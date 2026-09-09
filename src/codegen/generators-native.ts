@@ -26,6 +26,8 @@
  *     (try/finally without catch is, as in Phase 1).
  */
 import { ts } from "../ts-api.js";
+import { emitVecDelegationAbrupt } from "./generator-vec-abrupt.js";
+import { getVecInfo } from "./type-coercion.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 import {
   isBooleanType,
@@ -38,6 +40,11 @@ import type { TypeFact } from "../checker/oracle.js";
 import type { FieldDef, Instr, ValType, WasmFunction } from "../ir/types.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import { ensureNativeIteratorRuntime } from "./iterator-native.js";
+import {
+  emitNativeForOfTerminator,
+  forOfBindingIsFrameSafe,
+  type NativeForOfTerminator,
+} from "./generators-native-for-of.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import type { CodegenContext, FunctionContext, NativeGeneratorInfo } from "./context/types.js";
 import { reportError } from "./context/errors.js";
@@ -115,6 +122,7 @@ const MAX_NATIVE_GENERATOR_STATES = 256;
  *              else jump to `elseState`. No suspension.
  */
 type StateTerminator =
+  | NativeForOfTerminator
   | { kind: "yield"; expr: ts.Expression | undefined; next: number }
   | { kind: "return"; expr: ts.Expression | undefined }
   | { kind: "done" }
@@ -405,6 +413,14 @@ function isStringYieldExpression(ctx: CodegenContext, expr: ts.Expression | unde
  * Never returns null now — the externref carrier subsumes the formerly-bailing
  * cases; zero-yield generators are rejected separately by the plan builder.
  */
+function arrayDelegationLayout(ctx: CodegenContext, subject: ts.Expression) {
+  const type = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(subject));
+  const vec = type.kind === "ref" || type.kind === "ref_null" ? getVecInfo(ctx, type.typeIdx) : null;
+  if (!vec || (type.kind !== "ref" && type.kind !== "ref_null"))
+    throw new Error("Array delegation did not resolve to a vector type");
+  return { vecTypeIdx: type.typeIdx, arrTypeIdx: vec.arrTypeIdx, elemType: vec.elemType };
+}
+
 function generatorElemValType(ctx: CodegenContext, decl: GeneratorDecl): ValType {
   let sawNumeric = false;
   let sawString = false;
@@ -419,7 +435,12 @@ function generatorElemValType(ctx: CodegenContext, decl: GeneratorDecl): ValType
       // Include that operand in the carrier decision; otherwise the generator
       // defaults to f64 and each delegated character becomes NaN.
       if (node.asteriskToken) {
-        if (isStringYieldExpression(ctx, node.expression)) sawString = true;
+        const delegated = node.expression ? ctx.oracle.typeFactOf(node.expression) : undefined;
+        if (delegated?.kind === "array") {
+          if (delegated.element.kind === "number") sawNumeric = true;
+          else if (delegated.element.kind === "string") sawString = true;
+          else sawOther = true;
+        } else if (isStringYieldExpression(ctx, node.expression)) sawString = true;
       } else if (isNumericExpression(ctx, node.expression)) sawNumeric = true;
       else if (isStringYieldExpression(ctx, node.expression)) sawString = true;
       else sawOther = true;
@@ -744,6 +765,10 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         if (!lowerFor(stmt, unwind)) return false;
         continue;
       }
+      if (ts.isForOfStatement(stmt)) {
+        if (!lowerForOf(stmt, unwind)) return false;
+        continue;
+      }
 
       // 6) A bare block with yields — flatten it (no new scope modeling).
       if (ts.isBlock(stmt)) {
@@ -893,11 +918,11 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     // value of `yield*` consumed, a non-native inner) still bails to the host
     // path / scoped diagnostic.
     if (yieldExpr.asteriskToken) {
-      // (#3050) `yield*` inside a NEW try-region is not modeled — the
-      // delegation states ignore the resume mode, so an abrupt completion
-      // could not be routed into the region's catch/finally. Bail to the host
-      // path (legacy replay-only regions keep today's behavior).
-      if (unwind.some((e) => e.kind !== "replay")) return fail();
+      // Array delegates route return/throw into the region unwind.
+      // Other delegates still need full protocol forwarding (including a
+      // return/throw result with done=false), so keep their admission guarded.
+      const structuredUnwind = unwind.some((e) => e.kind !== "replay");
+      if (structuredUnwind && (!yieldExpr.expression || !isArrayDelegate(ctx, yieldExpr.expression))) return fail();
       // (#2864 D2) A yield-star terminator SELF-SUSPENDS (its yield arm re-enters
       // the SAME state on the next resume), so it must live in a DEDICATED state:
       //  (a) empty prelude / no resume bindings — otherwise the prelude statements
@@ -917,22 +942,19 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         finishState(curId, { kind: "jump", next: starId });
         resetCursor(starId);
       }
-      curAbrupt = {
-        finalizers: unwind.map((e) => [...(e as { statements: readonly ts.Statement[] }).statements]).reverse(),
-      };
-      curUnwind = undefined;
+      curAbrupt = structuredUnwind
+        ? undefined
+        : {
+            finalizers: unwind.map((e) => [...(e as { statements: readonly ts.Statement[] }).statements]).reverse(),
+          };
+      curUnwind = structuredUnwind ? [...unwind].reverse() : undefined;
       const subject = yieldExpr.expression;
       const innerName = subject ? nativeGeneratorDelegationName(subject) : undefined;
       if (subject && innerName === undefined) {
-        // (#2173 slice-2a) Not a native-generator call — try a NUMERIC
-        // array / vec delegate (`yield* [1,2,3]`, `yield* arr`). Driven by a
-        // direct vec cursor (no host box/unbox), so it stays standalone-clean.
-        // Same carrier-mismatch gate as the native-gen path: the vec elements
-        // are f64, so an f64 outer re-yields them exactly and a boxed-any outer
-        // boxes via the `repairStructTypeMismatches` seam (fixups.ts); a STRING
-        // outer has a concrete-ref `value` no repair can bridge — bail it to the
-        // host path (standalone: the clean #680 refusal).
-        if (!elemIsString && isNumericIterableDelegate(ctx, subject)) {
+        // Array delegation uses a cursor over the resolved physical vector.
+        // Each loaded element is coerced to the generator result carrier;
+        // object references must never pass through a numeric fallback.
+        if (isArrayDelegate(ctx, subject)) {
           // (#2864 R1) `const x = yield* [..]` — the delegation completion value
           // (§27.5.3.7) of an array is `undefined`; the done-arm delivers the f64
           // undefined sentinel into the binding's spill (a #2106 residual).
@@ -1082,19 +1104,11 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     return callee.text;
   }
 
-  // (#2173 slice-2a) True when `subject`'s static type is a NUMERIC array
-  // (`number[]` — an array literal of numbers, or an identifier/param typed
-  // `number[]`), which lowers to the canonical f64 vec. This is the direct-vec
-  // case driven by the array for-of fast path — `vec.data[idx]` reads f64 with
-  // zero host imports. Generic `{next()}` iterables / `arr.values()` iterators
-  // are NOT arrays and stay on the host path (slice-2b, the #1320 bridge); a
-  // string / string[] / object[] subject fails the numeric-element gate.
-  // (#1930) Uses the registry-free `ctx.oracle` type boundary, NOT the raw
-  // TS checker (the oracle-ratchet gate); the concrete vec ValType is resolved
-  // separately in `buildResumeInfo` via `getOrRegisterVecType`.
-  function isNumericIterableDelegate(ctx: CodegenContext, subject: ts.Expression): boolean {
+  // Array shape admission is registry-free. Concrete vector layout and element
+  // representation are resolved separately when the frame is registered.
+  function isArrayDelegate(ctx: CodegenContext, subject: ts.Expression): boolean {
     const fact = ctx.oracle.typeFactOf(subject);
-    return fact.kind === "array" && fact.element.kind === "number";
+    return fact.kind === "array";
   }
 
   // (#2173 slice-2b) True when `subject`'s static type is a GENERIC iterable that
@@ -1107,12 +1121,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   // native `__iterator` runtime (#2038) then drives it host-free. Mirrors the
   // checker use already present in `nativeGeneratorDelegationName`.
   function isGenericIterableDelegate(ctx: CodegenContext, subject: ts.Expression): boolean {
-    const t = ctx.checker.getTypeAtLocation(subject);
-    if (!t) return false;
-    for (const p of ctx.checker.getPropertiesOfType(t)) {
-      if (p.getName().startsWith("__@iterator")) return true;
-    }
-    return false;
+    return ctx.oracle.wellKnownSymbolMemberOf(subject, "iterator") === true;
   }
 
   // Reserve the successor of a yield and set up its resume binding/abrupt
@@ -1797,6 +1806,50 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     curResumeBindings = [];
     curAbrupt = undefined;
     curUnwind = undefined;
+    return ok;
+  }
+
+  /** Lazy synchronous iteration with a state-lowered IteratorClose region. */
+  function lowerForOf(stmt: ts.ForOfStatement, unwind: readonly UnwindEntry[]): boolean {
+    if (!ctx.standalone || stmt.awaitModifier || stateFinallyDepth > 0 || nodeContainsYield(stmt.expression))
+      return fail();
+    if (!ts.isVariableDeclarationList(stmt.initializer) || stmt.initializer.declarations.length !== 1) return fail();
+    const binding = stmt.initializer.declarations[0]!;
+    if (!ts.isIdentifier(binding.name) || loopBodyHasUnsupportedJump(stmt.statement)) return fail();
+    if (!forOfBindingIsFrameSafe(decl.body!, binding.name)) return fail();
+    if (decl.parameters.some((p) => ts.isIdentifier(p.name) && p.name.text === binding.name.getText())) return fail();
+    const iterator = continuationSpillName("operand");
+    addSpill(iterator);
+    continuationSpillTypes.set(iterator, { kind: "externref" });
+    needsPending = true;
+    hasThrowRoutes = true;
+    const outerRoute = curThrowRoute;
+    const header = reserveState();
+    const exit = reserveState();
+    const close = reserveState();
+    const closeExit = reserveState();
+    const region: TryRegionPlan = { finallyEntryState: close };
+    finishState(curId, { kind: "iterator-init", subject: stmt.expression, iterator, next: header });
+    curThrowRoute = { kind: "finally", region };
+    const bodyEntry = reserveState();
+    resetCursor(bodyEntry);
+    const bodyOk = lowerStatements(thenBody(stmt.statement), [...unwind, { kind: "finally", region }], false);
+    curThrowRoute = outerRoute;
+    if (!bodyOk) return false;
+    finishState(curId, { kind: "jump", next: header });
+    resetCursor(header);
+    finishState(header, {
+      kind: "iterator-step",
+      iterator,
+      binding: binding.name.text,
+      bodyState: bodyEntry,
+      doneState: exit,
+    });
+    resetCursor(close);
+    finishState(close, { kind: "iterator-close", iterator, next: closeExit });
+    resetCursor(closeExit);
+    finishState(closeExit, { kind: "finally-exit", join: exit, unwind: [...unwind].reverse() });
+    resetCursor(exit);
     return ok;
   }
 
@@ -3272,11 +3325,14 @@ export function registerNativeGenerator(
   // (#5255) A free declaration can be invoked through a callable object field
   // (`{ g: g }.g()`), whose receiver is installed only while its factory call
   // runs. Native execution resumes later, so persist that dynamic receiver in
-  // the state frame. Methods already have their exact receiver as the leading
-  // synthetic wasm param; generator function expressions remain separately
-  // gated because their closure ABI supplies a different capture carrier.
+  // the state frame. Closed methods have a synthesized receiver param; open
+  // object methods instead arrive through the closure ABI and need this same
+  // snapshot. Generator function expressions remain separately gated.
   const capturesDynamicThis =
-    !synthesizedThis && ts.isFunctionDeclaration(decl) && decl.body !== undefined && bodyReferencesOwnThis(decl.body);
+    !synthesizedThis &&
+    (ts.isFunctionDeclaration(decl) || ts.isMethodDeclaration(decl)) &&
+    decl.body !== undefined &&
+    bodyReferencesOwnThis(decl.body);
   // (#2571) The synthetic `this` (when present) is the FIRST param name, aligned
   // with the caller's `paramTypes[0] === receiverType`. User params follow.
   // (#2920) A binding-pattern param has no source identifier; mint a unique
@@ -3407,14 +3463,10 @@ export function registerNativeGenerator(
   // is resolved once here from the subject's static type and stored on the info,
   // so the emit-time cursor drive and this field layout use the SAME typeIdx.
   const vecDelegationSlots: NonNullable<NativeGeneratorInfo["vecDelegationSlots"]> = [];
-  for (const _site of plan.vecDelegationSites) {
-    // The gate (`isNumericIterableDelegate`) has already established the subject
-    // is a `number[]`, which lowers to the canonical f64 vec. Resolve that vec
-    // type directly (registry call, no checker) so the field layout and the
-    // emit-time cursor drive use the SAME typeIdx as `compileExpression(subject)`
-    // produces (both go through `getOrRegisterVecType(ctx, "f64")`).
-    const vecTypeIdx = getOrRegisterVecType(ctx, "f64");
-    const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+  for (const site of plan.vecDelegationSites) {
+    // Admission establishes an array; layout resolution establishes its actual
+    // vector and element ABI, shared by the frame slot and cursor read.
+    const { vecTypeIdx, arrTypeIdx, elemType } = arrayDelegationLayout(ctx, site.subject);
     const vecFieldIdx = stateFields.length;
     stateFields.push({
       name: `vecdeleg_${vecDelegationSlots.length}`,
@@ -3428,7 +3480,7 @@ export function registerNativeGenerator(
       cursorFieldIdx,
       vecTypeIdx,
       arrTypeIdx,
-      elemType: { kind: "f64" },
+      elemType,
     });
   }
 
@@ -4049,6 +4101,9 @@ function compileState(
     const abruptBody: Instr[] = [];
     const savedAbrupt = fctx.body;
     fctx.body = abruptBody;
+    if (state.terminator.kind === "yield-star" && state.terminator.delegationKind === "vec") {
+      emitVecDelegationAbrupt(ctx, fctx, info, state.terminator.vecSiteIndex, selfLocal);
+    }
     emitUnwindWalk(ctx, fctx, info, state.unwind, {
       selfLocal,
       resultLocal,
@@ -4237,6 +4292,11 @@ function compileState(
 
   const term = state.terminator;
   switch (term.kind) {
+    case "iterator-init":
+    case "iterator-step":
+    case "iterator-close":
+      emitNativeForOfTerminator(ctx, fctx, info, term, selfLocal, loopDepth);
+      break;
     case "yield": {
       const tmp = withNativeGeneratorContinuationLocals(ctx, fctx, state.continuationReplacements, () =>
         emitYieldValueAsElem(ctx, fctx, term.expr, info),
@@ -4432,6 +4492,17 @@ function compileState(
           ...setStateInstrs(info, selfLocal, term.next),
           { op: "br", depth: loopDepth + 1 }, // +1 for the inner `if`
         ];
+        const element: Instr[] = [
+          { op: "local.get", index: vecLocal },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+          { op: "local.get", index: cursorLocal },
+          { op: "array.get", typeIdx: vslot.arrTypeIdx },
+        ];
+        const savedElementBody = fctx.body;
+        fctx.body = element;
+        coerceType(ctx, fctx, vslot.elemType, info.elemValType);
+        fctx.body = savedElementBody;
         const yieldArm: Instr[] = [
           // element available — stay in THIS state; advance the cursor.
           ...setStateInstrs(info, selfLocal, stateId),
@@ -4442,11 +4513,7 @@ function compileState(
           { op: "i32.add" },
           { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: vslot.cursorFieldIdx },
           // result = { vec.data[cursor] (f64), done: 0 }
-          { op: "local.get", index: vecLocal },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
-          { op: "local.get", index: cursorLocal },
-          { op: "array.get", typeIdx: vslot.arrTypeIdx },
+          ...element,
           { op: "i32.const", value: 0 },
           { op: "struct.new", typeIdx: info.resultTypeIdx },
           { op: "local.set", index: resultLocal },

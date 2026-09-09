@@ -4,10 +4,10 @@ import { expect, it } from "vitest";
 import { repairBody, repairStructTypeMismatches } from "../src/codegen/fixups.js";
 import type { Instr, WasmModule } from "../src/ir/types.js";
 
-it("#1058 repairs a shared instruction DAG once", () => {
+it.each([28, 20_000])("#1058 repairs a shared instruction DAG once at depth %i", (maximumDepth) => {
   const leaf: Instr[] = [{ op: "ref.null.extern" }, { op: "struct.get", typeIdx: 1, fieldIdx: 0 }];
   let shared = leaf;
-  for (let depth = 0; depth < 28; depth++) {
+  for (let depth = 0; depth < maximumDepth; depth++) {
     shared = [{ op: "if", blockType: { kind: "empty" }, then: shared, else: shared }];
   }
   const mod = {
@@ -24,6 +24,20 @@ it("#1058 repairs a shared instruction DAG once", () => {
     { op: "ref.null", typeIdx: 1 },
     { op: "struct.get", typeIdx: 1, fieldIdx: 0 },
   ]);
+  expect(repairBody(shared, [], mod)).toBe(0);
+});
+
+it("#1058 repairs catch-all bodies and is idempotent", () => {
+  const leaf: Instr[] = [{ op: "ref.null.extern" }, { op: "struct.get", typeIdx: 0, fieldIdx: 0 }];
+  const body = [{ op: "try", blockType: { kind: "empty" }, body: [], catches: [], catchAll: leaf }] as Instr[];
+  const mod = {
+    imports: [],
+    functions: [],
+    types: [{ kind: "struct", name: "Target", fields: [{ name: "x", type: { kind: "i32" }, mutable: true }] }],
+  } as unknown as WasmModule;
+  expect(repairBody(body, [], mod)).toBe(1);
+  expect(leaf[0]).toEqual({ op: "ref.null", typeIdx: 0 });
+  expect(repairBody(body, [], mod)).toBe(0);
 });
 
 it("#1058 fails closed on a cross-function struct repair with incompatible local spaces", () => {

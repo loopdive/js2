@@ -45,6 +45,7 @@ import {
   emitArgumentsVecBody,
   emitParamDefaultArgMissingCheck,
   paramDefaultNeedsArgc,
+  registerOmissionTrackedScalarParams,
 } from "./statements/nested-declarations.js";
 import { beginNestedFunctionNameScope, endNestedFunctionNameScope } from "./nested-function-name-scope.js"; // (#4456)
 import { emitThrowReferenceError } from "./expressions/helpers.js";
@@ -411,12 +412,20 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   // Emit default-value initialization for parameters with initializers. Known
   // direct callers may inline a constant default, but first-class/dynamic
   // callers cannot; the callee must therefore retain the semantic check.
-  const defaultArgcLocal = decl.parameters.some((param, i) => {
-    if (!param.initializer) return false;
-    return paramDefaultNeedsArgc(params[i]?.type);
-  })
-    ? cacheParamDefaultArgc(ctx, fctx)
-    : undefined;
+  const tracksScalarOmission = registerOmissionTrackedScalarParams(
+    ctx,
+    fctx,
+    decl,
+    params.map((param) => param.type),
+  );
+  const defaultArgcLocal =
+    tracksScalarOmission ||
+    decl.parameters.some((param, i) => {
+      if (!param.initializer) return false;
+      return paramDefaultNeedsArgc(params[i]?.type);
+    })
+      ? cacheParamDefaultArgc(ctx, fctx)
+      : undefined;
   for (let i = 0; i < decl.parameters.length; i++) {
     const param = decl.parameters[i]!;
     if (!param.initializer) continue;

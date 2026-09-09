@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { compileMulti, wrapExports } from "../src/index.js";
 
 describe("#1058 TypeScript parenthesizer callable property", () => {
-  it("dispatches a one-parameter arrow through its two-parameter interface field", async () => {
+  it.each(["gc", "standalone"] as const)("dispatches a shorter parenthesizer callback in %s", async (target) => {
     const result = await compileMulti(
       {
         "./core.ts": `
@@ -105,8 +105,8 @@ describe("#1058 TypeScript parenthesizer callable property", () => {
       },
       "./entry.ts",
       {
-        target: "gc",
-        platform: "node",
+        target,
+        ...(target === "gc" ? { platform: "node" as const } : {}),
         skipSemanticDiagnostics: true,
         experimentalIR: true,
         resolve: { consumerDrivenBarrels: true },
@@ -115,10 +115,14 @@ describe("#1058 TypeScript parenthesizer callable property", () => {
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(WebAssembly.validate(result.binary)).toBe(true);
+    if (target === "standalone") expect(WebAssembly.Module.imports(new WebAssembly.Module(result.binary))).toEqual([]);
     const imports = result.importObject ?? {};
     const { instance } = await WebAssembly.instantiate(result.binary, imports);
     (imports as { __setInstance?: (value: WebAssembly.Instance) => void }).__setInstance?.(instance);
-    const exports = wrapExports(instance, { signatures: result.exportSignatures });
+    const exports =
+      target === "standalone"
+        ? (instance.exports as Record<string, () => number>)
+        : wrapExports(instance, { signatures: result.exportSignatures });
 
     expect(exports.realRules()).toBe(421);
     expect(exports.nullRules()).toBe(421);

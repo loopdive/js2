@@ -55,6 +55,7 @@
 //     `localClasses` set drives that exemption.
 
 import { ts, forEachChild } from "../ts-api.js";
+import { isErasedLocalTypeDeclaration, orderTailFunctionDeclarations } from "./tail-function-declarations.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
@@ -2236,11 +2237,15 @@ function primitiveClosureTypeFromTypeNode(node: ts.TypeNode | undefined): IrType
   return null;
 }
 
-export function irClosureSignatureFromFunctionTypeNode(node: ts.FunctionTypeNode): IrClosureSignature | null {
+export function irClosureSignatureFromFunctionTypeNode(
+  node: ts.FunctionTypeNode | ts.MethodSignature,
+): IrClosureSignature | null {
+  if (!node.type) return null;
   if (node.typeParameters && node.typeParameters.length > 0) return null;
   const params: IrType[] = [];
   for (const p of node.parameters) {
-    if (p.questionToken || p.dotDotDotToken || p.initializer) return null;
+    if (p.questionToken || p.dotDotDotToken || p.initializer || (ts.isIdentifier(p.name) && p.name.text === "this"))
+      return null;
     const ir = primitiveClosureTypeFromTypeNode(p.type);
     if (!ir) return null;
     params.push(ir);
@@ -3667,6 +3672,7 @@ function isPhase1StatementListInScope(
   // (the lowerer synthesizes the implicit empty-values return).
   isVoidReturn: boolean = false,
 ): boolean {
+  stmts = orderTailFunctionDeclarations(stmts);
   if (stmts.length < 1)
     return shapeNo("stmt-list-empty", stmts.length ? stmts[0]! : ({ kind: ts.SyntaxKind.Block } as ts.Node));
   for (let i = 0; i < stmts.length - 1; i++) {
@@ -5020,6 +5026,7 @@ function isPhase1BodyStatement(
   // #2952 slice 4 — break-only scope (enclosing switch / labeled blocks).
   breaks: BreakScope = NO_BREAKS,
 ): boolean {
+  if (isErasedLocalTypeDeclaration(stmt)) return true;
   if (ts.isBlock(stmt)) {
     return withProjectionEvidenceScope(() =>
       withLexicalValueBindingScope(stmt.statements, () => {
@@ -5667,7 +5674,13 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
     }
     if (!ts.isIdentifier(d.name)) return shapeNo("vardecl-nonident-name", d.name);
     if (scope.has(d.name.text)) return shapeNo("vardecl-shadow", d.name);
-    if (!d.initializer) return shapeNo("vardecl-noinit", d);
+    if (!d.initializer) {
+      if (isConst || currentSubjectIsModuleInit) return shapeNo("vardecl-noinit", d);
+      clearProjectionBinding(d.name.text);
+      scope.add(d.name.text);
+      currentMutableSlotNames.add(d.name.text);
+      continue;
+    }
     clearProjectionBinding(d.name.text);
     const initializerScope = new Set(scope);
     initializerScope.add(d.name.text);
@@ -5892,35 +5905,36 @@ function isPhase1NestedFunc(
   scope: Set<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
-  if (!fn.name) return false;
-  if (fn.asteriskToken) return false; // generator
+  if (!fn.name) return shapeNo("nested-function-name-missing", fn);
+  if (fn.asteriskToken) return shapeNo("nested-function-generator", fn);
   if (
     fn.modifiers &&
     fn.modifiers.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword || m.kind === ts.SyntaxKind.ExportKeyword)
   ) {
-    return false;
+    return shapeNo("nested-function-modifier", fn);
   }
-  if (fn.typeParameters && fn.typeParameters.length > 0) return false;
-  if (scope.has(fn.name.text)) return false; // shadowing — defer
+  if (fn.typeParameters && fn.typeParameters.length > 0) return shapeNo("nested-function-type-parameters", fn);
+  if (scope.has(fn.name.text)) return shapeNo("nested-function-shadow", fn.name);
 
   // Every param + return must have an explicit primitive / object
   // annotation. Slice 3 doesn't run propagation across closure
   // boundaries, so propagation overrides aren't applicable.
-  if (!fn.type || annotationToResolvedKind(fn.type) === null) return false;
+  if (!fn.type) return shapeNo("nested-function-return-type-missing", fn);
+  if (annotationToResolvedKind(fn.type) === null) return shapeNo("nested-function-return-type", fn.type);
 
   const closureScope = new Set(scope);
   for (const p of fn.parameters) {
-    if (!ts.isIdentifier(p.name)) return false;
-    if (p.questionToken || p.dotDotDotToken || p.initializer) return false;
-    if (!p.type || annotationToResolvedKind(p.type) === null) return false;
-    if (closureScope.has(p.name.text)) return false;
+    if (!ts.isIdentifier(p.name)) return shapeNo("nested-function-param-name", p.name);
+    if (p.questionToken || p.dotDotDotToken || p.initializer) return shapeNo("nested-function-param-shape", p);
+    if (!p.type || annotationToResolvedKind(p.type) === null) return shapeNo("nested-function-param-type", p.type ?? p);
+    if (closureScope.has(p.name.text)) return shapeNo("nested-function-param-shadow", p.name);
     closureScope.add(p.name.text);
   }
 
   // Reject self-reference syntactically — slice 3 doesn't yet support
   // recursive nested funcs (would need a closure-name binding inside
   // the lifted body).
-  if (!fn.body) return false;
+  if (!fn.body) return shapeNo("nested-function-body-missing", fn);
   if (bodyReferencesIdentifier(fn.body, fn.name.text)) {
     return capabilityNo("call-resolution-unsupported", "nested-function-self-reference", fn);
   }
@@ -5934,7 +5948,7 @@ function isPhase1NestedFunc(
     currentMutableSlotNames = outerMutableSlotNames;
     restoreProjectionBindings(projectionBindings);
   }
-  if (!bodyAccepted) return false;
+  if (!bodyAccepted) return shapeNo("nested-function-body", fn.body);
 
   // Add the nested function name to the OUTER scope.
   scope.add(fn.name.text);

@@ -27,6 +27,8 @@
  */
 import { ts } from "../ts-api.js";
 import { symbolShadowsBuiltinGlobal } from "./builtin-shadow.js"; // (#5096) intrinsic-shadow claim gate
+import { higherOrderSignatureTypeFact } from "./higher-order-signature-fact.js";
+import { resolveCheckerSignaturePosition } from "./signature-position.js";
 
 /** JS runtime tag classification (aligned with the #2104 JsTag module). */
 export type JsTag = "number" | "string" | "boolean" | "bigint" | "symbol" | "undefined" | "object" | "function";
@@ -38,7 +40,7 @@ export interface SignatureFact {
 }
 
 export interface ShapeFact {
-  props: { name: string; fact: TypeFact }[];
+  props: { name: string; fact: TypeFact; optional?: boolean }[];
 }
 
 /**
@@ -74,6 +76,16 @@ export type TypeFact =
  */
 export type OracleTypeKey = symbol & { readonly __brand: "OracleTypeKey" };
 
+/** Zero-based parameter index or return slot, descending through callable types. */
+export type SignaturePositionPath = readonly (number | "return")[];
+
+export interface SignaturePositionFact {
+  readonly fact: TypeFact;
+  readonly typeKey: OracleTypeKey;
+  /** Present only when this source annotation names the exact instantiated type. */
+  readonly annotation?: ts.TypeNode;
+}
+
 export interface TypeOracle {
   /** The workhorse: the registry-free fact for a node's type. */
   typeFactOf(node: ts.Node): TypeFact;
@@ -86,8 +98,14 @@ export interface TypeOracle {
   nullabilityOf(node: ts.Node): { nullable: boolean; undefinable: boolean };
   /** Union member facts (undefined when the type is not a union). */
   unionPartsOf(node: ts.Node): TypeFact[] | undefined;
-  /** Call signature fact (undefined when not callable / not resolvable). */
+  /**
+   * Call signature fact (undefined when not callable / not resolvable).
+   * Fixed-arity callable positions may contain bounded nested signatures;
+   * a function tag without one is not proof of a concrete closure ABI.
+   */
   signatureOf(node: ts.Node): SignatureFact | undefined;
+  /** Exact source type identity at an inferred or annotated callable position. */
+  signaturePositionOf(node: ts.Node, path: SignaturePositionPath): SignaturePositionFact | undefined;
   /** Fact for property `name` on the node's type. */
   propertyFactOf(node: ts.Node, name: string): TypeFact;
   /** Element fact for arrays/tuples. */
@@ -161,6 +179,14 @@ export interface TypeOracle {
   aliasedValueDeclarationOf(id: ts.Node): ts.Declaration | undefined;
   /** All declarations for an exact binding, without exposing its Symbol. */
   declarationsOf(node: ts.Node): readonly ts.Declaration[];
+  /** Declarations of the non-nullish receiver type, not its variable binding. */
+  typeDeclarationsOf(node: ts.Node): readonly ts.Declaration[];
+  /** Exact overload selected for a call; unavailable when resolution fails. */
+  resolvedCallDeclarationOf(node: ts.CallExpression): ts.Signature["declaration"];
+  /** Index signature presence on the non-nullish type; unknown is not absent. */
+  hasIndexSignature(node: ts.Node): boolean | undefined;
+  /** Data properties of an indexed record element; no class/accessor layout claims. */
+  indexedElementShapeOf(node: ts.Node): ShapeFact | undefined;
   /**
    * Variable declaration for a plain identifier binding. Returning the AST
    * declaration (rather than the checker Symbol) keeps binding-identity
@@ -222,6 +248,10 @@ export class TsCheckerOracle implements TypeOracle {
   // cached too.
   private readonly valueDeclCache = new WeakMap<ts.Node, ts.Declaration | null>();
   private readonly declarationsCache = new WeakMap<ts.Node, readonly ts.Declaration[]>();
+  private readonly typeDeclarationsCache = new WeakMap<ts.Node, readonly ts.Declaration[]>();
+  private readonly resolvedCallCache = new WeakMap<ts.CallExpression, ts.Signature["declaration"]>();
+  private readonly indexSignatureCache = new WeakMap<ts.Node, boolean | undefined>();
+  private readonly indexedElementShapeCache = new WeakMap<ts.Node, ShapeFact | undefined>();
   private keyCounter = 0;
 
   constructor(private readonly checker: ts.TypeChecker) {}
@@ -268,13 +298,31 @@ export class TsCheckerOracle implements TypeOracle {
       const t = this.checker.getTypeAtLocation(node);
       const sig = t?.getCallSignatures?.()[0];
       if (!sig) return undefined;
+      const positionFact = (type: ts.Type): TypeFact =>
+        higherOrderSignatureTypeFact(this.checker, type, (position) => this.factOfType(position, 0));
       return {
         params: sig.parameters.map((p) => {
           const d = p.valueDeclaration;
-          return d ? this.typeFactOf(d) : ({ kind: "unresolvable" } as TypeFact);
+          return d
+            ? positionFact(this.checker.getTypeOfSymbolAtLocation(p, d))
+            : ({ kind: "unresolvable" } as TypeFact);
         }),
-        returns: this.factOfType(this.checker.getReturnTypeOfSignature(sig), 0),
+        returns: positionFact(this.checker.getReturnTypeOfSignature(sig)),
         declaredArity: sig.parameters.length,
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
+  signaturePositionOf(node: ts.Node, path: SignaturePositionPath): SignaturePositionFact | undefined {
+    try {
+      const position = resolveCheckerSignaturePosition(this.checker, node, path);
+      if (!position) return undefined;
+      return {
+        fact: higherOrderSignatureTypeFact(this.checker, position.type, (type) => this.factOfType(type, 0)),
+        typeKey: this.internTypeKey(position.type),
+        ...(position.annotation ? { annotation: position.annotation } : {}),
       };
     } catch {
       return undefined;
@@ -361,7 +409,10 @@ export class TsCheckerOracle implements TypeOracle {
   }
 
   typeKeyOf(node: ts.Node): OracleTypeKey {
-    const t = this.checker.getTypeAtLocation(node) as unknown as object;
+    return this.internTypeKey(this.checker.getTypeAtLocation(node));
+  }
+
+  private internTypeKey(t: ts.Type): OracleTypeKey {
     let key = this.keyCache.get(t);
     if (!key) {
       key = Symbol(`oracle-type-${this.keyCounter++}`) as OracleTypeKey;
@@ -479,6 +530,82 @@ export class TsCheckerOracle implements TypeOracle {
     }
     this.declarationsCache.set(node, decls);
     return decls;
+  }
+
+  typeDeclarationsOf(node: ts.Node): readonly ts.Declaration[] {
+    const cached = this.typeDeclarationsCache.get(node);
+    if (cached) return cached;
+    let declarations: readonly ts.Declaration[] = [];
+    try {
+      const type = this.checker.getNonNullableType(this.checker.getTypeAtLocation(node));
+      declarations = [...(type.getSymbol()?.declarations ?? [])];
+    } catch {
+      /* Missing provenance must not authorize an intrinsic. */
+    }
+    this.typeDeclarationsCache.set(node, declarations);
+    return declarations;
+  }
+
+  resolvedCallDeclarationOf(node: ts.CallExpression): ts.Signature["declaration"] {
+    if (this.resolvedCallCache.has(node)) return this.resolvedCallCache.get(node);
+    let declaration: ts.Signature["declaration"];
+    try {
+      declaration = this.checker.getResolvedSignature(node)?.declaration;
+    } catch {
+      /* unknown */
+    }
+    this.resolvedCallCache.set(node, declaration);
+    return declaration;
+  }
+
+  hasIndexSignature(node: ts.Node): boolean | undefined {
+    if (this.indexSignatureCache.has(node)) return this.indexSignatureCache.get(node);
+    let result: boolean | undefined;
+    try {
+      const sourceType = this.checker.getTypeAtLocation(node);
+      if (!(sourceType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.TypeParameter))) {
+        const type = this.checker.getNonNullableType(sourceType);
+        result = type.getStringIndexType() !== undefined || type.getNumberIndexType() !== undefined;
+        // A union may hide a constituent's open signature at its common-type
+        // surface. Without checking every arm, absence is not a closed proof.
+        if (type.isUnion() && result === false) result = undefined;
+      }
+    } catch {
+      /* Unknown is distinct from a proven closed shape. */
+    }
+    this.indexSignatureCache.set(node, result);
+    return result;
+  }
+
+  indexedElementShapeOf(node: ts.Node): ShapeFact | undefined {
+    if (this.indexedElementShapeCache.has(node)) return this.indexedElementShapeCache.get(node);
+    let result: ShapeFact | undefined;
+    try {
+      const element = this.checker.getTypeAtLocation(node).getNumberIndexType();
+      const properties = element?.getProperties();
+      if (
+        element &&
+        !element.isClass() &&
+        properties?.length &&
+        !properties.some((property) =>
+          property.declarations?.some(
+            (declaration) => ts.isGetAccessorDeclaration(declaration) || ts.isSetAccessorDeclaration(declaration),
+          ),
+        )
+      ) {
+        result = {
+          props: properties.map((property) => ({
+            name: property.name,
+            fact: this.factOfType(this.checker.getTypeOfSymbolAtLocation(property, node), 0),
+            optional: (property.flags & ts.SymbolFlags.Optional) !== 0,
+          })),
+        };
+      }
+    } catch {
+      /* Unavailable shape never authorizes a closed record snapshot. */
+    }
+    this.indexedElementShapeCache.set(node, result);
+    return result;
   }
 
   /** Internal: classify a checker type into a registry-free fact. */

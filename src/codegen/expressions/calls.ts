@@ -4,6 +4,7 @@
  * property method calls, IIFEs, and conditional callees.
  */
 import { ts, forEachChild } from "../../ts-api.js";
+import { isNamespaceQualifier } from "../static-enum-receiver.js";
 import { profilePhase } from "../../compile-profile.js";
 import {
   isBigIntType,
@@ -3465,7 +3466,8 @@ export function functionExprBodyReferencesOwnName(fn: ts.FunctionExpression): bo
   return found;
 }
 
-function isRuntimeNamespaceReceiver(ctx: CodegenContext, identifier: ts.Identifier): boolean {
+function isRuntimeNamespaceReceiver(ctx: CodegenContext, identifier: ts.Expression): boolean {
+  if (!ts.isIdentifier(identifier)) return isNamespaceQualifier(ctx, identifier);
   const declaration = ctx.oracle.valueDeclarationOf(identifier);
   if (declaration !== undefined && (ts.isNamespaceImport(declaration) || ts.isModuleDeclaration(declaration))) {
     return true;
@@ -3522,7 +3524,7 @@ function tryRuntimeNamespaceMemberCall(
 ): InnerResult | undefined {
   if (!ts.isPropertyAccessExpression(expr.expression)) return undefined;
   const access = expr.expression;
-  if (!ts.isIdentifier(access.expression) || ts.isPrivateIdentifier(access.name)) return undefined;
+  if (ts.isPrivateIdentifier(access.name)) return undefined;
   if (!isRuntimeNamespaceReceiver(ctx, access.expression)) return undefined;
   // TypeScript nominates the first signature as valueDeclaration for an
   // overloaded exported function. Resolve the one body-bearing declaration;
@@ -3820,13 +3822,27 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
     declaration: ts.FunctionDeclaration,
     params: readonly ValType[],
     returnType: ValType | null,
-  ): boolean =>
-    vecFactoryDeclarations.has(declaration) &&
-    params.length === 1 &&
-    (params[0]!.kind === "ref" || params[0]!.kind === "ref_null") &&
-    getVecInfo(ctx, params[0]!.typeIdx) !== null &&
-    returnType !== null &&
-    (returnType.kind === "ref" || returnType.kind === "ref_null");
+  ): boolean => {
+    const sourceParams = runtimeParameters(declaration);
+    // TypeScript's createNodeArray carries one additional optional Boolean.
+    // Keep the early-registration exception exact: a branded Boolean plus a
+    // source formal that genuinely contributes no expected argument, never an
+    // arbitrary scalar or a wider factory signature.
+    const hasSafeOptionalBooleanSuffix =
+      params.length === 2 &&
+      sourceParams.length === 2 &&
+      expectedArgumentCountOfParams([sourceParams[1]]) === 0 &&
+      params[1]!.kind === "i32" &&
+      params[1]!.boolean === true;
+    return (
+      vecFactoryDeclarations.has(declaration) &&
+      (params.length === 1 || hasSafeOptionalBooleanSuffix) &&
+      (params[0]!.kind === "ref" || params[0]!.kind === "ref_null") &&
+      getVecInfo(ctx, params[0]!.typeIdx) !== null &&
+      returnType !== null &&
+      (returnType.kind === "ref" || returnType.kind === "ref_null")
+    );
+  };
   let liveClosureInfosByFuncTypeIdx: Map<number, Set<ClosureInfo>> | undefined;
   const indexLiveClosureInfo = (info: ClosureInfo): void => {
     const index = (liveClosureInfosByFuncTypeIdx ??= new Map());
@@ -4127,10 +4143,10 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
     // shorthand properties. Their allocation can live in a later source file
     // than a typed callback invocation (TypeScript's NodeFactory is the large
     // production witness), so the exact closure signature is not available to
-    // that earlier dispatcher yet. A one-vec -> reference signature is safe to
-    // pre-register: dispatch still discriminates by the exact funcref type and
-    // the candidate bridge proves the vec element projection before emitting
-    // the call_ref arm.
+    // that earlier dispatcher yet. A one-vec -> reference signature, optionally
+    // followed by one proven omittable Boolean, is safe to pre-register:
+    // dispatch still discriminates by the exact funcref type and the candidate
+    // bridge proves the vec element projection before emitting the call_ref arm.
     const safeVecFactoryCallback = isSafeVecFactoryCallback(declaration, params, returnType);
     const hasOmittableTrailingParams = expectedArgumentCountOfParams(declaration.parameters) < params.length;
     // A callback whose entire parameter ABI is externref can safely be

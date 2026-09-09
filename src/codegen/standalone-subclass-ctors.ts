@@ -162,12 +162,19 @@ export function emitStandaloneIdentityBuiltinConstructor(
  * (#3972) The native-collection parents, mapped to the `COLLECTION_KIND` brand
  * their `$Map` carrier must be stamped with.
  */
-export const STANDALONE_COLLECTION_BUILTIN_PARENTS: ReadonlyMap<string, number> = new Map<string, number>([
-  ["Map", COLLECTION_KIND.MAP],
-  ["Set", COLLECTION_KIND.SET],
-  ["WeakMap", COLLECTION_KIND.WEAKMAP],
-  ["WeakSet", COLLECTION_KIND.WEAKSET],
-]);
+const STANDALONE_COLLECTION_BUILTIN_PARENTS: ReadonlySet<string> = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
+
+function standaloneCollectionBuiltinKind(parentName: string): number | undefined {
+  // Resolve the map-runtime export only when code generation asks for a
+  // collection parent. This module participates in the index/shared/calls
+  // cycle, so reading COLLECTION_KIND while modules are loading can observe a
+  // partially initialized map-runtime namespace.
+  if (parentName === "Map") return COLLECTION_KIND.MAP;
+  if (parentName === "Set") return COLLECTION_KIND.SET;
+  if (parentName === "WeakMap") return COLLECTION_KIND.WEAKMAP;
+  if (parentName === "WeakSet") return COLLECTION_KIND.WEAKSET;
+  return undefined;
+}
 
 /**
  * (#3972) `class Sub extends <Map|Set|WeakMap|WeakSet>` — a REAL native
@@ -199,7 +206,7 @@ export function emitStandaloneCollectionSuperCtor(
   parentName: string,
   argCount: number,
 ): number | undefined {
-  const kind = STANDALONE_COLLECTION_BUILTIN_PARENTS.get(parentName);
+  const kind = standaloneCollectionBuiltinKind(parentName);
   if (kind === undefined) return undefined;
   const key = `__new_${parentName}@${argCount}`;
   const existing = ctx.funcMap.get(key);

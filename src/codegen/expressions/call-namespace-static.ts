@@ -62,6 +62,7 @@ import {
 } from "../json-standalone.js";
 import { canonicalUndefinedExternInstrs } from "../any-helpers.js";
 import { compileObjectLiteralAsExternref, materializeStructAsDynamicObject } from "../literals.js";
+import { emitJsonRecordArray, isJsonRecordArrayCandidate } from "../json-record-array.js";
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { emitCollectionIteratorVec } from "../map-runtime.js";
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "../native-strings.js";
@@ -382,11 +383,13 @@ function emitJsonCodecValueAsAnyref(
   ctx: CodegenContext,
   fctx: FunctionContext,
   value: ts.Expression,
-  opts?: { materializeClosedStruct?: boolean },
+  opts?: { materializeClosedStruct?: boolean; materializeRecordArray?: boolean; recordArrayType?: ValType },
 ): boolean {
   const unwrapped = unwrapReflectConstructExpr(value);
   let valueType: ValType | null = { kind: "externref" };
-  if (ts.isArrayLiteralExpression(unwrapped) && !unwrapped.elements.some(ts.isSpreadElement)) {
+  if (opts?.materializeRecordArray && emitJsonRecordArray(ctx, fctx, value, opts.recordArrayType)) {
+    valueType = { kind: "externref" };
+  } else if (ts.isArrayLiteralExpression(unwrapped) && !unwrapped.elements.some(ts.isSpreadElement)) {
     emitJsonArrayLiteralAsObjVec(ctx, fctx, unwrapped);
   } else if (ts.isObjectLiteralExpression(unwrapped) && isPlainJsonCodecObjectLiteral(unwrapped)) {
     ensureObjectRuntime(ctx);
@@ -650,13 +653,15 @@ export function compileNamespaceStaticCall(
         }
         fctx.body.push({ op: "ref.as_non_null" });
         fctx.body.push({ op: "call", funcIdx: forIdx });
-        return { kind: "i32" };
+        return { kind: "i32", symbol: true };
       }
       // (#3676) JS-host mode: return the module's CANONICAL i32 symbol id, not a
       // raw host Symbol. A symbol VALUE is an i32 id everywhere else in the
       // compiler — `mapTsTypeToWasm` maps `symbol` → i32 and the sibling
-      // producer `compileSymbolCall` (`Symbol()`) returns an unbranded
-      // `{ kind: "i32" }`. `Symbol.for` was the outlier returning `externref`,
+      // producer `compileSymbolCall` (`Symbol()`) uses an i32 id too.
+      // Preserve the Symbol brand here: a conditional joining this result
+      // with null boxes it as a Symbol, never as a numeric registry id.
+      // `Symbol.for` was the outlier returning `externref`,
       // so a `symbol`-typed slot (module global, local, param) received an
       // externref and `coerceType` bridged it with `__unbox_number` — literally
       // `Number(Symbol())`, a guaranteed TypeError (§7.1.4) at `__module_init`.
@@ -673,11 +678,11 @@ export function compileNamespaceStaticCall(
       flushLateImportShifts(ctx, fctx);
       if (funcIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx });
-        return { kind: "i32" };
+        return { kind: "i32", symbol: true };
       }
       fctx.body.push({ op: "drop" });
       fctx.body.push({ op: "i32.const", value: 0 });
-      return { kind: "i32" };
+      return { kind: "i32", symbol: true };
     }
     if (symMethod === "keyFor" && expr.arguments.length >= 1) {
       // (#2163) No-JS-host mode: the symbol is an i32 id; the native registry
@@ -3150,7 +3155,8 @@ export function compileNamespaceStaticCall(
           // PR-A serialises `$Object` graphs only. Arrays (closed typed-vec
           // structs `number[]` etc.) and tuples are a separate sub-slice
           // (PR-A2) — they are NOT `$ObjVec`, so routing them to the codec
-          // would emit wrong output. Detect an array/tuple static type via the
+          // directly would emit wrong output. Flat record arrays use the
+          // explicit materialization path below. Detect an array/tuple type via the
           // checker and keep it on the refusal path below.
           const arg0Type = ctx.checker.getTypeAtLocation(expr.arguments[0]!);
           const checkerArr = ctx.checker as unknown as {
@@ -3190,9 +3196,18 @@ export function compileNamespaceStaticCall(
           if (
             replacerNullish &&
             gap !== undefined &&
-            (!isArrayLike || arrayLiteralForCodec !== undefined || proxyShapedValue)
+            (!isArrayLike ||
+              arrayLiteralForCodec !== undefined ||
+              proxyShapedValue ||
+              isJsonRecordArrayCandidate(ctx, expr.arguments[0]!))
           ) {
-            if (!emitJsonCodecValueAsAnyref(ctx, fctx, expr.arguments[0]!)) return null;
+            if (
+              !emitJsonCodecValueAsAnyref(ctx, fctx, expr.arguments[0]!, {
+                materializeRecordArray: true,
+                recordArrayType: isArrayLike ? resolveWasmType(ctx, arg0Type) : undefined,
+              })
+            )
+              return null;
             emitJsonStringifyValue(ctx);
             flushLateImportShifts(ctx, fctx);
             if (gap === "") {

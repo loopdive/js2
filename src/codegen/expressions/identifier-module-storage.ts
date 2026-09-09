@@ -47,14 +47,21 @@ export function identifierHasOnlyAmbientDeclarations(ctx: CodegenContext, id: ts
  * are deliberately `any` (and Node class stubs use `typeof ...`).  Excluding
  * those two synthetic shapes keeps an imported binding from being reinterpreted
  * as a same-named property of globalThis. Declaration-file globals continue to
- * use the established `collectDeclaredGlobals` path.
+ * use `collectDeclaredGlobals`, except standalone's host-owned `process` value.
  */
 export function identifierHasExplicitHostAmbientValueDeclaration(ctx: CodegenContext, id: ts.Identifier): boolean {
-  if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports) return false;
+  // Standalone has a native global environment too. A declaration describes
+  // a capability; it does not prove that capability exists at runtime.
+  if (!ctx.standalone && (ctx.wasi || ctx.strictNoHostImports)) return false;
   const declarations = identifierValueDeclarations(ctx, id);
   if (declarations.length === 0 || !identifierHasOnlyAmbientDeclarations(ctx, id)) return false;
   return declarations.some((declaration) => {
-    if (!ts.isVariableDeclaration(declaration) || declaration.getSourceFile().isDeclarationFile) return false;
+    if (!ts.isVariableDeclaration(declaration)) return false;
+    // Node ambient types can be injected by an unrelated node: import (or
+    // type-only hint). They do not supply a process object to standalone.
+    // Resolve its actual value from the native global environment, including
+    // an explicitly installed value, rather than folding its declared type.
+    if (declaration.getSourceFile().isDeclarationFile && !(ctx.standalone && id.text === "process")) return false;
     const list = declaration.parent;
     if (!ts.isVariableDeclarationList(list) || !ts.isVariableStatement(list.parent)) return false;
     if (!hasDeclareModifier(list.parent)) return false;

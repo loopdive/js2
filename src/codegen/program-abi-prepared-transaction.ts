@@ -1,6 +1,16 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { irClassTypeRef, irTypeBindingKey } from "../ir/abi-bindings.js";
+import {
+  prepareSupportTypeDescriptorForScope,
+  consumePreparedSupportTypeDescriptor,
+  type PreparedSupportTypeDescriptor,
+} from "./program-abi-support-type-preparation.js";
+import {
+  prepareUnitCallableDescriptorForScope,
+  consumePreparedUnitCallableDescriptor,
+  type PreparedUnitCallableDescriptor,
+} from "./program-abi-unit-callable-preparation.js";
 import type { IrBindingId, IrClassId, IrSourceId, IrUnitId } from "../ir/identity.js";
 import { ProgramAbiInvariantError, type ProgramAbiPlanEntry, type ProgramAbiSlotSpace } from "../ir/program-abi.js";
 import type { StructTypeDef, TypeDef, ValType, WasmModule } from "../ir/types.js";
@@ -83,7 +93,9 @@ export interface PreparedProgramAbiDescriptorPart {
     | "callable-providers"
     | "class-layouts"
     | "export-aliases"
-    | "module-callable-aliases";
+    | "module-callable-aliases"
+    | "unit-callables"
+    | "support-types";
   readonly session: ProgramAbiSession;
   readonly descriptor: object;
   readonly lifecycle: PreparedProgramAbiDescriptorLifecycle;
@@ -117,6 +129,8 @@ export interface PreparedProgramAbiComponentBatchInput {
   readonly classLayouts?: PreparedClassLayoutDescriptor;
   readonly exportAliases?: PreparedExportAliasDescriptor;
   readonly moduleCallableAliases?: PreparedModuleCallableAliasDescriptor;
+  readonly unitCallables?: PreparedUnitCallableDescriptor;
+  readonly supportTypes?: PreparedSupportTypeDescriptor;
 }
 
 export interface PreparedProgramAbiPlanningOverlay {
@@ -939,11 +953,20 @@ export function stagePreparedProgramAbiComponentBatch(
     if (input.callableImports) {
       prepare(() => prepareCallableImportDescriptorForScope(input.callableImports!, host.session, scopeId));
     }
+    if (input.unitCallables) {
+      prepare(() =>
+        prepareUnitCallableDescriptorForScope(input.unitCallables!, host.session, scopeId, terminalUnitIds),
+      );
+    }
     if (input.callableProviders) {
       prepare(() => prepareCallableProviderDescriptorForScope(input.callableProviders!, host.session, scopeId));
     }
     if (input.classLayouts) {
+      // Class layouts and candidate closure support have separate provenance.
       prepare(() => prepareClassLayoutDescriptorForScope(input.classLayouts!, host.session, scopeId));
+    }
+    if (input.supportTypes) {
+      prepare(() => prepareSupportTypeDescriptorForScope(input.supportTypes!, host.session, scopeId, terminalUnitIds));
     }
     if (input.exportAliases) {
       prepare(() => prepareExportAliasDescriptorForScope(input.exportAliases!, host.session, scopeId));
@@ -966,7 +989,13 @@ export function stagePreparedProgramAbiComponentBatch(
     }
     if (
       requestedStructuralReferenceKeys.length === 0 &&
-      !parts.some(({ kind }) => kind === "export-aliases" || kind === "module-callable-aliases")
+      !parts.some(
+        ({ kind }) =>
+          kind === "export-aliases" ||
+          kind === "module-callable-aliases" ||
+          kind === "unit-callables" ||
+          kind === "support-types",
+      )
     ) {
       throw new ProgramAbiInvariantError(
         "invalid-binding-reference",
@@ -1237,6 +1266,14 @@ export function consumePreparedProgramAbiComponentBatch(
           session,
           batch.scopeId,
         );
+      } else if (part.kind === "unit-callables") {
+        consumePreparedUnitCallableDescriptor(
+          part.descriptor as PreparedUnitCallableDescriptor,
+          session,
+          batch.scopeId,
+        );
+      } else if (part.kind === "support-types") {
+        consumePreparedSupportTypeDescriptor(part.descriptor as PreparedSupportTypeDescriptor, session, batch.scopeId);
       } else {
         consumePreparedExportAliasDescriptor(part.descriptor as PreparedExportAliasDescriptor, session, batch.scopeId);
       }

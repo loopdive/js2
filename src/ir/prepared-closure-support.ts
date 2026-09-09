@@ -10,7 +10,10 @@ import type {
   ProgramAbiRefCellSupportRequest,
 } from "../codegen/program-abi-type-planning.js";
 import { addFuncType } from "../codegen/registry/types.js";
+import { objectFieldsHashKey } from "./object-method-key.js";
+import { resolveIrDynamicCarrierType } from "../codegen/any-helpers.js";
 import { irTypeBindingKey } from "./abi-bindings.js";
+import { orderedObjectFields } from "./object-layout.js";
 import type { IrUnitId } from "./identity.js";
 import type { PreparedComponentClosureSupportEvidence } from "./prepared-component-dependencies.js";
 import { IrInvariantError } from "./outcomes.js";
@@ -40,14 +43,6 @@ export interface PreparedRefCellRegistry {
   resolveIr(inner: IrType): IrRefCellLowering | null;
 }
 
-function preparedObjectLegacyKey(fields: readonly FieldDef[]): string {
-  return fields
-    .map(({ name, type }) =>
-      type.kind === "ref" || type.kind === "ref_null" ? `${name}:${type.kind}:${type.typeIdx}` : `${name}:${type.kind}`,
-    )
-    .join("|");
-}
-
 /**
  * Allocate a closed object layout before closure signatures are frozen. This
  * mirrors ObjectStructRegistry's anonymous-struct contract, including nullable
@@ -60,12 +55,11 @@ function prepareClosureObjectType(
   refCells?: PreparedRefCellRegistry,
   closures?: PreparedClosureRegistry,
 ): ValType {
-  const fields: FieldDef[] = type.shape.fields.map((field) => {
-    let physical = lowerPreparedClosureSupportType(ctx, field.type, refCells, closures);
-    if (physical.kind === "ref") physical = { kind: "ref_null", typeIdx: physical.typeIdx };
+  const fields: FieldDef[] = orderedObjectFields(type.shape).map((field) => {
+    const physical = lowerPreparedClosureSupportType(ctx, field.type, refCells, closures);
     return { name: field.name, type: physical, mutable: true };
   });
-  const key = preparedObjectLegacyKey(fields);
+  const key = objectFieldsHashKey(type.shape, fields);
   const existingName = ctx.anonStructHash.get(key);
   if (existingName !== undefined) {
     const existingIdx = ctx.structMap.get(existingName);
@@ -74,6 +68,9 @@ function prepareClosureObjectType(
   }
 
   const name = `__anon_${ctx.anonTypeCounter++}`;
+  for (const field of fields) {
+    if (field.type.kind === "ref") field.type = { kind: "ref_null", typeIdx: field.type.typeIdx };
+  }
   const typeIdx = ctx.mod.types.length;
   ctx.mod.types.push({ kind: "struct", name, fields } as StructTypeDef);
   ctx.structMap.set(name, typeIdx);
@@ -89,7 +86,27 @@ export function lowerPreparedClosureSupportType(
   refCells?: PreparedRefCellRegistry,
   closures?: PreparedClosureRegistry,
 ): ValType {
+  if (type.kind === "val" && type.typeRef) {
+    if (type.val.kind !== "ref" && type.val.kind !== "ref_null") {
+      throw new Error("prepared closure symbolic physical type ref is attached to a scalar");
+    }
+    const ref = type.typeRef;
+    const session = ctx.programAbiSession;
+    const draft = session?.getDraft(ref.binding.bindingId);
+    if (
+      draft?.intent.kind !== "type" ||
+      draft.slotPolicy === "none" ||
+      draft.structuralReferenceKey !== irTypeBindingKey(ref.binding)
+    ) {
+      throw new Error("prepared closure physical carrier has no exact Program ABI type plan");
+    }
+    return {
+      kind: type.val.kind,
+      typeIdx: session!.resolveCurrentIndex(ref.binding.bindingId, "type", irTypeBindingKey(ref.binding)),
+    };
+  }
   if (type.kind === "val" && type.val.kind !== "ref" && type.val.kind !== "ref_null") return type.val;
+  if (type.kind === "dynamic") return resolveIrDynamicCarrierType(ctx);
   if (type.kind === "extern" || type.kind === "callable") return { kind: "externref" };
   if (type.kind === "string" && type.carrierRef && ctx.programAbiSession) {
     const ref = type.carrierRef;
@@ -138,9 +155,10 @@ export function prepareDerivedCallableTypeIdx(
   ctx: CodegenContext,
   registry: PreparedClosureRegistry,
   fn: IrFunction,
+  refCells: PreparedRefCellRegistry,
 ): number {
   const lower = (type: IrType): ValType => {
-    if (type.kind !== "closure") return lowerPreparedClosureSupportType(ctx, type, undefined, registry);
+    if (type.kind !== "closure") return lowerPreparedClosureSupportType(ctx, type, refCells, registry);
     if (!registry.resolveBase(type.signature)) {
       throw new Error("prepared callable signature cannot allocate its closure type");
     }
@@ -175,6 +193,7 @@ export function allocatePreparedDerivedCallableSlots(
   }[],
   originalArtifactUnitIds: ReadonlySet<IrUnitId>,
   registry: PreparedClosureRegistry,
+  refCells: PreparedRefCellRegistry,
 ): readonly PreparedDerivedCallableSlot[] {
   const slots: PreparedDerivedCallableSlot[] = [];
   for (const entry of entries) {
@@ -186,7 +205,7 @@ export function allocatePreparedDerivedCallableSlots(
     const physicalName = ctx.funcMap.has(entry.name) ? `__\0js2_ir_prepared_derived_${slots.length}` : entry.name;
     const func: WasmFunction = {
       name: physicalName,
-      typeIdx: prepareDerivedCallableTypeIdx(ctx, registry, entry.fn),
+      typeIdx: prepareDerivedCallableTypeIdx(ctx, registry, entry.fn, refCells),
       locals: [],
       body: [],
       exported: entry.fn.exported,
@@ -345,7 +364,7 @@ export function prepareDependencyCompleteClosureSupport(
       );
     }
     const requests = [...objectTypes].map(([objectType, structType]) => ({ objectType, structType }));
-    const support = programAbiTypes.prepareObjectSupportTypes(requests);
+    const support = programAbiTypes.prepareObjectSupportTypes(requests, true);
     support.forEach((entry, index) => typeRefs.set(requests[index]!.objectType, [entry.objectTypeRef]));
   }
 
@@ -481,7 +500,10 @@ export function prepareDependencyCompleteClosureSupport(
         "prepared closure support requires one canonical Program ABI type registry",
       );
     }
-    const layouts = programAbiTypes.prepareClosureSupportLayouts(pending.map(({ request }) => request));
+    const layouts = programAbiTypes.prepareClosureSupportLayouts(
+      pending.map(({ request }) => request),
+      true,
+    );
     if (layouts.length !== pending.length) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
@@ -504,7 +526,10 @@ export function prepareDependencyCompleteClosureSupport(
         "prepared ref-cell support requires one canonical Program ABI type registry",
       );
     }
-    const support = programAbiTypes.prepareRefCellSupportTypes(pendingRefCells.map(({ request }) => request));
+    const support = programAbiTypes.prepareRefCellSupportTypes(
+      pendingRefCells.map(({ request }) => request),
+      true,
+    );
     support.forEach((entry, index) => pendingRefCells[index]!.publish(Object.freeze([entry.cellTypeRef])));
   }
   return Object.freeze({ typeRefs, instructionRefs, functionRefs });

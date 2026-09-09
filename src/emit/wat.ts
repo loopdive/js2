@@ -335,50 +335,82 @@ function formatFunction(f: WasmFunction, _globalIdx: number, mod: WasmModule, in
   return lines.join("\n");
 }
 
+type WatFrame = string | { instr: Instr; depth: number };
+
+function bodyFrames(body: Instr[], depth: number): WatFrame[] {
+  const frames: WatFrame[] = [];
+  for (let i = 0; i < body.length; i++) {
+    if (i > 0) frames.push("\n");
+    frames.push({ instr: body[i]!, depth });
+  }
+  return frames;
+}
+
 function formatInstrIndented(instr: Instr, depth: number): string {
-  const pad = "  ".repeat(depth);
+  const pending: WatFrame[] = [{ instr, depth }];
+  const chunks: string[] = [];
+  while (pending.length > 0) {
+    const frame = pending.pop()!;
+    if (typeof frame === "string") {
+      chunks.push(frame);
+      continue;
+    }
+    const next = instructionFrames(frame.instr, frame.depth);
+    for (let i = next.length - 1; i >= 0; i--) pending.push(next[i]!);
+  }
+  return chunks.join("");
+}
+
+/** Expand one instruction only; the work stack drives all nested formatting. */
+function instructionFrames(instr: Instr, depth: number): WatFrame[] {
+  // Indentation is cosmetic. Keep ordinary output unchanged, but bound the
+  // whitespace for generated dispatch ladders: quadratic indentation alone
+  // can exceed V8's maximum string length on the full TypeScript module.
+  const pad = "  ".repeat(Math.min(depth, 64));
 
   switch (instr.op) {
-    case "block": {
-      const bt = formatBlockType(instr.blockType);
-      const inner = instr.body.map((i) => formatInstrIndented(i, depth + 1)).join("\n");
-      return `${pad}(block${bt}\n${inner}\n${pad})`;
-    }
+    case "block":
     case "loop": {
       const bt = formatBlockType(instr.blockType);
-      const inner = instr.body.map((i) => formatInstrIndented(i, depth + 1)).join("\n");
-      return `${pad}(loop${bt}\n${inner}\n${pad})`;
+      return [`${pad}(${instr.op}${bt}\n`, ...bodyFrames(instr.body, depth + 1), `\n${pad})`];
     }
     case "if": {
       const bt = formatBlockType(instr.blockType);
-      const thenStr = instr.then.map((i) => formatInstrIndented(i, depth + 1)).join("\n");
+      const frames: WatFrame[] = [
+        `${pad}(if${bt}\n${pad}  (then\n`,
+        ...bodyFrames(instr.then, depth + 1),
+        `\n${pad}  )`,
+      ];
       const hasElse = instr.else && instr.else.length > 0;
       const needsElse = hasElse || instr.blockType.kind === "val";
       if (needsElse) {
-        const elseStr = hasElse
-          ? instr.else!.map((i) => formatInstrIndented(i, depth + 1)).join("\n")
-          : `${pad}    unreachable`;
-        return `${pad}(if${bt}\n${pad}  (then\n${thenStr}\n${pad}  )\n${pad}  (else\n${elseStr}\n${pad}  )\n${pad})`;
+        frames.push(`\n${pad}  (else\n`);
+        const elseFrames = hasElse ? bodyFrames(instr.else!, depth + 1) : [`${pad}    unreachable`];
+        for (const frame of elseFrames) frames.push(frame);
+        frames.push(`\n${pad}  )`);
       }
-      return `${pad}(if${bt}\n${pad}  (then\n${thenStr}\n${pad}  )\n${pad})`;
+      frames.push(`\n${pad})`);
+      return frames;
     }
     case "try": {
       const bt = formatBlockType(instr.blockType);
-      let result = `${pad}(try${bt}\n${pad}  (do\n`;
-      result += instr.body.map((i) => formatInstrIndented(i, depth + 2)).join("\n");
-      result += `\n${pad}  )`;
+      const frames: WatFrame[] = [
+        `${pad}(try${bt}\n${pad}  (do\n`,
+        ...bodyFrames(instr.body, depth + 2),
+        `\n${pad}  )`,
+      ];
       for (const c of instr.catches) {
-        result += `\n${pad}  (catch ${c.tagIdx}\n`;
-        result += c.body.map((i) => formatInstrIndented(i, depth + 2)).join("\n");
-        result += `\n${pad}  )`;
+        frames.push(`\n${pad}  (catch ${c.tagIdx}\n`);
+        for (const frame of bodyFrames(c.body, depth + 2)) frames.push(frame);
+        frames.push(`\n${pad}  )`);
       }
       if (instr.catchAll) {
-        result += `\n${pad}  (catch_all\n`;
-        result += instr.catchAll.map((i) => formatInstrIndented(i, depth + 2)).join("\n");
-        result += `\n${pad}  )`;
+        frames.push(`\n${pad}  (catch_all\n`);
+        for (const frame of bodyFrames(instr.catchAll, depth + 2)) frames.push(frame);
+        frames.push(`\n${pad}  )`);
       }
-      result += `\n${pad})`;
-      return result;
+      frames.push(`\n${pad})`);
+      return frames;
     }
     case "try_table": {
       const bt = formatBlockType(instr.blockType);
@@ -391,13 +423,12 @@ function formatInstrIndented(instr: Instr, depth: number): string {
         }
       }
       if (instr.body.length > 0) {
-        result += `\n${instr.body.map((i) => formatInstrIndented(i, depth + 1)).join("\n")}\n${pad}`;
+        return [`${result}\n`, ...bodyFrames(instr.body, depth + 1), `\n${pad})`];
       }
-      result += ")";
-      return result;
+      return [`${result})`];
     }
     default:
-      return `${pad}${formatInstr(instr, depth)}`;
+      return [`${pad}${formatInstr(instr, depth)}`];
   }
 }
 

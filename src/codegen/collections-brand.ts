@@ -96,12 +96,19 @@ const COLLECTION_METHODS: Record<CollectionClass, ReadonlySet<string>> = {
   WeakSet: new Set(["add", "has", "delete"]),
 };
 
-const KIND_OF: Record<CollectionClass, number> = {
-  Map: COLLECTION_KIND.MAP,
-  Set: COLLECTION_KIND.SET,
-  WeakMap: COLLECTION_KIND.WEAKMAP,
-  WeakSet: COLLECTION_KIND.WEAKSET,
-};
+function collectionKindOf(cls: CollectionClass): number {
+  // Keep the read lazy. `map-runtime` reaches this module through the
+  // index/shared/calls cycle while its own exports are still being initialized;
+  // eagerly building this table at module evaluation time observes an
+  // incomplete COLLECTION_KIND export.
+  const kindOf: Record<CollectionClass, number> = {
+    Map: COLLECTION_KIND.MAP,
+    Set: COLLECTION_KIND.SET,
+    WeakMap: COLLECTION_KIND.WEAKMAP,
+    WeakSet: COLLECTION_KIND.WEAKSET,
+  };
+  return kindOf[cls];
+}
 
 /** The `[[XData]]` receiver brand for one collection class: `$Map` struct +
  *  matching COLLECTION_KIND tag. Exported for #3172 (set-algebra receivers). */
@@ -109,7 +116,7 @@ export function collectionBrandSpec(ctx: CodegenContext, cls: CollectionClass): 
   return {
     message: `TypeError: Method ${cls}.prototype.* called on incompatible receiver`,
     structTypeIdx: ctx.mapTypeIdx,
-    kindField: { fieldIdx: MAP_LAYOUT.M_KIND, accept: [KIND_OF[cls]] },
+    kindField: { fieldIdx: MAP_LAYOUT.M_KIND, accept: [collectionKindOf(cls)] },
   };
 }
 

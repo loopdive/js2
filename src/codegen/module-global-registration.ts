@@ -8,6 +8,7 @@ import { computeElidableTopLevelTdzNames } from "./expressions/identifiers.js";
 import { localGlobalIdx, nextModuleGlobalIdx } from "./registry/imports.js";
 
 const TOP_LEVEL_LEXICAL_FLAGS = ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing;
+const moduleGlobalOwners = new WeakMap<GlobalDef, ts.SourceFile>();
 
 function isFunctionOrClassBoundary(node: ts.Node): boolean {
   return (
@@ -160,7 +161,17 @@ export function registerModuleGlobal(
   const shadowsConversionHook = declaration !== undefined && (name === "toString" || name === "valueOf");
   if (fnIdx !== undefined && fnIdx >= ctx.numImportFuncs && !shadowsConversionHook) return;
   const existingGlobalIdx = ctx.moduleGlobals.get(name);
-  if (existingGlobalIdx !== undefined) {
+  const exactModuleDeclaration = declaration && ts.isExternalModule(declaration.getSourceFile());
+  const exactBinding = exactModuleDeclaration ? ctx.programAbiGlobals?.moduleBinding(declaration) : undefined;
+  if (exactBinding) {
+    ctx.moduleGlobals.set(name, ctx.numImportGlobals + ctx.mod.globals.indexOf(exactBinding.value));
+    return;
+  }
+  const existingOwner =
+    existingGlobalIdx === undefined
+      ? undefined
+      : moduleGlobalOwners.get(ctx.mod.globals[localGlobalIdx(ctx, existingGlobalIdx)]!);
+  if (existingGlobalIdx !== undefined && (!exactModuleDeclaration || existingOwner === declaration.getSourceFile())) {
     if (declaration) {
       const existingGlobal = ctx.mod.globals[localGlobalIdx(ctx, existingGlobalIdx)];
       if (!existingGlobal) {
@@ -197,6 +208,7 @@ export function registerModuleGlobal(
     init,
   };
   ctx.mod.globals.push(global);
+  if (exactModuleDeclaration) moduleGlobalOwners.set(global, declaration.getSourceFile());
   ctx.moduleGlobals.set(name, globalIdx);
   if (declaration) {
     ctx.programAbiGlobals?.observeModuleValue(declaration, name, global);

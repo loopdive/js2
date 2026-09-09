@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts, forEachChild } from "../ts-api.js";
+import { dataFieldsHashKey } from "../wasm/physical/data-fields-key.js";
+import { primitiveSourceMethodSignature } from "../ir/object-method-key.js";
+import { objectLiteralHasIndexedSpread } from "./indexed-object-spread.js";
 import { propertyValueIsAccessorObjectLiteral } from "./accessor-value-field.js";
 import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
@@ -541,6 +544,7 @@ import { compileDeclarations } from "./audited-declarations.js";
 import { snapshotLegacyBodyAudit } from "./legacy-body-audit.js";
 import type { ModuleInitMode } from "./declarations.js";
 import { prepareModuleTdzGlobals } from "./module-global-registration.js";
+import { projectModuleBindings } from "./module-binding-projection.js";
 import { hoistedVarPreInitValueIsObserved } from "./declarations/hoisted-var-preinit-read.js";
 import { inferParamTypeFromCallSites } from "./declarations/param-return-inference.js";
 import {
@@ -1465,7 +1469,7 @@ function objectIrTypeFromTsType(ctx: CodegenContext, tsType: ts.Type, onPath?: S
   const props = tsType.getProperties();
   if (props.length === 0) return null; // empty object — defer to a future slice
 
-  const fields: { name: string; type: IrType }[] = [];
+  const fields: { name: string; type: IrType; sourceMethodSignature?: string }[] = [];
   path.add(tsType);
   try {
     for (const prop of props) {
@@ -1479,13 +1483,31 @@ function objectIrTypeFromTsType(ctx: CodegenContext, tsType: ts.Type, onPath?: S
       const propType = ctx.checker.getTypeOfSymbol(prop);
       const fieldIr = tsTypeToFieldIr(ctx, propType, path);
       if (!fieldIr) return null;
-      fields.push({ name: prop.name, type: fieldIr });
+      fields.push({
+        name: prop.name,
+        type: fieldIr,
+        ...(fieldIr.kind === "callable"
+          ? { sourceMethodSignature: primitiveSourceMethodSignature(fieldIr.signature) }
+          : {}),
+      });
     }
   } finally {
     path.delete(tsType);
   }
+  const fieldOrder = fields.map((field) => field.name);
   fields.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return { kind: "object", shape: { fields } };
+  const symbol = tsType.aliasSymbol ?? tsType.getSymbol();
+  const declared =
+    fields.some((field) => field.sourceMethodSignature !== undefined) &&
+    symbol &&
+    ctx.structMap.has(symbol.name) &&
+    symbol.declarations?.some(
+      (declaration) => ts.isInterfaceDeclaration(declaration) || ts.isTypeAliasDeclaration(declaration),
+    );
+  return {
+    kind: "object",
+    shape: { fields, fieldOrder, ...(declared ? { allocationKind: "declared" as const } : {}) },
+  };
 }
 
 /**
@@ -1496,8 +1518,16 @@ function objectIrTypeFromTsType(ctx: CodegenContext, tsType: ts.Type, onPath?: S
  */
 function tsTypeToFieldIr(ctx: CodegenContext, t: ts.Type, onPath?: Set<ts.Type>): IrType | null {
   if (t.flags & ts.TypeFlags.NumberLike) return irVal({ kind: "f64" });
-  if (t.flags & ts.TypeFlags.BooleanLike) return irVal({ kind: "i32" });
+  if (t.flags & ts.TypeFlags.BooleanLike) return irVal({ kind: "i32", boolean: true });
   if (t.flags & ts.TypeFlags.StringLike) return { kind: "string" };
+  const signatures = t.getCallSignatures();
+  if (signatures.length === 1) {
+    const declaration = signatures[0]!.getDeclaration();
+    if (declaration && (ts.isFunctionTypeNode(declaration) || ts.isMethodSignature(declaration))) {
+      const signature = irClosureSignatureFromFunctionTypeNode(declaration);
+      if (signature) return { kind: "callable", signature };
+    }
+  }
   // (#4019) thread the in-progress descent so a self-referential shape is
   // rejected instead of recursing until the stack dies.
   if (t.flags & ts.TypeFlags.Object) return objectIrTypeFromTsType(ctx, t, onPath);
@@ -10996,6 +11026,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
           ctx.funcMap.set(name, idx);
         }
         rebindPerSourceGeneratorState(ctx, ownNativeGenBySource.get(sf), ownFuncIdxBySource.get(sf));
+        projectModuleBindings(ctx, sf);
         profilePhase(sf.fileName, () => {
           if (multiPreparedProgram) multiPreparedProgram.compileBodySource(sf, moduleInitMode);
           else compileDeclarations(ctx, sf, undefined, undefined, undefined, moduleInitMode);
@@ -12411,15 +12442,12 @@ function inheritsMapCarrier(checker: ts.TypeChecker, type: ts.Type | undefined, 
 }
 
 /**
- * Return the ambient host class that implements a Map-refining interface.
- *
- * JS-host builds can dispatch `PragmaMap extends Map` directly through the
- * ordinary Map imports. Native-string/standalone builds deliberately retain
- * their existing exact-symbol routing until the native Map runtime supports
- * refined interface receivers as a separate change.
+ * Return the ambient Map family implemented by a refining interface.
+ * Host and native dispatch use the same inheritance proof; the selected
+ * target still determines whether the carrier is externref or native Map.
  */
 export function hostMapCarrierClassName(ctx: CodegenContext, type: ts.Type): "Map" | undefined {
-  return !ctx.nativeStrings && inheritsMapCarrier(ctx.checker, type) ? "Map" : undefined;
+  return inheritsMapCarrier(ctx.checker, type) ? "Map" : undefined;
 }
 
 /**
@@ -12601,7 +12629,7 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // the same native Map instance, just as NodeArray is a view over Array.
     // Resolve it before the named-interface struct lookup below so method calls
     // retain the `$Map` receiver created by `new Map()`.
-    if (hostMapCarrierClassName(ctx, tsType) !== undefined) {
+    if (!ctx.nativeStrings && hostMapCarrierClassName(ctx, tsType) !== undefined) {
       return { kind: "externref" };
     }
 
@@ -12673,7 +12701,7 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // becomes `ref $Map` so `new Map()` stores directly and method/.size
     // dispatch reads a typed receiver (no externref round-trip / illegal cast).
     // JS-host mode keeps Map as an externref-backed externClass (falls through).
-    if (builtinSymName === "Map" && ctx.nativeStrings) {
+    if (ctx.nativeStrings && (builtinSymName === "Map" || inheritsMapCarrier(ctx.checker, tsType))) {
       ensureMapRuntimeTypes(ctx);
       if (ctx.mapTypeIdx >= 0) return { kind: "ref", typeIdx: ctx.mapTypeIdx };
     }
@@ -12995,22 +13023,7 @@ export function resolveWasmTypeForClosureReturn(ctx: CodegenContext, retType: ts
  * Compute a hash key for a list of struct fields (for O(1) structural dedup).
  */
 export function fieldsHashKey(fields: FieldDef[]): string {
-  const parts: string[] = [];
-  for (const f of fields) {
-    const t = f.type;
-    if (t.kind === "ref" || t.kind === "ref_null") {
-      parts.push(`${f.name}:${t.kind}:${(t as { typeIdx: number }).typeIdx}`);
-    } else if (t.kind === "i32" && ((t as { boolean?: true }).boolean || t.symbol === true)) {
-      // (#1788) Keep boolean-branded i32 fields distinct from numeric i32 in the
-      // structural dedup key — they box differently (`__box_boolean` vs
-      // `__box_number`), so two shapes that differ only in boolean-vs-number must
-      // not collapse to one struct (which would inherit the wrong getter boxing).
-      parts.push(`${f.name}:i32:${t.symbol === true ? "sym" : "bool"}`);
-    } else {
-      parts.push(`${f.name}:${t.kind}`);
-    }
-  }
-  return parts.join("|");
+  return dataFieldsHashKey(fields);
 }
 
 /** Ensure the $__Date struct type exists in the module, return its type index. */
@@ -13901,7 +13914,7 @@ function hoistVarDecl(
           (spreadCtxType.flags & ts.TypeFlags.Unknown) !== 0 ||
           (spreadCtxType.flags & ts.TypeFlags.NonPrimitive) !== 0 ||
           spreadCtxType.getProperties().length === 0;
-        if (nonSpecificCtx) initForcesExternref = true;
+        if (nonSpecificCtx || objectLiteralHasIndexedSpread(ctx, decl.initializer)) initForcesExternref = true;
       }
     }
     // (#684) Usage-narrowed f64 override for a boxed-`any` var — computed

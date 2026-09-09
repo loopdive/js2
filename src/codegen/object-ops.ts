@@ -6,6 +6,7 @@
  * Extracted from expressions.ts (#688 step 6).
  */
 import { classHierarchyHasDynamicMember } from "./class-dynamic-keys.js"; // (#5195 F5)
+import { objectLiteralHasIndexedSpread } from "./indexed-object-spread.js";
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import { ts } from "../ts-api.js";
 import { isVoidType } from "../checker/type-mapper.js";
@@ -4143,8 +4144,15 @@ export function compileObjectKeysOrValues(
   // `externrefAccessorVars` tag the variable sites set, so the representation
   // (externref host object) and the enumeration path stay in lockstep.
   const argIsHostObjectVar = ts.isIdentifier(arg) && ctx.externrefAccessorVars.has(arg.text);
+  // An index signature describes an open property set, not a closed struct.
+  // MapLike keyword tables carry native dynamic objects even when the checker
+  // registered an empty interface struct; enumerate their actual own keys.
+  const hasIndexSignature = argType.getStringIndexType() !== undefined || argType.getNumberIndexType() !== undefined;
+  const literalArg = unwrapTransparentExpression(arg);
+  const hasIndexedSpread = ts.isObjectLiteralExpression(literalArg) && objectLiteralHasIndexedSpread(ctx, literalArg);
   // Resolve struct name from the argument type
-  const structName = argIsHostObjectVar ? undefined : resolveStructName(ctx, argType);
+  const structName =
+    argIsHostObjectVar || hasIndexSignature || hasIndexedSpread ? undefined : resolveStructName(ctx, argType);
   if (!structName) {
     // Only a FRESH syntactic `{}` proves an empty own-key set. A variable or
     // parameter whose checker type has zero declared properties is not such a

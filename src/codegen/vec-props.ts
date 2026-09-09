@@ -58,11 +58,16 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { protoIndexRecvGetMissInstrs } from "./proto-index-store.js"; // (#4176) inherited proto-named consult
 import { addFuncType, getOrRegisterVecBaseType } from "./registry/types.js";
+import { wireVecPrototypeHelpers } from "./vec-prototype.js";
+import { VEC_PROJECTION_ROOT } from "./vec-projection-identity.js";
 
 /** Reserved helper names. */
 const IS_VEC_PROP_CARRIER = "__is_vec_prop_carrier";
 const VEC_BAG_LOOKUP = "__vec_bag_lookup";
 const VEC_BAG_ENSURE = "__vec_bag_ensure";
+export const VEC_PROTO_HAS = "__vec_proto_has";
+export const VEC_PROTO_GET = "__vec_proto_get";
+export const VEC_PROTO_SET = "__vec_proto_set";
 /**
  * (#4247) The two terminal bag accessors are EXPORTED so a caller that has
  * already decided, at compile time, that a key names an ordinary property can
@@ -232,6 +237,9 @@ export function reserveVecPropHelpers(ctx: CodegenContext): void {
     { name: "key", type: { kind: "eqref" }, mutable: false },
     // bag — the per-array own-property `$Object`, wrapped to externref.
     { name: "bag", type: { kind: "externref" }, mutable: false },
+    // Presence is independent of value: null is an explicit prototype.
+    { name: "prototype", type: { kind: "externref" }, mutable: true },
+    { name: "hasPrototype", type: { kind: "i32" }, mutable: true },
   ];
   ctx.mod.types.push({ kind: "struct", name: "$VecPropEntry", fields: entryFields });
   ctx.vecPropEntryTypeIdx = entryTypeIdx;
@@ -268,6 +276,9 @@ export function reserveVecPropHelpers(ctx: CodegenContext): void {
   reserve(IS_VEC_PROP_CARRIER, [externref], [{ kind: "i32" }]);
   reserve(VEC_BAG_LOOKUP, [externref], [externref]);
   reserve(VEC_BAG_ENSURE, [externref], [externref]);
+  reserve(VEC_PROTO_HAS, [externref], [{ kind: "i32" }]);
+  reserve(VEC_PROTO_GET, [externref], [externref]);
+  reserve(VEC_PROTO_SET, [externref, externref], []);
   reserve(VEC_PROP_GET, [externref, externref], [externref]);
   reserve(VEC_PROP_SET, [externref, externref, externref], []);
 
@@ -296,6 +307,7 @@ export function fillVecPropHelpers(ctx: CodegenContext): void {
   const reflectGetReceiverIdx = ctx.funcMap.get("__reflect_get_receiver");
   const toPropertyKeyIdx = ctx.funcMap.get("__to_property_key");
   const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object");
+  wireVecPrototypeHelpers(ctx);
   const setDecideIdx = ctx.funcMap.get("__extern_set_decide");
   const setOwnIdx = ctx.funcMap.get("__extern_set_own");
   const setResultGlobalIdx = ctx.externSetResultGlobalIdx;
@@ -306,7 +318,12 @@ export function fillVecPropHelpers(ctx: CodegenContext): void {
     const fn = definedFuncAt(ctx, idx);
     if (!fn) return;
     fn.locals = locals;
-    fn.body = body;
+    const root = ctx.funcMap.get(VEC_PROJECTION_ROOT);
+    const identityLookup = [VEC_BAG_LOOKUP, VEC_BAG_ENSURE, VEC_PROTO_HAS, VEC_PROTO_GET, VEC_PROTO_SET].includes(name);
+    fn.body =
+      root !== undefined && identityLookup
+        ? [{ op: "local.get", index: 0 }, { op: "call", funcIdx: root }, { op: "local.set", index: 0 }, ...body]
+        : body;
   };
 
   // The undefined-read sentinel, matching `__extern_get`'s `getMiss()` factory
@@ -396,10 +413,76 @@ export function fillVecPropHelpers(ctx: CodegenContext): void {
       { op: "global.get", index: headGlobalIdx }, // next
       { op: "local.get", index: 1 }, // key (recvEq)
       { op: "local.get", index: 3 }, // bag
+      { op: "ref.null.extern" }, // prototype, absent until explicitly assigned
+      { op: "i32.const", value: 0 },
       { op: "struct.new", typeIdx: entryTypeIdx },
       { op: "global.set", index: headGlobalIdx },
       { op: "local.get", index: 3 }, // return bag
     ]);
+  }
+
+  // Prototype storage shares the identity-keyed record, never the public bag.
+  // Generate each body independently: finalize mutates instruction indices.
+  for (const name of [VEC_PROTO_HAS, VEC_PROTO_GET, VEC_PROTO_SET]) {
+    const writing = name === VEC_PROTO_SET;
+    const cur = writing ? 2 : 1;
+    const hit: Instr[] = writing
+      ? [
+          { op: "local.get", index: cur },
+          { op: "local.get", index: 1 },
+          { op: "struct.set", typeIdx: entryTypeIdx, fieldIdx: 3 },
+          { op: "local.get", index: cur },
+          { op: "i32.const", value: 1 },
+          { op: "struct.set", typeIdx: entryTypeIdx, fieldIdx: 4 },
+          { op: "return" },
+        ]
+      : [
+          { op: "local.get", index: cur },
+          { op: "struct.get", typeIdx: entryTypeIdx, fieldIdx: name === VEC_PROTO_HAS ? 4 : 3 },
+          { op: "return" },
+        ];
+    setBody(
+      name,
+      [{ name: "entry", type: { kind: "ref_null", typeIdx: entryTypeIdx } }],
+      [
+        ...(writing && bagEnsureIdx !== undefined
+          ? ([{ op: "local.get", index: 0 }, { op: "call", funcIdx: bagEnsureIdx }, { op: "drop" }] satisfies Instr[])
+          : []),
+        { op: "global.get", index: headGlobalIdx },
+        { op: "local.set", index: cur },
+        {
+          op: "block",
+          blockType: { kind: "empty" },
+          body: [
+            {
+              op: "loop",
+              blockType: { kind: "empty" },
+              body: [
+                { op: "local.get", index: cur },
+                { op: "ref.is_null" },
+                { op: "br_if", depth: 1 },
+                { op: "local.get", index: cur },
+                { op: "struct.get", typeIdx: entryTypeIdx, fieldIdx: F_KEY },
+                { op: "local.get", index: 0 },
+                { op: "any.convert_extern" },
+                { op: "ref.cast", typeIdx: vecBaseTypeIdx },
+                { op: "ref.eq" },
+                { op: "if", blockType: { kind: "empty" }, then: hit },
+                { op: "local.get", index: cur },
+                { op: "struct.get", typeIdx: entryTypeIdx, fieldIdx: F_NEXT },
+                { op: "local.set", index: cur },
+                { op: "br", depth: 0 },
+              ],
+            },
+          ],
+        },
+        ...(writing
+          ? []
+          : name === VEC_PROTO_HAS
+            ? ([{ op: "i32.const", value: 0 }] satisfies Instr[])
+            : ([{ op: "ref.null.extern" }] satisfies Instr[])),
+      ],
+    );
   }
 
   // ── __vec_prop_get(externref obj, externref key) -> externref ──
@@ -441,7 +524,10 @@ export function fillVecPropHelpers(ctx: CodegenContext): void {
           ];
     setBody(
       VEC_PROP_GET,
-      [{ name: "__bag", type: { kind: "externref" } }],
+      [
+        { name: "__bag", type: { kind: "externref" } },
+        { name: "__proto", type: { kind: "externref" } },
+      ],
       [
         // The guarded bag path probes and then reads the same key. Normalize
         // it once here so an object key's observable ToPropertyKey hook runs
@@ -470,6 +556,28 @@ export function fillVecPropHelpers(ctx: CodegenContext): void {
               blockType: { kind: "empty" },
               then: bagOwnGuardedRead,
             },
+          ],
+        },
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: ctx.funcMap.get(VEC_PROTO_HAS)! },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: ctx.funcMap.get(VEC_PROTO_GET)! },
+            { op: "local.tee", index: 3 },
+            { op: "ref.is_null" },
+            { op: "if", blockType: { kind: "empty" }, then: [...getMiss(), { op: "return" }] },
+            { op: "local.get", index: 3 },
+            { op: "local.get", index: 1 },
+            ...(reflectGetReceiverIdx !== undefined
+              ? ([
+                  { op: "local.get", index: 0 },
+                  { op: "call", funcIdx: reflectGetReceiverIdx },
+                ] satisfies Instr[])
+              : ([{ op: "call", funcIdx: externGetIdx }] satisfies Instr[])),
+            { op: "return" },
           ],
         },
         ...(protoIndexRecvGetMissInstrs(ctx, 0, 1) ?? getMiss()),

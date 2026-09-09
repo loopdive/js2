@@ -96,6 +96,7 @@ import { pushProgramAbiNestedFunctionDeclaration } from "../program-abi-source-c
 import { objectLiteralForcesHostPath, objectLiteralSpreadTakesHostPath } from "../literals.js";
 import { genericCallbackResultDeclaration } from "../generic-callback-result.js";
 import { nativeTypeOfDeclaration } from "../native-type-annotations.js";
+import { preserveOptionalDeclarationParameter } from "../optional-declaration-parameter.js";
 import {
   collectDirectEvalActivationBindingNames,
   collectDirectEvalBindingNames,
@@ -206,16 +207,7 @@ function preserveOmittedNestedParameter(
   param: ts.ParameterDeclaration,
   wasmType: ValType,
 ): ValType {
-  // Keep i32 optionals on their scalar ABI. Contextual function fields and
-  // shared closure wrappers derive that ABI independently; widening only the
-  // lifted declaration makes an otherwise valid closure fail its guarded cast
-  // and become null. Omitted booleans are instead tracked through `__argc`
-  // below, which preserves the ABI while retaining undefined-vs-false.
-  return wasmType.kind === "f64" &&
-    nestedParameterMayBeOmitted(param) &&
-    nativeTypeOfDeclaration(ctx.checker, param) === null
-    ? { kind: "externref" }
-    : wasmType;
+  return preserveOptionalDeclarationParameter(ctx, param, wasmType);
 }
 
 function nestedParameterIsTrailingForwardedArgument(
@@ -252,7 +244,7 @@ function nestedParameterIsTrailingForwardedArgument(
  * forwarding call has two arguments, but its second value may still represent
  * an argument omitted by the parser's caller.
  */
-function registerNestedOmissionTrackedScalarParams(
+export function registerOmissionTrackedScalarParams(
   ctx: CodegenContext,
   fctx: FunctionContext,
   owner: ts.FunctionLikeDeclarationBase,
@@ -3563,7 +3555,7 @@ export function emitDefaultParamInit(
   paramTypes: ValType[],
   paramOffset: number,
 ): void {
-  const tracksScalarOmission = registerNestedOmissionTrackedScalarParams(ctx, liftedFctx, stmt, paramTypes);
+  const tracksScalarOmission = registerOmissionTrackedScalarParams(ctx, liftedFctx, stmt, paramTypes);
   const defaultArgcLocal =
     tracksScalarOmission ||
     stmt.parameters.some((param, i) => {

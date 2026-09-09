@@ -58,6 +58,7 @@ import type {
   IrVecLowering,
 } from "./backend/handles.js";
 import { WasmGcEmitter } from "./backend/wasmgc-emitter.js";
+import { objectConstructionValues } from "./object-construction-order.js";
 import {
   emitWasmInt32Coercion,
   emitWasmMathClz32,
@@ -2344,13 +2345,12 @@ export function lowerIrFunctionBody<S, Slot>(
         if (!obj) {
           throw new Error(`ir/lower: resolver cannot lower object<${describeShape(instr.shape)}> (${func.name})`);
         }
-        // Push values in canonical (sorted) field order — same order as
-        // shape.fields, which is also the WasmGC struct's declared field
-        // order. The builder enforces value-count parity with shape arity,
-        // so this loop always produces the right stack shape.
+        // SSA operands follow canonical logical order; the resolver owns
+        // physical field order. Effectful operands retain their scheduled
+        // definition order before these value loads.
         // (a2) struct/object family (#1584 §2a): route through emitAggregateNew
         // — byte-identical {op:"struct.new"} on WasmGC, OP.STRUCT_NEW on bytecode.
-        for (const v of instr.values) emitValue(v, out);
+        for (const v of objectConstructionValues(instr.shape, instr.values, obj)) emitValue(v, out);
         emitter.emitAggregateNew(obj, instr.values.length, out);
         return;
       }
@@ -2482,10 +2482,7 @@ export function lowerIrFunctionBody<S, Slot>(
       }
       case "refcell.new": {
         const valueIrType = typeOf(instr.value);
-        const inner = asVal(valueIrType);
-        if (!inner) {
-          throw new Error(`ir/lower: refcell.new value must be a val-kind IrType (${func.name})`);
-        }
+        const inner = lowerIrTypeToValType(valueIrType, resolver, func.name);
         const cell = resolver.resolveRefCell?.(inner, instr.alloc);
         if (!cell) {
           throw new Error(`ir/lower: resolver cannot lower refcell<${inner.kind}> (${func.name})`);
@@ -2502,7 +2499,7 @@ export function lowerIrFunctionBody<S, Slot>(
           throw new Error(`ir/lower: refcell.get cell must be boxed, got ${cellT.kind} (${func.name})`);
         }
         // #1926 — unwrap the inner IrType to its backend ValType.
-        const getInner = memberValType(cellT.inner, func.name);
+        const getInner = lowerIrTypeToValType(cellT.inner, resolver, func.name);
         const cell = resolver.resolveRefCell?.(getInner);
         if (!cell) {
           throw new Error(`ir/lower: resolver cannot lower refcell<${getInner.kind}> (${func.name})`);
@@ -2519,7 +2516,7 @@ export function lowerIrFunctionBody<S, Slot>(
           throw new Error(`ir/lower: refcell.set cell must be boxed, got ${cellT.kind} (${func.name})`);
         }
         // #1926 — unwrap the inner IrType to its backend ValType.
-        const setInner = memberValType(cellT.inner, func.name);
+        const setInner = lowerIrTypeToValType(cellT.inner, resolver, func.name);
         const cell = resolver.resolveRefCell?.(setInner);
         if (!cell) {
           throw new Error(`ir/lower: resolver cannot lower refcell<${setInner.kind}> (${func.name})`);
@@ -4423,7 +4420,7 @@ export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcN
   // Slice 3 (#1169c): the resolver delegates to the legacy ref-cell
   // registry so legacy and IR ref cells share one WasmGC struct.
   // #1926 — unwrap the inner IrType to its backend ValType.
-  const innerVal = memberValType(t.inner, funcName);
+  const innerVal = lowerIrTypeToValType(t.inner, resolver, funcName);
   if (resolver.resolveRefCell) {
     const cell = resolver.resolveRefCell(innerVal);
     if (cell) {

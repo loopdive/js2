@@ -17,6 +17,8 @@ import {
   recordLiftedCaptureBox,
 } from "../closures/capture-source-slot.js";
 import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
+import { fixedSourceFunctionCallHandle } from "../source-function-call.js";
+import { emitConditionalCaptureBoxRepair } from "../closures/conditional-capture-box.js";
 import { materializeHoistedFunctionValueBinding } from "../closures/funcref-as-closure.js";
 import {
   candidateFixedFormalCount,
@@ -390,7 +392,24 @@ function tryCompileImmutablePropertyCallableAlias(
   expr: ts.CallExpression,
 ): InnerResult | null {
   if (!ts.isIdentifier(expr.expression)) return null;
-  if (!bindingIsImmutablePropertyCallableAlias(ctx, expr.expression)) return null;
+  // Generic bodies can be emitted before a caller's concrete closure
+  // signature may be registered. Their callable parameters need the same
+  // finalize-filled bridge as linked aliases, not a body-time signature list.
+  const genericCallback =
+    ctx.standalone &&
+    ctx.oracle.declarationsOf(expr.expression).some((declaration) => {
+      if (!ts.isParameter(declaration)) return false;
+      const owner = declaration.parent;
+      return (
+        (ts.isFunctionDeclaration(owner) || ts.isFunctionExpression(owner) || ts.isMethodDeclaration(owner)) &&
+        (owner.typeParameters?.length ?? 0) > 0 &&
+        ctx.checker
+          .getTypeAtLocation(expr.expression)
+          .getCallSignatures()
+          .some((signature) => signature.parameters.length <= 8)
+      );
+    });
+  if (!genericCallback && !bindingIsImmutablePropertyCallableAlias(ctx, expr.expression)) return null;
   if (expr.arguments.some((argument) => ts.isSpreadElement(argument))) return null;
   if (expr.arguments.length > 8) return null;
 
@@ -431,6 +450,7 @@ function tryCompileImmutablePropertyCallableAlias(
 
   // Host-free targets use the matching finalize-filled closure application
   // bridge and an ObjVec containing the true source argument count.
+  if (genericCallback) addUnionImports(ctx);
   reserveApplyClosure(ctx);
   ensureObjVecBuilders(ctx);
   flushLateImportShifts(ctx, fctx);
@@ -447,6 +467,18 @@ function tryCompileImmutablePropertyCallableAlias(
     fctx.body.push({ op: "local.get", index: argsLocal });
     emitExternValue(argument);
     fctx.body.push({ op: "call", funcIdx: ensureObjVecBuilders(ctx).pushIdx });
+  }
+  if (genericCallback) {
+    // __apply_closure also serves optional probes and returns undefined for
+    // non-callables. A source call must instead throw, after evaluating args.
+    // Use the finalize-filled classifier, not another body-time type list.
+    const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "Callback is not a function");
+    fctx.body.push(
+      { op: "local.get", index: calleeLocal },
+      { op: "call", funcIdx: ctx.funcMap.get("__typeof_function")! },
+      { op: "i32.eqz" },
+      { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
+    );
   }
   fctx.body.push({ op: "local.get", index: calleeLocal });
   fctx.body.push({ op: "ref.null.extern" });
@@ -1885,10 +1917,11 @@ export function compileIdentifierCall(
     // local `const funcIdx` would hold the pre-shift value.
     // (#1301) Skip funcMap when locally shadowed; the local-callable fallback
     // below handles dispatch via call_ref through the param/local.
+    const sourceFunctionHandle = fixedSourceFunctionCallHandle(ctx, expr.expression);
     let funcIdx =
       isLocallyShadowed || defaultExpressionImport !== undefined || calleeBindingMayReceiveHostCallable
         ? undefined
-        : ctx.funcMap.get(funcName);
+        : (sourceFunctionHandle ?? ctx.funcMap.get(funcName));
     if (funcIdx === undefined) {
       // Before giving up, check if this identifier is a local/param with callable TS type
       // (e.g. function parameter `fn: (x: number) => number` stored as externref).
@@ -2338,12 +2371,85 @@ export function compileIdentifierCall(
               boxNumberIdx: number | null;
               boxBooleanIdx: number | null;
               unboxNumberIdx: number | null;
+              unboxBooleanIdx: number | null;
             },
             allowProvenNumberUnbox: boolean,
+            allowProvenBooleanUnbox: boolean,
             allowGeneralRefExport: boolean,
           ): Instr[] | null => {
             if (scalarAbiTypesMatch(from, to)) return [];
-            if (ctx.standalone || ctx.wasi) return null;
+            // A predicate may implement a boolean|string callback result.
+            // Its branded i32 must enter the tagged union as a Boolean.
+            if (
+              from.kind === "i32" &&
+              from.boolean === true &&
+              (to.kind === "ref" || to.kind === "ref_null") &&
+              to.typeIdx === ctx.anyValueTypeIdx
+            ) {
+              ensureAnyHelpers(ctx);
+              const boxBoolean = ctx.funcMap.get("__any_box_bool");
+              return boxBoolean === undefined ? null : [{ op: "call", funcIdx: boxBoolean }];
+            }
+            if (
+              (from.kind === "ref" || from.kind === "ref_null") &&
+              (from.typeIdx === ctx.anyStrTypeIdx || from.typeIdx === ctx.nativeStrTypeIdx) &&
+              (to.kind === "ref" || to.kind === "ref_null") &&
+              to.typeIdx === ctx.anyValueTypeIdx
+            ) {
+              ensureAnyHelpers(ctx);
+              const boxString = ctx.funcMap.get("__any_box_string");
+              return boxString === undefined
+                ? null
+                : [{ op: "extern.convert_any" }, { op: "call", funcIdx: boxString }];
+            }
+            if (ctx.standalone || ctx.wasi) {
+              // Proven factory callbacks may return a concrete node through
+              // an erased union result. Exporting that reference preserves
+              // identity and brand without any host service or reconstruction.
+              if (
+                allowGeneralRefExport &&
+                (from.kind === "ref" || from.kind === "ref_null") &&
+                from.typeIdx !== ctx.anyValueTypeIdx &&
+                isHostExtern(to)
+              ) {
+                return [{ op: "extern.convert_any" }];
+              }
+              // Generic reducers erase their accumulator to externref while
+              // the concrete callback keeps its vec ABI. Export the carrier
+              // itself so subsequent calls retain array identity and typed
+              // null still triggers the callback's default initializer. The
+              // inverse cast rejects a different representation; it must not
+              // materialize an unrelated object as an empty accumulator.
+              if (
+                (from.kind === "ref" || from.kind === "ref_null") &&
+                getVecInfo(ctx, from.typeIdx) !== null &&
+                isHostExtern(to)
+              ) {
+                return [{ op: "extern.convert_any" }];
+              }
+              if (isHostExtern(from) && to.kind === "ref_null" && getVecInfo(ctx, to.typeIdx) !== null) {
+                return [{ op: "any.convert_extern" }, { op: "ref.cast_null", typeIdx: to.typeIdx }];
+              }
+              // Standalone's native scalar providers preserve the Boolean
+              // brand across the public externref ABI. This is needed by
+              // factory callbacks whose optional vec parameter is followed by
+              // an optional Boolean: the vec bridge can admit the first slot,
+              // but the exact implementation funcref remains unreachable if
+              // candidate discovery rejects its proven Boolean suffix. Keep
+              // the host-free exception to that branded, call-site-proven
+              // conversion; general externref scalar coercion remains closed.
+              if (allowProvenBooleanUnbox && isHostExtern(from) && to.kind === "i32" && to.boolean === true) {
+                return helpers.unboxBooleanIdx === null ? null : [{ op: "call", funcIdx: helpers.unboxBooleanIdx }];
+              }
+              // A defaulted numeric implementation can sit behind an optional
+              // externref interface slot as well. Use the native number provider
+              // only when this call proves Number (or supplies the omitted-slot
+              // sentinel below); arbitrary any/Boolean/BigInt values stay excluded.
+              if (allowProvenNumberUnbox && isHostExtern(from) && to.kind === "f64" && to.undefSentinel !== true) {
+                return helpers.unboxNumberIdx === null ? null : [{ op: "call", funcIdx: helpers.unboxNumberIdx }];
+              }
+              return null;
+            }
 
             // A generic callback commonly erases its type parameter to
             // externref while the concrete closure compiled at the call site
@@ -2422,14 +2528,191 @@ export function compileIdentifierCall(
             if (allowProvenNumberUnbox && isHostExtern(from) && to.kind === "f64" && to.undefSentinel !== true) {
               return helpers.unboxNumberIdx === null ? null : [{ op: "call", funcIdx: helpers.unboxNumberIdx }];
             }
+            // Contextual callable fields widen optional parameters to
+            // externref, while a lifted nested implementation deliberately
+            // keeps optional booleans on its branded i32 ABI and observes
+            // omission through `__argc`. Admit that concrete funcref only when
+            // the call-site expression proves a Boolean. An omitted argument
+            // is also safe: the selected arm supplies i32 zero below and the
+            // candidate's argc distinguishes omission from explicit false.
+            // Do not admit unbranded i32 — an `any` value cannot prove either
+            // Boolean identity or a lossless numeric conversion.
+            if (allowProvenBooleanUnbox && isHostExtern(from) && to.kind === "i32" && to.boolean === true) {
+              return helpers.unboxBooleanIdx === null ? null : [{ op: "call", funcIdx: helpers.unboxBooleanIdx }];
+            }
             return null;
           };
-          const argumentHasNumberBridgeProof = (index: number): boolean =>
-            index >= expr.arguments.length || ctx.oracle.staticJsTypeOf(expr.arguments[index]!) === "number";
+          const argumentHasNumberBridgeProof = (index: number): boolean => {
+            if (index >= expr.arguments.length) return true;
+            const argument = expr.arguments[index]!;
+            if (ctx.oracle.staticJsTypeOf(argument) === "number") return true;
+
+            // A numeric enum is represented by the checker as a union of its
+            // numeric members. `staticJsTypeOf` intentionally leaves every
+            // union as `mixed`, even when all members share one JS tag, so the
+            // ordinary proof above misses calls such as TypeScript's
+            // `getNumericLiteralFlags(): TokenFlags`. Keep this refinement at
+            // the ABI bridge: every possible value must be a Number, and a
+            // nullable/undefinable union must retain its open externref lane.
+            const fact = ctx.oracle.typeFactOf(argument);
+            return (
+              fact.kind === "union" &&
+              !fact.nullable &&
+              !fact.undefinable &&
+              fact.parts.length > 0 &&
+              fact.parts.every((part) => part.kind === "number")
+            );
+          };
+          const argumentIsForwardedTrackedOptionalBoolean = (index: number): boolean => {
+            const argument = expr.arguments[index];
+            if (!argument || !ts.isIdentifier(argument)) return false;
+            const declaration = ctx.oracle.valueDeclarationOf(argument);
+            return (
+              declaration !== undefined &&
+              ts.isParameter(declaration) &&
+              fctx.omissionTrackedScalarParams?.has(declaration) === true
+            );
+          };
+          const argumentHasBooleanBridgeProof = (index: number): boolean =>
+            index >= expr.arguments.length ||
+            ctx.oracle.staticJsTypeOf(expr.arguments[index]!) === "boolean" ||
+            argumentIsForwardedTrackedOptionalBoolean(index);
+          const omittableReferenceTargetByParamIndex = new Map<number, number>();
+          for (let pi = 0; pi < sig.parameters.length; pi++) {
+            const parameter = sig.parameters[pi]!;
+            const declaration = parameter.valueDeclaration;
+            if (!declaration || !ts.isParameter(declaration) || !parameterMayBeOmitted(declaration)) continue;
+            const declaredType = ctx.checker.getNonNullableType(ctx.checker.getTypeOfSymbol(parameter));
+            const declaredWasmType = resolveWasmType(ctx, declaredType);
+            if (declaredWasmType.kind === "ref" || declaredWasmType.kind === "ref_null") {
+              omittableReferenceTargetByParamIndex.set(pi, declaredWasmType.typeIdx);
+            }
+          }
+          type OptionalReferenceBridgeProof = "omitted" | "undefined" | "exact-local";
+          const optionalReferenceBridgeProof = (
+            paramIndex: number,
+            to: ValType,
+          ): OptionalReferenceBridgeProof | null => {
+            if (paramIndex >= expr.arguments.length) return "omitted";
+            let argument = expr.arguments[paramIndex]!;
+            while (
+              ts.isParenthesizedExpression(argument) ||
+              ts.isAsExpression(argument) ||
+              ts.isTypeAssertionExpression(argument) ||
+              ts.isNonNullExpression(argument) ||
+              ts.isSatisfiesExpression(argument)
+            ) {
+              argument = argument.expression;
+            }
+            if (ctx.oracle.staticJsTypeOf(argument) === "undefined") return "undefined";
+            if (!ts.isIdentifier(argument)) return null;
+            const sourceLocal = fctx.localMap.get(argument.text);
+            if (sourceLocal === undefined) return null;
+            const sourceType = getLocalType(fctx, sourceLocal);
+            return (sourceType?.kind === "ref" || sourceType?.kind === "ref_null") &&
+              (to.kind === "ref" || to.kind === "ref_null") &&
+              sourceType.typeIdx === to.typeIdx &&
+              (to.kind === "ref_null" || sourceType.kind === "ref")
+              ? "exact-local"
+              : null;
+          };
+          const canBridgeOptionalReferenceArgument = (paramIndex: number, from: ValType, to: ValType): boolean =>
+            isHostExtern(from) &&
+            to.kind === "ref_null" &&
+            omittableReferenceTargetByParamIndex.get(paramIndex) === to.typeIdx &&
+            to.typeIdx !== ctx.anyStrTypeIdx &&
+            to.typeIdx !== ctx.nativeStrTypeIdx &&
+            to.typeIdx !== ctx.anyValueTypeIdx &&
+            optionalReferenceBridgeProof(paramIndex, to) !== null;
+
+          const optionalReferenceBridgeScratchByTypeIdx = new Map<number, number>();
+          const optionalReferenceExactSnapshotByArgIndex = new Map<number, { local: number; type: ValType }>();
+          const emitSnapshotVecArgumentBridge = (paramIndex: number, from: ValType, to: ValType): Instr[] | null => {
+            const snapshot = optionalReferenceExactSnapshotByArgIndex.get(paramIndex);
+            if (
+              !isHostExtern(from) ||
+              !snapshot ||
+              (snapshot.type.kind !== "ref" && snapshot.type.kind !== "ref_null") ||
+              (to.kind !== "ref" && to.kind !== "ref_null") ||
+              getVecInfo(ctx, snapshot.type.typeIdx) === null ||
+              getVecInfo(ctx, to.typeIdx) === null
+            )
+              return null;
+            // The public externref slot does not imply the implementation's
+            // vec layout. Project the once-evaluated physical array instead of
+            // casting an extern-element list directly to a Node-element vec.
+            return [
+              { op: "drop" },
+              { op: "local.get", index: snapshot.local },
+              ...coercionInstrs(ctx, snapshot.type, to, fctx),
+            ];
+          };
+          const emitOptionalReferenceArgumentBridge = (
+            paramIndex: number,
+            from: ValType,
+            to: ValType,
+          ): Instr[] | null => {
+            if (!canBridgeOptionalReferenceArgument(paramIndex, from, to) || to.kind !== "ref_null") return null;
+
+            const proof = optionalReferenceBridgeProof(paramIndex, to);
+            if (proof === null) return null;
+
+            // Host-free externref conversion can materialize a concrete struct
+            // as a native `$Object`, so converting that public ABI local back
+            // to `ref null $T` is not reversible. The argument loop snapshots
+            // an exact physical carrier before that conversion, at the value's
+            // original left-to-right evaluation point. Omitted and statically
+            // undefined values use the representation's typed null sentinel.
+            if (ctx.standalone || ctx.wasi) {
+              if (proof === "omitted" || proof === "undefined") {
+                return [{ op: "drop" }, { op: "ref.null", typeIdx: to.typeIdx }];
+              }
+              const snapshot = optionalReferenceExactSnapshotByArgIndex.get(paramIndex);
+              if (
+                snapshot === undefined ||
+                (snapshot.type.kind !== "ref" && snapshot.type.kind !== "ref_null") ||
+                snapshot.type.typeIdx !== to.typeIdx
+              ) {
+                return null;
+              }
+              return [{ op: "drop" }, { op: "local.get", index: snapshot.local }];
+            }
+
+            // `p?: Node` is widened to externref in the public callable ABI so
+            // omission can cross the boundary as JavaScript undefined. A
+            // nested implementation commonly spells the same contract as
+            // `p: Node | undefined`, whose executable ABI is `ref null Node`.
+            // Recover only an exact physical local carrier, including an exact
+            // vec carrier, or a statically proven undefined/omitted value. This
+            // excludes asserted host and plain-object values whose checker type
+            // alone would not prove a reversible WasmGC round trip. Undefined
+            // becomes the representation's null sentinel. The funcref type
+            // test still selects the live callee.
+            let scratch = optionalReferenceBridgeScratchByTypeIdx.get(to.typeIdx);
+            if (scratch === undefined) {
+              scratch = allocLocal(fctx, `__optional_ref_${to.typeIdx}_${fctx.locals.length}`, { kind: "anyref" });
+              optionalReferenceBridgeScratchByTypeIdx.set(to.typeIdx, scratch);
+            }
+            return [
+              { op: "any.convert_extern" },
+              { op: "local.tee", index: scratch },
+              { op: "ref.test", typeIdx: to.typeIdx },
+              {
+                op: "if",
+                blockType: { kind: "val", type: to },
+                then: [
+                  { op: "local.get", index: scratch },
+                  { op: "ref.cast_null", typeIdx: to.typeIdx },
+                ],
+                else: [{ op: "ref.null", typeIdx: to.typeIdx }],
+              },
+            ];
+          };
           const theoreticalHelpers = {
             boxNumberIdx: 0,
             boxBooleanIdx: 0,
             unboxNumberIdx: 0,
+            unboxBooleanIdx: 0,
           };
           // (#5334) On the host lane a trailing `$__vec_externref` formal is
           // marshalled by the runtime-disambiguating bridge (see
@@ -2449,7 +2732,16 @@ export function compileIdentifierCall(
               const to = info.paramTypes[pi]!;
               if (scalarAbiTypesMatch(from, to)) continue;
               differs = true;
-              if (scalarBridgePlan(from, to, theoreticalHelpers, argumentHasNumberBridgeProof(pi), true) === null) {
+              if (
+                scalarBridgePlan(
+                  from,
+                  to,
+                  theoreticalHelpers,
+                  argumentHasNumberBridgeProof(pi),
+                  argumentHasBooleanBridgeProof(pi),
+                  true,
+                ) === null
+              ) {
                 compatible = false;
                 break;
               }
@@ -2459,7 +2751,7 @@ export function compileIdentifierCall(
               expectedReturn !== null &&
               info.returnType !== null &&
               !scalarAbiTypesMatch(info.returnType, expectedReturn) &&
-              scalarBridgePlan(info.returnType, expectedReturn, theoreticalHelpers, false, false) !== null;
+              scalarBridgePlan(info.returnType, expectedReturn, theoreticalHelpers, false, false, false) !== null;
             if (differs || returnDiffers) {
               needsScalarBridge = true;
               break;
@@ -2473,6 +2765,7 @@ export function compileIdentifierCall(
             from: ValType,
             to: ValType,
             allowProvenNumberUnbox: boolean,
+            allowProvenBooleanUnbox: boolean,
             allowGeneralRefExport: boolean,
           ): Instr[] | null =>
             scalarBridgePlan(
@@ -2482,8 +2775,10 @@ export function compileIdentifierCall(
                 boxNumberIdx: ctx.funcMap.get("__box_number") ?? null,
                 boxBooleanIdx: ctx.funcMap.get("__box_boolean") ?? null,
                 unboxNumberIdx: ctx.funcMap.get("__unbox_number") ?? null,
+                unboxBooleanIdx: ctx.funcMap.get("__unbox_boolean") ?? null,
               },
               allowProvenNumberUnbox,
+              allowProvenBooleanUnbox,
               allowGeneralRefExport,
             );
 
@@ -2556,8 +2851,12 @@ export function compileIdentifierCall(
                     sigParamWasmTypes[pi]!,
                     candidateParamTypes[pi]!,
                     argumentHasNumberBridgeProof(pi),
+                    argumentHasBooleanBridgeProof(pi),
                     true,
                   ) ??
+                  (canBridgeOptionalReferenceArgument(pi, sigParamWasmTypes[pi]!, candidateParamTypes[pi]!)
+                    ? []
+                    : null) ??
                   referencePredicateArgumentBridge(
                     {
                       funcTypeIdx: info.funcTypeIdx,
@@ -2598,6 +2897,7 @@ export function compileIdentifierCall(
               dispatchBridgePlan(
                 info.returnType,
                 expectedReturn,
+                false,
                 false,
                 canExportCandidateReferenceResult(info.funcTypeIdx),
               ) === null &&
@@ -2644,9 +2944,7 @@ export function compileIdentifierCall(
             }
           }
 
-          // (#5334) The pure-rest shape `(...args) -> R` too, so a rest closure
-          // compiled AFTER this site (jest's `vi.fn()` spy) has an arm; its vec
-          // slot is decided at runtime by the bridge.
+          // (#5334) Include pure-rest closures compiled after this call site.
           if (hostLane) {
             for (const info of restShapedWrapperCandidates(ctx, expr.getSourceFile(), [
               resultTypes,
@@ -2658,6 +2956,45 @@ export function compileIdentifierCall(
               funcCandidates.push(info);
             }
           }
+
+          // A public array slot can erase its physical vec layout. Snapshot
+          // local vectors in either lane so candidate dispatch can project the
+          // original value after all arguments have been evaluated.
+          // A standalone/WASI public optional-reference slot is externref, but
+          // an implementation candidate can consume the original typed GC
+          // reference. Mark only the argument positions needed by an admitted
+          // candidate; the argument loop below snapshots those exact values
+          // before public-ABI coercion can materialize them.
+          const optionalReferenceExactSnapshotTargetByArgIndex = new Map<number, ValType>();
+          for (let ai = 0; ai < Math.min(expr.arguments.length, matchedClosureInfo.paramTypes.length); ai++) {
+            const argument = expr.arguments[ai]!;
+            if (!isHostExtern(matchedClosureInfo.paramTypes[ai]!) || !ts.isIdentifier(argument)) continue;
+            const local = fctx.localMap.get(argument.text);
+            const type = local === undefined ? undefined : getLocalType(fctx, local);
+            if ((type?.kind === "ref" || type?.kind === "ref_null") && getVecInfo(ctx, type.typeIdx) !== null) {
+              optionalReferenceExactSnapshotTargetByArgIndex.set(ai, type);
+            }
+          }
+          if (ctx.standalone || ctx.wasi) {
+            for (const candidate of funcCandidates) {
+              const fixedCount = candidate.hasRestParam
+                ? Math.max(0, candidate.paramTypes.length - 1)
+                : candidate.paramTypes.length;
+              const positionalCount = Math.min(fixedCount, matchedClosureInfo.paramTypes.length, expr.arguments.length);
+              for (let ai = 0; ai < positionalCount; ai++) {
+                const fromType = matchedClosureInfo.paramTypes[ai]!;
+                const toType = candidate.paramTypes[ai]!;
+                if (
+                  !scalarAbiTypesMatch(fromType, toType) &&
+                  canBridgeOptionalReferenceArgument(ai, fromType, toType) &&
+                  optionalReferenceBridgeProof(ai, toType) === "exact-local"
+                ) {
+                  optionalReferenceExactSnapshotTargetByArgIndex.set(ai, toType);
+                }
+              }
+            }
+          }
+
           // Preserve the JavaScript distinction between an omitted argument
           // and null. A preregistered callback with optional externref formals
           // can be wider than the public callable signature, so keep one
@@ -2770,7 +3107,37 @@ export function compileIdentifierCall(
               // (`Math.max`, `Math.min`, `String.fromCharCode`) never receive
               // an object literal, so nothing else changes shape.
               const aliasArg = expr.arguments[i]!;
-              if (
+              const optionalReferenceSnapshotTarget = optionalReferenceExactSnapshotTargetByArgIndex.get(i);
+              if (optionalReferenceSnapshotTarget !== undefined) {
+                // Compile exactly once without the widened public externref
+                // expectation. Keep the physical ref in a persistent local
+                // before coercing that same stack value for the ordinary
+                // callable ABI. In particular, a later argument may reassign
+                // the source binding; candidate dispatch must still observe
+                // the value evaluated here.
+                const rawType = compileExpression(ctx, fctx, aliasArg);
+                if (rawType === null) {
+                  pushDefaultValue(fctx, matchedClosureInfo.paramTypes[i]!, ctx);
+                } else {
+                  if (
+                    (rawType.kind === "ref" || rawType.kind === "ref_null") &&
+                    (optionalReferenceSnapshotTarget.kind === "ref" ||
+                      optionalReferenceSnapshotTarget.kind === "ref_null") &&
+                    rawType.typeIdx === optionalReferenceSnapshotTarget.typeIdx &&
+                    (optionalReferenceSnapshotTarget.kind === "ref_null" || rawType.kind === "ref")
+                  ) {
+                    const snapshotLocal = allocLocal(fctx, `__carg_exact_ref_${i}_${fctx.locals.length}`, rawType);
+                    fctx.body.push({ op: "local.tee", index: snapshotLocal });
+                    optionalReferenceExactSnapshotByArgIndex.set(i, {
+                      local: snapshotLocal,
+                      type: rawType,
+                    });
+                  }
+                  if (!valTypesMatch(rawType, matchedClosureInfo.paramTypes[i]!)) {
+                    coerceType(ctx, fctx, rawType, matchedClosureInfo.paramTypes[i]!);
+                  }
+                }
+              } else if (
                 builtinAliasInfo !== undefined &&
                 matchedClosureInfo.paramTypes[i]?.kind === "externref" &&
                 ts.isObjectLiteralExpression(aliasArg)
@@ -3232,10 +3599,27 @@ export function compileIdentifierCall(
                   fcCallBody.push(...defaultValueInstrs(toType));
                   continue;
                 }
+                if (
+                  ai >= expr.arguments.length &&
+                  toType.kind === "i32" &&
+                  toType.boolean === true &&
+                  isHostExtern(fromType)
+                ) {
+                  fcCallBody.push(...defaultValueInstrs(toType));
+                  continue;
+                }
                 fcCallBody.push({ op: "local.get", index: argLocals[ai]! });
                 if (!scalarAbiTypesMatch(fromType, toType)) {
                   const bridge =
-                    dispatchBridgePlan(fromType, toType, argumentHasNumberBridgeProof(ai), true) ??
+                    emitSnapshotVecArgumentBridge(ai, fromType, toType) ??
+                    emitOptionalReferenceArgumentBridge(ai, fromType, toType) ??
+                    dispatchBridgePlan(
+                      fromType,
+                      toType,
+                      argumentHasNumberBridgeProof(ai),
+                      argumentHasBooleanBridgeProof(ai),
+                      true,
+                    ) ??
                     referencePredicateArgumentBridge(fc, ai, fromType, toType) ??
                     genericReferenceCallbackArgumentBridge(fc, ai, fromType, toType) ??
                     vecArgumentBridge(fromType, toType);
@@ -3281,8 +3665,9 @@ export function compileIdentifierCall(
               // ends up wrapping the wrong function (#2174 regression: a plain
               // `var fn = makeAdder(10); fn(32)` had its adder `ref.func`
               // rewritten to a freshly-imported `__typeof_boolean`, throwing at
-              // runtime). The live arm always matches `expectedReturn` exactly
-              // (so `valTypesMatch` is true and this block is skipped for it).
+              // runtime). Generic factories can have a LIVE arm whose erased
+              // result differs from expectedReturn; its bridge must likewise
+              // avoid registering imports while this dispatch is detached.
               const matchedDispatch = expectedReturn !== null && fc.returnType !== null;
               if (expectedReturn === null && fc.returnType !== null) {
                 fcCallBody.push({ op: "drop" });
@@ -3298,6 +3683,22 @@ export function compileIdentifierCall(
                   if (fc.returnType!.kind === "ref_null" && expectedReturn!.kind === "ref") {
                     fcCallBody.push({ op: "ref.as_non_null" });
                   }
+                } else if (
+                  calleeIsGenericCallableFactoryResult &&
+                  isHostExtern(fc.returnType!) &&
+                  (expectedReturn!.kind === "ref" || expectedReturn!.kind === "ref_null")
+                ) {
+                  // A generic factory such as memoize returns an erased
+                  // closure result. Decode its live value to the instantiated
+                  // object contract; never replace that value with dead-arm
+                  // padding. These instructions cannot register late imports.
+                  fcCallBody.push(
+                    { op: "any.convert_extern" },
+                    {
+                      op: expectedReturn!.kind === "ref_null" ? "ref.cast_null" : "ref.cast",
+                      typeIdx: expectedReturn!.typeIdx,
+                    },
+                  );
                 } else if (canProjectImplementationReturn(fc.returnType!, expectedReturn!)) {
                   fcCallBody.push(...coercionInstrs(ctx, fc.returnType!, expectedReturn!, fctx));
                 } else {
@@ -3312,6 +3713,7 @@ export function compileIdentifierCall(
                     // undefined sentinel. Still null-safe: `scalarBridgePlan` gives
                     // up when `__unbox_number` is unregistered, so no late import.
                     true,
+                    false,
                     canExportCandidateReferenceResult(fc.funcTypeIdx),
                   );
                   if (bridge !== null) {
@@ -3529,7 +3931,10 @@ export function compileIdentifierCall(
     }
 
     // Check if this function is eligible for call-site inlining
-    const inlineInfo = ctx.inlinableFunctions.get(funcName);
+    const inlineInfo =
+      sourceFunctionHandle !== undefined && sourceFunctionHandle !== ctx.funcMap.get(funcName)
+        ? undefined
+        : ctx.inlinableFunctions.get(funcName);
     if (
       inlineInfo &&
       !isModuleInitChunkFunctionContext(fctx) &&
@@ -3596,7 +4001,7 @@ export function compileIdentifierCall(
     }
 
     // Prepend captured values for nested functions with captures
-    const nestedCaptures = ctx.nestedFuncCaptures.get(funcName);
+    const nestedCaptures = sourceFunctionHandle === undefined ? ctx.nestedFuncCaptures.get(funcName) : undefined;
     // (#5148 checkpoint) The funcMap/nestedFuncCaptures registries are
     // NAME-keyed across the whole graph, so a callee name that is really a
     // LOCAL closure value here (Deno's `const { __isLeakTracingEnabled } =
@@ -3633,7 +4038,7 @@ export function compileIdentifierCall(
       // #1177: Get param types early so we can coerce captures to expected types.
       // Re-fetch funcIdx in case a prior compileExpression triggered a late-import
       // shift (which updated funcMap but not our local `funcIdx`).
-      funcIdx = ctx.funcMap.get(funcName) ?? funcIdx;
+      funcIdx = sourceFunctionHandle ?? ctx.funcMap.get(funcName) ?? funcIdx;
       const captureParamTypes = getFuncParamTypes(ctx, funcIdx);
       for (let capIdx = 0; capIdx < nestedCaptures.length; capIdx++) {
         const cap = nestedCaptures[capIdx]!;
@@ -3755,6 +4160,7 @@ export function compileIdentifierCall(
               (sourceType.kind === "ref" || sourceType.kind === "ref_null") &&
               sourceType.typeIdx === refCellTypeIdx;
             if (sourceIsSameCell) {
+              emitConditionalCaptureBoxRepair(fctx, cap.name, currentLocalIdx);
               fctx.body.push({ op: "local.get", index: currentLocalIdx });
               if (sourceType.kind === "ref_null") fctx.body.push({ op: "ref.as_non_null" });
             } else if (sourceType !== undefined) {
@@ -3823,17 +4229,21 @@ export function compileIdentifierCall(
             fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
             // Also box the outer local so subsequent reads/writes go through the ref cell
             const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}`, {
-              kind: "ref",
+              kind: "ref_null",
               typeIdx: refCellTypeIdx,
             });
             // Duplicate: need the ref cell for the call AND for the outer local
             fctx.body.push({ op: "local.tee", index: boxedLocalIdx });
+            fctx.body.push({ op: "ref.as_non_null" });
             // Re-register the original name to point to the boxed local
             fctx.localMap.set(cap.name, boxedLocalIdx);
             if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
             fctx.boxedCaptures.set(cap.name, {
               refCellTypeIdx,
               valType: cap.valType,
+              // The call may be skipped; reads, writes and subsequent calls
+              // must seed the cell from this still-live binding on that path.
+              rawLocalIdx: capSourceIdx,
             });
           }
           // Coerce mutable capture (ref cell) to expected param type if they differ
@@ -4003,10 +4413,12 @@ export function compileIdentifierCall(
     // shift via emitLocalTdzCheck/emitStaticTdzThrow. #1205: also covers
     // late-import shifts triggered by the TDZ-flag prepend block (which
     // calls getOrRegisterRefCellType — typically pre-registered, but still).
-    funcIdx = ctx.funcMap.get(funcName) ?? funcIdx;
+    funcIdx = sourceFunctionHandle ?? ctx.funcMap.get(funcName) ?? funcIdx;
 
     // Check for rest parameters on the callee
-    const restInfo = ctx.funcRestParams.get(funcName);
+    // The exact declaration was proven fixed-arity; a same-named module may
+    // have registered rest/default metadata that does not belong to this call.
+    const restInfo = sourceFunctionHandle === undefined ? ctx.funcRestParams.get(funcName) : undefined;
 
     // Check if any argument uses spread syntax
     const hasSpreadArg = expr.arguments.some((a) => ts.isSpreadElement(a));
@@ -4183,7 +4595,7 @@ export function compileIdentifierCall(
         }
       }
 
-      const optInfo = ctx.funcOptionalParams.get(funcName);
+      const optInfo = sourceFunctionHandle === undefined ? ctx.funcOptionalParams.get(funcName) : undefined;
       if (paramTypes) {
         // Missing arguments must be emitted in formal-parameter order. The old
         // two-pass lowering emitted every optional/defaulted parameter first,
@@ -4217,7 +4629,7 @@ export function compileIdentifierCall(
     }
 
     // Argument compilation may shift defined-function indices.
-    const finalFuncIdx = ctx.funcMap.get(funcName) ?? funcIdx;
+    const finalFuncIdx = sourceFunctionHandle ?? ctx.funcMap.get(funcName) ?? funcIdx;
     fctx.body.push({ op: "call", funcIdx: finalFuncIdx });
     // Foreign eval calls lack checker signatures; the resolved Wasm signature is authoritative.
     if (isForeignEvalNode(expr) && wasmFuncReturnsVoid(ctx, finalFuncIdx)) return VOID_RESULT;

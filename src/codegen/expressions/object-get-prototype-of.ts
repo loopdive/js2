@@ -7,6 +7,7 @@ import { ts } from "../../ts-api.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression } from "../shared.js";
+import { allocLocal } from "../context/locals.js";
 import { emitLazyNativeProtoGet } from "../native-proto.js";
 import {
   ensureTypedArrayIntrinsicNativeProtoGlue,
@@ -200,7 +201,14 @@ export function tryCompileEs5GetPrototypeOfEarly(
   // Closed standalone plain objects keep their ordinary prototype implicit.
   // An integrity call marks the identifier, so preserve the argument read and
   // answer this exact query with the compiler-owned singleton.
-  if (ctx.standalone && ts.isIdentifier(arg0) && ctx.nonExtensibleVars.has(integrityVarKey(ctx, arg0))) {
+  // Typed arrays are not plain objects: nonextensibility neither changes
+  // their intrinsic prototype nor discards a previously assigned override.
+  if (
+    ctx.standalone &&
+    ts.isIdentifier(arg0) &&
+    ctx.nonExtensibleVars.has(integrityVarKey(ctx, arg0)) &&
+    !isTypedArrayViewProtoName(ctx.oracle.declaredNameOf(arg0) ?? "")
+  ) {
     const argType = compileExpression(ctx, fctx, arg0);
     if (argType) fctx.body.push({ op: "drop" });
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
@@ -351,7 +359,38 @@ export function tryCompileEs5GetPrototypeOfValue(
       // this needs a per-binding subclass fact, not a per-file one.
       const brand = ensureTypedArrayViewNativeProtoGlue(ctx, viewName);
       if (brand !== undefined) {
+        ensureLateImport(ctx, "__getPrototypeOf", [{ kind: "externref" }], [{ kind: "externref" }]);
+        flushLateImportShifts(ctx, fctx);
         const argType = compileExpression(ctx, fctx, arg0);
+        const hasOverride = ctx.funcMap.get("__vec_proto_has");
+        const getOverride = ctx.funcMap.get("__vec_proto_get");
+        if (
+          argType &&
+          (argType.kind === "ref" || argType.kind === "ref_null" || argType.kind === "externref") &&
+          hasOverride !== undefined &&
+          getOverride !== undefined
+        ) {
+          if (argType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
+          const recv = allocLocal(fctx, "__gpo_vec", { kind: "externref" });
+          fctx.body.push({ op: "local.set", index: recv });
+          const start = fctx.body.length;
+          if (!emitLazyNativeProtoGet(ctx, fctx, brand)) fctx.body.push({ op: "ref.null.extern" });
+          const fallback = fctx.body.splice(start);
+          fctx.body.push(
+            { op: "local.get", index: recv },
+            { op: "call", funcIdx: hasOverride },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "externref" } },
+              then: [
+                { op: "local.get", index: recv },
+                { op: "call", funcIdx: getOverride },
+              ],
+              else: fallback,
+            },
+          );
+          return { kind: "externref" };
+        }
         if (argType) fctx.body.push({ op: "drop" });
         if (emitLazyNativeProtoGet(ctx, fctx, brand)) return { kind: "externref" };
         fctx.body.push({ op: "ref.null.extern" });

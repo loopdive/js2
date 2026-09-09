@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { BytecodeEmitter, BytecodeSink, BytecodeTypeConverter, OP } from "../src/ir/backend/bytecode-emitter.js";
 import { runSink } from "../src/ir/backend/bytecode-vm.js";
+import { irUnitFuncRef } from "../src/ir/callable-bindings.js";
 import type { IrObjectStructLowering } from "../src/ir/backend/handles.js";
 import { type IrFunction, type IrLowerResolver, asBlockId, asValueId, irVal } from "../src/ir/index.js";
 // #1584 (a0-tail): the REAL production lowerer, generic over the sink. The arm
@@ -423,7 +424,7 @@ describe("#1584 (a1) — real lower.ts drives OP.CALL through the BytecodeEmitte
           instrs: [
             {
               kind: "call",
-              target: { kind: "func", name: "add" },
+              target: irUnitFuncRef(irIdentities.next("add")),
               args: [asValueId(0), asValueId(1)],
               result: asValueId(2),
               resultType: F64,

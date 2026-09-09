@@ -11,6 +11,7 @@ import { allocLocal, getLocalType } from "../context/locals.js";
 import { redeclarationWidenedLocalSlotType } from "../declarations/redeclared-var-widening.js";
 import type { CodegenContext, FunctionContext, NullGuardFact, NullishExclusion } from "../context/types.js";
 import { emitCoercedLocalSet, noJsHost } from "../expressions/helpers.js";
+import { sourceCollectionFactoryUsesObjectCarrier } from "../source-collection-factory.js";
 import { emitUndefined } from "../expressions/late-imports.js";
 import {
   nativeGeneratorBindingType,
@@ -942,8 +943,9 @@ export function resolveSpillLocalValType(ctx: CodegenContext, decl: ts.VariableD
     const idx = ctx.structMap.get(widenedStructName);
     return idx === undefined ? null : { kind: "ref_null", typeIdx: idx };
   }
-  const init = decl.initializer;
+  const init = decl.initializer && stripInferenceWrapper(decl.initializer);
   if (init) {
+    if (sourceCollectionFactoryUsesObjectCarrier(ctx, init)) return { kind: "externref" };
     if (ts.isObjectLiteralExpression(init)) {
       // (#802 Slice A) A proto-receiver literal is promoted to an open `$Object`
       // (externref, standalone-only) in compileObjectLiteral — the spill slot
@@ -1802,10 +1804,11 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // (`{ a: 1, [symbolKey]: 3 }`): the value built as a host object while an
     // un-annotated local stayed struct-typed — the store null-cast and reads
     // answered NULL (jest Replaceable "Type null is not support").
+    const carrierInitializer = decl.initializer && stripInferenceWrapper(decl.initializer);
     const initIsAccessorLiteral =
-      decl.initializer !== undefined &&
-      ts.isObjectLiteralExpression(decl.initializer) &&
-      objectLiteralForcesHostPath(ctx, decl.initializer);
+      carrierInitializer !== undefined &&
+      ((ts.isObjectLiteralExpression(carrierInitializer) && objectLiteralForcesHostPath(ctx, carrierInitializer)) ||
+        sourceCollectionFactoryUsesObjectCarrier(ctx, carrierInitializer));
     // (#2804) A spread-containing object literal initializer that takes the host
     // plain-object path (no concrete contextual struct type — e.g.
     // `const b = { ...a, z: 3 }`) builds a host `$Object` (externref), NOT the

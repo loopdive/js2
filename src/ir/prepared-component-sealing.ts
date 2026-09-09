@@ -2,7 +2,19 @@
 
 import type { CodegenContext } from "../codegen/context/types.js";
 import { definedFuncAt } from "../codegen/func-space.js";
-import { planProgramAbiUnitCallable } from "../codegen/program-abi-planning.js";
+import {
+  describePreparedSupportTypes,
+  type PreparedSupportTypeDescriptor,
+} from "../codegen/program-abi-support-type-preparation.js";
+import {
+  describeProgramAbiUnitCallable,
+  planProgramAbiUnitCallable,
+  type ProgramAbiUnitCallablePlan,
+} from "../codegen/program-abi-planning.js";
+import {
+  describePreparedUnitCallables,
+  type PreparedUnitCallableDescriptor,
+} from "../codegen/program-abi-unit-callable-preparation.js";
 import { irClassTypeRef, irTypeBindingKey } from "./abi-bindings.js";
 import { irCallableBindingKey, irRuntimeFuncRef, irUnitCallableBindingId, irUnitFuncRef } from "./callable-bindings.js";
 import type { IrBindingId, IrClassId, IrUnitId, IrUnitInventory } from "./identity.js";
@@ -142,6 +154,8 @@ type PreparedSealFailureSelector =
   | { readonly kind: "terminal"; readonly value: IrUnitId };
 
 interface PreparedComponentBatchDescription {
+  readonly supportTypes?: PreparedSupportTypeDescriptor;
+  readonly unitCallables?: PreparedUnitCallableDescriptor;
   readonly requestedStructuralReferenceKeys: readonly string[];
   readonly callableImports?: ReturnType<NonNullable<CodegenContext["programAbiCallableImports"]>["describePrepared"]>;
   readonly callableProviders?: ReturnType<
@@ -561,6 +575,8 @@ export function prepareDependencyCompletePreparedComponents(
   }
   const terminalUnitIds = new Set(entries.map((entry) => entry.terminalOwnerUnitId));
   const callableAllocatorsByArtifactUnitId = new Map<IrUnitId, WasmFunction>();
+  const callablePlans = new Map<IrUnitId, ProgramAbiUnitCallablePlan>();
+  const callableContributions = new Map<IrBindingId, NonNullable<ReturnType<typeof describeProgramAbiUnitCallable>>>();
   for (const entry of entries) {
     const terminalUnitId = entry.terminalOwnerUnitId;
     const isTerminal = entry.artifactUnitId === terminalUnitId && !entry.derivedUnit;
@@ -582,13 +598,22 @@ export function prepareDependencyCompletePreparedComponents(
         `dependency preparation has no exact allocated callable for artifact ${entry.artifactUnitId}`,
       );
     }
-    const bindingId = planProgramAbiUnitCallable(ctx, { ref: irUnitFuncRef(entry.fn), signature, func });
-    if (bindingId !== irUnitCallableBindingId(entry.artifactUnitId)) {
+    const plan = { ref: irUnitFuncRef(entry.fn), signature, func };
+    const contribution = describeProgramAbiUnitCallable(ctx, plan);
+    if (!contribution || contribution.draft.id !== irUnitCallableBindingId(entry.artifactUnitId)) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "resolve",
         `dependency preparation could not plan the exact callable for artifact ${entry.artifactUnitId}`,
       );
+    }
+    if (isTerminal || entry.classMember || entry.moduleInit) {
+      // Retained source allocator reservations predate this candidate and
+      // remain authoritative for direct fallback and class-member lookup.
+      planProgramAbiUnitCallable(ctx, plan);
+    } else {
+      callablePlans.set(entry.artifactUnitId, plan);
+      callableContributions.set(contribution.draft.id, contribution);
     }
     callableAllocatorsByArtifactUnitId.set(entry.artifactUnitId, func);
   }
@@ -613,9 +638,23 @@ export function prepareDependencyCompletePreparedComponents(
       );
     },
   );
+  const supportContributions = new Map(
+    (ctx.programAbiTypes?.provisionalSupportTypes() ?? []).map((binding) => [binding.draft.id, binding]),
+  );
   const committedAbi: Pick<PreparedComponentScopeLookup, "get" | "bindingIdsForStructuralReference"> = Object.freeze({
-    get: (id: IrBindingId) => session.getDraft(id),
-    bindingIdsForStructuralReference: (key: string) => session.bindingIdsForStructuralReference(key),
+    get: (id: IrBindingId) =>
+      session.getDraft(id) ?? callableContributions.get(id)?.draft ?? supportContributions.get(id)?.draft,
+    bindingIdsForStructuralReference: (key: string) => [
+      ...new Set([
+        ...session.bindingIdsForStructuralReference(key),
+        ...[...callableContributions.values()]
+          .filter((binding) => binding.structuralReferenceKey === key)
+          .map((binding) => binding.draft.id),
+        ...[...supportContributions.values()]
+          .filter((binding) => binding.structuralReferenceKey === key)
+          .map((binding) => binding.draft.id),
+      ]),
+    ],
   });
   const derive = (
     candidateTerminalUnitIds: ReadonlySet<IrUnitId>,
@@ -659,13 +698,38 @@ export function prepareDependencyCompletePreparedComponents(
       input.callableImports,
       classIdByBindingId,
     );
-    const batch =
+    const dependencyBatch =
       input.preparedModuleCallableAliasDescriptor !== undefined
         ? {
             ...(describedBatch ?? { requestedStructuralReferenceKeys: Object.freeze([]) }),
             moduleCallableAliases: input.preparedModuleCallableAliasDescriptor,
           }
         : describedBatch;
+    const candidatePlans = entries
+      .filter((entry) => component.terminalUnitIds.includes(entry.terminalOwnerUnitId))
+      .flatMap((entry) => {
+        const plan = callablePlans.get(entry.artifactUnitId);
+        return plan ? [plan] : [];
+      });
+    const supportIds = [
+      ...new Set(
+        component.abiDependencies.flatMap((dependency) =>
+          [dependency.bindingId, dependency.canonicalBindingId].filter((id) => supportContributions.has(id)),
+        ),
+      ),
+    ];
+    const batch =
+      (candidatePlans.length > 0 || supportIds.length > 0) && (dependencyBatch || component.status === "complete")
+        ? {
+            ...(dependencyBatch ?? { requestedStructuralReferenceKeys: Object.freeze([]) }),
+            ...(candidatePlans.length > 0
+              ? { unitCallables: describePreparedUnitCallables(ctx, component.terminalUnitIds, candidatePlans) }
+              : {}),
+            ...(supportIds.length > 0
+              ? { supportTypes: describePreparedSupportTypes(ctx, component.terminalUnitIds, supportIds) }
+              : {}),
+          }
+        : dependencyBatch;
     let failure: IrUnsupportedError | undefined;
     let diagnosticVisibility: IrIntegrationDiagnosticVisibility = "report";
     try {
@@ -678,6 +742,8 @@ export function prepareDependencyCompletePreparedComponents(
             scopeId: component.id,
             terminalUnitIds: component.terminalUnitIds,
             requestedStructuralReferenceKeys: batch.requestedStructuralReferenceKeys,
+            unitCallables: batch.unitCallables,
+            supportTypes: batch.supportTypes,
             ...(batch.callableImports ? { callableImports: batch.callableImports } : {}),
             ...(batch.callableProviders ? { callableProviders: batch.callableProviders } : {}),
             ...(batch.classLayouts ? { classLayouts: batch.classLayouts } : {}),

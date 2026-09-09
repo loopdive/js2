@@ -39,8 +39,8 @@
       "status": "active",
       "roots": ["src/wasm/physical"],
       "required": true,
-      "entries": ["src/wasm/physical/function-handles.ts"],
-      "minModules": 1
+      "entries": ["src/wasm/physical/function-handles.ts", "src/wasm/physical/data-fields-key.ts"],
+      "minModules": 2
     },
     {
       "id": "wasm-emit",
@@ -360,6 +360,11 @@
   ],
   "activationHistory": [
     {
+      "layer": "wasm-physical",
+      "entries": ["src/wasm/physical/function-handles.ts", "src/wasm/physical/data-fields-key.ts"],
+      "minModules": 2
+    },
+    {
       "layer": "foundation",
       "entries": [
         "src/shared/contracts/source-origin.ts",
@@ -406,6 +411,10 @@
     {
       "from": "src/codegen/prepared-async-frame-types.ts",
       "to": "src/runtime/wasmgc/async/prepared-async-frame-types.ts"
+    },
+    {
+      "from": "src/codegen/registry/data-fields-key.ts",
+      "to": "src/wasm/physical/data-fields-key.ts"
     }
   ],
   "evidence": [
@@ -460,6 +469,236 @@
     }
   ],
   "files": [
+    {
+      "path": "src/checker/higher-order-signature-fact.ts",
+      "state": "unmigrated",
+      "layer": "frontend-ts"
+    },
+    {
+      "path": "src/checker/signature-position.ts",
+      "state": "unmigrated",
+      "layer": "frontend-ts"
+    },
+    {
+      "path": "src/codegen/closures/generator-declaration.ts",
+      "state": "unmigrated",
+      "layer": "frontend-ts"
+    },
+    {
+      "path": "src/codegen/expressions/optional-native-set.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate source expression compilation from native collection helper allocation."
+    },
+    {
+      "path": "src/codegen/function-proto-call.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate callable runtime bodies from context-owned apply closure and late-import allocation."
+    },
+    {
+      "path": "src/codegen/generator-vec-abrupt.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate generator frame and exception allocation from array-iterator abrupt semantics."
+    },
+    {
+      "path": "src/codegen/generators-native-for-of.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate source loop admission from frame storage, iterator runtime and exception emission."
+    },
+    {
+      "path": "src/codegen/generic-scalar-union-result.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate checker-derived result evidence from erased carrier recovery emission."
+    },
+    {
+      "path": "src/codegen/indexed-object-spread.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Extract indexed-spread frontend evidence from the shared codegen context."
+    },
+    {
+      "path": "src/codegen/json-record-array.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate source/checker eligibility from speculative storage compilation and native record projection."
+    },
+    {
+      "path": "src/codegen/module-binding-projection.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate source binding identity evidence from legacy context name-map projection."
+    },
+    {
+      "path": "src/codegen/object-proto-has-own.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate property-key/runtime semantics from context-owned object runtime and import allocation."
+    },
+    {
+      "path": "src/codegen/optional-declaration-parameter.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate source optional-parameter evidence from physical declaration ABI selection."
+    },
+    {
+      "path": "src/codegen/program-abi-support-type-description.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate semantic type binding identity from physical support-type descriptions and ABI session ownership."
+    },
+    {
+      "path": "src/codegen/program-abi-support-type-preparation.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate support-type contribution authentication from context-owned physical ABI publication."
+    },
+    {
+      "path": "src/codegen/program-abi-unit-callable-preparation.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate unit callable contribution authentication from context-owned callable ABI allocation."
+    },
+    {
+      "path": "src/wasm/physical/data-fields-key.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
+      "path": "src/codegen/resolved-rest-parameter.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate source rest-parameter evidence from vector type registration and physical signature mutation."
+    },
+    {
+      "path": "src/codegen/source-collection-factory.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate source collection/callback evidence from closure signatures and physical object carriers."
+    },
+    {
+      "path": "src/codegen/source-function-call.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate source declaration identity resolution from context-owned physical function handles."
+    },
+    {
+      "path": "src/codegen/static-enum-receiver.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Extract namespace/enum frontend evidence from the shared codegen context."
+    },
+    {
+      "path": "src/codegen/tuple-index-read.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate observable tuple index semantics from registered physical layouts and boxing emission."
+    },
+    {
+      "path": "src/codegen/uninitialised-variable-undefined.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate checker/source undefined-slot evidence from codegen context storage classification."
+    },
+    {
+      "path": "src/codegen/vec-projection-identity.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate runtime projection identity bodies from context-owned type and function allocation."
+    },
+    {
+      "path": "src/codegen/vec-prototype-method-call.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate source method dispatch from prototype runtime, coercion and physical helper allocation."
+    },
+    {
+      "path": "src/codegen/vec-prototype.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate native prototype helper wiring from the context-owned function registry."
+    },
+    {
+      "path": "src/ir/object-construction-order.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate logical construction values from resolved backend struct field order."
+    },
+    {
+      "path": "src/ir/object-layout.ts",
+      "state": "unmigrated",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/object-method-key.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate semantic method signatures and object shapes from source allocator physical field hashing."
+    },
+    {
+      "path": "src/ir/tail-function-declarations.ts",
+      "state": "unmigrated",
+      "layer": "frontend-ts"
+    },
+    {
+      "path": "src/ir/undefined-value-provider.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate IR undefined-provider demand from legacy context-owned runtime and function allocation."
+    },
     {
       "path": "src/adapter-manifest.ts",
       "state": "unmigrated",

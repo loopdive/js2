@@ -23,6 +23,9 @@ import {
   type JsTag,
   type OracleTypeKey,
   type SignatureFact,
+  type SignaturePositionFact,
+  type SignaturePositionPath,
+  type ShapeFact,
   type TypeFact,
   type TypeOracle,
 } from "./oracle.js";
@@ -201,7 +204,11 @@ function describeFact(fact: TypeFact | undefined): string {
 
 function describeSignature(sig: SignatureFact | undefined): string {
   if (!sig) return "undefined";
-  return `(${sig.params.map(factKey).join(",")})->${factKey(sig.returns)}#${sig.declaredArity}`;
+  return `(${sig.params.map(describeSignaturePosition).join(",")})->${describeSignaturePosition(sig.returns)}#${sig.declaredArity}`;
+}
+
+function describeSignaturePosition(fact: TypeFact): string {
+  return fact.kind === "function" && fact.signature ? `function<${describeSignature(fact.signature)}>` : factKey(fact);
 }
 
 /**
@@ -209,6 +216,33 @@ function describeSignature(sig: SignatureFact | undefined): string {
  * `candidate` (in-house) disagrees. Wrapping is cheap — both backends memoize.
  */
 export class DifferentialOracle implements TypeOracle {
+  indexedElementShapeOf(node: ts.Node): ShapeFact | undefined {
+    return this.compare(
+      "indexedElementShapeOf",
+      node,
+      (o) => o.indexedElementShapeOf(node),
+      (shape) => (shape ? JSON.stringify(shape) : "<unavailable>"),
+    );
+  }
+  typeDeclarationsOf(node: ts.Node): readonly ts.Declaration[] {
+    return this.compare(
+      "typeDeclarationsOf",
+      node,
+      (o) => o.typeDeclarationsOf(node),
+      (declarations) => declarations.map(describeOptionalNode).join(","),
+    );
+  }
+  resolvedCallDeclarationOf(node: ts.CallExpression): ts.Signature["declaration"] {
+    return this.compare(
+      "resolvedCallDeclarationOf",
+      node,
+      (o) => o.resolvedCallDeclarationOf(node),
+      describeOptionalNode,
+    );
+  }
+  hasIndexSignature(node: ts.Node): boolean | undefined {
+    return this.compare("hasIndexSignature", node, (o) => o.hasIndexSignature(node), String);
+  }
   constructor(
     private readonly primary: TypeOracle,
     private readonly candidate: TypeOracle,
@@ -260,6 +294,24 @@ export class DifferentialOracle implements TypeOracle {
 
   signatureOf(node: ts.Node): SignatureFact | undefined {
     return this.compare("signatureOf", node, (o) => o.signatureOf(node), describeSignature);
+  }
+
+  signaturePositionOf(node: ts.Node, path: SignaturePositionPath): SignaturePositionFact | undefined {
+    return this.compare(
+      `signaturePositionOf:${path.join("/")}`,
+      node,
+      (oracle) => oracle.signaturePositionOf(node, path),
+      (position) => {
+        if (!position) return "undefined";
+        const annotation = position.annotation;
+        const source = annotation?.getSourceFile();
+        // Tokens are intentionally local to each oracle; never compare their
+        // generated labels. Return the primary token unchanged to consumers.
+        return `${describeSignaturePosition(position.fact)}@${
+          annotation && source ? `${source.fileName}:${annotation.getStart(source)}:${annotation.end}` : "unwitnessed"
+        }`;
+      },
+    );
   }
 
   propertyFactOf(node: ts.Node, name: string): TypeFact {

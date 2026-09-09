@@ -16,6 +16,7 @@
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { numberIsPredicateOps } from "./number-is-predicate-ops.js";
+import { emitStandaloneDateNowValue } from "./standalone-clock-capability.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { addUnionImports, TYPED_ARRAY_NAMES, typedArrayPackedSignedness } from "./index.js";
 import {
@@ -1007,6 +1008,11 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
   let genericThrowBody = false;
 
   switch (key) {
+    case "Date.now":
+      paramTypes = [];
+      genericThrowBody = !ctx.standalone && !(ctx.wasi && ctx.funcMap.has("__wasi_date_now"));
+      returnType = genericThrowBody ? { kind: "externref" } : { kind: "f64" };
+      break;
     case "Array.isArray":
       paramTypes = [{ kind: "externref" }];
       returnType = BOOLEAN_PREDICATE_RESULT;
@@ -1328,7 +1334,14 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     const selfType: ValType = { kind: "ref", typeIdx: wrapperTypes.liftedSelfTypeIdx };
     const closureFctx = makeBuiltinClosureFctx(funcName, selfType, paramTypes, returnType);
 
-    if (key === "Array.isArray") {
+    if (key === "Date.now" && !genericThrowBody) {
+      // Stored timestamp callbacks share the direct-call clock policy.
+      if (ctx.wasi && ctx.funcMap.has("__wasi_date_now")) {
+        closureFctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__wasi_date_now")! });
+      } else {
+        emitStandaloneDateNowValue(ctx, closureFctx);
+      }
+    } else if (key === "Array.isArray") {
       closureFctx.body.push({ op: "local.get", index: 1 });
       emitArrayIsArrayExternrefPredicate(ctx, closureFctx);
     } else if (key === "Object.assign") {
