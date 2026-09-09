@@ -18,6 +18,7 @@
  * to the pre-split inline blocks (verified via `prove-emit-identity`).
  */
 import type { Instr } from "../ir/types.js";
+import { buildStringConcatDefinition } from "../runtime/wasmgc/values/string-concat-bodies.js";
 import { addFuncType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { lazyStrFlattenEnabled, relocatedFlattenPreamble } from "./lazy-str-flatten.js";
@@ -39,136 +40,15 @@ export function emitStrConcatHelpers(shared: NativeStrShared): void {
     const funcIdx = mintDefinedFunc(ctx);
     ctx.nativeStrHelpers.set("__str_concat", funcIdx);
 
-    // params: a(0), b(1)
-    // locals: lenA(2), lenB(3), newLen(4), newArr(5), flatA(6), flatB(7)
-    const body: Instr[] = [
-      // lenA = a.len (field 0 of AnyString)
-      { op: "local.get", index: 0 },
-      { op: "struct.get", typeIdx: anyStrTypeIdx, fieldIdx: 0 },
-      { op: "local.set", index: 2 }, // lenA
-
-      // lenB = b.len (field 0 of AnyString)
-      { op: "local.get", index: 1 },
-      { op: "struct.get", typeIdx: anyStrTypeIdx, fieldIdx: 0 },
-      { op: "local.set", index: 3 }, // lenB
-
-      // Empty strings are the identity element for concatenation. Returning
-      // the other immutable string directly avoids allocating and copying a
-      // fresh flat string for common accumulator shapes such as
-      // `let out = ""; out += value`. Keep a compile-time kill switch so the
-      // optimization can be measured against the identical compiler tree.
-      ...(process.env.JS2WASM_STR_CONCAT_EMPTY_IDENTITY === "0"
-        ? []
-        : [
-            { op: "local.get" as const, index: 2 },
-            { op: "i32.eqz" as const },
-            {
-              op: "if" as const,
-              blockType: { kind: "empty" as const },
-              then: [{ op: "local.get" as const, index: 1 }, { op: "return" as const }],
-            },
-            { op: "local.get" as const, index: 3 },
-            { op: "i32.eqz" as const },
-            {
-              op: "if" as const,
-              blockType: { kind: "empty" as const },
-              then: [{ op: "local.get" as const, index: 0 }, { op: "return" as const }],
-            },
-          ]),
-
-      // newLen = lenA + lenB
-      { op: "local.get", index: 2 },
-      { op: "local.get", index: 3 },
-      { op: "i32.add" },
-      { op: "local.set", index: 4 }, // newLen
-
-      // if newLen >= 64, create ConsString (O(1) rope node)
-      { op: "local.get", index: 4 },
-      { op: "i32.const", value: 64 },
-      { op: "i32.ge_u" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: strRef },
-        then: [
-          // struct.new $ConsString(newLen, a, b)
-          { op: "local.get", index: 4 }, // len = newLen
-          { op: "local.get", index: 0 }, // left = a
-          { op: "local.get", index: 1 }, // right = b
-          { op: "struct.new", typeIdx: consStrTypeIdx },
-        ],
-        else: [
-          // Short string: flatten both sides and copy
-          // flatA = flatten(a)
-          { op: "local.get", index: 0 },
-          { op: "call", funcIdx: flattenIdx },
-          { op: "local.set", index: 6 },
-
-          // flatB = flatten(b)
-          { op: "local.get", index: 1 },
-          { op: "call", funcIdx: flattenIdx },
-          { op: "local.set", index: 7 },
-
-          // newArr = array.new_default(newLen)
-          { op: "local.get", index: 4 },
-          { op: "array.new_default", typeIdx: strDataTypeIdx },
-          { op: "local.set", index: 5 },
-
-          // array.copy(newArr, 0, flatA.data, flatA.off, lenA)
-          { op: "local.get", index: 5 }, // dst
-          { op: "ref.as_non_null" },
-          { op: "i32.const", value: 0 }, // dstOffset
-          { op: "local.get", index: 6 }, // flatA
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 }, // flatA.data
-          { op: "local.get", index: 6 }, // flatA
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 }, // flatA.off
-          { op: "local.get", index: 2 }, // lenA
-          {
-            op: "array.copy",
-            dstTypeIdx: strDataTypeIdx,
-            srcTypeIdx: strDataTypeIdx,
-          },
-
-          // array.copy(newArr, lenA, flatB.data, flatB.off, lenB)
-          { op: "local.get", index: 5 }, // dst
-          { op: "ref.as_non_null" },
-          { op: "local.get", index: 2 }, // dstOffset = lenA
-          { op: "local.get", index: 7 }, // flatB
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 }, // flatB.data
-          { op: "local.get", index: 7 }, // flatB
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 }, // flatB.off
-          { op: "local.get", index: 3 }, // lenB
-          {
-            op: "array.copy",
-            dstTypeIdx: strDataTypeIdx,
-            srcTypeIdx: strDataTypeIdx,
-          },
-
-          // result = struct.new $NativeString(newLen, 0, newArr)
-          { op: "local.get", index: 4 }, // len = newLen
-          { op: "i32.const", value: 0 }, // off = 0
-          { op: "local.get", index: 5 }, // data = newArr
-          { op: "ref.as_non_null" },
-          { op: "struct.new", typeIdx: strTypeIdx },
-        ],
-      },
-    ];
-
+    const definition = buildStringConcatDefinition(
+      { strTypeIdx, strDataTypeIdx, anyStrTypeIdx, consStrTypeIdx },
+      { flattenIdx, emptyIdentity: process.env.JS2WASM_STR_CONCAT_EMPTY_IDENTITY !== "0" },
+    );
     pushDefinedFunc(ctx, funcIdx, {
       name: "__str_concat",
       typeIdx,
-      locals: [
-        { name: "lenA", type: { kind: "i32" } },
-        { name: "lenB", type: { kind: "i32" } },
-        { name: "newLen", type: { kind: "i32" } },
-        { name: "newArr", type: { kind: "ref_null", typeIdx: strDataTypeIdx } },
-        { name: "flatA", type: { kind: "ref_null", typeIdx: strTypeIdx } },
-        { name: "flatB", type: { kind: "ref_null", typeIdx: strTypeIdx } },
-      ],
-      body,
+      locals: definition.locals,
+      body: definition.body,
       exported: false,
     });
   }

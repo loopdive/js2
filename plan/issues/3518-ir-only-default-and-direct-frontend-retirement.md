@@ -6787,3 +6787,105 @@ agent-context/3518-native-async-resource-declarations-spec-2026-09-09.md;
 the frame API and object-access donor map are also preserved for the next lanes.
 This composition does not remove the async acceptance refusal or establish
 native async execution, public default cutover or retirement.
+
+### Native string-output executable extraction E1 — static draft (2026-09-09)
+
+The separately claimed Lane E prerequisite is implemented against published
+721cd33a828c89cfc04c851b011f910b76a4d2c5: complete binary concat, fixed-arity
+concat, stdout append, prepare and character readout bodies/locals now have
+pure runtime owners with live compatibility adapters. Registration, literal
+production and publication remain in their original order. Owned concat,
+growth, console coercion and all consumer/resource admission code are unchanged.
+
+Read-only inverse reconstruction matches all three complete historical donor
+files, with original hash receipts retained. Two new suites author 84 cases,
+including 24 real-Wasm recipes under both empty-identity choices; these tests,
+typecheck, formatting and normal publication hooks have NOT run in this draft.
+High review and serialized validation are required before publication.
+
+See agent-context/3518-native-string-output-extraction-handoff-2026-09-09.md
+for exact scope, interfaces, frozen source hashes and unrun commands. Native
+output resource admission and full-family consumer execution remain the next
+checkpoint; this extraction does not satisfy those acceptance conditions.
+
+### E1 validation exposes inherited UTF8 rope traversal failure (2026-09-09)
+
+The unchanged E1 R1 source/test freeze was measured: 56/84 focused cases pass,
+28 mixed-UTF8-rope cases fail; all 24 complete-donor preservation controls pass,
+and TS7 exits zero. Failures are retained, not waived or relabeled as successful
+native output acceptance.
+
+Independent original-donor versus canonical-resource execution gives 32 calls:
+UTF16 ropes and UTF8 roots succeed, while UTF8-left/right rope leaves trap on
+both arms (16 successes, 16 failures). Original and extracted copy-tree/flatten
+bodies and locals are exactly equal. Full binaries retain the separate prior
+UTF8 decoder offset correction as an explicit difference.
+
+Actual public source independently reproduces the defect: a runtime-selected
+65-code-unit concat followed by charCodeAt, compiled on exact 721cd33a versus
+frozen E1, with IR and UTF8-storage switches independently off/on. Eight
+compilations, 16 instances and 64 calls give 48 successes and 16 failures. All
+four baseline/candidate pairs have exact bytes/WAT/import/export/outcome parity.
+Only IR-on/storage-on produces real UTF8 leaves and traps; storage-on alone
+on the legacy source route still materializes UTF16 globals and is not UTF8
+coverage. The public trap is the copy-tree ConsString cast inlined into flatten.
+
+Required repair owner is the shared string-flatten runtime and its two actual
+legacy/resource callers, outside E1's five production paths. Copy-tree needs
+an actual decoder dependency for UTF8 leaves while preserving declaration and
+registration order. No such repair, case removal or production scope expansion
+has occurred. See the executed-evidence section of
+agent-context/3518-native-string-output-extraction-handoff-2026-09-09.md for
+exact sessions, donor lineage, artifacts, remaining limitations and owner join.
+
+### E1 extraction plus authorized UTF8-rope repair — publication preparation (2026-09-09)
+
+The later High contract explicitly authorized the shared copy-tree repair and
+its two real callers. Copy-tree receives the actual enabled/disabled decoder
+selection, classifies UTF8 leaves before the original descent, and retains all
+seven locals. Legacy registration captures and fills the same pending function
+object in the original order; issued resource fill passes the genuine decoder.
+The original seven E1 files and complete UTF8 decoder bytes remain unchanged.
+Two exact checked inverses reconstruct the original copy-tree and legacy adapter
+without reseeding historical scanner/decoder or whole-donor receipts.
+
+Session 97215 retained 293/301: E1 84/84, repair 75/75, flatten 61/61 and proof
+73/81. All eight remaining failures were child argv path errors. Their test-only
+correction then passed all 81/81 in session 29311; no guard was weakened.
+TS7 session 78279 exited zero with this unchanged production.
+
+Actual public compilation compared exact 721cd33a against the frozen eight-path
+production delta. All four compiler children exited zero: eight compilations,
+16 real instances and 64 calls. Candidate passes 32/32. Baseline retains its
+eight IR-on/UTF8-on illegal casts and passes the other 24/32. Both disabled-UTF8
+pairs preserve exact bytes/WAT/import/export ordering/outcomes; both enabled
+pairs retain explicit differences rather than pretending repair is parity.
+
+The public controller exited one only after compilation, because its validator
+invented a required `warnings` array; the real public CompileResult has `errors`,
+not a warnings field. Original script and failure report remain. A separate
+comparison-only correction reread the exact receipts without another compiler
+run and exited zero, with six independently rejecting corruption controls.
+The final report SHA256 is
+`55f87e2bac3473d7f66c33017451f6e87500cbb1998f52c450c5e16618e71913`;
+full artifact, provenance and terminal paths are in the E1 publication handoff.
+
+The heavy slot is released. Normal commit/push gates and parent-owned inventory
+registration for the two new body modules remain pending. The full scanner
+three-arm compiler run and existing caller regression suites have not been
+rerun here after this repair. This prepares a non-draft held checkpoint; it
+does not claim native output resource admission, complete async execution,
+public IR-only default, ABI30 acceptance or retirement.
+
+Subsequent bounded metadata handoff: parent added exactly two `files` records
+for the new concat/stdout body owners, both clean/native-runtime, and delegated
+their inclusion as the seventeenth checkpoint file. The complete policy is
+otherwise structurally unchanged: no allowed edges, required roots, minima,
+history or negative-control expansion. Actual inventory validation remains
+unrun pending the serialized slot; classification is not activation evidence.
+
+Actual publication inventory subsequently passed in session 79242, exit zero:
+1,353 modules, zero errors, inventory valid and architecture incomplete against
+the immutable 721cd33a base. The two new owners were counted as untracked prior
+to staging. This is classification validation, not expanded root coverage or
+complete-graph/retirement evidence; normal publication hooks remain next.
