@@ -250,7 +250,7 @@ describe("reservation-only Promise pack controls; missing native dependencies re
       "__mt_caps",
       "__mt_args",
     ]);
-    expect(module.functions.slice(0, 8).map((fn) => fn.name)).toEqual([
+    expect(module.functions.map((fn) => fn.name)).toEqual([
       "__microtask_grow",
       "__microtask_enqueue",
       "__drain_microtasks",
@@ -259,8 +259,33 @@ describe("reservation-only Promise pack controls; missing native dependencies re
       "__then_identity_fulfill",
       "__then_identity_reject",
       "__promise_resolve_value",
+      "__promise_resolve_cl",
+      "__promise_reject_cl",
+      "__promise_peel_value",
+      "__promise_has_callable_then",
+      "__promise_lookup_then",
+      "__promise_thenable_job",
     ]);
-    expect(new Set(Object.values(pack.functions).map((fn) => fn.object)).size).toBe(13);
+    expect(new Set(Object.values(pack.functions).map((fn) => fn.object)).size).toBe(14);
+    expect(pack.functions.lookupThen.object).toMatchObject({
+      name: "__promise_lookup_then",
+      body: [],
+    });
+    expect(module.types[pack.functions.lookupThen.object.typeIdx]).toMatchObject({
+      kind: "func",
+      params: [{ kind: "externref" }],
+      results: [{ kind: "i32" }, { kind: "externref" }],
+    });
+    expect(pack.functions.classifier.object).toMatchObject({
+      name: "__promise_has_callable_then",
+      body: [],
+    });
+    expect(module.types[pack.functions.classifier.object.typeIdx]).toMatchObject({
+      kind: "func",
+      params: [{ kind: "externref" }],
+      results: [{ kind: "i32" }],
+    });
+    expect(pack.functions.lookupThen.object).not.toBe(pack.functions.classifier.object);
     expect(tx.state).toBe("reserving");
     tx.freezeReservations();
     expect(() => tx.seal()).toThrow("missing global fill");

@@ -44,6 +44,7 @@ import { ensureBuiltinFnMetaType } from "./builtin-fn-meta.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { reserveClosedMethodDispatchVararg } from "./closed-method-dispatch.js";
+import { reservePromiseThenableValueHelpers } from "./promise-thenable-lookup.js";
 // (#4394) Dynamic `.then` handler wrappers invoke a runtime-held callback via
 // the `__apply_closure` arity bridge; the args carrier is the runtime's own
 // $ObjVec. Cycle-safe: object-runtime.ts does not import this module.
@@ -937,6 +938,7 @@ export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecu
  */
 interface PromiseThenableSubstrate {
   hasCallableThenFuncIdx: number;
+  lookupThenFuncIdx: number;
   thenableJobFuncIdx: number;
   /**
    * `__promise_peel_value(value) -> externref` — unwraps a `$AnyValue`-boxed
@@ -1007,19 +1009,7 @@ function ensurePromiseThenableSubstrate(
   });
   ctx.funcMap.set("__promise_has_callable_then", hasCallableThenFuncIdx);
 
-  // __promise_peel_value(value: externref) -> externref — reserved; filled at
-  // finalize (needs `$AnyValue`, whose typeIdx may not exist yet). IDENTITY
-  // placeholder: raw (unboxed) values are classified/dispatched unchanged.
-  const peelTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }], "$__promise_peel_type");
-  const peelValueFuncIdx = mintDefinedFunc(ctx);
-  pushDefinedFunc(ctx, peelValueFuncIdx, {
-    name: "__promise_peel_value",
-    typeIdx: peelTypeIdx,
-    locals: [],
-    body: [{ op: "local.get", index: 0 }],
-    exported: false,
-  });
-  ctx.funcMap.set("__promise_peel_value", peelValueFuncIdx);
+  const { peelValueFuncIdx, lookupThenFuncIdx } = reservePromiseThenableValueHelpers(ctx);
   ctx.promiseThenableReserved = true;
 
   // __promise_thenable_job(capsRaw: externref, thenable: externref) -> externref
@@ -1053,6 +1043,7 @@ function ensurePromiseThenableSubstrate(
 
   const result: PromiseThenableSubstrate = {
     hasCallableThenFuncIdx,
+    lookupThenFuncIdx,
     thenableJobFuncIdx,
     peelValueFuncIdx,
     newTypeErrorFuncIdx,

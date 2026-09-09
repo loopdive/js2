@@ -1,4 +1,5 @@
-import { buildPromisePeelValue, buildPromiseThenableClassifier } from "../runtime/wasmgc/promise/thenable-bodies.js";
+import { buildPromisePeelValue } from "../runtime/wasmgc/promise/thenable-bodies.js";
+import { finalizePromiseThenableLookup } from "./promise-thenable-lookup.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * #2151 — standalone any-receiver method dispatch over CLOSED object-literal
@@ -2032,8 +2033,8 @@ export function fillPromiseThenableHelpers(ctx: CodegenContext): void {
   const fields = collectFieldEntries(ctx, "then");
   const externGetIdx = ctx.funcMap.get("__extern_get");
   const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
-  const result = buildPromiseThenableClassifier({
-    finalized: true,
+  const inventory = {
+    finalized: true as const,
     peelFuncIdx: peelIdx,
     methodTypeIdxs,
     accessors,
@@ -2048,7 +2049,6 @@ export function fillPromiseThenableHelpers(ctx: CodegenContext): void {
             thenStringInstrs: stringConstantExternrefInstrs(ctx, "then"),
           }
         : null,
-  });
-  predFn.locals = result.locals;
-  predFn.body = result.body;
+  };
+  finalizePromiseThenableLookup(ctx, predFn, inventory);
 }

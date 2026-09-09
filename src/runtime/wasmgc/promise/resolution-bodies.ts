@@ -5,6 +5,7 @@ import { PROMISE_STATE_FULFILLED, PROMISE_STATE_REJECTED } from "./settlement-bo
 
 export interface PromiseResolutionBindings {
   readonly hasCallableThenFuncIdx: FuncHandle;
+  readonly lookupThenFuncIdx: FuncHandle;
   readonly thenableJobFuncIdx: FuncHandle;
   readonly peelValueFuncIdx: FuncHandle;
   readonly newTypeErrorFuncIdx: FuncHandle;
@@ -44,6 +45,7 @@ export function buildNativePromiseResolveValueBody(
     throw new Error("Native Promise resolution requires complete thenable and TypeError bindings");
   for (const handle of [
     resources.thenable.hasCallableThenFuncIdx,
+    resources.thenable.lookupThenFuncIdx,
     resources.thenable.thenableJobFuncIdx,
     resources.thenable.peelValueFuncIdx,
     resources.thenable.newTypeErrorFuncIdx,
@@ -65,6 +67,18 @@ export function buildPromiseResolveValueLocals(promiseTypeIdx: TypeHandle): Loca
     { name: "$peeled", type: { kind: "externref" } },
     // (#5197 R3-5) The own `then` read off a native `$Promise` resolution.
     { name: "$bagThen", type: { kind: "externref" } },
+  ];
+}
+
+function buildResolutionPeelPrelude(
+  thenable: PromiseResolutionBindings | null,
+  valueLocal: number,
+  peeledLocal: number,
+): Instr[] {
+  return [
+    { op: "local.get", index: valueLocal },
+    ...(thenable === null ? [] : [{ op: "call", funcIdx: thenable.peelValueFuncIdx } as Instr]),
+    { op: "local.set", index: peeledLocal },
   ];
 }
 
@@ -114,6 +128,8 @@ export function buildPromiseResolveValueBody(resources: PromiseResolveValueResou
   const hasThenLocal = 4;
   const reasonLocal = 5;
   const poisonedLocal = 6;
+  // Reuse the existing own-then scratch local; each invocation has its own frame.
+  const capturedThenLocal = 8;
 
   // (#3125) The non-$Promise arm: thenable check + job enqueue, or direct
   // fulfil. Falls back to the pre-#3125 direct fulfil when the substrate is
@@ -127,7 +143,7 @@ export function buildPromiseResolveValueBody(resources: PromiseResolveValueResou
           { op: "call", funcIdx: state.promiseFulfillFuncIdx },
         ]
       : [
-          // hasThen = __promise_has_callable_then(value) — the Get("then") runs
+          // (hasThen, capturedThen) = __promise_lookup_then(value). Get("then") runs
           // accessors, so a poisoned getter THROWS here (§27.2.1.3.2 step 9):
           // catch → reject(promise, thrown).
           buildTargetTaggedTry(
@@ -135,7 +151,8 @@ export function buildPromiseResolveValueBody(resources: PromiseResolveValueResou
             { kind: "empty" },
             [
               { op: "local.get", index: valueLocal },
-              { op: "call", funcIdx: thenable.hasCallableThenFuncIdx },
+              { op: "call", funcIdx: thenable.lookupThenFuncIdx },
+              { op: "local.set", index: capturedThenLocal },
               { op: "local.set", index: hasThenLocal },
             ],
             [
@@ -166,11 +183,11 @@ export function buildPromiseResolveValueBody(resources: PromiseResolveValueResou
                 blockType: { kind: "val", type: { kind: "externref" } },
                 then: [
                   // Callable then: enqueue PromiseResolveThenableJob(promise,
-                  // value, then). caps = $__then_caps{callback: null, chained:
+                  // value, then). caps = $__then_caps{callback: capturedThen, chained:
                   // promise}; the thenable rides the job's value slot (step 14
                   // — the then CALL happens as a job, never inline).
                   { op: "ref.func", funcIdx: thenable.thenableJobFuncIdx },
-                  { op: "ref.null.extern" },
+                  { op: "local.get", index: capturedThenLocal },
                   { op: "local.get", index: promiseLocal },
                   { op: "struct.new", typeIdx: capsTypeIdx },
                   { op: "extern.convert_any" },
@@ -222,17 +239,7 @@ export function buildPromiseResolveValueBody(resources: PromiseResolveValueResou
   // deliver the ORIGINAL `value`, preserving identity across the promise.
   // (Placeholder peel = identity, so pre-fill behaviour is unchanged.)
   const peeledLocal = 7;
-  const peelPrelude: Instr[] =
-    thenable === null
-      ? [
-          { op: "local.get", index: valueLocal },
-          { op: "local.set", index: peeledLocal },
-        ]
-      : [
-          { op: "local.get", index: valueLocal },
-          { op: "call", funcIdx: thenable.peelValueFuncIdx },
-          { op: "local.set", index: peeledLocal },
-        ];
+  const peelPrelude = buildResolutionPeelPrelude(thenable, valueLocal, peeledLocal);
 
   // (#5197 R3-5) §27.2.1.3.2 steps 8-13 run `Get(resolution, "then")` for EVERY
   // object, including a native promise. The `$Promise` arm below adopts the
@@ -505,8 +512,8 @@ export function buildPromiseThenableJob(resources: PromiseThenableJobResources):
     // res, rej)`. The peel unwraps an `$AnyValue`-boxed resolution so the
     // dispatcher's `ref.test` arms (closed structs / `$Object`) see the RAW
     // object as the receiver.
-    // (#5197 R3-5) When Resolve captured the `then` FUNCTION (an own `then` on
-    // a native promise), call THAT value — the spec captures `then` at Resolve
+    // When Resolve captured the `then` FUNCTION (ordinary lookup or own `then`
+    // on a native promise), call THAT value — the spec captures `then` at Resolve
     // time (step 9) and calls it as a job (step 14), so a reassignment between
     // the two must not change which function runs. Otherwise re-dispatch
     // through the vararg `then` method dispatcher exactly as before.
