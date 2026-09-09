@@ -26,6 +26,7 @@ if (mode === "post") {
 assert.equal(process.platform, "linux");
 assert.equal(process.arch, "x64");
 assert.equal(process.version, "v25.9.0");
+assert.equal(execFileSync("pnpm", ["--version"], { encoding: "utf8" }).trim(), "10.30.2", "pinned package manager");
 const controls = {
   COMPILER_POOL_SIZE: "4",
   VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024",

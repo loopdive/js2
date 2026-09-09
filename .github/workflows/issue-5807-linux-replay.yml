@@ -68,7 +68,6 @@ jobs:
           persist-credentials: false
       - uses: pnpm/action-setup@v4
         with:
-          version: 10.30.2
           package_json_file: subject/package.json
       - uses: actions/setup-node@v6
         with:
@@ -113,6 +112,8 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           path: |
+            subject/package.json
+            subject/pnpm-lock.yaml
             subject/replay5807*.json
             subject/replay5807*.log
             subject/benchmarks/results/test262-results-replay5807-*

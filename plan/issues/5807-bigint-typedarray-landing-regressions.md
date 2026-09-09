@@ -134,3 +134,11 @@ record both the actual image and this limitation. Original worker scheduling
 cannot be reconstructed. A complete replay is diagnostic, not automatic
 regression clearance. Upload all receipts/logs, including failures; do not retry
 or expand repair scope merely to obtain green. Parent owns integration.
+
+Initial run34417551787 stopped in pnpm/action-setup for both arms, before
+dependency installation or compiler/test execution. The action rejects an
+explicit plain version alongside the packageManager integrity-qualified pin.
+Remove only the redundant workflow version; retain the exact historical package
+pin and independently assert pnpm10.30.2 in admission. Preserve the failed run.
+Setup inputs are now included in artifact upload even if no test receipts exist.
+This setup correction changes neither test scope nor validation gates.
