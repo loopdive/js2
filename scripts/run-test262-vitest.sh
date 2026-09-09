@@ -38,10 +38,19 @@ if [ "$TEST262_TARGET" = "standalone" ]; then
   esac
 fi
 
+TEST262_SEMANTIC_PROVIDERS="${TEST262_SEMANTIC_PROVIDERS:-auto}"
+case "$TEST262_SEMANTIC_PROVIDERS" in
+  auto|native-first) ;;
+  *) echo "ERROR: TEST262_SEMANTIC_PROVIDERS must be auto or native-first"; exit 1 ;;
+esac
 RESULT_PREFIX="test262"
 if [ "$TEST262_TARGET" != "gc" ]; then
   RESULT_PREFIX="test262-${TEST262_TARGET}"
 fi
+if [ "$TEST262_SEMANTIC_PROVIDERS" != "auto" ]; then
+  RESULT_PREFIX="${RESULT_PREFIX}-${TEST262_SEMANTIC_PROVIDERS}"
+fi
+export TEST262_SEMANTIC_PROVIDERS
 
 forwarded_args=()
 for arg in "$@"; do
@@ -268,7 +277,7 @@ if [ "$USE_WORKTREE" = "1" ]; then
 fi
 
 echo "Run ID: $RUN_TIMESTAMP"
-echo "Target: $TEST262_TARGET"
+echo "Target: $TEST262_TARGET; semantic providers: $TEST262_SEMANTIC_PROVIDERS"
 echo "Reporter: $TEST262_REPORTER"
 echo "Worktree at $(git -C "$WT_DIR" rev-parse --short HEAD)"
 echo "Running vitest (unified compile+execute in fork pool)..."

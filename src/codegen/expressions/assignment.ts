@@ -32,6 +32,7 @@ import { reportError } from "../context/errors.js";
 import { fnShadowSlot, isShadowedTopLevelFn, withShadowReadSuppressed } from "../fn-global-shadow.js"; // (#4630)
 import { reportSilentFallback } from "../fallback-telemetry.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
+import { recordSidecarPropertyOwner } from "../sidecar-owner-scope.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import {
   addFuncType,
@@ -2783,7 +2784,9 @@ function emitDynamicMemberSet(
   // choice so a later statically-typed `obj.prop` read does not auto-add a new,
   // still-default struct field and thereby hide the value just written.
   if (ts.isIdentifier(target.expression)) {
-    ctx.sidecarDefinedPropertyKeys.add(`${target.expression.text}:${propName}`);
+    const sidecarKey = `${target.expression.text}:${propName}`;
+    ctx.sidecarDefinedPropertyKeys.add(sidecarKey);
+    recordSidecarPropertyOwner(ctx, sidecarKey, target.expression);
   }
 
   // Receiver (reference before value, matching plain `obj.x = v` ordering) → externref local.
