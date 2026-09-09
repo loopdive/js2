@@ -249,6 +249,21 @@ export function buildImports(result: CompileResult): WebAssembly.Imports {
     Object.assign(env, buildRuntimeImports(errorConstructorImports, undefined, result.stringPool).env);
   }
 
+  // (#4376) Indexed writes can arm sparse reads even for initially dense
+  // arrays. Their hole-to-undefined boundary imports this canonical builtin.
+  // Use the production resolver for only its exact ABI, not a blanket fallback.
+  const undefinedImports = result.imports.filter(
+    (descriptor) =>
+      descriptor.module === "env" &&
+      descriptor.kind === "func" &&
+      descriptor.name === "__get_undefined" &&
+      descriptor.intent.type === "builtin" &&
+      descriptor.intent.name === "__get_undefined",
+  );
+  if (undefinedImports.length > 0) {
+    Object.assign(env, buildRuntimeImports(undefinedImports, undefined, result.stringPool).env);
+  }
+
   // (#4616) The `__call_fn_N` dispatchers' unmatched-callee terminal now calls
   // the fixed-arity `__call_function_<N>` host bridge instead of yielding a
   // silent null, so any host-lane module that exports closure dispatchers

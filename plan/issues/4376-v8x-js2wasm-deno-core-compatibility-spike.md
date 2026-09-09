@@ -3,7 +3,7 @@ id: 4376
 title: "Spike v8x as a rusty_v8-compatible js2wasm backend for a compiler-free Deno runtime"
 status: in-progress
 created: 2026-08-12
-updated: 2026-09-08
+updated: 2026-09-09
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -1465,3 +1465,13 @@ Separate raw provider .tmp/provider-object-parameters.wasm25520361bytes built wi
 
 
 Provider build89331 terminal0. Compiled-provider probe904a25 improves4/6→5/6 success envelopes; follow-up ae2229 verifies numeric results3,1,1,2,1 for all five successful cases, including parameter shorthand1. General await still produces the exact UnsupportedNodeError, so probe exits1 honestly. Inherited-field optimizer56638 still live. Changes ready for checkpoint commit, no full Deno completion claim.
+
+### PR 5784 equivalence harness handoff (2026-09-09)
+
+The five `math-pow-test262-pattern` cases pass 5/5 on CI base `cb248bc7713d7c4f9a40f94af53faba35f04cfd3`, but pass 0/5 (all five fail) on both PR head `219ff55a15c062f83b27ffb50dc3f9686fd9979e` and actual CI merge `5b5e109c6c6c03b3a9e5af7f01d146c1b4db43dd`. All failures occur before execution: the manual equivalence import harness lacks callable `env::__get_undefined`. The unchanged five-case file has Git blob `1b470bdc00a1821714c7056ee563ee0606d8d1d2` in all three revisions. Measurements use the original default compiler lane and harness, one 512 MiB fork, not a substituted standalone lane.
+
+A diagnostic-only overlay supplies exactly that import from the production runtime resolver and restores 5/5 on the unchanged head. No observed row warrants the earlier speculative call-index/compiler repair. A separate scan-toggle mock did not reach compiler execution and is explicitly uninformative. The proposed test-only repair therefore restricts the overlay to the exact namespace, function kind, import name and builtin intent, with sparse-read and decline controls. Its tracked implementation is awaiting focused validation; the diagnostic pass is not a claim that the new controls passed.
+
+The independent Wasmtime smoke failure (`v8x:context::__symbol_counter`) and three unclassified compiler modules/four targets remain unresolved. This harness slice does not complete Deno integration, repair its runtime ABI, certify architecture retirement, or make the whole PR merge-ready. Original author handoff and existing artifacts remain preserved.
+
+Focused tracked validation now passes 21/21: the seven new sparse/decline/absent-import controls, all five unchanged `math-pow-test262-pattern` cases, and nine existing #3529 Error-family overlay controls. The run used one 512 MiB fork with no file parallelism (19.04 seconds, terminal exit 0). High static review approved the exact helper and test blobs before validation; no production compiler or runtime source changed.
