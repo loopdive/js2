@@ -111,6 +111,8 @@ func-budget-allow:
   # observers; inherited presence and own-key enumeration require distinct
   # predicates. Verified in both standalone configurations and public v8x APIs.
   - src/codegen/object-runtime.ts::fillConcatNativeHoleArms
+  # 2026-09-10: in-place heap sorting for open-object own-key enumeration.
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
   - src/codegen/object-runtime.ts::fillDynamicForinVecArms
   - src/codegen/expressions/calls-closures.ts::compileCallablePropertyCall
   - src/codegen/statements/variables.ts::compileVariableStatement
@@ -588,6 +590,8 @@ without the composed patch (10,007,948 bytes), the patch reduces the artifact
 by 3,006 bytes; the larger artifact size predates it.
 
 ## Handover
+
+2026-09-10 heap-sort measurement complete: compiler8fd489a918dee3be51bb1e75d191f9815a830eb0, cleanpin/private/tmp/js2-own-key-heap-pinned-20260910; runtimebuildera1a711f; native5400404unchanged. Fullbuild11984, wasm-opt36750, core2/2, precompile72690(1/1), nativeexactreplaypass; nine native tests27664pass. Final45-case string-order regression passes bothbaseline andcandidate. Existingenumeration40/42 onboth, same2descriptorfailures. OriginalReflectsymboloracle failsboth missingkeys; finalReflectfixturestringonly, symbolmerge NOTcertified. OptimizedstandaloneNode probe250/250timedscans+20warmuppasses,1600property5scanmedian24.1->1.9ms(12.8xfaster), notDeno. Fullpaired10/10sameexe55.8->54.8ms(1.8%lower), modestgain; threeengine21/21V88.0/QJS22.5/js2wasm54.4ms still2.4xbehind. Payloadunchanged44,964,280bytes42.9MiB/core35,667,720bytes34.0MiB; RSS41.0MiB,physical5.9MiB. CoreSHA24b22a1ee113e7737802630a91c1f075fcd96a4beaaa03652a363c195ac58356. Runtime reports/raw tools/deno/results/2026-09-10-own-key-heap-* and measure-own-key-sorting.mjs. Controls preservedcore-module-lexical-copying-speed/comparison-module-lexical, candidatecore-own-key-heap-copying-speed/comparison-own-key-heap. Allbuild/tests terminal, no timing overlap. Single nesteddiagnosticprimordials22.6ms,usage4.5ms; enumerationnotdominant. Next trace builtin/property and boundfunction setup rather than extrapolate enumerationprobe. Goalactive; Deno sourceunchanged, nointerpreter/compilerdeployed. Added ownissue ensureObjectRuntime functionbudgetgrant so growthdoesnotborrowotherissue allowance.
 
 2026-09-10 own-key sort candidate: replace selection sort in __obj_ordered/__obj_ordered_all with in-place max-heapsort using the existing key comparator, compaction/filtering and null suffix; fresh instruction trees per emission retained. Checksum probe (five rounds x five scans per size) at1600properties improves roughly26.2ms->1.7ms in standalone Node Wasm, not Deno. New exact-order fixture45/45 cases passes for keys/names/Reflect-string-keys/values/entries, sizes0..700, numeric/string ordering, tombstone reinsertion, hidden properties and symbol exclusion. Existing42 tests40pass/2fail on bothcandidate and clean e805 baseline; unchanged descriptor materialization failures. Initial full Reflect symbol oracle fails on both versions (missing symbols); kept as diagnostic baseline, final sort regression explicitly uses string-only Reflect fixture and does not certify separate symbol merge path. Initial test input accidentally defaulted toJS despite annotations; corrected explicitTSfilename. ConfiguredTS7 and bridgefixture pass. Nine native tests running; full clean AOT+O3/native Deno measurement pending.
 
