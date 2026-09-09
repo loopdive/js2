@@ -7237,3 +7237,22 @@ byte parity and actual-candidate semantic correctness are separate claims.
 Receipts: `.tmp/native-scanner-source-pair-a1Lq22`. This does not resolve the
 delay mismatch or5807. Frame baseline0194 is clean; its paired run remains
 unexecuted while cumulative artifact attribution is reviewed.
+
+### Frame/delay three-arm plan requested after historical failures
+
+Superseding the preceding frame UNRUN note: frame session93831 finished EXIT1,
+20/21 tests passed; four of five artifact rows differ. Delay's original outer
+OOM and all saved differences remain preserved. Bounded attribution accounts
+for reference shifts and identifies Promise capture, scanner guard and vector
+non-null changes, but does not turn exact-parity failures into acceptance.
+
+The user authorized preparation of an exact reviewable comparison plan, not
+implementation or execution. See
+[the three-arm review plan](../agent-context/3518-frame-delay-three-arm-review-plan-2026-09-09.md).
+It pins original roots, candidate, instruments and fixture arrays; preserves
+all original failures; retains 5/12 frame and 11/19 delay artifact/execution
+counts per arm; and requires complete repaired-baseline/candidate equality.
+No normalization, omitted fields, replacement fixtures or automatic baseline
+expansion is allowed. Literal repair patches and the additive driver require
+an independently reviewed execution manifest before any run. PR5798 remains
+held, and issue5807's Linux regression evidence is not waived.
