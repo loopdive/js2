@@ -83,7 +83,18 @@ Parent owns final consumer composition and boundary activation.
   29 inventory errors. These are already repaired in published parent 445f65523b;
   parent authorized a normal worker commit followed by normal merge of that exact
   dependency, not duplicate classifications or allowed-edge edits. Composed
-  inventory, TS7 and formatter/boundary validation remain pending.
+  inventory, TS7 and formatter/boundary validation were subsequently completed below.
+- Normal checkpoint commit `24543`: exit 0, creating `f4536c6fd6`; lint, LOC,
+  function budget and oracle gates passed. Changed-root explicitly skipped 102
+  files; that skip is not a test pass. Parent 445f65523b merged cleanly as
+  `acf37ffbeb`, preserving all ten formatter files exactly.
+- Composed inventory `36367`: exit 0, no errors, inventoryValid=true,
+  graphComplete=false, architectureComplete=false, status
+  inventory-valid-architecture-incomplete.
+- Composed unfiltered TS7 `98290`: exit 0.
+- Composed formatter and boundary validation `16745`: exit 0, 131/131 across
+  three files (35 formatter, 96 boundary), 74.09 seconds. Guarded replay child
+  PID 47709 exited 0, signal null. No restart or termination occurred.
 
 Repairs after the approved static checkpoint were confined to tests: canonical
 intrinsic preparation matching the existing legacy wrapper, AST-based import and
