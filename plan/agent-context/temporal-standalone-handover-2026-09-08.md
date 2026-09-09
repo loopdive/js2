@@ -91,18 +91,73 @@ still unwritten. That is what the S2h lane was dispatched to close.
    (a property read on the result of a `never`-returning call elides the
    receiver — why `Temporal.Now` is out of scope for the smoke test).
 
+## The merge-queue parks — read this before re-admitting anything
+
+**As of 2026-09-09 00:57 the whole stack is held and must stay held until the
+hypothesis below is tested.** #5777 is parked for the second time, and #5780 and
+#5785 are held as its dependents. Nothing is enqueued.
+
+Four parks happened across the stack in one evening, with a converging shape:
+
+| PR | park | rows |
+| --- | --- | --- |
+| #5773 | 1st | one TypedArray `set` RangeError row |
+| #5777 | 1st | one `ctors-bigint/.../new-instance-extensibility.js` row |
+| #5780 | 1st | 16 Temporal rows |
+| #5777 | 2nd | 26 Temporal rows + that same BigInt row |
+
+The Temporal failures fall into three families every time: `Temporal is not
+defined`, `Cannot read properties of null (reading '<method>')`, and
+wrong-error-type assertions. No row touches a construct path, a class value, or
+a TypedArray constructor identity, which is what these diffs change.
+
+**What was proven.** For the first three parks the named rows compile to
+byte-identical wasm on the PR head and on the merge-group's own baseline
+compiler, and pass solo on both. That is a real result and it stands: no
+compiler change from those diffs reaches those rows. #5773 merged on that
+evidence.
+
+**What that evidence does NOT establish, and why the stack is held.** These are
+host-lane tests that need the Temporal provider built and cached.
+`Temporal is not defined` and a null read on a Temporal method are what a shard
+shows when the **provider is missing**, not what a wrong-codegen row looks like.
+Each of these PRs changes the compiled provider's bytes, which changes its cache
+key and forces a rebuild. If that rebuild is flaky or slow under a sharded merge
+group, you get exactly the observed pattern — a scattered subset of Temporal
+rows, different ones each run — and it would be **caused by the PR**, even
+though every individual row's compiled output is provably correct.
+
+Byte-identity per row cannot distinguish those two worlds. That is the trap:
+the measurement is sound and the conclusion drawn from it was too broad.
+
+**Test this first, before removing any hold.** The hypothesis is falsifiable:
+
+1. Do the failing rows cluster by **shard** rather than by feature? Pull the
+   per-shard artifacts from the parked run and group the failures by shard id.
+   Clustering by shard supports the provider-rebuild story; an even spread
+   across shards weakens it.
+2. Do those shards' logs show a provider **rebuild** rather than
+   `cacheHit=true`? The runner prints a `[test262] Temporal provider … built in
+   Nms cacheHit=…` line; the local run in this worktree shows `cacheHit=true`,
+   so a merge-group run that shows a miss is the tell.
+3. If confirmed, the fix is in the provider cache/build path under sharding, not
+   in any of these slices, and it should land before the stack does.
+
+Only if both checks come back negative is the collateral reading safe to act on
+again — and then it needs the queue lane's agreement, not a unilateral label
+removal. Do not remove a hold on the strength of a byte-identity table alone.
+
 ## Two operational lessons worth keeping
 
-**The merge queue parked three of these PRs on collateral rows, not real
-regressions.** Each time the row was a TypedArray test that the diff could not
-reach, and each time the proof was the same and took about two minutes: compile
-the named row with `runTest262File` on the PR head and on the exact
-merge-group **baseline compiler sha** named in the park comment, and compare the
-runner's own `wasm_sha`. Identical bytes mean no compiler change reached that
-row, whatever the aggregate says. Post that table before removing a `hold`;
-re-admit at most once, and if the same row parks a third time, dequeue to draft
-and open a flake-ledger entry instead. These rows belong to the #1957 fork
-realm-mutation class and have been shown collateral repeatedly.
+**Per-row byte identity is the right measurement and the wrong conclusion.**
+Compiling a parked row with `runTest262File` on the PR head and on the exact
+merge-group **baseline compiler sha** named in the park comment, then comparing
+the runner's own `wasm_sha`, takes about two minutes and does prove that no
+compiler change reached that row. Do it. But see the section above before
+concluding "collateral" from it: a PR can leave every row's bytes untouched and
+still break those rows in CI, by changing the provider cache key and destabilising
+the shard's provider build. Post the table, and treat it as one input rather than
+a verdict — especially on a second park of the same PR.
 
 **Deferred, measured, and not this stack's to fix.** Eleven more
 `ref.test $__ta_ctor` sites ask a structural question where they mean a nominal
