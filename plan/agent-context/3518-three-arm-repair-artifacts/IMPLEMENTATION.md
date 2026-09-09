@@ -133,3 +133,33 @@ alias guards are not independently reached because earlier defenses reject first
 No compiler comparison or execution-approved manifest exists. The isolated
 review-only manifest is ready for separate execution review; approval must not
 be inferred from any of these preflight results.
+
+## Explicit execution approval and launch
+
+The user subsequently approved running the six-arm historical comparison;
+merging remains unauthorized. Fresh review preflight passed. The separate
+`execution-manifest-approved.json` differs from the isolated review manifest
+only in status, verified by deep equality after restoring the review status.
+Approved digest: `1037fab89ef9857f3d8417186a50d1c5bcd7cd682a7a412b556549c6a6721f64`.
+Run evidence directory: `.tmp/frame-delay-three-arm-IEjZ6b`.
+Coordinator session 21989 launched frame/original PID 50324. This is RUNNING,
+not a parity result. Retain all evidence and wait for terminal state before
+considering any retry; no parallel duplicate or automatic repair expansion.
+
+### Terminal result: PASS
+
+Coordinator 21989 finished EXIT0. All six children finished EXIT0 without signals:
+frame 5 artifacts/12 executions per arm, delay 11/19 per arm, total **48/93**.
+Complete repaired-baseline/candidate fixture arrays and rows are exactly equal
+for both suites. Original/candidate equality remains false for both; original
+failures are preserved, not reclassified. Frame late-import equals across O/R/C.
+Parent independently compared complete saved R/C rows and fixture arrays; the
+subagent independently confirmed all frame evidence and pins without rerunning.
+
+`comparison-terminal-evidence.json` contains the verdict, six terminal summaries,
+and SHA256/size inventory of every retained run artifact. Raw receipts/logs total
+318MB and remain at the recorded local evidence directory; they are not embedded
+in this small review checkpoint. This establishes only the approved frame/delay
+preservation gate against bounded repairs. Closure, physical acceptance and full
+direct-codegen retirement remain uncertified; Linux issue5807 is not waived.
+No merge was performed or authorized by the execution approval.
