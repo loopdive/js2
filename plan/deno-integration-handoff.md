@@ -30,7 +30,7 @@ The detailed history is in [the integration issue](issues/4376-v8x-js2wasm-deno-
 2. Complete parameter semantics: defaults/computed keys need parameter-environment isolation and TDZ; arrays need iterator semantics; rest is unimplemented. These currently remain explicit refusals.
 3. Rebuild, wasm-opt, precompile, and replay unchanged Deno async tests with pinned compiler/runtime revisions. The current next test is `runtime::tests::misc::test_set_macrotask_callback_set_next_tick_callback`; the old full pair fails during parsing. The repaired provider exposes the next explicit await limitation.
 4. Expand native Deno coverage and fix remaining host API/ABI gaps. Never infer full integration from examples or three selected tests.
-5. Update runtime compiler pins only with a corresponding verified artifact pair. Publish both repositories and link their PRs.
+5. Update runtime compiler pins only with a corresponding verified artifact pair. Both checkpoint PRs are now published; keep their revisions coordinated.
 6. Measure V8, QuickJS, and js2wasm using the same supported Deno workload. Record versions, compile/precompile costs separately from runtime costs, startup, warm execution, per-instance RSS, shared payload, repetitions and correctness checks. Unsupported workload rows must be reported as unsupported, not estimated.
 
 ## Local reproduction state
@@ -46,4 +46,4 @@ The detailed history is in [the integration issue](issues/4376-v8x-js2wasm-deno-
 
 ## Publishing and measurement status
 
-PR links and new benchmark results will be added after publication/execution. Earlier three-engine numbers are historical, not measurements of this checkpoint.
+Compiler PR: https://github.com/loopdive/js2/pull/5784\n\nRuntime PR: https://github.com/loopdive/v8x/pull/2\n\n[Measured Deno-core process comparison](https://github.com/loopdive/v8x/blob/codex/4376-deno-realm-bootstrap/tools/deno/results/2026-09-09-core-processes.md): seven runs per engine, all21 correct. V8/QuickJS/js2wasm deployment payload37.3/5.4/546.1MiB, peak RSS20.2/17.6/494.3MiB, median launch-through-exit57.7/44.8/13482.2ms. This is the unchanged hello_world on the last fully paired bda15/0eaa build, not warm execution, additional-instance density, latest-ac17 artifacts, or full Deno CLI support. The report includes substantial timing ranges and raw hashes/results. Earlier engine-only benchmark numbers must not be substituted for these full-core observations.\n\nThe requested wrap-up stops implementation at this checkpoint. General async and remaining integration work are handed off, not completed. No active build or measurement remains; preserve old unrelated idle processes and all worktrees.
