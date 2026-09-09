@@ -29,6 +29,15 @@ export function replaceKey(n:number):number {
   const m=new Map<string,number>();m.set(build(n),1);m.set("ab",2);
   return m.size*10+(m.get(build(n))??0);
 }
+export function bufferBuilder(n:number):number {
+  const bytes=new Uint8Array(n);
+  for(let i=0;i<n;i+=2) bytes[i]=97+i/2;
+  let text="";
+  for(let i=0;i<bytes.length;i+=2)
+    text+=String.fromCharCode(bytes[i]+bytes[i+1]*256);
+  const m=new Map<string,number>();m.set(n===0?"":"ab",13);
+  return m.get(text)??-1;
+}
 `,
     { target: "standalone", platform: "deno", hostBridge: "always" },
   );
@@ -44,6 +53,8 @@ for (const [name, n, value] of [
   ["slicedKey", 1, 11],
   ["setMember", 2, 1],
   ["replaceKey", 2, 12],
+  ["bufferBuilder", 0, 13],
+  ["bufferBuilder", 4, 13],
 ] as const) {
   it(`${name}(${n}) hashes logical string contents`, () => expect(e[name](n)).toBe(value));
 }
