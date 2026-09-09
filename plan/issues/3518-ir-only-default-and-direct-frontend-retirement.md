@@ -4117,3 +4117,63 @@ integration. It also sequences native and linear resource materialization,
 public metadata/cutover, original-population evidence and eventual deletion.
 This is specification only: no source implementation, gate relaxation,
 claim release or migration-complete declaration is included.
+
+### Capability contract extraction checkpoint (2026-09-08)
+
+The [Astra High capability-schema plan](../agent-context/3518-capability-schema-checkpoint-plan-2026-09-08.md)
+specifies an independent checkpoint from canonical main
+`16498efb481cb022ee5c4dcc9bb137b6d4c91a50`. It extracts the complete closed
+capability-record data schema (25 types/interfaces, 14 constants) into
+`src/runtime/contracts/host-capability-schema.ts`, without changing provider
+selection, host/linear behavior, catalog construction or authentication.
+The old module imports/re-exports the same bindings and retains every
+function, private set/map and canonical record object. This removes an
+implementation dependency needed by the subsequent manifest contract split;
+it is not new host-backend work.
+
+Reconciled claim `3518:capability-schema-separation` is held by
+`ttraenkler/codex-astra-capability-schema-20260908`, branch
+`codex/3518-capability-schema-worker-20260908`, verified in ledger
+`d31c011bfbdca1f743d8102f82c9404ce743e15b` (815 held records). Historical
+claims and P/C's twelve/five dirty files remain preserved. Astra Low source
+and evidence workers have disjoint worktrees; the parent owns shared policy,
+integration and non-draft PR publication. No main push or force push.
+
+The boundary policy activates only the canonical schema leaf with zero new
+allowed edges. The old catalog implementation and the planned full runtime
+contracts index remain explicit debt. Core may not import this upward
+contract: full semantic-function/prepared-function separation still needs
+the reader, writer, generic-pass and codec obligations in the linked plan.
+
+PR #5742 (core type construction/equality) was independently observed at
+`acfd3e37b8765c4c4788c1fa94718d62c60e473c` with 29 successful and 13 skipped
+PR-head checks, mergeable/CLEAN, no unresolved review threads and `hold`
+retained. That is not merge-group or full-conformance proof. This checkpoint
+does not stack its source. PRs #5738/#5739/#5741/#5742 retain the inherited
+N1 host-regression/merge-queue-safety hold; the separate ABI caller decision
+also remains open. No CI/ruleset change, hold removal, enqueue or retirement
+claim is authorized by this checkpoint.
+
+Validated handoff: 39/39 moved declarations and 48/48 retained declarations
+(all 28 functions) are text/documentation-identical; source net +100 LOC,
+no budget exemption. All 76 new controls pass, plus all 42 existing D0
+controls. The full distinct focused population is **216/217 passing**: the
+one existing host-async concat fixture fails on untouched main too. Exact
+base/candidate byte, WAT, import-order, pool and outcome comparison matches
+at 10,122 bytes, SHA `9cc61132c3cea9c609e93fc3ec5fa85af99e7d17bca888eb457373d3c9fa3450`,
+28 function imports and concat5 index 22. Its old 10,021-byte/27-import/index-21
+expectations are not changed or waived. No claim that the fixture passes or
+that its prior mismatch is fixed.
+
+Three original public standalone scalar/vector/closure programs execute
+twice each with zero Wasm imports and full baseline/candidate equality
+(bytes/WAT/descriptors/pools/IR outcomes/results). Two complete async manifests
+retain seven providers each and 0/7 standalone/host capability records;
+all 32 catalog objects remain canonical. Typecheck passed. Inventory:
+1,245 tracked modules, seven clean, two compatibility adapters, 1,236 debt,
+9,751 resolved edges, four unknowns, zero inventory errors. Complete mode
+fails honestly; N1 preservation retains all six witnesses and its original
+25-entry legacy baseline, while strict closure still fails on the same two
+dynamic imports. No retirement credit. The linked plan records exact frozen
+hashes, test commands/receipts, next prepared-function obligations and
+Astra High's held-publication review.
