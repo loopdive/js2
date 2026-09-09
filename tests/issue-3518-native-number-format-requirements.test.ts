@@ -20,6 +20,10 @@ import {
 import { declareNativeNumberFormatResources } from "../src/backend/wasmgc/resources/native-number-format.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
 import { createEmptyModule } from "../src/ir/types.js";
+import { prepareIrRuntimeManifest } from "../src/ir/intrinsic-support.js";
+import { planPhysicalSetup, type PhysicalNativeNumberFormatInput } from "../src/ir/program-physical-plan.js";
+import { forEachInstrDeep } from "../src/ir/core/nodes.js";
+import { planNativeStringValuePhysical } from "../src/backend/wasmgc/program/native-string-values.js";
 import { collectNativeStringValueDemands } from "../src/ir/program/native-string-value-demands.js";
 import { irNativeAsyncCallableDeclaration } from "../src/ir/runtime/native-async-callables.js";
 import {
@@ -49,6 +53,87 @@ function actual() {
 }
 
 describe("complete prepared formatter demand joins", () => {
+  it("authenticates the whole support manifest without waiving the actual family string gap", () => {
+    const program = actual();
+    const projection = program.runtime[0]!;
+    const options = {
+      backend: "wasmgc",
+      target: "standalone",
+      utf8Storage: false,
+      sharedExceptionTag: false,
+      sourceMap: false,
+      moduleName: "formatter-manifest-control",
+      numberFormat: { integerBeforeScratch: false },
+    } as const;
+    const requirements = deriveNativeNumberFormatRequirements({
+      program,
+      projection,
+      integerBeforeScratch: false,
+    })!;
+    const support = prepareIrRuntimeManifest({
+      functions: [requirements.batch.implementation.body],
+      sourceFile: "<stdlib:__sh_num_toString_radix>",
+      policy: projection.prepared.manifest.policy,
+      includeEmpty: true,
+    });
+    const input = { requirements, support };
+    const demands = collectNativeStringValueDemands(program, projection);
+    const selected = planNativeStringValuePhysical(demands, { representation: "native-string", utf8Storage: false });
+    expect(selected.kind).toBe("unsupported");
+    if (selected.kind !== "unsupported")
+      throw new Error("update the full-family integration proof after real string admission");
+    expect(selected.detail).toMatch(/has no native string value resource join/);
+    const positive = planPhysicalSetup(program, options, projection, undefined, input);
+    // This is the unchanged real source refusal, not a successful formatter ABI plan.
+    expect(positive).toEqual(selected);
+    const prior = planPhysicalSetup(program, options, projection);
+    if (prior.kind !== "unsupported") throw new Error("expected the existing async materialization refusal");
+    expect(prior.detail).toContain("needs scheduler/promise runtime materialization");
+    const changedFunctions = structuredClone(support.functions);
+    expect(
+      planPhysicalSetup(program, options, projection, undefined, {
+        requirements,
+        support: { ...support, functions: changedFunctions },
+      }).kind,
+    ).toBe("unsupported");
+    let changedAttachments = 0;
+    for (const fn of changedFunctions)
+      for (const block of fn.blocks)
+        for (const root of block.instrs)
+          forEachInstrDeep(root, (instruction) => {
+            if (changedAttachments === 0 && instruction.kind === "intrinsic" && instruction.provider) {
+              Object.assign(instruction, { provider: { ...instruction.provider, unexpected: true } });
+              changedAttachments++;
+            }
+          });
+    expect(changedAttachments).toBe(1);
+    expect(support.providers.size).toBeGreaterThan(0);
+    const [providerId, provider] = [...support.providers][0]!;
+    const replaced = new Map(support.providers);
+    replaced.set(providerId, { ...provider, unexpected: true } as typeof provider);
+    const extra = new Map<string, unknown>(support.providers);
+    extra.set("unexpected-provider", provider);
+    const { providers: omitted, ...withoutProviders } = support;
+    expect(omitted).toBe(support.providers);
+    for (const changed of [
+      { ...support, functions: changedFunctions },
+      { ...support, functions: [{ ...support.functions[0]!, name: "foreign-body" }] },
+      { ...support, providers: new Map() },
+      { ...support, providers: replaced },
+      { ...support, providers: extra },
+      { ...support, manifest: { ...support.manifest, policy: { ...support.manifest.policy, target: "host" } } },
+      { ...support, unexpected: true },
+      withoutProviders,
+    ]) {
+      expect(() =>
+        planPhysicalSetup(program, options, projection, undefined, {
+          requirements,
+          support: changed,
+        } as PhysicalNativeNumberFormatInput),
+      ).toThrow(/support manifest differs from canonical preparation/);
+    }
+  });
+
   for (const decoded of [false, true])
     it.each([false, true])(`plans an independent empty formatter layout, decoded=${decoded}, utf8=%s`, (utf8) => {
       const original = actual();

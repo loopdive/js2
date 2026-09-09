@@ -190,3 +190,62 @@ across requirements and boundary suites passed in 85.91 seconds. Inventory
 These results include the three newly mandatory formatter roots and their
 controls. Parent commit/push of these additions remains pending; the heavy slot
 was released to E1 publication after both validation processes terminated.
+
+## Recovery after agent handles disappeared
+
+The helper/boundary checkpoint is published in #5798 as
+13c33537b9d61b184d768b73992e615974244f14. Commit 31710 and push 40347
+exited zero; normal push included 18/18 numeric-parity tests. Source and test
+hashes were independently rechecked against High review before committing.
+Changed-root skipped 102 files, not an additional successful suite.
+
+All five old agent handles returned not_found. Resuming an existing agent
+failed with the agent-thread limit. Parent found no surviving validation or
+publication processes and preserved all worktrees. The staged-closure draft
+and its explicit ownership handoff remain in
+/private/tmp/js2-3518-staged-closure-reservations-20260909; its six-file draft
+still needs review and execution, not a duplicate implementation.
+
+E1 had committed 03d0615e34da8629971659d8c5937b8483f57643 but had no PR.
+Its old validation handle 74854 was missing; the complete saved 84/84 report
+was retained. Parent recovery run 52680 exited zero, 84/84 in 15.23 seconds.
+Normal push 48796 then exited zero, including typecheck, lint, formatting,
+ratchets, issue integrity and 18/18 numeric tests. Non-draft held #5802 now
+contains that exact commit and targets the verified #5794 branch. It is not
+yet composed into the parent branch and is not a main landing.
+
+The next local planner change authenticates the complete separate support
+manifest by canonical re-preparation, including ordered provider maps, without
+removing any existing async/resource gap. High explicitly approved bounded
+private preparation in the mixed planner and consumer, using the existing
+complete preparedIrDataMismatch comparison. Full ABI resource joins and
+consumer reservation/fill wiring remain to be implemented.
+Source TS7 73229 exited zero. Requirements run 36615 passed 19/19 before
+the final nested-attachment control; final run 37244 passed 19/19 in 30.44
+seconds with that control included. The positive preserves the complete
+genuine async refusal; eight changed-manifest forms reject after it. These
+planner-authentication changes remain local and do not yet implement the
+seven callable bindings or the formatter emission branch.
+
+## Descriptive formatter ABI integration
+
+The local planner now derives all seven canonical callable associations and
+the remaining internal formatter rows from the full 16-resource recipe, reuses
+the scratch owner, supports the honest layout-only dependency, checks combined
+binding ownership, and includes prepared support references in dependency
+closure. The consumer has not yet been changed to retain or materialize this
+new plan. No new runtime execution path is claimed.
+
+Run 3485 failed 1/19: the attempted test incorrectly assumed the full family's
+ordinary string selection was already planned. It is actually unsupported.
+The corrected control preserves that exact existing source-string failure;
+it does not fabricate a source reservation input or erase family operations.
+Original no-formatter planning separately retains its async runtime refusal.
+Run 87977 then passed 19/19. The newly derived formatter ABI branch is still
+unproven through that family until real string admission is implemented.
+
+Final validation 49752 exited zero: formatting, source TS7 and 80/80 across
+formatter requirements and existing native string ABI planning passed in 42.76
+seconds. These tests establish manifest authentication, preservation of the
+real refusal, and existing ABI behavior—not execution of the new full-family
+formatter ABI branch, successful emission, async completion or retirement.

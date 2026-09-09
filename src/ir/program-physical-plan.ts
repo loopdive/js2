@@ -33,9 +33,30 @@ import {
   type NativeStringValuePhysicalPlan,
   type NativeStringValueReservationInput,
 } from "../backend/wasmgc/program/native-string-values.js";
-import type { NativeStringValueDeclaration } from "../runtime/wasmgc/values/native-resource-declaration-types.js";
-import { deriveNativeNumberFormatRequirements } from "./program/native-number-format-requirements.js";
-import { planNativeNumberFormatScratch } from "../backend/wasmgc/program/native-number-format.js";
+import type {
+  NativeResourceRecipe,
+  NativeDeclaredValType,
+  NativeStringValueDeclaration,
+} from "../runtime/wasmgc/values/native-resource-declaration-types.js";
+import {
+  deriveNativeNumberFormatRequirements,
+  assertNativeNumberFormatRequirementsCurrent,
+  type NativeNumberFormatRequirements,
+} from "./program/native-number-format-requirements.js";
+import type { PreparedIrRuntimeManifest } from "./runtime/contracts/prepared.js";
+import { prepareIrRuntimeManifest } from "./intrinsic-support.js";
+import { verifyIrBackendLegality } from "./backend/legality.js";
+import {
+  planNativeNumberFormatScratch,
+  planNativeNumberFormatStringLayout,
+  planNativeNumberFormatPhysical,
+  type NativeNumberFormatStringLayoutPlan,
+  type NativeNumberFormatPhysicalPlan,
+} from "../backend/wasmgc/program/native-number-format.js";
+import { nativeStringTypeKeys } from "../backend/wasmgc/resources/native-string-literals.js";
+import { collectNativeStringValueDemands } from "./program/native-string-value-demands.js";
+import { numberFormatRadixSupportDeclarations } from "./program/formatter-support.js";
+import { NATIVE_ASYNC_CALLABLE_DECLARATIONS } from "./runtime/native-async-callables.js";
 import type { IrBindingId, IrUnitId } from "./identity.js";
 import { forEachInstrDeep, type IrFunction, type IrType } from "./nodes.js";
 import type { IrPreparationFailure } from "./outcomes.js";
@@ -74,9 +95,28 @@ export interface NativeStringValueAbiBinding {
 }
 
 export interface PhysicalNativeStringSetup {
-  readonly resources: NativeStringValuePhysicalPlan;
+  readonly resources: NativeStringValuePhysicalPlan | NativeNumberFormatStringLayoutPlan;
   readonly bindings: readonly NativeStringValueAbiBinding[];
   readonly formatterScratch?: Extract<IrType, { kind: "support-ref" }>;
+}
+
+/** Descriptive input only; the consumer retains the actual prepared support owner. */
+export interface PhysicalNativeNumberFormatInput {
+  readonly requirements: NativeNumberFormatRequirements;
+  readonly support: PreparedIrRuntimeManifest;
+}
+
+export interface PhysicalNativeNumberFormatSetup {
+  readonly resources: NativeNumberFormatPhysicalPlan;
+  readonly bindings: readonly NativeStringValueAbiBinding[];
+  readonly support: {
+    readonly unitId: IrUnitId;
+    readonly reference: IrFuncRef;
+    readonly bindingId: IrBindingId;
+    readonly resourceKey: string;
+    readonly params: readonly PhysicalSignatureType[];
+    readonly results: readonly PhysicalSignatureType[];
+  };
 }
 
 export interface PhysicalFunctionSlot {
@@ -137,6 +177,7 @@ export interface PhysicalSetupPlan {
   readonly vectors: NativeVectorResourcePlan;
   /** Descriptive only: the issued reservation input stays in the consumer's private record. */
   readonly nativeStrings?: PhysicalNativeStringSetup;
+  readonly nativeNumberFormat?: PhysicalNativeNumberFormatSetup;
   readonly importedFunctions: readonly PhysicalImportedFunction[];
   readonly importedGlobals: readonly PhysicalImportedGlobal[];
   readonly definedGlobals: readonly PhysicalDefinedGlobal[];
@@ -286,6 +327,41 @@ function nativeSame(actual: unknown, expected: unknown, detail: string): void {
   if (preparedIrDataMismatch(actual, expected) !== undefined) nativeInvalid(detail);
 }
 
+/** Authenticate the entire separately prepared support manifest before planning resources. */
+function validateNativeNumberFormatInput(
+  program: PreparedIrProgram,
+  options: PreparedIrBackendOptions,
+  projection: PreparedIrProgramRuntimeProjection,
+  input: PhysicalNativeNumberFormatInput,
+): void {
+  const { requirements } = input;
+  if (
+    options.backend !== "wasmgc" ||
+    options.target !== "standalone" ||
+    requirements.program !== program ||
+    requirements.projection !== projection ||
+    typeof options.numberFormat?.integerBeforeScratch !== "boolean" ||
+    requirements.integerBeforeScratch !== options.numberFormat.integerBeforeScratch
+  )
+    nativeInvalid("formatter input does not belong to the selected program/projection/options");
+  assertNativeNumberFormatRequirementsCurrent(requirements, requirements);
+  const expected = prepareIrRuntimeManifest({
+    functions: [requirements.batch.implementation.body],
+    sourceFile: "<stdlib:__sh_num_toString_radix>",
+    policy: projection.prepared.manifest.policy,
+    includeEmpty: true,
+  });
+  // This comparison includes every top-level field, nested provider attachment
+  // and the ordered provider map. No provider-stripping comparison is sound.
+  nativeSame(input.support, expected, "formatter support manifest differs from canonical preparation");
+  if (expected.functions.length !== 1) nativeInvalid("formatter preparation must retain exactly one support body");
+  const body = expected.functions[0]!;
+  if (body.asyncPlan || body.asyncRuntime) nativeInvalid("formatter support unexpectedly acquired async state");
+  const errors = verifyIrBackendLegality(body, options.backend);
+  if (errors.length)
+    nativeInvalid(`formatter support cannot be lowered: ${errors.map((error) => error.message).join("; ")}`);
+}
+
 function nativeRole(declaration: NativeStringValueDeclaration): string {
   return "native-string-values:v1:" + JSON.stringify(declaration.role);
 }
@@ -300,10 +376,7 @@ function nativeReferenceKey(ref: NativeStringValueAbiBinding["reference"]): stri
   return ref.kind === "global" ? irGlobalBindingKey(ref.binding) : irTypeBindingKey(ref.binding);
 }
 
-function declarationForRole(
-  resources: NativeStringValuePhysicalPlan,
-  role: readonly string[],
-): NativeStringValueDeclaration {
+function declarationForRole(resources: NativeResourceRecipe, role: readonly string[]): NativeStringValueDeclaration {
   const rows = resources.declarations.filter((row) => preparedIrDataMismatch(row.role, role) === undefined);
   if (rows.length !== 1) nativeInvalid(`missing/duplicate declaration role ${JSON.stringify(role)}`);
   return rows[0]!;
@@ -360,7 +433,7 @@ function internalNativeBinding(
 
 interface NativeAbiContext {
   readonly program: PreparedIrProgram;
-  readonly resources: NativeStringValuePhysicalPlan;
+  readonly resources: NativeResourceRecipe;
   readonly entries: ReadonlyMap<IrBindingId, PreparedIrAbiEntry>;
   readonly abi: ProgramAbiMap;
 }
@@ -679,6 +752,217 @@ function nativeStringSetup(
   return { resources: input.plan, bindings, ...(formatterScratch ? { formatterScratch } : {}) };
 }
 
+/** Validate the complete joined owner vector before any physical allocation. */
+function sealNativeBindingPlan(program: PreparedIrProgram, bindings: readonly NativeStringValueAbiBinding[]): void {
+  const abi = new ProgramAbiMap(program.inventory, program.derivedUnits);
+  const entries = new Map(program.abi.entries.map((row) => [row.plan.id, row.plan]));
+  for (const entry of entries.values()) abi.plan(entry);
+  const owners = new Map<string, IrBindingId>();
+  const resources = new Map<IrBindingId, string>();
+  const routes = new Map<string, string>();
+  for (const binding of bindings) {
+    const owner = owners.get(binding.resourceKey);
+    const resource = resources.get(binding.entry.id);
+    const route = routes.get(nativeReferenceKey(binding.reference));
+    if (
+      (owner && owner !== binding.entry.id) ||
+      (resource && resource !== binding.resourceKey) ||
+      (route && route !== binding.resourceKey)
+    )
+      nativeInvalid("joined native resources have competing owners");
+    owners.set(binding.resourceKey, binding.entry.id);
+    resources.set(binding.entry.id, binding.resourceKey);
+    routes.set(nativeReferenceKey(binding.reference), binding.resourceKey);
+    const existing = entries.get(binding.entry.id);
+    if (existing) nativeSame(binding.entry, existing, "joined native ABI entry differs from its existing owner");
+    else {
+      abi.plan(binding.entry);
+      entries.set(binding.entry.id, binding.entry);
+    }
+  }
+  abi.sealPlan();
+}
+
+function nativeSupplementalOrder(program: PreparedIrProgram): number {
+  const anchor = preparedIrRuntimeAbiAnchor(program.inventory);
+  let order = 0;
+  for (const entry of program.abi.entries)
+    if (entry.plan.order.sourceOrder === anchor.order) order = Math.max(order, entry.plan.order.declarationOrder + 1);
+  if (!Number.isSafeInteger(order)) nativeInvalid("native supplemental order overflow");
+  return order;
+}
+
+function nativeFormatterLayoutSetup(
+  program: PreparedIrProgram,
+  options: PreparedIrBackendOptions,
+  requirements: NativeNumberFormatRequirements,
+): PhysicalNativeStringSetup {
+  const resources = planNativeNumberFormatStringLayout(requirements, options.utf8Storage);
+  const scratch = planNativeNumberFormatScratch(requirements, resources.key, resources);
+  const baseOrder = nativeSupplementalOrder(program);
+  const entries = new Map(program.abi.entries.map((row) => [row.plan.id, row]));
+  const abi = new ProgramAbiMap(program.inventory, program.derivedUnits);
+  for (const row of program.abi.entries) abi.plan(row.plan);
+  abi.sealPlan();
+  const context: NativeAbiContext = { program, resources, entries, abi };
+  const bindings: NativeStringValueAbiBinding[] = [];
+  for (const [index, declaration] of resources.declarations.entries()) {
+    const internal = internalNativeBinding(program, declaration, baseOrder + index);
+    const existing = program.abi.entries.find((row) => row.plan.id === internal.entry.id);
+    if (declaration === scratch.declaration) {
+      if (scratch.entry.structuralReferenceKey !== irTypeBindingKey(scratch.reference.binding))
+        nativeInvalid("formatter scratch structural key differs");
+      if (existing && canonicalEntry(entries, existing.plan.id)?.plan.id !== scratch.entry.id)
+        nativeInvalid("formatter layout has an independent required data root");
+      bindings.push({ resourceKey: declaration.key, entry: scratch.entry, reference: scratch.reference });
+      bindings.push({ ...internal, entry: scratch.entry });
+    } else {
+      if (
+        existing &&
+        declaration.space === "type" &&
+        preparedIrDataMismatch(declaration.role, ["string-type", "any"]) === undefined
+      ) {
+        if (internal.reference.kind !== "type") nativeInvalid("formatter AnyString reference is not a type");
+        nativeStringCarrier({ kind: "string", carrierRef: internal.reference }, context);
+      } else if (existing)
+        nativeSame(
+          existing.plan,
+          {
+            ...internal.entry,
+            order: existing.plan.order,
+            displayName: existing.plan.displayName,
+          },
+          "existing formatter layout entry contradicts its recipe",
+        );
+      bindings.push({ ...internal, entry: existing?.plan ?? internal.entry });
+    }
+  }
+  return { resources, bindings, formatterScratch: requirements.batch.scratch.type };
+}
+
+function formatterSymbolicType(
+  type: IrType,
+  requirements: NativeNumberFormatRequirements,
+  stringKey: string,
+): NativeDeclaredValType {
+  const keys = nativeStringTypeKeys(stringKey);
+  if (type.kind === "val" && !Object.hasOwn(type, "typeRef") && type.val.kind === "f64") return type.val;
+  if (type.kind === "string" && !Object.hasOwn(type, "carrierRef")) return { kind: "ref", typeKey: keys.any };
+  if (type.kind === "support-ref" && preparedIrDataMismatch(type, requirements.batch.scratch.type) === undefined)
+    return { kind: type.nullable ? "ref_null" : "ref", typeKey: keys.data };
+  return nativeInvalid("formatter signature contains a foreign or unsupported carrier");
+}
+
+function nativeFormatterSetup(
+  program: PreparedIrProgram,
+  strings: PhysicalNativeStringSetup,
+  requirements: NativeNumberFormatRequirements,
+): PhysicalNativeNumberFormatSetup {
+  const anchor = preparedIrRuntimeAbiAnchor(program.inventory);
+  if (anchor.id !== requirements.batch.sourceId) nativeInvalid("formatter source anchor differs");
+  const resources = planNativeNumberFormatPhysical(
+    requirements,
+    strings.resources.literalRequirements.key,
+    strings.resources,
+  );
+  const canonical = numberFormatRadixSupportDeclarations(anchor.id);
+  const adapters = NATIVE_ASYNC_CALLABLE_DECLARATIONS.filter((row) => row.feature === "async.native.number-to-string");
+  if (adapters.length !== 1) nativeInvalid("formatter native adapter contract is not unique");
+  const associations = [
+    ...canonical.kernels.map((row) => ({ ...row, origin: "support" as const })),
+    { ...canonical.implementation, role: "radix-body", origin: "support" as const },
+    { ...adapters[0]!, role: "native-to-string", origin: "intrinsic" as const },
+  ];
+  const bindings: NativeStringValueAbiBinding[] = [];
+  for (const association of associations) {
+    const declaration = declarationForRole(resources, ["number-format", association.role]);
+    if (declaration.space !== "function") nativeInvalid("formatter callable role does not name a function");
+    const id =
+      association.ref.binding.kind === "support"
+        ? association.ref.binding.bindingId
+        : preparedIrRuntimeCallableBindingId(program.inventory, association.ref);
+    const candidates = program.abi.entries.filter((row) => row.plan.id === id);
+    if (candidates.length !== 1) nativeInvalid("formatter callable is missing its unique existing ABI entry");
+    const { plan, contract } = candidates[0]!;
+    if (
+      plan.slotPolicy !== "required" ||
+      plan.slotSpace !== "function" ||
+      plan.intent.kind !== "callable" ||
+      plan.intent.origin !== association.origin ||
+      contract.kind !== "callable" ||
+      Object.hasOwn(contract, "promise")
+    )
+      nativeInvalid("formatter callable has a contradictory required contract");
+    if (association.origin === "support" && (plan.intent.origin !== "support" || plan.intent.sourceId !== anchor.id))
+      nativeInvalid("formatter support callable has a foreign source");
+    nativeSame(contract.ref, association.ref, "formatter callable reference differs");
+    nativeSame(contract.params, association.params, "formatter callable parameters differ");
+    nativeSame(contract.results, association.results, "formatter callable results differ");
+    nativeSame(
+      plan.structuralReferenceKey,
+      nativeReferenceKey(association.ref),
+      "formatter callable structural key differs",
+    );
+    nativeSame(
+      plan.intent.signature,
+      preparedIrCallableSignature(association.params, association.results),
+      "formatter callable signature intent differs",
+    );
+    nativeSame(
+      declaration.signature,
+      {
+        params: association.params.map((type) => formatterSymbolicType(type, requirements, resources.input.stringKey)),
+        results: association.results.map((type) =>
+          formatterSymbolicType(type, requirements, resources.input.stringKey),
+        ),
+      },
+      "formatter physical signature contradicts its semantic contract",
+    );
+    bindings.push({ resourceKey: declaration.key, entry: plan, reference: association.ref });
+  }
+  const baseOrder = nativeSupplementalOrder(program) + strings.resources.declarations.length;
+  if (!Number.isSafeInteger(baseOrder + resources.declarations.length))
+    nativeInvalid("formatter declaration order overflow");
+  for (const [index, declaration] of resources.declarations.entries()) {
+    if (bindings.some((row) => row.resourceKey === declaration.key)) continue;
+    const internal = internalNativeBinding(program, declaration, baseOrder + index);
+    const existing = program.abi.entries.find((row) => row.plan.id === internal.entry.id);
+    if (existing)
+      nativeSame(
+        existing.plan,
+        {
+          ...internal.entry,
+          order: existing.plan.order,
+          displayName: existing.plan.displayName,
+        },
+        "formatter internal resource contradicts an existing entry",
+      );
+    bindings.push({ ...internal, entry: existing?.plan ?? internal.entry });
+  }
+  if (new Set(bindings.map((row) => row.resourceKey)).size !== resources.declarations.length)
+    nativeInvalid("formatter ABI does not cover the complete resource recipe");
+  const support = bindings.find(
+    (row) => nativeReferenceKey(row.reference) === nativeReferenceKey(canonical.implementation.ref),
+  );
+  if (!support) nativeInvalid("formatter support body has no exact ABI association");
+  return {
+    resources,
+    bindings,
+    support: {
+      unitId: resources.supportUnitId,
+      reference: canonical.implementation.ref,
+      bindingId: support.entry.id,
+      resourceKey: support.resourceKey,
+      params: canonical.implementation.params.map((type) =>
+        type.kind === "val" ? type.val : nativeInvalid("non-scalar radix parameter"),
+      ),
+      results: canonical.implementation.results.map((type) =>
+        type.kind === "string" ? type : nativeInvalid("non-string radix result"),
+      ),
+    },
+  };
+}
+
 function physicalSignatureConverter(
   program: PreparedIrProgram,
   vectors: NativeVectorResourcePlan,
@@ -752,14 +1036,31 @@ export function planPhysicalSetup(
   options: PreparedIrBackendOptions,
   projection: PreparedIrProgramRuntimeProjection,
   native?: NativeStringValueReservationInput,
+  formatter?: PhysicalNativeNumberFormatInput,
 ): PhysicalSetupOutcome {
   const gaps = new Gaps();
   const physical = projection.prepared.functions;
   const bodies = new Map<IrUnitId, IrFunction>(physical.map((fn) => [fn.unitId, fn] as const));
   const entries = new Map<IrBindingId, PreparedIrAbiEntry>(program.abi.entries.map((entry) => [entry.plan.id, entry]));
   const vectors = planNativeVectorResources(program, options, projection);
-  const nativeStrings = native ? nativeStringSetup(program, options, projection, native) : undefined;
-  const nativeIds = new Set(nativeStrings?.bindings.map((row) => row.entry.id));
+  if (formatter) validateNativeNumberFormatInput(program, options, projection, formatter);
+  let nativeStrings = native ? nativeStringSetup(program, options, projection, native) : undefined;
+  if (formatter && !native) {
+    const sourcePlan = planNativeStringValuePhysical(collectNativeStringValueDemands(program, projection), {
+      representation: "native-string",
+      utf8Storage: options.utf8Storage,
+    });
+    if (sourcePlan.kind !== "none") {
+      if (sourcePlan.kind !== "planned") return sourcePlan;
+      nativeInvalid("formatter requires the actual source string reservation input");
+    }
+    nativeStrings = nativeFormatterLayoutSetup(program, options, formatter.requirements);
+  }
+  const nativeNumberFormat =
+    formatter && nativeStrings ? nativeFormatterSetup(program, nativeStrings, formatter.requirements) : undefined;
+  const nativeBindings = [...(nativeStrings?.bindings ?? []), ...(nativeNumberFormat?.bindings ?? [])];
+  if (nativeBindings.length) sealNativeBindingPlan(program, nativeBindings);
+  const nativeIds = new Set(nativeBindings.map((row) => row.entry.id));
   const convert = physicalSignatureConverter(program, vectors, gaps, nativeStrings);
 
   // 1. Function slots: one per physical body, signature from the body's own ABI contract.
@@ -878,18 +1179,18 @@ export function planPhysicalSetup(
     ...functions.map((slot) => irCallableBindingKey({ kind: "unit", unitId: slot.unitId })),
     ...importedFunctions.map((fn) => fn.referenceKey),
     ...(vectors.helper ? [vectors.helper.referenceKey] : []),
-    ...(nativeStrings?.bindings
-      .filter((row) => row.reference.kind === "func")
-      .map((row) => nativeReferenceKey(row.reference)) ?? []),
+    ...nativeBindings.filter((row) => row.reference.kind === "func").map((row) => nativeReferenceKey(row.reference)),
   ]);
   const reservedGlobals = new Set<string>([
     ...[...importedGlobals, ...definedGlobals].map((global) => global.referenceKey),
-    ...(nativeStrings?.bindings
-      .filter((row) => row.reference.kind === "global")
-      .map((row) => nativeReferenceKey(row.reference)) ?? []),
+    ...nativeBindings.filter((row) => row.reference.kind === "global").map((row) => nativeReferenceKey(row.reference)),
   ]);
   let exceptionRequired = vectors.exceptionRequired;
-  for (const fn of physical) {
+  for (const fn of [...physical, ...(formatter ? formatter.support.functions : [])]) {
+    const diagnosticUnit =
+      formatter && fn === formatter.support.functions[0]
+        ? formatter.requirements.calls.find((row) => row.view === "projection")!.ownerUnitId
+        : fn.unitId;
     for (const buffer of [
       ...fn.blocks.map((block) => block.instrs),
       ...(fn.asyncPlan?.states.map((s) => s.body) ?? []),
@@ -901,19 +1202,20 @@ export function planPhysicalSetup(
             if (!reserved.has(irCallableBindingKey(ref.binding))) {
               gaps.add(
                 `body ${fn.name} references ${ref.binding.kind} callable ${ref.name} that the plan cannot reserve`,
-                fn.unitId,
+                diagnosticUnit,
               );
             }
           } else if (instruction.kind === "global.get" || instruction.kind === "global.set") {
             if (!reservedGlobals.has(irGlobalBindingKey(instruction.target.binding))) {
               gaps.add(
                 `body ${fn.name} references global ${instruction.target.name} that the plan cannot reserve`,
-                fn.unitId,
+                diagnosticUnit,
               );
             }
           } else if (instruction.kind === "intrinsic") {
             const provider = instruction.provider;
-            if (!provider) gaps.add(`body ${fn.name} intrinsic ${instruction.id} has no physical provider`, fn.unitId);
+            if (!provider)
+              gaps.add(`body ${fn.name} intrinsic ${instruction.id} has no physical provider`, diagnosticUnit);
             else if (
               !(
                 nativeStrings &&
@@ -927,7 +1229,7 @@ export function planPhysicalSetup(
             ) {
               gaps.add(
                 `body ${fn.name} intrinsic ${instruction.id} needs ${provider.kind} provider materialization`,
-                fn.unitId,
+                diagnosticUnit,
               );
             }
           } else if (instruction.kind === "throw" || instruction.kind === "try") {
@@ -991,6 +1293,7 @@ export function planPhysicalSetup(
     exceptionTag: { required: exceptionRequired || options.sharedExceptionTag, shared: options.sharedExceptionTag },
     vectors,
     ...(nativeStrings ? { nativeStrings } : {}),
+    ...(nativeNumberFormat ? { nativeNumberFormat } : {}),
     importedFunctions,
     importedGlobals,
     definedGlobals,
