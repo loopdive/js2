@@ -5,6 +5,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setImmediate } from "node:timers/promises";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const checker = resolve(repository, "scripts/check-compiler-boundaries.mjs");
@@ -96,8 +97,11 @@ function fixture(sources: Record<string, string> = {}) {
   };
   return { root, policy, put, run };
 }
-afterEach(() => {
+afterEach(async () => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  // Synchronous checker subprocesses must not starve worker result acknowledgments
+  // for the entire control population. Keep every assertion and timeout unchanged.
+  await setImmediate();
 });
 const codes = (result: ReturnType<ReturnType<typeof fixture>["run"]>) =>
   result.report.errors.map((error: { code: string }) => error.code);
@@ -211,6 +215,8 @@ it("keeps formatter support contracts and the canonical type factory mandatory",
         "src/runtime/wasmgc/values/number-ryu-signatures.ts",
         "src/runtime/wasmgc/values/number-format-bodies.ts",
         "src/runtime/wasmgc/values/number-format-radix-bodies.ts",
+        "src/runtime/wasmgc/values/string-concat-bodies.ts",
+        "src/runtime/wasmgc/values/stdout-bodies.ts",
       ],
     ],
     [
@@ -226,7 +232,7 @@ it("keeps formatter support contracts and the canonical type factory mandatory",
     expect(layer).toMatchObject({ status: "active", required: true });
     expect(layer.entries).toEqual(expect.arrayContaining(paths));
     expect(layer.minModules).toBeGreaterThanOrEqual(
-      layerId === "backend-wasmgc" ? 14 : layerId === "native-runtime" ? 29 : 18,
+      layerId === "backend-wasmgc" ? 14 : layerId === "native-runtime" ? 31 : 18,
     );
     if (layerId === "ir-program") expect(layer.minModules).toBeGreaterThanOrEqual(19);
     for (const path of paths) {
@@ -264,6 +270,8 @@ for (const [layerId, path] of [
   ["native-runtime", "src/runtime/wasmgc/values/number-ryu-signatures.ts"],
   ["native-runtime", "src/runtime/wasmgc/values/number-format-bodies.ts"],
   ["native-runtime", "src/runtime/wasmgc/values/number-format-radix-bodies.ts"],
+  ["native-runtime", "src/runtime/wasmgc/values/string-concat-bodies.ts"],
+  ["native-runtime", "src/runtime/wasmgc/values/stdout-bodies.ts"],
 ] as const) {
   it.each(["delete", "demote", "type-import", "value-import"] as const)(
     `formatter boundary ${path} rejects %s after its positive control`,

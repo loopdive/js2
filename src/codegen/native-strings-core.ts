@@ -18,9 +18,11 @@
  * to the pre-split inline blocks (verified via `prove-emit-identity`).
  */
 import type { Instr, ValType } from "../ir/types.js";
+import type { WasmFunction } from "../wasm/model/module-records.js";
 import {
   buildStringCopyTreeDefinition,
   buildStringFlattenDefinition,
+  type StringFlattenResources,
 } from "../runtime/wasmgc/values/string-flatten-bodies.js";
 import { buildStringUtf8ToFlatDefinition } from "../runtime/wasmgc/values/string-utf8-decode-bodies.js";
 import { flushLateImportShifts } from "./expressions/late-imports.js";
@@ -42,6 +44,9 @@ import type { NativeStrShared } from "./native-strings-shared.js";
  */
 export function emitStrFlattenHelpers(shared: NativeStrShared): void {
   const { ctx, strTypeIdx, strDataTypeIdx, anyStrTypeIdx, consStrTypeIdx, strRef, flatStrRef, strDataRef } = shared;
+  let copyTreeFunction: WasmFunction;
+  let copyTreeWorklistType: number;
+  let utf8Decoder: StringFlattenResources["utf8Decoder"] = { kind: "absent" };
 
   // --- $__str_copy_tree(node: ref $AnyString, buf: ref $__str_data, pos: i32) -> i32 ---
   // Iteratively copies rope tree into a flat buffer. Returns next write position.
@@ -78,15 +83,17 @@ export function emitStrFlattenHelpers(shared: NativeStrShared): void {
     //   wlTop(8): i32 — number of items currently on the worklist
     //   newWl(9): ref_null $AnyString_arr — scratch slot for grow-on-push reallocation (#1184)
 
-    const definition = buildStringCopyTreeDefinition(ctx, wlArrTypeIdx);
-
-    pushDefinedFunc(ctx, funcIdx, {
+    // Reserve the actual function object in its historical slot. It is pending,
+    // not executable, until the optional decoder has been registered below.
+    copyTreeWorklistType = wlArrTypeIdx;
+    copyTreeFunction = {
       name: "__str_copy_tree",
       typeIdx,
-      locals: definition.locals,
-      body: definition.body,
+      locals: [],
+      body: [],
       exported: false,
-    });
+    };
+    pushDefinedFunc(ctx, funcIdx, copyTreeFunction);
   }
 
   // #1588 PR-B part 2: $__str_utf8_to_flat(u: ref $Utf8String) -> ref $NativeString
@@ -111,7 +118,14 @@ export function emitStrFlattenHelpers(shared: NativeStrShared): void {
       body: definition.body,
       exported: false,
     });
+    utf8Decoder = { kind: "present", handle: funcIdx };
   }
+
+  // Fill the same pushed object once, using only the decoder minted above.
+  // A decoder construction failure propagates before any completion is claimed.
+  const copyTreeDefinition = buildStringCopyTreeDefinition(ctx, copyTreeWorklistType, utf8Decoder);
+  copyTreeFunction.locals = copyTreeDefinition.locals;
+  copyTreeFunction.body = copyTreeDefinition.body;
 
   // --- $__str_flatten(s: ref $AnyString) -> ref $NativeString ---
   // If s is already a FlatString, returns it. Otherwise flattens the rope tree.
@@ -131,8 +145,6 @@ export function emitStrFlattenHelpers(shared: NativeStrShared): void {
     ctx.funcMap.set("__str_flatten", funcIdx);
 
     const copyTreeIdx = ctx.nativeStrHelpers.get("__str_copy_tree")!;
-    // #1588 PR-B part 2: present iff --utf8-storage is on.
-    const utf8ToFlatIdx = ctx.nativeStrHelpers.get("__str_utf8_to_flat");
 
     // params: s(0)
     // locals: len(1), buf(2)
@@ -142,10 +154,7 @@ export function emitStrFlattenHelpers(shared: NativeStrShared): void {
     const definition = buildStringFlattenDefinition(ctx, {
       copyTree: copyTreeIdx,
       emptyLiteralGlobalIndex: emptyInstrs[0].index,
-      utf8Decoder:
-        ctx.utf8Storage && ctx.utf8StrTypeIdx >= 0 && utf8ToFlatIdx !== undefined
-          ? { kind: "present", handle: utf8ToFlatIdx }
-          : { kind: "absent" },
+      utf8Decoder,
     });
 
     pushDefinedFunc(ctx, funcIdx, {

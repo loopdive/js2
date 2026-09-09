@@ -116,7 +116,12 @@ function flattenConsBody(
 export function buildStringCopyTreeDefinition(
   layout: NativeStringLayout,
   worklistTypeIndex: number,
+  utf8Decoder: StringFlattenResources["utf8Decoder"],
 ): { locals: LocalDef[]; body: Instr[] } {
+  const utf8Indices = utf8Decoder.kind === "present" ? [layout.utf8StrTypeIdx, layout.utf8StrDataTypeIdx] : [];
+  for (const index of utf8Indices)
+    if (!Number.isSafeInteger(index) || index < 0)
+      throw new Error("native string copy tree: decoder requires UTF8 layout");
   const { nativeStrTypeIdx: strTypeIdx, nativeStrDataTypeIdx: strDataTypeIdx, anyStrTypeIdx, consStrTypeIdx } = layout;
   const wlArrTypeIdx = worklistTypeIndex;
   const wlArrRefNull: ValType = { kind: "ref_null", typeIdx: wlArrTypeIdx };
@@ -225,6 +230,25 @@ export function buildStringCopyTreeDefinition(
                   op: "loop",
                   blockType: { kind: "empty" },
                   body: [
+                    // Normalize UTF8 at every descent, including popped right children.
+                    ...(utf8Decoder.kind === "present"
+                      ? ([
+                          { op: "local.get", index: CUR },
+                          { op: "ref.as_non_null" },
+                          { op: "ref.test", typeIdx: layout.utf8StrTypeIdx },
+                          {
+                            op: "if",
+                            blockType: { kind: "empty" },
+                            then: [
+                              { op: "local.get", index: CUR },
+                              { op: "ref.as_non_null" },
+                              { op: "ref.cast", typeIdx: layout.utf8StrTypeIdx },
+                              { op: "call", funcIdx: utf8Decoder.handle },
+                              { op: "local.set", index: CUR },
+                            ],
+                          },
+                        ] satisfies Instr[])
+                      : []),
                     // if cur is FlatString: br to end of inner block (depth 1)
                     { op: "local.get", index: CUR },
                     { op: "ref.as_non_null" },

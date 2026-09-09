@@ -245,9 +245,11 @@
         "src/runtime/wasmgc/values/number-ryu-to-buffer.ts",
         "src/runtime/wasmgc/values/number-ryu-signatures.ts",
         "src/runtime/wasmgc/values/number-format-bodies.ts",
-        "src/runtime/wasmgc/values/number-format-radix-bodies.ts"
+        "src/runtime/wasmgc/values/number-format-radix-bodies.ts",
+        "src/runtime/wasmgc/values/string-concat-bodies.ts",
+        "src/runtime/wasmgc/values/stdout-bodies.ts"
       ],
-      "minModules": 29
+      "minModules": 31
     },
     {
       "id": "standalone-platform",
@@ -486,6 +488,11 @@
     }
   ],
   "activationHistory": [
+    {
+      "layer": "native-runtime",
+      "entries": ["src/runtime/wasmgc/values/string-concat-bodies.ts", "src/runtime/wasmgc/values/stdout-bodies.ts"],
+      "minModules": 2
+    },
     {
       "layer": "backend-wasmgc",
       "entries": ["src/backend/wasmgc/resources/native-number-format.ts"],
@@ -1394,6 +1401,16 @@
       "destination": "frontend-ts",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate the existing mixed source-preparation type and stdlib template dependencies from the canonical typed support producer. The broader src/frontend/ts/index.ts boundary remains unfulfilled."
+    },
+    {
+      "path": "src/runtime/wasmgc/values/string-concat-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/stdout-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
     },
     {
       "path": "src/runtime/wasmgc/values/closure-layouts.ts",

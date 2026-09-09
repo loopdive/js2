@@ -10,6 +10,7 @@
  * operand.
  */
 import type { Instr, ValType } from "../ir/types.js";
+import { buildStringBatchedConcatDefinition } from "../runtime/wasmgc/values/string-concat-bodies.js";
 import { ts } from "../ts-api.js";
 import { isStringType } from "../checker/type-mapper.js";
 import type { CodegenContext } from "./context/types.js";
@@ -24,7 +25,6 @@ import { STRING_CONCAT_MANY_NATIVE_ARITY } from "../ir/runtime-manifest.js";
 // authority and both readers derive from it.
 const MIN_BATCHED_CONCAT_ARITY = STRING_CONCAT_MANY_NATIVE_ARITY.min;
 const MAX_BATCHED_CONCAT_ARITY = STRING_CONCAT_MANY_NATIVE_ARITY.max;
-const FLAT_CONCAT_LIMIT = 64;
 
 /** Flatten only `+` subtrees whose TypeScript result is already a string. */
 export function collectConcatOperands(ctx: CodegenContext, expression: ts.Expression): ts.Expression[] {
@@ -70,125 +70,19 @@ export function ensureNativeBatchedConcat(ctx: CodegenContext, arity: number): n
   const funcIdx = mintDefinedFunc(ctx);
   ctx.nativeStrHelpers.set(helperName, funcIdx);
 
-  // Params: operand0..operandN-1.
-  // Locals: totalLen(N), output(N+1), offset(N+2).
-  const totalLenLocal = arity;
-  const outputLocal = arity + 1;
-  const offsetLocal = arity + 2;
-  const body: Instr[] = [];
-  // (#4394) Null-carrier ToString guard. A statically-string-typed operand can
-  // carry the null $AnyString sentinel at runtime — the JS `undefined` of a
-  // missing property/param that flowed through a string-typed slot (the #3548
-  // carrier convention; e.g. `expectedErrorConstructor.name` in the test262
-  // asyncHelpers, JSDoc-typed `string`). The length sum below would trap on it
-  // ("dereferencing a null pointer in __str_concat_N"). §7.1.17 ToString of
-  // that carrier is "undefined", so substitute exactly that — never the empty
-  // string, which would silently corrupt the concatenation.
-  for (let index = 0; index < arity; index++) {
-    body.push(
-      { op: "local.get", index },
-      { op: "ref.is_null" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [...nativeStringLiteralInstrs(ctx, "undefined"), { op: "local.set", index }],
-      },
-    );
-  }
-  body.push({ op: "i32.const", value: 0 });
-  for (let index = 0; index < arity; index++) {
-    body.push({ op: "local.get", index }, { op: "struct.get", typeIdx: anyStrTypeIdx, fieldIdx: 0 }, { op: "i32.add" });
-  }
-  body.push(
-    { op: "local.tee", index: totalLenLocal },
-    { op: "i32.const", value: FLAT_CONCAT_LIMIT },
-    { op: "i32.lt_u" },
-  );
-
-  const flatArm: Instr[] = [];
-  for (let index = 0; index < arity; index++) {
-    flatArm.push(
-      { op: "local.get", index },
-      { op: "ref.test", typeIdx: strTypeIdx },
-      { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index },
-          { op: "call", funcIdx: flattenIdx },
-          { op: "local.set", index },
-        ],
-      },
-    );
-  }
-  flatArm.push(
-    { op: "local.get", index: totalLenLocal },
-    { op: "array.new_default", typeIdx: strDataTypeIdx },
-    { op: "local.set", index: outputLocal },
-    { op: "i32.const", value: 0 },
-    { op: "local.set", index: offsetLocal },
-  );
-  for (let index = 0; index < arity; index++) {
-    flatArm.push(
-      { op: "local.get", index: outputLocal },
-      { op: "ref.as_non_null" },
-      { op: "local.get", index: offsetLocal },
-      { op: "local.get", index },
-      { op: "ref.cast", typeIdx: strTypeIdx },
-      { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 },
-      { op: "local.get", index },
-      { op: "ref.cast", typeIdx: strTypeIdx },
-      { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 },
-      { op: "local.get", index },
-      { op: "struct.get", typeIdx: anyStrTypeIdx, fieldIdx: 0 },
-      { op: "array.copy", dstTypeIdx: strDataTypeIdx, srcTypeIdx: strDataTypeIdx },
-    );
-    if (index + 1 < arity) {
-      flatArm.push(
-        { op: "local.get", index: offsetLocal },
-        { op: "local.get", index },
-        { op: "struct.get", typeIdx: anyStrTypeIdx, fieldIdx: 0 },
-        { op: "i32.add" },
-        { op: "local.set", index: offsetLocal },
-      );
-    }
-  }
-  flatArm.push(
-    { op: "local.get", index: totalLenLocal },
-    { op: "i32.const", value: 0 },
-    { op: "local.get", index: outputLocal },
-    { op: "ref.as_non_null" },
-    { op: "struct.new", typeIdx: strTypeIdx },
-  );
-
-  // Preserve the exact existing left-associated concat/rope behaviour for
-  // longer results. Only the short-string allocation path changes.
-  const pairwiseArm: Instr[] = [
-    { op: "local.get", index: 0 },
-    { op: "local.get", index: 1 },
-    { op: "call", funcIdx: concatIdx },
-  ];
-  for (let index = 2; index < arity; index++) {
-    pairwiseArm.push({ op: "local.get", index }, { op: "call", funcIdx: concatIdx });
-  }
-
-  body.push({
-    op: "if",
-    blockType: { kind: "val", type: strRef },
-    then: flatArm,
-    else: pairwiseArm,
+  // Preserve each null guard's literal production after registration, in operand order.
+  const undefinedLiterals: Instr[][] = [];
+  for (let index = 0; index < arity; index++) undefinedLiterals.push(nativeStringLiteralInstrs(ctx, "undefined"));
+  const definition = buildStringBatchedConcatDefinition({ strTypeIdx, strDataTypeIdx, anyStrTypeIdx }, arity, {
+    flattenIdx,
+    concatIdx,
+    undefinedLiterals,
   });
-
   pushDefinedFunc(ctx, funcIdx, {
     name: helperName,
     typeIdx,
-    locals: [
-      { name: "totalLen", type: { kind: "i32" } },
-      { name: "output", type: { kind: "ref_null", typeIdx: strDataTypeIdx } },
-      { name: "offset", type: { kind: "i32" } },
-    ],
-    body,
+    locals: definition.locals,
+    body: definition.body,
     exported: false,
   });
   return funcIdx;

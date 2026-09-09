@@ -6,7 +6,11 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
-import { projectDecoder } from "../scripts/verify-native-scanner-source-preservation.mjs";
+import {
+  projectDecoder,
+  projectCopyTreeUtf8,
+  projectFlattenAdapterStaging,
+} from "../scripts/verify-native-scanner-source-preservation.mjs";
 import { nativeStringFlattenDonor } from "./fixtures/issue-3518-native-string-flatten-donor.js";
 import { createEmptyModule } from "../src/ir/types.js";
 import type { Instr } from "../src/wasm/model/instructions.js";
@@ -25,6 +29,10 @@ import {
 } from "../src/backend/wasmgc/resources/native-string-flatten.js";
 
 const read = (path: string) => readFileSync(new URL("../" + path, import.meta.url), "utf8");
+function projectedFlattenSource(path: string, project: typeof projectCopyTreeUtf8): string {
+  const url = new URL("../" + path, import.meta.url).href;
+  return project(read(path), url, url, (s: string) => createHash("sha256").update(s).digest("hex")).text;
+}
 const parse = (text: string) => ts.createSourceFile("receipt.ts", text, ts.ScriptTarget.Latest, true);
 function functionNode(sf: ts.SourceFile, name: string): ts.FunctionDeclaration {
   const fn = sf.statements.find(
@@ -304,7 +312,14 @@ describe("mandatory live flatten donor reconstruction", () => {
   const adapterPath = "src/codegen/native-strings-core.ts",
     flattenPath = "src/runtime/wasmgc/values/string-flatten-bodies.ts",
     decoderPath = "src/runtime/wasmgc/values/string-utf8-decode-bodies.ts";
-  const current = () => [read(adapterPath), read(flattenPath), read(decoderPath)] as const;
+  // First authenticate and invert only the two approved semantic/staging deltas.
+  // The original donor, wrapper/header, token and comment controls below remain unchanged.
+  const current = () =>
+    [
+      projectedFlattenSource(adapterPath, projectFlattenAdapterStaging),
+      projectedFlattenSource(flattenPath, projectCopyTreeUtf8),
+      read(decoderPath),
+    ] as const;
   const verify = (rows: readonly [string, string, string]) =>
     expect(receipt(reconstruct(...rows))).toBe(receipt(nativeStringFlattenDonor));
   it("retains all three donor functions, nested bodies, locals, comments and registration order", () => {
@@ -805,8 +820,8 @@ describe("exact approved decoder offset delta", () => {
       expect(
         receipt(
           reconstruct(
-            read("src/codegen/native-strings-core.ts"),
-            read("src/runtime/wasmgc/values/string-flatten-bodies.ts"),
+            projectedFlattenSource("src/codegen/native-strings-core.ts", projectFlattenAdapterStaging),
+            projectedFlattenSource("src/runtime/wasmgc/values/string-flatten-bodies.ts", projectCopyTreeUtf8),
             source,
           ),
         ),

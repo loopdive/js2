@@ -307,3 +307,115 @@ Post-cleanup formatting passed in 87755; an accidental ESLint invocation
 failed because this repository uses Biome, not an ESLint configuration. That
 command did not run the chained TS7 check. The correct Biome/TS7 check replaces
 it; no lint configuration or policy was changed.
+
+The correct post-cleanup Biome and TS7 run 87104 exited zero. Normal commit
+43444 produced 66e339b7b697330bbed5692eb0de4188b1193caa; changed-root was
+explicitly skipped for 102 files, not passed. Push 39139 exited zero with
+18/18 numeric parity tests and all normal gates. GitHub independently confirmed
+that exact head on open, non-draft, held #5798 targeting #5797's branch.
+
+## E1 composition and E2 dispatch preparation
+
+The integration tree now has an uncommitted merge of published E1
+03d0615e34da8629971659d8c5937b8483f57643 into 66e339b7b6. Only issue-history
+append and policy-file classification conflicts occurred. Both complete issue
+histories and all parent policy fields/classifications were preserved; a
+read-only structural comparison confirmed exactly two added classifications.
+Subsequent parent-owned activation adds those two runtime modules as mandatory
+roots, raises native-runtime's floor from 29 to 31, retains all prior activation
+history/allowed edges, and adds eight delete/demote/type/value-import controls.
+This activation is authored but not yet validated. Source E1 content is not
+rewritten by composition. No full-graph closure or retirement is inferred.
+
+Maxwell's read-only E2 proposal identifies binary string.concat as the first
+resource refusal and covers required arity-5 concat and stdout append/prepare/
+char. It requires one independently shared flatten owner, not fabricated
+scanner/unbox demand. High is freezing the exact implementation APIs, explicit
+empty-identity option, canonical literal requirements and authority controls.
+The proposed four production paths/two tests are not yet dispatched for source
+implementation; parent retains ABI/consumer/options/boundary ownership.
+
+Hilbert was granted the exclusive heavy validation slot after parent push.
+Parent requested a terminal handle or explicit release before running E1
+composition tests or normal commit/push; no concurrent heavy run is authorized.
+
+Hilbert explicitly released the slot after test 4029 exited zero (172/172);
+its TS7 40649 predates two test-only repairs, so final TS7 remains his obligation.
+Parent composition run 46969 passed formatting/TS7 and all 504 assertions in
+eight suites, but exited 1 due to a Vitest worker RPC onTaskUpdate timeout
+(one unhandled error). This is not clean validation. The unchanged eight-suite
+selection is being rerun with one worker and no file parallelism; no assertion,
+test timeout, source or gate was weakened. The original failure is retained.
+
+Single-worker retry 44850 also exited 1: 504/504 assertions, eight files, one
+unhandled onTaskUpdate RPC timeout, 438.26 seconds. Concurrency is not a sufficient
+explanation. The installed Vitest transport uses a 60-second request deadline;
+the error is a worker-to-runner task-report acknowledgement failure, not a test
+assertion diagnostic. The specific suite/cause remains unassigned. No third
+blind whole-selection rerun or timeout/config/dependency change is authorized
+by this observation. Next diagnostic is isolated suite execution with unchanged
+assertions, beginning with the synchronous boundary controls and a separate
+non-boundary selection after the heavy slot is returned.
+
+Parent released the heavy slot to Hilbert for final TS7 and normal staged-closure
+publication. Parent read the full final staged contract and production diff;
+bounded source review found no new defect beyond High's approved test repairs.
+The correct stack base is #5798; this is not permission to land incomplete async
+resources on main. Actual effective host git config currently has Thomas author
+but no signing configuration; recent normal parent commit 66e339 has no gpgsig.
+No agent may invent a signing key or disable signing to work around that fact.
+
+E2 contract f33688ecd6c5bea50e7f41be537776343ce13007afa9ba4a9a4fc2dc35b502d8
+was read in full and copied byte-exact into this worktree. Canonical claim 32902
+exited zero with verified ownership, and Maxwell was dispatched on the exact
+six-file scope. The string-values aggregate is byte-identical at published E1
+and 66e339; final E2 source-family validation must include the current integration.
+E2 implementation can progress while E1's reporting failure is diagnosed; the
+pending composition is not a clean validation or published checkpoint.
+
+Isolated unchanged boundary run 44353 reproduced the same reporting failure:
+116/116 assertions, one onTaskUpdate RPC timeout, exit 1, 62.77 seconds. This
+attributes the problem to that suite without relying on the aggregate report.
+Its checker subprocesses and afterEach cleanup are entirely synchronous. High
+approved the existing semantic-provider boundary suite's scheduling-only pattern:
+retain cleanup, then await node:timers/promises setImmediate between tests.
+Parent applied only that import/async-afterEach/yield/comment; no assertions,
+fixture handling or timeouts changed. Amended isolated run 39986 is pending.
+
+Staged closure #5803 is independently verified open/non-draft/held against #5798
+at 7482ce3d2fc68588ff594e911a6d3a83ff493f13, exactly nine files. Worker final
+TS7 11727, normal commit 88977 and push 31714 exited zero; scoped tests were
+172/172 and hook parity 18/18. The heavy slot was explicitly released and is
+now with parent. Clarification: repository TS7 includes only src and excludes
+tests; it is source typechecking, not typechecking of the two test repairs.
+Their runtime assertion evidence is the actual 172/172 result.
+
+Amended isolated boundary run 39986 exited zero: 116/116, zero unhandled errors,
+62.55 seconds, versus unchanged 44353's 62.77 seconds and reporting failure.
+The yield is scheduling-only and retains all synchronous checker/cleanup behavior.
+Full original eight-file selection plus inventory is running as 34620; unlike
+the diagnostic retry it uses normal file parallelism. Formatting and Biome passed.
+No success for that aggregate is claimed before its terminal receipt.
+
+Parent also read the complete Lane B API proposal and integration decisions
+from published cf6ac354. High is now grounding a concrete B implementation delta
+against published staged closure 7482ce3, with typed publication obligations,
+single-owner timer constants/layouts, actual import/export occupancy and explicit
+tracking configuration. Missing C1/C2 invocation dependencies remain obligations,
+not placeholder bodies or permission to remove the async refusal.
+
+Full composition validation 34620 exited zero: normal file parallelism, all
+504/504 tests across the same eight suites, zero unhandled errors, 340.58 seconds.
+The subsequent inventory check against 66e339 exited zero with inventoryValid
+true, errors empty and architectureComplete false. This report inspected the
+actual pending-merge working tree; its sourceRevision field is the pre-merge
+HEAD, not a claim that E1 was already part of commit 66e339. Formatting and Biome
+also passed. Both earlier 504/504-plus-RPC-error runs remain failed receipts.
+
+The scheduling-only boundary repair therefore passes both isolated and composed
+controls without changing assertions, cases, timeouts, child handling, source or
+Vitest configuration. Canonical E1 production/test/proof content remains the
+published donor checkpoint except for the separately parent-owned boundary test.
+Normal integration commit/push is the next serialized operation. Full E2 source
+admission, native async execution, public default cutover and retirement remain
+unproven; the real source-string refusal is intentionally still exercised.
