@@ -11,6 +11,48 @@ reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-07
 loc-budget-allow:
+  # 2026-09-08 (S2e) — scope-discriminating the `defineProperty` sidecar key.
+  # The mechanism itself is the new module src/codegen/sidecar-owner-scope.ts;
+  # what lands in these four files is ONLY the wiring, and it has to sit on the
+  # exact `.add`/`.has` line it qualifies, because the whole defect is that the
+  # key and the binding it was recorded for were separated:
+  #   object-ops.ts              +3  record the owner where the key is added
+  #   expressions/assignment.ts  +3  same, for the destructuring-target writer
+  #   object-shape-widening.ts   +5  the two widening writers mark the key
+  #                                  UNSCOPED (they hold a name, not a node) —
+  #                                  that is what keeps their behaviour identical
+  #   property-access.ts         +4  the two READ guards
+  - src/codegen/object-ops.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/declarations/object-shape-widening.ts
+  - src/codegen/property-access.ts
+  # 2026-09-08 (S2d) — the standalone cross-module OBJECT boundary. The whole
+  # mechanism lives in the new module src/codegen/standalone-link-boundary.ts;
+  # what lands in object-runtime.ts is the two places the mechanism has to be
+  # WIRED, and both are wired next to their JS-host twin on purpose:
+  #   object-runtime.ts  +24  the peer-terminal registration (beside the
+  #                           `__boundary_object_*` late imports, which must all
+  #                           exist before the #1984 index-space freeze), the
+  #                           `??`-fallback on the two arms that already ask
+  #                           "this carrier is not mine, who can decode it?",
+  #                           and the one call that emits the provider-side
+  #                           terminals. Moving any of it away from the arm it
+  #                           guards would hide the ordering constraint its
+  #                           comment exists to document.
+  - src/codegen/object-runtime.ts
+  # 2026-09-08 (S2b) — the externref-backed-subclass family fix (own-field
+  # write/read + dynamic method dispatch on `class B extends Array`). Every
+  # entry is a net-new guarded arm plus the measurement that justifies it; the
+  # dispatch machinery itself lives in the new module
+  # src/codegen/standalone-subclass-method-install.ts, not in these files.
+  #   assignment.ts             +29  the unknown-backing write redirect (R6)
+  #   property-access-dispatch  +20  its READ twin (R6)
+  #   property-access.ts         +3  the backing-override parameter (R6)
+  #   class-bodies.ts            +8  the one call into the new module (R7)
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/property-access-dispatch.ts
+  - src/codegen/property-access.ts
+  - src/codegen/class-bodies.ts
   # 2026-09-07 (S2) — three more codegen fixes, each reduced from the exact
   # statement in the linked polyfill bundle that hit it (see "S2 findings"
   # below for the measurement behind each). Plain-path spelling: the gate's
@@ -42,6 +84,24 @@ loc-budget-allow:
     lines: 20
     reason: "#5383 S2 R4 — pre-register the `Math.<fn>` value-read substrate before the closure is built (#2704 forbids a first registration mid-body), which is why every Math value read kept the refusal body."
 func-budget-allow:
+  # 2026-09-08 (S2e) — the second sidecar READ guard lives inside this function,
+  # on the `isDynamicSidecarRead` line it qualifies. Moving it out would separate
+  # the key from the binding check, which is the defect being fixed.
+  - src/codegen/property-access.ts::compileElementAccessBody
+  # 2026-09-08 (S2d) — same wiring, same argument: `ensureObjectRuntime` is
+  # where every dynamic terminal is registered and where the late-import freeze
+  # point is, so the peer registration and the terminal emission cannot move out
+  # of it without moving away from the constraint they depend on.
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
+  # 2026-09-08 (S2b) — both grants are a guarded ARM added to an existing
+  # dispatch cascade, in the one place the cascade's order is load-bearing: the
+  # write redirect must sit between the externref-backed check and the struct
+  # path, and the read twin must sit between the own-field read and the struct
+  # ladder. Lifting either into a helper would move the arm away from the
+  # ordering constraint its comment exists to document, and would not shrink
+  # the cascade — the call would still be a line in the same place.
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
+  - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
   - src/codegen/builtin-value-read.ts::ensureStandaloneBuiltinStaticMethodClosure
   - path: src/codegen/builtin-value-read.ts::ensureStandaloneBuiltinStaticMethodClosure
     reason: "#5383 S2 R4 — the 8-line pre-registration hook plus its rationale; splitting a single call out of this dispatcher would hide the ordering constraint it exists to document."
@@ -374,3 +434,489 @@ The S2 smoke test from the plan (`buildTemporalProvider` +
 `Temporal.Duration.from({hours:1}).total("minutes") === 60`) is NOT written:
 it cannot pass while `__module_init` throws, and a skipped assertion would be
 worse than an honest gap.
+
+## S2b findings (2026-09-08) — the externref-backed subclass family, and the new stop
+
+The handover's suspect was right and INCOMPLETE. A property write on a
+`class … extends Array` instance does throw — that is R6 below — but fixing it
+alone changed nothing at the module level, because a second, larger defect sat
+behind it: **a user METHOD on such an instance is unreachable through any
+dynamic receiver**, and it fails SILENTLY, answering `null`. That silence is
+why `JSBI.subtract` was reached with a null: it is not where the null was made.
+
+Probe used throughout: the jsbi PREFIX of the linked bundle (28,942 B, up to
+`l=e.multiply(h,i);`) plus a handful of exported one-liners. It compiles in
+**5 s** against the whole file's ~45 s, exercises the same class, and is what
+made the iteration loop usable — the whole-file probe was only re-run to
+confirm each step.
+
+### R6 — own-field write/read on an externref-backed subclass instance
+
+`class B extends Array { constructor(n, s) { super(n); this.sign = s; } }`
+threw `TypeError: Cannot access property on null or undefined` at the write.
+
+Root cause: `compilePropertyAssignment` (`src/codegen/expressions/assignment.ts`)
+consults `externrefBackedOwnFieldBacking`, which knows two carriers —
+`$Error_struct` and a native `$Object` — and answers `undefined` for every
+other parent. On `undefined` the code FELL THROUGH to the struct.set path, and
+that path is unreachable-by-design here: the instance is a `$__vec_externref`
+and never a `$B`, so `ref.test $B` always misses, the receiver narrows to
+`ref.null $B`, and the #2084 null guard throws.
+
+The field only reaches that path because the constructor's own assignment
+FLOW-GROWS a `sign` slot onto the vestigial `$B` struct. The identical write
+from outside the class (`b.sign = 1`) finds no slot, takes the #4149
+`fieldIdx === -1` dynamic-store arm, and has always worked — so the class's own
+constructor was the one place the write failed. Fix: route the unknown-backing
+case to that SAME dynamic store, plus its read twin in
+`property-access-dispatch.ts` (scoped to keys that actually have a flow-grown
+slot, so a builtin member like `length` still reaches the array paths).
+
+### R7 — a method is unreachable through a dynamic receiver (the real blocker)
+
+| receiver spelling | `o.d(0)` before | after |
+| --- | --- | --- |
+| `var x = new B(1); x.d(0)` | 5 | 5 |
+| `function f(o) { return o.d(0); } f(b)` | **null** | 5 |
+| `new B(1).d(0)` | **null** | null (unchanged, see below) |
+
+A statically-typed receiver compiles to `call $B_d`. Anything the checker
+cannot pin — and jsbi's statics take UNANNOTATED parameters
+(`static toNumber(i) { … i.__unsignedDigit(0) … }`) — goes out through the
+dynamic terminal, which resolves a method by `ref.test`ing instance identity
+against each closed struct plus the open `$Object`. The carrier is none of
+those. The host lane's answer is `__set_subclass_proto`, a JS host import, so
+`emitSetSubclassProto` is a documented NO-OP standalone: nothing on the
+instance says "B".
+
+Measured consequence on the jsbi prefix, before the fix:
+`JSBI.toNumber(JSBI.BigInt(5))` → `null`, `JSBI.add(5,3)` → `null`,
+`JSBI.unaryMinus(x)` → `null`, `x.__copy()` → `null`. After: `5`, `8`,
+non-null, non-null. The polyfill's `Ne = xo(ke), xe = e.unaryMinus(Ne),
+Le = e.add(e.subtract(xe, l), n)` is one top-level statement; `unaryMinus`
+returned null and `subtract` reported it, five frames later.
+
+Two halves, both in the fix:
+
+1. **`standalone-subclass-method-install.ts` (new).** At construction, install
+   each declared instance method on the instance as an own data property at §17
+   attributes — the same closure singleton, `__defineProperty_value` and flags
+   `class-proto-object.ts` (#3976) uses for `C.prototype`. The dynamic
+   terminals already consult the carrier's own-property side table (#3537 vec
+   bag / #3468 closure bag).
+2. **The method trampoline's `this` slot** (`closures/method-trampolines.ts`).
+   Installing alone was not enough: the trampoline builds `this` by
+   `ref.test`ing `__current_this` against the method's object struct, so the
+   carrier failed that test too and every method ran with `this === null`
+   (`this[0]` threw, `this.sign` answered null). For a method whose declared
+   `this` is `externref` AND whose owner is externref-backed, the carrier is now
+   passed straight through. The #2025 absent-receiver TypeError is preserved and
+   tested.
+
+**Alternatives measured and rejected** (each would put the methods where the
+spec puts them, and each is a dead end today): `Object.setPrototypeOf(inst,
+B.prototype)` → the standalone dynamic member path does not consult an explicit
+prototype link on a non-`$Object` carrier, so the call still answers `null`;
+`inst.__proto__ = B.prototype` → same; leaning on `B.prototype` itself →
+`emitStandaloneClassProtoObject` explicitly DECLINES for a builtin-parent class,
+so it is still the legacy defaulted struct. The deviation shipped instead is
+that the methods are OWN rather than inherited (`hasOwnProperty("d")` answers
+`true`); they are non-enumerable, so `Object.keys` / `for-in` are unchanged.
+
+`extends Error` is EXCLUDED by measurement, not by policy: `__defineProperty_value`
+does not reach an `$Error_struct`'s `$props` side-slot, so such a class got
+5.8 kB of machinery and still answered "called value is not a function".
+Deleting that one line is the whole fix once the Error carrier's dynamic member
+path reads `$props`.
+
+### Byte A/B (`.tmp/ab-base.txt` vs `.tmp/ab-new2.txt`, sha256, 6 modules × 2 targets)
+
+**gc lane: all six byte-identical** (arith, plain class, `extends Array`,
+`extends Error`, object-literal method, Map/WeakMap). Standalone: **only the
+`extends Array` module changes**; arith, plain class, object-literal method,
+Map/WeakMap and — after the Error exclusion — `extends Error` are byte-identical.
+
+### Where `__module_init` stops NOW
+
+Not in jsbi any more. `TypeError: Cannot access property on null or undefined`
+at **4:94864**, which is
+`"formatToParts" in ai.prototype || delete DateTimeFormatImpl.prototype.formatToParts`
+— `ai` is `Intl.DateTimeFormat`, and standalone deliberately leaves the `Intl`
+identifier `ref.null.extern` (#5206: "a compiled shim for it is a separate, much
+larger gap"). The polyfill reads that namespace at top level in two places: the
+cache `ct = Intl.DateTimeFormat` at 4:10198 and this `.prototype` probe.
+
+An `Intl.<member>` → `undefined` arm was written and **reverted**: it clears the
+first read and the second one then throws on `.prototype`, so it moved the
+failure without removing it while changing standalone `Intl` semantics. Getting
+past this needs one of, in increasing order of honesty:
+
+1. the provider builder strips/stubs the Intl-dependent section of the polyfill
+   for standalone (a provider-side decision — the 66 Intl-dependent Temporal
+   rows are already out of scope per this issue's own plan);
+2. a standalone `Intl` namespace whose members are constructible refusal
+   closures carrying a real `.prototype` (the #5206 gap, properly);
+3. ICU in Wasm (out of scope, permanently, for this issue).
+
+Recommendation: **(1)**, as the S2 continuation — it is the only one that does
+not require deciding the `Intl` shim question to link Temporal.
+
+### Not reached (unchanged from S2)
+
+The S2 smoke test (`buildTemporalProvider` + `compileWithTemporalGlobal` +
+host-free `instantiateLinkedProject`) is still NOT written: `__module_init`
+still throws, and a skipped assertion is worse than an honest gap. Everything
+else in this slice is a test in
+`tests/issue-5383-standalone-temporal-provider.test.ts` (S2b R6 / S2b R7,
+9 cases, including the non-enumerability of the installed methods, the
+untouched element/length surface, an unaffected plain class, and the preserved
+absent-receiver TypeError).
+
+## S2c findings (2026-09-08) — the Intl shim; `__module_init` RETURNS; the stop moves to the getter boundary
+
+`__module_init` now **returns** under `--target standalone`, both as a plain
+`compileMulti` of the bundle and through `buildTemporalProvider`'s real link
+path. The S2 smoke test is still **not** written, and the reason is new and
+elsewhere: the `Temporal` object does not survive the linked-provider **getter
+boundary** on this lane.
+
+### R8 — the `Intl` refusal shim (`src/temporal-intl-shim.ts`, provider-local)
+
+S2b stopped at `"formatToParts" in ai.prototype`, because standalone leaves the
+`Intl` identifier null by decision (#5206). The fix is **lexical and
+provider-local**, not a codegen change: `buildTemporalProvider` writes the
+synthetic package's `index.js` as `<shim>\n<bundle>` when
+`compileOptions.target` is `standalone` or `wasi`, and verbatim otherwise.
+
+The shape is dictated by the polyfill's own EAGER uses, each measured:
+
+| polyfill line (top level) | what the shim must provide |
+| --- | --- |
+| `ct = Intl.DateTimeFormat`, `const ai = Intl.DateTimeFormat` | a constructor VALUE (`typeof === "function"`) |
+| `"formatToParts" in ai.prototype \|\| delete DateTimeFormatImpl.prototype.formatToParts` (and the `formatRangeToParts` twin) | a real `.prototype` carrying both names, so the answer is TRUE and the polyfill does **not** delete its own methods |
+| `di.supportedLocalesOf = ai.supportedLocalesOf` | any value; a static is fine (measured: a class static read as a VALUE answers `undefined` on this lane — harmless here, noted below) |
+| `const {format,formatToParts} = Intl.DurationFormat?.prototype ?? …` and `Intl.DurationFormat?.prototype && (…)` | `DurationFormat: undefined`, so both short-circuit |
+| `Intl.supportedValuesOf?.("timeZone")` (lazy, `hr`) | `supportedValuesOf: undefined` → the polyfill's own fallback, not a throw |
+
+Everything else — the constructor and every method on the prototype — throws a
+`RangeError` naming `--target standalone`. `DurationFormat`/`supportedValuesOf`
+are deliberately `undefined` rather than throwing bodies: every use of them is
+behind `?.` or `typeof … === "function"`, so a body would convert a graceful
+degradation (`Duration.prototype.toLocaleString` falls back to the ISO string)
+into a throw.
+
+**A module-scoped `const Intl` DOES shadow the builtin on this lane** — measured
+first, because the whole design depends on it: with the shim prepended,
+`typeof ct === "function"`, `"formatToParts" in ai.prototype` is `true`, and
+`new Intl.DateTimeFormat()` throws the shim's RangeError rather than reaching
+`tryCompileIntlHostOnlyNew` (#5355). Standalone `Intl` semantics for user code
+are unchanged: the binding lives in ONE compilation unit.
+
+The shim text is part of the provider's identity: `temporalProviderCacheKey`
+now fingerprints the EFFECTIVE source, so editing the shim re-keys the
+standalone artifact and a stale binary cannot be served. **Host lane A/B, run
+both ways in this worktree** (`.tmp/gc-ab.mts`, fresh cache per side):
+key `372a41be…`, artifact sha256 `acd6ff4d…`, 1,701,105 B — **identical** before
+and after.
+
+Whole-bundle measurement with the shim (`--target standalone`,
+`hostBridge: "off"`, `deferTopLevelInit: true`): 158,585 B of source (shim
+1,043 B + bundle 157,541 B) compiles in **44 s**; through `buildTemporalProvider`
+the artifact is **3,167,456 B** with an **empty** import list, and
+`__module_init` **RETURNS**.
+
+### Where it stops now — the getter boundary, not the polyfill
+
+Measured two ways, which is what localises it:
+
+| probe | `Object.keys(Temporal).length` |
+| --- | --- |
+| inside the standalone module itself (`Object.keys(qi)` appended to the bundle, after `__module_init`) | **9** |
+| through `compileWithTemporalGlobal` + `instantiateLinkedProject(result, {})`, standalone | **0** |
+| the same consumer probe on the host `gc` lane (control) | **9** (`Duration,Instant,Now,PlainDate,…`) |
+
+So the standalone consumer receives an object (`typeof` `"object"`,
+`String(...)` `[object Object]`, not null) with no own properties, and
+`Temporal.PlainDate` is `undefined` — hence
+`TypeError: Cannot read properties of undefined (reading 'from')` for both smoke
+assertions. `__module_init` ran (the linker calls it in `wireProviderInstance`)
+and the namespace IS populated inside the provider. **This is a standalone
+cross-module object-boundary defect and it is the next slice (S2d).**
+
+Two further stops sit BEHIND that one, found by driving the polyfill from
+inside its own module (so they are real, not boundary artifacts):
+
+- `Temporal.PlainDate.from("2024-01-01")` → `TypeError: Unsupported dynamic
+  regular expression pattern` — the polyfill parses ISO strings with a
+  dynamically-built RegExp, which the standalone RegExp backend refuses.
+- `Temporal.Duration.from({hours:1}).total("minutes")` and the
+  `new Temporal.Duration(…)` spelling → `TypeError: invalid receiver: method
+  called with the wrong type of this-object`.
+- `new Temporal.PlainDate(2024,1,1)` → `RangeError: invalid calendar identifier`.
+
+Fixing the boundary alone therefore will NOT make the two smoke assertions pass;
+S2d needs all three. Recording them now so the next lane does not re-derive them
+at 45 s per compile.
+
+### Two small measured facts worth not re-deriving
+
+- **A class STATIC read as a value answers `undefined`** on this lane
+  (`ai.supportedLocalesOf` where `ai` is a class with `static
+  supportedLocalesOf(){…}`). Harmless for the polyfill (it just copies the
+  value onto its own object), but it is not what the spec says.
+- **`Temporal.Now.timeZoneId()` answers `null` instead of throwing the shim's
+  RangeError.** The polyfill's `Uo()` is
+  `(new Intl.DateTimeFormat).resolvedOptions().timeZone`, and an isolated
+  reduction of that exact spelling — a `new`-expression chain whose result is
+  discarded by the caller — also swallowed the constructor's throw. The
+  direct spellings (`new Intl.DateTimeFormat()`, `const f = new …; f.m()`,
+  via an alias, with arguments) all throw correctly and are tests. The
+  swallowing shape is NOT fixed here; it is filed with the S2d work above,
+  and it is why the smoke test's "`Now.timeZoneId()` throws" assertion is not
+  written either.
+
+### Tests
+
+`tests/issue-5383-standalone-temporal-provider.test.ts` gains six S2c cases:
+the eager-use bitmask (all five shapes in one module), the lazy RangeError with
+its `--target standalone` text, a prototype-method refusal, the `gc` cache key
+recomputed from the raw bundle (the host-lane no-change guard), standalone/wasi
+keys distinct from `gc`, and the shim's own shape (one `const Intl`, prefixed
+binding).
+
+## S2d findings (2026-09-08) — the getter boundary, root-caused and fixed; the stop moves INSIDE the provider
+
+The S2 smoke test is still **not** written, and the reason moved again. What is
+fixed: the cross-module object boundary, end to end, on a reduction. What now
+stops Temporal is a provider-INTERNAL read, measured from both sides.
+
+### R9 — why a provider-minted object arrived empty (two causes, not one)
+
+**Cause 1 — the linker handed the consumer a JS host MIRROR.**
+`instantiateLinkedProviders` wrapped every non-function boundary value in
+`wrapLinkedProviderValue` → `_wrapForHost`, unconditionally. That mirror is
+bound to the provider's `__struct_field_names` / `__sget_*` exports, which a
+standalone binary does not have (#4035 strips the host bridge), and it is handed
+to a consumer that is **wasm** and cannot read a JS proxy at all. Fixed by
+skipping the mirror when the provider's own `targetProfile.environment` is not
+`"javascript"` — the raw struct now crosses.
+
+**Cause 2 — nothing on a standalone value says what it is.** With the raw struct
+crossing, every read still answered `undefined`: standalone has no
+self-describing property bag. `__extern_get` / `__object_keys` are module-local
+`ref.test` ladders over the struct types THAT module declared (filled at
+finalize), so a provider-minted struct misses every arm. The JS lane hides this
+because #5225's `_crossModuleStructs` registry re-points a read at the module
+that can decode it; there is no standalone twin.
+
+Fixed by building that twin in pure wasm (`src/codegen/standalone-link-boundary.ts`):
+a standalone provider whose consumer is wasm (`exportsConsumedByWasm`) publishes
+`__js2wasm_link_member_get` / `__js2wasm_link_object_keys` / `__js2wasm_link_apply`,
+and the consumer calls them on the arms where its own ladder has ALREADY missed
+— the same two arms the host lane's `__boundary_object_get` /
+`__boundary_object_keys` occupy, so neither lane grows an arm and the
+single-module lane is untouched.
+
+The two published reads are **wrappers, not re-exports**: each normalises "I do
+not know this value" to `ref.null.extern`. Without that the consumer would have
+to trust another module's `undefined` singleton, and the peer's empty key-vec
+would out-rank the consumer's own carrier bags. Both normalisations are
+answer-preserving (a genuinely-`undefined` property and a genuinely-empty object
+fall back to the consumer's local miss, which answers the same).
+
+**Measured** (`.tmp/s2d/probe3`, host-free `instantiateLinkedProject(result, {})`,
+three carrier shapes — object literal, assigned own props, `defineProperty`):
+
+| probe | base | after |
+| --- | --- | --- |
+| `Object.keys(NS).length` | 0 | **3** |
+| `NS.a` | `undefined` | **1** |
+| `NS.zzz === undefined` | true | true |
+| gc control | 3 / 1 | unchanged |
+
+Four cases in `tests/issue-5383-standalone-temporal-provider.test.ts`.
+
+Two things the facade does NOT yet cover, both measured: **calling a
+provider-minted closure** (`keysOf(NS)` → `null`) and `hasOwnProperty` / `in` /
+`for-in` for the non-`defineProperty` carriers — those terminals have their own
+miss arms and were left for a follow-up rather than guessed at.
+
+### Where it stops NOW — inside the provider, not at the boundary
+
+Through the real provider the consumer still reads nothing, and the reason is no
+longer the boundary. Measured with the terminals called directly from JS on the
+EXACT value the consumer holds (identity checked, `.tmp/s2d/temporal-probe`):
+
+- `__js2wasm_link_object_keys(Temporal)` → **non-null** (the provider enumerates
+  its own namespace fine — 9 keys);
+- `__js2wasm_link_member_get(Temporal, <consumer-minted "PlainDate">)` → **null**,
+  and with the normalisation disabled it is the provider's own `undefined`
+  singleton (the consumer agrees — `x === undefined` answers true for it, so the
+  singleton itself crosses correctly).
+
+So the provider's own `__extern_get` answers `undefined` for `qi.PlainDate`
+while its own `__object_keys` lists all nine. That asymmetry is provider-local:
+driving the polyfill from INSIDE its own module (`compileMulti` of shim+bundle,
+`.tmp/s2d/in-provider`, referencing the bundle's real binding `qi` — a bare
+`Temporal` identifier is intercepted by the #661 compile-time lowering and tests
+nothing) answers `Object.keys(qi).length === 9`, `typeof qi.PlainDate ===
+"function"`, `qi["Plain"+"Date"]` resolvable, `"PlainDate" in qi` true. **Next
+lane's target: find which terminal serves the in-module read and why
+`__extern_get` — the one the boundary can call — does not.** A first reduction
+attempt (`.tmp/s2d/probe13`, an object literal whose values are classes) does
+NOT reproduce it: there `__extern_get` returns the right class by identity, it
+only mis-reports `typeof` as `"object"` instead of `"function"` (a separate,
+smaller defect worth its own reduction).
+
+### The other three stops, re-measured in-module (`.tmp/s2d/in-provider`)
+
+Messages read back through the #5384 renderer (`__exn_render_prepare` /
+`__exn_render_char`), host-free, zero imports:
+
+| probe | answer |
+| --- | --- |
+| `Object.keys(qi).length` | **9** |
+| `new qi.PlainDate(2024,1,1).day` | throws `invalid calendar identifier` |
+| `qi.Duration.from({hours:1}).total("minutes")` | throws `invalid receiver: method called with the wrong type of this-object` |
+| `qi.PlainDate.from("2024-01-01")` | throws `Unsupported dynamic regular expression pattern` → filed as **#5404** |
+| `qi.Now.timeZoneId()` | **no-throw** (must raise the shim's RangeError) |
+
+The last one is NOT a boundary artifact and NOT the "discarded result" shape the
+S2c note guessed at — ten isolated spellings of that guess (bare `new`, no-paren
+`new`, two-step, result used, result returned, result discarded, via a namespace
+object, on both lanes) all propagate the constructor's throw correctly
+(`.tmp/s2d/probe14`, `probe15`, `probe16`). The real trigger is narrower and
+worse, and it reproduces in ten lines on BOTH lanes: **a property read on the
+result of a `never`-returning call elides the entire receiver expression**, so
+`(new Intl.DateTimeFormat).resolvedOptions().timeZone` never runs the
+constructor at all (`ctorHits === 0`). Filed as **#5405** with the reduction and
+the shape of the fix. Every shim method has a `throw`-only body, which is why
+the shim is where it surfaced.
+
+`invalid calendar identifier` and `invalid receiver` remain unreduced — S2d
+spent its budget on the boundary and on root-causing the two above.
+
+
+## S2e findings (2026-09-08) — `invalid calendar identifier` root-caused and fixed; the boundary miss re-measured; the receiver stop narrowed
+
+S2 is **not** complete. One of the three stops is fixed at the root, one is
+re-measured into a smaller and different defect than S2d recorded, and one is
+narrowed to a ten-word statement but not yet reduced. The S2 smoke test is
+therefore still not written — what blocks it is named exactly below.
+
+### R10 — `invalid calendar identifier` was a SCOPE-BLIND compiler key, not a Temporal defect
+
+`ctx.sidecarDefinedPropertyKeys` is keyed by `"<identifierTEXT>:<propName>"` —
+module-wide, no scope discrimination. The polyfill bundle contains one
+`Object.defineProperty(e, "length", …)`, which put `e:length` in that set, and
+from then on **every** `e.length` read anywhere in the module was routed to
+`emitRuntimeDescriptorGet`. For any *other* binding named `e` the runtime
+sidecar has no descriptor, so the read answered `undefined`.
+
+The victim is the polyfill's ASCII-lowercase helper
+`function Ao(e){let t="";for(let n=0;n<e.length;n++){const r=e.charCodeAt(n);t+=…}return t}`:
+its loop bound read `undefined`, so the loop never ran, `Ao("iso8601")`
+answered `""`, and `zo()` threw `RangeError: invalid calendar identifier `
+(note the empty tail — that is the whole diagnosis, and it is why the S2d note
+recorded the message without a name).
+
+**How it was identified** (this is the measurement, not a deduction): three
+byte-identical copies of the same function appended to the real bundle,
+differing only in the local's NAME. `zqx` → 9, `t` → 9, `e` → **0**. Then the
+compiler was instrumented at each arm of the property-access dispatch chain and
+printed `sidecar=true key=e:length` for the `e` copy only.
+
+Fixed in the new module `src/codegen/sidecar-owner-scope.ts`: each writer records
+the *declaration node* the key was recorded for (via `ctx.oracle.valueDeclarationOf`,
+not the raw checker), and the two readers in `property-access.ts` decline when the
+receiver provably resolves to a different declaration. Answer-preserving by
+construction: a key with no recorded owner, or an unresolvable receiver on either
+side, keeps its old module-wide meaning, so the change can only ever REMOVE a
+wrong-binding match. The two `object-shape-widening` writers hold a variable NAME
+rather than a node and therefore mark their keys unscoped — deliberately
+unchanged.
+
+Measured on the real provider source (shim + bundle, `--target standalone`,
+`hostBridge:"off"`), before → after:
+
+| probe | base | after |
+| --- | --- | --- |
+| `Ao("iso8601")` | `""` (length 0) | `"iso8601"` (length 7) |
+| `zo("iso8601")` | throws `invalid calendar identifier ` | `"iso8601"` |
+| `new qi.PlainDate(2024,1,1)` | `RangeError: invalid calendar identifier ` | reaches the NEXT stop (`invalid receiver`) |
+| the same helper with the local renamed `zqx` | already correct | unchanged |
+
+**JS-host (`gc`) lane byte-identical**: sha256 A/B over five modules including
+the reduction itself (`4c15a99694d22840`, `dc793b1437505d5d`,
+`540af5b064e0ee41`, `a162c242eca6b7a4`, `b8514a76991378d8`) — same before and
+after, same byte lengths.
+
+Two S2e cases in `tests/issue-5383-standalone-temporal-provider.test.ts`: the
+ten-line reduction (a module-level `Object.defineProperty(e,"length",…)` plus a
+shadowing local string `e`; base answers 0, fixed answers 17, and the
+defineProperty receiver still reads 3 through the sidecar), and the polyfill's
+`Ao` + `CALENDARS.includes` shape.
+
+### The boundary miss is NOT what S2d measured — re-measure before fixing it
+
+S2d recorded `__js2wasm_link_member_get(Temporal, "PlainDate")` answering the
+provider's `undefined`. On this branch, with S2d landed, a four-variant
+reduction through `buildProvider`/`runConsumer` (host-free
+`instantiateLinkedProject(result, {})`) says something narrower:
+
+| provider export | `Object.keys(NS).length` | `NS.b` (number) | `NS.Now.a` | `NS.PlainDate` |
+| --- | --- | --- | --- | --- |
+| `{ PlainDate: class, Now: {a:1}, b: 2 }` | 3 | 2 | 1 | **`undefined`** |
+| `Object.freeze({ … })` | 3 | 2 | 1 | **`undefined`** |
+| `{ __proto__: null, … }` | 3 | 2 | 1 | present, `typeof` **`"object"`** |
+| `Object.freeze({ __proto__: null, … })` — the polyfill's own shape (`var qi=Object.freeze({__proto__:null,Duration,Instant,Now:Bi,PlainDate,…})`) | 3 | 2 | 1 | present, `typeof` **`"object"`** |
+
+So numbers and nested objects cross correctly; a **class VALUE** does not. For
+the polyfill's exact shape the value now crosses but reports `typeof "object"`,
+which makes `new Temporal.PlainDate(…)` unreachable from the consumer
+(`typeof v !== "function"`, and `new v()` was not attempted past that). Two
+sub-defects, not one: the plain/frozen literal loses the class value entirely,
+the `__proto__: null` forms keep it but mis-tag it. Neither is fixed here.
+
+### The remaining in-provider stop, narrowed to one sentence
+
+`invalid receiver: method called with the wrong type of this-object` is thrown by
+the polyfill's `vt(e,t){if(!t(e))throw new TypeError(…)}` when its brand check
+`ne(e,...t){if(!e||"object"!=typeof e)return!1;const n=Q(e);return!!n&&t.every(e=>e in n)}`
+answers false. Every component of that check was measured to work — and the one
+that does not is `typeof`:
+
+| probe (in-provider, after R10) | answer |
+| --- | --- |
+| `Q(d)` for `d = new qi.Duration(0,0,0,0,1)` | a bag with **10** keys |
+| `Object.keys(bag)[0]`, `Y in bag`, `bag[Y]` | `slot-years`, true, `number` |
+| `t.every(k => k in bag)` in a hand-written copy, plain object | **1** (works) |
+| `typeof d` at the site that made `d` | `"object"` |
+| `typeof zv` for the SAME `d` inside `function tp(zv){return typeof zv}` | **`"function"`** |
+| the same for a class declared in the probe section of the same module | `"object"` |
+| the same for `{}`, `Object.create(null)`, `qi`, the slots bag | `"object"` |
+
+**A polyfill class instance reports `typeof "function"` once it crosses a call
+boundary**, so `ne`'s first line rejects it and every accessor and method on
+every Temporal object throws. `Duration.from({hours:1})` reports `"function"`
+even at the call site for the same reason (it arrives as a return value).
+
+Not reproduced in a small module by: a static factory (`D.from`), an aliased or
+namespaced class, a frozen `__proto__:null` namespace, `Object.defineProperty`
+of `Symbol.toStringTag` on the prototype, the `ae()` non-enumerable-statics
+loop, a `WeakMap.set(this, …)` escape in the constructor, a field-less
+constructor, or any combination of those tried. The discriminator that DOES hold
+is "declared in the polyfill" vs "declared in the probe section of the same
+module", which points at a whole-module classification — most plausibly the
+canonicalisation of structurally-identical struct types (a field-less instance
+struct sharing a wasm type with a closure carrier would `ref.test` as callable).
+That is the next lane's first experiment; the probe harnesses are
+`.tmp/s2e/{sa,inprov}.mts` in the S2e worktree.
+
+### What still blocks the S2 smoke test
+
+All three, in this order: the `typeof`-on-a-parameter defect above (blocks every
+Temporal method call, in-provider AND through the boundary), the class-value
+boundary crossing (blocks `new Temporal.PlainDate` from a consumer), and #5405
+(`Now.timeZoneId()`, already filed, deliberately out of scope). #5404 (dynamic
+RegExp) remains why the smoke test must not use the string form of `from`.
