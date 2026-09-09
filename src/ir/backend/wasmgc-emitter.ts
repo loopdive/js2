@@ -177,6 +177,7 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
     out.push({ op: "local.set", index: dataScratchLocal });
     out.push({ op: "i32.const", value: count });
     out.push({ op: "local.get", index: dataScratchLocal });
+    out.push({ op: "ref.as_non_null" });
     out.push({ op: "struct.new", typeIdx: layout.vecStructTypeIdx });
   }
 
