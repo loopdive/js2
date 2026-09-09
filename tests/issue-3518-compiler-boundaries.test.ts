@@ -409,6 +409,85 @@ describe("#3518 real compiler boundary detector", () => {
     expect(f.run().exit).not.toBe(0);
   });
 
+  function dataKeyFixture() {
+    // Exercise the real key and production activation policy with stub model
+    // inputs. This is not a proof of the complete canonical model closure.
+    const policy = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
+    const paths = [
+      "src/wasm/model/instructions.ts",
+      "src/wasm/physical/function-handles.ts",
+      "src/wasm/physical/data-fields-key.ts",
+    ];
+    const f = fixture({
+      [paths[0]!]: "export type ValType = { kind: string; typeIdx?: number; boolean?: boolean; symbol?: boolean };",
+      [paths[1]!]: "export const STABLE_FUNC_BASE = 1;",
+      [paths[2]!]: readFileSync(resolve(repository, paths[2]!), "utf8"),
+    });
+    f.policy.files = f.policy.files.filter((entry: any) => !paths.includes(entry.path));
+    for (const id of ["wasm-model", "wasm-physical", "mixed-needs-split"]) {
+      f.policy.layers.push(policy.layers.find((layer: any) => layer.id === id));
+      f.policy.allowedEdges[id] = policy.allowedEdges[id] ?? [];
+    }
+    for (const path of paths) f.policy.files.push(policy.files.find((entry: any) => entry.path === path));
+    f.policy.activationHistory = policy.activationHistory.filter((entry: any) => entry.layer === "wasm-physical");
+    return f;
+  }
+
+  it("cannot erase the data key by also lowering the current physical requirement", () => {
+    const f = dataKeyFixture();
+    expect(f.run("inventory").exit).toBe(0);
+    rmSync(resolve(f.root, "src/wasm/physical/data-fields-key.ts"));
+    f.policy.files = f.policy.files.filter((entry: any) => entry.path !== "src/wasm/physical/data-fields-key.ts");
+    const physical = f.policy.layers.find((layer: any) => layer.id === "wasm-physical");
+    physical.entries = ["src/wasm/physical/function-handles.ts"];
+    physical.minModules = 1;
+    expect(codes(f.run("inventory"))).toContain("activation-demoted");
+  });
+
+  it("requires the actual physical data key as an activated entry", () => {
+    const f = dataKeyFixture();
+    const result = f.run("inventory");
+    expect(result.exit).toBe(0);
+    expect(result.report.activatedRoots).toContainEqual(
+      expect.objectContaining({
+        layer: "wasm-physical",
+        modules: 2,
+        visitedEntries: expect.arrayContaining(["src/wasm/physical/data-fields-key.ts"]),
+      }),
+    );
+    rmSync(resolve(f.root, "src/wasm/physical/data-fields-key.ts"));
+    f.policy.files = f.policy.files.filter((entry: any) => entry.path !== "src/wasm/physical/data-fields-key.ts");
+    expect(codes(f.run("inventory"))).toContain("missing-activated-root");
+  });
+
+  it.each(["src/ir/types.ts", "src/codegen/context/types.ts"])(
+    "rejects a physical data key dependency on %s",
+    (path) => {
+      const f = dataKeyFixture();
+      expect(f.run("inventory").exit).toBe(0);
+      f.put(path, "export type Forbidden = number;");
+      f.policy.files.push({
+        path,
+        state: "unmigrated",
+        layer: "mixed-needs-split",
+        destination: "wasm-model",
+        owner: "test",
+        nextBoundary: "Forbidden upper-layer fixture.",
+      });
+      const key = "src/wasm/physical/data-fields-key.ts";
+      f.put(
+        key,
+        readFileSync(resolve(repository, key), "utf8") +
+          `\nimport type { Forbidden } from "../../${path.slice(4).replace(/\.ts$/, ".js")}";\n`,
+      );
+      const result = f.run("inventory");
+      expect(result.exit).not.toBe(0);
+      expect(result.report.forbiddenEdges).toContainEqual(
+        expect.objectContaining({ from: key, to: path, typeOnly: true }),
+      );
+    },
+  );
+
   it("cannot shrink an activated root by deleting its source and classification", () => {
     const f = fixture();
     rmSync(resolve(f.root, "src/foundation/value.ts"));

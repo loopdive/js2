@@ -39,8 +39,8 @@
       "status": "active",
       "roots": ["src/wasm/physical"],
       "required": true,
-      "entries": ["src/wasm/physical/function-handles.ts"],
-      "minModules": 1
+      "entries": ["src/wasm/physical/function-handles.ts", "src/wasm/physical/data-fields-key.ts"],
+      "minModules": 2
     },
     {
       "id": "wasm-emit",
@@ -360,6 +360,11 @@
   ],
   "activationHistory": [
     {
+      "layer": "wasm-physical",
+      "entries": ["src/wasm/physical/function-handles.ts", "src/wasm/physical/data-fields-key.ts"],
+      "minModules": 2
+    },
+    {
       "layer": "foundation",
       "entries": [
         "src/shared/contracts/source-origin.ts",
@@ -406,6 +411,10 @@
     {
       "from": "src/codegen/prepared-async-frame-types.ts",
       "to": "src/runtime/wasmgc/async/prepared-async-frame-types.ts"
+    },
+    {
+      "from": "src/codegen/registry/data-fields-key.ts",
+      "to": "src/wasm/physical/data-fields-key.ts"
     }
   ],
   "evidence": [
@@ -580,12 +589,9 @@
       "nextBoundary": "Separate unit callable contribution authentication from context-owned callable ABI allocation."
     },
     {
-      "path": "src/codegen/registry/data-fields-key.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate logical data-layout identity from physical FieldDef storage and boxing tags."
+      "path": "src/wasm/physical/data-fields-key.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
     },
     {
       "path": "src/codegen/resolved-rest-parameter.ts",

@@ -5,7 +5,7 @@ import { irTypeEquals, irVal, type IrObjectShape } from "../src/ir/nodes.js";
 import { orderedObjectFields } from "../src/ir/object-layout.js";
 import { irTypeKey } from "../src/ir/type-key.js";
 import { canonicalProgramAbiObjectShapeKey } from "../src/codegen/program-abi-type-planning.js";
-import { dataFieldsHashKey } from "../src/codegen/registry/data-fields-key.js";
+import { dataFieldsHashKey } from "../src/wasm/physical/data-fields-key.js";
 
 const cases = [
   {

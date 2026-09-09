@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { dataFieldsHashKey } from "../codegen/registry/data-fields-key.js";
+import { dataFieldsHashKey } from "../wasm/physical/data-fields-key.js";
 import type { FieldDef } from "./types.js";
 import type { IrClosureSignature, IrObjectShape, IrType } from "./nodes.js";
 import { orderedObjectFields } from "./object-layout.js";

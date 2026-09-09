@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts, forEachChild } from "../ts-api.js";
-import { dataFieldsHashKey } from "./registry/data-fields-key.js";
+import { dataFieldsHashKey } from "../wasm/physical/data-fields-key.js";
 import { primitiveSourceMethodSignature } from "../ir/object-method-key.js";
 import { objectLiteralHasIndexedSpread } from "./indexed-object-spread.js";
 import { propertyValueIsAccessorObjectLiteral } from "./accessor-value-field.js";
