@@ -14,12 +14,33 @@ const compiler = join(root, "examples/v8x-js2wasm-spike/compile-graph.ts");
 const denoWrapper = join(root, "examples/v8x-js2wasm-spike/deno.ts");
 const wasmtime = process.env.WASMTIME ?? "wasmtime";
 
+async function writeContext(contextPath: string): Promise<void> {
+  // compile-graph imports both the realm and its shared Symbol state.
+  const context = await compile(
+    `
+      const realm: any = globalThis;
+      export function __v8x_context_global_this(): any { return realm; }
+      export function __v8x_context_call(callable: any, receiver: any, args: any): any {
+        if (args.length === 0) return callable.call(receiver);
+        if (args.length === 1) return callable.call(receiver, args[0]);
+        throw new RangeError("test context supports at most one argument");
+      }
+    `,
+    { target: "standalone", hostBridge: "always", standaloneSymbolState: "export" },
+  );
+  expect(context.success, context.errors.map((error) => error.message).join("\n")).toBe(true);
+  expect(WebAssembly.Module.imports(new WebAssembly.Module(context.binary))).toEqual([]);
+  writeFileSync(contextPath, context.binary);
+}
+
 describe("v8x js2wasm module-backend spike", () => {
-  it("executes an externref-returning trampoline in Wasmtime", () => {
+  it("executes an externref-returning trampoline in Wasmtime", async () => {
     const dir = mkdtempSync(join(tmpdir(), "v8x-js2wasm-externref-tail-"));
     const mainPath = join(dir, "main.ts");
     const manifestPath = join(dir, "modules.tsv");
     const wasmPath = join(dir, "module.wasm");
+    const contextPath = join(dir, "context.wasm");
+    await writeContext(contextPath);
     writeFileSync(
       mainPath,
       `function makeObject(depth: number): any {\n` +
@@ -50,7 +71,16 @@ describe("v8x js2wasm module-backend spike", () => {
 
     const evaluated = spawnSync(
       wasmtime,
-      ["run", "-W", "gc=y,function-references=y,tail-call=y,exceptions=y", "--invoke", "__module_init", wasmPath],
+      [
+        "run",
+        "-W",
+        "gc=y,function-references=y,tail-call=y,exceptions=y",
+        "--preload",
+        `v8x:context=${contextPath}`,
+        "--invoke",
+        "__module_init",
+        wasmPath,
+      ],
       { encoding: "utf8" },
     );
     if (evaluated.error && "code" in evaluated.error && evaluated.error.code === "ENOENT") return;
@@ -67,21 +97,7 @@ describe("v8x js2wasm module-backend spike", () => {
       const manifestPath = join(dir, "modules.tsv");
       const wasmPath = join(dir, "module.wasm");
       const contextPath = join(dir, "context.wasm");
-      const context = await compile(
-        `
-      const realm: any = globalThis;
-      export function __v8x_context_global_this(): any { return realm; }
-      export function __v8x_context_call(callable: any, receiver: any, args: any): any {
-        if (args.length === 0) return callable.call(receiver);
-        if (args.length === 1) return callable.call(receiver, args[0]);
-        throw new RangeError("test context supports at most one argument");
-      }
-    `,
-        { target: "standalone", hostBridge: "always" },
-      );
-      expect(context.success, context.errors.map((error) => error.message).join("\n")).toBe(true);
-      expect(WebAssembly.Module.imports(new WebAssembly.Module(context.binary))).toEqual([]);
-      writeFileSync(contextPath, context.binary);
+      await writeContext(contextPath);
 
       // compile-graph defers source execution to __module_init and imports the
       // context owned by v8x. Supply the same Wasm context ABI to the CLI and
@@ -187,6 +203,12 @@ describe("v8x js2wasm module-backend spike", () => {
 
     const module = new WebAssembly.Module(readFileSync(wasmPath));
     expect(WebAssembly.Module.imports(module)).toEqual([
+      { kind: "global", module: "v8x:context", name: "__symbol_counter" },
+      { kind: "global", module: "v8x:context", name: "__symbol_desc_table" },
+      { kind: "global", module: "v8x:context", name: "__symbol_intern_table" },
+      { kind: "global", module: "v8x:context", name: "__symbol_reg_keys" },
+      { kind: "global", module: "v8x:context", name: "__symbol_reg_ids" },
+      { kind: "global", module: "v8x:context", name: "__symbol_reg_count" },
       { kind: "function", module: "v8x:deno", name: "__v8x_op_cwd_utf16_length" },
       { kind: "function", module: "v8x:deno", name: "__v8x_op_cwd_utf16_code_unit" },
     ]);
