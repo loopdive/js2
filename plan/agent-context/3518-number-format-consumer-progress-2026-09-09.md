@@ -249,3 +249,61 @@ formatter requirements and existing native string ABI planning passed in 42.76
 seconds. These tests establish manifest authentication, preservation of the
 real refusal, and existing ABI behavior—not execution of the new full-family
 formatter ABI branch, successful emission, async completion or retirement.
+
+## Consumer formatter integration (local review)
+
+Published planner checkpoint d62c566124f52f7f5a85bf86a0e98308a1c6dd5d
+was verified at #5798 after normal push 95591 exited zero, including 18/18
+numeric parity tests. The branch remains held on the #5797 stack, not main.
+
+The consumer now retains canonical provider-prepared support and its complete
+body snapshot privately. Before allocation it reauthenticates the entire
+manifest and physical plan, the real source/no-source distinction, and the
+complete shared-string/formatter ABI. It reserves one shared string owner and
+one formatter pack, compares authenticated ordered resource rows against the
+actual module descriptors with the shared type map, and binds before filling.
+The exact D1 body is lowered into its original support slot with canonical
+call/type scope and unique original-allocation inline WTF16 literal scope.
+The actual support function is distinct from primary and other runtime owners.
+Primary lowering and startup filling were extracted within the same consumer
+file to keep normal function budgets; no ledger or admission guard was relaxed.
+
+TS7 80943 passed. Formatting/TS7/budget 68208 passed before the final support
+census and no-demand byte/module controls. Run 31906 passed TS7 but stopped at
+the 308-line materializer budget (tests did not run). Extracting startup into
+a bounded helper fixed that overrun without a new allowance. Run 69465 is the
+replacement validation; its terminal receipt must be recorded before claiming
+the full result. The canonical claim check 1542 returned exit 3, confirming
+our existing ttraenkler/codex-number-format-consumer owner (not a collision).
+
+These are production wiring changes, not a successful whole-family execution
+receipt. The real source-string resource refusal remains unchanged; no source
+owner was removed and no test-only acceptance was minted. Full formatter
+consumer execution and inverse authority tests remain required after E2 and
+the other complete native async resource plans make the real source reachable.
+
+Original High reviewer Huygens, closure implementer Hilbert, and E1 owner
+Maxwell were recovered by closing their stale not_found handles and resuming
+the same IDs. Their histories and worktrees remain intact. Huygens reviews the
+consumer read-only, Hilbert resumes the saved staged-closure draft, and Maxwell
+investigates/specifies the real E2 source-resource blocker. Cicero owns queue
+shepherding. Parent retains the heavy slot until validation/publication ends.
+
+Validation 69465 exited zero: formatting, source TS7, function budget and
+96/96 tests (19 formatter requirements, 68 actual native string consumer
+execution, 9 module completion) in 324.45 seconds. Consumer coverage includes
+original/decoded programs, GVN off/on, UTF8 off/on, startup/export aliases,
+dependency order, large literals and repeated executed numeric values.
+The new no-demand option control compares complete emitted modules and bytes.
+This is preservation coverage; the formatter's full-family success branch is
+still unexecuted because the honest source-string refusal is retained.
+
+Huygens gave bounded static approval on consumer SHA256
+a4592f6bc09c1ce3dfa35dc74bade7dee9bd4f8b35ced178c4e3e5d03a39fe20
+and test SHA256 db14133dcb6d5a5891b7ff0cfc3ed0e45b03e36cdba8ea18a36e524beae713d0.
+Parent independently matched both. Only the known unused options destructure
+was removed afterward, a semantically neutral cleanup explicitly noted by High.
+Post-cleanup formatting passed in 87755; an accidental ESLint invocation
+failed because this repository uses Biome, not an ESLint configuration. That
+command did not run the chained TS7 check. The correct Biome/TS7 check replaces
+it; no lint configuration or policy was changed.

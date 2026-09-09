@@ -4,7 +4,12 @@ import { describe, expect, it } from "vitest";
 import { prepareWholeIrProgram } from "../src/ir/program-preparation.js";
 import { decodePreparedIrProgram, encodePreparedIrProgram } from "../src/ir/program-codec.js";
 import { assertPreparedIrProgram } from "../src/ir/program-validation.js";
-import { acceptPreparedIrProgram } from "../src/ir/program-consumer.js";
+import {
+  acceptPreparedIrProgram,
+  acceptedPhysicalSetupPlan,
+  emitAcceptedIrProgram,
+} from "../src/ir/program-consumer.js";
+import { emitBinary } from "../src/emit/binary.js";
 import { AllocSiteRegistry } from "../src/ir/analysis/alloc-registry.js";
 import {
   planNativeNumberFormatScratch,
@@ -86,6 +91,7 @@ describe("complete prepared formatter demand joins", () => {
     const positive = planPhysicalSetup(program, options, projection, undefined, input);
     // This is the unchanged real source refusal, not a successful formatter ABI plan.
     expect(positive).toEqual(selected);
+    expect(acceptPreparedIrProgram(program, options)).toEqual(selected);
     const prior = planPhysicalSetup(program, options, projection);
     if (prior.kind !== "unsupported") throw new Error("expected the existing async materialization refusal");
     expect(prior.detail).toContain("needs scheduler/promise runtime materialization");
@@ -502,6 +508,8 @@ describe("complete prepared formatter demand joins", () => {
     expect(original.kind).toBe("accepted");
     if (original.kind !== "accepted") throw new Error(original.detail);
     expect(Object.hasOwn(original.options, "numberFormat")).toBe(false);
+    const originalModule = emitAcceptedIrProgram(original).module;
+    const originalBytes = emitBinary(originalModule);
     for (const integerBeforeScratch of [false, true]) {
       const numberFormat = { integerBeforeScratch };
       const accepted = acceptPreparedIrProgram(program, { ...options, numberFormat });
@@ -510,6 +518,10 @@ describe("complete prepared formatter demand joins", () => {
       expect(accepted.options.numberFormat).toEqual(numberFormat);
       expect(accepted.options.numberFormat).not.toBe(numberFormat);
       expect(Object.isFrozen(accepted.options.numberFormat)).toBe(true);
+      expect(acceptedPhysicalSetupPlan(accepted).nativeNumberFormat).toBeUndefined();
+      const emitted = emitAcceptedIrProgram(accepted);
+      expect(emitBinary(emitted.module)).toEqual(originalBytes);
+      expect(emitted.module).toEqual(originalModule);
       Reflect.set(numberFormat, "unexpected", true);
       expect(() => acceptPreparedIrProgram(program, { ...options, numberFormat })).toThrow(/one resolved boolean/);
     }
