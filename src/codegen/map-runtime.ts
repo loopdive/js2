@@ -364,7 +364,6 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
     }
     // 3) Both strings → content equality.
     if (strEq !== undefined && typeofStr !== undefined && ctx.anyStrTypeIdx >= 0) {
-      const anyStrRef: ValType = { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
       body.push({ op: "local.get", index: 0 });
       body.push({ op: "extern.convert_any" });
       body.push({ op: "call", funcIdx: typeofStr });
@@ -385,7 +384,6 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
         ],
         else: [],
       });
-      void anyStrRef;
     }
     body.push({ op: "i32.const", value: 0 });
     addMapFunc(
@@ -472,8 +470,6 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
       });
     }
     // string → FNV-1a over UTF-16 code units via __str_charAt + length.
-    const charAt = ctx.nativeStrHelpers.get("__str_charAt");
-    void charAt;
     if (typeofStr !== undefined && ctx.anyStrTypeIdx >= 0) {
       const flatten = ctx.nativeStrHelpers.get("__str_flatten");
       const strTypeIdx = ctx.nativeStrTypeIdx;
@@ -492,15 +488,16 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
             { op: "call", funcIdx: flatten },
             { op: "ref.cast", typeIdx: strTypeIdx },
             { op: "local.tee", index: 5 },
-            // data array (field 3 of NativeString: len,byteLen?,off,data — use struct.get by name index)
-            // NativeString layout: { len(i32), ..., data }. We read length via array.len of data.
+            // Flat strings may be views or use an overallocated builder buffer.
+            // Hash only their logical length, starting at their stored offset.
             {
               op: "struct.get",
               typeIdx: strTypeIdx,
               fieldIdx: nativeStrDataFieldIdx(ctx),
             },
-            { op: "local.tee", index: 6 },
-            { op: "array.len" },
+            { op: "local.set", index: 6 },
+            { op: "local.get", index: 5 },
+            { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 },
             { op: "local.set", index: 7 },
             { op: "i32.const", value: 0x811c9dc5 | 0 },
             { op: "local.set", index: 3 },
@@ -522,6 +519,9 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
                     { op: "local.get", index: 3 },
                     { op: "local.get", index: 6 },
                     { op: "local.get", index: 4 },
+                    { op: "local.get", index: 5 },
+                    { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 },
+                    { op: "i32.add" },
                     {
                       op: "array.get_u",
                       typeIdx: dataTypeIdx,
