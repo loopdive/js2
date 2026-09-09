@@ -25,6 +25,51 @@ import {
   buildStringToNumberResult,
   buildStringToNumberLocals,
 } from "../../../runtime/wasmgc/values/string-number-bodies.js";
+import type {
+  NativeResourceRecipe,
+  NativeStringValueDeclaration,
+} from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
+import {
+  executeNativeResourceRecipe,
+  freezeNativeResourceRecipe,
+  nativeScalarTypeDeclaration,
+  requireNativeDeclaredReservation,
+} from "./native-resource-declarations.js";
+
+export function declareNativeStringNumberResources(anchor: NativeValueResourcePlan["anchor"]): NativeResourceRecipe {
+  const key = (role: string) => "physical:string-number:" + JSON.stringify(anchor) + ":" + role;
+  const declarations: NativeStringValueDeclaration[] = [
+    {
+      key: key("scanner"),
+      role: ["string-number", "scanner"],
+      space: "function",
+      name: "__str_to_number",
+      signature: { params: [{ kind: "externref" }], results: [{ kind: "f64" }] },
+    },
+    {
+      key: key("power-array"),
+      role: ["string-number", "power-array"],
+      space: "type",
+      shape: nativeScalarTypeDeclaration(buildDecimalPowerArrayType()),
+    },
+    {
+      key: key("power-global"),
+      role: ["string-number", "power-global"],
+      space: "global",
+      name: "__pow10_f64",
+      valueType: { kind: "ref", typeKey: key("power-array") },
+      mutable: false,
+    },
+  ];
+  return freezeNativeResourceRecipe({
+    declarations,
+    reservationSteps: declarations.map((row) => ({
+      phase: "resources" as const,
+      kind: "reserve" as const,
+      resourceKey: row.key,
+    })),
+  });
+}
 
 export interface NativeStringNumberReservations {
   readonly stringPack: NativeStringLiteralReservations;
@@ -104,17 +149,10 @@ export function reserveNativeStringNumberResources(
   requireNativeStringFlattenReservations(tx, flattenPack);
   const stringPack = flattenPack.stringPack;
   const key = (role: string) => "physical:string-number:" + JSON.stringify(nativeValuePlan.anchor) + ":" + role;
-  const toNumber = tx.reserveFunction(key("scanner"), "__str_to_number", {
-    params: [{ kind: "externref" }],
-    results: [{ kind: "f64" }],
-  });
-  const powerArray = tx.reserveType(key("power-array"), buildDecimalPowerArrayType());
-  const powerGlobal = tx.reserveGlobal(
-    key("power-global"),
-    "__pow10_f64",
-    { kind: "ref", typeIdx: powerArray.typeIndex },
-    false,
-  );
+  const records = executeNativeResourceRecipe(tx, declareNativeStringNumberResources(nativeValuePlan.anchor));
+  const toNumber = requireNativeDeclaredReservation(records, key("scanner"), "function");
+  const powerArray = requireNativeDeclaredReservation(records, key("power-array"), "type");
+  const powerGlobal = requireNativeDeclaredReservation(records, key("power-global"), "global");
   const pack = Object.freeze({ stringPack, flattenPack, powerArray, powerGlobal, toNumber });
   owners.set(pack, {
     tx,

@@ -6609,3 +6609,27 @@ pending the serialized slot; this section does not claim publication or
 completion of the epic. Exact hashes, commands, failure history and remaining
 obligations are in the
 [source-admission handoff](../agent-context/3518-native-string-source-admission-handoff-2026-09-09.md).
+
+### Shared native resource declarations (2026-09-09)
+
+String, flatten, scanner and primitive-value producers now share symbolic
+declarations with their reservation implementations. This lets checked consumer
+acceptance know the complete resource ABI before allocation without a second
+allocator or duplicated signature table. Canonical allocation order, type
+metadata and existing ownership authority remain load-bearing.
+
+High review's sparse-preflight and signature-observation findings are repaired;
+the owned declaration suite passes 20/20. Parent scanner integration resolves
+the previously failing dependency census and passes 140/140 combined scanner
+and declaration tests. New mandatory boundary records and model-only type
+controls are in place; full boundary/clean typecheck/caller validation is pending.
+See agent-context/3518-native-resource-declarations-checkpoint-2026-09-09.md
+for exact provenance, initial failures and the limits of this checkpoint.
+
+This does not establish actual prepared-consumer execution or public default
+cutover. Those joins and all other #3518 acceptance requirements remain open.
+
+The clean producer checkpoint now also passes 250/250 full boundary controls
+and unfiltered TS7 (session 54286 exit 0). Full caller revalidation passed
+322/322 across eight suites (session 46568 exit 0). Checkpoint validation is
+complete; this is not a migration-completion claim.

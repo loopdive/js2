@@ -538,6 +538,8 @@ function verifyCanonicalEdges(s: Sources): void {
       "src/backend/wasmgc/resources/native-string-literals.ts",
       "src/backend/wasmgc/resources/native-string-flatten.ts",
       "src/ir/program/native-value-resources.ts",
+      "src/runtime/wasmgc/values/native-resource-declaration-types.ts",
+      "src/backend/wasmgc/resources/native-resource-declarations.ts",
       paths.scaling,
       paths.scanner,
     ],
@@ -1360,6 +1362,7 @@ function launch(
   });
 }
 const canonicalRoots = [
+  "src/backend/wasmgc/resources/native-resource-declarations.ts",
   "src/runtime/wasmgc/values/string-number-grammar.ts",
   "src/runtime/wasmgc/values/decimal-scale-bodies.ts",
   "src/runtime/wasmgc/values/string-number-bodies.ts",
@@ -1370,6 +1373,8 @@ const canonicalRoots = [
   "src/backend/wasmgc/resources/native-string-literals.ts",
   "src/backend/wasmgc/resources/native-values.ts",
 ];
+// Erased declarations are hashed, but must not be fabricated as runtime loads.
+const canonicalSnapshotPaths = [...canonicalRoots, "src/runtime/wasmgc/values/native-resource-declaration-types.ts"];
 function childSource(rootPath: string, packet: string, report: string, census: string): string {
   return `
 import {register} from "node:module";
@@ -1378,7 +1383,7 @@ import {createHash} from "node:crypto";
 import {pathToFileURL} from "node:url";
 import {resolve} from "node:path";
 const root=${JSON.stringify(rootPath)}, packet=${JSON.stringify(packet)}, report=${JSON.stringify(report)};
-const paths=${JSON.stringify(canonicalRoots)};
+const paths=${JSON.stringify(canonicalSnapshotPaths)};
 const sha=text=>createHash("sha256").update(text).digest("hex");
 const snapshot=()=>Object.fromEntries(paths.map(p=>[p,sha(readFileSync(resolve(root,p)))]));
 const before=snapshot(),encoded=readFileSync(packet,"utf8");
@@ -1416,7 +1421,7 @@ describe("fresh-process canonical resource admission", () => {
     expect(receipt.root).toBe(root);
     expect(receipt.node).toBe(process.version);
     expect(receipt.encodedSha256).toBe(sha(actual().encoded));
-    const hashes = Object.fromEntries(canonicalRoots.map((p) => [p, sha(readFileSync(resolve(root, p)))]));
+    const hashes = Object.fromEntries(canonicalSnapshotPaths.map((p) => [p, sha(readFileSync(resolve(root, p)))]));
     expect(receipt.before).toEqual(hashes);
     expect(receipt.after).toEqual(hashes);
     expect(receipt.execution).toEqual(execution());

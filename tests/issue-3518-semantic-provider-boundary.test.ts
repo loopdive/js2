@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
+import ts from "typescript";
 
 const repository = resolve(import.meta.dirname, "..");
 // Fixed specification population, independent of discovered imports and policy.
@@ -153,12 +154,21 @@ const scannerAdditions = [
   "src/backend/wasmgc/resources/native-string-flatten.ts",
 ];
 const demandAdditions = ["src/ir/program/native-string-value-demands.ts"];
-const groups = {
+const scannerGroups = {
   ...nativeValueGroups,
   "ir-program": [...nativeValueGroups["ir-program"], ...demandAdditions],
   "wasm-model": [...nativeValueGroups["wasm-model"], scannerAdditions[0]!],
   "native-runtime": [...nativeValueGroups["native-runtime"], ...scannerAdditions.slice(1, 6)],
   "backend-wasmgc": [...nativeValueGroups["backend-wasmgc"], ...scannerAdditions.slice(6)],
+};
+const declarationAdditions = [
+  "src/runtime/wasmgc/values/native-resource-declaration-types.ts",
+  "src/backend/wasmgc/resources/native-resource-declarations.ts",
+];
+const groups = {
+  ...scannerGroups,
+  "native-runtime": [...scannerGroups["native-runtime"], declarationAdditions[0]!],
+  "backend-wasmgc": [...scannerGroups["backend-wasmgc"], declarationAdditions[1]!],
 };
 const required = Object.values(groups).flat();
 const callableAdditions = ["src/ir/core/async-callables.ts", "src/ir/runtime/native-async-callables.ts"];
@@ -202,11 +212,19 @@ function assertNewActivations(history: unknown[]) {
     minModules: groups["ir-program"].length,
   });
   history = history.slice(1);
-  expect(history.slice(0, 3)).toEqual(
-    (["wasm-model", "native-runtime", "backend-wasmgc"] as const).map((layer) => ({
+  expect(history.slice(0, 2)).toEqual(
+    (["native-runtime", "backend-wasmgc"] as const).map((layer) => ({
       layer,
       entries: groups[layer],
       minModules: groups[layer].length,
+    })),
+  );
+  history = history.slice(2);
+  expect(history.slice(0, 3)).toEqual(
+    (["wasm-model", "native-runtime", "backend-wasmgc"] as const).map((layer) => ({
+      layer,
+      entries: scannerGroups[layer],
+      minModules: scannerGroups[layer].length,
     })),
   );
   history = history.slice(3);
@@ -384,8 +402,8 @@ function fixture() {
 
 describe("semantic verification and provider ownership boundary", () => {
   it("pins the original 70 modules plus seven Promise/vector and five string/error owners without relaxing historical policy", () => {
-    expect(required).toHaveLength(95);
-    expect(new Set(required).size).toBe(95);
+    expect(required).toHaveLength(97);
+    expect(new Set(required).size).toBe(97);
     expect(callableAdditions).toHaveLength(2);
     expect(vectorAdditions).toHaveLength(2);
     expect(typeLayoutAdditions).toHaveLength(1);
@@ -411,6 +429,7 @@ describe("semantic verification and provider ownership boundary", () => {
             ...nativeValueAdditions,
             ...scannerAdditions,
             ...demandAdditions,
+            ...declarationAdditions,
           ].includes(path),
       ),
     ).toHaveLength(56);
@@ -432,17 +451,18 @@ describe("semantic verification and provider ownership boundary", () => {
       ...nativeValueAdditions,
       ...scannerAdditions,
       ...demandAdditions,
+      ...declarationAdditions,
     ])
       expect(required).toContain(path);
     const p = policy();
     assertNewActivations(p.activationHistory);
-    expect(p.activationHistory).toHaveLength(47);
-    expect(digest(p.activationHistory.slice(23))).toBe(
+    expect(p.activationHistory).toHaveLength(49);
+    expect(digest(p.activationHistory.slice(25))).toBe(
       "3437a59aacf39df9dffcafa8099ac9f47c0f43a7a0ecc423df4c1fe3e638f002",
     );
     expect(digest(p.allowedEdges)).toBe("efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7");
     // Exact full activation history at b4c116639a, not a selected subset.
-    expect(digest(p.activationHistory.slice(29))).toBe(
+    expect(digest(p.activationHistory.slice(31))).toBe(
       "a6d07b900b0837832707ce083202ab6ffa40f0bbe6bfce25f3062270882b26da",
     );
     for (const [id, entries] of Object.entries(groups)) {
@@ -459,12 +479,50 @@ describe("semantic verification and provider ownership boundary", () => {
   it("loads the complete actual canonical type-and-value closure", () => {
     const r = fixture().run();
     expect(r.status, JSON.stringify(r.report.errors)).toBe(0);
-    expect(r.report.counts.total).toBe(95);
+    expect(r.report.counts.total).toBe(97);
     expect(r.report.errors).toEqual([]);
     for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
       expect(r.report[field]).toEqual([]);
-    expect(r.report.resolvedEdgeCount).toBe(345);
-    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 222, runtime: 123 });
+    expect({ edges: r.report.resolvedEdgeCount, ...r.report.counts.resolvedEdgesByType }).toEqual({
+      edges: 361,
+      typeOnly: 233,
+      runtime: 128,
+    });
+  });
+
+  function assertModelOnlyDeclarations(text: string) {
+    const source = ts.createSourceFile("declarations.ts", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const imports: string[] = [];
+    for (const statement of source.statements) {
+      if (ts.isImportDeclaration(statement)) {
+        expect(statement.importClause?.isTypeOnly).toBe(true);
+        expect(ts.isStringLiteral(statement.moduleSpecifier)).toBe(true);
+        imports.push((statement.moduleSpecifier as ts.StringLiteral).text);
+      } else {
+        expect(ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)).toBe(true);
+      }
+    }
+    expect(imports).toEqual(["../../../wasm/model/instructions.js", "../../../wasm/model/module-records.js"]);
+    const visit = (node: ts.Node): void => {
+      expect(ts.isImportTypeNode(node)).toBe(false);
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+  }
+
+  it("keeps the actual declaration contract erased and model-only", () => {
+    assertModelOnlyDeclarations(readFileSync(resolve(repository, declarationAdditions[0]!), "utf8"));
+  });
+
+  it.each([
+    'import { extra } from "../../../wasm/model/instructions.js";',
+    'import type { Extra } from "../../../wasm/physical/module-reservations.js";',
+    'export type Extra = import("../../../wasm/physical/module-reservations.js").TypeReservation;',
+    "export const runtimeValue = 1;",
+  ])("rejects declaration-contract coupling: %s", (mutation) => {
+    const text = readFileSync(resolve(repository, declarationAdditions[0]!), "utf8");
+    assertModelOnlyDeclarations(text);
+    expect(() => assertModelOnlyDeclarations(text + "\n" + mutation)).toThrow();
   });
 
   it.each(["delete", "reorder", "layer", "entries", "minimum"] as const)(
@@ -499,6 +557,7 @@ describe("semantic verification and provider ownership boundary", () => {
     ...nativeValueAdditions,
     ...scannerAdditions,
     ...demandAdditions,
+    ...declarationAdditions,
   ])("rejects deleting %s and its classification", (path) => {
     const f = fixture();
     rmSync(resolve(f.root, path));
@@ -526,6 +585,7 @@ describe("semantic verification and provider ownership boundary", () => {
     ...nativeValueAdditions,
     ...scannerAdditions,
     ...demandAdditions,
+    ...declarationAdditions,
   ])("rejects an aliased frontend type dependency from %s", (path) => {
     const f = fixture();
     f.put("src/forbidden.ts", "export interface Hidden { value: number }");
@@ -558,6 +618,7 @@ describe("semantic verification and provider ownership boundary", () => {
       ...nativeValueAdditions,
       ...scannerAdditions,
       ...demandAdditions,
+      ...declarationAdditions,
     ])(`reports ${field} from %s instead of treating it as closed`, (path) => {
       const f = fixture();
       f.append(path, source);
