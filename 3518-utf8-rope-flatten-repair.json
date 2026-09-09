@@ -1,0 +1,11 @@
+{
+  "id": "3518",
+  "slice": "utf8-rope-flatten-repair",
+  "assignee": "ttraenkler/codex-native-string-output-extraction",
+  "requested_by": "ttraenkler/codex-native-string-output-extraction",
+  "status": "in-progress",
+  "branch": "codex/3518-native-string-output-extraction-20260909",
+  "claimed_at": "2026-09-09T05:44:11Z",
+  "updated_at": "2026-09-09T05:44:11Z",
+  "write_id": "85122-tp2ofa1y"
+}
