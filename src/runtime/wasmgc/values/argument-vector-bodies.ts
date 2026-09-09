@@ -19,13 +19,21 @@ export function createArgumentVectorArrayType(): ArrayTypeDef {
 }
 
 export function createArgumentVectorType(objVecBaseTypeIdx: number, objVecArrTypeIdx: number): StructTypeDef {
+  const { parent, ...shape } = createArgumentVectorShape(
+    { kind: "ref" as const, typeIdx: objVecArrTypeIdx },
+    objVecBaseTypeIdx,
+  );
+  return { kind: shape.kind, name: shape.name, superTypeIdx: parent, fields: shape.fields };
+}
+
+export function createArgumentVectorShape<D, P>(data: D, parent: P) {
   return {
-    kind: "struct",
+    kind: "struct" as const,
     name: "$ObjVec",
-    superTypeIdx: objVecBaseTypeIdx,
+    parent,
     fields: [
-      { name: "length", type: { kind: "i32" }, mutable: true },
-      { name: "data", type: { kind: "ref", typeIdx: objVecArrTypeIdx }, mutable: true },
+      { name: "length", type: { kind: "i32" as const }, mutable: true },
+      { name: "data", type: data, mutable: true },
     ],
   };
 }

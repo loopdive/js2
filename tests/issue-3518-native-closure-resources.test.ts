@@ -11,6 +11,9 @@ import * as funcSpace from "../src/codegen/func-space.js";
 import * as canonical from "../src/runtime/wasmgc/values/closure-layouts.js";
 import {
   reserveNativeClosureResources,
+  declareNativeClosureResources,
+  instantiateNativeClosureRequirements,
+  nativeClosureReservationInventory,
   requireNativeClosureReservations,
   type NativeClosureRequirements,
   type NativeClosureSignatureRequest,
@@ -92,6 +95,56 @@ const factoryHeaders = [
 ] as const;
 const allocationModeDeclaration = 'export type ClosureAllocationMode = "support" | "ordinary" | "host-one-shot";';
 function completeFactories(source: string): { declarations: string[]; bodies: string[] } {
+  const parsed = ts.createSourceFile("live-shapes.ts", source, ts.ScriptTarget.Latest, true);
+  const functions = parsed.statements.filter(ts.isFunctionDeclaration);
+  const declaration = (name: string) => {
+    const matches = functions.filter((fn) => fn.name?.text === name);
+    if (matches.length !== 1) throw new Error("missing/duplicate shape factory");
+    return matches[0]!.getText(parsed);
+  };
+  const wrapper = declaration("createSignatureWrapperType"),
+    metadata = declaration("createBuiltinFunctionMetadataType");
+  const wrapperShape = declaration("createSignatureWrapperShape"),
+    metadataShape = declaration("createBuiltinFunctionMetadataShape");
+  const wrapperDelegate = `${factoryHeaders[0]}
+  const { parent, ...shape } = createSignatureWrapperShape(name, superTypeIdx);
+  return { ...shape, superTypeIdx: parent };
+}`;
+  const metadataDelegate = `${factoryHeaders[1]}
+  const { parent, ...shape } = createBuiltinFunctionMetadataShape(
+    \`__builtinfn_meta_\${typeIndex}_struct\`,
+    signatureWrapperTypeIndex,
+  );
+  return { ...shape, superTypeIdx: parent };
+}`;
+  if (wrapper !== wrapperDelegate || metadata !== metadataDelegate)
+    throw new Error("changed numeric factory delegation");
+  let originalWrapper = replaceOnce(
+    wrapperShape,
+    "export function createSignatureWrapperShape<P>(name: string, parent: P) {",
+    factoryHeaders[0],
+  );
+  originalWrapper = replaceOnce(
+    originalWrapper,
+    'return { kind: "struct" as const, name, fields, parent };',
+    'return { kind: "struct", name, fields, superTypeIdx };',
+  );
+  let originalMetadata = replaceOnce(
+    metadataShape,
+    "export function createBuiltinFunctionMetadataShape<N, P>(name: N, parent: P) {",
+    factoryHeaders[1],
+  );
+  originalMetadata = replaceOnce(originalMetadata, 'kind: "struct" as const,', 'kind: "struct",');
+  originalMetadata = replaceOnce(originalMetadata, "    name,", "    name: `__builtinfn_meta_${typeIndex}_struct`,");
+  originalMetadata = replaceOnce(originalMetadata, "    parent,", "    superTypeIdx: signatureWrapperTypeIndex,");
+  let reconstructed = replaceOnce(source, wrapper + "\n\n" + wrapperShape, originalWrapper);
+  reconstructed = replaceOnce(reconstructed, metadata + "\n\n" + metadataShape, originalMetadata);
+  const complete = completeOriginalFactories(reconstructed);
+  // Existing mutation controls still mutate the LIVE numeric delegates; the
+  // bodies passed to the original donor inverse come from the live shapes.
+  return { declarations: [wrapper, metadata, declaration("buildBuiltinClosureValueInstrs")], bodies: complete.bodies };
+}
+function completeOriginalFactories(source: string): { declarations: string[]; bodies: string[] } {
   const start = source.indexOf(allocationModeDeclaration);
   if (start < 0) throw new Error("missing canonical suffix population");
   const suffix = source.slice(start);
@@ -318,6 +371,54 @@ function legacy(
 }
 
 describe("native closure identities and settlement metadata", () => {
+  for (const [before, after] of [
+    ["export function createSignatureWrapperShape<P>", "export async function createSignatureWrapperShape<P>"],
+    [
+      '  return { kind: "struct" as const, name, fields, parent };',
+      '  void 0;\n  return { kind: "struct" as const, name, fields, parent };',
+    ],
+    ["    parent,", "    parent: undefined,"],
+    [
+      '      { name: "bfnstate", type: { kind: "i32" as const }, mutable: true },',
+      '      { name: "bfnstate", type: { kind: "i32" as const }, mutable: false },',
+    ],
+  ])
+    it(`rejects live shape factoring mutation ${before}`, () => {
+      const source = read("src/runtime/wasmgc/values/closure-layouts.ts");
+      requireCanonicalFactoryReceipts(source);
+      expect(() => requireCanonicalFactoryReceipts(replaceOnce(source, before!, after!))).toThrow();
+    });
+  it("feeds a pure declaration to the live observer loop without changing donor descriptors or aliases", () => {
+    const input = requirements([
+      signature("first", [{ kind: "externref" }], [], "ordinary", 1),
+      metadata("meta", "first"),
+      signature("alias", [{ kind: "externref" }], [], "support", 0),
+      metadata("meta-alias", "alias"),
+    ]);
+    const plan = declareNativeClosureResources({
+      key: input.key,
+      startingClosureCounter: input.startingClosureCounter,
+      requests: input.requests as Parameters<typeof declareNativeClosureResources>[0]["requests"],
+      referenceTypeKeys: [],
+    });
+    const module = createEmptyModule(),
+      tx = new PhysicalModuleReservations(module);
+    const physical = instantiateNativeClosureRequirements(tx, plan, new Map());
+    const pack = reserveNativeClosureResources(tx, physical, plan);
+    const original = legacy(input, false);
+    expect(module.types).toStrictEqual(original.ctx.mod.types);
+    expect(pack.signatures[0]!.binding).toBe(pack.signatures[1]!.binding);
+    expect(pack.metadata[0]!.binding).toBe(pack.metadata[1]!.binding);
+    expect(pack.metadata[0]!.binding.metadata.length).toBe(1);
+    expect(pack.signatures[0]!.binding.info.minimumArgumentCount).toBe(0);
+    const rows = nativeClosureReservationInventory(tx, pack, plan);
+    expect(rows.map((row) => row.key)).toEqual(plan.declarations.map((row) => row.key));
+    expect(rows).toHaveLength(2);
+    tx.freezeReservations();
+    expect(nativeClosureReservationInventory(tx, pack, plan)).toEqual(rows);
+    expect(() => nativeClosureReservationInventory(tx, pack, structuredClone(plan))).toThrow();
+    expect(() => nativeClosureReservationInventory(tx, { ...pack }, plan)).toThrow();
+  });
   it("reconstructs all original factory/body spans from complete live canonical declarations", () => {
     requireCanonicalFactoryReceipts(read("src/runtime/wasmgc/values/closure-layouts.ts"));
   });
@@ -376,7 +477,18 @@ describe("native closure identities and settlement metadata", () => {
           '{ op: "i32.const", value: typeIndex }',
           '{ op: "i32.const", value: typeIndex + 1 }',
         );
-      const mutant = replaceOnce(source, declarations[index]!, factoryHeaders[index] + "\n" + changedBody + "\n}");
+      let mutant: string;
+      if (mutation === "wrapper-construction-order") {
+        const returned = '  return { kind: "struct" as const, name, fields, parent };';
+        const header = "export function createSignatureWrapperShape<P>(name: string, parent: P) {";
+        mutant = replaceOnce(replaceOnce(source, "\n" + returned, ""), header, header + "\n" + returned);
+      } else if (mutation === "field-mutability") {
+        mutant = replaceOnce(
+          source,
+          '{ name: "bfnstate", type: { kind: "i32" as const }, mutable: true }',
+          '{ name: "bfnstate", type: { kind: "i32" as const }, mutable: false }',
+        );
+      } else mutant = replaceOnce(source, declarations[index]!, factoryHeaders[index] + "\n" + changedBody + "\n}");
       expect(mutant).not.toBe(source);
       expect(() => requireCanonicalFactoryReceipts(mutant)).toThrow(/factory donor receipt mismatch/);
     });
@@ -396,12 +508,14 @@ describe("native closure identities and settlement metadata", () => {
       else if (mutation === "constant")
         mutant = replaceOnce(source, "export const BFN_ID_FIELD_IDX = 4;", "export const BFN_ID_FIELD_IDX = 5;");
       else if (mutation === "extra-declaration") mutant = source + "export const extraFactoryState = 0;\n";
-      else
-        mutant = replaceOnce(
-          source,
-          declarations[0]! + "\n\n" + declarations[1]!,
-          declarations[1]! + "\n\n" + declarations[0]!,
-        );
+      else {
+        const firstStart = source.indexOf(declarations[0]!),
+          secondStart = source.indexOf(declarations[1]!),
+          thirdStart = source.indexOf(declarations[2]!);
+        const first = source.slice(firstStart, secondStart),
+          second = source.slice(secondStart, thirdStart);
+        mutant = replaceOnce(source, first + second, second + first);
+      }
       expect(mutant).not.toBe(source);
       expect(() => requireCanonicalFactoryReceipts(mutant)).toThrow(/suffix|factory header/);
     });
@@ -437,9 +551,21 @@ describe("native closure identities and settlement metadata", () => {
     const source = read("src/runtime/wasmgc/values/closure-layouts.ts");
     const end = source.indexOf("\nexport type ClosureAllocationMode =");
     if (end < 0) throw new Error("missing header boundary");
-    const reconstructed = source.slice(0, end).trimEnd() + "\n";
+    let reconstructed = source.slice(0, end).trimEnd() + "\n";
+    // Only accurate scalar return annotations changed in the retained header;
+    // invert those exact signatures, preserving every implementation character.
+    reconstructed = replaceOnce(
+      reconstructed,
+      'export function closureArityField(): { name: string; type: { kind: "i32" }; mutable: false } {',
+      "export function closureArityField(): { name: string; type: ValType; mutable: false } {",
+    );
+    reconstructed = replaceOnce(
+      reconstructed,
+      'export function closureBagField(): { name: string; type: { kind: "externref" }; mutable: true } {',
+      "export function closureBagField(): { name: string; type: ValType; mutable: true } {",
+    );
     const restored = reconstructed.replace(
-      'import type { Instr, ValType, FuncHandle } from "../../../wasm/model/instructions.js";\nimport type { FieldDef, StructTypeDef } from "../../../wasm/model/module-records.js";',
+      'import type { Instr, FuncHandle } from "../../../wasm/model/instructions.js";\nimport type { FieldDef, StructTypeDef } from "../../../wasm/model/module-records.js";',
       'import type { FieldDef, Instr, ValType } from "../../ir/types.js";',
     );
     expect(hash(restored)).toBe(headerDonor.sha256);
