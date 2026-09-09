@@ -6871,3 +6871,24 @@ prepared formatter or async consumer acceptance. Nonfinite/zero formatter cases,
 both integer options, decoded support execution and parent boundary activation
 remain integration obligations. Public cutover and retirement remain open.
 See agent-context/3518-native-number-ryu-2026-09-09.md.
+
+### Native formatter D2 validated worker checkpoint (2026-09-09)
+
+Canonical formatter bodies now serve the retained legacy adapters and a complete
+issued resource owner. The exact thirteen-function closure includes the genuine
+D1 radix-body slot and nested Ryū resources; parent lowering fills that body,
+not a placeholder. Both integer options and partial legacy caches preserve the
+authenticated donor module and registration observations.
+
+Final worker run 15960 passed 35/35 ownership/resource tests in 22.67 seconds,
+including original/decoded source-produced support, the exact issue1537 corpus,
+both integer options, two instances and guarded fresh-process binary execution.
+TS7 50495 passed unfiltered. Earlier 27/35, 32/35 and 12/13 attempts remain in
+agent-context/3518-native-number-format-2026-09-09.md with their causes and
+terminal receipts. Canonical intrinsic preparation is required before lowering
+the support body's semantic math.floor operations, as in the legacy wrapper.
+
+Final post-validation High approval was relayed; normal publication is authorized
+and in progress under a separately granted serialized hook slot.
+These resource proofs do not close the full async consumer, public cutover,
+boundary activation or direct-codegen retirement obligations.

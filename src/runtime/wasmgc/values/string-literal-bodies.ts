@@ -3,6 +3,23 @@
 import type { Instr, LocalDef, ValType } from "../../../wasm/model/instructions.js";
 import type { NativeStringLayout } from "./string-layouts.js";
 
+/** Exact self-hosted inline WTF-16 literal, independent of primary UTF8 policy. */
+export function buildInlineNativeStringLiteral(
+  types: { nativeStrDataTypeIdx: number; nativeStrTypeIdx: number },
+  value: string,
+): Instr[] {
+  const ops: Instr[] = [
+    { op: "i32.const", value: value.length },
+    { op: "i32.const", value: 0 },
+  ];
+  for (let i = 0; i < value.length; i++) {
+    ops.push({ op: "i32.const", value: value.charCodeAt(i) });
+  }
+  ops.push({ op: "array.new_fixed", typeIdx: types.nativeStrDataTypeIdx, length: value.length });
+  ops.push({ op: "struct.new", typeIdx: types.nativeStrTypeIdx });
+  return ops;
+}
+
 /** #1588 encoding evidence selected by the backend-neutral IR analysis. */
 export type StringEncoding = "ascii" | "utf8-guaranteed" | "wtf16";
 
