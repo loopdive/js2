@@ -112,3 +112,25 @@ matrix run or workflow modification is implied by this plan.
 
 Full prepared async execution and direct-codegen retirement remain separate
 unfinished requirements of3518. Resolving this blocker does not complete them.
+
+## Approved bounded Linux replay (2026-09-10)
+
+The user approved adding a diagnostic Linux x64 workflow on existing PR5798,
+running the exact 939-path shard against both historical commits. This is
+shard34 (index33/52) and contains only the constructor-extensibility regression.
+The BigInt set regression is in shard31 (942 paths); it is not covered or waived.
+No full matrix, baseline promotion, unrelated test filtering or merge is allowed.
+
+The additive `issue-5807-linux-replay.yml` pins two checkouts, Node25.9.0,
+pnpm10.30.2, pool4 and worker/fork heaps1024. It downloads original provider
+artifacts10111137104/10113341443 and host shard artifacts10111668904/10113885435
+(verified nonexpired). The wrapper requires the exact ordered939-path digest
+`a96bc8efe43b6924c8d35af68d108a1ac1dd30a970d21212f8b0845971f5c737`,
+the original corpus file census, complete receipts, and the unchanged provider
+bytes. It runs the original dynamic shard without filtering or repartitioning.
+
+Current ubuntu24.04 hosted image may differ from original20260831.293.1;
+record both the actual image and this limitation. Original worker scheduling
+cannot be reconstructed. A complete replay is diagnostic, not automatic
+regression clearance. Upload all receipts/logs, including failures; do not retry
+or expand repair scope merely to obtain green. Parent owns integration.

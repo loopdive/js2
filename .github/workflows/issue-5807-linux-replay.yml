@@ -1,0 +1,121 @@
+name: Issue 5807 bounded Linux replay
+
+# One approved paired shard, not a conformance matrix or promotion workflow.
+on:
+  push:
+    branches: [codex/3518-number-format-consumer-20260909]
+    paths:
+      - .github/workflows/issue-5807-linux-replay.yml
+      - scripts/issue-5807-linux-replay.mjs
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: issue-5807-bounded-replay-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  replay:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - arm: donor
+            sha: 129e3efd4530ae1be56dbf5fdea54ddbbd87443e
+            run: 34368952422
+            provider: 10111137104
+            shard: 10111668904
+          - arm: candidate
+            sha: efa0908e09998c73da592fba32708c7ecca8d6e5
+            run: 34374533493
+            provider: 10113341443
+            shard: 10113885435
+    defaults:
+      run:
+        working-directory: subject
+    env:
+      COMPILER_POOL_SIZE: "4"
+      VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
+      TEST262_WORKER_MAX_OLD_SPACE_SIZE: "1024"
+      TEST262_INCLUDE_PROPOSALS: "1"
+      TEST262_TARGET: gc
+      TEST262_RESULT_PREFIX: test262
+      TEST262_CHUNK_INDEX: "33"
+      TEST262_CHUNK_TOTAL: "52"
+      TEST262_PATH_FILTER: ""
+      JS2WASM_IR_FIRST: ""
+      JS2WASM_FNCTOR_LAYOUT_EMIT: ""
+      JS2WASM_EVAL_ENGINE: ""
+      TEST262_IT_TIMEOUT_MS: ""
+      TEST262_FULL_RUNTIME_EVAL: ""
+      JS2WASM_TEMPORAL_CACHE: .test262-cache/temporal
+      RUN_TIMESTAMP: replay5807-${{ github.run_id }}-${{ matrix.arm }}
+      REPLAY_HEAD: ${{ matrix.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: control
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ matrix.sha }}
+          path: subject
+          submodules: recursive
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.2
+          package_json_file: subject/package.json
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 25.9.0
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v7
+        with:
+          github-token: ${{ github.token }}
+          repository: loopdive/js2
+          run-id: ${{ matrix.run }}
+          artifact-ids: ${{ matrix.provider }}
+          merge-multiple: true
+          path: subject/.test262-cache/temporal
+      - uses: actions/download-artifact@v7
+        with:
+          github-token: ${{ github.token }}
+          repository: loopdive/js2
+          run-id: ${{ matrix.run }}
+          artifact-ids: ${{ matrix.shard }}
+          merge-multiple: true
+          path: subject/historical-shard
+      - name: Admit pinned runtime, corpus and historical evidence
+        run: node ../control/scripts/issue-5807-linux-replay.mjs pre
+      - name: Build the original compiler and runtime bundles
+        run: |
+          pnpm run build:compiler-bundle
+          ./node_modules/.bin/esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
+      - name: Run only the original dynamic host shard
+        run: |
+          mkdir -p vitest-blob
+          set +e
+          node node_modules/vitest/dist/cli.js run tests/test262-chunk-dynamic.test.ts --reporter=blob --outputFile=vitest-blob/blob-js-host-mg34.json > replay5807.stdout.log 2> replay5807.stderr.log
+          replay_exit=$?
+          set -e
+          node ../control/scripts/issue-5807-linux-replay.mjs post "$replay_exit"
+      - name: Preserve complete and incomplete evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: issue5807-linux-${{ matrix.arm }}-${{ github.run_id }}
+          retention-days: 14
+          include-hidden-files: true
+          if-no-files-found: error
+          path: |
+            subject/replay5807*.json
+            subject/replay5807*.log
+            subject/benchmarks/results/test262-results-replay5807-*
+            subject/vitest-blob/
+            subject/historical-shard/
+            subject/.test262-cache/temporal/prewarm.json
