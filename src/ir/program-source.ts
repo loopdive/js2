@@ -56,6 +56,8 @@ export interface IrProgramSourceInput {
   readonly promiseDelayProjection?: "disabled" | "standalone-native";
   /** Explicit full-family logical lowering; never inferred from target or fast/default settings. */
   readonly asyncFamilyProjection?: "disabled" | "standalone-native";
+  /** Explicit frontend string-number lowering; not provider availability or permission to emit. */
+  readonly nativeStringValueProjection?: "standalone-native";
 }
 
 /** Frontend-only carrier; declarations never cross into PreparedIrProgram. */
@@ -190,6 +192,20 @@ function selectNativeAsyncFamilyProjection(input: IrProgramSourceInput): boolean
     throw new PreparedIrProgramInvariantError(
       "invalid-prepared-data",
       "native async family source projection requires explicit native delay and wasmgc:standalone policy",
+    );
+  return true;
+}
+
+/** Resolve before source planning; never infer string-number lowering from the target. */
+function selectNativeStringValueProjection(
+  input: Pick<IrProgramSourceInput, "nativeStringValueProjection" | "policy">,
+): boolean {
+  const projection = input.nativeStringValueProjection;
+  if (projection === undefined) return false;
+  if (projection !== "standalone-native" || input.policy.backend !== "wasmgc" || input.policy.target !== "standalone")
+    throw new PreparedIrProgramInvariantError(
+      "invalid-prepared-data",
+      "native string-value source projection requires an explicit standalone-native request with wasmgc:standalone policy",
     );
   return true;
 }
@@ -481,6 +497,7 @@ export function prepareIrProgramSources(
 ): IrProgramSourcePreparation | PreparedIrProgramFailure {
   const nativeDelay = selectNativePromiseDelaySourceProjection(input);
   const nativeAsyncFamily = selectNativeAsyncFamilyProjection(input);
+  const nativeStringValues = selectNativeStringValueProjection(input);
   const inventory = buildIrUnitInventory(input.sourceFiles, {
     ...input.inventoryOptions,
     entrySource: input.entrySource,
@@ -682,6 +699,7 @@ export function prepareIrProgramSources(
         allocRegistry: allocations,
         directCalls,
         resolver,
+        ...(nativeStringValues ? { stringNumericCoercion: "number-boundary" as const } : {}),
         ...(nativeDelay ? { promiseDelays: promiseDelaysBySource.get(source) } : {}),
         ...(family ? { logicalVectorTypes: family.logicalVectorTypes } : {}),
         ...(moduleInit
