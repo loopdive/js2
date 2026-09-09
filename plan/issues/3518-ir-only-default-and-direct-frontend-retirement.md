@@ -6883,3 +6883,25 @@ prepared formatter or async consumer acceptance. Nonfinite/zero formatter cases,
 both integer options, decoded support execution and parent boundary activation
 remain integration obligations. Public cutover and retirement remain open.
 See agent-context/3518-native-number-ryu-2026-09-09.md.
+
+### Same-owner staged closure reservation checkpoint (2026-09-09)
+
+The bounded closure resource producer now supports one issued owner and pack
+across a settle-metadata prefix, actual Promise reservation, and signature-only
+suffix. Complete preflight and all metadata precede the first pause; the legacy
+atomic API and complete frozen shape remain. Promise reserve/reserving inventory
+accept the authenticated prefix, while fill still requires completion.
+
+High statically approved production and final proof repairs. Focused rerun4029
+exited0 with 172/172 across four suites. Earlier33713 exited1 with 170/172;
+the surviving physical-only preflight mutant was still blocked by the canonical
+walk, and one expected missing-request diagnostic needed the new prefix guard.
+Both are retained distinctly in the handoff. TS740649 exited0 before those two
+test-only repairs. Final TS711727 exited0 after those repairs and scoped
+production formatting; normal publication remains pending.
+
+Original/decoded actual-source Promise interleaving, fresh/cached suffixes,
+three lazy-observer timings, full donor receipts, live mutants and allocator
+ordering controls establish this reservation prerequisite only. Complete Promise
+fill, full native async execution, public cutover and retirement remain open.
+See agent-context/3518-staged-closure-reservations-implementation-2026-09-09.md.
