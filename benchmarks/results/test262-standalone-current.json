@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-08T22:54:18.819Z",
-  "baseline_generated_at": "2026-09-08T22:54:18.819Z",
-  "baseline_sha": "9b52a113071f94499407b6584124aee9ff3b426b",
+  "timestamp": "2026-09-09T15:40:01.472Z",
+  "baseline_generated_at": "2026-09-09T15:40:01.472Z",
+  "baseline_sha": "129e3efd4530ae1be56dbf5fdea54ddbbd87443e",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -12,22 +12,22 @@
   "summary": {
     "total": 48232,
     "pass": 34979,
-    "fail": 9578,
+    "fail": 9579,
     "compile_error": 3647,
-    "compile_timeout": 10,
+    "compile_timeout": 9,
     "skip": 18,
-    "compilable": 44557,
+    "compilable": 44558,
     "host_free_pass": 34979,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 47146,
         "pass": 33950,
-        "fail": 9540,
+        "fail": 9541,
         "compile_error": 3628,
-        "compile_timeout": 10,
+        "compile_timeout": 9,
         "skip": 18,
-        "compilable": 43490,
+        "compilable": 43491,
         "host_free_pass": 33950,
         "stale": 0,
         "label": "ECMAScript current standard"
@@ -59,11 +59,11 @@
       "official": {
         "total": 48232,
         "pass": 34979,
-        "fail": 9578,
+        "fail": 9579,
         "compile_error": 3647,
-        "compile_timeout": 10,
+        "compile_timeout": 9,
         "skip": 18,
-        "compilable": 44557,
+        "compilable": 44558,
         "host_free_pass": 34979,
         "stale": 0,
         "label": "standard + annex_b (default)"
@@ -71,11 +71,11 @@
       "full": {
         "total": 48735,
         "pass": 35214,
-        "fail": 9594,
+        "fail": 9595,
         "compile_error": 3803,
-        "compile_timeout": 10,
+        "compile_timeout": 9,
         "skip": 114,
-        "compilable": 44808,
+        "compilable": 44809,
         "host_free_pass": 35214,
         "stale": 0,
         "label": "standard + annex_b + proposals"
@@ -85,33 +85,33 @@
   "official_summary": {
     "total": 48232,
     "pass": 34979,
-    "fail": 9578,
+    "fail": 9579,
     "compile_error": 3647,
-    "compile_timeout": 10,
+    "compile_timeout": 9,
     "skip": 18,
-    "compilable": 44557,
+    "compilable": 44558,
     "host_free_pass": 34979,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
     "pass": 35214,
-    "fail": 9594,
+    "fail": 9595,
     "compile_error": 3803,
-    "compile_timeout": 10,
+    "compile_timeout": 9,
     "skip": 114,
-    "compilable": 44808,
+    "compilable": 44809,
     "host_free_pass": 35214,
     "stale": 0
   },
   "strict_summary": {
     "total": 45721,
     "pass": 32712,
-    "fail": 9437,
+    "fail": 9438,
     "compile_error": 3545,
-    "compile_timeout": 9,
+    "compile_timeout": 8,
     "skip": 18,
-    "compilable": 42149,
+    "compilable": 42150,
     "host_free_pass": 32712,
     "stale": 0
   },
@@ -141,11 +141,11 @@
     "standard": {
       "total": 47146,
       "pass": 33950,
-      "fail": 9540,
+      "fail": 9541,
       "compile_error": 3628,
-      "compile_timeout": 10,
+      "compile_timeout": 9,
       "skip": 18,
-      "compilable": 43490,
+      "compilable": 43491,
       "host_free_pass": 33950,
       "stale": 0
     }
@@ -199,9 +199,9 @@
       "name": "built-ins/Array",
       "path": "built-ins/Array",
       "pass": 2173,
-      "fail": 791,
+      "fail": 792,
       "compile_error": 110,
-      "compile_timeout": 8,
+      "compile_timeout": 7,
       "skip": 0,
       "total": 3082,
       "host_free_pass": 2173
@@ -1198,7 +1198,7 @@
     }
   ],
   "error_categories": {
-    "assertion_fail": 4863,
+    "assertion_fail": 4864,
     "host_import_leak": 2519,
     "illegal_cast": 237,
     "negative_test_fail": 4,
@@ -1334,8 +1334,8 @@
         "sample_files": [
           "test/built-ins/AsyncDisposableStack/prototype/move/not-a-constructor.js",
           "test/built-ins/AsyncDisposableStack/prototype/move/sets-state-to-disposed.js",
-          "test/built-ins/AsyncDisposableStack/instance-extensible.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.asyncDispose-property-not-callable.js",
+          "test/built-ins/AsyncDisposableStack/instance-extensible.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.dispose-property-not-callable.js"
         ],
         "sample_signatures": [
@@ -1975,15 +1975,15 @@
         "count": 1852,
         "statuses": {
           "pass": 0,
-          "fail": 1634,
+          "fail": 1635,
           "compile_error": 209,
-          "compile_timeout": 9,
+          "compile_timeout": 8,
           "skip": 0,
           "total": 1852,
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 1182,
+          "assertion_fail": 1183,
           "null_deref": 8,
           "illegal_cast": 176,
           "type_error": 254,
@@ -1995,8 +1995,8 @@
         "by_edition": {
           "ES2024": 65,
           "ES2015": 229,
-          "ES2023": 95,
           "ES2022": 289,
+          "ES2023": 95,
           "ES2020": 315,
           "Unclassified (untagged)": 572,
           "ES2026": 118,
@@ -2640,15 +2640,15 @@
           "test/language/expressions/bitwise-xor/bigint-non-primitive.js",
           "test/language/expressions/unsigned-right-shift/bigint-non-primitive.js",
           "test/built-ins/Atomics/store/bigint/non-shared-bufferdata.js",
-          "test/built-ins/Atomics/notify/bigint/non-shared-bufferdata-returns-0.js",
-          "test/built-ins/Atomics/or/bigint/bad-range.js"
+          "test/built-ins/Atomics/or/bigint/bad-range.js",
+          "test/built-ins/Atomics/notify/bigint/non-shared-bufferdata-returns-0.js"
         ],
         "sample_signatures": [
           "type_error:TypeError: Cannot mix BigInt and other types, use explicit conversions",
           "assertion_fail:Test262Error: Object(0b101n) >>> Object(1n) throws TypeError Expected a TypeError to be thrown but no exception was thrown at all",
           "type_error:TypeError: Atomics.store requires a shared integer TypedArray, which is unsupported in --target standalone",
-          "type_error:TypeError: Atomics.notify requires a shared integer TypedArray, which is unsupported in --target standalone",
-          "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)"
+          "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)",
+          "type_error:TypeError: Atomics.notify requires a shared integer TypedArray, which is unsupported in --target standalone"
         ]
       },
       {
@@ -2909,8 +2909,8 @@
         "sample_files": [
           "test/language/identifiers/part-unicode-16.0.0-escaped.js",
           "test/language/identifiers/start-unicode-17.0.0-class.js",
-          "test/language/identifiers/start-unicode-16.0.0-escaped.js",
           "test/language/identifiers/part-unicode-17.0.0-class.js",
+          "test/language/identifiers/start-unicode-16.0.0-escaped.js",
           "test/language/identifiers/start-unicode-17.0.0.js"
         ],
         "sample_signatures": [
