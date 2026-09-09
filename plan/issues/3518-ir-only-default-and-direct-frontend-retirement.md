@@ -6787,3 +6787,19 @@ agent-context/3518-native-async-resource-declarations-spec-2026-09-09.md;
 the frame API and object-access donor map are also preserved for the next lanes.
 This composition does not remove the async acceptance refusal or establish
 native async execution, public default cutover or retirement.
+
+### Native async producer declarations (2026-09-09)
+
+The existing closure, argument-vector and Promise reservation callers now consume
+pure symbolic declaration plans before allocating. Issued inventories preserve
+ownership, request/cache ordering, adopted arrays and inherited metadata type
+identity. Promise still owns 25 declarations across 26 ordered operations.
+The declaration checkpoint passes 194/194 focused tests (77955, exit zero) and
+unfiltered TS7 (43844, exit zero). High approved the twelve frozen source/test
+files; earlier failing runs remain in the implementation handoff.
+
+Borrowed tag association is checked while reserving; actual tag provenance is
+authenticated only after freeze using the existing ledger. This limitation is
+explicit, not a claim of preallocation tag authentication. The full async
+consumer, staged cross-producer closure scheduling, complete runtime fills,
+public cutover and retirement remain unfinished.

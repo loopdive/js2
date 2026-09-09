@@ -14,6 +14,7 @@ import type {
   NativeDeclaredSignature,
   NativeStringValueDeclaration,
   NativeResourceRecipe,
+  NativeDeclaredName,
 } from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
 import { freezePreparedIrValue, preparedIrDataMismatch } from "../../../ir/program/data.js";
 
@@ -80,11 +81,20 @@ export function instantiateNativeDeclaredType(
   tx: PhysicalModuleReservations,
   shape: NativeDeclaredType,
   types: NativeDeclaredTypeTokens,
+  self?: { readonly key: string; readonly typeIndex: number },
 ): TypeDef {
+  const name = (value: NativeDeclaredName): string => {
+    if (typeof value === "string") return value;
+    if (value.kind === "array-ref-index") return `__arr_ref_${typeIndex(tx, types, value.typeKey)}`;
+    if (value.kind !== "builtin-function-metadata-index") fail("invalid indexed name");
+    const index = self?.key === value.typeKey ? self.typeIndex : typeIndex(tx, types, value.typeKey);
+    if (!Number.isSafeInteger(index) || index < 0) fail("invalid self coordinate");
+    return `__builtinfn_meta_${index}_struct`;
+  };
   if (shape.kind === "array")
     return {
       kind: "array",
-      name: typeof shape.name === "string" ? shape.name : `__arr_ref_${typeIndex(tx, types, shape.name.typeKey)}`,
+      name: name(shape.name),
       element: instantiateNativeDeclaredValType(tx, shape.element, types),
       mutable: shape.mutable,
     };
@@ -92,6 +102,7 @@ export function instantiateNativeDeclaredType(
   const { parent, fields, ...rest } = shape;
   return {
     ...rest,
+    name: name(shape.name),
     fields: fields.map((field) => ({ ...field, type: instantiateNativeDeclaredValType(tx, field.type, types) })),
     ...(Object.hasOwn(shape, "parent")
       ? {
@@ -122,17 +133,16 @@ export function nativeScalarTypeDeclaration(definition: TypeDef): NativeDeclared
   };
 }
 
-/** Preflight the entire recipe without allocation, then execute its exact interleaving. */
-export function executeNativeResourceRecipe(
-  tx: PhysicalModuleReservations,
+/** Validate the complete symbolic operation population without a module or ledger. */
+export function preflightNativeResourceRecipe(
   recipe: NativeResourceRecipe,
-  prerequisites: NativeDeclaredTypeTokens = new Map(),
-): ReadonlyMap<string, NativeDeclaredReservation> {
-  const types = new Map(prerequisites);
-  for (const [key, token] of types) {
-    if (token.key !== key) fail("substituted prerequisite key");
-    tx.assertTypeReservation(token);
-  }
+  prerequisiteKeys: readonly string[] = [],
+): void {
+  const types = new Set<string>();
+  dense(prerequisiteKeys, "prerequisites", (key) => {
+    if (typeof key !== "string" || !key || types.has(key)) fail("invalid prerequisite key");
+    types.add(key);
+  });
   const declarations = new Map<string, NativeStringValueDeclaration>();
   dense(recipe.declarations, "declarations", (row) => {
     if (!row.key || declarations.has(row.key) || types.has(row.key)) fail("duplicate declaration key");
@@ -142,7 +152,7 @@ export function executeNativeResourceRecipe(
     });
     declarations.set(row.key, row);
   });
-  const available = new Set(types.keys()),
+  const available = new Set(types),
     reserved = new Set<string>();
   const ref = (value: NativeDeclaredValType) => {
     if (!value || typeof value !== "object") fail("invalid value type");
@@ -156,11 +166,24 @@ export function executeNativeResourceRecipe(
     dense(sig.results, "signature results", ref);
   };
   let resourcePhase = false;
+  const signatureKeys = new Set<string>();
   dense(recipe.reservationSteps, "reservation steps", (step) => {
     if (step.phase !== "string-types" && step.phase !== "resources") fail("invalid reservation phase");
     if (step.phase === "resources") resourcePhase = true;
     else if (resourcePhase) fail("reordered string type phase");
     if (step.kind === "intern-signature") {
+      if (Object.hasOwn(step, "key")) {
+        if (
+          typeof step.key !== "string" ||
+          !step.key ||
+          signatureKeys.has(step.key) ||
+          declarations.has(step.key) ||
+          types.has(step.key)
+        )
+          fail("invalid signature observation key");
+        signatureKeys.add(step.key);
+      }
+      if (Object.hasOwn(step, "name") && typeof step.name !== "string") fail("invalid signature name");
       signature(step.signature);
       return;
     }
@@ -177,6 +200,11 @@ export function executeNativeResourceRecipe(
         )
           fail("invalid symbolic array name");
       } else if (shape.kind === "struct") {
+        if (
+          typeof shape.name !== "string" &&
+          (shape.name?.kind !== "builtin-function-metadata-index" || shape.name.typeKey !== row.key)
+        )
+          fail("invalid symbolic struct name");
         dense(shape.fields, "struct fields", (field) => ref(field.type));
         if (
           Object.hasOwn(shape, "parent") &&
@@ -192,11 +220,40 @@ export function executeNativeResourceRecipe(
     reserved.add(row.key);
   });
   if (reserved.size !== declarations.size) fail("declaration missing reserve step");
+}
+
+/** Both public execution APIs share these exact reservation/interner operations. */
+export function executeNativeResourceRecipeWithSignatures(
+  tx: PhysicalModuleReservations,
+  recipe: NativeResourceRecipe,
+  prerequisites: NativeDeclaredTypeTokens = new Map(),
+): {
+  readonly reservations: ReadonlyMap<string, NativeDeclaredReservation>;
+  readonly signatures: ReadonlyMap<string, number>;
+} {
+  preflightNativeResourceRecipe(recipe, [...prerequisites.keys()]);
+  // Only the closure producer has an authenticated append frontier for its
+  // self-named metadata subtype. Refuse before executing any generic step.
+  for (const row of recipe.declarations) {
+    if (row.space === "type" && row.shape.kind === "struct" && typeof row.shape.name !== "string")
+      fail("self-indexed metadata requires the closure reservation cursor");
+  }
+  const types = new Map(prerequisites);
+  for (const [key, token] of types) {
+    if (token.key !== key) fail("substituted prerequisite key");
+    tx.assertTypeReservation(token);
+  }
+  const declarations = new Map(recipe.declarations.map((row) => [row.key, row]));
+  const signatures = new Map<string, number>();
   const result = new Map<string, NativeDeclaredReservation>();
   for (const step of recipe.reservationSteps) {
     if (step.kind === "intern-signature") {
       const sig = instantiateNativeDeclaredSignature(tx, step.signature, types);
-      tx.internFunctionType(sig.params, sig.results);
+      const index =
+        step.name === undefined
+          ? tx.internFunctionType(sig.params, sig.results)
+          : tx.internFunctionType(sig.params, sig.results, step.name);
+      if (step.key !== undefined) signatures.set(step.key, index);
       continue;
     }
     const row = declarations.get(step.resourceKey)!;
@@ -214,7 +271,15 @@ export function executeNativeResourceRecipe(
     else token = tx.reserveFunction(row.key, row.name, instantiateNativeDeclaredSignature(tx, row.signature, types));
     result.set(row.key, token);
   }
-  return result;
+  return { reservations: result, signatures };
+}
+
+export function executeNativeResourceRecipe(
+  tx: PhysicalModuleReservations,
+  recipe: NativeResourceRecipe,
+  prerequisites: NativeDeclaredTypeTokens = new Map(),
+): ReadonlyMap<string, NativeDeclaredReservation> {
+  return executeNativeResourceRecipeWithSignatures(tx, recipe, prerequisites).reservations;
 }
 
 export function requireNativeDeclaredReservation<K extends NativeDeclaredReservation["kind"]>(

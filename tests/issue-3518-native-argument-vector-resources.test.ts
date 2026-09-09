@@ -18,6 +18,8 @@ import {
 } from "../src/runtime/wasmgc/values/vector-grow-store.js";
 import * as bodies from "../src/runtime/wasmgc/values/argument-vector-bodies.js";
 import {
+  declareNativeArgumentVectorResources,
+  nativeArgumentVectorReservationInventory,
   reserveNativeArgumentVectorResources,
   fillNativeArgumentVectorResources,
 } from "../src/backend/wasmgc/resources/native-argument-vectors.js";
@@ -208,13 +210,59 @@ function legacy(original: boolean, early: boolean, baseFirst: boolean) {
   const result = run(ctx);
   return { ctx, result };
 }
-function reserve(early = false) {
+function reserve(early = false, explicit = true) {
   const module = createEmptyModule();
   const tx = new PhysicalModuleReservations(module);
   const vectorBase = tx.reserveType("shared:base", createVectorBaseType());
   const earlyArgumentArray = early ? tx.reserveType("early:argv", bodies.createArgumentVectorArrayType()) : undefined;
-  const pack = reserveNativeArgumentVectorResources(tx, { key: "argv" }, { vectorBase, earlyArgumentArray });
-  return { module, tx, pack };
+  const declaration = declareNativeArgumentVectorResources(
+    { key: "argv" },
+    { vectorBaseKey: vectorBase.key, ...(earlyArgumentArray ? { earlyArgumentArrayKey: earlyArgumentArray.key } : {}) },
+  );
+  const pack = reserveNativeArgumentVectorResources(
+    tx,
+    { key: "argv" },
+    { vectorBase, earlyArgumentArray },
+    explicit ? declaration : undefined,
+  );
+  return { module, tx, pack, declaration };
+}
+
+const canonicalBodySource = () =>
+  readFileSync(new URL("../src/runtime/wasmgc/values/argument-vector-bodies.ts", import.meta.url), "utf8");
+function requireFactoredArgumentVectorReceipt(source: string): void {
+  const parsed = ts.createSourceFile("argument-vector-factories.ts", source, ts.ScriptTarget.Latest, true);
+  const declarations = parsed.statements.filter(ts.isFunctionDeclaration);
+  const named = (name: string) => {
+    const matches = declarations.filter((row) => row.name?.text === name);
+    if (matches.length !== 1) throw new Error("missing/duplicate argument-vector factory");
+    return matches[0]!.getText(parsed);
+  };
+  const delegate = named("createArgumentVectorType"),
+    shape = named("createArgumentVectorShape");
+  const header =
+    "export function createArgumentVectorType(objVecBaseTypeIdx: number, objVecArrTypeIdx: number): StructTypeDef {";
+  const expected = `${header}
+  const { parent, ...shape } = createArgumentVectorShape(
+    { kind: "ref" as const, typeIdx: objVecArrTypeIdx },
+    objVecBaseTypeIdx,
+  );
+  return { kind: shape.kind, name: shape.name, superTypeIdx: parent, fields: shape.fields };
+}`;
+  if (delegate !== expected) throw new Error("changed argument-vector delegate");
+  let original = replaceExactlyOnce(
+    shape,
+    "export function createArgumentVectorShape<D, P>(data: D, parent: P) {",
+    header,
+  );
+  original = replaceExactlyOnce(original, 'kind: "struct" as const,', 'kind: "struct",');
+  original = replaceExactlyOnce(original, "    parent,", "    superTypeIdx: objVecBaseTypeIdx,");
+  original = replaceExactlyOnce(original, 'type: { kind: "i32" as const }', 'type: { kind: "i32" }');
+  original = replaceExactlyOnce(original, "type: data,", 'type: { kind: "ref", typeIdx: objVecArrTypeIdx },');
+  const inverse = replaceExactlyOnce(source, delegate + "\n\n" + shape, original);
+  // Exact pre-factoring file at a024d9c048; prior extraction donors unchanged.
+  if (sha256(inverse) !== "5be0cba6648fd0c6eee5ff66fdca78c318b6f1d28b7c2901b0a171930a3bd166")
+    throw new Error("complete argument-vector factory inverse mismatch");
 }
 type Api = {
   newVector(): unknown;
@@ -268,6 +316,41 @@ function instantiate() {
 }
 
 describe("native argument-vector resources", () => {
+  it("inverts only the shared factory factoring against the complete unchanged donor", () => {
+    requireFactoredArgumentVectorReceipt(canonicalBodySource());
+  });
+  for (const [before, after] of [
+    ["type: data,", 'type: { kind: "externref" },'],
+    ["    parent,", "    parent: undefined,"],
+    ["export function createArgumentVectorShape<D, P>", "export async function createArgumentVectorShape<D, P>"],
+    ['  return {\n    kind: "struct" as const,', '  void 0;\n  return {\n    kind: "struct" as const,'],
+  ])
+    it(`rejects live argument-vector factory mutation ${before}`, () => {
+      const source = canonicalBodySource();
+      requireFactoredArgumentVectorReceipt(source);
+      expect(() => requireFactoredArgumentVectorReceipt(replaceExactlyOnce(source, before!, after!))).toThrow();
+    });
+  it.each([false, true])("preserves implicit/explicit recipe bodies and inventory, adopted=%s", (early) => {
+    const explicit = reserve(early),
+      implicit = reserve(early, false);
+    expect(explicit.module).toStrictEqual(implicit.module);
+    const rows = nativeArgumentVectorReservationInventory(explicit.tx, explicit.pack, explicit.declaration);
+    expect(rows.map((row) => row.key)).toEqual(explicit.declaration.declarations.map((row) => row.key));
+    expect(rows).toHaveLength(early ? 3 : 4);
+    if (early) expect(rows).not.toContain(explicit.pack.array);
+    explicit.tx.freezeReservations();
+    implicit.tx.freezeReservations();
+    fillNativeArgumentVectorResources(explicit.tx, explicit.pack);
+    fillNativeArgumentVectorResources(implicit.tx, implicit.pack);
+    expect(explicit.module).toStrictEqual(implicit.module);
+    expect(nativeArgumentVectorReservationInventory(explicit.tx, explicit.pack, explicit.declaration)).toEqual(rows);
+    expect(() =>
+      nativeArgumentVectorReservationInventory(explicit.tx, { ...explicit.pack }, explicit.declaration),
+    ).toThrow();
+    expect(() =>
+      nativeArgumentVectorReservationInventory(explicit.tx, explicit.pack, structuredClone(explicit.declaration)),
+    ).toThrow();
+  });
   for (const file of ["object", "linear"] as const) {
     const source = file === "object" ? liveObject : liveLinear;
     const canonicalImport = file === "object" ? canonicalObjectImport : canonicalLinearImport;
