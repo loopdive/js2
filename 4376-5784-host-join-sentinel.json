@@ -1,0 +1,11 @@
+{
+  "id": "4376",
+  "slice": "5784-host-join-sentinel",
+  "assignee": "ttraenkler/codex-5784-shepherd",
+  "requested_by": "ttraenkler/codex-5784-shepherd",
+  "status": "in-progress",
+  "branch": "codex/5784-array-hole-diagnosis",
+  "claimed_at": "2026-09-09T03:23:05Z",
+  "updated_at": "2026-09-09T03:23:05Z",
+  "write_id": "90336-3zmoztic"
+}
