@@ -28,6 +28,14 @@
 
 import { sameValTypes } from "../wasm/physical/function-types.js";
 import {
+  reserveNativeVectorTypes,
+  reserveNativeVectorHelper,
+  fillNativeVectorHelper,
+  nativeVectorPhysicalType,
+  resolveNativeVector,
+  resolveNativeVectorForElement,
+} from "../backend/wasmgc/resources/native-vectors.js";
+import {
   PhysicalModuleReservations,
   type CallableReservation,
   type FunctionReservation,
@@ -45,7 +53,7 @@ import { forEachInstrDeep, type IrFuncRef, type IrFunction, type IrGlobalRef } f
 import type { IrPreparationFailure } from "./outcomes.js";
 import { ProgramAbiMap } from "./program-abi.js";
 import { observePreparedIrProgram } from "./program-observation.js";
-import { planPhysicalSetup, type PhysicalSetupPlan } from "./program-physical-plan.js";
+import { planPhysicalSetup, type PhysicalSetupPlan, type PhysicalSignatureType } from "./program-physical-plan.js";
 import { assertPreparedIrProgram } from "./program-validation.js";
 import {
   preparedIrProgramOwner,
@@ -289,8 +297,27 @@ function materializePhysicalProgram(
       )
     : undefined;
 
+  const vectorTypes = reserveNativeVectorTypes(reservations, plan.vectors);
+  const physicalSignature = (signature: {
+    readonly params: readonly PhysicalSignatureType[];
+    readonly results: readonly PhysicalSignatureType[];
+  }) => {
+    const convert = (types: readonly PhysicalSignatureType[]): ValType[] =>
+      types.map((type) => {
+        const value = nativeVectorPhysicalType(vectorTypes, type.kind === "vec" ? type : { kind: "val", val: type });
+        if (!value) emissionFailed("accepted signature has no reserved physical carrier");
+        return value;
+      });
+    return { params: convert(signature.params), results: convert(signature.results) };
+  };
+
   for (const imported of plan.importedFunctions) {
-    const reserved = reservations.reserveFunctionImport(imported.bindingId, imported.module, imported.field, imported);
+    const reserved = reservations.reserveFunctionImport(
+      imported.bindingId,
+      imported.module,
+      imported.field,
+      physicalSignature(imported),
+    );
     functionsByKey.set(imported.referenceKey, reserved);
     resourcesByBinding.set(imported.bindingId, reserved);
   }
@@ -314,11 +341,19 @@ function materializePhysicalProgram(
   const slots = new Map<IrUnitId, FunctionReservation>();
   const slotOwners = new Map<WasmFunction, IrUnitId>();
   for (const declared of plan.functions) {
-    const reserved = reservations.reserveFunction(declared.bindingId, declared.name, declared);
+    const reserved = reservations.reserveFunction(declared.bindingId, declared.name, physicalSignature(declared));
     slots.set(declared.unitId, reserved);
     slotOwners.set(reserved.object, declared.unitId);
     functionsByKey.set(irCallableBindingKey({ kind: "unit", unitId: declared.unitId }), reserved);
     resourcesByBinding.set(declared.bindingId, reserved);
+  }
+  const vectorHelper = reserveNativeVectorHelper(reservations, plan.vectors, vectorTypes, exceptionTag);
+  if (vectorHelper) {
+    if (!plan.vectors.helper) emissionFailed("vector helper has no authenticated binding plan");
+    functionsByKey.set(plan.vectors.helper.referenceKey, vectorHelper.function);
+    resourcesByBinding.set(plan.vectors.helper.bindingId, vectorHelper.function);
+  } else if (plan.vectors.helper) {
+    emissionFailed("planned vector helper was not reserved");
   }
   let startAdapter: FunctionReservation | undefined;
   if (plan.startup.units.length > 0) {
@@ -353,6 +388,12 @@ function materializePhysicalProgram(
       index: reservations.physicalIndex(slots.get(declared.unitId)!),
     });
   }
+  if (vectorHelper && plan.vectors.helper) {
+    abi.bindFinalIndex(plan.vectors.helper.bindingId, {
+      space: "function",
+      index: reservations.physicalIndex(vectorHelper.function),
+    });
+  }
   for (const global of [...plan.importedGlobals, ...plan.definedGlobals]) {
     abi.bindFinalIndex(global.bindingId, {
       space: "global",
@@ -360,8 +401,12 @@ function materializePhysicalProgram(
     });
   }
   abi.finishBinding();
+  if (vectorHelper) fillNativeVectorHelper(reservations, vectorHelper);
 
   // 4. Lower every physical body into its reserved slot.
+  // Resource validation authenticates this exact shared two-field layout.
+  const vectorLowering = (layout: ReturnType<typeof resolveNativeVector>) =>
+    layout ? { ...layout, lengthFieldIdx: 0, dataFieldIdx: 1 } : null;
   const resolver: IrLowerResolver = {
     resolveFunc: (ref: IrFuncRef) => {
       const reserved = functionsByKey.get(irCallableBindingKey(ref.binding));
@@ -374,6 +419,8 @@ function materializePhysicalProgram(
       return reservations.physicalIndex(reserved);
     },
     resolveType: (ref) => emissionFailed(`type ${ref.name} was not reserved`),
+    resolveVec: (type) => vectorLowering(resolveNativeVector(vectorTypes, type)),
+    resolveVecForElement: (element) => vectorLowering(resolveNativeVectorForElement(vectorTypes, element)),
     internFuncType: (type) => reservations.internFunctionType(type.params, type.results),
     ensureExnTag: () => {
       if (exnTagIdx === undefined) emissionFailed("a body requires the __exn tag but the plan reserved none");
@@ -403,7 +450,8 @@ function materializePhysicalProgram(
     }
     const params = lowered.params.flatMap((param) => [...param.slots]);
     const results = lowered.results.flatMap((result) => [...result]);
-    if (!sameValTypes(params, declared.params) || !sameValTypes(results, declared.results)) {
+    const signature = physicalSignature(declared);
+    if (!sameValTypes(params, signature.params) || !sameValTypes(results, signature.results)) {
       emissionFailed(`body ${declared.unitId} lowered to a signature that contradicts its reserved ABI slot`);
     }
     reservations.fillFunction(reserved, {
@@ -453,7 +501,9 @@ function materializePhysicalProgram(
   for (const fn of module.functions) {
     const unitId = slotOwners.get(fn);
     if (unitId === undefined) {
-      if (fn !== startAdapter?.object) emissionFailed(`module carries an unowned function ${fn.name}`);
+      if (fn !== startAdapter?.object && fn !== vectorHelper?.function.object) {
+        emissionFailed(`module carries an unowned function ${fn.name}`);
+      }
       continue;
     }
     emittedUnitIds.push(unitId);

@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const repository = resolve(import.meta.dirname, "..");
 // Fixed specification population, independent of discovered imports and policy.
-const groups = {
+const historicalGroups = {
   foundation: [
     "source-origin",
     "ir-identity",
@@ -90,6 +90,17 @@ const groups = {
     (x) => `src/runtime/contracts/${x}.ts`,
   ),
 };
+const physicalVectorAdditions = [
+  "src/ir/program/native-vector-resources.ts",
+  "src/runtime/wasmgc/values/vector-grow-store.ts",
+  "src/backend/wasmgc/resources/native-vectors.ts",
+];
+const groups = {
+  ...historicalGroups,
+  "ir-program": [...historicalGroups["ir-program"], physicalVectorAdditions[0]!],
+  "native-runtime": [...historicalGroups["native-runtime"], physicalVectorAdditions[1]!],
+  "backend-wasmgc": [physicalVectorAdditions[2]!],
+};
 const required = Object.values(groups).flat();
 const callableAdditions = ["src/ir/core/async-callables.ts", "src/ir/runtime/native-async-callables.ts"];
 const vectorAdditions = ["src/ir/core/vector-runtime.ts", "src/ir/runtime/vector-callables.ts"];
@@ -126,34 +137,42 @@ const additions = [
 const policy = () => JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 function assertNewActivations(history: unknown[]) {
-  expect(history.slice(0, 2)).toEqual(
-    (["ir-core", "ir-runtime"] as const).map((layer) => ({
+  expect(history.slice(0, 3)).toEqual(
+    (["ir-program", "native-runtime", "backend-wasmgc"] as const).map((layer) => ({
       layer,
       entries: groups[layer],
       minModules: groups[layer].length,
     })),
   );
+  history = history.slice(3);
+  expect(history.slice(0, 2)).toEqual(
+    (["ir-core", "ir-runtime"] as const).map((layer) => ({
+      layer,
+      entries: historicalGroups[layer],
+      minModules: historicalGroups[layer].length,
+    })),
+  );
   history = history.slice(2);
   expect(history.slice(0, 2)).toEqual(
     (["ir-core", "ir-runtime"] as const).map((layer) => ({
       layer,
-      entries: groups[layer].filter((path) => !vectorAdditions.includes(path)),
-      minModules: groups[layer].length - 1,
+      entries: historicalGroups[layer].filter((path) => !vectorAdditions.includes(path)),
+      minModules: historicalGroups[layer].length - 1,
     })),
   );
   history = history.slice(2);
-  expect(history[0]).toEqual({ layer: "wasm-physical", entries: groups["wasm-physical"], minModules: 5 });
-  expect(history[1]).toEqual({ layer: "native-runtime", entries: groups["native-runtime"], minModules: 6 });
+  expect(history[0]).toEqual({ layer: "wasm-physical", entries: historicalGroups["wasm-physical"], minModules: 5 });
+  expect(history[1]).toEqual({ layer: "native-runtime", entries: historicalGroups["native-runtime"], minModules: 6 });
   expect(history.slice(2, 4)).toEqual(
     (["native-runtime", "wasm-physical"] as const).map((layer) => ({
       layer,
-      entries: groups[layer].filter(
+      entries: historicalGroups[layer].filter(
         (path) =>
           ![...delayCombinatorAdditions, ...typeLayoutAdditions, ...callableAdditions, ...vectorAdditions].includes(
             path,
           ),
       ),
-      minModules: groups[layer].filter(
+      minModules: historicalGroups[layer].filter(
         (path) =>
           ![...delayCombinatorAdditions, ...typeLayoutAdditions, ...callableAdditions, ...vectorAdditions].includes(
             path,
@@ -165,7 +184,7 @@ function assertNewActivations(history: unknown[]) {
     (["native-runtime", "wasm-model", "wasm-physical", "ir-core", "ir-analysis", "ir-runtime"] as const).map(
       (layer) => ({
         layer,
-        entries: groups[layer].filter(
+        entries: historicalGroups[layer].filter(
           (path) =>
             ![
               ...frameAdditions,
@@ -175,7 +194,7 @@ function assertNewActivations(history: unknown[]) {
               ...vectorAdditions,
             ].includes(path),
         ),
-        minModules: groups[layer].filter(
+        minModules: historicalGroups[layer].filter(
           (path) =>
             ![
               ...frameAdditions,
@@ -261,9 +280,9 @@ function fixture() {
 }
 
 describe("semantic verification and provider ownership boundary", () => {
-  it("pins the original 68 modules plus two canonical vector owners without relaxing historical policy", () => {
-    expect(required).toHaveLength(70);
-    expect(new Set(required).size).toBe(70);
+  it("pins the original 70 modules plus three physical vector owners without relaxing historical policy", () => {
+    expect(required).toHaveLength(73);
+    expect(new Set(required).size).toBe(73);
     expect(callableAdditions).toHaveLength(2);
     expect(vectorAdditions).toHaveLength(2);
     expect(typeLayoutAdditions).toHaveLength(1);
@@ -282,6 +301,7 @@ describe("semantic verification and provider ownership boundary", () => {
             ...typeLayoutAdditions,
             ...callableAdditions,
             ...vectorAdditions,
+            ...physicalVectorAdditions,
           ].includes(path),
       ),
     ).toHaveLength(56);
@@ -296,17 +316,18 @@ describe("semantic verification and provider ownership boundary", () => {
       ...typeLayoutAdditions,
       ...callableAdditions,
       ...vectorAdditions,
+      ...physicalVectorAdditions,
     ])
       expect(required).toContain(path);
     const p = policy();
     assertNewActivations(p.activationHistory);
-    expect(p.activationHistory).toHaveLength(32);
-    expect(digest(p.activationHistory.slice(8))).toBe(
+    expect(p.activationHistory).toHaveLength(35);
+    expect(digest(p.activationHistory.slice(11))).toBe(
       "3437a59aacf39df9dffcafa8099ac9f47c0f43a7a0ecc423df4c1fe3e638f002",
     );
     expect(digest(p.allowedEdges)).toBe("efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7");
     // Exact full activation history at b4c116639a, not a selected subset.
-    expect(digest(p.activationHistory.slice(14))).toBe(
+    expect(digest(p.activationHistory.slice(17))).toBe(
       "a6d07b900b0837832707ce083202ab6ffa40f0bbe6bfce25f3062270882b26da",
     );
     for (const [id, entries] of Object.entries(groups)) {
@@ -323,23 +344,26 @@ describe("semantic verification and provider ownership boundary", () => {
   it("loads the complete actual canonical type-and-value closure", () => {
     const r = fixture().run();
     expect(r.status, JSON.stringify(r.report.errors)).toBe(0);
-    expect(r.report.counts.total).toBe(70);
+    expect(r.report.counts.total).toBe(73);
     expect(r.report.errors).toEqual([]);
     for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
       expect(r.report[field]).toEqual([]);
-    expect(r.report.resolvedEdgeCount).toBe(239);
-    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 163, runtime: 76 });
+    expect(r.report.resolvedEdgeCount).toBe(259);
+    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 174, runtime: 85 });
   });
 
   it.each(["delete", "reorder", "layer", "entries", "minimum"] as const)(
     "rejects %s corruption of the new activation records",
     (mutation) => {
       const history = policy().activationHistory;
+      assertNewActivations(history);
+      const before = digest(history);
       if (mutation === "delete") history.splice(0, 1);
       if (mutation === "reorder") [history[0], history[1]] = [history[1], history[0]];
-      if (mutation === "layer") history[0].layer = "ir-program";
+      if (mutation === "layer") history[0].layer = "ir-core";
       if (mutation === "entries") history[0].entries.pop();
       if (mutation === "minimum") history[0].minModules--;
+      expect(digest(history), "mutation must alter the accepted activation records").not.toBe(before);
       expect(() => assertNewActivations(history)).toThrow();
     },
   );
@@ -353,6 +377,7 @@ describe("semantic verification and provider ownership boundary", () => {
     ...typeLayoutAdditions,
     ...callableAdditions,
     ...vectorAdditions,
+    ...physicalVectorAdditions,
   ])("rejects deleting %s and its classification", (path) => {
     const f = fixture();
     rmSync(resolve(f.root, path));
@@ -373,6 +398,7 @@ describe("semantic verification and provider ownership boundary", () => {
     ...typeLayoutAdditions,
     ...callableAdditions,
     ...vectorAdditions,
+    ...physicalVectorAdditions,
   ])("rejects an aliased frontend type dependency from %s", (path) => {
     const f = fixture();
     f.put("src/forbidden.ts", "export interface Hidden { value: number }");
@@ -398,6 +424,7 @@ describe("semantic verification and provider ownership boundary", () => {
       ...typeLayoutAdditions,
       ...callableAdditions,
       ...vectorAdditions,
+      ...physicalVectorAdditions,
     ])(`reports ${field} from %s instead of treating it as closed`, (path) => {
       const f = fixture();
       f.append(path, source);

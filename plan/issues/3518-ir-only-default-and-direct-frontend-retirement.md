@@ -6268,3 +6268,24 @@ conflicts, unresolved review threads, or reported failing/pending checks.
 Stacked PRs5752 and5754–5760 lack required checks because CI targets main;
 their mergeability is not evidence of complete CI coverage. Existing holds
 remain, and neither this checkpoint nor those checks establish retirement.
+
+## Physical vector checkpoint after PR #5763
+
+The physical vector checkpoint is based on6ed68535323e0756c3a0b15dde18fd480ad7fc9f.
+It composes same-ledger vector layouts, the canonical grow/store body, checked
+resource planning and consumer binding while retaining the async physical
+refusal. All12 transferred implementation/test files matched their reviewed
+source tree exactly. No existing worktree was reset or replaced.
+
+Fresh composed-tree session10660 exited0: TS7 and226/226 tests across4/4 files
+passed (153 boundary,31 resources,22 body,20 donor). Public compiler comparison
+revision2 controller82714 and both children exited0:14/14 pairs,28 rows,
+56 expected calls, zero raw differences and five rejecting negative controls.
+The comparison covers both hole-fill arms, dense carriers and packed branding;
+it is extraction preservation, not execution of the full prepared async family.
+
+Detailed limits and provenance are in
+`plan/agent-context/3518-native-vector-checkpoint-handoff-2026-09-08.md`.
+Promise resolution and same-ledger Promise resources are the next active
+implementation slices. Full frame/timer/string execution, public IR-only
+cutover, strict closure and the ABI30 witness remain outstanding.

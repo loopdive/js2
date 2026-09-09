@@ -28,13 +28,18 @@ import {
   type PreparedIrProgramRuntimeProjection,
 } from "./program.js";
 import type { ValType } from "./types.js";
+import { deriveNativeVectorResourcePlan, type NativeVectorResourcePlan } from "./program/native-vector-resources.js";
+import { assertPreparedIrProgram } from "./program-validation.js";
+
+/** Vector carriers stay logical until the consumer reserves their shared types. */
+export type PhysicalSignatureType = ValType | Extract<IrType, { kind: "vec" }>;
 
 export interface PhysicalFunctionSlot {
   readonly unitId: IrUnitId;
   readonly bindingId: IrBindingId;
   readonly name: string;
-  readonly params: readonly ValType[];
-  readonly results: readonly ValType[];
+  readonly params: readonly PhysicalSignatureType[];
+  readonly results: readonly PhysicalSignatureType[];
 }
 
 export interface PhysicalImportedFunction {
@@ -42,8 +47,8 @@ export interface PhysicalImportedFunction {
   readonly referenceKey: string;
   readonly module: string;
   readonly field: string;
-  readonly params: readonly ValType[];
-  readonly results: readonly ValType[];
+  readonly params: readonly PhysicalSignatureType[];
+  readonly results: readonly PhysicalSignatureType[];
 }
 
 export interface PhysicalDefinedGlobal {
@@ -84,6 +89,7 @@ export interface PhysicalSetupPlan {
   readonly backend: PreparedIrBackendOptions["backend"];
   readonly target: PreparedIrBackendOptions["target"];
   readonly exceptionTag: PhysicalExceptionTag;
+  readonly vectors: NativeVectorResourcePlan;
   readonly importedFunctions: readonly PhysicalImportedFunction[];
   readonly importedGlobals: readonly PhysicalImportedGlobal[];
   readonly definedGlobals: readonly PhysicalDefinedGlobal[];
@@ -96,6 +102,41 @@ export interface PhysicalSetupPlan {
 export type PhysicalSetupOutcome =
   | { readonly kind: "planned"; readonly plan: PhysicalSetupPlan }
   | PreparedIrProgramFailure;
+
+/** Checked program entry; the canonical calculation has no acceptance authority. */
+export function planNativeVectorResources(
+  program: PreparedIrProgram,
+  options: PreparedIrBackendOptions,
+  projection: PreparedIrProgramRuntimeProjection,
+): NativeVectorResourcePlan {
+  assertPreparedIrProgram(program);
+  if (
+    !program.runtime.includes(projection) ||
+    projection.backend !== options.backend ||
+    projection.target !== options.target
+  ) {
+    throw new PreparedIrProgramInvariantError(
+      "invalid-prepared-data",
+      "native vector resources: selected projection does not belong to the requested program/backend/target",
+    );
+  }
+  const entry = program.inventory.sources.find((source) => source.kind === "entry");
+  if (!entry) {
+    throw new PreparedIrProgramInvariantError(
+      "invalid-prepared-data",
+      "native vector resources: missing entry-source anchor",
+    );
+  }
+  return deriveNativeVectorResourcePlan({
+    anchor: entry.id,
+    functions: program.ir.functions,
+    abiEntries: program.abi.entries,
+    policy: projection.prepared.manifest.policy,
+    providers: projection.prepared.manifest.providers,
+    backend: options.backend,
+    target: options.target,
+  });
+}
 
 function scalar(type: IrType): ValType | undefined {
   return type.kind === "val" ? type.val : undefined;
@@ -146,11 +187,23 @@ export function planPhysicalSetup(
   const physical = projection.prepared.functions;
   const bodies = new Map<IrUnitId, IrFunction>(physical.map((fn) => [fn.unitId, fn] as const));
   const entries = new Map<IrBindingId, PreparedIrAbiEntry>(program.abi.entries.map((entry) => [entry.plan.id, entry]));
+  const vectors = planNativeVectorResources(program, options, projection);
 
-  const convert = (types: readonly IrType[], where: string, unitId?: IrUnitId): ValType[] => {
-    const out: ValType[] = [];
+  const convert = (types: readonly IrType[], where: string, unitId?: IrUnitId): PhysicalSignatureType[] => {
+    const out: PhysicalSignatureType[] = [];
     for (const type of types) {
       const value = scalar(type);
+      if (
+        type.kind === "vec" &&
+        !type.layout &&
+        type.elementType.kind === "val" &&
+        !type.elementType.typeRef &&
+        (type.elementType.val.kind === "f64" || type.elementType.val.kind === "externref") &&
+        vectors.layouts.includes(type.elementType.val.kind)
+      ) {
+        out.push(type);
+        continue;
+      }
       if (!value) {
         gaps.add(
           `${where} carries non-scalar IR type ${typeLabel(type)}; physical carrier materialization is not available`,
@@ -229,6 +282,9 @@ export function planPhysicalSetup(
         });
         continue;
       }
+      if (vectors.helper?.bindingId === plan.id && vectors.helper.referenceKey === irCallableBindingKey(binding)) {
+        continue;
+      }
       gaps.add(`${binding.kind} callable ${contract.ref.name} needs runtime function materialization`);
       continue;
     }
@@ -272,9 +328,10 @@ export function planPhysicalSetup(
   const reserved = new Set<string>([
     ...functions.map((slot) => irCallableBindingKey({ kind: "unit", unitId: slot.unitId })),
     ...importedFunctions.map((fn) => fn.referenceKey),
+    ...(vectors.helper ? [vectors.helper.referenceKey] : []),
   ]);
   const reservedGlobals = new Set<string>([...importedGlobals, ...definedGlobals].map((global) => global.referenceKey));
-  let exceptionRequired = false;
+  let exceptionRequired = vectors.exceptionRequired;
   for (const fn of physical) {
     for (const buffer of [
       ...fn.blocks.map((block) => block.instrs),
@@ -369,6 +426,7 @@ export function planPhysicalSetup(
     backend: options.backend,
     target: options.target,
     exceptionTag: { required: exceptionRequired || options.sharedExceptionTag, shared: options.sharedExceptionTag },
+    vectors,
     importedFunctions,
     importedGlobals,
     definedGlobals,

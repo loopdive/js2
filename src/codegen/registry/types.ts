@@ -5,7 +5,12 @@
  * This module owns function-type caches plus reusable GC array/vec/ref-cell
  * registrations so leaf modules can depend on a narrow type-registry surface.
  */
-import type { ArrayTypeDef, FieldDef, FuncTypeDef, StructTypeDef, ValType } from "../../ir/types.js";
+import type { FieldDef, FuncTypeDef, StructTypeDef, ValType } from "../../ir/types.js";
+import {
+  createVectorBaseType,
+  createVectorBackingArrayType,
+  createVectorCarrierType,
+} from "../../runtime/wasmgc/values/vector-grow-store.js";
 import type { CodegenContext } from "../context/types.js";
 import { internFunctionType } from "../../wasm/physical/function-types.js";
 import { getArgumentsVecTypeIdx } from "../arguments-carrier-brand.js";
@@ -61,12 +66,7 @@ export function getOrRegisterArrayType(ctx: CodegenContext, elemKind: string, el
     elemType = { kind: "ref_null", typeIdx: (elemType as { typeIdx: number }).typeIdx };
   }
   const idx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "array",
-    name: `__arr_${cacheKey}`,
-    element: elemType,
-    mutable: true,
-  } as ArrayTypeDef);
+  ctx.mod.types.push(createVectorBackingArrayType(`__arr_${cacheKey}`, elemType));
   ctx.arrayTypeMap.set(cacheKey, idx);
   return idx;
 }
@@ -82,12 +82,7 @@ export function getOrRegisterArrayType(ctx: CodegenContext, elemKind: string, el
 export function getOrRegisterVecBaseType(ctx: CodegenContext): number {
   if (ctx.vecBaseTypeIdx >= 0) return ctx.vecBaseTypeIdx;
   const idx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: "__vec_base",
-    superTypeIdx: -1, // open / non-final — concrete vecs subtype this
-    fields: [{ name: "length", type: { kind: "i32" }, mutable: true }],
-  });
+  ctx.mod.types.push(createVectorBaseType());
   ctx.vecBaseTypeIdx = idx;
   ctx.structMap.set("__vec_base", idx);
   ctx.typeIdxToStructName.set(idx, "__vec_base");
@@ -185,32 +180,26 @@ export function getOrRegisterVecType(ctx: CodegenContext, elemKind: string, elem
 
   const arrTypeIdx = getOrRegisterArrayType(ctx, elemKind, elemTypeOverride);
   const vecIdx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: `__vec_${cacheKey}`,
-    superTypeIdx: vecBaseIdx,
-    // (#5349) Brand the packed-byte TypedArray carrier. `$__vec_i8_byte` and
-    // the ArrayBuffer's `$__vec_i32_byte` declare the same two fields over
-    // structurally identical `(array (mut i8))` data, so once BOTH are marked
-    // `final` by `markLeafStructsFinal` Wasm GC canonicalizes them to ONE
-    // runtime type and no `ref.test` can separate a `Uint8Array` from an
-    // ArrayBuffer (the §25.1.5.3 step-16 slot check). Declaring `final` here,
-    // while `finalizeLeafStructTypes` keeps `i32_byte` open, makes the two
-    // distinct canonical types. Sound because the packed-byte vec has no
-    // subtype anywhere: every `superTypeIdx` in `src/codegen` names
-    // `$__vec_base`, the externref vec, `$__vec_i32_byte` (`$__resizable_ab`)
-    // or a class/brand struct. Declared, not post-seal mutated, so
-    // `programAbiSession.recordLeafTypeFinalization` is not involved.
-    ...(cacheKey === "i8_byte" ? { final: true } : {}),
-    fields: [
-      { name: "length", type: { kind: "i32" }, mutable: true },
-      {
-        name: "data",
-        type: { kind: "ref", typeIdx: arrTypeIdx },
-        mutable: true,
-      },
-    ],
-  });
+  ctx.mod.types.push(
+    createVectorCarrierType({
+      name: `__vec_${cacheKey}`,
+      baseTypeIndex: vecBaseIdx,
+      arrayTypeIndex: arrTypeIdx,
+      // (#5349) Brand the packed-byte TypedArray carrier. `$__vec_i8_byte` and
+      // the ArrayBuffer's `$__vec_i32_byte` declare the same two fields over
+      // structurally identical `(array (mut i8))` data, so once BOTH are marked
+      // `final` by `markLeafStructsFinal` Wasm GC canonicalizes them to ONE
+      // runtime type and no `ref.test` can separate a `Uint8Array` from an
+      // ArrayBuffer (the §25.1.5.3 step-16 slot check). Declaring `final` here,
+      // while `finalizeLeafStructTypes` keeps `i32_byte` open, makes the two
+      // distinct canonical types. Sound because the packed-byte vec has no
+      // subtype anywhere: every `superTypeIdx` in `src/codegen` names
+      // `$__vec_base`, the externref vec, `$__vec_i32_byte` (`$__resizable_ab`)
+      // or a class/brand struct. Declared, not post-seal mutated, so
+      // `programAbiSession.recordLeafTypeFinalization` is not involved.
+      ...(cacheKey === "i8_byte" ? { final: true } : {}),
+    }),
+  );
   ctx.vecTypeMap.set(cacheKey, vecIdx);
 
   const vecStructName = `__vec_${cacheKey}`;
