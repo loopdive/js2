@@ -13,6 +13,7 @@ import { getArrTypeIdxFromVec, getOrRegisterVecType, registerStructType } from "
 import { valTypesMatch } from "../shared.js";
 import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import type { FieldDef, ValType } from "../../ir/types.js";
+import { recordSidecarPropertyOwner } from "../sidecar-owner-scope.js";
 import type { CodegenContext } from "../context/types.js";
 import { createDeclaredNestedWriteClassifier } from "./declared-nested-write.js";
 import { collectEvalAccessorObjectNames, collectEvalMutableNames } from "./eval-reachable-object-shape.js"; // (#4206/#4249)
@@ -2143,7 +2144,10 @@ function markStandaloneOutOfShapeDataDefineTargets(
     if (!ts.isObjectLiteralExpression(descArg)) {
       ctx.dynamicDescriptorWidenVars.add(varName);
       const key = staticDefineKey(keyArg);
-      if (key !== undefined) ctx.sidecarDefinedPropertyKeys.add(`${varName}:${key}`);
+      if (key !== undefined) {
+        ctx.sidecarDefinedPropertyKeys.add(`${varName}:${key}`);
+        recordSidecarPropertyOwner(ctx, `${varName}:${key}`);
+      }
       return true;
     }
     if (descriptorHasAccessorKey(descArg)) return false; // accessors: other marker
@@ -2553,6 +2557,7 @@ export function collectPropsFromStatements(
           if (ctx.standalone && !ts.isObjectLiteralExpression(descArg)) {
             ctx.dynamicDescriptorWidenVars.add(varName);
             ctx.sidecarDefinedPropertyKeys.add(`${varName}:${propName}`);
+            recordSidecarPropertyOwner(ctx, `${varName}:${propName}`);
           }
           recordDefinePropertyWiden(ctx, checker, varKey, propName, descArg, extraProps, seenProps);
         }
