@@ -3,7 +3,7 @@ id: 4376
 title: "Spike v8x as a rusty_v8-compatible js2wasm backend for a compiler-free Deno runtime"
 status: in-progress
 created: 2026-08-12
-updated: 2026-09-09
+updated: 2026-09-10
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -588,6 +588,10 @@ without the composed patch (10,007,948 bytes), the patch reduces the artifact
 by 3,006 bytes; the larger artifact size predates it.
 
 ## Handover
+
+2026-09-10 arithmetic experiment completed, not a speedup: runtime candidate `ee6e73d`, same native implementation `5400404`, same compiler `b8b0bcaf`. Full wasm-opt build, core 2/2 tests, precompile 1/1 and exact unchanged native replay pass. Five paired runs per side pass 10/10, control 67.2 ms versus candidate 66.9 ms, no meaningful gain; precompiled bytes identical at 40,108,424. Three-engine 21/21 exact outputs: V8 8.2 ms, QuickJS 23.1 ms, candidate 65.9 ms, still 2.9x slower than QuickJS. Production arithmetic substitution restored to previous floor checks, expanded integer edge-case fixture retained, inconclusive Math replacement probe removed. Runtime report/raw evidence `tools/deno/results/2026-09-10-integer-arithmetic-*`. Final fixture passes after restoration. Baseline remains module-eval optimization, not the rejected arithmetic candidate. Access workaround verified using existing /private/tmp worktrees and scoped signing approval without changing user settings. Goal remains active; next focus shared-realm dispatch/primordial bootstrap rather than assuming source substitutions improve machine code.
+
+2026-09-10 arithmetic bridge experiment: workspace access works without changing user settings. Runtime candidate `ee6e73d` replaces five floor-based ABI integer checks with remainder checks. Expanded fixture and nine native tests pass; baseline also passes the replaced-Math control, so no new correctness benefit is established by that control. Clean artifact checkout advanced to candidate, compiler remains `b8b0bcaf2dc95810931fef63499a8d828c117ed8`. Rebuild with wasm-opt and compare against `core-module-eval-copying-speed.cwasm` using the same native executable. No performance claim until measured. Previous verified unchanged-Deno baseline is 66.3 ms versus QuickJS 23.1 ms, not goal completion.
 
 The exact pins, stop point, reproduction steps, rejected shortcuts, and safest
 next slice are recorded in
