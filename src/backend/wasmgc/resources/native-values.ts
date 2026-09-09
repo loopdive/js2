@@ -1,6 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { ValType } from "../../../wasm/model/instructions.js";
 import type { NativeStringLiteralReservations } from "./native-string-literals.js";
 import {
   requireNativeStringNumberReservations,
@@ -32,6 +31,82 @@ import {
   buildTypeofNumberBody,
   type NativeNumberStringConversion,
 } from "../../../runtime/wasmgc/values/number-bodies.js";
+import type {
+  NativeResourceRecipe,
+  NativeDeclaredSignature,
+  NativeStringValueDeclaration,
+  NativeStringValueReservationStep,
+} from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
+import {
+  executeNativeResourceRecipe,
+  freezeNativeResourceRecipe,
+  nativeScalarTypeDeclaration,
+  requireNativeDeclaredReservation,
+} from "./native-resource-declarations.js";
+
+export function declareNativeValueResources(anchor: NativeValueResourcePlan["anchor"]): NativeResourceRecipe {
+  const key = (role: string) => "physical:values:" + JSON.stringify(anchor) + ":" + role;
+  const isNumber: NativeDeclaredSignature = { params: [{ kind: "externref" }], results: [{ kind: "i32" }] };
+  const unbox: NativeDeclaredSignature = { params: [{ kind: "externref" }], results: [{ kind: "f64" }] };
+  const box: NativeDeclaredSignature = { params: [{ kind: "f64" }], results: [{ kind: "externref" }] };
+  const declarations: NativeStringValueDeclaration[] = [
+    {
+      key: key("any"),
+      role: ["values", "any"],
+      space: "type",
+      shape: nativeScalarTypeDeclaration(buildAnyValueType()),
+    },
+    {
+      key: key("undefined"),
+      role: ["values", "undefined"],
+      space: "global",
+      name: "__undefined",
+      valueType: { kind: "ref", typeKey: key("any") },
+      mutable: false,
+    },
+    {
+      key: key("number"),
+      role: ["values", "number"],
+      space: "type",
+      shape: nativeScalarTypeDeclaration(buildBoxNumberType()),
+    },
+    {
+      key: key("boolean"),
+      role: ["values", "boolean"],
+      space: "type",
+      shape: nativeScalarTypeDeclaration(buildBoxBooleanType()),
+    },
+    { key: key("box-number"), role: ["values", "box-number"], space: "function", name: "__box_number", signature: box },
+    {
+      key: key("unbox-number"),
+      role: ["values", "unbox-number"],
+      space: "function",
+      name: "__unbox_number",
+      signature: unbox,
+    },
+    {
+      key: key("typeof-number"),
+      role: ["values", "typeof-number"],
+      space: "function",
+      name: "__typeof_number",
+      signature: isNumber,
+    },
+  ];
+  const reserve = (row: NativeStringValueDeclaration): NativeStringValueReservationStep => ({
+    phase: "resources",
+    kind: "reserve",
+    resourceKey: row.key,
+  });
+  // These explicit interns precede the helpers even when all three signatures already exist.
+  const reservationSteps: NativeStringValueReservationStep[] = [
+    ...declarations.slice(0, 4).map(reserve),
+    ...[isNumber, unbox, box].map(
+      (signature): NativeStringValueReservationStep => ({ phase: "resources", kind: "intern-signature", signature }),
+    ),
+    ...declarations.slice(4).map(reserve),
+  ];
+  return freezeNativeResourceRecipe({ declarations, reservationSteps });
+}
 
 export type NativeValueStringDependency =
   | {
@@ -56,9 +131,6 @@ export interface NativeValueReservations {
     readonly isNumber: FunctionReservation;
   };
 }
-const EXTERN: ValType = { kind: "externref" },
-  F64: ValType = { kind: "f64" },
-  I32: ValType = { kind: "i32" };
 interface Owner {
   readonly tx: PhysicalModuleReservations;
   readonly requirements: NativeValueResourcePlan;
@@ -98,23 +170,14 @@ export function reserveNativeValueResources(
   assertNativeValueResourcePlan(requirements);
   const strings = requireDependency(tx, requirements, dependencies);
   const key = (role: string) => "physical:values:" + JSON.stringify(requirements.anchor) + ":" + role;
-  const anyValue = tx.reserveType(key("any"), buildAnyValueType());
-  const undefinedValue = tx.reserveGlobal(
-    key("undefined"),
-    "__undefined",
-    { kind: "ref", typeIdx: anyValue.typeIndex },
-    false,
-  );
-  const boxedNumber = tx.reserveType(key("number"), buildBoxNumberType());
-  const boxedBoolean = tx.reserveType(key("boolean"), buildBoxBooleanType());
-  // Preserve the union donor's number-related signature order. The legacy
-  // adapter still interns ALL its unrelated signatures at the original sites.
-  tx.internFunctionType([EXTERN], [I32]);
-  tx.internFunctionType([EXTERN], [F64]);
-  tx.internFunctionType([F64], [EXTERN]);
-  const boxNumber = tx.reserveFunction(key("box-number"), "__box_number", { params: [F64], results: [EXTERN] });
-  const unboxNumber = tx.reserveFunction(key("unbox-number"), "__unbox_number", { params: [EXTERN], results: [F64] });
-  const isNumber = tx.reserveFunction(key("typeof-number"), "__typeof_number", { params: [EXTERN], results: [I32] });
+  const records = executeNativeResourceRecipe(tx, declareNativeValueResources(requirements.anchor));
+  const anyValue = requireNativeDeclaredReservation(records, key("any"), "type");
+  const undefinedValue = requireNativeDeclaredReservation(records, key("undefined"), "global");
+  const boxedNumber = requireNativeDeclaredReservation(records, key("number"), "type");
+  const boxedBoolean = requireNativeDeclaredReservation(records, key("boolean"), "type");
+  const boxNumber = requireNativeDeclaredReservation(records, key("box-number"), "function");
+  const unboxNumber = requireNativeDeclaredReservation(records, key("unbox-number"), "function");
+  const isNumber = requireNativeDeclaredReservation(records, key("typeof-number"), "function");
   const result = Object.freeze({
     types: Object.freeze({ anyValue, boxedNumber, boxedBoolean }),
     globals: Object.freeze({ undefined: undefinedValue }),

@@ -13,6 +13,10 @@ export type NativeLiteralPlan =
   | { readonly kind: "global"; readonly key: string; readonly refTypeIdx: number; readonly init: Instr[] }
   | { readonly kind: "callable"; readonly key: string; readonly chunks: readonly string[] };
 
+export type NativeStringLiteralSelection =
+  | { readonly kind: "global"; readonly key: string; readonly encoding: "utf8" | "wtf16" }
+  | { readonly kind: "callable"; readonly key: string; readonly chunks: readonly string[] };
+
 /** Selection, encoding evidence and oversized fallback shared by both callers. */
 export function planNativeStringLiteral(
   layout: NativeStringLayout,
@@ -20,13 +24,32 @@ export function planNativeStringLiteral(
   value: string,
   encoding?: StringEncoding,
 ): NativeLiteralPlan {
-  const utf8 = utf8Storage && layout.utf8StrTypeIdx >= 0 && (encoding === "ascii" || encoding === "utf8-guaranteed");
+  const selection = selectNativeStringLiteral(utf8Storage, layout.utf8StrTypeIdx >= 0, value, encoding);
+  if (selection.kind === "callable") return selection;
+  return {
+    kind: "global",
+    key: selection.key,
+    refTypeIdx: selection.encoding === "utf8" ? layout.utf8StrTypeIdx : layout.nativeStrTypeIdx,
+    init:
+      selection.encoding === "utf8"
+        ? utf8StringLiteralInstrs(layout, value)
+        : nativeStringLiteralInitInstrs(layout, value),
+  };
+}
+
+/** The same canonical selection without physical layout coordinates. */
+export function selectNativeStringLiteral(
+  utf8Storage: boolean,
+  utf8Available: boolean,
+  value: string,
+  encoding?: StringEncoding,
+): NativeStringLiteralSelection {
+  const utf8 = utf8Storage && utf8Available && (encoding === "ascii" || encoding === "utf8-guaranteed");
   if (utf8 && utf8Encode(value).length <= ARRAY_NEW_FIXED_MAX) {
     return {
       kind: "global",
       key: `u8:${value}`,
-      refTypeIdx: layout.utf8StrTypeIdx,
-      init: utf8StringLiteralInstrs(layout, value),
+      encoding: "utf8",
     };
   }
   if (value.length > ARRAY_NEW_FIXED_MAX) {
@@ -35,8 +58,7 @@ export function planNativeStringLiteral(
   return {
     kind: "global",
     key: `u16:${value}`,
-    refTypeIdx: layout.nativeStrTypeIdx,
-    init: nativeStringLiteralInitInstrs(layout, value),
+    encoding: "wtf16",
   };
 }
 
