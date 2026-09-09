@@ -1,0 +1,11 @@
+{
+  "id": "3518",
+  "slice": "runtime-support-transport",
+  "assignee": "ttraenkler/codex-runtime-support-transport",
+  "requested_by": "ttraenkler/codex-runtime-support-transport",
+  "status": "in-progress",
+  "branch": "codex/3518-runtime-support-transport-20260909",
+  "claimed_at": "2026-09-09T03:43:37Z",
+  "updated_at": "2026-09-09T03:43:37Z",
+  "write_id": "13381-caoralpc"
+}
