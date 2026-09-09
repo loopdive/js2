@@ -6673,3 +6673,17 @@ including frame/state lowering, delay/combinator publication, real object and
 closure invocation dependencies, complete number formatting and string output.
 The ordinary-vector source proposal and explicit P/C scope releases are also
 preserved in the handoffs. These plans are not execution or retirement proof.
+
+### Isolated vector construction nullability repair (2026-09-09)
+
+Claim 3518:vector-data-nonnull owns a one-instruction WasmGC emitter fix at
+published base 5404151bfc. A nullable/defaultable backing-array scratch reload
+now receives ref.as_non_null before the carrier's non-null data field is
+constructed. Layout, allocation order and unsupported-capacity refusal remain
+unchanged. Full TS7 exits 0; the final combined regression run passes 31/31
+across three suites, including all seven new controls. High approved the proof
+split: five AST-to-IR component rows with explicit type overrides and a
+physical-fixture resolver, one IR-builder externref spare-capacity row, and
+one refusal control. This is not whole-source admission or consumer execution.
+See agent-context/3518-vector-data-nonnull-2026-09-09.md for exact receipts and
+the separate historical-baseline/common-fix application requirement.
