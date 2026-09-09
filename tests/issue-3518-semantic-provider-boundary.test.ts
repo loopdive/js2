@@ -165,10 +165,15 @@ const declarationAdditions = [
   "src/runtime/wasmgc/values/native-resource-declaration-types.ts",
   "src/backend/wasmgc/resources/native-resource-declarations.ts",
 ];
-const groups = {
+const declarationGroups = {
   ...scannerGroups,
   "native-runtime": [...scannerGroups["native-runtime"], declarationAdditions[0]!],
   "backend-wasmgc": [...scannerGroups["backend-wasmgc"], declarationAdditions[1]!],
+};
+const aggregateAdditions = ["src/backend/wasmgc/program/native-string-values.ts"];
+const groups = {
+  ...declarationGroups,
+  "backend-wasmgc": [...declarationGroups["backend-wasmgc"], ...aggregateAdditions],
 };
 const required = Object.values(groups).flat();
 const callableAdditions = ["src/ir/core/async-callables.ts", "src/ir/runtime/native-async-callables.ts"];
@@ -207,6 +212,12 @@ const policy = () => JSON.parse(readFileSync(resolve(repository, "scripts/compil
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 function assertNewActivations(history: unknown[]) {
   expect(history[0]).toEqual({
+    layer: "backend-wasmgc",
+    entries: groups["backend-wasmgc"],
+    minModules: groups["backend-wasmgc"].length,
+  });
+  history = history.slice(1);
+  expect(history[0]).toEqual({
     layer: "ir-program",
     entries: groups["ir-program"],
     minModules: groups["ir-program"].length,
@@ -215,8 +226,8 @@ function assertNewActivations(history: unknown[]) {
   expect(history.slice(0, 2)).toEqual(
     (["native-runtime", "backend-wasmgc"] as const).map((layer) => ({
       layer,
-      entries: groups[layer],
-      minModules: groups[layer].length,
+      entries: declarationGroups[layer],
+      minModules: declarationGroups[layer].length,
     })),
   );
   history = history.slice(2);
@@ -402,8 +413,8 @@ function fixture() {
 
 describe("semantic verification and provider ownership boundary", () => {
   it("pins the original 70 modules plus seven Promise/vector and five string/error owners without relaxing historical policy", () => {
-    expect(required).toHaveLength(97);
-    expect(new Set(required).size).toBe(97);
+    expect(required).toHaveLength(98);
+    expect(new Set(required).size).toBe(98);
     expect(callableAdditions).toHaveLength(2);
     expect(vectorAdditions).toHaveLength(2);
     expect(typeLayoutAdditions).toHaveLength(1);
@@ -430,6 +441,7 @@ describe("semantic verification and provider ownership boundary", () => {
             ...scannerAdditions,
             ...demandAdditions,
             ...declarationAdditions,
+            ...aggregateAdditions,
           ].includes(path),
       ),
     ).toHaveLength(56);
@@ -452,17 +464,18 @@ describe("semantic verification and provider ownership boundary", () => {
       ...scannerAdditions,
       ...demandAdditions,
       ...declarationAdditions,
+      ...aggregateAdditions,
     ])
       expect(required).toContain(path);
     const p = policy();
     assertNewActivations(p.activationHistory);
-    expect(p.activationHistory).toHaveLength(49);
-    expect(digest(p.activationHistory.slice(25))).toBe(
+    expect(p.activationHistory).toHaveLength(50);
+    expect(digest(p.activationHistory.slice(26))).toBe(
       "3437a59aacf39df9dffcafa8099ac9f47c0f43a7a0ecc423df4c1fe3e638f002",
     );
     expect(digest(p.allowedEdges)).toBe("efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7");
     // Exact full activation history at b4c116639a, not a selected subset.
-    expect(digest(p.activationHistory.slice(31))).toBe(
+    expect(digest(p.activationHistory.slice(32))).toBe(
       "a6d07b900b0837832707ce083202ab6ffa40f0bbe6bfce25f3062270882b26da",
     );
     for (const [id, entries] of Object.entries(groups)) {
@@ -479,14 +492,14 @@ describe("semantic verification and provider ownership boundary", () => {
   it("loads the complete actual canonical type-and-value closure", () => {
     const r = fixture().run();
     expect(r.status, JSON.stringify(r.report.errors)).toBe(0);
-    expect(r.report.counts.total).toBe(97);
+    expect(r.report.counts.total).toBe(98);
     expect(r.report.errors).toEqual([]);
     for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
       expect(r.report[field]).toEqual([]);
     expect({ edges: r.report.resolvedEdgeCount, ...r.report.counts.resolvedEdgesByType }).toEqual({
-      edges: 361,
-      typeOnly: 233,
-      runtime: 128,
+      edges: 378,
+      typeOnly: 241,
+      runtime: 137,
     });
   });
 
@@ -558,6 +571,7 @@ describe("semantic verification and provider ownership boundary", () => {
     ...scannerAdditions,
     ...demandAdditions,
     ...declarationAdditions,
+    ...aggregateAdditions,
   ])("rejects deleting %s and its classification", (path) => {
     const f = fixture();
     rmSync(resolve(f.root, path));
@@ -586,6 +600,7 @@ describe("semantic verification and provider ownership boundary", () => {
     ...scannerAdditions,
     ...demandAdditions,
     ...declarationAdditions,
+    ...aggregateAdditions,
   ])("rejects an aliased frontend type dependency from %s", (path) => {
     const f = fixture();
     f.put("src/forbidden.ts", "export interface Hidden { value: number }");
@@ -619,6 +634,7 @@ describe("semantic verification and provider ownership boundary", () => {
       ...scannerAdditions,
       ...demandAdditions,
       ...declarationAdditions,
+      ...aggregateAdditions,
     ])(`reports ${field} from %s instead of treating it as closed`, (path) => {
       const f = fixture();
       f.append(path, source);

@@ -124,3 +124,16 @@ export function assertNativeValueResourcePlan(plan: NativeValueResourcePlan): vo
   if (!source || preparedIrDataMismatch(plan, calculate(source)) !== undefined)
     fail("unissued or stale selected native value requirements");
 }
+
+/** Join an issued plan to its exact source; visible plan equality grants no authority. */
+export function assertNativeValueResourcePlanFor(
+  plan: NativeValueResourcePlan,
+  program: PreparedIrProgram,
+  projection: PreparedIrProgramRuntimeProjection,
+  strings: NativeValueStringRepresentation,
+): void {
+  const source = sources.get(plan);
+  if (!source || source.program !== program || source.projection !== projection || source.strings !== strings)
+    fail("native value requirements were not issued for this program/projection/representation");
+  assertNativeValueResourcePlan(plan);
+}

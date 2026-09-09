@@ -6633,3 +6633,43 @@ The clean producer checkpoint now also passes 250/250 full boundary controls
 and unfiltered TS7 (session 54286 exit 0). Full caller revalidation passed
 322/322 across eight suites (session 46568 exit 0). Checkpoint validation is
 complete; this is not a migration-completion claim.
+
+### Real native-string prepared-consumer integration (2026-09-09)
+
+The composed consumer now accepts native string/value demands, seals their
+typed ABI before allocation, uses canonical resource declarations and owned
+reservations, and binds final indices after the single physical freeze.
+Original and decoded prepared programs execute through the real consumer;
+68/68 execution cases passed (handle 69379, exit 0). These include numeric
+edge cases, large/private-chunk literals, encoding checks on actual module
+objects, startup modes, aliases, and dependency initialization order.
+
+The first combined run failed 69/129: one ABI countermodel was unchanged and
+all 68 execution fixtures omitted explicit native string storage. Both are
+test-only repairs; no production policy or validator was relaxed. Follow-up
+ABI controls, no-demand old/new parity, full composed typecheck/boundaries and
+normal publication hooks remain pending. Exact hashes, preserved failures,
+dependency merge receipts and review scope are recorded in
+agent-context/3518-native-string-value-consumer-integration-2026-09-09.md.
+
+Public compilation still uses direct generateModule/generateMultiModule.
+Native-string execution does not satisfy the remaining native families,
+async/ABI30, cross-backend, fail-closed default, strict closure, or retirement
+requirements; every outstanding epic acceptance criterion stays open.
+
+Follow-up validation completed: ABI 61/61, boundary 258/258, materialization/
+codec/module regressions 51/51, and full TS7 exit zero. The three-arm comparison
+(76083, exit zero) reproduces the original vector CompileError, then proves
+complete repaired-baseline/candidate artifact and value parity for five source
+executions, one exact source refusal and one canonical-producer IR execution.
+The vector repair is published separately as #5792; ordinary vector source
+admission is still unsupported. All three arm receipts, runtime/input hashes,
+original/decoded versions and retained binaries/WAT are documented in the
+consumer integration handoff. No original-baseline vector success is claimed.
+
+The next complete native async-consumer implementation plan is recorded in
+agent-context/3518-native-async-consumer-implementation-spec-2026-09-09.md,
+including frame/state lowering, delay/combinator publication, real object and
+closure invocation dependencies, complete number formatting and string output.
+The ordinary-vector source proposal and explicit P/C scope releases are also
+preserved in the handoffs. These plans are not execution or retirement proof.
