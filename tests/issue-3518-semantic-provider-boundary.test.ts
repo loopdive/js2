@@ -176,8 +176,10 @@ const closureGroups = {
   "native-runtime": [...argumentVectorGroups["native-runtime"], closureAdditions[0]!],
   "backend-wasmgc": [...argumentVectorGroups["backend-wasmgc"], closureAdditions[1]!],
 };
+const demandAdditions = ["src/ir/program/native-string-value-demands.ts"];
 const groups = {
   ...scannerGroups,
+  "ir-program": [...scannerGroups["ir-program"], ...demandAdditions],
   "native-runtime": [...scannerGroups["native-runtime"], argumentVectorAdditions[0]!, closureAdditions[0]!],
   "backend-wasmgc": [...scannerGroups["backend-wasmgc"], argumentVectorAdditions[1]!, closureAdditions[1]!],
 };
@@ -217,6 +219,12 @@ const additions = [
 const policy = () => JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 function assertNewActivations(history: unknown[]) {
+  expect(history[0]).toEqual({
+    layer: "ir-program",
+    entries: groups["ir-program"],
+    minModules: groups["ir-program"].length,
+  });
+  history = history.slice(1);
   expect(history.slice(0, 3)).toEqual(
     (["wasm-model", "native-runtime", "backend-wasmgc"] as const).map((layer) => ({
       layer,
@@ -423,8 +431,8 @@ function fixture() {
 
 describe("semantic verification and provider ownership boundary", () => {
   it("pins the original 70 modules plus seven Promise/vector and five string/error owners without relaxing historical policy", () => {
-    expect(required).toHaveLength(98);
-    expect(new Set(required).size).toBe(98);
+    expect(required).toHaveLength(99);
+    expect(new Set(required).size).toBe(99);
     expect(callableAdditions).toHaveLength(2);
     expect(vectorAdditions).toHaveLength(2);
     expect(typeLayoutAdditions).toHaveLength(1);
@@ -449,6 +457,7 @@ describe("semantic verification and provider ownership boundary", () => {
             ...stringErrorAdditions,
             ...nativeValueAdditions,
             ...scannerAdditions,
+            ...demandAdditions,
             ...argumentVectorAdditions,
             ...closureAdditions,
           ].includes(path),
@@ -471,19 +480,20 @@ describe("semantic verification and provider ownership boundary", () => {
       ...stringErrorAdditions,
       ...nativeValueAdditions,
       ...scannerAdditions,
+      ...demandAdditions,
       ...argumentVectorAdditions,
       ...closureAdditions,
     ])
       expect(required).toContain(path);
     const p = policy();
     assertNewActivations(p.activationHistory);
-    expect(p.activationHistory).toHaveLength(53);
-    expect(digest(p.activationHistory.slice(29))).toBe(
+    expect(p.activationHistory).toHaveLength(54);
+    expect(digest(p.activationHistory.slice(30))).toBe(
       "3437a59aacf39df9dffcafa8099ac9f47c0f43a7a0ecc423df4c1fe3e638f002",
     );
     expect(digest(p.allowedEdges)).toBe("efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7");
     // Exact full activation history at b4c116639a, not a selected subset.
-    expect(digest(p.activationHistory.slice(35))).toBe(
+    expect(digest(p.activationHistory.slice(36))).toBe(
       "a6d07b900b0837832707ce083202ab6ffa40f0bbe6bfce25f3062270882b26da",
     );
     for (const [id, entries] of Object.entries(groups)) {
@@ -500,12 +510,12 @@ describe("semantic verification and provider ownership boundary", () => {
   it("loads the complete actual canonical type-and-value closure", () => {
     const r = fixture().run();
     expect(r.status, JSON.stringify(r.report.errors)).toBe(0);
-    expect(r.report.counts.total).toBe(98);
+    expect(r.report.counts.total).toBe(99);
     expect(r.report.errors).toEqual([]);
     for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
       expect(r.report[field]).toEqual([]);
-    expect(r.report.resolvedEdgeCount).toBe(349);
-    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 224, runtime: 125 });
+    expect(r.report.resolvedEdgeCount).toBe(357);
+    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 229, runtime: 128 });
   });
 
   it.each(["delete", "reorder", "layer", "entries", "minimum"] as const)(
@@ -539,6 +549,7 @@ describe("semantic verification and provider ownership boundary", () => {
     ...stringErrorAdditions,
     ...nativeValueAdditions,
     ...scannerAdditions,
+    ...demandAdditions,
     ...argumentVectorAdditions,
     ...closureAdditions,
   ])("rejects deleting %s and its classification", (path) => {
@@ -567,6 +578,7 @@ describe("semantic verification and provider ownership boundary", () => {
     ...stringErrorAdditions,
     ...nativeValueAdditions,
     ...scannerAdditions,
+    ...demandAdditions,
     ...argumentVectorAdditions,
     ...closureAdditions,
   ])("rejects an aliased frontend type dependency from %s", (path) => {
@@ -600,6 +612,7 @@ describe("semantic verification and provider ownership boundary", () => {
       ...stringErrorAdditions,
       ...nativeValueAdditions,
       ...scannerAdditions,
+      ...demandAdditions,
       ...argumentVectorAdditions,
       ...closureAdditions,
     ])(`reports ${field} from %s instead of treating it as closed`, (path) => {
