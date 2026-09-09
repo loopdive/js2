@@ -6787,3 +6787,33 @@ agent-context/3518-native-async-resource-declarations-spec-2026-09-09.md;
 the frame API and object-access donor map are also preserved for the next lanes.
 This composition does not remove the async acceptance refusal or establish
 native async execution, public default cutover or retirement.
+
+### Formatter semantic support transport checkpoint (2026-09-09)
+
+The formatter prerequisite now builds the unchanged radix source into real,
+index-free IR using the source program's allocation registry. A separate typed
+support batch survives preparation, ABI registration, validation and codec
+replay without being inserted into ordinary source populations. The original
+legacy self-hosted builder calls the same extracted frontend kernel.
+
+After composition and formatting, parent run 69266 passed 167/167 across nine
+source/transport/resource suites. Full boundary run 5497 passed 64/64; inventory
+run 43404 reported zero errors and architectureComplete:false. Source-free
+replay and its deliberately forbidden frontend-import control both passed.
+The reviewed materializer-use-site hole is fixed with complete validator and
+codec rejection tests using an actual canonical kernel reference.
+
+The four clean module activations retain all earlier active history and allowed
+edges. Exactly 17 already-unmigrated frontend files now carry mixed-needs-split
+layer labels with their frontend destination; three other existing frontend
+debt classifications remain unchanged. This is explicit migration debt, not
+whole-frontend closure. See agent-context/3518-formatter-d1-high-contract-2026-09-09.md
+and agent-context/3518-runtime-support-transport-progress-2026-09-09.md.
+
+Final preservation gate passed its 12 executed callers, 10 core-type references
+and six moved-function witnesses under the approved preservation-only contract;
+the two known dynamic imports still prevent strict closure. Post-format TS7
+passed, and the older self-hosted builtin suites passed 19/19. Normal publication
+checks remain in progress.
+Physical radix kernels, full formatter materialization, native async execution,
+public default cutover, ABI30 and direct-codegen retirement remain open.

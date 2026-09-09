@@ -10,6 +10,8 @@ import {
 import { createIrBindingId } from "./identity-values.js";
 import type { IrBindingId, IrClassId, IrSourceId, IrUnitId } from "./identity.js";
 import type { IrGlobalBinding, IrGlobalRef, IrTypeBinding, IrTypeRef } from "./nodes.js";
+import { typeRef, irSupportTypeRef } from "./core/type-references.js";
+export { irSupportTypeRef } from "./core/type-references.js";
 
 type IrBindingOwnerId = IrSourceId | IrUnitId | IrClassId;
 
@@ -29,15 +31,6 @@ function globalRef(name: string, binding: IrGlobalBinding): IrGlobalRef {
   return Object.freeze({
     kind: "global",
     name: requireNonEmpty(name, "global compatibility name"),
-    binding: Object.freeze(binding),
-  });
-}
-
-function typeRef(name: string, binding: IrTypeBinding): IrTypeRef {
-  requireBindingId(binding.bindingId, "type bindingId", binding.kind === "class" ? "class" : "type");
-  return Object.freeze({
-    kind: "type",
-    name: requireNonEmpty(name, "type compatibility name"),
     binding: Object.freeze(binding),
   });
 }
@@ -310,25 +303,6 @@ export function irRuntimeTypeRef(
       ownerId: requireNonEmpty(ownerId, "runtime type owner identity") as IrBindingOwnerId,
       domain: "type",
       role: `runtime:${checkedSymbol}`,
-      ordinal,
-    }),
-  });
-}
-
-/** Reference one compiler support type intention. */
-export function irSupportTypeRef(
-  ownerId: IrBindingOwnerId,
-  role: string,
-  adapterName: string,
-  ordinal?: number,
-): IrTypeRef {
-  const checkedRole = requireNonEmpty(role, "support type role");
-  return typeRef(adapterName, {
-    kind: "support",
-    bindingId: createIrBindingId({
-      ownerId: requireNonEmpty(ownerId, "support type owner identity") as IrBindingOwnerId,
-      domain: "type",
-      role: checkedRole,
       ordinal,
     }),
   });

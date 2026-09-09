@@ -5,6 +5,7 @@ import type { ValType } from "../../wasm/model/instructions.js";
 import type { IrFnctorShape } from "./fnctor-shapes.js";
 import type { IrFuncRef } from "./value-references.js";
 import { type TagId, tagRefinementEquals } from "./tag-refinement.js";
+import { requireBindingId } from "./binding-key-primitives.js";
 
 // ---------------------------------------------------------------------------
 // Symbolic references
@@ -38,6 +39,23 @@ export interface IrTypeRef {
   /** Compatibility/debug label; never the semantic lookup key. */
   readonly name: string;
   readonly binding: IrTypeBinding;
+}
+
+/** Nominal compiler-support storage; physical ownership is resolved later. */
+export interface IrSupportRefType {
+  readonly kind: "support-ref";
+  readonly ref: IrTypeRef & {
+    readonly binding: Extract<IrTypeBinding, { readonly kind: "support" }>;
+  };
+  readonly nullable: boolean;
+}
+
+export function irSupportRef(ref: IrTypeRef, nullable: boolean): IrSupportRefType {
+  if (!ref || ref.kind !== "type" || ref.binding?.kind !== "support")
+    throw new TypeError("support-ref requires a support type reference");
+  requireBindingId(ref.binding.bindingId, "support-ref bindingId", "type");
+  if (typeof nullable !== "boolean") throw new TypeError("support-ref nullability must be boolean");
+  return { kind: "support-ref", ref: ref as IrSupportRefType["ref"], nullable };
 }
 
 /**
@@ -263,6 +281,7 @@ export interface IrClassShape {
 }
 
 export type IrType =
+  | IrSupportRefType
   // The optional `signed` flag (#1126 Stage 1) is a *value-domain* fact, not
   // a Wasm-storage fact: both `int32` and `uint32` lower to the same Wasm
   // `i32` storage but are distinguished at op-selection time (`i32.shr_s`
@@ -451,6 +470,8 @@ export function irDynamic(tag?: TagId): IrType {
  */
 export function irTypeEquals(a: IrType, b: IrType): boolean {
   if (a.kind !== b.kind) return false;
+  if (a.kind === "support-ref" && b.kind === "support-ref")
+    return a.ref.binding.bindingId === b.ref.binding.bindingId && a.nullable === b.nullable;
   if (a.kind === "val" && b.kind === "val") {
     if (!valTypeEquals(a.val, b.val)) return false;
     // #1126 Stage 1 — `signed` is a domain fact, not a Wasm-storage fact.

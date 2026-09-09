@@ -11,6 +11,7 @@ import type { ProgramAbiDerivedUnitRecord } from "./abi.js";
 import type { IrProgramCallableBindingRecord } from "./callable-bindings.js";
 import type { IrPreparationControls } from "./controls.js";
 import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-policy.js";
+import type { IrRuntimeSupport } from "./runtime-support.js";
 
 /** Only semantic storage facts cross the frontend boundary, never declarations. */
 export interface TypedIrProgramGlobal {
@@ -39,6 +40,7 @@ export interface TypedIrProgramInput {
   readonly callables: readonly IrProgramCallableBindingRecord[];
   readonly globals: readonly TypedIrProgramGlobal[];
   readonly allocations: AllocRegistrySnapshot;
+  readonly runtimeSupport?: IrRuntimeSupport;
 }
 
 export interface TypedIrProgramOptions {

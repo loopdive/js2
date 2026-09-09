@@ -61,9 +61,9 @@
  * tail statement in the IR subset (`lowerTail`).
  */
 
-import { ts } from "../ts-api.js";
-import { lowerFunctionAstToIr, type IrFromAstResolver } from "../ir/from-ast.js";
-import { collectIrDirectCallLoweringPlans, type IrDirectCallTarget } from "../ir/ast-lowering-plans.js";
+import type { IrFromAstResolver } from "../ir/from-ast.js";
+import { buildSelfHostedIrBody } from "../frontend/builtins/build-ir.js";
+import type { SelfHostedFuncDef } from "../frontend/builtins/contracts.js";
 import { irIntrinsicFuncRef, irRuntimeFuncRef } from "../ir/callable-bindings.js";
 import { irVal, type IrFunction, type IrType } from "../ir/nodes.js";
 import { IR_VEC_ELEM_SET_PREFIX, parseIrVectorRuntimeElement } from "../ir/vector-runtime.js";
@@ -87,10 +87,6 @@ import { createDerivedIrUnitId, createIrSourceId, type IrSyntheticUnitRole, type
 import type { Instr, ValType } from "../ir/types.js";
 import { ensureNativeCharCodeAtHelper, NATIVE_CHARCODEAT_FN } from "./char-code-at-helpers.js";
 import { ensureVecElemSet, ensureVecElemSetForElement, VEC_ELEM_SET_PREFIX } from "./vec-elem-set.js";
-import { constantFold } from "../ir/passes/constant-fold.js";
-import { deadCode } from "../ir/passes/dead-code.js";
-import { simplifyCFG } from "../ir/passes/simplify-cfg.js";
-import { verifyIrFunction } from "../ir/verify.js";
 import { lowerIrFunctionToWasm, type IrLowerResolver } from "../ir/lower.js";
 import type { StdlibMathBuiltin } from "../stdlib/math.js";
 import type { CodegenContext } from "./context/types.js";
@@ -108,59 +104,7 @@ function selfHostedCalleeRef(name: string) {
     : irRuntimeFuncRef(name);
 }
 
-/**
- * #3161 — a self-hosted builtin with an explicit typed signature. The
- * generalized shape behind the `StdlibMathBuiltin` pilot descriptor:
- * positional param types + a typed callee map instead of the pilot's
- * implicit "everything is unary f64".
- *
- * `paramTypes` is positional and override-authoritative: a param whose
- * type has no TS-primitive spelling (externref, `ref_null { typeIdx }`)
- * should be annotated `unknown` in `source` — from-ast's `resolveIrType`
- * defers non-primitive annotations to the override, and REJECTS a
- * primitive annotation that disagrees with it (typo guard).
- * `returnType: null` means void (zero Wasm results; bare `return;` /
- * fall-through tails, statement-position calls only — #1228 / #2856 C4).
- */
-export interface SelfHostedFuncDef {
-  /** funcMap registration name — also the function's name in `source`. */
-  readonly name: string;
-  /** Ordinary TS source, IR-claimable subset. */
-  readonly source: string;
-  /** Positional param IrTypes (may carry ctx-bound typeIdx refs). */
-  readonly paramTypes: readonly IrType[];
-  /** Return IrType; null == void. */
-  readonly returnType: IrType | null;
-  /** Typed signatures for every direct callee in `source`. */
-  readonly calleeTypes: ReadonlyMap<string, { params: readonly IrType[]; returnType: IrType | null }>;
-  /**
-   * Optional process-lifetime memo key. Set ONLY for a CONTEXT-FREE def —
-   * one whose `paramTypes` / `returnType` / callee sigs carry no ctx-bound
-   * `{ typeIdx }` ref (all abstract scalars / string / externref). The
-   * memoized `IrFunction` is shared across every compilation, so a def with
-   * a ctx-relative type must NOT set this (its typeIdx would leak across
-   * contexts). The math family (all `(f64) -> f64`) sets it (keyed by
-   * builtin name); the generalized families (raw-array/typeIdx params)
-   * leave it unset and rebuild per emission — bounded to once per
-   * compilation by `emitSelfHostedFunc`'s funcMap early-return.
-   */
-  readonly memoKey?: string;
-  /**
-   * (#3256 Tier-1) Opt-in from-ast dialect for the STRING family: installs a
-   * context-free native-strings `stringMethodPlan` resolver at BUILD time so
-   * the source may use string method syntax (`s.charCodeAt(i)`,
-   * `s.substring(a, b)`) and string-typed params/locals. When emitted through
-   * `emitSelfHostedFunc`, the build resolver ALSO carries the live ctx's
-   * `resolveString()` (mutated string `let`s bind as slots whose Wasm-local
-   * type is the ctx-bound `(ref $AnyString)`), so dialect defs must NOT set
-   * `memoKey` — the baked slot typeIdx is only meaningful in the registering
-   * CodegenContext. Families that don't set this build exactly as before (no
-   * resolver — any accidental string-method use remains a loud error), which
-   * keeps the math/timsort/object defs byte-inert by construction.
-   */
-  readonly dialect?: "native-strings";
-}
-
+export type { SelfHostedFuncDef } from "../frontend/builtins/contracts.js";
 /**
  * (#3256) The native-mode string-method decision table the stdlib string
  * sources are allowed to use. Deliberately a SUBSET of integration.ts's
@@ -299,6 +243,9 @@ function irTypeContainsContextIndex(type: IrType, seen = new Set<object>()): boo
       return type.members.some((member) => irTypeContainsContextIndex(member, seen));
     case "boxed":
       return irTypeContainsContextIndex(type.inner, seen);
+    case "support-ref":
+      // Program-qualified support references must never enter the process cache.
+      return true;
     case "fnctor":
       // Fnctor shapes are nominal, backend-neutral leaves here. Their
       // reserved layout and constructor target are symbolic bindings rather
@@ -373,74 +320,14 @@ export function buildSelfHostedIr(def: SelfHostedFuncDef, unitId: IrUnitId, from
       return materializeSelfHostedIr(cached.template, unitId);
     }
   }
-  const sourceFile = ts.createSourceFile(
-    `stdlib/${def.name}.ts`,
-    def.source,
-    ts.ScriptTarget.Latest,
-    /* setParentNodes */ true,
-    ts.ScriptKind.TS,
-  );
-  const fnDecl = sourceFile.statements.find(
-    (s): s is ts.FunctionDeclaration => ts.isFunctionDeclaration(s) && s.name?.text === def.name,
-  );
-  if (!fnDecl) {
-    throw new Error(`stdlib-selfhost: source for ${def.name} has no matching function declaration`);
-  }
-  if (fnDecl.parameters.length !== def.paramTypes.length) {
-    throw new Error(
-      `stdlib-selfhost: ${def.name} declares ${fnDecl.parameters.length} params but paramTypes has ${def.paramTypes.length}`,
-    );
-  }
-
-  const { main, lifted } = lowerFunctionAstToIr(fnDecl, {
+  const ir = buildSelfHostedIrBody({
+    definition: def,
     ownerUnitId: unitId,
-    funcName: def.name,
-    exported: false,
-    calleeTypes: def.calleeTypes,
-    directCalls: collectIrDirectCallLoweringPlans(
-      fnDecl,
-      unitId,
-      new Map<string, IrDirectCallTarget>(
-        [...def.calleeTypes].map(([name, signature]) => [
-          name,
-          {
-            target: selfHostedCalleeRef(name),
-            signature,
-          },
-        ]),
-      ),
+    callees: new Map(
+      [...def.calleeTypes].map(([name, signature]) => [name, { target: selfHostedCalleeRef(name), signature }]),
     ),
-    paramTypeOverrides: def.paramTypes,
-    returnTypeOverride: def.returnType,
-    // (#3256) string-family dialect: the caller-supplied ctx-bound resolver
-    // (emitSelfHostedFunc), or the context-free plan table for resolver-less
-    // unit builds; absent for every other family (see the field doc).
     resolver: fromAst ?? (def.dialect === "native-strings" ? NATIVE_STRINGS_FROMAST_RESOLVER : undefined),
   });
-  if (lifted.length > 0) {
-    throw new Error(`stdlib-selfhost: ${def.name} unexpectedly produced ${lifted.length} lifted functions`);
-  }
-
-  const buildErrors = verifyIrFunction(main);
-  if (buildErrors.length > 0) {
-    throw new Error(`stdlib-selfhost: IR verify failed for ${def.name}: ${buildErrors[0]!.message}`);
-  }
-
-  // Same hygiene pipeline integration.ts runs (constantFold → deadCode →
-  // simplifyCFG to fixpoint; each pass returns the same reference when it
-  // makes no change).
-  let ir = main;
-  for (let iter = 0; iter < 10; iter++) {
-    const next = simplifyCFG(deadCode(constantFold(ir)));
-    if (next === ir) break;
-    ir = next;
-  }
-
-  const postErrors = verifyIrFunction(ir);
-  if (postErrors.length > 0) {
-    throw new Error(`stdlib-selfhost: post-pass IR verify failed for ${def.name}: ${postErrors[0]!.message}`);
-  }
-
   const template = selfHostedTemplate(ir);
   if (def.memoKey !== undefined) irCache.set(def.memoKey, { fingerprint: fingerprint!, template });
   return materializeSelfHostedIr(template, unitId);

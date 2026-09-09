@@ -18,6 +18,8 @@ export function irTypeKey(type: IrType): string {
       return current.val.kind;
     }
     if (current.kind === "string") return "string";
+    if (current.kind === "support-ref")
+      return `support-ref|${current.ref.binding.bindingId.length}:${current.ref.binding.bindingId}|nullable:${current.nullable ? 1 : 0}`;
     if (active.has(current)) throw new Error("IR type key cannot encode a recursive anonymous layout");
     active.add(current);
     try {

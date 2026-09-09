@@ -74,6 +74,7 @@ function validateCaptures(captures: readonly IrFnctorCapture[]): string | null {
 }
 
 function validateTypeGraph(type: IrType, activeTypes: Set<object>, activeShapes: Set<object>): string | null {
+  if (type.kind === "support-ref") return "fnctor shapes do not admit symbolic support references";
   if (type.kind === "val" || type.kind === "string" || type.kind === "dynamic" || type.kind === "extern") return null;
   if (activeTypes.has(type)) return "fnctor shape contains a recursive IR type graph";
   activeTypes.add(type);

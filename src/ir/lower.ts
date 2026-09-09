@@ -4317,6 +4317,12 @@ function memberValType(t: IrType, funcName: string): ValType {
 }
 
 export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcName: string): ValType {
+  if (t.kind === "support-ref") {
+    const typeIdx = resolver.resolveType(t.ref);
+    if (!Number.isSafeInteger(typeIdx) || typeIdx < 0)
+      throw new Error(`ir/lower: resolver cannot lower support-ref (${funcName})`);
+    return { kind: t.nullable ? "ref_null" : "ref", typeIdx };
+  }
   if (t.kind === "val") {
     if (!t.typeRef) return t.val;
     if (t.val.kind !== "ref" && t.val.kind !== "ref_null") {
@@ -4448,6 +4454,7 @@ function describeShape(shape: IrObjectShape): string {
 }
 
 function describeIrTypeShallow(t: IrType): string {
+  if (t.kind === "support-ref") return `support-ref<${t.ref.binding.bindingId}>${t.nullable ? "?" : ""}`;
   if (t.kind === "val") return t.val.kind;
   if (t.kind === "string") return "string";
   if (t.kind === "vec") return `vec<${describeIrTypeShallow(t.elementType)}>${t.nullable ? "?" : ""}`;

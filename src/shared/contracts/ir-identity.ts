@@ -27,6 +27,7 @@ export interface IrFunctionIdentity {
 export type IrSyntheticUnitRole =
   | `compiler-unit:${CompilerSourceProducer}:${string}`
   | `stdlib-selfhost:${string}`
+  | "runtime-support:number-format-radix"
   | "ir-async-state"
   | "lifted-closure"
   | "monomorphization-clone";

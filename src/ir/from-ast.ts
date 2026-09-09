@@ -3420,6 +3420,20 @@ function validateVectorInitializer(
   }
 }
 
+function resolveMutableLocalRepresentation(
+  inferred: IrType,
+  widenDynamic: boolean,
+  cx: LowerCtx,
+): IrSlotRepresentation | null {
+  const logicalType = inferred.kind === "dynamic" && widenDynamic ? irDynamic() : inferred;
+  if (logicalType.kind === "support-ref")
+    demoteToLegacy(
+      "operand-coercion-unsupported",
+      `ir/from-ast: support-ref cannot use a physical mutable slot (${cx.funcName})`,
+    );
+  return resolveIrSlotRepresentation(logicalType, cx.resolver, cx.funcName);
+}
+
 function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
   const isConst = !!(stmt.declarationList.flags & ts.NodeFlags.Const);
   for (const d of stmt.declarationList.declarations) {
@@ -3691,8 +3705,7 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
     // Logical string, dynamic, and vector values use resolver-selected
     // backend storage while identifier reads retain their logical IR type.
     if (!isConst && cx.mutatedLets.has(name)) {
-      const logicalType = inferred.kind === "dynamic" && widenDynamic ? irDynamic() : inferred;
-      const representation = resolveIrSlotRepresentation(logicalType, cx.resolver, cx.funcName);
+      const representation = resolveMutableLocalRepresentation(inferred, widenDynamic, cx);
       if (representation) {
         const slotIndex = cx.builder.declareSlot(name, representation.storageType);
         cx.builder.emitSlotWrite(slotIndex, value);
@@ -3971,6 +3984,7 @@ function coerceIrNumeric(value: IrValueId, target: IrType, cx: LowerCtx): IrValu
 
 /** Short debug string for IrType, used in error messages. */
 function describeIrType(t: IrType): string {
+  if (t.kind === "support-ref") return `support-ref<${t.ref.binding.bindingId}>${t.nullable ? "?" : ""}`;
   if (t.kind === "val") return t.val.kind;
   if (t.kind === "string") return "string";
   if (t.kind === "vec") return `vec<${describeIrType(t.elementType)}>${t.nullable ? "?" : ""}`;
@@ -5275,6 +5289,8 @@ function staticTypeOfFor(t: IrType): string | null {
  */
 function isIrTypeNullable(t: IrType): boolean {
   switch (t.kind) {
+    case "support-ref":
+      return t.nullable;
     case "object":
     case "class":
     case "string":
@@ -9897,6 +9913,11 @@ function lowerYield(expr: ts.YieldExpression, cx: LowerCtx): void {
  */
 function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts.Expression): IrValueId {
   const declared = cx.returnType;
+  const supportActual = cx.builder.typeOf(value);
+  if (declared?.kind === "support-ref" || supportActual.kind === "support-ref") {
+    if (declared && irTypeEquals(supportActual, declared)) return value;
+    demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: incompatible support-ref return in ${cx.funcName}`);
+  }
   if (declared?.kind === "callable") {
     const actual = cx.builder.typeOf(value);
     if (actual.kind === "callable" && closureSignatureEquals(actual.signature, declared.signature)) return value;
