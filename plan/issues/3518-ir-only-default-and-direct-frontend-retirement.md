@@ -6511,3 +6511,24 @@ negative matches the ledger's content contract and proves rejection before
 either function fills. No production semantics or identity gates were relaxed.
 The focused runtime,213 boundary tests and composed TS7 now pass; publication
 checks remain next. Full migration acceptance above remains open.
+
+### Native closure resource checkpoint — 2026-09-09
+
+The closure checkpoint is stacked on argument-vector PR #5776. Canonical
+closure layouts retain real legacy callers; the transaction-owned native
+closure pack reserves wrapper roots, signatures and builtin metadata in
+legacy order. The repaired minimum-arity observer preserves lazy snapshot
+timing rather than rescanning later metadata copies.
+
+High review approved production and the R3 complete-live-factory inverse.
+Validation: focused R3 62/62; composed runtime controls 76 passed and8 skipped;
+boundary policy 221/221; final composed TS7 exited0. Original donor hashes,
+complete factory population and20 positive-first mutation controls stay
+pinned. See agent-context/3518-native-closure-integration-2026-09-08.md for
+revision hashes and failure/repair provenance.
+
+Next: join native Promise consumers to the owned closure producer pack;
+do not duplicate Promise capture ownership. Full object/callable dispatch,
+whole-family execution, replay, public IR-only cutover and strict static
+closure/direct-codegen retirement remain open. This checkpoint does not
+claim those acceptance conditions.
