@@ -30,6 +30,11 @@ import {
 import type { ValType } from "./types.js";
 import { deriveNativeVectorResourcePlan, type NativeVectorResourcePlan } from "./program/native-vector-resources.js";
 import { assertPreparedIrProgram } from "./program-validation.js";
+import {
+  deriveNativePromiseResourcePlan,
+  type NativePromiseConfiguration,
+  type NativePromiseResourcePlan,
+} from "./program/native-promise-resources.js";
 
 /** Vector carriers stay logical until the consumer reserves their shared types. */
 export type PhysicalSignatureType = ValType | Extract<IrType, { kind: "vec" }>;
@@ -135,6 +140,45 @@ export function planNativeVectorResources(
     providers: projection.prepared.manifest.providers,
     backend: options.backend,
     target: options.target,
+  });
+}
+
+/** Authenticate the program and projection; runtime configuration remains an explicit caller choice. */
+export function planNativePromiseResources(
+  program: PreparedIrProgram,
+  options: PreparedIrBackendOptions,
+  projection: PreparedIrProgramRuntimeProjection,
+  configuration: NativePromiseConfiguration,
+): NativePromiseResourcePlan {
+  assertPreparedIrProgram(program);
+  if (
+    !program.runtime.includes(projection) ||
+    projection.backend !== options.backend ||
+    projection.target !== options.target
+  ) {
+    throw new PreparedIrProgramInvariantError(
+      "invalid-prepared-data",
+      "native Promise resources: selected projection does not belong to the requested program/backend/target",
+    );
+  }
+  const entry = program.inventory.sources.find((source) => source.kind === "entry");
+  if (!entry) {
+    throw new PreparedIrProgramInvariantError(
+      "invalid-prepared-data",
+      "native Promise resources: missing entry-source anchor",
+    );
+  }
+  return deriveNativePromiseResourcePlan({
+    anchor: entry.id,
+    functions: program.ir.functions,
+    selectedFunctions: projection.prepared.functions,
+    derivedUnits: program.derivedUnits,
+    abiEntries: program.abi.entries,
+    policy: projection.prepared.manifest.policy,
+    providers: projection.prepared.manifest.providers,
+    backend: options.backend,
+    target: options.target,
+    configuration,
   });
 }
 

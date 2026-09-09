@@ -6322,3 +6322,49 @@ Promise resource materialization is a separate concurrent implementation.
 
 Composed rerun5973 subsequently exited0:210/210 tests across2/2 files passed
 in96.37s. This supersedes its pending status, not the execution limitations.
+
+## Confirmed ordinary-thenable capture defect
+
+Public comparison controller76198 exited1 although both compiler children
+exited0. All24 baseline/candidate pairs were raw-equal: the extraction
+preserves existing behavior. All48 compilation rows,96 instances and184
+export observations were attempted. Semantic acceptance is false.
+
+The additional ordinary-object getter-capture recipe fails identically in
+both IR modes and both fresh instances on both arms: getter count2 instead
+of1; original callback calls0 instead of1; replacement calls1 instead of0;
+delivered value99 instead of42; trace13184 instead of1324. The queued job
+therefore does not preserve the original captured then method for this case.
+Keep the failing row and original receipts. This is an existing correctness
+defect, not an extraction regression, and cannot count as native completion.
+
+High is specifying the bounded canonical resolution/job repair before Low
+implementation. Acceptance must retain once-only getter access, original
+callback capture, poisoned-getter rejection, recursive adoption and the full
+comparison denominator. Do not replace the expected values or normalize the
+failure away. The original report lives in the instrument worktree under
+`.tmp/promise-resolution-public-parent-r1/comparison.json`.
+
+## Native Promise resource checkpoint (2026-09-08)
+
+The isolated checkpoint on #5765 now derives authenticated selected-program
+requirements and reserves native Promise resources in the existing physical
+ledger. It activates two resource modules without relaxing historical
+boundary rules. Session19123 passed192/192 controls (169 boundary,23 resource),
+and composed TS7 session42272 exited0. The77-module closure has286 edges:
+187 type-only and99 runtime, with no reported closure violations.
+
+High review found no source or boundary-policy blocker but requested a
+positive-paired unsealed-program rejection test. That test is added and awaits
+its scoped run; it protects the checked wrapper's leading authentication.
+Full filling and execution remain unproven: actual value, object, string,
+TypeError and closure dependencies are still required. The consumer's async
+refusal remains, as do strict closure and retirement gates.
+
+The getter-capture fix is now High-specified and delegated to native Astra Low
+in a separate worktree on #5765. The implementation contract and checkpoint
+handoff are in `plan/agent-context/3518-promise-getter-capture-implementation-plan-2026-09-08.md`
+and `plan/agent-context/3518-native-promise-resource-checkpoint-handoff-2026-09-08.md`.
+
+The requested unsealed-program control subsequently passed with all24/24
+resource tests in13.76s; session2053 also passed composed TS7 and exited0.

@@ -1,0 +1,299 @@
+{
+  "schema": "promise-resolution-public-fixtures-v1",
+  "base": "2b9cb408c18446361fcf9837045067d1fd97c642",
+  "recipes": [
+    {
+      "id": "native-adoption",
+      "source": "declare function __drain_microtasks(): void;\nexport function test(): number {\n  const holder: any = { last: 0 };\n  const inner: any = Promise.resolve(42);\n  const alias: any = inner;\n  new Promise(function (res: any) { res(alias); }).then(function (val: any) { holder.last = (val === 42) ? 1 : 2; }, function () { holder.last = 3; });\n  __drain_microtasks();\n  return holder.last;\n}",
+      "actions": [
+        {
+          "export": "test",
+          "args": [],
+          "expected": 1
+        }
+      ],
+      "options": {},
+      "origin": {
+        "path": "tests/issue-5197-own-then-indirection.test.ts",
+        "title": "standalone: a promise with no own then still adopts",
+        "sha256": "511fe70dbdaf65328bc302317c1bdc0b8717cf4a6afe0457bb31c8addcd8a1bd",
+        "originalHarness": "runStandalone",
+        "adaptation": "original source/PRELUDE; standalone-only target"
+      }
+    },
+    {
+      "id": "pending-adoption",
+      "source": "\nlet result = 0;\nexport function run(): void { Promise.resolve(1)\n           .then((v: number) => Promise.resolve(v).then((w: number) => w + 10))\n           .then((v: number) => { result = v; }); }\nexport function getResult(): number { return result; }\n",
+      "actions": [
+        {
+          "export": "run",
+          "args": [],
+          "expected": {
+            "$undefined": true
+          }
+        },
+        {
+          "export": "__drain_microtasks",
+          "args": [],
+          "expected": {
+            "$undefined": true
+          }
+        },
+        {
+          "export": "getResult",
+          "args": [],
+          "expected": 11
+        }
+      ],
+      "options": {},
+      "origin": {
+        "path": "tests/issue-2867.test.ts",
+        "title": "assimilation recurses through a pending inner promise",
+        "sha256": "7c846273064fbdd28ab82e12775a9eb34bf370baeaf9bbf531c5c185e6be8c03",
+        "originalHarness": "runWasi",
+        "adaptation": "original runWasi source wrapper; target changed to standalone"
+      }
+    },
+    {
+      "id": "self-resolution",
+      "source": "declare function __drain_microtasks(): void;\n\nexport function test(): number {\n  let result = 0;\n  let cap: any = null;\n  const p = new Promise(function(resolve) { cap = resolve; });\n  cap(p); // resolve p with ITSELF -> §27.2.1.3.2 step 6 rejects with TypeError\n  p.then(function() { result = 2; }, function(reason: any) {\n    result = reason ? 1 : 4;\n  });\n  __drain_microtasks();\n  return result;\n}",
+      "actions": [
+        {
+          "export": "test",
+          "args": [],
+          "expected": 1
+        }
+      ],
+      "options": {},
+      "origin": {
+        "path": "tests/issue-3125.test.ts",
+        "title": "rejects self-resolution with a truthy TypeError (executor resolve)",
+        "sha256": "d81689064e2d572f624fc4532c6ef997fcb44f920e0d2064ea7e236865fd3ed0",
+        "originalHarness": "runWasi",
+        "adaptation": "original source/PRELUDE; standalone-only target"
+      }
+    },
+    {
+      "id": "thenable-invocation",
+      "source": "declare function __drain_microtasks(): void;\n\nexport function test(): number {\n  let result = 0;\n  const thenable = { then: function(resolve: any) { resolve(42); } };\n  Promise.resolve(thenable).then(function(val: any) {\n    result = (val === 42) ? 1 : 2;\n  }, function() { result = 3; });\n  __drain_microtasks();\n  return result;\n}",
+      "actions": [
+        {
+          "export": "test",
+          "args": [],
+          "expected": 1
+        }
+      ],
+      "options": {},
+      "origin": {
+        "path": "tests/issue-3125.test.ts",
+        "title": "assimilates a user thenable ({then: function(resolve){...}})",
+        "sha256": "d81689064e2d572f624fc4532c6ef997fcb44f920e0d2064ea7e236865fd3ed0",
+        "originalHarness": "runWasi",
+        "adaptation": "original source/PRELUDE; standalone-only target"
+      }
+    },
+    {
+      "id": "thenable-recursion",
+      "source": "declare function __drain_microtasks(): void;\n\nexport function test(): number {\n  let result = 0;\n  const inner = { then: function(resolve: any) { resolve(7); } };\n  const outer = { then: function(resolve: any) { resolve(inner); } };\n  Promise.resolve(outer).then(function(val: any) {\n    result = (val === 7) ? 1 : 2;\n  }, function() { result = 3; });\n  __drain_microtasks();\n  return result;\n}",
+      "actions": [
+        {
+          "export": "test",
+          "args": [],
+          "expected": 1
+        }
+      ],
+      "options": {},
+      "origin": {
+        "path": "tests/issue-3125.test.ts",
+        "title": "assimilates recursively (thenable resolving with a thenable)",
+        "sha256": "d81689064e2d572f624fc4532c6ef997fcb44f920e0d2064ea7e236865fd3ed0",
+        "originalHarness": "runWasi",
+        "adaptation": "original source/PRELUDE; standalone-only target"
+      }
+    },
+    {
+      "id": "ordinary-number",
+      "source": "declare function __drain_microtasks(): void;\n\nexport function test(): number {\n  let result = 0;\n  Promise.resolve(42).then(function(val: any) {\n    result = (val === 42) ? 1 : 2;\n  }, function() { result = 3; });\n  __drain_microtasks();\n  return result;\n}",
+      "actions": [
+        {
+          "export": "test",
+          "args": [],
+          "expected": 1
+        }
+      ],
+      "options": {},
+      "origin": {
+        "path": "tests/issue-3125.test.ts",
+        "title": "non-object resolutions still fulfil directly (numbers)",
+        "sha256": "d81689064e2d572f624fc4532c6ef997fcb44f920e0d2064ea7e236865fd3ed0",
+        "originalHarness": "runWasi",
+        "adaptation": "original source/PRELUDE; standalone-only target"
+      }
+    },
+    {
+      "id": "ordinary-object",
+      "source": "declare function __drain_microtasks(): void;\n\nexport function test(): number {\n  let result = 0;\n  const plain = { marker: 5 };\n  Promise.resolve(plain).then(function(val: any) {\n    result = (val.marker === 5) ? 1 : 2;\n  }, function() { result = 3; });\n  __drain_microtasks();\n  return result;\n}",
+      "actions": [
+        {
+          "export": "test",
+          "args": [],
+          "expected": 1
+        }
+      ],
+      "options": {},
+      "origin": {
+        "path": "tests/issue-3125.test.ts",
+        "title": "non-thenable objects still fulfil directly (regression guard)",
+        "sha256": "d81689064e2d572f624fc4532c6ef997fcb44f920e0d2064ea7e236865fd3ed0",
+        "originalHarness": "runWasi",
+        "adaptation": "original source/PRELUDE; standalone-only target"
+      }
+    },
+    {
+      "id": "ordinary-rejection-identity",
+      "source": "\n        let identity = false;\n        const reason: any = { marker: 4167 };\n        Promise.resolve(0)\n          .then(function() { throw reason; })\n          .catch(function(caught) { identity = caught === reason; });\n        export function identityOk(): boolean { return identity; }\n      ",
+      "actions": [
+        {
+          "export": "__module_init",
+          "args": [],
+          "expected": {
+            "$undefined": true
+          }
+        },
+        {
+          "export": "__drain_microtasks",
+          "args": [],
+          "expected": {
+            "$undefined": true
+          }
+        },
+        {
+          "export": "identityOk",
+          "args": [],
+          "expected": 1
+        }
+      ],
+      "options": {
+        "deferTopLevelInit": true
+      },
+      "origin": {
+        "path": "tests/issue-4167-async-rejection-identity.test.ts",
+        "title": "keeps standalone Promise rejection payload identity on the native scheduler",
+        "sha256": "ca948318cd5c5670858a362bb4cf2b8120ebc8ae2d89a78accfed4a87ea7086f",
+        "originalHarness": "compile",
+        "adaptation": "unchanged compile source and required explicit init/drain"
+      }
+    },
+    {
+      "id": "getter-throw-closed",
+      "source": "declare function __drain_microtasks(): void;\n\nexport function test(): number {\n  let result = 0;\n  const value = { marker: 7 };\n  const poisoned = Object.defineProperty({}, 'then', { get: function() { throw value; } });\n  Promise.resolve(poisoned).then(function() { result = 2; }, function(val: any) {\n    result = (val === value) ? 1 : 4;\n  });\n  __drain_microtasks();\n  return result;\n}",
+      "actions": [
+        {
+          "export": "test",
+          "args": [],
+          "expected": 1
+        }
+      ],
+      "options": {},
+      "origin": {
+        "path": "tests/issue-3125-widen.test.ts",
+        "title": "rejects on a poisoned `then` getter (inline defineProperty target)",
+        "sha256": "36f16450807eacab5f22a91827541e80b8192329717b57170e05aba74861cef3",
+        "originalHarness": "runWidenStandalone",
+        "adaptation": "original source/PRELUDE; standalone-only target"
+      }
+    },
+    {
+      "id": "getter-throw-open",
+      "source": "declare function __drain_microtasks(): void;\n\nexport function test(): number {\n  let result = 0;\n  const value = { marker: 7 };\n  const o: any = {};\n  Object.defineProperty(o, 'then', { get: function() { throw value; } });\n  Promise.resolve(o).then(function() { result = 2; }, function(val: any) {\n    result = (val === value) ? 1 : 4;\n  });\n  __drain_microtasks();\n  return result;\n}",
+      "actions": [
+        {
+          "export": "test",
+          "args": [],
+          "expected": 1
+        }
+      ],
+      "options": {},
+      "origin": {
+        "path": "tests/issue-3125-widen.test.ts",
+        "title": "rejects on a poisoned `then` getter (any-typed $Object target)",
+        "sha256": "36f16450807eacab5f22a91827541e80b8192329717b57170e05aba74861cef3",
+        "originalHarness": "runWidenStandalone",
+        "adaptation": "original source/PRELUDE; standalone-only target"
+      }
+    },
+    {
+      "id": "native-then-capture",
+      "source": "declare function __drain_microtasks(): void;\nexport function test(): number {\n  const holder: any = { last: 0 };\n  const p: any = Promise.resolve(1);\n  p.then = function (res: any) { res(11); };\n  const alias: any = p;\n  const outer: any = new Promise(function (res: any) { res(alias); });\n  p.then = function (res: any) { res(22); };\n  outer.then(function (val: any) { holder.last = (val === 11) ? 1 : (val === 22 ? 2 : 4); }, function () { holder.last = 3; });\n  __drain_microtasks();\n  return holder.last;\n}",
+      "actions": [
+        {
+          "export": "test",
+          "args": [],
+          "expected": 1
+        }
+      ],
+      "options": {},
+      "origin": {
+        "path": "tests/issue-5197-own-then-indirection.test.ts",
+        "title": "standalone: `then` is captured at Resolve time, not at job time",
+        "sha256": "511fe70dbdaf65328bc302317c1bdc0b8717cf4a6afe0457bb31c8addcd8a1bd",
+        "originalHarness": "runStandalone",
+        "adaptation": "original source/PRELUDE; standalone-only target"
+      }
+    },
+    {
+      "id": "callable-getter-capture-trace",
+      "origin": {
+        "path": "tests/issue-3125-widen.test.ts + tests/issue-5197-own-then-indirection.test.ts",
+        "title": "proposed callable-getter counter/temporal control",
+        "adaptation": "new bounded source observation combining the existing open-object getter site and resolve-before-job replacement; not an unchanged existing passing fixture"
+      },
+      "source": "let gets = 0;\nlet calls = 0;\nlet wrongCalls = 0;\nlet value = 0;\nlet trace = 0;\nlet version = 0;\nexport function start(): number {\n  const o: any = {};\n  Object.defineProperty(o, \"then\", { get: function() {\n    gets += 1;\n    trace = trace * 10 + 1;\n    if (version === 0) return function(res: any) {\n      calls += 1;\n      trace = trace * 10 + 2;\n      res(42);\n    };\n    return function(res: any) {\n      wrongCalls += 1;\n      trace = trace * 10 + 8;\n      res(99);\n    };\n  } });\n  Promise.resolve(o).then(function(v: any) {\n    value = v;\n    trace = trace * 10 + 4;\n  });\n  trace = trace * 10 + 3;\n  version = 1;\n  return gets;\n}\nexport function getGets(): number { return gets; }\nexport function getCalls(): number { return calls; }\nexport function getWrongCalls(): number { return wrongCalls; }\nexport function getValue(): number { return value; }\nexport function getTrace(): number { return trace; }",
+      "options": {},
+      "actions": [
+        {
+          "export": "start",
+          "args": [],
+          "expected": 1
+        },
+        {
+          "export": "getCalls",
+          "args": [],
+          "expected": 0
+        },
+        {
+          "export": "__drain_microtasks",
+          "args": [],
+          "expected": {
+            "$undefined": true
+          }
+        },
+        {
+          "export": "getGets",
+          "args": [],
+          "expected": 1
+        },
+        {
+          "export": "getCalls",
+          "args": [],
+          "expected": 1
+        },
+        {
+          "export": "getWrongCalls",
+          "args": [],
+          "expected": 0
+        },
+        {
+          "export": "getValue",
+          "args": [],
+          "expected": 42
+        },
+        {
+          "export": "getTrace",
+          "args": [],
+          "expected": 1324
+        }
+      ]
+    }
+  ]
+}
