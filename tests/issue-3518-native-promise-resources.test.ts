@@ -24,6 +24,7 @@ import {
   reserveNativePromiseResources,
   declareNativePromiseResources,
   nativePromiseReservationInventory,
+  assertNativePromiseResourcePlanFor,
   fillNativePromiseResources,
   type NativePromiseFillDependencies,
 } from "../src/backend/wasmgc/resources/native-promises.js";
@@ -90,8 +91,8 @@ function closureRequests(): NativeClosureRequirements["requests"] {
     { kind: "metadata", id: "settle-meta", signatureId: "settle", key: "promise:settle", name: "", length: 1 },
   ];
 }
-function prerequisites(requests = closureRequests(), settleMetadataRequestId = "settle-meta") {
-  const { plan, vectorPlan } = actual();
+function prerequisites(requests = closureRequests(), settleMetadataRequestId = "settle-meta", prepared = actual()) {
+  const { plan, vectorPlan } = prepared;
   const module = createEmptyModule(),
     tx = new PhysicalModuleReservations(module);
   const tag = tx.reserveTag(
@@ -171,6 +172,36 @@ function futureReservationProbe(tx: PhysicalModuleReservations) {
 }
 
 describe("native Promise resource requirements, not whole-family materialization", () => {
+  it.each([false, true])(
+    "authenticates source configuration despite equal recipes, decoded=%s",
+    (replay) => {
+      const prepared = prepare("off", replay);
+      const a = prerequisites(closureRequests(), "settle-meta", prepared);
+      const declaration = declarationFor(a);
+      const different = planNativePromiseResources(prepared.program, backendOptions, prepared.program.runtime[0]!, {
+        hooks: "dispatch",
+        unhandledRejections: "disabled",
+      });
+      expect(different).not.toStrictEqual(a.plan);
+      expect(declareNativePromiseResources(different, declaration.dependencies)).toStrictEqual(declaration);
+      const pack = reserveNativePromiseResources(a.tx, a.plan, a.dependencies, declaration);
+      const fresh = () =>
+        planNativePromiseResources(prepared.program, backendOptions, prepared.program.runtime[0]!, configuration);
+      expect(() => assertNativePromiseResourcePlanFor(a.tx, pack, declaration, fresh())).not.toThrow();
+      const unchanged = unchangedModule(a.module);
+      expect(() => assertNativePromiseResourcePlanFor(a.tx, pack, declaration, different)).toThrow(
+        "Promise source requirements differ from checked source plan",
+      );
+      unchanged();
+      expect(a.tx.state).toBe("reserving");
+      expect(() => assertNativePromiseResourcePlanFor(a.tx, pack, declaration, fresh())).not.toThrow();
+      const twin = prerequisites(closureRequests(), "settle-meta", prepared);
+      reserveNativePromiseResources(twin.tx, twin.plan, twin.dependencies, declarationFor(twin));
+      expect(futureReservationProbe(a.tx)).toStrictEqual(futureReservationProbe(twin.tx));
+    },
+    35000,
+  );
+
   it("rejects structural clones that lose the retained metadata field type identity", () => {
     const a = reserve();
     expect(nativePromiseReservationInventory(a.tx, a.pack, a.declaration)).toHaveLength(25);

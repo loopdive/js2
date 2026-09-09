@@ -568,6 +568,18 @@ export function nativePromiseReservationInventory(
   );
 }
 
+/** Authenticate the retained source requirements, not merely their physical recipe. */
+export function assertNativePromiseResourcePlanFor(
+  tx: PhysicalModuleReservations,
+  pack: NativePromiseReservations,
+  expectedDeclaration: NativePromiseDeclarationPlan,
+  expectedSource: NativePromiseResourcePlan,
+): void {
+  nativePromiseReservationInventory(tx, pack, expectedDeclaration);
+  const owner = owners.get(pack)!;
+  same(owner.sourcePlan, expectedSource, "Promise source requirements differ from checked source plan");
+}
+
 /** No fallback: resolution/classification/value dependencies must all be real same-ledger reservations. */
 export function fillNativePromiseResources(
   tx: PhysicalModuleReservations,

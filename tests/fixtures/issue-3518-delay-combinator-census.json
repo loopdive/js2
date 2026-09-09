@@ -1,0 +1,1090 @@
+{
+  "owners": {
+    "program": [
+      {
+        "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+        "name": "delay"
+      },
+      {
+        "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000001",
+        "name": "fetchUser"
+      },
+      {
+        "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000001:ir-async-state:0000000000000000",
+        "name": "fetchUser__ir_async_state_0"
+      },
+      {
+        "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000002",
+        "name": "fetchAllSequential"
+      },
+      {
+        "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000000",
+        "name": "fetchAllSequential__ir_async_state_0"
+      },
+      {
+        "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000001",
+        "name": "fetchAllSequential__ir_async_state_1"
+      },
+      {
+        "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000002",
+        "name": "fetchAllSequential__ir_async_state_2"
+      },
+      {
+        "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000003",
+        "name": "fetchAllSequential__ir_async_state_3"
+      },
+      {
+        "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000004",
+        "name": "fetchAllSequential__ir_async_state_4"
+      },
+      {
+        "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000003",
+        "name": "fetchAllParallel"
+      },
+      {
+        "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000003:ir-async-state:0000000000000000",
+        "name": "fetchAllParallel__ir_async_state_0"
+      },
+      {
+        "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000003:ir-async-state:0000000000000001",
+        "name": "fetchAllParallel__ir_async_state_1"
+      },
+      {
+        "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000004",
+        "name": "main"
+      },
+      {
+        "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000004:ir-async-state:0000000000000000",
+        "name": "main__ir_async_state_0"
+      },
+      {
+        "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000004:ir-async-state:0000000000000001",
+        "name": "main__ir_async_state_1"
+      },
+      {
+        "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000004:ir-async-state:0000000000000002",
+        "name": "main__ir_async_state_2"
+      }
+    ],
+    "projection": [
+      {
+        "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+        "name": "delay"
+      },
+      {
+        "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000001",
+        "name": "fetchUser"
+      },
+      {
+        "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000001:ir-async-state:0000000000000000",
+        "name": "fetchUser__ir_async_state_0"
+      },
+      {
+        "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000002",
+        "name": "fetchAllSequential"
+      },
+      {
+        "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000000",
+        "name": "fetchAllSequential__ir_async_state_0"
+      },
+      {
+        "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000001",
+        "name": "fetchAllSequential__ir_async_state_1"
+      },
+      {
+        "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000002",
+        "name": "fetchAllSequential__ir_async_state_2"
+      },
+      {
+        "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000003",
+        "name": "fetchAllSequential__ir_async_state_3"
+      },
+      {
+        "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000004",
+        "name": "fetchAllSequential__ir_async_state_4"
+      },
+      {
+        "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000003",
+        "name": "fetchAllParallel"
+      },
+      {
+        "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000003:ir-async-state:0000000000000000",
+        "name": "fetchAllParallel__ir_async_state_0"
+      },
+      {
+        "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000003:ir-async-state:0000000000000001",
+        "name": "fetchAllParallel__ir_async_state_1"
+      },
+      {
+        "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000004",
+        "name": "main"
+      },
+      {
+        "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000004:ir-async-state:0000000000000000",
+        "name": "main__ir_async_state_0"
+      },
+      {
+        "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000004:ir-async-state:0000000000000001",
+        "name": "main__ir_async_state_1"
+      },
+      {
+        "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000004:ir-async-state:0000000000000002",
+        "name": "main__ir_async_state_2"
+      }
+    ]
+  },
+  "buffers": [
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+      "ownerName": "delay",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 1
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000001",
+      "ownerName": "fetchUser",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 0
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000001",
+      "ownerName": "fetchUser",
+      "rootKind": "async-plan",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 1
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000001",
+      "ownerName": "fetchUser",
+      "rootKind": "async-plan",
+      "rootIndex": 1,
+      "rootId": 1,
+      "path": [],
+      "instructionCount": 0
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000001:ir-async-state:0000000000000000",
+      "ownerName": "fetchUser__ir_async_state_0",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 4
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000002",
+      "ownerName": "fetchAllSequential",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 0
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000002",
+      "ownerName": "fetchAllSequential",
+      "rootKind": "async-plan",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 2
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000002",
+      "ownerName": "fetchAllSequential",
+      "rootKind": "async-plan",
+      "rootIndex": 1,
+      "rootId": 1,
+      "path": [],
+      "instructionCount": 1
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000002",
+      "ownerName": "fetchAllSequential",
+      "rootKind": "async-plan",
+      "rootIndex": 2,
+      "rootId": 2,
+      "path": [],
+      "instructionCount": 1
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000002",
+      "ownerName": "fetchAllSequential",
+      "rootKind": "async-plan",
+      "rootIndex": 3,
+      "rootId": 3,
+      "path": [],
+      "instructionCount": 2
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000002",
+      "ownerName": "fetchAllSequential",
+      "rootKind": "async-plan",
+      "rootIndex": 4,
+      "rootId": 4,
+      "path": [],
+      "instructionCount": 0
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000000",
+      "ownerName": "fetchAllSequential__ir_async_state_0",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 1
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000001",
+      "ownerName": "fetchAllSequential__ir_async_state_1",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 2
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000002",
+      "ownerName": "fetchAllSequential__ir_async_state_2",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 2
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000003",
+      "ownerName": "fetchAllSequential__ir_async_state_3",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 1
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000004",
+      "ownerName": "fetchAllSequential__ir_async_state_4",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 2
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000003",
+      "ownerName": "fetchAllParallel",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 0
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000003",
+      "ownerName": "fetchAllParallel",
+      "rootKind": "async-plan",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 1
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000003",
+      "ownerName": "fetchAllParallel",
+      "rootKind": "async-plan",
+      "rootIndex": 1,
+      "rootId": 1,
+      "path": [],
+      "instructionCount": 1
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000003:ir-async-state:0000000000000000",
+      "ownerName": "fetchAllParallel__ir_async_state_0",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 5
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000003:ir-async-state:0000000000000000",
+      "ownerName": "fetchAllParallel__ir_async_state_0",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [
+        {
+          "instructionIndex": 3,
+          "childBufferIndex": 0
+        }
+      ],
+      "instructionCount": 4
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000003:ir-async-state:0000000000000000",
+      "ownerName": "fetchAllParallel__ir_async_state_0",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [
+        {
+          "instructionIndex": 3,
+          "childBufferIndex": 1
+        }
+      ],
+      "instructionCount": 6
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000003:ir-async-state:0000000000000000",
+      "ownerName": "fetchAllParallel__ir_async_state_0",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [
+        {
+          "instructionIndex": 3,
+          "childBufferIndex": 2
+        }
+      ],
+      "instructionCount": 4
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000003:ir-async-state:0000000000000001",
+      "ownerName": "fetchAllParallel__ir_async_state_1",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 6
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000003:ir-async-state:0000000000000001",
+      "ownerName": "fetchAllParallel__ir_async_state_1",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [
+        {
+          "instructionIndex": 4,
+          "childBufferIndex": 0
+        }
+      ],
+      "instructionCount": 4
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000003:ir-async-state:0000000000000001",
+      "ownerName": "fetchAllParallel__ir_async_state_1",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [
+        {
+          "instructionIndex": 4,
+          "childBufferIndex": 1
+        }
+      ],
+      "instructionCount": 5
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000003:ir-async-state:0000000000000001",
+      "ownerName": "fetchAllParallel__ir_async_state_1",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [
+        {
+          "instructionIndex": 4,
+          "childBufferIndex": 2
+        }
+      ],
+      "instructionCount": 4
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000004",
+      "ownerName": "main",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 0
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000004",
+      "ownerName": "main",
+      "rootKind": "async-plan",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 3
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000004",
+      "ownerName": "main",
+      "rootKind": "async-plan",
+      "rootIndex": 1,
+      "rootId": 1,
+      "path": [],
+      "instructionCount": 4
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000004",
+      "ownerName": "main",
+      "rootKind": "async-plan",
+      "rootIndex": 2,
+      "rootId": 2,
+      "path": [],
+      "instructionCount": 2
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000004:ir-async-state:0000000000000000",
+      "ownerName": "main__ir_async_state_0",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 8
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000004:ir-async-state:0000000000000001",
+      "ownerName": "main__ir_async_state_1",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 10
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000004:ir-async-state:0000000000000002",
+      "ownerName": "main__ir_async_state_2",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 12
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+      "ownerName": "delay",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 1
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000001",
+      "ownerName": "fetchUser",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 0
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000001",
+      "ownerName": "fetchUser",
+      "rootKind": "async-plan",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 1
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000001",
+      "ownerName": "fetchUser",
+      "rootKind": "async-plan",
+      "rootIndex": 1,
+      "rootId": 1,
+      "path": [],
+      "instructionCount": 0
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000001",
+      "ownerName": "fetchUser",
+      "rootKind": "async-runtime",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 1
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000001",
+      "ownerName": "fetchUser",
+      "rootKind": "async-runtime",
+      "rootIndex": 1,
+      "rootId": 1,
+      "path": [],
+      "instructionCount": 0
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000001:ir-async-state:0000000000000000",
+      "ownerName": "fetchUser__ir_async_state_0",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 4
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000002",
+      "ownerName": "fetchAllSequential",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 0
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000002",
+      "ownerName": "fetchAllSequential",
+      "rootKind": "async-plan",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 2
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000002",
+      "ownerName": "fetchAllSequential",
+      "rootKind": "async-plan",
+      "rootIndex": 1,
+      "rootId": 1,
+      "path": [],
+      "instructionCount": 1
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000002",
+      "ownerName": "fetchAllSequential",
+      "rootKind": "async-plan",
+      "rootIndex": 2,
+      "rootId": 2,
+      "path": [],
+      "instructionCount": 1
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000002",
+      "ownerName": "fetchAllSequential",
+      "rootKind": "async-plan",
+      "rootIndex": 3,
+      "rootId": 3,
+      "path": [],
+      "instructionCount": 2
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000002",
+      "ownerName": "fetchAllSequential",
+      "rootKind": "async-plan",
+      "rootIndex": 4,
+      "rootId": 4,
+      "path": [],
+      "instructionCount": 0
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000002",
+      "ownerName": "fetchAllSequential",
+      "rootKind": "async-runtime",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 2
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000002",
+      "ownerName": "fetchAllSequential",
+      "rootKind": "async-runtime",
+      "rootIndex": 1,
+      "rootId": 1,
+      "path": [],
+      "instructionCount": 1
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000002",
+      "ownerName": "fetchAllSequential",
+      "rootKind": "async-runtime",
+      "rootIndex": 2,
+      "rootId": 2,
+      "path": [],
+      "instructionCount": 1
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000002",
+      "ownerName": "fetchAllSequential",
+      "rootKind": "async-runtime",
+      "rootIndex": 3,
+      "rootId": 3,
+      "path": [],
+      "instructionCount": 2
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000002",
+      "ownerName": "fetchAllSequential",
+      "rootKind": "async-runtime",
+      "rootIndex": 4,
+      "rootId": 4,
+      "path": [],
+      "instructionCount": 0
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000000",
+      "ownerName": "fetchAllSequential__ir_async_state_0",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 1
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000001",
+      "ownerName": "fetchAllSequential__ir_async_state_1",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 2
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000002",
+      "ownerName": "fetchAllSequential__ir_async_state_2",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 2
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000003",
+      "ownerName": "fetchAllSequential__ir_async_state_3",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 1
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000004",
+      "ownerName": "fetchAllSequential__ir_async_state_4",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 2
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000003",
+      "ownerName": "fetchAllParallel",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 0
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000003",
+      "ownerName": "fetchAllParallel",
+      "rootKind": "async-plan",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 1
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000003",
+      "ownerName": "fetchAllParallel",
+      "rootKind": "async-plan",
+      "rootIndex": 1,
+      "rootId": 1,
+      "path": [],
+      "instructionCount": 1
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000003",
+      "ownerName": "fetchAllParallel",
+      "rootKind": "async-runtime",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 1
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000003",
+      "ownerName": "fetchAllParallel",
+      "rootKind": "async-runtime",
+      "rootIndex": 1,
+      "rootId": 1,
+      "path": [],
+      "instructionCount": 1
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000003:ir-async-state:0000000000000000",
+      "ownerName": "fetchAllParallel__ir_async_state_0",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 5
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000003:ir-async-state:0000000000000000",
+      "ownerName": "fetchAllParallel__ir_async_state_0",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [
+        {
+          "instructionIndex": 3,
+          "childBufferIndex": 0
+        }
+      ],
+      "instructionCount": 4
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000003:ir-async-state:0000000000000000",
+      "ownerName": "fetchAllParallel__ir_async_state_0",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [
+        {
+          "instructionIndex": 3,
+          "childBufferIndex": 1
+        }
+      ],
+      "instructionCount": 6
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000003:ir-async-state:0000000000000000",
+      "ownerName": "fetchAllParallel__ir_async_state_0",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [
+        {
+          "instructionIndex": 3,
+          "childBufferIndex": 2
+        }
+      ],
+      "instructionCount": 4
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000003:ir-async-state:0000000000000001",
+      "ownerName": "fetchAllParallel__ir_async_state_1",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 6
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000003:ir-async-state:0000000000000001",
+      "ownerName": "fetchAllParallel__ir_async_state_1",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [
+        {
+          "instructionIndex": 4,
+          "childBufferIndex": 0
+        }
+      ],
+      "instructionCount": 4
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000003:ir-async-state:0000000000000001",
+      "ownerName": "fetchAllParallel__ir_async_state_1",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [
+        {
+          "instructionIndex": 4,
+          "childBufferIndex": 1
+        }
+      ],
+      "instructionCount": 5
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000003:ir-async-state:0000000000000001",
+      "ownerName": "fetchAllParallel__ir_async_state_1",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [
+        {
+          "instructionIndex": 4,
+          "childBufferIndex": 2
+        }
+      ],
+      "instructionCount": 4
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000004",
+      "ownerName": "main",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 0
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000004",
+      "ownerName": "main",
+      "rootKind": "async-plan",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 3
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000004",
+      "ownerName": "main",
+      "rootKind": "async-plan",
+      "rootIndex": 1,
+      "rootId": 1,
+      "path": [],
+      "instructionCount": 4
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000004",
+      "ownerName": "main",
+      "rootKind": "async-plan",
+      "rootIndex": 2,
+      "rootId": 2,
+      "path": [],
+      "instructionCount": 2
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000004",
+      "ownerName": "main",
+      "rootKind": "async-runtime",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 3
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000004",
+      "ownerName": "main",
+      "rootKind": "async-runtime",
+      "rootIndex": 1,
+      "rootId": 1,
+      "path": [],
+      "instructionCount": 4
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000004",
+      "ownerName": "main",
+      "rootKind": "async-runtime",
+      "rootIndex": 2,
+      "rootId": 2,
+      "path": [],
+      "instructionCount": 2
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000004:ir-async-state:0000000000000000",
+      "ownerName": "main__ir_async_state_0",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 8
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000004:ir-async-state:0000000000000001",
+      "ownerName": "main__ir_async_state_1",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 10
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000004:ir-async-state:0000000000000002",
+      "ownerName": "main__ir_async_state_2",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionCount": 12
+    }
+  ],
+  "calls": [
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+      "ownerName": "delay",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionIndex": 0,
+      "kind": "delay",
+      "binding": {
+        "kind": "runtime",
+        "symbol": "__ir_promise_delay_native"
+      }
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000001:ir-async-state:0000000000000000",
+      "ownerName": "fetchUser__ir_async_state_0",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionIndex": 3,
+      "kind": "delay",
+      "binding": {
+        "kind": "runtime",
+        "symbol": "__ir_promise_delay_native"
+      }
+    },
+    {
+      "view": "program",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000003:ir-async-state:0000000000000000",
+      "ownerName": "fetchAllParallel__ir_async_state_0",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionIndex": 4,
+      "kind": "all",
+      "binding": {
+        "kind": "runtime",
+        "symbol": "__ir_async_promise_all_native"
+      }
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+      "ownerName": "delay",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionIndex": 0,
+      "kind": "delay",
+      "binding": {
+        "kind": "runtime",
+        "symbol": "__ir_promise_delay_native"
+      }
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000001:ir-async-state:0000000000000000",
+      "ownerName": "fetchUser__ir_async_state_0",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionIndex": 3,
+      "kind": "delay",
+      "binding": {
+        "kind": "runtime",
+        "symbol": "__ir_promise_delay_native"
+      }
+    },
+    {
+      "view": "projection",
+      "ownerUnitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000003:ir-async-state:0000000000000000",
+      "ownerName": "fetchAllParallel__ir_async_state_0",
+      "rootKind": "block",
+      "rootIndex": 0,
+      "rootId": 0,
+      "path": [],
+      "instructionIndex": 4,
+      "kind": "all",
+      "binding": {
+        "kind": "runtime",
+        "symbol": "__ir_async_promise_all_native"
+      }
+    }
+  ]
+}

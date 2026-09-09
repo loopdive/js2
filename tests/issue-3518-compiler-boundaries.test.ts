@@ -203,6 +203,7 @@ it("keeps formatter support contracts and the canonical type factory mandatory",
         "src/backend/wasmgc/program/native-number-format.ts",
         "src/backend/wasmgc/resources/native-number-ryu.ts",
         "src/backend/wasmgc/resources/native-number-format.ts",
+        "src/backend/wasmgc/resources/native-delay-combinator.ts",
       ],
     ],
     [
@@ -233,7 +234,7 @@ it("keeps formatter support contracts and the canonical type factory mandatory",
     expect(layer).toMatchObject({ status: "active", required: true });
     expect(layer.entries).toEqual(expect.arrayContaining(paths));
     expect(layer.minModules).toBeGreaterThanOrEqual(
-      layerId === "backend-wasmgc" ? 14 : layerId === "native-runtime" ? 32 : 18,
+      layerId === "backend-wasmgc" ? 15 : layerId === "native-runtime" ? 32 : 18,
     );
     if (layerId === "ir-program") expect(layer.minModules).toBeGreaterThanOrEqual(19);
     for (const path of paths) {
@@ -256,6 +257,7 @@ it("keeps formatter support contracts and the canonical type factory mandatory",
 });
 
 for (const [layerId, path] of [
+  ["backend-wasmgc", "src/backend/wasmgc/resources/native-delay-combinator.ts"],
   ["frontend-ts", "src/frontend/builtins/contracts.ts"],
   ["ir-core", "src/ir/core/type-references.ts"],
   ["ir-program", "src/ir/program/runtime-support.ts"],
