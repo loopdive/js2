@@ -11,6 +11,21 @@ reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-07
 loc-budget-allow:
+  # 2026-09-08 (S2e) — scope-discriminating the `defineProperty` sidecar key.
+  # The mechanism itself is the new module src/codegen/sidecar-owner-scope.ts;
+  # what lands in these four files is ONLY the wiring, and it has to sit on the
+  # exact `.add`/`.has` line it qualifies, because the whole defect is that the
+  # key and the binding it was recorded for were separated:
+  #   object-ops.ts              +3  record the owner where the key is added
+  #   expressions/assignment.ts  +3  same, for the destructuring-target writer
+  #   object-shape-widening.ts   +5  the two widening writers mark the key
+  #                                  UNSCOPED (they hold a name, not a node) —
+  #                                  that is what keeps their behaviour identical
+  #   property-access.ts         +4  the two READ guards
+  - src/codegen/object-ops.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/declarations/object-shape-widening.ts
+  - src/codegen/property-access.ts
   # 2026-09-08 (S2d) — the standalone cross-module OBJECT boundary. The whole
   # mechanism lives in the new module src/codegen/standalone-link-boundary.ts;
   # what lands in object-runtime.ts is the two places the mechanism has to be
@@ -69,6 +84,10 @@ loc-budget-allow:
     lines: 20
     reason: "#5383 S2 R4 — pre-register the `Math.<fn>` value-read substrate before the closure is built (#2704 forbids a first registration mid-body), which is why every Math value read kept the refusal body."
 func-budget-allow:
+  # 2026-09-08 (S2e) — the second sidecar READ guard lives inside this function,
+  # on the `isDynamicSidecarRead` line it qualifies. Moving it out would separate
+  # the key from the binding check, which is the defect being fixed.
+  - src/codegen/property-access.ts::compileElementAccessBody
   # 2026-09-08 (S2d) — same wiring, same argument: `ensureObjectRuntime` is
   # where every dynamic terminal is registered and where the late-import freeze
   # point is, so the peer registration and the terminal emission cannot move out
@@ -776,3 +795,128 @@ the shim is where it surfaced.
 
 `invalid calendar identifier` and `invalid receiver` remain unreduced — S2d
 spent its budget on the boundary and on root-causing the two above.
+
+
+## S2e findings (2026-09-08) — `invalid calendar identifier` root-caused and fixed; the boundary miss re-measured; the receiver stop narrowed
+
+S2 is **not** complete. One of the three stops is fixed at the root, one is
+re-measured into a smaller and different defect than S2d recorded, and one is
+narrowed to a ten-word statement but not yet reduced. The S2 smoke test is
+therefore still not written — what blocks it is named exactly below.
+
+### R10 — `invalid calendar identifier` was a SCOPE-BLIND compiler key, not a Temporal defect
+
+`ctx.sidecarDefinedPropertyKeys` is keyed by `"<identifierTEXT>:<propName>"` —
+module-wide, no scope discrimination. The polyfill bundle contains one
+`Object.defineProperty(e, "length", …)`, which put `e:length` in that set, and
+from then on **every** `e.length` read anywhere in the module was routed to
+`emitRuntimeDescriptorGet`. For any *other* binding named `e` the runtime
+sidecar has no descriptor, so the read answered `undefined`.
+
+The victim is the polyfill's ASCII-lowercase helper
+`function Ao(e){let t="";for(let n=0;n<e.length;n++){const r=e.charCodeAt(n);t+=…}return t}`:
+its loop bound read `undefined`, so the loop never ran, `Ao("iso8601")`
+answered `""`, and `zo()` threw `RangeError: invalid calendar identifier `
+(note the empty tail — that is the whole diagnosis, and it is why the S2d note
+recorded the message without a name).
+
+**How it was identified** (this is the measurement, not a deduction): three
+byte-identical copies of the same function appended to the real bundle,
+differing only in the local's NAME. `zqx` → 9, `t` → 9, `e` → **0**. Then the
+compiler was instrumented at each arm of the property-access dispatch chain and
+printed `sidecar=true key=e:length` for the `e` copy only.
+
+Fixed in the new module `src/codegen/sidecar-owner-scope.ts`: each writer records
+the *declaration node* the key was recorded for (via `ctx.oracle.valueDeclarationOf`,
+not the raw checker), and the two readers in `property-access.ts` decline when the
+receiver provably resolves to a different declaration. Answer-preserving by
+construction: a key with no recorded owner, or an unresolvable receiver on either
+side, keeps its old module-wide meaning, so the change can only ever REMOVE a
+wrong-binding match. The two `object-shape-widening` writers hold a variable NAME
+rather than a node and therefore mark their keys unscoped — deliberately
+unchanged.
+
+Measured on the real provider source (shim + bundle, `--target standalone`,
+`hostBridge:"off"`), before → after:
+
+| probe | base | after |
+| --- | --- | --- |
+| `Ao("iso8601")` | `""` (length 0) | `"iso8601"` (length 7) |
+| `zo("iso8601")` | throws `invalid calendar identifier ` | `"iso8601"` |
+| `new qi.PlainDate(2024,1,1)` | `RangeError: invalid calendar identifier ` | reaches the NEXT stop (`invalid receiver`) |
+| the same helper with the local renamed `zqx` | already correct | unchanged |
+
+**JS-host (`gc`) lane byte-identical**: sha256 A/B over five modules including
+the reduction itself (`4c15a99694d22840`, `dc793b1437505d5d`,
+`540af5b064e0ee41`, `a162c242eca6b7a4`, `b8514a76991378d8`) — same before and
+after, same byte lengths.
+
+Two S2e cases in `tests/issue-5383-standalone-temporal-provider.test.ts`: the
+ten-line reduction (a module-level `Object.defineProperty(e,"length",…)` plus a
+shadowing local string `e`; base answers 0, fixed answers 17, and the
+defineProperty receiver still reads 3 through the sidecar), and the polyfill's
+`Ao` + `CALENDARS.includes` shape.
+
+### The boundary miss is NOT what S2d measured — re-measure before fixing it
+
+S2d recorded `__js2wasm_link_member_get(Temporal, "PlainDate")` answering the
+provider's `undefined`. On this branch, with S2d landed, a four-variant
+reduction through `buildProvider`/`runConsumer` (host-free
+`instantiateLinkedProject(result, {})`) says something narrower:
+
+| provider export | `Object.keys(NS).length` | `NS.b` (number) | `NS.Now.a` | `NS.PlainDate` |
+| --- | --- | --- | --- | --- |
+| `{ PlainDate: class, Now: {a:1}, b: 2 }` | 3 | 2 | 1 | **`undefined`** |
+| `Object.freeze({ … })` | 3 | 2 | 1 | **`undefined`** |
+| `{ __proto__: null, … }` | 3 | 2 | 1 | present, `typeof` **`"object"`** |
+| `Object.freeze({ __proto__: null, … })` — the polyfill's own shape (`var qi=Object.freeze({__proto__:null,Duration,Instant,Now:Bi,PlainDate,…})`) | 3 | 2 | 1 | present, `typeof` **`"object"`** |
+
+So numbers and nested objects cross correctly; a **class VALUE** does not. For
+the polyfill's exact shape the value now crosses but reports `typeof "object"`,
+which makes `new Temporal.PlainDate(…)` unreachable from the consumer
+(`typeof v !== "function"`, and `new v()` was not attempted past that). Two
+sub-defects, not one: the plain/frozen literal loses the class value entirely,
+the `__proto__: null` forms keep it but mis-tag it. Neither is fixed here.
+
+### The remaining in-provider stop, narrowed to one sentence
+
+`invalid receiver: method called with the wrong type of this-object` is thrown by
+the polyfill's `vt(e,t){if(!t(e))throw new TypeError(…)}` when its brand check
+`ne(e,...t){if(!e||"object"!=typeof e)return!1;const n=Q(e);return!!n&&t.every(e=>e in n)}`
+answers false. Every component of that check was measured to work — and the one
+that does not is `typeof`:
+
+| probe (in-provider, after R10) | answer |
+| --- | --- |
+| `Q(d)` for `d = new qi.Duration(0,0,0,0,1)` | a bag with **10** keys |
+| `Object.keys(bag)[0]`, `Y in bag`, `bag[Y]` | `slot-years`, true, `number` |
+| `t.every(k => k in bag)` in a hand-written copy, plain object | **1** (works) |
+| `typeof d` at the site that made `d` | `"object"` |
+| `typeof zv` for the SAME `d` inside `function tp(zv){return typeof zv}` | **`"function"`** |
+| the same for a class declared in the probe section of the same module | `"object"` |
+| the same for `{}`, `Object.create(null)`, `qi`, the slots bag | `"object"` |
+
+**A polyfill class instance reports `typeof "function"` once it crosses a call
+boundary**, so `ne`'s first line rejects it and every accessor and method on
+every Temporal object throws. `Duration.from({hours:1})` reports `"function"`
+even at the call site for the same reason (it arrives as a return value).
+
+Not reproduced in a small module by: a static factory (`D.from`), an aliased or
+namespaced class, a frozen `__proto__:null` namespace, `Object.defineProperty`
+of `Symbol.toStringTag` on the prototype, the `ae()` non-enumerable-statics
+loop, a `WeakMap.set(this, …)` escape in the constructor, a field-less
+constructor, or any combination of those tried. The discriminator that DOES hold
+is "declared in the polyfill" vs "declared in the probe section of the same
+module", which points at a whole-module classification — most plausibly the
+canonicalisation of structurally-identical struct types (a field-less instance
+struct sharing a wasm type with a closure carrier would `ref.test` as callable).
+That is the next lane's first experiment; the probe harnesses are
+`.tmp/s2e/{sa,inprov}.mts` in the S2e worktree.
+
+### What still blocks the S2 smoke test
+
+All three, in this order: the `typeof`-on-a-parameter defect above (blocks every
+Temporal method call, in-provider AND through the boundary), the class-value
+boundary crossing (blocks `new Temporal.PlainDate` from a consumer), and #5405
+(`Now.timeZoneId()`, already filed, deliberately out of scope). #5404 (dynamic
+RegExp) remains why the smoke test must not use the string form of `from`.

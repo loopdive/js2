@@ -22,6 +22,7 @@ import {
 import { reportError } from "./context/errors.js";
 import { isGlobalObjectExpr } from "./global-environment.js"; // (#4394) host global object, never a struct
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
+import { recordSidecarPropertyOwner } from "./sidecar-owner-scope.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitThrowRangeError, emitThrowTypeError } from "./expressions/helpers.js";
 import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js"; // (#3177 slice 4) defineProperty rejection sentinel → TypeError
@@ -182,7 +183,9 @@ function markRuntimeDefinedProperty(ctx: CodegenContext, objArg: ts.Expression, 
   if (!ts.isIdentifier(objArg)) return;
   const propName = ts.isStringLiteral(propArg) ? propArg.text : ts.isNumericLiteral(propArg) ? propArg.text : undefined;
   if (propName === undefined) return;
-  ctx.sidecarDefinedPropertyKeys.add(`${objArg.text}:${propName}`);
+  const sidecarKey = `${objArg.text}:${propName}`;
+  ctx.sidecarDefinedPropertyKeys.add(sidecarKey);
+  recordSidecarPropertyOwner(ctx, sidecarKey, objArg);
 }
 
 function emitDescriptorUndefinedSidecars(
