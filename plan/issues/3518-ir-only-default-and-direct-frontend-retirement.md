@@ -7273,3 +7273,11 @@ compiler. This does not prove historical equality or authorize execution.
 Independent static/data review found no actionable blockers. Late-path negative
 controls remain before run approval;
 see the implementation checkpoint for the exact manifest digest and limitations.
+
+The shared dependency census later changed, invalidating current admission;
+the failed preflight is preserved. An isolated complete dependency copy (cache
+included) and fresh exact-pin O worktrees now support a replacement review-only
+manifest. Parent validation passes 30 additional controls, including 27 negative
+rejections against frozen observed reads. This is admission coverage, not
+compiler parity. Execution and merge approval remain separate; see the updated
+implementation checkpoint and measured evidence for limitations and digest.

@@ -82,3 +82,54 @@ omitting dependencies. Any such failure requires explicit review, not relaxation
 Do not run the three-arm driver until the completed manifest and implementation
 have been reviewed and execution separately approved. Do not waive issue5807,
 normal PR checks or merge-group regression checks. No merge is authorized here.
+
+## Post-push dependency drift (2026-09-10)
+
+The earlier real-root preflight PASS is historical, not current clearance.
+After checkpoint 92c145720a passed normal push hooks, the next real preflight
+rejected the shared dependency census: count remains 31,789, but SHA256 is now
+`a0fd4dada69bc1989a89ae492d76cd9722a5d5a1d503b2be21b1f867f5e33711`
+instead of the pinned `3eb0bbaa82a6b0a85d47598abfa35f78696e95048ea41048246b03e8d6faab65`.
+Zero late negative controls executed. The proposed scratch controls are unvalidated.
+
+The only regular dependency file found modified in the preceding 40 minutes was
+`.vite/vitest/da39a3ee5e6b4b0d3255bfef95601890afd80709/results.json` at 00:05:04
+local time. It contains the push hook's numeric-local test duration 6109.210792ms,
+consistent with the successful 18-test hook. This is strong evidence of mutable
+test-cache contamination, not an exact per-file comparison: the original dependency
+census recorded only the aggregate hash, so exclusive attribution is unproven.
+Do not silently refresh the digest or exclude the cache to obtain PASS. Preserve
+the published manifest and failed evidence; isolate dependencies for a separately
+reviewable recapture before running the remaining admission controls.
+
+An isolated complete copy now exists at
+`/private/tmp/js2-three-arm-dependencies.jxi7WC/node_modules`. All 2,204 copied
+symlinks were relocated to their equivalent canonical targets inside that copy;
+the source tree was not modified. Independent full censuses of shared and isolated
+trees both returned 31,789 entries and `a0fd4dada69bc1989a89ae492d76cd9722a5d5a1d503b2be21b1f867f5e33711`.
+The cache remains included. No comparison roots have been re-pointed yet.
+Next: prepare fresh O worktrees at the exact historical pins (leave protected O
+roots untouched), connect all measurement arms to this isolated copy, and capture
+a new review-only manifest while preserving the published manifest and failure.
+
+That preparation is now complete: fresh `frame-original` and `delay-original`
+worktrees under `/private/tmp/js2-three-arm-dependencies.jxi7WC` retain the exact
+O pins. They and the existing isolated R/C measurement roots resolve to the
+isolated dependency copy. Protected originals retain their original links.
+`execution-manifest-isolated-review.json` has SHA256
+`bab290d12b0ea78fd773c4bf3c5e7343eeac71be58dfcde2def82027f605c161`.
+The parent real-root review preflight passed with zero compiler invocations and
+zero comparison runs. The published old manifest remains intact. The subagent
+is rerunning the proposed late negative controls against this replacement.
+
+Parent and subagent subsequently completed all 30 late admission controls:
+one live preflight, two unchanged frozen-snapshot positives and 27 expected
+rejections. `isolated-admission-validation.json` records the parent's measured
+result; `shared-dependency-drift-failure.json` preserves the earlier failed run.
+These are additional to the 103 synthetic/extraction/CLI checks. Late negatives
+replay observed file digests/metadata and Git outputs with no host IO; Git dirty
+and untracked states are simulated, not actual index mutations. Final cross-role
+alias guards are not independently reached because earlier defenses reject first.
+No compiler comparison or execution-approved manifest exists. The isolated
+review-only manifest is ready for separate execution review; approval must not
+be inferred from any of these preflight results.
