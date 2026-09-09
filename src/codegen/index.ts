@@ -122,7 +122,11 @@ import {
   type IrModuleInitInvocationKind,
   type IrModuleInitPlanningEvidence,
 } from "../ir/module-init-plan.js";
-import { buildIrRuntimeEvalBoundaryPlan, type IrRuntimeEvalBoundaryPlan } from "../ir/runtime-eval-boundary-plan.js";
+import {
+  buildIrRuntimeEvalBoundaryPlan,
+  runtimeEvalMayRebindModuleScope,
+  type IrRuntimeEvalBoundaryPlan,
+} from "../ir/runtime-eval-boundary-plan.js";
 import {
   buildIrUnitInventory,
   type BuildIrUnitInventoryOptions,
@@ -9893,7 +9897,10 @@ function registerReassignedFunctionGlobals(
       });
     for (const name of ctx.topLevelFunctionNames) {
       const declaration = ctx.topLevelFunctionDeclarations.get(name);
-      const canBeReboundByEval = !ctx.sourceIsModule || !declaration || !hasExportModifier(declaration);
+      const owner = declaration?.getSourceFile();
+      const canBeReboundByEval =
+        (!ctx.sourceIsModule || !declaration || !hasExportModifier(declaration)) &&
+        (!owner || runtimeEvalMayRebindModuleScope(runtimeEvalPlan, owner, sourceFiles.indexOf(owner)));
       if (canBeReboundByEval && (hasUnknownDynamicSource || mentionedByDynamicSource(name))) {
         reassigned.add(name);
         if (declaration) reassignedDeclarations.add(declaration);

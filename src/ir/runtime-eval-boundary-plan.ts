@@ -88,6 +88,17 @@ function stableSourceId(sourceFile: ts.SourceFile, index: number): string {
   return `source:${index}:${normalized.slice(normalized.lastIndexOf("/") + 1)}`;
 }
 
+/** Only direct eval can resolve private bindings in its enclosing ES module. */
+export function runtimeEvalMayRebindModuleScope(
+  plan: IrRuntimeEvalBoundaryPlan,
+  sourceFile: ts.SourceFile,
+  sourceIndex: number,
+): boolean {
+  if (sourceIndex < 0 || !ts.isExternalModule(sourceFile)) return true;
+  const sourceId = stableSourceId(sourceFile, sourceIndex);
+  return plan.sites.some((site) => site.sourceId === sourceId && site.kind === "direct-eval");
+}
+
 /**
  * Cheap, sound negative gate for the runtime-eval inventory walk. Most source
  * files contain none of the boundary spellings, and walking their full AST is
