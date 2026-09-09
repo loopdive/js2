@@ -18,6 +18,16 @@ origin: "Actual PR 5751 merge-group regression gate; GitHub issue 5807"
 
 # Landing blocker
 
+## Updated landing state
+
+PR5751 subsequently merged at 2026-09-09T16:31:32Z as
+`efa0908e09998c73da592fba32708c7ecca8d6e5`. Its exact head and merge commit
+are ancestors of main `96c4970002f09ea90c4c5620f4076643250fd2a8`.
+Run34374533493 still reports failure; no causal fix or regression clearance
+has been established. Thus the failure below now concerns landed code, not an
+unmerged PR. Keep the dependent cumulative PR5798 held pending reconciliation
+and its remaining composed validation. The original failure record follows.
+
 [GitHub issue](https://github.com/loopdive/js2/issues/5807) tracks the actual
 failure of PR5751 candidate `efa0908e09998c73da592fba32708c7ecca8d6e5`
 (PR head `1330f172f78ed794915ffabeacbf2c39cf5bea07`). Run34374533493,
@@ -36,7 +46,7 @@ These are blockers, not waived historical noise. Both raw CI rows lack
 `wasm_sha`: the comparator's hash-change classification is not independent
 byte/hash evidence. Passing rows can report strict-rerun imports while primary
 failures never reach that variant; missing `__extern_set_strict` is not alone
-causal evidence. PR5751 and dependent PR5798 remain held.
+causal evidence. PR5751 was held at diagnosis; dependent PR5798 remains held.
 
 ## Current evidence and limits
 
@@ -54,6 +64,32 @@ evidence, not an authoritative CI reproduction or permission to re-enqueue.
 No causal source fix or flakiness claim is established.
 
 ## Implementation plan
+
+### Recovered shard-34 provenance
+
+Baseline job102525608071 (run34368952422) downloaded Temporal artifact10111137104;
+candidate job102544492575 (run34374533493) downloaded artifact10113341443.
+Their own shard logs establish Ubuntu24.04.4 image20260831.293.1, Node25.9.0
+Linux x64, pool4, worker/fork heaps1024MiB, gc, proposals included, chunk33/52,
+empty path filter and939 complete canonical verdicts without exclusions.
+Both provider Wasm files independently hash to
+`1e277d9b4bc3e634f5838bdeff0f8088f56dba8c7e8a394ee38c2c63286df18b`;
+both stamps use key `372a41be9bdeb22ade63a811b4b26afce75694ee0d9b7cf928c24ddad739020b`
+and size1702133. Build times differ, provider bytes do not.
+
+Own logs are preserved in `/private/tmp/js2-5807-shard34-provenance.oIbwng`;
+provider artifacts in `/private/tmp/js2-5751-temporal-provider-evidence.NcNzcW`.
+The baseline also recorded an OOM; candidate recorded two. There is no target
+request/worker attribution, so these events do not establish cause.
+
+Minimum history-preserving workload replay is the exact ordered939-path shard
+per root on Linux x64 with the original provider cache and runner settings,
+plus separate genuine passing controls. Membership, complete receipts and
+variant/retry status must be checked. Scheduling remains unrecoverable from
+registration/completion order alone. Local Docker currently exposes ARM64,
+not a verified equivalent x64 runner; no provisioning or replay has occurred.
+The existing workflow has no bounded single-shard dispatch input. No full
+matrix run or workflow modification is implied by this plan.
 
 1. Preserve the original donor/candidate rows, actual gate and shard evidence.
 2. Recover exact shard membership and observed worker-request history; do not

@@ -1,5 +1,29 @@
 # Merge-only handoff, 2026-09-09
 
+## Resumed landing work
+
+The user restored the weekly budget to 55% and resumed merge-only work.
+Local commit `2262ac910d` integrates main96c497 into this cumulative branch;
+the merge changes only 16 generated benchmark/report files, no compiler,
+tests or configuration. The original snapshot below is retained as history.
+
+Batch B completed EXIT0: 367/367 tests, 11/11 files, zero failed/pending,
+497.45 seconds. Receipt `.tmp/queue-drain-consolidation-B.json` and matching
+log are in this worktree. Batch C completed EXIT0: 632/632 tests, 20/20 files,
+zero failed/pending, 178.86 seconds; receipt `.tmp/queue-drain-consolidation-C.json`.
+Batch D completed EXIT0: 273/273 tests, 6/6 files, zero failed/pending,
+177.73 seconds; receipt `.tmp/queue-drain-consolidation-D.json`. Historical pairs
+remain unrun. PR5798 remains held; the refreshed local commit is not yet pushed.
+
+Independently reviewed data-only PR5808 was admitted at exact head
+`07ab0a6e2d7876da96b5dc614cdc44f6a10df186`. Merge-group candidate
+`cbb227e10547f5d3befc4021a7fe5b2775c5060c` has successful CI and intentionally
+no-op Test262 checks (HOST_RAN/SHARDS_RAN false). Differential run34392323270
+subsequently completed successfully. PR5808 merged at19:04:25Z, and both its
+exact reviewed head and merge candidate were verified ancestors of fetched
+main `cbb227e10547f5d3befc4021a7fe5b2775c5060c`. Those no-op checks do not clear
+issue5807. Refresh the cumulative branch against this data-only main update.
+
 User reduced the remaining weekly budget to 7%. Pause migration expansion and
 expensive diagnostics. Work only on landing existing PRs. Parent owns integration
 and public writes; native agents are paused except cheap independent readiness
