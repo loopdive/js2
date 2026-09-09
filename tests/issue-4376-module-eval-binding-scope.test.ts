@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
 import { ts } from "../src/ts-api.js";
 import type { TypeOracle } from "../src/checker/oracle.js";
 import {
@@ -57,14 +58,27 @@ describe("module-private function eval visibility", () => {
     });
     expect(result.success, JSON.stringify(result.errors)).toBe(true);
     expect(result.wat.includes("(global $__mod_hidden ")).toBe(mutable);
-    const module = new WebAssembly.Module(result.binary);
-    expect(WebAssembly.Module.imports(module)).toEqual([]);
-    const e = new WebAssembly.Instance(module, {}).exports as Record<string, (...args: number[]) => number>;
-    e.__module_init!();
-    expect(e.run!(41)).toBe(84);
-    if (mutable) {
-      e.update!();
-      expect(e.run!(41)).toBe(96);
-    }
+    // The repository's fork configuration overrides parent Node flags.
+    // Give the execution child its required Wasm exception feature explicitly.
+    const output = JSON.parse(
+      execFileSync(
+        process.execPath,
+        [
+          "--experimental-wasm-exnref",
+          "-e",
+          `
+      const module = new WebAssembly.Module(require("node:fs").readFileSync(0));
+      const e = new WebAssembly.Instance(module, {}).exports;
+      e.__module_init();
+      const before = e.run(41);
+      let after = null;
+      if (e.update) { e.update(); after = e.run(41); }
+      process.stdout.write(JSON.stringify({imports: WebAssembly.Module.imports(module), before, after}));
+    `,
+        ],
+        { input: result.binary, encoding: "utf8" },
+      ),
+    );
+    expect(output).toEqual({ imports: [], before: 84, after: mutable ? 96 : null });
   });
 });
