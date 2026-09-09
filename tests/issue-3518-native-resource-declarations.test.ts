@@ -27,6 +27,8 @@ import {
 } from "../src/backend/wasmgc/resources/native-values.js";
 import {
   executeNativeResourceRecipe,
+  executeNativeResourceRecipeWithSignatures,
+  preflightNativeResourceRecipe,
   instantiateNativeDeclaredType,
   instantiateNativeDeclaredValType,
   compareNativeResourceDeclarationShape,
@@ -49,6 +51,65 @@ function fixture() {
   const module = createEmptyModule();
   return { module, tx: new PhysicalModuleReservations(module) };
 }
+
+it("retains step order independently of declaration-list order and captures named interning once", () => {
+  const recipe: NativeResourceRecipe = {
+    declarations: [
+      { key: "second", role: ["second"], space: "type", shape: { kind: "struct", name: "second", fields: [] } },
+      { key: "first", role: ["first"], space: "type", shape: { kind: "struct", name: "first", fields: [] } },
+    ],
+    reservationSteps: [
+      { phase: "resources", kind: "reserve", resourceKey: "first" },
+      {
+        phase: "resources",
+        kind: "intern-signature",
+        key: "observed",
+        name: "callback",
+        signature: { params: [], results: [] },
+      },
+      { phase: "resources", kind: "reserve", resourceKey: "second" },
+    ],
+  };
+  preflightNativeResourceRecipe(recipe, []);
+  const old = fixture(),
+    current = fixture();
+  const intern = vi.spyOn(current.tx, "internFunctionType");
+  const oldRows = executeNativeResourceRecipe(old.tx, recipe);
+  const result = executeNativeResourceRecipeWithSignatures(current.tx, recipe);
+  expect([...result.reservations.keys()]).toEqual(["first", "second"]);
+  expect([...oldRows.keys()]).toEqual([...result.reservations.keys()]);
+  expect(current.module).toStrictEqual(old.module);
+  expect(intern).toHaveBeenCalledTimes(1);
+  expect(result.signatures.get("observed")).toBe(1);
+  expect(current.module.types[1]).toMatchObject({ kind: "func", name: "callback" });
+});
+
+it("refuses self-index metadata in the generic executor before its first reservation", () => {
+  const recipe: NativeResourceRecipe = {
+    declarations: [
+      { key: "first", role: ["first"], space: "type", shape: { kind: "struct", name: "first", fields: [] } },
+      {
+        key: "meta",
+        role: ["meta"],
+        space: "type",
+        shape: {
+          kind: "struct",
+          name: { kind: "builtin-function-metadata-index", typeKey: "meta" },
+          fields: [],
+          parent: { kind: "resource", typeKey: "first" },
+        },
+      },
+    ],
+    reservationSteps: ["first", "meta"].map((resourceKey) => ({ phase: "resources", kind: "reserve", resourceKey })),
+  };
+  expect(() => preflightNativeResourceRecipe(recipe, [])).not.toThrow();
+  const { tx, module } = fixture(),
+    before = structuredClone(module);
+  expect(() => executeNativeResourceRecipeWithSignatures(tx, recipe)).toThrow(
+    "self-indexed metadata requires the closure reservation cursor",
+  );
+  expect(module).toStrictEqual(before);
+});
 
 it.each(["params", "results", "fields", "roles"] as const)(
   "rejects late sparse %s without consuming keys or hidden ordinals",

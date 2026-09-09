@@ -19,6 +19,8 @@ import {
 } from "../src/backend/wasmgc/resources/native-closures.js";
 import {
   reserveNativePromiseResources,
+  declareNativePromiseResources,
+  nativePromiseReservationInventory,
   fillNativePromiseResources,
   type NativePromiseFillDependencies,
 } from "../src/backend/wasmgc/resources/native-promises.js";
@@ -107,8 +109,20 @@ function prerequisites(requests = closureRequests(), settleMetadataRequestId = "
 }
 function reserve(requests = closureRequests(), settleMetadataRequestId = "settle-meta") {
   const input = prerequisites(requests, settleMetadataRequestId);
-  const pack = reserveNativePromiseResources(input.tx, input.plan, input.dependencies);
-  return { ...input, pack };
+  const declaration = declarationFor(input);
+  const pack = reserveNativePromiseResources(input.tx, input.plan, input.dependencies, declaration);
+  return { ...input, pack, declaration };
+}
+function declarationFor(input: ReturnType<typeof prerequisites>) {
+  const metadata = input.dependencies.closures.metadata.find(
+    (row) => row.id === input.dependencies.settleMetadataRequestId,
+  );
+  if (!metadata) throw new Error("test requires genuine settlement metadata");
+  return declareNativePromiseResources(input.plan, {
+    argumentArrayKey: input.dependencies.vectors.layouts.find((row) => row.element === "externref")!.array.key,
+    closureRootKey: input.dependencies.closures.root.key,
+    settleMetadataKey: metadata.binding.type.key,
+  });
 }
 
 /** Preserve undefined, sparse arrays, maps and numeric values as well as every object identity. */
@@ -154,6 +168,135 @@ function futureReservationProbe(tx: PhysicalModuleReservations) {
 }
 
 describe("native Promise resource requirements, not whole-family materialization", () => {
+  it("rejects structural clones that lose the retained metadata field type identity", () => {
+    const a = reserve();
+    expect(nativePromiseReservationInventory(a.tx, a.pack, a.declaration)).toHaveLength(25);
+    const capture = a.pack.types.settleCapture.object;
+    if (capture.kind !== "struct") throw new Error("fixture capture struct");
+    capture.fields[0]!.type = { ...capture.fields[0]!.type };
+    expect(() => nativePromiseReservationInventory(a.tx, a.pack, a.declaration)).toThrow(
+      "lost inherited metadata field/type identity",
+    );
+  });
+  it("rejects stale original plan data after a genuine reservation", () => {
+    const a = prerequisites(),
+      mutable = structuredClone(a.plan);
+    const declaration = declareNativePromiseResources(mutable, declarationFor(a).dependencies);
+    const pack = reserveNativePromiseResources(a.tx, mutable, a.dependencies, declaration);
+    expect(nativePromiseReservationInventory(a.tx, pack, declaration)).toHaveLength(25);
+    Object.assign(mutable, { anchor: "changed" });
+    expect(() => nativePromiseReservationInventory(a.tx, pack, declaration)).toThrow("stale Promise requirements");
+  });
+  it("declares the exact 25 resources and 26 operations before any ledger exists", () => {
+    const declaration = declareNativePromiseResources(actual().plan, {
+      argumentArrayKey: "external:argv",
+      closureRootKey: "external:root",
+      settleMetadataKey: "external:meta",
+    });
+    expect(declaration.declarations).toHaveLength(25);
+    expect(declaration.reservationSteps).toHaveLength(26);
+    expect(declaration.declarations.map((row) => row.role[1])).toEqual([
+      "queue:function-array",
+      "queue:head",
+      "queue:tail",
+      "queue:capacity",
+      "queue:functions",
+      "queue:captures",
+      "queue:arguments",
+      "queue:grow",
+      "queue:enqueue",
+      "queue:drain",
+      "carrier",
+      "callback",
+      "captures",
+      "fulfill",
+      "reject",
+      "identity-fulfill",
+      "identity-reject",
+      "resolve-value",
+      "settle-capture",
+      "resolve-closure",
+      "reject-closure",
+      "peel",
+      "classifier",
+      "lookup-then",
+      "thenable-job",
+    ]);
+    expect(declaration.declarations.filter((row) => row.space === "type")).toHaveLength(5);
+    expect(declaration.declarations.filter((row) => row.space === "global")).toHaveLength(6);
+    expect(declaration.declarations.filter((row) => row.space === "function")).toHaveLength(14);
+    expect(declaration.reservationSteps[1]).toMatchObject({
+      kind: "intern-signature",
+      key: declaration.callbackSignatureKey,
+      name: "$__mt_func_type",
+    });
+  });
+  it("reconciles explicit declarations with the live implicit path and retains metadata type identities", () => {
+    const a = reserve(),
+      b = prerequisites();
+    reserveNativePromiseResources(b.tx, b.plan, b.dependencies);
+    expect(a.module).toStrictEqual(b.module);
+    const rows = nativePromiseReservationInventory(a.tx, a.pack, a.declaration);
+    expect(rows.map((row) => row.key)).toEqual(a.declaration.declarations.map((row) => row.key));
+    expect(rows).toHaveLength(25);
+    expect(rows).not.toContain(a.pack.types.arguments);
+    const capture = a.pack.types.settleCapture.object,
+      meta = a.dependencies.closures.metadata[0]!.binding.type.object;
+    if (capture.kind !== "struct" || meta.kind !== "struct") throw new Error("expected actual structs");
+    expect(capture.fields).toHaveLength(6);
+    meta.fields.forEach((field, index) => {
+      expect(capture.fields[index]).not.toBe(field);
+      expect(capture.fields[index]!.type).toBe(field.type);
+    });
+    a.tx.freezeReservations();
+    expect(nativePromiseReservationInventory(a.tx, a.pack, a.declaration)).toEqual(rows);
+    expect(() => nativePromiseReservationInventory(a.tx, { ...a.pack }, a.declaration)).toThrow();
+    expect(() => nativePromiseReservationInventory(a.tx, a.pack, structuredClone(a.declaration))).toThrow();
+    expect(() => fillNativePromiseResources(a.tx, a.pack, undefined!)).toThrow(
+      "complete native dependencies are missing",
+    );
+  });
+  it.each(["foreign", "copy"] as const)(
+    "rejects %s borrowed-tag substitution without claiming reserve-phase provenance",
+    (kind) => {
+      const a = reserve();
+      expect(nativePromiseReservationInventory(a.tx, a.pack, a.declaration)).toHaveLength(25);
+      const replacement =
+        kind === "foreign" ? prerequisites().dependencies.exceptionTag : { ...a.dependencies.exceptionTag };
+      Object.assign(a.dependencies, { exceptionTag: replacement });
+      expect(() => nativePromiseReservationInventory(a.tx, a.pack, a.declaration)).toThrow(
+        "changed borrowed exception tag association",
+      );
+    },
+  );
+  it.each(["foreign", "copy"] as const)("authenticates an initially %s borrowed tag only after freeze", (kind) => {
+    const positive = reserve();
+    positive.tx.freezeReservations();
+    expect(nativePromiseReservationInventory(positive.tx, positive.pack, positive.declaration)).toHaveLength(25);
+    const a = prerequisites();
+    Object.assign(a.dependencies, {
+      exceptionTag: kind === "foreign" ? prerequisites().dependencies.exceptionTag : { ...a.dependencies.exceptionTag },
+    });
+    const declaration = declarationFor(a),
+      pack = reserveNativePromiseResources(a.tx, a.plan, a.dependencies, declaration);
+    // Current association is known here; tag provenance is NOT yet attested.
+    expect(nativePromiseReservationInventory(a.tx, pack, declaration)).toHaveLength(25);
+    a.tx.freezeReservations();
+    expect(() => nativePromiseReservationInventory(a.tx, pack, declaration)).toThrow();
+  });
+  it.each(["type", "global", "function"] as const)("rejects a deleted %s declaration before allocating", (space) => {
+    const positive = reserve();
+    expect(nativePromiseReservationInventory(positive.tx, positive.pack, positive.declaration)).toHaveLength(25);
+    const a = prerequisites(),
+      declaration = structuredClone(declarationFor(a));
+    const index = declaration.declarations.findIndex((row) => row.space === space);
+    (declaration.declarations as unknown[]).splice(index, 1);
+    const unchanged = unchangedModule(a.module);
+    expect(() => reserveNativePromiseResources(a.tx, a.plan, a.dependencies, declaration)).toThrow(
+      "substituted Promise declaration plan",
+    );
+    unchanged();
+  });
   it("rejects an unsealed program after accepting the genuine complete program", () => {
     const { program, plan } = actual();
     const projection = program.runtime[0]!;
