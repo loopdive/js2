@@ -10,7 +10,7 @@ Updated: 2026-09-09. Checkpoint, not completed Deno compatibility.
 - Runtime build scripts still pin compiler `bda15bdf70baefc3d7620f32a03dc3660c2fd005`, the last complete paired artifact build. Do not silently relabel it as the latest compiler.
 - Deno source: `1d4e6c1cb855b62a7fb572c6c138e4e8b4e7fa44`; `libs/core` unchanged. Only the runner's Cargo dependency/lock selects v8x.
 
-The detailed history is in [the integration issue](4376-v8x-js2wasm-deno-core-compatibility-spike.md), titled “Spike v8x as a rusty_v8-compatible js2wasm backend for a compiler-free Deno runtime”.
+The detailed history is in [the integration issue](issues/4376-v8x-js2wasm-deno-core-compatibility-spike.md), titled “Spike v8x as a rusty_v8-compatible js2wasm backend for a compiler-free Deno runtime”.
 
 ## What is verified
 
