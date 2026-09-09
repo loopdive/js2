@@ -79,6 +79,7 @@ export function attachIrVecLayouts(
   };
 
   function mapType(type: IrType): IrType {
+    if (type.kind === "support-ref") return type;
     const cached = typeMemo.get(type);
     if (cached) return cached;
     let mapped: IrType;
@@ -262,6 +263,7 @@ export function attachIrVecLayouts(
       case "class":
       case "extern":
       case "dynamic":
+      case "support-ref":
         return;
     }
   };

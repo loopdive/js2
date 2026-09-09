@@ -483,6 +483,10 @@ function porfforBinopLegal(op: IrBinop): boolean {
 }
 
 function backendTypeError(backend: IrBackendKind, type: IrType, fnctorResolved = false): string | null {
+  // This backend-only checker cannot confer target/program support ownership.
+  // The complete program admission separately requires standalone support.
+  if (type.kind === "support-ref")
+    return backend === "wasmgc" ? null : `${backend} backend does not support support-ref types`;
   if (type.kind === "fnctor" && !fnctorResolved) {
     return `${backend} backend does not support nominal fnctor types until an explicit ABI resolver is installed`;
   }

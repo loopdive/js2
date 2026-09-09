@@ -56,6 +56,7 @@ export function attachIrPhysicalRefTypeRefs(
   const nestedTypes = (type: IrType): readonly IrType[] => {
     switch (type.kind) {
       case "val":
+      case "support-ref":
       case "string":
       case "class":
       case "extern":
@@ -201,6 +202,7 @@ export function attachIrPhysicalRefTypeRefs(
       case "string":
       case "extern":
       case "fnctor":
+      case "support-ref":
       case "dynamic":
         mapped = type;
         break;

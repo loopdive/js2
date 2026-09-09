@@ -65,10 +65,10 @@
     },
     {
       "id": "frontend-ts",
-      "status": "planned",
-      "roots": ["src/frontend/ts"],
+      "status": "active",
+      "roots": ["src/frontend/builtins/contracts.ts"],
       "required": true,
-      "entries": ["src/frontend/ts/index.ts"],
+      "entries": ["src/frontend/builtins/contracts.ts"],
       "minModules": 1
     },
     {
@@ -93,9 +93,10 @@
         "src/ir/core/intrinsics.ts",
         "src/ir/core/callable-bindings.ts",
         "src/ir/core/async-callables.ts",
-        "src/ir/core/vector-runtime.ts"
+        "src/ir/core/vector-runtime.ts",
+        "src/ir/core/type-references.ts"
       ],
-      "minModules": 17
+      "minModules": 18
     },
     {
       "id": "ir-analysis",
@@ -167,9 +168,11 @@
         "src/ir/program/native-vector-resources.ts",
         "src/ir/program/native-promise-resources.ts",
         "src/ir/program/native-value-resources.ts",
-        "src/ir/program/native-string-value-demands.ts"
+        "src/ir/program/native-string-value-demands.ts",
+        "src/ir/program/runtime-support.ts",
+        "src/ir/program/formatter-support.ts"
       ],
-      "minModules": 16
+      "minModules": 18
     },
     {
       "id": "runtime-contracts",
@@ -472,6 +475,21 @@
     }
   ],
   "activationHistory": [
+    {
+      "layer": "frontend-ts",
+      "entries": ["src/frontend/builtins/contracts.ts"],
+      "minModules": 1
+    },
+    {
+      "layer": "ir-core",
+      "entries": ["src/ir/core/type-references.ts"],
+      "minModules": 1
+    },
+    {
+      "layer": "ir-program",
+      "entries": ["src/ir/program/runtime-support.ts", "src/ir/program/formatter-support.ts"],
+      "minModules": 2
+    },
     {
       "layer": "native-runtime",
       "entries": [
@@ -1307,6 +1325,27 @@
   ],
   "files": [
     {
+      "path": "src/frontend/builtins/contracts.ts",
+      "state": "clean",
+      "layer": "frontend-ts"
+    },
+    {
+      "path": "src/frontend/builtins/build-ir.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the existing mixed from-ast, direct-call planning, verifier and hygiene dependencies. The broader src/frontend/ts/index.ts boundary remains unfulfilled; contracts-only activation does not certify this implementation."
+    },
+    {
+      "path": "src/frontend/builtins/prepare-number-format.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the existing mixed source-preparation type and stdlib template dependencies from the canonical typed support producer. The broader src/frontend/ts/index.ts boundary remains unfulfilled."
+    },
+    {
       "path": "src/runtime/wasmgc/values/closure-layouts.ts",
       "state": "clean",
       "layer": "native-runtime"
@@ -1383,6 +1422,16 @@
     },
     {
       "path": "src/ir/program/native-string-value-demands.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/runtime-support.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/formatter-support.ts",
       "state": "clean",
       "layer": "ir-program"
     },
@@ -1717,6 +1766,11 @@
       "layer": "ir-core"
     },
     {
+      "path": "src/ir/core/type-references.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
       "path": "src/ir/core/fnctor-shapes.ts",
       "state": "clean",
       "layer": "ir-core"
@@ -1779,12 +1833,18 @@
     {
       "path": "src/checker/binder.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/builtin-shadow.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/divergence-classifier.ts",
@@ -1794,32 +1854,50 @@
     {
       "path": "src/checker/dts-entrypoint-seeds.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/index.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/inhouse-globals.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/inhouse-oracle.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/language-service.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/multi-file-paths.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/node-capability-map.ts",
@@ -1829,32 +1907,50 @@
     {
       "path": "src/checker/oracle-backend.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/oracle-declaration-snapshot.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/oracle.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/ts5-trace.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/type-mapper.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/usage-inference.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/cjs-rewrite.ts",
@@ -10307,9 +10403,10 @@
     {
       "path": "src/ir/planning-sites.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts",
+      "layer": "mixed-needs-split",
       "owner": "3518-coordinator",
-      "nextBoundary": "Source-bound AST identity validation shared with the legacy overlay; not a pure IR contract or physical runtime owner. Relocate under frontend/ts with its planning identity dependencies before frontend retirement."
+      "nextBoundary": "Source-bound AST identity validation shared with the legacy overlay; not a pure IR contract or physical runtime owner. Relocate under frontend/ts with its planning identity dependencies before frontend retirement.",
+      "destination": "frontend-ts"
     },
     {
       "path": "src/ir/planning-identity.ts",
@@ -10522,16 +10619,18 @@
     {
       "path": "src/ir/program-logical-types.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts",
+      "layer": "mixed-needs-split",
       "owner": "3518-coordinator",
-      "nextBoundary": "Checker-bound logical vector facts for original source nodes; relocate under frontend/ts with source preparation before retirement. No physical type authority or pure IR closure claim."
+      "nextBoundary": "Checker-bound logical vector facts for original source nodes; relocate under frontend/ts with source preparation before retirement. No physical type authority or pure IR closure claim.",
+      "destination": "frontend-ts"
     },
     {
       "path": "src/ir/program-native-async-source.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts",
+      "layer": "mixed-needs-split",
       "owner": "3518-coordinator",
-      "nextBoundary": "Original-AST native async family certification and logical lowering plans; relocate under frontend/ts with planning identity before retirement. Keep runtime declarations and physical providers separate."
+      "nextBoundary": "Original-AST native async family certification and logical lowering plans; relocate under frontend/ts with planning identity before retirement. Keep runtime declarations and physical providers separate.",
+      "destination": "frontend-ts"
     },
     {
       "path": "src/ir/program-observation.ts",

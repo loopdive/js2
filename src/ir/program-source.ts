@@ -84,7 +84,10 @@ function sourceDataField<T extends object, K extends keyof T>(object: T, key: K)
 }
 
 /** Explicit frontend projection; capture all semantic fields jointly with allocations. */
-export function captureTypedIrProgramInput(source: IrProgramSourcePreparation): TypedIrProgramInput {
+export function captureTypedIrProgramInput(
+  source: IrProgramSourcePreparation,
+  runtimeSupport?: TypedIrProgramInput["runtimeSupport"],
+): TypedIrProgramInput {
   const allocations = sourceDataField(source, "allocations");
   const inventory = sourceDataField(source, "inventory");
   const ir = sourceDataField(source, "ir");
@@ -122,7 +125,15 @@ export function captureTypedIrProgramInput(source: IrProgramSourcePreparation): 
       },
     });
   }
-  const captured = allocations.capturePreparationData({ inventory, ir, derivedUnits, startup, callables, globals });
+  const captured = allocations.capturePreparationData({
+    inventory,
+    ir,
+    derivedUnits,
+    startup,
+    callables,
+    globals,
+    ...(runtimeSupport === undefined ? {} : { runtimeSupport }),
+  });
   return {
     inventory: captured.data.inventory,
     ir: captured.data.ir,
@@ -131,6 +142,7 @@ export function captureTypedIrProgramInput(source: IrProgramSourcePreparation): 
     callables: captured.data.callables,
     globals: captured.data.globals,
     allocations: captured.allocations,
+    ...(captured.data.runtimeSupport === undefined ? {} : { runtimeSupport: captured.data.runtimeSupport }),
   };
 }
 

@@ -438,6 +438,7 @@ export function reauthenticatePreparedIrProgram(persisted: PreparedIrProgram): P
     derivedUnits: persisted.derivedUnits,
     startup: persisted.startup,
     allocations: persisted.allocations,
+    ...(persisted.runtimeSupport === undefined ? {} : { runtimeSupport: persisted.runtimeSupport }),
     runtime: Object.freeze(runtime),
     reconciliation: persisted.reconciliation,
     sealed: persisted.sealed,
@@ -504,6 +505,19 @@ export function assertPreparedIrProgramShape(value: unknown): asserts value is P
     return invalid(`program.reconciliation must be "complete", got ${String(program.reconciliation)}`);
   }
   if (program.sealed !== true) return invalid("program.sealed must be true");
+  if (Object.hasOwn(program, "runtimeSupport")) {
+    const support = requireRecord(program.runtimeSupport, "program.runtimeSupport");
+    if (support.schema !== "ir-runtime-support-v1") return invalid("unsupported runtime support schema");
+    const batches = requireArray(support.batches, "program.runtimeSupport.batches");
+    if (batches.length !== 1) return invalid("runtime support must contain exactly one radix batch");
+    const batch = requireRecord(batches[0], "program.runtimeSupport.batches[0]");
+    if (batch.kind !== "number-format-radix-v1") return invalid("unsupported runtime support batch");
+    const implementation = requireRecord(batch.implementation, "runtime support implementation");
+    const body = requireRecord(implementation.body, "runtime support body");
+    requireArray(body.blocks, "runtime support body.blocks");
+    requireArray(body.params, "runtime support body.params");
+    requireArray(body.resultTypes, "runtime support body.resultTypes");
+  }
 
   const inventory = requireRecord(program.inventory, "program.inventory");
   const sources = requireArray(inventory.sources, "program.inventory.sources");

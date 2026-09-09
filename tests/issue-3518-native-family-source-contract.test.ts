@@ -23,6 +23,7 @@ import * as runtimeCallables from "../src/ir/program-runtime-abi.js";
 import { irRuntimeCallableDeclaration } from "../src/ir/runtime/callable-declarations.js";
 import { sourceInput, typedOptions } from "./helpers/typed-program-fixtures.js";
 import { encodeTypedPacket, decodeTypedPacket } from "./helpers/typed-program-transport.mjs";
+import { captureNativeFamilyRuntimeSupport } from "./helpers/native-family-runtime-support.js";
 
 const ORIGINAL = readFileSync(new URL("../website/playground/examples/js/async.ts", import.meta.url), "utf8");
 const RUNTIME = ORIGINAL.replace("async function fetchUser", "export async function fetchUser")
@@ -280,7 +281,7 @@ describe("complete native family logical source preparation", () => {
       for (const replay of [false, true])
         it(`${variant} GVN=${gvnMode} decoded=${replay}: rejects omitted native string policy`, () => {
           const source = requireSource(prepareIrProgramSources(request(text)));
-          const original = captureTypedIrProgramInput(source);
+          const original = captureNativeFamilyRuntimeSupport(source, nativePolicy);
           const encoded = encodeTypedPacket(original);
           const decoded = decodeTypedPacket(encoded);
           expect(encodeTypedPacket(decoded)).toBe(encoded);
@@ -330,7 +331,7 @@ describe("complete native family logical source preparation", () => {
       for (const replay of [false, true])
         it(`${variant} GVN=${gvnMode} decoded=${replay}: prepares the entire native family`, () => {
           const source = requireSource(prepareIrProgramSources(request(text)));
-          const original = captureTypedIrProgramInput(source);
+          const original = captureNativeFamilyRuntimeSupport(source, nativePolicy);
           const encoded = encodeTypedPacket(original);
           const scans: ReturnType<typeof callCensus>[] = [];
           const collect = runtimeCallables.prepareIrProgramRuntimeCallables;
@@ -399,7 +400,7 @@ describe("complete native family logical source preparation", () => {
     { label: "explicit native policy", options: nativeOptions, expectedKind: "prepared" },
   ])("replays the complete source-free packet with $label in a fresh process", ({ options, expectedKind }) => {
     const source = requireSource(prepareIrProgramSources(request()));
-    const packet = captureTypedIrProgramInput(source);
+    const packet = captureNativeFamilyRuntimeSupport(source, nativePolicy);
     mkdirSync(resolve(".tmp"), { recursive: true });
     const directory = mkdtempSync(resolve(".tmp/native-family-source-free-"));
     const packetFile = resolve(directory, "packet.json");

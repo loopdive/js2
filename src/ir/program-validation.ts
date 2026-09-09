@@ -25,6 +25,9 @@ import {
 import { verifyIrFunction, type IrVerificationOptions } from "./verify.js";
 import { assertPreparedIrClassLayouts } from "./program-class-layouts.js";
 import { assertPreparedIrProgramAllocations } from "./program-allocations.js";
+import { assertIrRuntimeSupport } from "./program/runtime-support.js";
+import { numberFormatRadixSupportDeclarations } from "./program/formatter-support.js";
+import { assertPreparedIrRuntimeSupportDependencies } from "./prepared-component-dependencies.js";
 import { irRuntimeCallableHasNoSlot } from "./runtime/native-async-callables.js";
 import {
   assertPreparedIrRuntimeProjection,
@@ -184,6 +187,9 @@ export function assertPreparedIrProgram(program: PreparedIrProgram, options?: Ir
   if (program.schema !== "prepared-ir-program-v1" || program.reconciliation !== "complete" || program.sealed !== true)
     invalid("program is not a complete prepared program");
   assertPreparedIrProgramPopulation(program);
+  if (Object.hasOwn(program, "runtimeSupport") && program.runtimeSupport === undefined)
+    invalid("runtime support must be absent rather than own-property undefined");
+  assertIrRuntimeSupport(program, program.runtimeSupport);
   assertPreparedIrSemanticRuntimeSeparation(program);
   assertPreparedIrProgramAllocations(program);
   assertPreparedIrClassLayouts(program);
@@ -203,7 +209,70 @@ export function assertPreparedIrProgram(program: PreparedIrProgram, options?: Ir
   }
   const entries = new Map(program.abi.entries.map((entry) => [entry.plan.id, entry]));
   if (entries.size !== program.abi.entries.length) invalid("program ABI duplicates a binding");
+  for (const batch of program.runtimeSupport?.batches ?? []) {
+    const canonical = numberFormatRadixSupportDeclarations(batch.sourceId);
+    const refs = [
+      canonical.scratch.type.ref,
+      ...canonical.kernels.map((kernel) => kernel.ref),
+      canonical.implementation.ref,
+    ];
+    const ids = refs.map((ref) => {
+      if (ref.binding.kind !== "support") return invalid("formatter declaration is not support-owned");
+      return ref.binding.bindingId;
+    });
+    const first = program.abi.entries.findIndex((entry) => entry.plan.id === ids[0]);
+    if (first < 0) invalid("formatter ABI omits scratch type");
+    const anchor = preparedIrRuntimeAbiAnchor(program.inventory);
+    const firstOrder = program.abi.entries
+      .slice(0, first)
+      .filter((entry) => entry.plan.order.sourceOrder === anchor.order).length;
+    for (const [index, id] of ids.entries()) {
+      const entry = program.abi.entries[first + index];
+      if (
+        !entry ||
+        entry.plan.id !== id ||
+        entry.plan.slotPolicy !== "required" ||
+        entry.plan.slotSpace !== (index === 0 ? "type" : "function") ||
+        entry.plan.order.sourceOrder !== anchor.order ||
+        entry.plan.order.declarationOrder !== firstOrder + index
+      )
+        invalid("formatter ABI lacks its exact ordered required declarations");
+      if (index === 0) {
+        if (
+          preparedIrDataMismatch(entry.contract, {
+            kind: "type",
+            ref: canonical.scratch.type.ref,
+            type: canonical.scratch.type,
+          }) !== undefined
+        )
+          invalid("formatter ABI scratch contract differs from canonical declaration");
+      } else {
+        const callable = [...canonical.kernels, canonical.implementation][index - 1]!;
+        if (
+          entry.plan.intent.kind !== "callable" ||
+          entry.plan.intent.origin !== "support" ||
+          entry.plan.intent.sourceId !== batch.sourceId ||
+          preparedIrDataMismatch(entry.contract, {
+            kind: "callable",
+            ref: callable.ref,
+            params: callable.params,
+            results: callable.results,
+          }) !== undefined
+        )
+          invalid("formatter ABI callable differs from canonical source-owned declaration");
+      }
+    }
+    const isRuntime = (entry: PreparedIrAbiEntry): boolean =>
+      entry.contract.kind === "callable" &&
+      (entry.contract.ref.binding.kind === "runtime" || entry.contract.ref.binding.kind === "intrinsic");
+    if (
+      program.abi.entries.slice(0, first).some(isRuntime) ||
+      program.abi.entries.slice(first + ids.length).some((entry) => !isRuntime(entry))
+    )
+      invalid("formatter ABI must follow ordinary entries and precede the runtime tail");
+  }
   validateRuntimeCallables(program);
+  assertPreparedIrRuntimeSupportDependencies(program);
   const authority = new ProgramAbiMap(program.inventory, program.derivedUnits);
   for (const entry of program.abi.entries) {
     validateEntry(entry, entries);
@@ -232,8 +301,14 @@ export function assertPreparedIrProgram(program: PreparedIrProgram, options?: Ir
       declaredGlobals.set(irBindingKey(entry.contract.ref.binding)!, entry.contract.type);
     }
   }
-  for (const fn of functions.values()) {
-    const own = entries.get(irUnitCallableBindingId(fn.unitId));
+  const bodies = [
+    ...[...functions.values()].map((fn) => ({ fn, own: entries.get(irUnitCallableBindingId(fn.unitId)) })),
+    ...(program.runtimeSupport?.batches ?? []).map((batch) => ({
+      fn: batch.implementation.body,
+      own: calls.get(irCallableBindingKey(batch.implementation.declaration.ref.binding)),
+    })),
+  ];
+  for (const { fn, own } of bodies) {
     if (
       own?.contract.kind !== "callable" ||
       !sameSignature(
@@ -292,6 +367,8 @@ export function assertPreparedIrProgram(program: PreparedIrProgram, options?: Ir
   if (program.runtime.length === 0) invalid("program lacks an explicit runtime projection");
   const projections = new Set<string>();
   for (const projection of program.runtime) {
+    if (program.runtimeSupport !== undefined && (projection.backend !== "wasmgc" || projection.target !== "standalone"))
+      invalid("formatter runtime support requires a wasmgc:standalone projection");
     const key = `${projection.backend}:${projection.target}`;
     if (projections.has(key)) invalid(`program duplicates runtime projection ${key}`);
     projections.add(key);

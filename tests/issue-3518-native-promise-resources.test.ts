@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createEmptyModule } from "../src/ir/types.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
-import { prepareIrProgramSources, captureTypedIrProgramInput } from "../src/ir/program-source.js";
+import { prepareIrProgramSources } from "../src/ir/program-source.js";
+import { captureNativeFamilyRuntimeSupport } from "./helpers/native-family-runtime-support.js";
 import { prepareTypedIrProgram } from "../src/ir/program-prepare-ir.js";
 import { sourceInput, typedOptions, requireProgram } from "./helpers/typed-program-fixtures.js";
 import { encodeTypedPacket, decodeTypedPacket } from "./helpers/typed-program-transport.mjs";
@@ -46,7 +47,7 @@ function prepare(gvnMode: "off" | "on" = "off", replay = false) {
     asyncFamilyProjection: "standalone-native",
   });
   if (source.kind !== "prepared") throw new Error(source.detail);
-  const packet = captureTypedIrProgramInput(source);
+  const packet = captureNativeFamilyRuntimeSupport(source, policy);
   const input = replay ? decodeTypedPacket(encodeTypedPacket(packet)) : packet;
   const program = requireProgram(
     prepareTypedIrProgram(input, {
