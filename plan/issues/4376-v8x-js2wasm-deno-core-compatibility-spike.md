@@ -3,7 +3,7 @@ id: 4376
 title: "Spike v8x as a rusty_v8-compatible js2wasm backend for a compiler-free Deno runtime"
 status: in-progress
 created: 2026-08-12
-updated: 2026-09-08
+updated: 2026-09-09
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -1495,3 +1495,25 @@ Completed bulk checkpoint77985de and measurement/packaging checkpoint12cba0b. Fu
 Rerunning7rotated fresh processes per V8/QuickJS/js2wasm using unchanged deno_core hello_world. Candidate is shared native runtime plus speed-optimized core/provider artifacts. Harness now copies, strips, relocates and signs required dylibs and counts them in total payload; loader must actually use those copies. Output /private/tmp/deno-profile.RCcI44/comparison-shared-speed, session41434. Exactstdout/exit/peakRSS required eachrun. No builds active in this task during measurements. Plan report CPU/wall, deployment breakdown, native sample and private/shared memory where observable; do not equate peakRSS with marginal tenant cost.
 
 Remeasurement41434 terminal0:21/21exactoutputpasses. Seven-run medians: V8payload39078032/RSS21168128/physical6718688/wall11.339...ms; QuickJSpayload5613536/physical11305344/wall23.952917ms; js2payload410210336/RSS352862208/physical9880272/wall12812.491083ms. Full exact numbers/hashes and rawOS counters saved tools/deno/results/2026-09-09-shared-speed-{processes,counters}.json with analysis markdown. Shared candidate is534.9xslower and73.1xlarger deployment thanQuickJS. MacOSphysicalfootprint9.4MiB isnot336.5MiBRSS, notpertenant. Separate diagnostic26539 passesexactstdout:1598/2278earlymainthreadsamplesunderObjectSet,647branchrealmstring; vmmapmappedfiles382.4MiB/315.5resident/0dirty,physical9345KiB. Do not turn sampledinterval intowholeprocesspercent. No taskownedcompilationoverlappedbenchmark. Libraryrelocationverifiedloaderrelative. Report/harness changeslocal, noexternalwritesinthismeasurementturn.
+
+### PR 5784 equivalence harness handoff (2026-09-09)
+
+The five `math-pow-test262-pattern` cases pass 5/5 on CI base `cb248bc7713d7c4f9a40f94af53faba35f04cfd3`, but pass 0/5 (all five fail) on both PR head `219ff55a15c062f83b27ffb50dc3f9686fd9979e` and actual CI merge `5b5e109c6c6c03b3a9e5af7f01d146c1b4db43dd`. All failures occur before execution: the manual equivalence import harness lacks callable `env::__get_undefined`. The unchanged five-case file has Git blob `1b470bdc00a1821714c7056ee563ee0606d8d1d2` in all three revisions. Measurements use the original default compiler lane and harness, one 512 MiB fork, not a substituted standalone lane.
+
+A diagnostic-only overlay supplies exactly that import from the production runtime resolver and restores 5/5 on the unchanged head. No observed row warrants the earlier speculative call-index/compiler repair. A separate scan-toggle mock did not reach compiler execution and is explicitly uninformative. The proposed test-only repair therefore restricts the overlay to the exact namespace, function kind, import name and builtin intent, with sparse-read and decline controls. Its tracked implementation is awaiting focused validation; the diagnostic pass is not a claim that the new controls passed.
+
+The independent Wasmtime smoke failure (`v8x:context::__symbol_counter`) and three unclassified compiler modules/four targets remain unresolved. This harness slice does not complete Deno integration, repair its runtime ABI, certify architecture retirement, or make the whole PR merge-ready. Original author handoff and existing artifacts remain preserved.
+
+Focused tracked validation now passes 21/21: the seven new sparse/decline/absent-import controls, all five unchanged `math-pow-test262-pattern` cases, and nine existing #3529 Error-family overlay controls. The run used one 512 MiB fork with no file parallelism (19.04 seconds, terminal exit 0). High static review approved the exact helper and test blobs before validation; no production compiler or runtime source changed.
+
+### PR 5784 smoke context ABI repair (2026-09-09)
+
+Fresh CI job `102308871658` on head `10cf7ea294a3d14a2bc2886fe6cdcc4180e26181` again fails before execution with missing `v8x:context::__symbol_counter`. `compile-graph.ts` explicitly imports shared Symbol state and the canonical realm; the first smoke test omitted its context preload, and the sibling context provider omitted `standaloneSymbolState: "export"`. The test-only repair shares the existing compiled context provider, exports the documented Symbol state, and preloads it for the trampoline. The exact Deno.cwd import census now includes all six documented context globals plus its two typed host operations, retaining full equality rather than filtering unexpected imports.
+
+The official Wasmtime v46.0.1 aarch64-macos archive (10,138,192 bytes, SHA-256 `acee50be70dbe90b0ab2ac7db1321fc44715153a1b1cc58291c97b6d7cffc558`) was verified before extraction in isolated temporary storage. Its absolute executable was supplied per command; no global runtime, PATH, dependency, feature flag, or skip behavior changed. The unchanged exact trampoline test reproduces the missing import locally (1 failure, 3 filtered tests). After repair all four tests pass, including the expected-answer-43 thrown-exception negative control, with no skipped tests (27.38 seconds, one 512 MiB fork). This is actual Darwin arm64 Wasmtime evidence, not a claim of Linux CI parity. Compiler inventory quality remains unresolved and the PR is not yet merge-ready.
+
+### PR 5784 missing inventory debt entries (2026-09-09)
+
+The published smoke repair `6d1325bcaed8778171305db88812c5c107e6e980` passed the full Linux smoke job `102311228658`, including its scale controls. Quality still failed at compiler inventory. The earlier saved CI report `compiler-boundaries-34301397747-1` reported three unclassified modules and four incoming targets: `function-proto-call.ts`, `linked-realm-literal.ts`, and `reflect-argument-value.ts`. Full source review establishes that each still mixes AST/context or semantic decisions with physical code generation; none warrants a clean-layer claim.
+
+Three additive `unmigrated` / `mixed-needs-split` entries record that debt and its individual next boundaries. A structural comparison preserves all 1,255 pre-existing file entries and every other policy field, including allowed edges, layers, floors, activation history and evidence. The local inventory covers 1,258 tracked modules and reports zero errors against immutable repair head `6d1325bcaed8778171305db88812c5c107e6e980`, while correctly retaining `architectureComplete: false`. Its denominator differs from the saved CI merge report's 1,259 modules; no source population equivalence is claimed. All 42 boundary regression tests pass (19.36 seconds). This completes inventory classification, not IR migration or whole-PR merge certification; fresh remote CI is still required.
