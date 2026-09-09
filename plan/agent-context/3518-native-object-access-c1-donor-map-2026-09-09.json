@@ -1,0 +1,2887 @@
+{
+  "schema": "c1-static-donor-map-v1",
+  "root": "/private/tmp/js2-3518-native-string-value-consumer-20260909",
+  "classification": "syntactic named imports/calls/context references; not runtime reachability or empty-carrier proof",
+  "files": [
+    {
+      "file": "src/codegen/object-runtime.ts",
+      "sha256": "112f4a613e34313406efa596186806ab500fcb2df1fc859619ce00bb558c3c6d"
+    },
+    {
+      "file": "src/codegen/accessor-driver.ts",
+      "sha256": "9b618d740d61571e3fb0d69712ca79e54d31d511fcef00268b774e67d73a5d70"
+    },
+    {
+      "file": "src/codegen/closed-method-dispatch.ts",
+      "sha256": "6e5239145d14d8c3aca9b0780810776c6185b695fc1a2889f5de49ac434d65a2"
+    },
+    {
+      "file": "src/codegen/closure-classifier.ts",
+      "sha256": "0d2b70770eb0aef9d2791fd75d6a006b0a1873e7e510caf62c5809512b386693"
+    },
+    {
+      "file": "src/codegen/vec-props.ts",
+      "sha256": "cf83bcd2d102dd76f9982409687b8db5ef571957c2c980e625021b7445561dbb"
+    },
+    {
+      "file": "src/codegen/closure-props.ts",
+      "sha256": "ed53654557bf2b81ecc76bd9937a7e02ec3e9d652bbfb9bbb2f70087737fbc20"
+    },
+    {
+      "file": "src/codegen/instance-props.ts",
+      "sha256": "6fc6bf0e7e571b1e9ce594354fa36d2b4798bdcaf760340980a7ab4ef4dc7bb2"
+    },
+    {
+      "file": "src/codegen/proto-index-store.ts",
+      "sha256": "ee900ed83de7c3805a5b746f0ee57743b55f46655c1dc7c92b6d0e5818f1ae38"
+    },
+    {
+      "file": "src/codegen/native-proto-instance-method-read.ts",
+      "sha256": "d71c14fc362783202c62668d4ae378fbf1e59b02230194eb37e768a35f88cf99"
+    },
+    {
+      "file": "src/codegen/object-runtime-proxy.ts",
+      "sha256": "7e8575c25f28ed823277dee5cf29b7d534fc0331a37fab345be06b7c09f5fc77"
+    },
+    {
+      "file": "src/codegen/struct-accessor-closure.ts",
+      "sha256": "6fa35bd315c10e5382c544bc65519ea76c6185b44bdb170ca24a7058bdf57425"
+    },
+    {
+      "file": "src/codegen/closures/funcref-wrapper-types.ts",
+      "sha256": "8631bfc6e6ec1e21f62a3effa1d02f0a89f27e51dd60aa6e15d6889969de5e64"
+    },
+    {
+      "file": "src/codegen/statements/nested-declarations.ts",
+      "sha256": "4282ea1c1f49ce6e59c8f984a2c7d4f7cb695e903c5cd802bb6d89d316800d90"
+    },
+    {
+      "file": "src/codegen/object-runtime-template-raw.ts",
+      "sha256": "ad790fb3bad813f934331f38acd1d7bf255e4725e40bc88f3814bf1476bf1947"
+    },
+    {
+      "file": "src/backend/wasmgc/resources/native-promises.ts",
+      "sha256": "d7e6c6861125ea2b1f2101b65e4a0dd75b2cfca90d2ccf7108d305ec5a823ecb"
+    },
+    {
+      "file": "src/runtime/wasmgc/promise/thenable-bodies.ts",
+      "sha256": "1e8d56a26292e2d908e5bdfcb5a23bfd9e95c5b3fa4cab10f874c396f59fa168"
+    },
+    {
+      "file": "src/codegen/index.ts",
+      "sha256": "a96b88d37f86445c4f772d5a4d13f9fa9fc6ecacae67ca73ac17f7f7573db4f9"
+    }
+  ],
+  "segments": [
+    {
+      "file": "src/codegen/object-runtime.ts",
+      "name": "classObjectNameMetadata",
+      "kind": "function",
+      "startLine": 358,
+      "endLine": 384,
+      "start": 19407,
+      "end": 20461,
+      "sha256": "c10a794faa45215a7c27d15406de5e44e13ec32cbfd4e4ef364bfb5a7d13fac6",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "classObjectDisplayName",
+          "module": "./class-static-metadata.js",
+          "imported": "classObjectDisplayName",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": [
+        "ctx.classObjectGlobals",
+        "ctx.functionNameMap.get",
+        "ctx.staticAccessorSet.has",
+        "ctx.staticMethodSet.has",
+        "ctx.staticProps.has",
+        "ctx.structMap.get"
+      ],
+      "lookups": [],
+      "calls": [
+        "className.startsWith",
+        "classObjectDisplayName",
+        "ctx.functionNameMap.get",
+        "ctx.staticAccessorSet.has",
+        "ctx.staticMethodSet.has",
+        "ctx.staticProps.has",
+        "ctx.structMap.get",
+        "entries.push"
+      ]
+    },
+    {
+      "file": "src/codegen/object-runtime.ts",
+      "name": "fillClassObjectNameArms",
+      "kind": "function",
+      "startLine": 401,
+      "endLine": 553,
+      "start": 21329,
+      "end": 27008,
+      "sha256": "dbc879b917b071618ff0eb0450372b6cf594ac545250387c62d7747fd49d7c3e",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "INSTANCE_FIELD_DELETED",
+          "module": "./instance-tombstones.js",
+          "imported": "INSTANCE_FIELD_DELETED",
+          "typeOnly": false
+        },
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        },
+        {
+          "local": "ValType",
+          "module": "../ir/types.js",
+          "imported": "ValType",
+          "typeOnly": true
+        },
+        {
+          "local": "nativeStringLiteralInstrs",
+          "module": "./native-strings.js",
+          "imported": "nativeStringLiteralInstrs",
+          "typeOnly": false
+        },
+        {
+          "local": "undefinedExternInstrs",
+          "module": "./any-helpers.js",
+          "imported": "undefinedExternInstrs",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": [
+        "ctx.anyStrTypeIdx",
+        "ctx.externSetResultGlobalIdx",
+        "ctx.funcMap.get",
+        "ctx.mod.functions.find",
+        "ctx.nativeStrHelpers.get",
+        "ctx.nativeStrTypeIdx",
+        "ctx.standalone"
+      ],
+      "lookups": ["\"__create_descriptor\"", "\"__str_equals\"", "\"__str_flatten\"", "INSTANCE_FIELD_DELETED"],
+      "calls": [
+        "absent",
+        "arms.push",
+        "classIdentityArms",
+        "classObjectNameMetadata",
+        "ctx.funcMap.get",
+        "ctx.mod.functions.find",
+        "ctx.nativeStrHelpers.get",
+        "fn.body.unshift",
+        "fn.locals.push",
+        "hit",
+        "nativeStringLiteralInstrs",
+        "ownAnswer",
+        "prependNameKeyArm",
+        "refusal.push",
+        "undefinedExternInstrs"
+      ]
+    },
+    {
+      "file": "src/codegen/object-runtime.ts",
+      "name": "__to_property_key",
+      "kind": "runtime-registration-scope",
+      "startLine": 1485,
+      "endLine": 1547,
+      "start": 73422,
+      "end": 76181,
+      "sha256": "d4546e5569ef96a48dd9b2cf17d3a7d09110cd77f429dcfe2d17ab86fce061d2",
+      "imports": [
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        }
+      ],
+      "ctxPaths": ["ctx.funcMap.get", "ctx.nativeBoxNumberTypeIdx"],
+      "lookups": ["\"__unbox_number\"", "\"number_toString\""],
+      "calls": ["ctx.funcMap.get", "registerNative"]
+    },
+    {
+      "file": "src/codegen/object-runtime.ts",
+      "name": "withKeyCoercion",
+      "kind": "local-builder-declaration",
+      "startLine": 1555,
+      "endLine": 1563,
+      "start": 76649,
+      "end": 76957,
+      "sha256": "613a784771363251e3eb547076b80205a62f7fbd424060b2b484decaefd41b43",
+      "imports": [
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        }
+      ],
+      "ctxPaths": [],
+      "lookups": [],
+      "calls": []
+    },
+    {
+      "file": "src/codegen/object-runtime.ts",
+      "name": "__obj_hash",
+      "kind": "runtime-registration-scope",
+      "startLine": 1572,
+      "endLine": 1780,
+      "start": 77356,
+      "end": 85841,
+      "sha256": "079d84dfaac01d4818a2ee6031103f5a6b019f479d0ca6faaf71d34093ba5528",
+      "imports": [
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        }
+      ],
+      "ctxPaths": ["ctx.hashedStrTypeIdx", "ctx.targetProfile.semanticProviders"],
+      "lookups": [],
+      "calls": ["registerNative", "withKeyCoercion"]
+    },
+    {
+      "file": "src/codegen/object-runtime.ts",
+      "name": "__key_equals",
+      "kind": "runtime-registration-scope",
+      "startLine": 1798,
+      "endLine": 1848,
+      "start": 86927,
+      "end": 88747,
+      "sha256": "fa0d48e4bd230fe40508ede1ad77d9e42cb70ec5b46a7a50eab3f648eefd9cd3",
+      "imports": [
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        }
+      ],
+      "ctxPaths": [],
+      "lookups": [],
+      "calls": ["registerNative"]
+    },
+    {
+      "file": "src/codegen/object-runtime.ts",
+      "name": "emitClassifyKey",
+      "kind": "local-builder-declaration",
+      "startLine": 1859,
+      "endLine": 1901,
+      "start": 89470,
+      "end": 91065,
+      "sha256": "285700170d5623af9c15fa18c393d14807f2b7d7d870ff5910b55cefeeac8059",
+      "imports": [
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        }
+      ],
+      "ctxPaths": [],
+      "lookups": [],
+      "calls": []
+    },
+    {
+      "file": "src/codegen/object-runtime.ts",
+      "name": "emitKeyMatch",
+      "kind": "local-builder-declaration",
+      "startLine": 1906,
+      "endLine": 1926,
+      "start": 91312,
+      "end": 92235,
+      "sha256": "c5ce851ddefee438fd00ba20cf0aac737fb5cf653fe5380ef85c7079dc555292",
+      "imports": [
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        }
+      ],
+      "ctxPaths": [],
+      "lookups": [],
+      "calls": []
+    },
+    {
+      "file": "src/codegen/object-runtime.ts",
+      "name": "__obj_find",
+      "kind": "runtime-registration-scope",
+      "startLine": 1956,
+      "endLine": 2050,
+      "start": 93612,
+      "end": 97265,
+      "sha256": "bcfbe5edea4a7929f3019b6d6dc4b55b0b7a26b79c25a0bb8e9e8afd15548a80",
+      "imports": [
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        }
+      ],
+      "ctxPaths": [],
+      "lookups": [],
+      "calls": ["emitClassifyKey", "emitKeyMatch", "registerNative", "withKeyCoercion"]
+    },
+    {
+      "file": "src/codegen/object-runtime.ts",
+      "name": "__object_terminal_allows_implicit_proto",
+      "kind": "runtime-registration-scope",
+      "startLine": 2059,
+      "endLine": 2116,
+      "start": 97797,
+      "end": 99953,
+      "sha256": "148989ac984fb7fbfabf54396f824d53e058739a30425162db2fb79b6bee83b6",
+      "imports": [],
+      "ctxPaths": [],
+      "lookups": [],
+      "calls": ["registerNative"]
+    },
+    {
+      "file": "src/codegen/object-runtime.ts",
+      "name": "__fnctor_proto_start",
+      "kind": "runtime-registration-scope",
+      "startLine": 2123,
+      "endLine": 2132,
+      "start": 100315,
+      "end": 100667,
+      "sha256": "dbd88d7be557869a94702da9398838760ec601e140707efeb96b54053b0d1452",
+      "imports": [],
+      "ctxPaths": ["ctx.fnctorEscapeGate?.approvedNames.size", "ctx.standalone"],
+      "lookups": [],
+      "calls": ["registerNative"]
+    },
+    {
+      "file": "src/codegen/object-runtime.ts",
+      "name": "__method_cache_lookup",
+      "kind": "runtime-registration-scope",
+      "startLine": 2160,
+      "endLine": 2254,
+      "start": 102591,
+      "end": 106675,
+      "sha256": "b2dc026867451f644a576ecd47c613da69df780133d5c6d2a9f86bb14f9bcc3f",
+      "imports": [],
+      "ctxPaths": ["ctx.hashedStrTypeIdx"],
+      "lookups": [],
+      "calls": ["registerNative"]
+    },
+    {
+      "file": "src/codegen/object-runtime.ts",
+      "name": "__extern_get",
+      "kind": "runtime-registration-scope",
+      "startLine": 2284,
+      "endLine": 2670,
+      "start": 107930,
+      "end": 127919,
+      "sha256": "cb28ef63921940ca7cddc3460fcc41d37d8a502bdc21a9f9b468909b9cab2d91",
+      "imports": [
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        },
+        {
+          "local": "ValType",
+          "module": "../ir/types.js",
+          "imported": "ValType",
+          "typeOnly": true
+        },
+        {
+          "local": "buildInstancePropGetArm",
+          "module": "./instance-props.js",
+          "imported": "buildInstancePropGetArm",
+          "typeOnly": false
+        },
+        {
+          "local": "buildVecOrClosurePropGetMissArm",
+          "module": "./vec-props.js",
+          "imported": "buildVecOrClosurePropGetMissArm",
+          "typeOnly": false
+        },
+        {
+          "local": "protoIndexRecvGetMissInstrs",
+          "module": "./proto-index-store.js",
+          "imported": "protoIndexRecvGetMissInstrs",
+          "typeOnly": false
+        },
+        {
+          "local": "reserveAccessorGetDriver",
+          "module": "./accessor-driver.js",
+          "imported": "reserveAccessorGetDriver",
+          "typeOnly": false
+        },
+        {
+          "local": "undefinedExternInstrs",
+          "module": "./any-helpers.js",
+          "imported": "undefinedExternInstrs",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": ["ctx.hashedStrTypeIdx"],
+      "lookups": [],
+      "calls": [
+        "buildInstancePropGetArm",
+        "buildVecOrClosurePropGetMissArm",
+        "getMiss",
+        "protoIndexRecvGetMissInstrs",
+        "registerNative",
+        "reserveAccessorGetDriver",
+        "undefinedExternInstrs"
+      ]
+    },
+    {
+      "file": "src/codegen/object-runtime.ts",
+      "name": "__reflect_get_receiver",
+      "kind": "runtime-registration-scope",
+      "startLine": 2675,
+      "endLine": 2706,
+      "start": 128134,
+      "end": 129433,
+      "sha256": "0671483eba83cc6ac26eebee606878bc64fc3ade68b46dc1ea28cf39ee4256af",
+      "imports": [],
+      "ctxPaths": ["ctx.funcMap.get"],
+      "lookups": ["\"__extern_get\""],
+      "calls": ["ctx.funcMap.get", "registerNative"]
+    },
+    {
+      "file": "src/codegen/object-runtime.ts",
+      "name": "fillClosedStructExternGetArms",
+      "kind": "function",
+      "startLine": 9919,
+      "endLine": 10388,
+      "start": 453763,
+      "end": 474847,
+      "sha256": "633203b57df3f947ba781edd5f779ffd5d2271933616f34b956d21be24b56505",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "ColdFieldLocation",
+          "module": "./fnctor-cold-tail.js",
+          "imported": "ColdFieldLocation",
+          "typeOnly": true
+        },
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        },
+        {
+          "local": "PresenceSlot",
+          "module": "./fnctor-presence-bits.js",
+          "imported": "PresenceSlot",
+          "typeOnly": true
+        },
+        {
+          "local": "ResidFieldLocation",
+          "module": "./fnctor-layout-emit.js",
+          "imported": "ResidFieldLocation",
+          "typeOnly": true
+        },
+        {
+          "local": "UNDEF_F64_BITS",
+          "module": "./value-tags.js",
+          "imported": "UNDEF_F64_BITS",
+          "typeOnly": false
+        },
+        {
+          "local": "ValType",
+          "module": "../ir/types.js",
+          "imported": "ValType",
+          "typeOnly": true
+        },
+        {
+          "local": "allocatedStructTypeIndices",
+          "module": "./walk-instructions.js",
+          "imported": "allocatedStructTypeIndices",
+          "typeOnly": false
+        },
+        {
+          "local": "buildTombstoneScreen",
+          "module": "./instance-tombstones.js",
+          "imported": "buildTombstoneScreen",
+          "typeOnly": false
+        },
+        {
+          "local": "coldFieldNameAt",
+          "module": "./fnctor-cold-tail.js",
+          "imported": "coldFieldNameAt",
+          "typeOnly": false
+        },
+        {
+          "local": "coldFieldPresenceInstrs",
+          "module": "./fnctor-cold-tail.js",
+          "imported": "coldFieldPresenceInstrs",
+          "typeOnly": false
+        },
+        {
+          "local": "coldFieldValueInstrs",
+          "module": "./fnctor-cold-tail.js",
+          "imported": "coldFieldValueInstrs",
+          "typeOnly": false
+        },
+        {
+          "local": "coldOwnFieldsFor",
+          "module": "./fnctor-cold-tail.js",
+          "imported": "coldOwnFieldsFor",
+          "typeOnly": false
+        },
+        {
+          "local": "exposedClosedStructFieldName",
+          "module": "./property-descriptor-shape.js",
+          "imported": "exposedClosedStructFieldName",
+          "typeOnly": false
+        },
+        {
+          "local": "findFnctorLayoutStructsForField",
+          "module": "./fnctor-layout-emit.js",
+          "imported": "findFnctorLayoutStructsForField",
+          "typeOnly": false
+        },
+        {
+          "local": "findFnctorResidStructsForField",
+          "module": "./fnctor-layout-emit.js",
+          "imported": "findFnctorResidStructsForField",
+          "typeOnly": false
+        },
+        {
+          "local": "inheritedSetAnyDirty",
+          "module": "./inherited-set-gate.js",
+          "imported": "inheritedSetAnyDirty",
+          "typeOnly": false
+        },
+        {
+          "local": "isInternalStructFieldName",
+          "module": "./struct-field-exports.js",
+          "imported": "isInternalStructFieldName",
+          "typeOnly": false
+        },
+        {
+          "local": "isOpenDescriptorShape",
+          "module": "./property-descriptor-shape.js",
+          "imported": "isOpenDescriptorShape",
+          "typeOnly": false
+        },
+        {
+          "local": "isSyntheticStructName",
+          "module": "./emit-helpers.js",
+          "imported": "isSyntheticStructName",
+          "typeOnly": false
+        },
+        {
+          "local": "lazyStrFlattenEnabled",
+          "module": "./lazy-str-flatten.js",
+          "imported": "lazyStrFlattenEnabled",
+          "typeOnly": false
+        },
+        {
+          "local": "nativeStringLiteralHash",
+          "module": "./native-strings.js",
+          "imported": "nativeStringLiteralHash",
+          "typeOnly": false
+        },
+        {
+          "local": "nativeStringLiteralInstrs",
+          "module": "./native-strings.js",
+          "imported": "nativeStringLiteralInstrs",
+          "typeOnly": false
+        },
+        {
+          "local": "presenceSlotOf",
+          "module": "./fnctor-presence-bits.js",
+          "imported": "presenceSlotOf",
+          "typeOnly": false
+        },
+        {
+          "local": "presenceTestInstrs",
+          "module": "./fnctor-presence-bits.js",
+          "imported": "presenceTestInstrs",
+          "typeOnly": false
+        },
+        {
+          "local": "redundantFlattenCall",
+          "module": "./lazy-str-flatten.js",
+          "imported": "redundantFlattenCall",
+          "typeOnly": false
+        },
+        {
+          "local": "residFieldValueInstrs",
+          "module": "./fnctor-layout-emit.js",
+          "imported": "residFieldValueInstrs",
+          "typeOnly": false
+        },
+        {
+          "local": "stampRangeTestInstrs",
+          "module": "./fnctor-layout-emit.js",
+          "imported": "stampRangeTestInstrs",
+          "typeOnly": false
+        },
+        {
+          "local": "undefinedExternInstrs",
+          "module": "./any-helpers.js",
+          "imported": "undefinedExternInstrs",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": [
+        "ctx.anyStrTypeIdx",
+        "ctx.fnctorLayoutInfo?.values",
+        "ctx.funcMap.get",
+        "ctx.hashedStrTypeIdx",
+        "ctx.mod",
+        "ctx.mod.functions.find",
+        "ctx.nativeBoxNumberTypeIdx",
+        "ctx.nativeStrHelpers.get",
+        "ctx.nativeStrTypeIdx",
+        "ctx.shapeIdByStructName.get",
+        "ctx.standalone",
+        "ctx.structFields",
+        "ctx.structMap.get"
+      ],
+      "lookups": ["\"__box_boolean\"", "\"__box_number\"", "\"__obj_hash\"", "\"__str_equals\"", "\"__str_flatten\""],
+      "calls": [
+        "/^(?:0|[1-9]\\d*)$/.test",
+        "Number",
+        "[...buckets.entries()].sort",
+        "[...byField.values()].some",
+        "allocatedStructTypeIndices",
+        "allocatedTypes.has",
+        "appendFamilyArms",
+        "bucket.push",
+        "buckets.entries",
+        "buckets.get",
+        "buckets.set",
+        "buildNameProbe",
+        "buildReceiverArms",
+        "buildTombstoneScreen",
+        "byField.get",
+        "byField.set",
+        "byField.values",
+        "coldFieldNameAt",
+        "coldFieldPresenceInstrs",
+        "coldFieldValueInstrs",
+        "coldOwnFieldsFor",
+        "ctx.fnctorLayoutInfo?.values",
+        "ctx.funcMap.get",
+        "ctx.mod.functions.find",
+        "ctx.nativeStrHelpers.get",
+        "ctx.shapeIdByStructName.get",
+        "ctx.structMap.get",
+        "entries.push",
+        "entries.some",
+        "exposedClosedStructFieldName",
+        "fields.findIndex",
+        "findFnctorLayoutStructsForField",
+        "findFnctorResidStructsForField",
+        "fn.body.unshift",
+        "fn.locals.push",
+        "i31NumericKeyArms.push",
+        "inheritedSetAnyDirty",
+        "isInternalStructFieldName",
+        "isOpenDescriptorShape",
+        "isSyntheticStructName",
+        "lazyStrFlattenEnabled",
+        "nativeStringLiteralHash",
+        "nativeStringLiteralInstrs",
+        "new Array<number>(tableSize).fill",
+        "numericKeyArms.push",
+        "orderedBuckets.forEach",
+        "presenceSlotOf",
+        "presenceTestInstrs",
+        "probes.push",
+        "read.push",
+        "readAndBox",
+        "receiverArms.push",
+        "redundantFlattenCall",
+        "residFieldValueInstrs",
+        "seen.add",
+        "seen.has",
+        "stampRangeTestInstrs",
+        "stringKeyArms.push",
+        "then.push",
+        "undefinedExternInstrs",
+        "undefinedExternInstrs(ctx)?.map"
+      ]
+    },
+    {
+      "file": "src/codegen/object-runtime.ts",
+      "name": "fillFnctorPrototypeDispatchArms",
+      "kind": "function",
+      "startLine": 10397,
+      "endLine": 10568,
+      "start": 475230,
+      "end": 483124,
+      "sha256": "f10662f47c7c99be2b88d46d9d6188b53d0da40c7e977e6942a3b3d8017e8b1a",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        },
+        {
+          "local": "buildFnctorMissingMethodDispatch",
+          "module": "./fnctor-missing-method-dispatch.js",
+          "imported": "buildFnctorMissingMethodDispatch",
+          "typeOnly": false
+        },
+        {
+          "local": "definedFuncAt",
+          "module": "./func-space.js",
+          "imported": "definedFuncAt",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": [
+        "ctx.fnctorPrototypeObject",
+        "ctx.funcMap.get",
+        "ctx.funcMap.has",
+        "ctx.hashedStrTypeIdx",
+        "ctx.mod.functions.find",
+        "ctx.mod.types",
+        "ctx.objectRuntimeTypes",
+        "ctx.standalone",
+        "ctx.structMap.get"
+      ],
+      "lookups": ["\"__apply_closure\"", "\"__extern_get\"", "\"__fnctor_proto_start\"", "\"__nullish_to_null\""],
+      "calls": [
+        "arms.push",
+        "buildFnctorMissingMethodDispatch",
+        "ctx.funcMap.get",
+        "ctx.funcMap.has",
+        "ctx.mod.functions.find",
+        "ctx.structMap.get",
+        "definedFuncAt",
+        "fn.body.unshift",
+        "fn.locals.push",
+        "protoArms.push"
+      ]
+    },
+    {
+      "file": "src/codegen/object-runtime.ts",
+      "name": "unshiftExternGetWrapperCtorArm",
+      "kind": "function",
+      "startLine": 10584,
+      "endLine": 10618,
+      "start": 483840,
+      "end": 485336,
+      "sha256": "f1d5617531aac1511df799923b5824f58372951b554fc2ae86267b9ed4fdb5ce",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "nativeStringLiteralInstrs",
+          "module": "./native-strings.js",
+          "imported": "nativeStringLiteralInstrs",
+          "typeOnly": false
+        },
+        {
+          "local": "wrapperConstructorArmInstrs",
+          "module": "./wrapper-constructor-carrier.js",
+          "imported": "wrapperConstructorArmInstrs",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": [
+        "ctx.anyStrTypeIdx",
+        "ctx.mod.functions.find",
+        "ctx.nativeStrHelpers.get",
+        "ctx.objectRuntimeTypes",
+        "ctx.standalone"
+      ],
+      "lookups": ["\"__str_equals\"", "\"__str_flatten\""],
+      "calls": [
+        "ctx.mod.functions.find",
+        "ctx.nativeStrHelpers.get",
+        "fn.body.unshift",
+        "fn.locals.push",
+        "nativeStringLiteralInstrs",
+        "wrapperConstructorArmInstrs"
+      ]
+    },
+    {
+      "file": "src/codegen/object-runtime.ts",
+      "name": "unshiftExternGetStringExoticArm",
+      "kind": "function",
+      "startLine": 10633,
+      "endLine": 10761,
+      "start": 486049,
+      "end": 491462,
+      "sha256": "0314c913ded154b8c4565b38a6590e5b17b2df1fdacad4f7e05d24937a97c0db",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        }
+      ],
+      "ctxPaths": [
+        "ctx.anyStrTypeIdx",
+        "ctx.funcMap.get",
+        "ctx.mod.functions.find",
+        "ctx.nativeStrHelpers.get",
+        "ctx.nativeStrTypeIdx",
+        "ctx.nativeStrings",
+        "ctx.objectRuntimeTypes",
+        "ctx.standalone"
+      ],
+      "lookups": [
+        "\"__str_charAt\"",
+        "\"__str_equals\"",
+        "\"__str_flatten\"",
+        "\"__str_to_number\"",
+        "\"number_toString\""
+      ],
+      "calls": [
+        "ctx.funcMap.get",
+        "ctx.mod.functions.find",
+        "ctx.nativeStrHelpers.get",
+        "ensureWrapperStringValueHelper",
+        "fn.body.unshift",
+        "fn.locals.push"
+      ]
+    },
+    {
+      "file": "src/codegen/object-runtime.ts",
+      "name": "unshiftExternGetProtoCacheArm",
+      "kind": "function",
+      "startLine": 10774,
+      "endLine": 10909,
+      "start": 492135,
+      "end": 498038,
+      "sha256": "8a1189a2c96c5dbab8fbe0e4a81029b24ba84efb16d38ab2406a58bdb2d0a078",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        }
+      ],
+      "ctxPaths": [
+        "ctx.funcMap.get",
+        "ctx.hashedStrTypeIdx",
+        "ctx.mod.functions.find",
+        "ctx.mod.types",
+        "ctx.objectRuntimeTypes",
+        "ctx.standalone"
+      ],
+      "lookups": ["\"__fnctor_proto_start\""],
+      "calls": ["ctx.funcMap.get", "ctx.mod.functions.find", "fn.body.unshift", "fn.locals.some"]
+    },
+    {
+      "file": "src/codegen/object-runtime.ts",
+      "name": "fillDynamicForinVecArms",
+      "kind": "function",
+      "startLine": 10924,
+      "endLine": 11296,
+      "start": 498599,
+      "end": 515739,
+      "sha256": "a4aed43874e8332386821b054960282352c3132a38fa8e1c16157beb17c6efca",
+      "imports": [
+        {
+          "local": "ARGUMENTS_LENGTH_OVERRIDE_FIELD",
+          "module": "./arguments-length-brand.js",
+          "imported": "ARGUMENTS_LENGTH_OVERRIDE_FIELD",
+          "typeOnly": false
+        },
+        {
+          "local": "ARGUMENTS_LENGTH_VALUE_FIELD",
+          "module": "./arguments-length-brand.js",
+          "imported": "ARGUMENTS_LENGTH_VALUE_FIELD",
+          "typeOnly": false
+        },
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        },
+        {
+          "local": "buildArgumentsLengthAbsentMiss",
+          "module": "./arguments-length-brand.js",
+          "imported": "buildArgumentsLengthAbsentMiss",
+          "typeOnly": false
+        },
+        {
+          "local": "buildArgumentsLengthAbsentTail",
+          "module": "./arguments-length-brand.js",
+          "imported": "buildArgumentsLengthAbsentTail",
+          "typeOnly": false
+        },
+        {
+          "local": "buildBagPushKeys",
+          "module": "./carrier-bag-visibility.js",
+          "imported": "buildBagPushKeys",
+          "typeOnly": false
+        },
+        {
+          "local": "buildVecIndexKeyPush",
+          "module": "./vec-index-enumerable.js",
+          "imported": "buildVecIndexKeyPush",
+          "typeOnly": false
+        },
+        {
+          "local": "buildVecOverlayHasArm",
+          "module": "./vec-overlay-keys.js",
+          "imported": "buildVecOverlayHasArm",
+          "typeOnly": false
+        },
+        {
+          "local": "f64HolesActive",
+          "module": "./vec-f64-hole-presence.js",
+          "imported": "f64HolesActive",
+          "typeOnly": false
+        },
+        {
+          "local": "getOrRegisterVecBaseType",
+          "module": "./registry/types.js",
+          "imported": "getOrRegisterVecBaseType",
+          "typeOnly": false
+        },
+        {
+          "local": "nativeStringLiteralInstrs",
+          "module": "./native-strings.js",
+          "imported": "nativeStringLiteralInstrs",
+          "typeOnly": false
+        },
+        {
+          "local": "overlayRouteActive",
+          "module": "./typed-lane-overlay-route.js",
+          "imported": "overlayRouteActive",
+          "typeOnly": false
+        },
+        {
+          "local": "protoIndexRecvHasMissInstrs",
+          "module": "./proto-index-store.js",
+          "imported": "protoIndexRecvHasMissInstrs",
+          "typeOnly": false
+        },
+        {
+          "local": "reserveVecIndexEnumerable",
+          "module": "./vec-index-enumerable.js",
+          "imported": "reserveVecIndexEnumerable",
+          "typeOnly": false
+        },
+        {
+          "local": "reserveVecOverlayPushKeys",
+          "module": "./vec-overlay-keys.js",
+          "imported": "reserveVecOverlayPushKeys",
+          "typeOnly": false
+        },
+        {
+          "local": "undefinedExternInstrs",
+          "module": "./any-helpers.js",
+          "imported": "undefinedExternInstrs",
+          "typeOnly": false
+        },
+        {
+          "local": "vecConstructorArmInstrs",
+          "module": "./vec-constructor-carrier.js",
+          "imported": "vecConstructorArmInstrs",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": [
+        "ctx.anyStrTypeIdx",
+        "ctx.funcMap.get",
+        "ctx.mod.functions.find",
+        "ctx.nativeStrHelpers.get",
+        "ctx.standalone",
+        "ctx.structMap.get"
+      ],
+      "lookups": [
+        "\"__box_number\"",
+        "\"__carrier_bag_has\"",
+        "\"__extern_get_idx\"",
+        "\"__extern_has_idx\"",
+        "\"__objvec_new\"",
+        "\"__objvec_push\"",
+        "\"__str_equals\"",
+        "\"__str_flatten\"",
+        "\"__str_to_number\"",
+        "\"number_toString\""
+      ],
+      "calls": [
+        "buildArgumentsLengthAbsentMiss",
+        "buildArgumentsLengthAbsentTail",
+        "buildBagPushKeys",
+        "buildVecEnumerationTail",
+        "buildVecIndexKeyPush",
+        "buildVecOverlayHasArm",
+        "ctx.funcMap.get",
+        "ctx.mod.functions.find",
+        "ctx.nativeStrHelpers.get",
+        "ctx.structMap.get",
+        "f64HolesActive",
+        "findFn",
+        "getFn.body.splice",
+        "getFn.locals.push",
+        "getOrRegisterVecBaseType",
+        "hasFn.body.splice",
+        "hasFn.locals.push",
+        "keyIs",
+        "keyIsLength",
+        "keysFn.body.splice",
+        "keysFn.locals.push",
+        "nativeStringLiteralInstrs",
+        "overlayRouteActive",
+        "protoIndexRecvHasMissInstrs",
+        "pushKeyI",
+        "reserveVecIndexEnumerable",
+        "reserveVecOverlayPushKeys",
+        "undefinedExternInstrs",
+        "vecConstructorArmInstrs"
+      ]
+    },
+    {
+      "file": "src/codegen/object-runtime.ts",
+      "name": "fillExternArrayLikeStructArms",
+      "kind": "function",
+      "startLine": 11699,
+      "endLine": 12060,
+      "start": 534768,
+      "end": 552151,
+      "sha256": "680c4e5b53e88556ed6bcb194dea415d976e7d65741a7fdd9d37f300312a47e0",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        },
+        {
+          "local": "ValType",
+          "module": "../ir/types.js",
+          "imported": "ValType",
+          "typeOnly": true
+        },
+        {
+          "local": "buildThrowJsErrorInstrs",
+          "module": "./js-errors.js",
+          "imported": "buildThrowJsErrorInstrs",
+          "typeOnly": false
+        },
+        {
+          "local": "definedFuncAt",
+          "module": "./func-space.js",
+          "imported": "definedFuncAt",
+          "typeOnly": false
+        },
+        {
+          "local": "fnctorArray",
+          "module": "./fnctor-array-prototype.js",
+          "imported": "*",
+          "typeOnly": false
+        },
+        {
+          "local": "isVecBaseSubtype",
+          "module": "./registry/types.js",
+          "imported": "isVecBaseSubtype",
+          "typeOnly": false
+        },
+        {
+          "local": "protoIndexGetIdxMissInstrs",
+          "module": "./proto-index-store.js",
+          "imported": "protoIndexGetIdxMissInstrs",
+          "typeOnly": false
+        },
+        {
+          "local": "protoIndexHasIdxInstrs",
+          "module": "./proto-index-store.js",
+          "imported": "protoIndexHasIdxInstrs",
+          "typeOnly": false
+        },
+        {
+          "local": "undefinedExternInstrs",
+          "module": "./any-helpers.js",
+          "imported": "undefinedExternInstrs",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": [
+        "ctx.anyStrTypeIdx",
+        "ctx.externGetIdxReserved",
+        "ctx.funcMap.get",
+        "ctx.nativeStrTypeIdx",
+        "ctx.structFields",
+        "ctx.structMap.get",
+        "ctx.symbolTypeIdx"
+      ],
+      "lookups": [
+        "\"__extern_get_idx\"",
+        "\"__extern_has_idx\"",
+        "\"__str_to_number\"",
+        "\"__to_primitive\"",
+        "\"__typeof_string\"",
+        "\"__unbox_number\"",
+        "name"
+      ],
+      "calls": [
+        "Number",
+        "Number.isInteger",
+        "String",
+        "arms.push",
+        "boxClosedStructFieldToExternref",
+        "buildThrowJsErrorInstrs",
+        "cands.push",
+        "cands.sort",
+        "ctx.funcMap.get",
+        "ctx.structMap.get",
+        "definedFuncAt",
+        "fieldChecks.push",
+        "fields.findIndex",
+        "findFn",
+        "fnctorArray.closedStructIndexValue",
+        "fnctorArray.fnctorGetIndexMiss",
+        "fnctorArray.fnctorHasIndexSeed",
+        "fnctorArray.fnctorPrototypeGlobalForStruct",
+        "fnctorProtoGlobals.get",
+        "fnctorProtoGlobals.set",
+        "getIdxFn.body.splice",
+        "hasChain.push",
+        "hasIdxFn.body.splice",
+        "hasPreamble",
+        "idxMiss",
+        "isStringRefType",
+        "isVecBaseSubtype",
+        "lenFn.body.splice",
+        "lenFn.locals.findIndex",
+        "lenFn.locals.push",
+        "numericFields.push",
+        "primitiveNumberRead",
+        "protoGetMiss",
+        "protoHasSeed",
+        "protoIndexGetIdxMissInstrs",
+        "protoIndexHasIdxInstrs",
+        "seen.add",
+        "seen.has",
+        "structName.startsWith",
+        "symbolToNumberGuard",
+        "undefinedExternInstrs"
+      ]
+    },
+    {
+      "file": "src/codegen/object-runtime.ts",
+      "name": "prependBuiltinFnObjectSemantics",
+      "kind": "function",
+      "startLine": 12062,
+      "endLine": 12156,
+      "start": 552153,
+      "end": 556466,
+      "sha256": "50ad4fe40f22aa784cf53b1594a9ba952f8f8daf0ce6a31c6513de109ee412f7",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        },
+        {
+          "local": "buildLazyNativeProtoGetInstrs",
+          "module": "./native-proto.js",
+          "imported": "buildLazyNativeProtoGetInstrs",
+          "typeOnly": false
+        },
+        {
+          "local": "getBuiltinBrand",
+          "module": "./native-proto.js",
+          "imported": "getBuiltinBrand",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": ["ctx.mod.functions.find", "ctx.nativeProtoTypeIdx"],
+      "lookups": [],
+      "calls": [
+        "buildLazyNativeProtoGetInstrs",
+        "builtinFnTypePredicate",
+        "ctx.mod.functions.find",
+        "findFn",
+        "getBuiltinBrand",
+        "getPrototypeFn.body.splice",
+        "getPrototypeFn.locals.push",
+        "integrityFn.body.splice",
+        "predicate.push"
+      ]
+    },
+    {
+      "file": "src/codegen/object-runtime.ts",
+      "name": "fillBuiltinFnMeta",
+      "kind": "function",
+      "startLine": 12176,
+      "endLine": 12461,
+      "start": 557513,
+      "end": 567970,
+      "sha256": "3c94f94b30e667712256e078fbb1d535b22c716027c4676dfc3439810bfb35b6",
+      "imports": [
+        {
+          "local": "BFN_ID_FIELD_IDX",
+          "module": "./builtin-fn-meta.js",
+          "imported": "BFN_ID_FIELD_IDX",
+          "typeOnly": false
+        },
+        {
+          "local": "BFN_STATE_FIELD_IDX",
+          "module": "./builtin-fn-meta.js",
+          "imported": "BFN_STATE_FIELD_IDX",
+          "typeOnly": false
+        },
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        },
+        {
+          "local": "getFuncRefWrapperRootTypeIdx",
+          "module": "./closures/funcref-wrapper-types.js",
+          "imported": "getFuncRefWrapperRootTypeIdx",
+          "typeOnly": false
+        },
+        {
+          "local": "nativeStringLiteralInstrs",
+          "module": "./native-strings.js",
+          "imported": "nativeStringLiteralInstrs",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": [
+        "ctx.anyStrTypeIdx",
+        "ctx.builtinFnMetaByTypeIdx",
+        "ctx.funcMap.get",
+        "ctx.mod.functions.find",
+        "ctx.nativeStrHelpers.get"
+      ],
+      "lookups": [
+        "\"__box_number\"",
+        "\"__builtinfn_get_meta\"",
+        "\"__create_descriptor\"",
+        "\"__objvec_push\"",
+        "\"__str_equals\"",
+        "\"__str_flatten\""
+      ],
+      "calls": [
+        "Array.from",
+        "Array.from(metaMap.entries()).sort",
+        "arms.push",
+        "classifyKeyPreamble",
+        "classifyPreamble",
+        "ctx.funcMap.get",
+        "ctx.mod.functions.find",
+        "ctx.nativeStrHelpers.get",
+        "deleteFn.body.splice",
+        "entries.map",
+        "exactMetaArm",
+        "findFn",
+        "getFuncRefWrapperRootTypeIdx",
+        "getMetaFn.body.splice",
+        "gopdFn.body.splice",
+        "metaMap.entries",
+        "nativeStringLiteralInstrs",
+        "prependBuiltinFnObjectSemantics",
+        "pushOwnFn.body.splice"
+      ]
+    },
+    {
+      "file": "src/codegen/accessor-driver.ts",
+      "name": "buildAccessorCall",
+      "kind": "function",
+      "startLine": 78,
+      "endLine": 139,
+      "start": 4381,
+      "end": 6567,
+      "sha256": "37addf888c8c67c09e3a6ce1f448f9ddad67b066501f0701a22ba2e389bcd7b2",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        },
+        {
+          "local": "WasmFunction",
+          "module": "../ir/types.js",
+          "imported": "WasmFunction",
+          "typeOnly": true
+        },
+        {
+          "local": "ensureArgcGlobal",
+          "module": "./statements/nested-declarations.js",
+          "imported": "ensureArgcGlobal",
+          "typeOnly": false
+        },
+        {
+          "local": "undefinedExternInstrs",
+          "module": "./any-helpers.js",
+          "imported": "undefinedExternInstrs",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": ["ctx.funcMap.get"],
+      "lookups": ["\"__closure_arity\"", "`__call_fn_method_${dispatchArity}`"],
+      "calls": [
+        "call.push",
+        "callAtArity",
+        "ctx.funcMap.get",
+        "ensureArgcGlobal",
+        "undefinedArg",
+        "undefinedExternInstrs",
+        "undefinedExternInstrs(ctx)?.map"
+      ]
+    },
+    {
+      "file": "src/codegen/accessor-driver.ts",
+      "name": "reserveAccessorGetDriver",
+      "kind": "function",
+      "startLine": 152,
+      "endLine": 176,
+      "start": 7068,
+      "end": 7993,
+      "sha256": "e23b2a8c4c4838fe1f6eb2fbb07f2ccd4bfc0df900a4b14c456e6af404a0f4ce",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "WasmFunction",
+          "module": "../ir/types.js",
+          "imported": "WasmFunction",
+          "typeOnly": true
+        },
+        {
+          "local": "addFuncType",
+          "module": "./registry/types.js",
+          "imported": "addFuncType",
+          "typeOnly": false
+        },
+        {
+          "local": "mintDefinedFunc",
+          "module": "./func-space.js",
+          "imported": "mintDefinedFunc",
+          "typeOnly": false
+        },
+        {
+          "local": "pushDefinedFunc",
+          "module": "./func-space.js",
+          "imported": "pushDefinedFunc",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": ["ctx.accessorGetDriverReserved", "ctx.funcMap.get", "ctx.funcMap.set"],
+      "lookups": ["CALL_ACCESSOR_GET"],
+      "calls": ["addFuncType", "ctx.funcMap.get", "ctx.funcMap.set", "mintDefinedFunc", "pushDefinedFunc"]
+    },
+    {
+      "file": "src/codegen/accessor-driver.ts",
+      "name": "reserveAccessorSetDriver",
+      "kind": "function",
+      "startLine": 186,
+      "endLine": 209,
+      "start": 8353,
+      "end": 9205,
+      "sha256": "a344914be015b23f036adbd3a75473158c9ea1ed3ea65f49d9e48ed649d42653",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "WasmFunction",
+          "module": "../ir/types.js",
+          "imported": "WasmFunction",
+          "typeOnly": true
+        },
+        {
+          "local": "addFuncType",
+          "module": "./registry/types.js",
+          "imported": "addFuncType",
+          "typeOnly": false
+        },
+        {
+          "local": "mintDefinedFunc",
+          "module": "./func-space.js",
+          "imported": "mintDefinedFunc",
+          "typeOnly": false
+        },
+        {
+          "local": "pushDefinedFunc",
+          "module": "./func-space.js",
+          "imported": "pushDefinedFunc",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": ["ctx.accessorSetDriverReserved", "ctx.funcMap.get", "ctx.funcMap.set"],
+      "lookups": ["CALL_ACCESSOR_SET"],
+      "calls": ["addFuncType", "ctx.funcMap.get", "ctx.funcMap.set", "mintDefinedFunc", "pushDefinedFunc"]
+    },
+    {
+      "file": "src/codegen/accessor-driver.ts",
+      "name": "fillAccessorDrivers",
+      "kind": "function",
+      "startLine": 338,
+      "endLine": 448,
+      "start": 14442,
+      "end": 19070,
+      "sha256": "a59010a6a8f65f9a8ed9cbcc7e2f62aee0f8a706bc4a7d1f71d2ce530f361f9c",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "definedFuncAt",
+          "module": "./func-space.js",
+          "imported": "definedFuncAt",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": [
+        "ctx.accessorGetDriverReserved",
+        "ctx.accessorSetDriverReserved",
+        "ctx.funcMap.get",
+        "ctx.replacerDriverReserved",
+        "ctx.reviverDriverReserved",
+        "ctx.toJsonDriverReserved"
+      ],
+      "lookups": [
+        "\"__call_fn_method_1\"",
+        "\"__call_fn_method_2\"",
+        "CALL_ACCESSOR_GET",
+        "CALL_ACCESSOR_SET",
+        "CALL_REPLACER",
+        "CALL_REVIVER",
+        "CALL_TO_JSON"
+      ],
+      "calls": ["buildAccessorCall", "ctx.funcMap.get", "definedFuncAt"]
+    },
+    {
+      "file": "src/codegen/closed-method-dispatch.ts",
+      "name": "collectMethodEntries",
+      "kind": "function",
+      "startLine": 546,
+      "endLine": 603,
+      "start": 27881,
+      "end": 31104,
+      "sha256": "3bb78cdca2fd42ac026333709f9b8177683068b13e182265050c2a59663f24c7",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "ValType",
+          "module": "../ir/types.js",
+          "imported": "ValType",
+          "typeOnly": true
+        },
+        {
+          "local": "classMemberFuncKey",
+          "module": "./class-member-keys.js",
+          "imported": "classMemberFuncKey",
+          "typeOnly": false
+        },
+        {
+          "local": "definedFuncAt",
+          "module": "./func-space.js",
+          "imported": "definedFuncAt",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": [
+        "ctx.funcMap.get",
+        "ctx.funcOptionalParams.get",
+        "ctx.hostDynamicClassMethodNames.has",
+        "ctx.mod",
+        "ctx.standalone",
+        "ctx.structFields",
+        "ctx.structMap.get",
+        "ctx.wasi"
+      ],
+      "lookups": ["classMemberFuncKey(ctx, fullName, \"instance\")"],
+      "calls": [
+        "canSynthesizeOmitted",
+        "classMemberFuncKey",
+        "ctx.funcMap.get",
+        "ctx.funcOptionalParams.get",
+        "ctx.hostDynamicClassMethodNames.has",
+        "ctx.structMap.get",
+        "definedFuncAt",
+        "entries.push",
+        "funcType.params.slice",
+        "optionalParams.find",
+        "paramTypes.slice",
+        "paramTypes.slice(exactArity).some",
+        "structName.startsWith"
+      ]
+    },
+    {
+      "file": "src/codegen/closed-method-dispatch.ts",
+      "name": "collectFieldEntries",
+      "kind": "function",
+      "startLine": 621,
+      "endLine": 641,
+      "start": 31934,
+      "end": 32776,
+      "sha256": "9849a2dce53f1dc35f8147f13eea0fd9a26ef6a6f0ad4a7d8a1a535cbd3724f1",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "classMemberFuncKey",
+          "module": "./class-member-keys.js",
+          "imported": "classMemberFuncKey",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": ["ctx.funcMap.has", "ctx.structFields", "ctx.structMap.get"],
+      "lookups": [],
+      "calls": [
+        "classMemberFuncKey",
+        "ctx.funcMap.has",
+        "ctx.structMap.get",
+        "entries.push",
+        "fields.findIndex",
+        "structName.startsWith"
+      ]
+    },
+    {
+      "file": "src/codegen/closed-method-dispatch.ts",
+      "name": "fillPromiseThenableHelpers",
+      "kind": "function",
+      "startLine": 2003,
+      "endLine": 2054,
+      "start": 95953,
+      "end": 98035,
+      "sha256": "01064d552ffd276285fd792aea2b4aa31e2db30bd0098e4a0c0eccc85d211f60",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "buildPromisePeelValue",
+          "module": "../runtime/wasmgc/promise/thenable-bodies.js",
+          "imported": "buildPromisePeelValue",
+          "typeOnly": false
+        },
+        {
+          "local": "collectClosureBaseWrapperTypeIdxs",
+          "module": "./closure-classifier.js",
+          "imported": "collectClosureBaseWrapperTypeIdxs",
+          "typeOnly": false
+        },
+        {
+          "local": "definedFuncAt",
+          "module": "./func-space.js",
+          "imported": "definedFuncAt",
+          "typeOnly": false
+        },
+        {
+          "local": "finalizePromiseThenableLookup",
+          "module": "./promise-thenable-lookup.js",
+          "imported": "finalizePromiseThenableLookup",
+          "typeOnly": false
+        },
+        {
+          "local": "stringConstantExternrefInstrs",
+          "module": "./native-strings.js",
+          "imported": "stringConstantExternrefInstrs",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": [
+        "ctx.anyValueTypeIdx",
+        "ctx.funcMap.get",
+        "ctx.objectRuntimeTypes?.objectTypeIdx",
+        "ctx.promiseThenableReserved",
+        "ctx.structAccessorClosure",
+        "ctx.structMap.get"
+      ],
+      "lookups": [
+        "\"__call_accessor_get\"",
+        "\"__extern_get\"",
+        "\"__promise_has_callable_then\"",
+        "\"__promise_peel_value\""
+      ],
+      "calls": [
+        "accessors.push",
+        "buildPromisePeelValue",
+        "collectClosureBaseWrapperTypeIdxs",
+        "collectFieldEntries",
+        "collectMethodEntries",
+        "collectMethodEntries(ctx, \"then\", null).map",
+        "ctx.funcMap.get",
+        "ctx.structMap.get",
+        "definedFuncAt",
+        "finalizePromiseThenableLookup",
+        "key.endsWith",
+        "key.slice",
+        "stringConstantExternrefInstrs"
+      ]
+    },
+    {
+      "file": "src/codegen/closure-classifier.ts",
+      "name": "collectClosureBaseWrapperTypeIdxs",
+      "kind": "function",
+      "startLine": 40,
+      "endLine": 85,
+      "start": 2135,
+      "end": 4382,
+      "sha256": "078b52f6fd95fde04af9afae2909f631e89e95855f2d295d31d9cdeb81a7acc0",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        }
+      ],
+      "ctxPaths": [
+        "ctx.boundFnTypeIdx",
+        "ctx.closureInfoByTypeIdx",
+        "ctx.mod",
+        "ctx.runtimeEvalAotCallableCarrier?.structTypeIdx"
+      ],
+      "lookups": [],
+      "calls": ["baseTypeIdxs.push", "seenBase.add", "seenBase.has"]
+    },
+    {
+      "file": "src/codegen/closure-classifier.ts",
+      "name": "buildClosureRefTestArms",
+      "kind": "function",
+      "startLine": 100,
+      "endLine": 108,
+      "start": 5023,
+      "end": 5424,
+      "sha256": "19d79304d15a06c17f92895226f69067ace8aeae9c42ab0eace434e11dfd2ebd",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        }
+      ],
+      "ctxPaths": [],
+      "lookups": [],
+      "calls": ["arms.push", "collectClosureBaseWrapperTypeIdxs"]
+    },
+    {
+      "file": "src/codegen/vec-props.ts",
+      "name": "buildVecOrClosurePropGetMissArm",
+      "kind": "function",
+      "startLine": 94,
+      "endLine": 118,
+      "start": 5030,
+      "end": 5812,
+      "sha256": "4fb3ce9fc2cd6e81f4aeb54f574f3b1ae57623694487b8344b320eaf29a49de5",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        },
+        {
+          "local": "buildClosurePropGetMissArm",
+          "module": "./closure-props.js",
+          "imported": "buildClosurePropGetMissArm",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": ["ctx.funcMap.get"],
+      "lookups": ["IS_VEC_PROP_CARRIER", "VEC_PROP_GET"],
+      "calls": ["buildClosurePropGetMissArm", "ctx.funcMap.get"]
+    },
+    {
+      "file": "src/codegen/vec-props.ts",
+      "name": "fillVecPropHelpers",
+      "kind": "function",
+      "startLine": 282,
+      "endLine": 622,
+      "start": 13070,
+      "end": 27547,
+      "sha256": "0292f1c1fa2792951102f231f9de8ce6a1bf12801598ad693fd21f3de4440bfa",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        },
+        {
+          "local": "ValType",
+          "module": "../ir/types.js",
+          "imported": "ValType",
+          "typeOnly": true
+        },
+        {
+          "local": "definedFuncAt",
+          "module": "./func-space.js",
+          "imported": "definedFuncAt",
+          "typeOnly": false
+        },
+        {
+          "local": "nativeStringLiteralInstrs",
+          "module": "./native-strings.js",
+          "imported": "nativeStringLiteralInstrs",
+          "typeOnly": false
+        },
+        {
+          "local": "protoIndexRecvGetMissInstrs",
+          "module": "./proto-index-store.js",
+          "imported": "protoIndexRecvGetMissInstrs",
+          "typeOnly": false
+        },
+        {
+          "local": "undefinedExternInstrs",
+          "module": "./any-helpers.js",
+          "imported": "undefinedExternInstrs",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": [
+        "ctx.anyStrTypeIdx",
+        "ctx.externSetResultGlobalIdx",
+        "ctx.funcMap.get",
+        "ctx.nativeStrHelpers.get",
+        "ctx.vecPropBaseTypeIdx",
+        "ctx.vecPropEntryTypeIdx",
+        "ctx.vecPropHeadGlobalIdx",
+        "ctx.vecPropHelpersReserved"
+      ],
+      "lookups": [
+        "\"__extern_get\"",
+        "\"__extern_set\"",
+        "\"__extern_set_decide\"",
+        "\"__extern_set_own\"",
+        "\"__hasOwnProperty\"",
+        "\"__new_plain_object\"",
+        "\"__reflect_get_receiver\"",
+        "\"__str_equals\"",
+        "\"__str_flatten\"",
+        "\"__to_property_key\"",
+        "IS_VEC_PROP_CARRIER",
+        "VEC_BAG_ENSURE",
+        "VEC_BAG_LOOKUP",
+        "name"
+      ],
+      "calls": [
+        "ctx.funcMap.get",
+        "ctx.nativeStrHelpers.get",
+        "definedFuncAt",
+        "getMiss",
+        "nativeStringLiteralInstrs",
+        "protoIndexRecvGetMissInstrs",
+        "setBody",
+        "undefinedExternInstrs",
+        "walkLoop"
+      ]
+    },
+    {
+      "file": "src/codegen/closure-props.ts",
+      "name": "buildClosurePropGetMissArm",
+      "kind": "function",
+      "startLine": 170,
+      "endLine": 196,
+      "start": 9180,
+      "end": 10210,
+      "sha256": "a48d8268597ef23727167b2333aa20a1606af158272bc44b3d6275cee71d6ece",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        },
+        {
+          "local": "protoIndexRecvGetMissInstrs",
+          "module": "./proto-index-store.js",
+          "imported": "protoIndexRecvGetMissInstrs",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": ["ctx.funcMap.get"],
+      "lookups": ["CLOSURE_PROP_GET", "IS_CLOSURE_PROP_CARRIER"],
+      "calls": ["ctx.funcMap.get", "getMiss", "protoIndexRecvGetMissInstrs"]
+    },
+    {
+      "file": "src/codegen/closure-props.ts",
+      "name": "fillCarrierBagHelpers",
+      "kind": "function",
+      "startLine": 601,
+      "endLine": 787,
+      "start": 28524,
+      "end": 36044,
+      "sha256": "23e1fbcdf0e6e8c640046f47add91ec4ec26479cba39f1ad56241b7e183c7deb",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        },
+        {
+          "local": "ValType",
+          "module": "../ir/types.js",
+          "imported": "ValType",
+          "typeOnly": true
+        }
+      ],
+      "ctxPaths": [],
+      "lookups": [],
+      "calls": ["arms.push", "setBody", "slottedEnsureArms", "slottedLookupArms", "walkLoop"]
+    },
+    {
+      "file": "src/codegen/closure-props.ts",
+      "name": "fillClosurePropHelpers",
+      "kind": "function",
+      "startLine": 810,
+      "endLine": 1114,
+      "start": 37097,
+      "end": 50739,
+      "sha256": "093b54f7fda0b3200d4f88b60659e5bd19ba94ea493886a42339df973dc26c8a",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        },
+        {
+          "local": "ValType",
+          "module": "../ir/types.js",
+          "imported": "ValType",
+          "typeOnly": true
+        },
+        {
+          "local": "closurePrototypeEdgeGetArm",
+          "module": "./closure-prototype-edge.js",
+          "imported": "closurePrototypeEdgeGetArm",
+          "typeOnly": false
+        },
+        {
+          "local": "collectClosureBaseWrapperTypeIdxs",
+          "module": "./closure-classifier.js",
+          "imported": "collectClosureBaseWrapperTypeIdxs",
+          "typeOnly": false
+        },
+        {
+          "local": "definedFuncAt",
+          "module": "./func-space.js",
+          "imported": "definedFuncAt",
+          "typeOnly": false
+        },
+        {
+          "local": "protoIndexRecvGetMissInstrs",
+          "module": "./proto-index-store.js",
+          "imported": "protoIndexRecvGetMissInstrs",
+          "typeOnly": false
+        },
+        {
+          "local": "undefinedExternInstrs",
+          "module": "./any-helpers.js",
+          "imported": "undefinedExternInstrs",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": [
+        "ctx.closurePropEntryTypeIdx",
+        "ctx.closurePropHeadGlobalIdx",
+        "ctx.closurePropHelpersReserved",
+        "ctx.externSetResultGlobalIdx",
+        "ctx.funcMap.get"
+      ],
+      "lookups": [
+        "\"__extern_get\"",
+        "\"__extern_set\"",
+        "\"__extern_set_decide\"",
+        "\"__extern_set_own\"",
+        "\"__hasOwnProperty\"",
+        "\"__new_plain_object\"",
+        "\"__reflect_get_receiver\"",
+        "CLOSURE_BAG_ENSURE",
+        "CLOSURE_BAG_LOOKUP",
+        "IS_CLOSURE_PROP_CARRIER",
+        "name"
+      ],
+      "calls": [
+        "buildFnctorPrototypeWriteArm",
+        "builtinInstanceCarrierTypeIdxs",
+        "closurePrototypeEdgeGetArm",
+        "collectClosureBaseWrapperTypeIdxs",
+        "ctx.funcMap.get",
+        "definedFuncAt",
+        "fillCarrierBagHelpers",
+        "fillClosureCarrier",
+        "fillClosureMethodCall",
+        "fnctorInstanceCarrierTypeIdxs",
+        "getMiss",
+        "protoIndexRecvGetMissInstrs",
+        "setBody",
+        "slottedCarrierRoots",
+        "slottedInstanceCarrierRoots",
+        "undefinedExternInstrs"
+      ]
+    },
+    {
+      "file": "src/codegen/instance-props.ts",
+      "name": "buildInstancePropGetArm",
+      "kind": "function",
+      "startLine": 278,
+      "endLine": 306,
+      "start": 14670,
+      "end": 15736,
+      "sha256": "02f9585fb7f1e2243d68e5954c0d1754797b44db8a8f9db5620241e2405ce882",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        }
+      ],
+      "ctxPaths": ["ctx.funcMap.get"],
+      "lookups": ["INSTANCE_PROP_GET", "IS_INSTANCE_EXPANDO_CARRIER"],
+      "calls": ["ctx.funcMap.get"]
+    },
+    {
+      "file": "src/codegen/instance-props.ts",
+      "name": "fillInstanceProps",
+      "kind": "function",
+      "startLine": 315,
+      "endLine": 595,
+      "start": 16119,
+      "end": 27658,
+      "sha256": "c721ac020140650a0d96395b62416a9323e5826314ff3500203a03eae0696e09",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        },
+        {
+          "local": "ValType",
+          "module": "../ir/types.js",
+          "imported": "ValType",
+          "typeOnly": true
+        },
+        {
+          "local": "buildBagGopdFallback",
+          "module": "./carrier-bag-visibility.js",
+          "imported": "buildBagGopdFallback",
+          "typeOnly": false
+        },
+        {
+          "local": "buildBagMarkerTestInstrs",
+          "module": "./carrier-bag-visibility.js",
+          "imported": "buildBagMarkerTestInstrs",
+          "typeOnly": false
+        },
+        {
+          "local": "definedFuncAt",
+          "module": "./func-space.js",
+          "imported": "definedFuncAt",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": ["ctx.externSetResultGlobalIdx", "ctx.funcMap.get", "ctx.objectRuntimeTypes"],
+      "lookups": [
+        "\"__create_descriptor\"",
+        "\"__delete_property\"",
+        "\"__extern_get\"",
+        "\"__extern_set\"",
+        "\"__extern_set_decide\"",
+        "\"__extern_set_own\"",
+        "\"__getOwnPropertyDescriptor\"",
+        "\"__hasOwnProperty\"",
+        "\"__obj_find\"",
+        "CLOSURE_BAG_ENSURE",
+        "CLOSURE_BAG_LOOKUP",
+        "IS_INSTANCE_EXPANDO_CARRIER",
+        "name"
+      ],
+      "calls": [
+        "body.push",
+        "buildBagGopdFallback",
+        "buildBagMarkerTestInstrs",
+        "ctx.funcMap.get",
+        "definedFuncAt",
+        "findInBag",
+        "gopdFn.body.unshift",
+        "instanceCarrierTypeIdxs",
+        "loadBagOrBail",
+        "requireCarrier",
+        "setFn"
+      ]
+    },
+    {
+      "file": "src/codegen/proto-index-store.ts",
+      "name": "protoIndexRecvGetMissInstrs",
+      "kind": "function",
+      "startLine": 324,
+      "endLine": 360,
+      "start": 17377,
+      "end": 18799,
+      "sha256": "bb765393cad388d48f6838c17e16acacf93b0ba607fcdfe77bcaa6fee444658b",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        }
+      ],
+      "ctxPaths": ["ctx.funcMap.get"],
+      "lookups": ["PROTOIDX_BRAND_OFF", "PROTOIDX_GET_K", "PROTOIDX_GET_R"],
+      "calls": ["ctx.funcMap.get"]
+    },
+    {
+      "file": "src/codegen/proto-index-store.ts",
+      "name": "resolveFillDeps",
+      "kind": "function",
+      "startLine": 610,
+      "endLine": 649,
+      "start": 28518,
+      "end": 29921,
+      "sha256": "ec351758d260b19caf8e4e7b6e897657d62aa7b92d9aa76b3cea3b13208c5b1e",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        }
+      ],
+      "ctxPaths": [
+        "ctx.funcMap.get",
+        "ctx.objectRuntimeTypes",
+        "ctx.protoIndexCompanionsArrTypeIdx",
+        "ctx.protoIndexCompanionsGlobalIdx"
+      ],
+      "lookups": [
+        "\"__call_accessor_get\"",
+        "\"__call_accessor_set\"",
+        "\"__new_plain_object\"",
+        "\"__obj_find\"",
+        "\"__unbox_number\"",
+        "\"number_toString\"",
+        "PROTOIDX_COMPANION"
+      ],
+      "calls": ["ctx.funcMap.get"]
+    },
+    {
+      "file": "src/codegen/proto-index-store.ts",
+      "name": "fillGetKBody",
+      "kind": "function",
+      "startLine": 1181,
+      "endLine": 1278,
+      "start": 51241,
+      "end": 55000,
+      "sha256": "6b843bf80a809e85891f746d005e11c2493e650804294da6aad0411113dadb29",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        },
+        {
+          "local": "ValType",
+          "module": "../ir/types.js",
+          "imported": "ValType",
+          "typeOnly": true
+        },
+        {
+          "local": "undefinedExternInstrs",
+          "module": "./any-helpers.js",
+          "imported": "undefinedExternInstrs",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": [],
+      "lookups": [],
+      "calls": [
+        "findFn",
+        "keyIsNotConstructorInstrs",
+        "miss",
+        "parentLevelProbeArms",
+        "probeInto",
+        "undefinedExternInstrs"
+      ]
+    },
+    {
+      "file": "src/codegen/proto-index-store.ts",
+      "name": "fillRecvConsultBodies",
+      "kind": "function",
+      "startLine": 1624,
+      "endLine": 1650,
+      "start": 70067,
+      "end": 71013,
+      "sha256": "8cb766d6007b4c8b2455947edcdaf0947bc179f3135f629963f9b9d9fc042a8d",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        }
+      ],
+      "ctxPaths": ["ctx.funcMap.get"],
+      "lookups": ["PROTOIDX_BRAND_OFF", "PROTOIDX_GET_K", "PROTOIDX_HAS_K"],
+      "calls": ["ctx.funcMap.get", "findFn"]
+    },
+    {
+      "file": "src/codegen/proto-index-store.ts",
+      "name": "spliceNativeProtoDirectReadArms",
+      "kind": "function",
+      "startLine": 1790,
+      "endLine": 1842,
+      "start": 76391,
+      "end": 78575,
+      "sha256": "e9d6f431db899f04fb042f67f62aea628e8e973c5c81cb4d872e7ee1aa7cf813",
+      "imports": [
+        {
+          "local": "BUILTIN_BRAND_BASE",
+          "module": "./builtin-brands.js",
+          "imported": "BUILTIN_BRAND_BASE",
+          "typeOnly": false
+        },
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        }
+      ],
+      "ctxPaths": ["ctx.funcMap.get", "ctx.nativeProtoTypeIdx"],
+      "lookups": ["PROTOIDX_GET_F", "PROTOIDX_HAS_F"],
+      "calls": ["consult", "ctx.funcMap.get", "findFn", "fn.body.splice", "fn.locals.push", "splice"]
+    },
+    {
+      "file": "src/codegen/native-proto-instance-method-read.ts",
+      "name": "unshiftExternGetProtoMethodArm",
+      "kind": "function",
+      "startLine": 106,
+      "endLine": 317,
+      "start": 5037,
+      "end": 13415,
+      "sha256": "feaa6c830754c80aedb3c5b05bb0f92805bcc7d9e56b6b4fb27fe0ca4471195d",
+      "imports": [
+        {
+          "local": "BUILTIN_BRAND_TABLE",
+          "module": "./builtin-brands.js",
+          "imported": "BUILTIN_BRAND_TABLE",
+          "typeOnly": false
+        },
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        },
+        {
+          "local": "ValType",
+          "module": "../ir/types.js",
+          "imported": "ValType",
+          "typeOnly": true
+        },
+        {
+          "local": "ensureStandaloneNativeMethodClosure",
+          "module": "./native-proto.js",
+          "imported": "ensureStandaloneNativeMethodClosure",
+          "typeOnly": false
+        },
+        {
+          "local": "nativeStringLiteralInstrs",
+          "module": "./native-strings.js",
+          "imported": "nativeStringLiteralInstrs",
+          "typeOnly": false
+        },
+        {
+          "local": "pushBuiltinFnSingletonValueInstrs",
+          "module": "./builtin-fn-meta.js",
+          "imported": "pushBuiltinFnSingletonValueInstrs",
+          "typeOnly": false
+        },
+        {
+          "local": "seededNativeProtoOwnMembersByBrand",
+          "module": "./native-proto.js",
+          "imported": "seededNativeProtoOwnMembersByBrand",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": [
+        "ctx.anyStrTypeIdx",
+        "ctx.funcMap.get",
+        "ctx.mod.functions.find",
+        "ctx.nativeBoxBooleanTypeIdx",
+        "ctx.nativeBoxNumberTypeIdx",
+        "ctx.nativeProtoTypeIdx",
+        "ctx.nativeStrHelpers.get",
+        "ctx.nativeStrTypeIdx",
+        "ctx.objectRuntimeTypes",
+        "ctx.standalone"
+      ],
+      "lookups": ["\"__obj_find\"", "\"__protoidx_get_r\"", "\"__str_equals\"", "\"__str_flatten\""],
+      "calls": [
+        "(seededByBrand.get(brand) ?? []).filter",
+        "[...brands].sort",
+        "[...members].sort",
+        "byBrand.get",
+        "byBrand.keys",
+        "ctx.funcMap.get",
+        "ctx.mod.functions.find",
+        "ctx.nativeStrHelpers.get",
+        "ensureStandaloneNativeMethodClosure",
+        "fn.body.unshift",
+        "fn.locals.push",
+        "memberLadder",
+        "members.add",
+        "mintedMethodsByBrand",
+        "nativeStringLiteralInstrs",
+        "out.push",
+        "protoArms.push",
+        "pushBuiltinFnSingletonValueInstrs",
+        "seededByBrand.get",
+        "seededByBrand.keys",
+        "seededMembers.has",
+        "seededNativeProtoOwnMembersByBrand",
+        "slotValue",
+        "wrapperClassify.push"
+      ]
+    },
+    {
+      "file": "src/codegen/object-runtime-proxy.ts",
+      "name": "ensureProxyRuntime",
+      "kind": "function",
+      "startLine": 70,
+      "endLine": 2475,
+      "start": 4378,
+      "end": 113456,
+      "sha256": "7a24a0b53325720df8adae4f952290e82c1fda62ac047d34527879b836370996",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        },
+        {
+          "local": "ObjectRuntimeTypes",
+          "module": "./object-runtime.js",
+          "imported": "ObjectRuntimeTypes",
+          "typeOnly": true
+        },
+        {
+          "local": "ValType",
+          "module": "../ir/types.js",
+          "imported": "ValType",
+          "typeOnly": true
+        },
+        {
+          "local": "addFuncType",
+          "module": "./registry/types.js",
+          "imported": "addFuncType",
+          "typeOnly": false
+        },
+        {
+          "local": "addStringConstantGlobal",
+          "module": "./registry/imports.js",
+          "imported": "addStringConstantGlobal",
+          "typeOnly": false
+        },
+        {
+          "local": "addUnionImportsViaRegistry",
+          "module": "./shared.js",
+          "imported": "addUnionImportsViaRegistry",
+          "typeOnly": false
+        },
+        {
+          "local": "emitWasiErrorConstructor",
+          "module": "./registry/error-types.js",
+          "imported": "emitWasiErrorConstructor",
+          "typeOnly": false
+        },
+        {
+          "local": "ensureExnTag",
+          "module": "./registry/imports.js",
+          "imported": "ensureExnTag",
+          "typeOnly": false
+        },
+        {
+          "local": "ensureExternStrictEqHelper",
+          "module": "./any-helpers.js",
+          "imported": "ensureExternStrictEqHelper",
+          "typeOnly": false
+        },
+        {
+          "local": "ensureReflectIsConstructor",
+          "module": "./reflect-construct-native.js",
+          "imported": "ensureReflectIsConstructor",
+          "typeOnly": false
+        },
+        {
+          "local": "inheritedSetAnyDirty",
+          "module": "./inherited-set-gate.js",
+          "imported": "inheritedSetAnyDirty",
+          "typeOnly": false
+        },
+        {
+          "local": "mintDefinedFunc",
+          "module": "./func-space.js",
+          "imported": "mintDefinedFunc",
+          "typeOnly": false
+        },
+        {
+          "local": "pushDefinedFunc",
+          "module": "./func-space.js",
+          "imported": "pushDefinedFunc",
+          "typeOnly": false
+        },
+        {
+          "local": "registerProxyInvariantValidators",
+          "module": "./object-runtime-proxy-invariants.js",
+          "imported": "registerProxyInvariantValidators",
+          "typeOnly": false
+        },
+        {
+          "local": "reserveApplyClosure",
+          "module": "./object-runtime.js",
+          "imported": "reserveApplyClosure",
+          "typeOnly": false
+        },
+        {
+          "local": "stringConstantExternrefInstrs",
+          "module": "./native-strings.js",
+          "imported": "stringConstantExternrefInstrs",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": [
+        "ctx.externSetResultGlobalIdx",
+        "ctx.funcMap.get",
+        "ctx.funcMap.has",
+        "ctx.funcMap.set",
+        "ctx.mod.functions.find",
+        "ctx.mod.functions.find((f) => f.name === name)?.body",
+        "ctx.mod.types.length",
+        "ctx.mod.types.push",
+        "ctx.proxyDispatchReserved",
+        "ctx.standalone",
+        "ctx.structFields.set",
+        "ctx.structMap.get",
+        "ctx.structMap.set",
+        "ctx.symbolTypeIdx",
+        "ctx.typeIdxToStructName.set"
+      ],
+      "lookups": [
+        "\"__boundary_object_callable_kind\"",
+        "\"__box_boolean\"",
+        "\"__extern_get\"",
+        "\"__extern_get_idx\"",
+        "\"__extern_is_undefined\"",
+        "\"__extern_length\"",
+        "\"__extern_set\"",
+        "\"__getPrototypeOf\"",
+        "\"__host_eq\"",
+        "\"__is_truthy\"",
+        "\"__new_TypeError\"",
+        "\"__new_plain_object\"",
+        "\"__nullish_to_null\"",
+        "\"__obj_define_from_desc\"",
+        "\"__object_isExtensible\"",
+        "\"__objvec_new\"",
+        "\"__objvec_push\"",
+        "\"__proxy_apply_dispatch\"",
+        "\"__proxy_create\"",
+        "\"__proxy_define_dispatch\"",
+        "\"__proxy_delete_dispatch\"",
+        "\"__proxy_get_dispatch\"",
+        "\"__proxy_gopd_dispatch\"",
+        "\"__proxy_gpo_dispatch\"",
+        "\"__proxy_has_dispatch\"",
+        "\"__proxy_isext_dispatch\"",
+        "\"__proxy_ownkeys_keys_dispatch\"",
+        "\"__proxy_ownkeys_names_dispatch\"",
+        "\"__proxy_prevext_dispatch\"",
+        "\"__proxy_set_dispatch\"",
+        "\"__proxy_set_receiver_dispatch\"",
+        "\"__proxy_spo_dispatch\"",
+        "\"__reflect_get_receiver\"",
+        "\"__reflect_set_receiver\"",
+        "\"__typeof_bigint\"",
+        "\"__typeof_boolean\"",
+        "\"__typeof_function\"",
+        "\"__typeof_number\"",
+        "\"__typeof_object\"",
+        "\"__typeof_string\"",
+        "\"__typeof_symbol\"",
+        "\"__typeof_undefined\"",
+        "forwardName",
+        "name"
+      ],
+      "calls": [
+        "[\"__typeof_number\", \"__typeof_boolean\", \"__typeof_string\", \"__typeof_bigint\"]\n      .map",
+        "addFuncType",
+        "addStringConstantGlobal",
+        "addUnionImportsViaRegistry",
+        "appendPrimitiveTest",
+        "argAt",
+        "buildDefineDispatch",
+        "buildDispatch",
+        "buildExt1Dispatch",
+        "buildOwnKeysDispatch",
+        "buildProtoDispatch",
+        "callSetDispatch",
+        "callableTest",
+        "ctx.funcMap.get",
+        "ctx.funcMap.has",
+        "ctx.funcMap.set",
+        "ctx.mod.functions.find",
+        "ctx.mod.types.push",
+        "ctx.structFields.set",
+        "ctx.structMap.get",
+        "ctx.structMap.set",
+        "ctx.typeIdxToStructName.set",
+        "deleteBody.unshift",
+        "dispatchLocals",
+        "emitWasiErrorConstructor",
+        "ensureExnTag",
+        "ensureExternStrictEqHelper",
+        "ensureReflectIsConstructor",
+        "extras.map",
+        "findBody",
+        "getBody.unshift",
+        "gopdBody.unshift",
+        "gpoBody.unshift",
+        "hasBody.unshift",
+        "inheritedSetAnyDirty",
+        "isextBody.unshift",
+        "isextObjBody.unshift",
+        "methodCallFn.body.unshift",
+        "methodCallFn.locals.push",
+        "mintDefinedFunc",
+        "nameIs",
+        "noSetTrap",
+        "objDefineBody.unshift",
+        "objectKeysBody.unshift",
+        "objectTest",
+        "ownKeysDispatchLocals",
+        "ownNamesBody.unshift",
+        "prevextBody.unshift",
+        "primitiveTest.push",
+        "pushDefinedFunc",
+        "readTrap",
+        "readTrapRaw",
+        "reflectGetReceiverBody.unshift",
+        "reflectSetBody.unshift",
+        "registerNative",
+        "registerProxyInvariantValidators",
+        "requireObject",
+        "reserveApplyClosure",
+        "reserveDriver",
+        "setBody.unshift",
+        "spoBody.unshift",
+        "stringConstantExternrefInstrs",
+        "targetOf",
+        "throwGetTrapNotCallable",
+        "throwInvariant",
+        "throwNotListObject",
+        "throwNotObject",
+        "throwRevoked",
+        "throwTypeError",
+        "trapArm.push",
+        "trapCallableGuard",
+        "validateTrapResult"
+      ]
+    },
+    {
+      "file": "src/codegen/object-runtime-proxy.ts",
+      "name": "fillProxyDispatch",
+      "kind": "function",
+      "startLine": 2496,
+      "endLine": 2559,
+      "start": 114552,
+      "end": 118151,
+      "sha256": "81a7efcd8f51552df9cba28bfed26638800927c63293992e227c0b42cebfa3af",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        },
+        {
+          "local": "ValType",
+          "module": "../ir/types.js",
+          "imported": "ValType",
+          "typeOnly": true
+        },
+        {
+          "local": "definedFuncAt",
+          "module": "./func-space.js",
+          "imported": "definedFuncAt",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": ["ctx.funcMap.get", "ctx.proxyDispatchReserved"],
+      "lookups": ["\"__apply_closure\"", "\"__objvec_new\"", "\"__objvec_push\"", "name"],
+      "calls": ["body.push", "ctx.funcMap.get", "definedFuncAt", "fill"]
+    },
+    {
+      "file": "src/codegen/statements/nested-declarations.ts",
+      "name": "ensureArgcGlobal",
+      "kind": "function",
+      "startLine": 3709,
+      "endLine": 3720,
+      "start": 183291,
+      "end": 183652,
+      "sha256": "a721d2a404748a97eee3612d01da7e342a976c023b26dc0bc3744b8b918d08ac",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "../context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "nextModuleGlobalIdx",
+          "module": "../registry/imports.js",
+          "imported": "nextModuleGlobalIdx",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": ["ctx.argcGlobalIdx", "ctx.mod.globals.push"],
+      "lookups": [],
+      "calls": ["ctx.mod.globals.push", "nextModuleGlobalIdx"]
+    },
+    {
+      "file": "src/codegen/object-runtime-template-raw.ts",
+      "name": "buildTemplateRawGetArm",
+      "kind": "function",
+      "startLine": 14,
+      "endLine": 58,
+      "start": 586,
+      "end": 1996,
+      "sha256": "24da1a4bbb61e1e78a597f1d41ae58c3ca39d103e9b07b289d385d6a84779ff0",
+      "imports": [
+        {
+          "local": "CodegenContext",
+          "module": "./context/types.js",
+          "imported": "CodegenContext",
+          "typeOnly": true
+        },
+        {
+          "local": "Instr",
+          "module": "../ir/types.js",
+          "imported": "Instr",
+          "typeOnly": true
+        },
+        {
+          "local": "nativeStringLiteralInstrs",
+          "module": "./native-strings.js",
+          "imported": "nativeStringLiteralInstrs",
+          "typeOnly": false
+        }
+      ],
+      "ctxPaths": ["ctx.anyStrTypeIdx"],
+      "lookups": [],
+      "calls": ["nativeStringLiteralInstrs"]
+    }
+  ],
+  "errors": [],
+  "sourcePin": {
+    "specHead": "428e5b4b2e7645593681a998df42f5d769c53300",
+    "headAtReceipt": "9ccad45c62a29d3e314448f80da1e5a70e92e8a9",
+    "workingTreeSource": true
+  },
+  "additionalEvidenceFiles": [
+    {
+      "file": "plan/agent-context/3518-native-async-consumer-implementation-spec-2026-09-09.md",
+      "sha256": "71c0302fd7b3d52999e873a85d23b1b70ed4f4a2fc9ab5e5fb0f4f4d0f397e35"
+    },
+    {
+      "file": "src/codegen/async-scheduler.ts",
+      "sha256": "81d99ad21d51faee6105bb38f45588a3bddb0db1304932e3ab255eb04e84ae0c"
+    },
+    {
+      "file": "src/codegen/ir-async-frame.ts",
+      "sha256": "172e49b9db020793f7eb66d290eef34871b2b702256f31f7d061c737ddd67f67"
+    },
+    {
+      "file": "src/codegen/async-frame.ts",
+      "sha256": "a1a8356e4851d90d51e34c31b69049ac1f8ece992885774eb41a10ebce1bc2df"
+    },
+    {
+      "file": "src/codegen/registry/error-types.ts",
+      "sha256": "7eba69f6c2e29e27991c689f3871b78a640e9e440680ac6862d831203d82a5a9"
+    },
+    {
+      "file": "src/codegen/error-props.ts",
+      "sha256": "76e446f9733bc522e882449d6ae431249e4c7225541f030306bd633555d9e244"
+    },
+    {
+      "file": "src/codegen/function-instance-props.ts",
+      "sha256": "070bf13a20c75017a4ee399014ba52d16a60c9370f655d53a5a6b7e4cfd1641a"
+    },
+    {
+      "file": "src/codegen/ta-ctor-meta.ts",
+      "sha256": "3eb0ff6ee86fb5b6dee66d8b55397aad8a11e7d265b30120e47fcc57fdaf5a83"
+    },
+    {
+      "file": "src/codegen/ta-dyn-mop.ts",
+      "sha256": "4f6afe1ed961e274cd65595429df419705f3a696729dd0963b323e7773eeef08"
+    },
+    {
+      "file": "src/codegen/runtime-eval-callable.ts",
+      "sha256": "c350729ab8010177d5e2e4ddc64b55dbe88705a174f34892f096c57e6338219f"
+    },
+    {
+      "file": "src/codegen/runtime-eval-intrinsic-own-props.ts",
+      "sha256": "8c38c351b737bb26522ce501b02c8ee9ce6612363c70213e4e9f9e4db59d0068"
+    },
+    {
+      "file": "src/codegen/proxy-revoker-meta.ts",
+      "sha256": "382189df259aea8dce32e614eddffe8d829cfde84272c0a9485bdb30db13cf85"
+    },
+    {
+      "file": "src/codegen/walk-instructions.ts",
+      "sha256": "23e275b2272f71207ec00b36b1d594bc094c7900a0ee9991f56957582302c36b"
+    },
+    {
+      "file": "src/codegen/any-helpers.ts",
+      "sha256": "981942ff696e76cc08ebaddb61a513751110d065f36202bb638b73b5beecdeb1"
+    },
+    {
+      "file": "src/codegen/native-proto.ts",
+      "sha256": "cb47bc7aeeb68754c99cada9aec0173a33b29af73eb3f1646815ec32d7c53100"
+    },
+    {
+      "file": "src/codegen/instance-tombstones.ts",
+      "sha256": "d8aeaee300047ec423e10f392006a946ae8fffbf0e29262ececccba9c3a6190e"
+    },
+    {
+      "file": "src/codegen/fnctor-presence-bits.ts",
+      "sha256": "f1a6f3f61b7795b6efb6e1be4fed0b0a4dac544a9161abf652ea124fad47d2f5"
+    },
+    {
+      "file": "src/codegen/fnctor-cold-tail.ts",
+      "sha256": "465f4d57b8e29b794b1ece2485e3f4b41f7a15482364fac53798eb69d3ed9b5e"
+    },
+    {
+      "file": "src/codegen/fnctor-layout-emit.ts",
+      "sha256": "e55195dddd6b37fcebe1a1d7de690e832743a2dd0ef99bfa5b67a78e4669899b"
+    },
+    {
+      "file": "src/backend/wasmgc/resources/native-values.ts",
+      "sha256": "42d40b32b9d23f4aed3b952d41448cc82734656a21eb03b1549e55c19e7f959b"
+    },
+    {
+      "file": "src/backend/wasmgc/resources/native-vectors.ts",
+      "sha256": "704a73caf0352f0b2166f5c3042b933d8395db1e1f5870dff1dd331bf17b4eb8"
+    },
+    {
+      "file": "src/backend/wasmgc/resources/native-errors.ts",
+      "sha256": "1e16370cd039ee5e3afc9399606b438485874aab20a6c7554aec52fba1bae36f"
+    },
+    {
+      "file": "src/backend/wasmgc/resources/native-string-literals.ts",
+      "sha256": "6067cc2b5ac5bf3a6cf67601186976542bd16b6d85bde6eb5a5d84f85fc33462"
+    },
+    {
+      "file": "src/runtime/wasmgc/values/string-layouts.ts",
+      "sha256": "e1a199c4bac76eedef4f8bdd9b066f9fdf60159c4481a7fa137b723a8acdad05"
+    },
+    {
+      "file": "src/runtime/wasmgc/promise/delay-bodies.ts",
+      "sha256": "c6957917c6b9eabb4147bf75ee55eae003693906a12cab12f9213f2f484243ed"
+    },
+    {
+      "file": "src/runtime/wasmgc/promise/combinator-bodies.ts",
+      "sha256": "f07897f9a5e4f9febf2ce003c0827753a5aa1c74a890093e61d876eebd5c0f2a"
+    }
+  ],
+  "absenceObserved": [
+    "src/backend/wasmgc/resources/native-closures.ts",
+    "src/backend/wasmgc/resources/native-argument-vectors.ts"
+  ],
+  "observations": {
+    "selectedRuntimeRegistrationScopes": 9,
+    "selectedLocalBuilderDeclarations": 3,
+    "selectedNamedFunctions": 37,
+    "selectedFiles": 17,
+    "sourceHashDriftFromInitialRead": [],
+    "executionTestsRun": 0,
+    "closureCertified": false,
+    "finalCarrierPopulationCount": null
+  }
+}

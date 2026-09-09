@@ -13,6 +13,10 @@ import { planNativePromiseResources } from "../src/ir/program-physical-plan.js";
 import { deriveNativeVectorResourcePlan } from "../src/ir/program/native-vector-resources.js";
 import { reserveNativeVectorTypes } from "../src/backend/wasmgc/resources/native-vectors.js";
 import {
+  reserveNativeClosureResources,
+  type NativeClosureRequirements,
+} from "../src/backend/wasmgc/resources/native-closures.js";
+import {
   reserveNativePromiseResources,
   fillNativePromiseResources,
   type NativePromiseFillDependencies,
@@ -74,7 +78,13 @@ let cached: ReturnType<typeof prepare> | undefined;
 const actual = () => (cached ??= prepare());
 
 /** Type-only kernel harness. No fabricated native value/classifier/function dependency. */
-function reserve() {
+function closureRequests(): NativeClosureRequirements["requests"] {
+  return [
+    { kind: "signature", id: "settle", params: [{ kind: "externref" }], results: [], allocationMode: "ordinary" },
+    { kind: "metadata", id: "settle-meta", signatureId: "settle", key: "promise:settle", name: "", length: 1 },
+  ];
+}
+function prerequisites(requests = closureRequests(), settleMetadataRequestId = "settle-meta") {
   const { plan, vectorPlan } = actual();
   const module = createEmptyModule(),
     tx = new PhysicalModuleReservations(module);
@@ -84,30 +94,62 @@ function reserve() {
     { kind: "defined", name: "__exn" },
   );
   const vectors = reserveNativeVectorTypes(tx, vectorPlan);
-  const fields = [
-    { name: "func", type: { kind: "funcref" } as const, mutable: false },
-    { name: "$arity", type: { kind: "i32" } as const, mutable: false },
-    { name: "$bag", type: { kind: "externref" } as const, mutable: true },
-  ];
-  const closureRoot = tx.reserveType("kernel:closure-root", {
-    kind: "struct",
-    name: "kernel-root",
-    superTypeIdx: -1,
-    fields,
-  });
-  const settleMetadata = tx.reserveType("kernel:metadata", {
-    kind: "struct",
-    name: "kernel-metadata",
-    superTypeIdx: closureRoot.typeIndex,
-    fields: [
-      ...fields,
-      { name: "bfnstate", type: { kind: "i32" }, mutable: true },
-      { name: "bfnid", type: { kind: "i32" }, mutable: false },
-    ],
-  });
-  const dependencies = { vectors, exceptionTag: tag, closureRoot, settleMetadata };
-  const pack = reserveNativePromiseResources(tx, plan, dependencies);
-  return { module, tx, pack, dependencies, plan };
+  const closureRequirements: NativeClosureRequirements = {
+    key: "kernel:closures",
+    startingClosureCounter: 0,
+    requests,
+    referenceTypes: [],
+  };
+  const closures = reserveNativeClosureResources(tx, closureRequirements);
+  const dependencies = { vectors, exceptionTag: tag, closures, settleMetadataRequestId };
+  return { module, tx, dependencies, plan, closureRequirements };
+}
+function reserve(requests = closureRequests(), settleMetadataRequestId = "settle-meta") {
+  const input = prerequisites(requests, settleMetadataRequestId);
+  const pack = reserveNativePromiseResources(input.tx, input.plan, input.dependencies);
+  return { ...input, pack };
+}
+
+/** Preserve undefined, sparse arrays, maps and numeric values as well as every object identity. */
+function unchangedModule(module: ReturnType<typeof createEmptyModule>) {
+  const snapshot = structuredClone(module);
+  const checks: (() => void)[] = [];
+  const seen = new Set<object>();
+  function retain(value: unknown) {
+    if (value === null || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+    for (const key of Reflect.ownKeys(value)) {
+      const member = Reflect.get(value, key);
+      checks.push(() => expect(Reflect.get(value, key)).toBe(member));
+      retain(member);
+    }
+    if (value instanceof Map) {
+      const entries = [...value];
+      checks.push(() => {
+        const current = [...value];
+        expect(current).toHaveLength(entries.length);
+        entries.forEach(([key, member], i) => {
+          expect(current[i]![0]).toBe(key);
+          expect(current[i]![1]).toBe(member);
+        });
+      });
+      entries.forEach(([key, member]) => {
+        retain(key);
+        retain(member);
+      });
+    }
+  }
+  retain(module);
+  return () => {
+    expect(module).toStrictEqual(snapshot);
+    checks.forEach((check) => check());
+  };
+}
+
+function futureReservationProbe(tx: PhysicalModuleReservations) {
+  const type = tx.reserveType("join:future-type", { kind: "struct", name: "join-future", fields: [] });
+  const fn = tx.reserveFunction("join:future-function", "join-future", { params: [], results: [] });
+  return { typeIndex: type.typeIndex, handle: fn.handle, functionTypeIndex: fn.object.typeIdx };
 }
 
 describe("native Promise resource requirements, not whole-family materialization", () => {
@@ -238,6 +280,128 @@ describe("native Promise resource requirements, not whole-family materialization
 });
 
 describe("reservation-only Promise pack controls; missing native dependencies remain a gap", () => {
+  it("joins genuine metadata while preserving an alternate first-signature root", () => {
+    const a = reserve();
+    expect(a.dependencies.closures.root).toBe(a.dependencies.closures.signatures[0]!.binding.type);
+    const b = reserve([
+      {
+        kind: "signature",
+        id: "numeric",
+        params: [{ kind: "f64" }],
+        results: [{ kind: "f64" }],
+        allocationMode: "ordinary",
+      },
+      ...closureRequests(),
+    ]);
+    const { closures } = b.dependencies;
+    const producer = closures.metadata[0]!.binding.type.object;
+    const capture = b.pack.types.settleCapture.object;
+    if (producer.kind !== "struct" || capture.kind !== "struct") throw new Error("expected genuine struct types");
+    expect(producer.fields).toHaveLength(5);
+    expect(capture.fields.slice(0, 5)).toStrictEqual(producer.fields);
+    producer.fields.forEach((field, index) => {
+      expect(capture.fields[index]).not.toBe(field);
+      expect(capture.fields[index]!.type).toBe(field.type);
+    });
+    expect(closures.root).toBe(closures.signatures[0]!.binding.type);
+    expect(closures.metadata[0]!.binding.signature.type).not.toBe(closures.root);
+    expect(b.pack.types.settleCapture.object).toMatchObject({
+      superTypeIdx: closures.metadata[0]!.binding.type.typeIndex,
+      fields: [
+        ...(closures.metadata[0]!.binding.type.object as { fields: unknown[] }).fields,
+        { name: "cap_promise", type: { kind: "ref", typeIdx: b.pack.types.promise.typeIndex }, mutable: false },
+      ],
+    });
+    expect(b.module.types[b.pack.functions.resolveClosure.object.typeIdx]).toMatchObject({
+      params: [{ kind: "ref", typeIdx: closures.root.typeIndex }, { kind: "externref" }],
+      results: [],
+    });
+  });
+  it("accepts repeated metadata requests selecting the same cached binding and copies the request ID", () => {
+    const a = reserve();
+    expect(a.dependencies.closures.metadata).toHaveLength(1);
+    const b = reserve(
+      [
+        ...closureRequests(),
+        { kind: "metadata", id: "again", signatureId: "settle", key: "promise:settle", name: "", length: 1 },
+      ],
+      "again",
+    );
+    const rows = b.dependencies.closures.metadata;
+    expect(rows[0]!.binding).toBe(rows[1]!.binding);
+    b.dependencies.settleMetadataRequestId = "not-the-retained-id";
+    b.tx.freezeReservations();
+    expect(() => fillNativePromiseResources(b.tx, b.pack, undefined!)).toThrow(
+      "complete native dependencies are missing",
+    );
+  });
+  it("accepts undefined and lowered lazy arity without equating metadata snapshots", () => {
+    const a = reserve();
+    expect(a.dependencies.closures.metadata[0]!.binding.info.minimumArgumentCount).toBeUndefined();
+    const requests = closureRequests().map((request) =>
+      request.kind === "signature" ? { ...request, minimumArgumentCount: 1 } : request,
+    );
+    const b = reserve([
+      ...requests,
+      {
+        kind: "signature",
+        id: "later",
+        params: [{ kind: "externref" }],
+        results: [],
+        allocationMode: "ordinary",
+        minimumArgumentCount: 0,
+      },
+    ]);
+    expect(b.dependencies.closures.signatures[0]!.binding.info.minimumArgumentCount).toBe(0);
+    expect(b.dependencies.closures.metadata[0]!.binding.info.minimumArgumentCount).toBe(1);
+  });
+  for (const mutation of ["copied", "foreign", "stale", "missing-request", "wrong-request"] as const)
+    it(`rejects ${mutation} closure selection before allocating any Promise resources`, () => {
+      const positive = reserve();
+      expect(Object.keys(positive.pack.functions)).toHaveLength(14);
+      const requests: NativeClosureRequirements["requests"] = [
+        ...closureRequests(),
+        { kind: "metadata", id: "other", signatureId: "settle", key: "other", name: "other", length: 1 },
+      ];
+      const input = prerequisites(requests);
+      const control = prerequisites(structuredClone(requests));
+      const { tx, module, dependencies, plan, closureRequirements } = input;
+      if (mutation === "copied") dependencies.closures = { ...dependencies.closures };
+      if (mutation === "foreign") dependencies.closures = prerequisites().dependencies.closures;
+      if (mutation === "stale") (closureRequirements as { startingClosureCounter: number }).startingClosureCounter++;
+      if (mutation === "missing-request") dependencies.settleMetadataRequestId = "absent";
+      if (mutation === "wrong-request") dependencies.settleMetadataRequestId = "other";
+      const assertUnchanged = unchangedModule(module);
+      const error =
+        mutation === "copied" || mutation === "foreign"
+          ? "foreign or copied closure pack"
+          : mutation === "stale"
+            ? "stale closure request sequence"
+            : mutation === "missing-request"
+              ? "missing or ambiguous settle metadata request"
+              : "invalid settle metadata";
+      expect(() => reserveNativePromiseResources(tx, plan, dependencies)).toThrow(error);
+      assertUnchanged();
+      expect(tx.state).toBe("reserving");
+      // A pristine twin exposes consumed allocator ordinals even if an implementation
+      // restored the visible arrays before rejecting the bad dependency.
+      expect(futureReservationProbe(tx)).toStrictEqual(futureReservationProbe(control.tx));
+      expect(module.funcOrdinalToPosition).toStrictEqual(control.module.funcOrdinalToPosition);
+    });
+  it("reauthenticates the retained producer before the genuine missing-dependency fill frontier", () => {
+    const input = reserve();
+    input.tx.freezeReservations();
+    expect(() => fillNativePromiseResources(input.tx, input.pack, undefined!)).toThrow(
+      "complete native dependencies are missing",
+    );
+    const assertUnchanged = unchangedModule(input.module);
+    (input.closureRequirements as { startingClosureCounter: number }).startingClosureCounter++;
+    expect(() => fillNativePromiseResources(input.tx, input.pack, undefined!)).toThrow(
+      "stale closure request sequence",
+    );
+    assertUnchanged();
+    expect(input.tx.state).toBe("filling");
+  });
   it("reuses the exact vector array and preserves queue order and lazy storage obligations", () => {
     const { module, pack, dependencies, tx } = reserve();
     expect(pack.types.arguments).toBe(dependencies.vectors.layouts.find((row) => row.element === "externref")!.array);
