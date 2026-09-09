@@ -142,6 +142,22 @@ const nativeValueGroups = {
   "native-runtime": [...stringErrorGroups["native-runtime"], ...nativeValueAdditions.slice(1, 3)],
   "backend-wasmgc": [...stringErrorGroups["backend-wasmgc"], nativeValueAdditions[3]!],
 };
+const scannerAdditions = [
+  "src/wasm/model/instruction-walk.ts",
+  "src/runtime/wasmgc/values/string-number-grammar.ts",
+  "src/runtime/wasmgc/values/decimal-scale-bodies.ts",
+  "src/runtime/wasmgc/values/string-number-bodies.ts",
+  "src/runtime/wasmgc/values/string-flatten-bodies.ts",
+  "src/runtime/wasmgc/values/string-utf8-decode-bodies.ts",
+  "src/backend/wasmgc/resources/native-string-number.ts",
+  "src/backend/wasmgc/resources/native-string-flatten.ts",
+];
+const scannerGroups = {
+  ...nativeValueGroups,
+  "wasm-model": [...nativeValueGroups["wasm-model"], scannerAdditions[0]!],
+  "native-runtime": [...nativeValueGroups["native-runtime"], ...scannerAdditions.slice(1, 6)],
+  "backend-wasmgc": [...nativeValueGroups["backend-wasmgc"], ...scannerAdditions.slice(6)],
+};
 const argumentVectorAdditions = [
   "src/runtime/wasmgc/values/argument-vector-bodies.ts",
   "src/backend/wasmgc/resources/native-argument-vectors.ts",
@@ -155,10 +171,15 @@ const closureAdditions = [
   "src/runtime/wasmgc/values/closure-layouts.ts",
   "src/backend/wasmgc/resources/native-closures.ts",
 ];
-const groups = {
+const closureGroups = {
   ...argumentVectorGroups,
   "native-runtime": [...argumentVectorGroups["native-runtime"], closureAdditions[0]!],
   "backend-wasmgc": [...argumentVectorGroups["backend-wasmgc"], closureAdditions[1]!],
+};
+const groups = {
+  ...scannerGroups,
+  "native-runtime": [...scannerGroups["native-runtime"], argumentVectorAdditions[0]!, closureAdditions[0]!],
+  "backend-wasmgc": [...scannerGroups["backend-wasmgc"], argumentVectorAdditions[1]!, closureAdditions[1]!],
 };
 const required = Object.values(groups).flat();
 const callableAdditions = ["src/ir/core/async-callables.ts", "src/ir/runtime/native-async-callables.ts"];
@@ -196,11 +217,27 @@ const additions = [
 const policy = () => JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 function assertNewActivations(history: unknown[]) {
-  expect(history.slice(0, 2)).toEqual(
-    (["native-runtime", "backend-wasmgc"] as const).map((layer) => ({
+  expect(history.slice(0, 3)).toEqual(
+    (["wasm-model", "native-runtime", "backend-wasmgc"] as const).map((layer) => ({
       layer,
       entries: groups[layer],
       minModules: groups[layer].length,
+    })),
+  );
+  history = history.slice(3);
+  expect(history.slice(0, 3)).toEqual(
+    (["wasm-model", "native-runtime", "backend-wasmgc"] as const).map((layer) => ({
+      layer,
+      entries: scannerGroups[layer],
+      minModules: scannerGroups[layer].length,
+    })),
+  );
+  history = history.slice(3);
+  expect(history.slice(0, 2)).toEqual(
+    (["native-runtime", "backend-wasmgc"] as const).map((layer) => ({
+      layer,
+      entries: closureGroups[layer],
+      minModules: closureGroups[layer].length,
     })),
   );
   history = history.slice(2);
@@ -386,8 +423,8 @@ function fixture() {
 
 describe("semantic verification and provider ownership boundary", () => {
   it("pins the original 70 modules plus seven Promise/vector and five string/error owners without relaxing historical policy", () => {
-    expect(required).toHaveLength(90);
-    expect(new Set(required).size).toBe(90);
+    expect(required).toHaveLength(98);
+    expect(new Set(required).size).toBe(98);
     expect(callableAdditions).toHaveLength(2);
     expect(vectorAdditions).toHaveLength(2);
     expect(typeLayoutAdditions).toHaveLength(1);
@@ -411,6 +448,7 @@ describe("semantic verification and provider ownership boundary", () => {
             ...promiseResourceAdditions,
             ...stringErrorAdditions,
             ...nativeValueAdditions,
+            ...scannerAdditions,
             ...argumentVectorAdditions,
             ...closureAdditions,
           ].includes(path),
@@ -432,19 +470,20 @@ describe("semantic verification and provider ownership boundary", () => {
       ...promiseResourceAdditions,
       ...stringErrorAdditions,
       ...nativeValueAdditions,
+      ...scannerAdditions,
       ...argumentVectorAdditions,
       ...closureAdditions,
     ])
       expect(required).toContain(path);
     const p = policy();
     assertNewActivations(p.activationHistory);
-    expect(p.activationHistory).toHaveLength(47);
-    expect(digest(p.activationHistory.slice(23))).toBe(
+    expect(p.activationHistory).toHaveLength(53);
+    expect(digest(p.activationHistory.slice(29))).toBe(
       "3437a59aacf39df9dffcafa8099ac9f47c0f43a7a0ecc423df4c1fe3e638f002",
     );
     expect(digest(p.allowedEdges)).toBe("efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7");
     // Exact full activation history at b4c116639a, not a selected subset.
-    expect(digest(p.activationHistory.slice(29))).toBe(
+    expect(digest(p.activationHistory.slice(35))).toBe(
       "a6d07b900b0837832707ce083202ab6ffa40f0bbe6bfce25f3062270882b26da",
     );
     for (const [id, entries] of Object.entries(groups)) {
@@ -461,12 +500,12 @@ describe("semantic verification and provider ownership boundary", () => {
   it("loads the complete actual canonical type-and-value closure", () => {
     const r = fixture().run();
     expect(r.status, JSON.stringify(r.report.errors)).toBe(0);
-    expect(r.report.counts.total).toBe(90);
+    expect(r.report.counts.total).toBe(98);
     expect(r.report.errors).toEqual([]);
     for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
       expect(r.report[field]).toEqual([]);
-    expect(r.report.resolvedEdgeCount).toBe(325);
-    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 210, runtime: 115 });
+    expect(r.report.resolvedEdgeCount).toBe(349);
+    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 224, runtime: 125 });
   });
 
   it.each(["delete", "reorder", "layer", "entries", "minimum"] as const)(
@@ -499,6 +538,7 @@ describe("semantic verification and provider ownership boundary", () => {
     ...promiseResourceAdditions,
     ...stringErrorAdditions,
     ...nativeValueAdditions,
+    ...scannerAdditions,
     ...argumentVectorAdditions,
     ...closureAdditions,
   ])("rejects deleting %s and its classification", (path) => {
@@ -526,6 +566,7 @@ describe("semantic verification and provider ownership boundary", () => {
     ...promiseResourceAdditions,
     ...stringErrorAdditions,
     ...nativeValueAdditions,
+    ...scannerAdditions,
     ...argumentVectorAdditions,
     ...closureAdditions,
   ])("rejects an aliased frontend type dependency from %s", (path) => {
@@ -558,6 +599,7 @@ describe("semantic verification and provider ownership boundary", () => {
       ...promiseResourceAdditions,
       ...stringErrorAdditions,
       ...nativeValueAdditions,
+      ...scannerAdditions,
       ...argumentVectorAdditions,
       ...closureAdditions,
     ])(`reports ${field} from %s instead of treating it as closed`, (path) => {

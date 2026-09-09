@@ -34,8 +34,12 @@
       "status": "active",
       "roots": ["src/wasm/model"],
       "required": true,
-      "entries": ["src/wasm/model/instructions.ts", "src/wasm/model/module-records.ts"],
-      "minModules": 2
+      "entries": [
+        "src/wasm/model/instructions.ts",
+        "src/wasm/model/module-records.ts",
+        "src/wasm/model/instruction-walk.ts"
+      ],
+      "minModules": 3
     },
     {
       "id": "wasm-physical",
@@ -190,10 +194,12 @@
         "src/backend/wasmgc/resources/native-string-literals.ts",
         "src/backend/wasmgc/resources/native-errors.ts",
         "src/backend/wasmgc/resources/native-values.ts",
+        "src/backend/wasmgc/resources/native-string-number.ts",
+        "src/backend/wasmgc/resources/native-string-flatten.ts",
         "src/backend/wasmgc/resources/native-argument-vectors.ts",
         "src/backend/wasmgc/resources/native-closures.ts"
       ],
-      "minModules": 7
+      "minModules": 9
     },
     {
       "id": "native-runtime",
@@ -215,10 +221,15 @@
         "src/runtime/wasmgc/values/error-bodies.ts",
         "src/runtime/wasmgc/values/primitive-layouts.ts",
         "src/runtime/wasmgc/values/number-bodies.ts",
+        "src/runtime/wasmgc/values/string-number-grammar.ts",
+        "src/runtime/wasmgc/values/decimal-scale-bodies.ts",
+        "src/runtime/wasmgc/values/string-number-bodies.ts",
+        "src/runtime/wasmgc/values/string-flatten-bodies.ts",
+        "src/runtime/wasmgc/values/string-utf8-decode-bodies.ts",
         "src/runtime/wasmgc/values/argument-vector-bodies.ts",
         "src/runtime/wasmgc/values/closure-layouts.ts"
       ],
-      "minModules": 16
+      "minModules": 21
     },
     {
       "id": "standalone-platform",
@@ -457,6 +468,104 @@
     }
   ],
   "activationHistory": [
+    {
+      "layer": "wasm-model",
+      "entries": [
+        "src/wasm/model/instructions.ts",
+        "src/wasm/model/module-records.ts",
+        "src/wasm/model/instruction-walk.ts"
+      ],
+      "minModules": 3
+    },
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts",
+        "src/runtime/wasmgc/async/frame-engine.ts",
+        "src/runtime/wasmgc/async/native-await.ts",
+        "src/runtime/wasmgc/promise/delay-bodies.ts",
+        "src/runtime/wasmgc/promise/combinator-bodies.ts",
+        "src/runtime/wasmgc/values/vector-grow-store.ts",
+        "src/runtime/wasmgc/promise/resolution-bodies.ts",
+        "src/runtime/wasmgc/promise/thenable-bodies.ts",
+        "src/runtime/wasmgc/values/string-layouts.ts",
+        "src/runtime/wasmgc/values/string-literal-bodies.ts",
+        "src/runtime/wasmgc/values/error-bodies.ts",
+        "src/runtime/wasmgc/values/primitive-layouts.ts",
+        "src/runtime/wasmgc/values/number-bodies.ts",
+        "src/runtime/wasmgc/values/string-number-grammar.ts",
+        "src/runtime/wasmgc/values/decimal-scale-bodies.ts",
+        "src/runtime/wasmgc/values/string-number-bodies.ts",
+        "src/runtime/wasmgc/values/string-flatten-bodies.ts",
+        "src/runtime/wasmgc/values/string-utf8-decode-bodies.ts",
+        "src/runtime/wasmgc/values/argument-vector-bodies.ts",
+        "src/runtime/wasmgc/values/closure-layouts.ts"
+      ],
+      "minModules": 21
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": [
+        "src/backend/wasmgc/resources/native-vectors.ts",
+        "src/backend/wasmgc/resources/native-promises.ts",
+        "src/backend/wasmgc/resources/native-string-literals.ts",
+        "src/backend/wasmgc/resources/native-errors.ts",
+        "src/backend/wasmgc/resources/native-values.ts",
+        "src/backend/wasmgc/resources/native-string-number.ts",
+        "src/backend/wasmgc/resources/native-string-flatten.ts",
+        "src/backend/wasmgc/resources/native-argument-vectors.ts",
+        "src/backend/wasmgc/resources/native-closures.ts"
+      ],
+      "minModules": 9
+    },
+    {
+      "layer": "wasm-model",
+      "entries": [
+        "src/wasm/model/instructions.ts",
+        "src/wasm/model/module-records.ts",
+        "src/wasm/model/instruction-walk.ts"
+      ],
+      "minModules": 3
+    },
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts",
+        "src/runtime/wasmgc/async/frame-engine.ts",
+        "src/runtime/wasmgc/async/native-await.ts",
+        "src/runtime/wasmgc/promise/delay-bodies.ts",
+        "src/runtime/wasmgc/promise/combinator-bodies.ts",
+        "src/runtime/wasmgc/values/vector-grow-store.ts",
+        "src/runtime/wasmgc/promise/resolution-bodies.ts",
+        "src/runtime/wasmgc/promise/thenable-bodies.ts",
+        "src/runtime/wasmgc/values/string-layouts.ts",
+        "src/runtime/wasmgc/values/string-literal-bodies.ts",
+        "src/runtime/wasmgc/values/error-bodies.ts",
+        "src/runtime/wasmgc/values/primitive-layouts.ts",
+        "src/runtime/wasmgc/values/number-bodies.ts",
+        "src/runtime/wasmgc/values/string-number-grammar.ts",
+        "src/runtime/wasmgc/values/decimal-scale-bodies.ts",
+        "src/runtime/wasmgc/values/string-number-bodies.ts",
+        "src/runtime/wasmgc/values/string-flatten-bodies.ts",
+        "src/runtime/wasmgc/values/string-utf8-decode-bodies.ts"
+      ],
+      "minModules": 19
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": [
+        "src/backend/wasmgc/resources/native-vectors.ts",
+        "src/backend/wasmgc/resources/native-promises.ts",
+        "src/backend/wasmgc/resources/native-string-literals.ts",
+        "src/backend/wasmgc/resources/native-errors.ts",
+        "src/backend/wasmgc/resources/native-values.ts",
+        "src/backend/wasmgc/resources/native-string-number.ts",
+        "src/backend/wasmgc/resources/native-string-flatten.ts"
+      ],
+      "minModules": 7
+    },
     {
       "layer": "native-runtime",
       "entries": [
@@ -1126,6 +1235,46 @@
     },
     { "path": "src/runtime/wasmgc/values/argument-vector-bodies.ts", "state": "clean", "layer": "native-runtime" },
     { "path": "src/backend/wasmgc/resources/native-argument-vectors.ts", "state": "clean", "layer": "backend-wasmgc" },
+    {
+      "path": "src/wasm/model/instruction-walk.ts",
+      "state": "clean",
+      "layer": "wasm-model"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/string-number-grammar.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/decimal-scale-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/string-number-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/string-flatten-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/string-utf8-decode-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-string-number.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-string-flatten.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
     { "path": "src/ir/program/native-value-resources.ts", "state": "clean", "layer": "ir-program" },
     { "path": "src/runtime/wasmgc/values/primitive-layouts.ts", "state": "clean", "layer": "native-runtime" },
     { "path": "src/runtime/wasmgc/values/number-bodies.ts", "state": "clean", "layer": "native-runtime" },
