@@ -247,9 +247,10 @@
         "src/runtime/wasmgc/values/number-format-bodies.ts",
         "src/runtime/wasmgc/values/number-format-radix-bodies.ts",
         "src/runtime/wasmgc/values/string-concat-bodies.ts",
-        "src/runtime/wasmgc/values/stdout-bodies.ts"
+        "src/runtime/wasmgc/values/stdout-bodies.ts",
+        "src/runtime/wasmgc/promise/delay-combinator-layouts.ts"
       ],
-      "minModules": 31
+      "minModules": 32
     },
     {
       "id": "standalone-platform",
@@ -488,6 +489,11 @@
     }
   ],
   "activationHistory": [
+    {
+      "layer": "native-runtime",
+      "entries": ["src/runtime/wasmgc/promise/delay-combinator-layouts.ts"],
+      "minModules": 32
+    },
     {
       "layer": "native-runtime",
       "entries": ["src/runtime/wasmgc/values/string-concat-bodies.ts", "src/runtime/wasmgc/values/stdout-bodies.ts"],
@@ -1381,6 +1387,11 @@
     }
   ],
   "files": [
+    {
+      "path": "src/runtime/wasmgc/promise/delay-combinator-layouts.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
     {
       "path": "src/frontend/builtins/contracts.ts",
       "state": "clean",

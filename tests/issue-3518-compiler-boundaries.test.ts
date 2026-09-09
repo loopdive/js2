@@ -217,6 +217,7 @@ it("keeps formatter support contracts and the canonical type factory mandatory",
         "src/runtime/wasmgc/values/number-format-radix-bodies.ts",
         "src/runtime/wasmgc/values/string-concat-bodies.ts",
         "src/runtime/wasmgc/values/stdout-bodies.ts",
+        "src/runtime/wasmgc/promise/delay-combinator-layouts.ts",
       ],
     ],
     [
@@ -232,7 +233,7 @@ it("keeps formatter support contracts and the canonical type factory mandatory",
     expect(layer).toMatchObject({ status: "active", required: true });
     expect(layer.entries).toEqual(expect.arrayContaining(paths));
     expect(layer.minModules).toBeGreaterThanOrEqual(
-      layerId === "backend-wasmgc" ? 14 : layerId === "native-runtime" ? 31 : 18,
+      layerId === "backend-wasmgc" ? 14 : layerId === "native-runtime" ? 32 : 18,
     );
     if (layerId === "ir-program") expect(layer.minModules).toBeGreaterThanOrEqual(19);
     for (const path of paths) {
@@ -272,6 +273,7 @@ for (const [layerId, path] of [
   ["native-runtime", "src/runtime/wasmgc/values/number-format-radix-bodies.ts"],
   ["native-runtime", "src/runtime/wasmgc/values/string-concat-bodies.ts"],
   ["native-runtime", "src/runtime/wasmgc/values/stdout-bodies.ts"],
+  ["native-runtime", "src/runtime/wasmgc/promise/delay-combinator-layouts.ts"],
 ] as const) {
   it.each(["delete", "demote", "type-import", "value-import"] as const)(
     `formatter boundary ${path} rejects %s after its positive control`,
