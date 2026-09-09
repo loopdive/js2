@@ -125,3 +125,22 @@ protects the already-supported no-formatter paths, not full async admission.
 Boundary activation adds one required backend module and retains all old
 activation history and allowed edges. Actual full consumer execution of this
 hook remains unproven while the existing async admission refusal remains.
+
+## Ryū composition in progress
+
+Scratch checkpoint f092bf93749e22dfcdce21137157990c7d32c897 is now published
+on #5798; normal commit 67428 and push 31794 exited zero, including 18/18
+numeric-local tests. The next uncommitted merge composes #5799 at
+57b4ee9ebd67f04251fe467d708e4990202b6ca7. No source conflict occurred; the
+single appended issue-handoff conflict was resolved by retaining both sections.
+
+Five canonical Ryū runtime modules and the native resource owner are added as
+required boundary roots with explicit clean classifications, retaining previous
+activation history and allowed edges. Their delete/demote/type/value-import
+controls are added; fixture relative paths now derive from each module depth.
+Validation session 71702 exited zero: formatting and source TS7 passed, then
+149/149 tests across the boundary, Ryū ownership, Ryū resources and formatter
+requirements suites passed in 83.29 seconds. Inventory session 65114 exited zero
+with no errors and `inventoryValid: true`, but `graphComplete: false` and
+`inventory-valid-architecture-incomplete`. This does not certify direct-codegen
+retirement or full async admission. Normal merge publication hooks remain pending.
