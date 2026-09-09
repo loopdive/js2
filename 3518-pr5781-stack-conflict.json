@@ -1,0 +1,11 @@
+{
+  "id": "3518",
+  "slice": "pr5781-stack-conflict",
+  "assignee": "ttraenkler/codex-pr-shepherd",
+  "requested_by": "ttraenkler/codex-pr-shepherd",
+  "status": "in-progress",
+  "branch": "codex/5781-conflict-repair-20260909",
+  "claimed_at": "2026-09-09T10:36:56Z",
+  "updated_at": "2026-09-09T10:36:56Z",
+  "write_id": "33531-n3pohfkp"
+}
