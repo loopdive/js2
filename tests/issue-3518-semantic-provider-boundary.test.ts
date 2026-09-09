@@ -136,11 +136,29 @@ const nativeValueAdditions = [
   "src/runtime/wasmgc/values/number-bodies.ts",
   "src/backend/wasmgc/resources/native-values.ts",
 ];
-const groups = {
+const nativeValueGroups = {
   ...stringErrorGroups,
   "ir-program": [...stringErrorGroups["ir-program"], nativeValueAdditions[0]!],
   "native-runtime": [...stringErrorGroups["native-runtime"], ...nativeValueAdditions.slice(1, 3)],
   "backend-wasmgc": [...stringErrorGroups["backend-wasmgc"], nativeValueAdditions[3]!],
+};
+const argumentVectorAdditions = [
+  "src/runtime/wasmgc/values/argument-vector-bodies.ts",
+  "src/backend/wasmgc/resources/native-argument-vectors.ts",
+];
+const argumentVectorGroups = {
+  ...nativeValueGroups,
+  "native-runtime": [...nativeValueGroups["native-runtime"], argumentVectorAdditions[0]!],
+  "backend-wasmgc": [...nativeValueGroups["backend-wasmgc"], argumentVectorAdditions[1]!],
+};
+const closureAdditions = [
+  "src/runtime/wasmgc/values/closure-layouts.ts",
+  "src/backend/wasmgc/resources/native-closures.ts",
+];
+const groups = {
+  ...argumentVectorGroups,
+  "native-runtime": [...argumentVectorGroups["native-runtime"], closureAdditions[0]!],
+  "backend-wasmgc": [...argumentVectorGroups["backend-wasmgc"], closureAdditions[1]!],
 };
 const required = Object.values(groups).flat();
 const callableAdditions = ["src/ir/core/async-callables.ts", "src/ir/runtime/native-async-callables.ts"];
@@ -178,11 +196,27 @@ const additions = [
 const policy = () => JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 function assertNewActivations(history: unknown[]) {
-  expect(history.slice(0, 3)).toEqual(
-    (["ir-program", "native-runtime", "backend-wasmgc"] as const).map((layer) => ({
+  expect(history.slice(0, 2)).toEqual(
+    (["native-runtime", "backend-wasmgc"] as const).map((layer) => ({
       layer,
       entries: groups[layer],
       minModules: groups[layer].length,
+    })),
+  );
+  history = history.slice(2);
+  expect(history.slice(0, 2)).toEqual(
+    (["native-runtime", "backend-wasmgc"] as const).map((layer) => ({
+      layer,
+      entries: argumentVectorGroups[layer],
+      minModules: argumentVectorGroups[layer].length,
+    })),
+  );
+  history = history.slice(2);
+  expect(history.slice(0, 3)).toEqual(
+    (["ir-program", "native-runtime", "backend-wasmgc"] as const).map((layer) => ({
+      layer,
+      entries: nativeValueGroups[layer],
+      minModules: nativeValueGroups[layer].length,
     })),
   );
   history = history.slice(3);
@@ -352,8 +386,8 @@ function fixture() {
 
 describe("semantic verification and provider ownership boundary", () => {
   it("pins the original 70 modules plus seven Promise/vector and five string/error owners without relaxing historical policy", () => {
-    expect(required).toHaveLength(86);
-    expect(new Set(required).size).toBe(86);
+    expect(required).toHaveLength(90);
+    expect(new Set(required).size).toBe(90);
     expect(callableAdditions).toHaveLength(2);
     expect(vectorAdditions).toHaveLength(2);
     expect(typeLayoutAdditions).toHaveLength(1);
@@ -377,6 +411,8 @@ describe("semantic verification and provider ownership boundary", () => {
             ...promiseResourceAdditions,
             ...stringErrorAdditions,
             ...nativeValueAdditions,
+            ...argumentVectorAdditions,
+            ...closureAdditions,
           ].includes(path),
       ),
     ).toHaveLength(56);
@@ -396,17 +432,19 @@ describe("semantic verification and provider ownership boundary", () => {
       ...promiseResourceAdditions,
       ...stringErrorAdditions,
       ...nativeValueAdditions,
+      ...argumentVectorAdditions,
+      ...closureAdditions,
     ])
       expect(required).toContain(path);
     const p = policy();
     assertNewActivations(p.activationHistory);
-    expect(p.activationHistory).toHaveLength(43);
-    expect(digest(p.activationHistory.slice(19))).toBe(
+    expect(p.activationHistory).toHaveLength(47);
+    expect(digest(p.activationHistory.slice(23))).toBe(
       "3437a59aacf39df9dffcafa8099ac9f47c0f43a7a0ecc423df4c1fe3e638f002",
     );
     expect(digest(p.allowedEdges)).toBe("efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7");
     // Exact full activation history at b4c116639a, not a selected subset.
-    expect(digest(p.activationHistory.slice(25))).toBe(
+    expect(digest(p.activationHistory.slice(29))).toBe(
       "a6d07b900b0837832707ce083202ab6ffa40f0bbe6bfce25f3062270882b26da",
     );
     for (const [id, entries] of Object.entries(groups)) {
@@ -423,12 +461,12 @@ describe("semantic verification and provider ownership boundary", () => {
   it("loads the complete actual canonical type-and-value closure", () => {
     const r = fixture().run();
     expect(r.status, JSON.stringify(r.report.errors)).toBe(0);
-    expect(r.report.counts.total).toBe(86);
+    expect(r.report.counts.total).toBe(90);
     expect(r.report.errors).toEqual([]);
     for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
       expect(r.report[field]).toEqual([]);
-    expect(r.report.resolvedEdgeCount).toBe(313);
-    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 203, runtime: 110 });
+    expect(r.report.resolvedEdgeCount).toBe(325);
+    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 210, runtime: 115 });
   });
 
   it.each(["delete", "reorder", "layer", "entries", "minimum"] as const)(
@@ -461,6 +499,8 @@ describe("semantic verification and provider ownership boundary", () => {
     ...promiseResourceAdditions,
     ...stringErrorAdditions,
     ...nativeValueAdditions,
+    ...argumentVectorAdditions,
+    ...closureAdditions,
   ])("rejects deleting %s and its classification", (path) => {
     const f = fixture();
     rmSync(resolve(f.root, path));
@@ -486,6 +526,8 @@ describe("semantic verification and provider ownership boundary", () => {
     ...promiseResourceAdditions,
     ...stringErrorAdditions,
     ...nativeValueAdditions,
+    ...argumentVectorAdditions,
+    ...closureAdditions,
   ])("rejects an aliased frontend type dependency from %s", (path) => {
     const f = fixture();
     f.put("src/forbidden.ts", "export interface Hidden { value: number }");
@@ -516,6 +558,8 @@ describe("semantic verification and provider ownership boundary", () => {
       ...promiseResourceAdditions,
       ...stringErrorAdditions,
       ...nativeValueAdditions,
+      ...argumentVectorAdditions,
+      ...closureAdditions,
     ])(`reports ${field} from %s instead of treating it as closed`, (path) => {
       const f = fixture();
       f.append(path, source);
