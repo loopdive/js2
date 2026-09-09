@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { compareSuite, validatePopulation, sha, SPEC } from "./frame-delay-three-arm-contract.mjs";
+import {
+  compareSuite,
+  validatePopulation,
+  validateRequiredFiles,
+  sha,
+  SPEC,
+} from "./frame-delay-three-arm-contract.mjs";
 
 // Synthetic instrument controls only. No compiler, Wasm or historical arm runs.
 function population(suite) {
@@ -140,3 +146,37 @@ test("late-import must remain equal even when repaired/candidate match", () => {
   original.rows.at(-1).wat += "original-only";
   assert.equal(compareSuite(original, repaired, candidate).pass, false);
 });
+for (const suite of ["frame", "delay"]) {
+  const paths = [
+    "package.json",
+    "pnpm-lock.yaml",
+    "tsconfig.json",
+    "node_modules/typescript/package.json",
+    "node_modules/typescript/lib/typescript.js",
+    "node_modules/tsx/package.json",
+    "tests/helpers/semantic-provider-source-receipts.mjs",
+    "website/playground/examples/js/async.ts",
+    ...(suite === "frame"
+      ? [
+          "tests/issue-2906-async-multiawait.test.ts",
+          "tests/issue-2906-3c-trycatch.test.ts",
+          "tests/issue-2906-gap3-tryfinally.test.ts",
+          "tests/issue-2710-late-bind.test.ts",
+        ]
+      : [
+          "tests/issue-4573-standalone-native-promise-delay.test.ts",
+          "tests/issue-2867-gap4.test.ts",
+          "tests/issue-3137.test.ts",
+          "tests/issue-3125.test.ts",
+          "tests/issue-3125-widen.test.ts",
+        ]),
+  ];
+  test(suite + " complete pre-execution pin population accepted", () =>
+    validateRequiredFiles(Object.fromEntries(paths.map((p) => [p, "0".repeat(64)])), suite),
+  );
+  for (const missing of paths)
+    test(suite + " rejects missing pin before launch: " + missing, () => {
+      const files = Object.fromEntries(paths.filter((p) => p !== missing).map((p) => [p, "0".repeat(64)]));
+      assert.throws(() => validateRequiredFiles(files, suite));
+    });
+}

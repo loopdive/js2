@@ -47,7 +47,9 @@ roundtrips, and two read-only git apply checks. Parent reviewed the frame patch,
 materialized both patches and verified the complete source postimages.
 The driver retains every original child byte except one explicit pre-import
 admission insertion; syntax-only Node checks parse both adapted programs.
-40 synthetic/extraction/CLI controls passed with no compiler invocation.
+67 synthetic/extraction/CLI controls passed with no compiler invocation.
+Static review found and fixed two pre-execution admission gaps: root package.json
+is now mandatory, and every fixture-file pin must exist before any child launch.
 
 The driver records separate O/C and R/C equality, complete receipts and terminal
 status. R/C comparison retains bytes, WAT, resource ordering, all unknown row
@@ -57,8 +59,8 @@ executions across six fresh arms; zero of those arms has been run here.
 
 ## Before execution approval
 
-Finish independent driver/admission review and the remaining admission-mutation
-controls. Prepare a REVIEW-ONLY execution manifest with all six arm entries,
+Finish the remaining admission-mutation controls and prepare a REVIEW-ONLY
+execution manifest with all six arm entries,
 full source inventories, fixture file pins, original evidence paths/digests,
 driver/helper and adapted-child hashes, exact parent argv and environment, Node
 binary identity and full dependency-tree census. This is still outstanding.

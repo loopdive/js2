@@ -83,6 +83,37 @@ const familyActions = [
   "parallel-reject",
   "undefined",
 ];
+const fixturePaths = {
+  frame: [
+    "website/playground/examples/js/async.ts",
+    "tests/issue-2906-async-multiawait.test.ts",
+    "tests/issue-2906-3c-trycatch.test.ts",
+    "tests/issue-2906-gap3-tryfinally.test.ts",
+    "tests/issue-2710-late-bind.test.ts",
+  ],
+  delay: [
+    "website/playground/examples/js/async.ts",
+    "tests/issue-4573-standalone-native-promise-delay.test.ts",
+    "tests/issue-2867-gap4.test.ts",
+    "tests/issue-3137.test.ts",
+    "tests/issue-3125.test.ts",
+    "tests/issue-3125-widen.test.ts",
+  ],
+};
+export function validateRequiredFiles(files, suite) {
+  assert(fixturePaths[suite], "unknown suite");
+  for (const path of [
+    "package.json",
+    "pnpm-lock.yaml",
+    "tsconfig.json",
+    "node_modules/typescript/package.json",
+    "node_modules/typescript/lib/typescript.js",
+    "node_modules/tsx/package.json",
+    "tests/helpers/semantic-provider-source-receipts.mjs",
+    ...fixturePaths[suite],
+  ])
+    assert(Object.hasOwn(files, path), "missing pre-execution file pin: " + path);
+}
 const historicalReceipts = [
   "41578b8c1fc9df2b8b803d5bd6e97d5c71f473dcff6ab89a9679588a2654195a",
   "cf24823ed7f2b2ddc26e111c9088b3cc9f9b09757437cadd162bb538d2b267c4",
@@ -247,6 +278,7 @@ export function assertAdmission(manifest, instrumentRoot, invocation = null) {
       } else assert.equal(pin.sourceSha256, repairedPins[suite].source, "unapproved repaired census");
       assert.equal(git(pin.root, ["ls-files", "--others", "--exclude-standard", "--", "src"]), "", "untracked source");
       assert(pin.files && Object.keys(pin.files).length > 0, "fixture and dependency pins required");
+      validateRequiredFiles(pin.files, suite);
       for (const [path, digest] of Object.entries(pin.files)) filePin(pin.root, path, digest);
       for (const path of [
         "pnpm-lock.yaml",
