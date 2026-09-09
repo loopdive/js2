@@ -161,9 +161,10 @@
         "src/ir/program/data.ts",
         "src/ir/program/input.ts",
         "src/ir/program/native-vector-resources.ts",
-        "src/ir/program/native-promise-resources.ts"
+        "src/ir/program/native-promise-resources.ts",
+        "src/ir/program/native-value-resources.ts"
       ],
-      "minModules": 14
+      "minModules": 15
     },
     {
       "id": "runtime-contracts",
@@ -187,9 +188,10 @@
         "src/backend/wasmgc/resources/native-vectors.ts",
         "src/backend/wasmgc/resources/native-promises.ts",
         "src/backend/wasmgc/resources/native-string-literals.ts",
-        "src/backend/wasmgc/resources/native-errors.ts"
+        "src/backend/wasmgc/resources/native-errors.ts",
+        "src/backend/wasmgc/resources/native-values.ts"
       ],
-      "minModules": 4
+      "minModules": 5
     },
     {
       "id": "native-runtime",
@@ -208,9 +210,11 @@
         "src/runtime/wasmgc/promise/thenable-bodies.ts",
         "src/runtime/wasmgc/values/string-layouts.ts",
         "src/runtime/wasmgc/values/string-literal-bodies.ts",
-        "src/runtime/wasmgc/values/error-bodies.ts"
+        "src/runtime/wasmgc/values/error-bodies.ts",
+        "src/runtime/wasmgc/values/primitive-layouts.ts",
+        "src/runtime/wasmgc/values/number-bodies.ts"
       ],
-      "minModules": 12
+      "minModules": 14
     },
     {
       "id": "standalone-platform",
@@ -449,6 +453,58 @@
     }
   ],
   "activationHistory": [
+    {
+      "layer": "ir-program",
+      "entries": [
+        "src/ir/program/abi-inventory.ts",
+        "src/ir/program/abi.ts",
+        "src/ir/program/startup.ts",
+        "src/ir/program/abi-lookup.ts",
+        "src/ir/program/callable-bindings.ts",
+        "src/ir/program/controls.ts",
+        "src/ir/program/index.ts",
+        "src/ir/program/input-contracts.ts",
+        "src/ir/program/prepared-contracts.ts",
+        "src/ir/program/errors.ts",
+        "src/ir/program/data.ts",
+        "src/ir/program/input.ts",
+        "src/ir/program/native-vector-resources.ts",
+        "src/ir/program/native-promise-resources.ts",
+        "src/ir/program/native-value-resources.ts"
+      ],
+      "minModules": 15
+    },
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts",
+        "src/runtime/wasmgc/async/frame-engine.ts",
+        "src/runtime/wasmgc/async/native-await.ts",
+        "src/runtime/wasmgc/promise/delay-bodies.ts",
+        "src/runtime/wasmgc/promise/combinator-bodies.ts",
+        "src/runtime/wasmgc/values/vector-grow-store.ts",
+        "src/runtime/wasmgc/promise/resolution-bodies.ts",
+        "src/runtime/wasmgc/promise/thenable-bodies.ts",
+        "src/runtime/wasmgc/values/string-layouts.ts",
+        "src/runtime/wasmgc/values/string-literal-bodies.ts",
+        "src/runtime/wasmgc/values/error-bodies.ts",
+        "src/runtime/wasmgc/values/primitive-layouts.ts",
+        "src/runtime/wasmgc/values/number-bodies.ts"
+      ],
+      "minModules": 14
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": [
+        "src/backend/wasmgc/resources/native-vectors.ts",
+        "src/backend/wasmgc/resources/native-promises.ts",
+        "src/backend/wasmgc/resources/native-string-literals.ts",
+        "src/backend/wasmgc/resources/native-errors.ts",
+        "src/backend/wasmgc/resources/native-values.ts"
+      ],
+      "minModules": 5
+    },
     {
       "layer": "native-runtime",
       "entries": [
@@ -986,6 +1042,10 @@
     }
   ],
   "files": [
+    { "path": "src/ir/program/native-value-resources.ts", "state": "clean", "layer": "ir-program" },
+    { "path": "src/runtime/wasmgc/values/primitive-layouts.ts", "state": "clean", "layer": "native-runtime" },
+    { "path": "src/runtime/wasmgc/values/number-bodies.ts", "state": "clean", "layer": "native-runtime" },
+    { "path": "src/backend/wasmgc/resources/native-values.ts", "state": "clean", "layer": "backend-wasmgc" },
     { "path": "src/runtime/wasmgc/values/string-layouts.ts", "state": "clean", "layer": "native-runtime" },
     { "path": "src/runtime/wasmgc/values/string-literal-bodies.ts", "state": "clean", "layer": "native-runtime" },
     { "path": "src/runtime/wasmgc/values/error-bodies.ts", "state": "clean", "layer": "native-runtime" },

@@ -31,6 +31,11 @@ import type { ValType } from "./types.js";
 import { deriveNativeVectorResourcePlan, type NativeVectorResourcePlan } from "./program/native-vector-resources.js";
 import { assertPreparedIrProgram } from "./program-validation.js";
 import {
+  deriveNativeValueResourcePlan,
+  type NativeValueResourcePlan,
+  type NativeValueStringRepresentation,
+} from "./program/native-value-resources.js";
+import {
   deriveNativePromiseResourcePlan,
   type NativePromiseConfiguration,
   type NativePromiseResourcePlan,
@@ -180,6 +185,27 @@ export function planNativePromiseResources(
     target: options.target,
     configuration,
   });
+}
+
+/** Authenticate the complete program and current projection before deriving value requirements. */
+export function planNativeValueResources(
+  program: PreparedIrProgram,
+  options: PreparedIrBackendOptions,
+  projection: PreparedIrProgramRuntimeProjection,
+  strings: NativeValueStringRepresentation,
+): NativeValueResourcePlan {
+  assertPreparedIrProgram(program);
+  if (
+    !program.runtime.includes(projection) ||
+    projection.backend !== options.backend ||
+    projection.target !== options.target
+  ) {
+    throw new PreparedIrProgramInvariantError(
+      "invalid-prepared-data",
+      "native value resources: selected projection does not belong to the requested program/backend/target",
+    );
+  }
+  return deriveNativeValueResourcePlan(program, projection, strings);
 }
 
 function scalar(type: IrType): ValType | undefined {

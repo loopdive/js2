@@ -6429,3 +6429,27 @@ open. This checkpoint does not satisfy those acceptance requirements.
 Final scoped approval and execution: High approved the five live-constructor
 controls; parent67641 exited0 with29/29 tests passing in10.08s. All eight
 production hashes and the authenticated fixture remain unchanged.
+
+## Native primitive-value checkpoint — 2026-09-08
+
+On #5770, canonical primitive layouts and number bodies now back legacy
+callers and same-ledger native resource fills. The checked value-plan entry
+authenticates the whole program and selected projection. Integrated TS7
+passed;70/70 focused tests passed (60 resource/preservation and10 admission
+controls). Repaired comment receipts preserve the original tests and hashes;
+the preceding59/60 failure remains recorded rather than discarded.
+
+Four new boundary owners produce a measured86-module,313-edge graph
+(203 type-only,110 runtime), without unknown/unresolved/forbidden edges.
+Historical activation records and allowed edges are unchanged. Expanded205
+boundary controls are still running; final review and publication pending.
+See agent-context/3518-native-value-integration-2026-09-08.md for receipts.
+
+This does not complete native strings: the genuine scanner, flattening and
+exponent/power resources remain next, followed by closure metadata/ObjVec
+and complete object/callable dispatch. Existing Promise pack ownership of
+settle captures/trampolines must not be duplicated. Full-family execution,
+fresh-process replay, cutover, strict closure and retirement remain open.
+
+Expanded boundary suite86860 subsequently exited0:205/205 passed in132.76s.
+The full High native-value implementation plan is included in agent-context.

@@ -1,6 +1,14 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /** Import/global registration and late index-space fixups. */
 import type { Import, Instr, ValType } from "../../ir/types.js";
+import { buildBoxNumberType, buildBoxBooleanType } from "../../runtime/wasmgc/values/primitive-layouts.js";
+import {
+  buildBoxNumberBody,
+  buildBoxNumberLocals,
+  buildUnboxNumberBody,
+  buildUnboxNumberLocals,
+  buildTypeofNumberBody,
+} from "../../runtime/wasmgc/values/number-bodies.js";
 import type { CodegenContext, ExternClassInfo } from "../context/types.js";
 import { resolveWidenedVarKey } from "../widened-var-key.js";
 import { hasLoneSurrogate, hexCodeUnits, STRING_CONSTANTS16_NS } from "../../string-surrogate.js";
@@ -1228,18 +1236,10 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
 
   // 1. Register the boxed-value struct types. Both are immutable singletons.
   const boxNumStructIdx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: "__box_number_struct",
-    fields: [{ name: "value", type: { kind: "f64" }, mutable: false }],
-  });
+  ctx.mod.types.push(buildBoxNumberType());
 
   const boxBoolStructIdx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: "__box_boolean_struct",
-    fields: [{ name: "value", type: { kind: "i32" }, mutable: false }],
-  });
+  ctx.mod.types.push(buildBoxBooleanType());
 
   const bigIntStructIdx = ctx.mod.types.length;
   ctx.mod.types.push({
@@ -1307,47 +1307,7 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
   // (i31 cannot carry the sign — `1/x` and Object.is would lose it), NaN and
   // infinities (fail the trunc round-trip), and values outside [-2^30, 2^30-1]
   // (fail the shl/shr round-trip).
-  registerNative(
-    "__box_number",
-    f64ToExternref,
-    [
-      { op: "local.get", index: 0 },
-      { op: "i32.trunc_sat_f64_s" },
-      { op: "local.tee", index: 1 },
-      { op: "f64.convert_i32_s" },
-      { op: "local.get", index: 0 },
-      { op: "f64.eq" }, // integral (and clamp-free) round-trip
-      { op: "local.get", index: 1 },
-      { op: "i32.const", value: 1 },
-      { op: "i32.shl" },
-      { op: "i32.const", value: 1 },
-      { op: "i32.shr_s" },
-      { op: "local.get", index: 1 },
-      { op: "i32.eq" }, // fits signed 31 bits
-      { op: "i32.and" },
-      { op: "local.get", index: 1 },
-      { op: "i32.const", value: 0 },
-      { op: "i32.ne" },
-      { op: "local.get", index: 0 },
-      { op: "i64.reinterpret_f64" },
-      { op: "i64.const", value: 0n },
-      { op: "i64.lt_s" },
-      { op: "i32.eqz" },
-      { op: "i32.or" }, // t != 0 || sign bit clear (rejects -0 only)
-      { op: "i32.and" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "externref" } },
-        then: [{ op: "local.get", index: 1 }, { op: "ref.i31" }, { op: "extern.convert_any" }],
-        else: [
-          { op: "local.get", index: 0 },
-          { op: "struct.new", typeIdx: boxNumStructIdx },
-          { op: "extern.convert_any" },
-        ],
-      },
-    ],
-    [{ name: "$i31_temp", type: { kind: "i32" } as ValType }],
-  );
+  registerNative("__box_number", f64ToExternref, buildBoxNumberBody(boxNumStructIdx), buildBoxNumberLocals());
 
   // 4. __unbox_number(externref) -> f64
   //    Local 1 is an anyref temp used to ref.test then ref.cast without
@@ -1356,82 +1316,14 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
   registerNative(
     "__unbox_number",
     externrefToF64,
-    [
-      // if (ref.is_null param) return 0   // Number(null) === 0
-      { op: "local.get", index: 0 },
-      { op: "ref.is_null" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "f64.const", value: 0 }, { op: "return" }],
-      },
-      // any = any.convert_extern(param)
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "local.set", index: 1 },
-      // (#3673) i31-boxed small int → its value.
-      { op: "local.get", index: 1 },
-      { op: "ref.test", typeIdx: -20 },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: 1 },
-          { op: "ref.cast", typeIdx: -20 },
-          { op: "i31.get_s" },
-          { op: "f64.convert_i32_s" },
-          { op: "return" },
-        ],
-      },
-      { op: "local.get", index: 1 },
-      // if (ref.test $box_number_struct any) return any.value
-      { op: "ref.test", typeIdx: boxNumStructIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: 1 },
-          { op: "ref.cast", typeIdx: boxNumStructIdx },
-          { op: "struct.get", typeIdx: boxNumStructIdx, fieldIdx: 0 },
-          { op: "return" },
-        ],
-      },
-      // #1910 R3 — a boxed boolean (the [[BooleanData]] slot of a
-      // `new Boolean(x)` wrapper, recovered by `__to_primitive`) coerces per
-      // §7.1.4 ToNumber(true)=1, ToNumber(false)=0. Without this arm a boxed
-      // boolean fell through to the opaque-ref NaN fallback, so
-      // `Number(new Boolean(true))` returned NaN instead of 1.
-      { op: "local.get", index: 1 },
-      { op: "ref.test", typeIdx: boxBoolStructIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: 1 },
-          { op: "ref.cast", typeIdx: boxBoolStructIdx },
-          { op: "struct.get", typeIdx: boxBoolStructIdx, fieldIdx: 0 },
-          { op: "f64.convert_i32_s" },
-          { op: "return" },
-        ],
-      },
-      ...(strToNumberIdx !== undefined && ctx.anyStrTypeIdx >= 0
-        ? ([
-            // StringToNumber (§7.1.4.1): object ToPrimitive can yield a native
-            // string; parse it with the existing pure-Wasm scanner before the
-            // opaque-ref NaN fallback.
-            { op: "local.get", index: 1 },
-            { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [{ op: "local.get", index: 0 }, { op: "call", funcIdx: strToNumberIdx }, { op: "return" }],
-            },
-          ] satisfies Instr[])
-        : []),
-      // not a recognized boxed number → NaN (matches Number(opaque))
-      { op: "f64.const", value: NaN },
-    ],
-    [{ name: "$any_temp", type: { kind: "anyref" } as ValType }],
+    buildUnboxNumberBody(
+      boxNumStructIdx,
+      boxBoolStructIdx,
+      strToNumberIdx !== undefined && ctx.anyStrTypeIdx >= 0
+        ? { kind: "native-string", anyStringTypeIdx: ctx.anyStrTypeIdx, toNumber: strToNumberIdx }
+        : { kind: "absent", evidence: "selected-primitive-only" },
+    ),
+    buildUnboxNumberLocals(),
   );
 
   // 5. __box_boolean(i32) -> externref — interned carriers (#3780).
@@ -1784,23 +1676,7 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
   );
 
   // 8. __typeof_number(externref) -> i32 — `ref.test $box_number_struct`.
-  registerNative("__typeof_number", externrefToI32, [
-    { op: "local.get", index: 0 },
-    { op: "ref.is_null" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [{ op: "i32.const", value: 0 }, { op: "return" }],
-    },
-    { op: "local.get", index: 0 },
-    { op: "any.convert_extern" },
-    { op: "ref.test", typeIdx: boxNumStructIdx },
-    // (#3673) …or an i31-boxed small int.
-    { op: "local.get", index: 0 },
-    { op: "any.convert_extern" },
-    { op: "ref.test", typeIdx: -20 },
-    { op: "i32.or" },
-  ]);
+  registerNative("__typeof_number", externrefToI32, buildTypeofNumberBody(boxNumStructIdx));
 
   // 9. __typeof_boolean(externref) -> i32 — `ref.test $box_boolean_struct`.
   registerNative("__typeof_boolean", externrefToI32, [
