@@ -40,12 +40,11 @@
  */
 import type { Instr, ValType } from "../ir/types.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
+import { getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
 import {
-  closureArityField,
-  closureBagField,
-  closureBagInitInstr,
-  getOrCreateFuncRefWrapperTypes,
-} from "./closures/funcref-wrapper-types.js";
+  createBuiltinFunctionMetadataType,
+  buildBuiltinClosureValueInstrs,
+} from "../runtime/wasmgc/values/closure-layouts.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 
 /**
@@ -54,8 +53,7 @@ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
  * a `$bag` slot at index 2 and these two shifted with it.
  * Layout: `[func, $arity, $bag, bfnstate, bfnid]`.
  */
-export const BFN_STATE_FIELD_IDX = 3;
-export const BFN_ID_FIELD_IDX = 4;
+export { BFN_STATE_FIELD_IDX, BFN_ID_FIELD_IDX } from "../runtime/wasmgc/values/closure-layouts.js";
 
 /**
  * Spec `{name, length}` for the builtin STATIC method closures wired in
@@ -271,23 +269,7 @@ export function ensureBuiltinFnMetaType(
   if (existing !== undefined) return existing;
 
   const typeIdx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: `__builtinfn_meta_${typeIdx}_struct`,
-    fields: [
-      // Field 0 must mirror the supertype exactly (same type + mutability) —
-      // as must the #3673 $arity slot at index 1.
-      { name: "func", type: { kind: "funcref" as const }, mutable: false },
-      closureArityField(),
-      closureBagField(),
-      // Deleted-bits mask: bit 0 = "name" deleted, bit 1 = "length" deleted.
-      { name: "bfnstate", type: { kind: "i32" as const }, mutable: true },
-      // Stable per-module metadata identity. Structurally-equivalent meta
-      // subtypes cannot be distinguished by ref.test alone.
-      { name: "bfnid", type: { kind: "i32" as const }, mutable: false },
-    ],
-    superTypeIdx: baseStructTypeIdx,
-  });
+  ctx.mod.types.push(createBuiltinFunctionMetadataType(typeIdx, baseStructTypeIdx));
 
   ctx.closureInfoByTypeIdx.set(typeIdx, { ...baseClosureInfo, structTypeIdx: typeIdx });
   if (!ctx.builtinFnMetaByTypeIdx) ctx.builtinFnMetaByTypeIdx = new Map();
@@ -308,7 +290,7 @@ export function pushBuiltinFnClosureValueInstrs(
   closure: { type: { kind: "ref"; typeIdx: number }; funcIdx: number },
 ): Instr[] {
   const isMeta = ctx.builtinFnMetaByTypeIdx?.has(closure.type.typeIdx) ?? false;
-  const instrs: Instr[] = [{ op: "ref.func", funcIdx: closure.funcIdx }];
+
   // (#3673) $arity field 1 — the builtin's spec `length` when meta-typed,
   // else the registered closure signature's param count.
   // Receiver-aware variadic native-proto values are the one exception: their
@@ -323,13 +305,7 @@ export function pushBuiltinFnClosureValueInstrs(
       : isMeta
         ? (ctx.builtinFnMetaByTypeIdx?.get(closure.type.typeIdx)?.length ?? 0)
         : (closureInfo?.paramTypes.length ?? 0);
-  instrs.push({ op: "i32.const", value: arity });
-  instrs.push(closureBagInitInstr()); // (#4241) $bag field 2
-  if (isMeta) {
-    instrs.push({ op: "i32.const", value: 0 }, { op: "i32.const", value: closure.type.typeIdx });
-  }
-  instrs.push({ op: "struct.new", typeIdx: closure.type.typeIdx });
-  return instrs;
+  return buildBuiltinClosureValueInstrs(closure.type.typeIdx, closure.funcIdx, arity, isMeta);
 }
 
 /**
