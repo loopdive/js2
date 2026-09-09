@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-09-08T23:34:40.712Z",
+  "generatedAt": "2026-09-09T01:17:39.077Z",
   "measuredRange": {
     "oldest": "2026-09-08T19:11:45.598Z",
-    "newest": "2026-09-08T23:33:47.983Z"
+    "newest": "2026-09-09T01:16:51.200Z"
   },
   "correctness": {
     "definition": {
@@ -5977,7 +5977,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 2327244,
+        "durationMs": 2357219,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -6016,7 +6016,7 @@
           "implementationInvalidTests": 1,
           "compile": {
             "success": true,
-            "durationMs": 110608,
+            "durationMs": 111224,
             "binaryBytes": 5300077,
             "invalidBatches": 2
           },
@@ -6036,13 +6036,13 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": false,
-            "durationMs": 382760,
+            "durationMs": 394075,
             "binaryBytes": 3741139,
             "invalidBatches": 16
           },
           "validation": {
             "validates": false,
-            "firstError": "__JS2WASM_COMPILE_COMPLETE__:5321\nwasm://wasm/0043e0ae:1\n\n\nRuntimeError: dereferencing a null pointer\n    at startWork (wasm://wasm/0043e0ae:wasm-function[307]:0x7a6aa)\n    at __closure_187 (wasm://wasm/0043e0ae:wasm-function[830]:0x91192)\n    at __call_fn_2 (wasm://wasm/0043e0ae:wasm-function[1343]:0x9b3a8)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1838:10)\n    at wasmClosureDispatch (/home/runner/work/js2/js2/src/runtime.ts:2015:17)\n    at wasmClosureBridge (/home/runner/work/js2/js2/src/runtime.ts:2020:22)\n    at new Promise (<anonymous>)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16948:35)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:19178:20)\n    at __closure_186 (wasm://wasm/0043e0ae:wasm-function[831]:0x911ab)\n\nNode.js v25.9.0"
+            "firstError": "__JS2WASM_COMPILE_COMPLETE__:5433\nwasm://wasm/0043e0ae:1\n\n\nRuntimeError: dereferencing a null pointer\n    at startWork (wasm://wasm/0043e0ae:wasm-function[307]:0x7a6aa)\n    at __closure_187 (wasm://wasm/0043e0ae:wasm-function[830]:0x91192)\n    at __call_fn_2 (wasm://wasm/0043e0ae:wasm-function[1343]:0x9b3a8)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1838:10)\n    at wasmClosureDispatch (/home/runner/work/js2/js2/src/runtime.ts:2015:17)\n    at wasmClosureBridge (/home/runner/work/js2/js2/src/runtime.ts:2020:22)\n    at new Promise (<anonymous>)\n    at <anonymous> (/home/runner/work/js2/js2/src/runtime.ts:16948:35)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:19178:20)\n    at __closure_186 (wasm://wasm/0043e0ae:wasm-function[831]:0x911ab)\n\nNode.js v25.9.0"
           }
         },
         "nodeFizz": {
@@ -6056,13 +6056,13 @@
           "implementationInvalidTests": 1,
           "compile": {
             "success": false,
-            "durationMs": 161950,
+            "durationMs": 163525,
             "binaryBytes": 2535704,
             "invalidBatches": 4
           },
           "validation": {
             "validates": false,
-            "firstError": "__JS2WASM_COMPILE_COMPLETE__:4861\nnode:internal/process/promises:332\n    triggerUncaughtException(err, true /* fromPromise */);\n    ^\n\nReferenceError: ReadableStream is not defined\n    at hint (/home/runner/work/js2/js2/src/runtime.ts:13441:17)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:19178:20)\n    at __closure_249 (wasm://wasm/0044899e:wasm-function[885]:0x913b7)\n    at completeShell (wasm://wasm/0044899e:wasm-function[271]:0x6bf51)\n    at finishedTask (wasm://wasm/0044899e:wasm-function[275]:0x6d2f8)\n    at performWork (wasm://wasm/0044899e:wasm-function[276]:0x6f599)\n    at __fn_tramp_performWork_cached (wasm://wasm/0044899e:wasm-function[729]:0x88410)\n    at __call_fn_method_1 (wasm://wasm/0044899e:wasm-function[1426]:0x9c03c)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0044899e:wasm-function[1427]:0x9c805)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1838:10)\n\nNode.js v25.9.0"
+            "firstError": "__JS2WASM_COMPILE_COMPLETE__:4846\nnode:internal/process/promises:332\n    triggerUncaughtException(err, true /* fromPromise */);\n    ^\n\nReferenceError: ReadableStream is not defined\n    at hint (/home/runner/work/js2/js2/src/runtime.ts:13441:17)\n    at fn (/home/runner/work/js2/js2/src/runtime.ts:19178:20)\n    at __closure_249 (wasm://wasm/0044899e:wasm-function[885]:0x913b7)\n    at completeShell (wasm://wasm/0044899e:wasm-function[271]:0x6bf51)\n    at finishedTask (wasm://wasm/0044899e:wasm-function[275]:0x6d2f8)\n    at performWork (wasm://wasm/0044899e:wasm-function[276]:0x6f599)\n    at __fn_tramp_performWork_cached (wasm://wasm/0044899e:wasm-function[729]:0x88410)\n    at __call_fn_method_1 (wasm://wasm/0044899e:wasm-function[1426]:0x9c03c)\n    at __\u0000js2_call_fn_method_argc_1 (wasm://wasm/0044899e:wasm-function[1427]:0x9c805)\n    at _applyWithPrefix (/home/runner/work/js2/js2/src/runtime.ts:1838:10)\n\nNode.js v25.9.0"
           }
         },
         "edgeFizz": {
@@ -6076,7 +6076,7 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": true,
-            "durationMs": 23874,
+            "durationMs": 22495,
             "binaryBytes": 259651,
             "invalidBatches": 0
           },
@@ -12240,7 +12240,7 @@
             "diagnostic": "Native-first semantic-provider policy rejected implicit or unclassified host imports: env::__get_builtin (unknown, owner #4401), env::__get_process_env (unknown, owner #4401), env::__throw_reference_error (unknown, owner #4401), string_constants::__REACT_DEVTOOLS_GLOBAL_HOOK__ is not defined (legacy-semantic, owner #4397). Use the host-assisted compatibility profile for this source until its native provider is implemented.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 808.8595239999704,
+            "compileDurationMs": 848.1813090001233,
             "optimizationLevel": 4,
             "semanticProviders": "native-first",
             "environment": "javascript"
@@ -12257,7 +12257,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-08T23:33:47.983Z",
+      "measuredAt": "2026-09-09T01:16:51.200Z",
       "esEdition": {
         "required": 2015,
         "requiredLabel": "ES2015",
@@ -29815,7 +29815,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 9762,
+        "durationMs": 7092,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -32069,51 +32069,51 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "select one of two runtime-owned callbacks",
-            "wasmUs": 0.49824166885830345,
-            "nodeUs": 0.0056376755966507,
-            "wasmStdUs": 0.002539005135585993,
-            "nodeStdUs": 0.000021074433234877096,
-            "ratio": 0.011317611081805156,
-            "ratioStd": 0.00005978931771982101,
+            "wasmUs": 0.40094794865573224,
+            "nodeUs": 0.004367573156611729,
+            "wasmStdUs": 0.005634980845703303,
+            "nodeStdUs": 0.000030928372377422035,
+            "ratio": 0.010893117601062671,
+            "ratioStd": 0.00017056998145108856,
             "ratioSamples": [
-              0.011317611081805156,
-              0.01117523231231511,
-              0.011331319012541814,
-              0.01133176130061938,
-              0.011304403053921556,
-              0.011263806676109867,
-              0.01131514272896757,
-              0.011389407228033381,
-              0.011377502249960399
+              0.010891603656410204,
+              0.011000824595322024,
+              0.010877957351764687,
+              0.010919564726534343,
+              0.011038839605132085,
+              0.010411444898420205,
+              0.010893117601062671,
+              0.010890284057196959,
+              0.010915035416631268
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 422061,
+            "iters": 581253,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.5028021044351213,
-              0.5026216044600234,
-              0.49640566884884796,
-              0.49780829548335714,
-              0.4992922397473067,
-              0.4985364461535067,
-              0.49824166885830345,
-              0.4949804080452842,
-              0.49635339678386636
+              0.40163456704738265,
+              0.40076069456843894,
+              0.40085861062223177,
+              0.39954893824204013,
+              0.40401482314928583,
+              0.41879882942539054,
+              0.40094794865573224,
+              0.4008923979747117,
+              0.4011545884494253
             ],
             "nodeSamplesUs": [
-              0.005690518669109882,
-              0.005616913195029318,
-              0.005624930993360487,
-              0.005641044777885604,
-              0.005644200719798788,
-              0.005615418150467955,
-              0.0056376755966507,
-              0.005637533437125872,
-              0.005647261888683927
+              0.004374444518994002,
+              0.00440869810564682,
+              0.004360522870436284,
+              0.00436290049255203,
+              0.004459854830840771,
+              0.004360300936085336,
+              0.004367573156611729,
+              0.004365832090315462,
+              0.004378616540469618
             ],
-            "compileDurationMs": 821.5597090000083,
+            "compileDurationMs": 566.2549660000077,
             "binaryBytes": 1641,
             "moduleImportCount": 7,
             "functionImportCount": 7,
@@ -32149,53 +32149,53 @@
             "reason": "the pinned Lit callback probe currently covers the JS-host lane only"
           }
         },
-        "wasmUs": 0.49824166885830345,
-        "nodeUs": 0.0056376755966507,
-        "wasmStdUs": 0.002539005135585993,
-        "nodeStdUs": 0.000021074433234877096,
-        "ratio": 0.011317611081805156,
-        "ratioStd": 0.00005978931771982101,
+        "wasmUs": 0.40094794865573224,
+        "nodeUs": 0.004367573156611729,
+        "wasmStdUs": 0.005634980845703303,
+        "nodeStdUs": 0.000030928372377422035,
+        "ratio": 0.010893117601062671,
+        "ratioStd": 0.00017056998145108856,
         "ratioSamples": [
-          0.011317611081805156,
-          0.01117523231231511,
-          0.011331319012541814,
-          0.01133176130061938,
-          0.011304403053921556,
-          0.011263806676109867,
-          0.01131514272896757,
-          0.011389407228033381,
-          0.011377502249960399
+          0.010891603656410204,
+          0.011000824595322024,
+          0.010877957351764687,
+          0.010919564726534343,
+          0.011038839605132085,
+          0.010411444898420205,
+          0.010893117601062671,
+          0.010890284057196959,
+          0.010915035416631268
         ],
         "measurementOrder": "alternating-paired",
         "ratioEstimator": "median-of-paired-ratios",
-        "iters": 422061,
+        "iters": 581253,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          0.5028021044351213,
-          0.5026216044600234,
-          0.49640566884884796,
-          0.49780829548335714,
-          0.4992922397473067,
-          0.4985364461535067,
-          0.49824166885830345,
-          0.4949804080452842,
-          0.49635339678386636
+          0.40163456704738265,
+          0.40076069456843894,
+          0.40085861062223177,
+          0.39954893824204013,
+          0.40401482314928583,
+          0.41879882942539054,
+          0.40094794865573224,
+          0.4008923979747117,
+          0.4011545884494253
         ],
         "nodeSamplesUs": [
-          0.005690518669109882,
-          0.005616913195029318,
-          0.005624930993360487,
-          0.005641044777885604,
-          0.005644200719798788,
-          0.005615418150467955,
-          0.0056376755966507,
-          0.005637533437125872,
-          0.005647261888683927
+          0.004374444518994002,
+          0.00440869810564682,
+          0.004360522870436284,
+          0.00436290049255203,
+          0.004459854830840771,
+          0.004360300936085336,
+          0.004367573156611729,
+          0.004365832090315462,
+          0.004378616540469618
         ]
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-08T22:55:41.611Z",
+      "measuredAt": "2026-09-09T00:37:30.916Z",
       "esEdition": {
         "required": 2015,
         "requiredLabel": "ES2015",
