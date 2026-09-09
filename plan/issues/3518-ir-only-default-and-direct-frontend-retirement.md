@@ -7265,3 +7265,11 @@ in [the implementation checkpoint](../agent-context/3518-three-arm-repair-artifa
 No historical arm has run. Independent admission review, remaining mutation
 controls and the complete execution-manifest review remain required before
 requesting run approval. Original failures, fixtures and PR5798's hold remain.
+
+2026-09-10 preflight checkpoint: all 103 synthetic/extraction/CLI controls pass.
+The complete six-arm review-only manifest is captured, and read-only admission
+against the actual source roots and dependency tree passes without launching a
+compiler. This does not prove historical equality or authorize execution.
+Independent static/data review found no actionable blockers. Late-path negative
+controls remain before run approval;
+see the implementation checkpoint for the exact manifest digest and limitations.

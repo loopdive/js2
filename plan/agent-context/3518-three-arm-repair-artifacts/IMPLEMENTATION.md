@@ -47,7 +47,7 @@ roundtrips, and two read-only git apply checks. Parent reviewed the frame patch,
 materialized both patches and verified the complete source postimages.
 The driver retains every original child byte except one explicit pre-import
 admission insertion; syntax-only Node checks parse both adapted programs.
-67 synthetic/extraction/CLI controls passed with no compiler invocation.
+103 synthetic/extraction/CLI controls passed with no compiler invocation.
 Static review found and fixed two pre-execution admission gaps: root package.json
 is now mandatory, and every fixture-file pin must exist before any child launch.
 
@@ -59,11 +59,18 @@ executions across six fresh arms; zero of those arms has been run here.
 
 ## Before execution approval
 
-Finish the remaining admission-mutation controls and prepare a REVIEW-ONLY
-execution manifest with all six arm entries,
+The REVIEW-ONLY `execution-manifest-review.json` now contains all six arm entries,
 full source inventories, fixture file pins, original evidence paths/digests,
 driver/helper and adapted-child hashes, exact parent argv and environment, Node
-binary identity and full dependency-tree census. This is still outstanding.
+binary identity and full dependency-tree census (31,789 entries). Its SHA256 is
+`ffc56c483ec1b4fb503fa868b2c51fbc1959cdb274233a2056abd49c0a8b85c2`.
+The read-only `check-frame-delay-review-manifest.mjs` checks the same admission
+contract without changing its REVIEW_REQUIRED_NOT_AUTHORIZED status or launching
+an arm. Initial real-root preflight passed; this is not compiler parity evidence.
+The 36 additional admission tests cover early rejection paths, not all late
+Git-index, alias, patch-drift and historical-evidence mutations. Independent
+static/data review found no actionable blockers in capture or authorization
+separation; those remaining negative controls are still outstanding.
 No manifest marked REVIEWED_FOR_EXECUTION has been created or supplied.
 
 The parent and children deliberately use different invocation shapes. Parent

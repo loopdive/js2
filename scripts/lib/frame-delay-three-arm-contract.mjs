@@ -184,6 +184,13 @@ export function dependencySnapshot(root) {
   return { root, count: entries.length, sha256: sha(JSON.stringify(entries)) };
 }
 export function assertAdmission(manifest, instrumentRoot, invocation = null) {
+  return assertAdmissionImpl(manifest, instrumentRoot, invocation, "REVIEWED_FOR_EXECUTION");
+}
+// Same read-only checks, but cannot authorize the driver or any child process.
+export function assertReviewAdmission(manifest, instrumentRoot) {
+  return assertAdmissionImpl(manifest, instrumentRoot, null, "REVIEW_REQUIRED_NOT_AUTHORIZED");
+}
+function assertAdmissionImpl(manifest, instrumentRoot, invocation, expectedStatus) {
   for (const key of [
     "GIT_DIR",
     "GIT_WORK_TREE",
@@ -194,7 +201,7 @@ export function assertAdmission(manifest, instrumentRoot, invocation = null) {
   ])
     assert(process.env[key] === undefined, "Git-root override must be absent: " + key);
   assert.equal(manifest.schema, "frame-delay-three-arm-execution-v1");
-  assert.equal(manifest.status, "REVIEWED_FOR_EXECUTION");
+  assert.equal(manifest.status, expectedStatus);
   assert.equal(realpathSync(instrumentRoot), manifest.instrumentRoot);
   const required = [
     ...Object.keys(ORIGINAL_INSTRUMENTS),
