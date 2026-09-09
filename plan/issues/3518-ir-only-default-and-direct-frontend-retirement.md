@@ -6399,3 +6399,33 @@ reproduced its exact20 known gaps. Both arms completed48 compiles,96 instances
 and184 observations. Raw outputs differ; baseline/candidate equality is not
 the criterion for correcting the defect. Exact frozen-source scope, hashes
 and limitations are retained in the adjacent agent-context result/handoff.
+
+## Native string literal and TypeError resources — 2026-09-08 checkpoint
+
+On getter checkpoint00976e841109235a79991145ee5f0c30933bf3b1, extracted real
+string layouts/literal bodies and the six-field TypeError constructor into
+canonical runtime modules, with same-ledger backend reserve/fill operations.
+Legacy callers retain their registration order, caches and name fallbacks.
+Five modules enter the clean boundary inventory; historical activation
+records and allowed edges remain unchanged. Measured closure:82 modules,
+298 edges (194 type-only,104 runtime), zero unresolved/forbidden edges.
+
+Composed TS7 and213/213 tests passed in session99746 (24 resource/preservation
+and189 boundary cases). High approved all eight production files and the
+final test-only repair:29 authored cases preserve the24-test prefix and add
+actual live/donor constructor comparisons plus two live-guard mutants.
+Those five additions await execution; earlier results do not cover them.
+Exact donor spans and full-source hashes were independently checked against
+5118637e. Collection uses a committed authenticated fixture, not historical
+Git availability. Details: agent-context/3518-native-string-error-integration-2026-09-08.md.
+
+Next integrate checked primitive values, then the actual string scanner and
+its flatten/exponent/power dependencies; follow with closure/argument-vector
+and object/callable inventory joins. A correctly named scanner signature is
+not implementation proof. Full Promise execution, fresh-process replay,
+IR-only cutover, strict closure, ABI30 witness and direct retirement remain
+open. This checkpoint does not satisfy those acceptance requirements.
+
+Final scoped approval and execution: High approved the five live-constructor
+controls; parent67641 exited0 with29/29 tests passing in10.08s. All eight
+production hashes and the authenticated fixture remain unchanged.
