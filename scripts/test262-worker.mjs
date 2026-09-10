@@ -1,3 +1,4 @@
+import { parseTest262SemanticProviders } from "./test262-lane.mjs";
 /**
  * Unified test262 worker — compiles AND executes a test in one process.
  * Uses child_process.fork for full memory isolation.
@@ -1254,6 +1255,7 @@ async function doCompile(
   isNegative,
   negativePhase,
   temporal,
+  semanticProviders,
 ) {
   // Defence-in-depth: restore any poisoned builtins BEFORE each compile.
   // postCompileCleanup runs after the previous test, but under rare worker
@@ -1332,6 +1334,7 @@ async function doCompile(
       // before semantic analysis.
       skipSemanticDiagnostics: negativePhase !== "resolution",
       target,
+      semanticProviders,
       inferModuleStrictArguments,
       ...deferOpt,
     });
@@ -1354,6 +1357,7 @@ async function doCompile(
       emitWat: false,
       skipSemanticDiagnostics: true,
       target,
+      semanticProviders,
       inferModuleStrictArguments,
       ...deferOpt,
     });
@@ -1372,6 +1376,7 @@ async function doCompile(
       emitWat: false,
       skipSemanticDiagnostics: true,
       target,
+      semanticProviders,
       inferModuleStrictArguments,
       ...deferOpt,
     });
@@ -1383,6 +1388,7 @@ async function doCompile(
     emitWat: false,
     skipSemanticDiagnostics: true,
     target,
+    semanticProviders,
     inferModuleStrictArguments,
     ...deferOpt,
   });
@@ -1684,6 +1690,7 @@ process.on("message", async (msg) => {
   const nativeHarness = originalHarness && msg.nativeHarness === true && typeof msg.harnessPrefix === "string";
   const harnessPrefix = nativeHarness ? msg.harnessPrefix : "";
   const target = compileTargetFromMessage(msg.target);
+  const semanticProviders = parseTest262SemanticProviders(msg.semanticProviders ?? process.env.TEST262_SEMANTIC_PROVIDERS);
   const fixtureGraph = hasFixtureGraph(msg.fixtureFiles);
   const compileStart = performance.now();
 
@@ -1701,7 +1708,7 @@ process.on("message", async (msg) => {
   // null too, so a fork without a pre-warm stamp asks once and then costs
   // nothing per row.
   let temporal = null;
-  if (msg.temporal === true && target === undefined && originalHarness) {
+  if (msg.temporal === true && target === undefined && semanticProviders === "auto" && originalHarness) {
     temporal = await getWorkerTemporalProvider();
   }
 
@@ -1718,6 +1725,7 @@ process.on("message", async (msg) => {
       isNegative,
       msg.negativePhase,
       temporal,
+      semanticProviders,
     );
   } catch (err) {
     // Thrown exception may have poisoned the incremental compiler's internal

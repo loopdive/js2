@@ -13,6 +13,7 @@
  */
 
 import type { Instr, LocalDef, ValType } from "../ir/types.js";
+import { buildStandardTryTable } from "../ir/try-table.js";
 import { IR_NATIVE_PROMISE_DELAY_FN } from "../ir/promise-delay-lowering.js";
 import { PROMISE_STATE_PENDING, ensureAsyncDriveRuntime } from "./async-scheduler.js";
 import { getOrCreateFuncRefWrapperTypes } from "./closures.js";
@@ -179,34 +180,34 @@ export function ensureIrNativePromiseDelayProvider(ctx: CodegenContext): number 
     closureBagInitInstr(),
     { op: "struct.new", typeIdx: runtime.promiseTypeIdx },
     { op: "local.set", index: promiseLocal },
-    {
-      op: "try",
-      blockType: { kind: "empty" },
-      body: timerRegistration,
-      catches: [
-        {
-          tagIdx: exnTagIdx,
-          body: [
-            { op: "local.set", index: reasonLocal },
-            { op: "local.get", index: promiseLocal },
-            { op: "local.get", index: reasonLocal },
-            { op: "call", funcIdx: runtime.rejectFuncIdx },
-            { op: "drop" },
-          ],
-        },
-      ],
+    buildStandardTryTable({ kind: "empty" }, timerRegistration, [
+      {
+        kind: "catch",
+        tagIdx: exnTagIdx,
+        payloadType: externref,
+        body: [
+          { op: "local.set", index: reasonLocal },
+          { op: "local.get", index: promiseLocal },
+          { op: "local.get", index: reasonLocal },
+          { op: "call", funcIdx: runtime.rejectFuncIdx },
+          { op: "drop" },
+        ],
+      },
       // A JavaScript timer provider can throw a foreign host exception rather
       // than the module's tagged `throw` payload. The Promise constructor must
       // still return a rejected Promise instead of leaking that exception
       // synchronously. No host exception-value import is introduced here: the
       // rejection reason is the native null/undefined boundary sentinel.
-      catchAll: [
-        { op: "local.get", index: promiseLocal },
-        { op: "ref.null.extern" },
-        { op: "call", funcIdx: runtime.rejectFuncIdx },
-        { op: "drop" },
-      ],
-    },
+      {
+        kind: "catch_all",
+        body: [
+          { op: "local.get", index: promiseLocal },
+          { op: "ref.null.extern" },
+          { op: "call", funcIdx: runtime.rejectFuncIdx },
+          { op: "drop" },
+        ],
+      },
+    ]),
     { op: "local.get", index: promiseLocal },
     { op: "extern.convert_any" },
   ];
