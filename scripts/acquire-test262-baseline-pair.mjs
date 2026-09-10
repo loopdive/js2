@@ -13,9 +13,15 @@ const api = (path) => execFileSync("gh", ["api", `repos/loopdive/js2/${path}`], 
 try {
   const manifest = json(join(directory, "test262-baseline-pair.json"));
   const commit = process.env.BASELINE_COMMIT;
-  if (!/^[a-f0-9]{40}$/.test(commit ?? "")) throw new Error("Missing immutable baseline commit");
-  const actual = execFileSync("git", ["-C", directory, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-  if (actual !== commit) throw new Error("Baseline checkout differs from requested commit");
+  const artifactMatch = /^artifact:([1-9][0-9]*)$/.exec(commit ?? "");
+  if (artifactMatch) {
+    if (Number(artifactMatch[1]) !== manifest.producer?.artifact_id)
+      throw new Error("Requested artifact differs from reviewed receipt");
+  } else {
+    if (!/^[a-f0-9]{40}$/.test(commit ?? "")) throw new Error("Missing immutable baseline source");
+    const actual = execFileSync("git", ["-C", directory, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    if (actual !== commit) throw new Error("Baseline checkout differs from requested commit");
+  }
   const producer = manifest.producer;
   if (!Number.isSafeInteger(producer?.run_id) || !Number.isSafeInteger(producer?.artifact_id))
     throw new Error("Missing producer identifiers");
@@ -41,6 +47,11 @@ try {
   ]) {
     const bytes = execFileSync("unzip", ["-p", archivePath, member], { maxBuffer: 256 * 1024 * 1024 });
     if (digest(bytes) !== manifest.lanes?.[lane]?.sha256) throw new Error(`${lane} does not match producer artifact`);
+    if (artifactMatch)
+      writeFileSync(
+        join(directory, lane === "host" ? "test262-current.jsonl" : "test262-standalone-current.jsonl"),
+        bytes,
+      );
   }
   const boolean = (name) => {
     if (!["true", "false"].includes(process.env[name])) throw new Error(`Unknown candidate setting ${name}`);
@@ -53,7 +64,9 @@ try {
     /export\s+const\s+ORACLE_VERSION\s*=\s*(\d+)/,
   )[1];
   const expected = {
-    baselines_commit: commit,
+    ...(artifactMatch
+      ? { artifact_id: Number(artifactMatch[1]), receipt_commit: process.env.GITHUB_SHA }
+      : { baselines_commit: commit }),
     candidate_sha: process.env.GITHUB_SHA,
     corpus_sha: corpus,
     oracle_version: Number(oracle),

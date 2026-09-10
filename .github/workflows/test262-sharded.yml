@@ -113,7 +113,7 @@ on:
         default: false
         type: boolean
       baseline_commit:
-        description: "Measurement-only: immutable js2wasm-baselines commit containing test262-baseline-pair.json and both authenticated lanes; required when skip_promote=true"
+        description: "Measurement-only: immutable baselines commit, or artifact:<id> with a reviewed plan/baseline-evidence/<id>.json receipt; required when skip_promote=true"
         type: string
         default: ""
 
@@ -194,10 +194,15 @@ jobs:
           LAYOUT_EMIT: ${{ inputs.layout_emit }}
           NATIVE_FIRST: ${{ inputs.native_first }}
         run: |
-          [[ "$BASELINE_COMMIT" =~ ^[a-f0-9]{40}$ ]] || { echo '::error::Missing immutable baseline commit'; exit 1; }
-          git clone --filter=blob:none --no-checkout https://github.com/loopdive/js2wasm-baselines.git admitted-baseline
-          git -C admitted-baseline sparse-checkout set --no-cone /test262-current.jsonl /test262-standalone-current.jsonl /test262-baseline-pair.json
-          git -C admitted-baseline checkout --detach "$BASELINE_COMMIT"
+          if [[ "$BASELINE_COMMIT" =~ ^artifact:([1-9][0-9]*)$ ]]; then
+            mkdir admitted-baseline
+            cp "plan/baseline-evidence/${BASH_REMATCH[1]}.json" admitted-baseline/test262-baseline-pair.json
+          else
+            [[ "$BASELINE_COMMIT" =~ ^[a-f0-9]{40}$ ]] || { echo '::error::Missing immutable baseline source'; exit 1; }
+            git clone --filter=blob:none --no-checkout https://github.com/loopdive/js2wasm-baselines.git admitted-baseline
+            git -C admitted-baseline sparse-checkout set --no-cone /test262-current.jsonl /test262-standalone-current.jsonl /test262-baseline-pair.json
+            git -C admitted-baseline checkout --detach "$BASELINE_COMMIT"
+          fi
           node scripts/acquire-test262-baseline-pair.mjs admitted-baseline
       - name: Preserve baseline admission evidence even on refusal
         if: always() && github.event_name == 'workflow_dispatch' && inputs.skip_promote

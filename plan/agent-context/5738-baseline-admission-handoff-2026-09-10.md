@@ -1,5 +1,40 @@
 # #5738 measurement baseline admission checkpoint
 
+## Current follow-up: original artifact path verified locally
+
+The metadata-only publication prerequisite below is superseded, not waived.
+Current baselines commit `2d991b968225280b65fe84cb9f4f686e916603b5` is NOT
+byte-identical to the original artifact. Its host hash is
+`3cba527b8dc4a667000410a9204884a6dd1e919c39a3c65ba9cdb09b86491e71`:
+239 error fields and 237 error_signature fields differ, with embedded NUL
+replaced by `^@` in inspected examples. Standalone hash also differs; its
+record-level delta is not yet classified. Do not normalize or waive this.
+
+The approved alternative is implemented: `baseline_commit=artifact:10112017687`
+loads the reviewed receipt `plan/baseline-evidence/10112017687.json` from the
+candidate checkout and downloads that exact original Actions artifact. No
+baselines-repository write, replacement, or promotion is required. This binds
+the receipt to the candidate commit while retaining original producer identity.
+Both consumers still receive one admitted artifact pair from one acquisition.
+
+Real network acquisition succeeded locally in
+`/private/tmp/js2-5738-original-admission.Wi150Hsg`: original archive digest,
+both lane byte hashes, API producer identity, ancestor relationship, all
+48,735 unique records per lane, complete counts and settings admitted. Rechecked
+the preserved run 34459540170 candidate JSONLs: exact full path sets and verdict
+stamps match. This is admission validation, NOT a new conformance verdict.
+
+Producer registration evidence was read directly from job `102532626616`:
+log line 871 reports 52 host shards, 48,735 verdicts/registered, zero exclusions;
+line 890 reports the same population for 50 standalone shards. Effective
+settings come from the original compiler commit's merge-group job environment,
+not the promoted summary (which misleadingly says include_proposals=0).
+
+Follow-up tests: 95/95 across six files, including 31 admission controls and
+unchanged legacy resolver/per-lane/matrix tests. Next: publish this follow-up
+on #5738, run one skip-promote measurement pinned to the original artifact,
+preserve its outcome, then decide protected-queue admission. Stack remains paused.
+
 ## Scope and landing hold
 
 User approved a fail-closed baseline-admission repair on existing PR #5738.

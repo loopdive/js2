@@ -22,7 +22,18 @@ function requireThat(condition, message) {
 // from candidate expectations. Counts include proposals and ALL failure rows.
 export function admitPair(directory, manifest, expected) {
   requireThat(manifest.schema === 1, "unsupported/missing schema");
-  requireThat(sha.test(expected.baselines_commit ?? ""), "unpinned baselines commit");
+  if (expected.artifact_id !== undefined) {
+    requireThat(
+      expected.baselines_commit === undefined &&
+        Number.isSafeInteger(expected.artifact_id) &&
+        expected.artifact_id === manifest.producer?.artifact_id,
+      "unpinned/mismatched original artifact",
+    );
+    requireThat(
+      sha.test(expected.receipt_commit ?? "") && expected.receipt_commit === expected.candidate_sha,
+      "unbound reviewed receipt",
+    );
+  } else requireThat(sha.test(expected.baselines_commit ?? ""), "unpinned baselines commit");
   requireThat(sha.test(manifest.compiler_sha ?? ""), "missing compiler SHA");
   requireThat(sha.test(expected.candidate_sha ?? ""), "missing candidate SHA");
   requireThat(sha.test(expected.corpus_sha ?? ""), "missing candidate corpus");
@@ -69,6 +80,8 @@ export function admitPair(directory, manifest, expected) {
   const receipt = {
     schema: 1,
     baselines_commit: expected.baselines_commit,
+    artifact_id: expected.artifact_id,
+    receipt_commit: expected.receipt_commit,
     compiler_sha: manifest.compiler_sha,
     candidate_sha: expected.candidate_sha,
     corpus_sha: manifest.corpus_sha,

@@ -70,6 +70,26 @@ function fixture() {
 }
 
 describe("measurement-only baseline pair admission", () => {
+  it("admits a pinned original artifact with a receipt bound to the candidate commit", () => {
+    const f = fixture();
+    const { baselines_commit, ...expected } = f.expected;
+    const receipt = admitPair(f.directory, f.manifest, {
+      ...expected,
+      artifact_id: 2,
+      receipt_commit: expected.candidate_sha,
+    });
+    expect(receipt.artifact_id).toBe(2);
+    expect(receipt.baselines_commit).toBeUndefined();
+    expect(() =>
+      admitPair(f.directory, f.manifest, { ...expected, artifact_id: 3, receipt_commit: expected.candidate_sha }),
+    ).toThrow(/artifact/);
+    expect(() =>
+      admitPair(f.directory, f.manifest, { ...expected, artifact_id: 2, receipt_commit: "f".repeat(40) }),
+    ).toThrow(/receipt/);
+    expect(() =>
+      admitPair(f.directory, f.manifest, { ...f.expected, artifact_id: 2, receipt_commit: expected.candidate_sha }),
+    ).toThrow(/artifact/);
+  });
   it("refuses acquisition without a producer manifest despite a plausible committed fallback", () => {
     const f = fixture();
     const result = spawnSync(process.execPath, ["scripts/acquire-test262-baseline-pair.mjs", f.directory], {
