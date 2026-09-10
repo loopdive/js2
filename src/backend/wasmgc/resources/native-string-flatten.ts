@@ -151,7 +151,11 @@ export function fillNativeStringFlattenResources(
   if (owner.filled) fail("duplicate fill");
   requireCompletedNativeStringLiterals(tx, owner.stringPack);
   const layout = pack.stringPack.layout;
-  const copy = buildStringCopyTreeDefinition(layout, pack.worklist.typeIndex);
+  const copy = buildStringCopyTreeDefinition(
+    layout,
+    pack.worklist.typeIndex,
+    pack.utf8Decoder ? { kind: "present", handle: pack.utf8Decoder.handle } : { kind: "absent" },
+  );
   const decoder = pack.utf8Decoder ? buildStringUtf8ToFlatDefinition(layout) : null;
   const flat = buildStringFlattenDefinition(layout, {
     copyTree: pack.copyTree.handle,

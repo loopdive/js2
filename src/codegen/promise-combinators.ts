@@ -62,6 +62,11 @@ import {
   buildNativePromiseCombinatorVectorBody,
 } from "../runtime/wasmgc/promise/combinator-bodies.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
+import {
+  createNativeCombinatorStateShape,
+  createNativeCombinatorElementShape,
+  buildNativeAllProviderLocals,
+} from "../runtime/wasmgc/promise/delay-combinator-layouts.js";
 import type { FieldDef, Instr, LocalDef, ValType } from "../ir/types.js";
 import { ensureBuiltinFnMetaType } from "./builtin-fn-meta.js";
 import {
@@ -570,16 +575,13 @@ export function ensureCombinatorFunctions(ctx: CodegenContext): CombinatorRuntim
   const vecTypeIdx = getOrRegisterVecType(ctx, "externref", EXTERNREF);
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
 
-  const stateTypeIdx = registerStruct(ctx, "$CombinatorState", [
-    { name: "resultPromise", type: { kind: "ref", typeIdx: promiseTypeIdx }, mutable: false },
-    { name: "resultsArr", type: { kind: "ref", typeIdx: arrTypeIdx }, mutable: false },
-    { name: "length", type: { kind: "i32" }, mutable: false },
-    { name: "remaining", type: { kind: "i32" }, mutable: true },
-  ]);
-  const elemCapsTypeIdx = registerStruct(ctx, "$CombinatorElemCaps", [
-    { name: "state", type: { kind: "ref", typeIdx: stateTypeIdx }, mutable: false },
-    { name: "index", type: { kind: "i32" }, mutable: false },
-  ]);
+  const stateShape = createNativeCombinatorStateShape(
+    { kind: "ref" as const, typeIdx: promiseTypeIdx },
+    { kind: "ref" as const, typeIdx: arrTypeIdx },
+  );
+  const stateTypeIdx = registerStruct(ctx, stateShape.name, [...stateShape.fields]);
+  const elementShape = createNativeCombinatorElementShape({ kind: "ref" as const, typeIdx: stateTypeIdx });
+  const elemCapsTypeIdx = registerStruct(ctx, elementShape.name, [...elementShape.fields]);
 
   // Func types. The fulfill/reject wrappers share the microtask wrapper shape
   // `(caps externref, value externref) -> externref` (addFuncType dedups, so this
@@ -1225,20 +1227,18 @@ export function emitStandalonePromiseCombinatorRuntime(
   // emission below (registration-before-bake, same contract as the literal arm).
   const reaction = combinatorReactionFns(ctx, ids, method);
 
-  const resultLocal = allocLocal(fctx, `__comb_result_${fctx.locals.length}`, {
-    kind: "ref",
-    typeIdx: ids.promiseTypeIdx,
+  const localPlan = buildNativeAllProviderLocals(ids.promiseTypeIdx, ids.arrTypeIdx, ids.stateTypeIdx, {
+    parameterCount: fctx.params.length,
+    firstLocalOrdinal: fctx.locals.length,
+    argVecLocal,
   });
-  const arrLocal = allocLocal(fctx, `__comb_arr_${fctx.locals.length}`, {
-    kind: "ref",
-    typeIdx: ids.arrTypeIdx,
-  });
-  const stateLocal = allocLocal(fctx, `__comb_state_${fctx.locals.length}`, {
-    kind: "ref",
-    typeIdx: ids.stateTypeIdx,
-  });
-  const nLocal = allocLocal(fctx, `__comb_n_${fctx.locals.length}`, { kind: "i32" });
-  const iLocal = allocLocal(fctx, `__comb_i_${fctx.locals.length}`, { kind: "i32" });
+  const { resultLocal, arrLocal, stateLocal, nLocal, iLocal } = localPlan.slots;
+  const expectedSlots = [resultLocal, arrLocal, stateLocal, nLocal, iLocal];
+  for (const [ordinal, local] of localPlan.locals.entries()) {
+    if (allocLocal(fctx, local.name, local.type) !== expectedSlots[ordinal]) {
+      throw new Error("native combinator local allocation diverged from its canonical layout");
+    }
+  }
 
   const body = buildNativePromiseCombinatorVectorBody(
     {

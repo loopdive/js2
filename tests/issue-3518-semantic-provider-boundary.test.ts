@@ -199,6 +199,54 @@ const groups = {
   "backend-wasmgc": [...aggregateGroups["backend-wasmgc"], argumentVectorAdditions[1]!, closureAdditions[1]!],
 };
 const required = Object.values(groups).flat();
+// The historical 102-owner fixture and its 56-record history stay independent.
+const liveDependencyAdditions = [
+  "src/ir/program/runtime-support.ts",
+  "src/ir/program/formatter-support.ts",
+  "src/ir/core/type-references.ts",
+];
+const liveFixtureGroups = {
+  ...groups,
+  "ir-program": [...groups["ir-program"], ...liveDependencyAdditions.slice(0, 2)],
+  "ir-core": [...groups["ir-core"], liveDependencyAdditions[2]!],
+};
+const liveRequired = Object.values(liveFixtureGroups).flat();
+// Ordered additions independently reviewed at published policy 1eaa57abc,
+// and checked against local composition 19a0a9bd8c2c.
+// This is the full current layer contract, not the bounded live fixture.
+const currentLayerGroups = {
+  ...groups,
+  "ir-core": [...groups["ir-core"], "src/ir/core/type-references.ts"],
+  "ir-program": [
+    ...groups["ir-program"],
+    "src/ir/program/runtime-support.ts",
+    "src/ir/program/formatter-support.ts",
+    "src/ir/program/native-number-format-requirements.ts",
+  ],
+  "native-runtime": [
+    ...groups["native-runtime"],
+    "src/runtime/wasmgc/values/number-ryu-tables.ts",
+    "src/runtime/wasmgc/values/number-ryu-bodies.ts",
+    "src/runtime/wasmgc/values/number-ryu-digits.ts",
+    "src/runtime/wasmgc/values/number-ryu-to-buffer.ts",
+    "src/runtime/wasmgc/values/number-ryu-signatures.ts",
+    "src/runtime/wasmgc/values/number-format-bodies.ts",
+    "src/runtime/wasmgc/values/number-format-radix-bodies.ts",
+    "src/runtime/wasmgc/values/string-concat-bodies.ts",
+    "src/runtime/wasmgc/values/stdout-bodies.ts",
+    "src/runtime/wasmgc/promise/delay-combinator-layouts.ts",
+  ],
+  "backend-wasmgc": [
+    ...groups["backend-wasmgc"],
+    "src/backend/wasmgc/program/native-number-format.ts",
+    "src/backend/wasmgc/resources/native-number-ryu.ts",
+    "src/backend/wasmgc/resources/native-number-format.ts",
+    "src/backend/wasmgc/resources/native-delay-combinator.ts",
+  ],
+};
+// Archival graph receipt: 102 modules, 391 edges (248 type-only / 143 runtime).
+// This is not a fresh historical execution; expanded current sources are measured below.
+
 const callableAdditions = ["src/ir/core/async-callables.ts", "src/ir/runtime/native-async-callables.ts"];
 const vectorAdditions = ["src/ir/core/vector-runtime.ts", "src/ir/runtime/vector-callables.ts"];
 const typeLayoutAdditions = ["src/wasm/physical/type-layout.ts"];
@@ -388,6 +436,20 @@ function assertNewActivations(history: unknown[]) {
     ),
   );
 }
+// Authenticate the additive prefix before examining the unchanged old history.
+function assertCurrentActivations(history: unknown[]) {
+  expect(history).toHaveLength(68);
+  const prefix = history.slice(0, 12);
+  expect(prefix).toHaveLength(12);
+  expect(digest(prefix)).toBe("527f561bf9497c469352d9671615d33740b5ed95d17815c5cadb206d45711e07");
+  const historical = history.slice(12);
+  expect(historical).toHaveLength(56);
+  assertNewActivations(historical);
+  expect(digest(historical.slice(32))).toBe("3437a59aacf39df9dffcafa8099ac9f47c0f43a7a0ecc423df4c1fe3e638f002");
+  expect(digest(historical.slice(38))).toBe("a6d07b900b0837832707ce083202ab6ffa40f0bbe6bfce25f3062270882b26da");
+  return historical;
+}
+
 const scratch: string[] = [];
 afterEach(async () => {
   for (const root of scratch.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -406,13 +468,15 @@ function fixture() {
   const p = policy();
   p.requireGitProvenance = false;
   p.layers = p.layers.map((layer: { id: string; roots: string[] }) => {
-    const entries = groups[layer.id as keyof typeof groups];
+    const entries = liveFixtureGroups[layer.id as keyof typeof liveFixtureGroups];
     return entries
       ? { ...layer, status: "active", required: true, entries, minModules: entries.length }
       : { id: layer.id, roots: layer.roots, status: "debt" };
   });
-  p.files = Object.entries(groups).flatMap(([layer, paths]) => paths.map((path) => ({ path, layer, state: "clean" })));
-  p.activationHistory = Object.entries(groups).map(([layer, entries]) => ({
+  p.files = Object.entries(liveFixtureGroups).flatMap(([layer, paths]) =>
+    paths.map((path) => ({ path, layer, state: "clean" })),
+  );
+  p.activationHistory = Object.entries(liveFixtureGroups).map(([layer, entries]) => ({
     layer,
     entries,
     minModules: entries.length,
@@ -422,7 +486,7 @@ function fixture() {
   p.nonModules = [];
   p.externalPackages = [];
   p.externalAssets = [];
-  for (const path of required) put(path, readFileSync(resolve(repository, path), "utf8"));
+  for (const path of liveRequired) put(path, readFileSync(resolve(repository, path), "utf8"));
   put(
     "tsconfig.json",
     JSON.stringify({
@@ -520,20 +584,12 @@ describe("semantic verification and provider ownership boundary", () => {
     ])
       expect(required).toContain(path);
     const p = policy();
-    assertNewActivations(p.activationHistory);
-    expect(p.activationHistory).toHaveLength(56);
-    expect(digest(p.activationHistory.slice(32))).toBe(
-      "3437a59aacf39df9dffcafa8099ac9f47c0f43a7a0ecc423df4c1fe3e638f002",
-    );
+    assertCurrentActivations(p.activationHistory);
     expect(digest(p.allowedEdges)).toBe("efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7");
-    // Exact full activation history at b4c116639a, not a selected subset.
-    expect(digest(p.activationHistory.slice(38))).toBe(
-      "a6d07b900b0837832707ce083202ab6ffa40f0bbe6bfce25f3062270882b26da",
-    );
-    for (const [id, entries] of Object.entries(groups)) {
+    for (const [id, entries] of Object.entries(currentLayerGroups)) {
       const layer = p.layers.find((row: { id: string }) => row.id === id);
       expect(layer).toMatchObject({ status: "active", required: true, minModules: entries.length });
-      expect([...layer.entries].sort()).toEqual([...entries].sort());
+      expect(layer.entries).toEqual(entries);
       for (const path of entries)
         expect(p.files.filter((row: { path: string }) => row.path === path)).toEqual([
           { path, state: "clean", layer: id },
@@ -544,16 +600,36 @@ describe("semantic verification and provider ownership boundary", () => {
   it("loads the complete actual canonical type-and-value closure", () => {
     const r = fixture().run();
     expect(r.status, JSON.stringify(r.report.errors)).toBe(0);
-    expect(r.report.counts.total).toBe(102);
+    expect(required).toHaveLength(102);
+    expect(liveRequired).toHaveLength(105);
+    expect(new Set(liveRequired).size).toBe(105);
+    expect(r.report.counts.total).toBe(105);
     expect(r.report.errors).toEqual([]);
     for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
       expect(r.report[field]).toEqual([]);
     expect({ edges: r.report.resolvedEdgeCount, ...r.report.counts.resolvedEdgesByType }).toEqual({
-      edges: 391,
-      typeOnly: 248,
-      runtime: 143,
+      edges: 423,
+      typeOnly: 261,
+      runtime: 162,
     });
   });
+
+  it.each(["delete", "reorder", "layer", "entries", "minimum", "extra"] as const)(
+    "rejects %s corruption of the independently pinned twelve-record prefix",
+    (mutation) => {
+      const history = policy().activationHistory;
+      assertCurrentActivations(history);
+      const before = digest(history);
+      if (mutation === "delete") history.splice(0, 1);
+      if (mutation === "reorder") [history[0], history[1]] = [history[1], history[0]];
+      if (mutation === "layer") history[0].layer = "ir-core";
+      if (mutation === "entries") history[0].entries.pop();
+      if (mutation === "minimum") history[0].minModules--;
+      if (mutation === "extra") history.splice(0, 0, structuredClone(history[0]));
+      expect(digest(history)).not.toBe(before);
+      expect(() => assertCurrentActivations(history)).toThrow();
+    },
+  );
 
   function assertModelOnlyDeclarations(text: string) {
     const source = ts.createSourceFile("declarations.ts", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -595,7 +671,7 @@ describe("semantic verification and provider ownership boundary", () => {
       (["delete", "reorder", "layer", "entries", "minimum"] as const).map((mutation) => ({ offset, mutation })),
     ),
   )("rejects $mutation corruption of activation records at $offset", ({ offset, mutation }) => {
-    const history = policy().activationHistory;
+    const history = assertCurrentActivations(policy().activationHistory);
     assertNewActivations(history);
     const before = digest(history);
     if (mutation === "delete") history.splice(offset, 1);
@@ -627,6 +703,7 @@ describe("semantic verification and provider ownership boundary", () => {
     ...aggregateAdditions,
     ...argumentVectorAdditions,
     ...closureAdditions,
+    ...liveDependencyAdditions,
   ])("rejects deleting %s and its classification", (path) => {
     const f = fixture();
     rmSync(resolve(f.root, path));
@@ -658,6 +735,7 @@ describe("semantic verification and provider ownership boundary", () => {
     ...aggregateAdditions,
     ...argumentVectorAdditions,
     ...closureAdditions,
+    ...liveDependencyAdditions,
   ])("rejects an aliased frontend type dependency from %s", (path) => {
     const f = fixture();
     f.put("src/forbidden.ts", "export interface Hidden { value: number }");
@@ -694,6 +772,7 @@ describe("semantic verification and provider ownership boundary", () => {
       ...aggregateAdditions,
       ...argumentVectorAdditions,
       ...closureAdditions,
+      ...liveDependencyAdditions,
     ])(`reports ${field} from %s instead of treating it as closed`, (path) => {
       const f = fixture();
       f.append(path, source);

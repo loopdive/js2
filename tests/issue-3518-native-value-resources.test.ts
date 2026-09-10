@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import ts from "typescript";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createEmptyModule } from "../src/ir/types.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
@@ -20,11 +20,13 @@ import {
 import {
   reserveNativeValueResources,
   fillNativeValueResources,
+  requireCompletedNativeValues,
   type NativeValueDependencies,
 } from "../src/backend/wasmgc/resources/native-values.js";
 import { buildUnboxNumberBody } from "../src/runtime/wasmgc/values/number-bodies.js";
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await setImmediate();
 });
 const policy = { backend: "wasmgc", target: "standalone" } as const;
@@ -47,11 +49,10 @@ let cached: ReturnType<typeof prepare> | undefined;
 const actual = () => (cached ??= prepare());
 const absent = (): NativeValueDependencies => ({ strings: { kind: "absent" } });
 
-function reserve() {
+function reserve(plan = actual().plan) {
   const module = createEmptyModule(),
     tx = new PhysicalModuleReservations(module);
-  const dependencies = absent(),
-    plan = actual().plan;
+  const dependencies = absent();
   const pack = reserveNativeValueResources(tx, plan, dependencies);
   const f64 = { kind: "f64" } as const,
     i32 = { kind: "i32" } as const,
@@ -61,14 +62,16 @@ function reserve() {
   const boolean = tx.reserveFunction("control:boolean", "boolean", { params: [i32], results: [extern] });
   const undefinedValue = tx.reserveFunction("control:undefined", "undefinedValue", { params: [], results: [extern] });
   const tag = tx.reserveFunction("control:tag", "tag", { params: [], results: [i32] });
-  return { module, tx, dependencies, pack, roundtrip, small, boolean, undefinedValue, tag };
+  return { module, tx, dependencies, plan, pack, roundtrip, small, boolean, undefinedValue, tag };
 }
 
-function filled() {
-  const state = reserve();
-  const { tx, pack, dependencies, roundtrip, small, boolean, undefinedValue, tag } = state;
+function filled(plan = actual().plan) {
+  const state = reserve(plan);
+  const { tx, dependencies, roundtrip, small, boolean, undefinedValue, tag } = state;
   tx.freezeReservations();
-  fillNativeValueResources(tx, pack, dependencies);
+  fillNativeValueResources(tx, state.pack, dependencies);
+  const pack = requireCompletedNativeValues(tx, state.pack, plan, dependencies);
+  expect(pack).toBe(state.pack);
   tx.fillFunction(roundtrip, {
     locals: [],
     body: [
@@ -128,9 +131,10 @@ interface Exports {
   undefinedValue(): unknown;
   tag(): number;
 }
-function execute() {
-  const { module, tx } = filled();
+function execute(plan = actual().plan) {
+  const { module, tx, pack, dependencies } = filled(plan);
   const census = tx.seal();
+  expect(requireCompletedNativeValues(tx, pack, plan, dependencies)).toBe(pack);
   const binary = emitBinary(module);
   const compiled = new WebAssembly.Module(binary as BufferSource);
   expect(WebAssembly.Module.imports(compiled)).toEqual([]);
@@ -276,6 +280,146 @@ describe("native primitive resources: executed bodies, not signature-only admiss
     state.pack.globals.undefined.object.init[index] = { op: "i32.const", value: 42 };
     expect(() => state.tx.seal()).toThrow("altered");
   });
+});
+
+describe("native value producer completion authority", () => {
+  it("returns exact pack with a fresh containing dependency record without side effects", () => {
+    const state = filled();
+    const before = structuredClone(state.module);
+    const spies = [
+      vi.spyOn(state.tx, "reserveType"),
+      vi.spyOn(state.tx, "reserveFunction"),
+      vi.spyOn(state.tx, "reserveGlobal"),
+      vi.spyOn(state.tx, "internFunctionType"),
+      vi.spyOn(state.tx, "fillFunction"),
+      vi.spyOn(state.tx, "fillGlobal"),
+      vi.spyOn(state.tx, "defineExport"),
+      vi.spyOn(state.tx, "seal"),
+    ];
+    expect(requireCompletedNativeValues(state.tx, state.pack, state.plan, absent())).toBe(state.pack);
+    expect(state.tx.state).toBe("filling");
+    expect(state.module).toStrictEqual(before);
+    spies.forEach((spy) => expect(spy).not.toHaveBeenCalled());
+  });
+  it("executes decoded source-bound resources through completion before and after seal", () => {
+    const x = execute(prepare(true).plan).exports;
+    for (const value of [-1073741824, 1073741823, 70, 3e9, -0, 1.5, NaN, Infinity, -Infinity]) {
+      expect(Object.is(x.roundtrip(value), value)).toBe(true);
+      expect(x.isNumber(x.box(value))).toBe(1);
+    }
+    expect(x.tag()).toBe(1);
+    expect(x.unbox(x.undefinedValue())).toBeNaN();
+    expect(x.unbox(null)).toBe(0);
+    expect(x.unbox(x.boolean(1))).toBe(1);
+  });
+  it("rejects a distinct genuinely issued equal-visible plan", () => {
+    const state = filled();
+    expect(requireCompletedNativeValues(state.tx, state.pack, state.plan, state.dependencies)).toBe(state.pack);
+    const { program, projection } = actual();
+    const other = deriveNativeValueResourcePlan(program, projection, "primitive-only");
+    assertNativeValueResourcePlan(other);
+    expect(other).toEqual(state.plan);
+    expect(other).not.toBe(state.plan);
+    expect(() => requireCompletedNativeValues(state.tx, state.pack, other, state.dependencies)).toThrow(
+      "substituted native value requirements",
+    );
+  });
+  it("rejects foreign transactions and copied packs after a real completion", () => {
+    const state = filled();
+    expect(requireCompletedNativeValues(state.tx, state.pack, state.plan, state.dependencies)).toBe(state.pack);
+    expect(() =>
+      requireCompletedNativeValues(
+        new PhysicalModuleReservations(createEmptyModule()),
+        state.pack,
+        state.plan,
+        state.dependencies,
+      ),
+    ).toThrow("foreign");
+    expect(() => requireCompletedNativeValues(state.tx, { ...state.pack }, state.plan, state.dependencies)).toThrow(
+      "foreign",
+    );
+  });
+  it("rejects a genuine unfilled pack without marking it completed", () => {
+    const positive = filled();
+    expect(requireCompletedNativeValues(positive.tx, positive.pack, positive.plan, positive.dependencies)).toBe(
+      positive.pack,
+    );
+    const state = reserve();
+    state.tx.freezeReservations();
+    expect(() => requireCompletedNativeValues(state.tx, state.pack, state.plan, state.dependencies)).toThrow(
+      "incomplete native value resources",
+    );
+    expect(state.tx.state).toBe("filling");
+  });
+  for (const stopped of [0, 1, 2, 3])
+    it(`rejects real producer interrupted at fill ${stopped}`, () => {
+      const positive = filled();
+      expect(requireCompletedNativeValues(positive.tx, positive.pack, positive.plan, positive.dependencies)).toBe(
+        positive.pack,
+      );
+      const state = reserve();
+      state.tx.freezeReservations();
+      const sentinel = new Error("stop actual fill " + stopped);
+      const global = state.tx.fillGlobal.bind(state.tx),
+        fn = state.tx.fillFunction.bind(state.tx);
+      let calls = 0;
+      vi.spyOn(state.tx, "fillGlobal").mockImplementation((...args) => {
+        if (calls++ === stopped) throw sentinel;
+        return global(...args);
+      });
+      vi.spyOn(state.tx, "fillFunction").mockImplementation((...args) => {
+        if (calls++ === stopped) throw sentinel;
+        return fn(...args);
+      });
+      let caught: unknown;
+      try {
+        fillNativeValueResources(state.tx, state.pack, state.dependencies);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBe(sentinel);
+      expect(calls).toBe(stopped + 1);
+      expect(state.tx.state).toBe("filling");
+      expect(() => requireCompletedNativeValues(state.tx, state.pack, state.plan, state.dependencies)).toThrow(
+        "incomplete native value resources",
+      );
+    });
+  // Mandatory countermodels: returning from an intercepted ledger operation is
+  // not proof that its token entered the ledger's successful-fill map.
+  for (const omitted of [0, 1, 2, 3])
+    it(`rejects nonthrowing omission of fill ${omitted}`, () => {
+      const positive = filled();
+      expect(requireCompletedNativeValues(positive.tx, positive.pack, positive.plan, positive.dependencies)).toBe(
+        positive.pack,
+      );
+      const state = reserve();
+      state.tx.freezeReservations();
+      const global = state.tx.fillGlobal.bind(state.tx),
+        fn = state.tx.fillFunction.bind(state.tx);
+      let calls = 0;
+      vi.spyOn(state.tx, "fillGlobal").mockImplementation((...args) => {
+        if (calls++ === omitted) return;
+        return global(...args);
+      });
+      vi.spyOn(state.tx, "fillFunction").mockImplementation((...args) => {
+        if (calls++ === omitted) return;
+        return fn(...args);
+      });
+      fillNativeValueResources(state.tx, state.pack, state.dependencies);
+      expect(calls).toBe(4);
+      expect(() => requireCompletedNativeValues(state.tx, state.pack, state.plan, state.dependencies)).toThrow();
+    });
+  for (const mutation of ["body", "locals", "initializer", "type"] as const)
+    it(`rejects post-fill ${mutation} drift via completion accessor`, () => {
+      const state = filled();
+      expect(requireCompletedNativeValues(state.tx, state.pack, state.plan, state.dependencies)).toBe(state.pack);
+      if (mutation === "body") state.pack.functions.boxNumber.object.body.push({ op: "unreachable" });
+      if (mutation === "locals")
+        state.pack.functions.unboxNumber.object.locals.push({ name: "foreign", type: { kind: "i32" } });
+      if (mutation === "initializer") state.pack.globals.undefined.object.init[0] = { op: "i32.const", value: 42 };
+      if (mutation === "type") state.pack.types.boxedBoolean.object.name = "foreign";
+      expect(() => requireCompletedNativeValues(state.tx, state.pack, state.plan, state.dependencies)).toThrow();
+    });
 });
 
 // Fixed 5118637 donor receipts. Tests read mandatory LIVE files only. Whitespace

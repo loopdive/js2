@@ -9,9 +9,16 @@ import { internFunctionType } from "../src/wasm/physical/function-types.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
 import * as funcSpace from "../src/codegen/func-space.js";
 import * as canonical from "../src/runtime/wasmgc/values/closure-layouts.js";
+import * as closureData from "../src/ir/program/data.js";
+import * as closureDeclarations from "../src/backend/wasmgc/resources/native-resource-declarations.js";
 import {
   reserveNativeClosureResources,
+  declareNativeClosureResources,
+  instantiateNativeClosureRequirements,
+  nativeClosureReservationInventory,
   requireNativeClosureReservations,
+  reserveNativeClosureResourcesPrefix,
+  resumeNativeClosureResources,
   type NativeClosureRequirements,
   type NativeClosureSignatureRequest,
   type NativeClosureMetadataRequest,
@@ -20,6 +27,44 @@ import { emitBinary } from "../src/emit/binary.js";
 import { emitWat } from "../src/emit/wat.js";
 
 const base = "bfe31c8bd96d748e867562e3e9b78343b72d1877";
+
+describe("atomic compatibility of the same-owner engine", () => {
+  it.each(["ordinary", "host-one-shot"] as const)(
+    "keeps the complete frozen value shape for %s-first roots",
+    (allocationMode) => {
+      const request = { kind: "signature" as const, id: "root", params: [], results: [], allocationMode };
+      const plan = declareNativeClosureResources({
+        key: "atomic",
+        startingClosureCounter: 0,
+        requests: [request],
+        referenceTypeKeys: [],
+      });
+      const input = { key: "atomic", startingClosureCounter: 0, requests: [request], referenceTypes: [] };
+      const a = createEmptyModule(),
+        b = createEmptyModule(),
+        ta = new PhysicalModuleReservations(a),
+        tb = new PhysicalModuleReservations(b);
+      const atomic = reserveNativeClosureResources(ta, input, plan),
+        completePrefix = reserveNativeClosureResourcesPrefix(tb, input, plan, 1);
+      expect(a).toStrictEqual(b);
+      expect(atomic).toStrictEqual(completePrefix);
+      expect(Reflect.ownKeys(completePrefix)).toEqual([
+        "root",
+        "signatures",
+        "metadata",
+        "resultingClosureCounter",
+        "registrations",
+      ]);
+      for (const key of Reflect.ownKeys(completePrefix))
+        expect(Object.getOwnPropertyDescriptor(completePrefix, key)).toEqual(
+          Object.getOwnPropertyDescriptor(atomic, key),
+        );
+      expect(Object.isFrozen(completePrefix)).toBe(true);
+      expect(Object.isFrozen(completePrefix.signatures[0]!.binding.info)).toBe(true);
+      expect(() => resumeNativeClosureResources(tb, completePrefix, 1)).toThrow("already complete");
+    },
+  );
+});
 // Prettier changed only the fixture's JSON whitespace at publication. All
 // embedded donor text/hashes remain unchanged; pin the formatted transport.
 const fixtureHash = "be6904328b9bb25981ca9ae109c3526d86931832eeb433bce66af41f99b96575";
@@ -92,6 +137,56 @@ const factoryHeaders = [
 ] as const;
 const allocationModeDeclaration = 'export type ClosureAllocationMode = "support" | "ordinary" | "host-one-shot";';
 function completeFactories(source: string): { declarations: string[]; bodies: string[] } {
+  const parsed = ts.createSourceFile("live-shapes.ts", source, ts.ScriptTarget.Latest, true);
+  const functions = parsed.statements.filter(ts.isFunctionDeclaration);
+  const declaration = (name: string) => {
+    const matches = functions.filter((fn) => fn.name?.text === name);
+    if (matches.length !== 1) throw new Error("missing/duplicate shape factory");
+    return matches[0]!.getText(parsed);
+  };
+  const wrapper = declaration("createSignatureWrapperType"),
+    metadata = declaration("createBuiltinFunctionMetadataType");
+  const wrapperShape = declaration("createSignatureWrapperShape"),
+    metadataShape = declaration("createBuiltinFunctionMetadataShape");
+  const wrapperDelegate = `${factoryHeaders[0]}
+  const { parent, ...shape } = createSignatureWrapperShape(name, superTypeIdx);
+  return { ...shape, superTypeIdx: parent };
+}`;
+  const metadataDelegate = `${factoryHeaders[1]}
+  const { parent, ...shape } = createBuiltinFunctionMetadataShape(
+    \`__builtinfn_meta_\${typeIndex}_struct\`,
+    signatureWrapperTypeIndex,
+  );
+  return { ...shape, superTypeIdx: parent };
+}`;
+  if (wrapper !== wrapperDelegate || metadata !== metadataDelegate)
+    throw new Error("changed numeric factory delegation");
+  let originalWrapper = replaceOnce(
+    wrapperShape,
+    "export function createSignatureWrapperShape<P>(name: string, parent: P) {",
+    factoryHeaders[0],
+  );
+  originalWrapper = replaceOnce(
+    originalWrapper,
+    'return { kind: "struct" as const, name, fields, parent };',
+    'return { kind: "struct", name, fields, superTypeIdx };',
+  );
+  let originalMetadata = replaceOnce(
+    metadataShape,
+    "export function createBuiltinFunctionMetadataShape<N, P>(name: N, parent: P) {",
+    factoryHeaders[1],
+  );
+  originalMetadata = replaceOnce(originalMetadata, 'kind: "struct" as const,', 'kind: "struct",');
+  originalMetadata = replaceOnce(originalMetadata, "    name,", "    name: `__builtinfn_meta_${typeIndex}_struct`,");
+  originalMetadata = replaceOnce(originalMetadata, "    parent,", "    superTypeIdx: signatureWrapperTypeIndex,");
+  let reconstructed = replaceOnce(source, wrapper + "\n\n" + wrapperShape, originalWrapper);
+  reconstructed = replaceOnce(reconstructed, metadata + "\n\n" + metadataShape, originalMetadata);
+  const complete = completeOriginalFactories(reconstructed);
+  // Existing mutation controls still mutate the LIVE numeric delegates; the
+  // bodies passed to the original donor inverse come from the live shapes.
+  return { declarations: [wrapper, metadata, declaration("buildBuiltinClosureValueInstrs")], bodies: complete.bodies };
+}
+function completeOriginalFactories(source: string): { declarations: string[]; bodies: string[] } {
   const start = source.indexOf(allocationModeDeclaration);
   if (start < 0) throw new Error("missing canonical suffix population");
   const suffix = source.slice(start);
@@ -317,7 +412,233 @@ function legacy(
   return { ctx, api, signatures, metas, observer };
 }
 
+function stagedModule(source: string) {
+  return evaluate(source, {
+    "../../../ir/program/data.js": closureData,
+    "../../../runtime/wasmgc/values/closure-layouts.js": canonical,
+    "./native-resource-declarations.js": closureDeclarations,
+  });
+}
+function assertStagedDonor(api: ReturnType<typeof stagedModule>) {
+  // Every expectation comes from the unchanged full original donor, not a
+  // second invocation of the candidate atomic implementation.
+  for (const timing of ["before-first", "after-first", "after-other-signature"] as const) {
+    const initial =
+      timing === "after-other-signature"
+        ? [signature("other", [{ kind: "f64" }], [], "support", 1), signature("settle")]
+        : [signature("settle", undefined, undefined, "ordinary", timing === "after-first" ? 1 : undefined)];
+    const input = requirements([
+      ...initial,
+      metadata("copied", "settle"),
+      signature("lower", undefined, undefined, "ordinary", 0),
+      signature("delay", [], [], "host-one-shot"),
+    ]);
+    const donor = legacy(input, false);
+    const module = createEmptyModule(),
+      tx = new PhysicalModuleReservations(module);
+    const plan = api.declareNativeClosureResources({
+      key: input.key,
+      startingClosureCounter: input.startingClosureCounter,
+      requests: input.requests,
+      referenceTypeKeys: [],
+    });
+    const cut = initial.length + 1;
+    const pack = api.reserveNativeClosureResourcesPrefix(tx, input, plan, cut);
+    const rows = pack.signatures,
+      metas = pack.metadata,
+      root = pack.root;
+    const info = pack.metadata[0].binding.info;
+    expect(Object.isFrozen(pack)).toBe(false);
+    expect(() => api.nativeClosureReservationInventory(tx, pack, plan)).toThrow("incomplete");
+    expect(api.resumeNativeClosureResources(tx, pack, input.requests.length)).toBe(pack);
+    expect(pack.signatures).toBe(rows);
+    expect(pack.metadata).toBe(metas);
+    expect(pack.root).toBe(root);
+    expect(pack.metadata[0].binding.info).toBe(info);
+    expect(module.types).toEqual(donor.ctx.mod.types);
+    expect(pack.resultingClosureCounter).toBe(donor.ctx.closureCounter);
+    for (const row of pack.signatures) expect(row.binding.info).toEqual(donor.signatures.get(row.id).closureInfo);
+    for (const row of pack.metadata)
+      expect(row.binding.info).toEqual(donor.ctx.closureInfoByTypeIdx.get(donor.metas.get(row.id)));
+    expect(Object.isFrozen(pack)).toBe(true);
+    expect(emitBinary(module)).toEqual(emitBinary(donor.ctx.mod));
+    expect(emitWat(module)).toBe(emitWat(donor.ctx.mod));
+  }
+}
+describe("staged engine live mutations against complete original donor receipts", () => {
+  function assertFullPreflight(api: ReturnType<typeof stagedModule>) {
+    const input = requirements([
+      signature("settle"),
+      metadata("meta", "settle"),
+      signature("delay", [], [], "host-one-shot"),
+    ]);
+    const plan = api.declareNativeClosureResources({
+      key: input.key,
+      startingClosureCounter: input.startingClosureCounter,
+      requests: input.requests,
+      referenceTypeKeys: [],
+    });
+    const good = new PhysicalModuleReservations(createEmptyModule());
+    const pack = api.reserveNativeClosureResourcesPrefix(good, input, plan, 2);
+    expect(api.requireNativeClosureReservationPrefix(good, pack, "meta")).toBe(pack);
+    const bad = structuredClone(input);
+    Object.assign(bad.requests[2]!, { minimumArgumentCount: 1 });
+    const module = createEmptyModule(),
+      tx = new PhysicalModuleReservations(module);
+    expect(() => api.reserveNativeClosureResourcesPrefix(tx, bad, plan, 2)).toThrow("invalid observed minimum arity");
+    expect(module).toStrictEqual(createEmptyModule());
+    const laterMetadata = requirements([...input.requests, metadata("cached-meta", "settle")]);
+    const laterPlan = api.declareNativeClosureResources({
+      key: laterMetadata.key,
+      startingClosureCounter: laterMetadata.startingClosureCounter,
+      requests: laterMetadata.requests,
+      referenceTypeKeys: [],
+    });
+    expect(() => api.reserveNativeClosureResourcesPrefix(tx, laterMetadata, laterPlan, 2)).toThrow(
+      "metadata cannot remain",
+    );
+    expect(module).toStrictEqual(createEmptyModule());
+  }
+  it.each(["suffix-preflight", "metadata-after-pause"] as const)(
+    "rejects live %s weakening after positive controls",
+    (mutation) => {
+      const source = read("src/backend/wasmgc/resources/native-closures.ts");
+      assertFullPreflight(stagedModule(source));
+      let changed: string;
+      if (mutation === "metadata-after-pause")
+        changed = replaceOnce(
+          source,
+          'fail("metadata cannot remain after a closure pause");',
+          'void "removed metadata barrier";',
+        );
+      else {
+        const start = source.indexOf("function validateRequests("),
+          end = source.indexOf("/** Atomic compatibility", start);
+        expect(start).toBeGreaterThan(0);
+        expect(end).toBeGreaterThan(start);
+        const validator = source.slice(start, end);
+        const weakened = replaceOnce(
+          validator,
+          "for (const request of requirements.requests) {",
+          "for (const request of requirements.requests.slice(0, 2)) {",
+        );
+        changed = source.slice(0, start) + weakened + source.slice(end);
+        // The complete symbolic walk independently rejects this invalid suffix.
+        // Weakening only the physical check is therefore an equivalent mutant
+        // for this witness; retain that measured protection explicitly.
+        assertFullPreflight(stagedModule(changed));
+        const walkStart = changed.indexOf("function walkClosureDeclarations("),
+          walkEnd = changed.indexOf("function validateCut(", walkStart);
+        expect(walkStart).toBeGreaterThan(0);
+        expect(walkEnd).toBeGreaterThan(walkStart);
+        const walk = changed.slice(walkStart, walkEnd);
+        changed =
+          changed.slice(0, walkStart) +
+          replaceOnce(
+            walk,
+            "for (const request of requirements.requests) {",
+            "for (const request of requirements.requests.slice(0, 2)) {",
+          ) +
+          changed.slice(walkEnd);
+      }
+      expect(changed).not.toBe(source);
+      expect(() => assertFullPreflight(stagedModule(changed))).toThrow();
+    },
+  );
+  it("retains all three lazy observer timings across a pause", () => {
+    assertStagedDonor(stagedModule(read("src/backend/wasmgc/resources/native-closures.ts")));
+  });
+  for (const [name, before, after] of [
+    [
+      "reset cache",
+      "if (requestCursor < requirements.requests.length) yield pack;",
+      "if (requestCursor < requirements.requests.length) { yield pack; cache.clear(); }",
+    ],
+    [
+      "reset lazy observer",
+      "if (requestCursor < requirements.requests.length) yield pack;",
+      "if (requestCursor < requirements.requests.length) { yield pack; minimumObserverInfos = undefined; }",
+    ],
+    [
+      "freeze early",
+      "if (requestCursor < requirements.requests.length) yield pack;",
+      "if (requestCursor < requirements.requests.length) yield Object.freeze(pack);",
+    ],
+    [
+      "replace issued pack",
+      "if (requestCursor < requirements.requests.length) yield pack;",
+      "if (requestCursor < requirements.requests.length) yield { ...pack };",
+    ],
+    [
+      "wrong canonical offset",
+      "stepEnds.push(reservationSteps.length);",
+      "stepEnds.push(reservationSteps.length + 1);",
+    ],
+    [
+      "incomplete inventory",
+      'if (!owner.complete) fail("incomplete closure reservation population");',
+      "void owner.complete;",
+    ],
+  ] as const) {
+    it(`rejects ${name} after the unchanged positive`, () => {
+      const source = read("src/backend/wasmgc/resources/native-closures.ts");
+      assertStagedDonor(stagedModule(source));
+      const changed = replaceOnce(source, before, after);
+      expect(changed).not.toBe(source);
+      expect(() => assertStagedDonor(stagedModule(changed))).toThrow();
+    });
+  }
+});
+
 describe("native closure identities and settlement metadata", () => {
+  for (const [before, after] of [
+    ["export function createSignatureWrapperShape<P>", "export async function createSignatureWrapperShape<P>"],
+    [
+      '  return { kind: "struct" as const, name, fields, parent };',
+      '  void 0;\n  return { kind: "struct" as const, name, fields, parent };',
+    ],
+    ["    parent,", "    parent: undefined,"],
+    [
+      '      { name: "bfnstate", type: { kind: "i32" as const }, mutable: true },',
+      '      { name: "bfnstate", type: { kind: "i32" as const }, mutable: false },',
+    ],
+  ])
+    it(`rejects live shape factoring mutation ${before}`, () => {
+      const source = read("src/runtime/wasmgc/values/closure-layouts.ts");
+      requireCanonicalFactoryReceipts(source);
+      expect(() => requireCanonicalFactoryReceipts(replaceOnce(source, before!, after!))).toThrow();
+    });
+  it("feeds a pure declaration to the live observer loop without changing donor descriptors or aliases", () => {
+    const input = requirements([
+      signature("first", [{ kind: "externref" }], [], "ordinary", 1),
+      metadata("meta", "first"),
+      signature("alias", [{ kind: "externref" }], [], "support", 0),
+      metadata("meta-alias", "alias"),
+    ]);
+    const plan = declareNativeClosureResources({
+      key: input.key,
+      startingClosureCounter: input.startingClosureCounter,
+      requests: input.requests as Parameters<typeof declareNativeClosureResources>[0]["requests"],
+      referenceTypeKeys: [],
+    });
+    const module = createEmptyModule(),
+      tx = new PhysicalModuleReservations(module);
+    const physical = instantiateNativeClosureRequirements(tx, plan, new Map());
+    const pack = reserveNativeClosureResources(tx, physical, plan);
+    const original = legacy(input, false);
+    expect(module.types).toStrictEqual(original.ctx.mod.types);
+    expect(pack.signatures[0]!.binding).toBe(pack.signatures[1]!.binding);
+    expect(pack.metadata[0]!.binding).toBe(pack.metadata[1]!.binding);
+    expect(pack.metadata[0]!.binding.metadata.length).toBe(1);
+    expect(pack.signatures[0]!.binding.info.minimumArgumentCount).toBe(0);
+    const rows = nativeClosureReservationInventory(tx, pack, plan);
+    expect(rows.map((row) => row.key)).toEqual(plan.declarations.map((row) => row.key));
+    expect(rows).toHaveLength(2);
+    tx.freezeReservations();
+    expect(nativeClosureReservationInventory(tx, pack, plan)).toEqual(rows);
+    expect(() => nativeClosureReservationInventory(tx, pack, structuredClone(plan))).toThrow();
+    expect(() => nativeClosureReservationInventory(tx, { ...pack }, plan)).toThrow();
+  });
   it("reconstructs all original factory/body spans from complete live canonical declarations", () => {
     requireCanonicalFactoryReceipts(read("src/runtime/wasmgc/values/closure-layouts.ts"));
   });
@@ -376,7 +697,18 @@ describe("native closure identities and settlement metadata", () => {
           '{ op: "i32.const", value: typeIndex }',
           '{ op: "i32.const", value: typeIndex + 1 }',
         );
-      const mutant = replaceOnce(source, declarations[index]!, factoryHeaders[index] + "\n" + changedBody + "\n}");
+      let mutant: string;
+      if (mutation === "wrapper-construction-order") {
+        const returned = '  return { kind: "struct" as const, name, fields, parent };';
+        const header = "export function createSignatureWrapperShape<P>(name: string, parent: P) {";
+        mutant = replaceOnce(replaceOnce(source, "\n" + returned, ""), header, header + "\n" + returned);
+      } else if (mutation === "field-mutability") {
+        mutant = replaceOnce(
+          source,
+          '{ name: "bfnstate", type: { kind: "i32" as const }, mutable: true }',
+          '{ name: "bfnstate", type: { kind: "i32" as const }, mutable: false }',
+        );
+      } else mutant = replaceOnce(source, declarations[index]!, factoryHeaders[index] + "\n" + changedBody + "\n}");
       expect(mutant).not.toBe(source);
       expect(() => requireCanonicalFactoryReceipts(mutant)).toThrow(/factory donor receipt mismatch/);
     });
@@ -396,12 +728,14 @@ describe("native closure identities and settlement metadata", () => {
       else if (mutation === "constant")
         mutant = replaceOnce(source, "export const BFN_ID_FIELD_IDX = 4;", "export const BFN_ID_FIELD_IDX = 5;");
       else if (mutation === "extra-declaration") mutant = source + "export const extraFactoryState = 0;\n";
-      else
-        mutant = replaceOnce(
-          source,
-          declarations[0]! + "\n\n" + declarations[1]!,
-          declarations[1]! + "\n\n" + declarations[0]!,
-        );
+      else {
+        const firstStart = source.indexOf(declarations[0]!),
+          secondStart = source.indexOf(declarations[1]!),
+          thirdStart = source.indexOf(declarations[2]!);
+        const first = source.slice(firstStart, secondStart),
+          second = source.slice(secondStart, thirdStart);
+        mutant = replaceOnce(source, first + second, second + first);
+      }
       expect(mutant).not.toBe(source);
       expect(() => requireCanonicalFactoryReceipts(mutant)).toThrow(/suffix|factory header/);
     });
@@ -437,9 +771,21 @@ describe("native closure identities and settlement metadata", () => {
     const source = read("src/runtime/wasmgc/values/closure-layouts.ts");
     const end = source.indexOf("\nexport type ClosureAllocationMode =");
     if (end < 0) throw new Error("missing header boundary");
-    const reconstructed = source.slice(0, end).trimEnd() + "\n";
+    let reconstructed = source.slice(0, end).trimEnd() + "\n";
+    // Only accurate scalar return annotations changed in the retained header;
+    // invert those exact signatures, preserving every implementation character.
+    reconstructed = replaceOnce(
+      reconstructed,
+      'export function closureArityField(): { name: string; type: { kind: "i32" }; mutable: false } {',
+      "export function closureArityField(): { name: string; type: ValType; mutable: false } {",
+    );
+    reconstructed = replaceOnce(
+      reconstructed,
+      'export function closureBagField(): { name: string; type: { kind: "externref" }; mutable: true } {',
+      "export function closureBagField(): { name: string; type: ValType; mutable: true } {",
+    );
     const restored = reconstructed.replace(
-      'import type { Instr, ValType, FuncHandle } from "../../../wasm/model/instructions.js";\nimport type { FieldDef, StructTypeDef } from "../../../wasm/model/module-records.js";',
+      'import type { Instr, FuncHandle } from "../../../wasm/model/instructions.js";\nimport type { FieldDef, StructTypeDef } from "../../../wasm/model/module-records.js";',
       'import type { FieldDef, Instr, ValType } from "../../ir/types.js";',
     );
     expect(hash(restored)).toBe(headerDonor.sha256);

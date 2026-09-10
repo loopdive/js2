@@ -5,6 +5,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setImmediate } from "node:timers/promises";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const checker = resolve(repository, "scripts/check-compiler-boundaries.mjs");
@@ -96,8 +97,11 @@ function fixture(sources: Record<string, string> = {}) {
   };
   return { root, policy, put, run };
 }
-afterEach(() => {
+afterEach(async () => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  // Synchronous checker subprocesses must not starve worker result acknowledgments
+  // for the entire control population. Keep every assertion and timeout unchanged.
+  await setImmediate();
 });
 const codes = (result: ReturnType<ReturnType<typeof fixture>["run"]>) =>
   result.report.errors.map((error: { code: string }) => error.code);
@@ -193,12 +197,46 @@ it("keeps formatter support contracts and the canonical type factory mandatory",
   const policy = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
   for (const [layerId, paths] of [
     ["ir-core", ["src/ir/core/type-references.ts"]],
-    ["ir-program", ["src/ir/program/runtime-support.ts", "src/ir/program/formatter-support.ts"]],
+    [
+      "backend-wasmgc",
+      [
+        "src/backend/wasmgc/program/native-number-format.ts",
+        "src/backend/wasmgc/resources/native-number-ryu.ts",
+        "src/backend/wasmgc/resources/native-number-format.ts",
+        "src/backend/wasmgc/resources/native-delay-combinator.ts",
+      ],
+    ],
+    [
+      "native-runtime",
+      [
+        "src/runtime/wasmgc/values/number-ryu-tables.ts",
+        "src/runtime/wasmgc/values/number-ryu-bodies.ts",
+        "src/runtime/wasmgc/values/number-ryu-digits.ts",
+        "src/runtime/wasmgc/values/number-ryu-to-buffer.ts",
+        "src/runtime/wasmgc/values/number-ryu-signatures.ts",
+        "src/runtime/wasmgc/values/number-format-bodies.ts",
+        "src/runtime/wasmgc/values/number-format-radix-bodies.ts",
+        "src/runtime/wasmgc/values/string-concat-bodies.ts",
+        "src/runtime/wasmgc/values/stdout-bodies.ts",
+        "src/runtime/wasmgc/promise/delay-combinator-layouts.ts",
+      ],
+    ],
+    [
+      "ir-program",
+      [
+        "src/ir/program/runtime-support.ts",
+        "src/ir/program/formatter-support.ts",
+        "src/ir/program/native-number-format-requirements.ts",
+      ],
+    ],
   ] as const) {
     const layer = policy.layers.find((item: { id: string }) => item.id === layerId);
     expect(layer).toMatchObject({ status: "active", required: true });
     expect(layer.entries).toEqual(expect.arrayContaining(paths));
-    expect(layer.minModules).toBeGreaterThanOrEqual(18);
+    expect(layer.minModules).toBeGreaterThanOrEqual(
+      layerId === "backend-wasmgc" ? 15 : layerId === "native-runtime" ? 32 : 18,
+    );
+    if (layerId === "ir-program") expect(layer.minModules).toBeGreaterThanOrEqual(19);
     for (const path of paths) {
       expect(policy.files.find((item: { path: string }) => item.path === path)).toEqual({
         path,
@@ -219,10 +257,25 @@ it("keeps formatter support contracts and the canonical type factory mandatory",
 });
 
 for (const [layerId, path] of [
+  ["backend-wasmgc", "src/backend/wasmgc/resources/native-delay-combinator.ts"],
   ["frontend-ts", "src/frontend/builtins/contracts.ts"],
   ["ir-core", "src/ir/core/type-references.ts"],
   ["ir-program", "src/ir/program/runtime-support.ts"],
   ["ir-program", "src/ir/program/formatter-support.ts"],
+  ["ir-program", "src/ir/program/native-number-format-requirements.ts"],
+  ["backend-wasmgc", "src/backend/wasmgc/program/native-number-format.ts"],
+  ["backend-wasmgc", "src/backend/wasmgc/resources/native-number-ryu.ts"],
+  ["backend-wasmgc", "src/backend/wasmgc/resources/native-number-format.ts"],
+  ["native-runtime", "src/runtime/wasmgc/values/number-ryu-tables.ts"],
+  ["native-runtime", "src/runtime/wasmgc/values/number-ryu-bodies.ts"],
+  ["native-runtime", "src/runtime/wasmgc/values/number-ryu-digits.ts"],
+  ["native-runtime", "src/runtime/wasmgc/values/number-ryu-to-buffer.ts"],
+  ["native-runtime", "src/runtime/wasmgc/values/number-ryu-signatures.ts"],
+  ["native-runtime", "src/runtime/wasmgc/values/number-format-bodies.ts"],
+  ["native-runtime", "src/runtime/wasmgc/values/number-format-radix-bodies.ts"],
+  ["native-runtime", "src/runtime/wasmgc/values/string-concat-bodies.ts"],
+  ["native-runtime", "src/runtime/wasmgc/values/stdout-bodies.ts"],
+  ["native-runtime", "src/runtime/wasmgc/promise/delay-combinator-layouts.ts"],
 ] as const) {
   it.each(["delete", "demote", "type-import", "value-import"] as const)(
     `formatter boundary ${path} rejects %s after its positive control`,
@@ -262,9 +315,10 @@ for (const [layerId, path] of [
       if (mutation === "delete") rmSync(resolve(f.root, path));
       if (mutation === "demote")
         f.policy.files.find((file: { path: string }) => file.path === path).state = "unmigrated";
+      const legacyImport = "../".repeat(path.split("/").length - 2) + "legacy.js";
       if (mutation === "type-import")
-        f.put(path, source + '\nimport type { Legacy } from "../../legacy.js"; export type Hidden = Legacy;');
-      if (mutation === "value-import") f.put(path, source + '\nexport { legacy } from "../../legacy.js";');
+        f.put(path, source + `\nimport type { Legacy } from "${legacyImport}"; export type Hidden = Legacy;`);
+      if (mutation === "value-import") f.put(path, source + `\nexport { legacy } from "${legacyImport}";`);
       const result = f.run();
       expect(result.exit).not.toBe(0);
       if (mutation.endsWith("import")) expect(codes(result)).toContain("forbidden-clean-edge");

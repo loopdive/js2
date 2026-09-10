@@ -135,6 +135,7 @@ interface Owner {
   readonly tx: PhysicalModuleReservations;
   readonly requirements: NativeValueResourcePlan;
   readonly dependency: NativeValueStringDependency;
+  filled: boolean;
 }
 const owners = new WeakMap<NativeValueReservations, Owner>();
 function fail(detail: string): never {
@@ -186,6 +187,7 @@ export function reserveNativeValueResources(
   owners.set(result, {
     tx,
     requirements,
+    filled: false,
     dependency:
       strings.kind === "absent"
         ? Object.freeze({ kind: "absent" })
@@ -244,4 +246,41 @@ export function fillNativeValueResources(
     body: buildUnboxNumberBody(boxedNumber.typeIndex, boxedBoolean.typeIndex, conversion),
   });
   tx.fillFunction(reservations.functions.isNumber, { locals: [], body: buildTypeofNumberBody(boxedNumber.typeIndex) });
+  owner.filled = true;
+}
+
+/** Authenticate successful producer completion without allocating, filling or sealing. */
+export function requireCompletedNativeValues(
+  tx: PhysicalModuleReservations,
+  pack: NativeValueReservations,
+  expectedRequirements: NativeValueResourcePlan,
+  expectedDependencies: NativeValueDependencies,
+): NativeValueReservations {
+  const owner = owners.get(pack);
+  if (!owner || owner.tx !== tx) fail("foreign native value reservations");
+  if (owner.requirements !== expectedRequirements) fail("substituted native value requirements");
+  assertNativeValueResourcePlan(expectedRequirements);
+  const strings = requireDependency(tx, expectedRequirements, expectedDependencies);
+  if (
+    strings.kind !== owner.dependency.kind ||
+    (strings.kind === "native-string" &&
+      (owner.dependency.kind !== "native-string" ||
+        strings.stringPack !== owner.dependency.stringPack ||
+        strings.scanner !== owner.dependency.scanner))
+  )
+    fail("substituted native string conversion dependency");
+  if (!owner.filled) fail("incomplete native value resources");
+  for (const [token, expected] of [
+    [pack.types.anyValue, buildAnyValueType()],
+    [pack.types.boxedNumber, buildBoxNumberType()],
+    [pack.types.boxedBoolean, buildBoxBooleanType()],
+  ] as const) {
+    if (tx.physicalIndex(token) !== token.typeIndex) fail("stale primitive layout coordinate");
+    same(token.object, expected, "altered primitive layout");
+  }
+  tx.assertCompletedReservation(pack.globals.undefined);
+  for (const token of Object.values(pack.functions)) tx.assertCompletedReservation(token);
+  if (strings.kind === "native-string")
+    requireCompletedNativeStringNumber(tx, strings.scanner, expectedRequirements, strings.stringPack);
+  return pack;
 }

@@ -588,6 +588,18 @@ export class PhysicalModuleReservations {
     }
   }
 
+  /** Authenticate producer completion without sealing unrelated reservations. */
+  assertCompletedReservation(token: FunctionReservation | GlobalReservation): void {
+    if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`completion requested in ${this.#state}`);
+    this.#verifyLayout();
+    this.#owned(token);
+    if (token.kind === "function") {
+      if (!this.#filledFunctions.has(token)) this.#fail(`missing function fill ${token.key}`);
+    } else if (token.kind === "global") {
+      if (!this.#filledGlobals.has(token)) this.#fail(`missing global fill ${token.key}`);
+    } else this.#fail("completion requires a defined function or global");
+  }
+
   fillFunction(token: FunctionReservation, definition: { locals: LocalDef[]; body: Instr[] }): void {
     this.#require("filling");
     this.#owned(token);

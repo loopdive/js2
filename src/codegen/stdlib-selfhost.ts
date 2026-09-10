@@ -62,6 +62,7 @@
  */
 
 import type { IrFromAstResolver } from "../ir/from-ast.js";
+import { buildInlineNativeStringLiteral } from "../runtime/wasmgc/values/string-literal-bodies.js";
 import { buildSelfHostedIrBody } from "../frontend/builtins/build-ir.js";
 import type { SelfHostedFuncDef } from "../frontend/builtins/contracts.js";
 import { irIntrinsicFuncRef, irRuntimeFuncRef } from "../ir/callable-bindings.js";
@@ -575,16 +576,7 @@ function lowerAndRegister(ctx: CodegenContext, name: string, ir: IrFunction): nu
       // Inline WTF-16 literal — same shape as makeResolver's native arm /
       // legacy compileNativeStringLiteral (i16 path; stdlib sources carry no
       // utf8-storage alloc annotations).
-      const ops: Instr[] = [
-        { op: "i32.const", value: value.length },
-        { op: "i32.const", value: 0 },
-      ];
-      for (let i = 0; i < value.length; i++) {
-        ops.push({ op: "i32.const", value: value.charCodeAt(i) });
-      }
-      ops.push({ op: "array.new_fixed", typeIdx: ctx.nativeStrDataTypeIdx, length: value.length });
-      ops.push({ op: "struct.new", typeIdx: ctx.nativeStrTypeIdx });
-      return ops;
+      return buildInlineNativeStringLiteral(ctx, value);
     },
     emitStringConcat(): readonly Instr[] {
       requireNativeStrings("string.concat");

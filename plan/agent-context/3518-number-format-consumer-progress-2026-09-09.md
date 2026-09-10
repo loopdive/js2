@@ -1,0 +1,421 @@
+# D2 formatter consumer integration progress
+
+Base: published PR #5798, 7291f717833e3dba676b9f719f865a3eab9aaff3,
+composing PR #5797 formatter support and PR #5796 resource declarations.
+Worktree: /private/tmp/js2-3518-number-format-consumer-20260909.
+Claim: 3518:number-format-consumer-D2, ttraenkler/codex-number-format-consumer.
+Claim invocation 15649 exited 0; independent check 7658 returned the matching
+held owner (exit 3). No paused producer worktree was modified.
+
+The adjacent final High contract has SHA256
+e2c5206585f69776fdf44ef384e891ff9314fabe30dc9f197602b2ecea835c65.
+Hilbert owns the ten-file Ryū extraction/resource scope; Euclid owns the separate
+ten-file formatter extraction/resource scope. This tree owns requirements,
+physical planning and consumer integration. Their live drafts are not imported.
+
+## Implemented, not yet a physical formatter
+
+- New pure requirements collector reuses the unchanged complete primary/selected
+  instruction census, preserving both views, nested buffers and actual calls.
+- Separate radix support traversal retains exact body/buffer/instruction and
+  allocation/alias/metadata identities, without adding ordinary source owners.
+- Canonical call/provider/policy, support currentness and explicit resolved
+  integer-before-scratch option checks reject contradictory evidence.
+- Backend option capture preserves an explicitly supplied immutable formatter
+  option and introduces no environment read or no-demand default.
+
+The module still requires the caller's full prepared-program authentication.
+It is descriptive evidence, not an acceptance capability. The formatter recipe,
+scratch required-root mapping, complete supplemental ABI, radix-body emission,
+single-ledger integration and source-free physical execution remain to implement.
+No async refusal was removed. Full A/B/C/E integration, public cutover, ABI30 and
+direct-codegen retirement are not completed by this change.
+
+## Executed receipts
+
+- Source-only TS7 invocation 74745 exited 0 before tests/options were added.
+- Requirements suite 19741 exited 0: 11/11, no skips, 18.15 seconds. Genuine full
+  async source and decoded programs are positive controls; missing support,
+  missing/duplicate/substituted provider, incompatible policy, stale/detached
+  evidence and omitted option are rejected. Real scalar no-demand acceptance
+  verifies immutable option capture and absence of a new default.
+- All four changed source/test paths were formatted successfully afterward.
+
+- Post-format TS7 invocation 59888 exited 0, including tests and options.
+- Invocation 65740 exited 0: 79/79 in two suites (requirements and native string
+  value consumer execution), 327.60 seconds, no skips.
+- After dependency composition, invocation 30810 exited 0: 194/194 resource
+  declaration tests across five suites, 21.33 seconds.
+- High static review approved production and requested stronger independent
+  population pins and precise negative diagnostics. The revised test fixes eight
+  call coordinates across two continuation owners and both views, 31 support
+  buffers, and four literal coordinates/values. It rejects stale allocation IDs,
+  canonical allocation IDs, missing literals and detached support evidence.
+- Invocation 76460 exited 0: 80/80 tests in two suites, 35.65 seconds, no skips
+  (12 formatter requirements and 68 compiler boundary tests).
+- Follow-up invocation 79626 exited 0: 12/12 requirements tests, 19.42 seconds,
+  after adding source-side retirement of a real support literal allocation. The
+  exact non-live-allocation diagnostic is required, not an arbitrary exception.
+- Invocation 18552 completed TS7 successfully, then reported boundary inventory
+  `inventoryValid: true` and `graphComplete: false`. This is valid inventory,
+  not proof of static closure or permission to retire direct codegen.
+  An earlier attempted `tsgo` launcher was absent (exit 127); the successful
+  invocation used the repository's configured TypeScript 7 entry point.
+
+High's follow-up review approved the production and retired-allocation control,
+but required positive alias/metadata identity and detached metadata coverage.
+A thirteenth test now uses the real allocation registry to alias a support literal
+to a fresh compatible site, preserves its original encoding metadata, requires
+full prepared-program validation, and rejects a copied metadata row. Initial
+run 86745 failed this test (12/13 passed): the invented test metadata namespace
+was correctly rejected by the full validator. The fixture now uses only the real
+metadata transferred by registry.alias; no validator policy was changed. Run
+44418 exited zero: all 13 requirements tests passed in 20.67 seconds, followed
+by successful configured TS7. The earlier 12/12 and 80/80 receipts precede this
+test. The validation slot is now assigned to Hilbert's Ryū extraction tests;
+the shepherd continues lightweight queue and claim work.
+
+Final High review approved test SHA256
+0c383c37d30040350cd9a4d731ac98b35f7c308576e3868104f49da2d126af25,
+which exactly matches the source in passing run 44418. No remaining static
+blocker was reported for this requirements checkpoint. All nine checkpoint
+files are staged; scoped whitespace checking passed.
+
+Normal publication hooks remain required for these uncommitted changes.
+Published #5798 currently
+contains only the prerequisite composition, not these requirements changes.
+These receipts do not prove that the unfinished physical integration executes.
+
+## Next physical scratch join (uncommitted)
+
+Published requirements checkpoint: #5798 at
+56d9922bc85a0bf1ffb105746b5926a3f0dca9a6. Normal commit 16447 and push 30198
+exited zero; push hooks included 18/18 numeric-local tests. The worktree was
+clean after publication. The following changes are subsequent drafts.
+
+The new backend formatter aggregate validates the canonical mutable i16 string
+data declaration against the prepared scratch contract and its existing required
+ABI root. Native string planning maps both scratch and canonical string-data
+resolver references to that root before assigning supplemental declarations,
+rejecting an existing incompatible independent root. No ABI aliases are created
+after planning and no allocation/emission authority is introduced by this join.
+
+Run 16244 passed 14/14 requirements/scratch tests followed by TS7 before the
+planner hook. Run 87023 passed TS7 and 14/14 requirements after the hook, but
+boundary tests passed only 70/72: the two new import mutations used the wrong
+relative depth and reached missing modules rather than forbidden dependencies.
+The fixture paths are corrected; full boundary rerun 23251 passed 72/72 in
+35.80 seconds, exit zero. Real inventory run 29000 then rejected a mixed
+ir/abi-bindings dependency from the clean aggregate. The structural-key check
+now resides in the existing mixed planner, using its existing canonical import;
+the clean aggregate retains its semantic and storage checks. Inventory rerun
+20972 exited zero with no errors, inventoryValid:true and graphComplete:false.
+After that dependency correction, run 18869 exited zero: TS7 passed followed
+by 14/14 requirements/scratch tests in 21.44 seconds.
+Subsequent work carries the exact accepted scratch support-ref in
+the native string setup and converts only that matching signature leaf through
+the issued string pack's data type, preserving nullability. Other support refs
+remain unsupported. Run 97644 covered these later edits: formatting and TS7
+passed, followed by 14/14 requirements/scratch tests in 22.62 seconds. High
+approved the restricted conversion statically. Consumer regression run 9217
+exited zero: 68/68 in 337.22 seconds, covering original/decoded programs,
+GVN and UTF8 modes, aliases, startup and dependency initialization order.
+Actual formatter signature/support-body execution remains required; this suite
+protects the already-supported no-formatter paths, not full async admission.
+Boundary activation adds one required backend module and retains all old
+activation history and allowed edges. Actual full consumer execution of this
+hook remains unproven while the existing async admission refusal remains.
+
+## Ryū composition in progress
+
+Scratch checkpoint f092bf93749e22dfcdce21137157990c7d32c897 is now published
+on #5798; normal commit 67428 and push 31794 exited zero, including 18/18
+numeric-local tests. The next uncommitted merge composes #5799 at
+57b4ee9ebd67f04251fe467d708e4990202b6ca7. No source conflict occurred; the
+single appended issue-handoff conflict was resolved by retaining both sections.
+
+Five canonical Ryū runtime modules and the native resource owner are added as
+required boundary roots with explicit clean classifications, retaining previous
+activation history and allowed edges. Their delete/demote/type/value-import
+controls are added; fixture relative paths now derive from each module depth.
+Validation session 71702 exited zero: formatting and source TS7 passed, then
+149/149 tests across the boundary, Ryū ownership, Ryū resources and formatter
+requirements suites passed in 83.29 seconds. Inventory session 65114 exited zero
+with no errors and `inventoryValid: true`, but `graphComplete: false` and
+`inventory-valid-architecture-incomplete`. This does not certify direct-codegen
+retirement or full async admission. Normal merge publication hooks remain pending.
+
+## Formatter composition and next consumer join
+
+The Ryū composition was published as 445f65523b9b8023339ef344e0eed7a62e1a7bcb
+on #5798: commit 87938 and push 17108 exited zero, including 18/18 numeric
+parity tests. The changed-root hook skipped 100 files; that is not extra test
+coverage. GitHub subsequently recorded #5799 merged into this stacked base,
+not into main.
+
+Parent now locally includes formatter merge acf37ffbeb10ba91cfc9baf922cf141d77c93fa0
+(implementation f4536c6fd6 plus the published Ryū composition). The formatter
+worker retains ownership of its publication and live validation 16745. Parent
+adds three required boundary roots and their delete/demote/type/value-import
+controls, retaining all previous activation history and allowed edges. These
+new parent controls have not been executed yet; no expanded pass count is
+claimed. Parent publication waits for the worker's PR and normal validation.
+
+The remaining consumer join must authenticate a string-layout dependency even
+when the source has no string literals, preserve that dependency through input
+currentness checks, preplan every formatter ABI row, reserve all resources
+before the single freeze, and lower the genuine prepared radix support body.
+Resource tests alone do not provide that whole-program connection. Existing
+async admission and retirement refusals remain unchanged.
+
+The formatter worker subsequently published non-draft #5800 at
+a7bee804437858a7038ea03e1e4a3c6635e8b37a. Its combined run 16745 passed
+131/131 tests and normal push 36814 passed, including 18/18 numeric tests.
+Parent composed the final receipt commit too. The initially missing hold label
+was restored by parent (REST session 32748, exit zero); this remains stacked
+work, not main or async acceptance.
+
+The frozen 252-line consumer integration delta is preserved beside this file.
+Its first aggregate layer is implemented: an independent empty literal/type
+layout and the complete canonical formatter recipe, preserving the actual
+scratch declaration and semantic ABI-entry identities. High approved helper
+SHA256 31dea95f3d5f121d3ccb665e1bb0d6ca513b22b56f564c081570d08f92cf5b40
+and tests f54739e639cea2d8c456d76f08202b8ab27b879c4fae49669528ab2e99b90ca1.
+The four new original/decoded controls are dependency tests, not successful
+consumer execution or an independent UTF/fastpath cross-product.
+
+Parent validation 66647 exited zero: formatting, source TS7 and 126/126 tests
+across requirements and boundary suites passed in 85.91 seconds. Inventory
+13540 exited zero with no errors, inventoryValid true and graphComplete false.
+These results include the three newly mandatory formatter roots and their
+controls. Parent commit/push of these additions remains pending; the heavy slot
+was released to E1 publication after both validation processes terminated.
+
+## Recovery after agent handles disappeared
+
+The helper/boundary checkpoint is published in #5798 as
+13c33537b9d61b184d768b73992e615974244f14. Commit 31710 and push 40347
+exited zero; normal push included 18/18 numeric-parity tests. Source and test
+hashes were independently rechecked against High review before committing.
+Changed-root skipped 102 files, not an additional successful suite.
+
+All five old agent handles returned not_found. Resuming an existing agent
+failed with the agent-thread limit. Parent found no surviving validation or
+publication processes and preserved all worktrees. The staged-closure draft
+and its explicit ownership handoff remain in
+/private/tmp/js2-3518-staged-closure-reservations-20260909; its six-file draft
+still needs review and execution, not a duplicate implementation.
+
+E1 had committed 03d0615e34da8629971659d8c5937b8483f57643 but had no PR.
+Its old validation handle 74854 was missing; the complete saved 84/84 report
+was retained. Parent recovery run 52680 exited zero, 84/84 in 15.23 seconds.
+Normal push 48796 then exited zero, including typecheck, lint, formatting,
+ratchets, issue integrity and 18/18 numeric tests. Non-draft held #5802 now
+contains that exact commit and targets the verified #5794 branch. It is not
+yet composed into the parent branch and is not a main landing.
+
+The next local planner change authenticates the complete separate support
+manifest by canonical re-preparation, including ordered provider maps, without
+removing any existing async/resource gap. High explicitly approved bounded
+private preparation in the mixed planner and consumer, using the existing
+complete preparedIrDataMismatch comparison. Full ABI resource joins and
+consumer reservation/fill wiring remain to be implemented.
+Source TS7 73229 exited zero. Requirements run 36615 passed 19/19 before
+the final nested-attachment control; final run 37244 passed 19/19 in 30.44
+seconds with that control included. The positive preserves the complete
+genuine async refusal; eight changed-manifest forms reject after it. These
+planner-authentication changes remain local and do not yet implement the
+seven callable bindings or the formatter emission branch.
+
+## Descriptive formatter ABI integration
+
+The local planner now derives all seven canonical callable associations and
+the remaining internal formatter rows from the full 16-resource recipe, reuses
+the scratch owner, supports the honest layout-only dependency, checks combined
+binding ownership, and includes prepared support references in dependency
+closure. The consumer has not yet been changed to retain or materialize this
+new plan. No new runtime execution path is claimed.
+
+Run 3485 failed 1/19: the attempted test incorrectly assumed the full family's
+ordinary string selection was already planned. It is actually unsupported.
+The corrected control preserves that exact existing source-string failure;
+it does not fabricate a source reservation input or erase family operations.
+Original no-formatter planning separately retains its async runtime refusal.
+Run 87977 then passed 19/19. The newly derived formatter ABI branch is still
+unproven through that family until real string admission is implemented.
+
+Final validation 49752 exited zero: formatting, source TS7 and 80/80 across
+formatter requirements and existing native string ABI planning passed in 42.76
+seconds. These tests establish manifest authentication, preservation of the
+real refusal, and existing ABI behavior—not execution of the new full-family
+formatter ABI branch, successful emission, async completion or retirement.
+
+## Consumer formatter integration (local review)
+
+Published planner checkpoint d62c566124f52f7f5a85bf86a0e98308a1c6dd5d
+was verified at #5798 after normal push 95591 exited zero, including 18/18
+numeric parity tests. The branch remains held on the #5797 stack, not main.
+
+The consumer now retains canonical provider-prepared support and its complete
+body snapshot privately. Before allocation it reauthenticates the entire
+manifest and physical plan, the real source/no-source distinction, and the
+complete shared-string/formatter ABI. It reserves one shared string owner and
+one formatter pack, compares authenticated ordered resource rows against the
+actual module descriptors with the shared type map, and binds before filling.
+The exact D1 body is lowered into its original support slot with canonical
+call/type scope and unique original-allocation inline WTF16 literal scope.
+The actual support function is distinct from primary and other runtime owners.
+Primary lowering and startup filling were extracted within the same consumer
+file to keep normal function budgets; no ledger or admission guard was relaxed.
+
+TS7 80943 passed. Formatting/TS7/budget 68208 passed before the final support
+census and no-demand byte/module controls. Run 31906 passed TS7 but stopped at
+the 308-line materializer budget (tests did not run). Extracting startup into
+a bounded helper fixed that overrun without a new allowance. Run 69465 is the
+replacement validation; its terminal receipt must be recorded before claiming
+the full result. The canonical claim check 1542 returned exit 3, confirming
+our existing ttraenkler/codex-number-format-consumer owner (not a collision).
+
+These are production wiring changes, not a successful whole-family execution
+receipt. The real source-string resource refusal remains unchanged; no source
+owner was removed and no test-only acceptance was minted. Full formatter
+consumer execution and inverse authority tests remain required after E2 and
+the other complete native async resource plans make the real source reachable.
+
+Original High reviewer Huygens, closure implementer Hilbert, and E1 owner
+Maxwell were recovered by closing their stale not_found handles and resuming
+the same IDs. Their histories and worktrees remain intact. Huygens reviews the
+consumer read-only, Hilbert resumes the saved staged-closure draft, and Maxwell
+investigates/specifies the real E2 source-resource blocker. Cicero owns queue
+shepherding. Parent retains the heavy slot until validation/publication ends.
+
+Validation 69465 exited zero: formatting, source TS7, function budget and
+96/96 tests (19 formatter requirements, 68 actual native string consumer
+execution, 9 module completion) in 324.45 seconds. Consumer coverage includes
+original/decoded programs, GVN off/on, UTF8 off/on, startup/export aliases,
+dependency order, large literals and repeated executed numeric values.
+The new no-demand option control compares complete emitted modules and bytes.
+This is preservation coverage; the formatter's full-family success branch is
+still unexecuted because the honest source-string refusal is retained.
+
+Huygens gave bounded static approval on consumer SHA256
+a4592f6bc09c1ce3dfa35dc74bade7dee9bd4f8b35ced178c4e3e5d03a39fe20
+and test SHA256 db14133dcb6d5a5891b7ff0cfc3ed0e45b03e36cdba8ea18a36e524beae713d0.
+Parent independently matched both. Only the known unused options destructure
+was removed afterward, a semantically neutral cleanup explicitly noted by High.
+Post-cleanup formatting passed in 87755; an accidental ESLint invocation
+failed because this repository uses Biome, not an ESLint configuration. That
+command did not run the chained TS7 check. The correct Biome/TS7 check replaces
+it; no lint configuration or policy was changed.
+
+The correct post-cleanup Biome and TS7 run 87104 exited zero. Normal commit
+43444 produced 66e339b7b697330bbed5692eb0de4188b1193caa; changed-root was
+explicitly skipped for 102 files, not passed. Push 39139 exited zero with
+18/18 numeric parity tests and all normal gates. GitHub independently confirmed
+that exact head on open, non-draft, held #5798 targeting #5797's branch.
+
+## E1 composition and E2 dispatch preparation
+
+The integration tree now has an uncommitted merge of published E1
+03d0615e34da8629971659d8c5937b8483f57643 into 66e339b7b6. Only issue-history
+append and policy-file classification conflicts occurred. Both complete issue
+histories and all parent policy fields/classifications were preserved; a
+read-only structural comparison confirmed exactly two added classifications.
+Subsequent parent-owned activation adds those two runtime modules as mandatory
+roots, raises native-runtime's floor from 29 to 31, retains all prior activation
+history/allowed edges, and adds eight delete/demote/type/value-import controls.
+This activation is authored but not yet validated. Source E1 content is not
+rewritten by composition. No full-graph closure or retirement is inferred.
+
+Maxwell's read-only E2 proposal identifies binary string.concat as the first
+resource refusal and covers required arity-5 concat and stdout append/prepare/
+char. It requires one independently shared flatten owner, not fabricated
+scanner/unbox demand. High is freezing the exact implementation APIs, explicit
+empty-identity option, canonical literal requirements and authority controls.
+The proposed four production paths/two tests are not yet dispatched for source
+implementation; parent retains ABI/consumer/options/boundary ownership.
+
+Hilbert was granted the exclusive heavy validation slot after parent push.
+Parent requested a terminal handle or explicit release before running E1
+composition tests or normal commit/push; no concurrent heavy run is authorized.
+
+Hilbert explicitly released the slot after test 4029 exited zero (172/172);
+its TS7 40649 predates two test-only repairs, so final TS7 remains his obligation.
+Parent composition run 46969 passed formatting/TS7 and all 504 assertions in
+eight suites, but exited 1 due to a Vitest worker RPC onTaskUpdate timeout
+(one unhandled error). This is not clean validation. The unchanged eight-suite
+selection is being rerun with one worker and no file parallelism; no assertion,
+test timeout, source or gate was weakened. The original failure is retained.
+
+Single-worker retry 44850 also exited 1: 504/504 assertions, eight files, one
+unhandled onTaskUpdate RPC timeout, 438.26 seconds. Concurrency is not a sufficient
+explanation. The installed Vitest transport uses a 60-second request deadline;
+the error is a worker-to-runner task-report acknowledgement failure, not a test
+assertion diagnostic. The specific suite/cause remains unassigned. No third
+blind whole-selection rerun or timeout/config/dependency change is authorized
+by this observation. Next diagnostic is isolated suite execution with unchanged
+assertions, beginning with the synchronous boundary controls and a separate
+non-boundary selection after the heavy slot is returned.
+
+Parent released the heavy slot to Hilbert for final TS7 and normal staged-closure
+publication. Parent read the full final staged contract and production diff;
+bounded source review found no new defect beyond High's approved test repairs.
+The correct stack base is #5798; this is not permission to land incomplete async
+resources on main. Actual effective host git config currently has Thomas author
+but no signing configuration; recent normal parent commit 66e339 has no gpgsig.
+No agent may invent a signing key or disable signing to work around that fact.
+
+E2 contract f33688ecd6c5bea50e7f41be537776343ce13007afa9ba4a9a4fc2dc35b502d8
+was read in full and copied byte-exact into this worktree. Canonical claim 32902
+exited zero with verified ownership, and Maxwell was dispatched on the exact
+six-file scope. The string-values aggregate is byte-identical at published E1
+and 66e339; final E2 source-family validation must include the current integration.
+E2 implementation can progress while E1's reporting failure is diagnosed; the
+pending composition is not a clean validation or published checkpoint.
+
+Isolated unchanged boundary run 44353 reproduced the same reporting failure:
+116/116 assertions, one onTaskUpdate RPC timeout, exit 1, 62.77 seconds. This
+attributes the problem to that suite without relying on the aggregate report.
+Its checker subprocesses and afterEach cleanup are entirely synchronous. High
+approved the existing semantic-provider boundary suite's scheduling-only pattern:
+retain cleanup, then await node:timers/promises setImmediate between tests.
+Parent applied only that import/async-afterEach/yield/comment; no assertions,
+fixture handling or timeouts changed. Amended isolated run 39986 is pending.
+
+Staged closure #5803 is independently verified open/non-draft/held against #5798
+at 7482ce3d2fc68588ff594e911a6d3a83ff493f13, exactly nine files. Worker final
+TS7 11727, normal commit 88977 and push 31714 exited zero; scoped tests were
+172/172 and hook parity 18/18. The heavy slot was explicitly released and is
+now with parent. Clarification: repository TS7 includes only src and excludes
+tests; it is source typechecking, not typechecking of the two test repairs.
+Their runtime assertion evidence is the actual 172/172 result.
+
+Amended isolated boundary run 39986 exited zero: 116/116, zero unhandled errors,
+62.55 seconds, versus unchanged 44353's 62.77 seconds and reporting failure.
+The yield is scheduling-only and retains all synchronous checker/cleanup behavior.
+Full original eight-file selection plus inventory is running as 34620; unlike
+the diagnostic retry it uses normal file parallelism. Formatting and Biome passed.
+No success for that aggregate is claimed before its terminal receipt.
+
+Parent also read the complete Lane B API proposal and integration decisions
+from published cf6ac354. High is now grounding a concrete B implementation delta
+against published staged closure 7482ce3, with typed publication obligations,
+single-owner timer constants/layouts, actual import/export occupancy and explicit
+tracking configuration. Missing C1/C2 invocation dependencies remain obligations,
+not placeholder bodies or permission to remove the async refusal.
+
+Full composition validation 34620 exited zero: normal file parallelism, all
+504/504 tests across the same eight suites, zero unhandled errors, 340.58 seconds.
+The subsequent inventory check against 66e339 exited zero with inventoryValid
+true, errors empty and architectureComplete false. This report inspected the
+actual pending-merge working tree; its sourceRevision field is the pre-merge
+HEAD, not a claim that E1 was already part of commit 66e339. Formatting and Biome
+also passed. Both earlier 504/504-plus-RPC-error runs remain failed receipts.
+
+The scheduling-only boundary repair therefore passes both isolated and composed
+controls without changing assertions, cases, timeouts, child handling, source or
+Vitest configuration. Canonical E1 production/test/proof content remains the
+published donor checkpoint except for the separately parent-owned boundary test.
+Normal integration commit/push is the next serialized operation. Full E2 source
+admission, native async execution, public default cutover and retirement remain
+unproven; the real source-string refusal is intentionally still exercised.
