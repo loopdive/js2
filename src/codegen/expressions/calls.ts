@@ -337,7 +337,10 @@ import {
   ensureStandaloneNativeMethodClosure,
   getNativeProtoBuiltinGlue,
 } from "../native-proto.js";
-import { ensureRuntimeEvalAotCallableCarrierTypes } from "../runtime-eval-callable.js";
+import {
+  ensureRuntimeEvalAotCallableCarrierTypes,
+  ensureRuntimeEvalCallableWrapHelper,
+} from "../runtime-eval-callable.js";
 import { RUNTIME_EVAL_AOT_CALLABLE_BRAND_A, RUNTIME_EVAL_AOT_CALLABLE_BRAND_B } from "../runtime-eval-boundary.js";
 import { wrapperProtoSyntacticMember } from "../wrapper-proto-dynamic-demand.js"; // (#4619)
 import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
@@ -7001,6 +7004,7 @@ function tryRuntimeEvalInterpretedBoundaryIntrinsic(
   const wrapsBooleanResult = calleeName === "__runtime_eval_wrap_boolean_result";
   const unwrapsResult = calleeName === "__runtime_eval_unwrap_result";
   const testsAotCallable = calleeName === "__runtime_eval_is_aot_callable";
+  const wrapsAotCallable = calleeName === "__runtime_eval_wrap_aot_callable";
   if (
     (!ctx.standalone && !ctx.wasi) ||
     ctx.runtimeEvalCallableBoundaryEnabled !== true ||
@@ -7010,7 +7014,8 @@ function tryRuntimeEvalInterpretedBoundaryIntrinsic(
       !wrapsResult &&
       !wrapsBooleanResult &&
       !unwrapsResult &&
-      !testsAotCallable) ||
+      !testsAotCallable &&
+      !wrapsAotCallable) ||
     (wraps ? expr.arguments.length !== (wrapsFunction ? 3 : 4) : expr.arguments.length !== 1)
   ) {
     return undefined;
@@ -7025,6 +7030,12 @@ function tryRuntimeEvalInterpretedBoundaryIntrinsic(
   }
   const valueType = compileExpression(ctx, fctx, expr.arguments[0]!, externref);
   if (valueType && valueType.kind !== "externref") coerceType(ctx, fctx, valueType, externref);
+  if (wrapsAotCallable) {
+    const helper = ensureRuntimeEvalCallableWrapHelper(ctx);
+    flushLateImportShifts(ctx, fctx);
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__runtime_eval_wrap_callable") ?? helper });
+    return externref;
+  }
   if (wrapsResult) return emitRuntimeEvalResultBoundaryWrap(ctx, fctx, externref);
   if (unwrapsResult) return emitRuntimeEvalResultBoundaryUnwrap(ctx, fctx, externref);
   if (testsAotCallable) {

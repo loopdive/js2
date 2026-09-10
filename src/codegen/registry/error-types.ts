@@ -54,7 +54,7 @@ import {
   nativeStringLiteralInstrs,
   stringConstantExternrefInstrs,
 } from "../native-strings.js";
-import { undefinedSingletonActive } from "../any-helpers.js";
+import { canonicalUndefinedExternInstrs, undefinedSingletonActive } from "../any-helpers.js";
 import { usesNativeJsErrors } from "../js-errors.js";
 import { CARRIER_BAG_HAS } from "../carrier-bag-visibility.js";
 import { ERROR_PROP_GET } from "../error-props.js";
@@ -310,6 +310,7 @@ function emitErrorStructConstructor(
     // $props — (#2101a R5) own-field backing store; null until the subclass's
     // first own-field write lazily allocates an `$Object` here.
     { op: "ref.null.extern" },
+    { op: "i32.const", value: displayName === "Test262Error" ? -1 : tagValue },
     { op: "struct.new", typeIdx: structIdx },
     { op: "extern.convert_any" },
   ];
@@ -458,6 +459,7 @@ export function ensureNativeSuppressedErrorCtor(ctx: CodegenContext): number | u
     { op: "i32.const", value: -1 },
     // $props
     { op: "local.get", index: L_PROPS },
+    { op: "i32.const", value: BUILTIN_TYPE_TAGS.SuppressedError },
     { op: "struct.new", typeIdx: structIdx },
     { op: "extern.convert_any" },
   ];
@@ -922,4 +924,57 @@ export function fillErrorStructMessageOwnPropArms(ctx: CodegenContext): void {
     ];
     fn.body.splice(0, 0, ...arm);
   }
+}
+
+/** Late-filled driver arms use final indices and canonical constructor identity.
+ * Do not claim options/cause or an explicitly supplied alternate prototype.
+ */
+export function errorValueConstructArms(ctx: CodegenContext, arity: number): Instr[] {
+  if (arity > 1) return [];
+  const body: Instr[] = [];
+  const eq = -19;
+  for (const name of WASI_ERROR_NAMES) {
+    const helper = ctx.funcMap.get("__construct_error_value_" + name);
+    const carrier = ctx.builtinObjectGlobals.get(name);
+    if (helper === undefined || carrier === undefined) continue;
+    body.push(
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: eq },
+      { op: "global.get", index: carrier },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: eq },
+      { op: "i32.and" },
+      { op: "local.get", index: 1 },
+      { op: "ref.is_null" },
+      { op: "i32.and" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: eq },
+          { op: "global.get", index: carrier },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: eq },
+          { op: "ref.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              ...(arity === 0 ? canonicalUndefinedExternInstrs(ctx) : [{ op: "local.get", index: 2 } as Instr]),
+              { op: "call", funcIdx: helper },
+              { op: "return" },
+            ],
+          },
+        ],
+      },
+    );
+  }
+  return body;
+}
+
+export function emitErrorValueStructConstructor(ctx: CodegenContext, name: WasiErrorName): void {
+  emitErrorStructConstructor(ctx, "__new_error_value_" + name, name, BUILTIN_TYPE_TAGS[name], 1);
 }

@@ -16,11 +16,15 @@ import { BUILTIN_STATIC_METHOD_ARITY, pushBuiltinFnSingletonValueInstrs } from "
 import { ensureStandaloneBuiltinStaticMethodClosure } from "./builtin-value-read.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
+import { emitErrorValueStructConstructor, isWasiErrorName } from "./registry/error-types.js";
+import { ensureSymbolCarrier } from "./symbol-native.js";
+import { getExternrefToStringProvider } from "./coercion-engine.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
-import { ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { ensureExternrefToStringProvider, ensureLateImport, flushLateImportShifts } from "./shared.js";
 
 const SUPPORTED_STATIC_PROPS: ReadonlyMap<string, readonly string[]> = new Map([
   ["Array", ["isArray"]],
@@ -490,6 +494,7 @@ export function emitBuiltinNamespaceObject(
 ): ValType | null {
   const baselineProps = SUPPORTED_STATIC_PROPS.get(builtinName);
   if (!baselineProps) return null;
+  reserveErrorValueConstructor(ctx, fctx, builtinName);
   // A namespace carrier is materialized only when the namespace is used as a
   // value. At that demand point, source its complete function-valued own
   // surface from the same canonical registry that drives static value
@@ -571,4 +576,54 @@ export function emitBuiltinNamespaceObject(
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });
   fctx.body.push({ op: "global.get", index: globalIdx });
   return { kind: "externref" };
+}
+
+/** Exact intrinsic-value construction, separate from ordinary function values.
+ * Only the no-options Error contract is wired by the driver below.
+ */
+function reserveErrorValueConstructor(ctx: CodegenContext, fctx: FunctionContext, name: string): void {
+  if (!(ctx.standalone || ctx.wasi) || !isWasiErrorName(name) || name === "AggregateError") return;
+  const helper = "__construct_error_value_" + name;
+  if (ctx.funcMap.has(helper)) return;
+  ensureExternrefToStringProvider(ctx, fctx, "string");
+  ensureLateImport(ctx, "__typeof_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+  const symbol = ensureSymbolCarrier(ctx);
+  // Separate name fixes the ABI at one argument even when an internal error
+  // emitter has previously reserved a different __new_<Name> signature.
+  const ctor = "__new_error_value_" + name;
+  emitErrorValueStructConstructor(ctx, name);
+  const rejectSymbol = buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a Symbol value to a string", {
+    forceInModuleCtor: true,
+  });
+  flushLateImportShifts(ctx, fctx);
+  const toStringIdx = getExternrefToStringProvider(ctx);
+  const isUndefined = ctx.funcMap.get("__typeof_undefined");
+  if (toStringIdx === undefined || isUndefined === undefined) throw new Error("Missing native Error value coercion");
+  const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }], helper + "_type");
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set(helper, funcIdx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: helper,
+    typeIdx,
+    locals: [],
+    exported: false,
+    body: [
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: isUndefined },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: [{ op: "ref.null.extern" }],
+        else: [
+          { op: "local.get", index: 0 },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: symbol },
+          { op: "if", blockType: { kind: "empty" }, then: rejectSymbol },
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: toStringIdx },
+        ],
+      },
+      { op: "call", funcIdx: ctx.funcMap.get(ctor)! },
+    ],
+  });
 }

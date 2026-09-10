@@ -92,16 +92,18 @@ function unionCarriesUndefined(retType: ts.Type): boolean {
  *
  * `lowered` is what the existing pipeline already resolved (so this never
  * re-runs `resolveWasmType` and cannot register a type twice); the return value
- * replaces it. Every non-mixed / non-scalar case returns `lowered` UNCHANGED,
- * which is what keeps this byte-inert for the corpora measured above.
+ * replaces it. Non-mixed results stay unchanged. Away from an explicitly
+ * selected reference boundary, non-scalar results also keep their old ABI.
  *
- * Reference carriers are left alone on purpose: a `ref_null` / `externref`
- * result already represents `undefined` (both default-value emit sites push
- * `ref.null` / `emitUndefined` for them), so widening would be a no-op that
- * only cost a coercion.
+ * Specialized reference carriers keep their local null-as-absence convention
+ * except at an eval callable boundary. There, a raw null becomes JS null after
+ * conversion to externref, losing the undefined value. A mixed reference result
+ * must carry the canonical undefined tag before crossing that boundary. Plain
+ * reference results and modules without that boundary remain unchanged.
  */
-export function widenMixedUndefinedReturn(retType: ts.Type, lowered: ValType): ValType {
-  if (lowered.kind !== "f64" && lowered.kind !== "i32" && lowered.kind !== "i64") return lowered;
+export function widenMixedUndefinedReturn(retType: ts.Type, lowered: ValType, referenceBoundary = false): ValType {
+  const boundaryReference = referenceBoundary && (lowered.kind === "ref" || lowered.kind === "ref_null");
+  if (!boundaryReference && lowered.kind !== "f64" && lowered.kind !== "i32" && lowered.kind !== "i64") return lowered;
   if (!unionCarriesUndefined(retType)) return lowered;
   return { kind: "externref" };
 }

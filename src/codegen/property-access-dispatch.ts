@@ -2602,6 +2602,9 @@ export function tryPrototypeMethodAndArityReads(
  */
 function emitStandaloneAnyLength(ctx: CodegenContext, fctx: FunctionContext): ValType {
   const closureRootIdx = getFuncRefWrapperRootTypeIdx(ctx);
+  const callableRoots = [closureRootIdx, ctx.runtimeEvalAotCallableCarrier?.structTypeIdx].filter(
+    (idx): idx is number => idx !== undefined,
+  );
   ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
   // (#2175 S3b-3, defect B) The metadata consult used to be ensured ONLY when
   // the module had a closure root, because it was only ever asked for a closure
@@ -2618,7 +2621,7 @@ function emitStandaloneAnyLength(ctx: CodegenContext, fctx: FunctionContext): Va
   // so wherever the import IS present the `$__ta_ctor` arm works regardless of
   // when the type appeared.
   const taCtorRegistered = ctx.taCtorTypeIdx !== undefined && ctx.taCtorTypeIdx >= 0;
-  const wantMeta = closureRootIdx !== undefined || taCtorRegistered;
+  const wantMeta = callableRoots.length > 0 || taCtorRegistered;
   if (wantMeta) {
     ensureLateImport(
       ctx,
@@ -2633,13 +2636,13 @@ function emitStandaloneAnyLength(ctx: CodegenContext, fctx: FunctionContext): Va
   // consult that bag before falling back to Function.prototype.length (0).
   // The dynamic-key path already routes through this helper; keep the direct
   // `fn.length` spelling observably identical.
-  if (closureRootIdx !== undefined) {
+  if (callableRoots.length > 0) {
     ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
     ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
   }
   const metaLengthToI32 = wantMeta ? coercionInstrs(ctx, { kind: "externref" }, { kind: "i32" }, fctx) : undefined;
   const ownLengthToI32 =
-    closureRootIdx !== undefined ? coercionInstrs(ctx, { kind: "externref" }, { kind: "i32" }, fctx) : undefined;
+    callableRoots.length > 0 ? coercionInstrs(ctx, { kind: "externref" }, { kind: "i32" }, fctx) : undefined;
   flushLateImportShifts(ctx, fctx);
 
   const lenFn = ctx.funcMap.get("__extern_length");
@@ -2714,12 +2717,16 @@ function emitStandaloneAnyLength(ctx: CodegenContext, fctx: FunctionContext): Va
           // With no closure root in the module there is no closure to test, so the
           // generic fallback stands alone.
           then:
-            closureRootIdx === undefined
+            callableRoots.length === 0
               ? genericLength(recvExternLocal)
               : [
-                  { op: "local.get", index: recvExternLocal },
-                  { op: "any.convert_extern" },
-                  { op: "ref.test", typeIdx: closureRootIdx },
+                  // Foreign canonical adapters are not subtypes of the local closure root.
+                  ...callableRoots.flatMap((typeIdx, index): Instr[] => [
+                    { op: "local.get", index: recvExternLocal },
+                    { op: "any.convert_extern" },
+                    { op: "ref.test", typeIdx },
+                    ...(index > 0 ? [{ op: "i32.or" } as Instr] : []),
+                  ]),
                   {
                     op: "if",
                     blockType: { kind: "val", type: { kind: "i32" } },
@@ -2736,7 +2743,7 @@ function emitStandaloneAnyLength(ctx: CodegenContext, fctx: FunctionContext): Va
 
   if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
     emitGuardedNativeStringLength(ctx, fctx, guardedLength);
-  } else if (closureRootIdx !== undefined && bfnGetMetaFn !== undefined && metaLengthToI32 !== undefined) {
+  } else if (callableRoots.length > 0 && bfnGetMetaFn !== undefined && metaLengthToI32 !== undefined) {
     const recvExternLocal = allocLocal(fctx, `__bfn_len_recv_${fctx.locals.length}`, { kind: "externref" });
     fctx.body.push({ op: "local.set", index: recvExternLocal }, ...guardedLength(recvExternLocal));
   } else if (lenFn !== undefined) {
@@ -3783,9 +3790,9 @@ export function tryNamespaceConstantAndSymbolReads(
     // `undefined`, matching `Symbol().description === undefined`.
     if (usesNativeSymbolProvider(ctx)) {
       ensureNativeSymbolBoundaryBridge(ctx);
-      const recvType = compileExpression(ctx, fctx, expr.expression, { kind: "i32" });
+      const recvType = compileExpression(ctx, fctx, expr.expression, { kind: "i32", symbol: true });
       if (recvType && recvType.kind !== "i32") {
-        coerceType(ctx, fctx, recvType, { kind: "i32" });
+        coerceType(ctx, fctx, recvType, { kind: "i32", symbol: true });
       }
       emitSymbolDescLoad(ctx, fctx);
       // Result is `ref_null $AnyString` — a native string (or null⇒undefined).

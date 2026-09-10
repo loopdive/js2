@@ -1850,7 +1850,9 @@ function registerBodylessFunctionDeclaration(
             nativeTypeFromTypeNode(ctx.checker, stmt.type) ??
               (functionReturnsReferenceBoundaryCarrier(ctx, stmt)
                 ? { kind: "externref" }
-                : resolveWasmType(ctx, rUnwrapped)),
+                : ctx.runtimeEvalCallableBoundaryEnabled === true && ts.isSourceFile(stmt.parent)
+                  ? widenMixedUndefinedReturn(rUnwrapped, resolveWasmType(ctx, rUnwrapped), true)
+                  : resolveWasmType(ctx, rUnwrapped)),
           ];
     }
   }
@@ -2988,7 +2990,11 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
                       // RESULT so `emitUndefined` can carry the absent value (the
                       // externref arm of both sites already does). Deliberately NOT
                       // the general union-collapse reversal — that is #3580 S3.
-                      widenMixedUndefinedReturn(rUnwrapped, resolveWasmType(ctx, rUnwrapped))),
+                      widenMixedUndefinedReturn(
+                        rUnwrapped,
+                        resolveWasmType(ctx, rUnwrapped),
+                        ctx.runtimeEvalCallableBoundaryEnabled === true && ts.isSourceFile(stmt.parent),
+                      )),
               ];
         }
       }

@@ -88,6 +88,7 @@ import {
 } from "./promise-subclass.js";
 import {
   emitLiveIdentifierGlobalRead,
+  identifierHasOnlyAmbientDeclarations,
   moduleTdzGlobalIndexForIdentifier,
   tryEmitAmbientRegistryCollisionRead,
   tryEmitExplicitHostAmbientValueRead,
@@ -901,9 +902,21 @@ function compileRuntimeEvalGlobalLexicalRead(
 
 function shouldUseRuntimeEvalGlobalLexicalRead(
   ctx: CodegenContext,
+  id: ts.Identifier,
   skipRuntimeEvalState: boolean,
   unresolvedInModuleGoal: boolean,
 ): boolean {
+  // The global Script lexical environment is outside every module environment.
+  // It cannot shadow a resolved module binding. Direct-eval activation state is
+  // handled before this gate; ambient and unresolved names remain conservative.
+  const declaration = ctx.oracle.valueDeclarationOf(id);
+  if (
+    declaration &&
+    ts.isExternalModule(declaration.getSourceFile()) &&
+    !identifierHasOnlyAmbientDeclarations(ctx, id)
+  ) {
+    return false;
+  }
   return (
     !skipRuntimeEvalState &&
     !unresolvedInModuleGoal &&
@@ -1507,7 +1520,7 @@ function compileIdentifierCore(
     return compileCapturedGlobalRead(ctx, fctx, id, name);
   }
 
-  if (shouldUseRuntimeEvalGlobalLexicalRead(ctx, skipRuntimeEvalState, unresolvedInModuleGoal)) {
+  if (shouldUseRuntimeEvalGlobalLexicalRead(ctx, id, skipRuntimeEvalState, unresolvedInModuleGoal)) {
     return compileRuntimeEvalGlobalLexicalRead(ctx, fctx, id);
   }
 

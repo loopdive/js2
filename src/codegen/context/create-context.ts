@@ -408,6 +408,7 @@ export function createCodegenContext(
     nodeFsWriteSyncIdx: -1,
     standalone: targetProfile.target === "standalone",
     ...(options?.standaloneGlobalThisImport ? { standaloneGlobalThisImport: options.standaloneGlobalThisImport } : {}),
+    standaloneSymbolState: options?.standaloneSymbolState,
     directEvalMode: options?.directEval ?? "legacy",
     // (#2141 S1) Honest generic any-boxing regime — default OFF (legacy tag-5
     // box-the-externref ABI, byte-identical modules). Flips in S4.

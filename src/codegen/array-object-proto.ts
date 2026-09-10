@@ -85,7 +85,10 @@ import { emitObjectProtoIsPrototypeOfBody } from "./object-proto-is-prototype-of
 import { ANNEX_B_ACCESSOR_ARITY, emitObjectProtoAnnexBAccessorBody } from "./object-proto-annex-b-accessors.js";
 import { emitWrapperProtoValueOfBody, isWrapperBrandName } from "./wrapper-proto-value-of.js";
 import { emitWrapperProtoToStringBody } from "./wrapper-proto-to-string.js"; // (#4619)
+import { emitFunctionProtoApplyBody } from "./function-proto-apply.js";
+import { emitFunctionProtoCallBody } from "./function-proto-call.js";
 import { emitFunctionProtoToStringBody } from "./function-proto-to-string.js"; // (#4492 wave-5)
+import { emitArrayProtoToStringBody } from "./array-proto-tostring.js";
 import { emitObjectProtoValueOfBody } from "./object-proto-value-of.js"; // (#4492 wave-5)
 import { emitStringConcatMemberBody } from "./string-proto-concat.js";
 import { emitStringSubstringMemberBody } from "./string-proto-substring.js";
@@ -884,6 +887,7 @@ const ASYNCDISPOSABLESTACK_PROTO_METHOD_LENGTH: Readonly<Record<string, number>>
  * compile refusal). Returns externref (the uniform closure-call result type).
  */
 function emitArrayProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, member: string): ValType | null {
+  if (member === "toString") return emitArrayProtoToStringBody(ctx, fctx);
   if (member === "concat") {
     return compileArrayConcatNativeSpecFromReceiverAndArgsVec(ctx, fctx, 1, 2) ?? null;
   }
@@ -2431,7 +2435,7 @@ function makeGlue(
     memberIsVariadic: (member) =>
       name === "Array" && (member === "join" || member === "push" || member === "unshift" || member === "concat")
         ? true
-        : name === "String" && member === "concat",
+        : (name === "String" && member === "concat") || (name === "Function" && member === "call"),
     // (#4485) §B.2.4.3 — `Date.prototype.toGMTString` IS `Date.prototype.
     // toUTCString` (one function object, asserted by test262 annexB
     // .../toGMTString/value.js). The Annex B String aliases have the same
@@ -2494,6 +2498,8 @@ function makeGlue(
       // VALUE. Same "ask first, emit second" contract as the two arms above, so a
       // decline leaves the ladder byte-identical.
       (name === "Function" && member === "toString" ? emitFunctionProtoToStringBody(c, fctx) : null) ??
+      (name === "Function" && member === "apply" ? emitFunctionProtoApplyBody(c, fctx) : null) ??
+      (name === "Function" && member === "call" ? emitFunctionProtoCallBody(c, fctx) : null) ??
       // ES2015 §19.2.3.6 — the inherited `@@hasInstance` method. Its body is
       // shared with the standalone dynamic-instanceof substrate so ordinary
       // function receivers and direct `Function.prototype` reads use the same
@@ -2833,7 +2839,7 @@ export function ensureBigIntNativeProtoGlue(ctx: CodegenContext): number | undef
   const brand = getBuiltinBrand(ctx, "BigInt");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
-    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "BigInt", BIGINT_PROTO_METHODS));
+    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "BigInt", BIGINT_PROTO_METHODS, "BigInt"));
   }
   return brand;
 }

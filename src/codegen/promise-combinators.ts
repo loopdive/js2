@@ -1232,6 +1232,7 @@ function buildNewAggregateErrorBody(
     { op: "ref.null.extern" },
     { op: "i32.const", value: -1 },
     { op: "local.get", index: PROPS },
+    { op: "i32.const", value: BUILTIN_TYPE_TAGS.AggregateError },
     { op: "struct.new", typeIdx: errStructTypeIdx },
     { op: "extern.convert_any" },
   ];

@@ -18,6 +18,7 @@
  * Only used in `noJsHost` mode; JS-host mode keeps the spec-accurate host
  * accessor path unchanged.
  */
+import { allocateSymbolState, reserveSymbolStateImports } from "./symbol-state.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
@@ -98,8 +99,7 @@ export function ensureSymbolCarrier(ctx: CodegenContext): number {
       kind: "ref_null",
       typeIdx: symIdx,
     });
-    const internGlobalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
-    ctx.mod.globals.push({
+    const internGlobalIdx = allocateSymbolState(ctx, {
       name: "__symbol_intern_table",
       type: { kind: "ref_null", typeIdx: internArrTypeIdx },
       mutable: true,
@@ -364,8 +364,7 @@ export function ensureSymbolDescTable(ctx: CodegenContext): void {
   });
   ctx.symbolDescArrTypeIdx = arrTypeIdx;
 
-  const globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
-  ctx.mod.globals.push({
+  const globalIdx = allocateSymbolState(ctx, {
     name: "__symbol_desc_table",
     type: { kind: "ref_null", typeIdx: arrTypeIdx },
     mutable: true,
@@ -564,22 +563,19 @@ export function ensureSymbolRegistry(ctx: CodegenContext): {
     const keysArrNull: ValType = { kind: "ref_null", typeIdx: keysArrTypeIdx };
     const idsArrNull: ValType = { kind: "ref_null", typeIdx: idsArrTypeIdx };
 
-    ctx.symbolRegKeysGlobalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
-    ctx.mod.globals.push({
+    ctx.symbolRegKeysGlobalIdx = allocateSymbolState(ctx, {
       name: "__symbol_reg_keys",
       type: keysArrNull,
       mutable: true,
       init: [{ op: "ref.null", typeIdx: keysArrTypeIdx }],
     });
-    ctx.symbolRegIdsGlobalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
-    ctx.mod.globals.push({
+    ctx.symbolRegIdsGlobalIdx = allocateSymbolState(ctx, {
       name: "__symbol_reg_ids",
       type: idsArrNull,
       mutable: true,
       init: [{ op: "ref.null", typeIdx: idsArrTypeIdx }],
     });
-    ctx.symbolRegCountGlobalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
-    ctx.mod.globals.push({
+    ctx.symbolRegCountGlobalIdx = allocateSymbolState(ctx, {
       name: "__symbol_reg_count",
       type: { kind: "i32" },
       mutable: true,
@@ -1127,4 +1123,12 @@ export function fillSymbolAnyToStringArm(ctx: CodegenContext): void {
     },
   ];
   fn.body.splice(0, 0, ...arm);
+}
+
+/** Owners export all Symbol state even when their own source does not use Symbols. */
+export function initializeSharedSymbolState(ctx: CodegenContext): void {
+  if (!ctx.standaloneSymbolState) return;
+  reserveSymbolStateImports(ctx);
+  ensureSymbolCarrier(ctx);
+  ensureSymbolRegistry(ctx);
 }

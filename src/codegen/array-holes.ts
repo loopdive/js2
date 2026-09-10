@@ -84,6 +84,26 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
         }
       }
     }
+    // An indexed assignment can create a gap even when every literal starts
+    // dense. Reads may compile before the write, so arm hole handling here.
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      ts.isElementAccessExpression(node.left)
+    ) {
+      const receiver = ctx.oracle.typeFactOf(node.left.expression).kind;
+      if (
+        receiver === "any" ||
+        receiver === "unknown" ||
+        receiver === "unresolvable" ||
+        receiver === "union" ||
+        receiver === "array" ||
+        receiver === "tuple"
+      ) {
+        ctx.usesArrayHoles = true;
+      }
+    }
     if (!ctx.protoIndexDirty && isProtoIndexWrite(node)) {
       ctx.protoIndexDirty = true;
     }

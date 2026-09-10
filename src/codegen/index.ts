@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { isLinkedRealmPublicationType } from "./linked-realm-literal.js";
 import { ts, forEachChild } from "../ts-api.js";
 import { propertyValueIsAccessorObjectLiteral } from "./accessor-value-field.js";
 import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.js";
@@ -121,7 +122,11 @@ import {
   type IrModuleInitInvocationKind,
   type IrModuleInitPlanningEvidence,
 } from "../ir/module-init-plan.js";
-import { buildIrRuntimeEvalBoundaryPlan, type IrRuntimeEvalBoundaryPlan } from "../ir/runtime-eval-boundary-plan.js";
+import {
+  buildIrRuntimeEvalBoundaryPlan,
+  runtimeEvalMayRebindModuleScope,
+  type IrRuntimeEvalBoundaryPlan,
+} from "../ir/runtime-eval-boundary-plan.js";
 import {
   buildIrUnitInventory,
   type BuildIrUnitInventoryOptions,
@@ -376,11 +381,12 @@ import {
   unshiftExternGetStringExoticArm,
   unshiftExternGetWrapperCtorArm,
 } from "./object-runtime.js";
+import { fillSymbolDescriptionRead } from "./symbol-description.js";
 import { fillObjectProtoSingleton } from "./object-runtime-prototype.js"; // (#5270 step 2)
 import { fillVecLengthDynamicArms } from "./vec-length-set.js";
 import { fillTaCtorGetMetaArm } from "./ta-ctor-meta.js"; // `$__ta_ctor` name/length meta arm
 import { fillProxyRevokerFnMeta } from "./proxy-revoker-meta.js"; // (#5196) revoker name/length meta arm
-import { fillSymbolAnyToStringArm } from "./symbol-native.js"; // (#4632) $Symbol arm in __any_to_string
+import { fillSymbolAnyToStringArm, initializeSharedSymbolState } from "./symbol-native.js"; // (#4632) $Symbol arm in __any_to_string
 import { fillCallableAnyToStringArm, fillCallableExternToStringArm } from "./callable-any-to-string.js"; // (#4492 wave-5) callable ToString arms
 import { fillMapSetDynDispatchArms } from "./map-runtime.js"; // (#4629) Map/Set any-channel dispatch arms
 import { fillBigIntDynValueOfArm } from "./wrapper-proto-value-of.js"; // (#4631) dyn wrapper valueOf arm
@@ -4940,6 +4946,10 @@ function finalizeLeafStructTypes(ctx: CodegenContext): void {
   // gate makes host byte-identical to main again.
   const abVecIdx = ctx.wasi || ctx.standalone ? ctx.vecTypeMap.get("i32_byte") : undefined;
   if (abVecIdx !== undefined) keepOpenTypeIdxs.add(abVecIdx);
+  // The shared externref vector is an ABI root: providers may subtype it
+  // for arguments/template arrays even when a consumer has no such subtype.
+  const sharedVecIdx = ctx.standalone ? ctx.vecTypeMap.get("externref") : undefined;
+  if (sharedVecIdx !== undefined) keepOpenTypeIdxs.add(sharedVecIdx);
   const finalizedTypeIndices = markLeafStructsFinal(ctx.mod, ctx.wasi, keepOpenTypeIdxs);
   ctx.programAbiSession?.recordLeafTypeFinalization(finalizedTypeIndices);
 }
@@ -5142,6 +5152,7 @@ export function generateModule(
     : undefined;
   const ctx = createCodegenContext(mod, ast.checker, options, programAbiSession, irPlanningIdentityContext);
   ctx.callableSourceFiles = [ast.sourceFile];
+  initializeSharedSymbolState(ctx);
   ctx.irBodyRouteAuditSession?.registerGenerator("single", "generateModule");
   const standaloneCalendar = planSingleSourceStandaloneCalendar(ctx, ast.checker, ast.sourceFile, inventoryOptions);
   ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan([ast.sourceFile], ctx.oracle);
@@ -6009,7 +6020,9 @@ export function generateModule(
     // and IR bodies have settled their type slots. Prepending it during the
     // syntax scan shifts the legacy type indices underneath IR-first's parity
     // check for otherwise ordinary numeric AOT functions.
-    if (ctx.runtimeEvalCallableBoundaryEnabled) {
+    // An explicit standalone host bridge can receive a callable from a linked
+    // eval-bearing module even when this owner has no local eval syntax.
+    if (ctx.runtimeEvalCallableBoundaryEnabled || (ctx.standalone && ctx.emitHostBridge)) {
       ensureRuntimeEvalAotCallableCarrierTypes(ctx);
     }
 
@@ -6729,6 +6742,7 @@ export function generateModule(
     // object, and the brand's lazy `$NativeProto` global only exists once the
     // native-proto glue has been registered.
     fillObjectProtoSingleton(ctx);
+    fillSymbolDescriptionRead(ctx);
 
     // (#2638) Fill the reserved `__class_to_primitive` driver now that the
     // per-struct `__call_valueOf`/`__call_toString` dispatchers exist (emitted
@@ -9883,7 +9897,10 @@ function registerReassignedFunctionGlobals(
       });
     for (const name of ctx.topLevelFunctionNames) {
       const declaration = ctx.topLevelFunctionDeclarations.get(name);
-      const canBeReboundByEval = !ctx.sourceIsModule || !declaration || !hasExportModifier(declaration);
+      const owner = declaration?.getSourceFile();
+      const canBeReboundByEval =
+        (!ctx.sourceIsModule || !declaration || !hasExportModifier(declaration)) &&
+        (!owner || runtimeEvalMayRebindModuleScope(runtimeEvalPlan, owner, sourceFiles.indexOf(owner)));
       if (canBeReboundByEval && (hasUnknownDynamicSource || mentionedByDynamicSource(name))) {
         reassigned.add(name);
         if (declaration) reassignedDeclarations.add(declaration);
@@ -10523,6 +10540,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     : undefined;
   const ctx = createCodegenContext(mod, multiAst.checker, options, programAbiSession, irPlanningIdentityContext);
   ctx.callableSourceFiles = multiAst.sourceFiles;
+  initializeSharedSymbolState(ctx);
   const irAuthority = makeIrPlanningAuthority(multiAst.checker, irPlanningIdentityContext, options?.experimentalIR);
   const multiPreparedProgram = initializeMultiPreparedProgram(ctx, multiAst, options, explicitlyDisabledEnv);
   const standaloneCalendar = planMultiCalendar(ctx, multiAst.checker, multiAst.sourceFiles, multiAst.entryFile);
@@ -11497,6 +11515,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // (#5270 step 2) Multi-source parity for the `%Object.prototype%` carrier;
     // see the single-source placement above.
     profilePhase("fill-object-proto-singleton", () => fillObjectProtoSingleton(ctx));
+    profilePhase("fill-symbol-description", () => fillSymbolDescriptionRead(ctx));
 
     // (#2358 #10 / #2638) Fill the reserved `__array_to_primitive_string` /
     // `__class_to_primitive` driver bodies now that `__extern_length` /
@@ -12427,6 +12446,7 @@ export function hostMapCarrierClassName(ctx: CodegenContext, type: ts.Type): "Ma
  * Use this instead of mapTsTypeToWasm in the codegen to get real type indices.
  */
 export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0, _visited?: Set<ts.Type>): ValType {
+  if (isLinkedRealmPublicationType(ctx, tsType)) return { kind: "externref" };
   // Guard against infinite recursion (can happen with skipSemanticDiagnostics
   // when getTypeArguments returns the container type itself)
   if (_depth > 10) return { kind: "externref" };

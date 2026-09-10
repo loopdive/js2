@@ -124,28 +124,11 @@ function syncedTrampolineBody(
       body: [...buildArgs, callEnvelope(), { op: "local.get", index: envelopeLocal }],
     };
   }
-  // While the provider is actively re-entering caller-owned AOT code, its
-  // stack is only a conduit back to the caller module. Preserve the caller's
-  // exception tag on that path: unwrapping an envelope inside the provider
-  // would replace it with the provider's private tag, which the caller cannot
-  // catch. The cleanup catch still pushes live globals before rethrowing.
+  // Every cross-module call transports an envelope, including reentry while
+  // eval is active. A raw caller-owned exception tag bypasses the provider's
+  // catch handlers. Its apply bridge unwraps and rethrows with its own tag;
+  // a later hop back to the caller performs the same translation there.
   if (direction === "aot") {
-    const rawResult = buildTargetTaggedTry(
-      ctx,
-      { kind: "empty" },
-      [...callTarget, { op: "local.set", index: envelopeLocal }],
-      [
-        {
-          tagIdx: ensureExnTag(ctx),
-          body: [
-            { op: "local.set", index: envelopeLocal },
-            { op: "call", funcIdx: afterIdx },
-            { op: "local.get", index: envelopeLocal },
-            { op: "throw", tagIdx: ensureExnTag(ctx) },
-          ],
-        },
-      ],
-    );
     return {
       locals,
       body: [
@@ -156,7 +139,7 @@ function syncedTrampolineBody(
           blockType: { kind: "val", type: { kind: "externref" } },
           then: [
             { op: "call", funcIdx: beforeIdx },
-            rawResult,
+            callEnvelope(),
             { op: "call", funcIdx: afterIdx },
             { op: "local.get", index: envelopeLocal },
           ],

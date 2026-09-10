@@ -1358,7 +1358,13 @@ function compileNestedFunctionDeclarationInScope(
   for (let pi = 0; pi < stmt.parameters.length; pi++) {
     const p = stmt.parameters[pi]!;
     const paramType = foreignEvalDeclaration ? undefined : ctx.checker.getTypeAtLocation(p);
-    if (paramType !== undefined) ensureStructForType(ctx, paramType);
+    // An inferred object-binding shape describes reads, not a closed value
+    // layout. For example, a property descriptor passed to { get, set } can
+    // have additional fields and must remain on the dynamic object carrier.
+    // Explicit parameter types still need registration before ABI reservation.
+    if (paramType !== undefined && (p.type !== undefined || !ts.isObjectBindingPattern(p.name))) {
+      ensureStructForType(ctx, paramType);
+    }
     let wasmType: ValType =
       foreignEvalDeclaration || restBindingOverridesToExternref(p)
         ? { kind: "externref" }
@@ -3242,7 +3248,7 @@ export function hoistFunctionDeclarations(
       const paramTypes: ValType[] = stmt.parameters.map((p) => {
         if (foreignEvalDeclaration) return { kind: "externref" };
         const paramType = ctx.checker.getTypeAtLocation(p);
-        ensureStructForType(ctx, paramType);
+        if (p.type !== undefined || !ts.isObjectBindingPattern(p.name)) ensureStructForType(ctx, paramType);
         let wt = resolveWasmType(ctx, paramType);
         wt = preserveOmittedNestedParameter(ctx, stmt, p, wt);
         if (p.initializer && wt.kind === "ref") {

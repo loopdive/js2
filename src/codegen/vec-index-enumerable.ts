@@ -84,6 +84,7 @@ export function buildVecIndexKeyPush(
     numToStringIdx: number;
     objVecPushIdx: number;
     externHasIdxIdx?: number;
+    ownPresenceIdx?: number;
     gatePresence: boolean;
   },
 ): Instr[] {
@@ -95,12 +96,13 @@ export function buildVecIndexKeyPush(
     { op: "call", funcIdx: args.objVecPushIdx },
   ];
   const gatedPush: Instr[] =
-    args.gatePresence && args.externHasIdxIdx !== undefined
+    args.gatePresence && (args.ownPresenceIdx ?? args.externHasIdxIdx) !== undefined
       ? [
           { op: "local.get", index: args.objLocal },
           { op: "local.get", index: args.indexLocal },
           { op: "f64.convert_i32_s" },
-          { op: "call", funcIdx: args.externHasIdxIdx },
+          ...(args.ownPresenceIdx !== undefined ? [{ op: "call", funcIdx: args.numToStringIdx } as Instr] : []),
+          { op: "call", funcIdx: (args.ownPresenceIdx ?? args.externHasIdxIdx)! },
           { op: "if", blockType: { kind: "empty" }, then: push },
         ]
       : push;

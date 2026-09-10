@@ -1,3 +1,5 @@
+import { errorValueConstructArms } from "./registry/error-types.js";
+import { ordinaryConstructCall } from "./ordinary-new-target.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * #3981 — Wasm-native ordinary [[Construct]] for a first-class function VALUE
@@ -294,7 +296,7 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
       return instrs;
     };
 
-    const body: Instr[] = [];
+    const body: Instr[] = errorValueConstructArms(ctx, arity);
 
     // (#5196 R3-0) `Proxy` read as a VALUE — `var OProxy =
     // $262.createRealm().global.Proxy; new OProxy(t, h)` — materialises the
@@ -465,7 +467,7 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
     // the proven receiver-aware dispatcher. A provider-owned runtime Function
     // marker cannot enter that module-local classifier, so an exact type+brand
     // arm packs the already-evaluated args and invokes `__apply_closure`.
-    const ordinaryCall: Instr[] = [];
+    let ordinaryCall: Instr[] = [];
     if (methodCallIdx !== undefined) {
       ordinaryCall.push({ op: "local.get", index: selfLocal }, { op: "local.get", index: 0 });
       for (let arg = 0; arg < arity; arg++) ordinaryCall.push({ op: "local.get", index: arg + 2 });
@@ -477,6 +479,8 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
       // ordinary Wasm-closure tail is unavailable in that shape.
       ordinaryCall.push({ op: "ref.null.extern" });
     }
+
+    ordinaryCall = ordinaryConstructCall(ctx, ordinaryCall, arity + 6, arity + 7, resultLocal);
 
     const canApplyRuntimeMarker =
       runtimeCallbackTypeIdx !== undefined &&
@@ -583,10 +587,16 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
       { name: "__ctor_proto", type: EXTERNREF },
       { name: "__ctor_self", type: EXTERNREF },
       { name: "__ctor_result", type: EXTERNREF },
-      ...(canApplyRuntimeMarker || canProxyConstruct || canBoundaryConstruct
+      ...(canApplyRuntimeMarker || canProxyConstruct || canBoundaryConstruct || (ctx.standalone && ctx.usesNewTarget)
         ? [{ name: "__ctor_args", type: EXTERNREF }]
         : []),
     ];
+    if (ctx.standalone && ctx.usesNewTarget) {
+      driver.locals.push(
+        { name: "__previous_new_target", type: EXTERNREF },
+        { name: "__new_target_exception", type: EXTERNREF },
+      );
+    }
     driver.body = body;
   }
 

@@ -3006,17 +3006,11 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     );
   }
 
-  // __new_String(externref) -> externref : the value is already a string
-  // externref; wrap it directly (param 0 is the value local).
-  {
+  // Preserve an existing primitive carrier in its internal wrapper slot.
+  // String construction and ToObject share this representation-preserving tail.
+  for (const name of ["__new_String", "__wrap_primitive_value"]) {
     const body: Instr[] = emitWrapperBuildTail(0, 1);
-    registerNative(
-      "__new_String",
-      [{ kind: "externref" }],
-      [{ kind: "externref" }],
-      [{ name: "o", type: objRef }],
-      body,
-    );
+    registerNative(name, [{ kind: "externref" }], [{ kind: "externref" }], [{ name: "o", type: objRef }], body);
   }
 
   // __new_Boolean(f64) -> externref : ToBoolean(arg) — the call sites coerce the
@@ -5804,15 +5798,15 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // remaining string keys in insertion order ($PropEntry.seq ascending). The
   // result array's prefix [0..m) holds the ordered entries; the suffix is null,
   // so callers walk until the first null (or use the known live count). Symbol
-  // keys are out of scope here (the open-object runtime stores only string keys).
+  // keys are filtered here and handled by the separate symbol enumeration helper.
   //
-  // Selection sort over the compacted set — O(m²) but m is the live-property
-  // count of one object, which is small in practice and avoids any auxiliary
-  // host array.
+  // In-place heapsort over the compacted prefix gives O(m log m) comparisons
+  // without allocating auxiliary arrays. Each live entry has a distinct ordering
+  // key, so stability is unnecessary; filtering and the null suffix are unchanged.
   //
   // param: 0=o(ref $Object)
-  // locals: 1=arr(ref $PropMap) 2=cap 3=i 4=e(ref null $PropEntry) 5=out(ref $PropMap)
-  //         6=m(filled count) 7=j 8=best 9=k 10=cand(ref null $PropEntry) 11=bestE(ref null $PropEntry)
+  // locals: 1=arr(ref $PropMap) 2=cap/heapEnd 3=i 4=e(ref null $PropEntry) 5=out(ref $PropMap)
+  //         6=m(filled count) 7=heapStart 8=root 9=child 10=cand(ref null $PropEntry) 11=bestE(ref null $PropEntry)
   //         12=candIdx 13=bestIdx 14=candSeq 15=bestSeq 16=tmp(ref null $PropEntry)
   {
     const entryRef: ValType = { kind: "ref", typeIdx: propEntryTypeIdx };
@@ -5879,6 +5873,102 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // Each registration gets a FRESH body + locals array — `registerNative`
     // stores the locals array by reference and a later lowering pass may mutate
     // it, so the two functions must not share one (that cross-corrupted both).
+    // Sift root (local 8) down a max heap with exclusive end in local 2.
+    // Fresh instructions per use: later lowering mutates instruction trees.
+    const siftDown = (): Instr[] => [
+      {
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [
+          {
+            op: "loop",
+            blockType: { kind: "empty" },
+            body: [
+              { op: "local.get", index: 8 },
+              { op: "i32.const", value: 2 },
+              { op: "i32.mul" },
+              { op: "i32.const", value: 1 },
+              { op: "i32.add" },
+              { op: "local.set", index: 9 },
+              { op: "local.get", index: 9 },
+              { op: "local.get", index: 2 },
+              { op: "i32.ge_u" },
+              { op: "br_if", depth: 1 },
+              // Select the greater child.
+              { op: "local.get", index: 5 },
+              { op: "local.get", index: 9 },
+              { op: "array.get", typeIdx: propMapTypeIdx },
+              { op: "local.set", index: 11 },
+              ...entryIndexOf(11),
+              { op: "local.set", index: 13 },
+              ...entrySeqOf(11),
+              { op: "local.set", index: 15 },
+              { op: "local.get", index: 9 },
+              { op: "i32.const", value: 1 },
+              { op: "i32.add" },
+              { op: "local.get", index: 2 },
+              { op: "i32.lt_u" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: 5 },
+                  { op: "local.get", index: 9 },
+                  { op: "i32.const", value: 1 },
+                  { op: "i32.add" },
+                  { op: "array.get", typeIdx: propMapTypeIdx },
+                  { op: "local.set", index: 10 },
+                  ...entryIndexOf(10),
+                  { op: "local.set", index: 12 },
+                  ...entrySeqOf(10),
+                  { op: "local.set", index: 14 },
+                  ...keyLess(13, 15, 12, 14),
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [
+                      { op: "local.get", index: 9 },
+                      { op: "i32.const", value: 1 },
+                      { op: "i32.add" },
+                      { op: "local.set", index: 9 },
+                      { op: "local.get", index: 10 },
+                      { op: "local.set", index: 11 },
+                      { op: "local.get", index: 12 },
+                      { op: "local.set", index: 13 },
+                      { op: "local.get", index: 14 },
+                      { op: "local.set", index: 15 },
+                    ],
+                  },
+                ],
+              },
+              // Stop when the root is at least as great as its children.
+              { op: "local.get", index: 5 },
+              { op: "local.get", index: 8 },
+              { op: "array.get", typeIdx: propMapTypeIdx },
+              { op: "local.set", index: 16 },
+              ...entryIndexOf(16),
+              { op: "local.set", index: 12 },
+              ...entrySeqOf(16),
+              { op: "local.set", index: 14 },
+              ...keyLess(12, 14, 13, 15),
+              { op: "i32.eqz" },
+              { op: "br_if", depth: 1 },
+              { op: "local.get", index: 5 },
+              { op: "local.get", index: 8 },
+              { op: "local.get", index: 11 },
+              { op: "array.set", typeIdx: propMapTypeIdx },
+              { op: "local.get", index: 5 },
+              { op: "local.get", index: 9 },
+              { op: "local.get", index: 16 },
+              { op: "array.set", typeIdx: propMapTypeIdx },
+              { op: "local.get", index: 9 },
+              { op: "local.set", index: 8 },
+              { op: "br", depth: 0 },
+            ],
+          },
+        ],
+      },
+    ];
     const buildOrderedBody = (includeNonEnum: boolean): Instr[] => [
       // arr = o.props ; cap = arr.len
       { op: "local.get", index: 0 },
@@ -5979,10 +6069,13 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           },
         ],
       },
-      // Second pass: selection sort out[0..m) by OrdinaryOwnPropertyKeys order.
-      // for j in 0..m-1: find best in [j..m) and swap into out[j]
-      { op: "i32.const", value: 0 },
-      { op: "local.set", index: 7 }, // j
+      // Heapify the compacted prefix from the last parent backwards.
+      { op: "local.get", index: 6 },
+      { op: "local.set", index: 2 },
+      { op: "local.get", index: 6 },
+      { op: "i32.const", value: 1 },
+      { op: "i32.shr_u" },
+      { op: "local.set", index: 7 },
       {
         op: "block",
         blockType: { kind: "empty" },
@@ -5991,109 +6084,54 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
             op: "loop",
             blockType: { kind: "empty" },
             body: [
-              // if j >= m break
               { op: "local.get", index: 7 },
-              { op: "local.get", index: 6 },
-              { op: "i32.ge_u" },
+              { op: "i32.eqz" },
               { op: "br_if", depth: 1 },
-              // best = j ; bestE = out[j] ; bestIdx = idx(bestE) ; bestSeq = bestE.seq
               { op: "local.get", index: 7 },
+              { op: "i32.const", value: 1 },
+              { op: "i32.sub" },
+              { op: "local.tee", index: 7 },
               { op: "local.set", index: 8 },
+              ...siftDown(),
+              { op: "br", depth: 0 },
+            ],
+          },
+        ],
+      },
+      // Move each maximum to the end, then repair the remaining heap.
+      {
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [
+          {
+            op: "loop",
+            blockType: { kind: "empty" },
+            body: [
+              { op: "local.get", index: 2 },
+              { op: "i32.const", value: 1 },
+              { op: "i32.le_u" },
+              { op: "br_if", depth: 1 },
+              { op: "local.get", index: 2 },
+              { op: "i32.const", value: 1 },
+              { op: "i32.sub" },
+              { op: "local.set", index: 2 },
               { op: "local.get", index: 5 },
-              { op: "local.get", index: 7 },
+              { op: "i32.const", value: 0 },
               { op: "array.get", typeIdx: propMapTypeIdx },
-              { op: "local.set", index: 11 },
-              ...entryIndexOf(11),
-              { op: "local.set", index: 13 },
-              ...entrySeqOf(11),
-              { op: "local.set", index: 15 },
-              // for k in j+1..m
-              { op: "local.get", index: 7 },
-              { op: "i32.const", value: 1 },
-              { op: "i32.add" },
-              { op: "local.set", index: 9 },
-              {
-                op: "block",
-                blockType: { kind: "empty" },
-                body: [
-                  {
-                    op: "loop",
-                    blockType: { kind: "empty" },
-                    body: [
-                      { op: "local.get", index: 9 },
-                      { op: "local.get", index: 6 },
-                      { op: "i32.ge_u" },
-                      { op: "br_if", depth: 1 },
-                      // cand = out[k] ; candIdx = idx(cand) ; candSeq = cand.seq
-                      { op: "local.get", index: 5 },
-                      { op: "local.get", index: 9 },
-                      { op: "array.get", typeIdx: propMapTypeIdx },
-                      { op: "local.set", index: 10 },
-                      ...entryIndexOf(10),
-                      { op: "local.set", index: 12 },
-                      ...entrySeqOf(10),
-                      { op: "local.set", index: 14 },
-                      // if cand precedes best → best = k, bestIdx=candIdx,
-                      // bestSeq=candSeq, bestE=cand
-                      //
-                      // ordering predicate keyLess(candIdx,candSeq,bestIdx,bestSeq):
-                      //   both indices (>=0): cand < best  ⇔  candIdx < bestIdx
-                      //   cand index, best string: cand precedes  (candIdx>=0 && bestIdx<0)
-                      //   cand string, best index: cand does NOT precede
-                      //   both strings (<0): candSeq < bestSeq
-                      ...keyLess(12, 14, 13, 15),
-                      {
-                        op: "if",
-                        blockType: { kind: "empty" },
-                        then: [
-                          { op: "local.get", index: 9 },
-                          { op: "local.set", index: 8 },
-                          { op: "local.get", index: 12 },
-                          { op: "local.set", index: 13 },
-                          { op: "local.get", index: 14 },
-                          { op: "local.set", index: 15 },
-                          { op: "local.get", index: 10 },
-                          { op: "local.set", index: 11 },
-                        ],
-                      },
-                      { op: "local.get", index: 9 },
-                      { op: "i32.const", value: 1 },
-                      { op: "i32.add" },
-                      { op: "local.set", index: 9 },
-                      { op: "br", depth: 0 },
-                    ],
-                  },
-                ],
-              },
-              // swap out[j] <-> out[best] (only if best != j)
-              { op: "local.get", index: 8 },
-              { op: "local.get", index: 7 },
-              { op: "i32.ne" },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  // tmp = out[j]
-                  { op: "local.get", index: 5 },
-                  { op: "local.get", index: 7 },
-                  { op: "array.get", typeIdx: propMapTypeIdx },
-                  { op: "local.set", index: 16 },
-                  // out[j] = out[best] (== bestE)
-                  { op: "local.get", index: 5 },
-                  { op: "local.get", index: 7 },
-                  { op: "local.get", index: 11 },
-                  { op: "array.set", typeIdx: propMapTypeIdx },
-                  // out[best] = tmp
-                  { op: "local.get", index: 5 },
-                  { op: "local.get", index: 8 },
-                  { op: "local.get", index: 16 },
-                  { op: "array.set", typeIdx: propMapTypeIdx },
-                ],
-              },
-              { op: "local.get", index: 7 },
-              { op: "i32.const", value: 1 },
-              { op: "i32.add" },
-              { op: "local.set", index: 7 },
+              { op: "local.set", index: 16 },
+              { op: "local.get", index: 5 },
+              { op: "i32.const", value: 0 },
+              { op: "local.get", index: 5 },
+              { op: "local.get", index: 2 },
+              { op: "array.get", typeIdx: propMapTypeIdx },
+              { op: "array.set", typeIdx: propMapTypeIdx },
+              { op: "local.get", index: 5 },
+              { op: "local.get", index: 2 },
+              { op: "local.get", index: 16 },
+              { op: "array.set", typeIdx: propMapTypeIdx },
+              { op: "i32.const", value: 0 },
+              { op: "local.set", index: 8 },
+              ...siftDown(),
               { op: "br", depth: 0 },
             ],
           },
@@ -8794,6 +8832,11 @@ export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
   // `idxMiss()` an out-of-bounds index already uses, so `[0, , 2]` with
   // `Array.prototype[1] = 1` reads `1` at the hole (§10.1.8.1 OrdinaryGet).
   const f64HoleUndef = f64HolesActive(ctx) ? idxMiss() : undefined;
+  let externHoleScratch = -1;
+  if (ctx.usesArrayHoles) {
+    externHoleScratch = 2 + fn.locals.length;
+    fn.locals.push({ name: "__externhole_get_v", type: { kind: "externref" } });
+  }
   let f64HoleScratch = -1;
   if (f64HoleUndef !== undefined) {
     f64HoleScratch = 2 + fn.locals.length;
@@ -8816,7 +8859,18 @@ export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
               else: [{ op: "local.get", index: f64HoleScratch }, ...readBox.boxOps],
             },
           ] satisfies Instr[])
-        : readBox.boxOps;
+        : externHoleScratch >= 0 && elemType.kind === "externref"
+          ? ([
+              { op: "local.tee", index: externHoleScratch },
+              ...holeTestInstrs(ctx),
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "externref" } },
+                then: idxMiss(),
+                else: [{ op: "local.get", index: externHoleScratch }],
+              },
+            ] satisfies Instr[])
+          : readBox.boxOps;
     vecArms.push(
       { op: "local.get", index: 2 },
       { op: "ref.test", typeIdx },
@@ -8921,7 +8975,8 @@ export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
  * output byte-neutral.
  */
 export function fillConcatNativeHoleArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || !ctx.usesNativeConcatHoleSubstrate || ctx.holeGlobalIdx === undefined) return;
+  if (!ctx.standalone || (!ctx.usesNativeConcatHoleSubstrate && !ctx.usesArrayHoles) || ctx.holeGlobalIdx === undefined)
+    return;
   const types = ctx.objectRuntimeTypes;
   if (!types) return;
 
@@ -9080,7 +9135,10 @@ export function fillConcatNativeHoleArms(ctx: CodegenContext): void {
                 {
                   op: "if",
                   blockType: { kind: "empty" },
-                  then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+                  then: [
+                    ...(protoIndexHasIdxInstrs(ctx, 1, 1) ?? [{ op: "i32.const", value: 0 } as Instr]),
+                    { op: "return" },
+                  ],
                 },
               ],
             },
@@ -11014,7 +11072,7 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
   // the helper here when the module's own-key demand gate is active.
   reserveVecIndexEnumerable(ctx);
   /** `__objvec_push(out, ToString(i))`, presence-gated under the overlay route. */
-  const pushKeyI = (outLocal: number, iLocal: number): Instr[] =>
+  const pushKeyI = (outLocal: number, iLocal: number, ownOnly: boolean): Instr[] =>
     buildVecIndexKeyPush(ctx, {
       objLocal: 0,
       outLocal,
@@ -11023,6 +11081,7 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
       objVecPushIdx: objVecPushIdx as number,
       externHasIdxIdx,
       gatePresence: gateKeysOnPresence,
+      ownPresenceIdx: ownOnly ? ctx.funcMap.get("__hasOwnProperty") : undefined,
     });
   for (const keysFn of [findFn("__object_keys_forin"), findFn("__object_keys")]) {
     if (!(keysFn && numToStringIdx !== undefined && objVecNewIdx !== undefined && objVecPushIdx !== undefined))
@@ -11069,7 +11128,7 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
                   { op: "br_if", depth: 1 },
                   // __objvec_push(vec, number_toString(f64(i))), presence-gated
                   // under the overlay route — see `pushKeyI`.
-                  ...pushKeyI(kVec, kI),
+                  ...pushKeyI(kVec, kI, keysFn.name === "__object_keys"),
                   { op: "local.get", index: kI },
                   { op: "i32.const", value: 1 },
                   { op: "i32.add" },

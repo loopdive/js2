@@ -132,6 +132,7 @@ it("collects allocated struct types once across shared module roots", () => {
       { name: "first", typeIdx: 0, locals: [], body: shared },
       { name: "second", typeIdx: 0, locals: [], body: shared },
     ],
+    types: [],
     globals: [],
   } as unknown as WasmModule;
 
@@ -161,4 +162,18 @@ describe("walkChildren", () => {
     walkChildren(instr, (c) => children.push(c));
     expect(children.length).toBe(0);
   });
+});
+
+it("retains transitive allocated supertypes without admitting unrelated shapes", () => {
+  const mod = {
+    types: [
+      { kind: "struct", name: "Base", fields: [], superTypeIdx: -1 },
+      { kind: "struct", name: "Middle", fields: [], superTypeIdx: 0 },
+      { kind: "struct", name: "Leaf", fields: [], superTypeIdx: 1 },
+      { kind: "struct", name: "Unallocated", fields: [] },
+    ],
+    functions: [{ name: "allocate", typeIdx: 0, locals: [], body: [{ op: "struct.new", typeIdx: 2 }] }],
+    globals: [],
+  } as unknown as WasmModule;
+  expect([...allocatedStructTypeIndices(mod)]).toEqual([2, 1, 0]);
 });

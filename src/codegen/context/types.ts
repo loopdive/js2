@@ -173,6 +173,8 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
   standalone?: boolean;
   /** Linked zero-argument getter for a canonical standalone realm-global object. */
   standaloneGlobalThisImport?: { module: string; name: string; call?: string };
+  /** Export or import the complete mutable Symbol state of a standalone realm. */
+  standaloneSymbolState?: "export" | { module: string; reexport?: boolean };
   /** JS-host direct-eval lowering; see `CompileOptions.directEval`. */
   directEval?: "legacy" | "reified-host";
   /**
@@ -867,6 +869,7 @@ export interface FunctionContext {
   materializingHoistedFunctionValueBindings?: Set<string>;
   /** Whether this function is a class constructor (for new.target support) */
   isConstructor?: boolean;
+  ordinaryNewTargetLocal?: number;
   /**
    * (#4464) This is a synthesized `new F()` body for a plain FUNCTION
    * constructor ("fnctor"), not a `class` constructor.
@@ -1735,6 +1738,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   usesNewTarget: boolean;
   newTargetGlobalIdx: number | undefined;
+  ordinaryNewTargetGlobalIdx?: number;
   classNewTargetIds: Map<string, number>;
   /**
    * (#802) Dynamic prototype support. Set by the `scanForDynamicProto` pre-scan
@@ -4034,6 +4038,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   standalone: boolean;
   /** Linked zero-argument getter for the canonical standalone realm-global object. */
   standaloneGlobalThisImport?: { module: string; name: string; call?: string };
+  /** Export or import the complete mutable Symbol state of a standalone realm. */
+  standaloneSymbolState?: "export" | { module: string; reexport?: boolean };
   /** Resolved JS-host direct-eval lowering. */
   directEvalMode: "legacy" | "reified-host";
   /** Private externref-array carrier used only by reified JS-host direct eval. */

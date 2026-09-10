@@ -874,6 +874,9 @@ export function getOrRegisterErrorStructType(ctx: CodegenContext): number {
       // registered lazily by the object-runtime, which may run AFTER this
       // struct. Kept LAST so fields 0..4 stay stable.
       { name: "props", type: { kind: "externref" }, mutable: true },
+      // Immutable construction identity, independent of writable name. The
+      // harness Test262Error shares Error instanceof tagging but uses -1 here.
+      { name: "intrinsicTag", type: { kind: "i32" }, mutable: false },
     ],
   });
   ctx.errorStructTypeIdx = idx;

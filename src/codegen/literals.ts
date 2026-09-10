@@ -8,9 +8,11 @@
  * widened and closed-struct object carriers.
  */
 
+import { isLinkedRealmPublicationLiteral } from "./linked-realm-literal.js";
 import ts from "typescript";
 import { hoistFunctionDeclarations } from "./statements/nested-declarations.js";
 import { isStringType, isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
+import { allocateSymbolState } from "./symbol-state.js";
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction } from "../ir/types.js";
 import {
   collectMutatedCaptureNames,
@@ -2251,6 +2253,9 @@ export function compileObjectLiteral(
   if (expr.properties.length > 0 && _hasAccessorSpreadSource(ctx, expr)) {
     return compileObjectLiteralWithAccessors(ctx, fctx, expr);
   }
+  if (isLinkedRealmPublicationLiteral(ctx, fctx, expr)) {
+    return compileObjectLiteralAsExternref(ctx, fctx, expr);
+  }
   // (#3633) Foreign eval literals lack checker types and require the open representation.
   if (isForeignEvalNode(expr)) return compileObjectLiteralAsExternref(ctx, fctx, expr);
   // (#2714) A spread-containing literal evaluated in a NON-SPECIFIC contextual
@@ -2832,8 +2837,7 @@ export function wellKnownSymbolName(id: number): string | undefined {
  */
 export function ensureSymbolCounter(ctx: CodegenContext): number {
   if (ctx.symbolCounterGlobalIdx >= 0) return ctx.symbolCounterGlobalIdx;
-  const idx = nextModuleGlobalIdx(ctx);
-  ctx.mod.globals.push({
+  const idx = allocateSymbolState(ctx, {
     name: "__symbol_counter",
     type: { kind: "i32" },
     mutable: true,
