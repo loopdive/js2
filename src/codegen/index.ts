@@ -174,10 +174,11 @@ import {
   removeMultiIrAttemptedCallableUnits,
 } from "./multi-prepared-callable-orchestration.js";
 import { createCodegenContext } from "./context/create-context.js";
-import { markIndexedPropertyStale } from "./strict-eq-stale-type.js";
+import { expressionHasWidenedPropertyType, markIndexedPropertyStale } from "./strict-eq-stale-type.js";
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
 import { sourceFunctionHandleForDeclaration } from "./program-abi-source-callable-planning.js";
 import { stripHostBridgeExports } from "./host-bridge-exports.js";
+import { publishStandaloneLinkBoundaryExports } from "./standalone-link-boundary.js"; // (#5383 S2d)
 import { eliminateDeadLayoutAndPlanProgramAbi } from "./program-abi-finalization.js";
 import { emitDataStructHostBridgeManifest } from "./data-struct-host-bridge.js";
 import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_ROLE } from "./program-abi-planning.js";
@@ -7012,6 +7013,11 @@ function assertNoLeakedHostImports(ctx: CodegenContext, mod: WasmModule): void {
 function finalizeStandaloneTimerCallbackExports(ctx: CodegenContext): void {
   publishStandaloneTimerCallbackDispatch(ctx);
   stripHostBridgeExports(ctx);
+  // (#5383 S2d) AFTER the host-bridge strip, deliberately: the strip is what
+  // removes the JS-facing decoder family from a standalone binary, and these
+  // wasm-facing terminals are its replacement for a linked consumer. Publishing
+  // before it would leave the export to be stripped again.
+  publishStandaloneLinkBoundaryExports(ctx);
 }
 
 /**
@@ -13932,7 +13938,11 @@ function hoistVarDecl(
     // mixed-assignment demotion does not — a positive unboxing proof outranks
     // it (see `numericProofOverridesMixedCarrier`).
     const hardForcesExternref =
-      initForcesExternref || realmStructuralCarrier || forInTargetForcesExternref || transferredArrayLikeResult;
+      initForcesExternref ||
+      realmStructuralCarrier ||
+      forInTargetForcesExternref ||
+      transferredArrayLikeResult ||
+      (!!decl.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer));
     const usageF64 = hardForcesExternref
       ? null
       : mixedAssignmentCarrier
@@ -14740,7 +14750,10 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           ? numericProofOverridesMixedCarrier(usageInferredLocalType(ctx, decl))
           : null;
         const carrierForcesExternref =
-          initForcesExternref || realmStructuralCarrier || (mixedAssignmentCarrier && !mixedCarrierProvenF64);
+          initForcesExternref ||
+          realmStructuralCarrier ||
+          (mixedAssignmentCarrier && !mixedCarrierProvenF64) ||
+          (!!decl.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer));
         // (#4616) Empty-array (or Array<any>) initializer: use the SAME
         // usage-based vec inference `compileVariableStatement` applies
         // (`inferArrayVecType`, mirroring the var hoister above). Without it

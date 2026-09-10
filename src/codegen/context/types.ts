@@ -2352,7 +2352,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   objectLiteralAssignedPropertyNames: Set<string>;
   /** Concrete RHS types observed for those property writes. */
   objectLiteralAssignedPropertyTypes: Map<string, ts.Type[]>;
-  /** Concrete RHS types observed for statically-resolved indexed properties. */
+  /** Concrete RHS types for indexed properties and union-receiver property declarations. */
   objectLiteralIndexedAssignedPropertyTypes: Map<ts.Declaration, ts.Type[]>;
   /**
    * (#2674) Property names that need a deferred-fill member-READ dispatcher

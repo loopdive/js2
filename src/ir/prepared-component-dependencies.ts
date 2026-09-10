@@ -22,7 +22,7 @@ import {
   type IrValueId,
   type IrVecLayoutRef,
 } from "./nodes.js";
-import type { ProgramAbiDerivedUnitRecord, ProgramAbiIntent, ProgramAbiPlanEntry } from "./program-abi.js";
+import type { ProgramAbiDerivedUnitRecord, ProgramAbiIntent } from "./program-abi.js";
 import {
   capabilityGlobalIntentMatches,
   externalCallableIntentMatches,
@@ -38,37 +38,16 @@ import {
   type PreparedClassAccessorWritebackEvidence,
   type PreparedComponentClosureSupportEvidence,
   type PreparedDynamicInstructionSupportEvidence,
-  type PreparedInstructionSupportSidecars,
 } from "./prepared-instruction-support.js";
+import type { PreparedComponentAbiEntry, PreparedComponentAbiLookup } from "./program/abi-lookup.js";
+export type { PreparedComponentAbiEntry, PreparedComponentAbiLookup } from "./program/abi-lookup.js";
+
 export type {
   PreparedClassAccessorWritebackEvidence,
   PreparedComponentClosureSupportEvidence,
   PreparedDynamicInstructionSupportEvidence,
   PreparedInstructionSupportSidecars,
 } from "./prepared-instruction-support.js";
-
-export type PreparedComponentAbiEntry = Pick<
-  ProgramAbiPlanEntry,
-  "id" | "intent" | "slotPolicy" | "structuralReferenceKey"
-> & {
-  readonly aliasOf?: IrBindingId;
-};
-
-/**
- * Minimal read-only Program ABI surface needed by dependency discovery.
- *
- * `ProgramAbiMap` and a sealed prepared scope adapt directly. Planning-time
- * callers also need reverse structural-key lookup for import/runtime/intrinsic
- * refs, whose IR binding deliberately carries no `IrBindingId`; exposing that
- * lookup on `ProgramAbiSession` is the smallest remaining production adapter.
- * Omitting both reverse-lookup forms is safe but conservative: every such ref
- * blocks.
- */
-export interface PreparedComponentAbiLookup {
-  get(id: IrBindingId): PreparedComponentAbiEntry | undefined;
-  bindingIdsForStructuralReference?(key: string): readonly IrBindingId[];
-  entries?(): readonly PreparedComponentAbiEntry[];
-}
 
 export type PreparedComponentDependencyFailureCode =
   | "unknown-component-terminal"

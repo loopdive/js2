@@ -3,28 +3,26 @@
 /** Source-free runtime preparation and validated replay attachment. Physical helpers remain backend-owned. */
 import {
   assertPreparedIrAsyncRuntimeCurrent,
-  irAsyncPlanNeedsNumberBridge,
   preparedIrAsyncFrameCapabilityFailure,
-} from "./async-plan.js";
-import type { IrUnitId } from "./identity.js";
+} from "./runtime/async-attachment.js";
+import { irAsyncPlanNeedsNumberBridge } from "./analysis/async-plan.js";
+import type { IrUnitId } from "../shared/contracts/ir-identity.js";
 import {
   IrRuntimeFunctionPreparationError,
   prepareIrRuntimeManifest,
   type IrRuntimeManifestDemands,
-  type PreparedIrRuntimeManifest,
 } from "./intrinsic-support.js";
-import { INTRINSIC_DEFINITIONS, type IntrinsicSourceLocation } from "./intrinsics.js";
-import { forEachInstrDeep, type IrFunction } from "./nodes.js";
-import { classifyIrFailure, IrInvariantError, type IrPreparationFailure } from "./outcomes.js";
-import {
-  PreparedIrProgramInvariantError,
-  preparedIrProgramOwner,
-  preparedIrReadonlyMap,
-  type PreparedIrProgramFailure,
-  type PreparedIrProgramProducerInput,
-} from "./program.js";
+import type { PreparedIrRuntimeManifest } from "./runtime/contracts/prepared.js";
+import { INTRINSIC_DEFINITIONS } from "./core/intrinsics.js";
+import type { IntrinsicSourceLocation } from "./core/intrinsic-contracts.js";
+import { forEachInstrDeep } from "./nodes.js";
+import type { PreparedIrFunction as IrFunction } from "./runtime/contracts/prepared.js";
+import { classifyIrFailure, IrInvariantError } from "./outcomes.js";
+import type { IrPreparationFailure } from "../shared/contracts/ir-preparation-failure.js";
+import { PreparedIrProgramInvariantError, preparedIrProgramOwner, preparedIrReadonlyMap } from "./program.js";
+import type { PreparedIrProgramFailure, PreparedIrProgramProducerInput } from "./program/prepared-contracts.js";
 import { assertPreparedIrProgramPopulation } from "./program-population.js";
-import { irRuntimeCallableDeclaration } from "./runtime-callable-declarations.js";
+import { irRuntimeCallableDeclaration } from "./runtime/callable-declarations.js";
 import {
   FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURES,
   GENERATOR_NUMBER_BOX_RUNTIME_FEATURES,
@@ -37,8 +35,8 @@ import {
   STRING_EQ_RUNTIME_FEATURES,
   STRING_LEN_RUNTIME_FEATURES,
   RuntimeManifestInvariantError,
-  type RuntimeFeature,
-} from "./runtime-manifest.js";
+} from "./runtime/manifest.js";
+import type { RuntimeFeature } from "./runtime/contracts/manifest.js";
 
 type ProducerInput = PreparedIrProgramProducerInput;
 

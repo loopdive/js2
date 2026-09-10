@@ -68,7 +68,8 @@ import {
 } from "../nodes.js";
 import type { ValType } from "../types.js";
 import type { AllocSiteRegistry } from "../alloc-registry.js";
-import { createDerivedIrUnitId, type IrDerivedUnitProvenance, type IrUnitId } from "../identity.js";
+import { createDerivedIrUnitId } from "../../shared/contracts/identity-values.js";
+import type { IrDerivedUnitProvenance, IrUnitId } from "../identity.js";
 import { irUnitFuncRef } from "../callable-bindings.js";
 import { forkAllocInInstr } from "./alloc-discipline.js";
 import { irFnctorShapeKey } from "../type-key.js";
