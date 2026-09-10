@@ -142,3 +142,43 @@ Remove only the redundant workflow version; retain the exact historical package
 pin and independently assert pnpm10.30.2 in admission. Preserve the failed run.
 Setup inputs are now included in artifact upload even if no test receipts exist.
 This setup correction changes neither test scope nor validation gates.
+
+## Completed paired replay: failure reproduced in both commits
+
+Corrected workflow run34417885898 finished both jobs successfully as complete
+diagnostics; both Vitest processes returned1. Parent independently validated all
+four historical/replay completion manifests:939 registered/canonical rows each,
+zero exclusions. The constructor target now fails on BOTH donor129e and candidate
+efa with the original opaque-BigInt64Array marshalling error. Historical donor
+PASS remains preserved. Three controls selected from original shard evidence
+during the replay remain PASS in all four populations; they were not predeclared
+independent controls and do not clear the regression.
+
+Both replay arms have748pass,171fail,15compile_error,1compile_timeout,4skip.
+The donor loses exactly the constructor pass relative to its historical run;
+the candidate status population is unchanged. Named verdict fields (status,
+error, error_category, oracle_version, oracle_lane, semantic_providers, scope,
+scope_official, strict, reached_test) are equal between the replay arms. Three
+dynamic-import error texts differ from historical records without status changes.
+This is not byte equality or full-row equality and does not identify cause.
+
+Independent review confirmed all four populations and the replay verdict-field
+comparison. The three dynamic-import error texts gain `/subject/` in missing-module
+paths; retain these literal differences. Original donor/candidate logs contain
+one/two OOMs, versus two/three in replay. Candidate replay records SIGABRT and a
+fresh-worker retry for `test/built-ins/Object/defineProperty/15.2.3.6-4-155.js`;
+that test has retry_count1 in all four canonical records. Constructor rows have
+no retry/PID/request fields, so this does not attribute their failure to a worker.
+
+Donor runner image20260831.293.1 matches the original image; candidate image is
+20260907.300.1. Node25.9.0/Linuxx64/pool4 and pinned corpus/provider admission
+passed in both. Runtime history and scheduling remain unproven. These observations
+contradict a simple deterministic candidate-only explanation, not the original
+failure record. Do not waive it, claim flakiness, or repeat the run merely for green.
+
+Evidence: [replay summary and complete file-hash inventory](../agent-context/5807-linux-shard34-replay-evidence-2026-09-10.json).
+Artifacts10130095338/10130101382 remain on run34417885898; local originals are
+preserved at `/private/tmp/js2-5807-linux-replay-results.WJtxny`.
+Next diagnosis is to trace the demonstrated opaque-value marshalling failure and
+its dependency on compiler/worker state. No causal fix, merge or retirement
+clearance exists. Shard31/BigInt set remains outside this approved replay.
