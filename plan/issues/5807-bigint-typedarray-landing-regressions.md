@@ -3,7 +3,7 @@ id: 5807
 title: "Bisect two BigInt TypedArray regressions blocking semantic-provider landing"
 status: in-progress
 created: 2026-09-09
-updated: 2026-09-09
+updated: 2026-09-10
 priority: critical
 feasibility: hard
 reasoning_effort: high
@@ -182,3 +182,46 @@ preserved at `/private/tmp/js2-5807-linux-replay-results.WJtxny`.
 Next diagnosis is to trace the demonstrated opaque-value marshalling failure and
 its dependency on compiler/worker state. No causal fix, merge or retirement
 clearance exists. Shard31/BigInt set remains outside this approved replay.
+
+## Approved observation-only follow-up
+
+The user approved the paired diagnostic tracing run on 2026-09-10. Preserve
+the same two historical commits, corpus, provider, and all 939 shard paths.
+No reset intervention, fixture edit, exclusion, oracle change, or regression
+waiver is authorized by this diagnostic. The prior four raw populations remain
+the historical evidence; instrumented execution is explicitly a new experiment,
+not an unmodified historical replay or proof of byte equality.
+
+The linked instantiate branch resets its decoder registry; the non-linked branch
+does not. A local empty-Wasm probe with an injected reset counter observed
+linked/non-linked/linked counts 1/1/2. The original shard contains 90 Temporal
+paths, but registration order does not prove worker dispatch order. Independently,
+the exact constructor fixture requests only `passthrough`, while its error suffix
+names `makeArray`; the callback ignores the factory argument. Do not infer a
+factory invocation from that suffix.
+
+Implementation: admit clean historical sources before installing exact,
+hash-checked observation patches. Observe request/worker lifecycle and available
+decoder state at the existing failing boundary without new decoder calls or
+property reads that might change behavior. Mark unavailable observations explicitly.
+Verify that only the exact approved patches differ afterward, preserve patch
+receipts and traces alongside original verdicts, and reject empty or incomplete
+diagnostics rather than treating them as clearance. Review tracing tooling and
+negative controls before pushing to existing PR5798 and starting the two jobs.
+
+Separately, PR5809 (`chore(ci): refresh npm-compat artifacts`) reached main at
+`035b760edc661e48f1069339ffaa8624683d5d3d`; reviewed head `95e60a484d0e692f8105f7672fd8d564164e4a82`
+is an ancestor. This data-only delivery does not clear the IR hold.
+
+Pre-launch verification: 59 tracing tests plus four replay-guard tests pass
+(63/63, no skips). The exact transforms syntax-check for both historical pins.
+Parent also installed and verified the instrumentation in a new disposable donor
+checkout at `/private/tmp/js2-5807-trace-install-check.06XSun/subject`, without
+executing a compiler or fixture. Installer SHA256:
+`3d23c7d9ead75f8b6a5a388fbe2dcd5faff388f7426cc7858a006ee6b5fdd911`;
+patch-file inventory SHA256:
+`56c04cec43e1be6a870833fd5b22d69c0e69da67e2d610d3072c9f0d2f4e519c`.
+Tests prove bounded observation properties, not the constructor's cause.
+Factory identities are unavailable without extra compiled reads; abrupt worker
+death can leave an unknowable final trace tail. Both limits remain explicit.
+Artifact upload retains traces and hash receipts, not full patched source files.

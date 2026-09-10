@@ -23,3 +23,16 @@ for (const mode of ["invalid", "pre", "post"]) {
     // Retain test receipts; never erase test history during agent work.
   });
 }
+
+test("post preserves the original exit before rejecting an unknown tracing mode", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "js2-5807-trace-guard-"));
+  const result = spawnSync(process.execPath, [script, "post", "1"], {
+    cwd,
+    encoding: "utf8",
+    env: { ...process.env, REPLAY_OBSERVATION_TRACE: "unexpected" },
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /unexpected trace mode/);
+  assert.deepEqual(readdirSync(cwd), ["replay5807-terminal.json"]);
+  assert.equal(JSON.parse(readFileSync(join(cwd, "replay5807-terminal.json"))).code, 1);
+});

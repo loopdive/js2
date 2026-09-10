@@ -1,4 +1,4 @@
-// Bounded evidence wrapper; never substitutes a compiler, test, or verdict.
+// Bounded evidence wrapper; never substitutes a test or verdict.
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -16,6 +16,7 @@ function files(dir) {
 }
 const mode = process.argv[2];
 assert(["pre", "post"].includes(mode));
+const observationTrace = process.env.REPLAY_OBSERVATION_TRACE === "1";
 // Preserve the actual runner terminal before any post-run admission can fail.
 const code = mode === "post" ? Number(process.argv[3]) : null;
 if (mode === "post") {
@@ -23,6 +24,7 @@ if (mode === "post") {
   assert(Number.isInteger(code));
   save("replay5807-terminal.json", { code, head: process.env.REPLAY_HEAD });
 }
+assert([undefined, "1"].includes(process.env.REPLAY_OBSERVATION_TRACE), "unexpected trace mode");
 assert.equal(process.platform, "linux");
 assert.equal(process.arch, "x64");
 assert.equal(process.version, "v25.9.0");
@@ -56,11 +58,30 @@ assert(
 assert.equal(git("rev-parse", "HEAD"), process.env.REPLAY_HEAD);
 assert.equal(git("-C", "test262", "rev-parse", "HEAD"), "b363f29d3c43c626dc852744ad64a0b48a003693");
 const inputs = ["src", "tests", "scripts", "package.json", "pnpm-lock.yaml", "tsconfig.json", "vitest.config.ts"];
-assert.equal(
-  git("status", "--porcelain", "--untracked-files=all", "--", ...inputs),
-  "",
-  "compiler/harness/config drift",
-);
+let traceReceipt = null;
+if (observationTrace && mode === "post") {
+  const { verifyObservationTrace } = await import("./issue-5807-observation-trace.mjs");
+  traceReceipt = verifyObservationTrace(process.cwd());
+  assert(traceReceipt.modifiedPaths.length > 0, "trace patch census missing");
+  const expected = [
+    ...traceReceipt.modifiedPaths.map((path) => ` M ${path}`),
+    ...traceReceipt.untrackedPaths.map((path) => `?? ${path}`),
+  ].sort();
+  const actual = execFileSync("git", ["status", "--porcelain", "--untracked-files=all", "--", ...inputs], {
+    encoding: "utf8",
+  })
+    .trimEnd()
+    .split("\n")
+    .filter(Boolean)
+    .sort();
+  assert.deepEqual(actual, expected, "only exact verified observation patches may differ");
+} else {
+  assert.equal(
+    git("status", "--porcelain", "--untracked-files=all", "--", ...inputs),
+    "",
+    "compiler/harness/config drift",
+  );
+}
 assert.equal(git("-C", "test262", "status", "--porcelain", "--untracked-files=all"), "", "corpus drift");
 const historicalFiles = files("historical-shard");
 const manifests = historicalFiles.filter((p) => p.endsWith(".complete.json"));
@@ -92,6 +113,7 @@ if (mode === "pre") {
     platform: process.platform,
     arch: process.arch,
     controls,
+    observationTrace,
     imageOS: process.env.ImageOS ?? null,
     imageVersion: process.env.ImageVersion ?? null,
     originalImageVersion: "20260831.293.1",
@@ -130,12 +152,20 @@ if (mode === "pre") {
   const target = "test/built-ins/TypedArrayConstructors/ctors-bigint/object-arg/new-instance-extensibility.js";
   const targetRows = rows.filter((r) => r.file === target);
   assert.equal(targetRows.length, 1, "target present exactly once");
+  let traceCoverage = null;
+  if (observationTrace) {
+    const { auditObservationTrace } = await import("./issue-5807-observation-trace.mjs");
+    traceCoverage = auditObservationTrace(process.cwd());
+  }
   save("replay5807-result.json", {
     status: "COMPLETE_DIAGNOSTIC_ONLY",
     code,
     canonicalRows: rows.length,
     targetRows,
     regressionCleared: false,
+    observationTrace,
+    traceReceipt,
+    traceCoverage,
     excludesOtherRegression: "BigInt set is in shard31, not this approved shard34 replay",
   });
 }

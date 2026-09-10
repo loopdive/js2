@@ -1,12 +1,13 @@
 name: Issue 5807 bounded Linux replay
 
-# One approved paired shard, not a conformance matrix or promotion workflow.
+# Approved observation-only paired shard; no reset intervention or promotion.
 on:
   push:
     branches: [codex/3518-number-format-consumer-20260909]
     paths:
       - .github/workflows/issue-5807-linux-replay.yml
       - scripts/issue-5807-linux-replay.mjs
+      - scripts/issue-5807-observation-trace.mjs
 
 permissions:
   contents: read
@@ -55,6 +56,7 @@ jobs:
       JS2WASM_TEMPORAL_CACHE: .test262-cache/temporal
       RUN_TIMESTAMP: replay5807-${{ github.run_id }}-${{ matrix.arm }}
       REPLAY_HEAD: ${{ matrix.sha }}
+      REPLAY_OBSERVATION_TRACE: "1"
     steps:
       - uses: actions/checkout@v5
         with:
@@ -91,7 +93,9 @@ jobs:
           path: subject/historical-shard
       - name: Admit pinned runtime, corpus and historical evidence
         run: node ../control/scripts/issue-5807-linux-replay.mjs pre
-      - name: Build the original compiler and runtime bundles
+      - name: Install exact observation-only tracing patches
+        run: node ../control/scripts/issue-5807-observation-trace.mjs install
+      - name: Build pinned compiler and observation-instrumented runtime bundles
         run: |
           pnpm run build:compiler-bundle
           ./node_modules/.bin/esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
@@ -116,6 +120,7 @@ jobs:
             subject/pnpm-lock.yaml
             subject/replay5807*.json
             subject/replay5807*.log
+            subject/replay5807-traces/
             subject/benchmarks/results/test262-results-replay5807-*
             subject/vitest-blob/
             subject/historical-shard/
