@@ -65,6 +65,11 @@ report `summary.total` can exclude proposals and is NOT this full population.
   unchanged comparator still fails it; missing producer evidence fails even
   with a plausible fallback JSONL present.
 - Unresolved review threads: zero, fully paginated at implementation time.
+- Broader workflow cohort initially 43/44: the per-lane test expected two
+  merge-group dependencies, but the pre-repair `ea21d583` workflow already has
+  three (`changes`, `runtime-eval-provider`, `temporal-provider`). Updated only
+  that exact expectation; the merge-group job and skip-safety assertions remain
+  unchanged. Normal initial commit hooks passed 106/106 changed-root tests.
 - Native subagent resume/spawn refused by service task limit; no sidebar task
   was created as a workaround.
 
