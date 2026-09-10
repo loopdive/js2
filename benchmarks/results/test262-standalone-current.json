@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-09T15:40:01.472Z",
-  "baseline_generated_at": "2026-09-09T15:40:01.472Z",
-  "baseline_sha": "129e3efd4530ae1be56dbf5fdea54ddbbd87443e",
+  "timestamp": "2026-09-10T12:39:09.719Z",
+  "baseline_generated_at": "2026-09-10T12:39:09.719Z",
+  "baseline_sha": "2be365f4f3fe350b3c63aaacccf885df49c96767",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -12,22 +12,22 @@
   "summary": {
     "total": 48232,
     "pass": 34979,
-    "fail": 9579,
+    "fail": 9580,
     "compile_error": 3647,
-    "compile_timeout": 9,
+    "compile_timeout": 8,
     "skip": 18,
-    "compilable": 44558,
+    "compilable": 44559,
     "host_free_pass": 34979,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 47146,
         "pass": 33950,
-        "fail": 9541,
+        "fail": 9542,
         "compile_error": 3628,
-        "compile_timeout": 9,
+        "compile_timeout": 8,
         "skip": 18,
-        "compilable": 43491,
+        "compilable": 43492,
         "host_free_pass": 33950,
         "stale": 0,
         "label": "ECMAScript current standard"
@@ -59,11 +59,11 @@
       "official": {
         "total": 48232,
         "pass": 34979,
-        "fail": 9579,
+        "fail": 9580,
         "compile_error": 3647,
-        "compile_timeout": 9,
+        "compile_timeout": 8,
         "skip": 18,
-        "compilable": 44558,
+        "compilable": 44559,
         "host_free_pass": 34979,
         "stale": 0,
         "label": "standard + annex_b (default)"
@@ -71,11 +71,11 @@
       "full": {
         "total": 48735,
         "pass": 35214,
-        "fail": 9595,
+        "fail": 9596,
         "compile_error": 3803,
-        "compile_timeout": 9,
+        "compile_timeout": 8,
         "skip": 114,
-        "compilable": 44809,
+        "compilable": 44810,
         "host_free_pass": 35214,
         "stale": 0,
         "label": "standard + annex_b + proposals"
@@ -85,22 +85,22 @@
   "official_summary": {
     "total": 48232,
     "pass": 34979,
-    "fail": 9579,
+    "fail": 9580,
     "compile_error": 3647,
-    "compile_timeout": 9,
+    "compile_timeout": 8,
     "skip": 18,
-    "compilable": 44558,
+    "compilable": 44559,
     "host_free_pass": 34979,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
     "pass": 35214,
-    "fail": 9595,
+    "fail": 9596,
     "compile_error": 3803,
-    "compile_timeout": 9,
+    "compile_timeout": 8,
     "skip": 114,
-    "compilable": 44809,
+    "compilable": 44810,
     "host_free_pass": 35214,
     "stale": 0
   },
@@ -141,11 +141,11 @@
     "standard": {
       "total": 47146,
       "pass": 33950,
-      "fail": 9541,
+      "fail": 9542,
       "compile_error": 3628,
-      "compile_timeout": 9,
+      "compile_timeout": 8,
       "skip": 18,
-      "compilable": 43491,
+      "compilable": 43492,
       "host_free_pass": 33950,
       "stale": 0
     }
@@ -991,9 +991,9 @@
       "name": "language/expressions",
       "path": "language/expressions",
       "pass": 8951,
-      "fail": 1049,
+      "fail": 1050,
       "compile_error": 1083,
-      "compile_timeout": 1,
+      "compile_timeout": 0,
       "skip": 18,
       "total": 11102,
       "host_free_pass": 8951
@@ -1281,8 +1281,8 @@
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 1257,
           "type_error": 1214,
+          "assertion_fail": 1257,
           "host_import_leak": 451,
           "other": 1509,
           "null_deref": 2
@@ -1291,18 +1291,18 @@
           "ES2026": 4433
         },
         "sample_files": [
-          "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
+          "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
           "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
-          "test/built-ins/Temporal/Duration/prototype/round/subclassing-ignored.js"
+          "test/built-ins/Temporal/ZonedDateTime/prototype/with/disambiguation-wrong-type.js"
         ],
         "sample_signatures": [
-          "assertion_fail:Test262Error: null Expected a RangeError but got a TypeError",
           "type_error:TypeError: Cannot read properties of undefined (reading 'until')",
+          "assertion_fail:Test262Error: null Expected a RangeError but got a TypeError",
           "host_import_leak:standalone target emitted host imports: env::__temporal_plain_date_add_field, env::__temporal_plain_date_from_string_field (##)",
           "type_error:TypeError: Cannot read properties of undefined (reading 'round')",
-          "other:ReferenceError: Temporal is not defined"
+          "type_error:TypeError: called value is not a function"
         ]
       },
       {
@@ -1334,8 +1334,8 @@
         "sample_files": [
           "test/built-ins/AsyncDisposableStack/prototype/move/not-a-constructor.js",
           "test/built-ins/AsyncDisposableStack/prototype/move/sets-state-to-disposed.js",
-          "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.asyncDispose-property-not-callable.js",
           "test/built-ins/AsyncDisposableStack/instance-extensible.js",
+          "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.asyncDispose-property-not-callable.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.dispose-property-not-callable.js"
         ],
         "sample_signatures": [
@@ -1552,8 +1552,8 @@
         },
         "sample_files": [
           "test/built-ins/RegExp/prototype/Symbol.match/coerce-global.js",
-          "test/built-ins/RegExp/prototype/Symbol.matchAll/species-constructor-species-is-null-or-undefined.js",
           "test/built-ins/RegExp/prototype/Symbol.matchAll/species-constructor-is-undefined.js",
+          "test/built-ins/RegExp/prototype/Symbol.matchAll/species-constructor-species-is-null-or-undefined.js",
           "test/built-ins/RegExp/prototype/Symbol.replace/coerce-lastindex-err.js",
           "test/built-ins/RegExp/prototype/Symbol.match/builtin-infer-unicode.js"
         ],
@@ -2524,9 +2524,9 @@
         "count": 431,
         "statuses": {
           "pass": 0,
-          "fail": 422,
+          "fail": 423,
           "compile_error": 8,
-          "compile_timeout": 1,
+          "compile_timeout": 0,
           "skip": 0,
           "total": 431,
           "host_free_pass": 0
@@ -2640,15 +2640,15 @@
           "test/language/expressions/bitwise-xor/bigint-non-primitive.js",
           "test/language/expressions/unsigned-right-shift/bigint-non-primitive.js",
           "test/built-ins/Atomics/store/bigint/non-shared-bufferdata.js",
-          "test/built-ins/Atomics/or/bigint/bad-range.js",
-          "test/built-ins/Atomics/notify/bigint/non-shared-bufferdata-returns-0.js"
+          "test/built-ins/Atomics/notify/bigint/non-shared-bufferdata-returns-0.js",
+          "test/built-ins/Atomics/or/bigint/bad-range.js"
         ],
         "sample_signatures": [
           "type_error:TypeError: Cannot mix BigInt and other types, use explicit conversions",
           "assertion_fail:Test262Error: Object(0b101n) >>> Object(1n) throws TypeError Expected a TypeError to be thrown but no exception was thrown at all",
           "type_error:TypeError: Atomics.store requires a shared integer TypedArray, which is unsupported in --target standalone",
-          "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)",
-          "type_error:TypeError: Atomics.notify requires a shared integer TypedArray, which is unsupported in --target standalone"
+          "type_error:TypeError: Atomics.notify requires a shared integer TypedArray, which is unsupported in --target standalone",
+          "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)"
         ]
       },
       {
@@ -2909,8 +2909,8 @@
         "sample_files": [
           "test/language/identifiers/part-unicode-16.0.0-escaped.js",
           "test/language/identifiers/start-unicode-17.0.0-class.js",
-          "test/language/identifiers/part-unicode-17.0.0-class.js",
           "test/language/identifiers/start-unicode-16.0.0-escaped.js",
+          "test/language/identifiers/part-unicode-17.0.0-class.js",
           "test/language/identifiers/start-unicode-17.0.0.js"
         ],
         "sample_signatures": [
