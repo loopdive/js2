@@ -124,6 +124,16 @@ only enqueue #5738 once evidence and protected checks justify it. Do not resume
 
 ## Superseding measurement and acquisition repair evidence
 
+### Subsequent caller-cache repair (local validation, 2026-09-10)
+
+Repaired conformance run 34484384957 completed 48,735 rows per lane, zero exclusions. All 20 Temporal regressions recovered; standalone had zero regressions. Host still failed at net -2: Function 15.3.5.4_2-11gs plus TypedArray findLast/BigInt predicate and length/BigInt return-length. Original artifact 10156078401 (SHA256 0fa4c7ffa0186f07d2e14fcd69b38160cd7c40910d82b66f01c624a890d176a4) remains at /private/tmp/js2-5738-repaired-conformance.HAo1msBb. Do not waive these rows or restart blindly.
+
+The exact Function row passes through fresh runTest262File in both lanes. In the production unified worker, untouched original harnesses in order 11gs/12gs/11gs produce pass/fail/pass; a separate worker in order 12gs/11gs produces pass/fail with the exact CI missing-TypeError message. Both controls pass first in a fresh worker. Five requests establish order dependence without a registry-reset intervention.
+
+Direct TypeScript updateSourceFile controls prove the function node is reused and reparented after inserting or removing a source directive. The process-global WeakMap keyed only by that node retains the previous strictness. All four transition tests fail before repair; the independent module-inference control passes. Removing this invalid memoization retains the existing strictness rules but reads current enclosing scopes on each call. This trades a scope walk for correct incremental semantics; no broad cache reset or worker recycling is introduced.
+
+After repair: new tests 5/5, module-arguments tests 5/5, caller suite 12/16. The four constructor failures (two shapes in both lanes) also fail with the original helper, with matching errors and Wasm stack locations; preserve them as pre-existing failures, not a green suite. Rebuilding only the compiler bundle and replaying both original worker orders gives 5/5 passing requests. The runtime bundle and all upstream fixtures are unchanged. This proves the bounded caller repair, not recovery of the two current TypedArray rows or whole conformance. Normal commit/push gates and further validation remain required. Stack refreshes stay paused and #5738 remains held.
+
 The original-artifact admission path is now published at eafbc5fc9a476afb65e90414a8c2afae04cf108a. Run 34477860865 admitted original artifact 10112017687 without normalizing its bytes. Both lanes completed 48,735 registered rows with zero exclusions after a failed-jobs-only retry of standalone shard 15, whose first runner received a shutdown signal. Original attempts and artifacts remain preserved. No baseline promotion occurred.
 
 The completed measurement failed: standalone had zero status regressions; host had 23 raw pass-to-fail rows, of which the unchanged canary policy excluded two, leaving 21 counted regressions. The coarse merge-report threshold is not landing clearance. The fine regression gate failed. All 23 rows passed in the earlier ea21 measurement; that observation alone does not waive them.
