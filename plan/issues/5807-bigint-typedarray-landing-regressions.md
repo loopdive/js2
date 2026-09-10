@@ -429,3 +429,40 @@ Next intervention execution requires fresh versioned subjects and an explicit
 request-budget reconciliation; preserve the invalid attempt in every report.
 No production fix, Linux causal attribution, TypedArray `.set` clearance,
 baseline relaxation, or IR retirement certificate follows from this checkpoint.
+
+## Queue-drain main delivery and pending diagnostic approval
+
+Instrument-only PR5717 landed on main at
+`26ad33b51c8e39e39096817526aa763ab58d3e75` (2026-09-10T03:28:08Z).
+Parent and independent subagent verified all sixteen reviewed file blobs against
+main and both merge parents. See [exact delivery proof](../agent-context/3518-retirement-instrument-main-delivery-2026-09-10.json).
+Actual merge-group CI and differential gates passed. Both differential lanes
+retain115/120 matches, two mismatches and three runtime errors, with zero new
+regressions; raw differential harness exits remain1. Test262 shards/regression
+comparison were intentionally not run for this instrument-only diff. This
+delivery does not clear the production hold or certify an end-to-end IR program.
+There are32 open PRs after this merge and the verified supersession closures of
+PR5739/5741; no open PR targets the instrument branch.
+
+PR5752 is refreshed at `3b1fbc608b3b95d5136b43fe81d2c7db739b9e67`, retargeted
+to main after its parent landed, and still held. Its thirteen owned source/test
+files are unchanged;254 focused tests and294 normal commit-hook tests passed,
+and fresh head CI passed. PR5738 is refreshed at
+`ea21d583a0e69e9db75255672c87d6b4440d4e50`, still held. Its preserved139/140
+failure identified a stale dependency-graph expectation; the reviewed exact
+21-module/24-edge list now passes140/140 with all rejection controls retained.
+No production behavior or conformance gate was relaxed by either conflict repair.
+
+PR5738's fresh exact-head CI subsequently completed successfully, including
+quality, sanitizers and equivalence; it remains held. This cumulative checkout
+is now synchronized with main26ad33b5. The merge adds only the sixteen landed
+instrument/fixture/handoff files and six npm artifact files, with no production
+source, workflow, package or lock changes. The instrument/IR-only/route-audit
+cohort passes39/39 after composition (24.20 seconds, Node25.9.0/macOS ARM64).
+
+The corrected diagnostic repeat remains UNAPPROVED and UNEXECUTED. Proposal:
+[six fresh same-version arms](https://github.com/loopdive/js2/pull/5798#issuecomment-5612166905),
+maximum24 new requests /30 total including the six preserved V1 requests.
+Keep both completed V1 outcomes, all raw files and the frozen V1 driver intact.
+This explicitly exceeds the former total24 cap; do not execute before user
+approval. No new migration scope, production reset, or Linux replay is implied.
