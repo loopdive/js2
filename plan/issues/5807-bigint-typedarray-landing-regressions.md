@@ -225,3 +225,45 @@ Tests prove bounded observation properties, not the constructor's cause.
 Factory identities are unavailable without extra compiled reads; abrupt worker
 death can leave an unknowable final trace tail. Both limits remain explicit.
 Artifact upload retains traces and hash receipts, not full patched source files.
+
+## Observation run complete; failing state not captured
+
+Run34424328148 completed both diagnostic jobs (candidate12m1s, donor12m41s).
+Both original Vitest exits remain1. Parent independently reran the original
+completeness validator and trace audit:939/939 rows, zero exclusions,34 trace
+streams/33 workers/1620 dispatches and two target requests in each arm.
+Both images are20260831.293.1. Both populations contain749pass,170fail,
+15compile_error,1compile_timeout,4skip; all ten named verdict fields compare
+equal between these instrumented arms, not complete rows or Wasm bytes.
+
+The constructor target passes primary and strict variants in both arms. Donor
+worker3501 and candidate worker3422 record no preceding linked instantiation,
+28 empty/disabled registry observations each, no selected peer decoder, no
+constructor refusal, and four existing mirror-length reads of3 each. Thus this
+run does NOT capture the retained-state failure hypothesis. It neither proves
+that hypothesis nor explains away the earlier failures. Observation/scheduling
+effects have not been separated; no reset intervention or causal fix occurred.
+
+Compared with the uninstrumented replay, only the constructor's named verdict
+fields change (fail to pass). Historical comparisons also retain the three
+literal dynamic-import error-path changes. All prior failures remain preserved.
+The BigInt set regression and cumulative IR hold remain unresolved.
+
+Evidence and96-file extracted hash inventory:
+[observation replay evidence](../agent-context/5807-observation-replay-evidence-2026-09-10.json).
+Raw artifacts10132355779 (donor) and10132338406 (candidate) are retained locally
+at `/private/tmp/js2-5807-observation-results.jjunUu`. Archive digests are
+API-reported; extracted files were independently hashed. Do not rerun simply
+to obtain green. Next causal test must explicitly distinguish prior linked
+worker history from observation effects while preserving original fixtures;
+any reset intervention remains a separately reviewed action.
+
+Independent review reproduced both trace audits and reconstructed all six
+instrumentation postimage hashes per pin against the receipts. This is not a
+comparison against omitted uploaded source bytes or generated Wasm. Donor's
+target worker had six earlier requests; candidate's had seven; all ended
+normally without recycling. Both workers were replacements after
+`Boolean.prototype.Symbol(Symbol.search):added` realm-drift recycling, and
+neither had a preceding linked request or reset. All trace streams lack exit
+markers, so final unwritten tails remain unknown. The original failing workers'
+corresponding histories are unavailable; do not infer them from these replacements.
