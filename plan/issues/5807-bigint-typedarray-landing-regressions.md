@@ -343,3 +343,89 @@ linked-to-nonlinked transition, with original failures kept as controls and
 exact fixture preservation. A registry-only intervention must be distinguished
 from broader linked-project/realm cleanup and tested on both pins before any
 causal or repair claim. That intervention remains unapproved and unexecuted.
+
+## Approved registry-only attribution experiment
+
+The user approved the outstanding six local trials after the controlled-history
+checkpoint. This supersedes the preceding unapproved status for the diagnostic
+only, not for production runtime changes or regression clearance.
+
+At each historical pin, use three fresh seeded one-worker pools: unchanged
+observation-only control, diagnostic hook present but inactive (sham), and the
+same hook with decoder-registration reset enabled. Maximum24 requests, original
+fixture bytes and primary/conditional-strict behavior, no driver retries.
+Keep all previous trial roots and receipts unchanged. New isolated subjects
+are under `/private/tmp/js2-5807-registry-intervention.AyGZPo`.
+
+The diagnostic export calls only `_crossModuleStructs.reset()`: do not call
+`resetLinkedProjectRegistry()`, which also resets linked mirror ownership, or
+Temporal realm cleanup. Invoke through the worker's existing runtime bundle
+immediately before target `buildImports`, after successful compilation, only
+for the exact nonlinked target. Preserve seed behavior and normal resets.
+The reset clears decoder registrations/enabled state, not the ownership/state
+WeakMaps; do not claim otherwise. Sham and active hook source/bundle bytes must
+match; original control distinguishes the effect of merely adding/rebuilding
+the hook. Use a separate intervention-aware audit, retaining the original
+observation-only target-reset prohibition. Record final hashes after exit.
+
+Require both seed variants to pass and actually link in the same surviving
+worker. Original and sham must reproduce the exact constructor failure for
+attribution. Preserve every outcome, including strict-variant failures. A
+rescue shows only local sufficiency of retiring decoder registrations; it does
+not prove the historical Linux worker history or justify a production repair.
+
+Queue-drain side result: artifact PR5810 landed at
+`1429cfdf2167f31532d70c5304430a9300c2a982`; reviewed head09f343dcae is an
+ancestor and all six reviewed artifact blobs match the merge. Both differential
+gates preserve115/120 matches with zero new regressions. The separate unchanged
+workflow assertion failure remains documented in that PR. This data-only
+delivery does not clear this issue or the cumulative IR hold. Fresh queue
+count35; no PR targets the artifact branch, so no dependent retarget is needed.
+
+Preparation admission caught one changed Vitest results-cache file in the
+dependency copy. No package code differed. Preserve that rejected tree at
+`node_modules-rejected`; the replacement copied from the earlier controlled
+trial now matches its full census exactly. Six source/corpus/provider admissions
+pass, with zero fixture requests executed. Receipts:
+[dependency mismatch](../agent-context/5807-registry-intervention-dependency-drift-2026-09-10.json)
+and [preparation](../agent-context/5807-registry-intervention-preparation-2026-09-10.json).
+
+Parent review rejected the first unexecuted installer draft because it added
+hooks to the original control and generated different sham/reset worker source.
+The correction must prove original output equals the published observation-only
+patch and sham/reset overlay source and rebuilt bundles are byte-identical;
+only the admitted runtime switch may differ. No diagnostic execution is allowed
+before those tests and the final installer review pass.
+
+## Intervention V1 stopped on a diagnostic defect
+
+The first two admitted trials have exited; six requests were consumed. Donor
+original has two passing seed variants and the exact opaque constructor failure
+on the primary target (valid diagnostic, controller exit0). Donor sham has two
+passing seed variants, then `compile_error: invalid decoder-only intervention
+target/linkage` before target instantiation (invalid diagnostic, exit2). No reset
+intervention ran. The other four trials remain unexecuted; do not run their V1
+overlay or overwrite any trial directory.
+
+Both pinned workers normalize raw `msg.target === "gc"` to local
+`target === undefined`. V1 incorrectly required local `target === "gc"`;
+its synthetic hook tests repeated the same wrong assumption. The corrected
+installer checks both the raw GC request and normalized undefined value. Two
+new contract tests extract and execute the actual normalization function from
+both pinned git blobs. The five diagnostic test files pass218/218, without
+executing additional historical fixtures or changing runtime production code.
+
+The executed V1 driver is frozen at
+`/private/tmp/js2-5807-registry-intervention.AyGZPo/control-v1/issue-5807-registry-intervention.mjs`,
+SHA256 `f8046fb560338ab9310e5cd905208c89d707a5f84aa563a929c974cb7c7d9c7b`.
+Existing receipts bind that version, not the corrected installer. Do not
+re-audit old subjects using the changed control file and relabel the evidence.
+The independent post-exit collector captures all34 raw files across both trials,
+including all four trace streams even though sham's final audit is null. Its
+19 synthetic tests pass; complete raw capture is not diagnostic acceptance.
+See [unchanged V1 outcomes and final hashes](../agent-context/5807-registry-intervention-v1-evidence-2026-09-10.json).
+
+Next intervention execution requires fresh versioned subjects and an explicit
+request-budget reconciliation; preserve the invalid attempt in every report.
+No production fix, Linux causal attribution, TypedArray `.set` clearance,
+baseline relaxation, or IR retirement certificate follows from this checkpoint.

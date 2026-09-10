@@ -1,0 +1,162 @@
+{
+  "schema": "issue-5807-registry-intervention-preparation-v1",
+  "root": "/private/tmp/js2-5807-registry-intervention.AyGZPo",
+  "node": {
+    "path": "/private/tmp/js2-5807-node25.SwC0fQ/node-v25.9.0-darwin-arm64/bin/node",
+    "version": "v25.9.0",
+    "platform": "darwin",
+    "arch": "arm64",
+    "sha256": "4b3fe8b384e30ee917e28a9f5b79a3ca64b72b13b70d9ab2273e6e9a823f4cbf"
+  },
+  "dependencies": {
+    "root": "/private/tmp/js2-5807-registry-intervention.AyGZPo/node_modules",
+    "count": 37767,
+    "sha256": "2323443257621a9645041ececdac85b2dbcf1ff995112e723f543c8f9c051cd3",
+    "equalsPriorControlledTrial": true,
+    "rejectedCopyPreserved": "/private/tmp/js2-5807-registry-intervention.AyGZPo/node_modules-rejected"
+  },
+  "subjects": [
+    {
+      "arm": "donor",
+      "mode": "original",
+      "path": "/private/tmp/js2-5807-registry-intervention.AyGZPo/donor-original",
+      "head": "129e3efd4530ae1be56dbf5fdea54ddbbd87443e",
+      "corpus": "b363f29d3c43c626dc852744ad64a0b48a003693",
+      "observationInstallerSha256": "3d23c7d9ead75f8b6a5a388fbe2dcd5faff388f7426cc7858a006ee6b5fdd911",
+      "observationPatchSha256": "56c04cec43e1be6a870833fd5b22d69c0e69da67e2d610d3072c9f0d2f4e519c",
+      "provider": {
+        "sha256": "7ec402c2fa0519920defc30a0dd3e2a33c8ad25ffefaafc20ccaec5eb13b1d9a",
+        "wasm": [
+          {
+            "path": "providers/1e277d9b4bc3e634f5838bdeff0f8088f56dba8c7e8a394ee38c2c63286df18b.wasm",
+            "type": "file",
+            "bytes": 1702133,
+            "sha256": "1e277d9b4bc3e634f5838bdeff0f8088f56dba8c7e8a394ee38c2c63286df18b"
+          }
+        ]
+      },
+      "fixtureRequestsExecuted": 0,
+      "bundlesBuilt": false,
+      "interventionInstalled": false
+    },
+    {
+      "arm": "donor",
+      "mode": "sham",
+      "path": "/private/tmp/js2-5807-registry-intervention.AyGZPo/donor-sham",
+      "head": "129e3efd4530ae1be56dbf5fdea54ddbbd87443e",
+      "corpus": "b363f29d3c43c626dc852744ad64a0b48a003693",
+      "observationInstallerSha256": "3d23c7d9ead75f8b6a5a388fbe2dcd5faff388f7426cc7858a006ee6b5fdd911",
+      "observationPatchSha256": "56c04cec43e1be6a870833fd5b22d69c0e69da67e2d610d3072c9f0d2f4e519c",
+      "provider": {
+        "sha256": "7ec402c2fa0519920defc30a0dd3e2a33c8ad25ffefaafc20ccaec5eb13b1d9a",
+        "wasm": [
+          {
+            "path": "providers/1e277d9b4bc3e634f5838bdeff0f8088f56dba8c7e8a394ee38c2c63286df18b.wasm",
+            "type": "file",
+            "bytes": 1702133,
+            "sha256": "1e277d9b4bc3e634f5838bdeff0f8088f56dba8c7e8a394ee38c2c63286df18b"
+          }
+        ]
+      },
+      "fixtureRequestsExecuted": 0,
+      "bundlesBuilt": false,
+      "interventionInstalled": false
+    },
+    {
+      "arm": "donor",
+      "mode": "reset",
+      "path": "/private/tmp/js2-5807-registry-intervention.AyGZPo/donor-reset",
+      "head": "129e3efd4530ae1be56dbf5fdea54ddbbd87443e",
+      "corpus": "b363f29d3c43c626dc852744ad64a0b48a003693",
+      "observationInstallerSha256": "3d23c7d9ead75f8b6a5a388fbe2dcd5faff388f7426cc7858a006ee6b5fdd911",
+      "observationPatchSha256": "56c04cec43e1be6a870833fd5b22d69c0e69da67e2d610d3072c9f0d2f4e519c",
+      "provider": {
+        "sha256": "7ec402c2fa0519920defc30a0dd3e2a33c8ad25ffefaafc20ccaec5eb13b1d9a",
+        "wasm": [
+          {
+            "path": "providers/1e277d9b4bc3e634f5838bdeff0f8088f56dba8c7e8a394ee38c2c63286df18b.wasm",
+            "type": "file",
+            "bytes": 1702133,
+            "sha256": "1e277d9b4bc3e634f5838bdeff0f8088f56dba8c7e8a394ee38c2c63286df18b"
+          }
+        ]
+      },
+      "fixtureRequestsExecuted": 0,
+      "bundlesBuilt": false,
+      "interventionInstalled": false
+    },
+    {
+      "arm": "candidate",
+      "mode": "original",
+      "path": "/private/tmp/js2-5807-registry-intervention.AyGZPo/candidate-original",
+      "head": "efa0908e09998c73da592fba32708c7ecca8d6e5",
+      "corpus": "b363f29d3c43c626dc852744ad64a0b48a003693",
+      "observationInstallerSha256": "3d23c7d9ead75f8b6a5a388fbe2dcd5faff388f7426cc7858a006ee6b5fdd911",
+      "observationPatchSha256": "56c04cec43e1be6a870833fd5b22d69c0e69da67e2d610d3072c9f0d2f4e519c",
+      "provider": {
+        "sha256": "a6f3c601102cbf17cbf246c4f24a642a5379b2919e8efce7990e9e2502a14165",
+        "wasm": [
+          {
+            "path": "providers/1e277d9b4bc3e634f5838bdeff0f8088f56dba8c7e8a394ee38c2c63286df18b.wasm",
+            "type": "file",
+            "bytes": 1702133,
+            "sha256": "1e277d9b4bc3e634f5838bdeff0f8088f56dba8c7e8a394ee38c2c63286df18b"
+          }
+        ]
+      },
+      "fixtureRequestsExecuted": 0,
+      "bundlesBuilt": false,
+      "interventionInstalled": false
+    },
+    {
+      "arm": "candidate",
+      "mode": "sham",
+      "path": "/private/tmp/js2-5807-registry-intervention.AyGZPo/candidate-sham",
+      "head": "efa0908e09998c73da592fba32708c7ecca8d6e5",
+      "corpus": "b363f29d3c43c626dc852744ad64a0b48a003693",
+      "observationInstallerSha256": "3d23c7d9ead75f8b6a5a388fbe2dcd5faff388f7426cc7858a006ee6b5fdd911",
+      "observationPatchSha256": "56c04cec43e1be6a870833fd5b22d69c0e69da67e2d610d3072c9f0d2f4e519c",
+      "provider": {
+        "sha256": "a6f3c601102cbf17cbf246c4f24a642a5379b2919e8efce7990e9e2502a14165",
+        "wasm": [
+          {
+            "path": "providers/1e277d9b4bc3e634f5838bdeff0f8088f56dba8c7e8a394ee38c2c63286df18b.wasm",
+            "type": "file",
+            "bytes": 1702133,
+            "sha256": "1e277d9b4bc3e634f5838bdeff0f8088f56dba8c7e8a394ee38c2c63286df18b"
+          }
+        ]
+      },
+      "fixtureRequestsExecuted": 0,
+      "bundlesBuilt": false,
+      "interventionInstalled": false
+    },
+    {
+      "arm": "candidate",
+      "mode": "reset",
+      "path": "/private/tmp/js2-5807-registry-intervention.AyGZPo/candidate-reset",
+      "head": "efa0908e09998c73da592fba32708c7ecca8d6e5",
+      "corpus": "b363f29d3c43c626dc852744ad64a0b48a003693",
+      "observationInstallerSha256": "3d23c7d9ead75f8b6a5a388fbe2dcd5faff388f7426cc7858a006ee6b5fdd911",
+      "observationPatchSha256": "56c04cec43e1be6a870833fd5b22d69c0e69da67e2d610d3072c9f0d2f4e519c",
+      "provider": {
+        "sha256": "a6f3c601102cbf17cbf246c4f24a642a5379b2919e8efce7990e9e2502a14165",
+        "wasm": [
+          {
+            "path": "providers/1e277d9b4bc3e634f5838bdeff0f8088f56dba8c7e8a394ee38c2c63286df18b.wasm",
+            "type": "file",
+            "bytes": 1702133,
+            "sha256": "1e277d9b4bc3e634f5838bdeff0f8088f56dba8c7e8a394ee38c2c63286df18b"
+          }
+        ]
+      },
+      "fixtureRequestsExecuted": 0,
+      "bundlesBuilt": false,
+      "interventionInstalled": false
+    }
+  ],
+  "limits": [
+    "Preparation only: no intervention or fixture requests yet",
+    "Overlay still requires separate exact source verification"
+  ]
+}

@@ -1,0 +1,100 @@
+{
+  "schema": "issue-3518-superseded-pr-content-v1",
+  "main": "1429cfdf2167f31532d70c5304430a9300c2a982",
+  "incorporationCommit": "e90f2a14aa263084cf94449b706b3df07bf30d71",
+  "prs": [
+    {
+      "pr": 5739,
+      "head": "c3afa4389469e55d434c0715698dc59c6caa9120",
+      "exactFiles": [
+        {
+          "path": "src/ir/abi-bindings.ts",
+          "prBlob": "ccc36208e534f572379150dc4e9ebf5a79edace4",
+          "mainBlob": "ccc36208e534f572379150dc4e9ebf5a79edace4"
+        },
+        {
+          "path": "src/ir/core/binding-key-primitives.ts",
+          "prBlob": "76364db86fb07972f66a78a886d66197e2355f6a",
+          "mainBlob": "76364db86fb07972f66a78a886d66197e2355f6a"
+        },
+        {
+          "path": "src/ir/program-abi.ts",
+          "prBlob": "35e3849eb8ef955e8944e77d15b284137897a2db",
+          "mainBlob": "35e3849eb8ef955e8944e77d15b284137897a2db"
+        },
+        {
+          "path": "src/ir/program/abi-inventory.ts",
+          "prBlob": "d65caca8c5e4bf9b60b555f68711e3801f30dd9a",
+          "mainBlob": "d65caca8c5e4bf9b60b555f68711e3801f30dd9a"
+        },
+        {
+          "path": "src/ir/program/abi.ts",
+          "prBlob": "c9240ad8bc83c36774a7def20db27425252f459a",
+          "mainBlob": "c9240ad8bc83c36774a7def20db27425252f459a"
+        },
+        {
+          "path": "tests/issue-3518-program-abi-seam-boundary.test.ts",
+          "prBlob": "0ac038747f5c5ee50465b759e50fbdb25ca86e28",
+          "mainBlob": "0ac038747f5c5ee50465b759e50fbdb25ca86e28"
+        },
+        {
+          "path": "tests/issue-3518-program-abi-seam.test.ts",
+          "prBlob": "7f96f27ded3b9387ad63c6edee970b47e3430a9f",
+          "mainBlob": "7f96f27ded3b9387ad63c6edee970b47e3430a9f"
+        },
+        {
+          "path": "plan/agent-context/3518-program-abi-integration-evidence-2026-09-08.md",
+          "prBlob": "67bafba82b31fb498a66239ec79406f772bead7e",
+          "mainBlob": "67bafba82b31fb498a66239ec79406f772bead7e"
+        },
+        {
+          "path": "plan/agent-context/3518-program-abi-reachability-plan-2026-09-08.md",
+          "prBlob": "b1ec444284a39cfecd2cc3d3acb8a2e1694d2ecd",
+          "mainBlob": "b1ec444284a39cfecd2cc3d3acb8a2e1694d2ecd"
+        }
+      ]
+    },
+    {
+      "pr": 5741,
+      "head": "7b37b23c72af84a1e336cebce2954942408ecea6",
+      "exactFiles": [
+        {
+          "path": "src/ir/module-init-plan.ts",
+          "prBlob": "84c96221142a577437d88d30a4d775cb8bf32b05",
+          "mainBlob": "84c96221142a577437d88d30a4d775cb8bf32b05"
+        },
+        {
+          "path": "src/ir/program/startup.ts",
+          "prBlob": "fc9c7514c24e61a063fbdb6eb9fa58d3f11c334f",
+          "mainBlob": "fc9c7514c24e61a063fbdb6eb9fa58d3f11c334f"
+        },
+        {
+          "path": "tests/issue-3518-startup-boundary.test.ts",
+          "prBlob": "d441a40df2af9a286d385cb8bcffc1813764bc01",
+          "mainBlob": "d441a40df2af9a286d385cb8bcffc1813764bc01"
+        },
+        {
+          "path": "tests/issue-3518-startup-contract.test.ts",
+          "prBlob": "65031277cfa3561f1f6578f418dbe09d8e6241a7",
+          "mainBlob": "65031277cfa3561f1f6578f418dbe09d8e6241a7"
+        },
+        {
+          "path": "plan/agent-context/3518-startup-contract-plan-2026-09-08.md",
+          "prBlob": "441b55b686df1f0d6f3389ae701e78dacd6e0ad1",
+          "mainBlob": "441b55b686df1f0d6f3389ae701e78dacd6e0ad1"
+        },
+        {
+          "path": "plan/agent-context/3518-core-types-next-plan-2026-09-08.md",
+          "prBlob": "dd59898e827bd7daa8143ac6c109c95179526cff",
+          "mainBlob": "dd59898e827bd7daa8143ac6c109c95179526cff"
+        }
+      ]
+    }
+  ],
+  "remainingDifferences": [
+    "Shared boundary metadata evolved in the composed contract integration; canonical ABI and startup roots remain active.",
+    "PR5741 startup type import now resides in src/ir/program/prepared-contracts.ts; startup field still uses canonical IrModuleInitPlan.",
+    "Issue3518 keeps composed acceptance obligations; historical PR issue text remains accessible at the exact immutable heads. No issue is closed."
+  ],
+  "retirementComplete": false
+}

@@ -32,3 +32,16 @@ including later intentional changes. Generic lowering #5738 remains separate.
 Queue-drain mode pauses new migration scope. The coordinator alone refreshes,
 validates and submits existing PRs in dependency order, one queue entry at a time
 with verified baseline provenance. Stack-only merges are not main delivery.
+
+## Verified supersession closure — 2026-09-10
+
+PR5739 and PR5741 are now closed as superseded, with their branches retained.
+Freshly fetched main `1429cfdf2167f31532d70c5304430a9300c2a982` contains all
+nine ABI implementation/test/document blobs and all six startup
+implementation/test/document blobs exactly. The later prepared-contracts owner
+retains the startup import/field; composed boundary metadata retains canonical
+ABI and startup ownership. Original PR history remains available at the exact
+recorded heads. See the [per-file content proof](./3518-superseded-pr-content-2026-09-10.json).
+This satisfies the earlier content-verification condition, not IR retirement,
+the missing rooted getter witness, or conformance clearance. No new source was
+merged by closing these duplicate PRs.

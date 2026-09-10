@@ -1,0 +1,236 @@
+{
+  "schema": "issue-5807-registry-intervention-evidence-set-v1",
+  "subjects": [
+    {
+      "schema": "issue-5807-registry-intervention-evidence-v1",
+      "root": "/private/tmp/js2-5807-registry-intervention.AyGZPo/donor-original",
+      "captureStatus": "COMPLETE_RAW_CAPTURE",
+      "processesExitedUserConfirmed": true,
+      "livenessLimit": "Caller confirms all producers exited; collector does not independently establish process liveness.",
+      "traceFiles": 2,
+      "files": [
+        {
+          "path": "replay5807-intervention-admission.json",
+          "bytes": 2913,
+          "sha256": "f9bfad096df91248dca2a6a5f4486dbbca86507588796533afad34400dc51a5f"
+        },
+        {
+          "path": "replay5807-intervention-original/admission.json",
+          "bytes": 8930924,
+          "sha256": "265c2b7a5d5b51f6075e482ebb3a82b9c07aae7aefdfe01f1320c41560c77670"
+        },
+        {
+          "path": "replay5807-intervention-original/final.json",
+          "bytes": 3043,
+          "sha256": "85495762316181d8d0752b1754c6e26431b452185374b41e6a8034a338e83c2d"
+        },
+        {
+          "path": "replay5807-intervention-original/launch.json",
+          "bytes": 1036,
+          "sha256": "4734d6cb25cb07ea2e90ee17a45555031f2277ab9a74d8a8659e876b4af9c24b"
+        },
+        {
+          "path": "replay5807-intervention-original/pre-exit-trace-inventory.json",
+          "bytes": 311,
+          "sha256": "af4d82749eddb28667105403b67c7dfef0482253442fa9968dc50d89996ed5d0"
+        },
+        {
+          "path": "replay5807-intervention-original/preserved-traces.json",
+          "bytes": 3,
+          "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+        },
+        {
+          "path": "replay5807-intervention-original/request-1.json",
+          "bytes": 2059,
+          "sha256": "de5fc1efc4b2a3368df36edd153021555cc230819b47c4a588a65166431dc6ee"
+        },
+        {
+          "path": "replay5807-intervention-original/request-2.json",
+          "bytes": 2079,
+          "sha256": "6117686277f29ee9c5920e425308f881953b8f258db659a491313f3394470855"
+        },
+        {
+          "path": "replay5807-intervention-original/request-3.json",
+          "bytes": 2725,
+          "sha256": "1cf7a60cad79e2f4cc3bfc76b61cea49d5909f70cc3182eb8850dfdf07736fe6"
+        },
+        {
+          "path": "replay5807-intervention-original/result.json",
+          "bytes": 8828,
+          "sha256": "72abfb95030d209a328dbcb65828622f1ae848b96ad83f730fc9d5ec69bb4456"
+        },
+        {
+          "path": "replay5807-intervention-original/stderr.log",
+          "bytes": 150,
+          "sha256": "cf8e1272b990663437f90787417d808f64f212ccbc754eae525bb7c2aa9c40a6"
+        },
+        {
+          "path": "replay5807-intervention-original/stdout.log",
+          "bytes": 10,
+          "sha256": "770c2d18aa4ec3159f46da461ef452972949942ff4f6a9771044485faa146398"
+        },
+        {
+          "path": "replay5807-intervention-original/terminal.json",
+          "bytes": 94,
+          "sha256": "d09717133270cc2a7a02430a87436c0c3199bcb83547fd3ce0d2e529d64df680"
+        },
+        {
+          "path": "replay5807-intervention-original/worker-terminals.json",
+          "bytes": 72,
+          "sha256": "bc7605adaf19ffc98c50892125c27408c4ee6a4c1a93705daaef8da7162aea40"
+        },
+        {
+          "path": "replay5807-trace-admission.json",
+          "bytes": 2249,
+          "sha256": "6bbab18e48b771e3f1aefeec007b1ff595851946a65e91d3e64aaa7268579536"
+        },
+        {
+          "path": "replay5807-traces/47484-4bf22b0a-596b-4491-8c70-81657f2e4263.jsonl",
+          "bytes": 2125,
+          "sha256": "e50f6ef678a806f30b39854b1e7b91afaba72ad57524f5b1419105dfae18bf3a"
+        },
+        {
+          "path": "replay5807-traces/47560-efdcae1a-c60d-4d0e-8aab-2920004ecae7.jsonl",
+          "bytes": 24484,
+          "sha256": "1d434b5866c7e87a6f536c15a0f79082eca074e28d86fc120af31f1fd5109fad"
+        }
+      ],
+      "issues": [],
+      "recordedVerdicts": [
+        {
+          "arm": "original",
+          "finalPath": "replay5807-intervention-original/final.json",
+          "status": "COMPLETE_LOCAL_DIAGNOSTIC_ONLY",
+          "stopReason": null,
+          "audited": "present-see-hashed-final",
+          "resultStatus": "PRE_EXIT_DIAGNOSTIC_ONLY",
+          "terminal": {
+            "code": 0,
+            "signal": null,
+            "pid": 47484,
+            "parentPid": 47455,
+            "mode": "original"
+          }
+        }
+      ],
+      "regressionCleared": false,
+      "meaning": "Raw capture completeness only, never diagnostic acceptance or merge clearance."
+    },
+    {
+      "schema": "issue-5807-registry-intervention-evidence-v1",
+      "root": "/private/tmp/js2-5807-registry-intervention.AyGZPo/donor-sham",
+      "captureStatus": "COMPLETE_RAW_CAPTURE",
+      "processesExitedUserConfirmed": true,
+      "livenessLimit": "Caller confirms all producers exited; collector does not independently establish process liveness.",
+      "traceFiles": 2,
+      "files": [
+        {
+          "path": "replay5807-intervention-admission.json",
+          "bytes": 2963,
+          "sha256": "4ff04c3eef0f1fe12f61d8b5b582a53dcdcad36b2362d5e56042af519c0489de"
+        },
+        {
+          "path": "replay5807-intervention-sham/admission.json",
+          "bytes": 8930962,
+          "sha256": "9837f33c7c7221252a7b507b3179e80732a145bc2bb06265934cdf0c84f6902c"
+        },
+        {
+          "path": "replay5807-intervention-sham/final.json",
+          "bytes": 1873,
+          "sha256": "8b7035e5f3c9611de7e5cb0cea3b13efe04500cb998efedcb59b1700ec17147d"
+        },
+        {
+          "path": "replay5807-intervention-sham/launch.json",
+          "bytes": 1028,
+          "sha256": "c3e69300dbed76b4c1e8e91550c6b1e970958c75496902e9c18c68150696cc38"
+        },
+        {
+          "path": "replay5807-intervention-sham/pre-exit-trace-inventory.json",
+          "bytes": 311,
+          "sha256": "3cf0ad0680c9aa3b1556e656275745c135272d81693ca7418f2f9788336ade5c"
+        },
+        {
+          "path": "replay5807-intervention-sham/preserved-traces.json",
+          "bytes": 3,
+          "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+        },
+        {
+          "path": "replay5807-intervention-sham/request-1.json",
+          "bytes": 2051,
+          "sha256": "8e1aa78b8f9cccd9a650d0f550f1a898b5c1b2c4a40453a16e80999b61bac636"
+        },
+        {
+          "path": "replay5807-intervention-sham/request-2.json",
+          "bytes": 2080,
+          "sha256": "971ce013a9f3580f4731a1a18af388b32745210d17691ef22404216b65cb9d54"
+        },
+        {
+          "path": "replay5807-intervention-sham/request-3.json",
+          "bytes": 2652,
+          "sha256": "50fb0993549ff53751520e6a32b09ddcdc2f80ce3844c4cf705ce7c93e0acf08"
+        },
+        {
+          "path": "replay5807-intervention-sham/result.json",
+          "bytes": 8946,
+          "sha256": "f630e8cd1058fc22a9036b5326ade9cab9539266ab06e56c6d21c4b73ceea96a"
+        },
+        {
+          "path": "replay5807-intervention-sham/stderr.log",
+          "bytes": 150,
+          "sha256": "005b00920d86eb4211e062df55417d419725d2917b92e78dffdd7519e99fe3bb"
+        },
+        {
+          "path": "replay5807-intervention-sham/stdout.log",
+          "bytes": 10,
+          "sha256": "770c2d18aa4ec3159f46da461ef452972949942ff4f6a9771044485faa146398"
+        },
+        {
+          "path": "replay5807-intervention-sham/terminal.json",
+          "bytes": 90,
+          "sha256": "c2a8aa7416380c56d5eb6dba1217eaa261202fc9ce69ca1ebde612f2ff732752"
+        },
+        {
+          "path": "replay5807-intervention-sham/worker-terminals.json",
+          "bytes": 72,
+          "sha256": "fcc3d498cae1bda66646b8e6fd102fa3d7809a8b7a2924d41162f65d63ed32ab"
+        },
+        {
+          "path": "replay5807-trace-admission.json",
+          "bytes": 2249,
+          "sha256": "6bbab18e48b771e3f1aefeec007b1ff595851946a65e91d3e64aaa7268579536"
+        },
+        {
+          "path": "replay5807-traces/47760-e3387a38-3a01-472c-b41d-d304fdb2d03c.jsonl",
+          "bytes": 2125,
+          "sha256": "ca11e30c235cd8b20a45e2a802a110e233150f34d177498031b758ef5b538135"
+        },
+        {
+          "path": "replay5807-traces/47834-35b07243-29de-45c8-a189-2c9f6945d7cc.jsonl",
+          "bytes": 8061,
+          "sha256": "caf75ea28a620d725da4734fc85440e15a24f415f8f728ed4e1338ec57d71aa1"
+        }
+      ],
+      "issues": [],
+      "recordedVerdicts": [
+        {
+          "arm": "sham",
+          "finalPath": "replay5807-intervention-sham/final.json",
+          "status": "INVALID_OR_INCOMPLETE_INTERVENTION",
+          "stopReason": "diagnostic child failed\n\n2 !== 0\n",
+          "audited": null,
+          "resultStatus": "INVALID_OR_INCOMPLETE_INTERVENTION",
+          "terminal": {
+            "code": 2,
+            "signal": null,
+            "pid": 47760,
+            "parentPid": 47731,
+            "mode": "sham"
+          }
+        }
+      ],
+      "regressionCleared": false,
+      "meaning": "Raw capture completeness only, never diagnostic acceptance or merge clearance."
+    }
+  ],
+  "regressionCleared": false
+}
