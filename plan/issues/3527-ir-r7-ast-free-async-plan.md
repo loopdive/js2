@@ -1721,3 +1721,40 @@ fallback. Validate loaded-module census, two-await runtime behavior,
 source-qualified resume identity, tamper failures and the import removal
 control. Return the exact requirements C must materialize, without changing
 C's implementation or claiming its async acceptance has passed.
+
+### N queue physical extraction checkpoint — 2026-09-07
+
+The N continuation preserves the held semantic-runtime producer claim and
+changes only the approved queue portion of `async-scheduler.ts`: its real
+`ensureMicrotaskQueue` caller supplies a frozen typed reservation snapshot to
+`prepared-native-async-runtime.ts`. The leaf builds grow/enqueue/drain bodies
+and locals without importing the scheduler, codegen context, or a runtime
+registry. Type/global registration, grow → enqueue → drain function minting,
+the 8,192-slot initial capacity, stable handles, publication and startup remain
+owned by the existing caller.
+
+Baseline is upstream `6037ac8bcf07be4f71839cea33cf8c90ecc87f94`; candidate is
+this checkpoint's scoped diff on `codex/3527-native-async-closure`. The temporary
+`.tmp/compare-native-queue.ts` control compares all five extracted builder
+outputs with the exact baseline builders, using nonzero type/global indices
+and a stable function handle: **5/5 structurally identical**. The actual
+legacy-connected emitted Wasm tests in
+`tests/issue-3527-prepared-native-resource-closure.test.ts` passed **5/5**:
+unused/exhausted drain, FIFO growth beyond 8,192 entries with capture identity,
+enqueue-and-grow during drain, thrown callback/head advancement/resumption,
+and fresh-process leaf import with a forbidden-import positive control.
+
+Commands: `VITEST_MAX_FORKS=1 node_modules/.bin/vitest run tests/issue-3527-prepared-native-resource-closure.test.ts`
+(1/1 file, 5/5 tests, 14.56 s);
+`node --import tsx .tmp/compare-native-queue.ts` (5/5);
+`node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json`
+(exit 0). Logs are `.tmp/native-queue-vitest.log`,
+`.tmp/native-queue-baseline.log`, and `.tmp/native-queue-typecheck.log`.
+Prettier, LOC and function budget gates passed. The first Vitest attempt
+failed before collection because Vite could not write through the dependency
+symlink; the approved retry produced the reported execution results.
+
+This checkpoint does **not** complete the native Promise resource closure or
+admit native prepared-program emission. Promise settlement/assimilation,
+closure bridges, exception/rejection policy, optional hooks, value boundaries,
+and their resource declarations remain subsequent coordinated work.

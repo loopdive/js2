@@ -646,7 +646,62 @@ type CoerceIdxs = {
   unboxNumIdx?: number;
   unboxBoolIdx?: number;
   undefinedIdx?: number;
+  /**
+   * (#5380) Lazy accessor for `__unbox_number_or_omitted` — see
+   * {@link ensureUnboxNumberOrOmitted}. A THUNK, not an index: the helper is
+   * minted only when an arm actually has a defaulted f64 formal, so a module
+   * without one emits exactly the bytes it did before.
+   */
+  unboxNumOrOmitted?: () => number | undefined;
 };
+
+/**
+ * (#5380) Mint (once) `__unbox_number_or_omitted(externref) -> f64`: the plain
+ * numeric unbox, except that an explicit host `undefined` becomes the
+ * omitted-argument sNaN sentinel the callee's parameter prologue recognises.
+ *
+ * `f(undefined)` must run `f`'s default (§10.2.11 / FunctionDeclarationInstan-
+ * tiation), and an f64 formal has no other way to carry "absent": a plain
+ * unboxing `undefined` numerically yields a quiet NaN, indistinguishable from a real
+ * `NaN` argument. The MISSING-argument arm of `buildEntryArm` already pushes
+ * this sentinel; this is the same value for an argument that is present but
+ * undefined.
+ *
+ * A helper FUNCTION rather than inline instructions because the arm's argument
+ * may be produced by `__extern_get_idx` — evaluating it twice (once to test,
+ * once to unbox) would both cost and, for an accessor-backed element, observe
+ * the read twice. Returns `undefined` when either primitive is unavailable, so
+ * the caller keeps its previous bytes.
+ */
+function ensureUnboxNumberOrOmitted(ctx: CodegenContext, unboxIdx: number | undefined): number | undefined {
+  const existing = ctx.funcMap.get("__unbox_number_or_omitted");
+  if (existing !== undefined) return existing;
+  const isUndefIdx = ctx.funcMap.get("__extern_is_undefined");
+  if (unboxIdx === undefined || isUndefIdx === undefined) return undefined;
+  const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "f64" }], "$__unbox_number_or_omitted_type");
+  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  ctx.mod.functions.push({
+    name: "__unbox_number_or_omitted",
+    typeIdx,
+    locals: [],
+    body: [
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: isUndefIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "f64" } },
+        then: [{ op: "i64.const", value: 0x7ff00000deadc0den }, { op: "f64.reinterpret_i64" }],
+        else: [
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: unboxIdx },
+        ],
+      },
+    ],
+    exported: false,
+  } as WasmFunction);
+  ctx.funcMap.set("__unbox_number_or_omitted", funcIdx);
+  return funcIdx;
+}
 
 /**
  * Build one closed-struct call arm: cast recv→`this`, push each declared arg
@@ -699,7 +754,13 @@ function buildEntryArm(
     }
     arm.push(...pushArg(a)); // the arg, as externref, onto the stack
     if (want.kind === "f64") {
-      if (unboxNumIdx !== undefined) arm.push({ op: "call", funcIdx: unboxNumIdx });
+      // (#5380) A PRESENT-but-undefined argument to a DEFAULTED f64 formal must
+      // still run the default; only that formal takes the sentinel-preserving
+      // unboxer, so every other numeric argument keeps its previous bytes.
+      const optionalHere = entry.optionalParams.some((candidate) => candidate.index === a);
+      const omittedAwareIdx = optionalHere ? ci.unboxNumOrOmitted?.() : undefined;
+      if (omittedAwareIdx !== undefined) arm.push({ op: "call", funcIdx: omittedAwareIdx });
+      else if (unboxNumIdx !== undefined) arm.push({ op: "call", funcIdx: unboxNumIdx });
       else arm.push({ op: "drop" }, { op: "f64.const", value: 0 });
     } else if (want.kind === "i32") {
       if ((want as { boolean?: true }).boolean && unboxBoolIdx !== undefined) {
@@ -758,6 +819,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     unboxNumIdx: ctx.funcMap.get("__unbox_number"),
     unboxBoolIdx: ctx.funcMap.get("__unbox_boolean"),
     undefinedIdx: ctx.funcMap.get("__get_undefined"),
+    unboxNumOrOmitted: () => ensureUnboxNumberOrOmitted(ctx, ci.unboxNumIdx),
   };
   const methodCallIdx = ctx.funcMap.get("__extern_method_call");
   const objVecNewIdx = ctx.funcMap.get(ctx.standalone || ctx.wasi ? "__objvec_new" : "__js_array_new");

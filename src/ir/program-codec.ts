@@ -3,7 +3,7 @@
 // #3518 package C — lossless codec for the production `PreparedIrProgram`.
 //
 // The codec owns no schema of its own. Its accepted data domain is exactly the
-// prepared-data model that `freezePreparedIrValue` (src/ir/program.ts, package
+// prepared-data model that `freezePreparedIrValue` (src/ir/program/data.ts, package
 // A) accepts and preserves:
 //
 //   - primitives: string, boolean, finite/non-finite/negative-zero number,
@@ -32,14 +32,9 @@
 // re-authenticated program is returned by `decodePreparedIrProgram`.
 
 import { IR_CLASS_SHAPE_CELL } from "./nodes.js";
-import {
-  freezePreparedIrRuntimeValue,
-  freezePreparedIrValue,
-  preparedIrDataMismatch,
-  PreparedIrProgramInvariantError,
-  type PreparedIrProgram,
-  type PreparedIrProgramRuntimeProjection,
-} from "./program.js";
+import { freezePreparedIrRuntimeValue, freezePreparedIrValue, preparedIrDataMismatch } from "./program/data.js";
+import { PreparedIrProgramInvariantError } from "./program/errors.js";
+import type { PreparedIrProgram, PreparedIrProgramRuntimeProjection } from "./program/prepared-contracts.js";
 import { preparedIrDraftAbiLookup } from "./program-abi-contracts.js";
 import { irProgramRuntimeDemands } from "./program-runtime-demands.js";
 import { assertPreparedIrProgram } from "./program-validation.js";

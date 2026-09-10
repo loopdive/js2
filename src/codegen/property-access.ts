@@ -34,6 +34,7 @@ import { recordRuntimeKeyClassMethodRead } from "./runtime-key-class-methods.js"
 import { emitOverlayRoutedElementGet, overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4159 S3)
 import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js"; // (#2580 M2 slice 1) (#2984)
+import { sidecarKeyCoversReceiver } from "./sidecar-owner-scope.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import {
   emitCachedFuncClosureAccess,
@@ -153,6 +154,7 @@ import {
 } from "./array-object-proto.js";
 import { isBuiltinSubtype, isBuiltinTypeName } from "./builtin-tags.js";
 import {
+  type ExternrefBackedOwnFieldBacking,
   externrefBackedOwnFieldBacking,
   getOrRegisterErrorStructType,
   isWasiErrorName,
@@ -2052,8 +2054,10 @@ export function emitExternrefBackedOwnFieldRead(
   expr: ts.PropertyAccessExpression,
   propName: string,
   className?: string,
+  backingOverride?: ExternrefBackedOwnFieldBacking,
 ): ValType | null | undefined {
-  const backing = className === undefined ? "error-struct" : externrefBackedOwnFieldBacking(ctx, className);
+  const backing =
+    backingOverride ?? (className === undefined ? "error-struct" : externrefBackedOwnFieldBacking(ctx, className));
   if (backing === undefined) return undefined;
   ensureObjectRuntime(ctx);
   const externGetIdx = ensureLateImport(
@@ -4022,7 +4026,7 @@ export function compilePropertyAccess(
   // host object and must stay externref.
   if (ts.isIdentifier(expr.expression)) {
     const sidecarKey = `${expr.expression.text}:${propName}`;
-    if (ctx.sidecarDefinedPropertyKeys.has(sidecarKey)) {
+    if (ctx.sidecarDefinedPropertyKeys.has(sidecarKey) && sidecarKeyCoversReceiver(ctx, sidecarKey, expr.expression)) {
       const runtimeResult = emitRuntimeDescriptorGet(ctx, fctx, expr.expression, propName, expr, true);
       if (runtimeResult !== null) return runtimeResult;
     }
@@ -6101,7 +6105,10 @@ export function compileElementAccessBody(
         }
 
         const sidecarKey = ts.isIdentifier(expr.expression) ? `${expr.expression.text}:${fieldName}` : undefined;
-        const isDynamicSidecarRead = sidecarKey !== undefined && ctx.sidecarDefinedPropertyKeys.has(sidecarKey);
+        const isDynamicSidecarRead =
+          sidecarKey !== undefined &&
+          ctx.sidecarDefinedPropertyKeys.has(sidecarKey) &&
+          sidecarKeyCoversReceiver(ctx, sidecarKey, expr.expression);
         if (runtimeAccessorDescriptorKey(ctx, expr.expression, fieldName) !== undefined || isDynamicSidecarRead) {
           const runtimeResult = emitRuntimeDescriptorGet(
             ctx,

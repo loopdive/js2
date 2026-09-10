@@ -517,3 +517,93 @@ reviewer per round) on the ES2015 standalone lane (#4444).
 - **Handoff**: `plan/agent-context/es2015-standalone-handover-2026-09-07.md`
   (entry point) + the umbrella's "### Wave-5 close (2026-09-07)".
 
+
+## 2026-09-07 18:00 — Temporal window: host lane +2,845, re-targeted to STANDALONE ONLY, S1 landed
+
+Remote CCR session (Fable plans/dispatches, Opus senior-dev lanes implement in
+isolated worktrees) on the Temporal goal. The owner's direction at ~14:00 UTC:
+**standalone only** — everything before that was the JS-host lane.
+
+- **Pass rate (host lane, whole corpus)**: 35,498 → **38,343 / 48,735** over
+  the window (baselines-repo jsonl, last fetched 17:33 UTC; committed summary
+  lags at 38,107 / 48,232). Temporal rows in the host lane: 2,925 / 4,611 pass
+  on the 2026-09-07 morning baseline.
+- **Standalone (the goal now)**: `built-ins/Temporal/**` **170 / 4,603** pass
+  (1,506 `Temporal is not defined`, 454 `__temporal_*` host-import leaks from
+  the #661 compile-time lowering). Standalone has NO `Temporal`; #4628 marked it
+  out of scope.
+- **Merged (host lane, this session)**: #5648, #5657, #5661, #5666, #5670,
+  #5673 (#5360), #5678 (#5364), #5682 (#5374), #5685 (#5373), #5691 (#5376),
+  #5699 (#5377, +Codex hono guard f1a91dd4f3), #5706 (#5378, +54 on 334),
+  #5709 (#5381, +82 on 325); docs #5679 #5686 #5700 #5701 #5707 #5719.
+- **Merged (standalone)**: **#5721 — #5383 S1**: the compiled polyfill now
+  validates under `--target standalone` with an EMPTY import list (anyref row in
+  the #1917 ToBoolean cascade; host-free `recv.m?.()` lowering).
+- **Open**: #5723 (#5384 exn-render exports kept + #5383 S2 R3/R4/R5, stacked on
+  S1, main merged); #5712 (#5380, released); #5704 (#5379, draft, 0 delta — the
+  channel was already closed by #5364).
+- **New issues filed**: #5364 #5373 #5374 #5376 #5377 #5378 #5379 #5380 #5381
+  (host lane, all planned by Fable); **#5383** (standalone Temporal umbrella +
+  S1–S5 plan); **#5384** (standalone exception renderer stripped by the #4035
+  export sink — filed by dev-5383).
+- **Incidents**: my worktree cleanup (50 worktrees, disk 94 % → 59 %) deleted
+  the only real `test262/` — every worktree's copy was a symlink chain into an
+  agent worktree; restored by re-cloning the submodule at the pinned sha into
+  the main checkout and re-pointing all worktrees there. Two container restarts
+  killed lanes (dev-5380 salvaged from its pushed fix + on-disk TSVs); #5691
+  parked on 47 Temporal rows — proven collateral (byte-identical A/B, 47/47
+  pass solo; the #1957 fork realm-mutation class, same as #5673/#5685);
+  `node_modules` symlinks in old worktrees pointed at removed worktrees;
+  `maximumRuntimeTsLines` ceiling drift on every re-merge (measured `wc -l`
+  each time); a Codex lane pushed a fix onto #5699's branch mid-flight (merged,
+  not fought).
+- **Context/budget**: ~1.2 M subagent tokens across 8 lanes today; lead session
+  compacted once.
+- **Key learnings**: the linker's "deferred export unavailable for WASI" note is
+  about `--target wasi` only — standalone honours `deferTopLevelInit` and
+  exports `__module_init`; `Intl`/`BigInt` references compile under standalone
+  with zero env imports (only 66 of 4,603 Temporal rows touch Intl); a codegen
+  PR's "wasm-hash changed on every row" is not regression evidence; the #4035
+  export sink can delete what an emitter provably pushed — audit the SINK when
+  every emitter gate passes; a bare `if (m.get(k))` on native Map was the same
+  invalid Wasm as WeakMap (the original reduction hid it behind a local); the
+  polyfill's `__module_init` still throws (jsbi `subtract` with a null argument
+  — suspect: property write on a `class extends Array` instance).
+- **Handoff**: `plan/agent-context/temporal-standalone-handover-2026-09-07.md`
+  (entry point) + `plan/issues/5383-standalone-temporal-provider.md`.
+
+## 2026-09-08 (evening) — standalone Temporal: the polyfill constructs, host-free
+
+- **Landed**: S2b (#5761), S2c (#5762), S2d (#5767), S2e (#5773). Four compiler
+  defects root-caused from the compiled polyfill, each with a reduction and a
+  byte A/B showing the gc lane unchanged.
+- **Open, stacked, both current with main**: S2f (#5777 — `$__ta_ctor` identity
+  by brand, a class value is `typeof "function"`, the callable-kind/construct
+  boundary twins) and S2g (#5780 — `new K(…)` on a class VALUE runs the
+  constructor body, in-module and across the link boundary).
+- **State reached**: with no JS host imports at all, the provider links,
+  `__module_init` completes, `Object.keys(Temporal)` answers nine, a class value
+  crosses the boundary as `typeof "function"`, and
+  `new Temporal.PlainDate(2024,1,1)` runs the real constructor.
+- **The remaining stop**: a dynamic read of a class instance's PROTOTYPE member
+  answers `undefined` — module-local, six-line reduction, no Temporal involved;
+  own fields and dynamic method CALLS both work. Across the boundary a method
+  call on a provider-owned instance additionally has no peer terminal. So of the
+  three smoke assertions only `Object.keys(Temporal).length === 9` passes, and
+  the smoke test is deliberately still unwritten rather than asserting the
+  passing subset.
+- **Key learnings**: two independent "widen the struct so its shape is unique"
+  fixes had landed on the SAME shape, so `ref.test $__ta_ctor` answered true for
+  every instance of a field-less class — a structural test can never answer a
+  nominal question, and the brand it needed was already being written and never
+  read; a class value and an instance share type and `__tag`, so identity
+  (`ref.eq` against the class-object singleton) is the only discriminator, and
+  the same fact drives `typeof`, construct dispatch and `is_constructor`; a
+  compiler key made of an identifier's TEXT is scope-blind, which routed every
+  `e.length` in a module through one binding's descriptor.
+- **Queue**: three parks, all collateral, all proven the same cheap way —
+  compile the named row on the PR head and on the park comment's exact baseline
+  compiler sha, compare the runner's `wasm_sha`. Identical bytes, hold removed,
+  #5773 then merged. Two minutes per diagnosis; worth doing every time before
+  touching a `hold`.
+- **Handoff**: `plan/agent-context/temporal-standalone-handover-2026-09-08.md`.

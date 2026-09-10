@@ -30,6 +30,7 @@ import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import { BUILTIN_STATIC_METHOD_ARITY } from "./builtin-fn-meta.js";
 import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js";
+import { mathValueReadHasBody } from "./math-value-read.js";
 import { isVariadicValueStatic } from "./string-fromcharcode-value-read.js";
 
 function unwrap(expr: ts.Expression): ts.Expression {
@@ -71,7 +72,24 @@ function isAmbientGlobalIdentifier(ctx: CodegenContext, ident: ts.Identifier): b
  */
 const FIXED_ARITY_PLAIN_ALIAS_STATICS: ReadonlySet<string> = new Set(["Proxy.revocable"]);
 
+/**
+ * (#5383 S2) The second named widening, and the measurement the header asks
+ * for. `var _ = Math.floor; … _(i)` — jsbi's `JSBI.BigInt(number)` header,
+ * reached by `Temporal.PlainDate.from("2024-01-01")` — did NOT route here, so
+ * it took the foreign-callable fallback. On `--target standalone` there is no
+ * host to fall back to: measured 2026-09-07, `const g = Math.floor; g(1.5)`
+ * threw `TypeError: Cannot access property on null or undefined`, and so did
+ * every other fixed-arity `Math.<fn>` alias INCLUDING the ones #4565 had
+ * already given a working body. Routing through the closure ABI answers `1`.
+ *
+ * Gated on `mathValueReadHasBody`, i.e. on a body that actually computes the
+ * value — a name whose body is still the refusal keeps today's path, so this
+ * trades no throw for a different throw. The whole resolver is standalone/WASI
+ * only (`call-identifier.ts` passes `undefined` for js-host), so the gc lane
+ * cannot be reached from here at all.
+ */
 function isFixedArityPlainAliasStatic(builtinName: string, propName: string): boolean {
+  if (builtinName === "Math" && mathValueReadHasBody(propName)) return true;
   return FIXED_ARITY_PLAIN_ALIAS_STATICS.has(`${builtinName}.${propName}`);
 }
 
@@ -100,8 +118,18 @@ export function resolveVariadicBuiltinStaticPlainAlias(
   if (BUILTIN_STATIC_METHOD_ARITY[builtinName]?.[propName] === undefined) return undefined;
   if (!isAmbientGlobalIdentifier(ctx, init.expression)) return undefined;
 
+  // (#5383 S2) Both soundness gates are asked SCOPE-AWARE. The file-wide
+  // spelling test they used before is unusable on a minified bundle — jsbi
+  // alone binds `_`, `t`, `g` and `i` in hundreds of unrelated scopes and
+  // assigns most of them somewhere, so `var _ = Math.floor` never resolved even
+  // though THAT `_` is never written. The gates keep their meaning: a write to
+  // this exact binding (or to a user binding that shadows the namespace)
+  // declines. An identifier whose declaration cannot be resolved counts as a
+  // write, so an unresolvable case still declines.
   const file = declaration.getSourceFile();
-  if (identifierIsWrittenTo(file, declaration.name.text)) return undefined;
-  if (identifierIsWrittenTo(file, builtinName)) return undefined;
+  const bindingWrite = (id: ts.Identifier): boolean =>
+    (ctx.oracle.valueDeclarationOf(id) ?? ctx.oracle.variableDeclarationOf(id) ?? declaration) === declaration;
+  if (identifierIsWrittenTo(file, declaration.name.text, bindingWrite)) return undefined;
+  if (identifierIsWrittenTo(file, builtinName, (id) => isAmbientGlobalIdentifier(ctx, id))) return undefined;
   return { builtinName, propName };
 }

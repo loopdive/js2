@@ -73,7 +73,7 @@ import { emitJsonStringifyValue } from "./json-codec-native.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
 import { getArrTypeIdxFromVec } from "./registry/types.js";
-import { emitMathValueReadBody } from "./math-value-read.js"; // (#4565)
+import { emitMathValueReadBody, prepareMathValueRead } from "./math-value-read.js"; // (#4565, #5383)
 import { ensureHostArrayCarrierPredicate } from "./host-array-carrier.js"; // (#4649)
 import {
   emitStringFromCharCodeValueBody,
@@ -1306,6 +1306,14 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       for (let i = 0; i < genericArity; i++) paramTypes.push({ kind: "externref" });
       returnType = { kind: "externref" };
       genericThrowBody = true;
+      // (#5383 S2) `Math.<fn>` is the one family that gets a REAL body below
+      // (`emitMathValueReadBody`), and that body only READS `ctx.funcMap` —
+      // registering a native mid-body desyncs codegen (#2704). Register them
+      // here, before the wrapper types and the closure `FunctionContext` exist.
+      // Without this the body emitter found none of `__any_from_extern` /
+      // `__any_to_f64` / `__box_number` and declined EVERY name, so even the
+      // #4565 transcendentals kept the refusal body.
+      if (builtinName === "Math") prepareMathValueRead(ctx, propName);
       break;
     }
   }
