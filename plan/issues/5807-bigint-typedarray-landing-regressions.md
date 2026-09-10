@@ -267,3 +267,79 @@ normally without recycling. Both workers were replacements after
 neither had a preceding linked request or reset. All trace streams lack exit
 markers, so final unwritten tails remain unknown. The original failing workers'
 corresponding histories are unavailable; do not infer them from these replacements.
+
+## Bounded local controlled-history diagnosis
+
+Next diagnostic uses four serial, fresh one-worker pools: target alone and
+linked seed followed by target at each historical pin. The seed is
+`test/built-ins/Temporal/Duration/from/argument-string-invalid.js`, the
+lexicographically first of66 Temporal fixtures passing all six preserved
+populations. Its observed linkedModules1/PASS/no-recycle events establish an
+actual linked positive control. Keep original fixture bytes and original
+primary/conditional-strict assembly; at most12 requests across the four pools.
+
+No reset or registry manipulation is added. Reject a seeded trial if its seed
+fails, does not link, or its worker crashes, times out, recycles, retries, or is
+replaced before the target. Record identity/history rather than inferring it
+from completion order. Use a separate controlled-history checker; never reduce
+the existing939-row replay gate. Equal outcomes remain inconclusive.
+
+Subjects and independent corpus checkouts are newly created under
+`/private/tmp/js2-5807-controlled-history.Di6H7Q/{donor,candidate}`; protected
+originals are untouched. A fresh1.2GiB dependency copy has2204 symlinks, all
+resolving inside that copy. Both original provider caches and the exact reviewed
+observation patch are installed. Node25.9.0 is the previously retained Darwin
+ARM64 binary. This local one-worker/order-controlled diagnostic is not Linux
+reproduction and cannot clear either historical regression on its own.
+
+## Controlled history result: shared failure reproduced locally
+
+All four serial trials completed with diagnostic exit0, ten actual requests
+out of the twelve-request maximum. At donor129e3efd4530ae1be56dbf5fdea54ddbbd87443e
+and candidateefa0908e09998c73da592fba32708c7ecca8d6e5, target-alone primary and
+strict both PASS. In each seeded pool, both original Temporal seed variants
+PASS, then the target primary FAILS with the preserved error:
+`cannot marshal opaque compiled value to host BigInt64Array constructor (Testing with BigInt64Array and makeArray.)`
+The original conditional rule correctly omits the target strict rerun after
+failure. Diagnostic exit0 means complete evidence, not a passing target.
+
+Both seeded traces preserve one original worker across all three requests,
+actual linkedModules1 for the seed and0 for the target, and a warm provider
+cache. The seed's strict request registers decoder identities subsequently
+retained during the target. Each target selects one retained peer decoder,
+observes an undefined mirror length, and records one constructor refusal.
+Alone, neither pin selects a peer; all four existing mirror-length reads per
+trial are numeric3. Both existing resets occur during seeded requests; no reset
+was added and neither target resets. All four post-run source, fixture, corpus,
+dependency, bundle and provider comparisons passed. Independent parent trace
+audits also passed with exact request populations.
+
+This reproduces a shared worker-history-sensitive failure on the older pin as
+well as the candidate. It does not prove that registry retention alone caused
+it: the preceding Temporal workload changes more than that registry. It does
+not establish the original failing Linux workers' history, clear the BigInt
+set regression, authorize a baseline promotion, or release the cumulative IR
+hold. No production runtime changes or further cloud runs were made.
+
+Reproducible driver: `scripts/issue-5807-controlled-history.mjs`; its62 synthetic
+tests plus the unchanged observation/replay tests pass125/125 on Node25.9.0.
+Prepared inputs: [setup receipt](../agent-context/5807-controlled-history-setup-2026-09-10.json).
+Results, decisive trace records, exact pins, and raw-file hash inventory:
+[controlled-history evidence](../agent-context/5807-controlled-history-evidence-2026-09-10.json).
+Raw logs, admissions, results and traces remain in the four exclusive trial
+directories under `/private/tmp/js2-5807-controlled-history.Di6H7Q`; do not
+overwrite, retry in place, or delete them.
+
+Independent subagent review verified50/50 final artifact hashes and matching
+fixture/assembly hashes across all trials. In each seeded trace the retained
+seed decoder reports `years,months,weeks,days` for the target's object instead
+of the target-local decoder. The four original controller trace inventories
+were captured before controller exit: each later hash discrepancy reconciles
+exactly to one appended `observer-exit` line. Those original receipts remain
+unchanged; the published final inventory hashes the complete files after exit.
+
+Next reviewable step is a narrowly scoped intervention proposal at the
+linked-to-nonlinked transition, with original failures kept as controls and
+exact fixture preservation. A registry-only intervention must be distinguished
+from broader linked-project/realm cleanup and tested on both pins before any
+causal or repair claim. That intervention remains unapproved and unexecuted.
