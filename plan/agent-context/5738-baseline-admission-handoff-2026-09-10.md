@@ -121,3 +121,15 @@ metadata-only publication (no baseline promotion/replacement), then run one
 skip-promote measurement pinned to that commit. Preserve any new failures and
 only enqueue #5738 once evidence and protected checks justify it. Do not resume
 #5756 or the rest of the stack until #5738's landing decision is resolved.
+
+## Superseding measurement and acquisition repair evidence
+
+The original-artifact admission path is now published at eafbc5fc9a476afb65e90414a8c2afae04cf108a. Run 34477860865 admitted original artifact 10112017687 without normalizing its bytes. Both lanes completed 48,735 registered rows with zero exclusions after a failed-jobs-only retry of standalone shard 15, whose first runner received a shutdown signal. Original attempts and artifacts remain preserved. No baseline promotion occurred.
+
+The completed measurement failed: standalone had zero status regressions; host had 23 raw pass-to-fail rows, of which the unchanged canary policy excluded two, leaving 21 counted regressions. The coarse merge-report threshold is not landing clearance. The fine regression gate failed. All 23 rows passed in the earlier ea21 measurement; that observation alone does not waive them.
+
+All 20 Temporal regressions belong to host shard 6, job 102873292740, artifact 10152747001 (850 registered/verdict rows, zero exclusions). Its log at 12:40:37Z reports the unchanged JSBI source-link assertion rejecting an incomplete bundle, followed by three successful provider loads. Existing PR #5795 commit 085cf77f9e8ee33b223bc6098c9c159d543e884d addresses this exact acquisition mechanism. Its helper and five deterministic tests are imported unchanged; only its ten-line historical issue receipt is brought over, not unrelated donor history.
+
+Initial local validation on Node 25.9.0: acquisition 5/5, adjacent wiring/registry 23/24. The one failure is a literal workflow dependency assertion that predates this branch's added admission dependency. Update that exact expected list while retaining both provider dependencies and the unchanged merge-group expectation; do not change the workflow or weaken the assertion.
+
+Three non-Temporal raw failures remain separate: TypedArray findLastIndex return-abrupt-from-predicate-call, BigInt boolean-tobigint, and Function 15.3.5.4_2-11gs. Their cause remains unresolved. Preserve full artifacts at /private/tmp/js2-5738-conformance-attempt2.lZDW9Ond and the failed remote run. Focused acquisition tests are not a full conformance pass. Keep #5738 held until fresh measurement and protected checks justify landing, then tackle #5752. Stack refreshes remain paused.
