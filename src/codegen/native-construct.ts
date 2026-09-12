@@ -67,6 +67,7 @@ import { addFuncType } from "./registry/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { standaloneLinkBoundaryPeerIndex } from "./standalone-link-boundary.js"; // (#5383 S2f R12)
+import { ensureStandaloneClassConstructDispatch } from "./standalone-class-construct.js"; // (#5383 S2g)
 import { RUNTIME_EVAL_INTERP_CALLBACK_BRAND_A, RUNTIME_EVAL_INTERP_CALLBACK_BRAND_B } from "./runtime-eval-boundary.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
@@ -247,6 +248,13 @@ export function maxReservedNativeConstructArity(ctx: CodegenContext): number {
  * down an unrelated call.
  */
 export function fillNativeConstructDrivers(ctx: CodegenContext): void {
+  // (#5383 S2g) Mint the per-class construct trampolines FIRST, so the arm
+  // below has a funcIdx to bake and `__js2wasm_link_construct` — filled later,
+  // at export-publish time — finds the same dispatcher in `funcMap`.
+  //
+  // It gates itself: a module with no `new <runtime value>` site and no wasm
+  // consumer gets `undefined` here and emits identical bytes.
+  const classConstructIdx = ensureStandaloneClassConstructDispatch(ctx);
   for (let arity = 0; arity <= MAX_NATIVE_CONSTRUCT_ARITY; arity++) {
     const driverIdx = ctx.funcMap.get(driverName(arity));
     if (driverIdx === undefined) continue;
@@ -418,6 +426,32 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
         },
       );
     }
+    // (#5383 S2g) A class reached as a VALUE is the class-object singleton — a
+    // `$ClassName` struct, not a closure — so the ordinary tail's
+    // `__call_fn_method_<N>` misses it and returns the bare `Object.create`
+    // result with none of the constructor's own fields. Dispatch by IDENTITY to
+    // the class's construct trampoline first; a null answer means "not one of
+    // my classes" and falls through to the unchanged tail below.
+    const canClassConstruct =
+      classConstructIdx !== undefined && objVecNewIdx !== undefined && objVecPushIdx !== undefined;
+    if (canClassConstruct) {
+      body.push(
+        ...buildArgsVec(),
+        { op: "local.get", index: 0 },
+        { op: "local.get", index: argsVecLocal },
+        { op: "i32.const", value: arity },
+        { op: "call", funcIdx: classConstructIdx },
+        { op: "local.tee", index: resultLocal },
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "local.get", index: resultLocal }, { op: "return" }],
+        },
+      );
+    }
+
     const canBoundaryConstruct =
       boundaryCallableKindIdx !== undefined &&
       boundaryConstructIdx !== undefined &&
@@ -591,7 +625,7 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
       { name: "__ctor_proto", type: EXTERNREF },
       { name: "__ctor_self", type: EXTERNREF },
       { name: "__ctor_result", type: EXTERNREF },
-      ...(canApplyRuntimeMarker || canProxyConstruct || canBoundaryConstruct
+      ...(canApplyRuntimeMarker || canProxyConstruct || canBoundaryConstruct || canClassConstruct
         ? [{ name: "__ctor_args", type: EXTERNREF }]
         : []),
     ];

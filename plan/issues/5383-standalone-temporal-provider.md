@@ -11,6 +11,19 @@ reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-07
 loc-budget-allow:
+  # 2026-09-08 (S2g) — the standalone construct-from-a-class-VALUE path. The
+  # mechanism itself is two NEW modules (src/codegen/standalone-class-construct.ts
+  # and src/codegen/extern-arg-marshal.ts, the latter an extraction that makes
+  # closed-method-dispatch.ts SHRINK); what lands in new-super.ts is only the
+  # admission:
+  #   expressions/new-super.ts  +22  the member-callee admission
+  #     (`new NS.PlainDate(…)`) must sit ON the callee-shape decision inside
+  #     `tryCompileNativeConstructFromValue` and on the one `if` that gates it —
+  #     that is exactly where the host lane makes the same decision
+  #     (`usesHostConstructClosureBase`), and separating the two would let the
+  #     lanes drift apart silently. The rest of the growth is the rationale for
+  #     why an UNDECLARED base must keep declining (#4728).
+  - src/codegen/expressions/new-super.ts
   # 2026-09-08 (S2e) — scope-discriminating the `defineProperty` sidecar key.
   # The mechanism itself is the new module src/codegen/sidecar-owner-scope.ts;
   # what lands in these four files is ONLY the wiring, and it has to sit on the
@@ -84,6 +97,13 @@ loc-budget-allow:
     lines: 20
     reason: "#5383 S2 R4 — pre-register the `Math.<fn>` value-read substrate before the closure is built (#2704 forbids a first registration mid-body), which is why every Math value read kept the refusal body."
 func-budget-allow:
+  # 2026-09-08 (S2g) — +5 lines in `compileNewExpression`: the one `if` that
+  # lets a MEMBER callee reach the native construct driver under standalone.
+  # It is a condition on the existing dispatch `if`, not a block — there is
+  # nothing to extract, and moving the predicate away from the dispatch it
+  # guards is precisely how the host and standalone lanes drifted apart in the
+  # first place (the host lane's twin is three lines further down).
+  - src/codegen/expressions/new-super.ts::compileNewExpression
   # 2026-09-08 (S2f R12/R13) — three arms that CANNOT move out of the cascade
   # they qualify, because in each case the position IS the correctness argument:
   #   typeof-natives-finalize.ts::fillStandaloneTypeofClosureArms  +33
@@ -1145,3 +1165,130 @@ callable as a static-method receiver. `Object.keys(Temporal).length === 9` is
 the only one of the three assertions that would pass today. Writing a smoke test
 that asserts only that would hide what is missing, so the reduction above is the
 deliverable instead.
+
+## S2g findings (2026-09-08) — construct-from-a-class-VALUE fixed; the stop moves to PROTOTYPE members
+
+### R14 — `new K(…)` on a class value now runs the constructor body
+
+S2f's three-line reduction reproduces exactly as recorded (`mk(PlainDate).y`
+answered an `Object.create(null)`-shaped object, not `5`). Two things were
+missing, not one:
+
+| # | missing piece | where it was |
+| --- | --- | --- |
+| 1 | a per-class entry point that runs the ctor from an args vec | nowhere — the driver only knew how to dispatch a CLOSURE |
+| 2 | admission of a MEMBER callee under standalone | `tryCompileNativeConstructFromValue` took identifiers only, so `new NS.PlainDate(…)` never reached any construct path and evaluated to **null** |
+
+**The mechanism** — `src/codegen/standalone-class-construct.ts`:
+
+```
+__class_construct_<Name>(args: externref-vec, argc: i32) -> externref
+    a_i = i < argc ? coerce(args[i]) : <zero of the formal's type>
+    (new.target := <Name>; __argc := min(argc, formals))
+    return box(<Name>_new(a_0 … a_n))
+
+__class_construct_dispatch(callee, args, argc) -> externref
+    ref.eq the callee against each class-object singleton; on a hit, tail into
+    that class's trampoline. No hit ⇒ null.
+```
+
+Keyed by **identity**, not type — the same discriminator R13 needed for
+`typeof`, and for the same reason (a class value is a `$ClassName` struct with
+the same type and `__tag` as an instance, so no `ref.test` can separate them).
+The null answer is what lets both callers keep their previous behaviour
+verbatim on a miss.
+
+Two callers, one dispatcher:
+
+- `fillNativeConstructDrivers` — an arm ahead of the ordinary §10.2.2 tail;
+- `__js2wasm_link_construct` (the R12 provider terminal) — the SAME arm, which
+  is why `new NS.PlainDate(…)` works across the host-free boundary. Its ordinary
+  tail had the identical defect.
+
+`<Name>_new` is the constructor entry a STATIC `new Name(…)` calls, so field
+initializers, `super(…)` and parameter defaults come from the one lowering
+rather than a second copy of it. Missing arguments are zero-padded and the real
+defaults come from the callee's own prologue via the `__argc` global (#5244) —
+the trampoline publishes `min(argc, formals)`. Argument marshalling is
+`closed-method-dispatch.ts`'s, extracted verbatim to
+`src/codegen/extern-arg-marshal.ts` so the #5380 omitted-argument sentinel has
+one implementation for both callers (that extraction makes
+`closed-method-dispatch.ts` **shrink**).
+
+**R14b — `__reflect_is_constructor` had no class arm.** With the trampolines in
+place the boundary still returned an empty object, because the provider's
+`callableKind` terminal publishes bit 1 from `__reflect_is_constructor`, which
+answered 0 for a class-object singleton — so the consumer's driver never asked
+the owning module at all and fell into its own ordinary tail. Same identity arm,
+standalone/WASI only.
+
+Measured (`.tmp/r1.js` … `.tmp/r6.js`, `.tmp/linkprobe.mts`):
+
+| probe (`--target standalone`, `hostBridge:"off"`) | base | after |
+| --- | --- | --- |
+| `mk(PlainDate).y` (the S2f reduction) | `Object.create(null)`-shaped | **5** |
+| more args than declared / fewer (default runs) / `super(…)` / field initializer | 0 / 0 / 0 / 0 | 5 / 7 / 10 / 7 |
+| `new K(3)` on a plain function value (control) | 3 | 3 |
+| `new NS.PlainDate(2024,1,1)` through the linked boundary, host-free | **null** | an instance; `.y` = 2024, `.d` = 1 |
+
+**Byte A/B** (sha256, 6 modules × 2 targets, `.tmp/ab-base.txt` vs
+`.tmp/ab-new3.txt`): all twelve identical, gc AND standalone. The gate is a
+`new <runtime value>` site in the module (or being a wasm-consumed provider),
+not "a construct driver exists" — `array-species.ts` / `array-from-native.ts`
+reserve a driver in any module that touches those builtins, and gating on that
+changed a two-class module with no dynamic `new` by **+134 B**.
+
+**Pre-existing red, NOT caused by this slice** (measured both ways, base =
+`issue-5383-standalone-temporal-s2f` with the S2g files reverted by file copy):
+`tests/issue-2026-dynamic-new-spread.test.ts` (5),
+`tests/issue-2026-dynamic-new-varspread.test.ts` (5) and
+`tests/issue-3981-standalone-construct-function-value.test.ts` (1, "links the
+instance to the constructor's prototype") fail **identically — the same 11 —
+before and after**. Two of the three are gc-lane tests, which the byte A/B
+already says this slice cannot touch. Worth an owner; not this one.
+
+### The NEW stop — a PROTOTYPE member of a class instance, read dynamically
+
+Not a boundary defect. It reproduces in ONE standalone module, 6 lines, no
+Temporal (`.tmp/r6.js`):
+
+```js
+class PlainDate { constructor(d) { this._d = d; } get day() { return this._d; } sum(k) { return this._d + k; } }
+function readDyn(o, k) { return o[k]; }
+function callDyn(o) { return o.sum(1); }
+export function accessor() { const v = readDyn(new PlainDate(7), "day"); return typeof v === "number" ? v : -1; }
+export function method()   { return callDyn(new PlainDate(7)); }
+export function ownField() { const v = readDyn(new PlainDate(7), "_d"); return typeof v === "number" ? v : -1; }
+```
+
+| probe | answer |
+| --- | --- |
+| `ownField` — dynamic read of an OWN field | **7** (works) |
+| `method` — dynamic CALL of a prototype method | **8** (works, via `__call_m_sum_1`) |
+| `accessor` — dynamic READ of a prototype ACCESSOR | **−1**, i.e. `undefined` |
+
+A dynamic read of a prototype METHOD is the same miss (`typeof o["day"]` is
+`"undefined"` for `day() {…}` too). So the generic `__extern_get` ladder serves
+own fields but never consults the class PROTOTYPE; only the dynamic-method-CALL
+path (`closed-method-dispatch`) does, and that path is module-local.
+
+Across the boundary both halves fail, and for two different reasons — worth not
+re-deriving (`.tmp/linkprobe.mts` with `.tmp/prov2.js` / `.tmp/cons2.js`):
+
+| consumer probe on a provider-owned value | answer |
+| --- | --- |
+| `d.y` (own field) | 2024 ✓ |
+| `typeof d.day` (prototype method, read) | `"undefined"` |
+| `d.day()` (prototype method, called) | throws — "is not a function"; the closed dispatcher's arms are module-local and there is **no `__js2wasm_link_method_call` terminal** |
+| `NS.PlainDate.mk(7)` (STATIC method on the class value) | throws, same shape |
+
+**Consequence for the S2 smoke test: still not writable, and the missing piece
+is now named.** `new Temporal.PlainDate(2024,1,1).day` needs the accessor read
+(module-local defect above); `Temporal.Duration.from({hours:1}).total("minutes")`
+needs BOTH a static-method read on a class value and a method call on a
+provider-owned instance. `Object.keys(Temporal).length === 9` remains the only
+one of the three that passes today, and asserting only it would hide exactly
+this. The next slice is therefore: (a) make the generic dynamic member read
+consult the class prototype (own-field ladder → prototype accessors/methods),
+and (b) add the `method_call` terminal to `standalone-link-boundary.ts` beside
+`memberGet`/`apply`, wired into the consumer's `__extern_method_call` miss path.

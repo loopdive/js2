@@ -33,6 +33,7 @@
 
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { ensureReflectIsConstructor } from "./reflect-construct-native.js";
+import { CLASS_CONSTRUCT_DISPATCH } from "./standalone-class-construct.js"; // (#5383 S2g)
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { definedFuncAt } from "./func-space.js";
 import type { CodegenContext } from "./context/types.js";
@@ -251,7 +252,35 @@ function fillStandaloneLinkBoundaryLateTerminals(ctx: CodegenContext): void {
     // Param 2 (newTarget) is accepted for ABI parity with the host lane's
     // `__boundary_object_construct` and is deliberately unused: null there
     // means "use the constructor itself", which is what this tail does.
+    // (#5383 S2g) A CLASS the provider owns is constructed by its own
+    // trampoline, keyed by the class-object singleton's identity. The ordinary
+    // tail below cannot do it: a class value is a `$ClassName` struct, so
+    // `__apply_closure` misses and the consumer receives the bare
+    // `Object.create(proto)` — an instance with none of its own fields. A null
+    // answer means "not one of my classes" and falls through unchanged.
+    const classConstructIdx = ctx.funcMap.get(CLASS_CONSTRUCT_DISPATCH);
+    const externLengthIdx = ctx.funcMap.get("__extern_length");
+    const classArm: Instr[] =
+      classConstructIdx === undefined || externLengthIdx === undefined
+        ? []
+        : [
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: 1 },
+            { op: "local.get", index: 1 },
+            { op: "call", funcIdx: externLengthIdx },
+            { op: "i32.trunc_sat_f64_s" },
+            { op: "call", funcIdx: classConstructIdx },
+            { op: "local.tee", index: 4 },
+            { op: "ref.is_null" },
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "local.get", index: 4 }, { op: "return" }],
+            },
+          ];
     constructFn.body = [
+      ...classArm,
       { op: "local.get", index: 0 },
       ...stringConstantExternrefInstrs(ctx, "prototype"),
       { op: "call", funcIdx: externGetIdx },

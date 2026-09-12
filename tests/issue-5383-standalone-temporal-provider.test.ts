@@ -912,3 +912,136 @@ describe("#5383 S2f R12 — a provider-owned class VALUE is callable in the cons
     expect(await linkAndRun()).toEqual({ keys: 3, b: 2, nowA: 1, hasPD: 1, typeofPD: 1 });
   });
 });
+
+// ── S2g — `new` on a class VALUE runs the constructor body ───────────────────
+//
+// R14. `fillNativeConstructDrivers`'s ordinary tail is a CLOSURE dispatch
+// (`__call_fn_method_<N>`). A class reached as a value is the class-object
+// singleton — a `$ClassName` struct — so the dispatch missed, the result was
+// null, and the driver returned the bare `Object.create(proto)`: an object with
+// none of the constructor's own fields. Each class now has a `construct`
+// trampoline (`standalone-class-construct.ts`) reached by IDENTITY (`ref.eq`
+// against the singleton), which calls the SAME `<Class>_new` a static
+// `new C(…)` calls — so field initializers, `super(…)` and parameter defaults
+// come from the one lowering rather than a second copy of it.
+describe("#5383 S2g R14 — `new K(…)` on a class value runs the constructor", () => {
+  it("the three-line reduction: base returned an empty object, not `5`", async () => {
+    const mod = await compileStandalone(`
+      class PlainDate { constructor(y) { this.y = y; } }
+      const mk = (K) => new K(5);
+      export function test() { return mk(PlainDate).y; }
+    `);
+    expect(callExport(mod)).toBe(5);
+  });
+
+  it("more args than declared, fewer than declared (the default runs), and `super(…)`", async () => {
+    const mod = await compileStandalone(`
+      class A { constructor(y) { this.y = y; } }
+      class B { constructor(y = 7) { this.y = y; } }
+      class Sub extends A { constructor(y) { super(y * 2); this.z = 1; } }
+      const mk0 = (K) => new K();
+      const mk1 = (K) => new K(5);
+      const mk3 = (K) => new K(5, 6, 7);
+      export function test() {
+        const s = mk1(Sub);
+        return mk3(A).y * 1000 + mk0(B).y * 100 + s.y + s.z * 100000;
+      }
+    `);
+    // 5·1000 (extra args dropped) + 7·100 (the `= 7` default ran, so NOT 0)
+    // + 10 (`super(y*2)`) + 100000 (the subclass's own field).
+    expect(callExport(mod)).toBe(105_710);
+  });
+
+  it("a field initializer runs, and the result is a real instance", async () => {
+    const mod = await compileStandalone(`
+      class Init { n = 3; constructor(y) { this.y = y; } sum() { return this.y + this.n; } }
+      const mk = (K, v) => new K(v);
+      export function test() {
+        const a = mk(Init, 4);
+        return a.sum() * 10 + (a instanceof Init ? 1 : 0);
+      }
+    `);
+    // 7 = 4 + the field initializer's 3; `instanceof` holds because the
+    // trampoline returns the ordinary `<Class>_new` instance.
+    expect(callExport(mod)).toBe(71);
+  });
+
+  it("a plain function VALUE still takes the ordinary §10.2.2 tail", async () => {
+    const mod = await compileStandalone(`
+      class Unrelated { constructor(y) { this.y = y; } }
+      function Ctor(x) { this.x = x; }
+      const mk = (K) => new K(3);
+      export function test() { return mk(Ctor).x * 10 + mk(Unrelated).y; }
+    `);
+    // The class arm answers null for a closure callee, so the driver falls
+    // through to exactly the code it ran before this slice.
+    expect(callExport(mod)).toBe(33);
+  });
+});
+
+describe("#5383 S2g R14 — `new` on a provider-owned class, host-free", () => {
+  const PROVIDER = `class PlainDate {
+      constructor(y, m, d) { this.y = y; this.m = m; this.d = d; }
+    }
+    export const NS = Object.freeze({ __proto__: null, PlainDate, b: 2 });`;
+
+  // Own FIELDS only, deliberately. A dynamic read of a PROTOTYPE member
+  // (method or accessor) on a foreign instance is a separate, still-open stop —
+  // see the S2g findings in plan/issues/5383-standalone-temporal-provider.md;
+  // it reproduces in ONE module, with no boundary, so it is not this slice's.
+  const CONSUMER = `
+    export function year() { const d = new NS.PlainDate(2024, 1, 1); return d.y; }
+    export function day() { const d = new NS.PlainDate(2024, 1, 1); return d.d; }
+    export function b() { return NS.b; }
+  `;
+
+  it("`new NS.PlainDate(2024,1,1)` reaches the constructor body", { timeout: 300_000 }, async () => {
+    const root = mkdtempSync(join(tmpdir(), "issue-5383-s2g-"));
+    const packageRoot = join(root, "node_modules", "ns5383g");
+    mkdirSync(packageRoot, { recursive: true });
+    writeFileSync(
+      join(packageRoot, "package.json"),
+      JSON.stringify({ name: "ns5383g", version: "0.0.0", main: "index.js" }),
+    );
+    writeFileSync(join(packageRoot, "index.js"), PROVIDER);
+    const entry = join(root, "entry.js");
+    writeFileSync(entry, `import { NS } from "ns5383g";\nexport function __probe() { return typeof NS; }\n`);
+    const standalone = { target: "standalone" as const, hostBridge: "off" as const };
+    const built = await compileProject(entry, {
+      allowJs: true,
+      skipSemanticDiagnostics: true,
+      packageCacheDir: join(root, "providers"),
+      ...standalone,
+    });
+    expect(built.success).toBe(true);
+    expect(built.linkPlan?.mode).toBe("separate");
+    const artifact = (built.linkedModules ?? []).find((e) => e.packageName === "ns5383g")!;
+    const field = artifact.exportBoundaries!.NS!.field;
+    const consumerEntry = "/__main.js";
+    const result = await compileMulti(
+      {
+        "/__ns_stub.ts": `export declare function ${field}(): any;\n`,
+        [consumerEntry]: `import { ${field} } from "/__ns_stub";\nconst NS = ${field}();\n${CONSUMER}`,
+      },
+      consumerEntry,
+      {
+        allowJs: true,
+        skipSemanticDiagnostics: true,
+        canonicalRuntimeTypes: true,
+        sharedExceptionTag: true,
+        link: [artifact.namespace],
+        linkedPackageBindings: new Map([[field, { module: artifact.namespace, field }]]),
+        ...standalone,
+      },
+    );
+    (result as { linkedModules?: unknown[] }).linkedModules = [artifact];
+    expect(result.success).toBe(true);
+    const { instance } = await instantiateLinkedProject(result, {});
+    const ex = instance.exports as unknown as Record<string, () => unknown>;
+    // Base answered `{ day: undefined, year: undefined }`: the member callee
+    // reached no construct path at all (null), and once it did, the boundary's
+    // ordinary tail returned `Object.create(proto)` — an instance with none of
+    // the constructor's own fields.
+    expect({ day: ex.day(), year: ex.year(), b: ex.b() }).toEqual({ day: 1, year: 2024, b: 2 });
+  });
+});
