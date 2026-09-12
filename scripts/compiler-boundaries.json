@@ -10480,6 +10480,11 @@
       "layer": "legacy-host"
     },
     {
+      "path": "src/runtime/typed-array-host-brand.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
       "path": "src/runtime/vec-mirror-writeback.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
