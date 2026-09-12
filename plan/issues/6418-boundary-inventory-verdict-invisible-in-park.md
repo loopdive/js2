@@ -152,3 +152,20 @@ assertions). With the fix: 50/50 across
 
 **No compiler source changed** — `scripts/` and `.github/` only — so no dogfood
 suite A/B was run and every anchor is unaffected by construction.
+
+### Second finding, fixed here: agent commits reformat bot-owned artifacts
+
+Merging `upstream/main` into this branch silently reformatted four published
+test262 report artifacts — 414 lines of whitespace, zero data change.
+`lint-staged` runs `prettier --write` on every staged `*.json`, and
+`.prettierignore` covers `benchmarks/results/` but not its two published copies
+(`public/benchmarks/results/`, and the two `website/public/` test262 reports),
+which the baseline-sync bot writes unformatted. `git log` shows only bots have
+ever touched those files, so the reformat would have gone DIRTY on the bot's
+next push to main.
+
+It could not be reverted by hand — restoring the content and staging it just
+re-invokes the same `prettier --write` — so the fix is the missing ignore
+entries, which is also what stops the next branch from hitting it. Same family
+as the issue above: a mechanism doing something invisible until it costs
+someone a cycle.
