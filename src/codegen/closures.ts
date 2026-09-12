@@ -35,7 +35,11 @@ import { reportSilentFallback } from "./fallback-telemetry.js";
 import { resolveLiftedMethodThisStruct } from "./fnctor-escape-gate.js"; // (#2681/#2686 A3) lifted-method `this`→struct
 import { allocLocal, allocTempLocal, getLocalType } from "./context/locals.js";
 import { seedLiftedClosureArgumentsCallee } from "./arguments-callee.js"; // (#4243) §10.6 step 13.a
-import { callableHasConstructBehavior, resolveCallbackMakerName } from "./callback-ctor-bridge.js"; // (#4394) bridge [[Construct]] parity
+import {
+  callableHasConstructBehavior,
+  hostFacingCallbackReturnType,
+  resolveCallbackMakerName,
+} from "./callback-ctor-bridge.js"; // (#4394) bridge [[Construct]] parity · (#5375) host-facing result type
 import { registerStandaloneDomCallbackDirectClosure } from "./standalone-dom-callback-authority.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
@@ -4256,7 +4260,8 @@ export function compileArrowAsCallback(
       if (!isVoidType(retType)) {
         // (#3051 Slice 3) see resolveWasmTypeForClosureReturn — accessor-bearing
         // object-literal return types lower to externref (host plain objects).
-        cbReturnType = resolveWasmTypeForClosureReturn(ctx, retType);
+        // (#5375) A host-invoked accessor/method returns references as externref.
+        cbReturnType = hostFacingCallbackReturnType(resolveWasmTypeForClosureReturn(ctx, retType), needsThis);
       }
     }
   } catch {
