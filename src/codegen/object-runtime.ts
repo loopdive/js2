@@ -240,7 +240,11 @@ import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) o
 import { backedBoundsGuard, canonicalIndexDigitStep } from "./vec-index-domain.js"; // (#4434) index domain + sparse tail
 import { buildVecIndexKeyPush, reserveVecIndexEnumerable } from "./vec-index-enumerable.js"; // (#4491) overlay-aware key flags
 import { fillHostArrayCarrierPredicate } from "./host-array-carrier.js"; // (#4649) js-host late-bound carrier test
-import { emitStandaloneLinkBoundaryTerminals, standaloneLinkBoundaryPeerIndices } from "./standalone-link-boundary.js"; // (#5383 S2d) wasm→wasm peer terminals
+import {
+  emitStandaloneLinkBoundaryTerminals,
+  standaloneLinkBoundaryPeerIndex,
+  standaloneLinkBoundaryPeerIndices,
+} from "./standalone-link-boundary.js"; // (#5383 S2d/S2f) wasm→wasm peer terminals
 import {
   buildOwnToPrimitiveOverridePresent,
   buildWrapperSlotShortCircuit,
@@ -1020,7 +1024,14 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // space freezes (#1984) and because they answer the same question — "this
   // carrier is not mine; who can decode it?". On the host lane these stay
   // undefined and every arm below is byte-identical.
-  const { memberGet: peerMemberGetIdx, objectKeys: peerObjectKeysIdx } = standaloneLinkBoundaryPeerIndices(ctx);
+  const {
+    memberGet: peerMemberGetIdx,
+    objectKeys: peerObjectKeysIdx,
+    // (#5383 S2h) …and the CALL twin of the same question, for the same reason:
+    // a receiver this module cannot decode is one whose owner must run the
+    // method, because the trampoline's `this` lives in the owner's globals.
+    methodCall: peerMethodCallIdx,
+  } = standaloneLinkBoundaryPeerIndices(ctx);
   const boundaryObjectGetOwnPropertyDescriptorIdx = boundaryObjectInterop
     ? ctx.funcMap.get("__boundary_object_get_own_property_descriptor")
     : undefined;
@@ -6693,7 +6704,11 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // `resolved-callee-guard.ts` for the ABSENT and provably-PRIMITIVE arms and
     // why the primitive test is sound where a negative callable test is not.
     const resolvedMethodGuard = buildResolvedCalleeGuard(ctx, methodCallLocals);
-    const boundaryCallResultLocal = boundaryObjectCallIdx === undefined ? undefined : 3 + methodCallLocals.length;
+    // (#5383 S2h) The standalone peer terminal takes the same slot as the
+    // host lane's `__boundary_object_call`: same arm, same arguments, same
+    // "null means the peer does not own this receiver" contract.
+    const boundaryOrPeerCallIdx = boundaryObjectCallIdx ?? peerMethodCallIdx;
+    const boundaryCallResultLocal = boundaryOrPeerCallIdx === undefined ? undefined : 3 + methodCallLocals.length;
     if (boundaryCallResultLocal !== undefined) {
       methodCallLocals.push({ name: "boundaryCallResult", type: { kind: "externref" } });
     }
@@ -6740,12 +6755,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         // ($Vec/string/Map/Set) are the Slice-4 arms → undefined for now (never
         // invalid Wasm).
         else: [
-          ...(boundaryObjectCallIdx !== undefined && boundaryCallResultLocal !== undefined
+          ...(boundaryOrPeerCallIdx !== undefined && boundaryCallResultLocal !== undefined
             ? ([
                 { op: "local.get", index: 0 },
                 { op: "local.get", index: 1 },
                 { op: "local.get", index: 2 },
-                { op: "call", funcIdx: boundaryObjectCallIdx },
+                { op: "call", funcIdx: boundaryOrPeerCallIdx },
                 { op: "local.tee", index: boundaryCallResultLocal },
                 { op: "ref.is_null" },
                 { op: "i32.eqz" },
@@ -7490,7 +7505,13 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   // guarded on the matching __call_fn_method_N being registered.
   const callMethod = (n: number): number | undefined => ctx.funcMap.get(`__call_fn_method_${n}`);
   const linkedCallName = ctx.standaloneGlobalThisImport?.call;
-  const linkedCallIdx = linkedCallName === undefined ? undefined : ctx.funcMap.get(linkedCallName);
+  // (#5383 S2f R12) …or, on the standalone wasm→wasm lane, the linked
+  // provider's own `__apply_closure`, published as `__js2wasm_link_apply`.
+  // Reached only after every module-local arity dispatcher has already
+  // missed, so a caller-owned closure never crosses the boundary.
+  const linkedCallIdx =
+    (linkedCallName === undefined ? undefined : ctx.funcMap.get(linkedCallName)) ??
+    standaloneLinkBoundaryPeerIndex(ctx, "apply");
   const linkedFallback = (): Instr[] =>
     linkedCallIdx === undefined
       ? undefinedSentinel()

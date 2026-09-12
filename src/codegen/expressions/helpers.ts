@@ -81,6 +81,13 @@ export function isConstIdentifierAssignmentTarget(
   fctx: FunctionContext,
   id: ts.Identifier,
 ): boolean {
+  // (#5372) A write whose LHS IS the binding's own declaration name node is
+  // that binding's initialisation, not an assignment: the async CFG planner
+  // delivers a declarator's non-suspending initializer arm through a synthetic
+  // `name = init` whose left operand is `decl.name` itself (see
+  // `async-await-hoist.ts`). No source-level assignment can carry a declaration
+  // name as its target, so the discriminator is exact.
+  if (id.parent !== undefined && ts.isVariableDeclaration(id.parent) && id.parent.name === id) return false;
   // The oracle is authoritative when it resolves the reference: an active
   // same-text local set can belong to a different static block / namespace
   // binding and must not override that identity. Its `variableDeclarationOf`

@@ -80,6 +80,29 @@ function classDynamicMemberCallApplies(
   if (elemAccess.expression.kind === ts.SyntaxKind.SuperKeyword) {
     return superElementCallTarget(ctx, fctx) !== undefined;
   }
+  // (#5383 S2i) A class VALUE receiver — `C[k](5)` where `C` names a compiled
+  // class. Its static surface lives in the #5195 Step 2 sidecar, which
+  // `__extern_get` now reaches (`class-proto-lookup.ts`'s class-object arm), so
+  // the same resolve-then-apply lowering serves it. Measured before this arm:
+  // `C[k](5)` with `k="mk"` answered `undefined` (NaN through the f64 result)
+  // while `const f = C[k]; f(5)` already answered 6 — the VALUE resolved and
+  // only the CALL form did not.
+  //
+  // The gate is ORDER-INDEPENDENT on purpose: it asks the class table, never
+  // the S2h/S2i runtime-key demand set, because that set is filled by read
+  // sites as they compile and gating on it would reintroduce exactly the #5195
+  // F1 compile-order dependence this module was written to remove. A local
+  // binding that shadows a class name is a false positive of the NAME check
+  // only — the lowering it selects is fully dynamic and correct for any
+  // receiver, so the cost is bytes, not an answer.
+  if (
+    ts.isIdentifier(elemAccess.expression) &&
+    ctx.classSet.has(elemAccess.expression.text) &&
+    standaloneClassProtoObjectApplies(ctx, elemAccess.expression.text) &&
+    ctx.classObjectGlobals.get(elemAccess.expression.text) !== undefined
+  ) {
+    return true;
+  }
   const className = elemAccessReceiverClassName(ctx, elemAccess);
   return className !== undefined && classHierarchyHasDynamicMember(ctx, className);
 }

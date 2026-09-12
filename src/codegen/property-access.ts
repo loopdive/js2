@@ -31,6 +31,7 @@ import { resolveWidenedVarKey, integrityVarKey } from "./widened-var-key.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
 import { recordRuntimeKeyClassMethodRead } from "./runtime-key-class-methods.js"; // (#5358)
+import { recordStandaloneRuntimeKeyClassMemberRead } from "./standalone-class-dyn-member.js"; // (#5383 S2h)
 import { emitOverlayRoutedElementGet, overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4159 S3)
 import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js"; // (#2580 M2 slice 1) (#2984)
@@ -5484,6 +5485,10 @@ export function compileElementAccessBody(
       // (#5358) A non-numeric runtime key may name a prototype method of
       // whichever class instance the `any` holds: publish every class's bridges.
       recordRuntimeKeyClassMethodRead(ctx, undefined);
+      // (#5383 S2h) The standalone twin of the same demand — nothing narrows
+      // which instance the `any` holds, so every class's prototype `$Object`
+      // has to be reachable. Lane-disjoint with the call above.
+      recordStandaloneRuntimeKeyClassMemberRead(ctx, undefined);
     }
     // (#2784 S3) Native-vec-aware element read. A numeric `recv[i]` on an
     // `any`/externref receiver that is actually a NATIVE vec (a reconstructed-
@@ -6246,6 +6251,9 @@ export function compileElementAccessBody(
       // bridges the host resolver needs (runtime-key-class-methods.ts).
       if (!isNumericIndexExpression(ctx, expr.argumentExpression, fctx)) {
         recordRuntimeKeyClassMethodRead(ctx, typeIdx, fieldName);
+        // (#5383 S2h) …and the standalone twin, narrowed to the receiver's own
+        // class family (the struct type IS known on this arm).
+        recordStandaloneRuntimeKeyClassMemberRead(ctx, typeIdx);
       }
       // Convert struct ref (already on stack) to externref
       fctx.body.push({ op: "extern.convert_any" });
