@@ -36,7 +36,7 @@
  * protocol, and the bulk of test262 any-method patterns). Methods invoked with
  * arguments fall through to the existing path (the dispatcher is not used).
  */
-import type { Instr, ValType, WasmFunction } from "../ir/types.js";
+import type { FuncHandle, Instr, ValType, WasmFunction } from "../ir/types.js";
 import {
   canonicalUndefinedExternInstrs,
   ensureExternSameValueZeroHelper,
@@ -63,7 +63,7 @@ import { CLOSURE_ARITY_FIELD_IDX, getFuncRefWrapperRootTypeIdx } from "./closure
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { wrapClosureCallFastArm } from "./closure-call-fast.js"; // (#4185) closure-receiver fast `.call` arm
 import { buildFnctorArrayHofTargetTest } from "./fnctor-array-prototype.js";
-import { resolveVecHostBridgeHelper } from "./vec-access-exports.js";
+import { reserveVecMethodHelper, resolveVecHostBridgeHelper } from "./vec-access-exports.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
 import { defaultValueInstrs } from "./type-coercion.js";
 // (#5383 S2g) The externref-argument marshalling this file used to own inline;
@@ -1346,13 +1346,37 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     // never fires standalone). Route to the carrier-generic `__vec_push` /
     // `__vec_pop` helpers (reserved at reserve-time; body filled in the finalize
     // vec-export pass).
-    const vecPushIdx = resolveVecHostBridgeHelper(ctx, "push");
-    const vecPopIdx = resolveVecHostBridgeHelper(ctx, "pop");
     const wantVecMutArm =
       (ctx.standalone || ctx.wasi) &&
       VEC_MUTATE_METHODS.has(methodName) &&
       isVecMutateForm(methodName, arity) &&
       ctx.vecBaseTypeIdx >= 0;
+    // (#5383 S2n) RESOLVE-OR-RESERVE, not resolve. The bridge allocation is
+    // made by `emitVecAccessExports`, and the two generate entry points call
+    // that at OPPOSITE SIDES of this fill: `generateModule` before it,
+    // `generateMultiModule` after it. So a plain resolve answers a handle in a
+    // single-module compile and `undefined` in a multi-module one — the arm was
+    // silently dropped for every multi-module standalone/wasi program, which is
+    // the #2927 data-loss bug re-opened (measured: `this.pop()` inside a
+    // `class X extends Array` method returned `undefined` and mutated nothing,
+    // so JSBI's `__trim` never trimmed, `JSBI.subtract(x, x)` answered 2^29
+    // instead of 0, and `Temporal.Duration.from({hours:1}).total("minutes")`
+    // answered NaN through the compiled polyfill).
+    //
+    // Reserving here makes the arm ORDER-INDEPENDENT rather than reordering the
+    // finalize passes. It is byte-neutral for the lane that already worked: in
+    // a single-module compile the resolve succeeds and the reserve never runs,
+    // and the whole block is gated on standalone/wasi, so the gc lane is
+    // untouched. `reserveVecMethodHelper` also sets `usesVecValue`, which is
+    // what makes the finalize vec-export pass fill the placeholder bodies the
+    // arm calls into.
+    const resolveOrReserveVecHelper = (kind: "push" | "pop"): FuncHandle | undefined => {
+      const resolved = resolveVecHostBridgeHelper(ctx, kind);
+      if (resolved !== undefined || !wantVecMutArm) return resolved;
+      return reserveVecMethodHelper(ctx, kind);
+    };
+    const vecPushIdx = resolveOrReserveVecHelper("push");
+    const vecPopIdx = resolveOrReserveVecHelper("pop");
     if (wantVecMutArm) {
       let mutArmBody: Instr[] | undefined;
       if (methodName === "push" && vecPushIdx !== undefined && ci.boxNumIdx !== undefined) {

@@ -11,6 +11,18 @@ reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-07
 loc-budget-allow:
+  # 2026-09-12 (S2n) — the `$__vec_base` push/pop arm's resolve-OR-RESERVE.
+  #   closed-method-dispatch.ts  +24  the lookup helper plus the rationale. The
+  #     code is four lines; the rest records WHY the arm was order-dependent
+  #     (`generateModule` calls `emitVecAccessExports` before this fill,
+  #     `generateMultiModule` after it) and WHY the reserve is conditional
+  #     (unconditional would move the allocation earlier in the single-module
+  #     lane and change its bytes). It cannot move to another module: the fix
+  #     IS the lookup this arm makes, and the arm is the whole reason #2927's
+  #     block lives here. A reader who trims the note will "simplify" it back
+  #     to a plain resolve and silently reopen a data-loss bug that only the
+  #     multi-module lane shows.
+  - src/codegen/closed-method-dispatch.ts
   # 2026-09-12 (S2l) — `Object.fromEntries` over a computed pair list on the
   # standalone lane. Both defects are AT existing call sites, so neither can
   # move to a new module without separating a decision from the code that makes
@@ -155,6 +167,13 @@ loc-budget-allow:
     lines: 20
     reason: "#5383 S2 R4 — pre-register the `Math.<fn>` value-read substrate before the closure is built (#2704 forbids a first registration mid-body), which is why every Math value read kept the refusal body."
 func-budget-allow:
+  # 2026-09-12 (S2n) — `fillClosedMethodDispatch` +24. The growth is the
+  # resolve-OR-RESERVE lookup for the `$__vec_base` push/pop arm plus its
+  # rationale. It belongs to THIS function because the arm it feeds is built
+  # here and nowhere else, and the bug it fixes is precisely that the lookup
+  # answered differently depending on when this function runs relative to
+  # `emitVecAccessExports` — a fact only readable next to the arm.
+  - src/codegen/closed-method-dispatch.ts::fillClosedMethodDispatch
   # 2026-09-12 (S2l) — `Object.fromEntries` over a computed pair list,
   # standalone. Two growths, each on the function that already owns the
   # decision:
@@ -410,15 +429,16 @@ alone, unless measured as neutral).
    binary `WebAssembly.Module` accepts; each reduction is a test.
 2. S2: `buildTemporalProvider` with `target: "standalone"` returns
    `plan=separate`; the host-free smoke test passes.
-   **Status (S2m, 2026-09-12): 2 of 3 assertions asserted as a real test**
-   (`Object.keys(Temporal).length === 9`, `new Temporal.PlainDate(2024,1,1).day
-   === 1`, plus the `durationHours === 1` precursor). The third,
-   `Temporal.Duration.from({hours:1}).total("minutes") === 60`, is `it.todo`:
-   it answers **60 in one standalone module** and a provider-owned carrier that
-   does not decode across the link — a wasm↔wasm VALUE ABI slice, not a
-   Temporal defect. Its two earlier blockers are closed (the JSBI
-   `constructor`-identity read, and a provider throw that never reached the
-   consumer's `catch`). See "S2m findings".
+   **MET (S2n, 2026-09-12): all 3 assertions asserted as a real test** —
+   `Object.keys(Temporal).length === 9`, `new Temporal.PlainDate(2024,1,1).day
+   === 1`, and `Temporal.Duration.from({hours:1}).total("minutes") === 60`
+   (both the chained and bound-local spellings answer 60), plus the
+   `durationHours === 1` precursor. The third assertion's last blocker was NOT
+   a value-ABI defect: `.pop()` on an `any`-shaped vec receiver was a silent
+   no-op in every **multi-module** compile, so JSBI never trimmed its BigInt
+   digits and `total` computed NaN inside the provider. See "S2n findings".
+   One `it.todo` remains in the block and is **not** an S2 assertion: `typeof
+   d.total === "function"` read through a CHAINED receiver (#2984).
 3. S3–S4: standalone Temporal rows link the provider in both runners and CI;
    `__temporal_*` leaks are 0.
 4. S5: samples measured, 0 pass→fail, counts with artifacts; the standalone
@@ -2456,4 +2476,179 @@ the same expression answers 60 inside one standalone module.
 The brief's list, re-confirmed as the base state: `tests/issue-2151.test.ts` (1),
 `tests/issue-2151-mixed-spread.test.ts` (1), `tests/issue-3610-standalone-prototype-receiver-brand.test.ts` (1),
 `tests/issue-1051.test.ts` (3), `tests/issue-5382-temporal-project-publication.test.ts` (1);
+`tests/issue-5318-r4-computed-accessor-keys.test.ts` OOMs on both trees.
+
+## S2n findings (2026-09-12) — the value ABI was never the problem: `.pop()` was a no-op in every multi-module compile
+
+S2m's stop is closed, and its stated hypothesis was FALSIFIED before any code
+changed — as was the brief's. The answer was three reductions away from Temporal
+and one pass-ordering line away from the codegen it was blamed on.
+
+### The hypothesis, refuted with the type sections
+
+The brief's first hypothesis was that the boxed-primitive carriers are outside
+the canonical rec group (`RUNTIME_RECGROUP_TYPE_NAMES`) and therefore
+canonicalize differently in provider and consumer, so the consumer's
+`ref.test $__box_number_struct` fails. Measured with a raw type-section reader
+(`.tmp/s2n-types.mjs`, a re-creation of S2k's — that worktree is gone):
+
+| module | groups / types | canonical group `[0..9]` hash | boxed number | boxed boolean |
+| --- | --- | --- | --- | --- |
+| consumer | 121 / 130 | `b978f99195cd` | idx 38, group 29, **singleton** `plain struct(f64)` | idx 39, group 30, `plain struct(i32)` |
+| polyfill provider | 1057 / 1066 | `b978f99195cd` | idx 72, group 63, **singleton** `plain struct(f64)` | idx 73, group 64, `plain struct(i32)` |
+
+Both carriers are emitted as their own single-member group with no `sub`
+wrapper and no finality bit, so their canonical identity is structural and
+IDENTICAL in the two modules; the canonical group hashes match too (S2k's fix
+holding). `markLeafStructsFinal` cannot touch them either — it only finalizes
+structs that have a `superTypeIdx`, and these have none. **No ABI change was
+needed and none was made.**
+
+### What the carrier actually was
+
+`typeof v === "number"` answering true while `String(v)` throws is not a
+disagreement between two tests. It is one consistent reading of a **boxed NaN**
+(`.tmp/s2n-battery.mts`, `.tmp/s2n-nan.mts`, through the real provider):
+
+| probe on `d.total("minutes")` across the link | answer |
+| --- | --- |
+| `typeof v === "number"` | 1 |
+| `Number.isNaN(v)` / `v === v` | **1 / 0** |
+| `v === 60`, `v < 61`, `v ? 1 : 0` | 0, 0, 0 |
+| `v * 1`, `Number(v)` | NaN, NaN |
+| `d.hours` (control) | 1, and it crosses as a JS **number** — a `ref.i31` |
+
+`d.hours` is a small int, so the smi fast path boxes it as `ref.i31`, which JS
+sees as a number; `total`'s NaN cannot be an i31, so it is a `$__box_number_struct`,
+which JS sees as an opaque object — hence "Cannot convert object to primitive
+value" from `String()`. The consumer decoded it correctly the whole time.
+(`v + 0` throwing rather than answering NaN is a separate, unrelated gap in the
+`+` ToPrimitive path for that carrier; every other numeric operation answered
+NaN.)
+
+### Where the NaN came from — not the link, not the arguments
+
+Three reductions, each removing one suspect:
+
+| what was compiled | `total("minutes")` |
+| --- | --- |
+| polyfill as ONE standalone module (S2m's measurement, re-run) | 60 |
+| polyfill as a linked provider, probe INSIDE the provider, zero-arg, f64 return (`.tmp/s2n-probe-project.mts`) | **NaN** |
+| same, with the probe exports compiled by `compileProject` in **bundled** mode | **NaN** |
+
+The second row is decisive: no consumer-minted argument, no value crossing the
+boundary, no `plan=separate` required. The axis is `compile()` vs
+`compileProject()`, and it needs no link at all — a **single-file**
+`compileProject` (`plan=none`) reproduces (`.tmp/s2n-axis.mts`).
+
+Narrowing inside the polyfill (`.tmp/s2n-probe3.mts`) put it in
+`TimeDuration.fdiv`, and one probe named it: `g(totalNs, 6e10).remainder`
+answered **0** solo and **576460752303423500** (2^59) through `compileProject`.
+Dropping Temporal entirely (`.tmp/s2n-jsbi.mts`, jsbi alone, ~6 s per compile):
+
+| probe | solo | compileProject |
+| --- | --- | --- |
+| `JSBI.toNumber(JSBI.subtract(JSBI.BigInt(1e12), JSBI.BigInt(1e12)))` | 0 | **536870912** (2^29) |
+| `JSBI.remainder(3600000000000n, 60000000000n)` → `toNumber` | 0 | **throws** |
+| … its `.length` (digit count) | 0 | **3** |
+| `JSBI.divide(…)`, `JSBI.__clz30`, single-digit remainder | same | same |
+
+A JSBI zero that keeps three zero digits is a failed `__trim`, and `__trim`
+truncates with `this.pop()` inside a method of `class JSBI extends Array`.
+
+### The defect
+
+`fillClosedMethodDispatch`'s `$__vec_base` brand arm (#2927) routes `.push` /
+`.pop` on an `any`/externref receiver that is really a native vec to the
+carrier-generic `__vec_push` / `__vec_pop`. It looked the helper up with a plain
+`resolveVecHostBridgeHelper`, and the ALLOCATION that lookup needs is made by
+`emitVecAccessExports` — which the two generate entry points call on **opposite
+sides of this fill**:
+
+```
+generateModule      (src/codegen/index.ts:6098)   emitVecAccessExports BEFORE the fill
+generateMultiModule (src/codegen/index.ts:11405)  emitVecAccessExports AFTER  the fill
+```
+
+Traced directly (`JS2WASM_S2N_DEBUG` instrumentation, removed before commit):
+at the fill, `popIdx=2097441` in the single-module lane and `popIdx=undefined`
+in both multi-module lanes, with `want=true` in all three. So the arm was
+emitted in one and **silently dropped** in the other: `.pop()` fell to the
+open-`$Object` bottom arm, returned `undefined` and mutated nothing. That is the
+#2927 data-loss bug, reopened for `compileProject` only, on `--target
+standalone` / `--target wasi`, since whenever the two orders diverged.
+
+**Why it hid.** A `.push(…)` ANYWHERE in the module makes the call site reserve
+the bridge (`call-receiver-method.ts`), which allocates it before the fill and
+masks the pop defect entirely — measured: adding one `p_push` export to the
+8-line reduction made the base tree answer 0. The first draft of the regression
+test did exactly that and passed on the base tree; it is now two separate
+single-call-site sources for that reason.
+
+### The fix
+
+`resolveVecHostBridgeHelper` → **resolve-or-reserve** at the fill
+(`src/codegen/closed-method-dispatch.ts`, one small block), so the arm is
+order-INDEPENDENT rather than order-correct. Reordering the finalize passes was
+the alternative and is a much larger blast radius for the same outcome.
+`reserveVecMethodHelper` also sets `usesVecValue`, which is what makes the
+finalize vec-export pass fill the placeholder bodies the arm calls into.
+
+Byte-neutral for the lane that already worked: the reserve runs ONLY when the
+resolve returns `undefined`, and the whole block is gated on standalone/wasi.
+**Byte A/B, 12 module shapes × {gc, standalone} = 24 single-module artifacts
+(`.tmp/s2n-ab.mts`, base captured by file copy before the first edit): all 24
+sha256-identical**, including the `extends Array` / push / pop shapes.
+
+### The S2 smoke test, per assertion
+
+Through the shipped path (`buildTemporalProvider` + `compileWithTemporalGlobal`,
+`--target standalone` / `hostBridge:"off"`, host-free):
+
+| assertion | S2m | S2n |
+| --- | --- | --- |
+| `Object.keys(Temporal).length === 9` | passes | passes |
+| `new Temporal.PlainDate(2024,1,1).day === 1` | passes | passes |
+| `Temporal.Duration.from({hours:1}).total("minutes") === 60` | `it.todo` — a NaN carrier | **60 — passes** |
+| the same through a bound local (`totalBound`) | a NaN carrier | **60 — passes** |
+
+All three S2 assertions are now asserted as a real test.
+
+### The regression test lives in its own file, for a measured reason
+
+`tests/issue-5383-s2n-vec-mutation-pass-order.test.ts`. Adding the two compiles
+to `issue-5383-standalone-temporal-provider.test.ts` — which already spends
+~140 s, most of it inside ONE child-process assertion that builds the 3.3 MB
+provider — pushed the worker past vitest's `onTaskUpdate` RPC heartbeat:
+**every test passed and the FILE exited 1**, reproducibly, while the base file
+on the same tree exited 0. Split, both files exit 0 (168 s / 29 s). Worth
+knowing generally: a long blocking child process plus a few extra seconds of
+sibling work is enough to turn a green file red with no failing assertion.
+
+### The one `it.todo` left in that block — NOT an S2 assertion
+
+`durationHasTotal` still answers 0: `typeof Temporal.Duration.from({hours:1}).total
+=== "function"` through a CHAINED receiver, where the bound-local spelling
+(`durationHasTotalBound`) answers 1. That is #2984's path-dependent member read
+on a chained call result, named as such; `total` itself answers 60 in BOTH
+spellings.
+
+### Named residual, not this slice
+
+`v + 0` on a provider-owned `$__box_number_struct` throws "Cannot convert object
+to primitive value" where every other numeric operation on the same value
+decodes it. Not on the #5383 path (the value is a real number now), but it is a
+real gap in the `+` ToPrimitive ladder for that carrier.
+
+### Acceptance criteria — S2 smoke test status (2026-09-12, S2n)
+
+**MET: three of three.** Criterion 2 above is updated.
+
+### Pre-existing red, unchanged by this slice
+
+Re-confirmed as the base state: `tests/issue-2151.test.ts` (1),
+`tests/issue-2151-mixed-spread.test.ts` (1),
+`tests/issue-3610-standalone-prototype-receiver-brand.test.ts` (1),
+`tests/issue-1051.test.ts` (3),
+`tests/issue-5382-temporal-project-publication.test.ts` (1);
 `tests/issue-5318-r4-computed-accessor-keys.test.ts` OOMs on both trees.

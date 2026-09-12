@@ -1587,11 +1587,10 @@ describe("#5383 S2k — the shared VALUE ABI survives a provider that uses `argu
 
 describe("#5383 S2 smoke — the real standalone Temporal provider", () => {
   // The S2 acceptance test, through `buildTemporalProvider` +
-  // `compileWithTemporalGlobal` (the shipped path), host-free. Two of the
-  // three assertions pass as of S2k; the third has a named stop with its own
-  // reduction, below.
+  // `compileWithTemporalGlobal` (the shipped path), host-free. ALL THREE
+  // assertions pass as of S2n; the history of the third is below.
   it(
-    "Object.keys(Temporal).length === 9 and new Temporal.PlainDate(2024,1,1).day === 1",
+    "all three S2 assertions, including Temporal.Duration.from({hours:1}).total('minutes') === 60",
     {
       timeout: 1_800_000,
     },
@@ -1610,77 +1609,37 @@ describe("#5383 S2 smoke — the real standalone Temporal provider", () => {
       };
       // Base (S2j, and every point its bisect covered — this was never 9 across
       // a real provider): keys 0, hasPlainDate 0, day -1, durationHours -1.
+      // `total` / `totalBound`: threw through S2l, answered a NaN carrier
+      // through S2m, and answer 60 as of S2n.
       expect({
         keys: value("keys"),
         hasPlainDate: value("hasPlainDate"),
         day: value("day"),
         durationHours: value("durationHours"),
-      }).toEqual({ keys: 9, hasPlainDate: 1, day: 1, durationHours: 1 });
+        total: value("total"),
+        totalBound: value("totalBound"),
+      }).toEqual({ keys: 9, hasPlainDate: 1, day: 1, durationHours: 1, total: 60, totalBound: 60 });
     },
   );
 
-  // STILL OPEN — the third assertion,
-  // `Temporal.Duration.from({hours:1}).total("minutes") === 60`.
+  // The third assertion's history, because two of its three named stops were
+  // MIS-NAMED and the last one was not where anybody was looking:
   //
-  // S2k's stop is CLOSED (see the S2l block below): the unit table now builds
-  // correctly. Re-measured through the same in-provider probe S2k used, with
-  // only the two S2l source files reverted, the error message CHANGED — which
-  // is what makes this a new stop and not the old one:
-  //
-  //   base  (175 chars, ten `null`s)  "unit must be one of year, month, week,
-  //                                    day, hour, minute, second, millisecond,
-  //                                    microsecond, nanosecond, null ×10,
-  //                                    not minutes"
-  //   S2l   (58 chars, no `null`s)    "Convert JSBI instances to native numbers
-  //                                    using `toNumber`."
-  //
-  // The new one is JSBI's own `valueOf` guard: something on the `total` path
-  // applies an implicit ToNumber/ToPrimitive to a JSBI BigInt instance instead
-  // of calling `toNumber()`. It reproduces INSIDE one standalone module with no
-  // link (`.tmp/s2l-solo-total.mts`: the Intl shim + the linked polyfill + a
-  // probe export, compiled with plain `compile({target:"standalone",
-  // hostBridge:"off"})`), so the boundary is again not involved. It is present
-  // on the base tree too — `total("minute")`, a SINGULAR unit that was always
-  // in the table, answers the same failure on both trees, so this defect never
-  // depended on the `fromEntries` one.
-  //
-  // ── S2m UPDATE (2026-09-12) ─────────────────────────────────────
-  //
-  // BOTH facts above are now FIXED, and neither was what its description said.
-  //
-  //  - The JSBI guard was not an implicit ToNumber of ours at all. It was the
-  //    polyfill's own `__toPrimitive`, entered because `i.constructor === JSBI`
-  //    read FALSE: `class JSBI extends Array`, and standalone that read
-  //    answered `Array`. See the `#5383 S2m R15` block for the reduction and
-  //    the falsified hypothesis. Through the real polyfill compiled as ONE
-  //    standalone module, `Duration.from({hours:1}).total("minutes")` now
-  //    answers **60** (`.tmp/s2m-solo-total.mts`; base: the JSBI throw).
-  //  - The provider throw now crosses as a catchable error — `#5383 S2m R16`.
-  //
-  // The assertion is STILL not green, on a THIRD stop, which only the LINK
-  // shows. Measured on this branch against the real provider
-  // (`.tmp/s2m-total2.mts`, `.tmp/s2m-total.mts`):
-  //
-  //   | probe (real provider)                     | solo module | linked |
-  //   | ----------------------------------------- | ----------- | ------ |
-  //   | `d.hours`, `d.sign` (getters)             | 1 / 1       | 1 / 1  |
-  //   | `d.abs().hours`, `p.equals(p)`, `p.day`   | —           | ok     |
-  //   | `d.total("minutes")`                      | **60**      | a provider-owned OBJECT |
-  //
-  // So it is not "primitives cannot cross": a TINY hand-written provider
-  // answers every shape — number, string, boolean, object, zero-arg, one-arg —
-  // correctly (`.tmp/s2m-prim.mts`, 9/9), and object-returning and
-  // boolean-returning methods on the REAL provider cross too. What arrives
-  // wrong is specifically `total`'s result, which reads `typeof "number"` in
-  // the consumer while `String()` of it throws "Cannot convert object to
-  // primitive value" — i.e. the consumer's `typeof` ladder and its value
-  // decode disagree about a provider-owned carrier. That is a wasm↔wasm VALUE
-  // ABI slice of its own, not a Temporal defect.
-  //
-  // (`d.toString()` is NOT evidence for it: that call throws in the SOLO
-  //  module as well, so it is a separate pre-existing gap.)
+  //  - S2k blamed the missing plural unit names (`Object.fromEntries` over a
+  //    computed pair list) — real, fixed in S2l.
+  //  - S2l blamed an implicit ToNumber of ours on a JSBI BigInt. FALSIFIED in
+  //    S2m: it was the polyfill's own `__toPrimitive`, entered because
+  //    `i.constructor === JSBI` read false for `class JSBI extends Array`.
+  //  - S2m blamed the wasm↔wasm VALUE ABI: `total`'s result crossed the link
+  //    reading `typeof "number"` while `String()` of it threw. FALSIFIED in
+  //    S2n by the type sections — both modules define the boxed-number and
+  //    boxed-boolean carriers as the SAME singleton `struct(f64)` /
+  //    `struct(i32)` group, and the canonical group hashes match. The carrier
+  //    decoded perfectly: it was a box of NaN, and the NaN was computed INSIDE
+  //    the provider, with no argument and no value crossing anything. See the
+  //    `#5383 S2n R17` block below for what it really was.
   it.todo(
-    "Temporal.Duration.from({hours:1}).total('minutes') === 60 (blocked: `total`'s result crosses the wasm↔wasm link as a provider-owned carrier that answers `typeof \"number\"` but does not decode as one — solo answers 60; see the S2m findings table — #5383 S2m)",
+    "`typeof Temporal.Duration.from({hours:1}).total === 'function'` answers 0 through a CHAINED receiver while the bound-local spelling answers 1 (#2984 path-dependent member read on a chained call result — not a Temporal or boundary defect; the `durationHasTotal` / `durationHasTotalBound` harness probes score the two spellings separately)",
   );
 });
 
