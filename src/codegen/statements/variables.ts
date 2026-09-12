@@ -2148,6 +2148,22 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     const freshLocalForLetConst = !isVar && !isHoistedLetConst;
     let localIdx =
       reusedVarSlotIndex(fctx, decl, isVar, isHoistedLetConst, existingIdx) ?? allocLocal(fctx, name, wasmType);
+    // A native generator binding may refine a pre-hoisted `externref` slot to
+    // its concrete state type. Nested declarations are planned before this
+    // initializer, however, and retain that pre-hoisted slot as their lexical
+    // capture source. Keep it synchronized after initialization: it remains
+    // the generic/captured view of the same JavaScript binding, while the
+    // replacement local preserves direct native-state specialization. Leaving
+    // it at its hoisted undefined value made a later `yield* g` observe
+    // `undefined` even after `var g = producer()` had completed.
+    const nativeGeneratorCaptureMirrorSlot =
+      nativeGenBindingType &&
+      isVar &&
+      existingIdx !== undefined &&
+      getLocalType(fctx, existingIdx)?.kind === "externref" &&
+      !fctx.boxedCaptures?.has(name)
+        ? existingIdx
+        : undefined;
     if (
       nativeGenBindingType &&
       isVar &&
@@ -2570,6 +2586,14 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         });
       } else {
         emitCoercedLocalSet(ctx, fctx, localIdx, stackType);
+      }
+      if (nativeGeneratorCaptureMirrorSlot !== undefined && !fctx.boxedCaptures?.has(name)) {
+        const nativeGeneratorLocalType = getLocalType(fctx, localIdx);
+        if (nativeGeneratorLocalType?.kind === "ref" || nativeGeneratorLocalType?.kind === "ref_null") {
+          fctx.body.push({ op: "local.get", index: localIdx });
+          fctx.body.push({ op: "extern.convert_any" });
+          fctx.body.push({ op: "local.set", index: nativeGeneratorCaptureMirrorSlot });
+        }
       }
     } else if (wasmType.kind === "externref") {
       // (#2705) A bare `var x;` redeclaration whose slot was already hoisted to
