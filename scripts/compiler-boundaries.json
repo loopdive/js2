@@ -1546,6 +1546,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/async-await-hoist.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/async-cps-ast.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -6714,6 +6722,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/standalone-class-dyn-static.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/standalone-link-boundary.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -10412,6 +10428,11 @@
     },
     {
       "path": "src/runtime/platform-capability-adapter.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
+      "path": "src/runtime/promise-then-reactions.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
     },

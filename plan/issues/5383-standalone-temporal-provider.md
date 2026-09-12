@@ -11,6 +11,17 @@ reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-07
 loc-budget-allow:
+  # 2026-09-12 (S2i) — the runtime-key STATIC-member read on a class VALUE. The
+  # mechanism is the new module src/codegen/standalone-class-dyn-static.ts; the
+  # only god-file line this slice adds is ONE:
+  #   registry/imports.ts  +1  `shiftMap(ctx.classStaticSidecarGlobals)`, next to
+  #     the `protoGlobals` / `classObjectGlobals` lines it mirrors. The sidecar
+  #     global was the one class-global map NOT shifted when a late string
+  #     constant inserts an import global — a latent #2043 staleness that
+  #     predates this slice and that S2i makes reachable, because it now
+  #     registers that global at FINALIZE rather than at class collection. It
+  #     cannot live anywhere but in that shift block.
+  - src/codegen/registry/imports.ts
   # 2026-09-08 (S2h) — the runtime-key PROTOTYPE-member read, standalone. The
   # mechanism is the new module src/codegen/standalone-class-dyn-member.ts;
   # what lands in these files is only the wiring, and each line has to sit
@@ -1496,3 +1507,275 @@ branch with the four touched files reverted by file copy): `tests/issue-2151.tes
 (1, "wasi: custom iterable driven via any-method .next()") and
 `tests/issue-2151-mixed-spread.test.ts` (1, "empty dynamic spread: trailing
 numeric param reads 0") fail **identically — the same 2 — before and after**.
+
+## S2i findings (2026-09-12) — the STATIC read fixed, module-locally and across the boundary; the stop moves OFF the class surface entirely
+
+### The precedence question S2h deferred, answered by measurement BEFORE widening
+
+The sidecar carries static METHODS and ACCESSORS and deliberately not static
+FIELDS (a mirrored mutable slot would be two sources of truth). S2h's stated
+blocker was that routing every class-value read through it "would shadow the
+`staticProps` lowering for a static field".
+
+**It does not, and there was never an overlap to shadow.** `ctx.staticProps` is
+a purely SYNTACTIC lowering — `C.sf` becomes `global.get __static_C_sf`
+(`property-access-dispatch.ts`). There is no runtime name→slot map, so the
+DYNAMIC read never consulted it. Measured on the six-export reduction
+(`.tmp/probe.mts`, one module, `--target standalone` / `hostBridge:"off"`),
+base = this branch with the five touched files reverted by file copy:
+
+| probe (`readDyn(o,k)` is an externref-receiver runtime-key read) | base | after |
+| --- | --- | --- |
+| `readDyn(C, "mk")` — static METHOD value, then `f(5)` | `undefined` (−1) | **6** |
+| `readDyn(C, "acc")` — static ACCESSOR | −1 | **11** |
+| `C[k](5)`, `k` not const-folded — static CALL | −1 | **6** |
+| `K.mk(7)` via a dynamic receiver — named static CALL | **THROW** "is not a function" | **8** |
+| `typeof K.mk` via a dynamic receiver | 0 | **1** |
+| `K.acc` via a dynamic receiver | −1 | **11** |
+| `readDyn(C, "sf")` — static FIELD | `undefined` | `undefined` |
+| `readDyn(C, "sf")` AFTER `C.sf = 42` | `undefined` | `undefined` |
+| `C.sf` / `C.sf` after the write — TYPED | 7 / 42 | 7 / 42 |
+| `C.mk(5)` / `C.acc` — TYPED (controls) | 6 / 11 | 6 / 11 |
+| `readDyn(new C(3), "day")` — S2h prototype (control) | 3 | 3 |
+| `new K(3)._d` via a dynamic receiver (S2g control) | 3 | 3 |
+
+So the answer is: **the typed ladders keep `staticProps` as the one source of
+truth for a static field — including after a write — and the sidecar answers
+only the method/accessor surface.** The residual is the pre-existing #5195 one
+(a dynamic read of a static FIELD is `undefined` rather than its value),
+unchanged in either direction. Closing it does NOT require the two-sources-of-
+truth mirror S2h feared: the field could be installed as an ACCESSOR PAIR over
+its own `staticProps` global, which keeps the global authoritative. That is a
+slice of its own (a per-field minted getter/setter) and is not done here.
+
+### The mechanism
+
+```
+read site (o[k] / C[k], k not numeric, standalone)  ->  the SAME demand set S2h
+                                                        records, ctx.standaloneRuntimeKeyClassProtos
+finalize (before the closure dispatchers)           ->  mint __class_static_build_<C>()
+                                                        ( = register the sidecar global,
+                                                          then emitClassStaticSidecar + drop )
+__class_proto_lookup class-object arm               ->  if __static_<C> is null: call the builder
+__extern_method_call (prepended)                    ->  lookup non-null? resolve via __extern_get,
+                                                        and if it RESOLVES, __apply_closure
+```
+
+Three findings worth not re-deriving.
+
+- **The demand set is SHARED with S2h's, not a new one, and that is forced.**
+  A class OBJECT and its instances are the SAME wasm struct type (`$C`) — the
+  whole of #3976. At a read site the only narrowing available is the receiver's
+  struct type (or nothing, for an externref), so "may land on an instance of C"
+  and "may land on the class object C" are literally the same predicate. A
+  separate set would be populated from the identical condition at the identical
+  two sites.
+- **The sidecar global is registered at FINALIZE**, not at class collection,
+  which is what keeps a module with statics but no dynamic read byte-identical
+  (`m3-statics` in the A/B below). That exposed a latent bug: of the class
+  global maps, `classStaticSidecarGlobals` was the only one NOT in the
+  late-import shift block, so a string-constant import inserted after
+  registration left every baked read one slot off. Fixed in the same place as
+  `protoGlobals` / `classObjectGlobals`.
+- **Making the VALUE resolve did not make the CALL work, and the split is the
+  same one S2h hit at the boundary.** With only the read arm in place,
+  `typeof K.mk` answered `1` and `const f = C[k]; f(5)` answered `6` while
+  `K.mk(7)` still threw: `__extern_method_call`'s resolve-then-apply is
+  `ref.test $Object`-gated and a class object is a `$ClassName` struct, so it
+  fell to the non-`$Object` arm and hit the resolved-callee guard. The prepended
+  arm resolves FIRST and takes over only when the member actually resolves,
+  which is why it can sit at the front without claiming any receiver it does not
+  own.
+
+**Byte A/B** (sha256, 7 modules × {gc, standalone}, `.tmp/ab-base.txt` vs
+`.tmp/ab-new.txt`): **13 of 14 identical**. The gc lane is identical for all
+seven. The one that moves is `m7-dynread` under standalone
+(147,837 → 148,141 B, +304) — the only module in the corpus that performs a
+runtime-key class-member read, which is the gate. In particular `m3-statics`
+(a class with a static field, a static method and a static accessor, no dynamic
+read) is byte-identical under BOTH targets, and so is `m4-inherit` (statics
+across an `extends`). The refactor that split `fillClassProtoLookupArm` for the
+#3400 budget was separately verified byte-neutral.
+
+### The S2 smoke test is still not writable — and the stop moved OFF the class surface
+
+Through a REAL provider (`buildTemporalProvider` + `compileWithTemporalGlobal`,
+`--target standalone` / `hostBridge:"off"`, host-free
+`instantiateLinkedProject(result, {})`, provider 3,311,806 B, `.tmp/smoke.mts`):
+
+| consumer probe on the linked `Temporal` | answer |
+| --- | --- |
+| `Temporal === null` / `Temporal === undefined` | 0 / 0 |
+| `Object.keys(Temporal).length` | **0** (needs 9) |
+| `Object.getOwnPropertyNames(Temporal).length` | 0 |
+| `"PlainDate" in Temporal` | 0 |
+| `new Temporal.PlainDate(2024,1,1).day` | −1 |
+| `Temporal.Duration.from({hours:1}).total("minutes")` | throws |
+
+This is a stop **AHEAD** of the static read this slice fixes, not behind it:
+the namespace OBJECT crosses (non-null, `typeof` an object) while its entire
+member surface reads empty, so all three smoke assertions fail on the FIRST
+one — including `Object.keys(Temporal).length === 9`, which S2h's notes recorded
+as already passing (that was the reduction lane, not the real provider).
+
+What the measurement rules OUT: it is not the plumbing this slice touches, and
+not the S2d/S2h boundary terminals in general. The identical shape built by
+hand — `Object.freeze({__proto__: null, PlainDate, b: 2})` through a real
+`compileProject` provider, host-free — crosses correctly in
+`tests/issue-5383-standalone-temporal-provider.test.ts` ("STATIC members of a
+PROVIDER-owned class value"): keys 2, static value, static CALL, static
+accessor and the prototype accessor all reachable. The provider's raw export
+list confirms every terminal is present (`__js2wasm_link_member_get`,
+`__js2wasm_link_object_keys`, `__js2wasm_link_method_call`, …) and its import
+list is empty.
+
+What it does NOT yet isolate: whether the polyfill's exported `Temporal` is a
+shape the provider's own `__extern_get` cannot serve, or whether the object
+that crosses is a different one from the populated one. Calling the provider's
+`__js2wasm_link_member_get` from JS answers null for `"PlainDate"`, but that is
+NOT evidence — a standalone module's keys are wasm-native i16 arrays, so a JS
+string argument is undecodable by construction. The decisive probe is one
+INSIDE the provider, and the linker does not publish it: an extra
+`export function __probe_keys()` appended to the polyfill source produces a
+provider whose `exportBoundaries` still contains only `Temporal` (measured).
+Getting that probe published is the first step of the next slice.
+
+**Pre-existing red, NOT caused by this slice** (measured both ways, base = this
+branch with the five touched files reverted by file copy and the new module
+removed): `tests/issue-2151.test.ts` (1), `tests/issue-2151-mixed-spread.test.ts`
+(1), `tests/issue-3610-standalone-prototype-receiver-brand.test.ts` (1) and
+`tests/issue-1051.test.ts` (3) fail **identically before and after**.
+`tests/issue-5318-r4-computed-accessor-keys.test.ts` OOMs the vitest worker on
+BOTH trees (also at `--max-old-space-size=6144`), so it is not a signal either
+way.
+
+## S2j findings (2026-09-12) — the premise was wrong: there is no regression, and the stop is the whole wasm↔wasm VALUE ABI
+
+Two results, and the second one supersedes every carrier-specific hypothesis in
+S2c…S2i.
+
+### 1. The bisect — `Object.keys(Temporal).length` was NEVER 9 through a real provider
+
+The dispatch brief recorded a regression: 9 on 2026-09-08, 0 now, with ~94 main
+commits (including #5795, "publish complete Temporal package generations") and
+slice S2i in between. Measured at three points with one probe
+(`.tmp/s2j-probe.mts`, `buildTemporalProvider` + `compileWithTemporalGlobal`,
+`--target standalone` / `hostBridge:"off"`, host-free
+`instantiateLinkedProject(result, {})`, a **fresh `JS2WASM_TEMPORAL_CACHE` per
+point** so no stale artifact can answer for a compiler):
+
+| point | what it is | keys | provider bytes | cache key | polyfill src sha | init |
+| --- | --- | --- | --- | --- | --- | --- |
+| `c01abc32` | S2h, main merged, **before** #5795 | **0** | 3,282,057 | `fcd881da30bc` | `68b811af2824` | ok |
+| `8b42b7ab` | S2h, + S2f/S2g merged | **0** | 3,282,057 | `fcd881da30bc` | `68b811af2824` | ok |
+| `d1f9cbb3` | S2i head (this stack) | **0** | 3,311,806 | `fcd881da30bc` | `68b811af2824` | ok |
+
+So: **no regression, at any point.** `"PlainDate" in Temporal` is 0 and
+`new Temporal.PlainDate(2024,1,1).day` is −1 at all three.
+
+**#5795 is ruled out as an input change, by measurement rather than by argument:**
+the linked polyfill source is byte-identical across it (same sha, same 157,541 B)
+and so is the provider cache key. It moved WHERE the package generation lives,
+not WHAT is compiled.
+
+**Where the "9" came from.** It is a real number, measured INSIDE the provider
+(S2c/S2d: `Object.keys(qi).length === 9` driving the polyfill from inside its own
+module). S2f wrote "`Object.keys(Temporal).length === 9` is the only one of the
+three assertions that would pass today" — an inference, not a boundary
+measurement — and S2h restated it as "passed before this slice". S2i caught the
+restatement but attributed the 0 to a new stop. It was never 9 across the
+boundary; the in-provider figure was carried forward three slices as if it were.
+
+### 2. The root cause — from the polyfill provider, NOTHING structured crosses
+
+The decisive probe is not about `Temporal` at all (`.tmp/s2j-valueabi.mts`). Four
+ordinary values are exported from the provider and read by the consumer, with the
+tiny hand-built provider as the control — same consumer source, same link path,
+same target:
+
+| consumer read of a PROVIDER-minted value | tiny provider | polyfill provider |
+| --- | --- | --- |
+| `typeof num === "number"` → its value | 42 | **42** |
+| `typeof str === "string"` | 1 | **0** |
+| `str.length` / `str === "hello"` | 5 / 1 | **0 / 0** |
+| `Array.isArray(arr)` / `arr.length` / `arr[0]` | 1 / 3 / 1 | **0 / 0 / −1** |
+| `Object.keys({a:1,b:2}).length` / `.a` | 2 / 1 | **0 / −1** |
+
+A number crosses (it is unboxed f64). **Every reference value is unreadable** — a
+string is not even a string. So this is not the namespace carrier, not
+`Object.freeze`, not `__proto__: null`, and not anything S2d…S2i touched: the
+wasm↔wasm value ABI is dead for this provider, and `Temporal` was only the first
+value anyone happened to read.
+
+Four supporting measurements, each of which rules something out:
+
+- **It is not size, and not a feature the module uses.** A grown provider (up to
+  300 extra object shapes + 300 functions, 731 KB) crosses fine
+  (`.tmp/s2j-grow.mts`), as does the tiny provider with each of 20 features added
+  one at a time — `defineProperty`, `defineProperties`, getters/setters, `Proxy`,
+  symbol keys, `for-in`, `delete`, `Object.create`, `seal`,
+  `preventExtensions`, `setPrototypeOf`, `assign`, spread, computed keys, array
+  expandos, `Map`/`WeakMap`, class statics, `Symbol.toStringTag`
+  (`.tmp/s2j-feature.mts`, all 21 rows ok). Nor is it the export spelling: all six
+  of `export const` / `export var` / `var`+alias / `const`+alias / `let`+alias /
+  same-name re-export cross correctly (`.tmp/s2j-export-shape.mts`).
+- **The provider side is correct.** Called from JS on the exact value the consumer
+  receives, the polyfill provider's own terminals answer:
+  `__js2wasm_link_object_keys(ns)` non-null, `__js2wasm_link_member_get(ns, k)`
+  non-null — **with a PROVIDER-minted `k`** (`.tmp/s2j-terminal.mts`). With a
+  CONSUMER-minted `k` the same call answers **null** for the polyfill provider and
+  **non-null** for the tiny one — the same one-way failure the table above shows,
+  in the other direction.
+- **The wiring is correct and the consumers are identical.** Both providers export
+  all six terminals; both consumers import all six; the two consumer binaries are
+  the same size and the terminals' bodies call the right natives
+  (`__js2wasm_link_object_keys` → `__object_keys` + `__extern_length`,
+  `__js2wasm_link_member_get` → `__extern_get` + `__extern_is_undefined`) —
+  disassembled in both (`.tmp/s2j-calls.mjs`).
+- **The polyfill works perfectly INSIDE its own module**, through the generic
+  dynamic path, not a folded one: with the answers computed at provider init and
+  published as value exports, `Object.keys(qi).length` is 9, `"PlainDate" in qi`
+  is 1, `typeof qi.PlainDate === "function"` is 1, and
+  `new qi.PlainDate(2024,1,1).day` is **1** — and the same through a function
+  parameter (`__p_dynKeys(qi)` 9, `__p_dynGet(qi,"Plain"+"Date")` 1), so it is not
+  constant-folded (`.tmp/s2j-inside.mts`).
+
+**Method note that unblocked all of this:** S2i recorded "the linker does not
+publish an in-provider probe export". The real rule is narrower and usable — a
+package export whose boundary is a FUNCTION with an inferred/`any` signature makes
+the whole plan fall back to `bundled` ("inferred/any package signatures require
+side-effect-free engine validation", `.tmp/s2j-facade.mts`). **VALUE exports are
+getter boundaries and ARE published**, so any in-provider question can be answered
+by computing it at module init and exporting the result. That is how the table
+above was measured, and it is the tool the next slice needs.
+
+### What the fix is NOT (two pieces built and measured, each necessary, both insufficient)
+
+Both were implemented and then reverted rather than shipped, because neither moves
+a user-visible answer and both change a hot native:
+
+1. **The consumer never consults the peer for this receiver.** `ref.test $Object`
+   SUCCEEDS on the provider-minted namespace, so the S2d miss-path arms — which
+   sit in the NOT-a-`$Object` branch — are unreachable, and the `$Object` walk
+   reads an ordered map that enumerates nothing. Peer call count measured at
+   **zero** for `Object.keys` / `.b` / `in` (`.tmp/s2j-count.mts`). Adding a
+   terminal consult in `__extern_get` and a zero-keys consult in `__object_keys`
+   makes the peer fire.
+2. **It still answers 0.** With the consult in place `__js2wasm_link_object_keys`
+   returns **non-null** — and `Object.keys(...).length` on the returned vec is
+   still 0, because the provider-minted key vec is itself unreadable by the
+   consumer. Which is finding 2 again: the answer cannot cross either.
+
+So a miss-path change alone cannot fix this, and the ordering matters — piece 1 is
+required before piece 2 is even observable.
+
+### The next stop, exactly
+
+**Why is the polyfill provider's type space not shared with its consumer, when the
+tiny provider's is?** The first rec group (10 types, including the string struct
+`$11`) is textually identical in both providers, so the canonical prefix is not
+obviously the difference; the poly provider declares 618 types in the prefix the
+consumer declares 130 of, in a different order. The reduction is
+`.tmp/s2j-valueabi.mts`: four one-line value exports, a nine-line consumer, tiny
+vs polyfill, ~60 s. It needs no Temporal knowledge at all, and every earlier
+Temporal-specific symptom should fall out of it.

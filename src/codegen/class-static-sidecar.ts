@@ -113,10 +113,17 @@ export function classStaticSidecarApplies(ctx: CodegenContext, className: string
   if (!ctx.standalone) return false;
   if (ctx.classObjectGlobals?.get(className) === undefined) return false;
   if (ctx.classStaticSidecarGlobals.get(className) === undefined) return false;
-  // Narrow by design (see the module header): only a class with a static member
-  // whose key is known at runtime, which is the case no static dispatch ladder
-  // can serve at all.
-  return (ctx.classDynamicMembers.get(className) ?? []).some((member) => member.isStatic);
+  // A class with a static member whose key is known only at runtime — the case
+  // no static dispatch ladder can serve at all, and the original #5195 Step 2
+  // scope.
+  if ((ctx.classDynamicMembers.get(className) ?? []).some((member) => member.isStatic)) return true;
+  // (#5383 S2i) …plus a class a RUNTIME-KEY read may land on. That read has no
+  // name, so the demand is recorded coarsely at the read site
+  // (`standalone-class-dyn-member.ts`) and the sidecar is force-built by the
+  // per-class builder `class-proto-lookup.ts`'s class-object arm calls. The
+  // global is registered by that same minter, so this arm can only be reached
+  // for a class the minter admitted.
+  return ctx.standaloneRuntimeKeyClassProtos.has(className);
 }
 
 /** One installable static member, resolved to the funcMap entries it needs. */
