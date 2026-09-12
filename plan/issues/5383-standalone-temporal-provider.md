@@ -2127,3 +2127,163 @@ ToNumber stop above rather than on `Object.fromEntries`.
 `tests/issue-3610-standalone-prototype-receiver-brand.test.ts` (1) and
 `tests/issue-1051.test.ts` (3) — the same 6 recorded on the S2k base.
 `tests/issue-5318-r4-computed-accessor-keys.test.ts` OOMs on both trees.
+
+## S3 findings (2026-09-12) — the lane is wired per TARGET, and linking is not free
+
+S2l's provider is reachable from every test262 lane now. The slice's own
+surprises were both measurements that contradicted the plan, in opposite
+directions: the #2961 guard needed no work at all, and the per-row cost needs
+more than this slice can give it.
+
+### What was wired, and where
+
+| file | change |
+| --- | --- |
+| `scripts/test262-temporal.mjs` | ONE stamp per target (`prewarm.json` unchanged for host, `prewarm-standalone.json` for standalone); `temporalProviderCompileOptions`; `test262TemporalLaneEnabled` — the single lane gate all three lanes call |
+| `scripts/prewarm-temporal-provider.mjs` | `--target host\|standalone\|both`; the key is computed with the same options the build uses |
+| `scripts/test262-worker.mjs` | host-only refusal dropped; provider resolved and memoised per target; the no-cold-build rule unchanged, and standalone additionally REQUIRES a stamp |
+| `tests/test262-shared.ts` | `IS_HOST_LANE &&` → `TEMPORAL_LANE_ENABLED &&`, read once per process |
+| `tests/test262-runner.ts` | had **no lane gate at all** — a standalone row linked the HOST provider. Gated and keyed per target now |
+| `.github/workflows/test262-sharded.yml` | standalone artifact under `run_standalone` **and** the new `standalone_temporal` input; both shard jobs download the directory |
+| `scripts/run-test262-vitest.sh` | pre-warms the provider for the lane it is about to run |
+
+The in-process runner's missing gate is worth stating on its own: since #5248 a
+`--target standalone` row in that lane linked the `--target gc` provider. It was
+invisible because the standalone lane is a probe lane there, and because the
+failure it produces is a wrong VALUE, not an error.
+
+### The #2961 guard needed no relaxation — measured
+
+The plan expected the provider's imports to read as a host-import leak. They do
+not. A standalone consumer linked against the standalone provider reports
+`result.imports === []` (`.tmp/s3-imports.mts`):
+
+| module | `result.imports` (what the guard reads) | engine import list |
+| --- | --- | --- |
+| provider | — | `[]` |
+| consumer, `hostBridge:"off"` | `[]` | 6 × `js2wasm:npm:@js-temporal/polyfill:d7c6…::__js2wasm_link_*` |
+| consumer, `hostBridge:"always"` | `[]` | same 6 |
+
+The six real imports all live in the provider's `link:` namespace, which the
+compiler's import list deliberately excludes because the linker satisfies them.
+So the guard keeps its full strength for every other row — the outcome to
+prefer, since a widened #2961 guard is exactly how a real leak would stop being
+visible.
+
+### The stop: linking multiplies a standalone row's COMPILE time
+
+Measured on what the lane actually compiles — an **assembled** harness row, not
+a bare body (`.tmp/s3-cost.mts` vs `.tmp/s3-cost2.mts`, both on a loaded box, so
+read the ratio rather than the absolute):
+
+| source | size | unlinked | linked | ratio |
+| --- | --- | --- | --- | --- |
+| bare body, `PlainDate/prototype/day/basic.js` | 1 KB | 0.71 s | 0.94 s | 1.3× |
+| assembled row, same file | 10.6 KB | 4.2 s | 10.9 s | 2.6× |
+| assembled row, `intl402/…/from/era-japanese.js` | 60 KB | 17.4 s | 61.1 s | 3.5× |
+
+The bare-body number is why this did not surface earlier: the cost scales with
+the CONSUMER's source, not with the provider, so it only appears once the
+harness is in the picture. The sharded lane kills a fork at 30 s and the
+in-process lane fails a row at 15 s of compile, so a default-on standalone
+artifact converts large-harness Temporal rows from an honest `Temporal is not
+defined` fail into a per-row TIMEOUT — the storm the pre-warm doctrine exists to
+prevent, on a lane whose baseline was never measured linked.
+
+**So the artifact is OPT-IN**: the `standalone_temporal` `workflow_dispatch`
+input in CI, `JS2WASM_TEST262_TEMPORAL_STANDALONE=1` locally. The wiring is
+unconditional; the flag decides only whether the ARTIFACT exists, and the stamp
+gate turns that into the lane's answer. With it off, the default path is
+byte-identical to pre-S3. Making it the default is a follow-up that has to
+attack the linked-compile cost first.
+
+### Fail soft, from the negative side
+
+| state | `test262TemporalLaneEnabled("standalone")` | lane |
+| --- | --- | --- |
+| no stamp (the default today) | `false` | unlinked, pre-S3 behaviour |
+| truncated / non-JSON stamp | `false`, no throw | unlinked |
+| stamp with no `key` | `false` | unlinked |
+| stamp present, key mismatch (worker) | provider `null`, announced once on stderr | unlinked |
+| linear / wasi, stamp present | `false` | unlinked |
+| `JS2WASM_TEST262_TEMPORAL=0` | `false` on every lane | unlinked |
+
+In CI the same property is carried by three separate decisions, each of which
+had to be made explicitly: the standalone build step is `continue-on-error`
+(the host one is not, and must not be — its baseline IS measured linked); the
+host-stamp guarantee moved out of `if-no-files-found: error` into its own named
+check, because a shared directory can no longer carry it; and the provider
+directory is always uploadable, since `download-artifact` fails hard on a
+missing artifact and would otherwise turn the soft path into a red lane.
+
+### Measured: the 123-row family (`family-123.txt`), standalone lane
+
+Driver `.tmp/bucket-run-sa.mts` — the #5248 row-by-row driver with
+`runTest262File(file, category, 15000, "standalone")`, one TSV row per test so a
+flip cannot hide inside a count. Fresh `JS2WASM_TEMPORAL_CACHE` per side. The
+list is the one every earlier slice used (sha `979f0047cd09…`, the first 123
+`built-ins`/`intl402` Temporal rows in path order); no regeneration was needed.
+
+THREE configurations, because the honest base differs per lane. The in-process
+runner had no lane gate, so on `main` a standalone row links the **gc** provider;
+the sharded lane was host-only, so there a standalone row is **unlinked**.
+
+| | base: linked, gc provider | branch DEFAULT: no artifact | branch OPT-IN: linked, standalone provider |
+| --- | --- | --- | --- |
+| rows scored | 84 / 123 | **123 / 123** | 61 / 123 |
+| pass | 0 | **0** | 0 |
+| fail | 12 | 111 | 10 |
+| compile_error | 72 | 12 | 51 |
+| — of those, compile TIMEOUT | 64 | **0** | 45 |
+| `Temporal is not defined` | 0 | 82 | 0 |
+| `__temporal_*` leak | 0 | 12 | 0 |
+| host-import-leak verdicts | 0 | 12 | 0 |
+
+**0 pass→fail, and structurally so: this family has ZERO passing rows on the
+standalone lane in every configuration measured.** It cannot regress a pass
+because it has none — which is worth stating rather than implying, since a
+0-flip count on a family with no passes is a weaker fact than it looks.
+
+- **A. The opt-in path changes nothing on the rows measured.** Base-linked-gc vs
+  branch-linked-standalone over the 61 aligned rows: **0 status flips**, same 45
+  timeouts, same everything. Swapping a gc provider for the standalone one is
+  neutral here — these rows are dominated by the compile timeout and by Intl
+  refusals, not by the provider's values.
+- **B. The default path changes 62 of 84 rows, all in the right direction.**
+  Base-linked-gc vs branch-default: 61 × `compile_error(timeout)` → `fail` with a
+  real diagnostic (`missing required Temporal.PlainDate field`,
+  `Temporal is not defined`, …), and 1 × `fail` → `compile_error` where the row
+  now compiles far enough to surface its own `__temporal_*` host-import leak
+  (`intl402/…/PlainDate/prototype/equals/canonicalize-calendar.js` —
+  `env::__temporal_plain_date_from_string_field`, an S4 target). Not linking a
+  **gc** provider into a **standalone** consumer is the fix; the timeouts it was
+  producing were never conformance signal.
+- **This affects the in-process probe lane only.** The sharded lane — the one
+  that writes the published baseline — was host-only before this slice and stays
+  unlinked by default after it, so the committed standalone numbers do not move.
+
+**Coverage, stated plainly:** the two LINKED runs were stopped at 84 and 61 rows
+(`SIGTERM`, not a failure) after ~2 h, because each linked row costs 1-3 min on
+this box and they were starving the required equivalence gate. The configuration
+that SHIPS — default, no artifact — is complete at 123/123. The two linked
+prefixes cover the whole `intl402` head of the list, i.e. every Intl-dependent
+row in the family.
+
+**Intl-dependent rows, separately** (`intl402/**`, the first 111 of the 123): all
+111 of the scored rows in every configuration are `intl402`, so the table above
+IS the Intl breakdown for the prefixes. They are expected to stay red — the
+standalone provider ships the `Intl` refusal shim (`src/temporal-intl-shim.ts`),
+so a calendar-dependent row cannot pass by construction.
+
+**One environment caveat**, equal on all three sides: 5 rows report
+`JS2WASM_EVAL_ENGINE=quickjs but the quickjs provider is not built` — a local
+prerequisite this box lacks, not a verdict about the slice.
+
+### Pre-existing red, unchanged by this slice
+
+`tests/issue-5382-temporal-project-publication.test.ts` fails 1 of 33
+("materializes the pinned project", the Intl shim now in the polyfill source) —
+**measured on the S2l base commit as well**, same single failure, so S3 neither
+caused nor fixed it. The brief's known-red list (`issue-2151`,
+`issue-2151-mixed-spread`, `issue-3610-*`, `issue-1051`) is unchanged; those were
+not re-run here because S3 touches no `src/` file.
