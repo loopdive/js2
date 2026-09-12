@@ -165,6 +165,46 @@ the `.apply` site. Both assertions were refreshed to the behaviour that
 actually holds; its over-arity negative moved to a positive per this change,
 with the runtime answer unchanged at `2116`.
 
+## A/B — 17 dogfood upstream suites, one HEAD (`upstream/main` `cf82f78d6d`)
+
+Base = the same tree with the one changed clause reverted (file-copy A/B, no
+stashing). Both variants were measured back to back on the same box, per test
+file.
+
+| suite             |        base |         fix | delta  |
+| ----------------- | ----------- | ----------- | ------ |
+| webpack           | 16/16       | 16/16       | 0      |
+| three             | 17/18       | 17/18       | 0      |
+| clsx              | 32/32       | 32/32       | 0      |
+| cookie            | 63740/63740 | 63740/63740 | 0      |
+| lodash            | 59/62       | 59/62       | 0      |
+| redux             | 67/82       | 67/82       | 0      |
+| **axios**         | **202/231** | **208/231** | **+6** |
+| stylelint         | 108/108     | 108/108     | 0      |
+| tailwindcss       | 13/13       | 13/13       | 0      |
+| jsdom             | 6/6         | 6/6         | 0      |
+| styled-components | 9/9         | 9/9         | 0      |
+| uuid              | 75/75       | 75/75       | 0      |
+| marked            | 16/30       | 16/30       | 0      |
+| moment            | 10/10       | 10/10       | 0      |
+| prettier          | 105/151     | 105/151     | 0      |
+| jest              | 335/356     | 335/356     | 0      |
+| hono              | 258/324     | 258/324     | 0      |
+
+Per-file movers — **every status change across all 17 suites**, all
+`failed → passed`:
+
+| suite | file                                    | test                                   |
+| ----- | --------------------------------------- | -------------------------------------- |
+| axios | `tests/unit/transformResponse.test.js`  | parses json                            |
+| axios | `tests/unit/transformResponse.test.js`  | ignores XML                            |
+| axios | `tests/unit/transformResponse.test.js`  | does not parse the empty string        |
+| axios | `tests/unit/transformResponse.test.js`  | does not parse undefined               |
+| axios | `tests/unit/core/transformData.test.js` | supports an array of transformers      |
+| axios | `tests/unit/core/transformData.test.js` | passes headers through to transformers |
+
+Nothing else in any suite changed status in either direction.
+
 ## Residuals (deliberately not taken here)
 
 - **`arguments.length` is still the FORMAL count inside an under-applied
