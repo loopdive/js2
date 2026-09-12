@@ -11,9 +11,9 @@
 // is collision-free (jsbi.mjs declares one top-level binding, `JSBI`; the
 // polyfill's 340 top-level bindings do not include it).
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,7 +28,7 @@ function sha1(buf) {
   return createHash("sha1").update(buf).digest("hex");
 }
 
-function extractVerified(spec, root) {
+function verifyTarball(spec) {
   const tarballPath = resolve(HERE, spec.tarball);
   if (!existsSync(tarballPath)) {
     throw new Error(
@@ -48,35 +48,63 @@ function extractVerified(spec, root) {
     );
   }
 
-  const entryPath = join(root, spec.entryModule);
-  if (!existsSync(entryPath)) {
-    mkdirSync(root, { recursive: true });
-    execFileSync("tar", ["-xzf", tarballPath, "-C", root], { stdio: "pipe" });
-    if (!existsSync(entryPath)) {
-      throw new Error(`[dogfood] extraction did not produce ${spec.entryModule} under ${root}.`);
-    }
-  }
-  return entryPath;
+  return tarballPath;
 }
 
 /**
- * Ensure both pinned tarballs are extracted and integrity-checked.
- * Idempotent: re-extracts only when the extraction dir is missing.
+ * Publish both verified packages as one complete, immutable generation.
+ * Existing legacy .temporal-polyfill contents are neither read nor removed.
+ * force creates a fresh generation; it never invalidates paths held by readers.
  *
  * @param {{force?: boolean}} [opts]
  */
 export function setupTemporalPolyfill(opts = {}) {
   const pin = loadPin();
-  const root = join(HERE, ".temporal-polyfill");
-  const jsbiRoot = join(root, "jsbi");
+  // Recheck integrity even on a generation hit, before trusting either pin.
+  const polyfillTarball = verifyTarball(pin);
+  const jsbiTarball = verifyTarball(pin.dependency);
+  const key = createHash("sha256")
+    .update(JSON.stringify({ schema: "temporal-extraction-link-v1", pin }))
+    .digest("hex");
+  const generations = join(HERE, ".temporal-polyfill", "generations");
+  mkdirSync(generations, { recursive: true });
+  const root = join(generations, opts.force ? `${key}-fresh-${randomUUID()}` : key);
+  if (existsSync(root)) return validateGeneration(root, pin);
 
-  if (opts.force && existsSync(root)) rmSync(root, { recursive: true, force: true });
+  const staging = mkdtempSync(join(generations, ".staging-"));
+  try {
+    execFileSync("tar", ["-xzf", polyfillTarball, "-C", staging], { stdio: "pipe" });
+    const jsbiRoot = join(staging, "jsbi");
+    mkdirSync(jsbiRoot);
+    execFileSync("tar", ["-xzf", jsbiTarball, "-C", jsbiRoot], { stdio: "pipe" });
+    validateGeneration(staging, pin);
+    try {
+      renameSync(staging, root);
+    } catch (error) {
+      // A complete non-empty winner cannot be replaced by rename. Accept
+      // only that race, never permission errors or an incomplete destination.
+      if (error.code !== "EEXIST" && error.code !== "ENOTEMPTY") throw error;
+      return validateGeneration(root, pin);
+    }
+    return validateGeneration(root, pin);
+  } finally {
+    // This invocation owns this unique staging path, not any published root.
+    rmSync(staging, { recursive: true, force: true });
+  }
+}
 
-  const entryModulePath = extractVerified(pin, root);
-  const umdModulePath = join(root, pin.umdModule);
-  const jsbiEntryPath = extractVerified(pin.dependency, jsbiRoot);
-
-  return { root, entryModulePath, umdModulePath, jsbiEntryPath, version: pin.version, pin };
+function validateGeneration(root, pin) {
+  const paths = {
+    root,
+    entryModulePath: join(root, pin.entryModule),
+    umdModulePath: join(root, pin.umdModule),
+    jsbiEntryPath: join(root, "jsbi", pin.dependency.entryModule),
+    version: pin.version,
+    pin,
+  };
+  if (readFileSync(paths.umdModulePath).length === 0) throw new Error("[dogfood] empty Temporal UMD bundle");
+  linkPolyfillSource(paths);
+  return paths;
 }
 
 const SOURCE_MAP_COMMENT = /^\/\/# sourceMappingURL=.*$/gm;

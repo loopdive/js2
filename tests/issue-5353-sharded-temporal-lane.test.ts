@@ -169,7 +169,9 @@ describe("#5353 the parent pre-warms before the fork pool starts", () => {
     // Both shard jobs must depend on it, or a shard races an artifact that is
     // not there yet and silently runs unlinked.
     expect(
-      workflow.match(/needs: \[changes, mg-artifact-probe, runtime-eval-provider, temporal-provider\]/),
+      workflow.match(
+        /needs: \[changes, mg-artifact-probe, runtime-eval-provider, temporal-provider, admit-measurement-baseline\]/,
+      ),
     ).not.toBeNull();
     expect(workflow.match(/needs: \[changes, runtime-eval-provider, temporal-provider\]/)).not.toBeNull();
     expect(workflow).toContain("JS2WASM_TEMPORAL_CACHE: .test262-cache/temporal");
