@@ -24,6 +24,7 @@
  * is active (`ctx.standalone || ctx.wasi`). The JS-host path is untouched.
  */
 import { ts } from "../ts-api.js";
+import { COLLECTION_KIND } from "./builtin-brands.js";
 import { isVoidType } from "../checker/type-mapper.js";
 import type { Instr, StructTypeDef, ArrayTypeDef, ValType } from "../ir/types.js";
 import { canonicalUndefinedExternInstrs, ensureAnyValueType, undefinedSingletonActive } from "./any-helpers.js";
@@ -80,22 +81,7 @@ export const MAP_LAYOUT = {
   TOMBSTONE_BIT,
 } as const;
 
-/**
- * (#3171) Which keyed collection a `$Map` struct instance backs. All four
- * collections share the `$Map` hash table (Set/WeakSet store key === value), so
- * struct identity alone cannot distinguish `[[MapData]]` / `[[SetData]]` /
- * `[[WeakMapData]]` / `[[WeakSetData]]` for the spec receiver brand checks
- * (`Map.prototype.get.call(new Set())` must throw a TypeError). The immutable
- * `kind` field (MAP_LAYOUT.M_KIND), stamped at construction by `__map_new`,
- * carries the brand.
- */
-export const COLLECTION_KIND = {
-  MAP: 0,
-  SET: 1,
-  WEAKMAP: 2,
-  WEAKSET: 3,
-} as const;
-export type CollectionKind = (typeof COLLECTION_KIND)[keyof typeof COLLECTION_KIND];
+export { COLLECTION_KIND, type CollectionKind } from "./builtin-brands.js";
 
 /**
  * Register the WasmGC struct/array types backing the native Map. Idempotent.

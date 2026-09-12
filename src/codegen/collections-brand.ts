@@ -33,6 +33,7 @@
  * `.apply` (packed args) is deferred, matching #2604.
  */
 import { ts } from "../ts-api.js";
+import { COLLECTION_KIND } from "./builtin-brands.js";
 import type { ValType } from "../ir/types.js";
 import {
   compileCollectionGetOrInsert,
@@ -42,7 +43,6 @@ import {
 } from "./collections-es2025.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import {
-  COLLECTION_KIND,
   MAP_LAYOUT,
   compileCollectionElementArg,
   emitCollectionIteratorVec,

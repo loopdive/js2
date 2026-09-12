@@ -766,6 +766,10 @@ export interface FunctionContext {
    * / `liftedCaptureBoxSlot` in closures/capture-source-slot.ts.
    */
   liftedCaptureBoxes?: Map<string, number>;
+  /** (#5356) Cells `emitEagerCaptureBoxes` minted at function top, keyed by the RAW
+   * pre-hoisted slot each was seeded from — scope-hiding-proof, unlike the name-keyed
+   * maps above. Resolved through `statements/eager-capture-box.ts`. */
+  eagerCaptureBoxes?: Map<number, { cellSlot: number; refCellTypeIdx: number; valType: ValType }>;
   /**
    * Source-visible bindings owned by a function whose lexical descendants may
    * perform direct eval. These functions alone promote bindings to the shared
@@ -2687,6 +2691,16 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * relaxation never moves. See runtime-key-class-methods.ts.
    */
   runtimeKeyClassMethodNames: Set<string>;
+  /**
+   * (#5383 S2h) The STANDALONE twin of {@link runtimeKeyClassMethodNames}: the
+   * classes whose prototype `$Object` a runtime-key read may have to consult.
+   *
+   * Recorded, not emitted — the read site only knows that SOME class instance
+   * may reach it, and the prototype singletons are force-built once, at
+   * finalize, from this set. An empty set is what keeps every standalone module
+   * with no runtime-key read byte-identical. See standalone-class-dyn-member.ts.
+   */
+  standaloneRuntimeKeyClassProtos: Set<string>;
   /** Resolved concrete types for generic functions (from call-site analysis) */
   genericResolved: Map<string, { params: ValType[]; results: ValType[] }>;
   /** Rest parameter info per function (functions with ...rest syntax) */

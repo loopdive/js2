@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import ts from "typescript";
 import {
   allAdapterPath,
   combinatorPath,
@@ -12,21 +13,25 @@ import {
   donorNames,
   executeArm,
   fn,
+  parse,
   readerAt,
   receipt,
   semanticReceipt,
   RETAINED_DECLARATIONS,
   validateArm,
   verifyHistorical,
+  verifyForwardDelayHistorical,
+  DELAY_EH_FORWARD_EVIDENCE,
   verifyRetainedDeclarations,
 } from "./helpers/native-delay-combinator-source-receipts.mjs";
 
 const root = resolve(import.meta.dirname, ".."),
   read = readerAt(root);
+const verifyCurrent = (reader: (path: string) => string) => verifyForwardDelayHistorical(reader).historical;
 describe("eight historical combinator bodies reconstructed from mandatory live owners", () => {
   it("retains the eight-donor denominator and separately accounts for delay/vector/dispatch", () => {
     expect(donorNames).toHaveLength(8);
-    expect(verifyHistorical(read)).toEqual({
+    expect(verifyCurrent(read)).toEqual({
       historicalDonors: 8,
       delayRows: 4,
       vectorLoops: 1,
@@ -36,7 +41,7 @@ describe("eight historical combinator bodies reconstructed from mandatory live o
   for (const missing of [combinatorPath, delayPath, donorPath, delayAdapterPath, allAdapterPath]) {
     it(`rejects missing mandatory source ${missing}`, () =>
       expect(() =>
-        verifyHistorical((path: string) => {
+        verifyCurrent((path: string) => {
           if (path === missing) throw new Error("missing source");
           return read(path);
         }),
@@ -93,7 +98,7 @@ describe("eight historical combinator bodies reconstructed from mandatory live o
     it(`rejects live ${label} mutation, not a mutation of reconstructed output`, () => {
       expect(read(path!).includes(before!)).toBe(true);
       expect(() =>
-        verifyHistorical((file: string) => (file === path ? read(file).replace(before!, after!) : read(file))),
+        verifyCurrent((file: string) => (file === path ? read(file).replace(before!, after!) : read(file))),
       ).toThrow();
     });
   }
@@ -102,13 +107,13 @@ describe("eight historical combinator bodies reconstructed from mandatory live o
       const text = read(combinatorPath),
         node = fn(text, name),
         renamed = text.slice(0, node.name!.pos) + " missingHistoricalDonor" + text.slice(node.name!.end);
-      expect(() => verifyHistorical((path: string) => (path === combinatorPath ? renamed : read(path)))).toThrow();
+      expect(() => verifyCurrent((path: string) => (path === combinatorPath ? renamed : read(path)))).toThrow();
     });
   it("rejects duplicate live declarations", () => {
     const text = read(combinatorPath),
       duplicate = fn(text, "buildRejectBody").getText();
     expect(() =>
-      verifyHistorical((path: string) => (path === combinatorPath ? text + "\n" + duplicate : read(path))),
+      verifyCurrent((path: string) => (path === combinatorPath ? text + "\n" + duplicate : read(path))),
     ).toThrow();
   });
   it("rejects changed declaration order instead of sorting live functions by donor name", () => {
@@ -121,8 +126,121 @@ describe("eight historical combinator bodies reconstructed from mandatory live o
       text.slice(first.end, second.getStart()) +
       first.getText() +
       text.slice(second.end);
-    expect(() => verifyHistorical((path: string) => (path === combinatorPath ? changed : read(path)))).toThrow();
+    expect(() => verifyCurrent((path: string) => (path === combinatorPath ? changed : read(path)))).toThrow();
   });
+});
+
+describe("landed standard-EH forwarding with unchanged historical ledgers", () => {
+  function changeGuard(text: string, change: (call: ts.CallExpression) => string): string {
+    const provider = fn(text, "buildNativePromiseDelayProviderBody");
+    const result = provider.body!.statements.at(-1);
+    assert(
+      result && ts.isReturnStatement(result) && result.expression && ts.isArrayLiteralExpression(result.expression),
+    );
+    const call = result.expression.elements[6];
+    assert(call && ts.isCallExpression(call));
+    return text.slice(0, call.getStart()) + change(call) + text.slice(call.end);
+  }
+  function replaceHandlers(call: ts.CallExpression, indices: number[]): string {
+    const handlers = call.arguments[2];
+    assert(handlers && ts.isArrayLiteralExpression(handlers));
+    const prefix = call.getText().slice(0, handlers.getStart() - call.getStart());
+    const suffix = call.getText().slice(handlers.end - call.getStart());
+    return prefix + "[" + indices.map((index) => handlers.elements[index]!.getFullText()).join(",") + "]" + suffix;
+  }
+  const helperImport = 'import { buildStandardTryTable } from "../../../wasm/physical/exception-control.js";';
+  it("proves the forward delta separately and keeps the old verifier strict", () => {
+    expect(DELAY_EH_FORWARD_EVIDENCE.commit).toBe("d4108568d43f14c361ecc3a58c82633027eaae39");
+    expect(verifyForwardDelayHistorical(read)).toEqual({
+      historical: { historicalDonors: 8, delayRows: 4, vectorLoops: 1, sharedDispatchHelpers: 1 },
+      forwardEh: { reference: DELAY_EH_FORWARD_EVIDENCE.commit, tagged: 1, foreign: 1 },
+    });
+    expect(() => verifyHistorical(read)).toThrow("historical body delay-provider");
+  });
+  for (const [label, changedImport, guard] of [
+    [
+      "with attributes",
+      helperImport.slice(0, -1) + ' with { type: "json" };',
+      "ordinary EH import without attributes or assertions",
+    ],
+    [
+      "assert clause",
+      helperImport.slice(0, -1) + ' assert { type: "json" };',
+      "ordinary EH import without attributes or assertions",
+    ],
+    ["defer phase", helperImport.replace("import {", "import defer {"), "ordinary EH import without a phase modifier"],
+  ] as const) {
+    it(`rejects ${label} before erasing the projected import`, () => {
+      expect(verifyCurrent(read).delayRows).toBe(4);
+      const original = read(delayPath),
+        changed = original.replace(helperImport, changedImport);
+      expect(changed).not.toBe(original);
+      expect(() => parse(changed)).not.toThrow();
+      expect(() => verifyForwardDelayHistorical((path: string) => (path === delayPath ? changed : read(path)))).toThrow(
+        guard,
+      );
+    });
+  }
+  const mutations: [string, (text: string) => string][] = [
+    ["missing downward import", (text) => text.replace(helperImport, "")],
+    ["duplicate downward import", (text) => text + "\n" + helperImport],
+    ["missing canonical call", (text) => changeGuard(text, () => '{ op: "nop" }')],
+    [
+      "wrong helper",
+      (text) => changeGuard(text, (call) => call.getText().replace("buildStandardTryTable", "buildTargetTaggedTry")),
+    ],
+    [
+      "duplicate canonical call",
+      (text) => {
+        let duplicate = "";
+        changeGuard(text, (call) => {
+          duplicate = call.getText();
+          return duplicate;
+        });
+        return text + "\n" + duplicate + ";\n";
+      },
+    ],
+    ["lost tagged route", (text) => changeGuard(text, (call) => replaceHandlers(call, [1]))],
+    ["lost foreign route", (text) => changeGuard(text, (call) => replaceHandlers(call, [0]))],
+    ["reordered routes", (text) => changeGuard(text, (call) => replaceHandlers(call, [1, 0]))],
+    ["duplicate foreign route", (text) => changeGuard(text, (call) => replaceHandlers(call, [0, 1, 1]))],
+    ["wrong tag", (text) => text.replace("tagIdx: resources.exnTagIdx", "tagIdx: 0")],
+    [
+      "wrong tagged payload type",
+      (text) => text.replace('payloadType: { kind: "externref" }', 'payloadType: { kind: "f64" }'),
+    ],
+    [
+      "wrong rejection target",
+      (text) => text.replace("funcIdx: resources.rejectFuncIdx", "funcIdx: resources.timerFuncIdx"),
+    ],
+    [
+      "changed foreign sentinel",
+      (text) =>
+        changeGuard(text, (call) => {
+          const handlers = call.arguments[2];
+          assert(handlers && ts.isArrayLiteralExpression(handlers));
+          const foreign = handlers.elements[1]!;
+          const body = foreign.getText().replace('op: "ref.null.extern"', 'op: "ref.null.any"');
+          return (
+            call.getText().slice(0, foreign.getStart() - call.getStart()) +
+            body +
+            call.getText().slice(foreign.end - call.getStart())
+          );
+        }),
+    ],
+  ];
+  for (const [label, change] of mutations) {
+    it(`rejects ${label} before accepting a historical projection`, () => {
+      const original = read(delayPath),
+        changed = change(original);
+      expect(original).toContain(helperImport);
+      expect(changed).not.toBe(original);
+      expect(() => parse(changed)).not.toThrow();
+      expect(() =>
+        verifyForwardDelayHistorical((path: string) => (path === delayPath ? changed : read(path))),
+      ).toThrow();
+    });
+  }
 });
 
 describe("supplemental semantic fields and the original 24-declaration ledger", () => {
@@ -179,7 +297,7 @@ describe("supplemental semantic fields and the original 24-declaration ledger", 
       const changed = text.slice(0, node.getStart()) + declaration.replace(before!, after!) + text.slice(node.end);
       expect(receipt(changed)).toBe(receipt(text));
       expect(semanticReceipt(changed)).not.toBe(semanticReceipt(text));
-      expect(() => verifyHistorical((file: string) => (file === path ? changed : read(file)))).toThrow(expectedFailure);
+      expect(() => verifyCurrent((file: string) => (file === path ? changed : read(file)))).toThrow(expectedFailure);
     });
   }
   for (const { path, name } of RETAINED_DECLARATIONS) {

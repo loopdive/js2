@@ -1619,6 +1619,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/array-push-spread.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/array-reduce-fusion.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -1668,6 +1676,14 @@
     },
     {
       "path": "src/codegen/async-closure-promise.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/async-await-hoist.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -3347,6 +3363,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/expressions/destructuring-unresolved.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/expressions/dynamic-element-host-call.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -3884,6 +3908,14 @@
     },
     {
       "path": "src/codegen/expressions/void-operand.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/extern-arg-marshal.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -4523,6 +4555,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/host-method-args.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/host-native-instanceof.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -4892,6 +4932,14 @@
     },
     {
       "path": "src/codegen/iter-lazy-native.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/iterator-errors.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -6739,6 +6787,22 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/sidecar-owner-scope.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/spread-arg-list.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/stack-balance.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -6779,7 +6843,47 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/standalone-class-construct.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/standalone-class-dyn-member.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/standalone-class-dyn-static.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/standalone-link-boundary.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/standalone-subclass-ctors.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/standalone-subclass-method-install.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -6820,6 +6924,14 @@
     },
     {
       "path": "src/codegen/statements/destructuring.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/statements/eager-capture-box.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -8723,6 +8835,30 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/backend/lower-contracts.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Canonical lowering resolver/result types without implementation imports; existing IR-node and physical layout type dependencies still prevent a pure-contract certification."
+    },
+    {
+      "path": "src/ir/backend/wasm-constants.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "One shared Wasm constant implementation, independent of lowerers and concrete emitters; preserve deferred linear consumers and separate remaining IR-node model debt."
+    },
+    {
+      "path": "src/ir/backend/wasm-lowering.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Explicit Wasm convenience assembly owns concrete-emitter selection; generic lowering must not import this wrapper or reach it through the compatibility facade."
+    },
+    {
       "path": "src/ir/backend/wasmgc-emitter.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -9291,12 +9427,20 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/lower-generic.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Generic implementation no longer selects a concrete emitter, but Wasm-shaped branches, resolver callbacks and mixed IR dependencies remain; this cycle removal is not pure-IR or whole-compiler closure."
+    },
+    {
       "path": "src/ir/lower.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
-      "nextBoundary": "Split standalone lowering into backend/wasmgc/lowering; isolate shared pure contracts and deferred backend/legacy compatibility paths before relocation. Do not move all backend coupling into ir/core."
+      "nextBoundary": "Explicit old-path compatibility facade re-exports canonical generic lowering, Wasm assembly, constants and types; no implementations or factories remain here. Retain legacy consumers until their independent migration."
     },
     {
       "path": "src/ir/lowering-dynamic-scratch.ts",
@@ -10454,6 +10598,11 @@
       "layer": "legacy-host"
     },
     {
+      "path": "src/runtime/promise-then-reactions.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
       "path": "src/runtime/standalone-dom-string-bridge.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
@@ -10626,6 +10775,14 @@
     },
     {
       "path": "src/target-profile.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Review the frontend, orchestration, runtime and shared-contract split before migration."
+    },
+    {
+      "path": "src/temporal-intl-shim.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "compiler",

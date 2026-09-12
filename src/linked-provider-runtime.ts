@@ -252,8 +252,19 @@ export function instantiateLinkedProviders(
     // consumer-minted argument arrives undecodable.
     registerLinkedProviderModule(rawExports);
     const exposedExports: Record<string, any> = { ...rawExports };
+    // (#5383 S2d) A provider compiled for a NON-JavaScript environment
+    // (`--target standalone`) hands its values to a WASM consumer, not to a
+    // host. `wrapLinkedProviderValue` replaces the value with a JS host mirror
+    // bound to this provider's `__struct_field_names` / `__sget_*` exports —
+    // exactly right for the JS lane, and a dead end for the standalone one:
+    // those exports do not exist in a standalone binary (#4035 strips the host
+    // bridge), and the consumer is wasm, which cannot read a JS proxy at all.
+    // Measured: with the mirror in place the consumer sees an object with zero
+    // own keys and every read `undefined`. Passing the raw struct through is
+    // what lets the #5383 S2d boundary terminals decode it.
+    const noHostMirror = manifest.providerMetadata.targetProfile?.environment !== "javascript";
     for (const boundary of Object.values(manifest.exportBoundaries)) {
-      if (boundary.kind === "function") continue;
+      if (boundary.kind === "function" || noHostMirror) continue;
       const getter = rawExports[boundary.field];
       if (typeof getter !== "function") {
         throw new Error(`Linked provider ${artifact.namespace} has no getter ${boundary.field}`);
