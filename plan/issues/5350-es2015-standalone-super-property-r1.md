@@ -4,7 +4,7 @@ title: "ES2015 standalone super property access — r1: class [[HomeObject]] rea
 status: in-progress
 sprint: current
 created: 2026-09-05
-updated: 2026-09-06
+updated: 2026-09-12
 priority: high
 horizon: m
 feasibility: medium
@@ -16,7 +16,7 @@ language_feature: super
 es_edition: ES2015
 goal: standalone-mode
 requested_by: claude.ai@loopdive.com/fable-es6
-related: [4688, 5195, 3594, 3522, 2046, 5316, 4444]
+related: [4688, 5195, 3594, 3522, 2046, 5316, 4444, 6420]
 # 2026-09-06 (r1 review round): the whole change-set is these three files.
 # `new-super.ts` carries the r1 super-read lowering (steps 1-5) — restated here
 # because the lane's growth was covered only by OTHER issues' grants, which is a
@@ -27,6 +27,14 @@ related: [4688, 5195, 3594, 3522, 2046, 5316, 4444]
 # `super.m()` over such a literal answer node instead of throwing an escaping
 # TypeError. Both additions sit in the module that owns the mechanism.
 loc-budget-allow:
+  # 2026-09-12: narrow original-harness rescue. These are the three owning
+  # sites for declaration-proven class prototype writes, literal `prototype`
+  # reads, and bounded missing-super constructor replay; splitting the small
+  # predicates out of their dispatch owners would make the ordering contract
+  # harder to review, not smaller.
+  - src/codegen/declarations.ts
+  - src/codegen/property-access.ts
+  - src/codegen/class-bodies.ts
   - src/codegen/expressions/new-super.ts
   - src/codegen/literals.ts
   - src/codegen/dynamic-proto.ts
@@ -43,6 +51,10 @@ loc-budget-allow:
 # registers a 387-LOC "new over-budget function" for what is only a rename, so
 # the call-site form is the smaller change.
 func-budget-allow:
+  # 2026-09-12: the literal `C["prototype"]` singleton arm belongs beside the
+  # existing element-access dispatch; its declaration-identity predicate lives
+  # in the dedicated helper rather than growing this function further.
+  - src/codegen/property-access.ts::compileElementAccess
   - src/codegen/expressions/new-super.ts
   - src/codegen/literals.ts
   - src/codegen/dynamic-proto.ts
@@ -989,3 +1001,102 @@ shipped answer (f11 → 5). Byte-identical to r4 on wasi and host for all 316
 probes; standalone differs only on e12/e15/e16/f3/f10/f11; the 53-row control
 is identical to r4.
 
+## 2026-09-12 current-main rescue checkpoint (Codex)
+
+### Scope and provenance
+
+This checkpoint ports only the super-property mechanisms from historical commit
+`357b05f68c8c76b8c4888690941edf9d247243ab` onto current main
+`d4108568d43f14c361ecc3a58c82633027eaae39`; it does not cherry-pick the mixed
+PR wholesale. The source delta is deliberately limited to:
+
+- `src/codegen/class-prototype-write-keeps.ts`: declaration-identity proof for
+  direct or literal-computed class `.prototype` receivers;
+- `src/codegen/declarations.ts`: retain those top-level prototype assignments in
+  source order;
+- `src/codegen/property-access.ts`: make `C["prototype"]` use the established
+  lazy singleton read;
+- `src/codegen/class-bodies.ts`: replay only bounded missing-`super()` bodies
+  before the existing derived-constructor fallthrough error; and
+- eight focused regression cases in
+  `tests/issue-5350-super-property-r1.test.ts`.
+- `scripts/compiler-boundaries.json`: classify the new helper exactly like its
+  adjacent class-codegen modules (`unmigrated` / `mixed-needs-split` /
+  `backend-wasmgc`) so the boundary inventory retains a complete import graph.
+
+The guard rejects return/lexical-`this`/`eval`/nested callable or class shapes,
+parameter `super` references, and super write targets. That keeps the change at
+the two semantics it can prove: top-level `PutValue` effects
+([§6.2.5.6](https://tc39.es/ecma262/#sec-putvalue)) and the body/abrupt-completion
+ordering preceding the derived constructor's `GetThisBinding` check
+([§10.2.2](https://tc39.es/ecma262/#sec-ecmascript-function-objects-construct-argumentslist-newtarget)).
+Generator and TypedArray work from the historical PR is intentionally excluded.
+
+### Authoritative current-main measurement
+
+The supplied standalone cache has SHA-256
+`45ff56e7570bba0a1bff6590d19d35de2525928adb7e3054789ba35aebb29360` and
+contains **48,735 raw/unique rows**. Selecting `scope_official=true` and
+edition-index `4` (`ES2015`) from
+`website/public/benchmarks/results/test262-file-editions.json` yields
+**11,704 selected/unique ES2015 rows**. Its seven named current-main failures
+were rerun through `scripts/run-test262-paths.mts --standalone --isolate`, using
+untouched `d410...` and this candidate with the same checked-out Test262 corpus:
+
+| set | untouched current main | candidate |
+| --- | ---: | ---: |
+| seven intended ES2015 super rows | 0 pass / 7 fail | **7 pass / 0 fail** |
+| 18 neighbour/control rows | 13 pass / 5 fail | **13 pass / 5 fail** |
+
+The seven gains are `prop-dot-cls-this-uninit`,
+`prop-dot-cls-val-from-arrow`, `prop-dot-cls-val`,
+`prop-expr-cls-this-uninit`, `prop-expr-cls-val-from-arrow`,
+`prop-expr-cls-val-from-eval`, and `prop-expr-cls-val` (all `.js`). The five
+retained control residuals are `prop-{dot,expr}-cls-ref-strict`,
+`prop-{dot,expr}-cls-ref-this`, and `prop-dot-cls-val-from-eval`; their
+verdicts and first assertion text are identical on both revisions. This is the
+historical 36/58 -> 43/58 seven-gain mechanism revalidated on current main, not
+a claim of full ES2015 conformance.
+
+### One current-main blocker is deliberately excluded
+
+The focused file has a valid, pre-existing class-super-call pin. Exact archive
+evidence separates it from this rescue:
+
+| revision | focused result |
+| --- | ---: |
+| untouched `d410...` | 32 passed / 1 failed |
+| historical `357b05f...` | 41 passed |
+| this candidate | 40 passed / 1 failed |
+
+The sole failure is `throws TypeError when an object literal's super member is a
+class`: the compiler returns `0`, where Node v22.23.2 reports
+`typeof K === "function"` and a `TypeError` for `super.v()` when `v` is class
+`K`. A direct parent/child bisect proves the first bad commit is
+`3b9744f0562becc42f9070ca1d2f673a1c2f1ebd` (parent
+`0236a6122361a487340d61f3fefc02465549fed0` passes the same unchanged pin).
+That #5383 change correctly repaired `typeof` for class values; #5350's old
+guard incorrectly treats it as `IsCallable`, contrary to
+[EvaluateCall step 5](https://tc39.es/ecma262/#sec-evaluatecall).
+
+This is an independent carrier-classification defect, filed as
+[#6420](6420-standalone-class-value-iscallable-regression.md), with the bisect,
+Node control, plan, and acceptance criteria. It is not hidden, weakened, or
+implemented here.
+
+### Status and handoff
+
+The seven-row rescue checkpoint is complete and ready to review, but this issue
+remains `in-progress` and its PR is intentionally a **draft**: the valid #6420
+pin makes the focused suite 40/41 on current main. It becomes ready only after
+#6420 lands, this branch integrates the resulting current main, and the focused
+suite plus CI are green. No broad object-literal or class-value/callability
+change belongs in this checkpoint.
+
+**Post-push CI correction (2026-09-12).** The PR's compiler-boundary inventory
+initially reported only the new helper as unclassified, which in turn left the
+two imports from `declarations.ts` and `property-access.ts` unresolved. The
+single matching inventory entry above restores that evidence without changing
+the boundary policy or any super-property semantics; the exact quality command
+`node --max-old-space-size=2048 scripts/check-compiler-boundaries.mjs --mode
+inventory --base HEAD^1` now reports `errors: []` and `inventoryValid: true`.
