@@ -1,0 +1,13 @@
+{
+  "evidence": "downloaded snapshot; not current source execution",
+  "snapshot_sha256": "2a5d1620068563dc1f0c88fea47dbbaf5c85ae20d4d8974e1aad66edba1fbdfb",
+  "scope": 2486,
+  "rows": 2486,
+  "counts": {
+    "pass": 2122,
+    "compile_error": 228,
+    "fail": 136
+  },
+  "missing": [],
+  "duplicates": []
+}

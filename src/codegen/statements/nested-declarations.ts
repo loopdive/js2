@@ -1743,8 +1743,14 @@ function compileNestedFunctionDeclarationInScope(
       ? registerNativeGenerator(ctx, stmt, funcName, paramTypes)
       : undefined;
   if (nativeGenInfo) {
-    // The generator factory returns the state struct, not a JS Generator object.
-    returnType = { kind: "ref", typeIdx: nativeGenInfo.stateTypeIdx };
+    // A pass-0 opaque factory reservation remains its public ABI even when
+    // pass 2 now admits a nominal native state. Never rewrite published callers.
+    const reservedType = opts.reuseReservedEntry && ctx.mod.types[opts.reuseReservedEntry.typeIdx];
+    const opaqueResult =
+      reservedType?.kind === "func" &&
+      reservedType.results.length === 1 &&
+      reservedType.results[0]?.kind === "externref";
+    returnType = opaqueResult ? { kind: "externref" } : { kind: "ref", typeIdx: nativeGenInfo.stateTypeIdx };
   }
 
   const results: ValType[] = returnType ? [returnType] : [];
@@ -1942,6 +1948,7 @@ function compileNestedFunctionDeclarationInScope(
       // Wasm-native generator factory (builds + returns the state struct), the
       // same body the top-level path emits. No host imports, no JS buffer.
       compileNativeGeneratorFunction(ctx, liftedFctx, stmt, nativeGenInfo);
+      if (returnType?.kind === "externref") liftedFctx.body.push({ op: "extern.convert_any" });
     } else if (isGenerator && isAsync && isAsyncGenDriveCandidate(ctx, stmt)) {
       // (#2865) NESTED async-generator producer (the dominant test262 shape —
       // the runner wraps every test body inside `export function test()`, so

@@ -55,6 +55,7 @@ import {
   emitBuiltinNamespaceObject,
   isBuiltinConstructorIdentityName,
 } from "./builtin-static-globals.js";
+import { standaloneClassPrototypeReceiverName } from "./class-prototype-write-keeps.js";
 import { emitLazyClassObjectGet, emitLazyProtoGet, findExternInfoForMember } from "./expressions/extern.js";
 import {
   buildThrowJsErrorInstrs,
@@ -5009,6 +5010,11 @@ export function compileElementAccess(
   if (expr.questionDotToken) {
     return compileOptionalElementAccess(ctx, fctx, expr);
   }
+
+  // Literal C["prototype"] is the same singleton as C.prototype. The generic
+  // static-key ladder below has no prototype arm and otherwise reads null.
+  const prototypeClass = standaloneClassPrototypeReceiverName(ctx, expr);
+  if (prototypeClass !== undefined && emitLazyProtoGet(ctx, fctx, prototypeClass)) return { kind: "externref" };
 
   const functionPoisonResult = tryCompileFunctionPoisonRead(ctx, fctx, expr);
   if (functionPoisonResult !== undefined) return functionPoisonResult;

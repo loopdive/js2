@@ -4,7 +4,7 @@ title: "ES2015 standalone super property access — r1: class [[HomeObject]] rea
 status: in-progress
 sprint: current
 created: 2026-09-05
-updated: 2026-09-06
+updated: 2026-09-08
 priority: high
 horizon: m
 feasibility: medium
@@ -27,6 +27,10 @@ related: [4688, 5195, 3594, 3522, 2046, 5316, 4444]
 # `super.m()` over such a literal answer node instead of throwing an escaping
 # TypeError. Both additions sit in the module that owns the mechanism.
 loc-budget-allow:
+  # Original-harness follow-up: retain prototype writes and replay bounded ctor bodies.
+  - src/codegen/declarations.ts
+  - src/codegen/property-access.ts
+  - src/codegen/class-bodies.ts
   - src/codegen/expressions/new-super.ts
   - src/codegen/literals.ts
   - src/codegen/dynamic-proto.ts
@@ -43,6 +47,8 @@ loc-budget-allow:
 # registers a 387-LOC "new over-budget function" for what is only a rename, so
 # the call-site form is the smaller change.
 func-budget-allow:
+  # Five-line literal-prototype read dispatch to the shared singleton emitter.
+  - src/codegen/property-access.ts::compileElementAccess
   - src/codegen/expressions/new-super.ts
   - src/codegen/literals.ts
   - src/codegen/dynamic-proto.ts
@@ -989,3 +995,140 @@ shipped answer (f11 → 5). Byte-identical to r4 on wasi and host for all 316
 probes; standalone differs only on e12/e15/e16/f3/f10/f11; the 53-row control
 is identical to r4.
 
+
+## 2026-09-07 original-harness follow-up implementation plan (Codex)
+
+Base: `95186a4835a1fe`, standalone, current literal upstream harness.
+Fresh seven-row measurement is 0 pass / 7 fail; only the six class rows are
+ES2015. The poisoned-underscore-proto row is unclassified and remains a control.
+The former wrapped-harness captured-var diagnosis does not explain the first
+four current rows: emitted `C_method` writes both module globals, but
+`__module_init` contains none of the five class-prototype assignments.
+`collectModuleGlobals` retains direct class static assignments, but drops
+`A.prototype.fromA = 'a'` because class names are not module globals.
+
+1. Retain standalone assignments whose receiver is a named class's prototype,
+   under the existing declaration-identity check. Preserve runtime source order
+   and use the existing property assignment lowering; do not alter capture
+   deferral or super lowering. Spec: PutValue invokes the receiver's [[Set]];
+   a top-level assignment is an observable effect just like its function-body
+   equivalent. Verify dot/computed keys and compound assignments, side effects,
+   original harness PASS flips, and imports=[] without a harness rewrite.
+2. Trace the two this-uninitialised rows separately before selecting a change.
+   Their missing caught value does not yet prove a capture defect.
+3. Run issue-5350 and class/capture neighbours with one Vitest fork; rebuild
+   bundle before isolated original-harness reruns. Root owns the broader census.
+
+Second mechanism confirmed by WAT: `C_new` is only a ReferenceError throw;
+`ctorMissingSuper` in class-bodies.ts suppresses the entire body at entry.
+For standalone bodies without explicit returns, `this`, or nested function/class
+bodies, compile the real statements (including inner catches and side effects)
+before the existing fallthrough ReferenceError. Keep other constructor shapes
+on their existing route: general derived-return semantics and captured lexical
+`this` are separate mechanisms. The whitelist is semantic (a normal completion
+must reach GetThisBinding), not test-name based. Check caught super reads,
+side-effect ordering, and a body-thrown value escaping unchanged.
+
+
+Review follow-up: retaining `C["prototype"].x` exposed a separate computed-read
+hole: the class static element-read ladder never materialises its prototype.
+Route literal prototype reads to the dot form's singleton emitter using the
+same declaration proof, then admit those equivalent writes. Dynamic prototype
+keys retain their existing route. Also decline any `eval` mention in the
+bounded missing-super body scan: computed source can hide `this` from AST
+inspection; its derived-this environment requires separate support.
+
+A review probe found a regression in the first replay predicate: constructor
+parameter defaults were outside its scan. `constructor(x=this){seen=1}`
+returned seen=0 on base and Node, but seen=1 after replay. The existing default
+lowering does not enforce uninitialised-this, so execute-before-throw changed
+observable effects. Extend the eligibility scan to parameters as well as body,
+retaining the old route when either contains this/eval/nested callables/returns.
+Regression evidence is `.tmp/super-fix/parameter-{base,candidate}.log`, imports=[]
+on both trees. The provider-valid 58-row run before this correction was
+43 pass /14 fail /1 compile_error; final verification must follow the correction.
+
+The five-shape review matrix additionally caught body super-write regressions:
+`super.x=(seen=1)` and `super.x+=(seen=1)` are base=Node=0, replay=1. Existing
+super-read guards do not establish write-target safety. Decline constructors
+whose super member participates in an assignment/update/destructuring/iteration
+target; keep genuine super reads. Also decline SuperKeyword in parameter
+initializers, including parameter super(), because body-only missing-super
+classification does not model that initialisation. The direct super method-call
+control and default super.p both agree at 0 on all measured trees.
+
+
+## 2026-09-08 verified original-harness result (Codex)
+
+Standalone, literal upstream harness, base `95186a4835a1fe` against the final
+uncommitted candidate on `codex/4444-es2015-standalone-resume`:
+**58 ES2015 super rows: 36 pass /21 fail /1 compile_error →
+43 pass /14 fail /1 compile_error. Seven pass flips, zero lost passes.**
+All six targeted class rows pass. The additional gain is
+`prop-expr-cls-val-from-eval.js`; its literal computed super read benefits from
+the now-executed prototype writes. This is a measured seven-row gain, not a
+claim that general eval/super integration is fixed. The 58-row denominator
+includes all 14 super-spread rows. The unclassified poisoned-underscore-proto
+row is outside this denominator and remains a separate object-super defect.
+
+Implemented:
+
+- `class-prototype-write-keeps.ts` proves declaration identity and recognises
+  `.prototype` and literal `["prototype"]` receivers through transparent casts.
+  `declarations.ts` retains their module-level assignments in source order.
+- `property-access.ts` sends literal class-prototype element reads to the same
+  singleton emitter used by dot reads. No dynamic-key evaluation is folded.
+- `class-bodies.ts` executes bounded missing-super constructor bodies before
+  the fallthrough ReferenceError. Returns, lexical this/eval, nested callables
+  or classes, parameter super references, and super write targets retain the
+  previous route. This preserves inner catches, prior side effects, and body
+  exceptions without claiming complete derived-constructor return/this support.
+
+Neither the block-class deferral rule nor captured-global promotion changed.
+The original wrapped-harness capture diagnosis was not reused for these rows.
+
+Validation on Node 25.8.2:
+
+- `tests/issue-5350-super-property-r1.test.ts`: **41/41**, one Vitest fork,
+  every case asserts `imports=[]` and instantiates with `{}`. New cases cover
+  top-level observations, dot/computed prototype identity and assignment order,
+  constructor side effects and catches, body exceptions, primitive returns,
+  nested-function exclusions, parameter-this/super, and super-write exclusions.
+- Fresh serial comparison of issue-2818, issue-3123, and issue-4618 class-capture
+  owner isolation: **29/34 on both base and candidate**. All five failure titles
+  and complete error text before stack traces are identical. They are existing
+  IR constructor/body-install failures plus the existing `flatMap` failure.
+  The sibling-class closure control (1/1) and issue-1682 (5/5) also passed in
+  the initial neighbour batch. That initial batch used the wrong concurrency
+  override; the three failing files were rerun using `VITEST_MAX_FORKS=1`.
+- Three source probes on each of host/GC and WASI: **6/6 byte-identical** between
+  base and final candidate. These include both changed mechanisms and a
+  deliberately excluded nested-function constructor.
+- Review matrix: super assignment/update regressions found and removed;
+  all five shapes are now base-identical. Four agree with Node; parameter
+  `super()` remains the explicit pre-existing residual (base/candidate 0,
+  Node 1). Parameter-this regression separately restored base=Node=0.
+- Exact TS7 7.0.2 typecheck exit 0; scoped Biome lint and source LOC/function
+  budget gates exit 0, with `LOC_GATE_BASE=95186a4835a1fe`; diff-check clean.
+  Shared dependencies and baseline budget files were not modified.
+
+Authoritative artifacts in this worktree:
+`.tmp/super-fix/all58-final3.log`, `final58-diff.json`, `pins-final41.log`,
+`neighbours-serial.log`, `neighbour-errors.json`, `parity-final3.diff`, and
+`final3-sha256.txt`. Immutable comparison logs live under
+`/tmp/js2-es2015-base-95186a/.tmp/`. The final compiler bundle SHA256 is
+`25a959b06bc97b0d8affc98a0989bdeca1027d40d89da8820122b28146fea63f`.
+The rebuilt, canary-verified QuickJS adapter key is `a883c5fe9c6ce4c9`, binary
+SHA256 `86f99bb7c76eff6beccce9077a34bd0b450facbee913cac6a8aac2e691c5fed5`.
+The final cohort logs the valid adapter and a semantic failure for `realm.js`,
+not a missing-provider error. All recorded source/bundle/provider hashes were
+checked after the final run.
+
+Spec grounding: ECMA-262 §6.2.5.6 PutValue (property [[Set]]), and §10.2.2
+[[Construct]] (evaluate body, propagate its abrupt completion, then the derived
+GetThisBinding check). Exact algorithms were fetched from the specification
+before implementation. This increment is recorded on the isolated integration
+branch; no push was made. Status remains in-progress:
+the original issue acceptance and the umbrella's full-edition goal are not yet
+met. This increment does not claim the broader class/object census or Node22
+validation; the parent lane owns the edition-wide census.

@@ -238,7 +238,12 @@ export function fillProtoFunctionValue(ctx: CodegenContext): void {
   const identity = (name: string): void => setBody(name, [], [{ op: "local.get", index: 0 }]);
 
   const bagEnsureIdx = ctx.funcMap.get("__closure_bag_ensure");
-  const callableTypeIdxs = collectClosureBaseWrapperTypeIdxs(ctx);
+  const callableTypeIdxs = [
+    ...new Set([
+      ...collectClosureBaseWrapperTypeIdxs(ctx),
+      ...[...ctx.nativeGenerators.values()].map((info) => info.stateTypeIdx),
+    ]),
+  ];
   // (#4492) The `$NativeProto` arm is INDEPENDENT of the callable one: a module
   // may reach a builtin prototype in proto position without any closure root at
   // all, and bailing to identity on the callable gate alone would silently drop
