@@ -11,6 +11,28 @@ reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-07
 loc-budget-allow:
+  # 2026-09-12 (S2l) — `Object.fromEntries` over a computed pair list on the
+  # standalone lane. Both defects are AT existing call sites, so neither can
+  # move to a new module without separating a decision from the code that makes
+  # it:
+  #   expressions/call-builtin-static.ts  +39  the standalone admission, inside
+  #     the one `Object.fromEntries` branch, ahead of the `ensureLateImport`
+  #     fall-through it replaces. Most of the growth is the rationale, and it is
+  #     load-bearing twice over: it records that the OLD outcome (refuse vs.
+  #     compile) was decided by unrelated module content rather than by the
+  #     source construct, and it states why a `Map` argument must KEEP refusing
+  #     — the native would answer `{}`, which is the silent-wrong failure this
+  #     slice exists to delete. A reader who trims it will "finish the job" by
+  #     widening the gate to every argument and reintroduce it.
+  - src/codegen/expressions/call-builtin-static.ts
+  # 2026-09-12 (S2l) — STRANDED GRANTS restated. `builtins.ts` (+96) and
+  # `call-receiver-method.ts` (+9) are grown by the S2h/S2i commits this branch
+  # is stacked on, not by S2l; against `origin/main`'s baseline (which has not
+  # refreshed past them) CI sees that growth in this PR's merge preview. They
+  # are restated here, in a file this PR modifies, so the allowance travels
+  # with the diff that carries the growth (#3102's stranded-grant case).
+  - src/codegen/expressions/builtins.ts
+  - src/codegen/expressions/call-receiver-method.ts
   # 2026-09-12 (S2i) — the runtime-key STATIC-member read on a class VALUE. The
   # mechanism is the new module src/codegen/standalone-class-dyn-static.ts; the
   # only god-file line this slice adds is ONE:
@@ -126,6 +148,31 @@ loc-budget-allow:
     lines: 20
     reason: "#5383 S2 R4 — pre-register the `Math.<fn>` value-read substrate before the closure is built (#2704 forbids a first registration mid-body), which is why every Math value read kept the refusal body."
 func-budget-allow:
+  # 2026-09-12 (S2l) — `Object.fromEntries` over a computed pair list,
+  # standalone. Two growths, each on the function that already owns the
+  # decision:
+  #   object-runtime.ts::fillExternArrayLikeStructArms  +63  the TUPLE carrier
+  #     arm. This function IS the finalize-time candidate collector for the
+  #     standalone dyn-reader trio (`__extern_length` / `__extern_get_idx` /
+  #     `__extern_has_idx`); a tuple is a third array-like shape alongside the
+  #     closed struct and the typed vec, and it has to be minted in the SAME
+  #     pass, in the same `cands` order, or the spliced arms land at a
+  #     different body offset than the vec arms they must follow (#4443). Most
+  #     of the growth is the measurement that motivates it — the contextual
+  #     tuple lowering of `[k, v]` under `Object.fromEntries`'s
+  #     `Iterable<readonly [PropertyKey, T]>` signature, which made the SAME
+  #     expression work when bound to an `any` local first and answer
+  #     `{undefined: undefined}` when passed inline.
+  #   expressions/call-builtin-static.ts::compileBuiltinStaticCall  +39  the
+  #     standalone admission; see the loc-budget-allow note above for why it
+  #     cannot leave the `Object.fromEntries` branch.
+  - src/codegen/object-runtime.ts::fillExternArrayLikeStructArms
+  - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
+  # 2026-09-12 (S2l) — STRANDED GRANT restated, same reason as the loc twin
+  # above: `compileReceiverMethodCall` (+10) is grown by the stacked S2h/S2i
+  # commits, not by S2l, and `origin/main`'s baseline has not refreshed past
+  # them.
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
   # 2026-09-08 (S2h) — the runtime-key prototype-member read. Four call-site
   # growths, all one-liners plus the comment that makes them auditable; the
   # mechanism itself is a new module (standalone-class-dyn-member.ts):
@@ -1779,3 +1826,389 @@ consumer declares 130 of, in a different order. The reduction is
 `.tmp/s2j-valueabi.mts`: four one-line value exports, a nine-line consumer, tiny
 vs polyfill, ~60 s. It needs no Temporal knowledge at all, and every earlier
 Temporal-specific symptom should fall out of it.
+
+## S2k findings (2026-09-12) — confirmed: one `final` bit on one rec-group member killed the whole value ABI
+
+S2j's stop is resolved. The rec-group hypothesis was correct, and the mechanism
+is narrower and more mundane than "the polyfill's type space is different".
+
+### The type-section comparison
+
+`.tmp/s2k-types.mjs` reads a module's type section raw (no Binaryen, no names,
+no absolute indices) and renders each recursive group index-relatively.
+Measured on the four binaries S2j's `.tmp/s2j-dump.mts` produces:
+
+| module | groups / types | canonical group `[0..9]` hash |
+| --- | --- | --- |
+| consumer (identical source in both runs) | 121 / 130 | `2d74afdb81b1` |
+| tiny provider (works) | 123 / 132 | `2d74afdb81b1` |
+| **polyfill provider (fails)** | 1057 / 1066 | **`bc74a429728b`** |
+
+Group `[0..9]` is the frozen link ABI — `RUNTIME_RECGROUP_TYPE_NAMES`: the vec
+family (`__vec_base`, `__arr_externref`, `__vec_externref`, `__arr_f64`,
+`__vec_f64`) and the string family (`__str_data`, `AnyString`, `NativeString`,
+`ConsString`, `HashedString`). Diffing it member by member, **nine of ten are
+byte-identical and exactly one differs**:
+
+```
+2 DIFF
+   consumer: subfinal[t0] struct(mut i32,mut (ref null t1))   # $__vec_externref
+   provider: sub     [t0] struct(mut i32,mut (ref null t1))
+```
+
+S2j's note that "the first rec group is textually identical in both providers"
+compared the two PROVIDERS to each other at a coarser granularity; the
+difference is provider-vs-consumer, and it is one bit.
+
+### The mechanism
+
+WasmGC canonicalizes a recursive type group **as a whole**, and finality is
+part of a member's structure. So a single differing `final` bit makes all ten
+types a *different runtime type* in the engine. Every consumer-side check on a
+peer-minted value is a type-identity test — `ref.test $AnyString` for
+`typeof x === "string"`, `ref.test $__vec_externref` for `Array.isArray`, the
+`$Object` walk for `Object.keys` — so all of them fail at once, while an
+unboxed `f64` crosses fine because it is not a reference. That is precisely the
+S2j table, and `Temporal` was only the first value anyone happened to read.
+
+**Why the bit differed.** `markLeafStructsFinal` (`src/codegen/fixups.ts`)
+marks a struct `final` when nothing in *that module* subtypes it. The polyfill
+uses `arguments`; on the standalone lane that registers
+`$__arguments_vec_externref` as a subtype of `$__vec_externref`
+(`getOrRegisterArgumentsVecType`, `src/codegen/registry/types.ts`), and
+`arguments-length-brand.ts` hangs a further 5-field subtype off that. The
+consumer uses no `arguments`, so its `$__vec_externref` stayed a leaf and went
+`final`. Confirmed by walking the subtype chain in the failing binary
+(`.tmp/s2k-chain.mjs`): `t697 <: t2`, `t698 <: t697`, and nothing else in the
+module touches the group.
+
+`arguments` is only the *trigger that happened to be reachable*. Any
+module-local subtype of any group member does the same thing, which is the real
+defect: **the identity of a frozen cross-module ABI was a function of module
+content.**
+
+### The fix
+
+`finalizeLeafStructTypes` (`src/codegen/index.ts`) now adds every member of the
+canonical group to `keepOpenTypeIdxs`, so all ten are emitted non-final
+unconditionally and the group's encoding is a constant of the ABI. This reuses
+the mechanism `markLeafStructsFinal` already documents for exactly this reason
+("ABI roots whose non-finality is observable across separately compiled
+modules" — the funcref-wrapper root, and #5349's ArrayBuffer byte vec).
+
+Gated on `mod.canonicalRuntimeRecGroup` being present, which
+`createCodegenContext` sets only for runtime providers, linked namespaces, or
+explicit `canonicalRuntimeTypes`. **Byte A/B over 20 artifacts** (10 module
+shapes × {gc, unlinked standalone}, `.tmp/s2k-ab.mts`, base captured by file
+copy before the first edit): every sha256 identical. The JS-host lane and any
+standalone module that is not part of a link are untouched.
+
+No struct-shape collision is reintroduced (#2158 `$AnyString` vs the empty-class
+root, #5194 `$__ta_ctor`, S2f R11): the change only clears `final`, it does not
+merge, reshape or reorder anything, and `tests/issue-2158-class-identity-standalone.test.ts`
+(whose whole subject is AnyString canonicalization) passes.
+
+After the fix all three canonical groups hash `2a034407b1d9`, and S2j's own
+`.tmp/s2j-valueabi.mts` reduction reads identically for the tiny and polyfill
+providers: `strType 1, strLen 5, strEq 1, arrIs 1, arrLen 3, arr0 1,
+objKeys 2, objA 1`.
+
+### The S2 smoke test, per assertion
+
+Through the shipped path (`buildTemporalProvider` + `compileWithTemporalGlobal`,
+`--target standalone` / `hostBridge:"off"`, host-free), now a permanent test via
+`tests/dogfood/temporal-s2-smoke-harness.mjs`:
+
+| assertion | base (S2j, all three bisect points) | S2k |
+| --- | --- | --- |
+| `Object.keys(Temporal).length === 9` | 0 | **9 — passes** |
+| `new Temporal.PlainDate(2024,1,1).day === 1` | −1 | **1 — passes** |
+| `Temporal.Duration.from({hours:1}).total("minutes") === 60` | threw | still throws — `it.todo` |
+
+The harness runs as a child process: the 3.3 MB provider compile OOMs a vitest
+worker in-process (measured — a V8 OOM before the first assertion), the same
+reason every other dogfood adapter is a child process.
+
+### The next stop, exactly (`total`)
+
+Not a boundary problem any more, and not this slice's lane. The Duration
+crosses and reads correctly (`Duration.from({hours:1}).hours === 1`,
+`typeof d.total === "function"`), and `.total(…)` fails **identically inside the
+provider's own module** (`.tmp/s2k-inside-total.mts`, via the S2j value-export
+trick), with the error text:
+
+```
+RangeError: unit must be one of year, month, week, day, hour, minute, second,
+millisecond, microsecond, nanosecond, null, null, null, null, null, null,
+null, null, null, null, not minutes
+```
+
+The ten PLURAL unit names are missing. They come from the polyfill's
+`ot = Object.fromEntries(nt.map(([e, t]) => [t, e]))`. Reduced
+(`.tmp/s2k-red2.mts`, standalone / host-free):
+
+| form | result |
+| --- | --- |
+| `Object.fromEntries([["year","years"]])` (literal pairs) | works |
+| `Object.fromEntries(nt.map(([e,t]) => [t,e]))` | keys present (3), **values `undefined`** |
+| `Object.fromEntries(nt.map(e => [e[1],e[0]]))` | **COMPILE FAIL** — `'__object_fromEntries' (dynamic-shape object/property operation) is not yet supported in --target standalone` |
+| `Object.fromEntries(nt.map(function (e) {…}))` | **COMPILE FAIL** — same |
+
+So `Object.fromEntries` over a computed pair list is partly unimplemented on the
+standalone lane, and in the destructured-arrow form the polyfill happens to use
+it **silently builds the right keys with lost values** — the worse of the two
+failures, and the one to fix first.
+
+### Pre-existing red, unchanged by this slice
+
+`tests/issue-2151.test.ts` (1), `tests/issue-2151-mixed-spread.test.ts` (1),
+`tests/issue-3610-standalone-prototype-receiver-brand.test.ts` (1) and
+`tests/issue-1051.test.ts` (3) — 6 failures, exactly the count recorded on the
+base branch. `tests/issue-5318-r4-computed-accessor-keys.test.ts` OOMs on both
+trees and is not a signal either way.
+
+## S2l findings (2026-09-12) — `Object.fromEntries` over a computed pair list, standalone
+
+S2k's stop is closed. Both shapes it named turned out to be ONE call site with
+two independent defects, and neither was a capability boundary — each was an
+accident of something unrelated.
+
+### (A) The silent-wrong values: a pair is a TUPLE STRUCT, and the dyn reader had no arm for one
+
+`Object.fromEntries`'s lib signature is `Iterable<readonly [PropertyKey, T]>`.
+That contextual type reaches the callback, so `([e, t]) => [t, e]` returns a
+**tuple**, and `resolveWasmType` lowers a heterogeneous tuple to a nominal
+struct — `$__tuple_0 (struct (field $_0 externref) (field $_1 externref))` —
+not to the indexable pair vec the identical expression produces when it is
+bound to an `any` local first. Confirmed by diffing the two type sections
+(`.tmp/s2l-wat.mts`): the inline form carries `$__tuple_0` and a
+`$__vec_ref_51` (vec OF tuple); the via-a-local form carries neither and uses
+`$__vec_ref_2` (vec of `$__vec_externref`).
+
+The self-hosted `__object_fromEntries` (`src/stdlib/object-runtime.ts`) reads
+each pair with `__extern_get_idx(pair, 0)` / `(pair, 1)`. That helper had arms
+for `$ObjVec`, typed vecs (`fillExternGetIdxVecArms`) and closed array-like
+structs (`fillExternArrayLikeStructArms`, which requires a real `length` field
+AND canonical integer field names) — **none of which a tuple matches**. It
+answered `undefined` for both slots, so all ten polyfill entries wrote
+`out[undefined] = undefined` and the table came out as the single key
+`"undefined"`. That is why the RangeError listed `null` ten times.
+
+**Fix**: `fillExternArrayLikeStructArms` now admits tuple carriers as a third
+array-like shape — length = field count (a constant, no field to read), `_i` =
+index `i` — `ref.test`-guarded per type like every other arm. A TS tuple value
+IS a JS Array at runtime, so this is the spec answer, not a workaround; it is
+also the same answer the JS-host lane already gets from #5205's `__sget_*`
+struct-read exports.
+
+### (B) The refusal: decided by unrelated module CONTENT, not by the construct
+
+`ensureLateImport` returns a funcMap hit **before** the #1472 Phase B refusal
+check. `__object_fromEntries` is in funcMap only when something else in the
+module already pulled in `ensureObjectRuntime`. So the outcome depended on what
+else the module happened to contain:
+
+| form (`nt: any[]` of pairs) | base | S2l |
+| --- | --- | --- |
+| `Object.fromEntries([["year","years"]])` (array literal) | works | works (same bytes) |
+| `Object.fromEntries(nt.map(([e,t]) => [t,e]))` | 1 key `"undefined"` | **3 keys, right values** |
+| `Object.fromEntries(nt.map((e) => [e[1],e[0]]))` | 1 key `"undefined"` | **3 keys, right values** |
+| `Object.fromEntries(nt)` | **REFUSED** | **3 keys, right values** |
+| `Object.fromEntries(nt.slice(0))` / `.concat([])` / `.map((e) => e)` | **REFUSED** | **3 keys, right values** |
+| `Object.fromEntries(mk())` where `mk(): any` | REFUSED | REFUSED (arg not statically array/tuple) |
+| `Object.fromEntries(someMap)` | REFUSED | REFUSED — deliberate, see below |
+
+S2k's table recorded `nt.map((e) => [e[1],e[0]])` as a COMPILE FAIL and the
+destructured form as compiling. Re-measured here (`.tmp/s2l-red.mts`,
+`.tmp/s2l-red3.mts`) both compiled — the difference is module content, which is
+the finding rather than a discrepancy.
+
+**Fix**: the call site ensures the object runtime itself and calls the native
+directly when `ctx.oracle.typeFactOf(entriesArg)` says `array` or `tuple`. No
+new host import — the native is a defined function, so no import is added and
+no index shifts (#1984).
+
+**A non-indexable iterable deliberately KEEPS refusing.** For a `Map` the
+native would walk with `__extern_length` → 0 and hand back `{}` — precisely the
+silent-wrong failure this slice exists to delete. Native iterator-protocol
+consumption is #2190; until then the loud compile error is the correct answer.
+
+### Byte A/B
+
+12 module shapes × {gc, unlinked standalone} = 24 artifacts (`.tmp/s2l-ab.mts`,
+base captured by file copy before the first edit). **23 of 24 sha256-identical.**
+The single difference is `fromEntriesMap:standalone` — the direct subject. In
+particular the gc lane is identical for all 12 shapes (including `tuples`,
+`arraylike`, `maps`, `objects`), and standalone modules that do not use
+`Object.fromEntries` over a computed list — including the `tuples` and
+`arraylike` shapes — are byte-identical, because the tuple arms are minted only
+when the standalone dyn-reader trio is reserved AND a tuple type exists.
+
+### test262
+
+`built-ins/Object/fromEntries/**`, all 25 files × {gc, standalone}, run solo via
+`runTest262File` (`.tmp/s2l-t262.mts`):
+
+| | gc pass | gc fail | sa pass | sa fail | sa compile_error |
+| --- | --- | --- | --- | --- | --- |
+| base | 13 | 12 | 9 | 15 | 1 |
+| S2l | 13 | 12 | 9 | 15 | 1 |
+
+**0 of 50 rows changed**, so 0 pass→fail. No gain either: the remaining rows
+exercise generic iterables / iterator-close observability, which is #2190's
+lane, not this one.
+
+### The S2 smoke test, per assertion
+
+| assertion | S2k | S2l |
+| --- | --- | --- |
+| `Object.keys(Temporal).length === 9` | passes | passes |
+| `new Temporal.PlainDate(2024,1,1).day === 1` | passes | passes |
+| `Temporal.Duration.from({hours:1}).total("minutes") === 60` | `it.todo` (unit table) | still `it.todo` — **new stop, named below** |
+
+### The next stop, measured — a JSBI instance is implicitly ToNumber'd
+
+The unit table is fixed; the error message CHANGED, which is what makes this a
+new stop rather than the old one. Measured with the polyfill compiled as ONE
+standalone module (the Intl shim + the linked bundle + a probe export, plain
+`compile({target:"standalone", hostBridge:"off"})` — `.tmp/s2l-solo-total.mts`),
+so no link is involved, and re-measured with only the two S2l source files
+reverted by file copy:
+
+| tree | message length | `null`s | text |
+| --- | --- | --- | --- |
+| base | 175 | 10 | `unit must be one of year, …, nanosecond, null ×10, not minutes` |
+| S2l | 58 | 0 | ``Convert JSBI instances to native numbers using `toNumber`.`` |
+
+That is JSBI's own `valueOf` guard: something on the `total` path applies an
+implicit ToNumber/ToPrimitive to a JSBI BigInt instance instead of calling
+`toNumber()`. It is **not** caused by this slice — `total("minute")`, a
+SINGULAR unit that was always present in the table, fails identically on both
+trees.
+
+Two further facts, each measured on BOTH trees so neither is an S2l regression:
+
+- **A provider-side throw does not cross the link as a catchable JS error.**
+  The consumer's own `try { d.total(…) } catch (e) { … }` never runs — the raw
+  `WebAssembly.Exception` escapes to the embedder. So the smoke harness's
+  `total` probe can only ever report `throw`, never the message.
+- **The harness's `durationHasTotal` probe reads 0 on both trees**, while the
+  identical question through a bound local (`const d = …; typeof d.total`) reads
+  1 (`.tmp/s2l-method-red.mts`). That is #2984's path-dependent `typeof` on a
+  CHAINED member access, not a missing method: `d.toString()` works across the
+  same boundary, and a tiny hand-written provider answers the whole chain
+  including `d.total("minutes") === 60`. S2k's note that `typeof d.total ===
+  "function"` was measured through a different probe than the harness's.
+
+### Acceptance criteria — S2 smoke test status (2026-09-12)
+
+**Two of the three S2 assertions pass through the real standalone provider and
+are asserted as a real test** (`tests/issue-5383-standalone-temporal-provider.test.ts`,
+`#5383 S2 smoke`): `Object.keys(Temporal).length === 9` and
+`new Temporal.PlainDate(2024,1,1).day === 1`, plus the `durationHours === 1`
+precursor. The third, `Temporal.Duration.from({hours:1}).total("minutes") === 60`,
+does **not** pass and remains `it.todo`, now blocked on the JSBI implicit-
+ToNumber stop above rather than on `Object.fromEntries`.
+
+### Pre-existing red, unchanged by this slice
+
+`tests/issue-2151.test.ts` (1), `tests/issue-2151-mixed-spread.test.ts` (1),
+`tests/issue-3610-standalone-prototype-receiver-brand.test.ts` (1) and
+`tests/issue-1051.test.ts` (3) — the same 6 recorded on the S2k base.
+`tests/issue-5318-r4-computed-accessor-keys.test.ts` OOMs on both trees.
+
+## S2i regression fix (2026-09-12) — a computed static FIELD, shadowed by the class-value call arm
+
+PR #5820 (merged at `ec27f08b`) regressed **32 standalone rows**, one cluster:
+`test/language/{statements,expressions}/class/cpn-class-{decl,expr}-fields-methods-computed-property-name-from-*.js`.
+Every one failed `Expected SameValue(«null», «<value>»)` under
+`--target standalone`; the JS-host lane was untouched. This is the fix, based on
+`origin/main` and independent of the rest of the Temporal stack.
+
+### Root cause — S2i's gate was right, its callee resolution was not
+
+S2i widened `classDynamicMemberCallApplies`
+(`src/codegen/expressions/class-dynamic-member-call.ts`) to claim **every**
+`C[k](…)` whose receiver is an identifier naming a compiled class, and then let
+that call reuse the INSTANCE arm's lowering:
+`__apply_closure(__extern_get(recv, key), recv, args)`, where `recv` is the
+lazily materialized `$ClassName` class-object struct.
+
+That struct does not carry a **computed static field**. The ordinary READ
+lowering of `C[k]` does reach it; `__extern_get` on the raw class-object struct
+does not. So the fused call form answered null while the identical read answered
+the closure — a split the suspects named in the dispatch brief (the
+`class-static-sidecar` widening, the `class-proto-lookup` class-object arm, the
+`standalone-class-dyn-member` prototype widening) did **not** cause: probes that
+disabled `prependClassMethodCallArm` produced a byte-identical module
+(`wasm_sha 2afb8fcfed63` both ways), so the call arm was never even emitted for
+these modules.
+
+The split, measured on the reduction (one module, runner
+`runTest262File(…, "standalone")`):
+
+| probe on `let C = class { [1.1] = () => 3; static [1.1] = () => { hit++; return 2 } }` | main `cf82f78d` | fix |
+| ------------------------------------------------------------------------------------- | --------------- | --- |
+| `typeof C[String(1.1)]` — the READ                                                      | `"function"`    | `"function"` |
+| `C[String(1.1)]()` — the fused CALL                                                     | `null`          | `2`  |
+| `hit` after that call — was the closure INVOKED?                                        | `0`             | `1`  |
+| `const f = C[String(1.1)]; f()` — read, then call                                       | `2`             | `2`  |
+| `c[String(1.1)]()` — the INSTANCE half                                                  | `2`             | `2`  |
+
+The `hit` row is why the encoded probe exists in
+`tests/issue-5383-class-value-dynamic-call.test.ts`: a result-only assertion
+cannot tell "called, returned null" from "never called", and it was the latter.
+
+### The fix — ask the read lowering instead of re-deriving the callee
+
+`emitClassValueDynamicCall` handles the class-VALUE receiver separately: it
+compiles `elemAccess` itself for the callee (the read lowering knows about the
+static sidecar — S2i's win — **and** the `staticProps`/own-property surface —
+the regression), then recompiles the identifier for `this`.
+
+Recompiling the receiver is sound **only** here, and that is why the two arms
+stay split: `classValueReceiverApplies` requires an IDENTIFIER, so the second
+evaluation is a global read of the same lazy singleton. The instance arm cannot
+do this — `new C()[k]()` would construct twice — which is the constraint that
+forced S2i's single-evaluation shape in the first place.
+
+### Measurements (base = `origin/main` `cf82f78d6d`, a detached worktree; fix = this branch)
+
+Full `cpn-*` families, **all 248 rows** (`language/statements/class` +
+`language/expressions/class`), run solo per row:
+
+| lane           | base pass/fail | fix pass/fail | delta   |
+| -------------- | -------------- | ------------- | ------- |
+| `standalone`   | 152 / 96       | **184 / 64**  | **+32** |
+| gc (JS host)   | 136 / 112      | 136 / 112     | 0       |
+
+Per-TEST diff, not per-count: **32 fixed, 0 newly broken** on standalone, and the
+gc lane's failing-row LIST is byte-identical (`diff` empty). The 32 are exactly
+the `fields-methods` rows of both families — the cluster #5820 broke.
+
+Byte A/B on the gc lane: **13 modules** under `website/playground/examples/`
+compiled on both trees, sha256 of each binary **identical**. Expected — the gate
+is `ctx.standalone`-only.
+
+Suites: `#5383` (incl. the real-provider S2 smoke test), `#5195` ×4, `#5358`,
+`#2158` ×2, `#4628` ×2, `#5225`, `#5353`, `#5364` — **256 passed, 0 failed**
+(the one failure in the first batch was this PR's own new test before its host
+decode was fixed; a standalone export returns a WasmGC ref, so the probe encodes
+its four answers as one number).
+
+`npm run -s test:equivalence:gate` →
+`equivalence-gate: 22 failing, 1720 passing, 22 known-failures in baseline.`
+(exit 0).
+
+Pre-existing red, unchanged and re-measured on this tree: `issue-2151` (1),
+`issue-2151-mixed-spread` (1), `issue-3610-standalone-prototype-receiver-brand`
+(1), `issue-1051` (3), `issue-5382-temporal-project-publication` (1),
+`issue-2358-array-toprimitive` (1) — 8 total, the same 8 recorded on the S2k/S2l
+bases.
+
+### What this does NOT claim
+
+S2i's headline probe shape (`class C { static mk(a){…} }`, `C["mk"](5)`) still
+answers `NaN` under the test262 harness on **both** trees — measured, identical
+before and after. That is a separate residual of the static-method surface, not
+something this fix regressed or repaired.

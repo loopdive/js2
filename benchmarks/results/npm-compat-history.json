@@ -16342,6 +16342,60 @@
           "standalone": {}
         }
       }
+    },
+    {
+      "generatedAt": "2026-09-12T09:47:12.038Z",
+      "sourceRevision": "b3936fece6dde687587dd5fa7c43fa92444aec00",
+      "optimizationLevels": {
+        "js-host": 4,
+        "js-host-native": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHostNative": {},
+          "jsHost": {
+            "dynamic": 0.006843299863898034
+          },
+          "standalone": {}
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-09-12T10:51:55.222Z",
+      "sourceRevision": "b2b930877339c26314076eba820b486247c19372",
+      "optimizationLevels": {
+        "js-host": 4,
+        "js-host-native": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHostNative": {},
+          "jsHost": {
+            "dynamic": 0.009806726969419957
+          },
+          "standalone": {}
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-09-12T11:42:55.216Z",
+      "sourceRevision": "cf82f78d6d4c5399d72ee9f64f199311b507e5b7",
+      "optimizationLevels": {
+        "js-host": 4,
+        "js-host-native": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHostNative": {},
+          "jsHost": {
+            "dynamic": 0.010112912185889427
+          },
+          "standalone": {}
+        }
+      }
     }
   ]
 }
