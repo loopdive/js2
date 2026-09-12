@@ -5,6 +5,7 @@ import type { Import, TagDef } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { buildStrictHostImportError, isHostImportAllowed } from "../host-import-allowlist.js";
 import { addFuncType } from "./types.js";
+import { appendPhysicalImport } from "../../wasm/physical/module-reservations.js";
 
 /**
  * Register a physical import without loading source-collection code. This
@@ -32,7 +33,7 @@ export function addImport(ctx: CodegenContext, module: string, name: string, des
       return undefined;
     }
   }
-  ctx.mod.imports.push({ module, name, desc });
+  appendPhysicalImport(ctx.mod, module, name, desc);
   if (desc.kind === "func") {
     ctx.funcMap.set(name, ctx.numImportFuncs);
     ctx.numImportFuncs++;

@@ -13,7 +13,8 @@
 import { ASYNC_RUNTIME_FEATURES } from "./async-runtime-providers.js";
 import { asAsyncStateId, canonicalPromiseAbi, createIrAsyncPlan } from "./async-plan.js";
 import { irUnitFuncRef } from "./callable-bindings.js";
-import { createDerivedIrUnitId, type IrDerivedUnitProvenance } from "./identity.js";
+import { createDerivedIrUnitId } from "../shared/contracts/identity-values.js";
+import type { IrDerivedUnitProvenance } from "./identity.js";
 import {
   asBlockId,
   asVal,
