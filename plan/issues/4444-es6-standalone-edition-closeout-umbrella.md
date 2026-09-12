@@ -4,7 +4,7 @@ title: "UMBRELLA: ES6 (ES2015) standalone authoritative 11,704-row close-out →
 status: in-progress
 sprint: current
 created: 2026-08-15
-updated: 2026-09-01
+updated: 2026-09-12
 assignee: codex/es6-test262-closeout
 priority: high
 horizon: xl
@@ -17,6 +17,65 @@ related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445
 ---
 
 # #4444 — UMBRELLA: ES6 (ES2015) standalone edition close-out
+
+## Resume checkpoint (2026-09-12, Codex)
+
+The authoritative standalone baseline was force-refetched after synchronising
+with `loopdive/js2:main` at `d4108568d43f14c361ecc3a58c82633027eaae39`.
+The JSONL has **48,735 physical rows** and the checked-in edition map selects
+exactly **11,704 unique official ES2015 paths** (edition index 4). It reports:
+
+- **10,230 pass / 11,704 total (87.4%)**;
+- **1,144 fail, 329 compile errors, 1 compile timeout, 0 skips**;
+- oracle version 13, lane `honest`, semantic providers `auto`;
+- compiler baseline SHA `52d1bb7809de26f5c12fca1f887fe7be78f4479c`,
+  which is an ancestor of current main by three non-compiler commits;
+- JSONL SHA-256
+  `45ff56e7570bba0a1bff6590d19d35de2525928adb7e3054789ba35aebb29360`.
+
+This is complete dispatch evidence, not completion evidence: the acceptance bar
+remains a maintained-runner execution on the final integrated head with exactly
+**11,704 pass and zero rows in every other verdict**.
+
+Draft PR #5736 preserves three 2026-09-08 increments but deliberately combines
+two completed-looking fixes with unfinished generator work. It is 202 mainline
+commits behind its two unique commits and must stay draft while mixed and
+unverified on current main. The latest baseline proves all eleven claimed
+completed-row gains are still absent from main: seven `super` rows owned by
+#5350 and four inherited TypedArray-constructor rows owned by #5317 remain
+`fail` with their pre-fix signatures.
+
+### Implementation plan
+
+1. **#5350 — class prototype writes and bounded missing-super bodies.** Extract
+   only commit `357b05f68c8c76b8c4888690941edf9d247243ab` onto a fresh
+   current-main worktree, resolve against current class changes without
+   broadening its semantic whitelist, and rerun the exact 58-row super cohort,
+   41 focused pins, class/capture neighbours, and host/WASI parity controls.
+   Require the seven still-failing rows to pass with zero lost rows. Update the
+   issue handoff and open one ready, non-draft PR only after that proof.
+2. **#5317 — inherited TypedArray constructor Get.** Extract only the three
+   TypedArray source changes and their focused test from the second checkpoint
+   commit. Preserve actual getter results and receiver identity; default
+   constructor selection remains in SpeciesConstructor. Rerun the exact 55-row
+   cohort and 15 focused/neighbor pins, requiring the four current failures to
+   pass with zero losses. Update the issue handoff and open a separate ready,
+   non-draft PR.
+3. **#5199 — generic generator protocol.** Continue separately from current
+   main. The 2026-09-08 bridge checkpoint is WIP: 4/9 bridge fixtures pass and
+   numeric next/return payload preservation is unresolved. Rebuild compiler and
+   QuickJS artifacts, strengthen the extracted-method positive control, then
+   rerun the 27 pins, bridge/prototype fixtures, 44 protocol rows, and the full
+   2,486-row ES2015 generator feature cohort. Keep its PR draft unless every
+   owned acceptance check is current and mergeable.
+4. Run all implementation lanes in separate worktrees with Terra at maximum
+   reasoning. A separate shepherd owns body-template, exact-head, mergeability,
+   CI, regression, ready-state, and queue verification for every resulting PR.
+5. After each fix lands, force-refetch the baseline and set-diff every passing
+   row. Recluster the remaining complete 11,704-row record, update or allocate
+   one repository-local markdown issue per unowned mechanism, and repeat. Do
+   not create GitHub issues; #5091 and #5099 already exist as completed records
+   under `plan/issues/`.
 
 ## Handover (2026-09-06, session claude/es6-test262-standalone-g10c7u, wave 5)
 
