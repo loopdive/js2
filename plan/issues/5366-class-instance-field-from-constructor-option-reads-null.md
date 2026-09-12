@@ -1,10 +1,11 @@
 ---
 id: 5366
 title: "A class instance field assigned from a constructor-option object reads back null (hono `new Hono({ router })`)"
-status: ready
+status: done
 sprint: current
 created: 2026-09-06
-updated: 2026-09-06
+updated: 2026-09-12
+completed: 2026-09-12
 priority: medium
 horizon: m
 feasibility: medium
@@ -124,3 +125,103 @@ shape, so the blast radius is likely wider than this one test.
 Model: **opus**. One probe file names the mechanism; the fix lands in an
 existing widening or ordering arm. Dispatch after PR #5676 lands (it carries
 this file).
+
+## Resolution
+
+**Mechanism — the `??` join, not the field and not `Object.assign`.**
+`compileNullishCoalescing`'s tail (`finishNullishBranch`,
+`src/codegen/expressions/logical-ops.ts`) joined its two arms by taking the
+RIGHT arm's wasm type outright (`unifiedType = rType`) whenever the arms
+differed. The left arm was then pushed through `coerceType(lhs → rhs)`, and an
+unproven reference narrowing there is lowered as a GUARDED downcast —
+`ref.test $Rhs`, else `ref.null`. So a left value of some other class did not
+trap: it silently became `null`.
+
+Measured on the hono dist: `options.router` compiles to `externref`,
+`new SmartRouter({...})` to `ref $SmartRouter`. The join took `ref $SmartRouter`,
+the `externref` was `any.convert_extern` + guard-cast into it, and a
+`RegExpRouter` failed the `ref.test` → `app.router === null`.
+
+None of the issue's three hypotheses was right, and the plan's minimal
+four-variant probe did **not** reproduce — because its two classes were
+structurally identical, so the guarded cast happened to succeed. What settled
+it was a ten-row probe against the real hono dist
+(`.tmp/probe-5366-hono2.mjs`); its discriminating rows:
+
+| probe row                                            | base | reads |
+| ---------------------------------------------------- | ---- | ----- |
+| `new Hono({ router: new SmartRouter(...) })`          | PASS | the cast succeeds when the option IS the default arm's class |
+| `new Hono({ router: new RegExpRouter() })`            | FAIL | `null` |
+| `new HonoBase({ router: new RegExpRouter() })`        | PASS | the base's `Object.assign` copy is fine — **A4 exonerated** |
+| `app.router = new RegExpRouter()` after construction  | PASS | the field slot accepts it — **A1/A2 exonerated** |
+| `{ router: new RegExpRouter() }` read back directly   | PASS | the literal is fine |
+
+so the only failing ingredient is `lhs ?? new Default()` with an `lhs` that is
+not a `$Default`. A minimal two-file untyped-`.js` repro then reproduced it
+exactly (`X` vs `Y` with *different* shapes), and dropping the `??` — the plan's
+A3 dial — made it pass.
+
+**Fix.** New `src/codegen/expressions/nullish-join-carrier.ts`:
+`nullishJoinCarrier(ctx, lhs, rhs)` picks a carrier that holds BOTH arms —
+`externref` when the left arm is on the host plane, the nearest declared struct
+common ancestor (falling back to `externref`) when both are internal refs, and
+`rhs` only where the coercion is a box/unbox rather than a downcast
+(`$AnyValue` on exactly one side). `&&` and `||` have always joined a
+non-numeric mismatch at `externref`, and `?:` already joins two internal refs at
+their common ancestor with this exact rationale in its comment; `??` was the
+outlier.
+
+**Regression test** `tests/issue-5366-nullish-join-carrier.test.ts` — 19 rows
+across three lanes (single module, two untyped `.js` modules in one unit,
+library in a separately-linked package):
+
+| lane                        | parent wrong | fix wrong |
+| --------------------------- | ------------ | --------- |
+| single module               | 4            | 0         |
+| two modules, one unit       | 4            | 0         |
+| separately-linked package   | 5            | 2         |
+| **total**                   | **13**       | **2**     |
+
+Parent's wrong rows: `optionRouter` `"null"`, `optionRouterIdentity`
+`"different"`, `optionRouterThroughField` `"null"` in every lane, plus
+`nullishShortCircuits` `THREW: dereferencing a null pointer` in the two
+single-unit lanes. The two that remain are linked-lane only, identical on both
+sides, contain no `??`, and are pinned as `LINKED_RESIDUALS` → new issue #6426.
+Anti-vacuity controls that already passed on the parent: the default arm, a
+same-class option, a post-construction store, the base class's own
+`Object.assign`, and eight primitive/array `??` shapes.
+
+**A/B — 17 dogfood suites, one HEAD (`upstream/main` 24411b6763), per test
+file.** Base and fix runs are sequential runs of the same 17 suites with only
+`logical-ops.ts` swapped.
+
+| suite | base | fix | | suite | base | fix |
+| --- | --- | --- | --- | --- | --- | --- |
+| hono | 258/324 | **259/324** | | moment | 10/10 | 10/10 |
+| axios | 208/231 | 208/231 | | prettier | 105/151 | 105/151 |
+| clsx | 32/32 | 32/32 | | redux | 67/82 | 67/82 |
+| cookie | 63740/63740 | 63740/63740 | | styled-components | 9/9 | 9/9 |
+| jest | 335/356 | 335/356 | | stylelint | 108/108 | 108/108 |
+| jsdom | 6/6 | 6/6 | | tailwindcss | 13/13 | 13/13 |
+| lodash | 59/62 | 59/62 | | three | 17/18 | 17/18 |
+| marked | 16/30 | 16/30 | | uuid | 75/75 | 75/75 |
+| | | | | webpack | 16/16 | 16/16 |
+
+Per-file movement across all 17 suites: **+1 / -0** — the single mover is
+`hono src/helper/dev/index.test.ts` 1/8 → 2/8, and the test that flips is
+`Should return the correct router name` (`getRouterName()`), which is exactly
+this issue's acceptance criterion.
+
+**Residuals.**
+
+- hono `helper/dev` stays at 2/8; the other six are #5365 (host closure bridge
+  loses `length`/`name`), untouched here.
+- The separately-linked lane's `baseObjectAssign` / `otherOptionKey` → new
+  issue #6426.
+- `??=` / `||=` / `&&=` are a different lowering (`compileLogicalAssignment`
+  writes into the target's declared slot type) and were not changed.
+- `tests/logical-assignment.test.ts` (13 failures, stale hand-rolled import
+  object missing `string_constants`) and
+  `tests/issue-4616-nullish-spread-source.test.ts` (2 failures, `illegal cast`)
+  fail identically on the parent — verified by re-running both files with
+  `logical-ops.ts` reverted. Not caused by, and not reachable from, this change.
