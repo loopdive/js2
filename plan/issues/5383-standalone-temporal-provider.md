@@ -501,19 +501,34 @@ criterion 4 is **not**, and the issue stays `in-progress` for that reason. The
    because the #661 lowering covers only PlainDate/PlainTime/Duration).
 4. S5: samples measured, 0 pass→fail, counts with artifacts; the standalone
    Temporal bucket moves from 170 pass.
-   **NOT MET (S5, 2026-09-12).** The samples are measured and the artifacts are
-   listed in "S5 findings" below, but **4 legitimate pass→fail remain** (10
-   flips, of which 6 are false passes proven by row shape), and the bucket does
-   not move up: linked, the three sampled families score **0 pass** against 10
-   unlinked. All 10 losses and 352 of the 360 linked failures share one cause,
-   which is filed as #5406.
+   **NOT MET (re-measured S6, 2026-09-12).** Linked, the three sampled families
+   still score **0 pass** (120 rows each: PlainDate 0 pass / 109 fail / 11
+   compile-timeout, Duration 0 / 110 / 10, ZonedDateTime 0 / 111 / 9), so
+   **0 pass→fail against the S5-linked side** and 4 legitimate losses against
+   the UNLINKED side, unchanged. The compile-timeout rise vs S5 is contention
+   (three families run concurrently, S5 ran pairs) — three flipped rows re-run
+   solo come back `fail`, not `compile_error`.
+   **The reason the bucket does not move is now known and is NOT #5406.** Every
+   linked row fails at MODULE INIT, before its first statement: an EMPTY row
+   with `features: [Temporal]` fails with the same text, and the reduction is
+   six lines (an `eval` in the source plus any linked provider). Filed as
+   **#6432**. #5406 itself is fixed (the `Object.prototype.toString` boundary
+   answer) and its second half — provider-thrown error identity — was
+   re-measured as ALREADY CORRECT; the S5 sub-bucket table below therefore
+   classifies rows by a line the failure never reached.
 
 **Remaining, in the order that unblocks the most:**
 
-- **#5406** — a value that crosses a `link:` boundary is not an ordinary object
-  in the consumer (`Object.prototype.toString` refuses it; a provider-thrown
-  error's `constructor` is not the consumer's and its `.name` is `undefined`).
-  136 `assert.throws` rows fail on this alone; it is the reported text on 352.
+- **#6432** — the real blocker, found in S6: a standalone module that contains
+  `eval` AND links a provider throws
+  `Object.prototype.toString is not yet implemented` at MODULE INIT. The
+  harness prelude has an `eval`, so every linked row fails before its first
+  statement. Six-line reduction; identical on base.
+- ~~**#5406**~~ — DONE (S6): the boundary `Object.prototype.toString` answer
+  landed (`__js2wasm_link_to_string_tag`). Its error-identity half was
+  re-measured as already correct, and the "136 `assert.throws` rows fail on
+  this alone" claim does not survive re-measurement — that text is #6432's
+  module-init failure.
 - **#5408** — `Temporal.PlainDate.from("…")` throws and
   `PlainDate.from(date, options).year` is not a number, through the provider.
 - **#5407** — the provider's link cost (1.83×, +214 functions, WAT doubled,
@@ -3436,3 +3451,39 @@ origin/main)`) — the "ceiling reset by main's post-merge baseline refresh"
 failure class, visible only when the gate is run against upstream's tip rather
 than the fork point. Merging `origin/main` cleared it; no allowance was added
 and nothing was baselined.
+
+## S6 findings (2026-09-12) — the boundary `toString` answer lands, and the lane's 352-row text turns out to be a module-INIT failure
+
+Slice #5406, Opus lane, branch `issue-5383-standalone-temporal-s6` (stacked on
+S5). Full tables in `plan/issues/5406-standalone-link-boundary-object-identity.md`;
+the three results that matter here:
+
+1. **(A) fixed.** A value minted by a linked provider now answers
+   `Object.prototype.toString` in the consumer — `[object Object]` for a class
+   instance or plain object, `[object Error]` for an error — via a new
+   miss-path terminal `__js2wasm_link_to_string_tag`, the same shape as S2d's
+   `__js2wasm_link_member_get`. Exotic carriers whose tag is not the step-13
+   default (Date, RegExp, Map/Set, Symbol/BigInt boxes, WeakRef, generator
+   result) DECLINE explicitly and keep today's loud refusal; that list is not
+   optional — measured without it, `toString.call(new Date(0))` answered
+   `[object Object]` where the base threw.
+2. **(B) was never broken.** S5/#5406 read `instanceof RangeError === false` off
+   `Temporal.PlainDate.from("not-a-date")`. That call throws a **TypeError**
+   ("Unsupported dynamic regular expression pattern", #5408). On calls that
+   really throw a `RangeError`, identity, `instanceof`, `.name` and `.message`
+   all cross correctly — including through function PARAMETERS, which is
+   `assert.throws`'s own spelling. S2m's one-tag-per-graph did the work; S6 adds
+   the assertions to `tests/issue-5406-standalone-link-boundary-tostring.test.ts`.
+   Residual, single-module and not boundary-related: `e.constructor.name` reads
+   `undefined`, and `const C = RangeError; C.name` reads the TypeScript
+   interface name `"RangeErrorConstructor"`.
+3. **The lane's real blocker is #6432.** Six lines — a module containing `eval`
+   that links any provider — throw
+   `Object.prototype.toString is not yet implemented in --target standalone` at
+   `__module_init`, before any statement runs. The test262 harness prelude
+   defines `$262.evalScript`, so **every** linked row hits it; an empty row
+   fails identically. Same on the base tree and this one. That is the text on
+   352 of 360 S5 rows and the reason the linked lane scores 0 pass.
+
+Byte A/B: 12 shapes x {gc, standalone}, **24 of 24 identical** — both new arms
+are reachable only inside a linked graph.

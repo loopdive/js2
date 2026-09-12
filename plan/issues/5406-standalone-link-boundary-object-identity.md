@@ -1,7 +1,8 @@
 ---
 id: 5406
-title: "standalone: a value that crosses a `link:` boundary is not an ordinary object in the consumer — `Object.prototype.toString` refuses it, and a provider-thrown error's `constructor` is not the consumer's (136 of 360 measured Temporal rows fail on this alone, and it is the reported text on 352 of them)"
-status: ready
+title: "standalone: a value that crosses a `link:` boundary is not an ordinary object in the consumer — `Object.prototype.toString` refuses it (FIXED, S6). The issue's second half (a provider-thrown error's `constructor` is not the consumer's) was NOT reproducible: re-measured in S6, error identity already crosses; and the 352-row error text is the module-init failure now filed as #6432"
+status: done
+completed: 2026-09-12
 sprint: current
 priority: high
 horizon: l
@@ -154,7 +155,123 @@ undefined", which is exactly the shape seen in the run.
 - Related: #5383 (umbrella), #2860 (standalone gap umbrella), #5383 S2d/S2k/S2l
   (the boundary work this sits on top of).
 
-## S6 (in progress, 2026-09-12)
+## S6 findings (2026-09-12) — (A) fixed; (B) was never broken; the lane's real blocker is elsewhere and is now reduced to six lines
 
-Opus senior-dev lane started on branch `issue-5383-standalone-temporal-s6`
-(stacked on S5). Measuring (A) and (B) reductions before any `src/` change.
+Three results, in the order a reader needs them.
+
+### 1. (B) error identity across a link ALREADY works — the problem statement read a real TypeError as a boundary defect
+
+The table in "Problem" above came from probing
+`Temporal.PlainDate.from("not-a-date")` and expecting a `RangeError`. Re-measured
+through the same shipped path (`.tmp/s6-realerr-base.out`, base tree, provider
+built by the same compiler), that call throws a **TypeError** whose message is
+`Unsupported dynamic regular expression pattern` — a RegExp gap inside the
+provider (#5408), not an identity failure. `instanceof RangeError === false` was
+the right answer to the wrong question.
+
+Asking the same questions about calls that really do throw a `RangeError`:
+
+| probe, real provider, host-free | base | S6 |
+| --- | --- | --- |
+| `new Temporal.PlainDate(2024, 14, 1)` → `e instanceof RangeError` | true | true |
+| …`e.constructor === RangeError` | true | true |
+| …`e.name === "RangeError"` | true | true |
+| …`e.message` | `value out of range: 1 <= 14 <= 12` | same |
+| `Duration.from({hours:1}).total("bogus")` → `instanceof RangeError` | true | true |
+| `PlainDate.from("not-a-date")` → `instanceof TypeError` | true | true |
+| …`e.constructor === TypeError` | true | true |
+| the harness's own shape — both sides through PARAMETERS, `thrown.constructor === expected` (`.tmp/s6-throwsparam.out`) | 1 (holds) | 1 |
+| the control: a consumer `RangeError` compared against `TypeError` | 3 (differs) | 3 |
+
+#5383 S2m's shared exception tag is what made this work; S6 adds the
+parameter-passing spelling (`assert.throws`'s own) to the evidence, and asserts
+all of it in `tests/issue-5406-standalone-link-boundary-tostring.test.ts` so it
+cannot silently regress.
+
+**Residual, and it is NOT a boundary defect:** `e.constructor.name` reads
+`undefined`, and the bare-value spelling reads the TYPESCRIPT interface name.
+Measured in a SINGLE standalone module with no link at all
+(`.tmp/s6-ctorname{,2,3}-base.out`): `RangeError.name` (the #2501 static fold)
+answers `"RangeError"`; `const C = RangeError; C.name` answers
+**`"RangeErrorConstructor"`**; any read through an `any` answers `undefined`.
+Upstream `assert.throws` compares CONSTRUCTOR IDENTITY and only formats `.name`
+into the failure message, so this costs no test262 row today. Left as an
+`it.todo` with the measurement rather than fixed here — it is a single-module
+builtin-carrier defect, not this issue.
+
+### 2. (A) is real, and is fixed
+
+The consumer classifies `Object.prototype.toString` by WasmGC type test, and a
+type test only sees types THIS module declared. The vec/string families are in
+the canonical rec group; `$Object` and every nominal class struct are not
+(`.tmp/s6-probe-a-{base,fix}.out`, `.tmp/s6-tagtext-{base,fix2}.out`):
+
+| receiver, in the consumer | base | S6 |
+| --- | --- | --- |
+| the provider's class instance | throws | `[object Object]` |
+| the provider's `{ a: 1 }` | throws | `[object Object]` |
+| the provider's `new RangeError("x")` | throws | `[object Error]` |
+| the provider's `[1, 2]` | `[object Array]` | `[object Array]` |
+| the provider's `new Date(0)` | throws | throws (declined on purpose) |
+| the provider's `new Map()` | throws | throws (declined on purpose) |
+| the provider's `new Number(5)` | `[object Number]` | `[object Number]` |
+| a CONSUMER class instance through an `any` | throws | `[object Object]` |
+| a consumer `{ a: 1 }` / `[1,2]` / `null` / `undefined` | correct | unchanged |
+
+Mechanism: the provider publishes `__js2wasm_link_to_string_tag` and the
+consumer asks it only after its own chain has missed — the same miss-path shape
+as `__js2wasm_link_member_get` (S2d) and `__js2wasm_link_method_call` (S2h).
+**The candidate the issue sketched second — a per-intrinsic BRAND id in the
+canonical ABI — was not needed for either half**: (B) needed nothing (one tag
+per graph already), and for (A) "ask the owner" is strictly cheaper than
+widening the frozen rec group, which would re-key every existing artifact.
+Importing the consumer's intrinsics into the provider was rejected for the
+reason S2m already records: the linker instantiates providers FIRST, so a
+provider cannot import from its consumer.
+
+The decline list inside the terminal is load-bearing: with only the `$Map`
+decline, `toString.call(new Date(0))` answered `[object Object]` where the base
+threw — a loud refusal converted into a silent mis-tag. Named residual:
+`@@toStringTag` is not consulted, so a provider class that sets one (Temporal's
+do) answers the §20.1.3.6 step-13 default rather than its tag.
+
+### 3. The lane does not move, and the reason is a DIFFERENT defect — now reduced to six lines (#6432)
+
+Re-running the S5 sample (120 rows per family, linked side only, provider and
+quickjs eval adapter rebuilt with this tree):
+
+| | PlainDate S5 → S6 | Duration S5 → S6 | ZDT/prototype S5 → S6 |
+| --- | --- | --- | --- |
+| pass | 0 → **0** | 0 → **0** | 0 → **0** |
+| fail | 118 → 109 | 117 → 110 | 117 → 111 |
+| compile_error (all compile TIMEOUTS) | 2 → 11 | 3 → 10 | 3 → 9 |
+| rows reporting the one text | 118 → 109 | 117 → 110 | 117 → 111 |
+
+**0 pass→fail** (there were no passes to lose). The compile-timeout rise is a
+CONTENTION artifact, not a regression: S6 ran the three families as three
+concurrent processes where S5 ran pairs, and the timeout is wall-clock. Three
+flipped rows re-run SOLO (`PlainDate/basic.js`, `Duration/max.js`,
+`PlainDate/from/argument-string.js`) all come back `fail`, not `compile_error`.
+
+The top bucket is unchanged, and S6 found out why: **every linked row fails at
+MODULE INIT, before its first statement.** An EMPTY row (`var s6 = 1;` with
+`features: [Temporal]`) fails through the real runner with the identical text,
+and the reduction is six lines — a `var obj = { evalScript: function (s) {
+return eval(s); } }` in a module that links a provider. Unlinked it inits fine;
+linked it throws. Identical on the base tree and this one, so #5406's fix
+neither causes nor cures it. Filed as **#6432** with the full bisect.
+
+Consequence for the record: S5's sub-bucket table (136 `assert.throws`, 124
+`assert.sameValue`, …) classified rows by the `at L<n>` fragment of a failure
+that never reached that line. Those counts are not a classification of Temporal
+defects, and #5406's headline ("136 of 360 rows fail on this alone") does not
+survive the re-measurement.
+
+### 4. Order preservation
+
+12 module shapes x {gc, standalone}, base captured by file copy before the first
+edit (`.tmp/s6-ab-{base,fix}.out`): **24 of 24 sha256-identical.** Both new arms
+are emitted only inside a linked graph — the consumer arm requires an imported
+peer terminal, the provider arms require `exportsConsumedByWasm` — so a
+single-module compile in either lane cannot reach them.
+
