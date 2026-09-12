@@ -1620,34 +1620,164 @@ describe("#5383 S2 smoke — the real standalone Temporal provider", () => {
   );
 
   // STILL OPEN — the third assertion,
-  // `Temporal.Duration.from({hours:1}).total("minutes") === 60`. It is no
-  // longer a boundary problem: the Duration itself crosses and reads
-  // correctly (`Duration.from({hours:1}).hours === 1`, `typeof d.total ===
-  // "function"`), and `.total(…)` fails IDENTICALLY inside the provider's own
-  // module, so the link is not involved. It throws
+  // `Temporal.Duration.from({hours:1}).total("minutes") === 60`.
   //
-  //   RangeError: unit must be one of year, month, week, day, hour, minute,
-  //   second, millisecond, microsecond, nanosecond, null, null, null, null,
-  //   null, null, null, null, null, null, not minutes
+  // S2k's stop is CLOSED (see the S2l block below): the unit table now builds
+  // correctly. Re-measured through the same in-provider probe S2k used, with
+  // only the two S2l source files reverted, the error message CHANGED — which
+  // is what makes this a new stop and not the old one:
   //
-  // — the ten PLURAL unit names are missing. They come from the polyfill's
-  // `ot = Object.fromEntries(nt.map(([e, t]) => [t, e]))`, and the stop is
-  // `Object.fromEntries` on the standalone target. Reduced
-  // (`.tmp/s2k-red2.mts`, `--target standalone` / `hostBridge:"off"`):
+  //   base  (175 chars, ten `null`s)  "unit must be one of year, month, week,
+  //                                    day, hour, minute, second, millisecond,
+  //                                    microsecond, nanosecond, null ×10,
+  //                                    not minutes"
+  //   S2l   (58 chars, no `null`s)    "Convert JSBI instances to native numbers
+  //                                    using `toNumber`."
   //
-  //   | form                                                  | result |
-  //   | ----------------------------------------------------- | ------ |
-  //   | `Object.fromEntries([["year","years"]])` (literal)     | works |
-  //   | `Object.fromEntries(nt.map(([e,t]) => [t,e]))`         | keys present (3), **values `undefined`** |
-  //   | `Object.fromEntries(nt.map(e => [e[1],e[0]]))`         | **COMPILE FAIL** — `'__object_fromEntries' (dynamic-shape object/property operation) is not yet supported in --target standalone` |
-  //   | `Object.fromEntries(nt.map(function (e) {…}))`         | **COMPILE FAIL** — same |
+  // The new one is JSBI's own `valueOf` guard: something on the `total` path
+  // applies an implicit ToNumber/ToPrimitive to a JSBI BigInt instance instead
+  // of calling `toNumber()`. It reproduces INSIDE one standalone module with no
+  // link (`.tmp/s2l-solo-total.mts`: the Intl shim + the linked polyfill + a
+  // probe export, compiled with plain `compile({target:"standalone",
+  // hostBridge:"off"})`), so the boundary is again not involved. It is present
+  // on the base tree too — `total("minute")`, a SINGULAR unit that was always
+  // in the table, answers the same failure on both trees, so this defect never
+  // depended on the `fromEntries` one.
   //
-  // So `Object.fromEntries` over a computed pair list is partly unimplemented
-  // on the standalone lane and — in the destructured-arrow form the polyfill
-  // happens to use — SILENTLY builds the right keys with lost values, which is
-  // the worse of the two failures. That is the next slice's target and is
-  // independent of the value ABI fixed here.
+  // Two smaller facts worth not re-deriving, both measured on BOTH trees so
+  // neither is a regression from S2l:
+  //  - a provider-side throw does NOT cross the link as a catchable JS error.
+  //    The consumer's own `try { d.total(…) } catch (e) { … }` never runs; the
+  //    raw `WebAssembly.Exception` escapes to the embedder.
+  //  - the harness's `durationHasTotal` probe reads 0 while the identical
+  //    question through a bound local (`const d = …; typeof d.total`) reads 1
+  //    (`.tmp/s2l-method-red.mts`). That is the #2984 path-dependent `typeof`
+  //    on a CHAINED member access, not a missing method — `d.toString()` works
+  //    across the same boundary, and a tiny hand-written provider answers the
+  //    whole chain including `d.total("minutes") === 60`.
   it.todo(
-    "Temporal.Duration.from({hours:1}).total('minutes') === 60 (blocked: `Object.fromEntries` over a computed pair list loses its values on --target standalone — #5383 S2k)",
+    "Temporal.Duration.from({hours:1}).total('minutes') === 60 (blocked: an implicit ToNumber on a JSBI BigInt instance throws JSBI's `Convert JSBI instances to native numbers using toNumber.` guard inside the provider — #5383 S2l)",
   );
+});
+
+describe("#5383 S2l — `Object.fromEntries` over a computed pair list, standalone", () => {
+  // Two independent defects, one call site. Both are standalone-only and both
+  // were decided by module CONTENT rather than by the source construct.
+  //
+  //  (A) SILENTLY WRONG VALUES. `Object.fromEntries`'s lib signature is
+  //      `Iterable<readonly [PropertyKey, T]>`, so a callback returning
+  //      `[t, e]` is CONTEXTUALLY a tuple and lowers to a nominal
+  //      `$__tuple_N` struct with fields `_0`/`_1` — not to the indexable pair
+  //      vec the same expression produces when bound to an `any` local first.
+  //      The self-hosted `__object_fromEntries` reads each pair with
+  //      `__extern_get_idx(pair, 0/1)`, which had arms for `$ObjVec`, typed
+  //      vecs and closed array-like structs but NONE for a tuple, and answered
+  //      `undefined` for both slots. Ten entries then all wrote
+  //      `out[undefined] = undefined`, so the table came out as the single key
+  //      `"undefined"`. Fixed by admitting tuple carriers as array-like
+  //      candidates in `fillExternArrayLikeStructArms` (length = field count,
+  //      `_i` = index i).
+  //
+  //  (B) ACCIDENTAL REFUSAL. Every non-array-literal argument fell through to
+  //      `ensureLateImport`, whose funcMap lookup precedes the #1472 Phase B
+  //      refusal — and `__object_fromEntries` is in funcMap only when
+  //      something ELSE in the module already pulled in `ensureObjectRuntime`.
+  //      So `Object.fromEntries(nt.map(([e,t]) => [t,e]))` compiled (its
+  //      array-literal callback body ensures the runtime) while
+  //      `Object.fromEntries(nt)`, `nt.slice(0)` and `nt.map((e) => e)` were
+  //      refused. The call site now ensures the runtime itself and calls the
+  //      native directly when the argument is statically an array or tuple.
+  //
+  // A non-indexable iterable (a `Map`) deliberately KEEPS the refusal: the
+  // native would walk it with `__extern_length` → 0 and hand back `{}`, which
+  // is the silent-wrong failure this block exists to remove. #2190 owns that.
+  const runStandaloneFromEntries = async (src: string): Promise<unknown> => {
+    const r = await compile(src, { target: "standalone" });
+    expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    return (instance.exports as { test: () => unknown }).test();
+  };
+
+  const NT = `const nt: any[] = [["year","years"],["month","months"],["day","days"]];\n`;
+  // keys*100 + (swapped lookup ok)*10 + (first value not undefined)*1
+  const TAIL = `const ks = Object.keys(o);
+      return ks.length * 100 + (o["years"] === "year" ? 10 : 0) + (o[ks[0]] === undefined ? 0 : 1);`;
+
+  it("(A) a destructured-arrow pair list keeps its VALUES (base: 1 key, both slots undefined)", async () => {
+    expect(
+      await runStandaloneFromEntries(`${NT}export function test(): number {
+        const o: any = Object.fromEntries(nt.map(([e, t]: any) => [t, e]));
+        ${TAIL}
+      }`),
+    ).toBe(311);
+  });
+
+  it("(A) the same shape with a TYPED source array", async () => {
+    expect(
+      await runStandaloneFromEntries(`const nt: string[][] = [["year","years"],["month","months"],["day","days"]];
+        export function test(): number {
+          const o: any = Object.fromEntries(nt.map(([e, t]: string[]) => [t, e]));
+          ${TAIL}
+        }`),
+    ).toBe(311);
+  });
+
+  it("(B) a bare array identifier compiles (base: #1472 Phase B refusal)", async () => {
+    expect(
+      await runStandaloneFromEntries(`${NT}export function test(): number {
+        const o: any = Object.fromEntries(nt);
+        return Object.keys(o).length * 100 + (o["year"] === "years" ? 10 : 0);
+      }`),
+    ).toBe(310);
+  });
+
+  it("(B) an array-returning method call compiles (base: refusal)", async () => {
+    for (const expr of ["nt.slice(0)", "nt.concat([])", "nt.map((e: any) => e)"]) {
+      expect(
+        await runStandaloneFromEntries(`${NT}export function test(): number {
+          const o: any = Object.fromEntries(${expr});
+          return Object.keys(o).length * 100 + (o["year"] === "years" ? 10 : 0);
+        }`),
+        expr,
+      ).toBe(310);
+    }
+  });
+
+  it("the array-LITERAL fast path is unchanged", async () => {
+    expect(
+      await runStandaloneFromEntries(`export function test(): number {
+        const o: any = Object.fromEntries([["a","b"],["c","d"]]);
+        return (o.a === "b" && o.c === "d") ? 1 : -1;
+      }`),
+    ).toBe(1);
+  });
+
+  it("a non-indexable iterable still REFUSES rather than answering {}", async () => {
+    const r = await compile(
+      `export function test(): number {
+         const m = new Map<string, string>();
+         m.set("year", "years");
+         const o: any = Object.fromEntries(m);
+         return (o.year === "years") ? 1 : -1;
+       }`,
+      { target: "standalone" },
+    );
+    expect(r.success).toBe(false);
+    expect(r.errors.map((e) => e.message).join("\n")).toContain("__object_fromEntries");
+  });
+
+  it("a tuple is array-like to the dyn-reader trio (the (A) mechanism, directly)", async () => {
+    // `[string, number]` lowers to `$__tuple_N`; read it through a dynamic
+    // `any` receiver so the read goes via `__extern_length`/`__extern_get_idx`
+    // rather than a static `struct.get`. Base: length 0 and both reads
+    // `undefined`, so the whole expression answered 0.
+    expect(
+      await runStandaloneFromEntries(`export function test(): number {
+        const o: any = Object.fromEntries([["k", "v"]]);
+        const p: [string, number] = ["a", 1];
+        const dyn: any = p;
+        return (o.k === "v" ? 100 : 0) + (dyn.length === 2 ? 10 : 0) + (dyn[0] === "a" ? 1 : 0);
+      }`),
+    ).toBe(111);
+  });
 });
