@@ -80,6 +80,7 @@ import {
   reserveNativeConstructDriver,
   reserveTypedNativeConstructDriver,
 } from "../native-construct.js"; // (#3981 / #1058)
+import { markClassValueConstructSite } from "../standalone-class-construct.js"; // (#5383 S2g)
 import { linkCompatibleDeclaredStructAncestor } from "../struct-hierarchy-layout.js";
 import { emitBoundConstructOnNull } from "../construct-bound.js"; // (#4196) §10.4.1.2
 import { emitRuntimeEvalConstructOnNull } from "../runtime-eval-construct.js"; // (#4438) §10.2.2
@@ -3866,7 +3867,19 @@ function tryCompileNativeConstructFromValue(
 ): ValType | undefined {
   if (!noJsHost(ctx) && ctx.targetProfile.semanticProviders !== "native-first") return undefined;
   const runtimeEvalCallableResult = isRuntimeEvalCallableResultExpression(ctx, calleeExpr);
-  if (!ts.isIdentifier(calleeExpr) && !runtimeEvalCallableResult) return undefined;
+  // (#5383 S2g) A MEMBER callee holding a genuinely-dynamic ctor value —
+  // `new NS.PlainDate(…)`, the shape EVERY linked-provider namespace has. The
+  // host lane already routes it through `__construct_closure`
+  // (`usesHostConstructClosureBase`); standalone had no equivalent, so it fell
+  // through to the legacy `__new_<name>` extern-class import and evaluated to
+  // NULL. `resolvesToDynamicAnyCtorValue` is the same admission the host lane
+  // uses, and it declines an UNDECLARED base (#4728) — so the host-global
+  // `new Temporal.X(…)` lane is untouched.
+  const dynamicMemberCtorValue =
+    noJsHost(ctx) &&
+    (ts.isPropertyAccessExpression(calleeExpr) || ts.isElementAccessExpression(calleeExpr)) &&
+    resolvesToDynamicAnyCtorValue(ctx, calleeExpr);
+  if (!ts.isIdentifier(calleeExpr) && !runtimeEvalCallableResult && !dynamicMemberCtorValue) return undefined;
   // A compiled fnctor for this binding means the typed-struct path owns it.
   if (ts.isIdentifier(calleeExpr) && ctx.funcConstructorMap.has(calleeExpr.text)) return undefined;
   const runtimeFunctionAlias =
@@ -3882,6 +3895,7 @@ function tryCompileNativeConstructFromValue(
     !runtimeEvalCallableResult &&
     !proxyValue &&
     !proxyCtorValue &&
+    !dynamicMemberCtorValue &&
     !resolvesToConstructableFunctionValue(ctx, calleeExpr) &&
     !resolvesToLateAssignedConstructSignatureValue(ctx, calleeExpr)
   )
@@ -3912,6 +3926,9 @@ function tryCompileNativeConstructFromValue(
   ensureLateImport(ctx, "__object_create", [{ kind: "externref" }], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
   addStringConstantGlobal(ctx, "prototype");
+  // (#5383 S2g) This is a construct from a runtime VALUE, so the callee may be
+  // a class-object singleton — arm the class trampolines for this module.
+  markClassValueConstructSite(ctx);
   const driverIdx = reserveNativeConstructDriver(ctx, args.length, stringConstantExternrefInstrs(ctx, "prototype"));
 
   // Evaluate the callee, then each argument, exactly once and in source order.
@@ -7127,7 +7144,12 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // `!className` block because inferred names can still identify function values.
   if (
     (calleeIdent && !ctx.classSet.has(calleeIdent.text) && !(className && ctx.classSet.has(className))) ||
-    isRuntimeEvalCallableResultExpression(ctx, expr.expression)
+    isRuntimeEvalCallableResultExpression(ctx, expr.expression) ||
+    // (#5383 S2g) the standalone member-callee form; the helper re-checks the
+    // admission itself, so this only opens the door.
+    (noJsHost(ctx) &&
+      (ts.isPropertyAccessExpression(expr.expression) || ts.isElementAccessExpression(expr.expression)) &&
+      resolvesToDynamicAnyCtorValue(ctx, expr.expression))
   ) {
     const nativeCtor = tryCompileNativeConstructFromValue(ctx, fctx, expr.expression, expr.arguments ?? []);
     if (nativeCtor) return nativeCtor;
