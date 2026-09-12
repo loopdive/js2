@@ -5322,6 +5322,82 @@ structural references from ordinary string/debug-label text equal to a unit ID;
 frame preservation tests must run self-contained in ordinary CI and keep the
 external-baseline comparison explicit, with no child timeout killing. These
 are repair requests, not approvals or measured failures of frozen candidates.
+
+### Native async frame ownership checkpoint (2026-09-08)
+
+The six production files from the approved frame-body plan are composed on
+settlement checkpoint `535ee6b6ba19239394ee50f8235e6c528212688b` in
+`codex/3518-frame-engine-integration-20260908`. The real prepared async caller
+still reaches the original context adapter, which now calls canonical runtime
+builders for step bodies, ordered state chains and exception dispatch. Native
+await bodies live under `src/runtime/wasmgc/async`; standardized exception-control
+algorithms live under `src/wasm/physical`. Old public exports forward the same
+function objects. No context, AST, allocator or emission callback moved into
+these canonical builders.
+
+The extraction preserves detached instruction-array identity, immediate state
+tracking, chain tracking before finalizers, late-import remapping, reservation
+and publication order, catch-route cloning, and original restoration/failure
+behavior. All three await declarations and six exception-control declarations
+retain their historical implementation; 44 other frame functions and the whole
+`ir-async-frame.ts` remain unchanged. The pre-existing EH algorithm is preserved,
+not repaired by this checkpoint.
+
+Validation history is retained rather than relabeled:
+
+- Revision 1: 46/50 new checks passed, terminal session 90694 exited 1. Three
+  tests incorrectly searched for an empty saved body; one expected the empty
+  parallel aggregate to settle before its required microtask drain. Failed
+  evidence remains in the worker's `.tmp/frame-body-preservation-KqyGEb`.
+- Six unchanged production files: 65/65 existing checks passed, session 33588
+  exited 0 (14 native family, 38 try/catch, seven finally, six multi-await).
+  Production blobs were verified before and after. Worker typecheck session
+  90572 exited 0.
+- Revision 2: 50/50 new checks passed, session 79128 exited 0. Explicit
+  historical comparison session 17907 exited 0: five artifacts and 12 executions
+  per root, including eight full-family scenarios, against immutable baseline
+  `0194b64c246d2b5beab2db00af33a73498e2eb6e`. The same 21 source-preservation
+  tests were rerun, not 21 additional controls. Worker evidence remains in
+  `.tmp/frame-body-preservation-Fk3s9C`.
+- The composed revision-2 checkpoint passed 50/50, session 3436 exited 0;
+  evidence is `.tmp/frame-body-preservation-QH8HUz` in the integration worktree.
+- Revision 3 additionally requires exact thrown-error identity and re-reads,
+  checks and records main's stdout after repeated timer delivery. High reviewed
+  these two test-only changes and approved bounded composition. Final composed
+  revision 3 passed 50/50 plus typecheck, session 55719 exited 0. Its explicit
+  historical pair matched five artifacts and 12 executions per root, including
+  post-redelivery stdout; both child terminals exited 0 without signals.
+  Evidence is `.tmp/frame-body-preservation-83o9aW` in the integration worktree.
+  SHA256 of `JSON.stringify(parsedReport)` is baseline
+  `496685275ae494f90e6b3ae2129e69763b492ab6f95bc3ceb1e38a731a2bea84`
+  and candidate
+  `d2a797bc7487571cb6bbd8eba40944fe2ccd24ead4a85d948e29cb6290a6948c`.
+  These are parsed-report hashes, not hashes of pretty-printed file bytes.
+- The boundary registry now requires 63 canonical modules with 207 resolved
+  edges (148 type-only, 59 runtime), adding three mandatory owners and twelve
+  negative controls. All 24 prior activation records and all allowed edges are
+  unchanged. The first 113-assertion run exited 1 due to a Vitest worker RPC
+  timeout; it is not a passing suite. An awaited event-loop yield after unchanged
+  cleanup addresses synchronous detector starvation without changing assertions
+  or timeouts. The clean rerun, session 96705, exited 0 with 113/113 controls.
+- Full inventory session 49315 exited 0 with
+  `inventory-valid-architecture-incomplete`: 1,308 modules (1,305 tracked,
+  three new at measurement), 63 clean, five compatibility adapters and 1,240
+  unmigrated; zero errors and zero unresolved edges. Four unknown dynamic imports
+  remain: Porffor loader lines 75/76, optimize line 384 and platform-capability
+  adapter line 151. This explicitly does not prove whole-compiler static closure.
+
+The source-admission revision is separate, not included here: its seven frozen
+files passed 86/86 controls in worker session 4669, with High approving the
+constructor/global ownership and retained certification-population repairs.
+Its integration, regressions and typecheck remain outstanding.
+
+Neither these preservation receipts nor source admission establish complete
+prepared async physical acceptance. Full-family logical vectors and real runtime
+declarations/providers, transported frame materialization, public IR-only
+cutover, static closure, direct-codegen retirement and the ABI30 witness remain
+required. All existing PR holds remain; no merge or auto-merge is authorized by
+this checkpoint record.
 ### Capability contract extraction checkpoint (2026-09-08)
 
 The [Astra High capability-schema plan](../agent-context/3518-capability-schema-checkpoint-plan-2026-09-08.md)
@@ -5438,3 +5514,76 @@ tracked in issue5807 on the cumulative PR5798; keep this checkpoint held until
 that landing evidence is reconciled. Local tests and conflict repair do not
 waive that hold or certify complete native async/IR retirement. Older references
 above are historical records, not current dispatch or merge authorization.
+
+
+## 2026-09-12: resume existing PR queue, refresh frame extraction against main
+
+User direction: pause new migration scope and deliver the existing non-draft
+PR chain 5755 → 5756 → 5757 → 5758 → 5759 → 5760 dependency-first through the
+protected merge queue. Routine scoped fixes and normal validation, commits,
+pushes and queue submission are authorized. Delivery requires verified main
+ancestry and content; an open PR or green local suite is not completion.
+
+The supplied old temporary worktree and Markdown handoff are absent on this
+host. Published comment 5646241014 contains only an `@`-prefixed local path,
+not the handoff body. Preserve the earlier committed refresh record and
+original failures/receipts; reconstruct from the existing published PR head.
+
+PR5755 starts at published a42660c8974d75a06586cd7ce890e1c61d73c0f2 and cleanly
+merges main 06f4cfa4aca3cfa20f1e5c03738956407ec2fedb in the isolated
+`codex/5755-queue-drain-20260912` worktree. Eight of the nine original frame
+source/test files remain byte-identical. The async-frame wrapper incorporates
+main's Promise.all suspension and conditional-await spill/reaction fixes;
+the extracted engine and the landed native-delay exception repair remain
+unchanged. Boundary policy adds 16 unmigrated records and updates the existing
+lowering facade description; it removes no records or allowed-edge rules.
+
+Before compiler tests or hooks, an independent test262 repository was checked
+out at the exact shared gitlink b363f29d3c43c626dc852744ad64a0b48a003693.
+All 53,889 test files and 44 harness files match their raw Git blob hashes,
+file sets and modes (86,743,051 bytes); no untracked or ignored extras occur.
+The object store has no alternates or shared hardlinks. Original corpus links,
+25 untracked records and seven ignored records remain preserved. Verification
+manifest SHA256: fcaaff56a78c134e3875a00b743d5e6435939c38f304eeec1ffb35bc3c611ffb.
+The first checker refused an unmeasured same-name object comparison after Git
+repacked the clone; that failure remains archived. The corrected checker
+compares all three clone object-file inodes against all 411 source files.
+
+The original historical source positive was run before any test repair:
+1 failed, 20 filtered. Its reconstructed population remains 51 statements,
+47 functions and 92 bodies, but main's legitimate edits change its hash from
+`d842bc14445082f874a698a6778286ad511e51e7f7cc446dbe164eedfa0ce9d3` to
+`40bece50928038d795a05a31219cf4cfba82f528891311902b3fd6f2814bea87`.
+Preserve the original receipt; authenticate main's forward changes separately
+before inverse projection, with mutation controls. This is a scoped merge
+validation repair, not permission to reseed historical expectations.
+
+Validation and queue delivery remain in progress. Keep the hold until the
+refreshed head is validated; retarget the existing PR to main before pushing.
+At PR5756 use published e3a01efa44f68da1b93c16b1a728d0ba099183f9, never stale
+fea8c3f413. At PR5759 carry signed repair
+561853c00d76c72eb44dbee14340dc15e9841e41 into the extracted delay implementation,
+retaining both tagged and foreign catches and all original donor ledgers.
+
+
+The forward source-preservation repair is now validated: 41/41 tests pass,
+including all 20 original source controls, 20 additional forward-provenance
+controls and the unchanged public-source oracle. The seven admitted spans
+are verified against pinned a42660c8/06f4cfa4 Git blobs and recorded line
+ranges; the full ordinary async-cps import includes its module source and
+import kind. Reverting, corrupting or duplicating a forward span is refused.
+The inverse projection matches the complete original a426 wrapper SHA256
+before the unchanged 0194 donor receipts are checked. No original historical
+or bridge receipt was reseeded; the public comparator is byte-identical.
+Fixture raw SHA256:
+3f01c4d7c04f39f8be68e00bc34025228e759287292bcb7739f5292c266ddbb7.
+
+The final scoped population is 219/219 across five files (178 existing
+ownership/boundary/main regressions plus 41 preservation tests), no failures
+or skips. Full normal commit/push hooks remain mandatory. The default
+pre-commit selector currently sees 26 inherited root test changes relative
+to its old merge base and therefore self-skips its >20-file lane; the 219
+scoped tests were run directly and are not a claim that those 26 files ran.
+Actual signed commit, push-hook and CI/queue outcomes will be recorded in the
+existing PR follow-up. Preserve the retained original positive failure and
+all corpus verification artifacts.
