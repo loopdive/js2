@@ -505,6 +505,29 @@ replacement A/B cohort is green. They exercise `RegExp.prototype.exec` and do
 not call the replacement helper; leave them to the existing Slice-A/exec
 owner. No other full-residual status is inferred from this bounded fix.
 
+### C3a publication refresh after upstream #5756 (2026-09-12)
+
+Immediately before publication, `loopdive/js2` main advanced from the prior
+`ffb338c4` publication target to
+`b433de9ffe4e0c165fe65ff9d4a20bc91854cc1d` (merged #5756). The branch normally
+merged that exact tip with no conflict or rebase. #5756 changes IR delay-source
+admission files and has no overlap with either C3a implementation file; the
+following fresh remeasurement nevertheless makes `b433de9f` the final
+publication head and leaves the earlier `ffb338c4` result as intermediate
+evidence only.
+
+- `pnpm run build:compiler-bundle` passed;
+- the exact isolated host A/B cohort was `17 pass` and the standalone cohort
+  was `17 pass / 0 compile_error / 0 timeout / 0 skip / 0 host imports`;
+- the dedicated C3a pin passed `14/14` in one fork;
+- TS5, TS7, lint, Prettier, diff check, LOC/function, coercion/oracle,
+  dead-export, numeric-local (`18/18`), and issue-integrity gates passed.
+
+The two unrelated exec rows were also rechecked individually on `b433de9f` and
+remain standalone `fail` with the same Test262 `SameValue` errors described
+above. They are therefore residuals attributable to the pre-existing exec
+path, not a status change from this replacement-only implementation.
+
 ## Acceptance criteria
 
 - All 165 exact rows pass standalone with zero host imports; interim PRs pass
