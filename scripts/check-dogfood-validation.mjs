@@ -44,6 +44,22 @@
 // such a baseline would be noisy. The per-package compile status IS printed on
 // every run so the regression is at least visible in the log.
 //
+// THE MODULE SURFACE (#5368). Until 2026-09-12 this gate compiled exactly one
+// module per package — `<pkg>/<declared entry>`. A module a dogfood SUITE
+// admits through a subpath was never compiled here, so the invariant held
+// green over a package whose subpath emitted a module no engine would load.
+// #5339 is the measured miss: hono's `dist/helper/dev/index.js` pulls in
+// `dist/utils/color.js`, whose `getColorEnabledAsync` emitted `type error in
+// return[0] (expected i32, got externref)`. Re-measured on #5676's parent
+// (`34720daf53`), that module is INVALID and the other 19 hono suite modules
+// are clean — the widened gate is red there and green on main.
+//
+// The gated surface is `suite`: the declared entry PLUS every published module
+// the dogfood upstream suites admit (tests/dogfood/dogfood-surface-modules.mjs
+// derives it from the committed suite pins, so no upstream clone and no
+// generated tree is needed). A wider `--surface exports` walks the whole
+// `exports` map; it is a SURVEY, not a gate — see KNOWN_INVALID_MODULES.
+//
 // MACHINERY. All reused: `runNpmCompatCatalogHarness` (tests/dogfood/
 // npm-compat-catalog-harness.mjs) compiles the pinned tarball's declared entry
 // module via `tests/helpers/compile-project-probe.ts` in a child process with
@@ -60,8 +76,10 @@
 //   node scripts/check-dogfood-validation.mjs --json
 //   node scripts/check-dogfood-validation.mjs --only moment,lit
 //   node scripts/check-dogfood-validation.mjs --concurrency 1
+//   node scripts/check-dogfood-validation.mjs --surface exports   # survey, wider
+//   node scripts/check-dogfood-validation.mjs --list-modules      # print the surface
 //
-// Exit 0 = every gated package upheld the invariant. Exit 1 = a gated package
+// Exit 0 = every gated module upheld the invariant. Exit 1 = a gated module
 // compiled to a binary that does not validate (or blew its compile budget).
 // Exit 2 = usage. Exit 3 = infrastructure failure; nothing was measured.
 
@@ -73,6 +91,9 @@ import { performance } from "node:perf_hooks";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const HARNESS = join(REPO_ROOT, "tests", "dogfood", "npm-compat-catalog-harness.mjs");
+const SURFACE_PROBE = join(REPO_ROOT, "tests", "dogfood", "dogfood-surface-probe.mjs");
+/** Per-module deadline used to size each chunk's wall budget. */
+const MODULE_TIMEOUT_MS = 120_000;
 
 /**
  * The gated set: pinned npm-compat catalog packages that BOTH compile and
@@ -104,6 +125,54 @@ const GATED = [
  * gate stays a clean invariant; fixing one means moving it into `GATED`.
  */
 const KNOWN_INVALID = [{ name: "lit", issue: 3977, detail: 'local.set[0] in "y_createRenderRoot"' }];
+
+/**
+ * Individual SUBPATH modules that compile but do not validate on main today,
+ * all found by this gate's own `--surface exports` survey on 2026-09-12
+ * (`cf82f78d6d`). None of them is in the gated `suite` surface, so on the
+ * default surface this list waives nothing — it is what stops the wider survey
+ * from reading as an undifferentiated pile of red, and it is the list a future
+ * widening of the gated surface has to empty first. Fixing one deletes its row.
+ *
+ * Three distinct codegen bugs, seven modules: #6412 (`extern.convert_any`
+ * expecting anyref where an async resume produced externref), #6413 (a closure
+ * falling through with externref where i32 is expected), #6414 (a `struct.set`
+ * expecting i32 and given externref in an async resume).
+ */
+const KNOWN_INVALID_MODULES = [
+  {
+    name: "hono",
+    module: "dist/utils/jwt/index.js",
+    issue: 6412,
+    detail: 'extern.convert_any in "__async_resume_fimportPublicKey"',
+  },
+  {
+    name: "hono",
+    module: "dist/middleware/jwk/index.js",
+    issue: 6412,
+    detail: "same __async_resume_fimportPublicKey shape",
+  },
+  {
+    name: "hono",
+    module: "dist/middleware/jwt/index.js",
+    issue: 6412,
+    detail: "same __async_resume_fimportPublicKey shape",
+  },
+  {
+    name: "hono",
+    module: "dist/jsx/dom/client.js",
+    issue: 6413,
+    detail: 'fallthru[0] expected i32, got externref in "__closure_64"',
+  },
+  { name: "hono", module: "dist/jsx/dom/jsx-runtime.js", issue: 6413, detail: "same __closure_35 fallthru shape" },
+  { name: "hono", module: "dist/jsx/dom/jsx-dev-runtime.js", issue: 6413, detail: "same __closure_35 fallthru shape" },
+  {
+    name: "hono",
+    module: "dist/adapter/cloudflare-pages/index.js",
+    issue: 6414,
+    detail: 'struct.set[1] expected i32, got externref in "__async_resume_fanon_467"',
+  },
+];
 
 function usage(message) {
   process.stderr.write(
@@ -159,18 +228,6 @@ function probePackage(name) {
   });
 }
 
-async function probeAll(names, concurrency) {
-  const queue = [...names];
-  const results = new Map();
-  const workers = Array.from({ length: Math.max(1, Math.min(concurrency, queue.length)) }, async () => {
-    for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
-      results.set(next, await probePackage(next));
-    }
-  });
-  await Promise.all(workers);
-  return names.map((name) => results.get(name));
-}
-
 /** Classify one probe outcome. Only `invalid` and `budget` fail the gate. */
 function classify(outcome) {
   if (outcome.infrastructure) return { verdict: "infrastructure", detail: outcome.infrastructure };
@@ -203,10 +260,90 @@ function describe(outcome, classified) {
   };
 }
 
+/**
+ * Compile one CHUNK of one package's subpath modules in a single child.
+ * One process per chunk, not per module: loading the compiler costs ~1.5 s and
+ * the widened surface has ~20x the modules the entry-only gate had.
+ */
+function probeModuleChunk(name, modules) {
+  return new Promise((resolve) => {
+    const started = performance.now();
+    const child = spawn(
+      process.execPath,
+      [
+        "--max-old-space-size=2048",
+        "--import",
+        "tsx",
+        SURFACE_PROBE,
+        "--package",
+        name,
+        "--modules",
+        modules.join(","),
+      ],
+      { cwd: REPO_ROOT, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    // Sized off the chunk, not off one module: a chunk that hangs must still
+    // be killed, but a slow-but-honest chunk must not be.
+    const timer = setTimeout(() => child.kill("SIGTERM"), MODULE_TIMEOUT_MS * modules.length);
+    const settle = (rows, infrastructure) => {
+      clearTimeout(timer);
+      resolve({ name, modules, rows, infrastructure, wallMs: Math.round(performance.now() - started) });
+    };
+    child.on("error", (error) => settle([], `surface probe could not start: ${error.message}`));
+    child.on("exit", (code, signal) => {
+      const rows = [];
+      for (const line of stdout.split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        try {
+          rows.push(JSON.parse(line));
+        } catch {
+          // A non-JSON line is compiler chatter, not a verdict.
+        }
+      }
+      if (rows.some((row) => row.fatal)) {
+        settle([], `surface probe reported fatal: ${rows.find((row) => row.fatal).fatal}`);
+        return;
+      }
+      // A chunk that dies mid-way (OOM, crash) leaves its remaining modules
+      // unmeasured. Scoring only what survived would read as "all clear".
+      if (rows.length !== modules.length) {
+        const detail = stderr.trim() || `exited ${signal ?? `with code ${code}`}`;
+        settle(
+          rows,
+          `surface probe returned ${rows.length}/${modules.length} module verdicts ` +
+            `(stopped at ${modules[rows.length] ?? "?"}): ${detail.slice(0, 400)}`,
+        );
+        return;
+      }
+      settle(rows, null);
+    });
+  });
+}
+
+/** Split a package's modules into at most `parts` chunks, order preserved. */
+function chunk(modules, parts) {
+  const size = Math.max(1, Math.ceil(modules.length / Math.max(1, parts)));
+  const chunks = [];
+  for (let index = 0; index < modules.length; index += size) chunks.push(modules.slice(index, index + size));
+  return chunks;
+}
+
 const argv = process.argv.slice(2);
 const jsonOnly = argv.includes("--json");
 const survey = argv.includes("--survey");
 const only = readFlag(argv, "--only");
+const surface = readFlag(argv, "--surface") ?? "suite";
+if (!["suite", "exports"].includes(surface)) usage(`--surface expects one of suite, exports`);
 const concurrencyFlag = readFlag(argv, "--concurrency") ?? process.env.DOGFOOD_VALIDATION_CONCURRENCY;
 const concurrency = concurrencyFlag ? Number(concurrencyFlag) : Math.max(1, Math.min(4, availableParallelism() - 1));
 if (!Number.isInteger(concurrency) || concurrency < 1) usage(`--concurrency expects a positive integer`);
@@ -232,6 +369,38 @@ if (argv.includes("--list")) {
   process.exit(0);
 }
 
+// The subpath surface: the declared entry is already covered by the per-package
+// harness above, so it is dropped here rather than compiled twice.
+const { dogfoodSurfaceModules } = await import("../tests/dogfood/dogfood-surface-modules.mjs");
+const moduleJobs = [];
+const surfaceByPackage = new Map();
+for (const name of names) {
+  let enumerated;
+  try {
+    enumerated = dogfoodSurfaceModules(name, { surface });
+  } catch (error) {
+    // Enumeration is filesystem work over an extracted tarball; a package that
+    // cannot even be enumerated is reported by its entry probe below.
+    surfaceByPackage.set(name, { modules: [], error: error instanceof Error ? error.message : String(error) });
+    continue;
+  }
+  const subpaths = enumerated.modules.filter((entry) => entry.origin !== "entry").map((entry) => entry.path);
+  surfaceByPackage.set(name, { modules: subpaths, error: null });
+  for (const part of chunk(subpaths, concurrency)) moduleJobs.push({ name, modules: part });
+}
+
+if (argv.includes("--list-modules")) {
+  for (const name of names) {
+    const entry = surfaceByPackage.get(name);
+    if (entry.error) {
+      process.stdout.write(`${name}\t(enumeration failed: ${entry.error})\n`);
+      continue;
+    }
+    for (const modulePath of entry.modules) process.stdout.write(`${name}\t${modulePath}\n`);
+  }
+  process.exit(0);
+}
+
 const log = jsonOnly ? () => {} : (...values) => console.log(...values);
 const started = performance.now();
 log(
@@ -239,8 +408,35 @@ log(
     `asserting compile.success ⇒ the emitted binary validates`,
 );
 
-const outcomes = await probeAll(names, concurrency);
+// ONE pool over both kinds of work. The entry probes are a handful of long
+// jobs and the subpath chunks are many short ones; splitting the pool in two
+// leaves whichever half finishes first idle while the other is still the
+// critical path. Entry probes are queued first because they are the longest.
+const queue = [
+  ...names.map((name) => ({ kind: "entry", name })),
+  ...moduleJobs.map((job) => ({ kind: "chunk", ...job })),
+];
+const entryResults = new Map();
+const chunkResults = [];
+await Promise.all(
+  Array.from({ length: Math.max(1, Math.min(concurrency, queue.length)) }, async () => {
+    for (let job = queue.shift(); job !== undefined; job = queue.shift()) {
+      if (job.kind === "entry") entryResults.set(job.name, await probePackage(job.name));
+      else chunkResults.push(await probeModuleChunk(job.name, job.modules));
+    }
+  }),
+);
+const outcomes = names.map((name) => entryResults.get(name));
 const rows = outcomes.map((outcome) => describe(outcome, classify(outcome)));
+const moduleRows = chunkResults
+  .flatMap((result) => result.rows)
+  .sort((a, b) => a.package.localeCompare(b.package) || a.module.localeCompare(b.module));
+const moduleInfrastructure = chunkResults.filter((result) => result.infrastructure);
+const waived = new Set(KNOWN_INVALID_MODULES.map((entry) => `${entry.name} ${entry.module}`));
+const invalidModules = moduleRows.filter(
+  (row) => row.verdict === "invalid" && !waived.has(`${row.package} ${row.module}`),
+);
+const waivedHits = moduleRows.filter((row) => row.verdict === "invalid" && waived.has(`${row.package} ${row.module}`));
 const wallMs = Math.round(performance.now() - started);
 
 const MARK = {
@@ -262,6 +458,21 @@ if (!survey && !only) {
   }
 }
 
+const moduleCounts = { valid: 0, invalid: 0, "compile-failed": 0 };
+for (const row of moduleRows) moduleCounts[row.verdict] = (moduleCounts[row.verdict] ?? 0) + 1;
+log(
+  `  ${surface === "exports" ? "exports-map" : "suite"} subpath surface: ${moduleRows.length} module(s) — ` +
+    `${moduleCounts.valid} valid, ${moduleCounts.invalid} invalid, ${moduleCounts["compile-failed"]} did not codegen ` +
+    `(a module that does not codegen makes the implication vacuous; it is counted, never failed on)`,
+);
+for (const row of moduleRows) {
+  if (row.verdict === "valid") continue;
+  log(
+    `  ${row.verdict === "invalid" ? (waived.has(`${row.package} ${row.module}`) ? "(waived)" : "INVALID ") : "no-build"} ` +
+      `${`${row.package}/${row.module}`.padEnd(46)} ${String(row.detail).split("\n")[0].slice(0, 110)}`,
+  );
+}
+
 const invalid = rows.filter((row) => row.verdict === "invalid");
 const budget = rows.filter((row) => row.verdict === "budget");
 const infrastructure = rows.filter((row) => row.verdict === "infrastructure");
@@ -273,7 +484,11 @@ const vacuous = !survey && !only && compiled.length === 0;
 
 if (jsonOnly) {
   process.stdout.write(
-    `${JSON.stringify({ gated: !survey && !only, concurrency, wallMs, vacuous, packages: rows }, null, 2)}\n`,
+    `${JSON.stringify(
+      { gated: !survey && !only, surface, concurrency, wallMs, vacuous, packages: rows, modules: moduleRows },
+      null,
+      2,
+    )}\n`,
   );
 }
 
@@ -294,24 +509,37 @@ if (survey) {
   process.exit(0);
 }
 
-if (infrastructure.length > 0) {
+if (infrastructure.length > 0 || moduleInfrastructure.length > 0) {
   for (const row of infrastructure) console.error(`::error::[dogfood-validation] ${row.name}: ${row.detail}`);
+  for (const result of moduleInfrastructure) {
+    console.error(`::error::[dogfood-validation] ${result.name} subpath chunk: ${result.infrastructure}`);
+  }
   console.error(`[dogfood-validation] FAILED — the harness did not produce a verdict; nothing was measured.`);
   process.exit(3);
 }
 
-if (invalid.length > 0 || budget.length > 0) {
+if (invalid.length > 0 || budget.length > 0 || invalidModules.length > 0) {
   for (const row of [...invalid, ...budget]) {
     console.error(
       `::error::[dogfood-validation] ${row.name}@${row.version ?? "?"} (${row.entryModule ?? "?"}) ` +
         `${row.verdict === "budget" ? "blew its compile budget" : `compiled ${row.binaryBytes.toLocaleString("en-US")} bytes that do NOT validate`}: ${row.detail}`,
     );
   }
+  // Package, module path, and the engine's own words — a validation failure is
+  // only actionable if you can see WHICH function the engine rejected.
+  for (const row of invalidModules) {
+    console.error(
+      `::error::[dogfood-validation] ${row.package} module ${row.module} ` +
+        `compiled ${row.binaryBytes.toLocaleString("en-US")} bytes that do NOT validate: ${row.detail}`,
+    );
+  }
+  const total = invalid.length + invalidModules.length;
   console.error(
-    `\n[dogfood-validation] FAILED — the compiler emitted ${invalid.length} module(s) that WebAssembly refuses to load.\n` +
+    `\n[dogfood-validation] FAILED — the compiler emitted ${total} module(s) that WebAssembly refuses to load.\n` +
       `A module that codegens but does not validate is always a compiler bug: fix the codegen, do not\n` +
-      `adjust this gate. Reproduce one package locally with:\n` +
-      `  node --import tsx tests/dogfood/npm-compat-catalog-harness.mjs --package <name>\n`,
+      `adjust this gate. Reproduce locally with:\n` +
+      `  node --import tsx tests/dogfood/npm-compat-catalog-harness.mjs --package <name>          # declared entry\n` +
+      `  node --import tsx tests/dogfood/dogfood-surface-probe.mjs --package <name> --modules <p> # one subpath\n`,
   );
   process.exit(1);
 }
@@ -324,6 +552,14 @@ if (vacuous) {
   process.exit(1);
 }
 
+if (waivedHits.length > 0) {
+  for (const row of waivedHits) {
+    const waiver = KNOWN_INVALID_MODULES.find((entry) => entry.name === row.package && entry.module === row.module);
+    log(`  (waived) ${row.package}/${row.module} — known-invalid, tracked by #${waiver.issue}`);
+  }
+}
+
 log(
-  `[dogfood-validation] ok — ${compiled.length}/${rows.length} gated packages compiled, ${compiled.length}/${compiled.length} validated.`,
+  `[dogfood-validation] ok — ${compiled.length}/${rows.length} gated packages compiled, ${compiled.length}/${compiled.length} validated; ` +
+    `${moduleCounts.valid + moduleCounts.invalid}/${moduleRows.length} subpath modules compiled, ${moduleCounts.valid} validated.`,
 );
