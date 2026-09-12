@@ -33,6 +33,13 @@ loc-budget-allow:
   # with the diff that carries the growth (#3102's stranded-grant case).
   - src/codegen/expressions/builtins.ts
   - src/codegen/expressions/call-receiver-method.ts
+  # 2026-09-12 (S3) — a THIRD stranded grant, found by running the gate with
+  # LOC_GATE_BASE=origin/main on both this branch and its predecessor and
+  # getting the identical failure: `async-cps.ts` (+50) is grown by an earlier
+  # stacked slice, and S3 touches no `src/` file at all. Restated here so the
+  # allowance travels with the merge preview that carries the growth; without
+  # it `quality` fails on a diff that does not contain the lines it names.
+  - src/codegen/async-cps.ts
   # 2026-09-12 (S2i) — the runtime-key STATIC-member read on a class VALUE. The
   # mechanism is the new module src/codegen/standalone-class-dyn-static.ts; the
   # only god-file line this slice adds is ONE:
@@ -173,6 +180,10 @@ func-budget-allow:
   # commits, not by S2l, and `origin/main`'s baseline has not refreshed past
   # them.
   - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+  # 2026-09-12 (S3) — same stranded-grant case, measured the same way:
+  # `src/runtime.ts::resolveImport` is ONE line over its ceiling (7734 > 7733)
+  # on the predecessor branch as well as on this one, and S3 edits no `src/`.
+  - src/runtime.ts::resolveImport
   # 2026-09-08 (S2h) — the runtime-key prototype-member read. Four call-site
   # growths, all one-liners plus the comment that makes them auditable; the
   # mechanism itself is a new module (standalone-class-dyn-member.ts):
@@ -2116,3 +2127,259 @@ ToNumber stop above rather than on `Object.fromEntries`.
 `tests/issue-3610-standalone-prototype-receiver-brand.test.ts` (1) and
 `tests/issue-1051.test.ts` (3) — the same 6 recorded on the S2k base.
 `tests/issue-5318-r4-computed-accessor-keys.test.ts` OOMs on both trees.
+
+## S2i regression fix (2026-09-12) — a computed static FIELD, shadowed by the class-value call arm
+
+PR #5820 (merged at `ec27f08b`) regressed **32 standalone rows**, one cluster:
+`test/language/{statements,expressions}/class/cpn-class-{decl,expr}-fields-methods-computed-property-name-from-*.js`.
+Every one failed `Expected SameValue(«null», «<value>»)` under
+`--target standalone`; the JS-host lane was untouched. This is the fix, based on
+`origin/main` and independent of the rest of the Temporal stack.
+
+### Root cause — S2i's gate was right, its callee resolution was not
+
+S2i widened `classDynamicMemberCallApplies`
+(`src/codegen/expressions/class-dynamic-member-call.ts`) to claim **every**
+`C[k](…)` whose receiver is an identifier naming a compiled class, and then let
+that call reuse the INSTANCE arm's lowering:
+`__apply_closure(__extern_get(recv, key), recv, args)`, where `recv` is the
+lazily materialized `$ClassName` class-object struct.
+
+That struct does not carry a **computed static field**. The ordinary READ
+lowering of `C[k]` does reach it; `__extern_get` on the raw class-object struct
+does not. So the fused call form answered null while the identical read answered
+the closure — a split the suspects named in the dispatch brief (the
+`class-static-sidecar` widening, the `class-proto-lookup` class-object arm, the
+`standalone-class-dyn-member` prototype widening) did **not** cause: probes that
+disabled `prependClassMethodCallArm` produced a byte-identical module
+(`wasm_sha 2afb8fcfed63` both ways), so the call arm was never even emitted for
+these modules.
+
+The split, measured on the reduction (one module, runner
+`runTest262File(…, "standalone")`):
+
+| probe on `let C = class { [1.1] = () => 3; static [1.1] = () => { hit++; return 2 } }` | main `cf82f78d` | fix |
+| ------------------------------------------------------------------------------------- | --------------- | --- |
+| `typeof C[String(1.1)]` — the READ                                                      | `"function"`    | `"function"` |
+| `C[String(1.1)]()` — the fused CALL                                                     | `null`          | `2`  |
+| `hit` after that call — was the closure INVOKED?                                        | `0`             | `1`  |
+| `const f = C[String(1.1)]; f()` — read, then call                                       | `2`             | `2`  |
+| `c[String(1.1)]()` — the INSTANCE half                                                  | `2`             | `2`  |
+
+The `hit` row is why the encoded probe exists in
+`tests/issue-5383-class-value-dynamic-call.test.ts`: a result-only assertion
+cannot tell "called, returned null" from "never called", and it was the latter.
+
+### The fix — ask the read lowering instead of re-deriving the callee
+
+`emitClassValueDynamicCall` handles the class-VALUE receiver separately: it
+compiles `elemAccess` itself for the callee (the read lowering knows about the
+static sidecar — S2i's win — **and** the `staticProps`/own-property surface —
+the regression), then recompiles the identifier for `this`.
+
+Recompiling the receiver is sound **only** here, and that is why the two arms
+stay split: `classValueReceiverApplies` requires an IDENTIFIER, so the second
+evaluation is a global read of the same lazy singleton. The instance arm cannot
+do this — `new C()[k]()` would construct twice — which is the constraint that
+forced S2i's single-evaluation shape in the first place.
+
+### Measurements (base = `origin/main` `cf82f78d6d`, a detached worktree; fix = this branch)
+
+Full `cpn-*` families, **all 248 rows** (`language/statements/class` +
+`language/expressions/class`), run solo per row:
+
+| lane           | base pass/fail | fix pass/fail | delta   |
+| -------------- | -------------- | ------------- | ------- |
+| `standalone`   | 152 / 96       | **184 / 64**  | **+32** |
+| gc (JS host)   | 136 / 112      | 136 / 112     | 0       |
+
+Per-TEST diff, not per-count: **32 fixed, 0 newly broken** on standalone, and the
+gc lane's failing-row LIST is byte-identical (`diff` empty). The 32 are exactly
+the `fields-methods` rows of both families — the cluster #5820 broke.
+
+Byte A/B on the gc lane: **13 modules** under `website/playground/examples/`
+compiled on both trees, sha256 of each binary **identical**. Expected — the gate
+is `ctx.standalone`-only.
+
+Suites: `#5383` (incl. the real-provider S2 smoke test), `#5195` ×4, `#5358`,
+`#2158` ×2, `#4628` ×2, `#5225`, `#5353`, `#5364` — **256 passed, 0 failed**
+(the one failure in the first batch was this PR's own new test before its host
+decode was fixed; a standalone export returns a WasmGC ref, so the probe encodes
+its four answers as one number).
+
+`npm run -s test:equivalence:gate` →
+`equivalence-gate: 22 failing, 1720 passing, 22 known-failures in baseline.`
+(exit 0).
+
+Pre-existing red, unchanged and re-measured on this tree: `issue-2151` (1),
+`issue-2151-mixed-spread` (1), `issue-3610-standalone-prototype-receiver-brand`
+(1), `issue-1051` (3), `issue-5382-temporal-project-publication` (1),
+`issue-2358-array-toprimitive` (1) — 8 total, the same 8 recorded on the S2k/S2l
+bases.
+
+### What this does NOT claim
+
+S2i's headline probe shape (`class C { static mk(a){…} }`, `C["mk"](5)`) still
+answers `NaN` under the test262 harness on **both** trees — measured, identical
+before and after. That is a separate residual of the static-method surface, not
+something this fix regressed or repaired.
+
+## S3 findings (2026-09-12) — the lane is wired per TARGET, and linking is not free
+
+S2l's provider is reachable from every test262 lane now. The slice's own
+surprises were both measurements that contradicted the plan, in opposite
+directions: the #2961 guard needed no work at all, and the per-row cost needs
+more than this slice can give it.
+
+### What was wired, and where
+
+| file | change |
+| --- | --- |
+| `scripts/test262-temporal.mjs` | ONE stamp per target (`prewarm.json` unchanged for host, `prewarm-standalone.json` for standalone); `temporalProviderCompileOptions`; `test262TemporalLaneEnabled` — the single lane gate all three lanes call |
+| `scripts/prewarm-temporal-provider.mjs` | `--target host\|standalone\|both`; the key is computed with the same options the build uses |
+| `scripts/test262-worker.mjs` | host-only refusal dropped; provider resolved and memoised per target; the no-cold-build rule unchanged, and standalone additionally REQUIRES a stamp |
+| `tests/test262-shared.ts` | `IS_HOST_LANE &&` → `TEMPORAL_LANE_ENABLED &&`, read once per process |
+| `tests/test262-runner.ts` | had **no lane gate at all** — a standalone row linked the HOST provider. Gated and keyed per target now |
+| `.github/workflows/test262-sharded.yml` | standalone artifact under `run_standalone` **and** the new `standalone_temporal` input; both shard jobs download the directory |
+| `scripts/run-test262-vitest.sh` | pre-warms the provider for the lane it is about to run |
+
+The in-process runner's missing gate is worth stating on its own: since #5248 a
+`--target standalone` row in that lane linked the `--target gc` provider. It was
+invisible because the standalone lane is a probe lane there, and because the
+failure it produces is a wrong VALUE, not an error.
+
+### The #2961 guard needed no relaxation — measured
+
+The plan expected the provider's imports to read as a host-import leak. They do
+not. A standalone consumer linked against the standalone provider reports
+`result.imports === []` (`.tmp/s3-imports.mts`):
+
+| module | `result.imports` (what the guard reads) | engine import list |
+| --- | --- | --- |
+| provider | — | `[]` |
+| consumer, `hostBridge:"off"` | `[]` | 6 × `js2wasm:npm:@js-temporal/polyfill:d7c6…::__js2wasm_link_*` |
+| consumer, `hostBridge:"always"` | `[]` | same 6 |
+
+The six real imports all live in the provider's `link:` namespace, which the
+compiler's import list deliberately excludes because the linker satisfies them.
+So the guard keeps its full strength for every other row — the outcome to
+prefer, since a widened #2961 guard is exactly how a real leak would stop being
+visible.
+
+### The stop: linking multiplies a standalone row's COMPILE time
+
+Measured on what the lane actually compiles — an **assembled** harness row, not
+a bare body (`.tmp/s3-cost.mts` vs `.tmp/s3-cost2.mts`, both on a loaded box, so
+read the ratio rather than the absolute):
+
+| source | size | unlinked | linked | ratio |
+| --- | --- | --- | --- | --- |
+| bare body, `PlainDate/prototype/day/basic.js` | 1 KB | 0.71 s | 0.94 s | 1.3× |
+| assembled row, same file | 10.6 KB | 4.2 s | 10.9 s | 2.6× |
+| assembled row, `intl402/…/from/era-japanese.js` | 60 KB | 17.4 s | 61.1 s | 3.5× |
+
+The bare-body number is why this did not surface earlier: the cost scales with
+the CONSUMER's source, not with the provider, so it only appears once the
+harness is in the picture. The sharded lane kills a fork at 30 s and the
+in-process lane fails a row at 15 s of compile, so a default-on standalone
+artifact converts large-harness Temporal rows from an honest `Temporal is not
+defined` fail into a per-row TIMEOUT — the storm the pre-warm doctrine exists to
+prevent, on a lane whose baseline was never measured linked.
+
+**So the artifact is OPT-IN**: the `standalone_temporal` `workflow_dispatch`
+input in CI, `JS2WASM_TEST262_TEMPORAL_STANDALONE=1` locally. The wiring is
+unconditional; the flag decides only whether the ARTIFACT exists, and the stamp
+gate turns that into the lane's answer. With it off, the default path is
+byte-identical to pre-S3. Making it the default is a follow-up that has to
+attack the linked-compile cost first.
+
+### Fail soft, from the negative side
+
+| state | `test262TemporalLaneEnabled("standalone")` | lane |
+| --- | --- | --- |
+| no stamp (the default today) | `false` | unlinked, pre-S3 behaviour |
+| truncated / non-JSON stamp | `false`, no throw | unlinked |
+| stamp with no `key` | `false` | unlinked |
+| stamp present, key mismatch (worker) | provider `null`, announced once on stderr | unlinked |
+| linear / wasi, stamp present | `false` | unlinked |
+| `JS2WASM_TEST262_TEMPORAL=0` | `false` on every lane | unlinked |
+
+In CI the same property is carried by three separate decisions, each of which
+had to be made explicitly: the standalone build step is `continue-on-error`
+(the host one is not, and must not be — its baseline IS measured linked); the
+host-stamp guarantee moved out of `if-no-files-found: error` into its own named
+check, because a shared directory can no longer carry it; and the provider
+directory is always uploadable, since `download-artifact` fails hard on a
+missing artifact and would otherwise turn the soft path into a red lane.
+
+### Measured: the 123-row family (`family-123.txt`), standalone lane
+
+Driver `.tmp/bucket-run-sa.mts` — the #5248 row-by-row driver with
+`runTest262File(file, category, 15000, "standalone")`, one TSV row per test so a
+flip cannot hide inside a count. Fresh `JS2WASM_TEMPORAL_CACHE` per side. The
+list is the one every earlier slice used (sha `979f0047cd09…`, the first 123
+`built-ins`/`intl402` Temporal rows in path order); no regeneration was needed.
+
+THREE configurations, because the honest base differs per lane. The in-process
+runner had no lane gate, so on `main` a standalone row links the **gc** provider;
+the sharded lane was host-only, so there a standalone row is **unlinked**.
+
+| | base: linked, gc provider | branch DEFAULT: no artifact | branch OPT-IN: linked, standalone provider |
+| --- | --- | --- | --- |
+| rows scored | 84 / 123 | **123 / 123** | 61 / 123 |
+| pass | 0 | **0** | 0 |
+| fail | 12 | 111 | 10 |
+| compile_error | 72 | 12 | 51 |
+| — of those, compile TIMEOUT | 64 | **0** | 45 |
+| `Temporal is not defined` | 0 | 82 | 0 |
+| `__temporal_*` leak | 0 | 12 | 0 |
+| host-import-leak verdicts | 0 | 12 | 0 |
+
+**0 pass→fail, and structurally so: this family has ZERO passing rows on the
+standalone lane in every configuration measured.** It cannot regress a pass
+because it has none — which is worth stating rather than implying, since a
+0-flip count on a family with no passes is a weaker fact than it looks.
+
+- **A. The opt-in path changes nothing on the rows measured.** Base-linked-gc vs
+  branch-linked-standalone over the 61 aligned rows: **0 status flips**, same 45
+  timeouts, same everything. Swapping a gc provider for the standalone one is
+  neutral here — these rows are dominated by the compile timeout and by Intl
+  refusals, not by the provider's values.
+- **B. The default path changes 62 of 84 rows, all in the right direction.**
+  Base-linked-gc vs branch-default: 61 × `compile_error(timeout)` → `fail` with a
+  real diagnostic (`missing required Temporal.PlainDate field`,
+  `Temporal is not defined`, …), and 1 × `fail` → `compile_error` where the row
+  now compiles far enough to surface its own `__temporal_*` host-import leak
+  (`intl402/…/PlainDate/prototype/equals/canonicalize-calendar.js` —
+  `env::__temporal_plain_date_from_string_field`, an S4 target). Not linking a
+  **gc** provider into a **standalone** consumer is the fix; the timeouts it was
+  producing were never conformance signal.
+- **This affects the in-process probe lane only.** The sharded lane — the one
+  that writes the published baseline — was host-only before this slice and stays
+  unlinked by default after it, so the committed standalone numbers do not move.
+
+**Coverage, stated plainly:** the two LINKED runs were stopped at 84 and 61 rows
+(`SIGTERM`, not a failure) after ~2 h, because each linked row costs 1-3 min on
+this box and they were starving the required equivalence gate. The configuration
+that SHIPS — default, no artifact — is complete at 123/123. The two linked
+prefixes cover the whole `intl402` head of the list, i.e. every Intl-dependent
+row in the family.
+
+**Intl-dependent rows, separately** (`intl402/**`, the first 111 of the 123): all
+111 of the scored rows in every configuration are `intl402`, so the table above
+IS the Intl breakdown for the prefixes. They are expected to stay red — the
+standalone provider ships the `Intl` refusal shim (`src/temporal-intl-shim.ts`),
+so a calendar-dependent row cannot pass by construction.
+
+**One environment caveat**, equal on all three sides: 5 rows report
+`JS2WASM_EVAL_ENGINE=quickjs but the quickjs provider is not built` — a local
+prerequisite this box lacks, not a verdict about the slice.
+
+### Pre-existing red, unchanged by this slice
+
+`tests/issue-5382-temporal-project-publication.test.ts` fails 1 of 33
+("materializes the pinned project", the Intl shim now in the polyfill source) —
+**measured on the S2l base commit as well**, same single failure, so S3 neither
+caused nor fixed it. The brief's known-red list (`issue-2151`,
+`issue-2151-mixed-spread`, `issue-3610-*`, `issue-1051`) is unchanged; those were
+not re-run here because S3 touches no `src/` file.

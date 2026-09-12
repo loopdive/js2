@@ -34,7 +34,7 @@
 
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compile, compileMulti, compileProject, instantiateLinkedProject } from "../src/index.js";
@@ -1779,5 +1779,197 @@ describe("#5383 S2l — `Object.fromEntries` over a computed pair list, standalo
         return (o.k === "v" ? 100 : 0) + (dyn.length === 2 ? 10 : 0) + (dyn[0] === "a" ? 1 : 0);
       }`),
     ).toBe(111);
+  });
+});
+
+// ── S3 — the runner + CI wiring ───────────────────────────────────
+//
+// These are ROUTING tests, not conformance tests: they assert WHICH provider a
+// lane asks for and what happens when it is not there. The conformance answer
+// is measured in the issue file's S3 table (family-123, base vs branch), not
+// asserted here — a 3.3 MB provider build per assertion is not a unit test.
+//
+// The property that matters most is FAIL SOFT, and it is deliberately tested
+// from the negative side: a missing or corrupt standalone artifact must leave
+// the lane disabled, so the rows keep the ambient `Temporal is not defined`
+// verdict rather than timing out, compile-erroring, or taking the shard down.
+describe("#5383 S3 the per-target Temporal lane gate", () => {
+  const temporal = () => import("../scripts/test262-temporal.mjs");
+
+  const withCacheDir = async (fn: (dir: string) => void | Promise<void>) => {
+    const dir = mkdtempSync(join(tmpdir(), "js2wasm-temporal-s3-"));
+    try {
+      await fn(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  it("stamps host and standalone under different names, and keeps host's historical name", async () => {
+    // One cache dir holds both providers; a shared file name could only ever
+    // certify one of them, and the other lane would read a key that does not
+    // match the artifact it is about to ask for.
+    const { temporalPrewarmStampName, TEMPORAL_PREWARM_STAMP } = await temporal();
+    expect(temporalPrewarmStampName(undefined)).toBe(TEMPORAL_PREWARM_STAMP);
+    expect(temporalPrewarmStampName(undefined)).toBe("prewarm.json");
+    expect(temporalPrewarmStampName("standalone")).toBe("prewarm-standalone.json");
+  });
+
+  it("asks for the host-free provider on standalone and the default one on host", async () => {
+    const { temporalProviderCompileOptions } = await temporal();
+    expect(temporalProviderCompileOptions(undefined)).toBeUndefined();
+    expect(temporalProviderCompileOptions("standalone")).toEqual({ target: "standalone", hostBridge: "off" });
+  });
+
+  it("gives the two targets DIFFERENT cache keys", async () => {
+    // If they collided, one lane's pre-warm would certify the other's artifact.
+    const { temporalProviderCompileOptions } = await temporal();
+    const polyfillSource = "export const Temporal = 1;\n";
+    const host = temporalProviderCacheKey({ polyfillSource });
+    const standalone = temporalProviderCacheKey({
+      polyfillSource,
+      compileOptions: temporalProviderCompileOptions("standalone"),
+    });
+    expect(standalone).not.toBe(host);
+  });
+
+  it("FAILS SOFT: no stamp, or a corrupt one, leaves the standalone lane unlinked", async () => {
+    const { test262TemporalLaneEnabled, temporalPrewarmStampName } = await temporal();
+    await withCacheDir((dir) => {
+      // The shipped state today: nobody pre-warmed a standalone provider.
+      expect(test262TemporalLaneEnabled("standalone", dir)).toBe(false);
+      // A truncated / half-written artifact is the same answer as none. It must
+      // never throw — a throw here would take the whole shard down.
+      writeFileSync(join(dir, temporalPrewarmStampName("standalone")), "{ not json");
+      expect(test262TemporalLaneEnabled("standalone", dir)).toBe(false);
+      // A stamp without a `key` cannot certify anything either.
+      writeFileSync(join(dir, temporalPrewarmStampName("standalone")), JSON.stringify({ bytes: 1 }));
+      expect(test262TemporalLaneEnabled("standalone", dir)).toBe(false);
+    });
+  });
+
+  it("opens the standalone lane once a standalone-keyed stamp is present", async () => {
+    const { test262TemporalLaneEnabled, writeTemporalPrewarmStamp } = await temporal();
+    await withCacheDir((dir) => {
+      writeTemporalPrewarmStamp(
+        dir,
+        { key: "sa-key", namespace: "js2wasm:npm:@js-temporal/polyfill:sa", bytes: 3, buildMs: 1, cacheHit: false },
+        "standalone",
+      );
+      expect(test262TemporalLaneEnabled("standalone", dir)).toBe(true);
+      // The host lane never needs a stamp (it may build cold), and writing one
+      // target's stamp must not land in the other's slot.
+      expect(test262TemporalLaneEnabled(undefined, dir)).toBe(true);
+      writeTemporalPrewarmStamp(
+        dir,
+        { key: "host-key", namespace: "js2wasm:npm:@js-temporal/polyfill:h", bytes: 3, buildMs: 1, cacheHit: false },
+        undefined,
+      );
+      expect(readFileSync(join(dir, "prewarm.json"), "utf-8")).toContain("host-key");
+      expect(readFileSync(join(dir, "prewarm-standalone.json"), "utf-8")).toContain("sa-key");
+    });
+  });
+
+  it("never links on a lane with no provider at all (linear/wasi), stamp or not", async () => {
+    const { test262TemporalLaneEnabled, writeTemporalPrewarmStamp } = await temporal();
+    await withCacheDir((dir) => {
+      for (const target of ["linear", "wasi"]) {
+        writeTemporalPrewarmStamp(dir, { key: "x", namespace: "n", bytes: 1, buildMs: 1, cacheHit: false }, target);
+        expect(test262TemporalLaneEnabled(target, dir)).toBe(false);
+      }
+    });
+  });
+
+  it("honours the JS2WASM_TEST262_TEMPORAL=0 opt-out on every lane", async () => {
+    const { test262TemporalLaneEnabled, writeTemporalPrewarmStamp } = await temporal();
+    await withCacheDir((dir) => {
+      writeTemporalPrewarmStamp(dir, { key: "k", namespace: "n", bytes: 1, buildMs: 1, cacheHit: false }, "standalone");
+      const previous = process.env.JS2WASM_TEST262_TEMPORAL;
+      process.env.JS2WASM_TEST262_TEMPORAL = "0";
+      try {
+        expect(test262TemporalLaneEnabled(undefined, dir)).toBe(false);
+        expect(test262TemporalLaneEnabled("standalone", dir)).toBe(false);
+      } finally {
+        if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST262_TEMPORAL");
+        else process.env.JS2WASM_TEST262_TEMPORAL = previous;
+      }
+    });
+  });
+});
+
+describe("#5383 S3 the pre-warm step and the CI job", () => {
+  const readRepoFile = (...parts: string[]) => readFileSync(join(S2K_HERE, "..", ...parts), "utf-8");
+
+  it("the pre-warm script builds per target and stamps each one", () => {
+    const script = readRepoFile("scripts", "prewarm-temporal-provider.mjs");
+    expect(script).toContain("--target");
+    expect(script).toContain("temporalProviderCompileOptions(target)");
+    // The key MUST be computed with the same options the build uses, or the
+    // stamp certifies an artifact nobody will ask for.
+    expect(script).toContain("temporalProviderCacheKey({ polyfillSource, compileOptions })");
+    expect(script).toContain("buildTemporalProvider({ polyfillSource, cacheDir, compileOptions })");
+  });
+
+  it("the standalone provider is OPT-IN, in CI and locally", () => {
+    // Measured 2026-09-12: linking multiplies an ASSEMBLED standalone row's
+    // compile time ~2.5-3.5x (17.4 s → 61.1 s on a 60 KB-harness intl402 row;
+    // 4.2 s → 10.9 s on a 10.6 KB one). The fork kill is 30 s, so a default-on
+    // artifact would convert large rows from an honest fail into a per-row
+    // TIMEOUT. The wiring is complete either way — the flag only decides
+    // whether the artifact EXISTS, and the stamp gate does the rest.
+    const workflow = readRepoFile(".github", "workflows", "test262-sharded.yml");
+    expect(workflow).toContain("standalone_temporal:");
+    expect(workflow).toContain("needs.changes.outputs.run_standalone != 'false' && inputs.standalone_temporal");
+    const script = readRepoFile("scripts", "run-test262-vitest.sh");
+    expect(script).toContain("JS2WASM_TEST262_TEMPORAL_STANDALONE");
+  });
+
+  it("the workflow builds the standalone provider SOFT and the host one HARD", () => {
+    const workflow = readRepoFile(".github", "workflows", "test262-sharded.yml");
+    expect(workflow).toContain("node scripts/prewarm-temporal-provider.mjs --target host");
+    expect(workflow).toContain("node scripts/prewarm-temporal-provider.mjs --target standalone");
+    // The standalone step must be `continue-on-error`: no standalone baseline
+    // was ever measured with a provider, so a failed build is a no-op for the
+    // numbers and must not block the merge queue. The host step must NOT be —
+    // the published baseline IS measured with the host provider.
+    const standaloneStep = workflow.slice(workflow.indexOf("Build and stamp the provider (standalone)"));
+    expect(standaloneStep.slice(0, 400)).toContain("continue-on-error: true");
+    const hostStep = workflow.slice(
+      workflow.indexOf("Build and stamp the provider (host)"),
+      workflow.indexOf("Build and stamp the provider (standalone)"),
+    );
+    expect(hostStep).not.toContain("continue-on-error");
+    // …and the host guarantee is still asserted somewhere, now explicitly.
+    expect(workflow).toContain("test -f .test262-cache/temporal/prewarm.json");
+  });
+
+  it("every shard cell downloads the provider directory, standalone included", () => {
+    const workflow = readRepoFile(".github", "workflows", "test262-sharded.yml");
+    // A lane that cannot SEE the artifact can never link it. Both shard jobs
+    // used to skip the download on standalone cells.
+    expect(workflow).not.toMatch(/Download compiled Temporal provider \(#5353\)\n\s+if:/);
+    expect(workflow.match(/Download compiled Temporal provider \(#5353\)/g)?.length).toBe(2);
+    // And the directory is always uploadable, even when the soft build failed —
+    // `download-artifact` fails hard on a missing artifact, which would turn
+    // this slice's fail-soft into a red standalone lane.
+    expect(workflow).toContain("Ensure the provider directory is uploadable");
+  });
+
+  it("the local test262 entry point pre-warms the lane it is about to run", () => {
+    const script = readRepoFile("scripts", "run-test262-vitest.sh");
+    expect(script).toContain("--target standalone");
+    expect(script).toContain("--target host");
+  });
+
+  it("a run with no standalone artifact is byte-identical to the pre-S3 behaviour", () => {
+    // The whole fail-soft argument in one assertion: with the artifact off (the
+    // default), the standalone lane's answer comes from the stamp gate, not
+    // from any lane-local condition that could drift.
+    const worker = readRepoFile("scripts", "test262-worker.mjs");
+    expect(worker).toContain("test262TemporalLaneEnabled");
+    const shared = readRepoFile("tests", "test262-shared.ts");
+    expect(shared).toContain("test262TemporalLaneEnabled(TEST262_TARGET)");
+    const runner = readRepoFile("tests", "test262-runner.ts");
+    expect(runner).toContain("test262TemporalLaneEnabled(target)");
   });
 });
