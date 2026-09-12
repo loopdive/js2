@@ -286,3 +286,18 @@ regression and #5350/#5383 controls. No object-literal-super-only exception was
 introduced. There is no remaining implementation blocker; the only residual is
 the intentionally bounded non-migration of unrelated historical
 `__typeof_function` consumers.
+
+## Publication checkpoint
+
+- Review PR: <https://github.com/loopdive/js2/pull/5849> (non-draft, targeting
+  `loopdive/js2:main` from the authorized `ttraenkler/js2` fork).
+- The implementation head `4fd5a582bbe7de375f2d0781cfd3cd06aa7fcda1`
+  completed the repository PR workflows successfully. The strict-head refresh
+  through `cbeffc55aaf12cd26a52fcae811d2efa224c4dce` and documentation checkpoint
+  `23d0e676bbdc4d4eca1b37430dd092756365ca8b` retained all local gates above,
+  but GitHub did not schedule the required `pull_request` workflows for that
+  exact updated head.
+- This publication-only issue update is the documented recovery checkpoint for
+  that dropped `synchronize` delivery. The PR shepherd must certify the new
+  exact head only after required CI has been scheduled and passed; it must not
+  infer readiness from the earlier green head or merge the PR.
