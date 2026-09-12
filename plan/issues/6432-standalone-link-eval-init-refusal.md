@@ -1,7 +1,7 @@
 ---
 id: 6432
 title: "standalone: a module that contains `eval` AND links a provider throws `Object.prototype.toString is not yet implemented` at MODULE INIT — every test262 row in the linked Temporal lane fails before any test code runs (360 of 360 measured)"
-status: ready
+status: done
 sprint: current
 priority: high
 horizon: l
@@ -9,6 +9,8 @@ goal: standalone
 reasoning_effort: high
 requested_by: ttraenkler/senior-dev-5406
 created: 2026-09-12
+completed: 2026-09-12
+assignee: ttraenkler/senior-dev-6432
 ---
 
 ## Problem
@@ -107,3 +109,105 @@ identically before its first statement.
 - Related: #5383 (umbrella), #5406 (the boundary `Object.prototype.toString`
   answer, which is a real and separate fix), #5407 (link cost), #5408
   (`PlainDate.from`), #2860 (standalone gap umbrella).
+
+## S7 root cause + fix (senior-dev, Opus 5 High, 2026-09-12)
+
+**The refusal is `Object.prototype.toString`'s only by accident. The defect is
+that a Symbol was treated as an object by `ToPrimitive`.**
+
+### How it was found (measurement, not inference)
+
+1. Reproduced the six-line module through the runner's own seam
+   (`.tmp/s7-init.mts`, a copy of S6's `s6-init.mts`) — `init threw: TypeError:
+   Object.prototype.toString is not yet implemented in --target standalone`.
+   Note the S6 worktree's warm `JS2WASM_TEMPORAL_CACHE` no longer links against
+   this tree: it produces `LinkError: … "__js2wasm_link_to_string_tag":
+   function import requires a callable`, because S6 added that import to the
+   consumer after that cache entry was built. A fresh cache dir is required.
+2. Wrapped every provider export with a logging trampoline
+   (`.tmp/s7-trace.mts`) and took `new Error().stack` INSIDE the trampoline —
+   V8 renders wasm frames there, so the boundary call that runs deepest in the
+   failing chain hands back the whole wasm stack. That is what identified the
+   caller; nothing else did (the thrown value is a `WebAssembly.Exception`,
+   which carries no `.stack`, and the wat's TYPE-section ordering does not
+   match the binary's type index space, so static reading of `ref.test`
+   operands from `result.wat` is unsound — use `wasm-dis` on the binary).
+3. An env-gated one-line probe in `emitThrowJsError` appending
+   `[emitted in <fctx.name>]` to the message named the emitting body:
+   `__proto_method_-1073741806_toString` — the `Object.prototype.toString`
+   GLUE, i.e. someone *called* the method, rather than the classifier refusing.
+
+### The chain
+
+```
+__protoidx_companion                          (native-prototype seeding)
+ → __nativeproto_seed_<Array>
+   → __defineProperty_accessor(Array, @@species, …)      key = __box_symbol(5)
+     → __obj_find
+       → __to_property_key                    §7.1.1.1 ToPropertyKey
+         → __to_primitive                     ← SYMBOL NOT RECOGNISED AS PRIMITIVE
+           → __class_to_primitive
+             → (its generic runtime walk, guarded on
+                __typeof_object(v) || __typeof_function(v) — and
+                __typeof_object has NO Symbol arm, so it answers "object")
+               → __call_fn_method_0 → sym.toString()
+                 → Object.prototype.toString glue → loud standalone refusal
+```
+
+`__to_primitive`'s §7.1.1-step-1 "already a primitive" early-out cascade tested
+`i31 · $BoxedNumber · $BoxedBoolean · $AnyString · $Error` and **not `$Symbol`**,
+so every Symbol fell past the `$Object` test into the class path. The same
+function's `returnIfPrimitive` helper has always counted `$Symbol` as primitive
+(its `includeSymbol` arm), so the two halves disagreed.
+
+This is the **fourth instance** of the action-at-a-distance hazard the
+boxed-boolean and error-struct arms in that cascade already document in prose:
+the wrong answer appears only once some *other* part of the module contributes a
+`__class_to_primitive` body. Here the trigger pair was `eval` (forces the full
+realm seed at init, via `__native_globalThis_ensure` → `__protoidx_companion`)
+plus a linked provider (the state in which the in-flight seeding made
+`sym.toString` resolve to the `Object.prototype` glue instead of being absent).
+Neither is the cause; both are amplifiers.
+
+### The fix
+
+One arm, `src/codegen/object-runtime.ts` (`ensureObjectRuntime`'s `__to_primitive`
+builder): add `ref.test $Symbol → return input` to the early-out cascade, gated
+on `symbolKeysEnabled`. 34 lines, 30 of them the rationale.
+
+### Acceptance criteria
+
+1. **MET.** `.tmp/s6-e3.js` (the six-line reduction) with a linked provider:
+   `init OK`, raw and through `assembleOriginalHarness`.
+2. **MET.** `.tmp/s6probe-row5.js` (the EMPTY `features: [Temporal]` row):
+   `init OK`.
+3. **MET** — see the table in #5383's "S7 findings".
+4. **PARTLY MET, honestly.** `--target gc`: **12 of 12 modules byte-identical.**
+   Unlinked standalone: **7 of 12 identical, 5 changed** — every module that
+   registers the native symbol carrier gains the ~9-instruction early-out. That
+   is a real byte delta and it cannot be avoided while fixing the defect in the
+   shared standalone object runtime. It is behaviour-preserving in the modules
+   measured (a Symbol previously survived `__class_to_primitive` unchanged and
+   was returned by `returnIfPrimitive`) and strictly faster (one `ref.test`
+   instead of a dispatcher walk). Gating the arm on "a provider is linked" would
+   have kept the bytes and left the latent bug; that was rejected.
+
+### Test
+
+`tests/issue-6432-standalone-link-symbol-key-toprimitive.test.ts`. Read its
+header before trusting either arm: the host-free linked-pair arm is a SEMANTICS
+GUARD that passes on the base tree too (a hand-written provider does not
+reproduce — the throw needs the native-proto seeding to be mid-flight, which in
+practice needs the 3.3 MB Temporal compile). The arm with teeth is structural:
+the `$Symbol` carrier — read back from `__box_symbol`'s own `struct.new`, so it
+cannot drift with type numbering — must appear among `__to_primitive`'s
+early-out `ref.test` operands. Measured base `-20,61,62,6,70`; fixed
+`-20,61,62,6,70,73`.
+
+### Named residual (not fixed here)
+
+`__typeof_object(<a $Symbol>)` answers **true**. That is what let the
+class-to-primitive walk send a property read at a Symbol in the first place, and
+it is observable beyond ToPrimitive. The early-out now keeps Symbols away from
+that walk, so the lane is unblocked, but the predicate is still wrong and
+deserves its own slice.
