@@ -11,6 +11,23 @@ reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-07
 loc-budget-allow:
+  # 2026-09-12 (S2p) — outlining the standalone realm-global lazy-init seed.
+  #   The mechanism itself lives in the NEW module
+  #   `src/codegen/native-globalthis-outline.ts`, deliberately not in the
+  #   god-file. What remains here is the split the outline needs at its one
+  #   existing call site:
+  #   array-object-proto.ts  +29  `emitNativeGlobalThisObject` divided into
+  #     (a) the cached-global accessor, (b) `buildNativeGlobalThisSeed` — the
+  #     unchanged ~200-line seed, now RETURNING its init body instead of
+  #     splicing it into the caller — and (c) a four-line dispatch that prefers
+  #     the outlined helper and keeps the historical inline splice for the
+  #     re-entrant case. The growth is the three function headers plus the note
+  #     that the inline arm is not dead code: a realm-global read raised from
+  #     inside the seed's own construction MUST stay inline, because calling a
+  #     not-yet-initialized ensure helper from within its own initializer
+  #     recurses at runtime. A reader who deletes that arm as redundant
+  #     reintroduces an infinite loop that no byte A/B would show.
+  - src/codegen/array-object-proto.ts
   # 2026-09-12 (S2n) — the `$__vec_base` push/pop arm's resolve-OR-RESERVE.
   #   closed-method-dispatch.ts  +24  the lookup helper plus the rationale. The
   #     code is four lines; the rest records WHY the arm was order-dependent

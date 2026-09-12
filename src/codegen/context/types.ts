@@ -4056,6 +4056,11 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   standalone: boolean;
   /** Linked zero-argument getter for the canonical standalone realm-global object. */
   standaloneGlobalThisImport?: { module: string; name: string; call?: string };
+  /** (#5383 S2p) True while the outlined `__native_globalThis_ensure` seed body
+   *  is under construction, so a re-entrant realm-global read inside the seed
+   *  itself takes the legacy inline splice instead of calling a function whose
+   *  cached global is not set yet (which would recurse at runtime). */
+  nativeGlobalThisSeedBuilding?: boolean;
   /** Resolved JS-host direct-eval lowering. */
   directEvalMode: "legacy" | "reified-host";
   /** Private externref-array carrier used only by reified JS-host direct eval. */
