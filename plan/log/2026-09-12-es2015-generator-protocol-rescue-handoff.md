@@ -295,3 +295,25 @@ f414 source-sensitive full equivalence repair proof:
 All executable cohorts used `COMPILER_POOL_SIZE=1` and the corpus used the
 QuickJS evaluation engine. PR #5853 remains **draft** until this exact
 publication head has a green CI/shepherd verdict and is confirmed mergeable.
+
+## Post-#5859 final draft base — `561b9d20`
+
+The final normal upstream merge is
+`561b9d2003ed3e6d7bd27538437e4084f48369f0` at local tip
+`24d66a9c633a3c2ccb566317a343d031aa6710ba`. #5859 changes only the isolated
+RegExp cursor implementation, tests, and issue; it has no generator source or
+boundary-policy overlap. The f414 full-equivalence repair proof and 23a
+publication-base records remain authoritative for their scopes.
+
+- Bundle SHA-256 `63be675c0cba1db781a549b3cbc2570562c36fe108499468f8160753abcc2ca0`;
+  QuickJS evaluation adapter `50303ea3ccaa966d`, artifact
+  `073742801ba76347`, 1,826,684 bytes, canary-verified.
+- Permanent pins **46/46**, bridge9 **9/9** (`imports=[]`, valid Wasm, result
+  `1`), and exact protocol36+B8 **44/44** (A **36/36**, B **8/8**) pass.
+- The six CI regressions remain fixed; direct #439/#763 files remain **8/9**
+  only due to the pre-existing baselined #763 static diagnostic.
+- Boundary inventory `errors: []`, typecheck, lint, and Prettier pass.
+  Numeric payload remains the separated **0/3** residual.
+
+All executable cohorts used `COMPILER_POOL_SIZE=1`; protocol36+B8 also used
+QuickJS. PR #5853 stays **draft** until CI/shepherd confirms this exact head.

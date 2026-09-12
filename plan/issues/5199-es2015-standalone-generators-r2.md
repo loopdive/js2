@@ -443,5 +443,29 @@ PR #5853 remains **draft** while this refreshed exact head is published and its
 new CI/shepherd verdict is pending. It may be marked ready/non-draft only once
 that head is confirmed green and mergeable.
 
+### Post-#5859 final draft base — `561b9d20`
+
+Main advanced again to `561b9d2003ed3e6d7bd27538437e4084f48369f0` through the
+isolated RegExp cursor repair #5859. It was normally merged at
+`24d66a9c633a3c2ccb566317a343d031aa6710ba`; no generator file or boundary
+policy overlaps occurred. The f414 full-equivalence repair proof and 23a
+publication-base history remain intact, while the following final exact-head
+checks guard this unrelated source integration:
+
+- Bundle SHA-256 `63be675c0cba1db781a549b3cbc2570562c36fe108499468f8160753abcc2ca0`;
+  QuickJS evaluation adapter `50303ea3ccaa966d` is canary-verified against
+  artifact `073742801ba76347` (1,826,684 bytes).
+- Permanent generator pins are **46/46**, original bridge9 is **9/9** with
+  standalone `imports=[]`, valid Wasm, and result `1`, and protocol36+B8 is
+  **44/44** (A **36/36**, B **8/8**, zero B loss).
+- The six repaired #439/#763 rows pass again. Direct files remain **8/9** only
+  for the known baselined #763 static diagnostic; boundary inventory has
+  `errors: []`, and typecheck, lint, and Prettier pass.
+- The tracked numeric-payload residual remains **0/3**: all bodies compile with
+  `imports=[]` and valid Wasm but return `0`, not Node-oracle `1`.
+
+PR #5853 remains **draft** pending CI/shepherd confirmation for this exact head;
+do not mark it ready solely from these local checks.
+
 Full resumption details and exact local commands are in
 [the 2026-09-12 rescue handoff](../log/2026-09-12-es2015-generator-protocol-rescue-handoff.md).
