@@ -71,6 +71,19 @@ Should serialize cookie
 An absent `maxAge` option is being treated as present-and-zero. Likely
 independent of (a) and probably the cheaper of the two.
 
+## Relation to #6425
+
+[#6425](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6425-hono-crypto-textencoder-not-a-constructor)
+(filed on main the same day) covers hono's `src/utils/crypto.test.ts`, where
+`new TextEncoder()` answers `TextEncoder is not a constructor`. That is a
+different file and a different symptom, but it is the same host-boundary
+neighbourhood, and `getCryptoKey` feeds `crypto.subtle.importKey` a
+`new TextEncoder().encode(secret)` buffer — so an empty/!constructed encoder
+input is a plausible single cause for the all-zero signature here. **Check
+#6425 first**: if fixing it moves `src/utils/cookie.test.ts` off 24/35, close
+this one against that measurement rather than duplicating the work. Symptom (b)
+(`Max-Age=0`) is unrelated to #6425 either way.
+
 ## Acceptance criteria
 
 1. Reduce (a) and (b) to standalone probes (untyped `.js` two-file projects,
