@@ -2,11 +2,6 @@
 import { ts } from "../../ts-api.js";
 import { isUseStrictDirectiveExpression } from "./use-strict-directive.js";
 
-const cache = new WeakMap<ts.Node, boolean>();
-// (#2119) Separate cache for the inferModuleStrict=false path so the two
-// strictness modes do not clobber each other's memoized result.
-const cacheNoModule = new WeakMap<ts.Node, boolean>();
-
 /** True when the prologue of `body` opens with a `"use strict"` directive. */
 function hasUseStrictPrologue(statements: readonly ts.Statement[]): boolean {
   for (const s of statements) {
@@ -61,12 +56,12 @@ export function isStrictFunction(
   // synthetic `export function test()` wrapper does not unmap sloppy
   // (`noStrict`) `arguments`. An explicit `"use strict"` prologue or class
   // context still forces strict regardless. Defaults to true (module input is
-  // strict per the spec). The cache is keyed per-flag so both modes coexist.
+  // strict per the spec).
   inferModuleStrict = true,
 ): boolean {
-  const flagCache = inferModuleStrict ? cache : cacheNoModule;
-  const cached = flagCache.get(fn);
-  if (cached !== undefined) return cached;
+  // Incremental parsing can reuse this node while reparenting it beneath a
+  // changed directive prologue or module context. Node identity alone cannot
+  // memoize inherited strictness; inspect the current enclosing scopes.
 
   let result = false;
 
@@ -101,7 +96,6 @@ export function isStrictFunction(
     }
   }
 
-  flagCache.set(fn, result);
   return result;
 }
 

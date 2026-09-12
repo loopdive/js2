@@ -1,58 +1,122 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { IrBackendKind } from "./backend/legality.js";
-import type { IrBindingId, IrSourceId, IrUnitId } from "./identity.js";
-import { IR_CLASS_SHAPE_CELL } from "./nodes.js";
+import type { IrBindingId, IrUnitId } from "./identity.js";
+import { freezePreparedIrValue, invalidPreparedData, preparedIrReadonlyMap } from "./program/data.js";
+import { PreparedIrProgramInvariantError } from "./program/errors.js";
+export {
+  preparedIrReadonlyMap,
+  preparedIrDataMismatch,
+  freezePreparedIrValue,
+  freezePreparedIrRuntimeValue,
+} from "./program/data.js";
+export { PreparedIrProgramInvariantError } from "./program/errors.js";
+export type { PreparedIrProgramInvariantCode } from "./program/errors.js";
 import type { ProgramAbiCallableSignature, ProgramAbiPlanEntry } from "./program-abi.js";
+import type { PreparedComponentAbiLookup } from "./prepared-component-dependencies.js";
+import type { RuntimeManifestPolicy } from "./runtime-manifest.js";
+import { assertPreparedIrProgram } from "./program-validation.js";
+import type { WasmModule } from "./types.js";
+import type { LinearOptions } from "../codegen-linear/index.js";
+import type {
+  PreparedIrProgramProducerInput,
+  PreparedIrProgramFailure,
+  PreparedIrProgramRuntimeProjection,
+  PreparedIrProgram,
+  PreparedIrProgramOwner,
+  PreparedIrSourceLocation,
+} from "./program/prepared-contracts.js";
+export type {
+  PreparedIrAbiContract,
+  PreparedIrAbiEntry,
+  PreparedIrAbiSnapshot,
+  PreparedIrProgramProducerInput,
+  PreparedIrProgramFailure,
+  PreparedIrProgramRuntimeProjection,
+  PreparedIrProgram,
+  IrProgramPreparationResult,
+  PreparedIrProgramOwner,
+  PreparedIrSourceLocation,
+} from "./program/prepared-contracts.js";
+
+/** Resolved physical setup only; no source, policy callback or frontend option bag. */
+export interface PreparedIrBackendOptions {
+  readonly backend: RuntimeManifestPolicy["backend"];
+  readonly target: RuntimeManifestPolicy["target"];
+  readonly sharedExceptionTag: boolean;
+  readonly utf8Storage: boolean;
+  readonly sourceMap: boolean;
+  readonly moduleName: string;
+  readonly linear?: Readonly<
+    Pick<
+      LinearOptions,
+      "exposeArenaReset" | "allocationPolicy" | "externImports" | "importMemory" | "linkedHeap" | "heapAllocator"
+    >
+  >;
+}
+
+declare const acceptedPreparedIrProgramBrand: unique symbol;
+
+/** C owns token authentication; emitting a structurally forged acceptance must fail. */
+export interface AcceptedPreparedIrProgram {
+  readonly kind: "accepted";
+  readonly [acceptedPreparedIrProgramBrand]: true;
+  readonly program: PreparedIrProgram;
+  readonly options: PreparedIrBackendOptions;
+  readonly runtime: PreparedIrProgramRuntimeProjection;
+}
+
+export type PreparedIrBackendAcceptance = AcceptedPreparedIrProgram | PreparedIrProgramFailure;
+
+/** Exact physical body receipts, returned by C's actual emission loop. */
+export interface EmittedPreparedIrProgram {
+  readonly module: WasmModule;
+  readonly emittedUnitIds: readonly IrUnitId[];
+}
+
+/** Resolve diagnostics through the existing original/derived ownership records. */
+export function preparedIrProgramOwner(
+  input: Pick<PreparedIrProgramProducerInput, "inventory" | "derivedUnits">,
+  unitId: IrUnitId,
+): PreparedIrProgramOwner | undefined {
+  const derived = input.derivedUnits.find((record) => record.id === unitId);
+  const source = input.inventory.allUnits.find((record) => record.id === unitId);
+  const ownerId = derived?.terminalOwnerId ?? source?.terminalOwnerId ?? unitId;
+  const owner = input.inventory.terminalUnits.find((record) => record.id === ownerId);
+  if (!owner) return undefined;
+  const sourceRecord = input.inventory.sources.find((record) => record.id === owner.sourceId);
+  if (!sourceRecord) return undefined;
+  return Object.freeze({
+    unitId: owner.id,
+    sourceFile: sourceRecord.sourceKey,
+    location: Object.freeze({
+      sourceId: owner.sourceId,
+      line: owner.line,
+      column: owner.column,
+      declarationStart: owner.declarationStart,
+      declarationEnd: owner.declarationEnd,
+    }),
+  });
+}
+
+/** Reconstructed read surface over the one owned ABI entry vector. */
+export function preparedIrProgramAbiLookup(program: PreparedIrProgram): PreparedComponentAbiLookup {
+  assertPreparedIrProgram(program);
+  const entries = Object.freeze(program.abi.entries.map(({ plan }) => plan));
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  if (byId.size !== entries.length) {
+    throw new PreparedIrProgramInvariantError("invalid-prepared-data", "program ABI contains duplicate binding IDs");
+  }
+  return Object.freeze({
+    get: (id: IrBindingId) => byId.get(id),
+    entries: () => entries,
+    bindingIdsForStructuralReference: (key: string) =>
+      Object.freeze(entries.filter((entry) => entry.structuralReferenceKey === key).map((entry) => entry.id)),
+  });
+}
 
 export type PreparedIrCandidateRoute = "ir" | "direct" | "neither";
 export type PreparedIrEmitter = Exclude<PreparedIrCandidateRoute, "neither">;
-
-export type PreparedIrProgramInvariantCode =
-  | "abi-not-sealed"
-  | "program-sealed"
-  | "program-seal-failed"
-  | "duplicate-unit"
-  | "missing-unit"
-  | "unknown-unit"
-  | "duplicate-component-candidate"
-  | "empty-component-candidate"
-  | "duplicate-support-intent-candidate"
-  | "late-support-intent"
-  | "unknown-support-owner"
-  | "unknown-support-binding"
-  | "duplicate-allocation-candidate"
-  | "allocation-not-ir-candidate-owned"
-  | "duplicate-provenance-candidate"
-  | "provenance-not-ir-candidate-owned"
-  | "invalid-prepared-data"
-  | "program-has-invariant-candidate"
-  | "invalid-transaction-capability"
-  | "emission-already-started"
-  | "transaction-closed"
-  | "wrong-emitter"
-  | "duplicate-emission"
-  | "unknown-emission-unit"
-  | "partial-publication"
-  | "emission-failed";
-
-export class PreparedIrProgramInvariantError extends Error {
-  constructor(
-    readonly code: PreparedIrProgramInvariantCode,
-    message: string,
-  ) {
-    super(message);
-    this.name = "PreparedIrProgramInvariantError";
-  }
-}
-
-export interface PreparedIrSourceLocation {
-  readonly sourceId: IrSourceId;
-  readonly line: number;
-  readonly column: number;
-  readonly declarationStart: number;
-  readonly declarationEnd: number;
-}
 
 export interface PreparedIrAssertedOptimizationEvidence {
   readonly inlineSmall: "applied" | "not-applicable";
@@ -158,7 +222,7 @@ export interface PreparedIrProvenanceCandidate {
   readonly evidenceStatus: "unvalidated-candidate";
 }
 
-export interface PreparedIrAbiSnapshot {
+export interface PreparedIrCandidateAbiSnapshot {
   readonly planningSealed: true;
   readonly entries: readonly ProgramAbiPlanEntry[];
   get(id: IrBindingId): ProgramAbiPlanEntry | undefined;
@@ -187,8 +251,8 @@ export interface PreparedIrCandidatePublication {
   readonly ledger: ReadonlyMap<IrUnitId, PreparedIrEmissionLedgerEntry>;
 }
 
-export interface PreparedIrProgram {
-  readonly abi: PreparedIrAbiSnapshot;
+export interface PreparedIrCandidateProgram {
+  readonly abi: PreparedIrCandidateAbiSnapshot;
   /** Exact authoritative R2 denominator; every value remains an unvalidated candidate. */
   readonly units: ReadonlyMap<IrUnitId, PreparedIrUnitCandidate>;
   readonly irCandidates: ReadonlyMap<IrUnitId, PreparedIrIrCandidate>;
@@ -203,165 +267,6 @@ export interface PreparedIrProgram {
   beginEmission(): PreparedIrEmissionTransaction;
 }
 
-class FrozenMap<K, V> implements ReadonlyMap<K, V> {
-  readonly #map: Map<K, V>;
-
-  constructor(entries: Iterable<readonly [K, V]>) {
-    this.#map = new Map(entries);
-    Object.freeze(this);
-  }
-
-  get size(): number {
-    return this.#map.size;
-  }
-  has(key: K): boolean {
-    return this.#map.has(key);
-  }
-  get(key: K): V | undefined {
-    return this.#map.get(key);
-  }
-  forEach(callbackfn: (value: V, key: K, map: ReadonlyMap<K, V>) => void, thisArg?: unknown): void {
-    for (const [key, value] of this.#map) callbackfn.call(thisArg, value, key, this);
-  }
-  entries(): MapIterator<[K, V]> {
-    return this.#map.entries();
-  }
-  keys(): MapIterator<K> {
-    return this.#map.keys();
-  }
-  values(): MapIterator<V> {
-    return this.#map.values();
-  }
-  [Symbol.iterator](): MapIterator<[K, V]> {
-    return this.#map[Symbol.iterator]();
-  }
-  get [Symbol.toStringTag](): string {
-    return "FrozenMap";
-  }
-}
-
-class FrozenSet<T> implements ReadonlySet<T> {
-  readonly #set: Set<T>;
-
-  constructor(values: Iterable<T>) {
-    this.#set = new Set(values);
-    Object.freeze(this);
-  }
-
-  get size(): number {
-    return this.#set.size;
-  }
-  has(value: T): boolean {
-    return this.#set.has(value);
-  }
-  forEach(callbackfn: (value: T, value2: T, set: ReadonlySet<T>) => void, thisArg?: unknown): void {
-    for (const value of this.#set) callbackfn.call(thisArg, value, value, this);
-  }
-  entries(): SetIterator<[T, T]> {
-    return this.#set.entries();
-  }
-  keys(): SetIterator<T> {
-    return this.#set.keys();
-  }
-  values(): SetIterator<T> {
-    return this.#set.values();
-  }
-  [Symbol.iterator](): SetIterator<T> {
-    return this.#set[Symbol.iterator]();
-  }
-  get [Symbol.toStringTag](): string {
-    return "FrozenSet";
-  }
-}
-
-Object.freeze(FrozenMap.prototype);
-Object.freeze(FrozenMap);
-Object.freeze(FrozenSet.prototype);
-Object.freeze(FrozenSet);
-
-export function preparedIrReadonlyMap<K, V>(entries: Iterable<readonly [K, V]>): ReadonlyMap<K, V> {
-  return new FrozenMap(entries);
-}
-
-function invalidPreparedData(detail: string): never {
-  throw new PreparedIrProgramInvariantError("invalid-prepared-data", detail);
-}
-
-function isRecursiveIrClassShape(value: object): boolean {
-  const candidate = value as Record<PropertyKey, unknown>;
-  return (
-    candidate[IR_CLASS_SHAPE_CELL] === true &&
-    typeof candidate.classId === "string" &&
-    candidate.classId.startsWith("ir-class:v1:") &&
-    typeof candidate.className === "string" &&
-    Array.isArray(candidate.fields) &&
-    Array.isArray(candidate.methods) &&
-    Array.isArray(candidate.constructorParams)
-  );
-}
-
-function immutableCopy(
-  value: unknown,
-  ancestors = new Set<object>(),
-  activeCopies = new Map<object, unknown>(),
-): unknown {
-  if (typeof value === "function") invalidPreparedData("prepared data cannot contain executable functions");
-  if (value === null || typeof value !== "object") return value;
-  if (ancestors.has(value)) {
-    const recursiveShapeCopy = activeCopies.get(value);
-    if (recursiveShapeCopy !== undefined && isRecursiveIrClassShape(value)) return recursiveShapeCopy;
-    invalidPreparedData("prepared data must be acyclic outside exact IR class shapes");
-  }
-  const nextAncestors = new Set(ancestors).add(value);
-  if (value instanceof FrozenMap) {
-    return preparedIrReadonlyMap(
-      [...value].map(
-        ([key, item]) =>
-          [immutableCopy(key, nextAncestors, activeCopies), immutableCopy(item, nextAncestors, activeCopies)] as const,
-      ),
-    );
-  }
-  if (value instanceof FrozenSet) {
-    return new FrozenSet([...value].map((item) => immutableCopy(item, nextAncestors, activeCopies)));
-  }
-  if (Array.isArray(value)) return Object.freeze(value.map((item) => immutableCopy(item, nextAncestors, activeCopies)));
-  if (value instanceof Map) {
-    return preparedIrReadonlyMap(
-      [...value].map(
-        ([key, item]) =>
-          [immutableCopy(key, nextAncestors, activeCopies), immutableCopy(item, nextAncestors, activeCopies)] as const,
-      ),
-    );
-  }
-  if (value instanceof Set) {
-    return new FrozenSet([...value].map((item) => immutableCopy(item, nextAncestors, activeCopies)));
-  }
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) {
-    invalidPreparedData(`prepared data contains unsupported mutable ${prototype?.constructor?.name ?? "object"}`);
-  }
-  const copy = Object.create(null) as Record<PropertyKey, unknown>;
-  activeCopies.set(value, copy);
-  for (const key of Reflect.ownKeys(value)) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor || !("value" in descriptor)) {
-      invalidPreparedData(`prepared data property ${String(key)} must be a non-executable data property`);
-    }
-    Object.defineProperty(copy, key, {
-      value: immutableCopy(descriptor.value, nextAncestors, activeCopies),
-      enumerable: descriptor.enumerable,
-      configurable: false,
-      writable: false,
-    });
-  }
-  activeCopies.delete(value);
-  return Object.freeze(copy);
-}
-
-export function freezePreparedIrValue(value: unknown): unknown {
-  return immutableCopy(value);
-}
-
 interface MutableLedgerEntry {
   readonly unitId: IrUnitId;
   readonly candidateRoute: PreparedIrCandidateRoute;
@@ -372,13 +277,13 @@ interface MutableLedgerEntry {
 const EMISSION_TRANSACTION_CAPABILITY = Symbol("PreparedIrProgram.beginEmission");
 
 export class PreparedIrEmissionTransaction {
-  readonly #program: PreparedIrProgram;
+  readonly #program: PreparedIrCandidateProgram;
   readonly #staged = new Map<IrUnitId, PreparedIrStagedBody>();
   readonly #ledger = new Map<IrUnitId, MutableLedgerEntry>();
   #state: "open" | "published" | "aborted" = "open";
   #publication?: PreparedIrCandidatePublication;
 
-  private constructor(program: PreparedIrProgram, capability: symbol) {
+  private constructor(program: PreparedIrCandidateProgram, capability: symbol) {
     if (capability !== EMISSION_TRANSACTION_CAPABILITY) {
       throw new PreparedIrProgramInvariantError(
         "invalid-transaction-capability",
@@ -397,7 +302,7 @@ export class PreparedIrEmissionTransaction {
   }
 
   /** @internal Runtime capability remains module-private. */
-  static open(program: PreparedIrProgram, capability: symbol): PreparedIrEmissionTransaction {
+  static open(program: PreparedIrCandidateProgram, capability: symbol): PreparedIrEmissionTransaction {
     return new PreparedIrEmissionTransaction(program, capability);
   }
 
@@ -548,11 +453,11 @@ function expectedCandidateRoute(candidate: PreparedIrUnitCandidate): PreparedIrC
  * @internal Defensively owns every input. prepare.ts is the supported caller;
  * the output remains explicitly pending production reconciliation.
  */
-export function createPreparedIrCandidateProgram(input: PreparedIrCandidateProgramInput): PreparedIrProgram {
+export function createPreparedIrCandidateProgram(input: PreparedIrCandidateProgramInput): PreparedIrCandidateProgram {
   const ownedInput = ownCandidate(input);
   const entries = Object.freeze(ownedInput.abiEntries.map((entry) => ownCandidate(entry)));
   const entryMap = new Map(entries.map((entry) => [entry.id, entry]));
-  const abi: PreparedIrAbiSnapshot = Object.freeze({
+  const abi: PreparedIrCandidateAbiSnapshot = Object.freeze({
     planningSealed: true as const,
     entries,
     get: (id: IrBindingId) => entryMap.get(id),
@@ -639,7 +544,7 @@ export function createPreparedIrCandidateProgram(input: PreparedIrCandidateProgr
     ),
   );
   let emissionStarted = false;
-  const program: PreparedIrProgram = Object.freeze({
+  const program: PreparedIrCandidateProgram = Object.freeze({
     abi,
     units,
     irCandidates,

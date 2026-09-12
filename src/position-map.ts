@@ -1,4 +1,11 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import type { CompilerSourceOrigin, CompilerSourceOriginSpan } from "./shared/contracts/source-origin.js";
+export type {
+  CompilerSourceProducer,
+  CompilerSourceOrigin,
+  CompilerSourceOriginSpan,
+} from "./shared/contracts/source-origin.js";
+
 /**
  * #1928 — source-position remapping for pre-parse rewrites.
  *
@@ -36,28 +43,6 @@ export interface SourceEdit {
   readonly newLength: number;
   /** Compiler producer metadata for generated declarations in replacement text. */
   readonly compilerOrigins?: readonly CompilerSourceOriginSpan[];
-}
-
-export type CompilerSourceProducer =
-  | "timer-shim"
-  | "node-path-prelude"
-  | "node-path-binding"
-  | "import-wrapper"
-  | "eval-super-rewrite"
-  | "process-stdin-prelude"
-  | "iterator-statics-prelude";
-
-export interface CompilerSourceOrigin {
-  readonly producer: CompilerSourceProducer;
-  /** Producer-owned semantic role, independent of a parsed display name. */
-  readonly role: string;
-}
-
-/** Half-open span relative to one edit's generated output text. */
-export interface CompilerSourceOriginSpan {
-  readonly start: number;
-  readonly end: number;
-  readonly origin: CompilerSourceOrigin;
 }
 
 export class PositionMap {

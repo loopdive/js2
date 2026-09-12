@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * Runtime-carrier guards for strict equality operands whose checker type is
- * stale after an indexed object-literal write.
+ * Runtime-carrier guards for expressions whose checker type is stale after
+ * an indexed or union-alias object property write. Arithmetic, storage and
+ * output consumers must preserve that value until the actual JS operation.
  */
 import { ts } from "../ts-api.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
@@ -18,17 +19,30 @@ export function markIndexedPropertyStale(ctx: CodegenContext, property: ts.Decla
   stale.add(property);
 }
 
-/** Whether equality must inspect the runtime carrier instead of checker type. */
-export function equalityOperandHasStaleStaticType(
+/** Whether a value derives from a property whose carrier was widened. */
+export function expressionHasWidenedPropertyType(
   ctx: CodegenContext,
-  fctx: FunctionContext,
   expr: ts.Expression,
+  seen?: Set<ts.Node>,
 ): boolean {
-  if (
-    ts.isIdentifier(expr) &&
-    (fctx.forInIdentifierVars?.has(expr.text) === true || moduleGlobalIsDynamicButStaticallyPrimitive(ctx, expr))
-  ) {
-    return true;
+  if (!indexedStaleProperties.get(ctx)?.size) return false;
+  seen ??= new Set<ts.Node>();
+  if (seen.has(expr)) return false;
+  seen.add(expr);
+  while (ts.isParenthesizedExpression(expr) || ts.isAsExpression(expr) || ts.isNonNullExpression(expr)) {
+    expr = expr.expression;
+  }
+  if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    return (
+      expressionHasWidenedPropertyType(ctx, expr.left, seen) || expressionHasWidenedPropertyType(ctx, expr.right, seen)
+    );
+  }
+
+  if (ts.isIdentifier(expr) && ctx.objectLiteralIndexedAssignedPropertyTypes.size > 0) {
+    const declaration = ctx.oracle.valueDeclarationOf(expr);
+    if (declaration && ts.isVariableDeclaration(declaration) && !declaration.type && declaration.initializer) {
+      return expressionHasWidenedPropertyType(ctx, declaration.initializer, seen);
+    }
   }
 
   let key: string | undefined;
@@ -68,5 +82,18 @@ export function equalityOperandHasStaleStaticType(
   return (
     ctx.oracle.typeFactOf(propertyReceiver).kind === "object" &&
     ctx.oracle.propertyFactOf(propertyReceiver, propertyKey).kind !== "unresolvable"
+  );
+}
+
+/** Equality also observes pre-existing dynamic module/for-in carriers. */
+export function equalityOperandHasStaleStaticType(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.Expression,
+): boolean {
+  return (
+    (ts.isIdentifier(expr) &&
+      (fctx.forInIdentifierVars?.has(expr.text) === true || moduleGlobalIsDynamicButStaticallyPrimitive(ctx, expr))) ||
+    expressionHasWidenedPropertyType(ctx, expr)
   );
 }

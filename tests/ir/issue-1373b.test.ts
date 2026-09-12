@@ -27,6 +27,7 @@
 // regression that accidentally claims an async function before the lowering
 // is ready surfaces immediately.
 
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { ts } from "../../src/ts-api.js";
 import { isAsyncIrReady, planIrCompilation } from "../../src/ir/select.js";
@@ -241,11 +242,11 @@ describe("#1373b C-1 — selector claims the sync-pass-through population", () =
 
 describe("#1373b C-1 — full compile parity (JS-host gc lane)", () => {
   // The C-1 split, verified empirically:
-  //   - `base` (await-elidable: `await Promise.resolve(20)` is statically
-  //     resolved) → engine DECLINES (no real suspension) → IR claims it.
-  //   - `twice` (`const x = await base()` — a call operand is NOT statically
-  //     resolved) → engine HOST-DRIVES it → IR must decline; its export
-  //     returns a real host Promise on both gate settings.
+  // `base` keeps C1's numeric fulfillment ABI: its Promise.resolve await is
+  // statically settled. The #3527 generic producer cannot use that raw slot
+  // as evidence of a Promise-returning callee for `twice`. Reconciliation
+  // therefore withdraws this whole component before ABI promotion, and the
+  // existing direct engine returns the same host Promise on both gate settings.
   const src = `
     async function base(): Promise<number> {
       return await Promise.resolve(20) + 1;
@@ -256,12 +257,22 @@ describe("#1373b C-1 — full compile parity (JS-host gc lane)", () => {
     }
   `;
 
-  it("claims only the engine-declined fn; the engine keeps the suspending one; value parity via await", async () => {
-    const r = await compile(src, { fileName: "test.ts" });
+  it("withdraws the raw-fulfillment component and preserves the direct engine's Promise result", async () => {
+    const r = await compile(src, { fileName: "test.ts", trackIrOutcomes: true });
     expect(r.success).toBe(true);
-    expect(r.irCompiledFuncs ?? []).toContain("base");
-    // twice genuinely suspends → host-drive engine owns it, never the IR.
+    expect(r.irPostClaimErrors ?? []).toEqual([]);
+    expect(r.irCompiledFuncs ?? []).not.toContain("base");
     expect(r.irCompiledFuncs ?? []).not.toContain("twice");
+    for (const name of ["base", "twice"]) {
+      expect(r.irOutcomes?.find((row) => row.unitKind === "function" && row.displayName === name)).toMatchObject({
+        kind: "unsupported",
+        code: "late-preparation-unsupported",
+        directBodyEmissions: 1,
+        irBodyEmissions: 0,
+        legacyBodyEmitted: true,
+        irBodyEmitted: false,
+      });
+    }
     const ex = await instantiateHost(r);
     // Engine-driven export returns a real Promise; await normalizes.
     expect(await (ex.twice as () => Promise<number>)()).toBe(42);
@@ -386,6 +397,35 @@ describe("#1373b C-1 — engine-activated functions keep byte-identical routing"
 });
 
 describe("#1373b C-1 — wasi lane sync-shape claim", () => {
+  function runExactWasiBinary(binary: Uint8Array): { valid: boolean; value?: number } {
+    const child = spawnSync(
+      process.execPath,
+      [
+        "--experimental-wasm-exnref",
+        "--input-type=module",
+        "--eval",
+        `
+      const chunks = [];
+      for await (const chunk of process.stdin) chunks.push(chunk);
+      const binary = Buffer.concat(chunks);
+      const valid = WebAssembly.validate(binary);
+      const result = { valid };
+      if (valid) {
+        const { instance } = await WebAssembly.instantiate(binary, {});
+        result.value = instance.exports.f();
+      }
+      process.stdout.write(JSON.stringify(result));
+    `,
+      ],
+      { input: binary, encoding: "utf8", timeout: 10000, maxBuffer: 1024 * 1024 },
+    );
+    const diagnostic = [child.error?.message, child.signal, child.stderr, child.stdout].filter(Boolean).join("\n");
+    expect(child.error, diagnostic).toBeUndefined();
+    expect(child.signal, diagnostic).toBeNull();
+    expect(child.status, diagnostic).toBe(0);
+    return JSON.parse(child.stdout) as { valid: boolean; value?: number };
+  }
+
   it("an await-elidable async fn claims on wasi and runs host-free", async () => {
     const src = `
       export async function f(): Promise<number> {
@@ -396,8 +436,12 @@ describe("#1373b C-1 — wasi lane sync-shape claim", () => {
     expect(r.success, r.success ? "" : JSON.stringify(r.errors?.slice(0, 3))).toBe(true);
     expect(r.irCompiledFuncs ?? []).toContain("f");
     expect((r.imports ?? []).map((i) => `${i.module}.${i.name}`)).toEqual([]);
-    expect(WebAssembly.validate(r.binary)).toBe(true);
-    const { instance } = await WebAssembly.instantiate(r.binary, {});
-    expect((instance.exports.f as () => number)()).toBe(42);
+    // Node 24 needs exnref enabled for the retained native Promise runtime.
+    // Feed the exact compiler output to the child; compile and ownership
+    // checks stay in this test's normal process and target configuration.
+    expect(runExactWasiBinary(r.binary)).toEqual({ valid: true, value: 42 });
+    const corrupt = r.binary.slice();
+    corrupt[0] ^= 0xff;
+    expect(runExactWasiBinary(corrupt)).toEqual({ valid: false });
   });
 });

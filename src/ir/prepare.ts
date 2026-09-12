@@ -12,7 +12,7 @@ import {
   type PreparedIrDirectCandidate,
   type PreparedIrInvariantCandidate,
   type PreparedIrIrCandidate,
-  type PreparedIrProgram,
+  type PreparedIrCandidateProgram,
   type PreparedIrProvenanceCandidate,
   type PreparedIrSupportIntentCandidate,
   type PreparedIrUnitCandidate,
@@ -107,7 +107,7 @@ function duplicateIds(ids: readonly IrUnitId[]): IrUnitId[] {
  * integrity, not production Prepared status. Production wiring must derive and
  * reconcile IR edges, signatures, support, allocation, and provenance.
  */
-export class PreparedIrProgramBuilder {
+export class PreparedIrCandidateProgramBuilder {
   readonly #abi: ProgramAbiMap;
   readonly #freeUnits: ReadonlyMap<IrUnitId, IrTerminalUnitRecord>;
   readonly #candidates: PreparedIrUnitCandidate[] = [];
@@ -116,7 +116,7 @@ export class PreparedIrProgramBuilder {
   readonly #allocationCandidates: Omit<PreparedIrAllocationCandidate, "evidenceStatus">[] = [];
   readonly #provenanceCandidates: Omit<PreparedIrProvenanceCandidate, "evidenceStatus">[] = [];
   #state: BuilderState = "open";
-  #program?: PreparedIrProgram;
+  #program?: PreparedIrCandidateProgram;
 
   constructor(abi: ProgramAbiMap) {
     if (!abi.planningSealed) {
@@ -206,7 +206,7 @@ export class PreparedIrProgramBuilder {
     });
   }
 
-  seal(): PreparedIrProgram {
+  seal(): PreparedIrCandidateProgram {
     if (this.#state === "sealed") return this.#program!;
     this.#assertOpen();
     this.#state = "sealing";

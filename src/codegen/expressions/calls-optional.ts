@@ -12,6 +12,8 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { addStringImports, resolveWasmType } from "../index.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, ensureLateImport, valTypesMatch, VOID_RESULT } from "../shared.js";
+import { canonicalUndefinedExternInstrs } from "../any-helpers.js";
+import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
 import { compileNativeStringMethodCall } from "../string-ops.js";
 import { defaultValueInstrs, pushDefaultValue } from "../type-coercion.js";
 import { addStringConstantGlobal } from "../registry/imports.js";
@@ -348,18 +350,40 @@ function compileOptionalPropertyValueCall(
   fctx.body.push({ op: "local.set", index: receiverLocal });
 
   const methodName = ts.isPrivateIdentifier(propAccess.name) ? propAccess.name.text.slice(1) : propAccess.name.text;
+  // (#5383 / #2961) `recv.m?.(args)` used to build its argument list and invoke
+  // the callee through the JS-host trio `__js_array_new` / `__js_array_push` /
+  // `__call_function` (plus `__get_undefined` for the short-circuit result)
+  // unconditionally. Under `--target standalone` those four have no provider,
+  // so the shape leaked FOUR unsatisfiable `env::*` imports — the entire `env`
+  // import set of the compiled `@js-temporal/polyfill` (one call site, the
+  // polyfill's `hr`). The native lane owns exact equivalents already:
+  // `__objvec_new` / `__objvec_push` (object-runtime vec builders) and
+  // `__apply_closure`, which has the SAME `(callee, thisArg, args) -> result`
+  // signature as `__call_function`; `canonicalUndefinedExternInstrs` supplies
+  // the lane's real `undefined` (the #2106 tag-1 singleton standalone, the host
+  // `__get_undefined` otherwise). Split exactly the way
+  // `tryCompileCallableStaticField` already does. The HOST lane keeps its four
+  // `ensureLateImport` registrations in the same order and emits the same
+  // instructions, so its bytes are unchanged.
+  const hostLane = !ctx.standalone && !ctx.wasi;
   const getIdx = ensureLateImport(ctx, "__extern_get", [externref, externref], [externref]);
   const isUndefinedIdx = ensureExternIsUndefinedImport(ctx);
-  const arrayNewIdx = ensureLateImport(ctx, "__js_array_new", [], [externref]);
-  const arrayPushIdx = ensureLateImport(ctx, "__js_array_push", [externref, externref], []);
-  const callIdx = ensureLateImport(ctx, "__call_function", [externref, externref, externref], [externref]);
-  const getUndefinedIdx = ensureLateImport(ctx, "__get_undefined", [], [externref]);
+  const applyIdx = hostLane ? undefined : reserveApplyClosure(ctx);
+  const vecBuilders = hostLane ? undefined : ensureObjVecBuilders(ctx);
+  const arrayNewIdx = hostLane ? ensureLateImport(ctx, "__js_array_new", [], [externref]) : vecBuilders?.newIdx;
+  const arrayPushIdx = hostLane
+    ? ensureLateImport(ctx, "__js_array_push", [externref, externref], [])
+    : vecBuilders?.pushIdx;
+  const callIdx = hostLane
+    ? ensureLateImport(ctx, "__call_function", [externref, externref, externref], [externref])
+    : applyIdx;
+  if (hostLane) ensureLateImport(ctx, "__get_undefined", [], [externref]);
   addStringConstantGlobal(ctx, methodName);
   flushLateImportShifts(ctx, fctx);
   const resolvedGetIdx = ctx.funcMap.get("__extern_get") ?? getIdx;
-  const resolvedNewIdx = ctx.funcMap.get("__js_array_new") ?? arrayNewIdx;
-  const resolvedPushIdx = ctx.funcMap.get("__js_array_push") ?? arrayPushIdx;
-  const resolvedCallIdx = ctx.funcMap.get("__call_function") ?? callIdx;
+  const resolvedNewIdx = ctx.funcMap.get(hostLane ? "__js_array_new" : "__objvec_new") ?? arrayNewIdx;
+  const resolvedPushIdx = ctx.funcMap.get(hostLane ? "__js_array_push" : "__objvec_push") ?? arrayPushIdx;
+  const resolvedCallIdx = ctx.funcMap.get(hostLane ? "__call_function" : "__apply_closure") ?? callIdx;
   if (
     resolvedGetIdx === undefined ||
     resolvedNewIdx === undefined ||
@@ -400,14 +424,10 @@ function compileOptionalPropertyValueCall(
   const elseInstrs = fctx.body;
   popBody(fctx, savedBody);
 
-  const resolvedUndefinedIdx = ctx.funcMap.get("__get_undefined") ?? getUndefinedIdx;
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: externref },
-    then:
-      resolvedUndefinedIdx === undefined
-        ? [{ op: "ref.null.extern" }]
-        : [{ op: "call", funcIdx: resolvedUndefinedIdx }],
+    then: canonicalUndefinedExternInstrs(ctx),
     else: elseInstrs,
   });
   return externref;

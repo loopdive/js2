@@ -58,9 +58,11 @@ import { addFuncType, getOrRegisterTemplateVecType } from "../registry/types.js"
 import { emitNativeUriDecode, emitNativeUriEncode } from "../uri-encoding-native.js";
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
+import { registerImportCollectorDelegates } from "../registry/import-collector-delegates.js";
+import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
 
 /** Accumulated state for the single-pass collector */
-interface UnifiedCollectorState {
+export interface UnifiedCollectorState {
   // -- collectConsoleImports --
   consoleNeededByMethod: Map<string, Set<"number" | "bool" | "string" | "externref">>;
   // -- collectPrimitiveMethodImports --
@@ -404,6 +406,14 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
   // non-string, a shadowed callee, or a value-producing call that stays legacy.
   if (needsHostIndirectEvalImport(ctx, node)) state.hostIndirectEvalNeeded = true;
 
+  // (#5384) A source `throw` means this module can hand a payload of its own to
+  // whoever catches `__exn_tag`, so the host-free `__exn_render_*` readout is
+  // real surface and must survive the `hostBridge: "off"` export policy (see
+  // `ctx.usesSourceThrowStatement` and `stripHostBridgeExports`). Recorded on
+  // `ctx`, not `state`, because the flag is per-MODULE while the collector state
+  // is per-source-file: one throwing file in a multi-file compile is enough.
+  if (ts.isThrowStatement(node)) ctx.usesSourceThrowStatement = true;
+
   // ── collectStringLiterals (skip computed property names) ──
   if (state.insideComputedPropertyName === 0) {
     if (ts.isStringLiteral(node)) {
@@ -462,7 +472,9 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
       const needed = state.consoleNeededByMethod.get(method)!;
       for (const arg of node.arguments) {
         const argType = ctx.checker.getTypeAtLocation(arg);
-        if (isStringType(argType)) {
+        if (expressionHasWidenedPropertyType(ctx, arg)) {
+          needed.add("externref");
+        } else if (isStringType(argType)) {
           needed.add("string");
         } else if (isBooleanType(argType)) {
           needed.add("bool");
@@ -2282,3 +2294,5 @@ function isAccessorDescriptor(descArg: ts.Expression): boolean {
   }
   return false;
 }
+
+registerImportCollectorDelegates(createUnifiedCollectorState, unifiedVisitNode, finalizeUnifiedCollector);

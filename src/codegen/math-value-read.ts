@@ -41,7 +41,11 @@
  */
 
 import type { Instr } from "../ir/types.js";
+import { emitWasmMathClz32, emitWasmMathImul } from "../ir/backend/wasm-int32-coercion.js";
+import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { ensureAnyFromExternHelper, ensureAnyHelpers } from "./any-helpers.js";
+import { addUnionImports } from "./index.js";
 import { emitInlineMathFunctions } from "./math-helpers.js";
 
 /**
@@ -75,6 +79,118 @@ const MATH_SELF_HOSTED_F64: ReadonlyMap<string, number> = new Map([
 ]);
 
 /**
+ * (#5383 S2) `Math.<fn>` whose kernel is a SHORT instruction sequence rather
+ * than a self-hosted `Math_<name>` provider. The direct-call lowering emits
+ * these inline, so before this the value read had no provider to point at and
+ * fell to the refusal body — even though the arithmetic is two opcodes.
+ *
+ * Found compiling `@js-temporal/polyfill` for `--target standalone`: jsbi's
+ * feature-detect header is
+ *
+ *     JSBI.__clz30 = Math.clz32 ? function (i) { … } : function (i) { … };
+ *     JSBI.__imul  = Math.imul  || function (i, _) { return 0 | i * _; };
+ *
+ * Both READ the builtin as a value (truthy — so the fallback never runs) and
+ * then call it, which is the first thing the polyfill's `__module_init` does
+ * with a number. `JSBI.multiply` is the first caller, so `Temporal`'s very
+ * first `JSBI.BigInt(3600) * 1e9` died with
+ * `TypeError: called value is not a function`.
+ *
+ * Each entry is the value-read twin of an existing direct-call lowering, and
+ * the f64 opcode IS the ECMAScript operation for these five: `f64.floor` /
+ * `ceil` / `trunc` / `abs` / `sqrt` agree with §21.3.2 on -0, NaN and ±∞.
+ * `Math.round` and `Math.sign` are deliberately absent — `f64.nearest` rounds
+ * ties to EVEN while §21.3.2.28 rounds ties toward +∞, so a naive entry would
+ * be a WRONG ANSWER rather than a miss, which is the one outcome this file's
+ * contract forbids.
+ */
+const MATH_INLINE_F64_OPS: ReadonlyMap<string, Instr[]> = new Map([
+  ["abs", [{ op: "f64.abs" }] as Instr[]],
+  ["floor", [{ op: "f64.floor" }] as Instr[]],
+  ["ceil", [{ op: "f64.ceil" }] as Instr[]],
+  ["trunc", [{ op: "f64.trunc" }] as Instr[]],
+  ["sqrt", [{ op: "f64.sqrt" }] as Instr[]],
+  // §21.3.2.16 — round to the nearest float32, back to a Number.
+  ["fround", [{ op: "f32.demote_f64" }, { op: "f64.promote_f32" }] as Instr[]],
+]);
+
+/** Arity of the two exact-32-bit entries (`MATH_INLINE_F64_OPS` are all 1). */
+const MATH_INT32_OPS: ReadonlyMap<string, number> = new Map([
+  ["clz32", 1],
+  ["imul", 2],
+]);
+
+/**
+ * The ONE ToNumber/box route every `Math.<fn>` value body uses — the engine
+ * pipeline (`__any_from_extern` → `__any_to_f64`), never a hand-rolled unbox,
+ * so an object argument with a `valueOf` coerces exactly as it does through the
+ * direct call. Resolved in one place so the inline and self-hosted bodies
+ * cannot drift apart. Undefined when the substrate is unavailable, in which
+ * case the caller keeps its refusal body.
+ */
+function mathValueSubstrate(
+  ctx: CodegenContext,
+): { fromExternIdx: number; toF64Idx: number; boxNumIdx: number } | undefined {
+  const fromExternIdx = ctx.funcMap.get("__any_from_extern");
+  const toF64Idx = ctx.funcMap.get("__any_to_f64");
+  const boxNumIdx = ctx.funcMap.get("__box_number");
+  if (fromExternIdx === undefined || toF64Idx === undefined || boxNumIdx === undefined) return undefined;
+  return { fromExternIdx, toF64Idx, boxNumIdx };
+}
+
+/** Shared prologue: coerce params 1..arity from externref to f64 on the stack. */
+function pushCoercedArgs(closureFctx: FunctionContext, arity: number, fromExternIdx: number, toF64Idx: number): void {
+  for (let i = 1; i <= arity; i++) {
+    closureFctx.body.push(
+      { op: "local.get", index: i },
+      { op: "call", funcIdx: fromExternIdx },
+      { op: "call", funcIdx: toF64Idx },
+    );
+  }
+}
+
+/**
+ * Body for an inline-kernel `Math.<name>` value read. Returns false when the
+ * name has no inline kernel or the boxing substrate is missing, so the caller
+ * keeps its refusal body.
+ */
+function emitInlineMathValueReadBody(ctx: CodegenContext, closureFctx: FunctionContext, name: string): boolean {
+  const f64Ops = MATH_INLINE_F64_OPS.get(name);
+  const int32Arity = MATH_INT32_OPS.get(name);
+  if (f64Ops === undefined && int32Arity === undefined) return false;
+
+  const substrate = mathValueSubstrate(ctx);
+  if (substrate === undefined) return false;
+  const { fromExternIdx, toF64Idx, boxNumIdx } = substrate;
+
+  if (f64Ops !== undefined) {
+    pushCoercedArgs(closureFctx, 1, fromExternIdx, toF64Idx);
+    closureFctx.body.push(...f64Ops.map((instr) => ({ ...instr })));
+    closureFctx.body.push({ op: "call", funcIdx: boxNumIdx });
+    return true;
+  }
+
+  // `Math.clz32` / `Math.imul` need the EXACT ToUint32/ToInt32 of §7.1.6-7.1.7,
+  // not a trapping `i32.trunc_f64_s`. Reuse the IR backend's decomposition
+  // (`wasm-int32-coercion.ts`) verbatim so the value read and the direct call
+  // cannot disagree on a magnitude >= 2**63 or on a NaN/Infinity argument.
+  const scratch = {
+    bits: allocLocal(closureFctx, "mv_i32_bits", { kind: "i64" }),
+    exponent: allocLocal(closureFctx, "mv_i32_exp", { kind: "i64" }),
+    significand: allocLocal(closureFctx, "mv_i32_sig", { kind: "i64" }),
+    magnitude: allocLocal(closureFctx, "mv_i32_mag", { kind: "i64" }),
+  };
+  pushCoercedArgs(closureFctx, int32Arity as number, fromExternIdx, toF64Idx);
+  if (name === "clz32") {
+    emitWasmMathClz32(closureFctx.body, scratch);
+  } else {
+    emitWasmMathImul(closureFctx.body, scratch, allocLocal(closureFctx, "mv_imul_rhs", { kind: "i32" }));
+  }
+  closureFctx.body.push({ op: "call", funcIdx: boxNumIdx });
+  return true;
+}
+
+/**
  * Emit a real body for `Math.<name>` read as a value, into `closureFctx`.
  *
  * Returns false when no self-hosted provider can be materialised, in which case
@@ -82,6 +198,7 @@ const MATH_SELF_HOSTED_F64: ReadonlyMap<string, number> = new Map([
  * Params: 0 = self, 1..arity = the arguments, all `externref`.
  */
 export function emitMathValueReadBody(ctx: CodegenContext, closureFctx: FunctionContext, name: string): boolean {
+  if (emitInlineMathValueReadBody(ctx, closureFctx, name)) return true;
   const arity = MATH_SELF_HOSTED_F64.get(name);
   if (arity === undefined) return false;
 
@@ -90,19 +207,50 @@ export function emitMathValueReadBody(ctx: CodegenContext, closureFctx: Function
   const providerIdx = ctx.funcMap.get(symbol);
   if (providerIdx === undefined) return false;
 
-  const fromExternIdx = ctx.funcMap.get("__any_from_extern");
-  const toF64Idx = ctx.funcMap.get("__any_to_f64");
-  const boxNumIdx = ctx.funcMap.get("__box_number");
-  if (fromExternIdx === undefined || toF64Idx === undefined || boxNumIdx === undefined) return false;
+  const substrate = mathValueSubstrate(ctx);
+  if (substrate === undefined) return false;
+  const { fromExternIdx, toF64Idx, boxNumIdx } = substrate;
 
-  const body: Instr[] = [];
-  for (let i = 1; i <= arity; i++) {
-    body.push({ op: "local.get", index: i });
-    body.push({ op: "call", funcIdx: fromExternIdx });
-    body.push({ op: "call", funcIdx: toF64Idx });
-  }
-  body.push({ op: "call", funcIdx: providerIdx });
-  body.push({ op: "call", funcIdx: boxNumIdx });
-  closureFctx.body.push(...body);
+  // (#5383 S2) Through the SAME `pushCoercedArgs` the inline kernels use — one
+  // ToNumber route for every `Math.<fn>` value body, so the two can never drift.
+  pushCoercedArgs(closureFctx, arity, fromExternIdx, toF64Idx);
+  closureFctx.body.push({ op: "call", funcIdx: providerIdx }, { op: "call", funcIdx: boxNumIdx });
   return true;
+}
+
+/**
+ * (#5383 S2) Pre-register the natives every `Math.<fn>` value body reads —
+ * `__any_from_extern`, `__any_to_f64`, `__box_number` — BEFORE the caller
+ * builds the closure's wrapper types and `FunctionContext`.
+ *
+ * This is the #2704 discipline: a FIRST registration made mid-body desyncs
+ * codegen, so the body emitters below only ever READ `ctx.funcMap`. Before this
+ * existed they read it in a context where nothing had registered the three, so
+ * `emitMathValueReadBody` returned false for every name and EVERY `Math.<fn>`
+ * value read — including the self-hosted transcendentals #4565 added — kept the
+ * "not yet implemented in --target standalone" refusal body. That is why
+ * `[1, 4, 9].map(Math.sqrt)` still threw with #4565 in place.
+ *
+ * Safe to call unconditionally for the `Math` namespace: all three registrations
+ * are idempotent, and a module that reads no `Math.<fn>` value never gets here.
+ */
+export function prepareMathValueRead(ctx: CodegenContext, name: string): void {
+  if (!MATH_INLINE_F64_OPS.has(name) && !MATH_INT32_OPS.has(name) && !MATH_SELF_HOSTED_F64.has(name)) return;
+  addUnionImports(ctx); // __box_number
+  ensureAnyFromExternHelper(ctx);
+  ensureAnyHelpers(ctx); // __any_to_f64
+}
+
+/**
+ * (#5383 S2) True when `Math.<name>` read as a value gets a REAL body from this
+ * module — the inline kernels above plus #4565's self-hosted transcendentals.
+ *
+ * Read by `builtin-static-plain-alias.ts` to decide whether `var f = Math.<fn>;
+ * f(x)` may route through the reified closure's ABI. Deliberately keyed on
+ * "we can actually compute it", not on "it is a Math static": routing a name
+ * whose body is still the refusal would swap one throw for another and move a
+ * working js-host shape for no reason.
+ */
+export function mathValueReadHasBody(name: string): boolean {
+  return MATH_INLINE_F64_OPS.has(name) || MATH_INT32_OPS.has(name) || MATH_SELF_HOSTED_F64.has(name);
 }

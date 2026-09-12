@@ -386,13 +386,15 @@ describe("#4104 IR async plan runtime consumer", () => {
     ).not.toThrow();
   });
 
-  it("preserves a valid partial semantic provider closure without widening it to all six imports", () => {
+  it("preserves a valid partial semantic provider closure without widening it to all seven imports", () => {
     const { unit } = fixture("-partial");
     const prepared = prepare(settleOnlyIrFunction(unit));
     const fn = prepared.functions[0]!;
     const expected = ASYNC_HOST_CAPABILITY_RECORDS.filter(
       (record) =>
-        record.capability === "async.promise.capability.create" || record.capability === "async.promise.settle.fulfill",
+        record.capability === "async.exception.caught" ||
+        record.capability === "async.promise.capability.create" ||
+        record.capability === "async.promise.settle.fulfill",
     );
     expect(prepared.manifest.hostCapabilityRecords).toEqual(expected);
     expect(fn.asyncRuntime?.adapters.map((adapter) => adapter.record)).toEqual(expected);
@@ -447,6 +449,7 @@ describe("#4104 IR async plan runtime consumer", () => {
       stringConcatMany: { batch: "off" },
       stringConst: { storage: "unsupported" },
       hostCallbackWrap: { wrap: "unsupported" },
+      functionPrototypeCall: { call: "unsupported" },
     });
     expect(standalone.manifest.features).toEqual(ASYNC_RUNTIME_FEATURES);
     expect(standalone.manifest.hostCapabilities).toEqual([]);
@@ -495,8 +498,8 @@ describe("#4104 IR async plan runtime consumer", () => {
     expect(ownerView(hostReverse.functions)).toEqual(ownerView(hostForward.functions));
     expect(hostForward.manifest.hostCapabilityRecords).toEqual(ASYNC_HOST_ADAPTERS);
     expect(hostForward.manifest.backendRequirements).toEqual([]);
-    expect(hostForward.functions[0]!.asyncRuntime?.adapters).toHaveLength(6);
-    expect(hostForward.functions[1]!.asyncRuntime?.adapters).toHaveLength(2);
+    expect(hostForward.functions[0]!.asyncRuntime?.adapters).toHaveLength(7);
+    expect(hostForward.functions[1]!.asyncRuntime?.adapters).toHaveLength(3);
 
     const native = prepareIrRuntimeManifest({
       functions: [irFunction(units[0]!), irFunction(units[1]!, false, true)],
@@ -859,7 +862,7 @@ describe("#4104 IR async plan runtime consumer", () => {
     }
   });
 
-  it("materializes, reuses, and Program-ABI-plans all six imports before component sealing", () => {
+  it("materializes, reuses, and Program-ABI-plans all seven imports before component sealing", () => {
     const { inventory, unit } = fixture();
     const module = createEmptyModule();
     const session = new ProgramAbiSession(inventory, module);
@@ -874,11 +877,11 @@ describe("#4104 IR async plan runtime consumer", () => {
     expect(module.imports.map((imported) => `${imported.module}.${imported.name}`)).toEqual(
       ASYNC_HOST_ADAPTERS.map((adapter) => `${adapter.module}.${adapter.field}`),
     );
-    expect(module.imports).toHaveLength(6);
+    expect(module.imports).toHaveLength(7);
     expect(module.types).toHaveLength(typeCount);
 
     const planned = planProgramAbiCallableImports(ctx);
-    expect(planned.size).toBe(6);
+    expect(planned.size).toBe(7);
     const report = derivePreparedComponentDependencies({
       module: { functions },
       terminalUnitIds: new Set([unit.id]),
@@ -921,7 +924,7 @@ describe("#4104 IR async plan runtime consumer", () => {
 
     const first = adapters[0]!;
     const second = adapters[1]!;
-    reject(adapters.slice(1), /has 5 adapters; expected 6/);
+    reject(adapters.slice(1), /has 6 adapters; expected 7/);
     reject([first, first, ...adapters.slice(2)], /detached adapter/);
     reject([...adapters].reverse(), /detached adapter/);
     reject([Object.freeze({ ...first, record: second.record }), ...adapters.slice(1)], /detached adapter/);

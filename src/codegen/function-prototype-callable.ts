@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /** Native callable entry point for the ES5 `%Function.prototype%` object. */
 
+import { FUNCTION_PROTOTYPE_CALL_HELPER } from "../ir/runtime-symbols.js";
 import { ts } from "../ts-api.js";
 import type { Instr, WasmFunction } from "../ir/types.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
@@ -14,7 +15,7 @@ import { emitThrowTypeError } from "./expressions/helpers.js";
  * `undefined` (ES5 §15.3.4). Calls use a zero-parameter helper because both
  * front-ends evaluate and discard source arguments before invoking it.
  */
-export const FUNCTION_PROTOTYPE_CALL_HELPER = "__function_prototype_call";
+export { FUNCTION_PROTOTYPE_CALL_HELPER } from "../ir/runtime-symbols.js";
 
 export function ensureFunctionPrototypeCallHelper(ctx: CodegenContext): number | undefined {
   if (!(ctx.standalone || ctx.wasi)) return undefined;
