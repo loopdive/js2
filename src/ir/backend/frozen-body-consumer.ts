@@ -10,7 +10,8 @@
 
 import type { IrFunction } from "../nodes.js";
 import type { IrUnitId } from "../identity.js";
-import { lowerIrFunctionBody, type IrLowerResolver, type IrLoweredBody } from "../lower.js";
+import { lowerIrFunctionBody } from "../lower-generic.js";
+import type { IrLowerResolver, IrLoweredBody } from "./lower-contracts.js";
 import type { TypeConverter } from "./contract.js";
 import type { BackendEmitter } from "./emitter.js";
 import { verifyIrBackendLegality, type IrBackendKind } from "./legality.js";
