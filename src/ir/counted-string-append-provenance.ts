@@ -12,25 +12,16 @@ import {
   irCountedStringRepeatFitsNativeKernel,
 } from "./string-runtime.js";
 
-declare const irCountedStringAppendSiteIdBrand: unique symbol;
-
-/** Immutable source-qualified identity for one checker-proven counted append loop. */
-export type IrCountedStringAppendSiteId = string & {
-  readonly [irCountedStringAppendSiteIdBrand]: "IrCountedStringAppendSiteId";
-};
-
-/** Identity primitives retained after the live AST proof has been validated. */
-export interface IrCountedStringAppendSiteIdentity {
-  readonly sourceId: IrSourceId;
-  readonly ownerUnitId: IrUnitId;
-  readonly loopStart: number;
-  readonly loopEnd: number;
-}
-
-/** Untrusted site claim paired with the exact identity it is expected to represent. */
-export interface IrCountedStringAppendSiteClaim extends IrCountedStringAppendSiteIdentity {
-  readonly siteId: string;
-}
+import type {
+  IrCountedStringAppendSiteId,
+  IrCountedStringAppendSiteIdentity,
+  IrCountedStringAppendSiteClaim,
+} from "../shared/contracts/ir-counted-string-identity.js";
+export type {
+  IrCountedStringAppendSiteId,
+  IrCountedStringAppendSiteIdentity,
+  IrCountedStringAppendSiteClaim,
+} from "../shared/contracts/ir-counted-string-identity.js";
 
 /** Successful final IR artifact supplied by either backend preparation path. */
 export interface IrCountedStringAppendFinalArtifact {

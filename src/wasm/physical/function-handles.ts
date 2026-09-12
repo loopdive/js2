@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import type { FuncHandle } from "../model/instructions.js";
+import type { WasmFunction } from "../model/module-records.js";
+
 // ---------------------------------------------------------------------------
 // #1916 S3 — the two-regime function handle space.
 //
@@ -39,4 +42,44 @@ export const STABLE_FUNC_BASE = 1 << 21;
  */
 export function inLiveShiftRange(idx: number, importsBefore: number): boolean {
   return idx >= importsBefore && idx < STABLE_FUNC_BASE;
+}
+
+/** The existing module-owned ordinal authority, shared by both callers. */
+export interface DefinedFunctionStorage {
+  functions: WasmFunction[];
+  funcOrdinalToPosition: number[];
+}
+
+/** Reserve an ordinal independently of eventual physical append order. */
+export function mintDefinedFunc(storage: DefinedFunctionStorage): FuncHandle {
+  const ordinal = storage.funcOrdinalToPosition.length;
+  // Reserve the ordinal slot now (NaN = minted, not yet pushed) so nested
+  // mints get distinct ordinals even before this one's push happens.
+  storage.funcOrdinalToPosition.push(Number.NaN);
+  return STABLE_FUNC_BASE + ordinal;
+}
+
+/**
+ * Record the next append position. The legacy wrapper traces AFTER this
+ * commit and BEFORE appending; a throwing trace deliberately leaves that
+ * historical partial state intact. This kernel accepts no trace callback.
+ */
+export function commitDefinedFuncOrdinal(storage: DefinedFunctionStorage, funcIdx: FuncHandle): void {
+  if (funcIdx < STABLE_FUNC_BASE) {
+    throw new Error(`pushDefinedFunc: ${funcIdx} is not a stable-regime handle`);
+  }
+  const ordinal = funcIdx - STABLE_FUNC_BASE;
+  const existing = storage.funcOrdinalToPosition[ordinal];
+  if (existing === undefined) {
+    throw new Error(`pushDefinedFunc: handle ${funcIdx} was never minted`);
+  }
+  if (!Number.isNaN(existing)) {
+    throw new Error(`pushDefinedFunc: handle ${funcIdx} already pushed at position ${existing}`);
+  }
+  storage.funcOrdinalToPosition[ordinal] = storage.functions.length;
+}
+
+/** Append the exact object after its ordinal commit (and any legacy trace). */
+export function appendDefinedFunc(storage: DefinedFunctionStorage, fn: WasmFunction): void {
+  storage.functions.push(fn);
 }

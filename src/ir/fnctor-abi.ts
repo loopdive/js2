@@ -10,50 +10,11 @@
  * the current dynamic/legacy path unchanged.
  */
 
-import type { IrSourceId, IrUnitId } from "./identity.js";
-import { irTypeEquals, type IrType, type IrTypeRef } from "./nodes.js";
-import type { IrFuncRef } from "./value-references.js";
+import { irTypeEquals, type IrType, type IrTypeRef } from "./core/types.js";
+import type { IrFuncRef } from "./core/value-references.js";
 
-export interface IrFnctorField {
-  readonly name: string;
-  readonly type: IrType;
-  /** Stable field ordinal in the reserved constructor layout. */
-  readonly ordinal: number;
-}
-
-export interface IrFnctorCapture {
-  readonly name: string;
-  readonly type: IrType;
-  /** Whether this capture carries the paired TDZ flag parameter. */
-  readonly hasTdzFlag: boolean;
-  /** Stable capture ordinal in the constructor ABI. */
-  readonly ordinal: number;
-}
-
-/**
- * Nominal, source-qualified shape of one approved function-style constructor.
- * `name` fields are diagnostics only; source/unit/layout bindings are the
- * semantic identity and must be checked by every resolver.
- */
-export interface IrFnctorShape {
-  readonly kind: "fnctor-shape";
-  readonly sourceId: IrSourceId;
-  readonly constructorUnitId: IrUnitId;
-  readonly constructorName: string;
-  readonly constructorTarget: IrFuncRef;
-  /** Symbolic identity of the reserved `__fnctor_<name>` struct layout. */
-  readonly reservedLayout: IrTypeRef;
-  readonly fields: readonly IrFnctorField[];
-  readonly captures: readonly IrFnctorCapture[];
-  readonly userParamTypes: readonly IrType[];
-  /** Whether the active ABI carries the final hidden externref identity argument. */
-  readonly hiddenIdentity: boolean;
-  /** Identity metadata remains source/unit-qualified even when the active ABI omits the operand (WASI). */
-  readonly constructorIdentity: {
-    readonly unitId: IrUnitId;
-    readonly paramIndex: number;
-  };
-}
+import type { IrFnctorField, IrFnctorCapture, IrFnctorShape } from "./core/fnctor-shapes.js";
+export type { IrFnctorField, IrFnctorCapture, IrFnctorShape } from "./core/fnctor-shapes.js";
 
 /** Backend result of resolving a nominal shape against finalized ABI state. */
 export interface IrFnctorResolution {
