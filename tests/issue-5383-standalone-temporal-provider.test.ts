@@ -34,12 +34,18 @@
 
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compile, compileMulti, compileProject, instantiateLinkedProject } from "../src/index.js";
+import { runDogfoodScript } from "./dogfood/run-dogfood-script.js";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const S2K_HERE = dirname(fileURLToPath(import.meta.url));
 import { standaloneIntlShimSource } from "../src/temporal-intl-shim.js";
 import { temporalProviderCacheKey } from "../src/temporal-provider.js";
+import { RUNTIME_RECGROUP_TYPE_NAMES } from "../src/emit/canonical-recgroup.js";
 
 interface StandaloneModule {
   binary: Uint8Array;
@@ -69,6 +75,82 @@ async function compileStandalone(source: string): Promise<StandaloneModule> {
   expect(imports, "standalone module leaked host imports (#2961)").toEqual([]);
   const instance = await WebAssembly.instantiate(wasmModule, {});
   return { binary: result.binary, imports, instance };
+}
+
+/**
+ * (#5383 S2k) A structural fingerprint of the canonical runtime rec group —
+ * the first recursive group in `binary`'s type section, which codegen emits
+ * ahead of everything else and which holds exactly
+ * `RUNTIME_RECGROUP_TYPE_NAMES`.
+ *
+ * WasmGC canonicalizes a rec group AS A WHOLE, so this has to compare the
+ * group's own encoding and nothing else — in particular it must see the one
+ * bit that distinguishes `sub` from `sub final` on a member, which is
+ * invisible to any comparison made by type NAME or by absolute index. Returns
+ * "" when the module has no leading rec group.
+ */
+function canonicalGroupFingerprint(binary: Uint8Array): string {
+  let p = 8;
+  const leb = (): number => {
+    let v = 0;
+    let shift = 0;
+    let b: number;
+    do {
+      b = binary[p++]!;
+      v |= (b & 0x7f) << shift;
+      shift += 7;
+    } while (b & 0x80);
+    return v >>> 0;
+  };
+  while (p < binary.length) {
+    const id = binary[p++]!;
+    const size = leb();
+    if (id !== 1) {
+      p += size;
+      continue;
+    }
+    leb(); // type count
+    if (binary[p] !== 0x4e) return "";
+    const groupStart = p;
+    p++;
+    const count = leb();
+    expect(count, "the canonical group must hold exactly the frozen ABI members").toBe(
+      RUNTIME_RECGROUP_TYPE_NAMES.length,
+    );
+    const valType = (): void => {
+      const b = binary[p++]!;
+      if (b === 0x63 || b === 0x64) leb(); // (ref null? <heaptype>) — signed, but LEB-shaped
+    };
+    const comp = (): void => {
+      const k = binary[p++]!;
+      if (k === 0x5f) {
+        const n = leb();
+        for (let i = 0; i < n; i++) {
+          valType();
+          p++; // mutability
+        }
+      } else if (k === 0x5e) {
+        valType();
+        p++; // mutability
+      } else if (k === 0x60) {
+        const a = leb();
+        for (let i = 0; i < a; i++) valType();
+        const r = leb();
+        for (let i = 0; i < r; i++) valType();
+      }
+    };
+    for (let i = 0; i < count; i++) {
+      const tag = binary[p]!;
+      if (tag === 0x50 || tag === 0x4f) {
+        p++;
+        const n = leb();
+        for (let j = 0; j < n; j++) leb();
+      }
+      comp();
+    }
+    return createHash("sha256").update(binary.subarray(groupStart, p)).digest("hex").slice(0, 32);
+  }
+  return "";
 }
 
 function callExport(mod: StandaloneModule, name = "test"): unknown {
@@ -747,5 +829,1147 @@ describe("#5383 S2e R10 — a defineProperty sidecar key is scoped to its own bi
       export function test() { return CALENDARS.includes(Ao("ISO8601")) ? 1 : 0; }
     `);
     expect(callExport(mod)).toBe(1);
+  });
+});
+
+// ── S2f R11 — `ref.test $__ta_ctor` is a STRUCTURAL test used as a NOMINAL one ─
+//
+// `$__ta_ctor` is `(struct (field kind i32) (field brand i32))`, both immutable
+// (#5194 r3 F1 widened it from one field exactly to dodge a canonicalization
+// collision with `__box_boolean_struct`). #2158/#2009 gives an empty class ROOT
+// the SAME shape — `(field $__tag i32)` + `(field $__shape_brand i32)`. WasmGC
+// canonicalizes structurally-identical types, so in any module that both holds
+// a TypedArray constructor VALUE and declares a field-less class, every
+// instance of that class passes `ref.test $__ta_ctor` — and the standalone
+// `typeof` natives answered `"function"` for it.
+//
+// Measured 2026-09-08 on the compiled `@js-temporal/polyfill` under
+// `--target standalone`, `hostBridge:"off"`: `typeof` through a one-parameter
+// indirection said `"function"` for `new qi.Duration(0,0,0,0,1)` and
+// `new qi.PlainDate(2024,1,1)`; the matched struct's two fields dumped as
+// `{35, 0}` and `{33, 0}` — a class TAG and a `__shape_brand`, not
+// `{kind, TA_CTOR_BRAND}`. The polyfill's own brand check
+// `ne(e,…){ if (!e || "object" != typeof e) return !1; … }` therefore rejected
+// every Temporal receiver, so every Temporal method and accessor threw
+// `invalid receiver`. The fix checks the brand VALUE, not the shape
+// (`taCtorIdentityTestInstrs`, `registry/types.ts`).
+describe("#5383 S2f R11 — a field-less class instance is not a TypedArray constructor", () => {
+  const MODULE = `
+    const ctors = [Uint8Array, Int16Array];
+    class Empty {}
+    class Slots { constructor() { Slots.seen = 1; } }
+    function tof(v) { return typeof v; }
+    function isFn(v) { return typeof v === "function" ? 1 : 0; }
+    export function test() { return tof(new Empty()) === "object" ? 1 : 0; }
+    export function emptyIsFn() { return isFn(new Empty()); }
+    export function slotsIsFn() { return isFn(new Slots()); }
+    export function objIsFn() { return isFn({ a: 1 }); }
+    export function ctorIsFn() { return isFn(ctors[0]); }
+    export function bpe() { return ctors[1].BYTES_PER_ELEMENT; }
+  `;
+
+  it("`typeof` through a call boundary says `object`, not `function`", async () => {
+    const mod = await compileStandalone(MODULE);
+    // Base (before this fix) answered 0 here and 1 for `emptyIsFn`.
+    expect(callExport(mod)).toBe(1);
+    expect(callExport(mod, "emptyIsFn")).toBe(0);
+    expect(callExport(mod, "slotsIsFn")).toBe(0);
+    expect(callExport(mod, "objIsFn")).toBe(0);
+  });
+
+  it("a GENUINE TypedArray constructor keeps both answers", async () => {
+    const mod = await compileStandalone(MODULE);
+    expect(callExport(mod, "ctorIsFn")).toBe(1);
+    expect(callExport(mod, "bpe")).toBe(2);
+  });
+});
+
+// ── S2f R13 — a class VALUE is callable, and R12 carries that across the link ─
+//
+// S2e recorded this as a BOUNDARY defect ("a class value crosses but reports
+// `typeof "object"`"). Re-measured 2026-09-08, it is not: a class value answers
+// `typeof "object"` inside ONE standalone module too, the moment it is read
+// through a parameter rather than as a bare identifier. A class VALUE is a
+// `$ClassName` struct with the same type AND the same `__tag` as an instance
+// (#3976 / `class-object-of.ts`), so nothing about its TYPE distinguishes it —
+// only its IDENTITY, the lazily-materialised class-object singleton global.
+// The compile-time fold answers `"function"` for the bare identifier, which is
+// why the gap only shows through an indirection (#2984 path-dependence).
+describe('#5383 S2f R13 — a class VALUE answers `typeof "function"` at runtime', () => {
+  const MODULE = `
+    class PlainDate { constructor(y) { this.y = y; } day() { return 1; } }
+    function isFn(x) { return typeof x === "function" ? 1 : 0; }
+    function tofn(x) { return typeof x; }
+    export function test() { const v = PlainDate; return isFn(v); }
+    export function materialized() { const v = PlainDate; return tofn(v) === "function" ? 1 : 0; }
+    export function instanceIsObject() { const d = new PlainDate(1); return tofn(d) === "object" ? 1 : 0; }
+    export function plainObjectIsObject() { return isFn({ a: 1 }); }
+    export function realFn() { const f = function () { return 1; }; return isFn(f); }
+  `;
+
+  it("through a parameter — the inline compare and the materialized result agree", async () => {
+    const mod = await compileStandalone(MODULE);
+    // Base answered 0 for both: the runtime natives had no arm for the carrier.
+    expect(callExport(mod)).toBe(1);
+    expect(callExport(mod, "materialized")).toBe(1);
+  });
+
+  it("an INSTANCE, a plain object and a real function keep their answers", async () => {
+    const mod = await compileStandalone(MODULE);
+    // The instance shares the class value's struct TYPE and `__tag`; only
+    // identity separates them, which is what makes this arm exact.
+    expect(callExport(mod, "instanceIsObject")).toBe(1);
+    expect(callExport(mod, "plainObjectIsObject")).toBe(0);
+    expect(callExport(mod, "realFn")).toBe(1);
+  });
+});
+
+describe("#5383 S2f R12 — a provider-owned class VALUE is callable in the consumer", () => {
+  // The polyfill's own namespace shape:
+  // `var qi = Object.freeze({__proto__: null, Duration, Instant, PlainDate, …})`.
+  const PROVIDER = `class PlainDate { constructor(y) { this.y = y; } day() { return 1; } }
+    const Now = { a: 1 };
+    export const NS = Object.freeze({ __proto__: null, PlainDate, Now, b: 2 });`;
+
+  const CONSUMER = `
+    export function keys() { return Object.keys(NS).length; }
+    export function b() { return NS.b; }
+    export function nowA() { return NS.Now.a; }
+    export function hasPD() { return NS.PlainDate === undefined ? 0 : 1; }
+    export function typeofPD() { const v = NS.PlainDate; return typeof v === "function" ? 1 : (typeof v === "object" ? 2 : 3); }
+  `;
+
+  async function linkAndRun() {
+    const root = mkdtempSync(join(tmpdir(), "issue-5383-s2f-"));
+    const packageRoot = join(root, "node_modules", "ns5383f");
+    mkdirSync(packageRoot, { recursive: true });
+    writeFileSync(
+      join(packageRoot, "package.json"),
+      JSON.stringify({ name: "ns5383f", version: "0.0.0", main: "index.js" }),
+    );
+    writeFileSync(join(packageRoot, "index.js"), PROVIDER);
+    const entry = join(root, "entry.js");
+    writeFileSync(entry, `import { NS } from "ns5383f";\nexport function __probe() { return typeof NS; }\n`);
+    const standalone = { target: "standalone" as const, hostBridge: "off" as const };
+    const built = await compileProject(entry, {
+      allowJs: true,
+      skipSemanticDiagnostics: true,
+      packageCacheDir: join(root, "providers"),
+      ...standalone,
+    });
+    expect(built.success).toBe(true);
+    expect(built.linkPlan?.mode).toBe("separate");
+    const artifact = (built.linkedModules ?? []).find((e) => e.packageName === "ns5383f")!;
+    const field = artifact.exportBoundaries!.NS!.field;
+    const stub = "/__ns_stub.ts";
+    const consumerEntry = "/__main.js";
+    const result = await compileMulti(
+      {
+        [stub]: `export declare function ${field}(): any;\n`,
+        [consumerEntry]: `import { ${field} } from "/__ns_stub";\nconst NS = ${field}();\n${CONSUMER}`,
+      },
+      consumerEntry,
+      {
+        allowJs: true,
+        skipSemanticDiagnostics: true,
+        canonicalRuntimeTypes: true,
+        sharedExceptionTag: true,
+        link: [artifact.namespace],
+        linkedPackageBindings: new Map([[field, { module: artifact.namespace, field }]]),
+        ...standalone,
+      },
+    );
+    (result as { linkedModules?: unknown[] }).linkedModules = [artifact];
+    expect(result.success).toBe(true);
+    // EMPTY import object — the host-free contract.
+    const { instance } = await instantiateLinkedProject(result, {});
+    const ex = instance.exports as unknown as Record<string, () => unknown>;
+    return { keys: ex.keys(), b: ex.b(), nowA: ex.nowA(), hasPD: ex.hasPD(), typeofPD: ex.typeofPD() };
+  }
+
+  it("host-free: the class value crosses AND reports `function`", { timeout: 300_000 }, async () => {
+    // Base answered `typeofPD: 2` ("object"), which is what made
+    // `new Temporal.PlainDate(…)` unreachable from a consumer. The other four
+    // answers are S2d's, restated here so this case also guards them.
+    expect(await linkAndRun()).toEqual({ keys: 3, b: 2, nowA: 1, hasPD: 1, typeofPD: 1 });
+  });
+});
+
+// ── S2g — `new` on a class VALUE runs the constructor body ───────────────────
+//
+// R14. `fillNativeConstructDrivers`'s ordinary tail is a CLOSURE dispatch
+// (`__call_fn_method_<N>`). A class reached as a value is the class-object
+// singleton — a `$ClassName` struct — so the dispatch missed, the result was
+// null, and the driver returned the bare `Object.create(proto)`: an object with
+// none of the constructor's own fields. Each class now has a `construct`
+// trampoline (`standalone-class-construct.ts`) reached by IDENTITY (`ref.eq`
+// against the singleton), which calls the SAME `<Class>_new` a static
+// `new C(…)` calls — so field initializers, `super(…)` and parameter defaults
+// come from the one lowering rather than a second copy of it.
+describe("#5383 S2g R14 — `new K(…)` on a class value runs the constructor", () => {
+  it("the three-line reduction: base returned an empty object, not `5`", async () => {
+    const mod = await compileStandalone(`
+      class PlainDate { constructor(y) { this.y = y; } }
+      const mk = (K) => new K(5);
+      export function test() { return mk(PlainDate).y; }
+    `);
+    expect(callExport(mod)).toBe(5);
+  });
+
+  it("more args than declared, fewer than declared (the default runs), and `super(…)`", async () => {
+    const mod = await compileStandalone(`
+      class A { constructor(y) { this.y = y; } }
+      class B { constructor(y = 7) { this.y = y; } }
+      class Sub extends A { constructor(y) { super(y * 2); this.z = 1; } }
+      const mk0 = (K) => new K();
+      const mk1 = (K) => new K(5);
+      const mk3 = (K) => new K(5, 6, 7);
+      export function test() {
+        const s = mk1(Sub);
+        return mk3(A).y * 1000 + mk0(B).y * 100 + s.y + s.z * 100000;
+      }
+    `);
+    // 5·1000 (extra args dropped) + 7·100 (the `= 7` default ran, so NOT 0)
+    // + 10 (`super(y*2)`) + 100000 (the subclass's own field).
+    expect(callExport(mod)).toBe(105_710);
+  });
+
+  it("a field initializer runs, and the result is a real instance", async () => {
+    const mod = await compileStandalone(`
+      class Init { n = 3; constructor(y) { this.y = y; } sum() { return this.y + this.n; } }
+      const mk = (K, v) => new K(v);
+      export function test() {
+        const a = mk(Init, 4);
+        return a.sum() * 10 + (a instanceof Init ? 1 : 0);
+      }
+    `);
+    // 7 = 4 + the field initializer's 3; `instanceof` holds because the
+    // trampoline returns the ordinary `<Class>_new` instance.
+    expect(callExport(mod)).toBe(71);
+  });
+
+  it("a plain function VALUE still takes the ordinary §10.2.2 tail", async () => {
+    const mod = await compileStandalone(`
+      class Unrelated { constructor(y) { this.y = y; } }
+      function Ctor(x) { this.x = x; }
+      const mk = (K) => new K(3);
+      export function test() { return mk(Ctor).x * 10 + mk(Unrelated).y; }
+    `);
+    // The class arm answers null for a closure callee, so the driver falls
+    // through to exactly the code it ran before this slice.
+    expect(callExport(mod)).toBe(33);
+  });
+});
+
+describe("#5383 S2g R14 — `new` on a provider-owned class, host-free", () => {
+  const PROVIDER = `class PlainDate {
+      constructor(y, m, d) { this.y = y; this.m = m; this.d = d; }
+    }
+    export const NS = Object.freeze({ __proto__: null, PlainDate, b: 2 });`;
+
+  // Own FIELDS only, deliberately. A dynamic read of a PROTOTYPE member
+  // (method or accessor) on a foreign instance is a separate, still-open stop —
+  // see the S2g findings in plan/issues/5383-standalone-temporal-provider.md;
+  // it reproduces in ONE module, with no boundary, so it is not this slice's.
+  const CONSUMER = `
+    export function year() { const d = new NS.PlainDate(2024, 1, 1); return d.y; }
+    export function day() { const d = new NS.PlainDate(2024, 1, 1); return d.d; }
+    export function b() { return NS.b; }
+  `;
+
+  it("`new NS.PlainDate(2024,1,1)` reaches the constructor body", { timeout: 300_000 }, async () => {
+    const root = mkdtempSync(join(tmpdir(), "issue-5383-s2g-"));
+    const packageRoot = join(root, "node_modules", "ns5383g");
+    mkdirSync(packageRoot, { recursive: true });
+    writeFileSync(
+      join(packageRoot, "package.json"),
+      JSON.stringify({ name: "ns5383g", version: "0.0.0", main: "index.js" }),
+    );
+    writeFileSync(join(packageRoot, "index.js"), PROVIDER);
+    const entry = join(root, "entry.js");
+    writeFileSync(entry, `import { NS } from "ns5383g";\nexport function __probe() { return typeof NS; }\n`);
+    const standalone = { target: "standalone" as const, hostBridge: "off" as const };
+    const built = await compileProject(entry, {
+      allowJs: true,
+      skipSemanticDiagnostics: true,
+      packageCacheDir: join(root, "providers"),
+      ...standalone,
+    });
+    expect(built.success).toBe(true);
+    expect(built.linkPlan?.mode).toBe("separate");
+    const artifact = (built.linkedModules ?? []).find((e) => e.packageName === "ns5383g")!;
+    const field = artifact.exportBoundaries!.NS!.field;
+    const consumerEntry = "/__main.js";
+    const result = await compileMulti(
+      {
+        "/__ns_stub.ts": `export declare function ${field}(): any;\n`,
+        [consumerEntry]: `import { ${field} } from "/__ns_stub";\nconst NS = ${field}();\n${CONSUMER}`,
+      },
+      consumerEntry,
+      {
+        allowJs: true,
+        skipSemanticDiagnostics: true,
+        canonicalRuntimeTypes: true,
+        sharedExceptionTag: true,
+        link: [artifact.namespace],
+        linkedPackageBindings: new Map([[field, { module: artifact.namespace, field }]]),
+        ...standalone,
+      },
+    );
+    (result as { linkedModules?: unknown[] }).linkedModules = [artifact];
+    expect(result.success).toBe(true);
+    const { instance } = await instantiateLinkedProject(result, {});
+    const ex = instance.exports as unknown as Record<string, () => unknown>;
+    // Base answered `{ day: undefined, year: undefined }`: the member callee
+    // reached no construct path at all (null), and once it did, the boundary's
+    // ordinary tail returned `Object.create(proto)` — an instance with none of
+    // the constructor's own fields.
+    expect({ day: ex.day(), year: ex.year(), b: ex.b() }).toEqual({ day: 1, year: 2024, b: 2 });
+  });
+});
+
+describe("#5383 S2h — a runtime-key read reaches the class PROTOTYPE (standalone)", () => {
+  // The S2g reduction, verbatim. `_d` (an own field) and `o.sum(1)` (the
+  // `__call_m_sum_1` closed dispatcher) already worked; the accessor and the
+  // method VALUE did not, because `__extern_get`'s ladder serves a closed
+  // `$ClassName` struct's own fields and has no notion of its prototype.
+  const REDUCTION = `
+    class PlainDate {
+      constructor(d) { this._d = d; }
+      get day() { return this._d; }
+      sum(k) { return this._d + k; }
+    }
+    function readDyn(o, k) { return o[k]; }
+  `;
+
+  it("a prototype ACCESSOR read under a runtime key answers, with the INSTANCE as `this`", async () => {
+    const mod = await compileStandalone(`${REDUCTION}
+      export function test() {
+        const v = readDyn(new PlainDate(7), "day");
+        return typeof v === "number" ? v : -1;
+      }
+    `);
+    // Base: -1 (`undefined`). The receiver half matters independently — with the
+    // prototype built but the delegation done as a plain `__extern_get(proto,
+    // key)`, the getter ran with the PROTOTYPE as `this` and THREW.
+    expect(callExport(mod)).toBe(7);
+  });
+
+  it("a prototype METHOD read under a runtime key answers a callable bound by the call site", async () => {
+    const mod = await compileStandalone(`${REDUCTION}
+      export function test() {
+        const f = readDyn(new PlainDate(7), "sum");
+        if (typeof f !== "function") return -1;
+        return f.call(new PlainDate(3), 1) * 10 + 1;
+      }
+    `);
+    // Base: -1 — `typeof o["sum"]` was `"undefined"`. 4 = 3 + 1: the explicit
+    // receiver wins, so the value is the canonical UNBOUND method singleton.
+    expect(callExport(mod)).toBe(41);
+  });
+
+  it("an OWN field and a dynamic method CALL keep their answers", async () => {
+    const mod = await compileStandalone(`${REDUCTION}
+      export function test() {
+        const own = readDyn(new PlainDate(7), "_d");
+        const called = new PlainDate(7).sum(1);
+        const o = new PlainDate(7);
+        const k = "sum";
+        const computed = o[k](2);
+        return own * 100 + called * 10 + computed;
+      }
+    `);
+    // 7 / 8 / 9 — all three answered correctly BEFORE this slice, and the
+    // `__hasOwnProperty` guard on the new delegation is what keeps the own
+    // field from being shadowed by the prototype.
+    expect(callExport(mod)).toBe(789);
+  });
+});
+
+describe("#5383 S2h — prototype members of a PROVIDER-owned instance, host-free", () => {
+  const PROVIDER = `class PlainDate {
+      constructor(y, m, d) { this.y = y; this.m = m; this.d = d; }
+      get day() { return this.d; }
+      sum(k) { return this.y + k; }
+    }
+    export const NS = Object.freeze({ __proto__: null, PlainDate, b: 2 });`;
+
+  const CONSUMER = `
+    export function ownField() { const d = new NS.PlainDate(2024, 1, 1); return d.y; }
+    export function protoAccessor() { const d = new NS.PlainDate(2024, 1, 1); const v = d.day; return typeof v === "number" ? v : -1; }
+    export function protoMethodTypeof() { const d = new NS.PlainDate(2024, 1, 1); return typeof d.sum === "function" ? 1 : 0; }
+    export function protoMethodCall() { const d = new NS.PlainDate(2024, 1, 1); return d.sum(1); }
+    export function keys() { return Object.keys(NS).length; }
+  `;
+
+  it("the accessor, the method value and the method CALL all cross", { timeout: 300_000 }, async () => {
+    const root = mkdtempSync(join(tmpdir(), "issue-5383-s2h-"));
+    const packageRoot = join(root, "node_modules", "ns5383h");
+    mkdirSync(packageRoot, { recursive: true });
+    writeFileSync(
+      join(packageRoot, "package.json"),
+      JSON.stringify({ name: "ns5383h", version: "0.0.0", main: "index.js" }),
+    );
+    writeFileSync(join(packageRoot, "index.js"), PROVIDER);
+    const entry = join(root, "entry.js");
+    writeFileSync(entry, `import { NS } from "ns5383h";\nexport function __probe() { return typeof NS; }\n`);
+    const standalone = { target: "standalone" as const, hostBridge: "off" as const };
+    const built = await compileProject(entry, {
+      allowJs: true,
+      skipSemanticDiagnostics: true,
+      packageCacheDir: join(root, "providers"),
+      ...standalone,
+    });
+    expect(built.success).toBe(true);
+    const artifact = (built.linkedModules ?? []).find((e) => e.packageName === "ns5383h")!;
+    const field = artifact.exportBoundaries!.NS!.field;
+    const consumerEntry = "/__main.js";
+    const result = await compileMulti(
+      {
+        "/__ns_stub.ts": `export declare function ${field}(): any;\n`,
+        [consumerEntry]: `import { ${field} } from "/__ns_stub";\nconst NS = ${field}();\n${CONSUMER}`,
+      },
+      consumerEntry,
+      {
+        allowJs: true,
+        skipSemanticDiagnostics: true,
+        canonicalRuntimeTypes: true,
+        sharedExceptionTag: true,
+        link: [artifact.namespace],
+        linkedPackageBindings: new Map([[field, { module: artifact.namespace, field }]]),
+        ...standalone,
+      },
+    );
+    (result as { linkedModules?: unknown[] }).linkedModules = [artifact];
+    expect(result.success).toBe(true);
+    const { instance } = await instantiateLinkedProject(result, {});
+    const ex = instance.exports as unknown as Record<string, () => unknown>;
+    // Base (the S2g branch): accessor -1, typeof 0, and `d.sum(1)` threw
+    // "is not a function". The own field and the key count (2 — `PlainDate`
+    // and `b`; `__proto__: null` is not an own key) already crossed.
+    expect({
+      ownField: ex.ownField(),
+      protoAccessor: ex.protoAccessor(),
+      protoMethodTypeof: ex.protoMethodTypeof(),
+      protoMethodCall: ex.protoMethodCall(),
+      keys: ex.keys(),
+    }).toEqual({ ownField: 2024, protoAccessor: 1, protoMethodTypeof: 1, protoMethodCall: 2025, keys: 2 });
+  });
+
+  // STILL OPEN — the remaining S2h stop, measured on this branch
+  // (`.tmp/linkprobe.mts`): a STATIC method read off a class VALUE.
+  // `typeof NS.PlainDate.mk` is `"undefined"` and `NS.PlainDate.mk(7)` throws
+  // "is not a function", module-locally as well as across the boundary
+  // (`.tmp/r7.js` answers the same three ways on the S2g base and on this
+  // branch — this slice neither fixes nor regresses it). The class OBJECT is a
+  // `$ClassName` struct whose static surface lives in the #5195 Step 2 static
+  // SIDECAR, and that sidecar is built only for a class with a RUNTIME-KEYED
+  // static. Widening it is the rest of #5195 cluster B and carries a known
+  // static-FIELD-vs-sidecar precedence residual, so it is its own slice.
+  // This is what still blocks `Temporal.Duration.from({hours:1}).total(…)`,
+  // and it is why the three-assertion S2 smoke test is not yet writable.
+  it.todo("a STATIC method on a provider-owned class value is callable (#5195 cluster B)");
+});
+
+describe("#5383 S2i — a STATIC member on a class VALUE (standalone)", () => {
+  // The S2h reduction's static twin. `C.sf` / `C.mk(5)` / `C.acc` (the TYPED
+  // reads) already worked through the `staticProps` / static-dispatch ladders;
+  // every DYNAMIC read of the same surface answered `undefined`, because the
+  // class OBJECT is a `$ClassName` struct (#3976) whose static members live in
+  // the #5195 Step 2 sidecar `$Object` — built only for a class with a
+  // RUNTIME-KEYED static, which `C` is not.
+  const REDUCTION = `
+    class C {
+      static sf = 7;
+      static mk(a) { return a + 1; }
+      static get acc() { return 11; }
+      constructor(d) { this._d = d; }
+      get day() { return this._d; }
+    }
+    function readDyn(o, k) { return o[k]; }
+  `;
+
+  it("a static METHOD read under a runtime key answers a callable", async () => {
+    const mod = await compileStandalone(`${REDUCTION}
+      export function test() {
+        const f = readDyn(C, "mk");
+        if (typeof f !== "function") return -1;
+        return f(5);
+      }
+    `);
+    // Base: -1 — `typeof C["mk"]` was `"undefined"`.
+    expect(callExport(mod)).toBe(6);
+  });
+
+  it("a static ACCESSOR read under a runtime key answers", async () => {
+    const mod = await compileStandalone(`${REDUCTION}
+      export function test() {
+        const v = readDyn(C, "acc");
+        return typeof v === "number" ? v : -1;
+      }
+    `);
+    // Base: -1. The half is receiver-free, which is the #5318 Step 1c
+    // precondition for installing a static accessor on the sidecar at all.
+    expect(callExport(mod)).toBe(11);
+  });
+
+  it("a named static method call on a DYNAMIC class-value receiver lands", async () => {
+    const mod = await compileStandalone(`${REDUCTION}
+      const NS = { C: C, b: 2 };
+      export function test() {
+        const K = readDyn(NS, "C");
+        const v = K.mk(7);
+        return typeof v === "number" ? v : -1;
+      }
+    `);
+    // Base: THREW "is not a function" — `__extern_method_call`'s
+    // resolve-then-apply is `ref.test $Object`-gated and a class object is a
+    // `$ClassName` struct, so it fell to the non-`$Object` arm. This is the
+    // shape `Temporal.Duration.from({…})` has.
+    expect(callExport(mod)).toBe(8);
+  });
+
+  it("`C[k](…)` with a runtime key calls the static", async () => {
+    const mod = await compileStandalone(`${REDUCTION}
+      export function test() {
+        const k = ("m" + "k").length > 1 ? "mk" : "x";
+        const v = C[k](5);
+        return typeof v === "number" ? v : -1;
+      }
+    `);
+    // Base: `undefined` (NaN through the f64 result).
+    expect(callExport(mod)).toBe(6);
+  });
+
+  // THE PRECEDENCE ANSWER (#5383 S2i, the question S2h deferred).
+  //
+  // The sidecar carries static METHODS and ACCESSORS and deliberately not
+  // static FIELDS — a mirrored mutable slot would be two sources of truth. So
+  // the question was whether routing every class-value read through it shadows
+  // the `staticProps` lowering of a field. It does not, and there was never an
+  // overlap to shadow: `ctx.staticProps` is a purely SYNTACTIC lowering
+  // (`C.sf` -> `global.get`), with no runtime name->slot map, so the DYNAMIC
+  // read never consulted it and answered `undefined` before this slice and
+  // still answers `undefined` after. The typed read/write keep `staticProps` as
+  // the one source of truth, INCLUDING after a write.
+  it("a static FIELD keeps `staticProps`: typed read/write unchanged, dynamic read still `undefined`", async () => {
+    const mod = await compileStandalone(`${REDUCTION}
+      export function test() {
+        const before = readDyn(C, "sf");
+        const typedBefore = C.sf;
+        C.sf = 42;
+        const after = readDyn(C, "sf");
+        const typedAfter = C.sf;
+        // 7 / 42 from the staticProps global; both dynamic reads undefined.
+        return (before === undefined ? 1000 : 0)
+             + (after === undefined ? 2000 : 0)
+             + typedBefore * 100 + typedAfter;
+      }
+    `);
+    expect(callExport(mod)).toBe(3000 + 700 + 42);
+  });
+
+  it("the INSTANCE surface and the typed static ladders keep their answers", async () => {
+    const mod = await compileStandalone(`${REDUCTION}
+      export function test() {
+        const inst = readDyn(new C(3), "day");
+        const typedMethod = C.mk(5);
+        const typedAccessor = C.acc;
+        return inst * 10000 + typedMethod * 100 + typedAccessor;
+      }
+    `);
+    // 3 / 6 / 11 — the S2h prototype path and both typed static ladders,
+    // all three unchanged by the widening.
+    expect(callExport(mod)).toBe(30000 + 600 + 11);
+  });
+});
+
+describe("#5383 S2i — STATIC members of a PROVIDER-owned class value, host-free", () => {
+  const PROVIDER = `class PlainDate {
+      constructor(y, m, d) { this.y = y; this.m = m; this.d = d; }
+      static mk(k) { return k + 1; }
+      static get tag() { return 5; }
+      get day() { return this.d; }
+    }
+    export const NS = Object.freeze({ __proto__: null, PlainDate, b: 2 });`;
+
+  const CONSUMER = `
+    export function staticTypeof() { return typeof NS.PlainDate.mk === "function" ? 1 : 0; }
+    export function staticCall() { return NS.PlainDate.mk(7); }
+    export function staticAccessor() { const v = NS.PlainDate.tag; return typeof v === "number" ? v : -1; }
+    export function protoAccessor() { const d = new NS.PlainDate(2024, 1, 1); const v = d.day; return typeof v === "number" ? v : -1; }
+    export function keys() { return Object.keys(NS).length; }
+  `;
+
+  it("the static value, the static CALL and the static accessor all cross", { timeout: 300_000 }, async () => {
+    const root = mkdtempSync(join(tmpdir(), "issue-5383-s2i-"));
+    const packageRoot = join(root, "node_modules", "ns5383i");
+    mkdirSync(packageRoot, { recursive: true });
+    writeFileSync(
+      join(packageRoot, "package.json"),
+      JSON.stringify({ name: "ns5383i", version: "0.0.0", main: "index.js" }),
+    );
+    writeFileSync(join(packageRoot, "index.js"), PROVIDER);
+    const entry = join(root, "entry.js");
+    writeFileSync(entry, `import { NS } from "ns5383i";\nexport function __probe() { return typeof NS; }\n`);
+    const standalone = { target: "standalone" as const, hostBridge: "off" as const };
+    const built = await compileProject(entry, {
+      allowJs: true,
+      skipSemanticDiagnostics: true,
+      packageCacheDir: join(root, "providers"),
+      ...standalone,
+    });
+    expect(built.success).toBe(true);
+    const artifact = (built.linkedModules ?? []).find((e) => e.packageName === "ns5383i")!;
+    const field = artifact.exportBoundaries!.NS!.field;
+    const consumerEntry = "/__main.js";
+    const result = await compileMulti(
+      {
+        "/__ns_stub.ts": `export declare function ${field}(): any;\n`,
+        [consumerEntry]: `import { ${field} } from "/__ns_stub";\nconst NS = ${field}();\n${CONSUMER}`,
+      },
+      consumerEntry,
+      {
+        allowJs: true,
+        skipSemanticDiagnostics: true,
+        canonicalRuntimeTypes: true,
+        sharedExceptionTag: true,
+        link: [artifact.namespace],
+        linkedPackageBindings: new Map([[field, { module: artifact.namespace, field }]]),
+        ...standalone,
+      },
+    );
+    (result as { linkedModules?: unknown[] }).linkedModules = [artifact];
+    expect(result.success).toBe(true);
+    const { instance } = await instantiateLinkedProject(result, {});
+    const ex = instance.exports as unknown as Record<string, () => unknown>;
+    // Base (the S2h branch): staticTypeof 0, `NS.PlainDate.mk(7)` threw "is not
+    // a function", staticAccessor -1. The prototype accessor and the key count
+    // already crossed (S2h) and are carried here as controls.
+    expect({
+      staticTypeof: ex.staticTypeof(),
+      staticCall: ex.staticCall(),
+      staticAccessor: ex.staticAccessor(),
+      protoAccessor: ex.protoAccessor(),
+      keys: ex.keys(),
+    }).toEqual({ staticTypeof: 1, staticCall: 8, staticAccessor: 5, protoAccessor: 1, keys: 2 });
+  });
+
+  // (#5383 S2k) RESOLVED — S2j's "no reference value crosses from this
+  // provider" was a rec-group canonicalization failure, and the mechanism is
+  // one bit. The permanent guards for it are the two `describe` blocks below.
+});
+
+describe("#5383 S2k — the shared VALUE ABI survives a provider that uses `arguments`", () => {
+  // WasmGC canonicalizes a recursive type group AS A WHOLE. The ten types in
+  // `RUNTIME_RECGROUP_TYPE_NAMES` (the vec family + the string family) are the
+  // frozen ABI of a wasm→wasm link, so if ONE member's `final` bit differs
+  // between provider and consumer, all ten become different runtime types in
+  // the engine and EVERY `ref.test` on a peer-minted value fails: a
+  // provider-minted string is not a string, an array is not an array, an
+  // object enumerates nothing.
+  //
+  // That is exactly what a provider using `arguments` did. It registers
+  // `$__arguments_vec_externref` as a subtype of the group member
+  // `$__vec_externref`, so `markLeafStructsFinal` left that member `sub`
+  // (non-final) — while a consumer with no `arguments` emitted it `sub final`.
+  // Measured on the type sections (`.tmp/s2k-types.mjs`): group [0..9] hashed
+  // `2d74afdb81b1` in the consumer and `bc74a429728b` in the polyfill
+  // provider, differing in that single member and nothing else.
+  //
+  // `arguments` is only the trigger that happened to be reachable — any
+  // module-local subtype of any group member would do it. The fix pins every
+  // member open whenever the canonical group is emitted, so the group's
+  // identity is a constant of the ABI rather than a function of module
+  // content. This reduction uses `arguments` because it is the cheap,
+  // real-world trigger; the polyfill is not needed to reproduce it.
+  const PROVIDER = `
+    function argCount() { return arguments.length; }
+    export const probe = argCount(1, 2, 3);
+    export const str = "hello";
+    export const arr = [1, 2, 3];
+    export const obj = { a: 1, b: 2 };
+  `;
+
+  const CONSUMER = `
+    export function probe() { return NS.probe; }
+    export function strType() { return typeof NS.str === "string" ? 1 : 0; }
+    export function strLen() { const v = NS.str.length; return typeof v === "number" ? v : -1; }
+    export function strEq() { return NS.str === "hello" ? 1 : 0; }
+    export function arrIs() { return Array.isArray(NS.arr) ? 1 : 0; }
+    export function arrLen() { const v = NS.arr.length; return typeof v === "number" ? v : -1; }
+    export function arr0() { const v = NS.arr[0]; return typeof v === "number" ? v : -1; }
+    export function objKeys() { return Object.keys(NS.obj).length; }
+    export function objA() { const v = NS.obj.a; return typeof v === "number" ? v : -1; }
+  `;
+
+  it(
+    "a string, an array and an object all cross from a provider that uses `arguments`",
+    { timeout: 300_000 },
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "issue-5383-s2k-"));
+      const packageRoot = join(root, "node_modules", "ns5383k");
+      mkdirSync(packageRoot, { recursive: true });
+      writeFileSync(
+        join(packageRoot, "package.json"),
+        JSON.stringify({ name: "ns5383k", version: "0.0.0", main: "index.js" }),
+      );
+      writeFileSync(join(packageRoot, "index.js"), PROVIDER);
+      const entry = join(root, "entry.js");
+      writeFileSync(
+        entry,
+        `import { probe, str, arr, obj } from "ns5383k";\nconst NS = { probe, str, arr, obj };\n${CONSUMER}\n`,
+      );
+      const built = await compileProject(entry, {
+        allowJs: true,
+        skipSemanticDiagnostics: true,
+        packageCacheDir: join(root, "providers"),
+        target: "standalone",
+        hostBridge: "off",
+      });
+      expect(built.success).toBe(true);
+      expect(built.linkPlan?.mode, "the provider must be a SEPARATE module for this to test anything").toBe("separate");
+      const { instance } = await instantiateLinkedProject(built, {});
+      const ex = instance.exports as unknown as Record<string, () => unknown>;
+      // Base (before this fix): every reference row answered 0 / -1 while
+      // `probe` (an unboxed f64) answered 3 — the S2j signature exactly.
+      expect({
+        probe: ex.probe(),
+        strType: ex.strType(),
+        strLen: ex.strLen(),
+        strEq: ex.strEq(),
+        arrIs: ex.arrIs(),
+        arrLen: ex.arrLen(),
+        arr0: ex.arr0(),
+        objKeys: ex.objKeys(),
+        objA: ex.objA(),
+      }).toEqual({
+        probe: 3,
+        strType: 1,
+        strLen: 5,
+        strEq: 1,
+        arrIs: 1,
+        arrLen: 3,
+        arr0: 1,
+        objKeys: 2,
+        objA: 1,
+      });
+    },
+  );
+
+  it("the canonical rec group is byte-identical whether or not the module uses `arguments`", async () => {
+    // The direct statement of the invariant, independent of any link: two
+    // standalone modules that differ ONLY in whether they use `arguments`
+    // must emit the same canonical group. `canonicalRuntimeTypes: true` is
+    // what a linked artifact carries.
+    const opts = {
+      fileName: "issue-5383-s2k.js",
+      target: "standalone" as const,
+      hostBridge: "off" as const,
+      allowJs: true,
+      skipSemanticDiagnostics: true,
+      canonicalRuntimeTypes: true,
+    };
+    const withArgs = await compile(
+      `function f() { return arguments.length; }\nexport function test() { return f(1, 2) + "x".length; }`,
+      opts as never,
+    );
+    const without = await compile(`export function test() { return "x".length; }`, opts as never);
+    expect(withArgs.success && without.success).toBe(true);
+    const a = canonicalGroupFingerprint(withArgs.binary);
+    const b = canonicalGroupFingerprint(without.binary);
+    // Base: `sub final` vs `sub` on the `$__vec_externref` member — the two
+    // fingerprints differed and the link silently lost every reference value.
+    expect(a).toEqual(b);
+    expect(a).not.toBe("");
+  });
+});
+
+describe("#5383 S2 smoke — the real standalone Temporal provider", () => {
+  // The S2 acceptance test, through `buildTemporalProvider` +
+  // `compileWithTemporalGlobal` (the shipped path), host-free. Two of the
+  // three assertions pass as of S2k; the third has a named stop with its own
+  // reduction, below.
+  it(
+    "Object.keys(Temporal).length === 9 and new Temporal.PlainDate(2024,1,1).day === 1",
+    {
+      timeout: 1_800_000,
+    },
+    async () => {
+      // Child process: the 3.3 MB provider compile OOMs a vitest worker when run
+      // in-process (measured 2026-09-12, V8 OOM before the first assertion) and
+      // would stall its RPC heartbeat besides — the same reason every other
+      // dogfood adapter is a child process.
+      const report = JSON.parse(
+        await runDogfoodScript(join(S2K_HERE, "dogfood", "temporal-s2-smoke-harness.mjs"), ["--json"]),
+      );
+      expect(report.provider.binaryBytes).toBeGreaterThan(1_000_000);
+      const value = (label: string): unknown => {
+        const probe = report.probes[label];
+        return probe.status === "ok" ? probe.value : `${probe.status}: ${probe.error}`;
+      };
+      // Base (S2j, and every point its bisect covered — this was never 9 across
+      // a real provider): keys 0, hasPlainDate 0, day -1, durationHours -1.
+      expect({
+        keys: value("keys"),
+        hasPlainDate: value("hasPlainDate"),
+        day: value("day"),
+        durationHours: value("durationHours"),
+      }).toEqual({ keys: 9, hasPlainDate: 1, day: 1, durationHours: 1 });
+    },
+  );
+
+  // STILL OPEN — the third assertion,
+  // `Temporal.Duration.from({hours:1}).total("minutes") === 60`.
+  //
+  // S2k's stop is CLOSED (see the S2l block below): the unit table now builds
+  // correctly. Re-measured through the same in-provider probe S2k used, with
+  // only the two S2l source files reverted, the error message CHANGED — which
+  // is what makes this a new stop and not the old one:
+  //
+  //   base  (175 chars, ten `null`s)  "unit must be one of year, month, week,
+  //                                    day, hour, minute, second, millisecond,
+  //                                    microsecond, nanosecond, null ×10,
+  //                                    not minutes"
+  //   S2l   (58 chars, no `null`s)    "Convert JSBI instances to native numbers
+  //                                    using `toNumber`."
+  //
+  // The new one is JSBI's own `valueOf` guard: something on the `total` path
+  // applies an implicit ToNumber/ToPrimitive to a JSBI BigInt instance instead
+  // of calling `toNumber()`. It reproduces INSIDE one standalone module with no
+  // link (`.tmp/s2l-solo-total.mts`: the Intl shim + the linked polyfill + a
+  // probe export, compiled with plain `compile({target:"standalone",
+  // hostBridge:"off"})`), so the boundary is again not involved. It is present
+  // on the base tree too — `total("minute")`, a SINGULAR unit that was always
+  // in the table, answers the same failure on both trees, so this defect never
+  // depended on the `fromEntries` one.
+  //
+  // Two smaller facts worth not re-deriving, both measured on BOTH trees so
+  // neither is a regression from S2l:
+  //  - a provider-side throw does NOT cross the link as a catchable JS error.
+  //    The consumer's own `try { d.total(…) } catch (e) { … }` never runs; the
+  //    raw `WebAssembly.Exception` escapes to the embedder.
+  //  - the harness's `durationHasTotal` probe reads 0 while the identical
+  //    question through a bound local (`const d = …; typeof d.total`) reads 1
+  //    (`.tmp/s2l-method-red.mts`). That is the #2984 path-dependent `typeof`
+  //    on a CHAINED member access, not a missing method — `d.toString()` works
+  //    across the same boundary, and a tiny hand-written provider answers the
+  //    whole chain including `d.total("minutes") === 60`.
+  it.todo(
+    "Temporal.Duration.from({hours:1}).total('minutes') === 60 (blocked: an implicit ToNumber on a JSBI BigInt instance throws JSBI's `Convert JSBI instances to native numbers using toNumber.` guard inside the provider — #5383 S2l)",
+  );
+});
+
+describe("#5383 S2l — `Object.fromEntries` over a computed pair list, standalone", () => {
+  // Two independent defects, one call site. Both are standalone-only and both
+  // were decided by module CONTENT rather than by the source construct.
+  //
+  //  (A) SILENTLY WRONG VALUES. `Object.fromEntries`'s lib signature is
+  //      `Iterable<readonly [PropertyKey, T]>`, so a callback returning
+  //      `[t, e]` is CONTEXTUALLY a tuple and lowers to a nominal
+  //      `$__tuple_N` struct with fields `_0`/`_1` — not to the indexable pair
+  //      vec the same expression produces when bound to an `any` local first.
+  //      The self-hosted `__object_fromEntries` reads each pair with
+  //      `__extern_get_idx(pair, 0/1)`, which had arms for `$ObjVec`, typed
+  //      vecs and closed array-like structs but NONE for a tuple, and answered
+  //      `undefined` for both slots. Ten entries then all wrote
+  //      `out[undefined] = undefined`, so the table came out as the single key
+  //      `"undefined"`. Fixed by admitting tuple carriers as array-like
+  //      candidates in `fillExternArrayLikeStructArms` (length = field count,
+  //      `_i` = index i).
+  //
+  //  (B) ACCIDENTAL REFUSAL. Every non-array-literal argument fell through to
+  //      `ensureLateImport`, whose funcMap lookup precedes the #1472 Phase B
+  //      refusal — and `__object_fromEntries` is in funcMap only when
+  //      something ELSE in the module already pulled in `ensureObjectRuntime`.
+  //      So `Object.fromEntries(nt.map(([e,t]) => [t,e]))` compiled (its
+  //      array-literal callback body ensures the runtime) while
+  //      `Object.fromEntries(nt)`, `nt.slice(0)` and `nt.map((e) => e)` were
+  //      refused. The call site now ensures the runtime itself and calls the
+  //      native directly when the argument is statically an array or tuple.
+  //
+  // A non-indexable iterable (a `Map`) deliberately KEEPS the refusal: the
+  // native would walk it with `__extern_length` → 0 and hand back `{}`, which
+  // is the silent-wrong failure this block exists to remove. #2190 owns that.
+  const runStandaloneFromEntries = async (src: string): Promise<unknown> => {
+    const r = await compile(src, { target: "standalone" });
+    expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    return (instance.exports as { test: () => unknown }).test();
+  };
+
+  const NT = `const nt: any[] = [["year","years"],["month","months"],["day","days"]];\n`;
+  // keys*100 + (swapped lookup ok)*10 + (first value not undefined)*1
+  const TAIL = `const ks = Object.keys(o);
+      return ks.length * 100 + (o["years"] === "year" ? 10 : 0) + (o[ks[0]] === undefined ? 0 : 1);`;
+
+  it("(A) a destructured-arrow pair list keeps its VALUES (base: 1 key, both slots undefined)", async () => {
+    expect(
+      await runStandaloneFromEntries(`${NT}export function test(): number {
+        const o: any = Object.fromEntries(nt.map(([e, t]: any) => [t, e]));
+        ${TAIL}
+      }`),
+    ).toBe(311);
+  });
+
+  it("(A) the same shape with a TYPED source array", async () => {
+    expect(
+      await runStandaloneFromEntries(`const nt: string[][] = [["year","years"],["month","months"],["day","days"]];
+        export function test(): number {
+          const o: any = Object.fromEntries(nt.map(([e, t]: string[]) => [t, e]));
+          ${TAIL}
+        }`),
+    ).toBe(311);
+  });
+
+  it("(B) a bare array identifier compiles (base: #1472 Phase B refusal)", async () => {
+    expect(
+      await runStandaloneFromEntries(`${NT}export function test(): number {
+        const o: any = Object.fromEntries(nt);
+        return Object.keys(o).length * 100 + (o["year"] === "years" ? 10 : 0);
+      }`),
+    ).toBe(310);
+  });
+
+  it("(B) an array-returning method call compiles (base: refusal)", async () => {
+    for (const expr of ["nt.slice(0)", "nt.concat([])", "nt.map((e: any) => e)"]) {
+      expect(
+        await runStandaloneFromEntries(`${NT}export function test(): number {
+          const o: any = Object.fromEntries(${expr});
+          return Object.keys(o).length * 100 + (o["year"] === "years" ? 10 : 0);
+        }`),
+        expr,
+      ).toBe(310);
+    }
+  });
+
+  it("the array-LITERAL fast path is unchanged", async () => {
+    expect(
+      await runStandaloneFromEntries(`export function test(): number {
+        const o: any = Object.fromEntries([["a","b"],["c","d"]]);
+        return (o.a === "b" && o.c === "d") ? 1 : -1;
+      }`),
+    ).toBe(1);
+  });
+
+  it("a non-indexable iterable still REFUSES rather than answering {}", async () => {
+    const r = await compile(
+      `export function test(): number {
+         const m = new Map<string, string>();
+         m.set("year", "years");
+         const o: any = Object.fromEntries(m);
+         return (o.year === "years") ? 1 : -1;
+       }`,
+      { target: "standalone" },
+    );
+    expect(r.success).toBe(false);
+    expect(r.errors.map((e) => e.message).join("\n")).toContain("__object_fromEntries");
+  });
+
+  it("a tuple is array-like to the dyn-reader trio (the (A) mechanism, directly)", async () => {
+    // `[string, number]` lowers to `$__tuple_N`; read it through a dynamic
+    // `any` receiver so the read goes via `__extern_length`/`__extern_get_idx`
+    // rather than a static `struct.get`. Base: length 0 and both reads
+    // `undefined`, so the whole expression answered 0.
+    expect(
+      await runStandaloneFromEntries(`export function test(): number {
+        const o: any = Object.fromEntries([["k", "v"]]);
+        const p: [string, number] = ["a", 1];
+        const dyn: any = p;
+        return (o.k === "v" ? 100 : 0) + (dyn.length === 2 ? 10 : 0) + (dyn[0] === "a" ? 1 : 0);
+      }`),
+    ).toBe(111);
+  });
+});
+
+// ── S3 — the runner + CI wiring ───────────────────────────────────
+//
+// These are ROUTING tests, not conformance tests: they assert WHICH provider a
+// lane asks for and what happens when it is not there. The conformance answer
+// is measured in the issue file's S3 table (family-123, base vs branch), not
+// asserted here — a 3.3 MB provider build per assertion is not a unit test.
+//
+// The property that matters most is FAIL SOFT, and it is deliberately tested
+// from the negative side: a missing or corrupt standalone artifact must leave
+// the lane disabled, so the rows keep the ambient `Temporal is not defined`
+// verdict rather than timing out, compile-erroring, or taking the shard down.
+describe("#5383 S3 the per-target Temporal lane gate", () => {
+  const temporal = () => import("../scripts/test262-temporal.mjs");
+
+  const withCacheDir = async (fn: (dir: string) => void | Promise<void>) => {
+    const dir = mkdtempSync(join(tmpdir(), "js2wasm-temporal-s3-"));
+    try {
+      await fn(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  it("stamps host and standalone under different names, and keeps host's historical name", async () => {
+    // One cache dir holds both providers; a shared file name could only ever
+    // certify one of them, and the other lane would read a key that does not
+    // match the artifact it is about to ask for.
+    const { temporalPrewarmStampName, TEMPORAL_PREWARM_STAMP } = await temporal();
+    expect(temporalPrewarmStampName(undefined)).toBe(TEMPORAL_PREWARM_STAMP);
+    expect(temporalPrewarmStampName(undefined)).toBe("prewarm.json");
+    expect(temporalPrewarmStampName("standalone")).toBe("prewarm-standalone.json");
+  });
+
+  it("asks for the host-free provider on standalone and the default one on host", async () => {
+    const { temporalProviderCompileOptions } = await temporal();
+    expect(temporalProviderCompileOptions(undefined)).toBeUndefined();
+    expect(temporalProviderCompileOptions("standalone")).toEqual({ target: "standalone", hostBridge: "off" });
+  });
+
+  it("gives the two targets DIFFERENT cache keys", async () => {
+    // If they collided, one lane's pre-warm would certify the other's artifact.
+    const { temporalProviderCompileOptions } = await temporal();
+    const polyfillSource = "export const Temporal = 1;\n";
+    const host = temporalProviderCacheKey({ polyfillSource });
+    const standalone = temporalProviderCacheKey({
+      polyfillSource,
+      compileOptions: temporalProviderCompileOptions("standalone"),
+    });
+    expect(standalone).not.toBe(host);
+  });
+
+  it("FAILS SOFT: no stamp, or a corrupt one, leaves the standalone lane unlinked", async () => {
+    const { test262TemporalLaneEnabled, temporalPrewarmStampName } = await temporal();
+    await withCacheDir((dir) => {
+      // The shipped state today: nobody pre-warmed a standalone provider.
+      expect(test262TemporalLaneEnabled("standalone", dir)).toBe(false);
+      // A truncated / half-written artifact is the same answer as none. It must
+      // never throw — a throw here would take the whole shard down.
+      writeFileSync(join(dir, temporalPrewarmStampName("standalone")), "{ not json");
+      expect(test262TemporalLaneEnabled("standalone", dir)).toBe(false);
+      // A stamp without a `key` cannot certify anything either.
+      writeFileSync(join(dir, temporalPrewarmStampName("standalone")), JSON.stringify({ bytes: 1 }));
+      expect(test262TemporalLaneEnabled("standalone", dir)).toBe(false);
+    });
+  });
+
+  it("opens the standalone lane once a standalone-keyed stamp is present", async () => {
+    const { test262TemporalLaneEnabled, writeTemporalPrewarmStamp } = await temporal();
+    await withCacheDir((dir) => {
+      writeTemporalPrewarmStamp(
+        dir,
+        { key: "sa-key", namespace: "js2wasm:npm:@js-temporal/polyfill:sa", bytes: 3, buildMs: 1, cacheHit: false },
+        "standalone",
+      );
+      expect(test262TemporalLaneEnabled("standalone", dir)).toBe(true);
+      // The host lane never needs a stamp (it may build cold), and writing one
+      // target's stamp must not land in the other's slot.
+      expect(test262TemporalLaneEnabled(undefined, dir)).toBe(true);
+      writeTemporalPrewarmStamp(
+        dir,
+        { key: "host-key", namespace: "js2wasm:npm:@js-temporal/polyfill:h", bytes: 3, buildMs: 1, cacheHit: false },
+        undefined,
+      );
+      expect(readFileSync(join(dir, "prewarm.json"), "utf-8")).toContain("host-key");
+      expect(readFileSync(join(dir, "prewarm-standalone.json"), "utf-8")).toContain("sa-key");
+    });
+  });
+
+  it("never links on a lane with no provider at all (linear/wasi), stamp or not", async () => {
+    const { test262TemporalLaneEnabled, writeTemporalPrewarmStamp } = await temporal();
+    await withCacheDir((dir) => {
+      for (const target of ["linear", "wasi"]) {
+        writeTemporalPrewarmStamp(dir, { key: "x", namespace: "n", bytes: 1, buildMs: 1, cacheHit: false }, target);
+        expect(test262TemporalLaneEnabled(target, dir)).toBe(false);
+      }
+    });
+  });
+
+  it("honours the JS2WASM_TEST262_TEMPORAL=0 opt-out on every lane", async () => {
+    const { test262TemporalLaneEnabled, writeTemporalPrewarmStamp } = await temporal();
+    await withCacheDir((dir) => {
+      writeTemporalPrewarmStamp(dir, { key: "k", namespace: "n", bytes: 1, buildMs: 1, cacheHit: false }, "standalone");
+      const previous = process.env.JS2WASM_TEST262_TEMPORAL;
+      process.env.JS2WASM_TEST262_TEMPORAL = "0";
+      try {
+        expect(test262TemporalLaneEnabled(undefined, dir)).toBe(false);
+        expect(test262TemporalLaneEnabled("standalone", dir)).toBe(false);
+      } finally {
+        if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST262_TEMPORAL");
+        else process.env.JS2WASM_TEST262_TEMPORAL = previous;
+      }
+    });
+  });
+});
+
+describe("#5383 S3 the pre-warm step and the CI job", () => {
+  const readRepoFile = (...parts: string[]) => readFileSync(join(S2K_HERE, "..", ...parts), "utf-8");
+
+  it("the pre-warm script builds per target and stamps each one", () => {
+    const script = readRepoFile("scripts", "prewarm-temporal-provider.mjs");
+    expect(script).toContain("--target");
+    expect(script).toContain("temporalProviderCompileOptions(target)");
+    // The key MUST be computed with the same options the build uses, or the
+    // stamp certifies an artifact nobody will ask for.
+    expect(script).toContain("temporalProviderCacheKey({ polyfillSource, compileOptions })");
+    expect(script).toContain("buildTemporalProvider({ polyfillSource, cacheDir, compileOptions })");
+  });
+
+  it("the standalone provider is OPT-IN, in CI and locally", () => {
+    // Measured 2026-09-12: linking multiplies an ASSEMBLED standalone row's
+    // compile time ~2.5-3.5x (17.4 s → 61.1 s on a 60 KB-harness intl402 row;
+    // 4.2 s → 10.9 s on a 10.6 KB one). The fork kill is 30 s, so a default-on
+    // artifact would convert large rows from an honest fail into a per-row
+    // TIMEOUT. The wiring is complete either way — the flag only decides
+    // whether the artifact EXISTS, and the stamp gate does the rest.
+    const workflow = readRepoFile(".github", "workflows", "test262-sharded.yml");
+    expect(workflow).toContain("standalone_temporal:");
+    expect(workflow).toContain("needs.changes.outputs.run_standalone != 'false' && inputs.standalone_temporal");
+    const script = readRepoFile("scripts", "run-test262-vitest.sh");
+    expect(script).toContain("JS2WASM_TEST262_TEMPORAL_STANDALONE");
+  });
+
+  it("the workflow builds the standalone provider SOFT and the host one HARD", () => {
+    const workflow = readRepoFile(".github", "workflows", "test262-sharded.yml");
+    expect(workflow).toContain("node scripts/prewarm-temporal-provider.mjs --target host");
+    expect(workflow).toContain("node scripts/prewarm-temporal-provider.mjs --target standalone");
+    // The standalone step must be `continue-on-error`: no standalone baseline
+    // was ever measured with a provider, so a failed build is a no-op for the
+    // numbers and must not block the merge queue. The host step must NOT be —
+    // the published baseline IS measured with the host provider.
+    const standaloneStep = workflow.slice(workflow.indexOf("Build and stamp the provider (standalone)"));
+    expect(standaloneStep.slice(0, 400)).toContain("continue-on-error: true");
+    const hostStep = workflow.slice(
+      workflow.indexOf("Build and stamp the provider (host)"),
+      workflow.indexOf("Build and stamp the provider (standalone)"),
+    );
+    expect(hostStep).not.toContain("continue-on-error");
+    // …and the host guarantee is still asserted somewhere, now explicitly.
+    expect(workflow).toContain("test -f .test262-cache/temporal/prewarm.json");
+  });
+
+  it("every shard cell downloads the provider directory, standalone included", () => {
+    const workflow = readRepoFile(".github", "workflows", "test262-sharded.yml");
+    // A lane that cannot SEE the artifact can never link it. Both shard jobs
+    // used to skip the download on standalone cells.
+    expect(workflow).not.toMatch(/Download compiled Temporal provider \(#5353\)\n\s+if:/);
+    expect(workflow.match(/Download compiled Temporal provider \(#5353\)/g)?.length).toBe(2);
+    // And the directory is always uploadable, even when the soft build failed —
+    // `download-artifact` fails hard on a missing artifact, which would turn
+    // this slice's fail-soft into a red standalone lane.
+    expect(workflow).toContain("Ensure the provider directory is uploadable");
+  });
+
+  it("the local test262 entry point pre-warms the lane it is about to run", () => {
+    const script = readRepoFile("scripts", "run-test262-vitest.sh");
+    expect(script).toContain("--target standalone");
+    expect(script).toContain("--target host");
+  });
+
+  it("a run with no standalone artifact is byte-identical to the pre-S3 behaviour", () => {
+    // The whole fail-soft argument in one assertion: with the artifact off (the
+    // default), the standalone lane's answer comes from the stamp gate, not
+    // from any lane-local condition that could drift.
+    const worker = readRepoFile("scripts", "test262-worker.mjs");
+    expect(worker).toContain("test262TemporalLaneEnabled");
+    const shared = readRepoFile("tests", "test262-shared.ts");
+    expect(shared).toContain("test262TemporalLaneEnabled(TEST262_TARGET)");
+    const runner = readRepoFile("tests", "test262-runner.ts");
+    expect(runner).toContain("test262TemporalLaneEnabled(target)");
   });
 });

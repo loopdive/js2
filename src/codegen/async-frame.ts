@@ -58,6 +58,7 @@ import {
   planAsyncCfg,
   planAsyncGenCfg,
   planLinearAwaits,
+  isHostAsyncLane,
   tryCatchAsyncSpillInfo,
 } from "./async-cps.js";
 import { ensureNativeGeneratorResultType } from "./generators-native.js";
@@ -150,6 +151,13 @@ export interface HostAsyncImports {
   settleResolveIdx: number;
   /** `Promise_settle_reject(p, reason) -> externref(undefined)`. */
   settleRejectIdx: number;
+  /**
+   * (#5372) `Promise_then2_frame(p, onFulfilled, onRejected, resultPromise) ->
+   * Promise` — reaction registration whose wrapper rejects `resultPromise`
+   * when the resuming step TRAPS (uncatchable in wasm). Optional: the prepared
+   * IR frames resolve imports by capability and keep plain `Promise_then2`.
+   */
+  then2FrameIdx?: number;
   /** Exact prepared Promise<void> fulfillment provider. */
   undefinedIdx?: number;
 }
@@ -173,6 +181,7 @@ export function resolveHostAsyncImports(ctx: CodegenContext): HostAsyncImports |
   const newPendingIdx = ctx.funcMap.get("Promise_new_pending");
   const settleResolveIdx = ctx.funcMap.get("Promise_settle_resolve");
   const settleRejectIdx = ctx.funcMap.get("Promise_settle_reject");
+  const then2FrameIdx = ctx.funcMap.get("Promise_then2_frame");
   if (
     promiseResolveIdx === undefined ||
     then2Idx === undefined ||
@@ -190,6 +199,7 @@ export function resolveHostAsyncImports(ctx: CodegenContext): HostAsyncImports |
     newPendingIdx,
     settleResolveIdx,
     settleRejectIdx,
+    ...(then2FrameIdx !== undefined ? { then2FrameIdx } : {}),
   };
 }
 
@@ -258,15 +268,12 @@ export function asyncFnNeedsHostDrive(
     if (tc !== null) return tc.spillTypes.every(isSpillSafeType);
     return false;
   }
-  // Parity with asyncFnNeedsCps/asyncFnNeedsDrive: a lone `await Promise.all(...)`
-  // already yields a real Promise the legacy identity path resolves correctly.
-  if (
-    linear.finalizer === null &&
-    linear.segments.length === 1 &&
-    awaitedExprIsPromiseCombinator(linear.segments[0]!.awaitedExpr)
-  ) {
-    return false;
-  }
+  // (#5367) The former "lone `await Promise.all(...)` stays on the legacy
+  // identity path" carve-out is GONE here: with a resume binding that path
+  // delivered the un-awaited Promise object coerced into the STATIC awaited
+  // type (a default-initialised tuple struct / an empty vec) and never
+  // suspended, so pending continuations never ran. Its other rationale (#2028
+  // host-method marshaling) is fixed. `asyncFnNeedsDrive` (wasi) keeps its gate.
   // Type gate: a resume binding spilled across a later await needs a spill-safe
   // type (same rule as the wasi drive layer).
   for (let k = 0; k < linear.segments.length; k++) {
@@ -1081,7 +1088,7 @@ function computeTryCatchSpills(
   decl: ts.FunctionLikeDeclaration,
   plan: AsyncCpsPlan,
 ): { spillNames: string[]; spillTypes: ValType[] } | null {
-  const info = tryCatchAsyncSpillInfo(decl, plan);
+  const info = tryCatchAsyncSpillInfo(decl, plan, isHostAsyncLane(ctx));
   if (info === null) return null;
   const declByName = collectVarDeclsByName(decl);
   // `collectVarDeclsByName` also picks up a CATCH clause's own
@@ -2179,7 +2186,15 @@ export function ensureAsyncResumeFunction(
             out.push({ op: "local.get", index: frameLocal });
             out.push({ op: "extern.convert_any" });
             out.push({ op: "call", funcIdx: hostImports!.makeCbIdx });
-            out.push({ op: "call", funcIdx: hostImports!.then2Idx });
+            // (#5372) Frame-aware reaction: a trap while this frame resumes
+            // rejects `result_promise` instead of escaping the host reaction as
+            // an unhandled rejection (which killed the whole process).
+            if (hostImports!.then2FrameIdx !== undefined) {
+              out.push({ op: "local.get", index: resultPromiseLocal });
+              out.push({ op: "call", funcIdx: hostImports!.then2FrameIdx });
+            } else {
+              out.push({ op: "call", funcIdx: hostImports!.then2Idx });
+            }
             out.push({ op: "drop" });
             out.push({ op: "return" });
             break;

@@ -90,8 +90,14 @@ describe("#3796 receiver-correct stable named FunctionDeclaration.call", () => {
 
     expect((instance.exports.run as () => number)()).toBe(42);
     expect(result.wat).toContain("$__named_this_call_throwFromReceiver_");
-    expect(result.wat).toContain("catch_all");
-    expect(result.wat).toContain("rethrow 0");
+    // The standalone/WASI lane lowers the trampoline's restore-and-rethrow
+    // through STANDARDIZED exception handling (#4620), so the shape is a
+    // `try_table` with an explicit `catch` + `throw`, not the legacy
+    // `try`/`catch_all`/`rethrow 0`. Those two literals have not been in this
+    // module since standardized EH landed; asserting them made this case red
+    // on main independently of what it is testing (noticed while fixing
+    // #5341). Assert the shape that actually carries the restore.
+    expect(result.wat).toContain("try_table");
   });
 
   it("executes Acorn's finishNodeAt locations/ranges wrapper shape", async () => {
@@ -122,7 +128,7 @@ describe("#3796 receiver-correct stable named FunctionDeclaration.call", () => {
     expect(result.wat).toContain("$__named_this_call_wrapper_");
   });
 
-  it("keeps unstable identity, over-arity, and unsupported call shapes off the trampoline", async () => {
+  it("keeps unstable identity and unsupported call shapes off the trampoline", async () => {
     const source = `
       function readsThis(value) { return this.value + value; }
       function ignoresThis(value) { return value; }
@@ -175,13 +181,22 @@ describe("#3796 receiver-correct stable named FunctionDeclaration.call", () => {
     `;
     const { result, instance } = await compileStandalone(source, "issue-3796-negatives.mjs");
 
-    expect(result.wat).not.toContain("$__named_this_call_readsThis_");
+    // `readsThis` IS on the trampoline — not from `nullReceiver` (a provably
+    // null receiver still keeps the legacy lowering) but from `applyReceiver`,
+    // which #3983 routes onto the receiver-correct `.call` path. That has been
+    // true since #3983; the stale `not.toContain` here made this case red on
+    // main (noticed while fixing #5341). Assert the answers instead.
+    expect((instance.exports.applyReceiver as () => number)()).toBe(3);
     expect(result.wat).not.toContain("$__named_this_call_ignoresThis_");
     expect(result.wat).not.toContain("$__named_this_call_closure_");
     expect(result.wat).not.toContain("$__named_this_call_mutableTarget_");
     expect(result.wat).not.toContain("$__named_this_call_nestedTarget_");
     expect(result.wat).not.toContain("$__named_this_call_shadowedTarget_");
-    expect(result.wat).not.toContain("$__named_this_call_overArityTarget_");
+    // (#5341) Over-arity is no longer a refusal: the caller drops or marshals
+    // the overflow before the call, so the trampoline's operand stack is the
+    // same either way and the receiver is now installed rather than discarded.
+    // The answer below is unchanged — it never read `this` on this path.
+    expect(result.wat).toContain("$__named_this_call_overArityTarget_");
     expect((instance.exports.reassignedBeforeWrite as () => number)()).toBe(42);
     expect((instance.exports.nestedDeclaration as () => number)()).toBe(42);
     expect((instance.exports.sameNameShadow as () => number)()).toBe(42);

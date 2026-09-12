@@ -65,6 +65,11 @@ on:
     - cron: "23 2 * * *"
   workflow_dispatch:
     inputs:
+      standalone_temporal:
+        description: "(#5383 S3) Build the STANDALONE Temporal provider and let standalone shards link it. OFF by default: linking multiplies a standalone row's compile time ~2.5-3.5x (measured 2026-09-12), which pushes large-harness rows past the 30 s fork kill. The wiring is always present; this only decides whether the artifact exists."
+        required: false
+        default: false
+        type: boolean
       native_first:
         description: "Also measure native-first semantics in the JS environment (separate artifacts, never promotes host baselines)"
         type: boolean
@@ -112,6 +117,10 @@ on:
         required: false
         default: false
         type: boolean
+      baseline_commit:
+        description: "Measurement-only: immutable baselines commit, or artifact:<id> with a reviewed plan/baseline-evidence/<id>.json receipt; required when skip_promote=true"
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -166,6 +175,50 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  admit-measurement-baseline:
+    # Always succeeds as a no-op outside this explicit measurement path, so
+    # adding the dependency does not change legacy PR/merge-group selection.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v5
+        if: github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        with:
+          fetch-depth: 0
+      - name: Acquire and admit one immutable baseline pair
+        if: github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE_COMMIT: ${{ inputs.baseline_commit }}
+          INCLUDE_PROPOSALS: ${{ inputs.include_proposals }}
+          EVAL_ENGINE: ${{ inputs.eval_engine }}
+          COMPILER_POOL_SIZE: ${{ inputs.compiler_pool_size }}
+          IR_FIRST: ${{ inputs.ir_first }}
+          LAYOUT_EMIT: ${{ inputs.layout_emit }}
+          NATIVE_FIRST: ${{ inputs.native_first }}
+        run: |
+          if [[ "$BASELINE_COMMIT" =~ ^artifact:([1-9][0-9]*)$ ]]; then
+            mkdir admitted-baseline
+            cp "plan/baseline-evidence/${BASH_REMATCH[1]}.json" admitted-baseline/test262-baseline-pair.json
+          else
+            [[ "$BASELINE_COMMIT" =~ ^[a-f0-9]{40}$ ]] || { echo '::error::Missing immutable baseline source'; exit 1; }
+            git clone --filter=blob:none --no-checkout https://github.com/loopdive/js2wasm-baselines.git admitted-baseline
+            git -C admitted-baseline sparse-checkout set --no-cone /test262-current.jsonl /test262-standalone-current.jsonl /test262-baseline-pair.json
+            git -C admitted-baseline checkout --detach "$BASELINE_COMMIT"
+          fi
+          node scripts/acquire-test262-baseline-pair.mjs admitted-baseline
+      - name: Preserve baseline admission evidence even on refusal
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        uses: actions/upload-artifact@v6
+        with:
+          name: admitted-measurement-baseline
+          path: |
+            admitted-baseline/*.json
+            admitted-baseline/*.jsonl
+          if-no-files-found: error
+
   gate:
     name: cheap gate (main-ancestor + lint)
     runs-on: ubuntu-latest
@@ -739,25 +792,26 @@ jobs:
     timeout-minutes: 20
     env:
       JS2WASM_TEMPORAL_CACHE: .test262-cache/temporal
+      # (#5383 S3) One flag for "does ANY lane in this run want a provider?".
+      # Every shared step is gated on it; the per-target BUILD steps below keep
+      # their own lane gate, so a host-only merge_group still never pays for the
+      # standalone artifact and vice versa. A run that wants neither does no
+      # work at all and still reports success, so `needs` stays satisfied.
+      ANY_LANE: ${{ (needs.changes.outputs.run_host != 'false' || needs.changes.outputs.run_standalone != 'false') && 'true' || 'false' }}
     steps:
-      # Every expensive step is gated on the HOST lane: the provider is
-      # `--target gc` with the JS host adapter (`src/temporal-provider.ts`),
-      # standalone shards never link it, and a standalone-only merge_group
-      # should not pay ~1 min for an artifact nobody downloads. The no-op job
-      # still reports success so `needs` stays satisfied.
       - name: Checkout
-        if: needs.changes.outputs.run_host != 'false'
+        if: env.ANY_LANE == 'true'
         uses: actions/checkout@v5
         with:
           submodules: recursive
           fetch-depth: 1
 
       - name: Setup Node and pnpm (cached)
-        if: needs.changes.outputs.run_host != 'false'
+        if: env.ANY_LANE == 'true'
         uses: ./.github/actions/setup-node-pnpm
 
       - name: Install dependencies
-        if: needs.changes.outputs.run_host != 'false'
+        if: env.ANY_LANE == 'true'
         run: pnpm install --frozen-lockfile
 
       # The provider binary is content-addressed on the POLYFILL source, but the
@@ -767,15 +821,21 @@ jobs:
       # compiler change it misses and the ~42 s build runs again. Cross-run
       # reuse is therefore limited to re-runs of the same tree, which is exactly
       # when it is safe.
+      #
+      # (#5383 S3) ONE cache dir holds BOTH providers — they are content-
+      # addressed on different keys and stamped under different file names, so
+      # they cannot collide. `v2` retires the v1 entries: a v1 dir restored into
+      # a run that wants standalone would be a hit with no standalone artifact
+      # and no standalone stamp, i.e. a ~60 s build on every single run.
       - name: Restore Temporal provider cache
-        if: needs.changes.outputs.run_host != 'false'
+        if: env.ANY_LANE == 'true'
         uses: actions/cache@v4
         with:
           path: .test262-cache/temporal
-          key: temporal-provider-v1-${{ hashFiles('src/**/*.ts', 'tests/dogfood/temporal-polyfill-pin.json', 'tests/dogfood/setup-temporal-polyfill.mjs') }}
+          key: temporal-provider-v2-${{ hashFiles('src/**/*.ts', 'tests/dogfood/temporal-polyfill-pin.json', 'tests/dogfood/setup-temporal-polyfill.mjs') }}
 
       - name: Build compiler bundles
-        if: needs.changes.outputs.run_host != 'false'
+        if: env.ANY_LANE == 'true'
         run: |
           pnpm run build:compiler-bundle
           pnpm run build:runtime-bundle
@@ -785,14 +845,72 @@ jobs:
       # provider — a loud but thoroughly misleading signal that costs a
       # merge-queue cycle to diagnose. One failed step naming its own cause is
       # cheaper than that.
-      - name: Build and stamp the provider
+      - name: Build and stamp the provider (host)
         if: needs.changes.outputs.run_host != 'false'
         env:
           NODE_OPTIONS: --max-old-space-size=3072
-        run: node scripts/prewarm-temporal-provider.mjs
+        run: node scripts/prewarm-temporal-provider.mjs --target host
+
+      # (#5383 S3) OPT-IN, and SOFT when it does run. Two different decisions,
+      # each measured rather than assumed:
+      #
+      #  OPT-IN, because linking is not free on this lane. Compiling an ASSEMBLED
+      #  standalone row costs ~2.5-3.5x more linked than unlinked (measured
+      #  2026-09-12 on a loaded box: `intl402/.../era-japanese.js`, 60 KB of
+      #  harness, 17.4 s unlinked vs 61.1 s linked; `PlainDate/prototype/day/
+      #  basic.js`, 10.6 KB, 4.2 s vs 10.9 s). The fork kill is 30 s, so turning
+      #  this on by default would convert large-harness Temporal rows from an
+      #  honest `Temporal is not defined` fail into a per-row TIMEOUT — the exact
+      #  storm the pre-warm doctrine exists to prevent, and a slower shard for a
+      #  lane whose baseline was never measured linked. The wiring is complete
+      #  either way; this flag only decides whether the ARTIFACT exists, and the
+      #  stamp gate does the rest. Flip it on a `workflow_dispatch` measurement
+      #  run; make it the default once the linked-compile cost is addressed.
+      #
+      #  SOFT, because the published standalone baseline is measured UNLINKED. A
+      #  failed build writes no stamp, `test262TemporalLaneEnabled` answers
+      #  false, and the rows run exactly as that baseline expects. Failing the
+      #  job would block the merge queue on a lane whose numbers cannot move.
+      #  (The host step above is the opposite on both counts, deliberately: its
+      #  baseline IS measured linked, so a missing host artifact makes the shards
+      #  lie.) Build cost when it runs: ~60 s, 3.31 MB (measured 2026-09-12).
+      - name: Build and stamp the provider (standalone)
+        if: needs.changes.outputs.run_standalone != 'false' && inputs.standalone_temporal
+        continue-on-error: true
+        env:
+          NODE_OPTIONS: --max-old-space-size=3072
+        run: node scripts/prewarm-temporal-provider.mjs --target standalone
+
+      # (#5383 S3) The host guarantee, asserted explicitly now that the upload
+      # below can no longer carry it. `if-no-files-found: error` used to be the
+      # de-facto host check, but it cannot stay strict once a SOFT standalone
+      # step shares the directory: on a standalone-only run whose provider build
+      # failed, an empty dir is the correct, intended outcome and must not fail
+      # the job (the shards would cascade-skip through `needs`). So the strict
+      # check moves here, where it can name the one artifact that is mandatory.
+      - name: Verify the host stamp
+        if: needs.changes.outputs.run_host != 'false'
+        run: |
+          test -f .test262-cache/temporal/prewarm.json || {
+            echo "::error::no host Temporal pre-warm stamp — shards would run unlinked against a linked baseline"
+            exit 1
+          }
+
+      # (#5383 S3) The artifact must EXIST even when the standalone build
+      # soft-failed and no host build ran, because every shard cell downloads it
+      # by name and `download-artifact` fails hard on a missing artifact — which
+      # would convert this slice's fail-soft into a red standalone lane. A dir
+      # that holds only this marker is the honest "no provider" state: the lane
+      # gate reads STAMPS, and there are none.
+      - name: Ensure the provider directory is uploadable
+        if: env.ANY_LANE == 'true'
+        run: |
+          mkdir -p .test262-cache/temporal
+          echo "provider dir; stamps (prewarm*.json), if any, are the real payload" \
+            > .test262-cache/temporal/README.txt
 
       - name: Upload Temporal provider
-        if: needs.changes.outputs.run_host != 'false'
+        if: env.ANY_LANE == 'true'
         uses: actions/upload-artifact@v6
         with:
           name: temporal-provider-${{ github.run_id }}
@@ -1018,7 +1136,7 @@ jobs:
     # scripts/gen-test262-mg-matrix.mjs. This job keeps
     # its ORIGINAL 57-shard x 2-target matrix, UNCHANGED, for push (baseline
     # update) and workflow_dispatch (manual reruns).
-    needs: [changes, mg-artifact-probe, runtime-eval-provider, temporal-provider]
+    needs: [changes, mg-artifact-probe, runtime-eval-provider, temporal-provider, admit-measurement-baseline]
     # #3448 — the push arm is now AND-ed with a MISS on the merge_group
     # baseline-artifact probe: on a HIT the merge_group already produced the
     # merged JSONLs for this exact SHA, so this 114-job matrix is SKIPPED and
@@ -1187,7 +1305,8 @@ jobs:
       # when this directory carries a stamp whose key matches the provider it
       # would build — a cold build is ~42 s against a 30 s fork kill, so an
       # absent/mismatched stamp means the rows run unlinked (announced on
-      # stderr), never a per-row timeout. Standalone cells never link it.
+      # stderr), never a per-row timeout. (#5383 S3) Standalone cells read the
+      # same directory, keyed to their own stamp.
       JS2WASM_TEMPORAL_CACHE: .test262-cache/temporal
 
     steps:
@@ -1219,8 +1338,10 @@ jobs:
           ./node_modules/.bin/esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm \
             --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
 
+      # (#5383 S3) Downloaded on BOTH lanes now. A standalone cell links only if
+      # the directory carries a standalone-keyed stamp; with none it runs the
+      # rows unlinked, exactly as it did before this slice.
       - name: Download compiled Temporal provider (#5353)
-        if: matrix.target.test262_target != 'standalone'
         uses: actions/download-artifact@v7
         with:
           name: temporal-provider-${{ github.run_id }}
@@ -1419,7 +1540,8 @@ jobs:
       # when this directory carries a stamp whose key matches the provider it
       # would build — a cold build is ~42 s against a 30 s fork kill, so an
       # absent/mismatched stamp means the rows run unlinked (announced on
-      # stderr), never a per-row timeout. Standalone cells never link it.
+      # stderr), never a per-row timeout. (#5383 S3) Standalone cells read the
+      # same directory, keyed to their own stamp.
       JS2WASM_TEMPORAL_CACHE: .test262-cache/temporal
 
     steps:
@@ -1444,8 +1566,8 @@ jobs:
           ./node_modules/.bin/esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm \
             --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
 
+      # (#5383 S3) Downloaded on BOTH lanes now — see the note in `test262-shard`.
       - name: Download compiled Temporal provider (#5353)
-        if: matrix.test262_target != 'standalone'
         uses: actions/download-artifact@v7
         with:
           name: temporal-provider-${{ github.run_id }}
@@ -1575,7 +1697,7 @@ jobs:
     # under `always()`, so the probe being skipped on pull_request/merge_group
     # cannot force-skip it, and its empty output leaves SHARD_SKIP_OK unchanged
     # in those contexts.
-    needs: [changes, test262-shard, test262-shard-mg, mg-artifact-probe]
+    needs: [changes, test262-shard, test262-shard-mg, mg-artifact-probe, admit-measurement-baseline]
     runs-on: ubuntu-latest
     env:
       # 'true' when EITHER the static (test262-shard) or consolidated
@@ -1659,6 +1781,19 @@ jobs:
           pattern: test262-*-shard-*
           merge-multiple: false
 
+      - name: Download the admitted measurement baseline pair
+        if: env.SHARDS_RAN == 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        uses: actions/download-artifact@v7
+        with:
+          name: admitted-measurement-baseline
+          path: /tmp/cat-baselines
+      - name: Verify measurement baseline before any report guard
+        if: env.SHARDS_RAN == 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        run: |
+          node scripts/admit-test262-baseline-pair.mjs /tmp/cat-baselines /tmp/cat-baselines/expectations.json /tmp/cat-baselines/rechecked.json
+          mkdir -p .test262-cache
+          cp /tmp/cat-baselines/test262-standalone-current.jsonl .test262-cache/test262-standalone-current.jsonl
+
       - name: Merge JS-host test262 JSONL results
         if: env.HOST_RAN == 'true'
         run: |
@@ -1725,6 +1860,11 @@ jobs:
             --baseline-sha "${{ github.sha }}" \
             --baseline-generated-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             ${{ github.event_name != 'workflow_dispatch' && '--include-proposals' || (inputs.include_proposals && '--include-proposals' || '') }}
+
+      - name: Check measurement candidate population against admitted pair
+        if: env.SHARDS_RAN == 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        run: |
+          node scripts/admit-test262-baseline-pair.mjs /tmp/cat-baselines /tmp/cat-baselines/expectations.json /tmp/cat-baselines/candidate-admission.json merged-reports/test262-results-merged.jsonl merged-reports/test262-standalone-results-merged.jsonl
 
       # #2097 — ABSOLUTE standalone pass-count floor (high-water-mark backstop).
       # The #1897 standalone gate is a MOVING floor (re-seeded from the new
@@ -1837,9 +1977,11 @@ jobs:
           # Sparse + blob-filtered clone: the baselines repo carries a large
           # runs/ history (~500 MB cap), so a plain --depth=1 clone took
           # ~100s. Materializing only the two baseline JSONLs takes ~2-5s.
+          if [ "${{ github.event_name == 'workflow_dispatch' && inputs.skip_promote }}" != "true" ]; then
           { git clone --depth=1 --filter=blob:none --no-checkout https://github.com/loopdive/js2wasm-baselines.git /tmp/cat-baselines \
             && git -C /tmp/cat-baselines sparse-checkout set --no-cone /test262-current.jsonl /test262-standalone-current.jsonl \
             && git -C /tmp/cat-baselines checkout main; } 2>/dev/null || true
+          fi
           if [ ! -f /tmp/cat-baselines/test262-current.jsonl ]; then
             echo "::warning::No baseline JSONL available — skipping catastrophic guard (first seed)."
             exit 0
@@ -2213,7 +2355,7 @@ jobs:
     # the shard artifacts below. Running in parallel with merge-report (instead
     # of serially after it) cuts ~3 min off every run's tail.
     # #3431 — needs both shard jobs; only one runs per event (see merge-report).
-    needs: [changes, test262-shard, test262-shard-mg]
+    needs: [changes, test262-shard, test262-shard-mg, admit-measurement-baseline]
     runs-on: ubuntu-latest
     # actions:read — the #1956 predecessor-group baseline is an artifact from
     # ANOTHER workflow run, downloaded via the artifacts API. The workflow's
@@ -2257,6 +2399,19 @@ jobs:
       - name: Install dependencies
         if: env.HOST_RAN == 'true'
         run: pnpm install --frozen-lockfile
+
+      - name: Download the admitted measurement baseline pair
+        if: env.HOST_RAN == 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        uses: actions/download-artifact@v7
+        with:
+          name: admitted-measurement-baseline
+          path: admitted-baseline
+      - name: Verify measurement baseline before regression comparison
+        if: env.HOST_RAN == 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        run: |
+          node scripts/admit-test262-baseline-pair.mjs admitted-baseline admitted-baseline/expectations.json admitted-baseline/rechecked.json
+          cp admitted-baseline/test262-current.jsonl benchmarks/results/test262-current.jsonl
+          node -e 'const fs=require("node:fs"), m=JSON.parse(fs.readFileSync("admitted-baseline/test262-baseline-pair.json")); fs.writeFileSync("/tmp/baseline-meta-fresh.json",JSON.stringify({baseline_sha:m.compiler_sha,test262_version:m.corpus_sha,oracle_version:m.oracle_version}))'
 
       - name: Fetch fresh baseline from baselines repo
         id: fetch_baseline
@@ -2613,6 +2768,11 @@ jobs:
           mkdir -p merged-reports
           find shard-artifacts/test262-js-host-shard-* -name 'test262-results-*.jsonl' -print0 | sort -z | xargs -0 cat > merged-reports/test262-results-merged.jsonl
           test -s merged-reports/test262-results-merged.jsonl
+
+      - name: Check measurement host population against admitted baseline
+        if: env.HOST_RAN == 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        run: |
+          node scripts/admit-test262-baseline-pair.mjs admitted-baseline admitted-baseline/expectations.json admitted-baseline/candidate-admission.json merged-reports/test262-results-merged.jsonl
 
       - name: Compare against current main baseline
         id: regression_diff
