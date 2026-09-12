@@ -18,9 +18,16 @@ const groups = {
     "ir-preparation-failure",
     "ir-unit-inventory",
   ].map((x) => `src/shared/contracts/${x}.ts`),
-  "wasm-model": ["src/wasm/model/instructions.ts"],
-  "wasm-physical": ["src/wasm/physical/function-handles.ts"],
-  "native-runtime": ["src/runtime/wasmgc/async/microtask-queue-bodies.ts"],
+  "wasm-model": ["src/wasm/model/instructions.ts", "src/wasm/model/module-records.ts"],
+  "wasm-physical": [
+    "src/wasm/physical/function-handles.ts",
+    "src/wasm/physical/function-types.ts",
+    "src/wasm/physical/module-reservations.ts",
+  ],
+  "native-runtime": [
+    "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+    "src/runtime/wasmgc/promise/settlement-bodies.ts",
+  ],
   "ir-core": [
     "types",
     "fnctor-shapes",
@@ -73,6 +80,12 @@ const groups = {
   ),
 };
 const required = Object.values(groups).flat();
+const settlementAdditions = ["src/runtime/wasmgc/promise/settlement-bodies.ts"];
+const physicalAdditions = [
+  "src/wasm/model/module-records.ts",
+  "src/wasm/physical/function-types.ts",
+  "src/wasm/physical/module-reservations.ts",
+];
 const additions = [
   "src/ir/core/intrinsic-contracts.ts",
   "src/ir/core/intrinsics.ts",
@@ -90,12 +103,14 @@ const additions = [
 const policy = () => JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 function assertNewActivations(history: unknown[]) {
-  expect(history.slice(0, 3)).toEqual(
-    (["ir-core", "ir-analysis", "ir-runtime"] as const).map((layer) => ({
-      layer,
-      entries: groups[layer],
-      minModules: groups[layer].length,
-    })),
+  expect(history.slice(0, 6)).toEqual(
+    (["native-runtime", "wasm-model", "wasm-physical", "ir-core", "ir-analysis", "ir-runtime"] as const).map(
+      (layer) => ({
+        layer,
+        entries: groups[layer],
+        minModules: groups[layer].length,
+      }),
+    ),
   );
 }
 const scratch: string[] = [];
@@ -167,17 +182,20 @@ function fixture() {
 }
 
 describe("semantic verification and provider ownership boundary", () => {
-  it("pins all 56 required modules, twelve additions and unchanged historical policy", () => {
-    expect(required).toHaveLength(56);
-    expect(new Set(required).size).toBe(56);
+  it("pins the original 56 modules plus three physical owners and settlement without relaxing historical policy", () => {
+    expect(required).toHaveLength(60);
+    expect(new Set(required).size).toBe(60);
+    expect(physicalAdditions).toHaveLength(3);
+    expect(settlementAdditions).toHaveLength(1);
+    expect(required.filter((path) => ![...physicalAdditions, ...settlementAdditions].includes(path))).toHaveLength(56);
     expect(additions).toHaveLength(12);
     expect(new Set(additions).size).toBe(12);
-    for (const path of additions) expect(required).toContain(path);
+    for (const path of [...additions, ...physicalAdditions, ...settlementAdditions]) expect(required).toContain(path);
     const p = policy();
     assertNewActivations(p.activationHistory);
     expect(digest(p.allowedEdges)).toBe("efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7");
     // Exact full activation history at b4c116639a, not a selected subset.
-    expect(digest(p.activationHistory.slice(3))).toBe(
+    expect(digest(p.activationHistory.slice(6))).toBe(
       "a6d07b900b0837832707ce083202ab6ffa40f0bbe6bfce25f3062270882b26da",
     );
     for (const [id, entries] of Object.entries(groups)) {
@@ -194,12 +212,12 @@ describe("semantic verification and provider ownership boundary", () => {
   it("loads the complete actual canonical type-and-value closure", () => {
     const r = fixture().run();
     expect(r.status, JSON.stringify(r.report.errors)).toBe(0);
-    expect(r.report.counts.total).toBe(56);
+    expect(r.report.counts.total).toBe(60);
     expect(r.report.errors).toEqual([]);
     for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
       expect(r.report[field]).toEqual([]);
-    expect(r.report.resolvedEdgeCount).toBe(193);
-    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 137, runtime: 56 });
+    expect(r.report.resolvedEdgeCount).toBe(203);
+    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 145, runtime: 58 });
   });
 
   it.each(["delete", "reorder", "layer", "entries", "minimum"] as const)(
@@ -215,40 +233,49 @@ describe("semantic verification and provider ownership boundary", () => {
     },
   );
 
-  it.each(additions)("rejects deleting %s and its classification", (path) => {
-    const f = fixture();
-    rmSync(resolve(f.root, path));
-    f.p.files = f.p.files.filter((row: { path: string }) => row.path !== path);
-    for (const mode of ["inventory", "complete"]) {
-      const r = f.run(mode);
-      expect(r.status).not.toBe(0);
-      expect(r.report.errors.map((e: { code: string }) => e.code)).toContain("missing-activated-root");
-    }
-  });
+  it.each([...additions, ...physicalAdditions, ...settlementAdditions])(
+    "rejects deleting %s and its classification",
+    (path) => {
+      const f = fixture();
+      rmSync(resolve(f.root, path));
+      f.p.files = f.p.files.filter((row: { path: string }) => row.path !== path);
+      for (const mode of ["inventory", "complete"]) {
+        const r = f.run(mode);
+        expect(r.status).not.toBe(0);
+        expect(r.report.errors.map((e: { code: string }) => e.code)).toContain("missing-activated-root");
+      }
+    },
+  );
 
-  it.each(additions)("rejects an aliased frontend type dependency from %s", (path) => {
-    const f = fixture();
-    f.put("src/forbidden.ts", "export interface Hidden { value: number }");
-    f.p.files.push({ path: "src/forbidden.ts", layer: "frontend-ts", state: "unmigrated" });
-    f.append(path, 'export type { Hidden } from "@forbidden";');
-    const r = f.run();
-    expect(r.status).toBe(1);
-    expect(r.report.forbiddenEdges).toContainEqual(
-      expect.objectContaining({ from: path, to: "src/forbidden.ts", typeOnly: true }),
-    );
-  });
+  it.each([...additions, ...physicalAdditions, ...settlementAdditions])(
+    "rejects an aliased frontend type dependency from %s",
+    (path) => {
+      const f = fixture();
+      f.put("src/forbidden.ts", "export interface Hidden { value: number }");
+      f.p.files.push({ path: "src/forbidden.ts", layer: "frontend-ts", state: "unmigrated" });
+      f.append(path, 'export type { Hidden } from "@forbidden";');
+      const r = f.run();
+      expect(r.status).toBe(1);
+      expect(r.report.forbiddenEdges).toContainEqual(
+        expect.objectContaining({ from: path, to: "src/forbidden.ts", typeOnly: true }),
+      );
+    },
+  );
 
   for (const [source, field] of [
     ["const target = globalThis.toString(); import(target);", "unknownEdges"],
     ['export type { Missing } from "./missing-owner.js";', "unresolvedEdges"],
   ] as const) {
-    it.each(additions)(`reports ${field} from %s instead of treating it as closed`, (path) => {
-      const f = fixture();
-      f.append(path, source);
-      const r = f.run();
-      expect(r.status).toBe(1);
-      expect(r.report[field]).toContainEqual(expect.objectContaining({ from: path }));
-    });
+    it.each([...additions, ...physicalAdditions, ...settlementAdditions])(
+      `reports ${field} from %s instead of treating it as closed`,
+      (path) => {
+        const f = fixture();
+        f.append(path, source);
+        const r = f.run();
+        expect(r.status).toBe(1);
+        expect(r.report[field]).toContainEqual(expect.objectContaining({ from: path }));
+      },
+    );
   }
 
   it.each(additions)("rejects a runtime dependency on the historical facade from %s", (path) => {

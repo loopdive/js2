@@ -4979,6 +4979,129 @@ refusals establish preservation only, never physical acceptance or retirement.
 No direct-codegen retirement, public IR-only default, ABI30 getter witness, or
 native async materialization completion is claimed by these checkpoints.
 
+### Physical consumer implementation in progress (2026-09-08)
+
+The physical checkpoint is isolated on
+`codex/3518-physical-module-completion-20260908` from `e3de0f3ff7`, so its
+production changes do not alter PR5751's preservation candidate. Nine new
+source-driven integration controls were run against the unchanged implementation:
+eight stop at the intended missing stable-ordinal registration (zero entries
+for two alias functions or four startup functions); the listener-failure
+single-use control passes. Later instantiation/value assertions in those eight
+tests were not reached and are not claimed as measured.
+
+The program consumer draft now uses the physical reservation API, preserves
+separate instruction handles and final ABI/export/start indices, removes its
+fabricated `CodegenContext`, fills actual reserved objects and seals before
+publishing emission. Its integration is not yet validated because the worker's
+kernel is still under implementation and has not been adopted. The kernel claim
+is independently verified on the remote assignment branch, write
+`19409-8ue0poec`, assignee
+`ttraenkler/codex-astra-physical-module-completion-20260908`.
+
+Draft review identified that plain JSON snapshots would conflate `-0` with zero
+and non-finite instruction constants with null. The worker is assigned exact
+numeric/presence-preserving snapshots and mutation controls before freeze.
+Neither the existing native async refusal nor physical capability selection
+has been changed. Native scheduler/Promise/frame materialization remains open.
+
+High review tightened the source controls to require the exact selected unit
+sequence, fixture-declared two/three-unit populations and explicit startup
+presence, plus listener-error object identity. The consumer also checks actual
+module ownership order against its reserved projection. These revisions remain
+unmeasured until composition with the frozen physical kernel.
+
+Boundary activation now requires all original 56 canonical modules plus the
+three new physical owners. The prior allowed-edge policy and complete prior
+activation history were independently compared to `e3de0f3ff7` and are unchanged;
+the two new layer activations are additive. Deletion, frontend-alias and
+unresolved-edge controls include the new owners. The old 193-edge fixture
+assertions have deliberately not been replaced by guessed counts: run the
+composed checker and pin its actual type/runtime edge census before publication.
+
+The frozen nine-file kernel is now adopted with all nine Git blobs verified
+against the worker manifest. The composed kernel and real-source consumer pass
+83/83 controls (74 kernel, nine consumer), and TypeScript 7 completes with exit
+zero. An initial transfer inserted a truncation marker and duplicate text in
+the registry file; that agent-created insertion was repaired and the original
+frozen blob verified before the clean run. No failed-load test run is counted.
+
+The expanded boundary suite measured 96/97: only the intentionally stale
+edge-census assertion failed. A focused run measured 202 edges, comprising 144
+type-only and 58 runtime edges, across 59 required modules. Those measured
+counts now replace the old literals; the complete rerun passes 97/97 with a
+clean terminal exit. Allowed edges and prior activation history stay unchanged.
+
+High review blocks physical publication on five uncovered kernel defects:
+sparse publication array holes, distinct NaN payloads, flattened recursive
+type indices, omitted canonicalRuntimeRecGroup snapshots, and body-only
+ref.func declaration completeness. The existing Low implementation worker is
+repairing these with source-grounded controls; the parent owns serialized
+execution. The 83 passing controls do not resolve these counterexamples.
+No additional consumer-wiring defect was found. Native async acceptance and
+direct-codegen retirement remain unproven.
+
+Historical physical-consumer source parity is now measured in separate explicit
+baseline/candidate processes. The baseline is PR5751 source at e3de0f3ff7
+(head 9c60a92f4d changes tests/docs only, with no source diff or untracked source);
+the candidate is this physical worktree. Complete before/after source snapshots
+cover 1,303 and 1,306 files respectively and remain unchanged during each run.
+The initial eight alias/startup cases produce 32 original/replay execution
+records and sixteen exact cross-root pairs. Three additive source cases cover
+exported global 42 and local/shared throw-null tags. The supplemented eleven
+cases yield 44 emission/execution records and 22 exact cross-root pairs, with
+identical bytes, WAT, resource order, wire data and checked results. Descriptor
+receipts preserve optional presence, array holes, bytes and floating-point bits.
+These are the initial frozen kernel's measurements, not proof of its five
+pending repairs. Nonzero function-import offsets and full native async physical
+materialization remain separate obligations; a tag import is not a function
+import. The lexical-TDZ source refusal is not replaced by the var startup case.
+
+The next real runtime body move is specified in
+[the native Promise settlement plan](../agent-context/3518-native-promise-settlement-plan-2026-09-08.md).
+It retains the full resolve/adoption, object/closure inventory and frame/runtime
+resource obligations; moving six reusable body builders does not retire them.
+
+The five review repairs are adopted from the exact two-file frozen handoff:
+kernel `e930d15be902059c960fd6a9c675fb9a11a11110`, controls
+`d652f915bae2015a743ccfaa3fa479fc30dc5427`. The original 74 controls are retained;
+43 additive controls cover sparse arrays, numeric bits, recursive indices,
+canonical runtime group ownership and all existing declaration routes. The
+repaired kernel plus consumer passes 126/126 (117 + nine). Before these repairs,
+the existing native async and symbolic-reference suites passed 28/28. Those
+28 and the historical byte comparison must not be attributed to the repaired
+source until rerun. Final High review and the emitter's explicit-rec forward
+reference behavior remain unresolved; no publication or retirement is claimed.
+
+Final High review resolves four original findings. Flattened type allocation
+is repaired, but the shared emitter still interprets some explicit-rec physical
+references as outer-record positions and can form an invalid nested group.
+Because the new kernel admits those layouts, publication requires a fail-closed
+compatibility guard. The worker is adding that guard and controls without
+editing the shared emitter or weakening the existing 117 cases. Reference-free
+explicit groups and references solely to an earlier flat prefix remain
+supported. Reference-bearing explicit groups that cross this limitation remain
+unsupported, not silently re-encoded. Correcting shared-emitter grouping stays
+required when those groups are consumed by the full native IR path; this
+temporary guard does not reduce the migration's final scope.
+
+The final guard is adopted exactly: kernel
+`5a7d3c470e7b8ad7ee5978c02909c8a81a1560ee`, controls
+`03098a1f122ab8325957a66b658df3e837a6362d`. Final composed execution passes
+185/185 (148 kernel, nine real consumer, fourteen native async, fourteen
+symbolic-reference). TypeScript 7 passes. The eleven-case final candidate
+comparison again yields 22 exact baseline/candidate pairs, including both
+original and replayed programs; bytes, WAT, resource order and actual results
+match. Final candidate source census hash is
+`5670027d6b5815133f5058ef785a55f7522d82d1058676de532cbe933ab210b0`.
+The baseline source census hash is
+`121296da14cad893a94f9a97501880631beae38416ca6e5b09374579753b07c2`.
+Neither result covers nonzero function-import offsets or certifies full native
+physical materialization. The final boundary rerun passes 97/97. High source
+review approves the exact final guard blobs and finds no remaining blocker
+from the five original findings. Publication is a bounded physical reservation
+checkpoint, not acceptance of the still-unsupported native resources.
+
 The semantic source-evidence revision 2 was adopted byte-for-byte from the
 worker's frozen three-file manifest and measured: 57/59 focused tests pass,
 and TypeScript 7 passes. Both failures originate in the recorder's rejection
@@ -5048,6 +5171,157 @@ Math/TDZ physical-execution, boolean-host assertion and transformed async
 authentication gaps remain in the reports. Equal failures are preservation,
 not acceptance. Revision 3's exit13 remains documented above as failed evidence.
 
+### Native settlement measured and next implementation dispatched (2026-09-08)
+
+The five-file native Promise-settlement worker draft is frozen at
+`/private/tmp/js2-3518-native-promise-settlement-20260908`, based on
+`e3de0f3ff7d7828c66b3fea7946f08e593bf77d8`. Parent verified every recorded
+SHA256 and measured 100/100 focused tests (89 ownership plus 11 source controls),
+45/45 existing regression tests across five suites, and TS7 typecheck exit zero.
+Implementation publication and independent review remain pending; this entry
+does not imply those worker files are included in this documentation checkpoint.
+
+An independently clean exact-e3de worktree and the frozen candidate completed
+the historical eight-row comparison with zero differences and zero pending
+rows. Both child processes exited zero, with no signal or spawn error. Reports
+are retained in the worker's `.tmp/native-promise-settlement-historical-r1`:
+baseline SHA256 `a50049048ed5de0a97bc39fbe977556eb8479cd42b3ed4d3e9404fd789ab829e`,
+candidate SHA256 `718c85a33339e1338fa5755ea3b9ea1b0cb50d4687c61fda907e8f82f38bbca4`.
+The instrument's acceptance flag applies only to these eight public source rows:
+four standalone rows and four separately labelled legacy WASI preservation rows.
+It is not whole-program async acceptance, compiler closure, or retirement proof.
+
+The High-authored frame-body plan is recorded in
+`plan/agent-context/3518-native-async-frame-body-plan-2026-09-08.md` and assigned
+to the existing Astra Low worker in isolated
+`/private/tmp/js2-3518-native-async-frame-bodies-20260908`, based on physical
+checkpoint `0194b64c246d2b5beab2db00af33a73498e2eb6e`. Its six production and
+two test paths are disjoint from settlement and source admission. Claim and
+implementation status must be verified separately, not inferred from dispatch.
+
+The independent source-admission prerequisite is recorded in
+`plan/agent-context/3518-certified-delay-source-admission-plan-2026-09-08.md`.
+Fresh whole-program probes refuse the unchanged certified delay at unknown
+Promise construction, and the complete async family at the `number[]` parameter
+of `fetchAllSequential(ids: number[]): Promise<number>`. Existing public-route
+success does not remove either gap. Preserve
+the exact closure inventory while wiring certification; logical vector/await
+typing and all runtime/physical/public-cutover requirements remain in scope.
+
+### Native settlement implementation integrated (2026-09-08)
+
+The settlement checkpoint moves six executable builders and seven constants
+into `src/runtime/wasmgc/promise/settlement-bodies.ts`. Four existing scheduler
+registrations call the canonical builders. Context-bearing hook and unhandled
+rejection adapters retain their signatures and allocation order. Identity
+fulfillment still targets resolve/adoption, not direct fulfillment. Original
+13-declaration receipt and all 88 retained donor declarations remain checked.
+
+High review found no production regression, but identified three test-control
+gaps: reconstructed headers could hide signature/modifier changes; forwarding
+checks missed type-only clauses and aliases; source receipts did not independently
+pin compile recipes/counts. Revision 2 repairs these without changing the three
+production blobs or reseeding original receipts. The composed branch passes
+148/148 focused controls (129 ownership and 19 source). Revision 1 and its reports
+remain preserved rather than relabelled.
+
+Final composed regression measurement passes 45/45 across the existing delay,
+native async-family, hook, adoption and rejection-tracking suites. TS7 typecheck
+also exits zero. These are measured on the integrated physical/settlement source,
+not inferred from the earlier standalone worker results.
+
+Boundary activation now requires 60 canonical modules, adding exactly settlement
+to the prior 59. All 23 previous activation records and allowed edges remain
+unchanged. The complete selected closure measures 203 resolved edges (145
+type-only, 58 runtime), and all 101 boundary controls pass. This selected closure
+is not the full compiler graph or a retirement certificate.
+
+The full inventory check exits zero with `inventoryValid: true` but
+`architectureComplete: false`: 1,305 modules (60 clean, five compatibility
+adapters, 1,240 unmigrated), zero classification errors and zero unresolved
+imports. Four unknown dynamic-import edges remain: two in the Porffor loader,
+one in optimize, and one in the platform-capability adapter. Inventory validity
+must not be reported as static graph closure.
+
+The revision-2 historical pair compares an independently clean exact-e3de root
+with the composed settlement branch based on published `1731cf377a`. All eight
+pairs match with no pending rows; both children exit zero with no signal/error.
+Serialized-report SHA256s are
+`aa2915cb82b0322e223f99c3eb1eb60d2adeb4cf68dea4ec2f6c9406dcb7b721`
+(baseline) and `bee9a2f9e1429193b97dbc18581f1b7f71e415f6f4e69755087cbf31a991aa3a`
+(candidate), retained under `.tmp/native-promise-settlement-historical-r2` in
+the settlement integration worktree. Four standalone rows and four legacy WASI
+rows remain separately labelled. Acceptance is limited to these public-route
+fixtures, not whole-program source admission, physical async acceptance, ABI30,
+public cutover or retirement.
+
+The exact source-admission API and seven-file implementation contract are now
+in `plan/agent-context/3518-certified-delay-source-api-contract-2026-09-08.md`.
+The explicit default-off frontend request does not imply provider availability;
+the next missing runtime declaration must remain a located refusal. Full-family
+logical vector/await typing remains mandatory and independent.
+
+The frame worker's scoped claim was independently verified upstream with owner
+`ttraenkler/codex-astra-native-async-frame-bodies-20260908`, write ID
+`67945-bzg89dfn`, claim commit `178447ad6adedc33d882ab35f412f7c5b495caa6`.
+Its hook process completed and released the serialized test slot; static
+implementation proceeds separately. No frame implementation is implied here.
+
+### Full-family signature attribution corrected (2026-09-08)
+
+The unchanged playground source declares both sequential and parallel functions
+as `(ids: number[]): Promise<number>`. The earlier array-returning-signature
+description was incorrect. A direct invocation of the current `typeNodeToIr`
+on the exact parsed annotations rejects both `number[]` parameters with
+`type-resolution-unsupported`, while both unwrapped `number` returns lower to
+f64. This is a signature-lowering probe, not successful whole-program preparation.
+Parallel additionally requires its original `Promise<number>[]` local and
+the `number[]` result of `await Promise.all(pending)`; neither is removed from
+the full-family scope.
+
+Source-admission implementation is now claimed separately by
+`ttraenkler/codex-astra-certified-delay-source-admission-20260908`, verified
+upstream write `79476-841vjtpq`, claim commit
+`57e7f2be986125df69c4d16bdbf282937a0272ea`. The claim hook completed and released
+the shared validation slot. The seven-file source-admission implementation is
+still pending and is not included in this documentation correction.
+
+### Complete native-family next dispatch (2026-09-08)
+
+The source-grounded High plan is
+`plan/agent-context/3518-complete-native-family-source-plan-2026-09-08.md`;
+the exact shared interface is
+`plan/agent-context/3518-native-family-logical-vector-interface-2026-09-08.md`.
+These describe the next dispatch, after current delay-admission and frame drafts
+freeze. They do not expand those workers' current write scopes.
+
+The connected source goal retains all five original functions: certified delay,
+fetchUser, sequential, parallel, and main. It includes array parameters,
+effectful Promise-vector push, awaited Promise.all number-vector results, and
+main's real clock/logging/string operations. Pure logical vector lowering must
+not fabricate physical indices, resolver flags, providers or continuation bodies.
+
+The frozen frontend interface is per-function `logicalVectorTypes`, keyed by
+exact original parameter/variable declarations and vector-valued expressions.
+Producer identity validation and lowerer assignability/type validation are both
+required; missing entries must not fall back to physical registration. The
+separate default-off `asyncFamilyProjection` requires explicit native delay
+selection and compatible standalone/WasmGC source/runtime projections. Neither
+selection is inferred from legacy fast/default settings.
+
+Immediate acceptance remains eight separately reported preparation runs
+(original/export-only source, original/decoded input, GVN off/on), complete
+support inventory, and five original await sites. These are not eight executions.
+Final native execution still requires all eight existing behavioral scenarios,
+the unchanged 14-case public-family suite, real runtime declarations/providers,
+vector layouts/growth, frame transport and full public cutover/retirement proof.
+
+Preliminary reviews of the current, still-unfrozen drafts identified two
+requirements for their handoff: source admission must distinguish actual
+structural references from ordinary string/debug-label text equal to a unit ID;
+frame preservation tests must run self-contained in ordinary CI and keep the
+external-baseline comparison explicit, with no child timeout killing. These
+are repair requests, not approvals or measured failures of frozen candidates.
 ### Capability contract extraction checkpoint (2026-09-08)
 
 The [Astra High capability-schema plan](../agent-context/3518-capability-schema-checkpoint-plan-2026-09-08.md)
@@ -5145,3 +5419,22 @@ fresh exact-candidate merge-group comparison with verified baseline provenance;
 any demonstrated new candidate regression blocks it. Full native async execution,
 ABI30/public caller proof and strict retirement remain separate unfinished work.
 No older PR closes until its actual content is verified on main.
+
+### Physical reservation queue refresh (2026-09-10)
+
+PR5752 is refreshed against main `1429cfdf2167f31532d70c5304430a9300c2a982`
+in an isolated checkout. Its only textual merge conflict was competing appended
+issue history; both complete sections are retained. All thirteen PR-owned
+production/helper/test files match head
+`1731cf377a9ae3a55af7b9d9447c3b5b2fa144fd` byte-for-byte. Other source changes
+come from already-landed main, not a new implementation. The physical kernel,
+whole-program completion and semantic-provider boundary suites pass254/254
+tests across three files on Node25.9.0/macOS ARM64. This refresh does not repeat
+the historical source pairs or establish fresh merge-group conformance.
+
+The semantic-provider parent is already on main, so main is the appropriate
+landing base after publication. The BigInt conformance discrepancy remains
+tracked in issue5807 on the cumulative PR5798; keep this checkpoint held until
+that landing evidence is reconciled. Local tests and conflict repair do not
+waive that hold or certify complete native async/IR retirement. Older references
+above are historical records, not current dispatch or merge authorization.
