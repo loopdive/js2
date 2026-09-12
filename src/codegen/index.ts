@@ -472,6 +472,7 @@ import {
 import { ensureUnhandledRejectionReporter } from "./unhandled-rejection.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3) stable handles never shift
+import { RUNTIME_RECGROUP_TYPE_NAMES } from "../emit/canonical-recgroup.js"; // (#5383 S2k) frozen link ABI roots
 import { profileCount, profilePhase } from "../compile-profile.js";
 import { reportModuleScale } from "./module-scale-profile.js"; // (#4645) scale checkpoints
 import { frameSnapshotAtCompile } from "./function-body.js";
@@ -4942,6 +4943,48 @@ function finalizeLeafStructTypes(ctx: CodegenContext): void {
   // gate makes host byte-identical to main again.
   const abVecIdx = ctx.wasi || ctx.standalone ? ctx.vecTypeMap.get("i32_byte") : undefined;
   if (abVecIdx !== undefined) keepOpenTypeIdxs.add(abVecIdx);
+  // (#5383 S2k) The canonical runtime rec group is the shared VALUE ABI of a
+  // wasm→wasm link, and WasmGC canonicalizes a rec group AS A WHOLE: one
+  // differing `final` bit on ONE member makes all ten a different runtime type
+  // in the engine, so every `ref.test $AnyString` / `$__vec_externref` on a
+  // peer-minted value fails. That is not hypothetical — it is the measured
+  // cause of "no reference value crosses the boundary": a provider that uses
+  // `arguments` registers `$__arguments_vec_externref` as a subtype of the
+  // group member `$__vec_externref`, which makes that member non-final, while
+  // a consumer that does not use `arguments` leaves it `sub final`. The two
+  // groups then canonicalize apart and a provider-minted string is not even a
+  // string to the consumer (`typeof s === "string"` → false).
+  //
+  // Finality of an ABI root must therefore be a CONSTANT of the ABI, never a
+  // function of what the individual module happens to subtype. Pinning every
+  // member open makes the group byte-stable across separately compiled
+  // modules regardless of their content. Same principle as the funcref-wrapper
+  // root above, applied to the whole frozen group.
+  //
+  // Gated on `canonicalRuntimeRecGroup` being present, which `createCodegenContext`
+  // sets only for runtime providers / linked namespaces / explicit
+  // `canonicalRuntimeTypes` — so an unlinked standalone module and the entire
+  // JS-host (gc) lane are byte-identical to before.
+  if (ctx.mod.canonicalRuntimeRecGroup !== undefined) {
+    const abiRootNames = new Set(RUNTIME_RECGROUP_TYPE_NAMES);
+    for (let i = 0; i < ctx.mod.types.length; i++) {
+      const td = ctx.mod.types[i];
+      // Index convention MUST match `markLeafStructsFinal`: it treats a rec
+      // group's members as occupying `i, i+1, …` from the group's own array
+      // position, so the keep-open set is built with the same arithmetic.
+      if (td.kind === "rec") {
+        let inner = i;
+        for (const member of td.types) {
+          if (member.kind !== "rec" && member.name !== undefined && abiRootNames.has(member.name)) {
+            keepOpenTypeIdxs.add(inner);
+          }
+          inner++;
+        }
+      } else if (td.name !== undefined && abiRootNames.has(td.name)) {
+        keepOpenTypeIdxs.add(i);
+      }
+    }
+  }
   const finalizedTypeIndices = markLeafStructsFinal(ctx.mod, ctx.wasi, keepOpenTypeIdxs);
   ctx.programAbiSession?.recordLeafTypeFinalization(finalizedTypeIndices);
 }
