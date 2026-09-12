@@ -9513,6 +9513,13 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/planning-sites.ts",
+      "state": "unmigrated",
+      "layer": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Source-bound AST identity validation shared with the legacy overlay; not a pure IR contract or physical runtime owner. Relocate under frontend/ts with its planning identity dependencies before frontend retirement."
+    },
+    {
       "path": "src/ir/planning-identity.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -10499,6 +10506,11 @@
     },
     {
       "path": "src/runtime/timer-capability-adapter.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
+      "path": "src/runtime/typed-array-host-brand.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
     },
