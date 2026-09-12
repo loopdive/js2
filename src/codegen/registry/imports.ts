@@ -558,6 +558,7 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
   shiftMap(ctx.protoGlobals);
   shiftMap(ctx.nativeProtoGlobals);
   shiftMap(ctx.classObjectGlobals); // (#1395) — same shift discipline as protoGlobals
+  shiftMap(ctx.classStaticSidecarGlobals); // (#5195 Step 2 / #5383 S2i) — ditto for the static sidecar
   shiftMap(ctx.methodClosureGlobals); // (#1394) — cached per-method closure globals
   shiftMap(ctx.funcClosureGlobals); // (#1340) — cached per-function closure globals
   // (#4617) Prepared metadata and native names retain absolute global slots.

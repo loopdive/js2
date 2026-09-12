@@ -1024,7 +1024,14 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // space freezes (#1984) and because they answer the same question — "this
   // carrier is not mine; who can decode it?". On the host lane these stay
   // undefined and every arm below is byte-identical.
-  const { memberGet: peerMemberGetIdx, objectKeys: peerObjectKeysIdx } = standaloneLinkBoundaryPeerIndices(ctx);
+  const {
+    memberGet: peerMemberGetIdx,
+    objectKeys: peerObjectKeysIdx,
+    // (#5383 S2h) …and the CALL twin of the same question, for the same reason:
+    // a receiver this module cannot decode is one whose owner must run the
+    // method, because the trampoline's `this` lives in the owner's globals.
+    methodCall: peerMethodCallIdx,
+  } = standaloneLinkBoundaryPeerIndices(ctx);
   const boundaryObjectGetOwnPropertyDescriptorIdx = boundaryObjectInterop
     ? ctx.funcMap.get("__boundary_object_get_own_property_descriptor")
     : undefined;
@@ -6697,7 +6704,11 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // `resolved-callee-guard.ts` for the ABSENT and provably-PRIMITIVE arms and
     // why the primitive test is sound where a negative callable test is not.
     const resolvedMethodGuard = buildResolvedCalleeGuard(ctx, methodCallLocals);
-    const boundaryCallResultLocal = boundaryObjectCallIdx === undefined ? undefined : 3 + methodCallLocals.length;
+    // (#5383 S2h) The standalone peer terminal takes the same slot as the
+    // host lane's `__boundary_object_call`: same arm, same arguments, same
+    // "null means the peer does not own this receiver" contract.
+    const boundaryOrPeerCallIdx = boundaryObjectCallIdx ?? peerMethodCallIdx;
+    const boundaryCallResultLocal = boundaryOrPeerCallIdx === undefined ? undefined : 3 + methodCallLocals.length;
     if (boundaryCallResultLocal !== undefined) {
       methodCallLocals.push({ name: "boundaryCallResult", type: { kind: "externref" } });
     }
@@ -6744,12 +6755,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         // ($Vec/string/Map/Set) are the Slice-4 arms → undefined for now (never
         // invalid Wasm).
         else: [
-          ...(boundaryObjectCallIdx !== undefined && boundaryCallResultLocal !== undefined
+          ...(boundaryOrPeerCallIdx !== undefined && boundaryCallResultLocal !== undefined
             ? ([
                 { op: "local.get", index: 0 },
                 { op: "local.get", index: 1 },
                 { op: "local.get", index: 2 },
-                { op: "call", funcIdx: boundaryObjectCallIdx },
+                { op: "call", funcIdx: boundaryOrPeerCallIdx },
                 { op: "local.tee", index: boundaryCallResultLocal },
                 { op: "ref.is_null" },
                 { op: "i32.eqz" },
