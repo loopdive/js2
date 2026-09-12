@@ -4,8 +4,8 @@ title: "A hoisted inner function that mutates an outer `let` gets its ref cell m
 status: done
 sprint: current
 created: 2026-09-06
-updated: 2026-09-06
-completed: 2026-09-06
+updated: 2026-09-12
+completed: 2026-09-12
 assignee: ttraenkler/sendev-5356
 priority: high
 horizon: m
@@ -345,3 +345,62 @@ Every suite: exit 0 with an `admitted` headline on both sides; 17/17 per-file id
 `print-doc-to-string`: 0/3 both ways here; the #5357 branch
 (`fork/issue-5357-nullish-ref-strict-eq`) was at `50c81e5487` with no commits
 when measured, so "with #5357" is the same measurement. The file needs #5375.
+
+### Refresh onto current main (2026-09-12)
+
+The branch was 354 commits behind and its merge-group park-hold had been
+re-raised. `upstream/main` (`cf82f78d6d`) merged in cleanly — no conflicts in
+`src/`, all seven touched files and the regression test carried through
+unchanged.
+
+**Park-hold, run 34674500787 (`quality`) — REAL, and in this PR's own area.**
+Not the Temporal / `runtimeTsLines` main-side drift the earlier triage found.
+The failing step is the #3518 compiler-boundary inventory
+(`scripts/check-compiler-boundaries.mjs --mode inventory --base HEAD^1`), which
+landed on main after this branch was cut and requires every module under
+`src/` to carry a classification row. Reproduced locally, exit 1, six errors,
+all naming the one file this PR adds:
+
+```
+"status": "invalid-inventory",
+"errors": [
+  { "code": "unclassified-module", "detail": "src/codegen/statements/eager-capture-box.ts" },
+  { "code": "unclassified-target", "detail": "src/codegen/statements/eager-capture-box.ts" },   x5
+]
+```
+
+Fixed by classifying the new module in `scripts/compiler-boundaries.json` with
+the same row its `src/codegen/statements/` siblings carry (`unmigrated` /
+`mixed-needs-split` / `backend-wasmgc` / `3518-coordinator`). Gate now exits 0,
+`status: "inventory-valid-architecture-incomplete"` — the same status main
+itself reports.
+
+**Regression test, both ways, at the refreshed head.**
+
+| `tests/issue-5356-eager-capture-box-tdz.test.ts` | result |
+| ------------------------------------------------ | ------ |
+| seven touched files reverted to `upstream/main`   | 13 failed / 3 passed (16) |
+| with the fix                                      | 16 passed (16) |
+
+**A/B re-measure at the refreshed head** — file copies of the seven touched
+`src/` files, base = their `upstream/main` content, one head, the two
+closure-heavy suites:
+
+| package  | base    | fix     | per-file delta     |
+| -------- | ------- | ------- | ------------------ |
+| prettier | 105/151 | 105/151 | identical per file |
+| jest     | 335/356 | 335/356 | identical per file |
+
+Both suites exit 0 with an `admitted` headline on both sides. Same verdict as
+the original 17-suite table above: **the fix is dogfood-neutral.** Its value is
+the correctness of the binding, proved by the regression test, not a suite
+delta — prettier's `print-doc-to-string` stays 0/3 because it is blocked by
+[#5375](https://js2wasm.loopdive.com/dashboard/issue.html?slug=5375-prettier-print-doc-push-literal-loops),
+not by this cell.
+
+Gates at the refreshed head, all exit 0: `check-loc-budget`,
+`check-func-budget` (both with `LOC_GATE_BASE=cf82f78d6d`),
+`check-coercion-sites`, `check:oracle-ratchet` (getTypeAtLocation +0,
+ctx.checker +0 across 7 changed files), `check:dead-exports`,
+`check:dogfood-validation` (6/6 compiled, 6/6 validated),
+`check-compiler-boundaries`, typecheck.
