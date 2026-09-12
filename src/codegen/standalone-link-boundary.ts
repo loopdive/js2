@@ -37,6 +37,7 @@ import { ensureReflectIsConstructor } from "./reflect-construct-native.js";
 import { CLASS_CONSTRUCT_DISPATCH } from "./standalone-class-construct.js"; // (#5383 S2g)
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { definedFuncAt } from "./func-space.js";
+import { LINK_BOUNDARY_TO_STRING_TAG } from "./link-boundary-names.js";
 import type { CodegenContext } from "./context/types.js";
 import type { Instr, ValType } from "../ir/types.js";
 
@@ -77,6 +78,12 @@ export const LINK_BOUNDARY_EXPORTS = Object.freeze({
   // owning module keeps resolution AND receiver binding on the side that owns
   // both.
   methodCall: "__js2wasm_link_method_call",
+  // (#5406) `Object.prototype.toString` over a value the consumer cannot
+  // decode. The name lives in the leaf `link-boundary-names.ts` because the
+  // CONSUMER side of this terminal is emitted by `object-proto-tostring.ts`,
+  // which this module may not import (it would close a cycle through
+  // `object-runtime`).
+  toStringTag: LINK_BOUNDARY_TO_STRING_TAG,
 } as const);
 
 /** The internal terminal each boundary name wraps, and its signature. */
@@ -99,6 +106,11 @@ const TERMINALS: ReadonlyArray<{ export: string; internal: string; params: ValTy
     export: LINK_BOUNDARY_EXPORTS.methodCall,
     internal: LINK_BOUNDARY_EXPORTS.methodCall,
     params: [EXTERNREF, EXTERNREF, EXTERNREF],
+  },
+  {
+    export: LINK_BOUNDARY_EXPORTS.toStringTag,
+    internal: LINK_BOUNDARY_EXPORTS.toStringTag,
+    params: [EXTERNREF],
   },
 ];
 
@@ -250,6 +262,14 @@ export function emitStandaloneLinkBoundaryTerminals(ctx: CodegenContext, registe
   ensureReflectIsConstructor(ctx);
   if (!ctx.funcMap.has(LINK_BOUNDARY_EXPORTS.callableKind)) {
     registerNative(LINK_BOUNDARY_EXPORTS.callableKind, [EXTERNREF], [I32], [], [{ op: "i32.const", value: 0 }]);
+  }
+  // (#5406) Reserved with the miss body ("not mine") and filled at finalize by
+  // `fillLinkBoundaryToStringTagTerminal` — the §20.1.3.6 classifier it wraps
+  // composes `__typeof_*` and the native-proto brand table, neither of which is
+  // complete this early. A provider whose fill declines keeps this body, so the
+  // consumer simply keeps its own (refusing) answer.
+  if (!ctx.funcMap.has(LINK_BOUNDARY_EXPORTS.toStringTag)) {
+    registerNative(LINK_BOUNDARY_EXPORTS.toStringTag, [EXTERNREF], [EXTERNREF], [], [{ op: "ref.null.extern" }]);
   }
   if (!ctx.funcMap.has(LINK_BOUNDARY_EXPORTS.construct)) {
     registerNative(

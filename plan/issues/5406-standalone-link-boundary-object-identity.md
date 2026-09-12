@@ -9,6 +9,27 @@ goal: standalone
 reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-12
+func-budget-allow:
+  # 2026-09-12 (S6) — `emitObjectProtoToStringClassifier` +34. The CODE is the
+  # boundary-carrier arm at the end of the chain: call the peer's
+  # `__js2wasm_link_to_string_tag` terminal, return its answer when it is
+  # non-null, fall through to the unchanged loud refusal when it is null —
+  # about 14 lines. The remaining ~20 are the rationale, and they are
+  # load-bearing in two independent ways a reader cannot re-derive from the
+  # code:
+  #   (a) WHY the arm is last and miss-path only. It is what keeps the
+  #       single-module standalone lane byte-identical (a module with no linked
+  #       provider emits nothing here) and what keeps a receiver this module can
+  #       decode from paying a cross-module call.
+  #   (b) WHY the `exportsConsumedByWasm` guard is not redundant with the
+  #       `funcMap` lookup. A PROVIDER registers the very same terminal name in
+  #       its own `funcMap` — that is how the export is published — so without
+  #       the guard a provider would emit a call to ITSELF at the tail of its
+  #       own classifier and recurse. The same trap is documented on
+  #       `standaloneLinkBoundaryPeerIndex`; a reader who trims the note will
+  #       "simplify" the guard away and the failure is an infinite recursion no
+  #       byte A/B would show.
+  - src/codegen/object-proto-tostring.ts::emitObjectProtoToStringClassifier
 ---
 
 ## Problem

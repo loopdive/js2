@@ -179,6 +179,7 @@ import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-sessi
 import { sourceFunctionHandleForDeclaration } from "./program-abi-source-callable-planning.js";
 import { stripHostBridgeExports } from "./host-bridge-exports.js";
 import { publishStandaloneLinkBoundaryExports } from "./standalone-link-boundary.js"; // (#5383 S2d)
+import { fillLinkBoundaryToStringTagTerminal } from "./link-boundary-tostring.js"; // (#5406)
 import { eliminateDeadLayoutAndPlanProgramAbi } from "./program-abi-finalization.js";
 import { emitDataStructHostBridgeManifest } from "./data-struct-host-bridge.js";
 import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_ROLE } from "./program-abi-planning.js";
@@ -7080,6 +7081,10 @@ function finalizeStandaloneTimerCallbackExports(ctx: CodegenContext): void {
   // removes the JS-facing decoder family from a standalone binary, and these
   // wasm-facing terminals are its replacement for a linked consumer. Publishing
   // before it would leave the export to be stripped again.
+  // (#5406) Fill the §20.1.3.6 terminal before publishing: its body composes
+  // `__typeof_*` and the native-proto brand table, which are only complete at
+  // finalize. A provider that declines keeps the reserved "not mine" body.
+  fillLinkBoundaryToStringTagTerminal(ctx);
   publishStandaloneLinkBoundaryExports(ctx);
 }
 
