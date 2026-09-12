@@ -5,6 +5,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
 import * as ts from "typescript";
 import { readWorkerCompileDuration, stripWorkerProtocol } from "./upstream-suite-worker-protocol.mjs";
+import {
+  attributeRejections,
+  createUnhandledRejectionSink,
+  moduleRejectionText,
+} from "./upstream-unhandled-rejections.mjs";
 
 // The assertions are intentionally small, deterministic JavaScript. They are
 // runner infrastructure; the registered callback bodies remain the exact
@@ -1032,12 +1037,21 @@ export function createHarnessLogger({ quiet = false } = {}) {
 // react-dom's `installNativeHostErrorBoundary`: record and keep going. Every
 // capture is echoed to stderr so genuine harness bugs stay visible in CI logs,
 // and drained into the next run's `native.lateHostErrors`.
+//
+// (#5369) Unhandled REJECTIONS are handled one level finer than that. They are
+// the lane's own copy of the defect this boundary was written for, but a file-
+// level note loses the only thing a reader needs: which test leaked it. They
+// go to a sink instead, and `runNative` folds each drained reason into the
+// test that was running — the same rule the Wasm worker applies, so a lane
+// difference stays visible instead of both lanes reporting "somewhere in here".
 const nativeLateHostErrors = [];
 let nativeLateBoundaryInstalled = false;
 let nativeLateCurrentFile = null;
+let nativeRejections = null;
 function installNativeLateErrorBoundary() {
   if (nativeLateBoundaryInstalled) return;
   nativeLateBoundaryInstalled = true;
+  nativeRejections = createUnhandledRejectionSink({ label: "dogfood native" });
   const record = (kind) => (error) => {
     const entry = {
       kind,
@@ -1049,7 +1063,6 @@ function installNativeLateErrorBoundary() {
     process.stderr.write(`[dogfood] late native host error (${kind}) in ${entry.file ?? "?"}: ${entry.message}\n`);
   };
   process.on("uncaughtException", record("uncaughtException"));
-  process.on("unhandledRejection", record("unhandledRejection"));
 }
 
 async function runNative(generatedPath, source) {
@@ -1070,31 +1083,54 @@ async function runNative(generatedPath, source) {
   // top-level `describe` bodies and then every registered test body.
   return withHostConsole(async () => {
     const module = await import(`${pathToFileURL(nativePath).href}?run=${Date.now()}-${Math.random()}`);
+    // The dynamic import above executed the module's top-level `describe`
+    // bodies; anything they leaked belongs to the module, not to a test.
+    const moduleRejections = await nativeRejections.drain();
     const count = Number(module.upstreamTestCount());
     const statuses = [];
     const errors = [];
     if (typeof module.runUpstreamTest === "function") {
       for (let index = 0; index < count; index++) {
         let value;
+        let thrown = null;
         try {
           value = await module.runUpstreamTest(index);
         } catch (error) {
-          value = 0;
-          errors.push(errorText(error));
+          thrown = error;
         }
-        statuses.push(Number(value) === 1);
-        if (errors.length < index + 1) errors.push(String(module.upstreamTestErrors()[index] ?? ""));
+        let passed = Number(value) === 1;
+        let error = thrown ? errorText(thrown) : String(module.upstreamTestErrors()[index] ?? "");
+        ({ passed, error } = attributeRejections({ reasons: await nativeRejections.drain(), passed, error }));
+        statuses.push(passed);
+        errors.push(error);
       }
     } else {
       statuses.push(...Array.from(module.runUpstreamTests(), (value) => Number(value) === 1));
       errors.push(...Array.from(module.upstreamTestErrors(), String));
     }
     module.cleanupUpstreamTestEnvironment?.();
+    const trailingRejections = await nativeRejections.drain();
+    const last = statuses.length - 1;
+    if (trailingRejections.length > 0 && last >= 0) {
+      const applied = attributeRejections({
+        reasons: trailingRejections,
+        passed: statuses[last],
+        error: errors[last],
+        late: true,
+      });
+      statuses[last] = applied.passed;
+      errors[last] = applied.error;
+    } else if (trailingRejections.length > 0) {
+      moduleRejections.push(...trailingRejections);
+    }
     return {
       count,
       names: Array.from(module.upstreamTestNames(), String),
       statuses,
       errors,
+      // Rejections owned by no test. Deliberately NOT `fatal`: that field marks
+      // the whole file unmeasured, which is the cliff this change removes.
+      unhandledRejections: moduleRejections,
       // Late async throws recorded (not fatal) since this file's native run
       // started — see installNativeLateErrorBoundary above. Drained per run so
       // one file's stray timers are not attributed to the next.
@@ -1434,8 +1470,10 @@ export function summarizeUpstreamRuns({ name, pin, testFiles, selectedFiles, run
   report.compile.details = runs.map((run) => ({
     file: run.file,
     ...run.result.compile,
-    nativeError: run.result.native.fatal ?? null,
-    runtimeError: run.result.wasm?.fatal ?? null,
+    // A rejection that belongs to no test is still the module's, and it must
+    // be readable here rather than vanishing into a null (#5369).
+    nativeError: run.result.native.fatal ?? moduleRejectionText(run.result.native.unhandledRejections) ?? null,
+    runtimeError: run.result.wasm?.fatal ?? moduleRejectionText(run.result.wasm?.unhandledRejections) ?? null,
   }));
   report.summary = {
     headline: `${report.results.passed}/${report.results.scored} admitted original tests pass in Wasm`,
