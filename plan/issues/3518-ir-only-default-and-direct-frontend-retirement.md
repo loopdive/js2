@@ -3,7 +3,7 @@ id: 3518
 title: "IR-only default and direct front-end retirement"
 status: in-progress
 created: 2026-07-21
-updated: 2026-09-08
+updated: 2026-09-12
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -5757,3 +5757,237 @@ checks without errors. Parent read both rev2 paired terminal receipts (candidate
 non-draft, MERGEABLE/CLEAN with reported checks successful and auto-merge null.
 The recursive emitter's precise diagnostic assertion repair independently passed
 29/29 focused tests; its production review and composition remain separate work.
+
+### Implementation Plan — forward the native delay EH repair through the held extraction — 2026-09-12
+
+**Plan recorded before source edits; the exact seven-file repair is now
+implemented, reviewed and validated locally.** Root supplied isolated
+worktree `.claude/worktrees/codex-3518-delay-eh-forward-20260912`, branch
+`codex/3518-delay-eh-forward-20260912`, at exact clean
+`de2f1072ebb32771272d24a58407814f9d2a5d38` (held PR 5759).
+Root retains the integration-consolidation claim. The original
+`3518:native-delay-combinator-bodies` owner, its PR/worktree, the cumulative
+held PR 5798, other agents' source and the earlier export-marshalling draft
+remain untouched. This is a forward integration repair, not a takeover or a
+repeat claim that the original extraction changed no behavior relative to
+today's main. No publication or commit is authorized by this plan.
+
+The landed reference is
+`d4108568d43f14c361ecc3a58c82633027eaae39:src/codegen/ir-native-promise-delay.ts`.
+Its provider already calls `buildStandardTryTable` with an externref-bearing
+tagged handler followed by a foreign-exception `catch_all` handler. The held
+extraction's `src/runtime/wasmgc/promise/delay-bodies.ts:57` still returns the
+old legacy `try` envelope around those same operations. The binary encoder
+has separate literal encodings for `try_table` and `try`
+(`src/emit/binary.ts:1765` and `:1799`); this repair must change the actual
+instruction body, not just its name or recorded hash.
+
+**Existing authority and dependency boundary.** No helper extraction is
+needed. `src/wasm/physical/exception-control.ts:107` already owns the canonical
+`buildStandardTryTable`; its only import is type-only from the Wasm model.
+`src/ir/try-table.ts` is already a compatibility re-export of the same function
+objects. The existing ownership test in
+`tests/issue-3518-async-frame-body-ownership.test.ts:129` checks that identity.
+The helper constructs observable nested blocks and `try_table` catches and
+retargets branches by mutating its supplied instruction arrays. The delay
+builder supplies newly constructed registration/handler arrays on each call;
+it must continue doing so, with no cross-call or cross-handler aliasing.
+
+The signed base has 23 production importing consumers of the two EH helpers:
+the native async frame engine, the WasmGC IR backend, and 21 codegen modules
+(function-body, runtime-eval-callable, async-closure-promise, disposable-runtime,
+array-filter-length-set, async-scheduler, promise-executor,
+generators-native-consumer, class-bodies, index, named-this-call,
+statements/nested-declarations, literals, statements/loops, closures,
+statements/exceptions, generators-native, array-from-native, expressions,
+expressions/calls, expressions/new-super). Their exact paths and source pins
+are recorded in `.tmp/delay-eh-forward-planning/source-plan-evidence.json`
+(SHA-256 `ee07dd243b133c46a19d5dfecd21cdcb4ce9263eecd800add76d881f5bd0f4af`).
+They remain read-only. In particular, do not use `buildTargetTaggedTry`:
+its host branch preserves legacy output, while its standalone/WASI branch
+currently passes only tagged catches to the standard helper and omits its
+optional `catchAll`. That would lose the delay provider's required foreign
+exception sentinel route.
+
+The native delay adapter's existing guard at
+`src/codegen/ir-native-promise-delay.ts:99` admits only standalone with native
+strings and excludes WASI. It already supplies the resolved tag, function and
+type handles. No new target policy, import, ABI field, allocator, context
+callback, frontend access or runtime-to-IR dependency is required.
+`scripts/compiler-boundaries.json` already admits `native-runtime` to
+`wasm-physical`; both endpoints are already clean. Do not change that policy,
+its activation history or module population. One added runtime edge predicts
+212 total edges (150 type-only, 62 runtime), still 65 modules; these are
+predictions to verify, not new measured results.
+
+**Implemented connected write set: seven existing files.**
+
+1. `src/runtime/wasmgc/promise/delay-bodies.ts`: add the direct downward import
+   from `../../../wasm/physical/exception-control.js`. Replace only the legacy
+   envelope with `buildStandardTryTable({ kind: "empty" }, timerRegistration,
+   handlers)`. Handler zero is `catch` for the existing `resources.exnTagIdx`
+   with externref payload; handler one is `catch_all`. Keep the original five
+   tagged operations, four foreign operations and attached sentinel comment.
+   Keep the six allocation-prefix operations, eleven registration operations,
+   two return operations, callback, locals, resource interfaces, capture fields,
+   dependency handles and fresh instruction identities unchanged.
+2. `tests/issue-3518-native-delay-combinator-body-ownership.test.ts`: extend only
+   the delay leaf's exact import expectation, keeping combinator expectations
+   and every forbidden-edge control. Replace its legacy-envelope assertion
+   with independently stated nested block/`try_table` shape, ordered catches
+   at depths zero/one, the tagged payload block and exact existing operation
+   arrays. Assert no legacy `try`, unchanged prefix/suffix and nonaliasing
+   across handlers and repeated builder calls. Do not define the expected
+   body by calling the production helper again.
+3. `tests/helpers/native-delay-combinator-source-receipts.mjs`: preserve all
+   13 `ORIGINAL_EVIDENCE` and 13 `ORIGINAL_SEMANTIC_EVIDENCE` entries, both
+   original five-file glue ledgers and all 24 retained-declaration records.
+   Add a separately named, fail-closed EH-forward verifier. It must first
+   authenticate the single direct helper import and the exact canonical call
+   envelope/handler metadata against independently captured landed-main
+   evidence. Only then may it reverse that one envelope and remove that one
+   import for the existing historical verifier. Live prefix, registration,
+   handler bodies, comment and suffix pass through into the old comparison;
+   no candidate-derived historical digest, missing-root fallback or generic
+   normalizer is allowed. Record the intentional legacy-to-standard delta
+   separately from the unchanged historical body proof. If this cannot be
+   expressed narrowly without weakening the old verifier, return the concrete
+   limitation for review instead of reseeding evidence.
+4. `tests/issue-3518-native-delay-combinator-source-preservation.test.ts`: route
+   current-root historical assertions through that explicit forward verifier,
+   with named negative controls for a missing/duplicate helper call, wrong
+   callee, lost/reordered handler, wrong tag/payload, changed rejection target
+   and changed foreign null sentinel. Keep the old retained-declaration and
+   live-body mutation controls meaningful. The previous explicit historical
+   binary/WAT pair is preserved as evidence of the old extraction; do not
+   change its strict equality comparison to pretend the new EH bytes equal
+   the old donor. Any later legacy pair run must report that intentional
+   non-equivalence separately. No source fixture or execution is removed.
+5. `tests/issue-3518-semantic-provider-boundary.test.ts`: amend only the two
+   affected edge-count expectations once the actual graph confirms the one
+   new downward edge. Keep the 65-module denominator, allowed-edge digest,
+   activation-history pins and all refusal controls unchanged.
+6. `tests/issue-4573-standalone-native-promise-delay.test.ts`: retain the twelve
+   existing source/options/behavior controls, including the foreign JavaScript
+   exception producing `{ state: 2, reason: null }`. Add a focused synchronous
+   compile/validate regression using the exact 2,061-character native-family
+   source and options captured by the unchanged settlement recorder (source
+   SHA-256 `fb644cafb5d7125d1906519dd330642a53e05cbf8a9f5a4af6eef4bbf7a74b9e`,
+   file name `settlement-native-family.ts`, standalone, experimental IR,
+   skip semantic diagnostics, fallback/outcome tracking, host bridge always,
+   WAT enabled). Derive it by the existing recorded source transformation;
+   do not maintain a divergent fixture copy. Require actual nonempty native
+   delay ownership and standard-EH output plus successful synchronous
+   `WebAssembly.Module` construction before any runtime execution. Add a paired real tagged
+   registration-throw control using the actual compiled instance's exported
+   exception tag and a distinct externref payload. The timer import throws
+   `WebAssembly.Exception` with that exact tag; the delay call must return
+   without a synchronous leak, state must be rejected and the payload object
+   identity must be preserved. Require the actual tag export and the unchanged
+   single timer import; do not manufacture an unrelated tag, add a production
+   export/import, substitute a JS Promise or silently skip a missing export.
+7. This Issue 3518 implementation/evidence section only.
+
+No changes are proposed to the shared EH helper/facade, codegen delay adapter,
+combinator/settlement/frame bodies, encoder, source fixtures, boundary policy,
+C consumer/codec/emission, A finalizer, B engine or shared baselines. No size
+exception is proposed. Final measured sizes and exact named test population
+will accompany the source draft before validation is scheduled.
+
+**Behavior and evidence checks, in dependency order.**
+
+- Preserve a pre-edit source map and all root baseline artifacts. Root's full
+  unchanged twelve-case delay attempt on Node 25.9 aborted in V8
+  `!job->compile_imports_.empty()` before producing test rows. Its narrower
+  first existing synchronous compile/validate control then passed 1/1, with
+  eleven unselected. Therefore the legacy source envelope is not evidence that
+  every scalar delay module is invalid, and the engine abort is not a measured
+  twelve-test compiler verdict. Root's unchanged eight-fixture settlement
+  recorder likewise aborted on the first delay fixture before a row existed.
+  Root's subsequent explicitly labeled `--no-wasm-async-compilation`
+  diagnostic completed all eight original rows: seven executed, while
+  `native-family` threw during `artifact-validation` with
+  `WebAssembly.Module(): Compiling function #314:"__ir_promise_delay_native"
+  failed: module uses a mix of legacy and new exception handling instructions
+  @+110573`. The compiler reported success with no errors for that artifact.
+  The raw report is `.tmp/delay-eh-forward/baseline-settlement-sync.json`,
+  SHA-256 `ef9c4780c215629db34db0a9e4b0617bbe704af1f82427bf4935d5db1dbc11e8`.
+  This is a measured context-sensitive baseline refusal, distinct from the
+  original asynchronous V8 crashes and the passing scalar 1/1 control.
+- The mixed-EH source-produced failure is now reproduced in the unchanged
+  settlement recorder. Reuse that exact artifact/source and/or the existing
+  `website/playground/examples/js/async.ts` native-family fixture through the
+  unchanged Issue 4574 compile options. Preserve complete binary/WAT, actual
+  compiler result, terminal owner observations and synchronous validation
+  result before any instantiate. Identify the actual function containing the
+  incompatible forms; do not infer them solely from source names or count an
+  engine crash as a validator refusal. No simpler replacement fixture is an
+  application pass. The expected repair is validation and execution of this
+  same original family, not only the scalar delay that already passed.
+- After the repair, verify emitted standard-EH structure, both real rejection
+  routes, normal concurrent settlement and exactly-once behavior on the same
+  original fixtures. Compare the live provider envelope with the landed-main
+  form while preserving all non-envelope body evidence. Run the focused
+  ownership, historical-preservation and boundary controls; collect actual
+  row counts rather than adding new controls to historical totals.
+- Then run the relevant unchanged delay/native-family controls and canonical
+  source TS7 in the sole granted heavy slot, each behind a fresh finite load
+  gate, one 4-GiB fork and no file parallelism. Record the actual worker VM
+  flags and every diagnostic runtime variant. The previously recorded 33,
+  126, 121, 12 and 14 populations describe historical suites, not results of
+  this repair. The initial planning-only assignment authorized no heavy run;
+  root subsequently scheduled the frozen draft and completed the checks
+  recorded below.
+- Preserve failed artifacts and exact input hashes. Any new failure, missing
+  actual exported tag, unexpected graph change or required scope beyond the
+  seven files above is reported before a dependent expansion. Signing and
+  publication remain separate decisions after source and evidence review.
+
+#### Forward-repair local implementation and final evidence — 2026-09-12
+
+The seven-file repair is implemented and independently reviewed locally.
+The sole production leaf remains `e60283bf8303025e4faa430707a9f5651c78db98202feba9aa6ccd285056e29c`
+(111 lines); every other source file and the canonical EH helper are unchanged.
+The original thirteen donor hashes, supplemental semantic hashes, five-file
+glue ledgers and 24 retained declarations remain unchanged and enforced.
+The separate forward verifier authenticates the full ordinary import and
+landed call before projecting only the authorized envelope. B accepted the
+attribute/assertion/modifier/phase guards and three positive-first negatives.
+
+The diagnostic pair used the same eight fixtures, options and runtime flags,
+with only that production leaf changed: baseline executed 7/8 and rejected
+the native-family module for mixed EH at function 314, offset 110573;
+candidate executed 8/8 with 22 executions, including four family scenarios twice.
+Raw pair: `.tmp/delay-eh-forward/{baseline,candidate}-settlement-sync.json`.
+The normal-runtime candidate also executed 8/8 fixtures and 22 executions,
+exit 0: `.tmp/delay-eh-forward/candidate-settlement.json` (`c7918ca4`).
+Earlier asynchronous V8 aborts remain preserved and unclassified; they produced
+no test rows and are separate from the diagnostic validation refusal.
+
+Frozen cohort 68636 exited 0: **325/325**, zero failed or pending. Actual rows:
+ownership 33, preservation 143, boundary 121, delay 14, unchanged family 14.
+The new real module-tag case preserves payload identity; the original foreign
+exception case still rejects with the null sentinel. All twelve old delay
+test bodies and the strict historical comparison remain intact.
+Report: `.tmp/delay-eh-forward/cohort-325.json`, SHA-256
+`b3bd048e1d74547579f34bfb3e747a34b75ff35b77e39a961eda3be8362f7afb`.
+All seven frozen input hashes matched before this issue-only evidence update.
+
+Source TS7, LOC, function-size and oracle gates passed. Boundary inventory is
+valid: 1,313 modules, 65 clean, 1,243 migration entries, five compatibility
+adapters and zero errors; `architectureComplete` remains false. The dead-export
+command exited 0 with preservation witnesses 6/6, but strict closure remains
+open on two existing unknown imports. Retirement is not certified.
+The 325/325 report is the pre-style-correction capture. A later normal commit
+attempt stopped before tests on a `useConst` lint error; its log is preserved
+as `.tmp/delay-eh-forward/commit-attempt-1.log`. Only the new tagged test now
+uses a constant mutable holder (`ebecacf8` to `cbac043a`); source, helper and
+expectations are unchanged. Scoped format/lint passed. Subsequent full normal
+hooks passed **576/576 across 12 files** (29+21+41+45+24+33+143+36+55+14+121+14),
+including the corrected 14-case delay file; budgets, lint and oracle passed.
+The raw record is `.tmp/delay-eh-forward/commit-attempt-2.log`. This is a
+separate hook cohort, preserving the original pre-style 325/325 capture.
+Commit creation then failed after hooks, exit 128: the inherited SSH agent
+socket was missing. No commit was created in that attempt. Root verified the
+existing desktop agent and will retry signing with full normal hooks again.
+Root owns the signed local checkpoint; existing PR/claim holds remain untouched.

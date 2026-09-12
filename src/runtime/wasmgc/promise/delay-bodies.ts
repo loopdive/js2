@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { FuncHandle, Instr, LocalDef, TypeHandle, ValType } from "../../../wasm/model/instructions.js";
+import { buildStandardTryTable } from "../../../wasm/physical/exception-control.js";
 import { PROMISE_STATE_PENDING } from "./settlement-bodies.js";
 
 export interface NativePromiseDelayCaptureLayout {
@@ -76,34 +77,34 @@ export function buildNativePromiseDelayProviderBody(resources: NativePromiseDela
     { op: resources.bagInit.op },
     { op: "struct.new", typeIdx: resources.promiseTypeIdx },
     { op: "local.set", index: promiseLocal },
-    {
-      op: "try",
-      blockType: { kind: "empty" },
-      body: timerRegistration,
-      catches: [
-        {
-          tagIdx: resources.exnTagIdx,
-          body: [
-            { op: "local.set", index: reasonLocal },
-            { op: "local.get", index: promiseLocal },
-            { op: "local.get", index: reasonLocal },
-            { op: "call", funcIdx: resources.rejectFuncIdx },
-            { op: "drop" },
-          ],
-        },
-      ],
+    buildStandardTryTable({ kind: "empty" }, timerRegistration, [
+      {
+        kind: "catch",
+        tagIdx: resources.exnTagIdx,
+        payloadType: { kind: "externref" },
+        body: [
+          { op: "local.set", index: reasonLocal },
+          { op: "local.get", index: promiseLocal },
+          { op: "local.get", index: reasonLocal },
+          { op: "call", funcIdx: resources.rejectFuncIdx },
+          { op: "drop" },
+        ],
+      },
       // A JavaScript timer provider can throw a foreign host exception rather
       // than the module's tagged `throw` payload. The Promise constructor must
       // still return a rejected Promise instead of leaking that exception
       // synchronously. No host exception-value import is introduced here: the
       // rejection reason is the native null/undefined boundary sentinel.
-      catchAll: [
-        { op: "local.get", index: promiseLocal },
-        { op: "ref.null.extern" },
-        { op: "call", funcIdx: resources.rejectFuncIdx },
-        { op: "drop" },
-      ],
-    },
+      {
+        kind: "catch_all",
+        body: [
+          { op: "local.get", index: promiseLocal },
+          { op: "ref.null.extern" },
+          { op: "call", funcIdx: resources.rejectFuncIdx },
+          { op: "drop" },
+        ],
+      },
+    ]),
     { op: "local.get", index: promiseLocal },
     { op: "extern.convert_any" },
   ];
