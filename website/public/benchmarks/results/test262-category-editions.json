@@ -413,9 +413,9 @@
   },
   "built-ins/Object": {
     "ES5": {
-      "pass": 2327,
+      "pass": 2329,
       "fail": 483,
-      "ce": 21,
+      "ce": 19,
       "skip": 0
     },
     "ES2015": {
@@ -787,20 +787,6 @@
       "skip": 0
     }
   },
-  "built-ins/AsyncIteratorPrototype": {
-    "ES2018": {
-      "pass": 4,
-      "fail": 0,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2027": {
-      "pass": 0,
-      "fail": 9,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "built-ins/WeakMap": {
     "ES2015": {
       "pass": 86,
@@ -815,16 +801,16 @@
       "skip": 0
     }
   },
-  "built-ins/Uint8Array": {
-    "ES2026": {
-      "pass": 60,
-      "fail": 8,
+  "built-ins/AsyncIteratorPrototype": {
+    "ES2018": {
+      "pass": 4,
+      "fail": 0,
       "ce": 0,
       "skip": 0
     },
     "ES2027": {
       "pass": 0,
-      "fail": 2,
+      "fail": 9,
       "ce": 0,
       "skip": 0
     }
@@ -857,6 +843,20 @@
     "ES2024": {
       "pass": 84,
       "fail": 46,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2027": {
+      "pass": 0,
+      "fail": 2,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "built-ins/Uint8Array": {
+    "ES2026": {
+      "pass": 60,
+      "fail": 8,
       "ce": 0,
       "skip": 0
     },
@@ -1085,6 +1085,20 @@
       "skip": 0
     }
   },
+  "built-ins/SharedArrayBuffer": {
+    "ES2017": {
+      "pass": 51,
+      "fail": 9,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2022": {
+      "pass": 29,
+      "fail": 15,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "built-ins/decodeURI": {
     "ES2015": {
       "pass": 0,
@@ -1103,20 +1117,6 @@
     "ES2016": {
       "pass": 1,
       "fail": 0,
-      "ce": 0,
-      "skip": 0
-    }
-  },
-  "built-ins/SharedArrayBuffer": {
-    "ES2017": {
-      "pass": 51,
-      "fail": 9,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2022": {
-      "pass": 29,
-      "fail": 15,
       "ce": 0,
       "skip": 0
     }
@@ -1305,6 +1305,14 @@
       "skip": 0
     }
   },
+  "language/computed-property-names": {
+    "ES2015": {
+      "pass": 29,
+      "fail": 15,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "language/destructuring": {
     "ES2015": {
       "pass": 17,
@@ -1351,10 +1359,10 @@
       "skip": 0
     }
   },
-  "language/computed-property-names": {
+  "built-ins/ArrayIteratorPrototype": {
     "ES2015": {
-      "pass": 29,
-      "fail": 15,
+      "pass": 17,
+      "fail": 10,
       "ce": 0,
       "skip": 0
     }
@@ -1371,14 +1379,6 @@
     "ES2015": {
       "pass": 5,
       "fail": 3,
-      "ce": 0,
-      "skip": 0
-    }
-  },
-  "built-ins/ArrayIteratorPrototype": {
-    "ES2015": {
-      "pass": 17,
-      "fail": 10,
       "ce": 0,
       "skip": 0
     }
