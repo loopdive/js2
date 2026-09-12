@@ -1,3 +1,4 @@
+import { initializeNativeGeneratorFunctionValue } from "./generators-factory-prototype.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * Closure and arrow-function compilation for js2wasm.
@@ -3896,7 +3897,7 @@ export function compileArrowAsClosure(
     }
   }
 
-  return { kind: "ref", typeIdx: structTypeIdx };
+  return initializeNativeGeneratorFunctionValue(ctx, fctx, arrow, { kind: "ref", typeIdx: structTypeIdx });
 }
 
 const NUMERIC_CLOSURE_INLINE_OPS = new Set<string>([
