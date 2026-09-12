@@ -501,6 +501,14 @@ criterion 4 is **not**, and the issue stays `in-progress` for that reason. The
    because the #661 lowering covers only PlainDate/PlainTime/Duration).
 4. S5: samples measured, 0 pass→fail, counts with artifacts; the standalone
    Temporal bucket moves from 170 pass.
+   **MET for the sampled families (re-measured S7, 2026-09-12, after #6432).**
+   Linked, the three sampled families score **44 pass / 310 fail / 6
+   compile_error out of 360** (PlainDate 17, Duration 26, ZonedDateTime 1),
+   against **0 pass** on the S5- and S6-linked sides — **0 pass→fail**, 44
+   `fail→pass`, 2 `compile_error→fail` (both S5 compile-timeouts). The full-corpus
+   "moves from 170 pass" number is still unmeasured; only the 360-row sample is.
+   Per-family counts, flip lists and the new top buckets are in "S7 findings"
+   below. The S6 text that follows is kept for the record:
    **NOT MET (re-measured S6, 2026-09-12).** Linked, the three sampled families
    still score **0 pass** (120 rows each: PlainDate 0 pass / 109 fail / 11
    compile-timeout, Duration 0 / 110 / 10, ZonedDateTime 0 / 111 / 9), so
@@ -3487,3 +3495,117 @@ the three results that matter here:
 
 Byte A/B: 12 shapes x {gc, standalone}, **24 of 24 identical** — both new arms
 are reachable only inside a linked graph.
+
+## S7 findings (2026-09-12) — the init blocker is fixed; the linked lane scores 44/360 and the buckets are finally about Temporal
+
+**#6432 is fixed.** Root cause, chain, fix and the byte A/B live in that issue
+file; the one-line version: `__to_primitive`'s §7.1.1-step-1 "already a
+primitive" early-out cascade had no `$Symbol` arm, so a Symbol PROPERTY KEY
+(`Array[@@species]`, minted during native-prototype seeding at module init) fell
+into `__class_to_primitive`, whose generic walk guards on `__typeof_object ||
+__typeof_function` — and `__typeof_object` answers "object" for a Symbol. The
+walk therefore sent `sym.toString()` at it, which resolved to the inherited
+`Object.prototype.toString` glue and raised that method's loud standalone
+refusal. `eval` (forces the full realm seed at init) and a linked provider (the
+state that made the glue reachable mid-seed) were amplifiers, not the cause.
+
+### The three-family sample, LINKED, re-measured
+
+120 rows each, `--target standalone`, provider linked, families run
+**sequentially**, fresh `JS2WASM_TEMPORAL_CACHE`, quickjs eval provider built.
+S5-linked artifacts (`/home/user/js2/.tmp/s5-artifacts/*-link.tsv`) are the base;
+S6-linked measured the same 0-pass result.
+
+| family | rows | S5/S6 linked pass | **S7 linked pass** | fail | compile_error | pass→fail |
+| --- | --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 0 | **17** | 102 | 1 | **0** |
+| `built-ins/Temporal/Duration/**` | 120 | 0 | **26** | 91 | 3 | **0** |
+| `built-ins/Temporal/ZonedDateTime/prototype/**` | 120 | 0 | **1** | 117 | 2 | **0** |
+| **total** | **360** | **0** | **44** | **310** | **6** | **0** |
+
+46 rows flipped: 44 `fail→pass`, 2 `compile_error→fail` (both were S5
+compile-timeouts — contention, not a new defect). No row went `pass→fail`.
+
+The compile-timeout count also fell (S5 8 → S7 6) because the families ran
+sequentially this time; S6 recorded the opposite movement for the same reason.
+
+### Top error buckets, LINKED — the first ones that describe Temporal
+
+PlainDate (102 fail):
+
+| count | text |
+| --- | --- |
+| 21 | `Test262Error: calendar must be string in canonicalizeCalendarEra Expected SameValue(«"undefined"», «"string"»)` |
+| 16 | `TypeError: Unsupported dynamic regular expression pattern` |
+| 6 | `TypeError: Cannot read properties of undefined (reading 'sort')` |
+| 4 | `Test262Error: Expected a RangeError but got a undefined` |
+| 4 | `TypeError: map callbackfn is not a function` |
+
+Duration (91 fail):
+
+| count | text |
+| --- | --- |
+| 15 | `TypeError: Unsupported dynamic regular expression pattern` |
+| 9 | `TypeError: Cannot access property on null or undefined at 164:22` |
+| 6 | `Test262Error: Expected a RangeError but got a undefined` |
+| 4 | `TypeError: expected a string, not null` |
+| 4 | `Test262Error: years result: Expected SameValue(«undefined», «0») to be true` |
+
+ZonedDateTime/prototype (117 fail):
+
+| count | text |
+| --- | --- |
+| 70 | `TypeError: Unsupported dynamic regular expression pattern` |
+| 18 | `TypeError: Cannot convert undefined or null to object` |
+| 6 | `TypeError: Cannot read properties of undefined (reading 'equals')` |
+| 2 | `TypeError: Cannot read properties of undefined (reading 'toZonedDateTime')` |
+| 2 | `TypeError: Cannot read properties of undefined (reading 'sort')` |
+
+Read honestly, that gives the next slices a target list rather than one opaque
+text:
+
+- **The dynamic-RegExp gap (#5408) is now the single largest bucket — 101 of
+  310 failures across the three families, and 70 of ZonedDateTime's 117.** The
+  polyfill parses ISO strings with computed patterns; until those compile, the
+  whole string-parsing surface of the lane is capped. This is the highest-value
+  next slice by a wide margin.
+- **`canonicalizeCalendarEra` reads a calendar as `undefined` (21 PlainDate
+  rows)** — a distinct, self-contained defect in the calendar-id path.
+- **`Cannot read properties of undefined` / `Cannot access property on null or
+  undefined` (≈45 rows)** — several different missing members inside the
+  provider, not one bug; needs per-row attribution before it can be scoped.
+
+### A trap for whoever measures this lane next
+
+The standalone lane links a provider **only when a standalone-keyed pre-warm
+stamp exists in the cache dir** (`test262TemporalLaneEnabled` →
+`readTemporalPrewarmStamp`, #5383 S3). Without it every row runs **unlinked and
+fails soft** — and it looks exactly like a linked run that went badly. The first
+S7 run was exactly that, and the tell was the error texts: 74 `standalone target
+emitted host imports: env::__temporal_*` plus 89 `ReferenceError: Temporal is
+not defined`, i.e. the UNLINKED numbers already recorded in acceptance criterion
+3 above. Two checks make it unambiguous:
+
+- the run log must contain `[test262] Temporal provider (standalone) …
+  cacheHit=…`, and
+- `__temporal_*` host-import leaks must be **zero**.
+
+`scripts/prewarm-temporal-provider.mjs` needs `scripts/compiler-bundle.mjs`,
+which a plain source checkout does not have; `.tmp/s7-prewarm.mts` writes the
+same stamp in-process via `temporalProviderCacheKey` + `writeTemporalPrewarmStamp`.
+
+### Acceptance criterion 4 — updated
+
+Criterion 4 above is edited in place to MET-for-the-sample, with the S6 text
+kept beneath it for the record. Nothing here claims the full-corpus number: only
+360 rows were measured, and a corpus run is the tech lead's to schedule.
+
+### Artifacts
+
+`.tmp/s7fam/{pd,du,zdt}-link.tsv` (+ `.log`) in the S7 worktree
+`/home/user/js2/.claude/worktrees/agent-ab8c96460934f2664`, produced by
+`.tmp/s7-family.mts` (a copy of S6's, label `s7`) and compared with
+`.tmp/s7-table.mjs` against `/home/user/js2/.tmp/s5-artifacts/*-link.tsv`. The
+first, UNLINKED run is kept at `.tmp/s7fam-UNLINKED/` as the worked example of
+the pre-warm trap. Provider: `cacheHit=true`,
+`js2wasm:npm:@js-temporal/polyfill:75c71eaf308041cb`, 3,273,995 B.
