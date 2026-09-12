@@ -577,7 +577,13 @@ export function fillIterHofSteppers(ctx: CodegenContext): void {
   // Only generators whose resume function actually EMITTED participate —
   // reading `funcMap` per #2941 (the shift-maintained single source of truth)
   // rather than the cached `resumeFuncIdx` number.
-  const producers: { stateTypeIdx: number; resumeIdx: number; resultTypeIdx: number; elemValType: ValType }[] = [];
+  const producers: {
+    stateTypeIdx: number;
+    resumeIdx: number;
+    nativeDelegates?: boolean;
+    resultTypeIdx: number;
+    elemValType: ValType;
+  }[] = [];
   const seen = new Set<number>();
   for (const info of ctx.nativeGenerators.values()) {
     if (info.resumeFuncIdx === undefined || seen.has(info.stateTypeIdx)) continue;
@@ -585,6 +591,7 @@ export function fillIterHofSteppers(ctx: CodegenContext): void {
     producers.push({
       stateTypeIdx: info.stateTypeIdx,
       resumeIdx: info.resumeFuncIdx,
+      nativeDelegates: info.nativeDelegates,
       resultTypeIdx: info.resultTypeIdx,
       elemValType: info.elemValType,
     });
@@ -843,6 +850,13 @@ export function fillIterHofSteppers(ctx: CodegenContext): void {
             { op: "local.get", index: ANY },
             { op: "ref.cast", typeIdx: p.stateTypeIdx },
             { op: "call", funcIdx: p.resumeIdx },
+            ...(p.nativeDelegates
+              ? ([
+                  { op: "extern.convert_any" },
+                  { op: "call", funcIdx: ctx.funcMap.get("__gen_delegate_iter_result")! },
+                  { op: "return" },
+                ] as Instr[])
+              : []),
             { op: "local.set", index: RES_ANY }, // (ref RT) <: anyref
             // done
             { op: "local.get", index: RES_ANY },
