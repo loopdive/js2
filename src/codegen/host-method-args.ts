@@ -33,23 +33,12 @@ export function emitHostMethodCallArgs(
   arrPushName: string,
   arrPushIdx: number,
 ): void {
-  const spreadArgs = hasSpreadArgument(expr.arguments)
-    ? buildSpreadArgList(ctx, fctx, expr.arguments, 0, { kind: "externref" }, "emc_spread", {
-        afterValue: (arg) => {
-          maybeStampCompiledFunctionArgName(ctx, fctx, arg);
-        },
-      })
-    : undefined;
-  if (spreadArgs) {
-    // The push helper's funcidx is re-resolved by NAME: expanding a spread can
-    // register late imports, which shifts every defined-function index that
-    // was captured before them.
-    spreadArgs.emitStores({
-      pre: [{ op: "local.get", index: argsLocal }],
-      post: [{ op: "call", funcIdx: ctx.funcMap.get(arrPushName) ?? arrPushIdx }],
-    });
-    return;
-  }
+  const handled = tryEmitSpreadHostArgs(ctx, fctx, expr.arguments, argsLocal, arrPushName, arrPushIdx, {
+    afterValue: (arg) => {
+      maybeStampCompiledFunctionArgName(ctx, fctx, arg);
+    },
+  });
+  if (handled) return;
   for (const arg of expr.arguments) {
     fctx.body.push({ op: "local.get", index: argsLocal });
     const argType = compileExpression(ctx, fctx, arg, { kind: "externref" });
@@ -65,4 +54,41 @@ export function emitHostMethodCallArgs(
     maybeStampCompiledFunctionArgName(ctx, fctx, arg);
     fctx.body.push({ op: "call", funcIdx: arrPushIdx });
   }
+}
+
+/**
+ * Fill an already-created host array with a SPREAD-containing argument list,
+ * expanding each spread source at its runtime length.
+ *
+ * Returns `false` when there is no spread (the caller keeps its own unrolled
+ * per-node loop, which is exact and stays byte-identical) or when the target
+ * has no substrate to expand one. Nothing is emitted in either case.
+ *
+ * Every host-array argument builder in the compiler is the same `__js_array_new`
+ * + one `__js_array_push` per AST node shape, and every one of them sizes the
+ * array from `arguments.length` — which is the right number only while each
+ * argument is ONE value. This is the single place that difference is repaired,
+ * so a new bridge gets the runtime count by calling here rather than by growing
+ * a sixth copy of the loop.
+ */
+export function tryEmitSpreadHostArgs(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  args: readonly ts.Expression[],
+  argsLocal: number,
+  arrPushName: string,
+  arrPushIdx: number,
+  opts?: { afterValue?: (arg: ts.Expression) => void },
+): boolean {
+  if (!hasSpreadArgument(args)) return false;
+  const built = buildSpreadArgList(ctx, fctx, args, 0, { kind: "externref" }, "hostargs", opts);
+  if (!built) return false;
+  // The push helper's funcidx is re-resolved by NAME: expanding a spread can
+  // register late imports, which shifts every defined-function index that was
+  // captured before them.
+  built.emitStores({
+    pre: [{ op: "local.get", index: argsLocal }],
+    post: [{ op: "call", funcIdx: ctx.funcMap.get(arrPushName) ?? arrPushIdx }],
+  });
+  return true;
 }
