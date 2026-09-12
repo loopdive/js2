@@ -549,6 +549,26 @@ head evidence above. The unchanged two-row exec residual and deferred
 three-row `@@match` handoff remain exactly as recorded; no broad residual
 transition is inferred from the artifact-only merge.
 
+### C3a live-PR refresh after upstream #5850 (2026-09-12)
+
+After #5859 was published, live `loopdive/js2` main advanced to final exact
+`f84b3a3de56afd2f6ddd6c91a77ef407d92f4f19` through #5850. The open branch
+normally merged that tip without a conflict, rebase, or reset. The new async
+thenable lowering files do not overlap the C3a RegExp source, but the bounded
+proof was rerun on the merged head:
+
+- `pnpm run build:compiler-bundle` passed;
+- fresh isolated host A/B was `17 pass`;
+- fresh isolated standalone A/B was `17 pass / 0 compile_error / 0 timeout /
+  0 skip / 0 host imports`;
+- the dedicated C3a pin passed `14/14` in one fork; and
+- TS5, TS7, lint, Prettier, diff check, LOC/function, coercion, and oracle
+  gates passed before the normal pre-push rerun.
+
+This supersedes `781915e2` as the live PR base. The two known exec residuals
+and deferred `@@match` cohort are untouched by #5850 and remain precisely the
+same handoff, not an inferred transition.
+
 ## Acceptance criteria
 
 - All 165 exact rows pass standalone with zero host imports; interim PRs pass
