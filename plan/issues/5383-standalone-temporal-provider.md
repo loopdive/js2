@@ -2269,6 +2269,245 @@ answers `NaN` under the test262 harness on **both** trees — measured, identica
 before and after. That is a separate residual of the static-method surface, not
 something this fix regressed or repaired.
 
+## S2o findings (2026-09-12) — linking is nearly free; `compileMulti` is not
+
+S2o was dispatched to make the linked standalone compile affordable enough to
+flip the test262 artifact default-on. It did not get there, and the reason is
+that the slice's premise was wrong in a way worth recording: **linking costs
+about 2 %. The 3.3× is `compileMulti` vs `compile`,** and
+`compileWithTemporalGlobal` is simply the multi-file entry point. S3's table
+compared a multi-file compile against a single-file one and read the whole
+difference as the linker's.
+
+Half of that multi-file cost is now gone, from one registration-site guard. The
+other half is located, measured, and named below; it is a different defect and
+it is what the next slice should take.
+
+### 1. Profile first — the delta is not where the brief expected
+
+`.tmp/s2o-isolate.mts`, one process, same options on every line, the row the
+brief names (`built-ins/Temporal/PlainDate/prototype/day/basic.js`, 10.6 KB
+**assembled original harness**, standalone). Read the steps, not the absolutes —
+the box is loaded.
+
+| configuration | ms | vs `compile()` |
+| --- | --- | --- |
+| A `compile()` — what the UNLINKED lane runs | 1797 | 1.0× |
+| B `compileMulti()`, ONE file, **no link** | 5802 | **3.2×** |
+| C B + `canonicalRuntimeTypes` | 5604 | 3.1× |
+| D B + `sharedExceptionTag` | 5609 | 3.1× |
+| E B + both | 6025 | 3.4× |
+| F E + the provider stub file, still no link | 6762 | 3.8× |
+| G `compileWithTemporalGlobal` — the LINKED lane | 5882 | 3.3× |
+
+B is the whole gap. Neither compile flag matters, and G ≈ B: the provider
+contributes **6 functions** to a 2,761-function module. The comparison is the
+right one for the lane — `tests/test262-runner.ts` L4388-4393 runs
+`compileWithTemporalGlobal` when a provider exists and plain `compile` when it
+does not, so multi-vs-single IS linked-vs-unlinked from the lane's point of
+view. It is just not *caused* by linking.
+
+Per-phase attribution (`JS2WASM_COMPILE_PROFILE=1`, `.tmp/s2o-phase.mts`) showed
+no single hot pass — every whole-module finalize pass was ~3× its single-source
+self time, in proportion. That is the signature of a bigger MODULE, not a slower
+pass, and the module-scale markers said so directly:
+
+| before-finalize, same source | funcs | instrs | globals | types |
+| --- | --- | --- | --- | --- |
+| `compile()` | 612 | 102 k | 608 | 351 |
+| `compileMulti()` | 2761 | 694 k | 1928 | 533 |
+
+### 2. Root cause A (fixed): a WasmGC struct for `typeof globalThis`
+
+Of `compileMulti`'s 2,766 functions, **1,942 were `__sget_<name>` / `__sset_<name>`
+accessor pairs** — 977 getter names against 19 in the single-source module. The
+names read `AbortController`, `AudioContext`, `CSSKeyframeRule`: one giant
+struct, `$__anon_1`, with ~950 `externref` fields, one per ambient global in
+`lib.dom`.
+
+The test262 harness prefix opens with `var $262 = { global: globalThis, … }`.
+That makes the checker hand `ensureStructForType` the `typeof globalThis` type,
+it registered it, and `emitStructFieldGetters`/`Setters` minted a host-facing
+accessor per field. Not one of them is reachable: no value of that type exists
+at runtime to read through one.
+
+**This was already known to be wrong — three times, at use sites.** #3365 widens
+`var t = this` to externref; #4394 routes `Object.defineProperty(globalThis, …)`
+off the struct fast path; #4638 re-represents a data-only literal holding it.
+Each exists because a `(ref null $__anon_globalThis)` slot can never `ref.test`
+against the host externref (or the standalone `$Object` singleton) that the value
+actually is. The fix is the registration-site statement of the rule those three
+work around: `src/codegen/index.ts`, `ensureStructForType`, skip the type.
+
+Why the guard directly above it did not already catch this: the `.d.ts`-only
+skip (#1287) requires `dtsDecls.length > 0`, and the global scope's symbol is
+**transient with ZERO declarations** (`.tmp/s2o-globaltype.mts`:
+`symbol.name "globalThis"`, `decls []`, `props 946`). It failed open. Both
+conditions are checked so an ordinary user type merely NAMED `globalThis` keeps
+its struct.
+
+| before-finalize, 10.6 KB row | funcs | instrs | `__sget_`/`__sset_` |
+| --- | --- | --- | --- |
+| `compile()` | 612 | 102 k | 28 |
+| `compileMulti()`, base | 2766 | 694 k | **1942** |
+| `compileMulti()`, S2o | 929 | 486 k | 28 |
+
+−66 % functions, −30 % instructions, ≈ −15…20 % wall on the same box.
+
+### 3. Root cause B (NOT fixed, and it is the rest of the gap)
+
+After the fix the multi module is still **929 funcs / 486 k instrs** against
+single-source's 612 / 102 k. The remaining inflation is per-BODY, not per-module,
+and it is one mechanism:
+
+| function | single-source WAT lines | multi WAT lines |
+| --- | --- | --- |
+| harness `assert` | 103 | **5,610** |
+| `__module_init` | 5,785 | 47,489 |
+| `__closure_56` | 243 | 42,202 |
+
+`assert`'s multi body opens with `__native_globalThis_obj`,
+`__builtin_Array_obj`, `__builtin_Object_obj`, `__builtin_JSON_obj`,
+`__builtin_Math_obj`, `__builtin_Proxy_obj`, `__builtin_Reflect_obj`,
+`__runtime_eval_dynamic_global_obj` — **twice**.
+
+`emitNativeGlobalThisObject` (`src/codegen/array-object-proto.ts` ~L3629) caches
+the realm object in a module GLOBAL at runtime, but splices its entire
+~5,000-instruction lazy-init seed into the CALLER's body at every call site, at
+compile time. Single-source lands one copy in `__module_init`; the multi path
+lands ~30 copies across the module.
+
+**Proposed fix for the next slice:** outline the seed into one synthetic
+zero-argument helper (`__native_globalThis_ensure() -> externref` holding the
+`global.get` / `ref.is_null` / init guard), and emit `call` at each site. It is
+not a two-line change — the emitter allocates `objLocal` in the caller's `fctx`,
+and the late-import / index-shift discipline it documents ("keep the detached
+body live while later seed construction can still add imports") has to be carried
+onto the synthetic context. Not attempted here rather than attempted and
+half-validated: it is the standalone `globalThis` substrate, every standalone
+test262 row runs through it, and it needed more validation budget than remained.
+Ruled out on the way: the `#4157` IR inliner (`JS2WASM_IR_INLINE=0` leaves the
+before-finalize scale byte-for-byte identical, so the inflation is already
+present at codegen time) and `ctx.sourceIsModule` (the multi path pins it `true`
+at L10596, but module mode emits strictly *less*).
+
+### 4. Per-row cost, and why the default did NOT flip
+
+`.tmp/s2o-cost.mts`, median of 3, after the fix:
+
+| row | size | unlinked | linked | ratio |
+| --- | --- | --- | --- | --- |
+| `built-ins/…/PlainDate/prototype/day/basic.js` | 10.6 KB | 1634 ms | 5385 ms | 3.30× |
+| `intl402/…/PlainDate/from/era-japanese.js` | 60 KB | 7480 ms | 26826 ms | 3.59× |
+
+The target was ~1.3×. **The artifact therefore stays OPT-IN** —
+`standalone_temporal` in CI, `JS2WASM_TEST262_TEMPORAL_STANDALONE=1` locally —
+and no runner, worker, shared-harness or workflow file is touched by this slice.
+Flipping it now would put the 60 KB row at ~27 s against a 30 s fork kill and a
+15 s in-process compile limit: a 10 % margin, on a box measurement, for the
+class of failure (a per-row timeout storm) the pre-warm doctrine exists to
+prevent. Root cause B has to land first.
+
+### 5. Measured: two NON-Intl families, standalone lane
+
+First 40 rows in path order of `built-ins/Temporal/PlainDate/**` and
+`built-ins/Temporal/Duration/**` (driver `.tmp/s2o-family.mts`, one TSV row per
+test; `runTest262File(file, "s2o", 15000, "standalone")`). Fresh
+`JS2WASM_TEMPORAL_CACHE` per side; the linked side carries a standalone pre-warm
+stamp, the base side none, which is exactly how `test262TemporalLaneEnabled`
+decides. 40 not 120: each linked row costs ~6 s here and the four runs already
+took ~2 h wall.
+
+| | PlainDate base (unlinked) | PlainDate linked | Duration base (unlinked) | Duration linked |
+| --- | --- | --- | --- | --- |
+| rows | 40 | 40 | 40 | 40 |
+| pass | **2** | **0** | 0 | 0 |
+| fail | 34 | 37 | 37 | 34 |
+| compile_error | 4 | 3 | 3 | 6 |
+| — of those, TIMEOUT | 1 | 3 | 0 | 6 |
+| `Temporal is not defined` | 16 | **0** | 22 | **0** |
+| `__temporal_*` leak | 3 | **0** | 3 | **0** |
+| median compile ms | 1745 | 6142 | 2013 | 7026 |
+| status flips vs base | — | 7 | — | 9 |
+
+**The bar was 0 pass→fail and the count is 2, so state it as it is: 2 rows flip
+`pass` → `fail`, and both were FALSE passes.**
+`PlainDate/calendar-string.js` and `PlainDate/calendar-undefined.js` are ordinary
+positive tests — `new Temporal.PlainDate(2020, 12, 24)` then
+`assert.sameValue(d.calendarId, "iso8601")`. Neither can legitimately pass
+without a `Temporal` global, and unlinked there is none; the sibling row
+`compare/argument-propertybag-calendar-string.js` reports the honest
+`ReferenceError: Temporal is not defined` on the same side, so the unlinked pass
+is inconsistent, not systematic. Linked, both rows construct the object and then
+fail at line 13 on a **different, real** standalone gap —
+`TypeError: Object.prototype.toString is not yet implemented in --target standalone`.
+**Zero legitimate passes are lost**, and two rows stop reporting green for a
+feature the lane does not have. That is an improvement wearing a regression's
+clothes, and it is one more reason the count alone must not be the gate.
+
+Everything else moves the right way: `Temporal is not defined` 38 → 0 and the
+`__temporal_*` host-import leak 6 → 0 across both families. The cost is the 3.4×
+median and timeouts 1 → 9.
+
+**One measurement was thrown away and re-run, which is worth recording.** The
+first pass of this table had 37/40 and 34/40 LINKED rows failing on
+`JS2WASM_EVAL_ENGINE=quickjs but the quickjs provider is not built` — a local
+prerequisite this box lacked. Linking makes every row reach the runtime-eval
+path, so an environment gap that touched 2 rows unlinked touched nearly all of
+them linked, and the linked columns were measuring the box. S3 saw the same gap
+at 5 rows and reported it as a caveat; at 90 % it is not a caveat, it is a void
+measurement. Built with `npx tsx scripts/build-quickjs-eval-provider.mjs` (the
+plain `node` invocation fails — it needs `scripts/compiler-bundle.mjs` or tsx)
+and re-ran all four sides. The numbers above are the second run.
+
+### 6. Byte A/B
+
+10 modules × {gc, standalone} × {`compile`, `compileMulti`}, base tree vs branch
+by file copy (`.tmp/s2o-bytes.mts`, `.tmp/bytes-base.tsv` vs `.tmp/bytes-new.tsv`):
+**18 of 20 lane×route pairs byte-identical**, including all 8 gc pairs for the 9
+modules that do not mention `globalThis`.
+
+The two that move are the one module written to contain it, on both lanes:
+
+| module | lane | base bytes | S2o bytes |
+| --- | --- | --- | --- |
+| `gt` (`var $262 = { global: globalThis, … }`) | gc | 209,072 | **5,044** |
+| `gt` | standalone | 696,630 | **270,485** |
+
+The brief asked for the gc lane to be identical; it is, for every module except
+the one whose whole purpose is to exercise the change. A gc module carrying
+`globalThis` in an object literal shrinks 97.6 %, which is the same dead
+accessor bank — this is not a standalone-only win.
+
+### 7. Gates and suites
+
+`npm run -s test:equivalence:gate` → `equivalence-gate: 22 failing, 1720
+passing, 22 known-failures in baseline. ✓ No new equivalence regressions.`
+
+typecheck · loc-budget (also `LOC_GATE_BASE=origin/main`) · func-budget (also
+vs `origin/main`) · coercion-sites · oracle-ratchet · dead-exports ·
+compiler-boundaries (`--mode inventory --base origin/main`) · host-import-policy
+· `biome lint src tests scripts` — all exit 0. The one grant this slice needs is
+`src/codegen/index.ts::ensureStructForType` (+30, almost all of it the
+rationale), in the frontmatter above.
+
+Suites: #5383 (×3, incl. the real-provider smoke), #5353, #5248, #5251, #4628
+(×2), #4787 (×2), #4376 (×9) — 114 + 74 passing. Three reds, **each measured on
+the base tree by file copy and identical there**:
+
+| suite | on S2o | on base | verdict |
+| --- | --- | --- | --- |
+| `issue-4376-deno-core-bootstrap` | 1 failed (`expected 1 to be +0`, probe L652) | 1 failed, same assertion, same line | pre-existing |
+| `issue-4376-module-init-chunking` | 1 failed / 18 passed (`expected ['__module_init_chunk_0'] to not include …`) | identical | pre-existing |
+| `issue-4376-deno-infra-destructure` | vitest worker OOM | OOM at 6 GB too | pre-existing |
+
+The brief's known-red list (`issue-2151`, `issue-2151-mixed-spread`,
+`issue-3610-*`, `issue-1051`, `issue-5382-temporal-project-publication`,
+`issue-2358-array-toprimitive`; `issue-5318-r4-computed-accessor-keys` OOMs) was
+not re-run — those are unrelated to a struct-registration guard, and the
+equivalence gate plus the byte A/B cover the blast radius better than re-running
+a static list would.
+
 ## S3 findings (2026-09-12) — the lane is wired per TARGET, and linking is not free
 
 S2l's provider is reachable from every test262 lane now. The slice's own
