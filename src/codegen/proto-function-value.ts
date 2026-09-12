@@ -238,13 +238,30 @@ export function fillProtoFunctionValue(ctx: CodegenContext): void {
   const identity = (name: string): void => setBody(name, [], [{ op: "local.get", index: 0 }]);
 
   const bagEnsureIdx = ctx.funcMap.get("__closure_bag_ensure");
-  const callableTypeIdxs = collectClosureBaseWrapperTypeIdxs(ctx);
+  // A native generator frame borrows the closure bag as its object-facing
+  // property/prototype view, but it is NOT an ECMAScript Function object.  In
+  // particular, its bag's [[Prototype]] is initialized from the generator
+  // factory's writable `prototype` property and may subsequently be set to
+  // null. Keep that carrier set separate from actual function closures: the
+  // latter need the `%Function.prototype%` seed below, while seeding a
+  // generator frame again after `Object.setPrototypeOf(g, null)` silently
+  // resurrects the wrong prototype.
+  const closureTypeIdxs = [...new Set(collectClosureBaseWrapperTypeIdxs(ctx))];
+  const closureTypes = new Set(closureTypeIdxs);
+  const nativeGeneratorStateTypeIdxs = [
+    ...new Set(
+      [...ctx.nativeGenerators.values()]
+        .map((info) => info.stateTypeIdx)
+        .filter((typeIdx) => !closureTypes.has(typeIdx)),
+    ),
+  ];
+  const callableTypeCount = closureTypeIdxs.length + nativeGeneratorStateTypeIdxs.length;
   // (#4492) The `$NativeProto` arm is INDEPENDENT of the callable one: a module
   // may reach a builtin prototype in proto position without any closure root at
   // all, and bailing to identity on the callable gate alone would silently drop
   // it. Either arm being available is enough to fill a real body.
   const nativeProtoArm = nativeProtoViewArmInstrs(ctx, { entryTypeIdx, headGlobalIdx, objectTypeIdx, setBody });
-  const callableReady = bagEnsureIdx !== undefined && callableTypeIdxs.length > 0;
+  const callableReady = bagEnsureIdx !== undefined && callableTypeCount > 0;
   if (!callableReady && nativeProtoArm === undefined) {
     identity(PROTO_FROM_FUNCTION);
     identity(FUNCTION_FROM_PROTO);
@@ -256,7 +273,8 @@ export function fillProtoFunctionValue(ctx: CodegenContext): void {
     headGlobalIdx,
     objectTypeIdx,
     bagEnsureIdx: callableReady ? bagEnsureIdx : undefined,
-    callableTypeIdxs: callableReady ? callableTypeIdxs : [],
+    closureTypeIdxs: callableReady ? closureTypeIdxs : [],
+    nativeGeneratorStateTypeIdxs: callableReady ? nativeGeneratorStateTypeIdxs : [],
     nativeProtoArm,
     setBody,
   });
@@ -483,15 +501,27 @@ function fillProtoFromFunction(
   _ctx: CodegenContext,
   opts: FillOpts & {
     bagEnsureIdx: number | undefined;
-    callableTypeIdxs: number[];
+    closureTypeIdxs: number[];
+    nativeGeneratorStateTypeIdxs: number[];
     nativeProtoArm: Instr[] | undefined;
   },
 ): void {
-  const { entryTypeIdx, objectTypeIdx, bagEnsureIdx, callableTypeIdxs, nativeProtoArm, setBody } = opts;
+  const {
+    entryTypeIdx,
+    objectTypeIdx,
+    bagEnsureIdx,
+    closureTypeIdxs,
+    nativeGeneratorStateTypeIdxs,
+    nativeProtoArm,
+    setBody,
+  } = opts;
   const returnSelf: Instr[] = [{ op: "local.get", index: 0 }, { op: "return" }];
 
-  // The conversion, run once a `ref.test` has established `v` is a callable.
-  const convert = (): Instr[] => [
+  // The conversion, run once a `ref.test` has established a bag-owning
+  // carrier. Only actual function closures inherit %Function.prototype% at
+  // this layer; native generator states use the same bag only as their
+  // per-instance ordinary-object view.
+  const convert = (seedFunctionPrototype: boolean): Instr[] => [
     { op: "local.get", index: 0 },
     { op: "call", funcIdx: bagEnsureIdx! },
     { op: "local.tee", index: PFF_BAG },
@@ -501,8 +531,10 @@ function fillProtoFromFunction(
     // A bag is always an `$Object`; if this module ever changes that, decline
     // rather than cast-trap.
     { op: "if", blockType: { kind: "empty" }, then: returnSelf },
-    // (#4492) The bag's own `[[Prototype]]` — the hop #4637 left open.
-    ...registerViewInstrs(opts, bagFunctionProtoLinkInstrs(_ctx, objectTypeIdx)),
+    // (#4492) The bag's own `[[Prototype]]` — the hop #4637 left open for
+    // function closures. A generator state must retain its factory-captured
+    // (or explicitly replaced) prototype instead.
+    ...registerViewInstrs(opts, seedFunctionPrototype ? bagFunctionProtoLinkInstrs(_ctx, objectTypeIdx) : []),
   ];
 
   const body: Instr[] = [
@@ -510,11 +542,18 @@ function fillProtoFromFunction(
     { op: "any.convert_extern" },
     { op: "local.set", index: PFF_V_ANY },
   ];
-  for (const typeIdx of callableTypeIdxs) {
+  for (const typeIdx of closureTypeIdxs) {
     body.push(
       { op: "local.get", index: PFF_V_ANY },
       { op: "ref.test", typeIdx },
-      { op: "if", blockType: { kind: "empty" }, then: convert() },
+      { op: "if", blockType: { kind: "empty" }, then: convert(true) },
+    );
+  }
+  for (const typeIdx of nativeGeneratorStateTypeIdxs) {
+    body.push(
+      { op: "local.get", index: PFF_V_ANY },
+      { op: "ref.test", typeIdx },
+      { op: "if", blockType: { kind: "empty" }, then: convert(false) },
     );
   }
   // (#4492) A builtin prototype object in the same position. Emitted AFTER the
