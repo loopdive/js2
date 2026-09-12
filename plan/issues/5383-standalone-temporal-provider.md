@@ -33,6 +33,13 @@ loc-budget-allow:
   # with the diff that carries the growth (#3102's stranded-grant case).
   - src/codegen/expressions/builtins.ts
   - src/codegen/expressions/call-receiver-method.ts
+  # 2026-09-12 (S3) — a THIRD stranded grant, found by running the gate with
+  # LOC_GATE_BASE=origin/main on both this branch and its predecessor and
+  # getting the identical failure: `async-cps.ts` (+50) is grown by an earlier
+  # stacked slice, and S3 touches no `src/` file at all. Restated here so the
+  # allowance travels with the merge preview that carries the growth; without
+  # it `quality` fails on a diff that does not contain the lines it names.
+  - src/codegen/async-cps.ts
   # 2026-09-12 (S2i) — the runtime-key STATIC-member read on a class VALUE. The
   # mechanism is the new module src/codegen/standalone-class-dyn-static.ts; the
   # only god-file line this slice adds is ONE:
@@ -173,6 +180,10 @@ func-budget-allow:
   # commits, not by S2l, and `origin/main`'s baseline has not refreshed past
   # them.
   - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+  # 2026-09-12 (S3) — same stranded-grant case, measured the same way:
+  # `src/runtime.ts::resolveImport` is ONE line over its ceiling (7734 > 7733)
+  # on the predecessor branch as well as on this one, and S3 edits no `src/`.
+  - src/runtime.ts::resolveImport
   # 2026-09-08 (S2h) — the runtime-key prototype-member read. Four call-site
   # growths, all one-liners plus the comment that makes them auditable; the
   # mechanism itself is a new module (standalone-class-dyn-member.ts):

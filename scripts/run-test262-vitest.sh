@@ -224,7 +224,17 @@ if [ "${JS2WASM_TEST262_TEMPORAL:-1}" = "0" ]; then
   echo "Temporal provider: DISABLED (JS2WASM_TEST262_TEMPORAL=0)"
 else
   echo "Pre-warming Temporal provider into $JS2WASM_TEMPORAL_CACHE ..."
-  node scripts/prewarm-temporal-provider.mjs
+  if [ "$TEST262_TARGET" = "standalone" ]; then
+    # (#5383 S3) The standalone lane needs the HOST-FREE provider, and it needs
+    # its own stamp — the host stamp certifies a different binary. Soft on
+    # purpose, mirroring the workflow: with no standalone stamp the rows run
+    # unlinked, which is the pre-#5383 behaviour, so a local run is never
+    # blocked by a provider it does not strictly need.
+    node scripts/prewarm-temporal-provider.mjs --target standalone ||
+      echo "Temporal provider (standalone): UNAVAILABLE — those rows run unlinked"
+  else
+    node scripts/prewarm-temporal-provider.mjs --target host
+  fi
 fi
 
 # ── Prebuild the standalone runtime-eval provider (#2928 E6/E7) ──

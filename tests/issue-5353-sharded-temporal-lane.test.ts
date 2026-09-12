@@ -100,12 +100,19 @@ describe("#5353 the sharded worker's refusals", () => {
     expect(body).toContain("temporalProviderCacheKey");
   });
 
-  it("links only on the HOST lane", () => {
-    // The provider is `--target gc` with the JS host adapter. Under
-    // `--target standalone` its imports trip this worker's own #2961 guard
-    // ("standalone target emitted host imports"), which would convert honest
-    // standalone failures into compile_errors against the #1897 floor.
-    expect(worker).toMatch(/msg\.temporal === true && target === undefined/);
+  it("asks the SHARED lane gate which targets may link", () => {
+    // Until #5383 S3 this read `target === undefined` inline — host-only,
+    // because a host-only provider was the only one that existed. The rule now
+    // lives in `scripts/test262-temporal.mjs` so the worker, the shard parent
+    // and the in-process runner cannot disagree about which rows get a binding
+    // (a disagreement surfaces as phantom baseline drift in the validator, not
+    // as a visible bug). What must NOT come back is an inline lane test here.
+    expect(worker).toContain("test262TemporalLaneEnabled");
+    expect(worker).not.toMatch(/msg\.temporal === true && target === undefined/);
+    // The provider is resolved PER TARGET — a host artifact in a standalone
+    // consumer is a silently wrong realm, not a compile error.
+    expect(worker).toContain("getWorkerTemporalProvider(target)");
+    expect(worker).toContain("temporalProviderCompileOptions(target)");
   });
 
   it("routes provider registration through the runtime copy its imports came from", () => {
@@ -187,8 +194,11 @@ describe("#5353 the parent pre-warms before the fork pool starts", () => {
     const pool = read("scripts", "compiler-pool.ts");
     expect(pool).toContain("temporal: opts.temporal || false");
     const shared = read("tests", "test262-shared.ts");
-    // Host lane only, and computed from the shared gate.
-    expect(shared).toContain("IS_HOST_LANE && test262NeedsTemporalGlobal(relPath, meta.features)");
+    // (#5383 S3) Two gates, both shared: WHICH LANE may link, then WHICH ROW
+    // needs it. Was `IS_HOST_LANE && …` — the lane half is no longer a local
+    // constant, so a future target cannot be admitted by editing this file.
+    expect(shared).toContain("TEMPORAL_LANE_ENABLED && test262NeedsTemporalGlobal(relPath, meta.features)");
+    expect(shared).toContain("test262TemporalLaneEnabled(TEST262_TARGET)");
     // Every runTest call site — primary, poison retry, timeout retry — must
     // carry it, or a retried row is scored against a different realm than the
     // attempt it replaces.
