@@ -19,6 +19,11 @@ const cases = [
     source:
       "function* base(){yield 1;}export function test(){var gen=base(),caught=0;gen.next=undefined;function* outer(){yield* gen;}try{outer().next();}catch(e){if(e instanceof TypeError)caught++;}delete gen.next;gen[Symbol.iterator]=undefined;try{outer().next();}catch(e){if(e instanceof TypeError)caught++;}delete gen[Symbol.iterator];return caught===2&&gen.next().value===1?1:0;}",
   },
+  {
+    name: "native string generators keep a valid protocol return wrapper",
+    source:
+      "function* base(){yield* 'ab';}export function test(){var gen=base();var first=gen.next(),second=gen.next(),done=gen.next();return first.value==='a'&&second.value==='b'&&done.done?1:0;}",
+  },
 ];
 
 describe("#5199 native generator protocol bridge", () => {

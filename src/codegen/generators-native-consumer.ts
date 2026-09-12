@@ -206,7 +206,7 @@ function compileDirectNativeGeneratorMethod(
       then: [
         ...setStateI32FromConst(info, selfLocal, STATE_FIELD, info.doneState),
         ...setStateI32FromConst(info, selfLocal, info.modeFieldIdx, 0),
-        ...nativeReturnResultFromLocal(info, valueTmp),
+        ...nativeReturnResultFromLocal(ctx, info, valueTmp),
       ],
       else: [
         { op: "local.get", index: selfLocal },
@@ -218,7 +218,7 @@ function compileDirectNativeGeneratorMethod(
           blockType: { kind: "val", type: { kind: "ref", typeIdx: info.resultTypeIdx } },
           then: [
             ...setStateI32FromConst(info, selfLocal, info.modeFieldIdx, 0),
-            ...nativeReturnResultFromLocal(info, valueTmp),
+            ...nativeReturnResultFromLocal(ctx, info, valueTmp),
           ],
           else: [
             ...setStateFieldFromLocal(info, selfLocal, info.abruptFieldIdx, valueTmp),
@@ -668,9 +668,7 @@ function buildNativeGeneratorDispatch(
             ...loadCastState(anyLocal, info.stateTypeIdx),
             { op: "i32.const", value: 0 },
             { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.modeFieldIdx },
-            { op: "local.get", index: vLocal },
-            { op: "i32.const", value: 1 },
-            { op: "struct.new", typeIdx: info.resultTypeIdx },
+            ...nativeReturnResultFromLocal(ctx, info, vLocal),
           ],
           else: [
             ...loadCastState(anyLocal, info.stateTypeIdx),
@@ -684,9 +682,7 @@ function buildNativeGeneratorDispatch(
                 ...loadCastState(anyLocal, info.stateTypeIdx),
                 { op: "i32.const", value: 0 },
                 { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.modeFieldIdx },
-                { op: "local.get", index: vLocal },
-                { op: "i32.const", value: 1 },
-                { op: "struct.new", typeIdx: info.resultTypeIdx },
+                ...nativeReturnResultFromLocal(ctx, info, vLocal),
               ],
               else: [
                 ...loadCastState(anyLocal, info.stateTypeIdx),

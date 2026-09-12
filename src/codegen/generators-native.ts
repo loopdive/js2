@@ -3749,12 +3749,25 @@ export function emptyResultForType(ctx: CodegenContext, resultTypeIdx: number): 
   ];
 }
 
-export function nativeReturnResultFromLocal(info: NativeGeneratorInfo, valueLocal: number): Instr[] {
-  return [
-    { op: "local.get", index: valueLocal },
-    { op: "i32.const", value: 1 },
-    { op: "struct.new", typeIdx: info.resultTypeIdx },
-  ];
+/**
+ * Build the immediate IteratorResult for `.return()` before a generator has
+ * started or after it has completed.  The legacy scalar abrupt carrier is f64
+ * for both numeric and native-string generators, while a native-string result
+ * struct requires its string reference in field 0.  The resume path already
+ * deliberately uses the element default for that unsupported payload bridge;
+ * mirror it here so merely installing the public `return` method never makes a
+ * string generator's module invalid.  A raw arbitrary return-payload ABI is a
+ * separate follow-up, not a reason to feed an f64 into a ref field.
+ */
+export function nativeReturnResultFromLocal(
+  ctx: CodegenContext,
+  info: NativeGeneratorInfo,
+  valueLocal: number,
+): Instr[] {
+  const value: Instr[] = valTypesMatch(genCarrierFieldType(info.elemValType), info.elemValType)
+    ? [{ op: "local.get", index: valueLocal }]
+    : defaultElemValueInstrs(ctx, info.elemValType);
+  return [...value, { op: "i32.const", value: 1 }, { op: "struct.new", typeIdx: info.resultTypeIdx }];
 }
 
 export function emitExpressionAsF64(
