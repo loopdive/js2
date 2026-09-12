@@ -94,8 +94,11 @@ This implementation is a manual, generator-only port from the second commit of
 the stale mixed draft PR #5736 (`b3a21dfcd1fc28c13a9f2ef168a8114deee347b0`),
 reviewed relative to `357b05f68c8c76b8c4888690941edf9d247243ab`. It starts from
 fresh main `d4108568d43f14c361ecc3a58c82633027eaae39` in the isolated branch
-`codex/5199-generator-protocol-rescue-20260912`; before publication it must
-merge, never rebase, current `upstream/main` `c645a7627e099173b0b3e0c5daa1d7b5a110a9d5`.
+`codex/5199-generator-protocol-rescue-20260912`. It was normally merged,
+never rebased, through `c645a7627e099173b0b3e0c5daa1d7b5a110a9d5`, then the
+#3518 frame-engine integration at `7c8069cb0770e67014a8df4f42af48bbb7fb5736`,
+and finally current main
+`cbeffc55aaf12cd26a52fcae811d2efa224c4dce`.
 
 The port intentionally excludes the stale PR's super and TypedArray hunks. It
 does not modify the TypedArray lane's `ta-dyn-mop.ts`, `native-proto.ts`, or
@@ -153,6 +156,12 @@ generator semantics or full ES2015 conformance.
   registered native-state type set, restoring inherited `next` and
   `Symbol.iterator` after an own shadow is deleted; it does not widen the
   generic closure-carrier predicate.
+- Installing the public `return` wrapper exposed an older f64 abrupt-payload
+  assumption even for native-string generators that never call `.return()`.
+  Immediate return-result construction now uses the same default-element
+  fallback as the resume path when the old scalar carrier cannot inhabit a
+  nonnumeric result field. This makes the wrapper valid; it deliberately does
+  not claim the separate arbitrary-payload ABI.
 
 The rebuilt local bundle is
 `33dba5253a70deebe42a5f35ef04bfbb2244bbc2b8b6f484725416588188ac9a`.
@@ -169,7 +178,7 @@ SHA-256 `45ff56e7570bba0a1bff6590d19d35de2525928adb7e3054789ba35aebb29360`:
 11,704 rows (10,230 pass, 1,144 fail, 329 compile_error, 1 timeout). All
 cohorts use one compiler worker and exact corpus paths.
 
-### Required integrated validation
+### Final integrated validation — `cbeffc55`
 
 The historical `44/44` path list and legacy-control script were untracked
 artifacts and cannot be recovered. Their result remains historical and is not
@@ -190,14 +199,36 @@ matrix is
   `rhs-omitted.js`, `in-iteration-stmt.js`, `from-try.js`,
   `from-catch.js`, and `then-return.js`.
 
-After the normal upstream merge and provider rebuild, rerun that exact
-2026-09-12 protocol36+B8 matrix
-matrix with the maintained isolated runner, the original prototype11, the 27
-generic-yield-star pins, original bridge9, and the permanent named
-legacy-producer test. Record zero losses across the B controls and keep
-`imports=[]` plus valid Wasm for standalone fixture claims. The result of that
-integrated run, not the local checkpoint above, decides whether the PR is
-merge-ready or a useful draft.
+The manifest retains canonical JSONL paths rooted at `test/`; the maintained
+runner expects paths below `test262/test`. The final exact invocation removes
+only that root prefix while preserving all 44 selected rows:
+
+```sh
+COMPILER_POOL_SIZE=1 node --import tsx scripts/run-test262-paths.mts \
+  <(sed 's#^test/##' plan/log/2026-09-12-es2015-generator-protocol-current-head-paths.txt) \
+  --standalone --isolate
+```
+
+On final integrated head `67c36ad828fee7af2bd53f4f5617be03b86f46b0`
+(whose upstream parent is `cbeffc55`), the rebuilt compiler bundle was
+`b48135496043b1493824ddd47ca8ca309f1bfb77e96ce710a98de902a24e8bf0`.
+The correct QuickJS evaluation provider reused artifact
+`073742801ba76347` and built/canary-verified adapter `a39c62fac5d89739`.
+
+- The exact **2026-09-12 protocol36+B8** matrix is **44/44 pass**: owned
+  protocol A is **36/36 pass** and JSONL-authority B is **8/8 pass**, so there
+  are zero B-control losses. This is a new current-head matrix, never the
+  unrecoverable historical protocol44 claim.
+- Unchanged original prototype11 is **11/11 pass** and unchanged generic27 is
+  **27/27 pass**, each retaining their standalone compile, `imports=[]`, valid
+  Wasm, and result assertions.
+- Original bridge9 is **9/9** with successful standalone compile, `imports=[]`,
+  valid Wasm, and result `1`. The permanent bridge suite is **5/5**, including
+  the named legacy host-buffer producer positive control.
+
+The c645 provider build is retained only as intermediate provenance
+(`a67d940e…` bundle and `a520c80d…` adapter); no c645 cohort result is used as
+publication evidence.
 
 ### Separate numeric-payload and closed-identity residual
 
@@ -215,11 +246,25 @@ the yield element is numeric. The follow-up implementation plan is:
    completed return, ignored next) with `imports=[]` and valid Wasm before
    counting a Test262 gain.
 
-Closed-object identity has a no-generator control failure and is therefore not
-attributable to this protocol bridge. It remains a separate object-carrier
-substrate dependency: retain the no-generator control in the handoff, do not
-relabel it as a generator regression or a passing payload result, and coordinate
-with the owner before changing closed-object representation.
+On the final head, the tracked original payload source bodies from the stale
+checkpoint were rerun as a residual diagnostic (with only an export wrapper to
+invoke `test`): all three compile with `imports=[]` and valid Wasm, but all
+three return `0` rather than the Node-oracle `1`. The retained failures are
+**0/3** for suspended `return(object)`, completed `return(object)`, and ignored
+`next(object)`. They are not a Test262 gain and remain a separately scoped ABI
+follow-up.
+
+The historical closed-object identity control was untracked and is unavailable
+for a current rerun. Its previously recorded no-generator failure is not
+attributable to this protocol bridge and is not relabeled as passing; it remains
+an object-carrier substrate dependency to coordinate with its owner.
+
+### Readiness
+
+This bounded protocol bridge is ready for a non-draft review PR: final-head
+source fixtures, bridge controls, provider provenance, and the reproducible
+protocol36+B8 matrix are green. That readiness does not claim complete ES2015
+or close the separately recorded numeric-payload/closed-object mechanisms.
 
 Full resumption details and exact local commands are in
 [the 2026-09-12 rescue handoff](../log/2026-09-12-es2015-generator-protocol-rescue-handoff.md).

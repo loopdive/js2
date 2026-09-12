@@ -1,17 +1,19 @@
 # ES2015 standalone generator protocol rescue handoff — 2026-09-12
 
-This is a local checkpoint for issue #5199. It is a bounded generator-protocol
-implementation, not a full ES2015 conformance claim. It is intentionally
-recorded before merging current upstream so pre-integration and integrated-head
-evidence cannot be conflated.
+This handoff records the final integrated state for issue #5199. It is a
+bounded generator-protocol implementation, not a full ES2015 conformance
+claim. Pre-integration evidence remains labelled as such below and is not
+substituted for final-head validation.
 
 ## Provenance and branch discipline
 
 - Worktree: `/Users/thomas/Code/js2/.codex-worktrees/codex-5199-generator-rescue-20260912`
 - Branch: `codex/5199-generator-protocol-rescue-20260912`
 - Local base: `d4108568d43f14c361ecc3a58c82633027eaae39`
-- Required next integration: normal merge of `upstream/main`
-  `c645a7627e099173b0b3e0c5daa1d7b5a110a9d5`; never rebase this work.
+- Integrated normally, without rebase: `c645a7627e099173b0b3e0c5daa1d7b5a110a9d5`,
+  then #3518's `7c8069cb0770e67014a8df4f42af48bbb7fb5736`, then final current
+  main `cbeffc55aaf12cd26a52fcae811d2efa224c4dce` at merge tip
+  `67c36ad828fee7af2bd53f4f5617be03b86f46b0`.
 - Port source: generator-only hunks manually reviewed from the second commit of
   stale mixed PR #5736, `b3a21dfcd1fc28c13a9f2ef168a8114deee347b0`, relative to
   `357b05f68c8c76b8c4888690941edf9d247243ab`. Do not cherry-pick that commit.
@@ -42,6 +44,10 @@ merge: preserve its eager-capture behavior as well as this generator wiring.
   value and accessor behavior.
 - Generic `yield*` delegation uses the existing ported iterator record and
   result unwrap/re-read machinery.
+- A native-string generator's legacy f64 abrupt carrier cannot populate its
+  string IteratorResult field. Immediate `.return()` result construction now
+  mirrors the existing resume-path default fallback, keeping public wrapper
+  installation valid without claiming raw arbitrary payload transport.
 
 ## Exact local evidence (not integrated-head evidence)
 
@@ -80,32 +86,42 @@ Its `.tmp/protocol-paths.txt` and legacy-control script were untracked and are
 gone, so that exact matrix is unverifiable and must never be reconstructed or
 claimed as a current result.
 
-## Required continuation order
+## Final integrated validation
 
-1. Commit this local checkpoint, then merge `upstream/main` at
-   `c645a7627e099173b0b3e0c5daa1d7b5a110a9d5` in the worktree normally.
-   Resolve the two #5683 overlap files by preserving both intents.
-2. Rebuild the compiler bundle and the QuickJS evaluation provider (not the
-   interpreter provider) against the integrated head. Capture provider/artifact
-   provenance before running exact Test262 paths.
-3. Rerun, with `COMPILER_POOL_SIZE=1`: original prototype11, 27 generic pins,
-   original bridge9, and the current reproducible **2026-09-12 protocol36+B8**
-   Test262 matrix in
-   [`2026-09-12-es2015-generator-protocol-current-head-paths.txt`](./2026-09-12-es2015-generator-protocol-current-head-paths.txt).
-   The first 36 rows are every current
-   `yield/star-rhs-iter-*.js` path plus `star-iterable.js`,
-   `star-return-is-null.js`, and `star-throw-is-null.js`; the final eight are
-   exact authoritative-JSONL passing controls: `star-array.js`,
-   `star-string.js`, `rhs-iter.js`, `rhs-omitted.js`,
-   `in-iteration-stmt.js`, `from-try.js`, `from-catch.js`, and
-   `then-return.js`. Run the permanent named legacy-producer test and the
-   focused 27 original Vitest pins as well. All standalone source fixtures must
-   remain `imports=[]` and valid Wasm. Claims about Test262 use only its exact
-   corpus paths.
-4. Compare Test262 runs only to
-   `/Users/thomas/Code/js2/.test262-cache/test262-standalone-current.jsonl`
-   (SHA-256 `45ff56e7570bba0a1bff6590d19d35de2525928adb7e3054789ba35aebb29360`,
-   11,704 rows: 10,230 pass, 1,144 fail, 329 compile_error, 1 timeout).
+The final compiler bundle is
+`b48135496043b1493824ddd47ca8ca309f1bfb77e96ce710a98de902a24e8bf0`.
+The QuickJS **evaluation** provider (not the interpreter provider) reused
+artifact `073742801ba76347` and built/canary-verified adapter
+`a39c62fac5d89739`.
+
+- Original prototype11: **11/11 pass** with every unchanged fixture retaining
+  success, `imports=[]`, valid Wasm, and result `1`.
+- Original generic-yield-star pins: **27/27 pass** with the same fixture
+  assertions.
+- Original bridge9: **9/9 pass**, each successful with `imports=[]`, valid
+  Wasm, and result `1`.
+- Permanent bridge suite: **5/5 pass**, including the named legacy
+  rest-parameter host-buffer producer positive control.
+- Exact **2026-09-12 protocol36+B8**: **44/44 pass** on the maintained isolated
+  runner: A owned protocol rows **36/36**, B authoritative-passing controls
+  **8/8**, with no B loss.
+
+The manifest stores canonical JSONL paths beginning `test/`; the maintained
+runner wants paths below `test262/test`. The exact final command was:
+
+```sh
+COMPILER_POOL_SIZE=1 node --import tsx scripts/run-test262-paths.mts \
+  <(sed 's#^test/##' plan/log/2026-09-12-es2015-generator-protocol-current-head-paths.txt) \
+  --standalone --isolate
+```
+
+This current 36+B8 result replaces neither nor reconstructs the historical
+untracked protocol44 list. The historical list remains unverifiable.
+
+The authoritative comparison JSONL is
+`/Users/thomas/Code/js2/.test262-cache/test262-standalone-current.jsonl`
+(SHA-256 `45ff56e7570bba0a1bff6590d19d35de2525928adb7e3054789ba35aebb29360`,
+11,704 rows: 10,230 pass, 1,144 fail, 329 compile_error, 1 timeout).
 
 ## Residual outside this bounded bridge
 
@@ -114,19 +130,22 @@ currently couples numeric yielded elements to caller-supplied sent/return
 payloads. A follow-up needs separate payload/result representations, raw
 externref transport through resume/abrupt/completion paths, and numeric
 specialization only at a proven numeric consumer. The original three controls
-(suspended return(object), completed return(object), ignored next(object)) are
-the acceptance gate for that mechanism.
+(suspended return(object), completed return(object), ignored next(object))
+were rerun from their tracked stale-checkpoint source bodies as diagnostics on
+the final head. All three compile with `imports=[]` and valid Wasm but return
+`0` instead of Node-oracle `1`: **0/3**. The export shim used solely to invoke
+`test` is not an original-source/Test262 gain. These controls remain the
+acceptance gate for the separate ABI work.
 
-Closed-object identity also fails in a no-generator control. That is a separate
-object-carrier dependency, not evidence for or against this PR's bridge. Leave
-it unmodified here; preserve the control and coordinate with its owner before
-changing representation.
+The historical closed-object identity control was untracked and is unavailable
+for a current rerun. Its recorded no-generator failure is a separate
+object-carrier dependency, not evidence for or against this PR's bridge; it is
+not relabeled as passing.
 
 ## Readiness
 
-At this checkpoint the source-level prototype11 and generic 27 cohorts are
-green, but the branch is not yet integrated, rebuilt, or exact-corpus re-run.
-It is therefore a useful checkpoint, not a merge-readiness claim. A PR is draft
-only if the integrated validation remains genuinely incomplete or blocked; a
-green bounded bridge can be non-draft while the separately documented numeric
-payload mechanism remains tracked.
+The bounded protocol bridge is ready for a **non-draft** review PR. All required
+final-head source and exact-corpus evidence is green, and the numeric-payload
+and closed-identity residuals are explicitly separate mechanisms. This remains
+neither a claim of complete generator semantics nor a claim of full ES2015
+conformance.
