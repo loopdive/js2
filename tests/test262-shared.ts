@@ -25,7 +25,7 @@ import { join, relative } from "path";
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { CompilerPool, type TestResult } from "../scripts/compiler-pool.js";
 // (#5353) ONE Temporal gate across every lane — see scripts/test262-temporal.mjs.
-import { test262NeedsTemporalGlobal } from "../scripts/test262-temporal.mjs";
+import { test262NeedsTemporalGlobal, test262TemporalLaneEnabled } from "../scripts/test262-temporal.mjs";
 // oracle-version-exempt: #5215 changes callback-completeness evidence only; Test262 scoring is unchanged.
 import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "../scripts/negative-verdict.mjs";
 import { resolveTest262PoolSize } from "../scripts/test262-concurrency.mjs";
@@ -182,6 +182,11 @@ const TEST262_ORACLE_MODE = process.env.TEST262_ORACLE_MODE;
 const IS_HOST_LANE = TEST262_TARGET === undefined;
 const ORACLE_LANE: "honest" | "fast-nativeharness" =
   TEST262_ORACLE_MODE === "fast" && IS_HOST_LANE ? "fast-nativeharness" : "honest";
+
+// (#5383 S3) May this lane link the compiled `Temporal` provider (#4628)?
+// Read ONCE — it consults the pre-warm stamp on disk, and the answer is a
+// property of the run, not of a row. See scripts/test262-temporal.mjs.
+const TEMPORAL_LANE_ENABLED = test262TemporalLaneEnabled(TEST262_TARGET);
 
 // (#3461) Fast native-harness oracle — the execution side of the fast lane that
 // #3462 stamps above. Active ONLY when `TEST262_ORACLE_MODE=fast` AND the run is
@@ -1103,11 +1108,14 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
             // about which rows get a binding — a disagreement shows up as
             // phantom baseline drift in the validator, not as a visible bug.
             //
-            // HOST LANE ONLY: the provider is `--target gc` with the JS host
-            // adapter, so linking it under standalone would emit host imports
-            // and trip the worker's own #2961 guard. `false` ⇒ the message is
-            // byte-identical to the pre-#5353 one.
-            const needsTemporal = IS_HOST_LANE && test262NeedsTemporalGlobal(relPath, meta.features);
+            // (#5383 S3) WHICH LANE may link is now a shared answer too —
+            // `TEMPORAL_LANE_ENABLED`, hoisted to module scope because it reads
+            // the pre-warm stamp from disk and the answer cannot change inside a
+            // run. Host is unconditionally eligible (unchanged); standalone only
+            // when a standalone-keyed artifact was pre-warmed, so a missing one
+            // leaves every row unlinked exactly as before. `false` ⇒ the message
+            // is byte-identical to the pre-#5353 one.
+            const needsTemporal = TEMPORAL_LANE_ENABLED && test262NeedsTemporalGlobal(relPath, meta.features);
             if (nativeAssembly) {
               compileSource = nativeAssembly.primary.bindingShim + nativeAssembly.primary.body;
               lineAdjustOffset = nativeAssembly.primary.bodyLineOffset;

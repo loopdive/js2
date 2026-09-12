@@ -423,14 +423,34 @@ export function resolveNamedThisCallTarget(
   userArguments: readonly ts.Expression[],
 ): NamedThisCallTarget | undefined {
   const declaration = resolveDeclaration(ctx, callee);
-  const restIndex = declaration?.parameters.findIndex((parameter) => parameter.dotDotDotToken !== undefined) ?? -1;
-  // Rest arguments are packed into the declaration's single vec parameter by
-  // the ordinary `.call` lowering before it invokes this trampoline. Their
-  // source count therefore does not need to equal the Wasm parameter count;
-  // only every non-rest prefix parameter must be present.
-  const arityAdmitted =
-    declaration !== undefined &&
-    (restIndex >= 0 ? userArguments.length >= restIndex : userArguments.length === declaration.parameters.length);
+  // (#5341) ARITY NO LONGER GATES ADMISSION. It used to demand an exact match
+  // (`userArguments.length === declaration.parameters.length`, or `>= restIndex`
+  // for a rest declaration), and everything else fell through to the ordinary
+  // `.call` lowering — which evaluates `thisArg` and DROPS it. That is a silent
+  // wrong answer, not a refusal: axios' `transformData.call({ data: '' }, fns)`
+  // passes one argument into two formals, so `const config = this || defaults`
+  // read the ambient receiver and `context.data` answered `undefined` —
+  // `'undefinedfoo'` instead of `'foo'` (five more of the same shape in
+  // `transformResponse`).
+  //
+  // Admitting every arity is sound because the operand stack the caller builds
+  // is ALWAYS `paramTypes.length` wide, whatever the source argument count:
+  //   - under-application pads — optional-param sentinels first, then
+  //     `pushDefaultValue` for the remaining formals;
+  //   - over-application either marshals the overflow through the extras-argv
+  //     global (`emitSetExtrasArgv`, which pushes no operand) or compiles and
+  //     drops it;
+  //   - a rest declaration packs its trailing arguments into the single vec
+  //     parameter before the call.
+  // The trampoline's signature is exactly `[externref this, ...targetParams]`,
+  // so that stack fits it unchanged. The only thing admission changes is that
+  // the receiver is INSTALLED instead of discarded.
+  //
+  // Not fixed here, and still a residual: `arguments.length` inside an
+  // under-applied `.call` target reports the FORMAL count, not the supplied
+  // one. That is the argc-global protocol, independent of the receiver, and it
+  // reads the same before and after this change.
+
   // (#4203) Strictness of the TARGET, not of the call site: §10.4.3 keys the
   // receiver's treatment on the callee's own code. Only a strict target can
   // observe explicit-null differently from absent, so only a strict target
@@ -443,7 +463,6 @@ export function resolveNamedThisCallTarget(
     !declaration?.body ||
     ctx.liveFuncBindingGlobals?.has(callee.text) === true ||
     !declarationOwnsHandle(ctx, declaration, targetFuncIdx) ||
-    !arityAdmitted ||
     userArguments.some((argument) => ts.isSpreadElement(argument)) ||
     (declaration.parameters[0] &&
       ts.isIdentifier(declaration.parameters[0].name) &&
