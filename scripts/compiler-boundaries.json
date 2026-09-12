@@ -1,6 +1,6 @@
 {
   "schema": "compiler-boundaries-v1",
-  "description": "Exact compiler inventory with shared contracts and the bounded Wasm instruction, handle-primitive and native queue modules activated. Remaining model, allocator, runtime-value and compiler concerns stay migration debt.",
+  "description": "Exact compiler inventory with shared contracts, the complete semantic IR node/function closure and bounded Wasm instruction, handle-primitive and native queue modules activated. Prepared runtime attachments, program preparation, remaining model, allocator, runtime-value and compiler concerns stay migration debt.",
   "sourceRoot": "src",
   "tsconfig": "tsconfig.json",
   "requireGitProvenance": true,
@@ -22,25 +22,32 @@
       "entries": [
         "src/shared/contracts/source-origin.ts",
         "src/shared/contracts/ir-identity.ts",
-        "src/shared/contracts/identity-values.ts"
+        "src/shared/contracts/identity-values.ts",
+        "src/shared/contracts/ir-counted-string-identity.ts",
+        "src/shared/contracts/ir-preparation-failure.ts",
+        "src/shared/contracts/ir-unit-inventory.ts"
       ],
-      "minModules": 3
+      "minModules": 6
     },
     {
       "id": "wasm-model",
       "status": "active",
       "roots": ["src/wasm/model"],
       "required": true,
-      "entries": ["src/wasm/model/instructions.ts"],
-      "minModules": 1
+      "entries": ["src/wasm/model/instructions.ts", "src/wasm/model/module-records.ts"],
+      "minModules": 2
     },
     {
       "id": "wasm-physical",
       "status": "active",
       "roots": ["src/wasm/physical"],
       "required": true,
-      "entries": ["src/wasm/physical/function-handles.ts"],
-      "minModules": 1
+      "entries": [
+        "src/wasm/physical/function-handles.ts",
+        "src/wasm/physical/function-types.ts",
+        "src/wasm/physical/module-reservations.ts"
+      ],
+      "minModules": 3
     },
     {
       "id": "wasm-emit",
@@ -60,51 +67,108 @@
     },
     {
       "id": "ir-core",
-      "status": "planned",
+      "status": "active",
       "roots": ["src/ir/core"],
       "required": true,
-      "entries": ["src/ir/core/nodes.ts"],
-      "minModules": 1
+      "entries": [
+        "src/ir/core/types.ts",
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/capability-provenance.ts",
+        "src/ir/core/tag-refinement.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/dialect/js.ts",
+        "src/ir/core/async-plan.ts",
+        "src/ir/core/intrinsic-vocabulary.ts",
+        "src/ir/core/async-intents.ts",
+        "src/ir/core/string-types.ts",
+        "src/ir/core/binding-key-primitives.ts",
+        "src/ir/core/intrinsic-contracts.ts",
+        "src/ir/core/intrinsics.ts",
+        "src/ir/core/callable-bindings.ts"
+      ],
+      "minModules": 15
     },
     {
       "id": "ir-analysis",
-      "status": "planned",
-      "roots": ["src/ir/analysis"],
+      "status": "active",
+      "roots": [
+        "src/ir/analysis/contracts",
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/effects.ts",
+        "src/ir/analysis/intrinsics.ts",
+        "src/ir/analysis/async-plan.ts"
+      ],
       "required": true,
-      "entries": ["src/ir/analysis/dominance.ts"],
-      "minModules": 1
+      "entries": [
+        "src/ir/analysis/contracts/allocations.ts",
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/effects.ts",
+        "src/ir/analysis/intrinsics.ts",
+        "src/ir/analysis/async-plan.ts"
+      ],
+      "minModules": 5
     },
     {
       "id": "ir-passes",
-      "status": "planned",
-      "roots": ["src/ir/passes"],
+      "status": "active",
+      "roots": ["src/ir/passes/contracts"],
       "required": true,
-      "entries": ["src/ir/passes/constant-fold.ts"],
+      "entries": ["src/ir/passes/contracts/gvn.ts"],
       "minModules": 1
     },
     {
       "id": "ir-runtime",
-      "status": "planned",
+      "status": "active",
       "roots": ["src/ir/runtime"],
       "required": true,
-      "entries": ["src/ir/runtime/index.ts"],
-      "minModules": 1
+      "entries": [
+        "src/ir/runtime/index.ts",
+        "src/ir/runtime/contracts/intrinsics.ts",
+        "src/ir/runtime/contracts/manifest.ts",
+        "src/ir/runtime/contracts/prepared.ts",
+        "src/ir/runtime/host-capabilities.ts",
+        "src/ir/runtime/async-providers.ts",
+        "src/ir/runtime/callable-declarations.ts",
+        "src/ir/runtime/manifest.ts",
+        "src/ir/runtime/async-attachment.ts",
+        "src/ir/runtime/intrinsic-verification.ts"
+      ],
+      "minModules": 10
     },
     {
       "id": "ir-program",
-      "status": "planned",
+      "status": "active",
       "roots": ["src/ir/program"],
       "required": true,
-      "entries": ["src/ir/program/index.ts"],
-      "minModules": 1
+      "entries": [
+        "src/ir/program/abi-inventory.ts",
+        "src/ir/program/abi.ts",
+        "src/ir/program/startup.ts",
+        "src/ir/program/abi-lookup.ts",
+        "src/ir/program/callable-bindings.ts",
+        "src/ir/program/controls.ts",
+        "src/ir/program/index.ts",
+        "src/ir/program/input-contracts.ts",
+        "src/ir/program/prepared-contracts.ts",
+        "src/ir/program/errors.ts",
+        "src/ir/program/data.ts",
+        "src/ir/program/input.ts"
+      ],
+      "minModules": 12
     },
     {
       "id": "runtime-contracts",
-      "status": "planned",
+      "status": "active",
       "roots": ["src/runtime/contracts"],
       "required": true,
-      "entries": ["src/runtime/contracts/index.ts"],
-      "minModules": 1
+      "entries": [
+        "src/runtime/contracts/host-capability-schema.ts",
+        "src/runtime/contracts/async-provider-schema.ts",
+        "src/runtime/contracts/provider-policy.ts",
+        "src/runtime/contracts/index.ts"
+      ],
+      "minModules": 4
     },
     {
       "id": "backend-wasmgc",
@@ -119,8 +183,11 @@
       "status": "active",
       "roots": ["src/runtime/wasmgc"],
       "required": true,
-      "entries": ["src/runtime/wasmgc/async/microtask-queue-bodies.ts"],
-      "minModules": 1
+      "entries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts"
+      ],
+      "minModules": 2
     },
     {
       "id": "standalone-platform",
@@ -192,8 +259,8 @@
       "runtime-contracts",
       "wasm-model"
     ],
-    "ir-core": ["ir-core", "foundation"],
-    "ir-analysis": ["ir-analysis", "foundation", "ir-core"],
+    "ir-core": ["ir-core", "foundation", "wasm-model"],
+    "ir-analysis": ["ir-analysis", "foundation", "ir-core", "wasm-model"],
     "ir-passes": ["ir-passes", "foundation", "ir-core", "ir-analysis"],
     "ir-runtime": [
       "ir-runtime",
@@ -360,6 +427,214 @@
   ],
   "activationHistory": [
     {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts"
+      ],
+      "minModules": 2
+    },
+    {
+      "layer": "wasm-model",
+      "entries": ["src/wasm/model/instructions.ts", "src/wasm/model/module-records.ts"],
+      "minModules": 2
+    },
+    {
+      "layer": "wasm-physical",
+      "entries": [
+        "src/wasm/physical/function-handles.ts",
+        "src/wasm/physical/function-types.ts",
+        "src/wasm/physical/module-reservations.ts"
+      ],
+      "minModules": 3
+    },
+    {
+      "layer": "ir-core",
+      "entries": [
+        "src/ir/core/types.ts",
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/capability-provenance.ts",
+        "src/ir/core/tag-refinement.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/dialect/js.ts",
+        "src/ir/core/async-plan.ts",
+        "src/ir/core/intrinsic-vocabulary.ts",
+        "src/ir/core/async-intents.ts",
+        "src/ir/core/string-types.ts",
+        "src/ir/core/binding-key-primitives.ts",
+        "src/ir/core/intrinsic-contracts.ts",
+        "src/ir/core/intrinsics.ts",
+        "src/ir/core/callable-bindings.ts"
+      ],
+      "minModules": 15
+    },
+    {
+      "layer": "ir-analysis",
+      "entries": [
+        "src/ir/analysis/contracts/allocations.ts",
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/effects.ts",
+        "src/ir/analysis/intrinsics.ts",
+        "src/ir/analysis/async-plan.ts"
+      ],
+      "minModules": 5
+    },
+    {
+      "layer": "ir-runtime",
+      "entries": [
+        "src/ir/runtime/index.ts",
+        "src/ir/runtime/contracts/intrinsics.ts",
+        "src/ir/runtime/contracts/manifest.ts",
+        "src/ir/runtime/contracts/prepared.ts",
+        "src/ir/runtime/host-capabilities.ts",
+        "src/ir/runtime/async-providers.ts",
+        "src/ir/runtime/callable-declarations.ts",
+        "src/ir/runtime/manifest.ts",
+        "src/ir/runtime/async-attachment.ts",
+        "src/ir/runtime/intrinsic-verification.ts"
+      ],
+      "minModules": 10
+    },
+    {
+      "layer": "ir-analysis",
+      "entries": ["src/ir/analysis/contracts/allocations.ts", "src/ir/analysis/alloc-registry.ts"],
+      "minModules": 2
+    },
+    {
+      "layer": "ir-program",
+      "entries": [
+        "src/ir/program/abi-inventory.ts",
+        "src/ir/program/abi.ts",
+        "src/ir/program/startup.ts",
+        "src/ir/program/abi-lookup.ts",
+        "src/ir/program/callable-bindings.ts",
+        "src/ir/program/controls.ts",
+        "src/ir/program/index.ts",
+        "src/ir/program/input-contracts.ts",
+        "src/ir/program/prepared-contracts.ts",
+        "src/ir/program/errors.ts",
+        "src/ir/program/data.ts",
+        "src/ir/program/input.ts"
+      ],
+      "minModules": 12
+    },
+    {
+      "layer": "ir-core",
+      "entries": [
+        "src/ir/core/types.ts",
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/capability-provenance.ts",
+        "src/ir/core/tag-refinement.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/dialect/js.ts",
+        "src/ir/core/async-plan.ts",
+        "src/ir/core/intrinsic-vocabulary.ts",
+        "src/ir/core/async-intents.ts",
+        "src/ir/core/string-types.ts",
+        "src/ir/core/binding-key-primitives.ts"
+      ],
+      "minModules": 12
+    },
+    {
+      "layer": "foundation",
+      "entries": [
+        "src/shared/contracts/source-origin.ts",
+        "src/shared/contracts/ir-identity.ts",
+        "src/shared/contracts/identity-values.ts",
+        "src/shared/contracts/ir-counted-string-identity.ts",
+        "src/shared/contracts/ir-preparation-failure.ts",
+        "src/shared/contracts/ir-unit-inventory.ts"
+      ],
+      "minModules": 6
+    },
+    { "layer": "ir-analysis", "entries": ["src/ir/analysis/contracts/allocations.ts"], "minModules": 1 },
+    { "layer": "ir-passes", "entries": ["src/ir/passes/contracts/gvn.ts"], "minModules": 1 },
+    {
+      "layer": "ir-runtime",
+      "entries": [
+        "src/ir/runtime/index.ts",
+        "src/ir/runtime/contracts/intrinsics.ts",
+        "src/ir/runtime/contracts/manifest.ts",
+        "src/ir/runtime/contracts/prepared.ts"
+      ],
+      "minModules": 4
+    },
+    {
+      "layer": "ir-program",
+      "entries": [
+        "src/ir/program/abi-inventory.ts",
+        "src/ir/program/abi.ts",
+        "src/ir/program/startup.ts",
+        "src/ir/program/abi-lookup.ts",
+        "src/ir/program/callable-bindings.ts",
+        "src/ir/program/controls.ts",
+        "src/ir/program/index.ts",
+        "src/ir/program/input-contracts.ts",
+        "src/ir/program/prepared-contracts.ts"
+      ],
+      "minModules": 9
+    },
+    {
+      "layer": "runtime-contracts",
+      "entries": [
+        "src/runtime/contracts/host-capability-schema.ts",
+        "src/runtime/contracts/async-provider-schema.ts",
+        "src/runtime/contracts/provider-policy.ts",
+        "src/runtime/contracts/index.ts"
+      ],
+      "minModules": 4
+    },
+    {
+      "layer": "ir-program",
+      "entries": ["src/ir/program/abi-inventory.ts", "src/ir/program/abi.ts", "src/ir/program/startup.ts"],
+      "minModules": 3
+    },
+    {
+      "layer": "runtime-contracts",
+      "entries": ["src/runtime/contracts/host-capability-schema.ts"],
+      "minModules": 1
+    },
+    {
+      "layer": "ir-core",
+      "entries": [
+        "src/ir/core/types.ts",
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/capability-provenance.ts",
+        "src/ir/core/tag-refinement.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/dialect/js.ts",
+        "src/ir/core/async-plan.ts",
+        "src/ir/core/intrinsic-vocabulary.ts",
+        "src/ir/core/async-intents.ts",
+        "src/ir/core/string-types.ts"
+      ],
+      "minModules": 11
+    },
+    {
+      "layer": "foundation",
+      "entries": [
+        "src/shared/contracts/source-origin.ts",
+        "src/shared/contracts/ir-identity.ts",
+        "src/shared/contracts/identity-values.ts",
+        "src/shared/contracts/ir-counted-string-identity.ts"
+      ],
+      "minModules": 4
+    },
+    {
+      "layer": "ir-core",
+      "entries": [
+        "src/ir/core/types.ts",
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/capability-provenance.ts",
+        "src/ir/core/tag-refinement.ts"
+      ],
+      "minModules": 5
+    },
+    {
       "layer": "foundation",
       "entries": [
         "src/shared/contracts/source-origin.ts",
@@ -460,6 +735,56 @@
     }
   ],
   "files": [
+    { "path": "src/shared/contracts/ir-preparation-failure.ts", "state": "clean", "layer": "foundation" },
+    { "path": "src/shared/contracts/ir-unit-inventory.ts", "state": "clean", "layer": "foundation" },
+    { "path": "src/ir/analysis/contracts/allocations.ts", "state": "clean", "layer": "ir-analysis" },
+    { "path": "src/ir/analysis/alloc-registry.ts", "state": "clean", "layer": "ir-analysis" },
+    { "path": "src/ir/core/intrinsic-contracts.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/core/intrinsics.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/core/callable-bindings.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/analysis/effects.ts", "state": "clean", "layer": "ir-analysis" },
+    { "path": "src/ir/analysis/intrinsics.ts", "state": "clean", "layer": "ir-analysis" },
+    { "path": "src/ir/analysis/async-plan.ts", "state": "clean", "layer": "ir-analysis" },
+    { "path": "src/ir/runtime/host-capabilities.ts", "state": "clean", "layer": "ir-runtime" },
+    { "path": "src/ir/runtime/async-providers.ts", "state": "clean", "layer": "ir-runtime" },
+    { "path": "src/ir/runtime/callable-declarations.ts", "state": "clean", "layer": "ir-runtime" },
+    { "path": "src/ir/runtime/manifest.ts", "state": "clean", "layer": "ir-runtime" },
+    { "path": "src/ir/runtime/async-attachment.ts", "state": "clean", "layer": "ir-runtime" },
+    { "path": "src/ir/runtime/intrinsic-verification.ts", "state": "clean", "layer": "ir-runtime" },
+    { "path": "src/ir/passes/contracts/gvn.ts", "state": "clean", "layer": "ir-passes" },
+    { "path": "src/ir/runtime/index.ts", "state": "clean", "layer": "ir-runtime" },
+    { "path": "src/ir/runtime/contracts/intrinsics.ts", "state": "clean", "layer": "ir-runtime" },
+    { "path": "src/ir/runtime/contracts/manifest.ts", "state": "clean", "layer": "ir-runtime" },
+    { "path": "src/ir/runtime/contracts/prepared.ts", "state": "clean", "layer": "ir-runtime" },
+    { "path": "src/ir/program/abi-lookup.ts", "state": "clean", "layer": "ir-program" },
+    { "path": "src/ir/program/callable-bindings.ts", "state": "clean", "layer": "ir-program" },
+    { "path": "src/ir/program/controls.ts", "state": "clean", "layer": "ir-program" },
+    { "path": "src/ir/program/index.ts", "state": "clean", "layer": "ir-program" },
+    { "path": "src/ir/program/input-contracts.ts", "state": "clean", "layer": "ir-program" },
+    { "path": "src/ir/program/prepared-contracts.ts", "state": "clean", "layer": "ir-program" },
+    { "path": "src/ir/program/errors.ts", "state": "clean", "layer": "ir-program" },
+    { "path": "src/ir/program/data.ts", "state": "clean", "layer": "ir-program" },
+    { "path": "src/ir/program/input.ts", "state": "clean", "layer": "ir-program" },
+    { "path": "src/runtime/contracts/async-provider-schema.ts", "state": "clean", "layer": "runtime-contracts" },
+    { "path": "src/runtime/contracts/provider-policy.ts", "state": "clean", "layer": "runtime-contracts" },
+    { "path": "src/runtime/contracts/index.ts", "state": "clean", "layer": "runtime-contracts" },
+    { "path": "src/ir/core/binding-key-primitives.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/program/abi-inventory.ts", "state": "clean", "layer": "ir-program" },
+    { "path": "src/ir/program/abi.ts", "state": "clean", "layer": "ir-program" },
+    { "path": "src/ir/program/startup.ts", "state": "clean", "layer": "ir-program" },
+    { "path": "src/runtime/contracts/host-capability-schema.ts", "state": "clean", "layer": "runtime-contracts" },
+    { "path": "src/ir/core/nodes.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/core/dialect/js.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/core/async-plan.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/core/intrinsic-vocabulary.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/core/async-intents.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/core/string-types.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/shared/contracts/ir-counted-string-identity.ts", "state": "clean", "layer": "foundation" },
+    { "path": "src/ir/core/types.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/core/fnctor-shapes.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/core/value-references.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/core/capability-provenance.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/core/tag-refinement.ts", "state": "clean", "layer": "ir-core" },
     {
       "path": "src/adapter-manifest.ts",
       "state": "unmigrated",
@@ -2885,6 +3210,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/expressions/destructuring-unresolved.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/expressions/dynamic-element-host-call.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -4430,6 +4763,14 @@
     },
     {
       "path": "src/codegen/iter-lazy-native.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/iterator-errors.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -7866,7 +8207,7 @@
       "layer": "mixed-needs-split",
       "destination": "ir-core",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "Four validation primitives and source-global key grammar now live in the clean core leaf; remaining binding-reference factories and node/type/runtime contracts still need separation."
     },
     {
       "path": "src/ir/alloc-registry.ts",
@@ -7904,9 +8245,9 @@
       "path": "src/ir/analysis/dominance.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
-      "destination": "ir-core",
+      "destination": "ir-analysis",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "Move the complete dominance implementation into the clean ir-analysis layer; the contract-only subroot does not complete src/ir/analysis."
     },
     {
       "path": "src/ir/analysis/encoding-inference.ts",
@@ -8075,6 +8416,14 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/async-prepare-ir.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-runtime",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the complete type closure of IR-only async preparation from mixed identity, runtime-policy and compatibility contracts before placement in ir-runtime."
     },
     {
       "path": "src/ir/async-prepare.ts",
@@ -8277,6 +8626,30 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/backend/lower-contracts.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Canonical lowering resolver/result types without implementation imports; existing IR-node and physical layout type dependencies still prevent a pure-contract certification."
+    },
+    {
+      "path": "src/ir/backend/wasm-constants.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "One shared Wasm constant implementation, independent of lowerers and concrete emitters; preserve deferred linear consumers and separate remaining IR-node model debt."
+    },
+    {
+      "path": "src/ir/backend/wasm-lowering.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Explicit Wasm convenience assembly owns concrete-emitter selection; generic lowering must not import this wrapper or reach it through the compatibility facade."
+    },
+    {
       "path": "src/ir/backend/wasmgc-emitter.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -8334,11 +8707,11 @@
     },
     {
       "path": "src/ir/capability-provenance.ts",
-      "state": "unmigrated",
+      "state": "compatibility-adapter",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "The three unchanged declarations live in core/capability-provenance.ts with canonical F0 identity types. Retain this one-way compatibility export until consumers migrate."
     },
     {
       "path": "src/ir/capability.ts",
@@ -8446,11 +8819,11 @@
     },
     {
       "path": "src/ir/dialect/js.ts",
-      "state": "unmigrated",
+      "state": "compatibility-adapter",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "All 27 unchanged dialect interfaces live in core/dialect/js.ts. Retain only the exact type-only compatibility forwarder until old imports retire; canonical nodes alone assembles the union."
     },
     {
       "path": "src/ir/dom-boundary.ts",
@@ -8845,12 +9218,20 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/lower-generic.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Generic implementation no longer selects a concrete emitter, but Wasm-shaped branches, resolver callbacks and mixed IR dependencies remain; this cycle removal is not pure-IR or whole-compiler closure."
+    },
+    {
       "path": "src/ir/lower.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
-      "nextBoundary": "Split standalone lowering into backend/wasmgc/lowering; isolate shared pure contracts and deferred backend/legacy compatibility paths before relocation. Do not move all backend coupling into ir/core."
+      "nextBoundary": "Explicit old-path compatibility facade re-exports canonical generic lowering, Wasm assembly, constants and types; no implementations or factories remain here. Retain legacy consumers until their independent migration."
     },
     {
       "path": "src/ir/lowering-dynamic-scratch.ts",
@@ -8888,9 +9269,9 @@
       "path": "src/ir/module-init-plan.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
-      "destination": "ir-core",
+      "destination": "frontend-ts",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "Pure startup data lives in ir/program/startup.ts. Separate the remaining AST/checker builder and source verifier from the legacy parity observer before frontend placement; preserve algorithms and old type exports."
     },
     {
       "path": "src/ir/module-init.ts",
@@ -8914,7 +9295,7 @@
       "layer": "mixed-needs-split",
       "destination": "ir-core",
       "owner": "3518-coordinator",
-      "nextBoundary": "F0 redirects only the specified shared identity imports; later split semantic async attachment data from provider-selection implementation. This import change alone does not prove a clean core."
+      "nextBoundary": "The complete semantic instruction/function closure lives in src/ir/core/nodes.ts and its activated pure dependencies. Retain old prepared-function aliases while prepared runtime attachments and program preparation remain mixed debt. irValSigned and isDynamic remain here with unresolved production-caller obligations."
     },
     {
       "path": "src/ir/number-to-string-provider.ts",
@@ -8960,9 +9341,9 @@
       "path": "src/ir/passes/constant-fold.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
-      "destination": "ir-core",
+      "destination": "ir-passes",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "Move the complete constant-fold implementation into the clean ir-passes layer; the contract-only subroot does not complete src/ir/passes."
     },
     {
       "path": "src/ir/passes/dead-code.ts",
@@ -8971,6 +9352,14 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/passes/gvn-core.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-passes",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the complete type closure of GVN and its dominance, effects and operand-renaming dependencies before placement in ir-passes."
     },
     {
       "path": "src/ir/passes/gvn.ts",
@@ -9152,9 +9541,9 @@
       "path": "src/ir/program-abi.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
-      "destination": "ir-core",
+      "destination": "legacy-ir-bridge",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "Canonical ABI types/state machine are in ir/program/abi.ts. The old rich-inventory constructor specialization and name-based LegacyAbiAdapter remain a mixed compatibility boundary, never an import of the clean authority."
     },
     {
       "path": "src/ir/program-allocations.ts",
@@ -9171,6 +9560,14 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/program-callable-contract.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-program",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Place the callable/body-result contract in ir-program only after complete program ABI contract type-closure separation; preserve canonical core types and the async callable-versus-fulfillment distinction."
     },
     {
       "path": "src/ir/program-callable-selection.ts",
@@ -9203,6 +9600,22 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Split standalone WasmGC acceptance/emission into backend/wasmgc/program; replace legacy CodegenContext/physical-registry dependencies with the approved Wasm physical reservation boundary. Preserve deferred host/linear routes outside that clean transaction."
+    },
+    {
+      "path": "src/ir/program-input.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-program",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the complete type closure of detached program input, source inventory, startup, callable/provenance, allocation and runtime-policy contracts before placement in ir-program."
+    },
+    {
+      "path": "src/ir/program-middleend-ir.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-program",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the complete type closure of program optimization, producer population/provenance and allocation/analysis contracts before placement in ir-program."
     },
     {
       "path": "src/ir/program-middleend.ts",
@@ -9243,6 +9656,14 @@
       "destination": "frontend-ts",
       "owner": "3518-coordinator",
       "nextBoundary": "Split prepareWholeIrProgram into frontend source preparation and pure typed-IR preparation under ir/program. The latter accepts no AST or checker input; keep source orchestration outside the pure program boundary."
+    },
+    {
+      "path": "src/ir/program-prepare-ir.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-program",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the complete type closure of typed preparation, program ABI/population, validation and authenticated runtime projections before placement in ir-program; preserve explicit controls and transaction-owned allocations."
     },
     {
       "path": "src/ir/program-runtime-abi.ts",
@@ -9298,7 +9719,7 @@
       "layer": "mixed-needs-split",
       "destination": "ir-program",
       "owner": "3518-coordinator",
-      "nextBoundary": "Extract pure prepared data/ABI into ir/program only after splitting frontend inventory/module-init/outcome edges, backend acceptance and emission contracts, and deferred LinearOptions. Preserve runtime validation/transaction behavior through explicit boundaries; no whole-file relocation or clean declaration."
+      "nextBoundary": "Complete src/ir/program/index.ts with pure prepared data/ABI only after splitting frontend inventory/module-init/outcome edges, backend acceptance and emission contracts, and deferred LinearOptions. Preserve runtime validation/transaction behavior through explicit boundaries; no whole-file relocation or clean declaration."
     },
     {
       "path": "src/ir/promise-delay-lowering.ts",
@@ -9384,9 +9805,9 @@
       "path": "src/ir/runtime-host-capabilities.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
-      "destination": "ir-core",
+      "destination": "runtime-contracts",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "The complete 25-type/14-constant record schema lives in runtime/contracts/host-capability-schema.ts. Catalog construction, validators, resolvers and compatibility exports remain here. Complete remaining runtime contracts and the originally planned runtime/contracts/index.ts boundary without moving selected provider attachments into IR core."
     },
     {
       "path": "src/ir/runtime-manifest.ts",
@@ -9400,17 +9821,17 @@
       "path": "src/ir/runtime-program-manifest.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
-      "destination": "ir-core",
+      "destination": "ir-program",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "Move complete whole-program runtime ownership and manifest preparation into ir/program after separating its implementation dependencies."
     },
     {
       "path": "src/ir/runtime-program-producers.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
-      "destination": "ir-core",
+      "destination": "ir-program",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "Move complete whole-program runtime producer ownership into ir/program; ir/runtime must not depend on program population contracts."
     },
     {
       "path": "src/ir/runtime-symbols.ts",
@@ -9566,11 +9987,11 @@
     },
     {
       "path": "src/ir/value-references.ts",
-      "state": "unmigrated",
+      "state": "compatibility-adapter",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
       "owner": "3518-coordinator",
-      "nextBoundary": "F0 redirects the existing IrBindingId/IrUnitId type imports to the canonical shared identity module; verify remaining dependency closure separately before marking the module clean."
+      "nextBoundary": "The four unchanged declarations live in core/value-references.ts. Retain this one-way compatibility export; it is not a second declaration or proof that instructions/async attachments have migrated."
     },
     {
       "path": "src/ir/vec-layout.ts",
@@ -10017,6 +10438,11 @@
       "layer": "native-runtime"
     },
     {
+      "path": "src/runtime/wasmgc/promise/settlement-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
       "path": "src/runtime/web-host-constructors.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
@@ -10143,7 +10569,22 @@
       "layer": "wasm-model"
     },
     {
+      "path": "src/wasm/model/module-records.ts",
+      "state": "clean",
+      "layer": "wasm-model"
+    },
+    {
       "path": "src/wasm/physical/function-handles.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
+      "path": "src/wasm/physical/function-types.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
+      "path": "src/wasm/physical/module-reservations.ts",
       "state": "clean",
       "layer": "wasm-physical"
     },

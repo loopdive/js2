@@ -23,19 +23,23 @@
 // module — `emitted` only after construction succeeded — so no caller can
 // forge, repeat or skip a phase. C owns these three phases; A emits `prepared`.
 //
-// This module lives in `src/ir/` (not `src/ir/backend/`) because emission needs
-// the codegen physical-import registry; it imports no source frontend, checker
-// or compiler module.
+// Physical allocation is owned by the Wasm module reservation ledger. This
+// consumer imports no source frontend, checker or legacy CodegenContext.
 
-import { addImport, ensureExnTag } from "../codegen/registry/physical-imports.js";
-import { addFuncType } from "../codegen/registry/types.js";
-import type { CodegenContext } from "../codegen/context/types.js";
+import { sameValTypes } from "../wasm/physical/function-types.js";
+import {
+  PhysicalModuleReservations,
+  type CallableReservation,
+  type FunctionReservation,
+  type GlobalReservation,
+  type GlobalImportReservation,
+} from "../wasm/physical/module-reservations.js";
 import { irGlobalBindingKey } from "./abi-bindings.js";
 import { verifyIrBackendLegality } from "./backend/legality.js";
 import { LinearEmitter } from "./backend/linear-emitter.js";
 import { WasmGcEmitter } from "./backend/wasmgc-emitter.js";
 import { irCallableBindingKey } from "./callable-bindings.js";
-import type { IrUnitId } from "./identity.js";
+import type { IrBindingId, IrUnitId } from "./identity.js";
 import { lowerIrFunctionBody, wasmValueTypeConverter, type IrLowerResolver } from "./lower.js";
 import { forEachInstrDeep, type IrFuncRef, type IrFunction, type IrGlobalRef } from "./nodes.js";
 import type { IrPreparationFailure } from "./outcomes.js";
@@ -54,7 +58,7 @@ import {
   type PreparedIrProgramFailure,
   type PreparedIrProgramRuntimeProjection,
 } from "./program.js";
-import { createEmptyModule, type Instr, type ValType, type WasmFunction, type WasmModule } from "./types.js";
+import { createEmptyModule, type Instr, type ValType, type WasmFunction } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Module-private authority
@@ -213,44 +217,8 @@ export function emittedStartupAdapterIndex(emitted: EmittedPreparedIrProgram): n
 // Emission — one argument, internal source-free physical setup
 // ---------------------------------------------------------------------------
 
-type PhysicalContext = Pick<
-  CodegenContext,
-  | "mod"
-  | "funcMap"
-  | "numImportFuncs"
-  | "numImportGlobals"
-  | "errors"
-  | "indexSpaceFrozen"
-  | "strictNoHostImports"
-  | "linkedNamespaces"
-  | "funcTypeCache"
-  | "exnTagIdx"
-  | "sharedExnTag"
->;
-
-function physicalContext(module: WasmModule, sharedExnTag: boolean): CodegenContext {
-  const physical: PhysicalContext = {
-    mod: module,
-    funcMap: new Map(),
-    numImportFuncs: 0,
-    numImportGlobals: 0,
-    errors: [],
-    indexSpaceFrozen: false,
-    strictNoHostImports: false,
-    linkedNamespaces: new Set(),
-    funcTypeCache: new Map(),
-    exnTagIdx: -1,
-    sharedExnTag,
-  };
-  return physical as CodegenContext;
-}
-
 function emissionFailed(detail: string): never {
   throw new PreparedIrProgramInvariantError("emission-failed", `program emission: ${detail}`);
-}
-
-function sameValTypes(left: readonly ValType[], right: readonly ValType[]): boolean {
-  return left.length === right.length && left.every((type, index) => type.kind === right[index]!.kind);
 }
 
 function defaultInit(type: ValType): Instr[] {
@@ -281,97 +249,132 @@ export function emitAcceptedIrProgram(accepted: AcceptedPreparedIrProgram): Emit
   const plan = acceptedPhysicalSetupPlan(accepted);
   if (emissions.has(accepted)) programInvariant("invalid-transaction-capability", "acceptance was already emitted");
   emissions.add(accepted);
-  const { program, options, runtime } = accepted;
+  const { program, options } = accepted;
   const backend = options.backend;
   observePreparedIrProgram({ phase: "emission-started", program, backend, target: options.target });
+  let result: EmittedPreparedIrProgram;
+  try {
+    result = materializePhysicalProgram(accepted, plan);
+  } catch (error) {
+    if (error instanceof PreparedIrProgramInvariantError) throw error;
+    return emissionFailed(
+      `physical module construction failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  observePreparedIrProgram({ phase: "emitted", program, backend, target: options.target });
+  return result;
+}
+
+/** No observation or reusable capability escapes the physical transaction. */
+function materializePhysicalProgram(
+  accepted: AcceptedPreparedIrProgram,
+  plan: PhysicalSetupPlan,
+): EmittedPreparedIrProgram {
+  const { program, options, runtime } = accepted;
+  const backend = options.backend;
 
   // 1. Reserve every physical resource before any body is lowered.
   const module = createEmptyModule();
-  const ctx = physicalContext(module, plan.exceptionTag.shared);
-  const funcIndexByKey = new Map<string, number>();
-  const globalIndexByKey = new Map<string, number>();
-
-  let exnTagIdx: number | undefined;
-  if (plan.exceptionTag.required) exnTagIdx = ensureExnTag(ctx);
+  const reservations = new PhysicalModuleReservations(module);
+  const functionsByKey = new Map<string, CallableReservation>();
+  const globalsByKey = new Map<string, GlobalReservation | GlobalImportReservation>();
+  const resourcesByBinding = new Map<IrBindingId, CallableReservation | GlobalReservation | GlobalImportReservation>();
+  const exceptionTag = plan.exceptionTag.required
+    ? reservations.reserveTag(
+        "physical:exception-tag",
+        { params: [{ kind: "externref" }], results: [] },
+        plan.exceptionTag.shared
+          ? { kind: "import", module: "env", name: "__exn" }
+          : { kind: "defined", name: "__exn" },
+      )
+    : undefined;
 
   for (const imported of plan.importedFunctions) {
-    const typeIdx = addFuncType(ctx, [...imported.params], [...imported.results]);
-    const record = addImport(ctx, imported.module, imported.field, { kind: "func", typeIdx });
-    if (!record) emissionFailed(`import ${imported.module}.${imported.field} was refused by the physical registry`);
-    funcIndexByKey.set(imported.referenceKey, ctx.numImportFuncs - 1);
+    const reserved = reservations.reserveFunctionImport(imported.bindingId, imported.module, imported.field, imported);
+    functionsByKey.set(imported.referenceKey, reserved);
+    resourcesByBinding.set(imported.bindingId, reserved);
   }
   for (const imported of plan.importedGlobals) {
-    const record = addImport(ctx, imported.module, imported.field, {
-      kind: "global",
-      type: imported.type,
-      mutable: imported.mutable,
-    });
-    if (!record)
-      emissionFailed(`global import ${imported.module}.${imported.field} was refused by the physical registry`);
-    globalIndexByKey.set(imported.referenceKey, ctx.numImportGlobals - 1);
+    const reserved = reservations.reserveGlobalImport(
+      imported.bindingId,
+      imported.module,
+      imported.field,
+      imported.type,
+      imported.mutable,
+    );
+    globalsByKey.set(imported.referenceKey, reserved);
+    resourcesByBinding.set(imported.bindingId, reserved);
   }
   for (const global of plan.definedGlobals) {
-    globalIndexByKey.set(global.referenceKey, ctx.numImportGlobals + module.globals.length);
-    module.globals.push({
-      name: global.name,
-      type: global.type,
-      mutable: global.mutable,
-      init: defaultInit(global.type),
-    });
+    const reserved = reservations.reserveGlobal(global.bindingId, global.name, global.type, global.mutable);
+    globalsByKey.set(global.referenceKey, reserved);
+    resourcesByBinding.set(global.bindingId, reserved);
   }
 
-  const slots = new Map<IrUnitId, { readonly slot: WasmFunction; readonly index: number }>();
+  const slots = new Map<IrUnitId, FunctionReservation>();
   const slotOwners = new Map<WasmFunction, IrUnitId>();
   for (const declared of plan.functions) {
-    const typeIdx = addFuncType(ctx, [...declared.params], [...declared.results]);
-    const index = ctx.numImportFuncs + module.functions.length;
-    const slot: WasmFunction = { name: declared.name, typeIdx, locals: [], body: [], exported: false };
-    module.functions.push(slot);
-    slots.set(declared.unitId, { slot, index });
-    slotOwners.set(slot, declared.unitId);
-    funcIndexByKey.set(irCallableBindingKey({ kind: "unit", unitId: declared.unitId }), index);
+    const reserved = reservations.reserveFunction(declared.bindingId, declared.name, declared);
+    slots.set(declared.unitId, reserved);
+    slotOwners.set(reserved.object, declared.unitId);
+    functionsByKey.set(irCallableBindingKey({ kind: "unit", unitId: declared.unitId }), reserved);
+    resourcesByBinding.set(declared.bindingId, reserved);
   }
-  let startAdapter: { readonly slot: WasmFunction; readonly index: number } | undefined;
+  let startAdapter: FunctionReservation | undefined;
   if (plan.startup.units.length > 0) {
-    const typeIdx = addFuncType(ctx, [], []);
-    const index = ctx.numImportFuncs + module.functions.length;
-    const slot: WasmFunction = { name: "__module_init", typeIdx, locals: [], body: [], exported: false };
-    module.functions.push(slot);
-    startAdapter = { slot, index };
+    startAdapter = reservations.reserveFunction("physical:startup-adapter", "__module_init", {
+      params: [],
+      results: [],
+    });
   }
 
   // 2. Freeze the index space: nothing below may add an import or a slot.
-  ctx.indexSpaceFrozen = true;
+  reservations.freezeReservations();
+  const exnTagIdx = exceptionTag === undefined ? undefined : reservations.physicalIndex(exceptionTag);
+  for (const global of plan.definedGlobals) {
+    const reserved = globalsByKey.get(global.referenceKey);
+    if (!reserved || reserved.kind !== "global") emissionFailed(`global ${global.name} has no defined reservation`);
+    reservations.fillGlobal(reserved, defaultInit(global.type));
+  }
 
   // 3. A's authoritative ABI over the program's entries, bound to the reserved indices.
   const abi = new ProgramAbiMap(program.inventory, program.derivedUnits);
   for (const entry of program.abi.entries) abi.plan(entry.plan);
   abi.sealPlan();
   for (const imported of plan.importedFunctions) {
-    abi.bindFinalIndex(imported.bindingId, { space: "function", index: funcIndexByKey.get(imported.referenceKey)! });
+    abi.bindFinalIndex(imported.bindingId, {
+      space: "function",
+      index: reservations.physicalIndex(functionsByKey.get(imported.referenceKey)!),
+    });
   }
   for (const declared of plan.functions) {
-    abi.bindFinalIndex(declared.bindingId, { space: "function", index: slots.get(declared.unitId)!.index });
+    abi.bindFinalIndex(declared.bindingId, {
+      space: "function",
+      index: reservations.physicalIndex(slots.get(declared.unitId)!),
+    });
   }
   for (const global of [...plan.importedGlobals, ...plan.definedGlobals]) {
-    abi.bindFinalIndex(global.bindingId, { space: "global", index: globalIndexByKey.get(global.referenceKey)! });
+    abi.bindFinalIndex(global.bindingId, {
+      space: "global",
+      index: reservations.physicalIndex(globalsByKey.get(global.referenceKey)!),
+    });
   }
   abi.finishBinding();
 
   // 4. Lower every physical body into its reserved slot.
   const resolver: IrLowerResolver = {
     resolveFunc: (ref: IrFuncRef) => {
-      const index = funcIndexByKey.get(irCallableBindingKey(ref.binding));
-      if (index === undefined) emissionFailed(`callable ${ref.name} (${ref.binding.kind}) was not reserved`);
-      return index;
+      const reserved = functionsByKey.get(irCallableBindingKey(ref.binding));
+      if (!reserved) emissionFailed(`callable ${ref.name} (${ref.binding.kind}) was not reserved`);
+      return reserved.handle;
     },
     resolveGlobal: (ref: IrGlobalRef) => {
-      const index = globalIndexByKey.get(irGlobalBindingKey(ref.binding));
-      if (index === undefined) emissionFailed(`global ${ref.name} (${ref.binding.kind}) was not reserved`);
-      return index;
+      const reserved = globalsByKey.get(irGlobalBindingKey(ref.binding));
+      if (!reserved) emissionFailed(`global ${ref.name} (${ref.binding.kind}) was not reserved`);
+      return reservations.physicalIndex(reserved);
     },
     resolveType: (ref) => emissionFailed(`type ${ref.name} was not reserved`),
-    internFuncType: (type) => addFuncType(ctx, [...type.params], [...type.results]),
+    internFuncType: (type) => reservations.internFunctionType(type.params, type.results),
     ensureExnTag: () => {
       if (exnTagIdx === undefined) emissionFailed("a body requires the __exn tag but the plan reserved none");
       return exnTagIdx;
@@ -403,22 +406,25 @@ export function emitAcceptedIrProgram(accepted: AcceptedPreparedIrProgram): Emit
     if (!sameValTypes(params, declared.params) || !sameValTypes(results, declared.results)) {
       emissionFailed(`body ${declared.unitId} lowered to a signature that contradicts its reserved ABI slot`);
     }
-    reserved.slot.locals = lowered.locals.flatMap((local) =>
-      local.slots.map((type, slot) => ({ name: slot === 0 ? local.name : `${local.name}$${slot}`, type })),
-    );
-    reserved.slot.body = lowered.body;
+    reservations.fillFunction(reserved, {
+      locals: lowered.locals.flatMap((local) =>
+        local.slots.map((type, slot) => ({ name: slot === 0 ? local.name : `${local.name}$${slot}`, type })),
+      ),
+      body: lowered.body,
+    });
   }
 
   // 5. Startup adapter and ABI export aliases (by their planned index space).
   if (startAdapter) {
-    startAdapter.slot.body = plan.startup.units.map((unitId): Instr => {
+    const body = plan.startup.units.map((unitId): Instr => {
       const target = slots.get(unitId);
       if (!target) emissionFailed(`startup unit ${unitId} has no reserved slot`);
-      return { op: "call", funcIdx: target.index };
+      return { op: "call", funcIdx: target.handle };
     });
-    if (plan.startup.adapter === "wasm-start") module.startFuncIdx = startAdapter.index;
+    reservations.fillFunction(startAdapter, { locals: [], body });
+    if (plan.startup.adapter === "wasm-start") reservations.defineStart(startAdapter);
     else if (plan.startup.adapter === "deferred-export") {
-      module.exports.push({ name: "__module_init", desc: { kind: "func", index: startAdapter.index } });
+      reservations.defineExport("publication:startup", "__module_init", startAdapter);
     } else emissionFailed(`startup adapter ${plan.startup.adapter} has executable units but no materialization`);
   }
   const exportNames = new Set<string>(module.exports.map((entry) => entry.name));
@@ -427,30 +433,38 @@ export function emitAcceptedIrProgram(accepted: AcceptedPreparedIrProgram): Emit
     if (!final || final.space !== exported.space) {
       emissionFailed(`export ${exported.externalName} does not resolve to a bound ${exported.space}`);
     }
+    const reserved = resourcesByBinding.get(abi.canonicalId(exported.targetBindingId));
+    if (
+      !reserved ||
+      reservations.physicalIndex(reserved) !== final.index ||
+      (reserved.kind === "function" || reserved.kind === "function-import" ? "function" : "global") !== final.space
+    ) {
+      emissionFailed(`export ${exported.externalName} contradicts its canonical physical reservation`);
+    }
     if (exportNames.has(exported.externalName)) emissionFailed(`export ${exported.externalName} is declared twice`);
     exportNames.add(exported.externalName);
-    module.exports.push({
-      name: exported.externalName,
-      desc: { kind: exported.space === "function" ? "func" : "global", index: final.index },
-    });
+    reservations.defineExport(`publication:export:${exported.externalName}`, exported.externalName, reserved);
   }
+
+  reservations.seal();
 
   // 6. Receipts come from the module itself, never from the loop counter.
   const emittedUnitIds: IrUnitId[] = [];
   for (const fn of module.functions) {
     const unitId = slotOwners.get(fn);
     if (unitId === undefined) {
-      if (fn !== startAdapter?.slot) emissionFailed(`module carries an unowned function ${fn.name}`);
+      if (fn !== startAdapter?.object) emissionFailed(`module carries an unowned function ${fn.name}`);
       continue;
     }
-    if (fn.body.length === 0) emissionFailed(`reserved slot for ${unitId} was never filled`);
     emittedUnitIds.push(unitId);
   }
   if (emittedUnitIds.length !== plan.functions.length) {
     emissionFailed(`module holds ${emittedUnitIds.length} owned bodies but the plan reserved ${plan.functions.length}`);
   }
+  if (emittedUnitIds.some((unitId, index) => unitId !== plan.functions[index]!.unitId)) {
+    emissionFailed("module function ownership order contradicts the reserved program projection");
+  }
   const result: EmittedPreparedIrProgram = Object.freeze({ module, emittedUnitIds: Object.freeze(emittedUnitIds) });
-  if (startAdapter) startupAdapters.set(result, startAdapter.index);
-  observePreparedIrProgram({ phase: "emitted", program, backend, target: options.target });
+  if (startAdapter) startupAdapters.set(result, reservations.physicalIndex(startAdapter));
   return result;
 }

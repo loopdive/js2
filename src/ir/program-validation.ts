@@ -3,8 +3,11 @@
 import { irCallableBindingKey, irUnitCallableBindingId } from "./callable-bindings.js";
 import { irGlobalBindingKey, irTypeBindingKey } from "./abi-bindings.js";
 import { irBindingKey } from "./declared-types.js";
-import { forEachInstrDeep, type IrDeclaredSignature, type IrType } from "./nodes.js";
+import { forEachInstrDeep } from "./nodes.js";
+import type { IrDeclaredSignature } from "./core/nodes.js";
+import type { IrType } from "./core/types.js";
 import { ProgramAbiMap } from "./program-abi.js";
+import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
 import {
   preparedIrCallableSignature,
   preparedIrClassLayoutKey,
@@ -12,18 +15,14 @@ import {
   preparedIrTypeKey,
 } from "./program-abi-contracts.js";
 import { assertPreparedIrProgramPopulation } from "./program-population.js";
-import {
-  preparedIrDataMismatch,
-  PreparedIrProgramInvariantError,
-  type PreparedIrAbiEntry,
-  type PreparedIrProgram,
-} from "./program.js";
+import { preparedIrDataMismatch, PreparedIrProgramInvariantError } from "./program.js";
+import type { PreparedIrAbiEntry, PreparedIrProgram } from "./program/prepared-contracts.js";
 import {
   prepareIrProgramRuntimeCallables,
   preparedIrRuntimeAbiAnchor,
   preparedIrRuntimeCallableBindingId,
 } from "./program-runtime-abi.js";
-import { verifyIrFunction } from "./verify.js";
+import { verifyIrFunction, type IrVerificationOptions } from "./verify.js";
 import { assertPreparedIrClassLayouts } from "./program-class-layouts.js";
 import { assertPreparedIrProgramAllocations } from "./program-allocations.js";
 import {
@@ -177,7 +176,7 @@ function validateRuntimeCallables(program: PreparedIrProgram): void {
 }
 
 /** Complete source-free validation precedes lookup reconstruction, backend acceptance and replay. */
-export function assertPreparedIrProgram(program: PreparedIrProgram): void {
+export function assertPreparedIrProgram(program: PreparedIrProgram, options?: IrVerificationOptions): void {
   if (program.schema !== "prepared-ir-program-v1" || program.reconciliation !== "complete" || program.sealed !== true)
     invalid("program is not a complete prepared program");
   assertPreparedIrProgramPopulation(program);
@@ -237,7 +236,7 @@ export function assertPreparedIrProgram(program: PreparedIrProgram): void {
         preparedIrCallableSignature(own.contract.params, own.contract.results),
         preparedIrCallableSignature(
           fn.params.map((param) => param.type),
-          fn.resultTypes,
+          preparedIrProgramCallableResults(fn),
         ),
       )
     )
@@ -266,7 +265,7 @@ export function assertPreparedIrProgram(program: PreparedIrProgram): void {
           )
             invalid(`body ${fn.unitId} references undeclared global ${instruction.target.binding.bindingId}`);
         });
-    const errors = verifyIrFunction(fn, undefined, { declaredSignatures, declaredGlobals });
+    const errors = verifyIrFunction(fn, undefined, { declaredSignatures, declaredGlobals }, options);
     if (errors.length) invalid(`body ${fn.unitId}: ${errors.map((error) => error.message).join("; ")}`);
   }
   if (program.startup.length !== program.inventory.sources.length) invalid("startup omits or duplicates a source");

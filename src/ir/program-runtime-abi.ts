@@ -2,16 +2,13 @@
 
 import { irCallableBindingKey } from "./callable-bindings.js";
 import { createIrBindingId } from "./identity-values.js";
-import type { IrBindingId, IrSourceRecord, IrUnitInventory } from "./identity.js";
-import { forEachInstrDeep, type IrFuncRef } from "./nodes.js";
+import type { IrBindingId } from "../shared/contracts/ir-identity.js";
+import type { IrSourceRecord, IrUnitInventory } from "../shared/contracts/ir-unit-inventory.js";
+import { forEachInstrDeep } from "./nodes.js";
+import type { IrFuncRef } from "./core/value-references.js";
 import { assertPreparedIrProgramPopulation } from "./program-population.js";
-import {
-  preparedIrDataMismatch,
-  preparedIrProgramOwner,
-  PreparedIrProgramInvariantError,
-  type PreparedIrProgramFailure,
-  type PreparedIrProgramProducerInput,
-} from "./program.js";
+import { preparedIrDataMismatch, preparedIrProgramOwner, PreparedIrProgramInvariantError } from "./program.js";
+import type { PreparedIrProgramFailure, PreparedIrProgramProducerInput } from "./program/prepared-contracts.js";
 import { irRuntimeCallableDeclaration, type IrRuntimeCallableDeclaration } from "./runtime-callable-declarations.js";
 
 type RuntimeCallableInput = Pick<PreparedIrProgramProducerInput, "inventory" | "ir" | "derivedUnits">;
