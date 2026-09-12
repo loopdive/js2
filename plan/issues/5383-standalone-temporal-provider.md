@@ -167,6 +167,22 @@ loc-budget-allow:
     lines: 20
     reason: "#5383 S2 R4 — pre-register the `Math.<fn>` value-read substrate before the closure is built (#2704 forbids a first registration mid-body), which is why every Math value read kept the refusal body."
 func-budget-allow:
+  # 2026-09-12 (S2o) — `ensureStructForType` +30. The CODE is a two-line guard
+  # ("never register a struct for `typeof globalThis`"); the other 28 lines are
+  # the rationale, and they are load-bearing because the guard looks redundant
+  # from every angle except the one that matters. It sits immediately after the
+  # `.d.ts`-only guard, which a reader will reasonably assume already covers
+  # the global scope — it does not, because that symbol is transient and has
+  # ZERO declarations, so the existing guard's `length > 0` precondition fails
+  # open. The note also records the measurement that justifies the guard's
+  # existence at all (2,766 → 929 functions, 694 k → 486 k instructions on a
+  # 10.6 KB test262 original-harness row) and names the three use-site repairs
+  # — #3365, #4394, #4638 — that are each a workaround for the registration
+  # this guard prevents. Without that, the next reader deletes it as a
+  # micro-optimisation. The guard cannot move to another module: it is one of
+  # a list of sibling early-outs whose ORDER relative to the `.d.ts` check is
+  # the point.
+  - src/codegen/index.ts::ensureStructForType
   # 2026-09-12 (S2n) — `fillClosedMethodDispatch` +24. The growth is the
   # resolve-OR-RESERVE lookup for the `$__vec_base` push/pop arm plus its
   # rationale. It belongs to THIS function because the arm it feeds is built
