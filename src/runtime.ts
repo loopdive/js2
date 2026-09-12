@@ -58,6 +58,7 @@ import { fixedExternMethodCallArity, makeFixedExternMethodCall } from "./runtime
 import { DATE_HOST_METHOD_UNHANDLED, tryCallWasmDateHostMethod, wasmDateHostView } from "./runtime/date-host-method.js";
 import { wasmCarrierBuiltinPrototype } from "./runtime/wasm-carrier-prototype.js"; // (#5325)
 import { compiledClassInstancePrototype } from "./runtime/compiled-class-prototype.js"; // (#5347)
+import { compiledClosureLength } from "./runtime/compiled-closure-length.js"; // (#5365)
 import { getWasmVecPrototypeMember as vecProtoGet, WASM_VEC_PROTOTYPE_MISS } from "./runtime/wasm-vec-prototype.js";
 import { fnctorInstanceofResult, fnctorOrNative, type FnctorIoHooks } from "./runtime/fnctor-instanceof.js";
 export { buildStringConstants, buildStringConstants16 };
@@ -12579,8 +12580,13 @@ assert._isSameValue = isSameValue;
             const tomb = _wasmStructDeletedKeys.get(obj);
             if (tomb && tomb.has(key)) return undefined;
             const exports = _decoderExportsFor(obj, callbackState?.getExports()); // (#5225)
+            const ownFieldStatus = _structOwnFieldStatus(obj, key, exports);
+            // (#5365) A compiled closure's `.length`, AHEAD of the `__sget_`
+            // probe that answered an unrelated vec getter's miss-default `0`.
+            const closureLength = compiledClosureLength(obj, key, ownFieldStatus, exports);
+            if (closureLength !== undefined) return closureLength;
             const getter = exports?.[`__sget_${key}`];
-            const fieldValue = wsh.readField(getter, obj, _structOwnFieldStatus(obj, key, exports));
+            const fieldValue = wsh.readField(getter, obj, ownFieldStatus);
             if (fieldValue !== wsh.NO_GENERATED_FIELD) return _restoreF64Undefined(fieldValue);
             // Generic `.byteLength` on an ArrayBuffer/DataView byte vec (#3097).
             if (key === "byteLength") {
@@ -12923,6 +12929,9 @@ assert._isSameValue = isSameValue;
             // (#4536) A tuple struct's length is its field count.
             const tupleLen = _tupleFieldCount(obj, exports);
             if (tupleLen !== undefined) return tupleLen;
+            // (#5365) The same closure answer, for the numeric lowering.
+            const closureLength = compiledClosureLength(obj, "length", undefined, exports);
+            if (closureLength !== undefined) return closureLength;
             return 0;
           }
           const len = obj.length;
@@ -18532,8 +18541,12 @@ assert._isSameValue = isSameValue;
           const tomb = _wasmStructDeletedKeys.get(obj);
           if (tomb && tomb.has(key)) return undefined;
           const exports = _decoderExportsFor(obj, callbackState?.getExports()); // (#5225)
+          const ownFieldStatus = _structOwnFieldStatus(obj, key, exports);
+          // (#5365) Closure `.length` — see the by-name `__extern_get` binding.
+          const closureLength = compiledClosureLength(obj, key, ownFieldStatus, exports);
+          if (closureLength !== undefined) return closureLength;
           const getter = exports?.[`__sget_${key}`];
-          const fieldValue = wsh.readField(getter, obj, _structOwnFieldStatus(obj, key, exports));
+          const fieldValue = wsh.readField(getter, obj, ownFieldStatus);
           if (fieldValue !== wsh.NO_GENERATED_FIELD) return _restoreF64Undefined(fieldValue);
           // Generic `.byteLength` on an ArrayBuffer/DataView byte vec (#3097).
           if (key === "byteLength") {
