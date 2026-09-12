@@ -2806,6 +2806,14 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * either way (imported tags occupy the low indices).
    */
   sharedExnTag: boolean;
+  /**
+   * (#5383 S2m) True when this standalone module's exception tag is IMPORTED
+   * from a linked PROVIDER's `__exn_tag` export rather than module-defined, so
+   * a provider-side `throw` is caught by the consumer's own `try`/`catch`.
+   * Host-free twin of {@link sharedExnTag}; like it, `exnTagIdx` is then
+   * already an ABSOLUTE tag index.
+   */
+  exnTagImported: boolean;
   /** (#5247) True for a linked provider: its exports are called by another WASM
    *  module, so the export-boundary throw unwrapping is suppressed. */
   exportsConsumedByWasm: boolean;

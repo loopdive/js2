@@ -32,6 +32,7 @@
 // #5383's S2d notes).
 
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { reserveLinkedExnTag } from "./registry/physical-imports.js";
 import { ensureReflectIsConstructor } from "./reflect-construct-native.js";
 import { CLASS_CONSTRUCT_DISPATCH } from "./standalone-class-construct.js"; // (#5383 S2g)
 import { stringConstantExternrefInstrs } from "./native-strings.js";
@@ -421,6 +422,13 @@ export function standaloneLinkBoundaryPeerIndices(ctx: CodegenContext): {
 } {
   const namespace = peerNamespaces(ctx)[0];
   if (namespace === undefined) return {};
+  // (#5383 S2m) Take the peer's exception TAG in the same pre-freeze window.
+  // `ensureExnTag` is lazy — it runs at the first `throw`/`try`, which may be
+  // after the index space is frozen (#1984), and a tag import cannot be added
+  // then. Reserving here makes the graph share one tag for every module that
+  // links a provider, which is what lets a provider throw be CAUGHT by the
+  // consumer rather than escape as a raw `WebAssembly.Exception`.
+  reserveLinkedExnTag(ctx);
   // Register BOTH, then flush, then read the indices back. Each late import
   // SHIFTS the function index space, so an index captured from the first
   // `ensureLateImport` return names a different function once the second lands

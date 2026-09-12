@@ -410,6 +410,15 @@ alone, unless measured as neutral).
    binary `WebAssembly.Module` accepts; each reduction is a test.
 2. S2: `buildTemporalProvider` with `target: "standalone"` returns
    `plan=separate`; the host-free smoke test passes.
+   **Status (S2m, 2026-09-12): 2 of 3 assertions asserted as a real test**
+   (`Object.keys(Temporal).length === 9`, `new Temporal.PlainDate(2024,1,1).day
+   === 1`, plus the `durationHours === 1` precursor). The third,
+   `Temporal.Duration.from({hours:1}).total("minutes") === 60`, is `it.todo`:
+   it answers **60 in one standalone module** and a provider-owned carrier that
+   does not decode across the link — a wasm↔wasm VALUE ABI slice, not a
+   Temporal defect. Its two earlier blockers are closed (the JSBI
+   `constructor`-identity read, and a provider throw that never reached the
+   consumer's `catch`). See "S2m findings".
 3. S3–S4: standalone Temporal rows link the provider in both runners and CI;
    `__temporal_*` leaks are 0.
 4. S5: samples measured, 0 pass→fail, counts with artifacts; the standalone
@@ -2287,3 +2296,164 @@ prerequisite this box lacks, not a verdict about the slice.
 caused nor fixed it. The brief's known-red list (`issue-2151`,
 `issue-2151-mixed-spread`, `issue-3610-*`, `issue-1051`) is unchanged; those were
 not re-run here because S3 touches no `src/` file.
+
+## S2m findings (2026-09-12) — the JSBI guard was never OUR coercion, and a graph shares ONE tag
+
+Both stops S2l named are closed. Neither was what its name said, and the first
+one's stated hypothesis was FALSIFIED before any code changed — which is the
+main thing worth carrying forward.
+
+### (1) The JSBI `valueOf` guard: not an implicit ToNumber of ours
+
+S2l's read was "our standalone lowering coerces a JSBI object where JS would
+not". Tested first, directly. A class whose `valueOf` throws, exercised through
+**27** operations the spec does not coerce through — strict equality, `typeof`,
+ToBoolean (`if` / `!` / `&&` / `?:` / `Boolean()`), property read, method call,
+`instanceof`, argument passing, spread, rest, destructuring, `for-of`, array
+store / `indexOf` / `push`, object property, computed key, `Map` set/get,
+return, `??`, `== null`, optional chaining, `String()`, `Array.isArray`
+(`.tmp/s2m-valueof.mts`):
+
+| divergences from node, standalone | **0 of 27** |
+| --- | --- |
+
+So the coercion is the POLYFILL's own. `JSBI.__toPrimitive`, `__isBigInt` and
+`JSBI.BigInt` all open with `i.constructor === JSBI`; when that reads false
+`__toPrimitive` falls through to `const t = i.valueOf; t.call(i)` — JSBI's
+deliberately-throwing one, verbatim the message S2l measured. `class JSBI
+extends Array`, and standalone that read answered **`Array`**:
+
+| probe, `class C extends Array`, standalone (`.tmp/s2m-narrow*.mts`) | node | base | S2m |
+| --- | --- | --- | --- |
+| `x.constructor === C`, `x` a typed local | 1 | 1 | 1 |
+| `f(x)`, `function f(i){ return i.constructor === C }` | 1 | **0** | 1 |
+| which constructor did it answer? | `C` | **`Array`** | `C` |
+| the JSBI-shaped `__toPrimitive` reduction | 1 | **throws** | 1 |
+| a PLAIN `class C` (same questions) | 1 | 1 | 1 |
+
+An externref-backed subclass instance's carrier is a `$__vec_externref`,
+indistinguishable from a plain array, so the generic `__extern_get` ladder
+served the Array builtin's `constructor`. The JS-host lane has answered this
+since #5377 — the FOURTH argument to `__set_subclass_proto`, which
+`emitSetSubclassProto` documents as a no-op standalone.
+
+**Fix**: `emitStandaloneSubclassMethodInstall` now also installs `constructor` →
+the class-object singleton as an own data property at the same §17 flags
+(`{writable, !enumerable, configurable}`) it already uses for the METHODS, and
+not gated on the class declaring any method. Same mechanism, same trade-off the
+method install already documents: `hasOwnProperty("constructor")` answers `true`
+where the spec says `false`. A/B'd by file copy (`.tmp/s2m-keys.mts`), the
+enumerable surface is byte-for-byte the base's — `Object.keys` length, the
+`for…in` count, and `constructor`'s absence from both key lists are identical on
+the two trees.
+
+**Result on the real polyfill**: compiled as ONE standalone module,
+`Temporal.Duration.from({hours:1}).total("minutes")` answers **60**
+(`.tmp/s2m-solo-total.mts`; base: the JSBI throw). `total("minute")` too.
+
+### (2) A provider throw now crosses the link as a catchable error
+
+A wasm exception is matched by TAG IDENTITY, and two separately compiled
+standalone modules each DEFINE their own `__exn`. The JS-host answer (#5226
+`sharedExnTag`, a JS-owned `WebAssembly.Tag` imported as `env.__exn`) needs a
+host and is explicitly off for standalone.
+
+The host-free twin needed **no new ABI**, because both halves already existed:
+every module already EXPORTS its tag as `__exn_tag`, and
+`instantiateLinkedProviders` already publishes each provider's whole export
+record under its namespace on the consumer's import object. So a standalone
+CONSUMER now imports `<provider-namespace>.__exn_tag` and uses it as its own
+tag. One tag per graph, resolved by the linker that is already there, and the
+namespace is in `linkedNamespaces`, which `isHostImportAllowed` already
+admits — **no `env` import, no #2961 leak** (asserted in the test).
+
+Direction is one-way by necessity: the provider keeps its module-defined tag,
+because the linker instantiates providers first.
+
+| probe, host-free across a real link (`.tmp/s2m-exn.mts`) | base | S2m |
+| --- | --- | --- |
+| `NS.ok()` | 7 | 7 |
+| the `catch` clause runs at all | **raw `WebAssembly.Exception` escapes** | 1 |
+| `e.message === "x"` | — | 1 |
+| `e instanceof RangeError` | — | 1 |
+| `e.constructor === RangeError` (what `assert.throws` compares) | — | 1 |
+| `e instanceof TypeError` for a thrown `TypeError` | — | 1 |
+| a plain `Error` is NOT a `RangeError` | — | 1 |
+| re-`throw` from the `catch` | — | 1 |
+| `finally` runs | — | 11 |
+
+Registration is EAGER, from `standaloneLinkBoundaryPeerIndices` (the consumer-only
+pre-freeze window), because `ensureExnTag` is lazy — it runs at the first
+`throw`/`try`, which can be after the #1984 index-space freeze, where a tag
+import cannot be added. With no peer, or past the freeze, it degrades silently
+to the module-local tag, i.e. exactly today's behaviour.
+
+**Named residual, NOT caused by the link:** `e.constructor.name` and
+`typeof e.constructor` on a BUILTIN error are already wrong in a single
+standalone module with no link at all (`.tmp/s2m-ctorname.mts`: identity 1,
+`instanceof` 1, `.message` 1, but `.name` and `typeof` both wrong). The
+identity comparison — the one upstream `assert.throws` actually makes — holds.
+
+### The S2 smoke test, per assertion
+
+| assertion | S2l | S2m |
+| --- | --- | --- |
+| `Object.keys(Temporal).length === 9` | passes | passes |
+| `new Temporal.PlainDate(2024,1,1).day === 1` | passes | passes |
+| `Temporal.Duration.from({hours:1}).total("minutes") === 60` | `it.todo` (JSBI ToNumber) | still `it.todo` — **third stop, below** |
+
+### The next stop, measured — the RESULT of one provider method does not decode
+
+The harness `total` probe no longer throws; it answers a value. Two harness
+probes were added (`durationHasTotalBound` / `totalBound`) so the chained and
+bound-local spellings are scored separately, and the bound one is not the
+blocker either:
+
+| real provider | solo module | linked |
+| --- | --- | --- |
+| `d.hours`, `d.sign` (getters) | 1 / 1 | 1 / 1 |
+| `d.abs().hours`, `p.equals(p)`, `p.day` | — | ok |
+| `typeof d.total === "function"` (bound local) | — | 1 |
+| `d.total("minutes")` | **60** | a provider-owned carrier |
+
+It is **not** "primitives cannot cross". A tiny hand-written provider answers
+**9 of 9** shapes correctly — number, string, boolean, object, zero-arg,
+one-arg, free function, own field, accessor (`.tmp/s2m-prim.mts`) — and on the
+REAL provider the object-returning and boolean-returning methods cross too.
+What arrives wrong is specifically `total`'s result: the consumer's `typeof`
+ladder calls it `"number"` while `String()` of it throws "Cannot convert object
+to primitive value", i.e. the ladder and the value decode disagree about a
+provider-owned carrier. That is a wasm↔wasm VALUE ABI slice of its own.
+
+(`d.toString()` is NOT evidence for it — that call throws in the SOLO module as
+well, so it is a separate pre-existing gap.)
+
+### Byte A/B
+
+12 module shapes × {gc, standalone} = 24 artifacts (`.tmp/s2m-ab.mts`, base
+captured by file copy before the first edit). **21 of 24 sha256-identical.**
+
+- **All 12 gc-lane artifacts are identical**, including every subclass shape.
+- The 3 standalone differences are exactly the externref-backed subclass shapes
+  — `extendsArray`, `extendsArrayNoMethod`, `extendsMap` — the direct subject.
+- `extendsError:standalone` is **identical**: the method install's measured
+  error-struct exclusion still holds, so the `constructor` install inherits it.
+- Every standalone shape that throws or uses `try`/`finally` locally
+  (`throwsLocal`, `tryFinally`) is identical — the tag change fires only for a
+  CONSUMER that links a provider, never for a lone module and never for a
+  provider.
+
+### Acceptance criteria — S2 smoke test status (2026-09-12, S2m)
+
+Unchanged in count and moved in kind: **two of three** S2 assertions pass
+through the real standalone provider and are asserted as a real test. The third
+is still `it.todo`, now blocked on the wasm↔wasm decode of one method's RESULT
+rather than on a throw — the provider no longer throws at all on that path, and
+the same expression answers 60 inside one standalone module.
+
+### Pre-existing red, unchanged by this slice
+
+The brief's list, re-confirmed as the base state: `tests/issue-2151.test.ts` (1),
+`tests/issue-2151-mixed-spread.test.ts` (1), `tests/issue-3610-standalone-prototype-receiver-brand.test.ts` (1),
+`tests/issue-1051.test.ts` (3), `tests/issue-5382-temporal-project-publication.test.ts` (1);
+`tests/issue-5318-r4-computed-accessor-keys.test.ts` OOMs on both trees.

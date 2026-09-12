@@ -1644,19 +1644,43 @@ describe("#5383 S2 smoke — the real standalone Temporal provider", () => {
   // in the table, answers the same failure on both trees, so this defect never
   // depended on the `fromEntries` one.
   //
-  // Two smaller facts worth not re-deriving, both measured on BOTH trees so
-  // neither is a regression from S2l:
-  //  - a provider-side throw does NOT cross the link as a catchable JS error.
-  //    The consumer's own `try { d.total(…) } catch (e) { … }` never runs; the
-  //    raw `WebAssembly.Exception` escapes to the embedder.
-  //  - the harness's `durationHasTotal` probe reads 0 while the identical
-  //    question through a bound local (`const d = …; typeof d.total`) reads 1
-  //    (`.tmp/s2l-method-red.mts`). That is the #2984 path-dependent `typeof`
-  //    on a CHAINED member access, not a missing method — `d.toString()` works
-  //    across the same boundary, and a tiny hand-written provider answers the
-  //    whole chain including `d.total("minutes") === 60`.
+  // ── S2m UPDATE (2026-09-12) ─────────────────────────────────────
+  //
+  // BOTH facts above are now FIXED, and neither was what its description said.
+  //
+  //  - The JSBI guard was not an implicit ToNumber of ours at all. It was the
+  //    polyfill's own `__toPrimitive`, entered because `i.constructor === JSBI`
+  //    read FALSE: `class JSBI extends Array`, and standalone that read
+  //    answered `Array`. See the `#5383 S2m R15` block for the reduction and
+  //    the falsified hypothesis. Through the real polyfill compiled as ONE
+  //    standalone module, `Duration.from({hours:1}).total("minutes")` now
+  //    answers **60** (`.tmp/s2m-solo-total.mts`; base: the JSBI throw).
+  //  - The provider throw now crosses as a catchable error — `#5383 S2m R16`.
+  //
+  // The assertion is STILL not green, on a THIRD stop, which only the LINK
+  // shows. Measured on this branch against the real provider
+  // (`.tmp/s2m-total2.mts`, `.tmp/s2m-total.mts`):
+  //
+  //   | probe (real provider)                     | solo module | linked |
+  //   | ----------------------------------------- | ----------- | ------ |
+  //   | `d.hours`, `d.sign` (getters)             | 1 / 1       | 1 / 1  |
+  //   | `d.abs().hours`, `p.equals(p)`, `p.day`   | —           | ok     |
+  //   | `d.total("minutes")`                      | **60**      | a provider-owned OBJECT |
+  //
+  // So it is not "primitives cannot cross": a TINY hand-written provider
+  // answers every shape — number, string, boolean, object, zero-arg, one-arg —
+  // correctly (`.tmp/s2m-prim.mts`, 9/9), and object-returning and
+  // boolean-returning methods on the REAL provider cross too. What arrives
+  // wrong is specifically `total`'s result, which reads `typeof "number"` in
+  // the consumer while `String()` of it throws "Cannot convert object to
+  // primitive value" — i.e. the consumer's `typeof` ladder and its value
+  // decode disagree about a provider-owned carrier. That is a wasm↔wasm VALUE
+  // ABI slice of its own, not a Temporal defect.
+  //
+  // (`d.toString()` is NOT evidence for it: that call throws in the SOLO
+  //  module as well, so it is a separate pre-existing gap.)
   it.todo(
-    "Temporal.Duration.from({hours:1}).total('minutes') === 60 (blocked: an implicit ToNumber on a JSBI BigInt instance throws JSBI's `Convert JSBI instances to native numbers using toNumber.` guard inside the provider — #5383 S2l)",
+    "Temporal.Duration.from({hours:1}).total('minutes') === 60 (blocked: `total`'s result crosses the wasm↔wasm link as a provider-owned carrier that answers `typeof \"number\"` but does not decode as one — solo answers 60; see the S2m findings table — #5383 S2m)",
   );
 });
 
@@ -1780,6 +1804,226 @@ describe("#5383 S2l — `Object.fromEntries` over a computed pair list, standalo
       }`),
     ).toBe(111);
   });
+});
+
+describe("#5383 S2m R15 — `i.constructor` on an `extends Array` instance, standalone", () => {
+  // S2l's stop was `Temporal.Duration.from({hours:1}).total("minutes")` throwing
+  // JSBI's own guard, ``Convert JSBI instances to native numbers using
+  // `toNumber`.``, from inside the compiled polyfill. The obvious reading — our
+  // lowering applies an implicit ToNumber where JS does not — is WRONG, and was
+  // falsified before anything was changed: a 27-probe matrix over every
+  // operation the spec does not coerce through (strict equality, `typeof`,
+  // ToBoolean, property read, method call, `instanceof`, argument passing,
+  // spread, destructuring, `for-of`, `Map` round-trip, optional chaining, …)
+  // against a class whose `valueOf` throws found ZERO divergences from node
+  // (`.tmp/s2m-valueof.mts`).
+  //
+  // The coercion is the POLYFILL's own. `JSBI.__toPrimitive`, `__isBigInt` and
+  // `BigInt` all open with `i.constructor === JSBI`; when that reads false
+  // `__toPrimitive` falls through to `const t = i.valueOf; t.call(i)` — JSBI's
+  // deliberately-throwing one. `class JSBI extends Array`, and standalone that
+  // read answered **`Array`**: an externref-backed subclass instance's carrier
+  // is a `$__vec_externref`, indistinguishable from a plain array, so the
+  // generic ladder served the Array builtin's `constructor`. The JS-host lane
+  // has answered this since #5377 (the fourth argument to
+  // `__set_subclass_proto`, which is a documented no-op standalone).
+  //
+  // A PLAIN class was never affected — its instance is a closed `$ClassName`
+  // struct the #5383 S2h prototype-lookup arm already serves — which is why the
+  // matrix above is clean and why the defect needed the builtin-parent shape to
+  // show at all.
+  const PRELUDE = `
+    class Guard extends Array {
+      constructor(n, s) { super(n); this.sign = s; Object.setPrototypeOf(this, Guard.prototype); }
+      valueOf() { throw new Error("COERCED"); }
+      static toPrim(i) {
+        if (typeof i !== "object") return i;
+        if (i.constructor === Guard) return 1;
+        const f = i.valueOf;
+        if (f) { const r = f.call(i); if (typeof r !== "object") return r; }
+        return 2;
+      }
+    }
+    class Plain { constructor(v) { this.v = v; } }
+    function whichCtor(i) {
+      const c = i.constructor;
+      return c === undefined ? 0 : c === Guard ? 1 : c === Array ? 2 : c === Plain ? 4 : 3;
+    }`;
+
+  const run = async (body: string): Promise<unknown> => {
+    const { instance } = await compileStandalone(`${PRELUDE}\nexport function run() { ${body} }\n`);
+    return (instance.exports as unknown as { run: () => unknown }).run();
+  };
+
+  it("the JSBI-shaped ToPrimitive guard takes the constructor branch", { timeout: 300_000 }, async () => {
+    // Base: 0 — `i.constructor` read `Array`, so `__toPrimitive` fell through
+    // to `i.valueOf` and the module threw `COERCED` out to the embedder. This
+    // asserts the VALUE, so a regression that merely stops throwing still fails.
+    expect(await run(`return Guard.toPrim(new Guard(2, false));`)).toBe(1);
+  });
+
+  it("answers the subclass through an opaque receiver, not the builtin parent", { timeout: 300_000 }, async () => {
+    // A typed local was always right (1); only the opaque-parameter spelling —
+    // which is how every JSBI static receives its argument — read `Array` (2).
+    expect({
+      typedLocal: await run(`const x = new Guard(2, false); return x.constructor === Guard ? 1 : 0;`),
+      opaqueParam: await run(`return whichCtor(new Guard(2, false));`),
+      plainUnaffected: await run(`return whichCtor(new Plain(1)) === 4 ? 1 : 0;`),
+      // The install is non-enumerable §17, so the ENUMERABLE surface is
+      // untouched. A/B'd against the base by file copy (`.tmp/s2m-keys.mts`):
+      // `Object.keys` length and the `for…in` count are identical on both
+      // trees, and `constructor` appears in neither key list. `keysLength` is 1
+      // rather than node's 2 on BOTH trees — an index element pushed onto a vec
+      // carrier is not an own key standalone, a pre-existing gap this slice
+      // neither causes nor fixes.
+      ctorNotAKey: await run(`const x = new Guard(0, false); x.push(7); const ks = Object.keys(x);
+        let n = 0; for (let i = 0; i < ks.length; i++) if (ks[i] === "constructor") n++; return n;`),
+      keysLength: await run(`const x = new Guard(0, false); x.push(7); return Object.keys(x).length;`),
+      forInCount: await run(`const x = new Guard(0, false); x.push(7); let n = 0; for (const k in x) n++; return n;`),
+      stillAnArray: await run(`return Array.isArray(new Guard(2, false)) ? 1 : 0;`),
+    }).toEqual({
+      typedLocal: 1,
+      opaqueParam: 1,
+      plainUnaffected: 1,
+      ctorNotAKey: 0,
+      keysLength: 1,
+      forInCount: 2,
+      stillAnArray: 1,
+    });
+  });
+});
+
+describe("#5383 S2m R16 — a provider-side throw is CATCHABLE in the consumer", () => {
+  // A wasm exception is matched by TAG IDENTITY. Two separately compiled
+  // standalone modules each DEFINE their own `__exn`, so a `throw` inside a
+  // linked provider matched no handler in the consumer: the consumer's own
+  // `try { NS.f() } catch (e) { … }` never ran and the raw
+  // `WebAssembly.Exception` escaped to the embedder (measured on both trees in
+  // S2l). Every test262 row that asserts `throws RangeError` is unscoreable in
+  // that state — the negative half of the Temporal corpus.
+  //
+  // The JS-host lane's answer (#5226 `sharedExnTag`) is a JS-owned
+  // `WebAssembly.Tag` imported as `env.__exn`, which needs a host and is
+  // therefore explicitly off for standalone. The host-free twin needs no new
+  // ABI: every module already EXPORTS its tag as `__exn_tag`, and
+  // `instantiateLinkedProviders` already publishes each provider's export
+  // record under its namespace on the consumer's import object. So the CONSUMER
+  // imports `<provider-namespace>.__exn_tag` and uses it as its own — one tag
+  // per graph, resolved by the linker that is already there, with no `env`
+  // import and so no #2961 leak.
+  const PROVIDER = `
+    export const NS = Object.freeze({
+      __proto__: null,
+      boom() { throw new RangeError("x"); },
+      boomType() { throw new TypeError("t"); },
+      boomPlain() { throw new Error("e"); },
+      ok() { return 7; },
+    });`;
+
+  const CONSUMER = `
+    export function ok() { return NS.ok(); }
+    export function caught() { try { NS.boom(); return 0; } catch (e) { return 1; } }
+    export function message() { try { NS.boom(); return 0; } catch (e) { return e.message === "x" ? 1 : 2; } }
+    export function isRangeError() { try { NS.boom(); return 0; }
+      catch (e) { return (e instanceof RangeError) ? 1 : (e instanceof Error) ? 2 : 3; } }
+    export function ctorIdentity() { try { NS.boom(); return 0; }
+      catch (e) { return e.constructor === RangeError ? 1 : e.constructor === undefined ? 3 : 4; } }
+    export function isTypeError() { try { NS.boomType(); return 0; }
+      catch (e) { return (e instanceof TypeError) ? 1 : (e instanceof Error) ? 2 : 3; } }
+    export function plainIsNotRange() { try { NS.boomPlain(); return 0; }
+      catch (e) { return (e instanceof RangeError) ? 9 : (e instanceof Error) ? 1 : 3; } }
+    export function rethrows() { try { try { NS.boom(); } catch (e) { throw e; } return 0; }
+      catch (e) { return (e instanceof RangeError) ? 1 : 2; } }
+    export function finallyRuns() { let n = 0; try { NS.boom(); } catch (e) { n += 1; } finally { n += 10; } return n; }
+  `;
+
+  it("crosses the link as a catchable error of the right class", { timeout: 600_000 }, async () => {
+    const root = mkdtempSync(join(tmpdir(), "issue-5383-s2m-"));
+    const packageRoot = join(root, "node_modules", "ns5383m");
+    mkdirSync(packageRoot, { recursive: true });
+    writeFileSync(
+      join(packageRoot, "package.json"),
+      JSON.stringify({ name: "ns5383m", version: "0.0.0", main: "index.js" }),
+    );
+    writeFileSync(join(packageRoot, "index.js"), PROVIDER);
+    const entry = join(root, "entry.js");
+    writeFileSync(entry, `import { NS } from "ns5383m";\nexport function __probe() { return typeof NS; }\n`);
+    const standalone = { target: "standalone" as const, hostBridge: "off" as const };
+    const built = await compileProject(entry, {
+      allowJs: true,
+      skipSemanticDiagnostics: true,
+      packageCacheDir: join(root, "providers"),
+      ...standalone,
+    });
+    expect(built.success).toBe(true);
+    const artifact = (built.linkedModules ?? []).find((e) => e.packageName === "ns5383m")!;
+    const field = artifact.exportBoundaries!.NS!.field;
+    const consumerEntry = "/__main.js";
+    const result = await compileMulti(
+      {
+        "/__ns_stub.ts": `export declare function ${field}(): any;\n`,
+        [consumerEntry]: `import { ${field} } from "/__ns_stub";\nconst NS = ${field}();\n${CONSUMER}`,
+      },
+      consumerEntry,
+      {
+        allowJs: true,
+        skipSemanticDiagnostics: true,
+        canonicalRuntimeTypes: true,
+        link: [artifact.namespace],
+        linkedPackageBindings: new Map([[field, { module: artifact.namespace, field }]]),
+        ...standalone,
+      },
+    );
+    (result as { linkedModules?: unknown[] }).linkedModules = [artifact];
+    expect(result.success).toBe(true);
+    // The tag arrives through the provider's own namespace, NOT through `env` —
+    // a standalone consumer that leaked an `env` import would fail #2961.
+    const consumerImports = WebAssembly.Module.imports(new WebAssembly.Module(result.binary)).filter(
+      (entry) => entry.kind === "tag",
+    );
+    expect(consumerImports.map((entry) => `${entry.module}::${entry.name}`)).toEqual([
+      `${artifact.namespace}::__exn_tag`,
+    ]);
+
+    const { instance } = await instantiateLinkedProject(result, {});
+    const ex = instance.exports as unknown as Record<string, () => unknown>;
+    // Base: every row below except `ok` threw `[object WebAssembly.Exception]`
+    // out of the call — the `catch` clause never ran at all.
+    expect({
+      ok: ex.ok(),
+      caught: ex.caught(),
+      message: ex.message(),
+      isRangeError: ex.isRangeError(),
+      ctorIdentity: ex.ctorIdentity(),
+      isTypeError: ex.isTypeError(),
+      plainIsNotRange: ex.plainIsNotRange(),
+      rethrows: ex.rethrows(),
+      finallyRuns: ex.finallyRuns(),
+    }).toEqual({
+      ok: 7,
+      caught: 1,
+      message: 1,
+      isRangeError: 1,
+      ctorIdentity: 1,
+      isTypeError: 1,
+      plainIsNotRange: 1,
+      rethrows: 1,
+      finallyRuns: 11,
+    });
+  });
+
+  // NOT fixed here, and deliberately not conflated with the crossing above:
+  // `e.constructor.name` and `typeof e.constructor` on a BUILTIN error are
+  // already wrong in a SINGLE standalone module with no link at all
+  // (`.tmp/s2m-ctorname.mts`: `localCtorIsRange` 1, `localInstanceof` 1,
+  // `localMessage` 1, but `localCtorName` and `localTypeofCtor` both 4 — the
+  // `__builtin_<Name>` carrier object has no `name` and does not answer
+  // `typeof "function"`). The identity comparison is the one upstream
+  // `assert.throws` makes (`thrown.constructor !== expectedErrorConstructor`),
+  // and that one holds.
+  it.todo(
+    "`e.constructor.name` / `typeof e.constructor` on a builtin error answer standalone (pre-existing, single-module)",
+  );
 });
 
 // ── S3 — the runner + CI wiring ───────────────────────────────────
