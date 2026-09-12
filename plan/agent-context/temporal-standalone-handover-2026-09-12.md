@@ -176,3 +176,20 @@ node .tmp/s5-subbuckets.mjs PlainDate .tmp/pd-link.tsv
 The two diagnosis probes are `.tmp/s5-firstfail.mts` (what actually fails) and
 `.tmp/s5-throwshape.mts` (error identity across the boundary); both take a
 warm `JS2WASM_TEMPORAL_CACHE` and need no test262 checkout.
+
+## Where the artifacts actually live (salvage note)
+
+The S5 measuring lane was killed by a container restart before committing. The
+raw rows and probe scripts were carried into the salvaging worktree and are in
+`.tmp/` of the branch's worktree — `{pd,du,zdt}-{base,link}.tsv` (360 rows ×2
+sides, the input to every table above), `s5-*.mjs` / `s5-*.mts`, `s2p-*.mts`,
+and `an.mjs`, the independent aggregator written during salvage to re-derive
+§1 from the rows rather than trust the table. `.tmp/` is gitignored, so if this
+worktree is removed the numbers survive only in the issue file and here —
+re-running costs ~35 minutes of six single-process family runs plus a provider
+pre-warm per side.
+
+One lesson from the salvage itself, worth carrying: **a measurement slice
+should commit its rows-derived tables as soon as the rows exist**, not at the
+end next to the prose. Six family runs were nearly lost twice, and neither loss
+was a compiler problem.

@@ -3410,3 +3410,29 @@ and the scripts `s5-buckets.mjs`, `s5-subbuckets.mjs`, `s5-passloss.mjs`,
 `s5-imports.mts`, `s5-firstfail.mts`, `s5-throwshape.mts` (plus S2p's
 `s2p-family.mts` / `s2p-prewarm.mts` / `s2p-table.mjs`, reused unchanged apart
 from the run label).
+
+### 7. Salvage and independent re-verification (2026-09-12)
+
+The lane that produced §1–§6 was killed by a container restart before it could
+commit, and a second attempt wedged. The work was recovered from the dead
+worktree and committed by a third lane, which did **not** take the tables on
+trust: every number in §1 was recomputed from the six raw
+`{pd,du,zdt}-{base,link}.tsv` row files (`.tmp/an.mjs`, an independently written
+aggregator) and matches, and the pass→fail classification in §2 was re-derived
+from the rows' own sources — `grep -c assert.throws` against
+`grep -c "assert.sameValue|notSameValue|compareArray|^assert("` on all ten
+files. Result: the six rows called false passes have **0** non-throws
+assertions each, and the four legitimate losses have 1, 2, 4 and 6 value
+assertions respectively. No measurement was re-run; the artifacts were
+sufficient to re-derive every claim, and the tsvs were carried into the
+salvaging worktree's `.tmp/` with the probe scripts so they survive the dead
+worktree's cleanup.
+
+One thing DID change on the way in: `origin/main` had meanwhile shrunk
+`src/runtime.ts` from 19,725 to 19,722 lines, which reset the LOC ceiling under
+it. The branch does not touch that file, but carrying the older copy read as
+`+3` against the CI merge-preview base (`LOC_GATE_BASE=$(git rev-parse
+origin/main)`) — the "ceiling reset by main's post-merge baseline refresh"
+failure class, visible only when the gate is run against upstream's tip rather
+than the fork point. Merging `origin/main` cleared it; no allowance was added
+and nothing was baselined.
