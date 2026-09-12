@@ -96,7 +96,7 @@ import {
   setStateI32FromConst,
   storeSpills,
 } from "./frame-core.js";
-import { ensureI32Condition, resolveWasmType } from "./index.js";
+import { ensureI32Condition, resolveWasmType, varBindingNeedsExternrefForUndefined } from "./index.js";
 import { isUndefWidenedBindingElement } from "../checker/type-mapper.js";
 import { ensureExnTag } from "./registry/imports.js";
 import { addFuncType, getOrRegisterRefCellType, getOrRegisterVecType } from "./registry/types.js";
@@ -774,8 +774,22 @@ function resumeBindingValType(
   ctx: CodegenContext,
   rb: { name: string; type: ts.TypeNode | undefined; target?: ts.Identifier; awaitTarget?: ts.AwaitExpression },
 ): ValType {
+  const checker = ctx.checker;
+  // (#6414) A `let x = void 0` binding assigned from an await and read after a
+  // LATER await: the resume body re-compiles that declaration through the
+  // var-decl path, which routes a void-EXPRESSION initializer to externref
+  // (#2806), while the checker types it pure `undefined` → `resolveWasmType` i32.
+  // The i32 field then took `local.get <externref>` from `storeSpills` — an
+  // invalid module. Reuse #2806's predicate so both halves agree by construction;
+  // it is narrow by design, so #1112's f64-sentinel bindings stay numeric.
+  if (rb.target !== undefined) {
+    const bound = checker.getSymbolAtLocation(rb.target)?.valueDeclaration;
+    if (bound !== undefined && ts.isVariableDeclaration(bound) && varBindingNeedsExternrefForUndefined(bound, ctx)) {
+      return { kind: "externref" };
+    }
+  }
   const typeSite = rb.type ?? rb.target ?? rb.awaitTarget;
-  return typeSite ? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(typeSite)) : { kind: "externref" };
+  return typeSite ? resolveWasmType(ctx, checker.getTypeAtLocation(typeSite)) : { kind: "externref" };
 }
 
 /**
