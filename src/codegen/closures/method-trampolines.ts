@@ -1,3 +1,8 @@
+import {
+  initializeNativeGeneratorFunctionValue,
+  nativeGeneratorFunctionValueNeedsResultBridge,
+  nativeGeneratorFunctionValueWrapperResults,
+} from "../generators-factory-prototype.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * Method-ABI → closure-ABI trampoline machinery for js2wasm.
@@ -1121,7 +1126,10 @@ export function ensureFuncClosureSingleton(
   // signature (and therefore every direct call site's `wasmFuncReturnsVoid`
   // answer) is left untouched. See `parkedAsyncDeclarationWrapsPromise`.
   const eagerAsyncPromiseWrap = parkedAsyncDeclarationWrapsPromise(ctx, ownerDeclaration, sig.results);
-  const results: ValType[] = eagerAsyncPromiseWrap ? [{ kind: "externref" }] : sig.results;
+  const nativeGeneratorResultBridge = nativeGeneratorFunctionValueNeedsResultBridge(ctx, sig.results);
+  const results: ValType[] = eagerAsyncPromiseWrap
+    ? [{ kind: "externref" }]
+    : nativeGeneratorFunctionValueWrapperResults(ctx, sig.results);
   const wrapperTypes = constructible
     ? getOrCreateConstructibleFuncRefWrapperTypes(ctx, userParams, results)
     : getOrCreateFuncRefWrapperTypes(ctx, userParams, results);
@@ -1218,6 +1226,10 @@ export function ensureFuncClosureSingleton(
       trampolineBody.push({ op: "local.get", index: i + 1 });
     }
     trampolineBody.push({ op: "call", funcIdx });
+    // A direct native-generator call yields its private state struct.  Its
+    // first-class function value is JavaScript-visible, so the wrapper's
+    // checker-facing callable ABI returns the exported externref carrier.
+    if (nativeGeneratorResultBridge) trampolineBody.push({ op: "extern.convert_any" });
     // (#4630) Settle the void async completion into the promoted `externref`
     // result. `finalizeMethodTrampolines` rebuilds this body from the (possibly
     // re-resolved) callee signature, but it can also decline to rebuild, so the
@@ -1408,5 +1420,12 @@ export function emitCachedFuncClosureAccess(
   );
   fctx.body.push({ op: "any.convert_extern" });
   fctx.body.push({ op: "ref.cast", typeIdx: structTypeIdx });
-  return { kind: "ref", typeIdx: structTypeIdx };
+  return initializeNativeGeneratorFunctionValue(
+    ctx,
+    fctx,
+    sourceFunctionDeclarationForHandle(ctx, funcIdx) ??
+      ctx.funcMapOwnerDecl.get(funcName) ??
+      ctx.topLevelFunctionDeclarations.get(funcName),
+    { kind: "ref", typeIdx: structTypeIdx },
+  );
 }

@@ -549,6 +549,45 @@ head evidence above. The unchanged two-row exec residual and deferred
 three-row `@@match` handoff remain exactly as recorded; no broad residual
 transition is inferred from the artifact-only merge.
 
+### C3a live-PR refresh after upstream #5850 (2026-09-12)
+
+After #5859 was published, live `loopdive/js2` main advanced to exact
+`f84b3a3de56afd2f6ddd6c91a77ef407d92f4f19` through #5850. The original
+implementation branch normally merged that tip as
+`cd6ed08c8bb6bc3c1cadb158bc5f3e071e1d8a71`, without a conflict, rebase, or
+reset. The new async-thenable lowering files did not overlap the C3a RegExp
+source, but the bounded proof was rerun on that integrated head:
+
+- `pnpm run build:compiler-bundle` passed;
+- fresh isolated host A/B was `17 pass`;
+- fresh isolated standalone A/B was `17 pass / 0 compile_error / 0 timeout /
+  0 skip / 0 host imports`;
+- the dedicated C3a pin passed `14/14` in one fork; and
+- TS5, TS7, lint, Prettier, diff check, LOC/function, coercion, and oracle
+  gates passed before the normal pre-push rerun.
+
+The evidence commit `1a63c4ca6e36acc32102b4faba61cd46ad7c6944` recorded that
+exact f84b handoff. The two known standalone exec residuals and deferred
+three-row `@@match` cohort remained unchanged.
+
+### C3a publication reconciliation after merged #5859 (2026-09-12)
+
+The external queue merged #5859 as
+`561b9d2003ed3e6d7bd27538437e4084f48369f0`, with parents current main
+`23a0ddaa26e5db149a93e27db113dba17794c353` and the older PR head
+`a58dd42412543b12ba81c0a3c4a50b6c08c97eae`. It therefore landed the C3a
+implementation and dedicated pins, but omitted the later normal-merge
+`cd6ed08c8bb6bc3c1cadb158bc5f3e071e1d8a71` and evidence-only
+`1a63c4ca6e36acc32102b4faba61cd46ad7c6944` commits despite the PR metadata
+showing that live head.
+
+Required merge-group CI and Test262 passed for the merged #5859 snapshot. This
+docs-only follow-up restores the missing provenance without changing source or
+tests: the static/backend-created `@@replace` code is now landed in main, while
+the two standalone `RegExp.prototype.exec` lastIndex-access residuals and the
+separate three-row `@@match` cursor extension remain deferred. This is not a
+claim of complete RegExp-prototype or whole-suite conformance.
+
 ## Acceptance criteria
 
 - All 165 exact rows pass standalone with zero host imports; interim PRs pass
