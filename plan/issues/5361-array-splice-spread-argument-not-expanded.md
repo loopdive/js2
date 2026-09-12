@@ -4,8 +4,8 @@ title: "Array.prototype.splice inserts a SPREAD argument as one element instead 
 status: done
 sprint: current
 created: 2026-09-06
-updated: 2026-09-06
-completed: 2026-09-06
+updated: 2026-09-12
+completed: 2026-09-12
 priority: medium
 horizon: m
 feasibility: medium
@@ -122,9 +122,19 @@ Two adjacent defects surfaced by the same probes, likely the same root
 ## Resolution
 
 Fixed. hono `src/utils/ipaddr.test.ts` **13/16 → 16/16**; hono overall
-**229/324 → 232/324**; every other dogfood suite byte-for-byte unchanged
-(A/B at one HEAD, `upstream/main` `cbd2f11dff`, 17 suites, compared per test
-file: total delta **+3, no regressions**).
+**255/324 → 258/324**; every other dogfood suite byte-for-byte unchanged
+(A/B at one HEAD, `upstream/main` `8ffac7cd0a`, 17 suites, compared per test
+file: total delta **+3, no regressions** — axios 202, clsx 32, cookie 63,740,
+jest 335, jsdom 6, lodash 59, marked 9, moment 10, prettier 105, redux 67,
+styled-components 9, stylelint 108, tailwindcss 13, three 17, uuid 75,
+webpack 16, identical on both sides).
+
+Re-measured in full after merging 503 upstream commits (`cbd2f11dff` →
+`8ffac7cd0a`): the merge was mechanical (no conflicts), and the probe table,
+the regression-test counts both ways and the 17-suite A/B below were all
+re-run at the merged HEAD. The first measurement, at `cbd2f11dff`, read
+hono **229/324 → 232/324** with the same `+3` and the same single changed
+file; the absolute numbers moved because main did, the delta did not.
 
 ### Root cause
 
@@ -204,7 +214,7 @@ Evaluation order moves CLOSER to spec, not away from it: the inserted items are
 now evaluated right after `start`/`deleteCount` and before the receiver is
 touched, where they used to be compiled midway through the rebuild.
 
-### Probe table (measured, `upstream/main` `cbd2f11dff`)
+### Probe table (measured, `upstream/main` `8ffac7cd0a`)
 
 One standalone probe through `compileAndRunUpstreamModule` (the dogfood lane),
 an untyped `.js` two-file project, harness sanity-checked with a deliberately
