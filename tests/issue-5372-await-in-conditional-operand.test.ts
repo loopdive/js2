@@ -16,7 +16,8 @@
 // Promise reads as `[object Promise]` instead of being flattened by the host
 // `.then`.
 //
-// Parent (`cbd2f11dff`) counts, JS-host lane: 10 rows fail / 12 pass.
+// Parent (`cbd2f11dff`) counts, JS-host lane: 10 rows fail / 13 pass (the
+// `r13` control validates on the parent because nothing drives it there).
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -120,6 +121,17 @@ export async function r12(cond) {
   let u;
   u = cond ? await later("A") : "B";
   return "[" + u + "]";
+}
+function getColorEnabled() {
+  return true;
+}
+// hono getColorEnabledAsync: a BLOCK-bodied async IIFE inside the awaited
+// operand. The host frame machine cannot re-compile that shape in a resume
+// function (#6410, pre-existing on the linear path too), so the hoisting lane
+// must leave the statement alone — the module has to stay VALID.
+export async function r13(cond) {
+  const isNoColor = cond ? await (async () => { return true; })() : !getColorEnabled();
+  return "[" + isNoColor + "]";
 }
 
 export const markedHooks = {
@@ -354,6 +366,9 @@ describe("#5372 controls (passing on the parent too)", () => {
   });
   it("assignment form with the non-awaiting arm taken [false]", async () => {
     expect(await settle((m) => m.r12(false))).toBe("[B]");
+  });
+  it("block-bodied async IIFE in the awaited operand stays off the hoisting lane (#6410): module valid, false arm", async () => {
+    expect(await settle((m) => m.r13(false))).toBe("[false]");
   });
   it("marked parseMarkdown async arm without hooks", async () => {
     expect(await settle((m) => m.parseWithoutHooks("md"))).toBe("parse(L(md,[object Object]))");

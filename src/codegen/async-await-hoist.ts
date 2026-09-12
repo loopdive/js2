@@ -39,7 +39,7 @@
 // `b = cond ? await q : fallback` with exactly one awaiting arm) produce the
 // identical region items they did before.
 
-import { ts } from "../ts-api.js";
+import { forEachChild, ts } from "../ts-api.js";
 import { countAwaitsInStatement } from "./async-cps-ast.js";
 import type { LinearAwaitSegment, RegionBody, TryCatchChunk } from "./async-cps.js";
 
@@ -63,6 +63,35 @@ function unwrapParens(expr: ts.Expression): ts.Expression {
 
 function isAwaitFree(node: ts.Node, awaitSet: ReadonlySet<ts.AwaitExpression>): boolean {
   return countAwaitsInStatement(node, awaitSet) === 0;
+}
+
+/**
+ * Does `expr` contain an immediately-invoked function expression / arrow with a
+ * BLOCK body (`await (async () => { return x; })()`)? The host frame machine
+ * re-compiles a segment's awaited expression inside the resume function, and
+ * for that one shape the emitted resume function fails validation (`local.set`
+ * with an empty stack) — a pre-existing hole of the linear and `if`-arm paths
+ * alike (hono `getColorEnabledAsync`). Hoisting must not widen its reach:
+ * such a statement stays off the hoisting lane and the function keeps its
+ * pre-hoisting behaviour. Concise-bodied IIFEs and block-bodied function
+ * values that are merely passed as arguments are fine and stay admitted.
+ */
+function awaitedExprHasBlockIife(expr: ts.Expression): boolean {
+  let found = false;
+  const walk = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isCallExpression(node)) {
+      const callee = unwrapParens(node.expression);
+      if ((ts.isArrowFunction(callee) || ts.isFunctionExpression(callee)) && ts.isBlock(callee.body)) {
+        found = true;
+        return;
+      }
+    }
+    if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) return; // not compiled in the resume fn
+    forEachChild(node, walk);
+  };
+  walk(expr);
+  return found;
 }
 
 function segment(
@@ -139,6 +168,7 @@ function lowerValueInto(
 ): RegionBody | null {
   const e = unwrapParens(expr);
   if (ts.isAwaitExpression(e) && awaitSet.has(e)) {
+    if (awaitedExprHasBlockIife(e.expression)) return null;
     if (isAwaitFree(e.expression, awaitSet)) {
       return bodyOfChunk(chunkOf([segment(e.expression, bindingOf(target), false)], [], false));
     }
@@ -169,6 +199,7 @@ function lowerValueInto(
 function lowerEffect(expr: ts.Expression, awaitSet: ReadonlySet<ts.AwaitExpression>): RegionBody | null {
   const e = unwrapParens(expr);
   if (!ts.isAwaitExpression(e) || !awaitSet.has(e)) return null;
+  if (awaitedExprHasBlockIife(e.expression)) return null;
   if (isAwaitFree(e.expression, awaitSet)) {
     return bodyOfChunk(chunkOf([segment(e.expression, null, false)], [], false));
   }
@@ -184,6 +215,7 @@ function lowerEffect(expr: ts.Expression, awaitSet: ReadonlySet<ts.AwaitExpressi
 function lowerReturnValue(expr: ts.Expression, awaitSet: ReadonlySet<ts.AwaitExpression>): RegionBody | null {
   const e = unwrapParens(expr);
   if (ts.isAwaitExpression(e) && awaitSet.has(e)) {
+    if (awaitedExprHasBlockIife(e.expression)) return null;
     if (isAwaitFree(e.expression, awaitSet)) {
       return bodyOfChunk(chunkOf([segment(e.expression, null, true)], [], true));
     }

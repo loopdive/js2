@@ -3,10 +3,10 @@ id: 5372
 title: "`const u = cond ? await f() : v` inside an async function leaves `u` holding the Promise — the await in a conditional-expression operand is not suspended on (marked Hooks cluster B, the 10 async tests)"
 status: done
 assignee: ttraenkler/sendev-5372
-completed: 2026-09-06
+completed: 2026-09-12
 sprint: current
 created: 2026-09-06
-updated: 2026-09-06
+updated: 2026-09-12
 priority: high
 horizon: m
 feasibility: hard
@@ -14,23 +14,22 @@ reasoning_effort: max
 task_type: bug
 area: compiler
 goal: correctness
-related: [5367, 5358, 5345, 3722, 4302, 2906]
+related: [5367, 6409, 6410, 5358, 5345, 3722, 4302, 2906]
 # 2026-09-06 (#5372): the frame-aware reaction import `Promise_then2_frame` is
-# registered next to the six host async imports (import-collector finalize),
-# emitted at the resume machine's one reaction site (async-frame) and answered
-# by the runtime import resolver — a trap while a driven frame resumes now
-# rejects the frame's result promise instead of killing the host process
-# (marked Hooks.test.js went 9/30 → 0/30 without it). +15..+19 LOC each; the
-# additions sit in the functions that own those exact sites.
+# registered next to the six host async imports (import-collector finalize) and
+# emitted at the resume machine's one reaction site (async-frame) — a trap
+# while a driven frame resumes now rejects the frame's result promise instead
+# of killing the host process (marked Hooks.test.js went 9/30 → 0/30 without
+# it). +15/+16 LOC; the additions sit in the functions that own those exact
+# sites. Its runtime side lives in src/runtime/promise-then-reactions.ts
+# (2026-09-12: runtime.ts is at the #4401 ceiling, net 0 lines there).
 loc-budget-allow:
-  - src/runtime.ts
   - src/codegen/declarations/import-collector.ts
   - src/codegen/async-frame.ts
 # 2026-09-12 (#5372): `planTryCatchCfg` grows by exactly the 4 lines prettier
 # needs to wrap its widened signature (`hoist` flag) — no logic added.
 func-budget-allow:
   - src/codegen/async-cps.ts::planTryCatchCfg
-  - src/runtime.ts::resolveImport
   - src/codegen/declarations/import-collector.ts::finalizeUnifiedCollector
   - src/codegen/async-frame.ts::ensureAsyncResumeFunction
   - src/codegen/async-frame.ts::buildStateBody
@@ -138,28 +137,66 @@ own issue once reduced further.
 
 ## Implementation Plan
 
-(Lead-written; the implementing agent was to follow it and contradict it
-with evidence if measurement said otherwise. Shared with #5367 — one PR.)
+(The plan as executed. The lead's 2026-09-06 draft — "fix at the collector,
+every syntactic await is a suspension point" — was followed up to its step 2
+and then contradicted by measurement: `awaitSet` was already purely
+syntactic, and the decision that dropped the awaits lived one level up, in
+the activation gate. One PR with #5367, branch
+`issue-5367-5372-await-in-initializer`; interrupted after the fix and resumed
+2026-09-12 on upstream/main `225f400089`.)
 
-1. **Capture** `.tmp/async-cps.orig.ts` and `.tmp/async-ir-planning.orig.ts` before any edit. One standalone probe (`compileAndRunUpstreamModule` from `tests/dogfood/upstream-suite-runner.mjs`, untyped `.js` two-file project, harness sanity-checked with a deliberately failing control) with #5372's seven rows, marked's nested form `await (cond ? await a(e) : b)(u, i)`, the multi-declarator form (`let u = …, c = …`), and #5367's six ladder rows plus its continuations-run log (`seen` must read `s0|s1|e0|e1`).
-2. **How is `awaitSet` built?** Grep `awaitSet` in `async-cps.ts` and follow it to the collector. The #5372 table says the decision depends on the *callee shape* — that smells like membership gated on the operand's checker type being a visible `Promise<T>`. An `AwaitExpression` is a suspension point **by syntax** (`await 1` suspends too); the operand's type may only choose the resume binding's carrier (unknown → `externref`, coerced on resume), never whether to suspend. Instrument the collector to print, per await, the operand kind, the resolved type, and the verdict for every probe row BEFORE changing anything.
-3. **Fix at the collector / planner**, not in the conditional-initializer arm (~L1747, `ts.isConditionalExpression(initializer)`): once every syntactic await is a suspension point, re-run the probe; then check the arm handles the else-branch await and the multi-declarator form (`seen === decls.length`), and that the resume binding for a conditional initializer is typed by the join of both branches, not by the non-await branch alone.
-4. **#5367 on the same fix**: the inline `Promise.all` rows should now suspend; if the resumed value still materialises as a default tuple / empty vec, the resume coercion is choosing the awaited tuple carrier for a host array — route it through the coercion the via-local form already uses (compare the WAT of the via-local form). `isAmbientPromiseAll` (`async-ir-planning.ts` ~490) must keep its contract or be removed if it was only a workaround for the collector gap.
-5. **Both lanes**: run the probe under `semanticProviders: "native-first"` / the standalone target too (find how an existing test drives it) and record the status.
-6. **Scoped test262 before pushing**: `test/language/expressions/await`, `test/language/statements/async-function`, `test/built-ins/Promise/all` on parent and fix, both lanes (find the path filter in `tests/test262-runner.ts` / the vitest runner `pnpm run test:262`); numbers must not go down; quote them in the PR body.
-7. **Regression tests**: one file per issue under `tests/`, the tables as untyped `.js` two-file fixtures (each an async function, resolved on the host via `.then`), failing on the parent for the failing rows, controls for the passing rows; exact counts both ways.
-8. **A/B at ONE HEAD** over all 17 suites (`tests/dogfood/*-upstream-suite.mjs`: webpack three clsx cookie lodash redux axios stylelint tailwindcss jsdom styled-components uuid marked moment prettier jest hono), per test file, base vs fix via the `.orig.ts` copies, suites ONE AT A TIME (three other agents share the box). Anchors on main (measure your own base): marked 9/30 · hono 229–253/324 (moving as #5675/#5676/#5680/#5681 land) · prettier 105/151 · jest 335/356 · redux 67/82 · lodash 58/62 · axios 200/231 · three 17/18 · webpack 16 · clsx 32 · cookie 63740 · tailwindcss 13 · jsdom 6 · styled-components 9 · uuid 75 · moment 10 · stylelint 108. Expected: marked `Hooks.test.js` → ≥ 19/30, hono `concurrent.test.ts` → ≥ 5/6; jest and axios are promise-heavy and may move up; no regressions. Any suite with no `admitted` headline or non-zero exit is re-run alone (a transient `Cannot find package 'tsx'` in a worker spawn silently zeroes modules; per #5369 one unobserved host-promise rejection zeroes a whole file — check `compile.details` before attributing a whole-file flip). #5345 stays `in-progress` (its `illegal cast` bucket remains) — say what marked reads after your change.
-9. The async-IIFE-`.catch`-inside-an-async-function invalid-wasm shape noted above is NOT this task: reduce it to a two-file fixture, file it with `node scripts/claim-issue.mjs --allocate --by ttraenkler/sendev-5372` (read the LAST line for the verdict; never pipe a command whose status you need), do not fix it here.
-
-## Dispatch
-
-- Agent: `ttraenkler/sendev-5372` (Claude Fable 5.1, reasoning effort max);
-  one PR for #5372 + #5367; branch `issue-5367-5372-await-in-initializer`
-  from `upstream/main` `cbd2f11dff` (verified detached, clean, then branched).
-- Lanes: JS-host GC (`target: "gc"`, `platform: "web"`, `experimentalIR`,
-  as the dogfood worker compiles) is the fix lane; wasi/standalone must stay
-  byte-identical.
-- Commit trailer: `Model: Claude Fable 5.1 Max`.
+1. **Capture the base** (`.tmp/*.orig.ts` at `cbd2f11dff`; re-captured from
+   `upstream/main` at the merged head into `.tmp/ab2/base-src/`).
+2. **Probe** (`compileAndRunUpstreamModule`, untyped `.js`, failing control):
+   the seven table rows, marked's nested form
+   `await (cond ? await a(e) : b)(u, i)`, the multi-declarator form,
+   `cond && (await p)`, `return cond ? await a : b`, the assignment form, a
+   `parseMarkdown` mimic, plus #5367's rows — every binding consumed through
+   string concatenation so a leaked Promise reads `[object Promise]`.
+3. **How is `awaitSet` built?** `collectAwaitPoints` is syntactic (every
+   `AwaitExpression` outside a nested function). Instrument the engine claim
+   instead: `planLinearAwaits` / `analyzeTryCatchAsync` /
+   `asyncFnNeedsHostDrive` per row → the failing rows are the ones both
+   planners return `null` for, so the whole function falls to the legacy
+   synchronous pass-through (await = identity).
+4. **Fix at the planner**: new `src/codegen/async-await-hoist.ts` lowers the
+   awaiting variable / expression / return statements into the region items
+   `planTryCatchCfg` already drives (conditional arms, unbound suspend
+   segments, hoisted awaiting callees into `__async_hoist_<pos>` temps,
+   `return await` chunks); `lowerRegionBody` routes through it;
+   `analyzeTryCatchAsync` claims an all-chunk body that carries a hoisted item.
+5. **Lane gating**: `--target standalone` failed validation for the newly
+   admitted shapes (a re-declared own-local's spill mistyped), so hoisting is
+   admitted only through `isHostAsyncLane(ctx)`; non-host lanes keep the
+   pre-#5372 arm verbatim and their binaries byte-identical.
+6. **Const initialisation**: a `const` declarator's non-suspending arm is
+   delivered as a synthetic `name = init` whose LHS is the declaration's own
+   name node — recognised as initialisation in
+   `isConstIdentifierAssignmentTarget`.
+7. **Regression tests**: `tests/issue-5372-await-in-conditional-operand.test.ts`
+   (rows + controls + the async-IIFE-`.catch`-inside-an-async-function shape,
+   which does not even validate on the parent); re-contract
+   `tests/issue-3722-await-ternary-label-false-positive.test.ts` (it asserted
+   the legacy synchronous return of `return cond ? await x() : y`).
+8. **marked through the real suite**: `Hooks.test.js` went 9/30 → 0/30 once
+   the driven async arm reached the pre-existing #5345 `illegal cast` trap
+   inside a host-driven resume (an uncatchable wasm trap escaping a host
+   reaction kills the worker). Add a frame-aware reaction import
+   (`Promise_then2_frame`) whose wrapper rejects the frame's result promise
+   on a trap; its runtime side lives in `src/runtime/promise-then-reactions.ts`
+   because `src/runtime.ts` sits exactly at the #4401 line ceiling (19725).
+   Then characterise what still fails (below) instead of chasing it.
+9. **Gates, typecheck, scoped test262 both lanes parent vs fix, 17-suite A/B
+   at one head** (file copies, suites one at a time). The A/B found one
+   regression — hono `src/helper/dev/index.test.ts` 1/8 → 0/8 because its
+   module stopped VALIDATING: `getColorEnabledAsync` (`const isNoColor = cond
+   ? await (async () => { … })() : !getColorEnabled()`) became driven and the
+   resume emitter cannot re-compile a block-bodied IIFE inside an awaited
+   expression (pre-existing on the linear and `if`-arm paths too, measured on
+   the base → #6410). Gate that shape out of the hoisting lane
+   (`awaitedExprHasBlockIife`), re-verify the file (1/8 again, the base's own
+   errors), add the `r13` control row, re-run marked/hono and the scoped host
+   lane.
 
 ## Resolution
 
@@ -261,8 +298,9 @@ Probe totals: base wasm 15/31, fix wasm 30/31 (the 31st is the control).
 
 **Regression test** `tests/issue-5372-await-in-conditional-operand.test.ts`
 (untyped `.js` two-file project, compiled and instantiated exactly like the
-dogfood worker): 22 rows — 10 fail on the parent, 12 controls pass; 22/22
-with the fix. `tests/issue-3722-await-ternary-label-false-positive.test.ts`
+dogfood worker): 23 rows — 10 fail on the parent, 13 controls pass — plus 5
+rows for the async-IIFE-`.catch` shape (the parent does not validate that
+module); 28/28 with the fix. `tests/issue-3722-await-ternary-label-false-positive.test.ts`
 asserted the legacy synchronous contract (`pick(1) === 7` on an async fn
 whose body is `return cond ? await x() : 3`); it now awaits the returned
 Promise.
@@ -271,6 +309,103 @@ Promise.
 `language/statements/async-function`, `built-ins/Promise/all`): see the PR
 body / `## A/B` below.
 
+**Trap guard (`Promise_then2_frame`).** The resume machine's one reaction
+site (`ensureAsyncResumeFunction`) now registers reactions through
+`Promise_then2_frame(p, onFulfilled, onRejected, resultPromise)`, added next
+to the six host async imports in `finalizeUnifiedCollector`. Its runtime
+wrapper (`src/runtime/promise-then-reactions.ts`, which also owns the plain
+`Promise_then` / `Promise_then2` arms — the three fold into one two-line
+dispatch in `resolveImport`, net 0 lines in `runtime.ts`) catches a wasm trap
+raised while the state resumes and rejects the frame's own result promise,
+which is what the caller of the former synchronous pass-through would have
+observed. Prepared IR frames keep plain `Promise_then2` (the import is
+optional in `HostAsyncImports`). Effect on marked `Hooks.test.js`: 0/30 → 16/30.
+
+**marked `Hooks.test.js` — exact state (AC 3 not reached).** 16/30 with the
+fix (parent: 9/30). Of the 10 async tests this issue was filed for, 7 pass
+(`should preprocess async`, `should provide lexer async`, `should provide
+lexer async hook`, `should provide async lexer from async hook`, `should
+provide parser async`, `should provide parser async hook`, `should provide
+async parser from async hook`). The remaining three:
+
+- `should preprocess options async` fails exactly like its synchronous twin
+  `should preprocess options` (`actual=<p>line1…`) — not an async defect,
+  pre-existing, out of scope.
+- `should postprocess async` and `should process all hooks in reverse`:
+  `marked.parse` resolves `null` (`html.trim()` on null). Characterised with
+  the real module: the trigger is the **postprocess hook being a plain
+  object-literal `async` method that awaits an already-settled promise**
+  (`await timeout()` with `timeout = () => Promise.resolve()`); the wrapped
+  hook returns the right value when awaited directly by the test
+  (`marked.defaults.hooks.postprocess('H')` → `HQ`), a hook that captures a
+  test-local variable passes, a sync hook or a hook awaiting a timer passes,
+  and every same-module mimic of the shape (object-literal method through
+  marked's `Promise.resolve(o.call(r, a)).then(…)` wrapper, `return cond ?
+  await hook(h) : h`) passes — so it is not reduced to a fixture and is not
+  filed; it is the next marked item after #5345.
+
+So the reachable maximum for this issue is 18/30, not the 19/30 the AC
+assumed (the AC counted `preprocess options async` as async). The two
+`illegal cast` tests (`should process tokens [async] before walkTokens`)
+remain #5345's; the `not iterable` / `true is not a function` /
+`this.block` groups were never in this issue's scope.
+
+**Hoisting lane exclusion (#6410).** An awaited operand that contains an
+immediately-invoked function expression / arrow with a BLOCK body
+(`await (async () => { return x; })()`) is left off the hoisting lane
+(`awaitedExprHasBlockIife` in `async-await-hoist.ts`): the host frame
+machine's resume function is invalid for that shape on every path (linear,
+`if`-arm, the old multi-declarator arm — measured on the base), and driving
+more functions must not widen the reach of that hole. Such functions keep
+their pre-hoisting behaviour (the legacy pass-through); the `r13` control row
+pins that the module stays valid. The gate goes when #6410 lands.
+
+**Also fixed on the way**: the "Also seen" shape above (an async IIFE with
+`.catch` inside an async function that awaits it) — the parent emitted a
+module that fails `WebAssembly.validate`; with the hoisting the module
+validates and all five rows of that describe block pass.
+
 ## A/B
 
-<!-- filled from the fix/base legs -->
+Measured at ONE head — the merged branch tip (upstream/main `225f400089` +
+this change), base = the upstream/main copies of the five touched files
+(`.tmp/ab2/base-src`, the two new modules removed) swapped in by file copy,
+fix = the branch's files; suites one at a time, `JS2WASM_EVAL_ENGINE=interpreter`
+for the scoped test262 runs.
+
+**Regression tests** (`node node_modules/vitest/vitest.mjs run …`): base 20
+failing rows (`issue-5367` 5/8, `issue-5372` 15/28, `issue-3722` 0/4), fix
+0 failing (39/39 → 40/40 with the `r13` control).
+
+**Scoped test262** (`language/expressions/await` ·
+`language/statements/async-function` · `built-ins/Promise/all`, 387 tests):
+
+| lane | base | fix |
+| --- | --- | --- |
+| JS-host GC | 190 pass · 193 fail · 4 CE | **191** pass · 192 fail · 4 CE (`language/statements` 66 → 67, the other two categories identical) |
+| standalone (interpreter) | 161 pass · 111 fail · 115 CE | 161 pass · 111 fail · 115 CE (identical per category; probe binary sha256 `0ed867fc616cfa8d` on both sides) |
+
+**17 dogfood suites, per test file** (`tests/dogfood/<pkg>-upstream-suite.mjs`,
+`admitted` headline and exit 0 present on every run, both legs):
+
+| suite | base | fix | per-file delta |
+| --- | --- | --- | --- |
+| marked | 9/30 | **16/30** | `test/unit/Hooks.test.js` 9 → 16 |
+| hono | 255/324 | 255/324 | none (`src/utils/concurrent.test.ts` 0/6 both — #6409; `src/helper/dev/index.test.ts` 1/8 both after the #6410 gate; without the gate it read 0/8 — module invalid) |
+| webpack | 16/16 | 16/16 | none |
+| three | 17/18 | 17/18 | none |
+| clsx | 32/32 | 32/32 | none |
+| cookie | 63740/63740 | 63740/63740 | none |
+| lodash | 59/62 | 59/62 | none |
+| redux | 67/82 | 67/82 | none |
+| axios | 202/231 | 202/231 | none |
+| stylelint | 108/108 | 108/108 | none |
+| tailwindcss | 13/13 | 13/13 | none |
+| jsdom | 6/6 | 6/6 | none |
+| styled-components | 9/9 | 9/9 | none |
+| uuid | 75/75 | 75/75 | none |
+| moment | 10/10 | 10/10 | none |
+| prettier | 105/151 | 105/151 | none (the same 6 known compile problems — worker timeout / `--allow-fs` — on both legs) |
+| jest | 335/356 | 335/356 | none |
+
+Total: 65058 → 65065 (+7), no file lower than its base.
