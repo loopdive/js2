@@ -1,7 +1,9 @@
 ---
 id: 5404
 title: "standalone: the RegExp backend refuses every RUNTIME-BUILT pattern (`Unsupported dynamic regular expression pattern`), which is how the Temporal polyfill parses ISO strings — 13 `new RegExp(<template>)` sites composed at module init"
-status: ready
+status: done
+completed: 2026-09-12
+assignee: ttraenkler/sendev-5383-s8
 sprint: current
 priority: medium
 horizon: m
@@ -10,6 +12,18 @@ feasibility: hard
 reasoning_effort: high
 requested_by: ttraenkler/dev-5383-s2d
 created: 2026-09-08
+loc-budget-allow:
+  # 2026-09-12 (#5404 / #5383 S8) — the composition fold and its safety gate.
+  #   `staticConstStringValue` already folded `a + b` and `re.source`; this
+  #   adds the two spellings the Temporal polyfill actually uses at all 13 of
+  #   its `new RegExp` sites (measured: 11 template literals, 2
+  #   `[...].join("")`), plus `nativeRegExpPatternCompiles` — the trial compile
+  #   that keeps a widened fold from converting a catchable runtime TypeError
+  #   into a STICKY compile error. The fold lives next to the other
+  #   `static*Value` recoverers it recurses through; splitting it out would
+  #   have to export three private helpers and the `FoldWidening` protocol
+  #   across a module boundary for ~90 lines.
+  - src/codegen/regexp-standalone.ts
 ---
 
 # #5404 — a runtime-built RegExp pattern is refused under `--target standalone`

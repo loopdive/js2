@@ -579,6 +579,62 @@ function staticStringValue(ctx: CodegenContext, expr: ts.Expression): string | n
 }
 
 /**
+ * (#5404) Marks that a fold only succeeded by going through one of the two
+ * WIDENED arms — a template literal with substitutions, or `[...].join(sep)`.
+ *
+ * Those forms were refused before #5404, so they have no "previously correct"
+ * behaviour to preserve: their only prior outcome was the poisoned
+ * `$NativeRegExp` and its catchable `TypeError` at first use. Taking the
+ * compile-time path for them is therefore free UPSIDE — except in one
+ * direction. `compileStaticStandaloneRegExp` reports an unsupported construct
+ * through `reportStandaloneRegExpUnsupported`, which is a **sticky** compile
+ * ERROR (#3724/#3725): a widened fold that lands on a construct the native
+ * engine cannot compile would convert a recoverable runtime throw into a hard
+ * build failure for the whole module. On a 157 kB bundle built entirely out of
+ * this idiom (the `@js-temporal/polyfill`, 13 sites) that trade is strictly
+ * worse than the status quo.
+ *
+ * So a widened fold is accepted only once the composed pattern is proven to
+ * compile; otherwise `staticRegExpPatternFlags` returns `null` and the site
+ * keeps exactly today's dynamic lowering.
+ */
+interface FoldWidening {
+  used: boolean;
+}
+
+/** Memo for {@link nativeRegExpPatternCompiles} — the same fragment `.source`
+ *  is re-folded once per lowering query, and the polyfill reuses a dozen. */
+const widenedFoldCompilable = new Map<string, boolean>();
+
+/**
+ * (#5404) Can the native compile-time engine actually lower this pattern+flags?
+ * Mirrors `compileStaticStandaloneRegExp`'s own accept conditions, but SILENT —
+ * a `false` here must leave no diagnostic behind, because the caller falls back
+ * to the pre-existing dynamic path rather than refusing.
+ */
+function nativeRegExpPatternCompiles(pattern: string, flags: string): boolean {
+  const key = `${flags} ${pattern}`;
+  const memo = widenedFoldCompilable.get(key);
+  if (memo !== undefined) return memo;
+  let ok = false;
+  try {
+    const bits = parseFlags(flags);
+    if ((bits & ~SUPPORTED_STANDALONE_FLAGS) === 0) {
+      if ((bits & (RE_FLAG_U | RE_FLAG_V)) !== 0 && hostRegExpSyntaxErrorMessage(pattern, flags) !== null) {
+        ok = false;
+      } else {
+        compilePattern(pattern, bits);
+        ok = true;
+      }
+    }
+  } catch {
+    ok = false;
+  }
+  widenedFoldCompilable.set(key, ok);
+  return ok;
+}
+
+/**
  * #2161 — recover a **compile-time-constant** string from a `new RegExp(...)`
  * pattern / flags argument that `staticStringValue` is too narrow to fold.
  *
@@ -593,11 +649,17 @@ function staticStringValue(ctx: CodegenContext, expr: ts.Expression): string | n
  *   - `a + b` string concatenation where both sides fold to strings, and
  *   - parenthesised / `as` / `!` wrappers (via `stripStaticWrapper`).
  *
- * It intentionally does NOT fold template literals with substitutions, numeric
- * coercions, or `let`/`var` / reassigned bindings — those stay dynamic. Bounded
- * + behaviour-preserving: a pattern this resolves was already statically known,
- * so routing it to the native engine cannot change a previously-correct result
- * (the only prior behaviour for these forms was a runtime trap).
+ * (#5404) It ALSO folds template literals with substitutions and
+ * `[...].join(sep)` over an array literal — the two spellings a library uses to
+ * compose a grammar out of fragment `.source` reads. Those two arms are
+ * *widened* forms: see {@link FoldWidening} for why they are gated on a trial
+ * compile, and `staticRegExpPatternFlags` for where that gate is applied.
+ *
+ * It intentionally does NOT fold numeric coercions or `let`/`var` / reassigned
+ * bindings — those stay dynamic. Bounded + behaviour-preserving: a pattern this
+ * resolves was already statically known, so routing it to the native engine
+ * cannot change a previously-correct result (the only prior behaviour for these
+ * forms was a runtime trap).
  */
 function staticConstStringValue(
   ctx: CodegenContext,
@@ -605,6 +667,7 @@ function staticConstStringValue(
   seen: Set<ts.Node> = new Set(),
   depth = 0,
   maxDepth = 16,
+  widened?: FoldWidening,
 ): string | null | undefined {
   if (depth > maxDepth) return null;
   const cur = stripStaticWrapper(expr);
@@ -619,11 +682,61 @@ function staticConstStringValue(
 
   // `a + b` — fold when both operands fold to strings.
   if (ts.isBinaryExpression(cur) && cur.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-    const left = staticConstStringValue(ctx, cur.left, seen, depth + 1, maxDepth);
+    const left = staticConstStringValue(ctx, cur.left, seen, depth + 1, maxDepth, widened);
     if (typeof left !== "string") return null;
-    const right = staticConstStringValue(ctx, cur.right, seen, depth + 1, maxDepth);
+    const right = staticConstStringValue(ctx, cur.right, seen, depth + 1, maxDepth, widened);
     if (typeof right !== "string") return null;
     return left + right;
+  }
+
+  // (#5404) `` `head${a}mid${b}tail` `` — the spelling the Temporal polyfill
+  // uses at 11 of its 13 sites. Every substitution must itself fold to a
+  // string; a numeric/undefined substitution declines rather than guessing at
+  // ToString, and a tagged template never reaches here (different node kind).
+  //
+  // Gated on the CALLER passing a `widened` tracker, so the two new arms are
+  // reachable only from the two lowering sites that also apply the trial-compile
+  // gate. Every other `staticConstStringValue` caller (the flags-undefined
+  // spellings, the finite-candidate scan, the alias folds) keeps exactly its
+  // pre-#5404 answer.
+  if (widened && ts.isTemplateExpression(cur)) {
+    let out = cur.head.text;
+    for (const span of cur.templateSpans) {
+      const part = staticConstStringValue(ctx, span.expression, seen, depth + 1, maxDepth, widened);
+      if (typeof part !== "string") return null;
+      out += part + span.literal.text;
+    }
+    if (widened) widened.used = true;
+    return out;
+  }
+
+  // (#5404) `[a, b, c].join(sep)` — the other two polyfill sites. Restricted to
+  // a direct array LITERAL receiver (no spread, no holes, no binding): the
+  // point is to fold a composition that is syntactically obvious, not to model
+  // Array.prototype. An absent / statically-undefined separator is `","` per
+  // §23.1.3.16 step 3.
+  if (
+    widened &&
+    ts.isCallExpression(cur) &&
+    !cur.questionDotToken &&
+    ts.isPropertyAccessExpression(cur.expression) &&
+    cur.expression.name.text === "join" &&
+    cur.arguments.length <= 1
+  ) {
+    const receiver = stripStaticWrapper(cur.expression.expression);
+    if (!ts.isArrayLiteralExpression(receiver)) return null;
+    const sepArg = cur.arguments[0];
+    const sep = sepArg === undefined ? "," : staticConstStringValue(ctx, sepArg, seen, depth + 1, maxDepth, widened);
+    if (sep === null) return null;
+    const parts: string[] = [];
+    for (const element of receiver.elements) {
+      if (ts.isSpreadElement(element) || ts.isOmittedExpression(element)) return null;
+      const part = staticConstStringValue(ctx, element, seen, depth + 1, maxDepth, widened);
+      if (typeof part !== "string") return null;
+      parts.push(part);
+    }
+    if (widened) widened.used = true;
+    return parts.join(sep ?? ",");
   }
 
   // `staticRegExp.source` is itself a compile-time string. Acorn uses this to
@@ -667,7 +780,7 @@ function staticConstStringValue(
     // binding referenced twice in one pattern) is legitimate and must fold
     // (#2161 B4: the REX XML-parser concat chains reuse fragments repeatedly).
     seen.add(decl.initializer);
-    const folded = staticConstStringValue(ctx, decl.initializer, seen, depth + 1, maxDepth);
+    const folded = staticConstStringValue(ctx, decl.initializer, seen, depth + 1, maxDepth, widened);
     seen.delete(decl.initializer);
     return folded;
   }
@@ -782,13 +895,20 @@ function staticRegExpPatternFlags(
     // #2161 — fold compile-time-constant pattern/flags (concat, const-bound)
     // so a `const re = new RegExp("a"+"b","g")` binding is recognised as a
     // backend-created receiver for downstream `re.test`/`re.exec`/etc.
-    const pattern = patternArg === undefined ? "" : staticConstStringValue(ctx, patternArg, new Set(), depth + 1);
+    const widened: FoldWidening = { used: false };
+    const pattern =
+      patternArg === undefined ? "" : staticConstStringValue(ctx, patternArg, new Set(), depth + 1, 16, widened);
     const flags = patternOnly
       ? ""
       : flagsArg === undefined
         ? ""
-        : staticConstStringValue(ctx, flagsArg, new Set(), depth + 1);
+        : staticConstStringValue(ctx, flagsArg, new Set(), depth + 1, 16, widened);
     if (pattern === null || flags === null) return null;
+    // (#5404) A fold that needed a widened arm is only taken when the composed
+    // pattern provably compiles — otherwise the site keeps its pre-#5404
+    // dynamic lowering instead of becoming a sticky compile error. See
+    // {@link FoldWidening}.
+    if (widened.used && !nativeRegExpPatternCompiles(pattern ?? "", flags ?? "")) return null;
     return { pattern: pattern ?? "", flags: flags ?? "" };
   }
   if (ts.isIdentifier(unwrapped)) {
@@ -2746,8 +2866,30 @@ export function compileStandaloneRegExpConstructor(
   // #2161 — fold compile-time-constant patterns/flags (string-literal concat,
   // `const`-bound literals) that `staticStringValue` alone is too narrow for;
   // genuinely dynamic operands still resolve to `null` and keep the refusal.
-  const pattern = patternArg === undefined ? "" : staticConstStringValue(ctx, patternArg);
-  const flags = flagsArg === undefined ? "" : staticConstStringValue(ctx, flagsArg);
+  //
+  // (#5404) …and, through the `widening` tracker, the two COMPOSITION
+  // spellings: a template literal with substitutions and `[...].join(sep)`.
+  // Those are the only way the Temporal polyfill spells its 13 ISO-8601
+  // parsers, and they were previously refused wholesale. A widened fold is
+  // taken only once the composed pattern is proven to compile — otherwise
+  // `widenedPattern` is discarded and the site keeps the pre-#5404 dynamic
+  // lowering, because the alternative is a STICKY compile error on a
+  // construct that used to throw a catchable TypeError. See {@link FoldWidening}.
+  const widening: FoldWidening = { used: false };
+  const widenedPattern =
+    patternArg === undefined ? "" : staticConstStringValue(ctx, patternArg, new Set(), 0, 16, widening);
+  const widenedFlags = flagsArg === undefined ? "" : staticConstStringValue(ctx, flagsArg, new Set(), 0, 16, widening);
+  const widenedIsUsable =
+    !widening.used ||
+    (widenedPattern !== null &&
+      widenedFlags !== null &&
+      nativeRegExpPatternCompiles(widenedPattern ?? "", widenedFlags ?? ""));
+  const pattern = widenedIsUsable
+    ? widenedPattern
+    : patternArg === undefined
+      ? ""
+      : staticConstStringValue(ctx, patternArg);
+  const flags = widenedIsUsable ? widenedFlags : flagsArg === undefined ? "" : staticConstStringValue(ctx, flagsArg);
   if (pattern === null || flags === null) {
     if (!hasStandaloneRegExpEngine(ctx)) {
       reportStandaloneRegExpUnsupported(
