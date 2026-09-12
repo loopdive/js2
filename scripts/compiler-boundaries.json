@@ -3199,6 +3199,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/expressions/destructuring-unresolved.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/expressions/dynamic-element-host-call.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -4744,6 +4752,14 @@
     },
     {
       "path": "src/codegen/iter-lazy-native.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/iterator-errors.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -8599,6 +8615,30 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/backend/lower-contracts.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Canonical lowering resolver/result types without implementation imports; existing IR-node and physical layout type dependencies still prevent a pure-contract certification."
+    },
+    {
+      "path": "src/ir/backend/wasm-constants.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "One shared Wasm constant implementation, independent of lowerers and concrete emitters; preserve deferred linear consumers and separate remaining IR-node model debt."
+    },
+    {
+      "path": "src/ir/backend/wasm-lowering.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Explicit Wasm convenience assembly owns concrete-emitter selection; generic lowering must not import this wrapper or reach it through the compatibility facade."
+    },
+    {
       "path": "src/ir/backend/wasmgc-emitter.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -9167,12 +9207,20 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/lower-generic.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Generic implementation no longer selects a concrete emitter, but Wasm-shaped branches, resolver callbacks and mixed IR dependencies remain; this cycle removal is not pure-IR or whole-compiler closure."
+    },
+    {
       "path": "src/ir/lower.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
-      "nextBoundary": "Split standalone lowering into backend/wasmgc/lowering; isolate shared pure contracts and deferred backend/legacy compatibility paths before relocation. Do not move all backend coupling into ir/core."
+      "nextBoundary": "Explicit old-path compatibility facade re-exports canonical generic lowering, Wasm assembly, constants and types; no implementations or factories remain here. Retain legacy consumers until their independent migration."
     },
     {
       "path": "src/ir/lowering-dynamic-scratch.ts",

@@ -13,7 +13,8 @@
 // arithmetic / control flow) and the vec group. The remaining primitives
 // are added here as their groups get wired.
 
-import { emitConstInstr, type IrLowerResolver } from "../lower.js";
+import { emitConstInstr } from "./wasm-constants.js";
+import type { IrLowerResolver } from "./lower-contracts.js";
 import {
   asVal,
   type AllocSiteId,

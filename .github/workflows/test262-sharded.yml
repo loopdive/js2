@@ -112,6 +112,10 @@ on:
         required: false
         default: false
         type: boolean
+      baseline_commit:
+        description: "Measurement-only: immutable baselines commit, or artifact:<id> with a reviewed plan/baseline-evidence/<id>.json receipt; required when skip_promote=true"
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -166,6 +170,50 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  admit-measurement-baseline:
+    # Always succeeds as a no-op outside this explicit measurement path, so
+    # adding the dependency does not change legacy PR/merge-group selection.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v5
+        if: github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        with:
+          fetch-depth: 0
+      - name: Acquire and admit one immutable baseline pair
+        if: github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE_COMMIT: ${{ inputs.baseline_commit }}
+          INCLUDE_PROPOSALS: ${{ inputs.include_proposals }}
+          EVAL_ENGINE: ${{ inputs.eval_engine }}
+          COMPILER_POOL_SIZE: ${{ inputs.compiler_pool_size }}
+          IR_FIRST: ${{ inputs.ir_first }}
+          LAYOUT_EMIT: ${{ inputs.layout_emit }}
+          NATIVE_FIRST: ${{ inputs.native_first }}
+        run: |
+          if [[ "$BASELINE_COMMIT" =~ ^artifact:([1-9][0-9]*)$ ]]; then
+            mkdir admitted-baseline
+            cp "plan/baseline-evidence/${BASH_REMATCH[1]}.json" admitted-baseline/test262-baseline-pair.json
+          else
+            [[ "$BASELINE_COMMIT" =~ ^[a-f0-9]{40}$ ]] || { echo '::error::Missing immutable baseline source'; exit 1; }
+            git clone --filter=blob:none --no-checkout https://github.com/loopdive/js2wasm-baselines.git admitted-baseline
+            git -C admitted-baseline sparse-checkout set --no-cone /test262-current.jsonl /test262-standalone-current.jsonl /test262-baseline-pair.json
+            git -C admitted-baseline checkout --detach "$BASELINE_COMMIT"
+          fi
+          node scripts/acquire-test262-baseline-pair.mjs admitted-baseline
+      - name: Preserve baseline admission evidence even on refusal
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        uses: actions/upload-artifact@v6
+        with:
+          name: admitted-measurement-baseline
+          path: |
+            admitted-baseline/*.json
+            admitted-baseline/*.jsonl
+          if-no-files-found: error
+
   gate:
     name: cheap gate (main-ancestor + lint)
     runs-on: ubuntu-latest
@@ -1018,7 +1066,7 @@ jobs:
     # scripts/gen-test262-mg-matrix.mjs. This job keeps
     # its ORIGINAL 57-shard x 2-target matrix, UNCHANGED, for push (baseline
     # update) and workflow_dispatch (manual reruns).
-    needs: [changes, mg-artifact-probe, runtime-eval-provider, temporal-provider]
+    needs: [changes, mg-artifact-probe, runtime-eval-provider, temporal-provider, admit-measurement-baseline]
     # #3448 — the push arm is now AND-ed with a MISS on the merge_group
     # baseline-artifact probe: on a HIT the merge_group already produced the
     # merged JSONLs for this exact SHA, so this 114-job matrix is SKIPPED and
@@ -1575,7 +1623,7 @@ jobs:
     # under `always()`, so the probe being skipped on pull_request/merge_group
     # cannot force-skip it, and its empty output leaves SHARD_SKIP_OK unchanged
     # in those contexts.
-    needs: [changes, test262-shard, test262-shard-mg, mg-artifact-probe]
+    needs: [changes, test262-shard, test262-shard-mg, mg-artifact-probe, admit-measurement-baseline]
     runs-on: ubuntu-latest
     env:
       # 'true' when EITHER the static (test262-shard) or consolidated
@@ -1659,6 +1707,19 @@ jobs:
           pattern: test262-*-shard-*
           merge-multiple: false
 
+      - name: Download the admitted measurement baseline pair
+        if: env.SHARDS_RAN == 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        uses: actions/download-artifact@v7
+        with:
+          name: admitted-measurement-baseline
+          path: /tmp/cat-baselines
+      - name: Verify measurement baseline before any report guard
+        if: env.SHARDS_RAN == 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        run: |
+          node scripts/admit-test262-baseline-pair.mjs /tmp/cat-baselines /tmp/cat-baselines/expectations.json /tmp/cat-baselines/rechecked.json
+          mkdir -p .test262-cache
+          cp /tmp/cat-baselines/test262-standalone-current.jsonl .test262-cache/test262-standalone-current.jsonl
+
       - name: Merge JS-host test262 JSONL results
         if: env.HOST_RAN == 'true'
         run: |
@@ -1725,6 +1786,11 @@ jobs:
             --baseline-sha "${{ github.sha }}" \
             --baseline-generated-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             ${{ github.event_name != 'workflow_dispatch' && '--include-proposals' || (inputs.include_proposals && '--include-proposals' || '') }}
+
+      - name: Check measurement candidate population against admitted pair
+        if: env.SHARDS_RAN == 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        run: |
+          node scripts/admit-test262-baseline-pair.mjs /tmp/cat-baselines /tmp/cat-baselines/expectations.json /tmp/cat-baselines/candidate-admission.json merged-reports/test262-results-merged.jsonl merged-reports/test262-standalone-results-merged.jsonl
 
       # #2097 — ABSOLUTE standalone pass-count floor (high-water-mark backstop).
       # The #1897 standalone gate is a MOVING floor (re-seeded from the new
@@ -1837,9 +1903,11 @@ jobs:
           # Sparse + blob-filtered clone: the baselines repo carries a large
           # runs/ history (~500 MB cap), so a plain --depth=1 clone took
           # ~100s. Materializing only the two baseline JSONLs takes ~2-5s.
+          if [ "${{ github.event_name == 'workflow_dispatch' && inputs.skip_promote }}" != "true" ]; then
           { git clone --depth=1 --filter=blob:none --no-checkout https://github.com/loopdive/js2wasm-baselines.git /tmp/cat-baselines \
             && git -C /tmp/cat-baselines sparse-checkout set --no-cone /test262-current.jsonl /test262-standalone-current.jsonl \
             && git -C /tmp/cat-baselines checkout main; } 2>/dev/null || true
+          fi
           if [ ! -f /tmp/cat-baselines/test262-current.jsonl ]; then
             echo "::warning::No baseline JSONL available — skipping catastrophic guard (first seed)."
             exit 0
@@ -2213,7 +2281,7 @@ jobs:
     # the shard artifacts below. Running in parallel with merge-report (instead
     # of serially after it) cuts ~3 min off every run's tail.
     # #3431 — needs both shard jobs; only one runs per event (see merge-report).
-    needs: [changes, test262-shard, test262-shard-mg]
+    needs: [changes, test262-shard, test262-shard-mg, admit-measurement-baseline]
     runs-on: ubuntu-latest
     # actions:read — the #1956 predecessor-group baseline is an artifact from
     # ANOTHER workflow run, downloaded via the artifacts API. The workflow's
@@ -2257,6 +2325,19 @@ jobs:
       - name: Install dependencies
         if: env.HOST_RAN == 'true'
         run: pnpm install --frozen-lockfile
+
+      - name: Download the admitted measurement baseline pair
+        if: env.HOST_RAN == 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        uses: actions/download-artifact@v7
+        with:
+          name: admitted-measurement-baseline
+          path: admitted-baseline
+      - name: Verify measurement baseline before regression comparison
+        if: env.HOST_RAN == 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        run: |
+          node scripts/admit-test262-baseline-pair.mjs admitted-baseline admitted-baseline/expectations.json admitted-baseline/rechecked.json
+          cp admitted-baseline/test262-current.jsonl benchmarks/results/test262-current.jsonl
+          node -e 'const fs=require("node:fs"), m=JSON.parse(fs.readFileSync("admitted-baseline/test262-baseline-pair.json")); fs.writeFileSync("/tmp/baseline-meta-fresh.json",JSON.stringify({baseline_sha:m.compiler_sha,test262_version:m.corpus_sha,oracle_version:m.oracle_version}))'
 
       - name: Fetch fresh baseline from baselines repo
         id: fetch_baseline
@@ -2613,6 +2694,11 @@ jobs:
           mkdir -p merged-reports
           find shard-artifacts/test262-js-host-shard-* -name 'test262-results-*.jsonl' -print0 | sort -z | xargs -0 cat > merged-reports/test262-results-merged.jsonl
           test -s merged-reports/test262-results-merged.jsonl
+
+      - name: Check measurement host population against admitted baseline
+        if: env.HOST_RAN == 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        run: |
+          node scripts/admit-test262-baseline-pair.mjs admitted-baseline admitted-baseline/expectations.json admitted-baseline/candidate-admission.json merged-reports/test262-results-merged.jsonl
 
       - name: Compare against current main baseline
         id: regression_diff
