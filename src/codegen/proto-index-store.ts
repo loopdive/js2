@@ -205,7 +205,14 @@ export function reserveProtoIndexStore(ctx: CodegenContext): void {
   // that only reads a builtin proto through a runtime value (the dominant
   // test262 reflection idiom) reserved nothing and every consult site emitted
   // its pre-existing miss.
-  if (!ctx.standalone || !(ctx.protoIndexDirty || ctx.protoNamedDirty || ctx.protoMemberDirty)) return;
+  // Dynamic TypedArray instances also demand ordinary prototype properties:
+  // their constructor lookup must read a real intrinsic data property even
+  // in modules with no source-level prototype reflection or mutation.
+  if (
+    !ctx.standalone ||
+    !(ctx.protoIndexDirty || ctx.protoNamedDirty || ctx.protoMemberDirty || ctx.moduleUsesDynTaView)
+  )
+    return;
   if (ctx.protoIndexStoreReserved) return;
   ctx.protoIndexStoreReserved = true;
 

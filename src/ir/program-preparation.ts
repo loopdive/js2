@@ -29,6 +29,14 @@ export function prepareWholeIrProgram(input: IrWholeProgramPreparationInput): Ir
       "runtime policies duplicate a backend/target pair or omit the source preparation policy",
     );
   }
+  if (
+    input.promiseDelayProjection === "standalone-native" &&
+    policies.some((policy) => policy.backend !== "wasmgc" || policy.target !== "standalone")
+  )
+    throw new PreparedIrProgramInvariantError(
+      "invalid-prepared-data",
+      "native Promise-delay source projection cannot request a runtime projection outside wasmgc:standalone",
+    );
   const source = prepareIrProgramSources(input);
   if (source.kind !== "prepared") return source;
   const typed = captureTypedIrProgramInput(source);

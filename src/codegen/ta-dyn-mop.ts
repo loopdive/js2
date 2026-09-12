@@ -552,7 +552,6 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
     let aProtoValue = -1;
     const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty");
     const getProtoIdx = ctx.funcMap.get("__getPrototypeOf");
-    const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
     const newPlainObjIdx = ctx.funcMap.get("__new_plain_object");
     fn.locals.push(
       { name: "__tam_any", type: { kind: "anyref" } },
@@ -832,16 +831,9 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
       return out;
     };
 
-    // `constructor` is the one named TypedArray property whose ordinary
-    // lookup is observable by the species protocol.  It must consult an own
-    // expando property first, then the selected prototype (which may carry an
-    // inherited getter installed by the test), before falling back to the
-    // intrinsic per-kind carrier.  The old namedValue arm ran first and made
-    // an own `view.constructor = C` invisible to `SpeciesConstructor`.
-    //
-    // Keep the recursive call on the ordinary MOP rather than reaching into
-    // the property table here: that preserves accessor invocation and abrupt
-    // completion propagation for both the expando and prototype paths.
+    // Ordinary constructor lookup preserves the actual property value, even
+    // undefined. SpeciesConstructor, rather than [[Get]], owns defaulting to
+    // the intrinsic constructor. Both storage paths keep the original Receiver.
     const constructorLookup = (): Instr[] => {
       const fallback: Instr[] =
         mode === "get"
@@ -858,9 +850,13 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
             op: "if",
             blockType: { kind: "empty" },
             then: [
-              { op: "local.get", index: aExp },
-              { op: "local.get", index: aKey },
-              { op: "call", funcIdx: selfIdx },
+              ...(mode === "get"
+                ? protoGetWithReceiver(aExp, aKey, selfIdx)
+                : [
+                    { op: "local.get", index: aExp } as Instr,
+                    { op: "local.get", index: aKey } as Instr,
+                    { op: "call", funcIdx: selfIdx } as Instr,
+                  ]),
               { op: "return" },
             ],
           },
@@ -879,32 +875,19 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
           { op: "local.set", index: aProto },
         );
         out.push({ op: "local.get", index: aProto }, { op: "ref.is_null" });
-        out.push({ op: "if", blockType: { kind: "empty" }, then: fallback });
-        if (mode === "get" && isUndefinedIdx !== undefined) {
-          // A freshly materialized native prototype has no companion entry
-          // unless the module also flows that prototype through reflection.
-          // Treat that missing constructor as the intrinsic kind default so a
-          // dynamic view still exposes `view.constructor === TA`.  Keep an
-          // explicitly own expando value on the earlier path, and preserve
-          // non-undefined prototype values (including abrupt getter results).
-          out.push(
-            // (#5194 r3 F2) an inherited `constructor` getter sees the instance
-            ...protoGetWithReceiver(aProto, aKey, selfIdx),
-            { op: "local.set", index: aProtoValue },
-            { op: "local.get", index: aProtoValue },
-            { op: "call", funcIdx: isUndefinedIdx },
-            { op: "if", blockType: { kind: "empty" }, then: fallback },
-            { op: "local.get", index: aProtoValue },
-            { op: "return" },
-          );
-        } else {
-          out.push(
-            { op: "local.get", index: aProto },
-            { op: "local.get", index: aKey },
-            { op: "call", funcIdx: selfIdx },
-            { op: "return" },
-          );
-        }
+        const missing: Instr[] =
+          mode === "get" ? [...undef(), { op: "return" }] : [{ op: "i32.const", value: 0 }, { op: "return" }];
+        out.push({ op: "if", blockType: { kind: "empty" }, then: missing });
+        out.push(
+          ...(mode === "get"
+            ? protoGetWithReceiver(aProto, aKey, selfIdx)
+            : [
+                { op: "local.get", index: aProto } as Instr,
+                { op: "local.get", index: aKey } as Instr,
+                { op: "call", funcIdx: selfIdx } as Instr,
+              ]),
+          { op: "return" },
+        );
       } else {
         out.push(...fallback);
       }
