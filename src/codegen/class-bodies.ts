@@ -14,6 +14,7 @@ import {
 import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
 import { resolveIrDynamicCarrierType } from "./any-helpers.js";
 import { isUndefinedDefaultOnlyParam, isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
+import { widenAsyncThenableResults } from "./async-thenable-return.js"; // (#5371)
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../ir/types.js";
 // (#3522) nested implicit-ctor family
 import { irPreparedNestedOrdinaryClass, type IrNestedClassFieldCallAdmission, type IrUnitId } from "../ir/identity.js";
@@ -1689,7 +1690,9 @@ export function collectClassDeclaration(
         }
         if (!isVoidType(retType)) {
           // (#3673) `next(): i32` pins the result type syntactically.
-          methodResults = [nativeTypeFromTypeNode(ctx.checker, member.type) ?? resolveWasmType(ctx, retType)];
+          methodResults = widenAsyncThenableResults(ctx, member, [
+            nativeTypeFromTypeNode(ctx.checker, member.type) ?? resolveWasmType(ctx, retType),
+          ]);
         }
       }
 
