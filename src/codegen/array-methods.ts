@@ -124,6 +124,9 @@ const {
 import { emitFuncRefAsClosure } from "./closures/funcref-as-closure.js";
 import { emitRuntimeEvalCarrierUnwrapAny } from "./runtime-eval-callable.js";
 import { emitSymbolOperandCoercionThrow } from "./tonumber-symbol-throw.js"; // (#3481)
+import { buildSpreadArgList, hasSpreadArgument } from "./spread-arg-list.js"; // (#5361)
+import { canBuildSpreadArgList, isTupleStructType } from "./spread-arg-list.js"; // (#5361)
+import { compileArrayPushSpread } from "./array-push-spread.js"; // (#5361)
 
 // (#3264) Array.prototype-borrow subsystem extracted to array-prototype-borrow.ts;
 // re-export the two public entries so existing importers keep resolving.
@@ -1088,7 +1091,7 @@ export function emitClampNonNeg(fctx: FunctionContext, local: number): void {
  * a runtime no-op (the `if` is not taken). Callers gate the EMISSION on
  * `ctx.standalone`/`ctx.wasi` so the host/gc lane stays byte-identical.
  */
-function emitEnsureBackingCapacity(
+export function emitEnsureBackingCapacity(
   fctx: FunctionContext,
   vecLocal: number,
   dataLocal: number,
@@ -2869,7 +2872,10 @@ function compileArrayToSpliced(
   const tailCountTmp = allocLocal(fctx, `__arr_tspl_tc_${fctx.locals.length}`, { kind: "i32" });
   const writeTmp = allocLocal(fctx, `__arr_tspl_w_${fctx.locals.length}`, { kind: "i32" });
 
+  // (#5361) Same syntactic-vs-runtime count as `splice`: a spread argument
+  // contributes its element count, not one slot.
   const insertCount = Math.max(0, callExpr.arguments.length - 2);
+  const insertHasSpread = hasSpreadArgument(callExpr.arguments, 2);
 
   // Compile receiver -> vec ref
   compileExpression(ctx, fctx, propAccess.expression);
@@ -2937,9 +2943,20 @@ function compileArrayToSpliced(
   fctx.body.push({ op: "local.set", index: tailCountTmp });
   emitClampNonNeg(fctx, tailCountTmp);
 
+  // (#5361) Evaluate the inserted items once, before the copies, so the new
+  // backing array can be sized from their RUNTIME count.
+  const insertArgs =
+    insertCount > 0 && insertHasSpread
+      ? buildSpreadArgList(ctx, fctx, callExpr.arguments, 2, elemType, "arr_tspl_ins")
+      : undefined;
+  const pushInsertCount = (): void => {
+    if (insertArgs) fctx.body.push({ op: "local.get", index: insertArgs.countLocal });
+    else fctx.body.push({ op: "i32.const", value: insertCount });
+  };
+
   // newLen = start + insertCount + tailCount
   fctx.body.push({ op: "local.get", index: startTmp });
-  fctx.body.push({ op: "i32.const", value: insertCount });
+  pushInsertCount();
   fctx.body.push({ op: "i32.add" });
   fctx.body.push({ op: "local.get", index: tailCountTmp });
   fctx.body.push({ op: "i32.add" });
@@ -2954,7 +2971,23 @@ function compileArrayToSpliced(
   emitArrayCopy(fctx, arrTypeIdx, newData, null, dataTmp, null, startTmp);
 
   // Part 2: insert items at newData[start..start+insertCount]
-  if (insertCount > 0) {
+  if (insertArgs) {
+    fctx.body.push({ op: "local.get", index: startTmp });
+    fctx.body.push({ op: "local.set", index: writeTmp });
+    insertArgs.emitStores({
+      pre: [
+        { op: "local.get", index: newData },
+        { op: "local.get", index: writeTmp },
+      ],
+      post: [
+        { op: "array.set", typeIdx: arrTypeIdx },
+        { op: "local.get", index: writeTmp },
+        { op: "i32.const", value: 1 },
+        { op: "i32.add" },
+        { op: "local.set", index: writeTmp },
+      ],
+    });
+  } else if (insertCount > 0) {
     fctx.body.push({ op: "local.get", index: startTmp });
     fctx.body.push({ op: "local.set", index: writeTmp });
     for (let i = 0; i < insertCount; i++) {
@@ -2974,7 +3007,7 @@ function compileArrayToSpliced(
   // Part 3: copy tail: src[tailStart..tailStart+tailCount] -> newData[start+insertCount..end]
   // Compute destination offset = start + insertCount
   fctx.body.push({ op: "local.get", index: startTmp });
-  fctx.body.push({ op: "i32.const", value: insertCount });
+  pushInsertCount();
   fctx.body.push({ op: "i32.add" });
   fctx.body.push({ op: "local.set", index: writeTmp });
   emitArrayCopy(fctx, arrTypeIdx, newData, writeTmp, dataTmp, tailStartTmp, tailCountTmp);
@@ -4314,24 +4347,27 @@ function tryCompileArrayPushDynamicSpread(
   arrTypeIdx: number,
   elemType: ValType,
 ): ValType | undefined {
-  if (
-    receiverIsExternref ||
-    ctx.standalone ||
-    ctx.wasi ||
-    callExpr.arguments.length !== 1 ||
-    !ts.isSpreadElement(callExpr.arguments[0]!)
-  ) {
+  if (receiverIsExternref || ctx.standalone || ctx.wasi || !hasSpreadArgument(callExpr.arguments)) {
     return undefined;
   }
-  return compileArrayPushDynamicSpread(
-    ctx,
-    fctx,
-    propAccess,
-    callExpr.arguments[0]!.expression,
-    vecTypeIdx,
-    arrTypeIdx,
-    elemType,
-  );
+  if (callExpr.arguments.length === 1 && ts.isSpreadElement(callExpr.arguments[0]!)) {
+    const spreadExpression = callExpr.arguments[0]!.expression;
+    // (#5361) An inline array literal (`...["x", "y"]`) is a TUPLE struct, not
+    // a vec: the native arm cannot resolve it, and the host arm's externref
+    // mirror reports the right length but reads every element as null (two
+    // empty slots appended). Route only that shape to the shared builder and
+    // leave the two measured single-spread arms otherwise untouched.
+    const sourceWasmType = inferExpressionWasmType(ctx, fctx, spreadExpression);
+    if (!isTupleStructType(ctx, sourceWasmType)) {
+      return compileArrayPushDynamicSpread(ctx, fctx, propAccess, spreadExpression, vecTypeIdx, arrTypeIdx, elemType);
+    }
+  }
+  // Mixed / multi-spread argument lists (`a.push(x, ...src)`) and tuple
+  // sources: the unrolled `compileArrayPush` would store the spread SOURCE in
+  // one slot. Gate before emitting anything — the receiver has to be compiled
+  // first, and the builder must not decline after that.
+  if (!canBuildSpreadArgList(ctx, fctx, elemType)) return undefined;
+  return compileArrayPushSpread(ctx, fctx, propAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
 }
 
 /** Copy a runtime-sized native vec spread without losing typed elements at the host boundary. */
@@ -6164,7 +6200,14 @@ function compileArraySplice(
   // #1815 — items to insert at `start` (arguments[2..]). When present, the
   // backing array must be rebuilt (it may need to grow), so we cannot use the
   // in-place tail-shift path that only works when newLen <= len.
+  //
+  // (#5361) `insertCount` is the SYNTACTIC argument count, which is the right
+  // number only while every inserted item is one AST node. A spread argument
+  // contributes its RUNTIME element count, so with one present the rebuild is
+  // driven by `insertCountLocal` (built below) instead of this constant — the
+  // constant would store the spread SOURCE in one slot and nest the array.
   const insertCount = Math.max(0, callExpr.arguments.length - 2);
+  const insertHasSpread = hasSpreadArgument(callExpr.arguments, 2);
   const newData =
     insertCount > 0
       ? allocLocal(fctx, `__arr_spl_ndata_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx })
@@ -6220,6 +6263,15 @@ function compileArraySplice(
   });
   emitClampNonNeg(fctx, delCountTmp);
 
+  // (#5361) Evaluate the inserted items ONCE, in source order, before the
+  // receiver is touched — the rebuild below needs their runtime count before
+  // it can size the new backing array. Declining (undefined) keeps the static
+  // unrolled path, which is exact whenever no spread is present.
+  const insertArgs =
+    insertCount > 0 && insertHasSpread
+      ? buildSpreadArgList(ctx, fctx, callExpr.arguments, 2, _elemType, "arr_spl_ins")
+      : undefined;
+
   // (#5145) §23.1.3.29 step 11 — `A = ArraySpeciesCreate(O, actualDeleteCount)`,
   // before any element is moved.
   const speciesDeps = prepareArraySpeciesDeps(ctx, fctx);
@@ -6261,8 +6313,12 @@ function compileArraySplice(
   if (insertCount > 0) {
     // #1815 — insertion path: rebuild the backing array in place.
     // newLen = len - delCount + insertCount  (= start + insertCount + tailCount)
+    const pushInsertCount = (): void => {
+      if (insertArgs) fctx.body.push({ op: "local.get", index: insertArgs.countLocal });
+      else fctx.body.push({ op: "i32.const", value: insertCount });
+    };
     fctx.body.push({ op: "local.get", index: startTmp });
-    fctx.body.push({ op: "i32.const", value: insertCount });
+    pushInsertCount();
     fctx.body.push({ op: "i32.add" });
     fctx.body.push({ op: "local.get", index: tailCountTmp });
     fctx.body.push({ op: "i32.add" });
@@ -6279,22 +6335,39 @@ function compileArraySplice(
     // Part 2: items — newData[start..start+insertCount] = arguments[2..]
     fctx.body.push({ op: "local.get", index: startTmp });
     fctx.body.push({ op: "local.set", index: writeTmp });
-    for (let i = 0; i < insertCount; i++) {
-      fctx.body.push({ op: "local.get", index: newData });
-      fctx.body.push({ op: "local.get", index: writeTmp });
-      compileExpression(ctx, fctx, callExpr.arguments[2 + i]!, _elemType);
-      fctx.body.push({ op: "array.set", typeIdx: arrTypeIdx });
-      if (i < insertCount - 1) {
+    if (insertArgs) {
+      // (#5361) Values were already evaluated above; this only stores them.
+      insertArgs.emitStores({
+        pre: [
+          { op: "local.get", index: newData },
+          { op: "local.get", index: writeTmp },
+        ],
+        post: [
+          { op: "array.set", typeIdx: arrTypeIdx },
+          { op: "local.get", index: writeTmp },
+          { op: "i32.const", value: 1 },
+          { op: "i32.add" },
+          { op: "local.set", index: writeTmp },
+        ],
+      });
+    } else {
+      for (let i = 0; i < insertCount; i++) {
+        fctx.body.push({ op: "local.get", index: newData });
         fctx.body.push({ op: "local.get", index: writeTmp });
-        fctx.body.push({ op: "i32.const", value: 1 });
-        fctx.body.push({ op: "i32.add" });
-        fctx.body.push({ op: "local.set", index: writeTmp });
+        compileExpression(ctx, fctx, callExpr.arguments[2 + i]!, _elemType);
+        fctx.body.push({ op: "array.set", typeIdx: arrTypeIdx });
+        if (i < insertCount - 1) {
+          fctx.body.push({ op: "local.get", index: writeTmp });
+          fctx.body.push({ op: "i32.const", value: 1 });
+          fctx.body.push({ op: "i32.add" });
+          fctx.body.push({ op: "local.set", index: writeTmp });
+        }
       }
     }
 
     // Part 3: tail — newData[start+insertCount..] = data[tailStart..tailStart+tailCount]
     fctx.body.push({ op: "local.get", index: startTmp });
-    fctx.body.push({ op: "i32.const", value: insertCount });
+    pushInsertCount();
     fctx.body.push({ op: "i32.add" });
     fctx.body.push({ op: "local.set", index: writeTmp });
     // (#3201) clamp the tail read to the backing (+ guard) so a sparse receiver doesn't trap.
