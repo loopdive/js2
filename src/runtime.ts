@@ -18495,8 +18495,8 @@ assert._isSameValue = isSameValue;
               }
               return wsh.normalizeSandboxValue(obj, v, key, globalSandbox, callbackState, _unwrapForHost);
             }
-          } catch {
-            /* fall through to the generic path */
+          } catch (e) {
+            if (e instanceof RangeError) throw e; // (#5375) exhausted stack / throwing accessor: never re-run the read
           }
         }
         const val = _safeGet(obj, key, callbackState, intent.rawCallable === true);
