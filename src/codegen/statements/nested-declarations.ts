@@ -30,6 +30,7 @@ import {
 } from "../function-declaration-observation.js";
 import { getOrRegisterArgumentsVecType, reserveArgumentsLengthBrand } from "../arguments-length-brand.js";
 import { recordLiftedCaptureBox, recordLiftedCaptureSlots } from "../closures/capture-source-slot.js";
+import { recordEagerCaptureBox } from "./eager-capture-box.js";
 import { collectOwnerBindingsWrittenAfterDeclaration } from "../closures/declaration-write-analysis.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { recordNestedFunctionBody } from "../context/body-route-audit.js";
@@ -2793,19 +2794,15 @@ function emitEagerCaptureBoxes(ctx: CodegenContext, fctx: FunctionContext, funcN
     // Match the call-site predicate exactly: only mutable value captures with a
     // resolved value type are boxed. Immutable captures pass by value.
     if (!cap.mutable || !cap.valType) continue;
-    // (#2692) SKIP `let`/`const` (TDZ-flagged) captures. Eager-boxing them at
-    // function-top races their later block-scoped declaration: the `let`/`const`
-    // decl re-allocates the value slot (block-scope shadow / type reset) and
-    // resets `localMap` to a fresh unboxed f64 local, while `boxedCaptures` stays
-    // set → the var-decl box-write path then emits `ref.is_null` / `struct.set`
-    // on that fresh f64 slot → "ref.is_null expected reference, found f64"
-    // invalid Wasm (the entire for-await-of async-dstr regression cluster — all
-    // `let`-based). `var`/param captures have no such re-declaration, so eager
-    // boxing is safe for them, and the captured-counter dstr template (the #2669
-    // win) uses `var`. TDZ (`let`/`const`) captures fall back to the existing
-    // lazy call-site boxing (the pre-#2692 behaviour). Follow-up can extend the
-    // declaration path to be box-aware for the residual let/const-counter case.
-    if (cap.hasTdzFlag) continue;
+    // (#5356) `let`/`const` (TDZ-flagged) captures are boxed here too. #2692
+    // skipped them fearing the declaration would re-allocate the value slot
+    // under the cell; the declaration path is box-aware now (#3396 / #3534 /
+    // `dropStaleBindingBox`), while the lazy call-site box it fell back to is
+    // minted inside whatever buffer the FIRST call sits in — a call in an
+    // untaken branch left every later read a null cell (prettier's
+    // `printDocToString`). The races that DO exist are consumers treating the
+    // RAW pre-hoisted slot as the binding's storage; they resolve the cell via
+    // `eagerCaptureBoxes` (recorded below — statements/eager-capture-box.ts).
     // Dedup: a sibling nested fn already boxed this name (multi-capture of the
     // same var), OR the outer slot is itself the canonical cell (#2623
     // alreadyBoxed — re-boxing would create a cell-of-cell). `boxedCaptures.has`
@@ -2829,6 +2826,7 @@ function emitEagerCaptureBoxes(ctx: CodegenContext, fctx: FunctionContext, funcN
     if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
     fctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: cap.valType });
     recordLiftedCaptureBox(fctx, cap.name, cap.outerLocalIdx, boxedLocalIdx);
+    recordEagerCaptureBox(fctx, cap.outerLocalIdx, { cellSlot: boxedLocalIdx, refCellTypeIdx, valType: cap.valType });
   }
 }
 
@@ -2883,9 +2881,11 @@ function emitEagerNestedCallCaptureBoxes(
   referencedCalleeNames: ReadonlySet<string>,
 ): void {
   for (const cap of captures) {
-    // Same narrowing as the #2692 eager pass: only plain by-value `var`/param
-    // captures. Mutable → already a box param; alreadyBoxed → outer cell threaded
-    // through; hasTdzFlag → `let`/`const`, eager boxing races the re-declaration.
+    // Only plain by-value `var`/param captures. Mutable → already a box param;
+    // alreadyBoxed → outer cell threaded through; hasTdzFlag → kept lazy here
+    // (#5356 lifted the declaring-scope skip; a `let` a sibling mutates is
+    // promoted to a mutable capture by `mutatedInSiblingScope`, so this
+    // caller-scope pass rarely sees one).
     if (cap.mutable || cap.alreadyBoxed || cap.hasTdzFlag) continue;
     // Find a referenced sibling that mutably captures this same name, and adopt
     // ITS ref-cell value type so our refCellTypeIdx matches the lazy call-site's.
