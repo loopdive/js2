@@ -140,9 +140,11 @@ stay unchanged.
 ## Verification record
 
 Implementation developed from the verified baseline
-`405dfb5cacac05f98aaf20d41c794034c6d9f41f` and verified after a normal
-fast-forward integration of current upstream/main
-`c645a7627e099173b0b3e0c5daa1d7b5a110a9d5` on
+`405dfb5cacac05f98aaf20d41c794034c6d9f41f`, first verified after the
+`c645a7627e099173b0b3e0c5daa1d7b5a110a9d5` integration, then refreshed at
+`7c8069cb0770e67014a8df4f42af48bbb7fb5736`, and finally verified after a
+normal merge of strict upstream/main target
+`cbeffc55aaf12cd26a52fcae811d2efa224c4dce` on
 `codex/6420-class-value-iscallable-20260912`.
 
 ### Implemented surface
@@ -207,6 +209,37 @@ fast-forward integration of current upstream/main
 - Pre-push numeric-local control
   `tests/issue-3765-numeric-locals.test.ts`: **18 passed** in 104.82s.
 
+### Intermediate strict-head refresh (`7c8069cb…`, merge commit `f63579cf…`)
+
+- `tests/issue-6420-class-value-iscallable.test.ts`: **3 passed** in 87.48s.
+- Full `tests/issue-5350-super-property-r1.test.ts`: **33 passed** in
+  111.21s.
+- `tests/issue-5383-standalone-temporal-provider.test.ts -t 'S2f R11|S2f
+  R12|S2f R13|S2g R14'`: **10 passed, 70 skipped** in 101.05s.
+- `pnpm typecheck`, `pnpm run lint`, and `pnpm run format:check`: passed.
+  Biome again retained its capped existing-diagnostic summary but exited 0.
+- `pnpm run check:oracle-ratchet`, `pnpm run check:coercion-sites`,
+  `pnpm run check:loc-budget`, `pnpm run check:func-budget`,
+  `pnpm run check:codegen-fallbacks`, and `pnpm run check:stack-balance`:
+  passed with no unallowed ratchet growth.
+- Pre-push numeric-local control
+  `tests/issue-3765-numeric-locals.test.ts`: **18 passed** in 94.44s.
+
+### Final strict-head refresh (`cbeffc55…`, merge commit `15c6dd65…`)
+
+- `tests/issue-6420-class-value-iscallable.test.ts`: **3 passed** in 47.85s.
+- Full `tests/issue-5350-super-property-r1.test.ts`: **33 passed** in 66.87s.
+- `tests/issue-5383-standalone-temporal-provider.test.ts -t 'S2f R11|S2f
+  R12|S2f R13|S2g R14'`: **10 passed, 70 skipped** in 56.30s.
+- `pnpm typecheck`, `pnpm run lint`, and `pnpm run format:check`: passed.
+  Biome retained its capped existing-diagnostic summary but exited 0.
+- `pnpm run check:oracle-ratchet`, `pnpm run check:coercion-sites`,
+  `pnpm run check:loc-budget`, `pnpm run check:func-budget`,
+  `pnpm run check:codegen-fallbacks`, and `pnpm run check:stack-balance`:
+  passed with no unallowed ratchet growth.
+- Pre-push numeric-local control
+  `tests/issue-3765-numeric-locals.test.ts`: **18 passed** in 74.96s.
+
 ### Maintained Test262 A/B
 
 Used `scripts/harness-flip-probe.ts` in the standalone lane, which assembles
@@ -225,18 +258,18 @@ Exact rows:
 4. `test/language/statements/class/arguments/default-constructor.js` —
    `fail` → `fail` (existing `args.length` failure, unrelated to this change).
 
-The post-integration rerun has the identical verified partition: **0
-fail→pass, 0 pass→fail, 0 other changes, 4 unchanged, net 0**. The normative
-direct class Call row remains a pass; the dynamic class-value regression is
-represented by the focused host-free regression above because these maintained
-rows do not exercise that alias/boundary shape.
+The final `cbeffc55…` strict-head rerun has the identical verified partition:
+**0 fail→pass, 0 pass→fail, 0 other changes, 4 unchanged, net 0**. The
+normative direct class Call row remains a pass; the dynamic class-value
+regression is represented by the focused host-free regression above because
+these maintained rows do not exercise that alias/boundary shape.
 
 ### Handoff gates
 
 - `node scripts/check-committed-issue-integrity.mjs HEAD`: passed on the final
-  #6420 commit (4,435 issue files scanned, all with frontmatter).
+  strict-head checkpoint (4,437 issue files scanned, all with frontmatter).
 - `pnpm run check:issues` and `pnpm run check:issue-ids`: passed after the
-  handoff record was finalized.
+  final strict-head handoff record was finalized.
 - Do not widen the untouched historical `__typeof_function` consumers without
   a witnessed class-value path. Their legacy contracts remain outside #6420.
 
@@ -253,3 +286,18 @@ regression and #5350/#5383 controls. No object-literal-super-only exception was
 introduced. There is no remaining implementation blocker; the only residual is
 the intentionally bounded non-migration of unrelated historical
 `__typeof_function` consumers.
+
+## Publication checkpoint
+
+- Review PR: <https://github.com/loopdive/js2/pull/5849> (non-draft, targeting
+  `loopdive/js2:main` from the authorized `ttraenkler/js2` fork).
+- The implementation head `4fd5a582bbe7de375f2d0781cfd3cd06aa7fcda1`
+  completed the repository PR workflows successfully. The strict-head refresh
+  through `cbeffc55aaf12cd26a52fcae811d2efa224c4dce` and documentation checkpoint
+  `23d0e676bbdc4d4eca1b37430dd092756365ca8b` retained all local gates above,
+  but GitHub did not schedule the required `pull_request` workflows for that
+  exact updated head.
+- This publication-only issue update is the documented recovery checkpoint for
+  that dropped `synchronize` delivery. The PR shepherd must certify the new
+  exact head only after required CI has been scheduled and passed; it must not
+  infer readiness from the earlier green head or merge the PR.
