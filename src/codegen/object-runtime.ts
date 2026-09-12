@@ -11803,12 +11803,61 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
     lengthFieldIdx: number;
     lengthFieldType: ValType;
     numericFields: { n: number; fieldIdx: number; fieldType: ValType }[];
+    /**
+     * (#5383 S2l) A TUPLE carrier has no `length` FIELD — its length is the
+     * field count, a compile-time constant. Set only for tuple candidates;
+     * `lengthFieldIdx` is then −1 and the length arm emits `f64.const n`.
+     */
+    constLength?: number;
   };
   const seen = new Set<number>();
   const cands: ArrayLikeCand[] = [];
   const fnctorProtoGlobals = new Map<number, number>();
+  // (#5383 S2l) TUPLE carriers, the third array-like shape on the standalone
+  // dyn-reader trio. A TS tuple value IS a JS Array at runtime — `["a", 1]` has
+  // `length 2` and integer-indexed elements — but `resolveWasmType` lowers a
+  // heterogeneous tuple to a NOMINAL struct `$__tuple_N` whose fields are named
+  // `_0`, `_1`, … with no `length` field. So it matched neither the `$ObjVec` /
+  // typed-vec arms (`fillExternGetIdxVecArms`) nor the closed-struct array-like
+  // arms below, whose candidate filter requires a real `length` field and
+  // CANONICAL integer field names.
+  //
+  // What that cost, measured on this slice's subject: the Temporal polyfill's
+  // `Object.fromEntries(nt.map(([e, t]) => [t, e]))`. `Object.fromEntries`'s
+  // lib signature is `Iterable<readonly [PropertyKey, T]>`, so the callback's
+  // `[t, e]` is CONTEXTUALLY a tuple and lowers to `$__tuple_0`
+  // (`struct (field $_0 externref) (field $_1 externref)`) — whereas the SAME
+  // expression bound to an `any` local first lowers to a `$__vec_externref`
+  // pair and worked. The self-hosted `__object_fromEntries` reads each pair
+  // with `__extern_get_idx(pair, 0/1)`, which had no tuple arm and answered
+  // `undefined` for BOTH slots, so ten entries all wrote `out[undefined] =
+  // undefined` and the table came out as the single key `"undefined"` — a
+  // wrong answer with no diagnostic, and the reason `Duration.total("minutes")`
+  // threw `unit must be one of …, null ×10, not minutes`.
+  //
+  // Registering tuples as array-like candidates is the general fix (it is the
+  // same answer the JS-host lane gets from the `__sget_*` struct-read exports,
+  // #5205) and is `ref.test`-guarded per type like every other arm, so no
+  // other receiver shape changes.
+  const tupleTypeIdxs = new Set(ctx.tupleTypeMap.values());
   for (const [structName, fields] of ctx.structFields) {
     const typeIdx = ctx.structMap.get(structName);
+    if (typeIdx !== undefined && !seen.has(typeIdx) && tupleTypeIdxs.has(typeIdx)) {
+      // Fields are minted as `_0.._n-1` in order; require exactly that shape so
+      // a future differently-shaped tuple carrier cannot silently misread.
+      const positional = fields.every((f, i) => f.name === `_${i}`);
+      if (positional) {
+        seen.add(typeIdx);
+        cands.push({
+          typeIdx,
+          lengthFieldIdx: -1,
+          lengthFieldType: { kind: "f64" },
+          constLength: fields.length,
+          numericFields: fields.map((f, i) => ({ n: i, fieldIdx: i, fieldType: f.type })),
+        });
+      }
+      continue;
+    }
     if (typeIdx === undefined || seen.has(typeIdx)) continue;
     if (
       structName.startsWith("Wrapper") ||
@@ -11901,6 +11950,20 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
     const arms: Instr[] = [];
     let lenPrimLocalAdded = false; // (#3317) L_PRIM scratch appended at most once
     for (const cand of cands) {
+      // (#5383 S2l) A tuple carrier's length is its field count — a constant,
+      // with no field to read and nothing for ToLength to convert.
+      if (cand.constLength !== undefined) {
+        arms.push(
+          { op: "local.get", index: 1 },
+          { op: "ref.test", typeIdx: cand.typeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "f64.const", value: cand.constLength }, { op: "return" }],
+          },
+        );
+        continue;
+      }
       // Read the length field as f64: i32 converts (a boolean-branded field
       // reads 1/0 — ToLength(ToNumber(true)) = 1); externref (an `any`-typed
       // `length` slot) unboxes via __unbox_number (NaN for non-numbers → the
