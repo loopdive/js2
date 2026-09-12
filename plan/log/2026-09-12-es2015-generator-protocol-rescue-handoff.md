@@ -11,9 +11,11 @@ substituted for final-head validation.
 - Branch: `codex/5199-generator-protocol-rescue-20260912`
 - Local base: `d4108568d43f14c361ecc3a58c82633027eaae39`
 - Integrated normally, without rebase: `c645a7627e099173b0b3e0c5daa1d7b5a110a9d5`,
-  then #3518's `7c8069cb0770e67014a8df4f42af48bbb7fb5736`, then final current
-  main `cbeffc55aaf12cd26a52fcae811d2efa224c4dce` at merge tip
-  `67c36ad828fee7af2bd53f4f5617be03b86f46b0`.
+  then #3518's `7c8069cb0770e67014a8df4f42af48bbb7fb5736`, then
+  `cbeffc55aaf12cd26a52fcae811d2efa224c4dce`. After publication, #5849 landed
+  at `d03c2248002723c01c412ec48c3b585851e38bd0`; the required fresh fetch
+  advanced further to current main `ffb338c45b9ce26c0b430a7345f498c403d35441`.
+  The normal final merge tip is `66c44d6470fb6b73624ab9f5fc06915dd00f241e`.
 - Port source: generator-only hunks manually reviewed from the second commit of
   stale mixed PR #5736, `b3a21dfcd1fc28c13a9f2ef168a8114deee347b0`, relative to
   `357b05f68c8c76b8c4888690941edf9d247243ab`. Do not cherry-pick that commit.
@@ -86,7 +88,10 @@ Its `.tmp/protocol-paths.txt` and legacy-control script were untracked and are
 gone, so that exact matrix is unverifiable and must never be reconstructed or
 claimed as a current result.
 
-## Final integrated validation
+## Initial integrated validation — `cbeffc55`
+
+This was the first publication evidence. It is retained for audit provenance;
+the post-d03 validation below is the evidence for the current PR head.
 
 The final compiler bundle is
 `b48135496043b1493824ddd47ca8ca309f1bfb77e96ce710a98de902a24e8bf0`.
@@ -110,7 +115,7 @@ The manifest stores canonical JSONL paths beginning `test/`; the maintained
 runner wants paths below `test262/test`. The exact final command was:
 
 ```sh
-COMPILER_POOL_SIZE=1 node --import tsx scripts/run-test262-paths.mts \
+COMPILER_POOL_SIZE=1 JS2WASM_EVAL_ENGINE=quickjs node --import tsx scripts/run-test262-paths.mts \
   <(sed 's#^test/##' plan/log/2026-09-12-es2015-generator-protocol-current-head-paths.txt) \
   --standalone --isolate
 ```
@@ -123,6 +128,37 @@ The authoritative comparison JSONL is
 (SHA-256 `45ff56e7570bba0a1bff6590d19d35de2525928adb7e3054789ba35aebb29360`,
 11,704 rows: 10,230 pass, 1,144 fail, 329 compile_error, 1 timeout).
 
+## Post-d03 final integrated validation — `ffb338c45b`
+
+#5849 at `d03c2248` changes compiler/runtime inputs but had no direct source
+conflict with this generator patch. The later `d03..ffb338` range contains only
+#5341 documentation and npm-compat artifacts. The merge was nevertheless
+followed by a compiler and QuickJS evaluation-provider rebuild:
+
+- Final merge head: `66c44d6470fb6b73624ab9f5fc06915dd00f241e`.
+- Compiler bundle SHA-256:
+  `31bd3f5b3afcaeda6222bc1017be10a7cdd4f878d7e8801df7e2aa5f8aa09dd2`.
+- QuickJS artifact: cache key `2e2d7736713beeda`, SHA-256
+  `073742801ba76347`; evaluation adapter cache key `5fc4ed2567c14c45`,
+  1,826,684 bytes, built and canary-verified.
+
+All cohorts used `COMPILER_POOL_SIZE=1`; the exact-corpus run explicitly used
+`JS2WASM_EVAL_ENGINE=quickjs`.
+
+- Original unchanged prototype11 + generic27 + permanent bridge/legacy suite:
+  **43/43 pass**. Every standalone fixture still asserts successful compile,
+  `imports=[]`, valid Wasm, and runtime result `1`.
+- Original bridge9: **9/9 pass**, each with successful standalone compile,
+  `imports=[]`, valid Wasm, and result `1`. Its retained source bodies use only
+  the normal entry export wrapper (`function test()` to `export function
+  test()`); no diagnostic cast or behavior rewrite is a claimed gain.
+- Exact **2026-09-12 protocol36+B8**: **44/44 pass** on the maintained isolated
+  runner: A owned protocol rows **36/36**, B authoritative-passing controls
+  **8/8**, with no B loss. This remains distinct from the lost historical
+  protocol44 list.
+- `pnpm run typecheck`, `pnpm run lint`, Prettier, LOC budget, and function
+  budget all passed.
+
 ## Residual outside this bounded bridge
 
 Numeric payload transport is intentionally not claimed complete. The state ABI
@@ -132,9 +168,9 @@ externref transport through resume/abrupt/completion paths, and numeric
 specialization only at a proven numeric consumer. The original three controls
 (suspended return(object), completed return(object), ignored next(object))
 were rerun from their tracked stale-checkpoint source bodies as diagnostics on
-the final head. All three compile with `imports=[]` and valid Wasm but return
-`0` instead of Node-oracle `1`: **0/3**. The export shim used solely to invoke
-`test` is not an original-source/Test262 gain. These controls remain the
+the post-d03 final head. All three compile with `imports=[]` and valid Wasm but
+return `0` instead of Node-oracle `1`: **0/3**. The export shim used solely to
+invoke `test` is not an original-source/Test262 gain. These controls remain the
 acceptance gate for the separate ABI work.
 
 The historical closed-object identity control was untracked and is unavailable
@@ -144,8 +180,8 @@ not relabeled as passing.
 
 ## Readiness
 
-The bounded protocol bridge is ready for a **non-draft** review PR. All required
-final-head source and exact-corpus evidence is green, and the numeric-payload
-and closed-identity residuals are explicitly separate mechanisms. This remains
-neither a claim of complete generator semantics nor a claim of full ES2015
-conformance.
+The bounded protocol bridge remains ready for a **non-draft** review PR. All
+required post-d03-final-head source and exact-corpus evidence is green, and the
+numeric-payload and closed-identity residuals are explicitly separate
+mechanisms. This remains neither a claim of complete generator semantics nor a
+claim of full ES2015 conformance.

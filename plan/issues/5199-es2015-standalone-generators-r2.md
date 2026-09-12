@@ -100,6 +100,14 @@ never rebased, through `c645a7627e099173b0b3e0c5daa1d7b5a110a9d5`, then the
 and finally current main
 `cbeffc55aaf12cd26a52fcae811d2efa224c4dce`.
 
+After the first PR publication, upstream advanced through #5849 at
+`d03c2248002723c01c412ec48c3b585851e38bd0` and, on the required fresh fetch,
+to `ffb338c45b9ce26c0b430a7345f498c403d35441`. The latter contains only
+post-d03 #5341 documentation and npm-compat artifacts, while #5849 changes
+other compiler/runtime surfaces. Both were normally merged without conflict at
+`66c44d6470fb6b73624ab9f5fc06915dd00f241e`; no rebase or force update was
+used.
+
 The port intentionally excludes the stale PR's super and TypedArray hunks. It
 does not modify the TypedArray lane's `ta-dyn-mop.ts`, `native-proto.ts`, or
 `proto-index-store.ts`. The only shared surfaces are ordinary prototype/object
@@ -178,7 +186,11 @@ SHA-256 `45ff56e7570bba0a1bff6590d19d35de2525928adb7e3054789ba35aebb29360`:
 11,704 rows (10,230 pass, 1,144 fail, 329 compile_error, 1 timeout). All
 cohorts use one compiler worker and exact corpus paths.
 
-### Final integrated validation — `cbeffc55`
+### Initial integrated validation — `cbeffc55`
+
+This was the first publication evidence. It is retained for provenance, but
+the post-d03 final validation below is the review basis for the current PR
+head.
 
 The historical `44/44` path list and legacy-control script were untracked
 artifacts and cannot be recovered. Their result remains historical and is not
@@ -200,16 +212,16 @@ matrix is
   `from-catch.js`, and `then-return.js`.
 
 The manifest retains canonical JSONL paths rooted at `test/`; the maintained
-runner expects paths below `test262/test`. The final exact invocation removes
-only that root prefix while preserving all 44 selected rows:
+runner expects paths below `test262/test`. The exact invocation removes only
+that root prefix while preserving all 44 selected rows:
 
 ```sh
-COMPILER_POOL_SIZE=1 node --import tsx scripts/run-test262-paths.mts \
+COMPILER_POOL_SIZE=1 JS2WASM_EVAL_ENGINE=quickjs node --import tsx scripts/run-test262-paths.mts \
   <(sed 's#^test/##' plan/log/2026-09-12-es2015-generator-protocol-current-head-paths.txt) \
   --standalone --isolate
 ```
 
-On final integrated head `67c36ad828fee7af2bd53f4f5617be03b86f46b0`
+On initial integrated head `67c36ad828fee7af2bd53f4f5617be03b86f46b0`
 (whose upstream parent is `cbeffc55`), the rebuilt compiler bundle was
 `b48135496043b1493824ddd47ca8ca309f1bfb77e96ce710a98de902a24e8bf0`.
 The correct QuickJS evaluation provider reused artifact
@@ -230,6 +242,37 @@ The c645 provider build is retained only as intermediate provenance
 (`a67d940e…` bundle and `a520c80d…` adapter); no c645 cohort result is used as
 publication evidence.
 
+### Post-d03 final validation — `ffb338c45b`
+
+The normal merge tip is
+`66c44d6470fb6b73624ab9f5fc06915dd00f241e`, whose second parent is current
+upstream `ffb338c45b9ce26c0b430a7345f498c403d35441`. #5849 at `d03c2248`
+touches compiler/runtime inputs, so the compiler bundle and the QuickJS
+**evaluation** provider were rebuilt even though it has no direct generator
+source-file overlap. The later `d03..ffb338` range is only #5341 documentation
+and npm-compat artifacts.
+
+The rebuilt compiler bundle is
+`31bd3f5b3afcaeda6222bc1017be10a7cdd4f878d7e8801df7e2aa5f8aa09dd2`.
+The correct QuickJS evaluation provider reused artifact `073742801ba76347`
+and built/canary-verified adapter `5fc4ed2567c14c45` (1,826,684 bytes). All
+corpus commands used `COMPILER_POOL_SIZE=1` and
+`JS2WASM_EVAL_ENGINE=quickjs`.
+
+- Unchanged original prototype11, generic27, and permanent bridge/legacy suite
+  are **43/43 pass** under one Vitest fork. Standalone fixtures retain
+  successful compile, `imports=[]`, valid Wasm, and result `1` assertions.
+- Original bridge9 is **9/9 pass** from the retained source bodies, using only
+  the fixture entry wrapper that turns `function test()` into `export function
+  test()`; no diagnostic cast or behavior rewrite is counted. Every row has
+  successful standalone compile, `imports=[]`, valid Wasm, and result `1`.
+- The exact **2026-09-12 protocol36+B8** matrix is again **44/44 pass**:
+  owned protocol A is **36/36** and authoritative-JSONL B is **8/8**, with
+  zero B-control losses. This remains the reproducible current matrix, never
+  the unrecoverable historical protocol44 list.
+- `pnpm run typecheck`, `pnpm run lint`, Prettier, LOC/function budgets all
+  passed on this head.
+
 ### Separate numeric-payload and closed-identity residual
 
 Numeric generators still need an independent payload ABI decision. Do not
@@ -246,13 +289,13 @@ the yield element is numeric. The follow-up implementation plan is:
    completed return, ignored next) with `imports=[]` and valid Wasm before
    counting a Test262 gain.
 
-On the final head, the tracked original payload source bodies from the stale
-checkpoint were rerun as a residual diagnostic (with only an export wrapper to
-invoke `test`): all three compile with `imports=[]` and valid Wasm, but all
-three return `0` rather than the Node-oracle `1`. The retained failures are
-**0/3** for suspended `return(object)`, completed `return(object)`, and ignored
-`next(object)`. They are not a Test262 gain and remain a separately scoped ABI
-follow-up.
+On the post-d03 final head, the tracked original payload source bodies from the
+stale checkpoint were rerun as a residual diagnostic (with only an export
+wrapper to invoke `test`): all three compile with `imports=[]` and valid Wasm,
+but all three return `0` rather than the Node-oracle `1`. The retained failures
+are **0/3** for suspended `return(object)`, completed `return(object)`, and
+ignored `next(object)`. They are not a Test262 gain and remain a separately
+scoped ABI follow-up.
 
 The historical closed-object identity control was untracked and is unavailable
 for a current rerun. Its previously recorded no-generator failure is not
@@ -261,10 +304,11 @@ an object-carrier substrate dependency to coordinate with its owner.
 
 ### Readiness
 
-This bounded protocol bridge is ready for a non-draft review PR: final-head
-source fixtures, bridge controls, provider provenance, and the reproducible
-protocol36+B8 matrix are green. That readiness does not claim complete ES2015
-or close the separately recorded numeric-payload/closed-object mechanisms.
+This bounded protocol bridge remains ready for a non-draft review PR:
+post-d03-final-head source fixtures, bridge controls, provider provenance, and
+the reproducible protocol36+B8 matrix are green. That readiness does not claim
+complete ES2015 or close the separately recorded numeric-payload/closed-object
+mechanisms.
 
 Full resumption details and exact local commands are in
 [the 2026-09-12 rescue handoff](../log/2026-09-12-es2015-generator-protocol-rescue-handoff.md).
