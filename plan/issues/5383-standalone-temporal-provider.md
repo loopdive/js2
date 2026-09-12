@@ -458,8 +458,14 @@ alone, unless measured as neutral).
 
 ## Acceptance criteria
 
+**Verdict per criterion, S5 close-out (2026-09-12).** Three of four are met;
+criterion 4 is **not**, and the issue stays `in-progress` for that reason. The
+"Remaining" list at the end of this section names the successor issues.
+
 1. S1: the linked polyfill source compiles under `--target standalone` to a
    binary `WebAssembly.Module` accepts; each reduction is a test.
+   **MET (S1, 2026-09-07; PR #5721).** Two reductions (the `anyref` row in the
+   #1917 ToBoolean cascade; the `recv.m?.(args)` host/native split), both tests.
 2. S2: `buildTemporalProvider` with `target: "standalone"` returns
    `plan=separate`; the host-free smoke test passes.
    **MET (S2n, 2026-09-12): all 3 assertions asserted as a real test** —
@@ -474,8 +480,44 @@ alone, unless measured as neutral).
    d.total === "function"` read through a CHAINED receiver (#2984).
 3. S3–S4: standalone Temporal rows link the provider in both runners and CI;
    `__temporal_*` leaks are 0.
+   **PARTIALLY MET (S3, 2026-09-12; PR #5827) — the wiring is complete and
+   unconditional, but the ARTIFACT is opt-in.** Every lane (in-process runner,
+   worker, shared harness, CI) resolves the provider per TARGET and fails soft
+   without a stamp. The artifact is built only under
+   `JS2WASM_TEST262_TEMPORAL_STANDALONE=1` / the `standalone_temporal` workflow
+   input, because linking costs 1.76–1.83× a row's compile time and puts the
+   60 KB row exactly on the 15 s in-process limit (S2p §4). Successor: #5407.
+   **The `__temporal_*` half is MET (S4) — measured 0, by construction.** The
+   #4628 gate `temporalIsCompiledBinding` in `src/codegen/temporal-native.ts`
+   keys the #661 lowering on whether `Temporal` names a REAL, non-ambient,
+   value-producing declaration. The provider prelude binds
+   `const Temporal = <provider getter>()`, which is exactly such a declaration,
+   so the lowering stands down wherever the provider is linked — and only
+   there. That is the "keyed on the binding, not the target alone" property the
+   plan asked for, already satisfied, so no new gate was added and nothing in
+   the gc or unlinked-standalone lanes can move. Confirmed by measurement on
+   three families, 360 linked rows: **0 `__temporal_*` leaks linked, against 74
+   on the unlinked side** (48 PlainDate + 26 Duration; ZonedDateTime has none
+   because the #661 lowering covers only PlainDate/PlainTime/Duration).
 4. S5: samples measured, 0 pass→fail, counts with artifacts; the standalone
    Temporal bucket moves from 170 pass.
+   **NOT MET (S5, 2026-09-12).** The samples are measured and the artifacts are
+   listed in "S5 findings" below, but **4 legitimate pass→fail remain** (10
+   flips, of which 6 are false passes proven by row shape), and the bucket does
+   not move up: linked, the three sampled families score **0 pass** against 10
+   unlinked. All 10 losses and 352 of the 360 linked failures share one cause,
+   which is filed as #5406.
+
+**Remaining, in the order that unblocks the most:**
+
+- **#5406** — a value that crosses a `link:` boundary is not an ordinary object
+  in the consumer (`Object.prototype.toString` refuses it; a provider-thrown
+  error's `constructor` is not the consumer's and its `.name` is `undefined`).
+  136 `assert.throws` rows fail on this alone; it is the reported text on 352.
+- **#5408** — `Temporal.PlainDate.from("…")` throws and
+  `PlainDate.from(date, options).year` is not a number, through the provider.
+- **#5407** — the provider's link cost (1.83×, +214 functions, WAT doubled,
+  8 of 360 rows time out). The only blocker to the artifact being default-on.
 
 ## Notes
 
@@ -3217,3 +3259,154 @@ Re-confirmed as the base state: `tests/issue-2151.test.ts` (1),
 `tests/issue-1051.test.ts` (3),
 `tests/issue-5382-temporal-project-publication.test.ts` (1);
 `tests/issue-5318-r4-computed-accessor-keys.test.ts` OOMs on both trees.
+
+## S5 findings (2026-09-12) — measured; the bar is not met, and the reported error text was hiding the reason
+
+S5 is the measurement-and-close slice: no `src/` change, three non-Intl families
+at 120 rows each, both sides, and an honest verdict. The verdict is that the
+provider does its job — `Temporal is not defined` goes to zero and the
+`__temporal_*` leak goes to zero — and that the linked lane still scores **0
+pass**, because one defect in the LINK BOUNDARY (not in Temporal, and not in the
+provider) fails 352 of 360 rows and masks every other cause behind a misleading
+message.
+
+### 1. The three families, standalone lane, linked vs unlinked
+
+`.tmp/s2p-family.mts` (S2o's runner, `runTest262File(file, "s5", 15000,
+"standalone")`), first 120 rows in path order per root, **fresh
+`JS2WASM_TEMPORAL_CACHE` per side** — the linked side carries a standalone
+pre-warm stamp, the base side none, which is exactly how the runner decides the
+lane. QuickJS eval provider built first (`npx tsx
+scripts/build-quickjs-eval-provider.mjs`); S2o recorded why that is a
+prerequisite and not a detail, and its own first table was void without it.
+Each family's two sides ran as a PAIR, two processes at a time, so the ms column
+carries consistent contention and is comparable across sides.
+
+| | PlainDate base | PlainDate linked | Duration base | Duration linked | ZonedDateTime/prototype base | ZDT linked |
+| --- | --- | --- | --- | --- | --- | --- |
+| rows | 120 | 120 | 120 | 120 | 120 | 120 |
+| pass | 3 | **0** | 3 | **0** | 4 | **0** |
+| fail | 69 | 118 | 91 | 117 | 116 | 117 |
+| compile_error | 48 | 2 | 26 | 3 | 0 | 3 |
+| — of those, TIMEOUT | 0 | **2** | 0 | **3** | 0 | **3** |
+| `Temporal is not defined` | 33 | **0** | 56 | **0** | 34 | **0** |
+| `__temporal_*` leak | 48 | **0** | 26 | **0** | 0 | **0** |
+| median row ms | 1378 | 3126 | 1372 | 3275 | 1205 | 2886 |
+| status flips vs base | — | 53 | — | 32 | — | 7 |
+
+Intl: the three sample roots are all under `built-ins/Temporal/**`, so no
+`intl402` row entered the samples. Exactly **one** row names an era
+(`built-ins/Temporal/PlainDate/from/one-of-era-erayear-undefined.js`), and it is
+a `built-ins` calendar row, not an Intl-dependent one. `built-ins/Temporal/Now/**`
+was out of scope per #5405.
+
+### 2. Pass→fail: 10 flips, 6 false, **4 legitimate**
+
+The bar was 0 legitimate losses. It is not met. Every one of the 10 fails
+linked with the same reported text, so the loss is a function of ONE defect
+(#5406), not of provider semantics — but 4 of them are real product passes
+today and a reader must not be told otherwise (`.tmp/s5-passloss.mjs`):
+
+| row | shape | verdict |
+| --- | --- | --- |
+| `PlainDate/calendar-string.js` | 1 value assertion, 0 `assert.throws` | **legitimate loss** |
+| `PlainDate/calendar-undefined.js` | 2 value assertions | **legitimate loss** |
+| `PlainDate/from/options-basic.js` | 4 value assertions | **legitimate loss** |
+| `Duration/prototype/abs/new-object.js` | 6 value assertions | **legitimate loss** |
+| `Duration/get-prototype-from-constructor-throws.js` | throws-only | false pass |
+| `Duration/prototype/add/argument-invalid-property.js` | throws-only | false pass |
+| `ZonedDateTime/prototype/add/argument-invalid-property.js` | throws-only | false pass |
+| `ZonedDateTime/prototype/add/argument-singular-properties.js` | throws-only | false pass |
+| `ZonedDateTime/prototype/add/options-wrong-type.js` | throws-only | false pass |
+| `ZonedDateTime/prototype/equals/argument-propertybag-calendar-wrong-type.js` | throws-only | false pass |
+
+**The false-pass mechanism, stated so it is not re-derived.** A row whose only
+assertions are `assert.throws(TypeError, () => instance.m(x))` passes on the
+UNLINKED lane for the wrong reason: with no `Temporal` (the #661 lowering covers
+only PlainDate/PlainTime/Duration, so every ZonedDateTime row has none), the
+callee is absent and `undefined.m()` throws the very `TypeError` the row
+expects. All four ZonedDateTime "passes" are this shape, which is also why ZDT
+has 0 `__temporal_*` leaks while PlainDate has 48.
+
+**S2o's claim that `calendar-string.js` / `calendar-undefined.js` were false
+passes is CORRECTED here, by measurement rather than by argument.** Compiling
+those rows unlinked under standalone gives a binary with **zero imports**
+(`.tmp/s5-imports.mts`, `WebAssembly.Module.imports` on the assembled harness
+body — `[]` for all six rows probed): the #661 compile-time lowering answers
+them host-free, and their assertions are value assertions, which the false-pass
+mechanism above cannot satisfy. They are real passes that the linked lane loses.
+
+### 3. The single reported text is the THIRD event in a chain
+
+352 of the 360 linked rows report exactly
+`TypeError: Object.prototype.toString is not yet implemented in --target standalone`.
+That call appears in **one** place in the harness (`test262/harness/assert.js`,
+`formatSimpleValue`), inside the `catch` of `String(value)` — which the harness
+only reaches when an assertion has ALREADY failed. So the text names neither the
+failing operation nor even the failing formatter; it is the fallback of a
+fallback. Sub-classified by the harness call in each row's `at L<n>:` fragment
+(`.tmp/s5-subbuckets.mjs`):
+
+| sub-bucket | PlainDate | Duration | ZDT | total |
+| --- | --- | --- | --- | --- |
+| `assert.throws` over a provider call | 55 | 46 | 35 | **136** |
+| `assert.sameValue` on a provider value | 34 | 32 | 58 | 124 |
+| no line attributed (threw during setup) | 25 | 30 | 13 | 68 |
+| plain `assert()` | 0 | 0 | 9 | 9 |
+| `assert.compareArray` | 4 | 2 | 1 | 7 |
+| other harness line | 0 | 3 | 1 | 4 |
+| `assert.notSameValue` | 0 | 4 | 0 | 4 |
+| **compile timeout** (the other 8 rows) | 2 | 3 | 3 | 8 |
+
+### 4. Root cause of the 136, measured host-free: the boundary, not Temporal
+
+`.tmp/s5-firstfail.mts` and `.tmp/s5-throwshape.mts`, through the shipped path
+(`buildTemporalProvider` + `compileWithTemporalGlobal`, `hostBridge: "off"`,
+`instantiateLinkedProject(result, {})` — empty import object). Bound locals
+throughout, so #2984's chained-receiver read cannot confound the answers.
+
+| probe | measured |
+| --- | --- |
+| `new Temporal.PlainDate(2024,1,1).calendarId === "iso8601"` | **correct** |
+| `Temporal.PlainDate.compare(d1, d1)` | **0, correct** |
+| `String(new Temporal.PlainDate(2024,1,1))` | **a string — does NOT throw** |
+| `Object.prototype.toString.call(<a PlainDate>)` | **throws** |
+| `Object.prototype.toString.call({ a: 1 })` (consumer-owned) | **a string** |
+| a provider-thrown error: `e instanceof Error` | true |
+| …`e instanceof RangeError` | **false** |
+| …`e.constructor === RangeError` (consumer's) | **false** |
+| …`e.constructor.name` | **`undefined`** |
+| control: consumer's own `throw new RangeError` → `e.constructor === RangeError` | true |
+
+Two facts fall out, and they are the whole of #5406:
+
+- `Object.prototype.toString` is not "unimplemented under standalone" — it works
+  for a consumer-owned object and refuses a carrier that came across the link.
+  The message text misdirects whoever reads it.
+- The consumer and the provider each own their intrinsic error constructors, so
+  `assert.throws`'s `thrown.constructor !== expectedErrorConstructor` identity
+  test can never succeed over a provider call. **136 rows cannot pass, however
+  correct Temporal is.** This is a realm question, not a marshalling one.
+
+Two genuine Temporal-lane value defects were also isolated and are filed as
+#5408: `Temporal.PlainDate.from("1976-11-18")` throws, and
+`PlainDate.from(d, { overflow: "constrain" }).year` is not a number — while the
+constructor, `.calendarId`, `compare` and `String()` of a PlainDate are all
+correct.
+
+### 5. What this slice changed
+
+Nothing in `src/`. The deliverables are the measurement, the three successor
+issues (#5406 boundary identity, #5407 link cost, #5408 `PlainDate.from`), the
+acceptance verdict above, and
+`plan/agent-context/temporal-standalone-handover-2026-09-12.md`.
+
+### 6. Artifacts
+
+In the S5 worktree's `.tmp/`: `{pd,du,zdt}-{base,link}.tsv` (one row per test:
+path, status, ms, detail), `s5-summary.txt` (per-family counts + every flip),
+`s5-firstfail.out`, `s5-throwshape.out`, `s5-imports4.out`,
+and the scripts `s5-buckets.mjs`, `s5-subbuckets.mjs`, `s5-passloss.mjs`,
+`s5-imports.mts`, `s5-firstfail.mts`, `s5-throwshape.mts` (plus S2p's
+`s2p-family.mts` / `s2p-prewarm.mts` / `s2p-table.mjs`, reused unchanged apart
+from the run label).
