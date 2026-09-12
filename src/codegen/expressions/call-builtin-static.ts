@@ -3960,6 +3960,45 @@ export function compileBuiltinStaticCall(
       fctx.body.push({ op: "ref.null.extern" });
       return { kind: "externref" };
     }
+    // (#5383 S2l) STANDALONE, non-literal entries. Until now the ONLY standalone
+    // shape with a native lowering was the array-LITERAL-of-pairs above;
+    // everything else fell through to `ensureLateImport`, whose funcMap lookup
+    // decided the outcome — and `__object_fromEntries` is in funcMap only when
+    // something ELSE in the module already pulled in `ensureObjectRuntime`. So
+    // the same source line compiled or was REFUSED depending on unrelated module
+    // content: `Object.fromEntries(nt.map(([e,t]) => [t,e]))` compiled (the
+    // array-literal callback body ensures the runtime) while
+    // `Object.fromEntries(nt)`, `nt.slice(0)`, `nt.map((e) => e)` and
+    // `Object.fromEntries(mk())` all failed with the #1472 Phase B refusal.
+    // That is not a capability boundary, it is an accident of ordering.
+    //
+    // Ensure the runtime explicitly and call the self-hosted native directly
+    // when the argument is statically an ARRAY or TUPLE — the shapes the
+    // native's `__extern_length` / `__extern_get_idx` walk genuinely indexes
+    // (typed-vec arms + the closed-struct/tuple arms in
+    // `fillExternArrayLikeStructArms`). No new host import: the native is a
+    // defined function, so this adds no import and shifts no index (#1984).
+    //
+    // A NON-indexable iterable (a `Map`, a generator) deliberately keeps the
+    // refusal. The native would walk it with `__extern_length` → 0 and return
+    // `{}` — a silent wrong answer, which is exactly the failure this slice
+    // exists to remove. Native iterator-protocol consumption is the #2190
+    // follow-up; until then the loud compile error is the correct answer.
+    if (ctx.standalone) {
+      const entriesFact = ctx.oracle.typeFactOf(entriesArg);
+      if (entriesFact.kind === "array" || entriesFact.kind === "tuple") {
+        ensureObjectRuntime(ctx);
+        const feNativeIdx = ctx.funcMap.get("__object_fromEntries");
+        if (feNativeIdx !== undefined) {
+          const nativeArgType = compileExpression(ctx, fctx, entriesArg, { kind: "externref" });
+          if (nativeArgType && nativeArgType.kind !== "externref")
+            coerceType(ctx, fctx, nativeArgType, { kind: "externref" });
+          if (nativeArgType === null) fctx.body.push({ op: "ref.null.extern" });
+          fctx.body.push({ op: "call", funcIdx: feNativeIdx });
+          return { kind: "externref" };
+        }
+      }
+    }
     const argType = compileExpression(ctx, fctx, entriesArg, { kind: "externref" });
     if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
     // (#5205) The host handler must decode the compiled entries vec (and each

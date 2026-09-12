@@ -1,7 +1,8 @@
 ---
 id: 5385
 title: "Merge JS-host and standalone modes: one native semantic core, host semantics only as opt-in accelerators"
-status: ready
+status: in-progress
+assignee: ttraenkler/codex-5385
 created: 2026-09-07
 updated: 2026-09-07
 priority: high
@@ -58,11 +59,11 @@ imports; `check:host-import-policy` ratchets 33 probe families at zero
 param + `Object.keys`, class with getter, `Map`, RegExp `.test`, `JSON.stringify`,
 `Date`, `async/await`), measured on the fork checkout 2026-09-05:
 
-| profile                    | binary | imports | classification                          |
-| -------------------------- | ------ | ------- | --------------------------------------- |
-| `gc` (host, default)       | 6.7 KB | 30      | 26 legacy-semantic, 3 value-adapter, 1 lifecycle |
-| `gc` + `native-first`      | 112 KB | 19      | 19 value-adapter                        |
-| `standalone`               | 144 KB | 0       | —                                       |
+| profile               | binary | imports | classification                                   |
+| --------------------- | ------ | ------- | ------------------------------------------------ |
+| `gc` (host, default)  | 6.7 KB | 30      | 26 legacy-semantic, 3 value-adapter, 1 lifecycle |
+| `gc` + `native-first` | 112 KB | 19      | 19 value-adapter                                 |
+| `standalone`          | 144 KB | 0       | —                                                |
 
 Re-run on `upstream/main` @ `10312a066b` (2026-09-07): `standalone` still
 compiles host-free (188 KB); **`native-first` now REJECTS the same program**
@@ -90,11 +91,11 @@ host lane, and (c) deleting the host implementation.
   (e.g. `semanticProviders: { strings: "js-string" }`); the default is native
   i16 strings. The `string_constants` pool goes with the option.
 - **JS builtin accelerators as opt-in**: host RegExp (`src/runtime/legacy-regexp.ts`
-  + `RegExp_*` arms, #682 host half), and by the same rule host Date/Intl,
-  isolated eval (`__extern_eval`/`__extern_direct_eval`), `__date_parse_host`.
-  All re-registered under the `host-accelerator` class in
-  `src/host-import-policy.ts` with the native provider as fallback. Never
-  implicit.
+  - `RegExp_*` arms, #682 host half), and by the same rule host Date/Intl,
+    isolated eval (`__extern_eval`/`__extern_direct_eval`), `__date_parse_host`.
+    All re-registered under the `host-accelerator` class in
+    `src/host-import-policy.ts` with the native provider as fallback. Never
+    implicit.
 - **Small binaries** (6.7 KB vs 112 KB above) — the one genuine advantage of
   borrowing V8. Answered by shared-runtime linking (#2514), not by host
   semantics. Follow-on, not a blocker.
@@ -104,16 +105,16 @@ host lane, and (c) deleting the host implementation.
 The implicit ECMAScript semantic fallbacks only:
 
 - `LEGACY_SEMANTIC_BUILTIN_PREFIXES` in `src/host-import-policy.ts` **minus**
-  `RegExp_` (JSON_/Promise_/Map_/Set_/WeakMap_/WeakSet_/number_/bigint_/
-  parse\*/URI/escape/string_/`__array_`/`__js_array_`/`__async_iterator`/
-  `__bind_function`/`__call_`/`__concat_`/`__construct`/`__create_*generator`/
-  `__defineProperty_`/`__delete_property`/`__extern_`/`__for_in_`/`__gen_`/
-  `__getOwnPropertyDescriptor`/`__getPrototypeOf`/`__host_set_struct_proto`/
-  `__is_truthy`/`__iterator`/`__new_`/`__object_`/`__reflect_`/`__typeof`),
-  `extern_class` for ECMAScript builtins (`ECMASCRIPT_EXTERN_CLASSES`), the
-  `await` host driver, `host_eq/loose_eq/add/compare/bigint_binop`,
-  `same_value_zero`, `proxy_create`, `typeof_check`, `any_to_index`,
-  `truthy_check`.
+  `RegExp_` (JSON*/Promise*/Map*/Set*/WeakMap*/WeakSet*/number*/bigint*/
+  parse\*/URI/escape/string*/`\_\_array*`/`**js*array*`/`**async*iterator`/
+`**bind_function`/`**call*`/`**concat\_`/`**construct`/`**create\_\*generator`/
+`**defineProperty*`/`**delete_property`/`**extern*`/`**for*in*`/`**gen*`/
+`**getOwnPropertyDescriptor`/`**getPrototypeOf`/`**host_set_struct_proto`/
+`**is_truthy`/`**iterator`/`**new*`/`**object\_`/`**reflect\_`/`\_\_typeof`),
+`extern_class` for ECMAScript builtins (`ECMASCRIPT_EXTERN_CLASSES`), the
+`await`host driver,`host_eq/loose_eq/add/compare/bigint_binop`,
+`same_value_zero`, `proxy_create`, `typeof_check`, `any_to_index`,
+`truthy_check`.
 - `src/runtime/compatibility-adapter.ts`,
   `src/runtime/compatibility-semantic-adapter.ts`, the legacy arms of
   `resolveImport` in `src/runtime.ts` (ceiling today: 7,775 lines / 15 cases),
@@ -129,15 +130,15 @@ The implicit ECMAScript semantic fallbacks only:
 Upstream `src/` is 778k lines; `src/runtime.ts` 19,725 (at its ratchet
 ceiling); `src/runtime/` 6,969.
 
-| Region                                                                   | Retire (est.) | Keep                                                                                   |
-| ------------------------------------------------------------------------ | ------------: | -------------------------------------------------------------------------------------- |
-| `resolveImport` legacy arms (7.2–7.8k lines)                             |   **~5.5–6k** | `wasm:js-string` arms ~730, `RegExp_*` ~130, web-API `extern_class`, value-adapter ~200 |
-| `runtime.ts` semantic helpers (`_safeSet` 381, `_hostToPrimitive` 266, `_toPrimitive` 239, `_safeGet` 223, `_instanceofResult` 222, `_vecDefineOwnProperty` 196, descriptor/JSON/proxy-bridge helpers) | **~3–3.5k** | `_wrapForHost` 503, `_wrapCallableForHost`, `_wrapVecForHost`, `wrapExports`, `buildImports` (~3.8k) |
-| `src/runtime/` semantic modules: `iterator-polyfills.ts` 1,353, `class-method-host-bridge.ts` 305, `strict-iterator-host.ts` 266, `wasm-struct-host-semantics.ts` 231, `array-proto-sparse.ts` 192, `compatibility-semantic-adapter.ts` 121, `fixed-extern-method-call.ts` 62, `fnctor-instanceof.ts` 40, `date-host-method.ts` 34, `compatibility-adapter.ts` 21 | **~2.5k** | `legacy-regexp.ts` 209 (option), all boundary/capability adapters |
-| codegen host-only branches (`if (!ctx.standalone)` bodies + else-arms of `if (ctx.standalone)`) | **~1–1.5k** | the native arm |
-| codegen host-semantic helper files: `extern-get-inline-ic.ts` 404, `extern-eq-fast.ts` 225, `data-struct-host-bridge.ts` 197, `host-fnctor-method-driver.ts` 166, `host-string-prefix-suffix.ts` 127, `array-method-host.ts` 121, `extern-get-cache-arm.ts` 107 | **~1.3k** (+ up to ~1.8k partial from `closed-struct-extern-set.ts` 704 / `expressions/extern.ts` 1,153) | externref paths still needed for boundary / web-API objects |
-| scaffolding that only polices host imports: `host-import-allowlist.ts` 595, `legacy-body-audit.ts` 826, `ir-legacy-caller-abi.ts` 107 | **~1.5k** | `scripts/check-host-import-policy.ts` (keeps ratcheting accelerators) |
-| host-only tests (18 files matching host-import/legacy/extern)            |     **~2–3k** | native-first / boundary tests                                                          |
+| Region                                                                                                                                                                                                                                                                                                                                                            |                                                                                            Retire (est.) | Keep                                                                                                 |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------: | ---------------------------------------------------------------------------------------------------- |
+| `resolveImport` legacy arms (7.2–7.8k lines)                                                                                                                                                                                                                                                                                                                      |                                                                                              **~5.5–6k** | `wasm:js-string` arms ~730, `RegExp_*` ~130, web-API `extern_class`, value-adapter ~200              |
+| `runtime.ts` semantic helpers (`_safeSet` 381, `_hostToPrimitive` 266, `_toPrimitive` 239, `_safeGet` 223, `_instanceofResult` 222, `_vecDefineOwnProperty` 196, descriptor/JSON/proxy-bridge helpers)                                                                                                                                                            |                                                                                              **~3–3.5k** | `_wrapForHost` 503, `_wrapCallableForHost`, `_wrapVecForHost`, `wrapExports`, `buildImports` (~3.8k) |
+| `src/runtime/` semantic modules: `iterator-polyfills.ts` 1,353, `class-method-host-bridge.ts` 305, `strict-iterator-host.ts` 266, `wasm-struct-host-semantics.ts` 231, `array-proto-sparse.ts` 192, `compatibility-semantic-adapter.ts` 121, `fixed-extern-method-call.ts` 62, `fnctor-instanceof.ts` 40, `date-host-method.ts` 34, `compatibility-adapter.ts` 21 |                                                                                                **~2.5k** | `legacy-regexp.ts` 209 (option), all boundary/capability adapters                                    |
+| codegen host-only branches (`if (!ctx.standalone)` bodies + else-arms of `if (ctx.standalone)`)                                                                                                                                                                                                                                                                   |                                                                                              **~1–1.5k** | the native arm                                                                                       |
+| codegen host-semantic helper files: `extern-get-inline-ic.ts` 404, `extern-eq-fast.ts` 225, `data-struct-host-bridge.ts` 197, `host-fnctor-method-driver.ts` 166, `host-string-prefix-suffix.ts` 127, `array-method-host.ts` 121, `extern-get-cache-arm.ts` 107                                                                                                   | **~1.3k** (+ up to ~1.8k partial from `closed-struct-extern-set.ts` 704 / `expressions/extern.ts` 1,153) | externref paths still needed for boundary / web-API objects                                          |
+| scaffolding that only polices host imports: `host-import-allowlist.ts` 595, `legacy-body-audit.ts` 826, `ir-legacy-caller-abi.ts` 107                                                                                                                                                                                                                             |                                                                                                **~1.5k** | `scripts/check-host-import-policy.ts` (keeps ratcheting accelerators)                                |
+| host-only tests (18 files matching host-import/legacy/extern)                                                                                                                                                                                                                                                                                                     |                                                                                                **~2–3k** | native-first / boundary tests                                                                        |
 
 **Total: roughly 17–20k lines deleted (~2.5% of `src/`), ~10k of it from
 `runtime.ts` (19.7k → ~9k), plus ~2,400 mode conditionals collapsing to one
@@ -220,14 +221,14 @@ zero regressions on the standalone high-water floor.
 1. **Runtime**: remove `compatibility-adapter.ts`,
    `compatibility-semantic-adapter.ts`, the legacy `resolveImport` arms, and
    the semantic helper modules in the size table. **Keep** `legacy-regexp.ts`
-   + `RegExp_*` and the `wasm:js-string` / `string_constants` arms,
-   re-registered as `host-accelerator` behind the per-family opt-in; their
-   emission sites (`src/ir/lower.ts`, `src/ir/integration.ts`,
-   `src/codegen/index.ts`, `src/codegen/native-strings.ts`) key off that
-   opt-in instead of `!ctx.nativeStrings`. `src/host-import-policy.ts`:
-   `legacy-semantic` becomes a hard compile error in **every** profile
-   (today only under native-first); `LEGACY_SEMANTIC_BUILTIN_PREFIXES` →
-   empty → delete the class.
+   - `RegExp_*` and the `wasm:js-string` / `string_constants` arms,
+     re-registered as `host-accelerator` behind the per-family opt-in; their
+     emission sites (`src/ir/lower.ts`, `src/ir/integration.ts`,
+     `src/codegen/index.ts`, `src/codegen/native-strings.ts`) key off that
+     opt-in instead of `!ctx.nativeStrings`. `src/host-import-policy.ts`:
+     `legacy-semantic` becomes a hard compile error in **every** profile
+     (today only under native-first); `LEGACY_SEMANTIC_BUILTIN_PREFIXES` →
+     empty → delete the class.
 2. **Codegen collapse**: for each `ctx.standalone || ctx.wasi || …` site decide
    _semantics_ (drop the host branch, keep native unconditionally) vs
    _environment_ (rewrite to `ctx.targetProfile.environment !== "javascript"`).
@@ -254,6 +255,78 @@ zero regressions on the standalone high-water floor.
   `gc` and `standalone` is `environment`.
 
 ## Acceptance criteria
+
+### Phase 1 implementation checkpoint — 2026-09-07
+
+Taken over from merged specification PR #5725. Initial source baseline:
+`79b0e7c4dc47949fb9708a9ca45d0e7e5bade2ae`. Measurements and complete
+diagnostics: `plan/audit/5385-native-first-initial-evidence.json`.
+
+- Added `TEST262_SEMANTIC_PROVIDERS=native-first` throughout worker,
+  fixture, retry and in-process compilation. Cache keys, filenames and
+  report metadata distinguish the provider; mixed-provider reports fail.
+- Added an independent nightly / `native_first` dispatch lane using the
+  **current 57 chunks**, superseding the spec's stale 66-shard count.
+  Completeness-validated JSONL and JSON baselines are uploaded as separate
+  artifacts. **A complete CI baseline has not yet been measured or committed.**
+  Temporal is deliberately unlinked in this lane because its cached provider
+  compiles with host semantics; those rows are excluded from the parity bar
+  as specified in Phase 2. Native-first dispatch cannot promote host baselines.
+- Added npm `--lane js-host-native`; default `both` now records `jsHostNative`
+  alongside existing performance lanes. This selects the performance workload,
+  not the independent upstream package correctness suite. Existing npm refresh
+  CI collects the additional lane; its broader correctness census remains open.
+- Sidebar runner accepts `--semantic-providers=native-first` and `--output`.
+  `--kernels-only` (requiring an explicit output) removes the DOM entry point
+  and helper module identically in both profiles. Values must match JS before
+  timing; native results use the compiled adapter manifest in the child process.
+
+Local exploratory timing (macOS arm64, Node 25.9.0, O4/TurboFan, nine rounds;
+other development processes active) measured **4/4 isolated kernels** in each
+profile. Host/native-first medians in microseconds: fib **3993.13/4112.36**,
+loop **205.22/233.29**, string **0.163/2.919**, array **22.22/24.94**. These are
+optimized fixed workloads with constant folding enabled, not application-wide
+performance or evidence to flip the default. The full sidebar native-first
+run fails on its first DOM-bearing program; its other three rows are unmeasured.
+
+Initial gap list (individual reproductions, **not a ranked population census**):
+
+1. Property-name constants: native-first rejects `string_constants` names
+   `""`, `name`, `P`, `d`; identical source compiles in host mode (4,348 bytes)
+   and standalone (138,086 bytes, zero imports). Owner **#4397**.
+2. Sidebar DOM setup: native-first rejects `__extern_get`, `__js_array_new`,
+   `__call_function`; also reports an `innerHTML` IR lowering diagnostic.
+   Owner **#4397**, with capability routing under **#4398**.
+3. Cookie native performance workload: implicit-any `parseCookie(str)`
+   compile diagnostic while its host performance workload measures.
+   Owner **#5385 Phase 2** to minimize and route to the existing compiler owner.
+4. Redux native workload: string/array legacy imports (**#4397**) and
+   unclassified builtin/process-environment imports (**#4401/#4398**).
+   **0/2 selected native npm workloads measured**; failures remain explicit.
+
+Validation: 31 npm tests; 3 new test262 tests; 14 existing Temporal tests;
+8/8 real worker probes across both profiles. Host-import policy: **33/33 probes,
+zero legacy/unknown imports**. Existing native-core tests: **49/51 pass** on
+unchanged compiler source; URI native string conversion returns null and an
+older standalone generator-import expectation fails. Both reproduce in a
+focused rerun. They remain open; no full-green claim is made.
+
+Reproduction commands (build `scripts/compiler-bundle.mjs` first; use a Node
+version supporting the repository's Wasm flags):
+
+```sh
+TEST262_SEMANTIC_PROVIDERS=native-first pnpm run test:262
+node --experimental-wasm-stringref --experimental-wasm-custom-descriptors --import tsx scripts/generate-npm-compat-report.mjs --only cookie --perf-only --lane both --partial-output .tmp/npm-cookie-all.json
+node --experimental-wasm-stringref --experimental-wasm-custom-descriptors scripts/generate-playground-benchmark-sidebar.mjs --kernels-only --output=.tmp/sidebar-host-kernels.json
+node --experimental-wasm-stringref --experimental-wasm-custom-descriptors scripts/generate-playground-benchmark-sidebar.mjs --semantic-providers=native-first --kernels-only --output=.tmp/sidebar-native-kernels.json
+```
+
+Next: run the complete native-first CI lane, commit its measured baseline,
+join fresh host/native-first rows by `file|strict`, rank real gaps and route
+them to existing family owners. Phases 2–4 remain unstarted; all acceptance
+checkboxes below stay open until their full evidence exists.
+
+### Program acceptance
 
 - [ ] A native-first test262 lane and npm-compat lane exist, run in CI on
       dispatch/nightly, and their baselines are committed (Phase 1).

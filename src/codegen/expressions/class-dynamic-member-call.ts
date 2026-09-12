@@ -80,8 +80,42 @@ function classDynamicMemberCallApplies(
   if (elemAccess.expression.kind === ts.SyntaxKind.SuperKeyword) {
     return superElementCallTarget(ctx, fctx) !== undefined;
   }
+  // (#5383 S2i) A class VALUE receiver — `C[k](5)` where `C` names a compiled
+  // class. Its static surface lives in the #5195 Step 2 sidecar, which
+  // `__extern_get` now reaches (`class-proto-lookup.ts`'s class-object arm), so
+  // the same resolve-then-apply lowering serves it. Measured before this arm:
+  // `C[k](5)` with `k="mk"` answered `undefined` (NaN through the f64 result)
+  // while `const f = C[k]; f(5)` already answered 6 — the VALUE resolved and
+  // only the CALL form did not.
+  //
+  // The gate is ORDER-INDEPENDENT on purpose: it asks the class table, never
+  // the S2h/S2i runtime-key demand set, because that set is filled by read
+  // sites as they compile and gating on it would reintroduce exactly the #5195
+  // F1 compile-order dependence this module was written to remove. A local
+  // binding that shadows a class name is a false positive of the NAME check
+  // only — the lowering it selects is fully dynamic and correct for any
+  // receiver, so the cost is bytes, not an answer.
+  if (classValueReceiverApplies(ctx, elemAccess)) return true;
   const className = elemAccessReceiverClassName(ctx, elemAccess);
   return className !== undefined && classHierarchyHasDynamicMember(ctx, className);
+}
+
+/**
+ * The S2i arm's own predicate: the receiver is an IDENTIFIER naming a compiled
+ * class, i.e. the class OBJECT is the receiver rather than an instance.
+ *
+ * Split out from {@link classDynamicMemberCallApplies} because the callee
+ * resolution differs (see the `## The S2i regression` note on
+ * {@link tryEmitClassDynamicMemberCall}), and because being an identifier is
+ * what makes re-evaluating the receiver for `this` free of side effects.
+ */
+function classValueReceiverApplies(ctx: CodegenContext, elemAccess: ts.ElementAccessExpression): boolean {
+  return (
+    ts.isIdentifier(elemAccess.expression) &&
+    ctx.classSet.has(elemAccess.expression.text) &&
+    standaloneClassProtoObjectApplies(ctx, elemAccess.expression.text) &&
+    ctx.classObjectGlobals.get(elemAccess.expression.text) !== undefined
+  );
 }
 
 /**
@@ -120,6 +154,69 @@ function superElementCallTarget(
  * order, and is why a `new C()[k]()` receiver is safe here where a
  * capture-then-redispatch wrapper would have constructed twice.
  */
+/**
+ * ## The S2i regression (#5383, fixed 2026-09-12)
+ *
+ * S2i widened {@link classDynamicMemberCallApplies} to claim every `C[k](…)`
+ * whose receiver names a compiled class, and then resolved the callee the way
+ * the INSTANCE arm does: `__extern_get(recv, key)` on a freshly materialized
+ * class-object struct. That is strictly WEAKER than what the ordinary READ
+ * lowering of `C[k]` already does for a class value — S2i's own measurement
+ * said so ("`const f = C[k]; f(5)` already answered 6 … only the CALL form did
+ * not"), and the gap it leaves is a **computed static FIELD**:
+ *
+ * ```js
+ * let C = class { [1.1] = () => 2; static [1.1] = () => 2; };
+ * C[String(1.1)]()   // the read answers the closure; `__extern_get` on the
+ *                    // class-object struct answers null, so the call was null
+ * ```
+ *
+ * That is the whole of the 32-row `cpn-class-{decl,expr}-fields-methods-*`
+ * standalone regression #5820 shipped: the value was right and only the fused
+ * call form resolved against the wrong carrier.
+ *
+ * The fix is to stop re-deriving the callee and simply ASK the read lowering —
+ * compile `elemAccess` itself. It subsumes the static sidecar (S2i's win) and
+ * the `staticProps`/own-property surface (the regression) because it is the one
+ * place that knows about both. Re-evaluating the receiver afterwards for `this`
+ * is free of side effects **because** the arm only fires on an identifier, which
+ * is also why this cannot be done on the instance arm (`new C()[k]()` would
+ * construct twice) — the two arms stay separate for that reason alone.
+ */
+function emitClassValueDynamicCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  elemAccess: ts.ElementAccessExpression,
+  pushExtern: (value: ts.Expression) => boolean,
+  helpers: { newIdx: number; pushIdx: number; applyIdx: number },
+): InnerResult | undefined {
+  // §13.3.6.1: the MemberExpression is evaluated and GetValue'd BEFORE the
+  // arguments, so the read — which evaluates the receiver and then the key,
+  // each exactly once — comes first and its side effects are ordered right.
+  const calleeLocal = allocLocal(fctx, `__cval_callee_${fctx.locals.length}`, EXTERNREF);
+  if (!pushExtern(elemAccess)) return undefined;
+  fctx.body.push({ op: "local.set", index: calleeLocal });
+
+  const argsLocal = allocLocal(fctx, `__cval_args_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push({ op: "call", funcIdx: helpers.newIdx });
+  fctx.body.push({ op: "local.set", index: argsLocal });
+  for (const arg of expr.arguments) {
+    fctx.body.push({ op: "local.get", index: argsLocal });
+    if (!pushExtern(arg)) return undefined;
+    fctx.body.push({ op: "call", funcIdx: helpers.pushIdx } satisfies Instr);
+  }
+
+  fctx.body.push({ op: "local.get", index: calleeLocal });
+  // The class object is the `this` of a static call. Recompiling the identifier
+  // is a global read of the same lazy singleton — no second evaluation of any
+  // user expression, which is what `classValueReceiverApplies` guarantees.
+  if (!pushExtern(elemAccess.expression)) return undefined;
+  fctx.body.push({ op: "local.get", index: argsLocal });
+  fctx.body.push({ op: "call", funcIdx: helpers.applyIdx });
+  return EXTERNREF;
+}
+
 export function tryEmitClassDynamicMemberCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -145,6 +242,10 @@ export function tryEmitClassDynamicMemberCall(
     if ((type as ValType).kind !== "externref") coerceType(ctx, fctx, type as ValType, EXTERNREF);
     return true;
   };
+
+  if (classValueReceiverApplies(ctx, elemAccess)) {
+    return emitClassValueDynamicCall(ctx, fctx, expr, elemAccess, pushExtern, { newIdx, pushIdx, applyIdx });
+  }
 
   // `super[k]` splits the two roles an ordinary call fuses: the LOOKUP happens
   // on the home object's [[Prototype]], the INVOCATION on the current `this`.
