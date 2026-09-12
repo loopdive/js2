@@ -19,6 +19,7 @@ import {
 import { addFunctionOwnLocals } from "../../ir/analysis/binding-info.js"; // (#2103) memoized own-locals oracle
 import { condenseDirectedGraph } from "../analysis/strongly-connected-components.js";
 import { functionReturnsThroughWithScope } from "../declarations.js";
+import { widenAsyncThenableResult } from "../async-thenable-return.js"; // (#5371)
 import {
   collectNestedCaptureReferences,
   functionDeclarationObservesBindingValue,
@@ -1465,6 +1466,10 @@ function compileNestedFunctionDeclarationInScope(
   if (asyncDecision !== null) {
     returnType = { kind: "externref" };
   }
+  // (#5371) A never-suspending nested async declaration that returns a thenable
+  // keeps its result on the externref carrier so the call site's adopting
+  // `Promise.resolve` settles with the inner value instead of `Number(promise)`.
+  returnType = widenAsyncThenableResult(ctx, stmt, returnType);
   // Analyze captured variables from the enclosing scope. Use scope-aware
   // collection so nested `var` declarations and parameter bindings inside the
   // function body shadow outer references — otherwise a function with its own
