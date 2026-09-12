@@ -1,11 +1,10 @@
 {
   "id": "5371",
-  "assignee": "",
-  "requested_by": "ttraenkler/claude",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-09-06T10:52:06Z",
-  "updated_at": "2026-09-06T10:52:06Z",
-  "write_id": "56241-0ft9gvu1",
-  "pr_scan": "ok"
+  "assignee": "ttraenkler/sendev-5371",
+  "requested_by": "ttraenkler/sendev-5371",
+  "status": "in-progress",
+  "branch": "issue-5371-await-host-promise",
+  "claimed_at": "2026-09-12T13:35:03Z",
+  "updated_at": "2026-09-12T13:35:03Z",
+  "write_id": "92494-vneb7sg6"
 }
