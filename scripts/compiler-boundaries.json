@@ -34,16 +34,20 @@
       "status": "active",
       "roots": ["src/wasm/model"],
       "required": true,
-      "entries": ["src/wasm/model/instructions.ts"],
-      "minModules": 1
+      "entries": ["src/wasm/model/instructions.ts", "src/wasm/model/module-records.ts"],
+      "minModules": 2
     },
     {
       "id": "wasm-physical",
       "status": "active",
       "roots": ["src/wasm/physical"],
       "required": true,
-      "entries": ["src/wasm/physical/function-handles.ts"],
-      "minModules": 1
+      "entries": [
+        "src/wasm/physical/function-handles.ts",
+        "src/wasm/physical/function-types.ts",
+        "src/wasm/physical/module-reservations.ts"
+      ],
+      "minModules": 3
     },
     {
       "id": "wasm-emit",
@@ -419,6 +423,20 @@
     }
   ],
   "activationHistory": [
+    {
+      "layer": "wasm-model",
+      "entries": ["src/wasm/model/instructions.ts", "src/wasm/model/module-records.ts"],
+      "minModules": 2
+    },
+    {
+      "layer": "wasm-physical",
+      "entries": [
+        "src/wasm/physical/function-handles.ts",
+        "src/wasm/physical/function-types.ts",
+        "src/wasm/physical/module-reservations.ts"
+      ],
+      "minModules": 3
+    },
     {
       "layer": "ir-core",
       "entries": [
@@ -10535,7 +10553,22 @@
       "layer": "wasm-model"
     },
     {
+      "path": "src/wasm/model/module-records.ts",
+      "state": "clean",
+      "layer": "wasm-model"
+    },
+    {
       "path": "src/wasm/physical/function-handles.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
+      "path": "src/wasm/physical/function-types.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
+      "path": "src/wasm/physical/module-reservations.ts",
       "state": "clean",
       "layer": "wasm-physical"
     },
