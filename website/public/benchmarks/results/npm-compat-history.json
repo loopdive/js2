@@ -16234,6 +16234,42 @@
           "standalone": {}
         }
       }
+    },
+    {
+      "generatedAt": "2026-09-10T04:11:15.561Z",
+      "sourceRevision": "26ad33b51c8e39e39096817526aa763ab58d3e75",
+      "optimizationLevels": {
+        "js-host": 4,
+        "js-host-native": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHostNative": {},
+          "jsHost": {
+            "dynamic": 0.010126029560897351
+          },
+          "standalone": {}
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-09-10T13:22:21.956Z",
+      "sourceRevision": "2be365f4f3fe350b3c63aaacccf885df49c96767",
+      "optimizationLevels": {
+        "js-host": 4,
+        "js-host-native": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHostNative": {},
+          "jsHost": {
+            "dynamic": 0.0102911423503758
+          },
+          "standalone": {}
+        }
+      }
     }
   ]
 }

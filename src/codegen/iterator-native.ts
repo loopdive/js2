@@ -44,6 +44,7 @@
  * IteratorClose). See plan/issues/2038-standalone-iterator-next-illegal-cast-async-dstr.md.
  */
 import type { Instr, ValType } from "../ir/types.js";
+import { ensureNonIterableThrowDeps, nonIterableThrowInstrs } from "./iterator-errors.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
@@ -2850,10 +2851,9 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
     }
   }
 
-  // (#3100 S5) IteratorClose: rebuild `__iterator_return` with the USER close
-  // arm when a `return` dispatcher exists. Without one, close on a USER record
-  // finds no `return` method ⇒ NormalCompletion (§7.4.9 step 4) — the eager
-  // empty body is already exactly that, so it stays untouched (byte-identical).
+  // (#3100 S5) Close USER records through their method dispatcher or the
+  // strict provider's property bridge; absence of a dispatcher alone does not
+  // establish absence of a return method.
   // (#3119) The OBJ close arm (`__extern_get(iterObj, "return")` +
   // `__apply_closure`) fills independently — a plain-object iterator's
   // `return` is a PROPERTY, reachable without any closed-struct dispatcher.
@@ -2885,6 +2885,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
         hostDeps,
         sgDeps,
         closeCheck,
+        Boolean(strictRuntime && objDeps?.sgetReturnIdx !== undefined && deps?.callReturnIdx === undefined),
       );
     }
   }
@@ -3119,6 +3120,7 @@ function buildIteratorReturnBody(
    * keeps the legacy `drop`.
    */
   closeResultCheck?: () => Instr[],
+  closeUserViaProperties = false,
 ): Instr[] {
   const { iterRecTypeIdx } = types;
   const validateClose: Instr[] = closeResultCheck ? closeResultCheck() : [{ op: "drop" }];
@@ -3254,6 +3256,19 @@ function buildIteratorReturnBody(
         { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 0 },
         { op: "i32.const", value: ITER_KIND_OBJ },
         { op: "i32.eq" },
+        // Strict stepping also accepts USER records carrying closure-valued
+        // fields. Without a method dispatcher, close through the same property
+        // bridge instead of silently treating their return method as absent.
+        ...(closeUserViaProperties
+          ? ([
+              { op: "local.get", index: 1 },
+              { op: "ref.cast", typeIdx: iterRecTypeIdx },
+              { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 0 },
+              { op: "i32.const", value: ITER_KIND_USER },
+              { op: "i32.eq" },
+              { op: "i32.or" },
+            ] as Instr[])
+          : []),
         {
           op: "if",
           blockType: { kind: "empty" },
@@ -3375,39 +3390,6 @@ function buildIteratorReturnBody(
  * reuses it for iterFn/iterObj), 3=i(i32)/4=len(i32)/5=out(arr) — scratch for
  * the family-arm normalize loops.
  */
-/** (#3388) The §7.4.1 GetIterator TypeError message for a non-iterable subject. */
-const NOT_ITERABLE_MSG = "value is not iterable";
-
-/**
- * (#3388) Eagerly register the native `TypeError` constructor + the
- * "not iterable" message string global (both idempotent) so `__iterator`'s
- * non-iterable tail can throw a catchable `TypeError` instead of trapping.
- * Standalone/wasi only (host mode keeps the legacy loud trap — its `__iterator`
- * is a JS host import that already throws). Call from `ensureNativeIteratorRuntime`
- * BEFORE `buildIteratorBody`, so `nonIterableThrowInstrs` (below) only READS
- * already-registered symbols at both the eager and finalize build sites.
- */
-function ensureNonIterableThrowDeps(ctx: CodegenContext): void {
-  if (!(ctx.standalone || ctx.wasi)) return;
-  emitWasiErrorConstructor(ctx, "TypeError", 1); // idempotent (funcMap.has guard)
-  addStringConstantGlobal(ctx, NOT_ITERABLE_MSG); // idempotent (keyed by value)
-}
-
-/**
- * (#3388) FRESH throw-`TypeError` instrs for the §7.4.1 non-iterable tail, or
- * `undefined` to keep the legacy trap (host mode, or the ctor/global was not
- * pre-registered). Builds a new instr array each call (never share — the DCE
- * in-place remap double-applies to an aliased object, #2169b). Reads only
- * pre-registered symbols, so it is safe at BOTH the eager and finalize
- * `buildIteratorBody` sites.
- */
-function nonIterableThrowInstrs(ctx: CodegenContext): Instr[] | undefined {
-  if (!(ctx.standalone || ctx.wasi)) return undefined;
-  const ctorIdx = ctx.funcMap.get("__new_TypeError");
-  if (ctorIdx === undefined) return undefined;
-  const tagIdx = ensureExnTag(ctx);
-  return [...throwMsgExternrefInstrs(ctx, NOT_ITERABLE_MSG), { op: "call", funcIdx: ctorIdx }, { op: "throw", tagIdx }];
-}
 
 /** Build the unbounded strict spread materializer. */
 function buildStrictSpreadMaterializerBody(
