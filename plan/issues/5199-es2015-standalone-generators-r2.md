@@ -412,5 +412,36 @@ checkpoint source bodies with only the export wrapper. They compile with
 The separate payload ABI plan above remains the handoff; this is neither a
 Test262 gain nor a reason to hold the bounded protocol bridge draft.
 
+### Post-#5858 publication-base sync — `23a0ddaa`
+
+After the `f41432d1` checkpoint was pushed, the authoritative GitHub main
+advanced to `23a0ddaa26e5db149a93e27db113dba17794c353`. It was normally merged
+at `5e655de822f8653d8e8d7a4c7a864dc7418d38c6`; no rebase or force update was
+used. Although #5858 itself refreshes npm-compat artifacts, the intervening
+range also contains #5856 compiled-closure-length and #5857 nullish-join source
+work. Neither overlaps generator code; the shared
+`scripts/compiler-boundaries.json` policy auto-merged with both classifications
+intact.
+
+The f414 repair evidence remains the source-sensitive CI proof, including the
+full equivalence baseline gate (**1,720 pass**, 22 known failures, zero new
+regressions). The new publication-base rerun is deliberately proportional:
+
+- Bundle SHA-256 `cd964d00c8fca69aff9783644599717f268db2bcb9833d153cd00c2a323f38a4`;
+  QuickJS evaluation adapter `2523a1574106f5f1`, canary-verified with artifact
+  `073742801ba76347` (1,826,684 bytes).
+- Permanent generator pins **46/46**, original bridge9 **9/9** with
+  `imports=[]`, valid Wasm, and result `1`, and exact protocol36+B8 **44/44**
+  (A **36/36**, B **8/8**, zero B loss) are all green under one compiler worker.
+- The four #439 and two #763 repaired rows pass again; direct files remain
+  **8/9** solely for the existing baselined #763 static diagnostic.
+- CI-equivalent boundary inventory has `errors: []`; typecheck, lint, and
+  Prettier pass. The tracked numeric payload diagnostic remains **0/3** with
+  valid Wasm and `imports=[]`, returning `0` rather than the Node-oracle `1`.
+
+PR #5853 remains **draft** while this refreshed exact head is published and its
+new CI/shepherd verdict is pending. It may be marked ready/non-draft only once
+that head is confirmed green and mergeable.
+
 Full resumption details and exact local commands are in
 [the 2026-09-12 rescue handoff](../log/2026-09-12-es2015-generator-protocol-rescue-handoff.md).

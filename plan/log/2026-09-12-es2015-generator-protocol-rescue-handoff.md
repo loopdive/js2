@@ -268,3 +268,30 @@ All final corpus and compiler-backed cohorts used `COMPILER_POOL_SIZE=1`; the
 corpus run also used `JS2WASM_EVAL_ENGINE=quickjs`. The PR can remain
 **draft** until this refreshed head is published and confirmed mergeable; it can
 be marked ready/non-draft once that refreshed head is green and mergeable.
+
+## Post-#5858 publication-base sync — `23a0ddaa`
+
+GitHub main advanced after the f84 checkpoint to
+`23a0ddaa26e5db149a93e27db113dba17794c353`. The normal merge tip is
+`5e655de822f8653d8e8d7a4c7a864dc7418d38c6`. #5858 is npm-compat artifacts,
+but the cumulative range also includes #5856 compiled-closure-length and #5857
+nullish-join source work. There is no generator source conflict; the shared
+boundary policy retains both upstream and #5199 classifications.
+
+This is a proportional publication-base validation, not a replacement for the
+f414 source-sensitive full equivalence repair proof:
+
+- Bundle SHA-256 `cd964d00c8fca69aff9783644599717f268db2bcb9833d153cd00c2a323f38a4`;
+  QuickJS evaluation adapter `2523a1574106f5f1` is canary-verified against
+  artifact `073742801ba76347` (1,826,684 bytes).
+- Permanent generator pins: **46/46 pass**. Original bridge9: **9/9 pass**,
+  all standalone with `imports=[]`, valid Wasm, and result `1`.
+- Exact protocol36+B8: **44/44 pass** (A **36/36**, B **8/8**, zero B loss).
+- The six #439/#763 CI regressions remain fixed; the direct files are **8/9**
+  only because of the same pre-existing baselined #763 static diagnostic.
+- Boundary inventory has `errors: []`; typecheck, lint, and Prettier pass.
+  Numeric payload remains the same separated **0/3** residual.
+
+All executable cohorts used `COMPILER_POOL_SIZE=1` and the corpus used the
+QuickJS evaluation engine. PR #5853 remains **draft** until this exact
+publication head has a green CI/shepherd verdict and is confirmed mergeable.
