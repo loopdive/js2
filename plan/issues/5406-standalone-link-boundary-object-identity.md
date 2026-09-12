@@ -132,3 +132,8 @@ undefined", which is exactly the shape seen in the run.
   `.tmp/s5-firstfail.out`, `.tmp/s5-throwshape.out` in the S5 worktree.
 - Related: #5383 (umbrella), #2860 (standalone gap umbrella), #5383 S2d/S2k/S2l
   (the boundary work this sits on top of).
+
+## S6 (in progress, 2026-09-12)
+
+Opus senior-dev lane started on branch `issue-5383-standalone-temporal-s6`
+(stacked on S5). Measuring (A) and (B) reductions before any `src/` change.
