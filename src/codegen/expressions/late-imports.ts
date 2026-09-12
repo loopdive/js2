@@ -47,6 +47,7 @@ const UNION_NATIVE_HELPER_NAMES = new Set([
   "__typeof_undefined",
   "__typeof_object",
   "__typeof_function",
+  "__is_callable",
   "__typeof",
   // #2508 — native Strict Equality / SameValueZero over boxed externrefs, so
   // standalone `any[].indexOf/lastIndexOf/includes` need no JS host import.

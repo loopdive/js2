@@ -238,14 +238,15 @@ export function emitStandaloneLinkBoundaryTerminals(ctx: CodegenContext, registe
     );
   }
 
-  // (#5383 S2f R12) `callable_kind` and `construct` are RESERVED here (the
+  // (#5383 S2f R12 / #6420) `callable_kind` and `construct` are RESERVED here (the
   // index space is frozen after `ensureObjectRuntime`, #1984) and FILLED in
   // `publishStandaloneLinkBoundaryExports`, because both read helpers that do
-  // not have bodies yet: `__typeof_function` is filled by the typeof finalize,
+  // not have bodies yet: `__is_callable` is filled by the callable finalize,
   // `__reflect_is_constructor` by its own fill, and `__apply_closure` by
   // `fillApplyClosure`. Reserving with a refusal body (`0` / null) means a
   // provider whose helpers never materialise degrades to today's answer rather
   // than to a broken call.
+  ensureLateImport(ctx, "__is_callable", [EXTERNREF], [I32]);
   ensureReflectIsConstructor(ctx);
   if (!ctx.funcMap.has(LINK_BOUNDARY_EXPORTS.callableKind)) {
     registerNative(LINK_BOUNDARY_EXPORTS.callableKind, [EXTERNREF], [I32], [], [{ op: "i32.const", value: 0 }]);
@@ -271,30 +272,21 @@ export function emitStandaloneLinkBoundaryTerminals(ctx: CodegenContext, registe
  * refusal body, which is exactly the pre-R12 answer.
  */
 function fillStandaloneLinkBoundaryLateTerminals(ctx: CodegenContext): void {
-  const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+  const isCallableIdx = ctx.funcMap.get("__is_callable");
   const isConstructorIdx = ctx.funcMap.get("__reflect_is_constructor");
   const kindIdx = ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.callableKind);
   const kindFn = kindIdx === undefined ? undefined : definedFuncAt(ctx, kindIdx);
-  if (kindFn && typeofFunctionIdx !== undefined) {
+  if (kindFn && isCallableIdx !== undefined && isConstructorIdx !== undefined) {
     // bit 0 = [[Call]], bit 1 = [[Construct]] — the same encoding the host
-    // lane's `__boundary_object_callable_kind` uses, so the consumer arms that
-    // mask `& 1` (typeof) and `& 2` (construct) need no change at all.
-    const ctorBit: Instr[] =
-      isConstructorIdx === undefined
-        ? [
-            { op: "local.get", index: 0 },
-            { op: "call", funcIdx: typeofFunctionIdx },
-          ]
-        : [
-            { op: "local.get", index: 0 },
-            { op: "call", funcIdx: isConstructorIdx },
-          ];
+    // lane's `__boundary_object_callable_kind` uses. Critically, bit 0 is
+    // NOT `typeof === "function"`: a class has [[Construct]] but no [[Call]].
     kindFn.body = [
       { op: "local.get", index: 0 },
-      { op: "call", funcIdx: typeofFunctionIdx },
+      { op: "call", funcIdx: isCallableIdx },
       { op: "i32.const", value: 1 },
       { op: "i32.and" },
-      ...ctorBit,
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: isConstructorIdx },
       { op: "i32.const", value: 1 },
       { op: "i32.and" },
       { op: "i32.const", value: 1 },
