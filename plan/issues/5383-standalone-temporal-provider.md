@@ -1648,3 +1648,134 @@ removed): `tests/issue-2151.test.ts` (1), `tests/issue-2151-mixed-spread.test.ts
 `tests/issue-5318-r4-computed-accessor-keys.test.ts` OOMs the vitest worker on
 BOTH trees (also at `--max-old-space-size=6144`), so it is not a signal either
 way.
+
+## S2j findings (2026-09-12) — the premise was wrong: there is no regression, and the stop is the whole wasm↔wasm VALUE ABI
+
+Two results, and the second one supersedes every carrier-specific hypothesis in
+S2c…S2i.
+
+### 1. The bisect — `Object.keys(Temporal).length` was NEVER 9 through a real provider
+
+The dispatch brief recorded a regression: 9 on 2026-09-08, 0 now, with ~94 main
+commits (including #5795, "publish complete Temporal package generations") and
+slice S2i in between. Measured at three points with one probe
+(`.tmp/s2j-probe.mts`, `buildTemporalProvider` + `compileWithTemporalGlobal`,
+`--target standalone` / `hostBridge:"off"`, host-free
+`instantiateLinkedProject(result, {})`, a **fresh `JS2WASM_TEMPORAL_CACHE` per
+point** so no stale artifact can answer for a compiler):
+
+| point | what it is | keys | provider bytes | cache key | polyfill src sha | init |
+| --- | --- | --- | --- | --- | --- | --- |
+| `c01abc32` | S2h, main merged, **before** #5795 | **0** | 3,282,057 | `fcd881da30bc` | `68b811af2824` | ok |
+| `8b42b7ab` | S2h, + S2f/S2g merged | **0** | 3,282,057 | `fcd881da30bc` | `68b811af2824` | ok |
+| `d1f9cbb3` | S2i head (this stack) | **0** | 3,311,806 | `fcd881da30bc` | `68b811af2824` | ok |
+
+So: **no regression, at any point.** `"PlainDate" in Temporal` is 0 and
+`new Temporal.PlainDate(2024,1,1).day` is −1 at all three.
+
+**#5795 is ruled out as an input change, by measurement rather than by argument:**
+the linked polyfill source is byte-identical across it (same sha, same 157,541 B)
+and so is the provider cache key. It moved WHERE the package generation lives,
+not WHAT is compiled.
+
+**Where the "9" came from.** It is a real number, measured INSIDE the provider
+(S2c/S2d: `Object.keys(qi).length === 9` driving the polyfill from inside its own
+module). S2f wrote "`Object.keys(Temporal).length === 9` is the only one of the
+three assertions that would pass today" — an inference, not a boundary
+measurement — and S2h restated it as "passed before this slice". S2i caught the
+restatement but attributed the 0 to a new stop. It was never 9 across the
+boundary; the in-provider figure was carried forward three slices as if it were.
+
+### 2. The root cause — from the polyfill provider, NOTHING structured crosses
+
+The decisive probe is not about `Temporal` at all (`.tmp/s2j-valueabi.mts`). Four
+ordinary values are exported from the provider and read by the consumer, with the
+tiny hand-built provider as the control — same consumer source, same link path,
+same target:
+
+| consumer read of a PROVIDER-minted value | tiny provider | polyfill provider |
+| --- | --- | --- |
+| `typeof num === "number"` → its value | 42 | **42** |
+| `typeof str === "string"` | 1 | **0** |
+| `str.length` / `str === "hello"` | 5 / 1 | **0 / 0** |
+| `Array.isArray(arr)` / `arr.length` / `arr[0]` | 1 / 3 / 1 | **0 / 0 / −1** |
+| `Object.keys({a:1,b:2}).length` / `.a` | 2 / 1 | **0 / −1** |
+
+A number crosses (it is unboxed f64). **Every reference value is unreadable** — a
+string is not even a string. So this is not the namespace carrier, not
+`Object.freeze`, not `__proto__: null`, and not anything S2d…S2i touched: the
+wasm↔wasm value ABI is dead for this provider, and `Temporal` was only the first
+value anyone happened to read.
+
+Four supporting measurements, each of which rules something out:
+
+- **It is not size, and not a feature the module uses.** A grown provider (up to
+  300 extra object shapes + 300 functions, 731 KB) crosses fine
+  (`.tmp/s2j-grow.mts`), as does the tiny provider with each of 20 features added
+  one at a time — `defineProperty`, `defineProperties`, getters/setters, `Proxy`,
+  symbol keys, `for-in`, `delete`, `Object.create`, `seal`,
+  `preventExtensions`, `setPrototypeOf`, `assign`, spread, computed keys, array
+  expandos, `Map`/`WeakMap`, class statics, `Symbol.toStringTag`
+  (`.tmp/s2j-feature.mts`, all 21 rows ok). Nor is it the export spelling: all six
+  of `export const` / `export var` / `var`+alias / `const`+alias / `let`+alias /
+  same-name re-export cross correctly (`.tmp/s2j-export-shape.mts`).
+- **The provider side is correct.** Called from JS on the exact value the consumer
+  receives, the polyfill provider's own terminals answer:
+  `__js2wasm_link_object_keys(ns)` non-null, `__js2wasm_link_member_get(ns, k)`
+  non-null — **with a PROVIDER-minted `k`** (`.tmp/s2j-terminal.mts`). With a
+  CONSUMER-minted `k` the same call answers **null** for the polyfill provider and
+  **non-null** for the tiny one — the same one-way failure the table above shows,
+  in the other direction.
+- **The wiring is correct and the consumers are identical.** Both providers export
+  all six terminals; both consumers import all six; the two consumer binaries are
+  the same size and the terminals' bodies call the right natives
+  (`__js2wasm_link_object_keys` → `__object_keys` + `__extern_length`,
+  `__js2wasm_link_member_get` → `__extern_get` + `__extern_is_undefined`) —
+  disassembled in both (`.tmp/s2j-calls.mjs`).
+- **The polyfill works perfectly INSIDE its own module**, through the generic
+  dynamic path, not a folded one: with the answers computed at provider init and
+  published as value exports, `Object.keys(qi).length` is 9, `"PlainDate" in qi`
+  is 1, `typeof qi.PlainDate === "function"` is 1, and
+  `new qi.PlainDate(2024,1,1).day` is **1** — and the same through a function
+  parameter (`__p_dynKeys(qi)` 9, `__p_dynGet(qi,"Plain"+"Date")` 1), so it is not
+  constant-folded (`.tmp/s2j-inside.mts`).
+
+**Method note that unblocked all of this:** S2i recorded "the linker does not
+publish an in-provider probe export". The real rule is narrower and usable — a
+package export whose boundary is a FUNCTION with an inferred/`any` signature makes
+the whole plan fall back to `bundled` ("inferred/any package signatures require
+side-effect-free engine validation", `.tmp/s2j-facade.mts`). **VALUE exports are
+getter boundaries and ARE published**, so any in-provider question can be answered
+by computing it at module init and exporting the result. That is how the table
+above was measured, and it is the tool the next slice needs.
+
+### What the fix is NOT (two pieces built and measured, each necessary, both insufficient)
+
+Both were implemented and then reverted rather than shipped, because neither moves
+a user-visible answer and both change a hot native:
+
+1. **The consumer never consults the peer for this receiver.** `ref.test $Object`
+   SUCCEEDS on the provider-minted namespace, so the S2d miss-path arms — which
+   sit in the NOT-a-`$Object` branch — are unreachable, and the `$Object` walk
+   reads an ordered map that enumerates nothing. Peer call count measured at
+   **zero** for `Object.keys` / `.b` / `in` (`.tmp/s2j-count.mts`). Adding a
+   terminal consult in `__extern_get` and a zero-keys consult in `__object_keys`
+   makes the peer fire.
+2. **It still answers 0.** With the consult in place `__js2wasm_link_object_keys`
+   returns **non-null** — and `Object.keys(...).length` on the returned vec is
+   still 0, because the provider-minted key vec is itself unreadable by the
+   consumer. Which is finding 2 again: the answer cannot cross either.
+
+So a miss-path change alone cannot fix this, and the ordering matters — piece 1 is
+required before piece 2 is even observable.
+
+### The next stop, exactly
+
+**Why is the polyfill provider's type space not shared with its consumer, when the
+tiny provider's is?** The first rec group (10 types, including the string struct
+`$11`) is textually identical in both providers, so the canonical prefix is not
+obviously the difference; the poly provider declares 618 types in the prefix the
+consumer declares 130 of, in a different order. The reduction is
+`.tmp/s2j-valueabi.mts`: four one-line value exports, a nine-line consumer, tiny
+vs polyfill, ~60 s. It needs no Temporal knowledge at all, and every earlier
+Temporal-specific symptom should fall out of it.

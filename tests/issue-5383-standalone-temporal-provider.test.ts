@@ -1374,29 +1374,38 @@ describe("#5383 S2i — STATIC members of a PROVIDER-owned class value, host-fre
   });
 
   // STILL OPEN — the S2 three-assertion smoke test through the REAL
-  // `buildTemporalProvider` + `compileWithTemporalGlobal` provider, measured on
-  // this branch (`.tmp/smoke.mts`, host-free `instantiateLinkedProject(result,
-  // {})`, `--target standalone` / `hostBridge:"off"`, provider 3,311,806 B):
+  // `buildTemporalProvider` + `compileWithTemporalGlobal` provider. All three
+  // assertions fail on the first one, and (#5383 S2j) the reason is NOT the
+  // namespace, NOT `Object.freeze`, NOT `__proto__: null` and NOT the member
+  // surface: from the polyfill provider, **no reference value crosses at all**.
+  // Measured host-free, `--target standalone` / `hostBridge:"off"`, with the
+  // tiny hand-built provider as the control and the SAME consumer source
+  // (`.tmp/s2j-valueabi.mts` — four one-line value exports, a nine-line
+  // consumer, ~60 s):
   //
-  //   | consumer probe on the linked `Temporal`   | answer |
-  //   | ----------------------------------------- | ------ |
-  //   | `Temporal === null` / `=== undefined`     | 0 / 0  |
-  //   | `Object.keys(Temporal).length`            | 0      |
-  //   | `Object.getOwnPropertyNames(…).length`    | 0      |
-  //   | `"PlainDate" in Temporal`                 | 0      |
-  //   | `new Temporal.PlainDate(2024,1,1).day`    | −1     |
-  //   | `Temporal.Duration.from({hours:1})…`      | throws |
+  //   | consumer read of a provider-minted value | tiny | polyfill |
+  //   | ---------------------------------------- | ---- | -------- |
+  //   | `num` (unboxed f64)                      | 42   | 42       |
+  //   | `typeof str === "string"`                | 1    | 0        |
+  //   | `str.length`                             | 5    | 0        |
+  //   | `Array.isArray(arr)` / `arr.length`      | 1/3  | 0/0      |
+  //   | `Object.keys({a:1,b:2}).length`          | 2    | 0        |
   //
-  // That is a stop AHEAD of the static read this slice fixes, not behind it:
-  // the namespace OBJECT crosses (non-null, `typeof` an object) while its whole
-  // member surface reads empty, so all three smoke assertions fail on the FIRST
-  // one. The identical shape built by hand — `Object.freeze({__proto__: null,
-  // …})` through a real `compileProject` provider — crosses correctly in the
-  // test directly above (keys 2, statics and prototype members all reachable),
-  // so the plumbing this slice touches is not what is missing; it is specific
-  // to the polyfill's exported namespace. Isolating it further needs a probe
-  // export INSIDE the provider, which the linker does not publish (only the
-  // declared `Temporal` boundary appears in `exportBoundaries` — measured), so
-  // it is its own slice. See #5383's "S2i findings".
-  it.todo("the S2 smoke test through the real Temporal provider (blocked: the namespace member surface reads empty)");
+  // A number crosses because it is not a reference. A string is not even a
+  // string. So `Temporal` was simply the first value anyone read — the whole
+  // wasm↔wasm value ABI is dead for this provider, and the next slice's target
+  // is why its type space is not shared with its consumer's.
+  //
+  // Also measured in S2j, and worth not re-deriving: the polyfill works fully
+  // INSIDE its own module through the generic dynamic path (keys 9,
+  // `"PlainDate" in qi` true, `new qi.PlainDate(2024,1,1).day === 1`); the
+  // provider's own boundary terminals answer correctly when called with
+  // PROVIDER-minted arguments; and the consumer's S2d miss path is never
+  // reached for this receiver at all (`ref.test $Object` succeeds on it, peer
+  // call count zero) — so a miss-path change alone cannot fix it. The bisect
+  // that establishes this was never working (not a regression) and the full
+  // measurement set are in #5383's "S2j findings".
+  it.todo(
+    "the S2 smoke test through the real Temporal provider (blocked: no reference value crosses from this provider — #5383 S2j)",
+  );
 });
