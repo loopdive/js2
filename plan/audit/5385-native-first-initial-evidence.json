@@ -1,0 +1,661 @@
+{
+  "schemaVersion": 1,
+  "issue": 5385,
+  "compilerSourceRevision": "79b0e7c4dc47949fb9708a9ca45d0e7e5bade2ae",
+  "notes": [
+    "Exploratory local measurements on macOS arm64 / Node 25.9.0; other development processes were active. Not a CI baseline or a population census.",
+    "Sidebar kernel-only removes the DOM main and helper module identically in both profiles. Nine timed rounds after two warmup rounds; O4 and TurboFan; JS/Wasm values matched before timing. Constant folding remains enabled.",
+    "Full-sidebar native-first stops on the first compilation failure; the remaining three full-sidebar workloads are unmeasured.",
+    "npm samples are two selected performance workloads, not package conformance suites. No native npm timing was measured."
+  ],
+  "sidebarKernels": {
+    "host": [
+      {
+        "path": "examples/benchmarks/fib.ts",
+        "semanticProviders": "auto",
+        "workload": "kernel-only",
+        "compilerCommit": "1c3d93135c4f7be74a547d95bf8c1c9e52d33347",
+        "measuredAt": "2026-09-07T19:46:51.452Z",
+        "nodeVersion": "v25.9.0",
+        "v8Version": "14.1.146.11-node.25",
+        "wasmOptimized": true,
+        "wasmOptimizeLevel": 4,
+        "mode": "warm",
+        "jsFlags": ["--allow-natives-syntax", "--no-concurrent-recompilation"],
+        "wasmFlags": ["--no-liftoff"],
+        "jsOptStatus": "41 (matches optimized-signature 40)",
+        "wasmUs": 3993.13425,
+        "jsUs": 11122.287037037024,
+        "wasmStdUs": 215.35191339475463,
+        "jsStdUs": 321.79045434656865,
+        "ratioStd": 0.20388123815002046,
+        "warmupRounds": 2,
+        "measuredRounds": 9
+      },
+      {
+        "path": "examples/benchmarks/loop.ts",
+        "semanticProviders": "auto",
+        "workload": "kernel-only",
+        "compilerCommit": "1c3d93135c4f7be74a547d95bf8c1c9e52d33347",
+        "measuredAt": "2026-09-07T19:47:02.064Z",
+        "nodeVersion": "v25.9.0",
+        "v8Version": "14.1.146.11-node.25",
+        "wasmOptimized": true,
+        "wasmOptimizeLevel": 4,
+        "mode": "warm",
+        "jsFlags": ["--allow-natives-syntax", "--no-concurrent-recompilation"],
+        "wasmFlags": ["--no-liftoff"],
+        "jsOptStatus": "41 (matches optimized-signature 40)",
+        "wasmUs": 205.2185606060606,
+        "jsUs": 467.46842496285296,
+        "wasmStdUs": 17.378068756207977,
+        "jsStdUs": 15.990784576573644,
+        "ratioStd": 0.21313133767750372,
+        "warmupRounds": 2,
+        "measuredRounds": 9
+      },
+      {
+        "path": "examples/benchmarks/string.ts",
+        "semanticProviders": "auto",
+        "workload": "kernel-only",
+        "compilerCommit": "1c3d93135c4f7be74a547d95bf8c1c9e52d33347",
+        "measuredAt": "2026-09-07T19:47:09.310Z",
+        "nodeVersion": "v25.9.0",
+        "v8Version": "14.1.146.11-node.25",
+        "wasmOptimized": true,
+        "wasmOptimizeLevel": 4,
+        "mode": "warm",
+        "jsFlags": ["--allow-natives-syntax", "--no-concurrent-recompilation"],
+        "wasmFlags": ["--no-liftoff"],
+        "jsOptStatus": "41 (matches optimized-signature 40)",
+        "wasmUs": 0.16280566703294957,
+        "jsUs": 3.710348232344815,
+        "wasmStdUs": 0.004005544772338765,
+        "jsStdUs": 0.2963414435076674,
+        "ratioStd": 1.676704387879085,
+        "warmupRounds": 2,
+        "measuredRounds": 9
+      },
+      {
+        "path": "examples/benchmarks/array.ts",
+        "semanticProviders": "auto",
+        "workload": "kernel-only",
+        "compilerCommit": "1c3d93135c4f7be74a547d95bf8c1c9e52d33347",
+        "measuredAt": "2026-09-07T19:47:20.569Z",
+        "nodeVersion": "v25.9.0",
+        "v8Version": "14.1.146.11-node.25",
+        "wasmOptimized": true,
+        "wasmOptimizeLevel": 4,
+        "mode": "warm",
+        "jsFlags": ["--allow-natives-syntax", "--no-concurrent-recompilation"],
+        "wasmFlags": ["--no-liftoff"],
+        "jsOptStatus": "41 (matches optimized-signature 40)",
+        "wasmUs": 22.22138181151448,
+        "jsUs": 42.197739827539735,
+        "wasmStdUs": 0.7385756916032351,
+        "jsStdUs": 1.8627169338250233,
+        "ratioStd": 0.12617264390810512,
+        "warmupRounds": 2,
+        "measuredRounds": 9
+      }
+    ],
+    "nativeFirst": [
+      {
+        "path": "examples/benchmarks/fib.ts",
+        "semanticProviders": "native-first",
+        "workload": "kernel-only",
+        "compilerCommit": "1c3d93135c4f7be74a547d95bf8c1c9e52d33347",
+        "measuredAt": "2026-09-07T19:45:55.638Z",
+        "nodeVersion": "v25.9.0",
+        "v8Version": "14.1.146.11-node.25",
+        "wasmOptimized": true,
+        "wasmOptimizeLevel": 4,
+        "mode": "warm",
+        "jsFlags": ["--allow-natives-syntax", "--no-concurrent-recompilation"],
+        "wasmFlags": ["--no-liftoff"],
+        "jsOptStatus": "41 (matches optimized-signature 40)",
+        "wasmUs": 4112.356476190475,
+        "jsUs": 15341.770863636384,
+        "wasmStdUs": 1794.4658397108221,
+        "jsStdUs": 1532.9039235675114,
+        "ratioStd": 0.8127868824415364,
+        "warmupRounds": 2,
+        "measuredRounds": 9
+      },
+      {
+        "path": "examples/benchmarks/loop.ts",
+        "semanticProviders": "native-first",
+        "workload": "kernel-only",
+        "compilerCommit": "1c3d93135c4f7be74a547d95bf8c1c9e52d33347",
+        "measuredAt": "2026-09-07T19:46:07.201Z",
+        "nodeVersion": "v25.9.0",
+        "v8Version": "14.1.146.11-node.25",
+        "wasmOptimized": true,
+        "wasmOptimizeLevel": 4,
+        "mode": "warm",
+        "jsFlags": ["--allow-natives-syntax", "--no-concurrent-recompilation"],
+        "wasmFlags": ["--no-liftoff"],
+        "jsOptStatus": "41 (matches optimized-signature 40)",
+        "wasmUs": 233.28796055684438,
+        "jsUs": 606.0642887788784,
+        "wasmStdUs": 13.82992478854425,
+        "jsStdUs": 86.27224415677553,
+        "ratioStd": 0.4549706501984351,
+        "warmupRounds": 2,
+        "measuredRounds": 9
+      },
+      {
+        "path": "examples/benchmarks/string.ts",
+        "semanticProviders": "native-first",
+        "workload": "kernel-only",
+        "compilerCommit": "1c3d93135c4f7be74a547d95bf8c1c9e52d33347",
+        "measuredAt": "2026-09-07T19:46:19.180Z",
+        "nodeVersion": "v25.9.0",
+        "v8Version": "14.1.146.11-node.25",
+        "wasmOptimized": true,
+        "wasmOptimizeLevel": 4,
+        "mode": "warm",
+        "jsFlags": ["--allow-natives-syntax", "--no-concurrent-recompilation"],
+        "wasmFlags": ["--no-liftoff"],
+        "jsOptStatus": "41 (matches optimized-signature 40)",
+        "wasmUs": 2.918805823822065,
+        "jsUs": 4.903845363330212,
+        "wasmStdUs": 0.24618965463162537,
+        "jsStdUs": 2.595871202048114,
+        "ratioStd": 0.9574964221671131,
+        "warmupRounds": 2,
+        "measuredRounds": 9
+      },
+      {
+        "path": "examples/benchmarks/array.ts",
+        "semanticProviders": "native-first",
+        "workload": "kernel-only",
+        "compilerCommit": "1c3d93135c4f7be74a547d95bf8c1c9e52d33347",
+        "measuredAt": "2026-09-07T19:46:31.865Z",
+        "nodeVersion": "v25.9.0",
+        "v8Version": "14.1.146.11-node.25",
+        "wasmOptimized": true,
+        "wasmOptimizeLevel": 4,
+        "mode": "warm",
+        "jsFlags": ["--allow-natives-syntax", "--no-concurrent-recompilation"],
+        "wasmFlags": ["--no-liftoff"],
+        "jsOptStatus": "41 (matches optimized-signature 40)",
+        "wasmUs": 24.943167359494538,
+        "jsUs": 39.86767287469915,
+        "wasmStdUs": 6.742482697581006,
+        "jsStdUs": 2.227667875298595,
+        "ratioStd": 0.31371342797715623,
+        "warmupRounds": 2,
+        "measuredRounds": 9
+      }
+    ]
+  },
+  "fullSidebarNativeFirstFailure": [
+    "IR path failed for main: ir/from-ast: value of .innerHTML expects externref but got string (main) [IR-FALLBACK]",
+    "Native-first semantic-provider policy rejected implicit or unclassified host imports: env::__extern_get (legacy-semantic, owner #4397), env::__js_array_new (legacy-semantic, owner #4397), env::__call_function (legacy-semantic, owner #4397). Use the host-assisted compatibility profile for this source until its native provider is implemented."
+  ],
+  "propertyNameProbe": {
+    "source": "export function keys(value: any): any { return Object.keys(value); } class P { get d(): number { return 1; } } export function name(): string { return P.name; }",
+    "profiles": [
+      {
+        "options": {
+          "target": "gc"
+        },
+        "success": true,
+        "errors": [],
+        "bytes": 4348,
+        "imports": [
+          {
+            "module": "string_constants",
+            "name": "keys",
+            "kind": "global",
+            "classification": "legacy-semantic",
+            "family": "strings",
+            "ownerIssue": 4397,
+            "nativeFallback": true,
+            "reason": "host-backed string representation provider"
+          },
+          {
+            "module": "string_constants",
+            "name": "P",
+            "kind": "global",
+            "classification": "legacy-semantic",
+            "family": "strings",
+            "ownerIssue": 4397,
+            "nativeFallback": true,
+            "reason": "host-backed string representation provider"
+          },
+          {
+            "module": "string_constants",
+            "name": "get d",
+            "kind": "global",
+            "classification": "legacy-semantic",
+            "family": "strings",
+            "ownerIssue": 4397,
+            "nativeFallback": true,
+            "reason": "host-backed string representation provider"
+          },
+          {
+            "module": "string_constants",
+            "name": "name",
+            "kind": "global",
+            "classification": "legacy-semantic",
+            "family": "strings",
+            "ownerIssue": 4397,
+            "nativeFallback": true,
+            "reason": "host-backed string representation provider"
+          },
+          {
+            "module": "string_constants",
+            "name": "",
+            "kind": "global",
+            "classification": "legacy-semantic",
+            "family": "strings",
+            "ownerIssue": 4397,
+            "nativeFallback": true,
+            "reason": "host-backed string representation provider"
+          },
+          {
+            "module": "env",
+            "name": "__register_prototype",
+            "kind": "func",
+            "intentType": "builtin",
+            "classification": "instance-lifecycle",
+            "family": "instance-wiring",
+            "ownerIssue": 4399,
+            "nativeFallback": true,
+            "reason": "instance/export registration lifecycle"
+          },
+          {
+            "module": "env",
+            "name": "__register_class_object",
+            "kind": "func",
+            "intentType": "builtin",
+            "classification": "instance-lifecycle",
+            "family": "instance-wiring",
+            "ownerIssue": 4399,
+            "nativeFallback": true,
+            "reason": "instance/export registration lifecycle"
+          },
+          {
+            "module": "env",
+            "name": "__register_class_ctor",
+            "kind": "func",
+            "intentType": "builtin",
+            "classification": "instance-lifecycle",
+            "family": "instance-wiring",
+            "ownerIssue": 4399,
+            "nativeFallback": true,
+            "reason": "instance/export registration lifecycle"
+          },
+          {
+            "module": "string_constants",
+            "name": "d",
+            "kind": "global",
+            "classification": "legacy-semantic",
+            "family": "strings",
+            "ownerIssue": 4397,
+            "nativeFallback": true,
+            "reason": "host-backed string representation provider"
+          },
+          {
+            "module": "env",
+            "name": "__object_keys",
+            "kind": "func",
+            "intentType": "builtin",
+            "classification": "legacy-semantic",
+            "family": "ecmascript-runtime",
+            "ownerIssue": 4397,
+            "nativeFallback": false,
+            "reason": "implicit JavaScript semantic fallback"
+          },
+          {
+            "module": "env",
+            "name": "__box_number",
+            "kind": "func",
+            "intentType": "box",
+            "classification": "value-adapter",
+            "family": "dynamic-values",
+            "ownerIssue": 4399,
+            "nativeFallback": true,
+            "reason": "JS/Wasm dynamic value conversion"
+          },
+          {
+            "module": "env",
+            "name": "__call_function_0",
+            "kind": "func",
+            "intentType": "builtin",
+            "classification": "legacy-semantic",
+            "family": "ecmascript-runtime",
+            "ownerIssue": 4397,
+            "nativeFallback": false,
+            "reason": "implicit JavaScript semantic fallback"
+          },
+          {
+            "module": "env",
+            "name": "__call_function_1",
+            "kind": "func",
+            "intentType": "builtin",
+            "classification": "legacy-semantic",
+            "family": "ecmascript-runtime",
+            "ownerIssue": 4397,
+            "nativeFallback": false,
+            "reason": "implicit JavaScript semantic fallback"
+          },
+          {
+            "module": "env",
+            "name": "__call_function_2",
+            "kind": "func",
+            "intentType": "builtin",
+            "classification": "legacy-semantic",
+            "family": "ecmascript-runtime",
+            "ownerIssue": 4397,
+            "nativeFallback": false,
+            "reason": "implicit JavaScript semantic fallback"
+          },
+          {
+            "module": "env",
+            "name": "__call_function_3",
+            "kind": "func",
+            "intentType": "builtin",
+            "classification": "legacy-semantic",
+            "family": "ecmascript-runtime",
+            "ownerIssue": 4397,
+            "nativeFallback": false,
+            "reason": "implicit JavaScript semantic fallback"
+          },
+          {
+            "module": "env",
+            "name": "__call_function_4",
+            "kind": "func",
+            "intentType": "builtin",
+            "classification": "legacy-semantic",
+            "family": "ecmascript-runtime",
+            "ownerIssue": 4397,
+            "nativeFallback": false,
+            "reason": "implicit JavaScript semantic fallback"
+          },
+          {
+            "module": "string_constants",
+            "name": "\u0000js2_data_struct_host_bridge_token",
+            "kind": "global",
+            "classification": "legacy-semantic",
+            "family": "strings",
+            "ownerIssue": 4397,
+            "nativeFallback": true,
+            "reason": "host-backed string representation provider"
+          }
+        ]
+      },
+      {
+        "options": {
+          "target": "gc",
+          "semanticProviders": "native-first"
+        },
+        "success": false,
+        "errors": [
+          "Native-first semantic-provider policy rejected implicit or unclassified host imports: string_constants:: (legacy-semantic, owner #4397), string_constants::name (legacy-semantic, owner #4397), string_constants::P (legacy-semantic, owner #4397), string_constants::d (legacy-semantic, owner #4397). Use the host-assisted compatibility profile for this source until its native provider is implemented."
+        ],
+        "bytes": 0
+      },
+      {
+        "options": {
+          "target": "standalone"
+        },
+        "success": true,
+        "errors": [],
+        "bytes": 138086,
+        "imports": []
+      }
+    ]
+  },
+  "npm": [
+    {
+      "sourceRevision": "79b0e7c4dc47949fb9708a9ca45d0e7e5bade2ae",
+      "generatedAt": "2026-09-07T19:43:00.859Z",
+      "packages": [
+        {
+          "name": "cookie",
+          "version": "2.0.1",
+          "performance": {
+            "sampleOp": "parseCookie(8-pair header); verify a/h",
+            "lanes": {
+              "jsHost": {
+                "status": "measured",
+                "placement": "js-host",
+                "inputMode": "runtime-dynamic",
+                "sampleOp": "parseCookie(8-pair header); verify a/h",
+                "wasmUs": 307.45157911698357,
+                "nodeUs": 0.5182484692235433,
+                "wasmStdUs": 235.90930445876236,
+                "nodeStdUs": 0.1518991012009926,
+                "ratio": 0.0022007049646579884,
+                "ratioStd": 0.0011419903415100588,
+                "ratioSamples": [
+                  0.0038750004509853753, 0.0022007049646579884, 0.0012773453350256496, 0.0008420252405002507,
+                  0.0006530796635241812, 0.001098124598061718, 0.003567807477615645, 0.0029207263961743015,
+                  0.002732291096986119
+                ],
+                "measurementOrder": "alternating-paired",
+                "ratioEstimator": "median-of-paired-ratios",
+                "iters": 6206,
+                "warmupRounds": 2,
+                "measuredRounds": 9,
+                "wasmSamplesUs": [
+                  192.13454044473104, 275.7993272639383, 396.5089764743796, 548.6920655816951, 771.3297413793102,
+                  790.888575572027, 145.2568482114083, 163.37236142442748, 307.45157911698357
+                ],
+                "nodeSamplesUs": [
+                  0.7445214308732007, 0.6069529487590823, 0.5064788913953439, 0.4620125684820062, 0.5037397679661937,
+                  0.8684941991616368, 0.5182484692235433, 0.4771659684176535, 0.8400472123756576
+                ],
+                "binaryBytes": 16819,
+                "moduleImportCount": 151,
+                "functionImportCount": 45,
+                "expectedChecksum": 1,
+                "actualChecksum": 1,
+                "testCompiledToWasm": false,
+                "target": "js-host",
+                "optimizationRequested": true,
+                "optimizationVerified": true,
+                "optimizationLevel": 4
+              },
+              "standalone": {
+                "status": "measured",
+                "placement": "standalone",
+                "inputMode": "compile-time-static",
+                "sampleOp": "parseCookie(8-pair header); verify a/h",
+                "wasmUs": 0.0010102513337484722,
+                "nodeUs": 0.6357079354251836,
+                "wasmStdUs": 0.00016994590989879895,
+                "nodeStdUs": 0.031669469043764845,
+                "ratio": 603.850931667691,
+                "ratioStd": 88.97177887050792,
+                "ratioSamples": [
+                  657.4505819687903, 453.94079501909545, 675.4693759234563, 419.0981477020109, 575.7673502656944,
+                  669.6188706814002, 603.850931667691, 586.0452525610903, 660.2037181754552
+                ],
+                "measurementOrder": "alternating-paired",
+                "ratioEstimator": "median-of-paired-ratios",
+                "iters": 360636,
+                "warmupRounds": 2,
+                "measuredRounds": 9,
+                "wasmSamplesUs": [
+                  0.0010041288168871846, 0.0014004203684721526, 0.0010042425049051644, 0.0014408572632815773,
+                  0.0010680214953592128, 0.0010104842556048848, 0.0010044754267615765, 0.0010102513337484722,
+                  0.0010042452777851278
+                ],
+                "nodeSamplesUs": [
+                  0.6601650750341124, 0.6357079354251836, 0.6783350580640999, 0.6038606101442977, 0.6149319064097786,
+                  0.6766393260794782, 0.6065534222872795, 0.5920529980368017, 0.6630064663538842
+                ],
+                "compileDurationMs": 973.9758329999968,
+                "moduleCompileDurationMs": 1.2439159999994445,
+                "instantiateDurationMs": 0.019667000000481494,
+                "firstBatchDurationMs": 0.045958999999129446,
+                "binaryBytes": 103,
+                "moduleImportCount": 0,
+                "functionImportCount": 0,
+                "expectedChecksum": 1,
+                "actualChecksum": 1,
+                "testCompiledToWasm": true,
+                "benchmarkUsesIr": true,
+                "irCompiledFunctions": ["__npmCompatStandaloneBenchmark"],
+                "target": "standalone",
+                "optimizationRequested": true,
+                "optimizationVerified": true,
+                "optimizationLevel": 4
+              },
+              "jsHostNative": {
+                "status": "compile-error",
+                "placement": "js-host",
+                "inputMode": "runtime-dynamic",
+                "diagnostic": "Parameter 'str' in function 'parseCookie' has implicit 'any' type. Add a JSDoc annotation: /** @param {number} str */",
+                "optimizationRequested": true,
+                "optimizationVerified": false,
+                "optimizationLevel": 4,
+                "semanticProviders": "native-first",
+                "environment": "javascript"
+              },
+              "standaloneDynamic": {
+                "status": "measured",
+                "placement": "standalone",
+                "inputMode": "runtime-dynamic",
+                "sampleOp": "parseCookie(8-pair runtime-generated header); verify a/h",
+                "wasmUs": 5.950775212840531,
+                "nodeUs": 1.5086115315369695,
+                "wasmStdUs": 2.563989391100077,
+                "nodeStdUs": 0.6848869327110512,
+                "ratio": 0.25503219657707527,
+                "ratioStd": 0.06730342441919564,
+                "ratioSamples": [
+                  0.3728740392180493, 0.21225705662393826, 0.22504914101281295, 0.2771691301251846, 0.25503219657707527,
+                  0.15247332311476217, 0.26569273404118054, 0.21968808457553696, 0.3648342141310637
+                ],
+                "measurementOrder": "alternating-paired",
+                "ratioEstimator": "median-of-paired-ratios",
+                "iters": 65542,
+                "warmupRounds": 2,
+                "measuredRounds": 9,
+                "wasmSamplesUs": [
+                  4.045901223642882, 5.950775212840531, 5.591203594641694, 4.996524503371908, 5.391005004424707,
+                  10.35883415214674, 10.21507328125476, 11.179742256873434, 8.729688596625136
+                ],
+                "nodeSamplesUs": [
+                  1.5086115315369695, 1.2630940313082208, 1.2582955662018653, 1.3848823502487617, 1.3748798480364384,
+                  1.5794458667725033, 2.7140707485275906, 2.4560561624607153, 3.18488907875864
+                ],
+                "compileDurationMs": 4940.288375000004,
+                "moduleCompileDurationMs": 1.9205409999995027,
+                "instantiateDurationMs": 0.22466700000222772,
+                "moduleInitDurationMs": 0.09433300000091549,
+                "firstBatchDurationMs": 4.320166999998037,
+                "binaryBytes": 82504,
+                "moduleImportCount": 0,
+                "functionImportCount": 0,
+                "expectedChecksum": 1,
+                "actualChecksum": 1,
+                "testCompiledToWasm": true,
+                "benchmarkUsesIr": false,
+                "irCompiledFunctions": [],
+                "target": "standalone",
+                "optimizationRequested": true,
+                "optimizationVerified": true,
+                "optimizationOmittedPasses": ["flatten"],
+                "optimizationLevel": 4,
+                "runtimeArgumentSuppliedAfterCompile": true
+              }
+            },
+            "wasmUs": 307.45157911698357,
+            "nodeUs": 0.5182484692235433,
+            "wasmStdUs": 235.90930445876236,
+            "nodeStdUs": 0.1518991012009926,
+            "ratio": 0.0022007049646579884,
+            "ratioStd": 0.0011419903415100588,
+            "ratioSamples": [
+              0.0038750004509853753, 0.0022007049646579884, 0.0012773453350256496, 0.0008420252405002507,
+              0.0006530796635241812, 0.001098124598061718, 0.003567807477615645, 0.0029207263961743015,
+              0.002732291096986119
+            ],
+            "measurementOrder": "alternating-paired",
+            "ratioEstimator": "median-of-paired-ratios",
+            "iters": 6206,
+            "warmupRounds": 2,
+            "measuredRounds": 9,
+            "wasmSamplesUs": [
+              192.13454044473104, 275.7993272639383, 396.5089764743796, 548.6920655816951, 771.3297413793102,
+              790.888575572027, 145.2568482114083, 163.37236142442748, 307.45157911698357
+            ],
+            "nodeSamplesUs": [
+              0.7445214308732007, 0.6069529487590823, 0.5064788913953439, 0.4620125684820062, 0.5037397679661937,
+              0.8684941991616368, 0.5182484692235433, 0.4771659684176535, 0.8400472123756576
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "sourceRevision": "79b0e7c4dc47949fb9708a9ca45d0e7e5bade2ae",
+      "generatedAt": "2026-09-07T19:43:05.027Z",
+      "packages": [
+        {
+          "name": "redux",
+          "version": "5.0.1",
+          "performance": {
+            "sampleOp": "dispatch(action) + getState().count",
+            "lanes": {
+              "jsHost": {
+                "status": "skipped",
+                "placement": "js-host",
+                "inputMode": "runtime-dynamic",
+                "reason": "lane not selected"
+              },
+              "standalone": {
+                "status": "skipped",
+                "placement": "standalone",
+                "inputMode": "compile-time-static",
+                "reason": "lane not selected"
+              },
+              "jsHostNative": {
+                "status": "compile-error",
+                "placement": "js-host",
+                "inputMode": "runtime-dynamic",
+                "diagnostic": "Native-first semantic-provider policy rejected implicit or unclassified host imports: env::__get_builtin (unknown, owner #4401), env::__instanceof (unknown, owner #4401), env::__get_process_env (unknown, owner #4401), env::__throw_reference_error (unknown, owner #4401), string_constants::nextListeners is not defined (legacy-semantic, owner #4397), string_constants::currentListeners is not defined (legacy-semantic, owner #4397), string_constants::isDispatching is not defined (legacy-semantic, owner #4397), string_constants::currentState is not defined (legacy-semantic, owner #4397), string_constants::currentReducer is not defined (legacy-semantic, owner #4397), env::__js_array_new (legacy-semantic, owner #4397), env::__js_array_push (legacy-semantic, owner #4397), env::__call_function (legacy-semantic, owner #4397), env::__extern_is_object (legacy-semantic, owner #4397), string_constants::console (legacy-semantic, owner #4397), env::__to_property_key (unknown, owner #4401), env::__call_dyn_2 (legacy-semantic, owner #4397). Use the host-assisted compatibility profile for this source until its native provider is implemented.",
+                "optimizationRequested": true,
+                "optimizationVerified": false,
+                "compileDurationMs": 2496.8642499999996,
+                "optimizationLevel": 4,
+                "semanticProviders": "native-first",
+                "environment": "javascript"
+              },
+              "standaloneDynamic": {
+                "status": "skipped",
+                "placement": "standalone",
+                "inputMode": "runtime-dynamic",
+                "reason": "lane not selected"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "baselineChecks": {
+    "focusedCore": {
+      "passed": 49,
+      "failed": 2,
+      "total": 51,
+      "failures": [
+        "issue-4397: runs parse and URI string globals through their native providers (null instead of a b/✓)",
+        "issue-4401: preserves target-derived standalone compatibility fallbacks until native-first is explicitly selected (expected __create_generator import absent)"
+      ],
+      "reproducedInFocusedRerun": true
+    },
+    "hostImportPolicy": {
+      "probes": 33,
+      "imports": 395,
+      "legacySemanticImports": 0,
+      "unknownImports": 0
+    }
+  }
+}

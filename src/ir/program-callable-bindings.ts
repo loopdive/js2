@@ -11,22 +11,8 @@ import { irUnitCallableBindingId } from "./callable-bindings.js";
 import { createIrBindingId, type IrBindingId, type IrSourceId, type IrUnitId } from "./identity.js";
 import type { IrTerminalUnitRecord } from "./identity.js";
 import type { IrPlanningIdentityContext } from "./planning-identity.js";
-
-export type IrProgramCallableBindingKind = "source" | "import-alias" | "export-alias";
-
-/** One exact source or module-boundary callable identity. */
-export interface IrProgramCallableBindingRecord {
-  readonly bindingId: IrBindingId;
-  readonly sourceId: IrSourceId;
-  readonly declarationOrdinal: number;
-  /** Stable ordinal among the source's callable bindings of this graph kind. */
-  readonly bindingOrdinal: number;
-  readonly kind: IrProgramCallableBindingKind;
-  readonly localName: string;
-  readonly targetBindingId: IrBindingId;
-  readonly canonicalBindingId: IrBindingId;
-  readonly targetUnitId: IrUnitId;
-}
+import type { IrProgramCallableBindingRecord } from "./program/callable-bindings.js";
+export type { IrProgramCallableBindingKind, IrProgramCallableBindingRecord } from "./program/callable-bindings.js";
 
 /** One direct fixed-target call admitted by the whole-program graph. */
 export interface IrProgramCallableUse {

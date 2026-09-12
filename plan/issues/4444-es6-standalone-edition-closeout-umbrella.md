@@ -18,6 +18,151 @@ related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445
 
 # #4444 — UMBRELLA: ES6 (ES2015) standalone edition close-out
 
+## Handover (2026-09-06, session claude/es6-test262-standalone-g10c7u, wave 5)
+
+ES2015 standalone stood at **10,188 / 11,704 (87.0 %)** after wave 4 (#5604)
+landed on 2026-09-05. Wave 5 ran six lanes from Fable-written plans (Opus
+medium, Opus high for the Proxy lane, Sonnet high for the mechanical lib.dom
+fix), each followed by an adversarial review (one reviewer, two skeptics per
+finding) and as many reviewed fix rounds as the reviewer kept finding real
+defects. PR-1 integrated five lanes; #5349 (species / byte-vec brand) shipped
+as PR-2 after two more reviewed rounds.
+
+### Wave-5 close (2026-09-07)
+
+Three PRs landed, all through the merge queue:
+
+| PR | content | merged (UTC) | promoted standalone baseline |
+| --- | --- | --- | --- |
+| #5688 | the five PR-1 lanes | 2026-09-06 20:21 | ES2015 **10,219 / 11,704 (87.3 %)**; whole corpus +46 / −2 vs the pre-merge baseline |
+| #5694 | #5349 species r5, rounds 1–5 | 2026-09-07 03:14 | ES2015 **10,228 / 11,704 (87.4 %)**; whole corpus +21 / 0 (11 `Array`, 9 `ArrayBuffer`, 1 `TypedArrayConstructors`) |
+| #5696 | #5316 r6 — the 2-row Annex B regression #5688 introduced | 2026-09-07 03:57 | the two rows promote with the next baseline (not yet in the 04:10 fetch) |
+
+The −2 of #5688 was found by set-diffing the promoted baseline against the
+previous copy, not by any gate: `Object.prototype.__defineGetter__` /
+`__defineSetter__` on an EXISTING key of a non-extensible literal or class
+instance threw, because #5316's integrity bag now records
+`preventExtensions` on those carriers and `__defineProperty_accessor` judged
+"new key" from the bag, which cannot see a struct field. Fixed in the accessor
+arm with the own-only `__hasOwnProperty` guard (2,054-row control, 0 lost);
+the data arm's twin guard was measured and reverted because it silenced the
+correct frozen-object throw.
+
+#5349 needed rounds 4 and 5 after the round-3 audit: round 4 kept a
+packed-byte receiver's TypedArray brand through `ab.slice` when reached via an
+ArrayBuffer-typed binding and recognised the intrinsic `%ArrayBuffer%` as the
+species by identity; round 5 hoisted the species ladder's two null
+initialisers out of the `if (isPacked == 0)` gate, because a brand-gated
+slice site executed twice reused the first execution's species buffer (trap
+when longer, silent cross-object corruption otherwise). Full records: the
+issue file's "### Round 4" / "### Round 5"; 85 pins, every round-5 pin
+executes its site at least twice.
+
+**Follow-ups this close leaves, in priority order.**
+
+1. **wasi own-key ladder for closed-struct carriers.** On `--target wasi`
+   `__hasOwnProperty` answers false for a struct-field key (and
+   `Object.prototype.hasOwnProperty.call({existing:null}, 'existing')` traps),
+   so the #5316 r6 guard is emitted but inert there and the four PR-1-regressed
+   wasi shapes keep main's answer. No test262 row is at stake; recorded in
+   #5316's r6 residuals with the probe set.
+2. **`class B extends ArrayBuffer {}` as the species TRAPs** (node 4) — the
+   `IsConstructor` family cannot answer intrinsic identity for a subclass;
+   needs ArrayBuffer subclassing. Recorded in #5349 round 4/5 residuals.
+3. **`Reflect.defineProperty` of an accessor** over an existing key is a silent
+   no-op, over a NEW key of a non-extensible object traps instead of answering
+   `false` (the §10.1.6.3 throw is right; the `Reflect` wrapper's catch is
+   missing).
+4. **#5359** — spreading a packed-byte TypedArray emits invalid wasm.
+5. The **Temporal host-flake cluster**: the rebuilt merge group of #5696 was
+   parked on 28 `built-ins/Temporal/*` host rows that flip run-to-run (the
+   same content passed the gate one run earlier with 10 different Temporal
+   flips; a local A/B on 26 of them answers identically on the PR head and on
+   main). If the cluster recurs, the gate's own text prescribes a
+   `scripts/test262-host-noise-quarantine.json` entry citing both runs.
+
+**Lessons this close added.**
+
+- **Execute a site twice on different arms.** Every round-1…4 pin of #5349 ran
+  its slice site once, so a stale Wasm local was invisible until the round-4
+  reviewer looped it. A gate placed around an emitter that RETURNS a local to
+  its caller must keep that local's initialisation outside the gate.
+- **Set-diff the promoted baseline after every merge.** The merge-group
+  regression gate scores the host target and the standalone guards score the
+  aggregate; a 2-row standalone loss behind a +46 gain passed every one of
+  them. The whole-corpus diff of the two baseline copies took one minute and
+  found it.
+- **A push to main rebuilds the queue group.** The benchmark-artifact refresh
+  that follows every merge rebuilt #5696's group and re-rolled the Temporal
+  host bucket into a park. Read the cited run before touching the label: the
+  first group's log, the changed-path count and a local A/B settle it.
+- **`git archive` + bundles is the only base tree that measures.** Both
+  post-merge findings were attributed only after re-running the rows on an
+  archive of the exact main commit with its own compiler bundle and quickjs
+  adapter; a lane snapshot or a stale checkout would have blamed the wrong
+  change.
+
+| lane | shipped | owned rows (base → lane) | control | review rounds |
+| --- | --- | --- | --- | --- |
+| #5316 Proxy r5 (Opus high) | integrity bag learns the instance carrier; gopd fold asks the native on a guard miss; `in` stops folding over a Proxy; §10.5 clauses restored; false PreventExtensions/SetPrototypeOf status; `Reflect.set` with receiver (§10.1.9.2), receiver-Proxy define route, target-Proxy set trap with receiver, non-Object TypeError | +16 (Proxy+Reflect 350 → 366) +1 (integrity) | 464 + 317 rows, 0 lost | review → fix round → clean |
+| #5350 super property r1 | class [[HomeObject]] read, base-before-key element read, `extends null` TypeError, uninitialised-`this` guard (lexical + runtime flag), object-literal `super.m()` incl. accessor bodies, `__proto__:` literal links its prototype, callable check | +8 on the 53-row super control (18 → 26; 2 of them main drift), 6 / 13 target rows | 53 rows, 0 lost; 1,089-row class/super control run on the integrated tree (see PR) | review + 5 fix rounds (rounds 3–5 on the loop guard; round 5 by Fable) |
+| #5318 class r4 round 2 | tri-state static-accessor gate with a hardened syntactic walker; object-literal evaluated-key accessors; later same-key members DEFINE; host `__proto__:` after a dynamic accessor; spread after a same-key accessor copies via define | +2 (`computed-property-names/object/accessor/{getter,setter}`) | 61 rows identical; 783-row class sweep 0 lost | review + 3 fix rounds |
+| #3371 Reflect.construct r2 | nested-function `new.target` stop, symbol-resolved binding count, dynamic in-file targets gated on their whole value set, JSDoc/annotation refusals, `neverConstructed` for named function expressions, destructuring-assignment writes | +10 (218-row control 156 → 166); fix rounds 0 net, ~14 wrong-answer admissions turned back into refusals | 218 + 24 rows, 0 lost; 89-file probe corpus 0 base drift | review + 3 fix rounds |
+| #5351 lib.dom shadow (Sonnet high) | a user top-level binding excludes the same-named lib.dom ambient from the import set, scoped per source file | +6 (24 leak rows: 24/24 import-free, 6 pass, 18 now fail on unrelated gaps) | 40-name sweep, 24 rows, byte identity | review → fix round (multi-file scoping) → clean |
+| #5349 species r5 (PR-2) | Array ctor null TypeError, defineProperty arming, `ArrayBuffer.prototype.slice` SpeciesConstructor; round 2 brands `$__vec_i8_byte` (`final`) vs the open `$__vec_i32_byte` so step 16 discriminates; round 3 audits every cast/test site that relied on the old identity | +19 measured on the lane (57-row target set 6 → 25), 3,147-row TA/AB/DV control 0 lost on round 2 | in round 3 (Opus high) | review + 2 fix rounds so far |
+
+Expected ES2015 delta from PR-1: roughly +43 owned rows plus collateral; take
+the real figure from the promoted baseline. Every number above was measured
+with `scripts/run-test262-paths.mts --isolate --standalone` against a
+`git archive` base tree with its own compiler bundle and quickjs adapter.
+
+**Residuals carried forward, each with its mechanism in the issue file.**
+#5350: a `super.x` read that is genuinely reached before a nested function's
+`super()` answers a value instead of throwing (only a flag the nested function
+could store would decide it; the r4/r5 records explain why the
+never-invent-a-throw direction was chosen); reads inside an arrow inside a
+loop (xa8); `super.missing?.()`; `Math.max` as a super member; the 7 rows
+blocked by the block-scoped-class captured-`var` write defect. #5318: standalone
+`__proto__:` after a dynamic accessor (1010 on every tree); `u: undefined`
+member after an accessor traps on every tree. #3371: three conservative
+refusals of shapes base also refused (g1h/g2h/g2i); `let T = (function(){…})`
+answers 4 on base too; x1/x2 plain-`new` new.target misreads. #5316: the
+TypedArray integer-index arm for `Reflect.set` (six rows), `with(proxy)`
+re-entrancy (2 rows), `instanceof` fold. #5351: hoisted `var` in a top-level
+block / destructuring still leaks (pre-existing). New issues filed: #5359
+(for-in + spread over a TypedArray emits invalid wasm).
+
+**Next, in order.** (1) Land PR-2 (#5349 round 3) — the brand split is
+architecturally right and unblocks `ArrayBuffer.isView` /
+`Object.prototype.toString` precision, but every `ref.cast`/`ref.test` on the
+two byte vecs must dispatch on both types; its 3,147-row control is the gate.
+(2) #5350's block-scoped-class captured-`var` defect (7 target rows) and the
+`u8.buffer` snapshot-copy family found by the #5349 probes (t1/t2/t11/t17). (3)
+The TypedArray cluster (187 non-pass rows) once #5349 lands. The sibling
+issues #2864 / #2867 / #2175 stay with the other team.
+
+**Lessons this wave added** (the wave-4 list below still holds):
+
+- **Static predicates over dynamic facts converge only by review.** #3371 took
+  three rounds and #5350 five because each rule admitted a shape the previous
+  reviewer had not probed; each round's reviewer found the next hole in under an
+  hour. Budget the review loop, not the first implementation.
+- **A representation identity is load-bearing wherever a `ref.cast` never
+  trapped.** Splitting `$__vec_i8_byte` from `$__vec_i32_byte` (#5349 round 2)
+  was one line and correct, and it exposed three emitters that cast a typed
+  array to a buffer "because it always worked". Grep every cast site before
+  changing a canonical type, not after the review.
+- **Compare a fix tree against the tree it was cut from, never against the
+  lane snapshot.** Integration-branch drift (a new import, a new module)
+  produces false host-byte positives; two reviewers lost time to it.
+- **Host-target probes need `importObject.__setInstance(instance)`.** Without
+  it the open-object model is dead and every host answer is wrong on base too;
+  one review round's host findings were re-measured after this was found.
+- **A finisher agent beats a rerun after a container restart.** Fix commits
+  survive; a finisher prompt that names them, resumes the chunked driver (skip
+  `.done`, delete the partial chunk) and writes the record saved ~5 h of
+  control runs.
+
 ## Handover (2026-09-05, session claude/es6-test262-standalone-g10c7u, wave 4)
 
 ES2015 standalone stood at **10,131 / 11,704 (86.6 %)** after #5576 landed

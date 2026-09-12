@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts, forEachChild } from "../ts-api.js";
+import { propertyValueIsAccessorObjectLiteral } from "./accessor-value-field.js";
 import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { emitToBoolean } from "./coercion-engine.js";
@@ -173,10 +174,11 @@ import {
   removeMultiIrAttemptedCallableUnits,
 } from "./multi-prepared-callable-orchestration.js";
 import { createCodegenContext } from "./context/create-context.js";
-import { markIndexedPropertyStale } from "./strict-eq-stale-type.js";
+import { expressionHasWidenedPropertyType, markIndexedPropertyStale } from "./strict-eq-stale-type.js";
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
 import { sourceFunctionHandleForDeclaration } from "./program-abi-source-callable-planning.js";
 import { stripHostBridgeExports } from "./host-bridge-exports.js";
+import { publishStandaloneLinkBoundaryExports } from "./standalone-link-boundary.js"; // (#5383 S2d)
 import { eliminateDeadLayoutAndPlanProgramAbi } from "./program-abi-finalization.js";
 import { emitDataStructHostBridgeManifest } from "./data-struct-host-bridge.js";
 import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_ROLE } from "./program-abi-planning.js";
@@ -597,7 +599,9 @@ import { emitInitMarshalHelperRegistration } from "./init-marshal-helpers.js"; /
 import { emitInitClassDispatchRegistration } from "./init-class-dispatch-helpers.js"; // (#5202)
 import { emitObjectCreateClassInstanceExport } from "./object-create-class-instance.js"; // (#5239)
 import { emitClassInstanceProtoExport } from "./class-instance-proto.js"; // (#5347)
+import { hostBridgeMethodKeys } from "./runtime-key-class-methods.js"; // (#5358)
 import { emitClassValueConstructExports } from "./class-value-construct.js"; // (#5242)
+import { emitClassObjectOfExport } from "./class-object-of.js"; // (#5354)
 import {
   emitClosureCallExport,
   publishStandaloneTimerCallbackDispatch,
@@ -4919,7 +4923,23 @@ function planIrFirstBodyRouting(
 
 function finalizeLeafStructTypes(ctx: CodegenContext): void {
   const callableRootTypeIdx = getFuncRefWrapperRootTypeIdx(ctx);
-  const keepOpenTypeIdxs = callableRootTypeIdx === undefined ? undefined : new Set([callableRootTypeIdx]);
+  const keepOpenTypeIdxs = new Set<number>();
+  if (callableRootTypeIdx !== undefined) keepOpenTypeIdxs.add(callableRootTypeIdx);
+  // (#5349) The ArrayBuffer byte vec is the open ROOT of the buffer hierarchy —
+  // `$__resizable_ab` subtypes it — so leaving it non-final is the principled
+  // state, and it is what keeps it a distinct canonical type from the `final`
+  // packed-byte TypedArray carrier `$__vec_i8_byte` (same two fields over the
+  // same `(array (mut i8))`). Without this the two canonicalize together and
+  // the `ArrayBuffer.prototype.slice` step-16 `ref.test` accepts a Uint8Array.
+  // (#5349 r3) Gated on the host-free lanes. `$__vec_i8_byte` — the type this
+  // brand separates it from — is only ever registered under `wasi || standalone`
+  // (`TYPED_ARRAY_PACKED_STORAGE`), so on the JS-host lane there is no second
+  // type to canonicalize against and dropping `final` bought nothing while
+  // changing one byte of every host module that builds an ArrayBuffer
+  // (`sub final` → `sub`, measured on 14 of 22 probes in round 2). Keeping the
+  // gate makes host byte-identical to main again.
+  const abVecIdx = ctx.wasi || ctx.standalone ? ctx.vecTypeMap.get("i32_byte") : undefined;
+  if (abVecIdx !== undefined) keepOpenTypeIdxs.add(abVecIdx);
   const finalizedTypeIndices = markLeafStructsFinal(ctx.mod, ctx.wasi, keepOpenTypeIdxs);
   ctx.programAbiSession?.recordLeafTypeFinalization(finalizedTypeIndices);
 }
@@ -6068,6 +6088,11 @@ export function generateModule(
     // (#5242) `new <class value>(…)` — the CONSTRUCT twin of the same family.
     emitClassValueConstructExports(ctx, CLASS_VALUE_CONSTRUCT_HELPERS);
 
+    // (#5354) "which class is this struct an instance of" — the identity the
+    // host needs to give a foreign instance the same `[[Prototype]]` object
+    // that `C.prototype` answers across the linked-provider seam.
+    emitClassObjectOfExport(ctx);
+
     // (#2038 / #3100, reserve-then-fill #1719) Rebuild the native `__iterator`
     // body with the LATE ladder arms now that every carrier type is known: the
     // (#3100) vec-FAMILY normalization arms ($ObjVec + `__vec_<elemKind>` —
@@ -6988,6 +7013,11 @@ function assertNoLeakedHostImports(ctx: CodegenContext, mod: WasmModule): void {
 function finalizeStandaloneTimerCallbackExports(ctx: CodegenContext): void {
   publishStandaloneTimerCallbackDispatch(ctx);
   stripHostBridgeExports(ctx);
+  // (#5383 S2d) AFTER the host-bridge strip, deliberately: the strip is what
+  // removes the JS-facing decoder family from a standalone binary, and these
+  // wasm-facing terminals are its replacement for a linked consumer. Publishing
+  // before it would leave the export to be stripped again.
+  publishStandaloneLinkBoundaryExports(ctx);
 }
 
 /**
@@ -7384,6 +7414,48 @@ function supportsHostClassBridgeParam(type: ValType): boolean {
   return type.kind === "externref" || type.kind === "ref_extern" || type.kind === "f64";
 }
 
+/**
+ * (#5380) One host-class-bridge argument, with an explicit host `undefined`
+ * preserved as the callee's omitted-argument sentinel.
+ *
+ * The bridge ABI is `(externref, …externref) -> externref`, and the host side
+ * (`src/runtime/class-method-host-bridge.ts`) pads an under-applied call with
+ * real JS `undefined` values. Unboxing those to `f64` yields a plain quiet NaN,
+ * which the callee's parameter prologue cannot tell apart from a deliberately
+ * passed `NaN` — so a formal with a default kept the NaN and the default never
+ * ran. `x.toString()` on the compiled `@js-temporal/polyfill`'s JSBI reached
+ * `__toStringBasePowerOfTwo` with radix NaN, whose `u >>>= n` shift became
+ * `u >>>= 0` and never terminated (#5380: `ZonedDateTime.hoursInDay` hung).
+ *
+ * Both lanes of the fix are the SAME sentinel the closure bridges already use
+ * (`externToClosureF64` in `closure-exports.ts`) and that
+ * `closed-method-dispatch.ts` pushes for a statically-omitted argument. Applied
+ * ONLY to a formal the callee marked optional/defaulted, so every other bridge
+ * argument keeps its previous bytes.
+ *
+ * Returns `undefined` when the guard cannot be built (no `__extern_is_undefined`
+ * import in this module), leaving the caller on its existing path.
+ */
+function undefinedAwareF64BridgeArg(ctx: CodegenContext, argLocalIdx: number, coercion: Instr[]): Instr[] | undefined {
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+  if (isUndefinedIdx === undefined) return undefined;
+  return [
+    { op: "local.get", index: argLocalIdx },
+    { op: "call", funcIdx: isUndefinedIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "f64" } },
+      then: [{ op: "i64.const", value: 0x7ff00000deadc0den }, { op: "f64.reinterpret_i64" }],
+      else: [{ op: "local.get", index: argLocalIdx }, ...coercion],
+    },
+  ];
+}
+
+/** Whether formal `index` of `fullName` carries a default / `?` marker. */
+function hostClassBridgeFormalIsOptional(ctx: CodegenContext, fullName: string, index: number): boolean {
+  return (ctx.funcOptionalParams.get(fullName) ?? []).some((info) => info.index === index);
+}
+
 /** Instructions converting one incoming bridge externref into `param`. */
 function hostClassBridgeParamCoercion(ctx: CodegenContext, param: ValType): Instr[] | undefined {
   if (param.kind === "externref" || param.kind === "ref_extern") return [];
@@ -7448,7 +7520,7 @@ function classBridgeNeedsNumberBox(ctx: CodegenContext): boolean {
     }
   }
   const scanKeys = new Set<string>([
-    ...ctx.hostDynamicClassMethodNames,
+    ...hostBridgeMethodKeys(ctx), // (#5358) named + runtime-key demand
     ...externrefBackedKeys,
     ...dynamicClassAccessorReadKeys(ctx),
   ]);
@@ -7497,8 +7569,9 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
   // iterator demand gate, but also enter when a dynamic host call can target a
   // compiled class method (ordinary classes, not only fnctor subclasses).
   const needsIterator = ctx.funcMap.has("__iterator") || ctx.funcMap.has("__iterator_next");
-  const needsDynamicClassMembers =
-    !ctx.standalone && !ctx.wasi && ctx.hostDynamicClassMethodNames.size > 0 && ctx.classSet.size > 0;
+  // (#5358) `bridgeKeys` = named dynamic demand ∪ runtime-key read demand.
+  const bridgeKeys = hostBridgeMethodKeys(ctx);
+  const needsDynamicClassMembers = !ctx.standalone && !ctx.wasi && bridgeKeys.size > 0 && ctx.classSet.size > 0;
   // (#5204) An externref-backed class (`class D extends Array`) has host
   // objects for instances, so every host-side member access on it goes through
   // the class-qualified bridge. A module whose ONLY such access is a property
@@ -7532,7 +7605,7 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
     for (const m of ctx.classMethodNames.get(className) ?? []) externrefBackedMethodKeys.add(m);
   }
   for (const [structName] of ctx.structFields) {
-    for (const key of new Set<string>([...ctx.hostDynamicClassMethodNames, ...externrefBackedMethodKeys])) {
+    for (const key of new Set<string>([...bridgeKeys, ...externrefBackedMethodKeys])) {
       const fullName = `${structName}_${key}`;
       if (ctx.classMethodSet.has(fullName) && ctx.funcRestParams.has(fullName)) restMethodKeys.add(key);
     }
@@ -7980,7 +8053,17 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
             // remains the semantic path.
             testAndCall.push({ op: "i32.const", value: 0 });
           } else {
-            testAndCall.push({ op: "local.get", index: arg + 1 }, ...coercion);
+            // (#5380) Same undefined-preserving arm as the externref-backed
+            // bridge: the host pads an under-applied call with real `undefined`,
+            // which must reach a DEFAULTED f64 formal as the omitted-argument
+            // sentinel, not as a plain NaN.
+            const guarded =
+              expected.kind === "f64" &&
+              hostClassBridgeFormalIsOptional(ctx, `${entry.structName}_${methodSuffix}`, arg)
+                ? undefinedAwareF64BridgeArg(ctx, arg + 1, coercion)
+                : undefined;
+            if (guarded !== undefined) testAndCall.push(...guarded);
+            else testAndCall.push({ op: "local.get", index: arg + 1 }, ...coercion);
           }
         }
       } else {
@@ -8086,7 +8169,7 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
       }
     }
     if (needsDynamicClassMembers) {
-      for (const key of ctx.hostDynamicClassMethodNames) keys.add(key);
+      for (const key of bridgeKeys) keys.add(key);
     }
     const classMethodArities = new Map<string, Set<number>>();
     const classMethodRestKeys = new Set<string>();
@@ -8104,7 +8187,7 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
           classMethodRestKeys.add(key);
           continue;
         }
-        if (!ctx.hostDynamicClassMethodNames.has(key) && methodType.params.length !== 1) continue;
+        if (!bridgeKeys.has(key) && methodType.params.length !== 1) continue;
         if (methodType.params.slice(1).some((param) => !supportsHostClassBridgeParam(param))) continue;
         let arities = classMethodArities.get(key);
         if (!arities) classMethodArities.set(key, (arities = new Set()));
@@ -8211,7 +8294,13 @@ function emitExternrefClassMethodDispatch(ctx: CodegenContext, className: string
   const body: Instr[] = [];
   body.push({ op: "local.get", index: 0 });
   for (let index = 0; index < params.length; index++) {
-    body.push({ op: "local.get", index: index + 1 }, ...coercions[index]!);
+    // (#5380) A defaulted numeric formal takes the undefined-preserving arm.
+    const guarded =
+      params[index]!.kind === "f64" && hostClassBridgeFormalIsOptional(ctx, fullName, index)
+        ? undefinedAwareF64BridgeArg(ctx, index + 1, coercions[index]!)
+        : undefined;
+    if (guarded !== undefined) body.push(...guarded);
+    else body.push({ op: "local.get", index: index + 1 }, ...coercions[index]!);
   }
   body.push({ op: "call", funcIdx: methodIdx });
   const resultType = methodType.results.length > 0 ? methodType.results[0] : undefined;
@@ -8554,6 +8643,7 @@ function classArmTagCondition(
 function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number, keys: string[]): void {
   const mod = ctx.mod;
   const skipStruct = isSyntheticStructName;
+  const bridgeKeys = hostBridgeMethodKeys(ctx); // (#5358)
 
   type KindEntry = {
     structName: string;
@@ -8582,7 +8672,7 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
       const isSetter = memberKind === "setter";
       const restInfo = ctx.funcRestParams.get(fullName);
       if (!isGetter && restInfo) {
-        if (!ctx.hostDynamicClassMethodNames.has(memberKey)) continue;
+        if (!bridgeKeys.has(memberKey)) continue;
         const resultType: ValType | undefined = funcType.results.length > 0 ? funcType.results[0]! : undefined;
         entries.push({ structName, typeIdx, funcIdx, resultType, paramTypes: funcType.params, isRest: true });
         continue;
@@ -8592,7 +8682,7 @@ function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number
         // representation guess. Typed setter parameters keep their existing
         // compiled/static path until that ABI has an explicit coercion rule.
         if (funcType.params.length !== 2 || funcType.params[1]!.kind !== "externref") continue;
-      } else if ((isGetter || !ctx.hostDynamicClassMethodNames.has(memberKey)) && funcType.params.length !== 1) {
+      } else if ((isGetter || !bridgeKeys.has(memberKey)) && funcType.params.length !== 1) {
         continue;
       }
       if (funcType.params.length < 1) continue;
@@ -9888,46 +9978,65 @@ function directlyReassignedClassDeclarations(
  */
 function registerModuleClassStaticAssignments(ctx: CodegenContext, sourceFiles: readonly ts.SourceFile[]): void {
   const reassignedClasses = directlyReassignedClassDeclarations(ctx, sourceFiles);
+  // (#5383 S2) A MINIFIER writes `C.a = 1, C.f = function(){}, …` as ONE
+  // expression statement, so the top-level node is a comma `BinaryExpression`
+  // and the `=` test below rejected the whole chain — no value cell for any of
+  // them. For a plain class the host class-object setter covers the miss; for
+  // an externref-backed builtin subclass (`class JSBI extends Array`) there is
+  // no class-object singleton, so the write went through `null` and the later
+  // `JSBI.__imul(a, b)` read answered non-callable:
+  // `TypeError: called value is not a function`, thrown from
+  // `@js-temporal/polyfill`'s own `__module_init` before any Temporal code ran.
+  // Flattening is admission-only — each operand still passes every check below,
+  // and no control flow, order or delete semantics change.
+  const commaOperands = (expression: ts.Expression): ts.Expression[] => {
+    if (ts.isParenthesizedExpression(expression)) return commaOperands(expression.expression);
+    if (ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+      return [...commaOperands(expression.left), ...commaOperands(expression.right)];
+    }
+    return [expression];
+  };
   for (const sourceFile of sourceFiles) {
     for (const statement of sourceFile.statements) {
       if (!ts.isExpressionStatement(statement)) continue;
-      const expression = statement.expression;
-      if (!ts.isBinaryExpression(expression) || expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
-        continue;
+      for (const expression of commaOperands(statement.expression)) {
+        if (!ts.isBinaryExpression(expression) || expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
+          continue;
+        }
+        const target = expression.left;
+        if (!ts.isPropertyAccessExpression(target) || !ts.isIdentifier(target.expression)) continue;
+
+        const sourceName = target.expression.text;
+        const resolvedClass = ctx.classExprNameMap.get(sourceName) ?? sourceName;
+        if (!ctx.classSet.has(resolvedClass)) continue;
+
+        // A same-spelled non-class binding in another source must not acquire the
+        // graph-wide class's static storage merely because class registries are
+        // currently keyed by display name.
+        const declaration = ctx.oracle.valueDeclarationOf(target.expression);
+        if (declaration === undefined || !ts.isClassDeclaration(declaration)) continue;
+        if (ctx.classDeclarationMap.get(resolvedClass) !== declaration) continue;
+        if (reassignedClasses.has(declaration)) continue;
+
+        const propName = target.name.text;
+        // These are intrinsic Function/Class properties, not assignment-created
+        // ordinary data slots.  Existing declared fields/methods/accessors retain
+        // their established lowering and descriptor semantics below as well.
+        if (propName === "prototype" || propName === "name" || propName === "length") continue;
+        const fullName = `${resolvedClass}_${propName}`;
+        if (ctx.staticProps.has(fullName) || ctx.staticMethodSet.has(fullName) || ctx.staticAccessorSet.has(fullName)) {
+          continue;
+        }
+
+        const globalIdx = nextModuleGlobalIdx(ctx);
+        ctx.mod.globals.push({
+          name: `__static_${fullName}`,
+          type: { kind: "externref" },
+          mutable: true,
+          init: [{ op: "ref.null.extern" }],
+        });
+        ctx.staticProps.set(fullName, globalIdx);
       }
-      const target = expression.left;
-      if (!ts.isPropertyAccessExpression(target) || !ts.isIdentifier(target.expression)) continue;
-
-      const sourceName = target.expression.text;
-      const resolvedClass = ctx.classExprNameMap.get(sourceName) ?? sourceName;
-      if (!ctx.classSet.has(resolvedClass)) continue;
-
-      // A same-spelled non-class binding in another source must not acquire the
-      // graph-wide class's static storage merely because class registries are
-      // currently keyed by display name.
-      const declaration = ctx.oracle.valueDeclarationOf(target.expression);
-      if (declaration === undefined || !ts.isClassDeclaration(declaration)) continue;
-      if (ctx.classDeclarationMap.get(resolvedClass) !== declaration) continue;
-      if (reassignedClasses.has(declaration)) continue;
-
-      const propName = target.name.text;
-      // These are intrinsic Function/Class properties, not assignment-created
-      // ordinary data slots.  Existing declared fields/methods/accessors retain
-      // their established lowering and descriptor semantics below as well.
-      if (propName === "prototype" || propName === "name" || propName === "length") continue;
-      const fullName = `${resolvedClass}_${propName}`;
-      if (ctx.staticProps.has(fullName) || ctx.staticMethodSet.has(fullName) || ctx.staticAccessorSet.has(fullName)) {
-        continue;
-      }
-
-      const globalIdx = nextModuleGlobalIdx(ctx);
-      ctx.mod.globals.push({
-        name: `__static_${fullName}`,
-        type: { kind: "externref" },
-        mutable: true,
-        init: [{ op: "ref.null.extern" }],
-      });
-      ctx.staticProps.set(fullName, globalIdx);
     }
   }
 }
@@ -11253,6 +11362,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("emit-class-value-construct", () =>
       emitClassValueConstructExports(ctx, CLASS_VALUE_CONSTRUCT_HELPERS),
     );
+
+    // (#5354) See the single-source path — same placement, same gate.
+    profilePhase("emit-class-object-of", () => emitClassObjectOfExport(ctx));
 
     // Multi-source parity with generateModule: rebuild the reserved native
     // iterator ladders only after every graph carrier and receiver dispatcher
@@ -13233,6 +13345,12 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
         wasmType = { kind: "externref" };
       }
     }
+    // (#5376) #1589A one step further — see `propertyValueIsAccessorObjectLiteral`.
+    // A method-shorthand value (`{ v: { valueOf() { return 3 } } }`) builds a real
+    // struct and keeps its existing field type; only accessor values widen.
+    if ((wasmType.kind === "ref" || wasmType.kind === "ref_null") && propertyValueIsAccessorObjectLiteral(prop)) {
+      wasmType = { kind: "externref" };
+    }
     // For valueOf/toString callable properties, store as eqref instead of externref
     // so coercion can recover the closure and call it via call_ref
     if (wasmType.kind === "externref" && callSigs.length > 0 && (prop.name === "valueOf" || prop.name === "toString")) {
@@ -13820,7 +13938,11 @@ function hoistVarDecl(
     // mixed-assignment demotion does not — a positive unboxing proof outranks
     // it (see `numericProofOverridesMixedCarrier`).
     const hardForcesExternref =
-      initForcesExternref || realmStructuralCarrier || forInTargetForcesExternref || transferredArrayLikeResult;
+      initForcesExternref ||
+      realmStructuralCarrier ||
+      forInTargetForcesExternref ||
+      transferredArrayLikeResult ||
+      (!!decl.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer));
     const usageF64 = hardForcesExternref
       ? null
       : mixedAssignmentCarrier
@@ -14331,37 +14453,6 @@ function inferStandaloneRegExpMatchArrayType(
   return null;
 }
 
-function isStaticRegExpMatchArrayCallForImportScan(ctx: CodegenContext, call: ts.CallExpression): boolean {
-  const callee = stripRegExpInferenceWrapper(call.expression);
-  if (ts.isPropertyAccessExpression(callee)) {
-    const method = callee.name.text;
-    if (method === "exec") return isStaticRegExpExpressionForInference(ctx, callee.expression);
-    if (method === "match" && call.arguments.length === 1) {
-      return isStaticRegExpExpressionForInference(ctx, call.arguments[0]!);
-    }
-    return false;
-  }
-  // `re[Symbol.match](s)` (#2161) — symbol-protocol dual of `s.match(re)`.
-  if (ts.isElementAccessExpression(callee)) {
-    if (isSymbolMatchKeyForInference(callee.argumentExpression) && call.arguments.length === 1) {
-      return isStaticRegExpExpressionForInference(ctx, callee.expression);
-    }
-  }
-  return false;
-}
-
-export function isStandaloneRegExpMatchArrayValue(ctx: CodegenContext, expr: ts.Expression): boolean {
-  const unwrapped = stripRegExpInferenceWrapper(expr);
-  if (ts.isCallExpression(unwrapped)) return isStaticRegExpMatchArrayCallForImportScan(ctx, unwrapped);
-  if (!ts.isIdentifier(unwrapped)) return false;
-  const sym = ctx.checker.getSymbolAtLocation(unwrapped);
-  const decl = sym?.getDeclarations()?.find((d) => ts.isVariableDeclaration(d)) as ts.VariableDeclaration | undefined;
-  const initializer = decl?.initializer ? stripRegExpInferenceWrapper(decl.initializer) : undefined;
-  return initializer !== undefined && ts.isCallExpression(initializer)
-    ? isStaticRegExpMatchArrayCallForImportScan(ctx, initializer)
-    : false;
-}
-
 function inferLetConstInitializerWasmType(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -14659,7 +14750,10 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           ? numericProofOverridesMixedCarrier(usageInferredLocalType(ctx, decl))
           : null;
         const carrierForcesExternref =
-          initForcesExternref || realmStructuralCarrier || (mixedAssignmentCarrier && !mixedCarrierProvenF64);
+          initForcesExternref ||
+          realmStructuralCarrier ||
+          (mixedAssignmentCarrier && !mixedCarrierProvenF64) ||
+          (!!decl.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer));
         // (#4616) Empty-array (or Array<any>) initializer: use the SAME
         // usage-based vec inference `compileVariableStatement` applies
         // (`inferArrayVecType`, mirroring the var hoister above). Without it

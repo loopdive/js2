@@ -22,6 +22,17 @@
 // `shiftLateImportIndices` pass is a no-op for every body produced here.
 // That's the whole point of the symbolic-ref design — spec #1131 §1.2.
 
+import {
+  irStringCompareDemand,
+  irStringEqDemand,
+  irStringLenDemand,
+  irStringConcatDemand,
+  irHostCallbackWrapDemand,
+  irFunctionPrototypeCallDemand,
+  irStringConstDemand,
+  irStringCharCodeAtDemand,
+  irStringConcatManyDemand,
+} from "./program-runtime-demands.js";
 import { ts } from "../ts-api.js";
 import type { IrIntegrationOptions } from "./integration-options.js";
 export type { IrIntegrationOptions } from "./integration-options.js";
@@ -303,13 +314,10 @@ import {
 } from "./nodes.js";
 import { analyzeEscape } from "./analysis/escape.js";
 import { analyzeOwnership } from "./analysis/ownership.js";
-import { constantFold } from "./passes/constant-fold.js";
-import { deadCode } from "./passes/dead-code.js";
+import { runHygienePasses } from "./program-middleend.js";
 import { batchStringConcat } from "./passes/batch-string-concat.js";
 import { inlineSmall } from "./passes/inline-small.js";
 import { monomorphize } from "./passes/monomorphize.js";
-import { simplifyCFG } from "./passes/simplify-cfg.js";
-import { gvnFromEnv } from "./passes/gvn.js"; // #4424
 import { UnionStructRegistry } from "./passes/tagged-union-types.js";
 import { runTaggedUnions } from "./passes/tagged-unions.js";
 import type { IrFnctorShape } from "./fnctor-abi.js";
@@ -361,6 +369,7 @@ import type {
   HostCallbackWrapPolicy,
   NumberBoundaryPolicy,
   RuntimeProviderPlan,
+  RuntimeManifestPolicy,
   StringCharCodeAtPolicy,
   StringComparePolicy,
   StringConcatManyPolicy,
@@ -387,14 +396,16 @@ import type {
   WasmFunction,
 } from "./types.js";
 import {
-  collectIntegrationFunctionDeclarations,
   definedFuncAt,
   definedFuncHandleOf,
-  makeMultiSourceOverrideResolvers,
   nativeStrHelperHandle,
   replaceDefinedFuncAt,
-  resolveIntegrationSourceFiles,
 } from "../codegen/func-space.js"; // (#1916 S2) positional read/write chokepoints
+import {
+  collectIntegrationFunctionDeclarations,
+  makeMultiSourceOverrideResolvers,
+  resolveIntegrationSourceFiles,
+} from "../codegen/multi-source-ir-integration.js";
 // (#4467) per-lane §7.1.17 Number::toString provider (host import / native thunk)
 import {
   ensureIrNumberToFixedProvider,
@@ -1065,7 +1076,17 @@ function prepareClosureTransaction(input: {
  * both arms. Native `__box_number` presence must NOT widen the box policy —
  * the current arm is host-only by policy, not by helper availability.
  */
-function integrationNumberBoundaryPolicy(ctx: CodegenContext): NumberBoundaryPolicy {
+export type IrProgramRuntimePolicyContext = Pick<
+  CodegenContext,
+  | "nativeStrings"
+  | "standalone"
+  | "wasi"
+  | "strictNoHostImports"
+  | "targetProfile"
+  | "requiresStandaloneDomInteractionCapability"
+>;
+
+function integrationNumberBoundaryPolicy(ctx: IrProgramRuntimePolicyContext): NumberBoundaryPolicy {
   const hostNumberBoundary = !ctx.nativeStrings;
   return Object.freeze({
     box: hostNumberBoundary ? ("host" as const) : ("unsupported" as const),
@@ -1087,7 +1108,7 @@ function integrationNumberBoundaryPolicy(ctx: CodegenContext): NumberBoundaryPol
  * boundary as the number `1`; the family is one-armed because no native
  * boolean boxer exists to select.
  */
-function integrationBooleanBoundaryPolicy(ctx: CodegenContext): BooleanBoundaryPolicy {
+function integrationBooleanBoundaryPolicy(ctx: IrProgramRuntimePolicyContext): BooleanBoundaryPolicy {
   return Object.freeze({ box: !ctx.nativeStrings ? ("host" as const) : ("unsupported" as const) });
 }
 
@@ -1103,7 +1124,7 @@ function integrationBooleanBoundaryPolicy(ctx: CodegenContext): BooleanBoundaryP
  * GC) and wider than `booleanBoundary` (no native arm at all). The three name
  * different symbols and must not be merged.
  */
-function integrationExternIsUndefinedPolicy(ctx: CodegenContext): ExternIsUndefinedPolicy {
+function integrationExternIsUndefinedPolicy(ctx: IrProgramRuntimePolicyContext): ExternIsUndefinedPolicy {
   return Object.freeze({
     probe: ctx.standalone || ctx.wasi || ctx.nativeStrings ? ("native" as const) : ("host" as const),
   });
@@ -1139,7 +1160,7 @@ function unsupportedExternBoundaryIntrinsic(
  * arm is host-only by design — the two policies name the same symbol and must
  * not be merged.
  */
-function integrationGeneratorNumberBoxPolicy(ctx: CodegenContext): GeneratorNumberBoxPolicy {
+function integrationGeneratorNumberBoxPolicy(ctx: IrProgramRuntimePolicyContext): GeneratorNumberBoxPolicy {
   return Object.freeze({ box: !ctx.nativeStrings ? ("host" as const) : ("native" as const) });
 }
 
@@ -1153,36 +1174,8 @@ function integrationGeneratorNumberBoxPolicy(ctx: CodegenContext): GeneratorNumb
  * arm is stated as `nativeStrings ? native : host` rather than repeating
  * `integrationExternIsUndefinedPolicy`'s three-way disjunction.
  */
-function integrationStringComparePolicy(ctx: CodegenContext): StringComparePolicy {
+function integrationStringComparePolicy(ctx: IrProgramRuntimePolicyContext): StringComparePolicy {
   return Object.freeze({ compare: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
-}
-
-/**
- * (#3526 F2-S1) True when any of `fns` performs a string relational compare.
- *
- * The seam carries no `intrinsic` instruction — from-ast emits a plain `call`
- * through the `IR_STRING_COMPARE_FN` sentinel func-ref — so the demand is read
- * off the call population directly, the way `irGeneratorNumberBoxDemand` reads
- * the `gen.setReturn` one. The same predicate answers the freeze request and
- * the owner-local partition below, so the two can never disagree.
- */
-function irStringCompareDemand(fns: readonly IrFunction[]): boolean {
-  for (const fn of fns) {
-    let found = false;
-    const scan = (buffer: readonly IrInstr[]): void => {
-      for (const root of buffer) {
-        forEachInstrDeep(root, (instr) => {
-          if (found || instr.kind !== "call") return;
-          const { binding } = instr.target;
-          if (binding.kind === "intrinsic" && binding.symbol === IR_STRING_COMPARE_FN) found = true;
-        });
-      }
-    };
-    for (const block of fn.blocks) scan(block.instrs);
-    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
-    if (found) return true;
-  }
-  return false;
 }
 
 /**
@@ -1193,33 +1186,8 @@ function irStringCompareDemand(fns: readonly IrFunction[]): boolean {
  * once, here, before freeze. Same one-flag truth table as the compare's, for the
  * same reason: `standalone` and `wasi` both imply `nativeStrings`.
  */
-function integrationStringEqPolicy(ctx: CodegenContext): StringEqPolicy {
+function integrationStringEqPolicy(ctx: IrProgramRuntimePolicyContext): StringEqPolicy {
   return Object.freeze({ eq: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
-}
-
-/**
- * (#3526 F2-S3) True when any of `fns` compares two strings for equality.
- *
- * Simpler than `irStringCompareDemand`: `string.eq` IS an instruction kind, so
- * the scan is a plain kind test rather than a walk of the `call` population.
- * The same predicate answers the freeze request and the owner-local partition
- * below, so the two can never disagree.
- */
-function irStringEqDemand(fns: readonly IrFunction[]): boolean {
-  for (const fn of fns) {
-    let found = false;
-    const scan = (buffer: readonly IrInstr[]): void => {
-      for (const root of buffer) {
-        forEachInstrDeep(root, (instr) => {
-          if (instr.kind === "string.eq") found = true;
-        });
-      }
-    };
-    for (const block of fn.blocks) scan(block.instrs);
-    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
-    if (found) return true;
-  }
-  return false;
 }
 
 /**
@@ -1230,34 +1198,8 @@ function irStringEqDemand(fns: readonly IrFunction[]): boolean {
  * freeze. Same one-flag truth table as its two family-2 siblings, for the same
  * reason: `standalone` and `wasi` both imply `nativeStrings`.
  */
-function integrationStringLenPolicy(ctx: CodegenContext): StringLenPolicy {
+function integrationStringLenPolicy(ctx: IrProgramRuntimePolicyContext): StringLenPolicy {
   return Object.freeze({ len: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
-}
-
-/**
- * (#3526 F2-S4) True when any of `fns` reads a string's `.length`.
- *
- * A plain `string.len` instruction-kind scan, the twin of `irStringEqDemand`.
- * The same predicate answers the freeze request and the owner-local partition
- * below, so the two can never disagree — and it is deliberately the same
- * enumeration `prepareStrings`'s `usesStringLen` scan performs, so the freeze
- * cannot request a row for a demand the attachment pass will not find.
- */
-function irStringLenDemand(fns: readonly IrFunction[]): boolean {
-  for (const fn of fns) {
-    let found = false;
-    const scan = (buffer: readonly IrInstr[]): void => {
-      for (const root of buffer) {
-        forEachInstrDeep(root, (instr) => {
-          if (instr.kind === "string.len") found = true;
-        });
-      }
-    };
-    for (const block of fn.blocks) scan(block.instrs);
-    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
-    if (found) return true;
-  }
-  return false;
 }
 
 /**
@@ -1270,40 +1212,8 @@ function irStringLenDemand(fns: readonly IrFunction[]): boolean {
  * `nativeStrings`. The concat MODE is deliberately absent — it selects the
  * helper on the chosen authority, not the authority, and lives on the feature.
  */
-function integrationStringConcatPolicy(ctx: CodegenContext): StringConcatPolicy {
+function integrationStringConcatPolicy(ctx: IrProgramRuntimePolicyContext): StringConcatPolicy {
   return Object.freeze({ concat: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
-}
-
-/**
- * (#3526 F2-S5) Which concat MODES any of `fns` performs.
- *
- * A `string.concat` instruction-kind scan like `irStringLenDemand`, but it
- * returns a PAIR: the seam has two feature rows and the producer maps
- * `concatMode` onto one of two callable symbols
- * (`src/ir/string-support.ts`'s `irStringCallableProviderRef`), so this mirrors
- * that mapping exactly — `instr.concatMode ?? "immutable"`. A module with no
- * builder loop then freezes no `owned-append` row at all.
- *
- * The same predicate answers the freeze request and the owner-local partition
- * below, so the two can never disagree.
- */
-function irStringConcatDemand(fns: readonly IrFunction[]): { readonly immutable: boolean; readonly owned: boolean } {
-  let immutable = false;
-  let owned = false;
-  for (const fn of fns) {
-    const scan = (buffer: readonly IrInstr[]): void => {
-      for (const root of buffer) {
-        forEachInstrDeep(root, (instr) => {
-          if (instr.kind !== "string.concat") return;
-          if ((instr.concatMode ?? "immutable") === "owned-append") owned = true;
-          else immutable = true;
-        });
-      }
-    };
-    for (const block of fn.blocks) scan(block.instrs);
-    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
-  }
-  return { immutable, owned };
 }
 
 /**
@@ -1318,7 +1228,7 @@ function irStringConcatDemand(fns: readonly IrFunction[]): { readonly immutable:
  * Same one-flag truth table as its four family-2 siblings, for the same reason:
  * `standalone` and `wasi` both imply `nativeStrings`.
  */
-function integrationStringCharCodeAtPolicy(ctx: CodegenContext): StringCharCodeAtPolicy {
+function integrationStringCharCodeAtPolicy(ctx: IrProgramRuntimePolicyContext): StringCharCodeAtPolicy {
   return Object.freeze({ charCodeAt: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
 }
 
@@ -1330,7 +1240,7 @@ function integrationStringCharCodeAtPolicy(ctx: CodegenContext): StringCharCodeA
  * before freeze. Same one-flag truth table as its five family-2 siblings, for
  * the same reason: `standalone` and `wasi` both imply `nativeStrings`.
  */
-function integrationStringConstPolicy(ctx: CodegenContext): StringConstPolicy {
+function integrationStringConstPolicy(ctx: IrProgramRuntimePolicyContext): StringConstPolicy {
   return Object.freeze({ storage: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
 }
 
@@ -1355,7 +1265,7 @@ function integrationStringConstPolicy(ctx: CodegenContext): StringConstPolicy {
  * to partition. That is why the disabled arm is unreachable on every real lane
  * and the migration is byte-neutral.
  */
-function integrationHostCallbackWrapPolicy(ctx: CodegenContext): HostCallbackWrapPolicy {
+function integrationHostCallbackWrapPolicy(ctx: IrProgramRuntimePolicyContext): HostCallbackWrapPolicy {
   if (
     ctx.requiresStandaloneDomInteractionCapability === true &&
     ctx.standalone &&
@@ -1395,161 +1305,8 @@ function integrationHostCallbackWrapPolicy(ctx: CodegenContext): HostCallbackWra
  * `ctx.fast` is NOT read here and must not be: it is a different axis, and the
  * census is identical across `{compat, fast}` in both target cells.
  */
-function integrationFunctionPrototypeCallPolicy(ctx: CodegenContext): FunctionPrototypeCallPolicy {
+function integrationFunctionPrototypeCallPolicy(ctx: IrProgramRuntimePolicyContext): FunctionPrototypeCallPolicy {
   return Object.freeze({ call: ctx.standalone && !ctx.wasi ? ("native" as const) : ("unsupported" as const) });
-}
-
-/**
- * (#3526 F3-S1) Which host callback MAKER arms any of `fns` crosses.
- *
- * Read off `closure.new`, which is the ONLY lane-free place both arms are
- * visible: `hostOneShot` is set exclusively by `lowerHostVoidCallbackExpression`
- * for a certified void callback that is NOT `standaloneDomReusable`, and
- * `domCallbackAuthority` exclusively for one that is. The maker `call` itself
- * cannot serve as the demand, because on the exact standalone-DOM lane there is
- * no call to find — the packed closure goes straight to the DOM import — and a
- * demand only the host arm can produce would leave the dispatcher lane with no
- * frozen row for the manifest to admit it by.
- *
- * The same predicate answers the freeze request and the owner-local partition
- * below, so the two can never disagree.
- */
-function irHostCallbackWrapDemand(fns: readonly IrFunction[]): {
-  readonly host: boolean;
-  readonly nativeDispatch: boolean;
-} {
-  let host = false;
-  let nativeDispatch = false;
-  for (const fn of fns) {
-    const scan = (buffer: readonly IrInstr[]): void => {
-      for (const root of buffer) {
-        forEachInstrDeep(root, (instr) => {
-          if (instr.kind !== "closure.new") return;
-          if (instr.hostOneShot === true) host = true;
-          if (instr.domCallbackAuthority !== undefined) nativeDispatch = true;
-        });
-      }
-    };
-    for (const block of fn.blocks) scan(block.instrs);
-    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
-  }
-  return { host, nativeDispatch };
-}
-
-/**
- * (#3526 F3-S3) Whether any of `fns` calls the `%Function.prototype%` helper.
- *
- * Exactly the enumeration the preregister scan below repeats, so a demand the
- * freeze requests can never be one the admission then refuses. The seam carries
- * no intrinsic instruction — from-ast emits a plain zero-arg `call` on the
- * runtime symbol — so this is read off `call`, the only place the use is
- * visible before the freeze.
- */
-function irFunctionPrototypeCallDemand(fns: readonly IrFunction[]): boolean {
-  let used = false;
-  for (const fn of fns) {
-    const scan = (buffer: readonly IrInstr[]): void => {
-      for (const root of buffer) {
-        forEachInstrDeep(root, (instr) => {
-          if (instr.kind !== "call" || instr.target.binding.kind !== "runtime") return;
-          if (instr.target.binding.symbol === FUNCTION_PROTOTYPE_CALL_HELPER) used = true;
-        });
-      }
-    };
-    for (const block of fn.blocks) scan(block.instrs);
-    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
-  }
-  return used;
-}
-
-/**
- * (#3526 F2-S8) Which literal-storage namespaces any of `fns` needs.
- *
- * TWO producers, exactly the enumeration `prepareStrings`' own literal scan
- * performs: a `string.const` instruction, and an `extern.regex`, whose pattern
- * and flags lower through two `emitStringConst` calls and DO occupy
- * `string_constants` globals on the host lane. Counting the regex is what keeps
- * a regex-only module's frozen `hostCapabilityRecords` truthful about the
- * namespace it imports — even though its two literals still reach emission
- * through the no-storage fallback until that seam carries a `storage` of its
- * own (measured: 2 reaches, REGEX/gc-host, and 0 for `string.const` anywhere).
- *
- * `utf16` is the ONE derivation, `hasLoneSurrogate`, shared with the legacy
- * collector through `src/string-surrogate.ts`. It is a per-literal fact inside
- * the host arm, never an arm of its own — the pair says which feature ROWS the
- * module needs, not which authority answers them.
- */
-function irStringConstDemand(fns: readonly IrFunction[]): { readonly literal: boolean; readonly utf16: boolean } {
-  let literal = false;
-  let utf16 = false;
-  const note = (value: string): void => {
-    literal = true;
-    utf16 ||= hasLoneSurrogate(value);
-  };
-  for (const fn of fns) {
-    const scan = (buffer: readonly IrInstr[]): void => {
-      for (const root of buffer) {
-        forEachInstrDeep(root, (instr) => {
-          if (instr.kind === "string.const") note(instr.value);
-          if (instr.kind === "extern.regex") {
-            note(instr.pattern);
-            note(instr.flags);
-          }
-        });
-      }
-    };
-    for (const block of fn.blocks) scan(block.instrs);
-    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
-  }
-  return { literal, utf16 };
-}
-
-/**
- * (#3526 F2-S7) True when any of `fns` performs a guarded `charCodeAt` read.
- *
- * TWO producers reach WasmGC codegen and BOTH are demand — this is the only
- * scan in the family that is not a single instruction kind:
- *
- *  * a `string.char_code_at` instruction, minted by `from-ast` only with
- *    receiver-encoding evidence; and
- *  * an `intrinsic` `call` whose symbol is the plan-path pair
- *    `__jsstr_charCodeAt` / `__str_charCodeAt` — the SAME enumeration the host
- *    pre-registration scan performs further down, minus the trusted symbol.
- *
- * The proof-licensed symbols (`__jsstr_charCodeAt_trusted`, and the
- * `__str_flatten` + `__str_flat_charCodeAt` preheader pair) are deliberately
- * NOT demand: they are a different, plan-time-decided feature this slice does
- * not govern, so a hoisted char-read loop freezes no row and its arms are
- * untouched.
- *
- * The same predicate answers the freeze request and the owner-local partition
- * below, so the two can never disagree.
- */
-function irStringCharCodeAtDemand(fns: readonly IrFunction[]): boolean {
-  for (const fn of fns) {
-    let found = false;
-    const scan = (buffer: readonly IrInstr[]): void => {
-      for (const root of buffer) {
-        forEachInstrDeep(root, (instr) => {
-          if (instr.kind === "string.char_code_at") {
-            found = true;
-            return;
-          }
-          if (instr.kind !== "call" || instr.target.binding.kind !== "intrinsic") return;
-          if (
-            instr.target.binding.symbol === JSSTR_CHARCODEAT_FN ||
-            instr.target.binding.symbol === NATIVE_CHARCODEAT_FN
-          ) {
-            found = true;
-          }
-        });
-      }
-    };
-    for (const block of fn.blocks) scan(block.instrs);
-    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
-    if (found) return true;
-  }
-  return false;
 }
 
 /**
@@ -1567,49 +1324,13 @@ function irStringCharCodeAtDemand(fns: readonly IrFunction[]): boolean {
  * `wasm:js-string.concat` and no `__concat_`. Only the wasi term keeps the
  * pass off there.
  */
-function integrationStringConcatManyPolicy(ctx: CodegenContext): StringConcatManyPolicy {
+function integrationStringConcatManyPolicy(ctx: IrProgramRuntimePolicyContext): StringConcatManyPolicy {
   if (ctx.nativeStrings) {
     return Object.freeze({ batch: ctx.standalone && !ctx.wasi ? ("native" as const) : ("off" as const) });
   }
   return Object.freeze({
     batch: ctx.standalone || ctx.wasi || ctx.strictNoHostImports ? ("off" as const) : ("host" as const),
   });
-}
-
-/**
- * (#3526 F2-S6) The sorted unique arities any of `fns` concatenates in one
- * batched call.
- *
- * Scanned AFTER the fusion pass, off the BATCHED IR, which is what makes it
- * different from its four siblings: there is no instruction kind to look for,
- * only the `call` targets the pass minted. Both producers are covered — the
- * `string.concat$arityN` family the pass emits, and the fixed
- * `async.string.concat$arity5` symbol async planning emits for the prepared
- * final main, which has its own arm with the identical lowering.
- *
- * A module with no fused root returns `[]` and freezes no family row.
- */
-function irStringConcatManyDemand(fns: readonly IrFunction[]): { readonly arities: readonly number[] } {
-  const arities = new Set<number>();
-  for (const fn of fns) {
-    const scan = (buffer: readonly IrInstr[]): void => {
-      for (const root of buffer) {
-        forEachInstrDeep(root, (instr) => {
-          if (instr.kind !== "call" || instr.target.binding.kind !== "intrinsic") return;
-          const symbol = instr.target.binding.symbol;
-          if (symbol === IR_ASYNC_STRING_CONCAT_5_FN) {
-            arities.add(5);
-            return;
-          }
-          const arity = parseIrStringConcatManyArity(symbol);
-          if (arity !== null) arities.add(arity);
-        });
-      }
-    };
-    for (const block of fn.blocks) scan(block.instrs);
-    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
-  }
-  return { arities: Object.freeze([...arities].sort((left, right) => left - right)) };
 }
 
 /** The first number-boundary intrinsic in `fn` this policy cannot provide. */
@@ -1652,6 +1373,29 @@ function unsupportedBooleanBoundaryIntrinsic(
   return found;
 }
 
+export function irProgramRuntimePolicy(
+  ctx: IrProgramRuntimePolicyContext,
+  backend: RuntimeManifestPolicy["backend"] = "wasmgc",
+): RuntimeManifestPolicy {
+  return {
+    target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : ctx.strictNoHostImports ? "strict-no-host" : "host",
+    backend,
+    numberBoundary: integrationNumberBoundaryPolicy(ctx),
+    booleanBoundary: integrationBooleanBoundaryPolicy(ctx),
+    externIsUndefined: integrationExternIsUndefinedPolicy(ctx),
+    generatorNumberBox: integrationGeneratorNumberBoxPolicy(ctx),
+    stringCompare: integrationStringComparePolicy(ctx),
+    stringEq: integrationStringEqPolicy(ctx),
+    stringLen: integrationStringLenPolicy(ctx),
+    stringConcat: integrationStringConcatPolicy(ctx),
+    stringCharCodeAt: integrationStringCharCodeAtPolicy(ctx),
+    stringConcatMany: integrationStringConcatManyPolicy(ctx),
+    stringConst: integrationStringConstPolicy(ctx),
+    hostCallbackWrap: integrationHostCallbackWrapPolicy(ctx),
+    functionPrototypeCall: integrationFunctionPrototypeCallPolicy(ctx),
+  };
+}
+
 function prepareBuiltFnRuntimeManifest(
   ctx: CodegenContext,
   sourceFile: string,
@@ -1660,23 +1404,7 @@ function prepareBuiltFnRuntimeManifest(
   const runtime = prepareIrRuntimeManifest({
     functions: entries.map((entry) => entry.fn),
     sourceFile,
-    policy: {
-      target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : ctx.strictNoHostImports ? "strict-no-host" : "host",
-      backend: "wasmgc",
-      numberBoundary: integrationNumberBoundaryPolicy(ctx),
-      booleanBoundary: integrationBooleanBoundaryPolicy(ctx),
-      externIsUndefined: integrationExternIsUndefinedPolicy(ctx),
-      generatorNumberBox: integrationGeneratorNumberBoxPolicy(ctx),
-      stringCompare: integrationStringComparePolicy(ctx),
-      stringEq: integrationStringEqPolicy(ctx),
-      stringLen: integrationStringLenPolicy(ctx),
-      stringConcat: integrationStringConcatPolicy(ctx),
-      stringCharCodeAt: integrationStringCharCodeAtPolicy(ctx),
-      stringConcatMany: integrationStringConcatManyPolicy(ctx),
-      stringConst: integrationStringConstPolicy(ctx),
-      hostCallbackWrap: integrationHostCallbackWrapPolicy(ctx),
-      functionPrototypeCall: integrationFunctionPrototypeCallPolicy(ctx),
-    },
+    policy: irProgramRuntimePolicy(ctx),
     // (#3526 F1-S3) Same predicate, same enumeration the attachment pass runs
     // later — see `forEachIrGeneratorSetReturn`.
     generatorNumberBoxDemand: irGeneratorNumberBoxDemand(entries.map((entry) => entry.fn)),
@@ -6627,34 +6355,6 @@ function ownershipAnalysisEnabled(): boolean {
  */
 function escapeAnalysisEnabled(): boolean {
   return process.env.JS2WASM_IR_ESCAPE === "1" || process.env.JS2WASM_IR_ESCAPE === "true";
-}
-
-/**
- * Run the Phase 3a IR hygiene pipeline to fixpoint.
- *
- * Pipeline order (spec #1167a):
- *   constantFold → deadCode → simplifyCFG
- *
- * Each pass returns the same IrFunction reference when it makes no
- * changes, so reference equality is a reliable "unchanged" signal. The
- * loop iterates until a full pass round is a no-op. An iteration cap
- * guards against pathological non-convergence — with the V1 passes each
- * loop strictly removes instructions or blocks, so real code converges
- * in a handful of rounds.
- */
-function runHygienePasses(fn: IrFunction, registry?: AllocSiteRegistry): IrFunction {
-  const MAX_ITERS = 10;
-  let cur = fn;
-  for (let iter = 0; iter < MAX_ITERS; iter++) {
-    const afterCF = constantFold(cur, registry);
-    // #4424 — flag-gated structure-tree GVN (default OFF, gate lives in gvn.ts).
-    const afterGVN = gvnFromEnv(afterCF);
-    const afterDCE = deadCode(afterGVN, registry);
-    const afterCFG = simplifyCFG(afterDCE);
-    if (afterCFG === cur) return cur;
-    cur = afterCFG;
-  }
-  return cur;
 }
 
 /**

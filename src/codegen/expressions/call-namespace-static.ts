@@ -868,12 +868,36 @@ export function compileNamespaceStaticCall(
     const reflectMethod = propAccess.name.text;
 
     // Helper — compile each argument as externref, padding missing positions with ref.null.extern.
-    const emitReflectArgs = (count: number): void => {
+    //
+    // (#5381) `argumentsListIndex` names the position whose value the host
+    // reads with CreateListFromArrayLike (§7.3.18) — argument 1 of
+    // `Reflect.construct`, argument 2 of `Reflect.apply`. There the array
+    // literal's own LENGTH is the argument count, and the contextual type must
+    // not change it. TypeScript types `Reflect.construct<A extends any[]>` so
+    // that `A` infers from the TARGET's constructor signature: for
+    // `Reflect.construct(Intl.DateTimeFormat, ["en-US"])`, `A` is the OPTIONAL
+    // 2-tuple `[locales?, options?]`, and the tuple-literal lowering pads the
+    // one-element literal to a full 2-field struct whose second field is
+    // `undefined`. The host then ran `new Intl.DateTimeFormat("en-US", null)`
+    // and V8 threw "Intl.DateTimeFormat called on null or undefined" — an
+    // arity-signature masquerading as a length. `Reflect.construct(Map, [])`
+    // has the same shape and only escaped notice because `new Map(null)` is
+    // legal. Compiling this one position as a vec keeps the literal's length.
+    const emitReflectArgs = (count: number, argumentsListIndex?: number): void => {
       const externRef: ValType = { kind: "externref" };
+      const forceVecFlag = ctx as unknown as { _arrayLiteralForceVec?: boolean };
       for (let i = 0; i < count; i++) {
         const arg = expr.arguments[i];
         if (arg !== undefined) {
-          const argTy = compileExpression(ctx, fctx, arg, externRef);
+          const forceVec = i === argumentsListIndex && ts.isArrayLiteralExpression(arg);
+          const previousForceVec = forceVecFlag._arrayLiteralForceVec;
+          if (forceVec) forceVecFlag._arrayLiteralForceVec = true;
+          let argTy: ValType | null;
+          try {
+            argTy = compileExpression(ctx, fctx, arg, externRef);
+          } finally {
+            if (forceVec) forceVecFlag._arrayLiteralForceVec = previousForceVec;
+          }
           if (argTy && argTy.kind !== "externref") {
             coerceType(ctx, fctx, argTy, externRef);
           } else if (argTy === null) {
@@ -1107,6 +1131,63 @@ export function compileNamespaceStaticCall(
             }
             return fallbackReturn(4, "i32-false");
           }
+          // (#5316 r5 step 6) The refusal is replaced by the real thing:
+          // `__reflect_set_receiver` is §10.1.9.2 OrdinarySetWithOwnDescriptor
+          // with the receiver as an explicit parameter (see
+          // `object-runtime-ordinary-set.ts`). Same argument machinery as the
+          // 3-argument form — locals rather than the bare stack, so a throwing
+          // `toString` in ToPropertyKey still escapes (§7.1.19) — and the same
+          // §26.1.13 step 1 Object-target guard. The 3-argument path below is
+          // untouched and keeps its byte-identical lowering.
+          //
+          // The probe is done BEFORE any operand is emitted: this name is in
+          // `OBJECT_RUNTIME_HELPER_NAMES`, so `ensureLateImport` resolves it to
+          // the DEFINED native and adds no import (hence no funcIdx shift), and
+          // it answers `undefined` on a target where the native was not
+          // registered — wasi, and any tree where a primitive it needs is
+          // missing. Then the refusal below still stands, unchanged.
+          if (
+            ensureLateImport(ctx, "__reflect_set_receiver", [externRef, externRef, externRef, externRef], [i32Ty]) !==
+            undefined
+          ) {
+            const targetArg4 = expr.arguments[0]!;
+            if (emitNonObjectArgGuard(ctx, fctx, targetArg4, "Reflect.set")) {
+              fctx.body.push({ op: "i32.const", value: 0 }); // unreachable after throw
+              return { kind: "i32" };
+            }
+            const recvLocals = emitReflectArgumentLocals();
+            // (#5316 review r1 F3) §26.1.13 step 1 for every non-Object target,
+            // not just the statically-branded ones the guard above catches. See
+            // the 3-argument arm below for why this is the by-EXCLUSION emitter.
+            guardReflectTargetIsObject(recvLocals[0]!, "Reflect.set called on non-object");
+            coerceReflectPropertyKey(recvLocals[1]);
+            for (let i = 0; i < 4; i++) {
+              const local = recvLocals[i];
+              if (local === undefined) fctx.body.push({ op: "ref.null.extern" });
+              else fctx.body.push({ op: "local.get", index: local });
+            }
+            const recvSetIdx = ensureLateImport(
+              ctx,
+              "__reflect_set_receiver",
+              [externRef, externRef, externRef, externRef],
+              [i32Ty],
+            );
+            flushLateImportShifts(ctx, fctx);
+            if (recvSetIdx !== undefined) {
+              fctx.body.push({ op: "call", funcIdx: recvSetIdx });
+              releaseReflectArgumentLocals(recvLocals);
+              return { kind: "i32" };
+            }
+            releaseReflectArgumentLocals(recvLocals);
+            fctx.body.push(
+              { op: "drop" },
+              { op: "drop" },
+              { op: "drop" },
+              { op: "drop" },
+              { op: "i32.const", value: 0 },
+            );
+            return { kind: "i32" };
+          }
           reportError(
             ctx,
             expr,
@@ -1133,6 +1214,20 @@ export function compileNamespaceStaticCall(
         // is unchanged — `emitReflectArgumentLocals` compiles the same
         // arguments in the same source order.
         const setLocals = emitReflectArgumentLocals();
+        // (#5316 review r1 F3) §26.1.13 step 1 for every non-Object target.
+        // `emitNonObjectArgGuard` above is a STATIC test on the argument's TS
+        // type, so it never fires for the spelling programs actually use —
+        // `Reflect.set(1 as any, …)`, or a variable the checker calls `any`.
+        // This is the same runtime by-exclusion brand `Reflect.get`/`has` were
+        // given in #5196: it rejects only positively-branded primitives
+        // (number/string/boolean/bigint/Symbol) and admits every unrecognised
+        // object shape, so an ordinary object flowing through a representation
+        // the classifiers do not brand keeps its previous answer instead of
+        // becoming a spurious TypeError. Both `Reflect.set` arms get it: the
+        // 4-argument form is what exposed the hole, but the guard is shared and
+        // the spec text is one step for both (probe `n2`, 3-argument:
+        // base = lane = 11, node = 22).
+        guardReflectTargetIsObject(setLocals[0]!, "Reflect.set called on non-object");
         coerceReflectPropertyKey(setLocals[1]);
         for (let i = 0; i < 3; i++) {
           const local = setLocals[i];
@@ -2355,7 +2450,7 @@ export function compileNamespaceStaticCall(
 
     // Reflect.apply(fn, thisArg, argList) — returns externref. Host performs CreateListFromArrayLike.
     if (reflectMethod === "apply" && expr.arguments.length >= 3) {
-      emitReflectArgs(3);
+      emitReflectArgs(3, 2);
       const funcIdx = ensureLateImport(ctx, "__reflect_apply", [externRef, externRef, externRef], [externRef]);
       flushLateImportShifts(ctx, fctx);
       if (funcIdx !== undefined) {
@@ -2376,7 +2471,7 @@ export function compileNamespaceStaticCall(
     // throwing. Encode presence in the import NAME — the boundary cannot carry
     // it any other way, and the arity is a compile-time fact.
     if (reflectMethod === "construct" && expr.arguments.length >= 2) {
-      emitReflectArgs(3);
+      emitReflectArgs(3, 1);
       const constructImport = expr.arguments.length >= 3 ? "__reflect_construct_newtarget" : "__reflect_construct";
       const funcIdx = ensureLateImport(ctx, constructImport, [externRef, externRef, externRef], [externRef]);
       flushLateImportShifts(ctx, fctx);

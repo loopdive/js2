@@ -561,6 +561,79 @@ func-budget-allow:
 
 # #3526 — IR-only R6: typed semantic runtime contract and frozen feature manifest
 
+## Execution amendment — 2026-09-05
+
+Future work follows package B of the approved
+[whole-program cutover plan](3518-ir-only-default-and-direct-frontend-retirement.md#current-execution-plan--whole-program-cutover-2026-09-05),
+jointly with R7. Populate one prepared program using the existing manifest,
+provider contracts, and immutable async plans. Reuse runtime implementations
+through typed operands/results, effects, exceptions, and allocation demands;
+do not wrap AST dispatch in an opaque IR operation or copy the runtime.
+Begin dependency extraction alongside package A, then implement its published
+interface without a second ABI/ownership authority. A integrates shared-entry
+changes; B owns its dedicated producers after live claim reconciliation.
+Prioritize complete applications over more isolated policy switches. Existing
+runtime behavior, optimization obligations, and full issue acceptance remain.
+
+### Package B executable producer checkpoint — 2026-09-06
+
+`prepareWholeProgramRuntimeManifest` now lives in the dedicated
+`src/ir/runtime-program-manifest.ts` leaf and is re-exported by
+`runtime-program-producers.ts`. It invokes A's shared population validator,
+requires one explicit existing semantic-demand scan per final artifact, and
+freezes the existing provider graph once. Runtime-free programs receive an
+explicit empty frozen manifest. Provider lookup uses A's immutable map facade.
+This phase never materializes helpers or allocates backend imports, functions,
+types, or globals.
+
+The reconciled producer inventory matches consolidated base
+`af5eef9e24a8fb5b575cb57ce9eee0e8ebe425e8`; its preserved SHA256 is
+`02b0daafdff2fb4fccb6a9b85b7565245f0f7bafcd930946cd3253ade82655df`.
+Before editing, the `prepareIrRuntimeManifest` callers were enumerated:
+`integration.ts`, `backend/linear-integration.ts`, and `stdlib-selfhost.ts`.
+They retain their optional-empty behavior. The complete producer passes exact
+owner locations and requests empty output explicitly. Per-function collection
+and attachment failures preserve UnitId; provider-graph failures retain the
+original request through the existing fixed-point walk. The builder's initial
+requests, frontier removal, and transitive additions were updated together.
+Diagnostics resolve through A's original/derived owner helper, never the first
+source filename. No ownership or ABI authority moved.
+
+Typed numeric Promise crossings use the new semantic `promise.number.bridge`
+intent with the existing canonical `number.box` and `number.unbox` host records,
+and the existing native number-boundary requirement. The generic number-boundary
+policy remains unchanged, including its disabled state for the original
+`target: "gc", nativeStrings: true` application. Frame lowering reads only the
+authenticated prepared adapter projection. The canonical capability table also
+now declares the existing `env.__get_caught_exception: () -> externref` import
+through the mandatory Promise-capability creation provider. This moves its allocation into the
+accepted manifest's physical materializer and prevents the frame from inventing
+that import late. Readers were enumerated across catalogue canonicalization,
+manifest closure, async projection, intrinsic attachment, runtime currentness,
+ABI dependency collection, and materialization; the frozen canonical records
+have no mutators. The historical narrow async value-type projection remains
+separate from the explicitly typed numeric projection.
+
+Focused evidence totals 118/118 across eight distinct producer,
+manifest, provider-schema, state-preparation, and existing settled/linear async
+runtime test files; standalone typechecking passed. The numeric control executes
+real Wasm with native host Promises, returns 29, preserves
+`sync,tick1,tick2,value:29,done`, and preserves all nine import object identities
+and the import count across frame generation. ABI, missing-body/provenance,
+provider-origin, and attachment-identity mutation controls remain explicit.
+Fresh-process source-free reattachment passes after A's signed identity
+extraction (`1b9ced2df05cd5ac0415508ec6f8299d07767369`): the loader blocks the
+frontend, reissues authenticated runtime joins from JSON semantic plans, and
+a deliberate frontend import proves the barrier. Minimal valid settle-only
+plans retain their three-record semantic closure but receive a located
+backend capability refusal (typed resolve stage) before physical allocation: the current shared frame
+requires the complete core host adapter set. A fully declared settled control
+executes without new imports. The existing unconditional exception-tag helper
+remains backend setup; shared-tag imports are not covered by the module-local
+tag control. A owns source scanning and compiler wiring; C owns exact decoded
+manifest comparison before accepting newly authenticated runtime attachments.
+The original seven-unit application and complete R6 acceptance remain open.
+
 ## Objective
 
 Establish one typed, immutable contract from prepared semantics to runtime and
@@ -10517,3 +10590,67 @@ rationale, `LOC_GATE_BASE` re-checked). **Sequence behind #5297** (W2-A holds
 (#3521 `:953-956`): line-scoped edit at `:6598-6603` only, the same shape
 F1/F2 took — record the R2 lane's acknowledgement in the PR body as F3-S1 did.
 Claim slug `3526:f3-s3`, never the bare id.
+
+### ReferenceError runtime declaration slice — 2026-09-06
+
+Root granted the bounded runtime-producer implementation for #3518,
+“IR-only default and direct front-end retirement”, before source edits. This
+slice starts from signed integration `2e68ccfe6b2996307559952daa94c5acb2a277fb`
+in isolated worktree `codex-3518-reference-error-runtime-20260906`, under claim
+`3518:reference-error-runtime`. B retains its broad runtime ownership and its
+unchanged B45 oracle; A owns incorporation and validation in the existing ABI
+vector, and C owns physical reservation and consumption.
+
+The new pure `runtime-callable-declarations.ts` getter recognizes only the
+exact runtime binding `__new_ReferenceError`. Its immutable declaration has
+feature `error.reference.construct`, one externref parameter and one externref
+result, derived from the sole canonical `env.__new_ReferenceError` host record.
+The manifest reuses that declaration's signature and existing target filtering:
+host selects the import, standalone/WASI the native helper. Existing native
+emission builds `$Error_struct` with `struct.new` and `extern.convert_any`;
+this slice admits WasmGC only, leaving linear representation/throw support
+explicitly unavailable.
+
+Owned source changes are limited to that new leaf and the corresponding
+feature/provider/call/demand-owner hunks in `runtime-host-capabilities.ts`,
+`runtime-manifest.ts`, `intrinsic-support.ts`, and `runtime-program-manifest.ts`.
+The existing full block/state scans request the getter's feature and retain
+its actual requesting unit; runtime calls prevent the optional empty return.
+A's complete ABI collector also visits `closure.new.liftedFunc`; both runtime
+visitors use that same exact-reference population. Declaring a closure target
+does not establish physical closure support, which remains C's capability check.
+There is no new manifest-demand field, policy option, ABI/schema field or
+source dependency. The imported-global guard and approved three-source,
+seven-terminal fixture remain unchanged.
+
+Validation will cover exact binding selection, canonical deep immutability,
+host/native target and backend admission, nested/later-block/async-state
+demands, located original and derived owners, malformed capability/provider
+contracts, and a fresh-process frontend import barrier with a positive control.
+Only the new ReferenceError producer test and affected catalog ID/count/
+`LATER_SLICE_IDS` expectations in the existing string-schema suite are owned.
+Compiler, typecheck and test work will use root's single heavy slot after a
+fresh finite nonnegative load sample below cores minus two. Results and exact
+denominators will be recorded after execution; preparation does not establish
+physical reservation or application replay acceptance.
+
+Validation on signed parent `2e68ccfe6b2996307559952daa94c5acb2a277fb` plus
+this scoped diff passed **103/103 tests across 5/5 files**: ReferenceError
+producer **28/28**, string capability schema **32/32**, complete runtime
+producers **25/25**, async providers **10/10**, and runtime manifest **8/8**.
+Both full project TypeScript 7 and TypeScript 5 checks exited zero. The fresh
+load samples were respectively **4.375**, **4.3408203125**, and **7.2041015625**,
+all nonnegative and below **8** on ten logical cores; the jobs ran sequentially
+in root's assigned slot. Test workers used one fork, no file parallelism and
+4096 MB. Scoped formatting and Biome also passed. Evidence is retained in
+this worktree's `.tmp/reference-error-runtime-tests.log` and corresponding
+`reference-error-runtime-typecheck-ts7.log` / `reference-error-runtime-typecheck-ts5.log`.
+
+The two native helper controls measure construction and ABI only: each emits
+one `__new_ReferenceError` function with externref parameter/result and observes
+`struct.new` plus `extern.convert_any`. They do not establish application
+execution, error identity, physical reservation or linear support. The imported
+global's null/externref/throw legality, native Error struct/name dependencies,
+exception-tag reservation and complete public compiler replay remain owned
+follow-up work. The approved fixture's source digest remains
+`594eaf3f977ec2717777cdde3ff9813753f4c44faa6e3bf50fc6ced726e61b49`.

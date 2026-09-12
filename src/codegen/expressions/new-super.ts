@@ -123,10 +123,17 @@ import { compileStringLiteral } from "../string-ops.js";
 import { canStructurallyProjectRef, coerceType as coerceTypeImpl, pushDefaultValue } from "../type-coercion.js";
 import { ensureDateDaysFromCivilHelper, ensureDateStruct } from "./builtins.js";
 import { emitNativeDateParse } from "../date-parse-native.js"; // (#2164) pure-Wasm new Date(str)
-import { compileSpreadCallArgs, emitLazyClassObjectGet, emitRegisterDynamicClassParent } from "./extern.js";
+import {
+  compileSpreadCallArgs,
+  emitLazyClassObjectGet,
+  emitLazyProtoGet,
+  emitRegisterDynamicClassParent,
+} from "./extern.js";
+import { standaloneClassProtoObjectApplies } from "../class-proto-object.js"; // (#5350 step 1) class [[HomeObject]] gate
 import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5195 r3-5)
 import { compileTemporalNewExpression } from "../temporal-native.js";
 import {
+  emitSuperUninitializedThisGuard,
   emitThrowReferenceError,
   emitThrowTypeError,
   getFuncParamTypes,
@@ -136,6 +143,7 @@ import {
   noJsHost,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
+import { buildThrowJsErrorInstrs } from "../js-errors.js"; // (#5350 r2, R2) super-call callable guard
 import { localGlobalIdx } from "../registry/imports.js";
 import { ensureGetUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { holeToUndefinedInstrs } from "../array-holes.js";
@@ -1057,6 +1065,165 @@ function emitSuperExternMethodCall(
  * pushing a value (the divergence flagged in #1849's 2026-06-04 review); the two
  * forms are now unified on the value-leaving branch.
  */
+/**
+ * (#5350 step 5) `super.m(args)` / `super['m'](args)` inside an OBJECT-LITERAL
+ * method, standalone.
+ *
+ * `compileSuperMethodCallCore` bails to `evalArgsAndDefault` for an object
+ * literal — the arguments run, and a typed default (`null` / 0) is left where
+ * the call's value belongs, so `super.getThis()` answered `null`. The read half
+ * already works (#4688 + step 1): resolve the method through
+ * `__getPrototypeOf(home)` → `__reflect_get_receiver`, then Invoke it through
+ * the host-import-free `__apply_closure(fn, thisValue, argsCarrier)` bridge with
+ * `this` = the call-time receiver, which is what the `-obj-ref-this` rows
+ * observe.
+ *
+ * Order follows §13.3.6: the method is fetched first, then the arguments are
+ * evaluated (they run on BOTH sides of the callable test, so a miss keeps their
+ * side effects), and only then is callability tested.
+ *
+ * (#5350 r2 review, R2) THAT TEST NOW THROWS. Step 1's real `__proto__:`
+ * prototype link made `super.missing()` on an object literal *resolve* — to
+ * `undefined` — where before the prototype was absent, so the typed default the
+ * first cut kept ("declining to throw where the compiler cannot see the whole
+ * prototype surface") stopped being conservative and became wrong: node throws
+ * `TypeError`, this answered `undefined` (probe c01), while the ordinary
+ * `o.missing()` on the SAME object threw (control c12). The guard here is
+ * deliberately the *same* one `buildResolvedCalleeGuard` splices into
+ * `__extern_method_call` — absent (null/undefined) plus the POSITIVE primitive
+ * brands — so the two call forms agree and no callable shape the brand
+ * classifier fails to recognise can be turned into a throw. A non-callable
+ * plain object still reaches `__apply_closure`'s legacy `undefined`, exactly as
+ * on the ordinary path (#4221 declined the negative classifier).
+ */
+function compileStandaloneObjectLiteralSuperMethodCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  key: SuperReadKey,
+): ValType | null | undefined {
+  if (!ctx.standalone) return undefined;
+  if (expr.arguments.some((arg) => ts.isSpreadElement(arg))) return undefined;
+  const externref: ValType = { kind: "externref" };
+  ensureObjectRuntime(ctx);
+  ensureLateImport(ctx, "__apply_closure", [externref, externref, externref], [externref]);
+  // (#5350 r3 review, S2) IsCallable for the resolved super member.
+  ensureLateImport(ctx, "__typeof_function", [externref], [{ kind: "i32" }]);
+  if (expr.arguments.length > 0) {
+    ensureLateImport(ctx, "__objvec_new", [], [externref]);
+    ensureLateImport(ctx, "__objvec_push", [externref, externref], []);
+  }
+  // (#5350 r2, R2) Register the TypeError constructor + message constant BEFORE
+  // any funcIdx is baked into `fctx.body`, so the guard adds no late shift of
+  // its own further down.
+  const calleeGuardMessage = "called value is not a function";
+  const buildNotCallableThrow = (): Instr[] => {
+    if (!noJsHost(ctx)) return [];
+    emitWasiErrorConstructor(ctx, "TypeError", 1);
+    return buildThrowJsErrorInstrs(ctx, "TypeError", calleeGuardMessage, { flush: fctx });
+  };
+  const calleeGuardThrows = buildNotCallableThrow().length > 0;
+  flushLateImportShifts(ctx, fctx);
+  const applyIdx = ctx.funcMap.get("__apply_closure");
+  if (applyIdx === undefined) return undefined;
+  const objVecNewIdx = ctx.funcMap.get("__objvec_new");
+  const objVecPushIdx = ctx.funcMap.get("__objvec_push");
+  if (expr.arguments.length > 0 && (objVecNewIdx === undefined || objVecPushIdx === undefined)) return undefined;
+  const currentThisIdx = ensureCurrentThisGlobal(ctx);
+
+  const methodValueType = compileStandaloneObjectLiteralSuperPropertyRead(ctx, fctx, key, "externref");
+  if (methodValueType === undefined) return undefined;
+  const methodLocal = allocLocal(fctx, `__super_call_m_${fctx.locals.length}`, externref);
+  fctx.body.push({ op: "local.set", index: methodLocal });
+
+  const argsLocal = allocLocal(fctx, `__super_call_args_${fctx.locals.length}`, externref);
+  if (expr.arguments.length === 0) {
+    // `__apply_closure` reads a null carrier as the empty argument list
+    // (guardNullableApplyArguments), so no `$ObjVec` is allocated.
+    fctx.body.push({ op: "ref.null.extern" });
+  } else {
+    fctx.body.push({ op: "call", funcIdx: objVecNewIdx! });
+    fctx.body.push({ op: "local.set", index: argsLocal });
+    for (const arg of expr.arguments) {
+      fctx.body.push({ op: "local.get", index: argsLocal });
+      const argType = compileExpression(ctx, fctx, arg, externref);
+      if (argType === null) fctx.body.push({ op: "ref.null.extern" });
+      else if (argType.kind !== "externref" && argType.kind !== "ref_extern") {
+        coerceType(ctx, fctx, argType, externref);
+      }
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__objvec_push") ?? objVecPushIdx! });
+    }
+    fctx.body.push({ op: "local.get", index: argsLocal });
+  }
+  fctx.body.push({ op: "local.set", index: argsLocal });
+
+  if (calleeGuardThrows) {
+    // §13.3.6.2 EvaluateCall step 5 — same shape as `buildResolvedCalleeGuard`.
+    const nullishIdx = ctx.funcMap.get("__nullish_to_null");
+    if (nullishIdx !== undefined) {
+      fctx.body.push({ op: "local.get", index: methodLocal });
+      fctx.body.push({ op: "call", funcIdx: nullishIdx });
+      fctx.body.push({ op: "local.set", index: methodLocal });
+    }
+    fctx.body.push({ op: "local.get", index: methodLocal });
+    fctx.body.push({ op: "ref.is_null" });
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: buildNotCallableThrow() });
+    // (#5350 r3 review, S2) POSITIVE callable test. The r2 guard tested only
+    // absence plus the three primitive brands, so a resolved super member that
+    // is a plain OBJECT (`{ v: { q: 1 } }`) or a CLASS fell through to
+    // `__apply_closure`'s legacy `undefined` — probes xb6/xb7 answered
+    // undefined where node throws a TypeError. `__typeof_function` is the
+    // module's canonical standalone IsCallable predicate (the same one
+    // `ensureNativeArrayHof` uses for `callbackfn is not a function`), so it
+    // recognises every callable carrier — ordinary function, bound function,
+    // arrow, builtin, generator, async function, class — and the throw fires
+    // only on a genuine non-callable. When the module never registered it the
+    // primitive-brand guard stands in unchanged, so nothing regresses to a
+    // silent default.
+    const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+    if (typeofFunctionIdx !== undefined) {
+      fctx.body.push({ op: "local.get", index: methodLocal });
+      fctx.body.push({ op: "call", funcIdx: typeofFunctionIdx });
+      fctx.body.push({ op: "i32.eqz" });
+      fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: buildNotCallableThrow() });
+    } else {
+      for (const brand of ["__typeof_number", "__typeof_string", "__typeof_boolean"]) {
+        const brandIdx = ctx.funcMap.get(brand);
+        if (brandIdx === undefined) continue;
+        fctx.body.push({ op: "local.get", index: methodLocal });
+        fctx.body.push({ op: "call", funcIdx: brandIdx });
+        fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: buildNotCallableThrow() });
+      }
+    }
+    fctx.body.push({ op: "local.get", index: methodLocal });
+    fctx.body.push({ op: "global.get", index: currentThisIdx });
+    fctx.body.push({ op: "local.get", index: argsLocal });
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__apply_closure") ?? applyIdx });
+  } else {
+    fctx.body.push({ op: "local.get", index: methodLocal });
+    fctx.body.push({ op: "ref.is_null" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: externref },
+      then: [{ op: "ref.null.extern" }],
+      else: [
+        { op: "local.get", index: methodLocal },
+        { op: "global.get", index: currentThisIdx },
+        { op: "local.get", index: argsLocal },
+        { op: "call", funcIdx: applyIdx },
+      ],
+    });
+  }
+
+  const sig = ctx.checker.getResolvedSignature(expr);
+  const returnType = sig ? resolveWasmType(ctx, ctx.checker.getReturnTypeOfSignature(sig)) : externref;
+  if (returnType.kind !== "externref" && returnType.kind !== "ref_extern") {
+    coerceType(ctx, fctx, externref, returnType);
+  }
+  flushLateImportShifts(ctx, fctx);
+  return returnType;
+}
+
 function compileSuperMethodCallCore(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1086,7 +1253,16 @@ function compileSuperMethodCallCore(
 
   // Determine which class we're in.
   const currentClassName = resolveEnclosingClassName(fctx);
-  if (!currentClassName) return evalArgsAndDefault(); // super in object literal
+  if (!currentClassName) {
+    // (#5350 step 5) Standalone object literal: resolve and INVOKE the method
+    // rather than leaving a default where its value belongs.
+    const objectLiteralCall = compileStandaloneObjectLiteralSuperMethodCall(ctx, fctx, expr, {
+      kind: "name",
+      name: methodName,
+    });
+    if (objectLiteralCall !== undefined) return objectLiteralCall;
+    return evalArgsAndDefault(); // super in object literal
+  }
   const parentClassName = ctx.classParentMap.get(currentClassName);
   if (!parentClassName) return evalArgsAndDefault(); // class without extends
 
@@ -1210,43 +1386,77 @@ function emitSuperBaseCoercibleGuard(ctx: CodegenContext, fctx: FunctionContext)
   fctx.body.push({ op: "local.get", index: baseLocal });
 }
 
-function compileStandaloneObjectLiteralSuperPropertyRead(
+/**
+ * (#5350 step 1) The runtime `super.<name>` read, shared by the object-literal
+ * arm (#4688) and the class-method arm.
+ *
+ * The two differ ONLY in where the [[HomeObject]] and the receiver come from,
+ * so both are injected:
+ *
+ *   - `emitHomeObject` leaves the home object on the stack as an externref and
+ *     returns `false` — having emitted NOTHING — when it cannot. Object
+ *     literals read the synthetic `SUPER_HOME_OBJECT_CAPTURE_NAME` capture; a
+ *     class method materialises `C.prototype` through the #5195 `$Object`
+ *     prototype singleton.
+ *   - `emitReceiver` leaves the §12.3.5.3 step 3 `actualThis`. Object literals
+ *     use `__current_this` (the standalone call carrier); a class method uses
+ *     its own `this` LOCAL, which is the receiver the call actually bound.
+ */
+/**
+ * The referenced name of a `super` read: a key known at compile time, or (#5350
+ * step 2) an expression evaluated at runtime after the super base is resolved.
+ */
+type SuperReadKey = { kind: "name"; name: string } | { kind: "dynamic"; emit: () => void };
+
+function compileStandaloneSuperPropertyRead(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  expr: ts.PropertyAccessExpression | ts.ElementAccessExpression,
-  propName: string,
-  accessType: ts.Type,
+  key: SuperReadKey,
+  accessType: ts.Type | "externref",
+  emitHomeObject: () => boolean,
+  emitReceiver: () => void,
 ): ValType | undefined {
   if (!ctx.standalone) return undefined;
 
   ensureObjectRuntime(ctx);
-  addStringConstantGlobal(ctx, propName);
+  if (key.kind === "name") addStringConstantGlobal(ctx, key.name);
   flushLateImportShifts(ctx, fctx);
 
   const getPrototypeOfIdx = ctx.funcMap.get("__getPrototypeOf");
   const reflectGetReceiverIdx = ctx.funcMap.get("__reflect_get_receiver");
   if (getPrototypeOfIdx === undefined || reflectGetReceiverIdx === undefined) return undefined;
 
-  const currentThisIdx = ensureCurrentThisGlobal(ctx);
-  const homeObjectLocal = fctx.localMap.get(SUPER_HOME_OBJECT_CAPTURE_NAME);
-  // A standalone object-literal method must carry its actual [[HomeObject]].
-  // Falling back to __current_this would make a borrowed method resolve
-  // `super` against the call-time receiver.
-  if (homeObjectLocal === undefined) return undefined;
-  fctx.body.push({ op: "local.get", index: homeObjectLocal });
+  if (!emitHomeObject()) return undefined;
   fctx.body.push({ op: "call", funcIdx: getPrototypeOfIdx });
-  // (#5153 C.1) §12.3.5.3 step 5: RequireObjectCoercible(GetSuperBase()). With
-  // the home object's [[Prototype]] set to null the read must throw a
-  // TypeError, not quietly answer `undefined`.
-  emitSuperBaseCoercibleGuard(ctx, fctx);
-  fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
+  if (key.kind === "name") {
+    // (#5153 C.1) §12.3.5.3 step 5: RequireObjectCoercible(GetSuperBase()).
+    // With the home object's [[Prototype]] set to null the read must throw a
+    // TypeError, not quietly answer `undefined`.
+    emitSuperBaseCoercibleGuard(ctx, fctx);
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, key.name));
+  } else {
+    // (#5350 step 2) §12.3.5.1 + §6.2.5.5 GetValue: GetSuperBase runs BEFORE
+    // ToPropertyKey, so the base is spilled here and the key expression runs
+    // against the ALREADY-resolved base. A key whose `toString` re-points the
+    // home object's prototype (`prop-expr-getsuperbase-before-topropertykey-*`)
+    // must not move the base out from under the read.
+    const baseLocal = allocLocal(fctx, `__super_dynbase_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: baseLocal });
+    key.emit();
+    const keyLocal = allocLocal(fctx, `__super_dynkey_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: keyLocal });
+    fctx.body.push({ op: "local.get", index: baseLocal });
+    emitSuperBaseCoercibleGuard(ctx, fctx);
+    fctx.body.push({ op: "local.get", index: keyLocal });
+  }
   // The property receiver is the call-time `this`, not [[HomeObject]]. This
-  // distinction is observable through inherited accessors on a borrowed
-  // method; `__current_this` is the established standalone call carrier.
-  fctx.body.push({ op: "global.get", index: currentThisIdx });
+  // distinction is observable through an inherited accessor.
+  emitReceiver();
   fctx.body.push({ op: "call", funcIdx: reflectGetReceiverIdx });
 
-  const resultType = resolveWasmType(ctx, accessType);
+  // (#5350 step 5) `"externref"` keeps the raw value — the method-call arm
+  // invokes it and coerces the CALL's result, not the property's.
+  const resultType: ValType = accessType === "externref" ? { kind: "externref" } : resolveWasmType(ctx, accessType);
   if (resultType.kind !== "externref" && resultType.kind !== "ref_extern") {
     coerceType(ctx, fctx, { kind: "externref" }, resultType);
   }
@@ -1254,6 +1464,474 @@ function compileStandaloneObjectLiteralSuperPropertyRead(
   // the helper calls emitted above before the enclosing body continues.
   flushLateImportShifts(ctx, fctx);
   return resultType;
+}
+
+/**
+ * (#5350 step 3) Is the class that lexically encloses this `super` reference
+ * declared `extends null`?
+ *
+ * §15.7.14 gives such a class a prototype whose [[Prototype]] IS null, so
+ * `GetSuperBase()` answers null and RequireObjectCoercible throws a TypeError —
+ * unlike a BASE class (no `extends` at all), whose super base is
+ * `Object.prototype` and whose `super.x` must quietly answer `undefined`.
+ * `ctx.classParentMap` cannot tell the two apart (both have no parent NAME), so
+ * the distinction is read off the heritage clause. The walk stops at an object
+ * literal: `super` inside an object-literal method binds to that literal, not
+ * to any class the literal happens to sit in.
+ */
+function enclosingClassExtendsNull(node: ts.Node): boolean {
+  let current: ts.Node | undefined = node.parent;
+  while (current) {
+    if (ts.isObjectLiteralExpression(current)) return false;
+    if (ts.isClassDeclaration(current) || ts.isClassExpression(current)) {
+      const heritage = current.heritageClauses?.find((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword);
+      const heritageExpr = heritage?.types[0]?.expression;
+      return heritageExpr !== undefined && heritageExpr.kind === ts.SyntaxKind.NullKeyword;
+    }
+    current = current.parent;
+  }
+  return false;
+}
+
+/**
+ * (#5350 step 3) Emit the `class C extends null` super-base TypeError and a
+ * type-shaped value so the enclosing expression stays stack-balanced (the
+ * value is unreachable — the throw precedes it). Returns the result type, or
+ * `undefined` when this is not that shape and the caller keeps its default.
+ */
+function emitSuperExtendsNullThrow(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.Node,
+  accessType: ts.Type,
+): ValType | undefined {
+  if (!ctx.standalone) return undefined;
+  if (!enclosingClassExtendsNull(expr)) return undefined;
+  emitThrowTypeError(ctx, fctx, "Cannot read properties of null (super base)");
+  const wasmType = resolveWasmType(ctx, accessType);
+  if (wasmType.kind === "f64") {
+    fctx.body.push({ op: "f64.const", value: 0 });
+  } else if (wasmType.kind === "i32") {
+    fctx.body.push({ op: "i32.const", value: 0 });
+  } else {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+  return wasmType;
+}
+
+/**
+ * (#5350 step 4b) In a DERIVED constructor, is this `super.<x>` read provably
+ * evaluated while `this` is still uninitialised?
+ *
+ * §13.3.7.1 resolves a SuperProperty by calling `GetThisBinding()` FIRST, and
+ * in a derived constructor that binding stays uninitialised until `super(...)`
+ * returns — so the read is a ReferenceError. Proving it needs only a LEXICAL
+ * check, kept deliberately conservative in the safe direction: the answer is
+ * `true` only when the enclosing constructor contains NO `super(...)` call that
+ * ends before this reference begins. A `super()` anywhere earlier — including
+ * inside an `if` or a loop, where it may not actually have run — keeps today's
+ * behaviour rather than risking a throw in a working program.
+ *
+ * A reference inside a nested function or arrow is excluded outright: its
+ * source position says nothing about when it runs (`() => super.x` written
+ * before `super()` and called after it is correct code), and an arrow is
+ * compiled into the constructor's own FunctionContext, so `isDerivedConstructor`
+ * alone cannot tell them apart.
+ */
+type SuperUninitializedReadKind = "always" | "runtime" | "never";
+
+/**
+ * Does `root` contain a `super(...)` call, optionally only one that ends
+ * before `endsBefore`?
+ *
+ * `skipNestedClasses` excludes a NESTED class's own `super()`: it initialises
+ * THAT class's `this`, never the enclosing constructor's, so counting it as a
+ * back-edge carrier wrongly suppressed the throw for
+ * `for (…) { class C extends A { constructor(){ super() } }; v = super.zz }`
+ * (probe xa11 — node throws, this answered 6). It is set for BOTH the
+ * "completes textually before the read" scan and the enclosing-loop scan, for
+ * the same reason in both: that `super()` belongs to another constructor.
+ * `skipNestedFunctions` excludes a `super()` written inside a nested FUNCTION
+ * (arrow, function expression/declaration). Such a call still initialises THIS
+ * constructor's `this` — `const f = () => super(); f();` really does — so the
+ * "completes textually before the read" scan leaves it OFF and keeps counting
+ * it. The enclosing-loop scan turns it ON (#5350 r4), because that scan decides
+ * whether a runtime flag can be TRUSTED, and the flag is a wasm LOCAL of the
+ * constructor: a nested function compiles to a separate wasm function whose
+ * `FunctionContext` has no such local, so `emitSuperInitializedFlagStore` there
+ * is a no-op and the flag would stay 0 for ever (probe s1c2).
+ */
+function containsSuperCall(
+  root: ts.Node,
+  endsBefore: number | undefined,
+  skipNestedClasses: boolean,
+  skipNestedFunctions = false,
+): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (skipNestedClasses && (ts.isClassDeclaration(node) || ts.isClassExpression(node))) return;
+    if (
+      skipNestedFunctions &&
+      (ts.isArrowFunction(node) || ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node))
+    ) {
+      return;
+    }
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.SuperKeyword &&
+      (endsBefore === undefined || node.end <= endsBefore)
+    ) {
+      found = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(root, visit);
+  return found;
+}
+
+/**
+ * (#5350 r3 review, S1) Classify a `super.<x>` read in a DERIVED constructor.
+ *
+ *   - `"always"`  — no `super(...)` completes before the read and no enclosing
+ *     loop can carry one back over it: an unconditional ReferenceError.
+ *   - `"runtime"` — the read sits inside a loop that ALSO contains a
+ *     `super(...)`. Position cannot decide this case, in either direction:
+ *     `for (let i = 0; i < 1; i++) { v = super.zz; super() }` reaches the read
+ *     on iteration 1 before any `super()` has run (node throws — probes
+ *     xa13/xa12/xa3), while `while (true) { if (i === 1) { v = super.zz; break }
+ *     super(); i = 1 }` reaches the SAME textual read on iteration 2 with
+ *     `this` long initialised (node answers 5 — probes n4/n5). Both shapes are
+ *     "a read textually before a `super()` in the same loop", so the decision
+ *     moves to a runtime test of `fctx.superInitializedFlagLocal`. r2's
+ *     position-blind rule answered "no throw" for the whole class and so lost
+ *     the iteration-1 case.
+ *   - `"never"`   — a `super(...)` completes textually before the read, or the
+ *     reference crosses a nested function/class boundary whose source position
+ *     says nothing about when it runs (`() => super.x` written before
+ *     `super()` and called after it is correct code). Keep the ordinary read.
+ */
+function classifySuperUninitializedRead(fctx: FunctionContext, expr: ts.Node): SuperUninitializedReadKind {
+  if (!fctx.isDerivedConstructor) return "never";
+  // (#5350 r2 review, R1) NO BACK-EDGE THAT CAN CARRY A `super()` OVER THE
+  // READ. Source position orders the TEXT, not the execution, and the one
+  // construct that lets a textually LATER `super()` run BEFORE this read is a
+  // loop's back-edge — but only when that `super()` is INSIDE the same loop:
+  // `while (true) { if (i === 1) { v = super.zz; break } super(); i = 1 }`
+  // reaches the read on the second iteration with `this` long initialised
+  // (node answers 5, probes n4/n5). A loop that contains NO `super()` has no
+  // such edge, so `for (let i = 0; i < 1; i++) { v = super.zz } super()` is
+  // still an unconditional ReferenceError (probes d02b/d10) — r1 suppressed
+  // those too, by returning false for ANY enclosing iteration statement.
+  // Labelled statements are not a case at all: a labelled BLOCK is
+  // forward-only (`break lbl` jumps out, never back — probe d01b), and a
+  // labelled LOOP is an iteration statement already, caught below.
+  // Forward-only branches (`if` / `switch` / `try`) cannot re-run an earlier
+  // `super()`, and a `super()` in a branch textually BEFORE the read is
+  // handled by the preceded-by check. Anything suppressed here falls through
+  // to the ordinary read, which answers `undefined` rather than inventing a
+  // throw. The compiler cannot be more precise without a runtime
+  // this-initialised flag: a derived constructor's `this` local is
+  // `struct.new`-allocated at entry (class-bodies.ts), so there is no null to
+  // test at the read.
+  const enclosingLoops: ts.IterationStatement[] = [];
+  let current: ts.Node | undefined = expr.parent;
+  while (current && !ts.isConstructorDeclaration(current)) {
+    if (ts.isIterationStatement(current, /* lookInLabeledStatements */ false)) {
+      enclosingLoops.push(current);
+    }
+    if (
+      ts.isArrowFunction(current) ||
+      ts.isFunctionExpression(current) ||
+      ts.isFunctionDeclaration(current) ||
+      ts.isMethodDeclaration(current) ||
+      ts.isGetAccessorDeclaration(current) ||
+      ts.isSetAccessorDeclaration(current) ||
+      ts.isClassDeclaration(current) ||
+      ts.isClassExpression(current) ||
+      ts.isObjectLiteralExpression(current)
+    ) {
+      return "never";
+    }
+    current = current.parent;
+  }
+  if (!current?.body) return "never";
+  // (a) no `super(...)` completes textually before the read begins …
+  if (containsSuperCall(current.body, expr.pos, /* skipNestedClasses */ true)) return "never";
+  // (b) … and where an enclosing loop could bring a later one back over it,
+  // only a runtime flag can say whether it already did.
+  // (#5350 r4 review) The carrier must be one this compiler can INSTRUMENT.
+  // The flag is a wasm local of the constructor, so only a `super(...)`
+  // lexically in the constructor's own body can store into it; a `super()`
+  // inside a nested function is lowered in that function's own
+  // `FunctionContext`, where the store is a no-op. Classifying such a read
+  // "runtime" therefore allocated a flag nothing ever set and threw on every
+  // iteration (probe s1c2 — node 6, r3 9). A loop whose only carrier sits in a
+  // nested function is left UNGUARDED instead ("never" — the ordinary read,
+  // which is round-2 and base behaviour): still wrong for a read that really is
+  // reached before the arrow's `super()` runs, but wrong in the direction that
+  // answers `undefined` rather than inventing a throw.
+  // (#5350 r5 review) … and the flag is trustworthy only when EVERY carrier
+  // an enclosing loop holds can store into it. A loop with a constructor-body
+  // `super()` AND a nested-function `super()` (probe e15: `if (useArrow) { const
+  // f = () => { super() }; f() } else { super() }`) took the "runtime" arm on
+  // the strength of the body carrier, but on the path that ran the arrow's
+  // call the flag stayed 0 and the read threw on an initialised `this` (node 6,
+  // r4 9). One untrustworthy carrier anywhere in the enclosing loops therefore
+  // leaves the read UNGUARDED, whatever else the loop contains.
+  let guardableCarrier = false;
+  let untrustedCarrier = false;
+  for (const loop of enclosingLoops) {
+    if (containsSuperCallInNestedFunction(loop)) untrustedCarrier = true;
+    if (containsSuperCall(loop, undefined, /* skipNestedClasses */ true, /* skipNestedFunctions */ true)) {
+      guardableCarrier = true;
+    }
+  }
+  if (untrustedCarrier) return "never";
+  if (guardableCarrier) return "runtime";
+  return "always";
+}
+
+/**
+ * (#5350 r5 review) True when `root` holds a `super(...)` INSIDE a nested
+ * function (arrow / function expression / function declaration), i.e. a
+ * carrier that initialises this constructor's `this` but whose store to the
+ * `__super_done` flag cannot land (it is lowered in the nested function's own
+ * `FunctionContext`). Nested classes are skipped: their `super()` belongs to
+ * another constructor.
+ */
+function containsSuperCallInNestedFunction(root: ts.Node): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) return;
+    if (ts.isArrowFunction(node) || ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node)) {
+      if (containsSuperCall(node, undefined, /* skipNestedClasses */ true)) found = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(root, visit);
+  return found;
+}
+
+/**
+ * (#5350 r3 review, S1) Allocate the derived constructor's `__super_done` flag
+ * when — and only when — some read in this constructor classifies `"runtime"`.
+ * A wasm local is zero at entry, so no initialising store is needed.
+ *
+ * Must run BEFORE the constructor body is compiled: `emitSuperInitializedFlagStore`
+ * needs the index at every `super(...)` site, and a `super(...)` can be
+ * compiled before the read that motivates the flag.
+ */
+export function ensureSuperInitializedFlagLocal(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  ctor: ts.ConstructorDeclaration,
+): void {
+  if (!ctx.standalone) return;
+  if (!fctx.isDerivedConstructor) return;
+  if (fctx.superInitializedFlagLocal !== undefined) return;
+  if (!ctor.body) return;
+  let needed = false;
+  const visit = (node: ts.Node): void => {
+    if (needed) return;
+    if (
+      (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+      node.expression.kind === ts.SyntaxKind.SuperKeyword &&
+      // A `super.m()` CALLEE takes the method-call lowering, which has no
+      // uninitialised-this guard — counting it would allocate a local nothing
+      // reads and move the bytes of every such constructor.
+      !(ts.isCallExpression(node.parent) && node.parent.expression === node) &&
+      classifySuperUninitializedRead(fctx, node) === "runtime"
+    ) {
+      needed = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(ctor.body, visit);
+  if (!needed) return;
+  fctx.superInitializedFlagLocal = allocLocal(fctx, "__js2_super_done", { kind: "i32" });
+}
+
+/**
+ * (#5350 r3 review, S1) `this` is initialised from here on — store 1 into the
+ * flag, immediately after a `super(...)` call's lowering returns. A no-op
+ * unless this constructor allocated the flag, which is why a NESTED class's
+ * `super()` (a different FunctionContext) can never set the outer one.
+ */
+export function emitSuperInitializedFlagStore(fctx: FunctionContext): void {
+  const idx = fctx.superInitializedFlagLocal;
+  if (idx === undefined) return;
+  fctx.body.push({ op: "i32.const", value: 1 });
+  fctx.body.push({ op: "local.set", index: idx });
+}
+
+/**
+ * (#5350 step 4b) Emit that ReferenceError plus a type-shaped (unreachable)
+ * value so the enclosing expression stays stack-balanced.
+ */
+function emitSuperUninitializedThisReadThrow(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.Node,
+  accessType: ts.Type,
+): ValType | undefined {
+  if (!ctx.standalone) return undefined;
+  const kind = classifySuperUninitializedRead(fctx, expr);
+  if (kind === "never") return undefined;
+  const message =
+    "Must call super constructor in derived class before accessing 'this' or returning from derived constructor";
+  if (kind === "runtime") {
+    // (#5350 r3 review, S1) `if (__super_done === 0) throw` — and then fall
+    // through to the ordinary read, which is correct on every iteration where
+    // the flag is set. Returning `undefined` when the flag was not allocated
+    // keeps r2's behaviour rather than inventing a throw.
+    const flagLocal = fctx.superInitializedFlagLocal;
+    if (flagLocal === undefined) return undefined;
+    fctx.body.push({ op: "local.get", index: flagLocal });
+    fctx.body.push({ op: "i32.eqz" });
+    const start = fctx.body.length;
+    emitThrowReferenceError(ctx, fctx, message);
+    const throwInstrs = fctx.body.splice(start);
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs, else: [] });
+    return undefined;
+  }
+  emitThrowReferenceError(ctx, fctx, message);
+  const wasmType = resolveWasmType(ctx, accessType);
+  if (wasmType.kind === "f64") {
+    fctx.body.push({ op: "f64.const", value: 0 });
+  } else if (wasmType.kind === "i32") {
+    fctx.body.push({ op: "i32.const", value: 0 });
+  } else {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+  return wasmType;
+}
+
+function compileStandaloneObjectLiteralSuperPropertyRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  key: SuperReadKey,
+  accessType: ts.Type | "externref",
+): ValType | undefined {
+  if (!ctx.standalone) return undefined;
+  const currentThisIdx = ensureCurrentThisGlobal(ctx);
+  return compileStandaloneSuperPropertyRead(
+    ctx,
+    fctx,
+    key,
+    accessType,
+    () => {
+      // A standalone object-literal method must carry its actual
+      // [[HomeObject]]. Falling back to __current_this would make a borrowed
+      // method resolve `super` against the call-time receiver.
+      const homeObjectLocal = fctx.localMap.get(SUPER_HOME_OBJECT_CAPTURE_NAME);
+      if (homeObjectLocal === undefined) return false;
+      fctx.body.push({ op: "local.get", index: homeObjectLocal });
+      return true;
+    },
+    () => {
+      fctx.body.push({ op: "global.get", index: currentThisIdx });
+    },
+  );
+}
+
+/**
+ * (#5350 step 1) `super.<name>` / `super[<static key>]` inside a CLASS method,
+ * standalone.
+ *
+ * The [[HomeObject]] of a class instance method is `C.prototype`, which since
+ * #5195 is a real `$Object` singleton, so the same `__getPrototypeOf` →
+ * RequireObjectCoercible → `__reflect_get_receiver` lowering the object-literal
+ * arm uses applies verbatim. Before this the three static tables (parent
+ * accessors / parent struct fields / parent methods) were the ONLY resolution,
+ * and anything installed on the parent prototype at runtime
+ * (`A.prototype.fromA = 'a'`) compiled to a type-shaped literal default.
+ *
+ * Declines — emitting nothing — outside the narrow gate:
+ *   - no parent class: a base class's `C.prototype.[[Prototype]]` is null in
+ *     this runtime today (probe `.tmp/w5/super/p18.js`), so the coercible guard
+ *     would turn every `super.x` that must answer `undefined` into a TypeError;
+ *   - `standaloneClassProtoObjectApplies` false (builtin-parent subclasses such
+ *     as `extends Map`), which keeps the `emitSuperExternMethodCall` route;
+ *   - a static method (no `this` local), which keeps today's default.
+ */
+function compileStandaloneClassSuperPropertyRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  key: SuperReadKey,
+  accessType: ts.Type,
+  currentClassName: string,
+  parentClassName: string | undefined,
+): ValType | undefined {
+  if (!ctx.standalone) return undefined;
+  if (parentClassName === undefined) return undefined;
+  if (!standaloneClassProtoObjectApplies(ctx, currentClassName)) return undefined;
+  // (#5350 step 1, corrected in step 4) The PARENT must own a `$Object`
+  // prototype too, or the §15.7.14 step 6 link out of `C.prototype` is not
+  // built and `__getPrototypeOf` answers nullish — which the coercible guard
+  // would turn into a TypeError for a read that must answer `undefined`.
+  // Measured on `class D extends Object { … super.y … }`
+  // (`.tmp/w5350/q52.ts`): without this the read threw a TypeError where node
+  // answers `undefined`. A builtin parent keeps the historical default and the
+  // `emitSuperExternMethodCall` route.
+  if (!standaloneClassProtoObjectApplies(ctx, parentClassName)) return undefined;
+  const selfIdx = fctx.localMap.get("this");
+  if (selfIdx === undefined) return undefined;
+
+  return compileStandaloneSuperPropertyRead(
+    ctx,
+    fctx,
+    key,
+    accessType,
+    () => {
+      // `emitLazyProtoGet` can still decline (the #5195 F1 re-entrancy guard,
+      // an accessor store it cannot reach). Capture into a fresh buffer so a
+      // decline leaves the real body untouched and the caller keeps its
+      // historical default — never a half-emitted prototype read.
+      const saved = fctx.body;
+      const captured: Instr[] = [];
+      fctx.body = captured;
+      let emitted: boolean;
+      try {
+        emitted = emitLazyProtoGet(ctx, fctx, currentClassName);
+      } finally {
+        fctx.body = saved;
+      }
+      if (!emitted) return false;
+      fctx.body.push(...captured);
+      return true;
+    },
+    () => {
+      // §12.3.5.3 step 3 `actualThis` is the receiver the call actually bound.
+      // In a class method that is the `this` LOCAL — except that the local is
+      // typed to the INSTANCE struct, so a call whose receiver is not a `$C`
+      // instance leaves it null. `C.prototype.method()` is exactly that shape
+      // (the #5195 prototype is an `$Object`, and `ref.test` against `$C`
+      // fails), and it is the shape four of these rows use. Measured: the
+      // local reads null there while the standalone call carrier
+      // `__current_this` holds the real receiver, so select at RUNTIME —
+      // typed local when it is bound, carrier otherwise. Never a throw either
+      // way, and an ordinary `new C().method()` keeps the typed local.
+      fctx.body.push({ op: "local.get", index: selfIdx });
+      const selfType = getLocalType(fctx, selfIdx);
+      if (selfType?.kind !== "externref" && selfType?.kind !== "ref_extern") {
+        fctx.body.push({ op: "extern.convert_any" });
+      }
+      const recvLocal = allocLocal(fctx, `__super_recv_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.tee", index: recvLocal });
+      fctx.body.push({ op: "ref.is_null" });
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: [{ op: "global.get", index: ensureCurrentThisGlobal(ctx) }],
+        else: [{ op: "local.get", index: recvLocal }],
+      });
+    },
+  );
 }
 
 /**
@@ -1281,14 +1959,25 @@ export function compileSuperPropertyAccess(
   expr: ts.PropertyAccessExpression,
   propName: string,
 ): ValType | null {
+  // One checker query for the whole function — every arm below answers with the
+  // type at this access site.
+  const accessType = ctx.checker.getTypeAtLocation(expr);
+  // (#5350 step 4b) §13.3.7.1: GetThisBinding precedes everything else, and in
+  // a derived constructor before `super()` that throws a ReferenceError.
+  const uninitThrow = emitSuperUninitializedThisReadThrow(ctx, fctx, expr, accessType);
+  if (uninitThrow !== undefined) return uninitThrow;
   // Determine which class we're in
   const currentClassName = resolveEnclosingClassName(fctx);
   if (!currentClassName) {
-    const accessType = ctx.checker.getTypeAtLocation(expr);
     // (#4688) Object-literal methods have a runtime home-object prototype in
     // standalone mode. Resolve the named read through the native object
     // runtime before retaining the old type-shaped fallback for other lanes.
-    const runtimeReadType = compileStandaloneObjectLiteralSuperPropertyRead(ctx, fctx, expr, propName, accessType);
+    const runtimeReadType = compileStandaloneObjectLiteralSuperPropertyRead(
+      ctx,
+      fctx,
+      { kind: "name", name: propName },
+      accessType,
+    );
     if (runtimeReadType !== undefined) return runtimeReadType;
 
     // super in object literal method — cannot resolve prototype chain at compile time.
@@ -1308,7 +1997,10 @@ export function compileSuperPropertyAccess(
   const parentClassName = ctx.classParentMap.get(currentClassName);
   if (!parentClassName) {
     // In a base class, super.prop resolves to Object.prototype[prop] — usually undefined.
-    const accessType = ctx.checker.getTypeAtLocation(expr);
+    // (#5350 step 3) `extends null` is NOT a base class: its super base is
+    // null, so the read is a TypeError rather than `undefined`.
+    const nullHeritageThrow = emitSuperExtendsNullThrow(ctx, fctx, expr, accessType);
+    if (nullHeritageThrow !== undefined) return nullHeritageThrow;
     const wasmType = resolveWasmType(ctx, accessType);
     if (wasmType.kind === "f64") {
       fctx.body.push({ op: "f64.const", value: 0 });
@@ -1346,8 +2038,7 @@ export function compileSuperPropertyAccess(
           fctx.body.push({ op: "local.get", index: selfIdx });
         }
         fctx.body.push({ op: "call", funcIdx });
-        const propType = ctx.checker.getTypeAtLocation(expr);
-        return resolveWasmType(ctx, propType);
+        return resolveWasmType(ctx, accessType);
       }
     }
     ancestor = ctx.classParentMap.get(ancestor);
@@ -1398,7 +2089,18 @@ export function compileSuperPropertyAccess(
 
   // Fallback: could be a method reference (not a call) — try to find a parent method
   // For now, emit a default based on the TypeScript type at the access site
-  const accessType = ctx.checker.getTypeAtLocation(expr);
+  // (#5350 step 1) Standalone: before defaulting, do the real prototype-chain
+  // read. Deliberately AFTER the parent-accessor and struct-field walks above,
+  // so both keep their single static call (`tests/issue-3522-super-accessor`).
+  const classRuntimeRead = compileStandaloneClassSuperPropertyRead(
+    ctx,
+    fctx,
+    { kind: "name", name: propName },
+    accessType,
+    currentClassName,
+    parentClassName,
+  );
+  if (classRuntimeRead !== undefined) return classRuntimeRead;
   const wasmType = resolveWasmType(ctx, accessType);
   if (wasmType.kind === "f64") {
     fctx.body.push({ op: "f64.const", value: 0 });
@@ -1420,6 +2122,25 @@ export function compileSuperElementAccess(
   fctx: FunctionContext,
   expr: ts.ElementAccessExpression,
 ): ValType | null {
+  // (#5350 step 4a) `super[super()]` — the #2709 guard, which the WRITE and
+  // UPDATE paths already call (assignment.ts:5522) but the READ never did.
+  // One checker query for the whole function — every arm below answers with the
+  // type at this access site.
+  const accessType = ctx.checker.getTypeAtLocation(expr);
+  if (emitSuperUninitializedThisGuard(ctx, fctx, expr.argumentExpression)) {
+    const guardedType = resolveWasmType(ctx, accessType);
+    if (guardedType.kind === "f64") {
+      fctx.body.push({ op: "f64.const", value: 0 });
+    } else if (guardedType.kind === "i32") {
+      fctx.body.push({ op: "i32.const", value: 0 });
+    } else {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+    return guardedType;
+  }
+  // (#5350 step 4b) Same uninitialised-`this` ReferenceError as the dot form.
+  const uninitThrow = emitSuperUninitializedThisReadThrow(ctx, fctx, expr, accessType);
+  if (uninitThrow !== undefined) return uninitThrow;
   const argExpr = expr.argumentExpression;
   // Try to resolve the key to a static string
   let propName: string | undefined;
@@ -1434,6 +2155,36 @@ export function compileSuperElementAccess(
   }
 
   if (propName === undefined) {
+    // (#5350 step 2) Standalone: the VALUE is a runtime read, not a default.
+    // GetSuperBase runs first, then ToPropertyKey on the evaluated key, then
+    // the receiver-aware [[Get]] — see compileStandaloneSuperPropertyRead.
+    if (argExpr && ctx.standalone) {
+      const dynamicKey: SuperReadKey = {
+        kind: "dynamic",
+        emit: () => {
+          const keyType = compileExpression(ctx, fctx, argExpr, { kind: "externref" });
+          if (keyType === null) {
+            fctx.body.push({ op: "ref.null.extern" });
+            return;
+          }
+          if (keyType.kind !== "externref") coerceType(ctx, fctx, keyType, { kind: "externref" });
+          emitToPropertyKeyOnce(ctx, fctx);
+        },
+      };
+      const dynClassName = resolveEnclosingClassName(fctx);
+      const dynRead =
+        dynClassName === undefined
+          ? compileStandaloneObjectLiteralSuperPropertyRead(ctx, fctx, dynamicKey, accessType)
+          : compileStandaloneClassSuperPropertyRead(
+              ctx,
+              fctx,
+              dynamicKey,
+              accessType,
+              dynClassName,
+              ctx.classParentMap.get(dynClassName),
+            );
+      if (dynRead !== undefined) return dynRead;
+    }
     // Dynamic key on super — the VALUE cannot be resolved at compile time, but
     // §12.3.5.1 still evaluates the key expression and runs ToPropertyKey on
     // it, so a throwing key expression (or a poisoned `toString`) must
@@ -1447,7 +2198,6 @@ export function compileSuperElementAccess(
         fctx.body.push({ op: "drop" });
       }
     }
-    const accessType = ctx.checker.getTypeAtLocation(expr);
     const wasmType = resolveWasmType(ctx, accessType);
     if (wasmType.kind === "f64") {
       fctx.body.push({ op: "f64.const", value: 0 });
@@ -1462,10 +2212,14 @@ export function compileSuperElementAccess(
   // Determine which class we're in
   const currentClassName = resolveEnclosingClassName(fctx);
   if (!currentClassName) {
-    const accessType = ctx.checker.getTypeAtLocation(expr);
     // (#4688) Mirror the dot-property lowering for a statically resolved
     // element key. Dynamic keys stay on the historical fallback path.
-    const runtimeReadType = compileStandaloneObjectLiteralSuperPropertyRead(ctx, fctx, expr, propName, accessType);
+    const runtimeReadType = compileStandaloneObjectLiteralSuperPropertyRead(
+      ctx,
+      fctx,
+      { kind: "name", name: propName },
+      accessType,
+    );
     if (runtimeReadType !== undefined) return runtimeReadType;
 
     // super in object literal method — emit default value
@@ -1483,8 +2237,10 @@ export function compileSuperElementAccess(
   // Find parent class — if none, super resolves to Object.prototype
   const parentClassName = ctx.classParentMap.get(currentClassName);
   if (!parentClassName) {
-    const accessType2 = ctx.checker.getTypeAtLocation(expr);
-    const wasmType2 = resolveWasmType(ctx, accessType2);
+    // (#5350 step 3) Same `extends null` TypeError as the dot form.
+    const nullHeritageThrow2 = emitSuperExtendsNullThrow(ctx, fctx, expr, accessType);
+    if (nullHeritageThrow2 !== undefined) return nullHeritageThrow2;
+    const wasmType2 = resolveWasmType(ctx, accessType);
     if (wasmType2.kind === "f64") {
       fctx.body.push({ op: "f64.const", value: 0 });
     } else if (wasmType2.kind === "i32") {
@@ -1508,8 +2264,7 @@ export function compileSuperElementAccess(
           fctx.body.push({ op: "local.get", index: selfIdx });
         }
         fctx.body.push({ op: "call", funcIdx });
-        const propType = ctx.checker.getTypeAtLocation(expr);
-        return resolveWasmType(ctx, propType);
+        return resolveWasmType(ctx, accessType);
       }
     }
     ancestor = ctx.classParentMap.get(ancestor);
@@ -1556,7 +2311,16 @@ export function compileSuperElementAccess(
   }
 
   // Fallback: emit default value based on TypeScript type
-  const accessType = ctx.checker.getTypeAtLocation(expr);
+  // (#5350 step 1) Same runtime prototype read as the dot form, same position.
+  const classRuntimeRead = compileStandaloneClassSuperPropertyRead(
+    ctx,
+    fctx,
+    { kind: "name", name: propName },
+    accessType,
+    currentClassName,
+    parentClassName,
+  );
+  if (classRuntimeRead !== undefined) return classRuntimeRead;
   const wasmType = resolveWasmType(ctx, accessType);
   if (wasmType.kind === "f64") {
     fctx.body.push({ op: "f64.const", value: 0 });

@@ -133,6 +133,11 @@ import {
   reserveInstanceTombstones,
 } from "./instance-tombstones.js"; // (#4098 G1 s1)
 import { OBJECT_INTEGRITY_OBJ_PREDICATES } from "./object-integrity-carrier.js"; // (#4032)
+import {
+  REFLECT_SET_RECEIVER,
+  fillOrdinarySetWithReceiver,
+  reserveOrdinarySetWithReceiver,
+} from "./object-runtime-ordinary-set.js"; // (#5316)
 // (#3537) array ($Vec) expando side table — composes AROUND the #3468 closure
 // arms (vec test first, unchanged closure arm as fallthrough).
 import {
@@ -235,6 +240,7 @@ import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) o
 import { backedBoundsGuard, canonicalIndexDigitStep } from "./vec-index-domain.js"; // (#4434) index domain + sparse tail
 import { buildVecIndexKeyPush, reserveVecIndexEnumerable } from "./vec-index-enumerable.js"; // (#4491) overlay-aware key flags
 import { fillHostArrayCarrierPredicate } from "./host-array-carrier.js"; // (#4649) js-host late-bound carrier test
+import { emitStandaloneLinkBoundaryTerminals, standaloneLinkBoundaryPeerIndices } from "./standalone-link-boundary.js"; // (#5383 S2d) wasm→wasm peer terminals
 import {
   buildOwnToPrimitiveOverridePresent,
   buildWrapperSlotShortCircuit,
@@ -1009,6 +1015,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   const boundaryObjectSetPrototypeIdx = boundaryObjectInterop
     ? ctx.funcMap.get("__boundary_object_set_prototype")
     : undefined;
+  // (#5383 S2d) The standalone twin of the two host-lane boundary reads above.
+  // Registered HERE, next to them, because both must exist before the index
+  // space freezes (#1984) and because they answer the same question — "this
+  // carrier is not mine; who can decode it?". On the host lane these stay
+  // undefined and every arm below is byte-identical.
+  const { memberGet: peerMemberGetIdx, objectKeys: peerObjectKeysIdx } = standaloneLinkBoundaryPeerIndices(ctx);
   const boundaryObjectGetOwnPropertyDescriptorIdx = boundaryObjectInterop
     ? ctx.funcMap.get("__boundary_object_get_own_property_descriptor")
     : undefined;
@@ -2388,11 +2400,17 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           // fallback below. A present JS property whose value is `undefined`
           // returns the non-null native undefined carrier, so miss and value do
           // not alias.
-          ...(boundaryObjectGetIdx !== undefined
+          // (#5383 S2d) The standalone lane reaches the SAME arm with the peer
+          // provider's normalising terminal: "not a `$Object` of mine" is
+          // exactly the question, and the wrapper's null-for-a-miss contract is
+          // the same one this arm was written against. The closed-struct field
+          // ladder is unshifted onto the FRONT of this body at finalize, so a
+          // receiver this module can decode never gets here.
+          ...((boundaryObjectGetIdx ?? peerMemberGetIdx) !== undefined
             ? ([
                 { op: "local.get", index: 0 },
                 { op: "local.get", index: 1 },
-                { op: "call", funcIdx: boundaryObjectGetIdx },
+                { op: "call", funcIdx: (boundaryObjectGetIdx ?? peerMemberGetIdx)! },
                 { op: "local.tee", index: 6 },
                 { op: "ref.is_null" },
                 { op: "i32.eqz" },
@@ -6335,8 +6353,13 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     objVecPushIdx,
     objOrderedIdx,
     objOrderedAllIdx,
-    boundaryObjectKeysIdx,
-    boundaryObjectForInKeysIdx,
+    // (#5383 S2d) On the standalone lane the peer terminal takes the SAME arm:
+    // the arm's contract is "ask, and use the answer only when it is non-null",
+    // which is exactly what the provider's normalising wrapper guarantees. The
+    // two are mutually exclusive by construction (one needs a JS host, the
+    // other needs there not to be one), so neither lane grows an arm.
+    boundaryObjectKeysIdx: boundaryObjectKeysIdx ?? peerObjectKeysIdx,
+    boundaryObjectForInKeysIdx: boundaryObjectForInKeysIdx ?? peerObjectKeysIdx,
     FLAG_ENUMERABLE,
     FLAG_TOMBSTONE,
   });
@@ -6756,6 +6779,15 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // __extern_get/set/has are registered (the trap dispatch helpers forward to
   // them when a trap is absent) and only adds DEFINED functions, so no index
   // shift (same invariant as the rest of this runtime).
+  // (#5316 r5 step 6 / #2046, review r1 F2) RESERVE §10.1.9.2
+  // OrdinarySetWithOwnDescriptor's funcIdx before the Proxy runtime builds:
+  // `__proxy_set_receiver_dispatch` bakes a call to it (§10.5.9 step 6's
+  // trap-absent forward), and it bakes a call back to that dispatch. Every
+  // primitive the walk reads — `__getOwnPropertyDescriptor`, `__getPrototypeOf`,
+  // `__extern_get/set/has`, the `__call_accessor_set` driver — is registered by
+  // here; the body is filled at the end of this function.
+  reserveOrdinarySetWithReceiver(ctx);
+
   ensureProxyRuntime(ctx, types, registerNative);
 
   // (#4749) Fill Object.assign's standalone Proxy-source CopyDataProperties
@@ -6828,6 +6860,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     }
   }
 
+  // (#5383 S2d) A standalone provider publishes the same two reads to its WASM
+  // consumer that the block above publishes to a JS host. Emitted here, at the
+  // end of the object runtime, because both wrappers call terminals the block
+  // above has only just finished registering.
+  emitStandaloneLinkBoundaryTerminals(ctx, registerNative);
+
   // (#2175 V2-S3b-1) Build any `$NativeProto` companion seeders that were parked
   // because their proto materialized before `__defineProperty_value` existed
   // (measured: RegExp does, reached through a plain `RegExp.prototype` value
@@ -6836,6 +6874,15 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // mint or register types at finalize. No-op unless the module is
   // `protoMemberDirty` AND actually materialized a proto.
   flushPendingNativeProtoSeeders(ctx);
+
+  // (#5316 r5 step 6 / #2046) FILL §10.1.9.2 OrdinarySetWithOwnDescriptor, the
+  // receiver-threaded `[[Set]]` behind `Reflect.set`'s 4-argument form, into
+  // the slot reserved just before `ensureProxyRuntime`. Filled LAST, and
+  // deliberately so: besides the descriptor/prototype/accessor primitives it
+  // reads `__proxy_set_receiver_dispatch` and `__create_descriptor` /
+  // `__obj_define_from_desc`, which are in place only by here. Mints nothing,
+  // so no funcIdx moves.
+  fillOrdinarySetWithReceiver(ctx);
 
   return types;
 }
@@ -12455,6 +12502,7 @@ export const OBJECT_RUNTIME_HELPER_NAMES: ReadonlySet<string> = new Set([
   "__extern_set",
   "__extern_set_strict", // (#3983) distinct helper: __reflect_set + strict-PutValue TypeError
   "__reflect_set",
+  REFLECT_SET_RECEIVER, // (#5316) Reflect.set 4-arg — §10.1.9.2 with a receiver
   "__to_primitive",
   "__extern_toString",
   "__delete_property",

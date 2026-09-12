@@ -156,6 +156,25 @@ jobs:
         if: steps.npm_compat.outputs.only != 'true'
         run: pnpm run check:ir-dialect
 
+      - name: Compiler inventory and activated boundaries (#3518)
+        id: compiler_boundaries
+        if: steps.npm_compat.outputs.only != 'true'
+        run: |
+          # Inventory mode enforces real activated closures while reporting
+          # remaining migration debt; it does not certify IR-only completion.
+          # Compare with the immutable first parent, not HEAD's new policy.
+          node --max-old-space-size=2048 scripts/check-compiler-boundaries.mjs \
+            --mode inventory --base HEAD^1 > compiler-boundaries-report.json
+
+      - name: Preserve compiler boundary evidence (#3518)
+        if: always() && steps.compiler_boundaries.outcome != 'skipped' && steps.compiler_boundaries.outcome != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiler-boundaries-${{ github.run_id }}-${{ github.run_attempt }}
+          path: compiler-boundaries-report.json
+          if-no-files-found: error
+          retention-days: 7
+
       - name: IR per-kind neutrality verdict gate (#4551)
         if: steps.npm_compat.outputs.only != 'true'
         run: pnpm run check:ir-kind-neutrality

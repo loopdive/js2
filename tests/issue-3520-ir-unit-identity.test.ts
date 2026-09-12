@@ -1364,15 +1364,30 @@ export function user() { return 1; }
     expect(arrows.every((unit) => unit.lexicalOwnerId !== null)).toBe(true);
   });
 
-  it("keeps export-assignment expressions unowned without manufacturing an R0 row", () => {
-    const fixture = source("default-export.ts", `export default (() => 1);`);
+  it.each(["export default", "export ="])("keeps %s expressions unowned beside the module-init terminal", (form) => {
+    const fixture = source("default-export.ts", `${form} (() => 1);`);
     const inventory = buildIrUnitInventory([fixture], { entrySource: fixture });
 
-    expect(inventory.terminalUnits).toEqual([]);
-    expect(inventory.allUnits.map((unit) => unit.kind)).toEqual(["export-assignment", "arrow-function"]);
+    // #5332: export evaluation owns a module-init terminal, but the export
+    // statement is not a lowerable function-body statement. Its support units
+    // must not be assigned to that terminal merely because it now exists.
+    expect(inventory.terminalUnits).toHaveLength(1);
+    const terminal = inventory.terminalUnits[0]!;
+    expect(terminal).toMatchObject({
+      kind: "module-init",
+      terminal: true,
+      terminalOwnerId: terminal.id,
+      lexicalOwnerId: null,
+      displayName: "<module-init>",
+    });
+    expect(inventory.allUnits.map((unit) => unit.kind)).toEqual(["export-assignment", "arrow-function", "module-init"]);
+    const supportUnits = inventory.allUnits.filter((unit) => unit.id !== terminal.id);
+    expect(supportUnits).toHaveLength(2);
     expect(
-      inventory.allUnits.every((unit) => unit.terminalOwnerId === null && unit.unownedReason === "no-r0-attempt-root"),
+      supportUnits.every((unit) => unit.terminalOwnerId === null && unit.unownedReason === "no-r0-attempt-root"),
     ).toBe(true);
+    expect(supportUnits[0]!.lexicalOwnerId).toBeNull();
+    expect(supportUnits[1]!.lexicalOwnerId).toBe(supportUnits[0]!.id);
   });
 
   it("keeps heritage/computed/decorator expressions unowned beside an unrelated module-init root", () => {

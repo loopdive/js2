@@ -2,8 +2,9 @@
 
 import { ts } from "../ts-api.js";
 import type { IrFunctionBuilder } from "./builder.js";
-import { irVal, type IrFuncRef, type IrType, type IrValueId } from "./nodes.js";
+import { irTypeEquals, irVal, type IrFuncRef, type IrType, type IrValueId } from "./nodes.js";
 import { coerceIrValueToExternref } from "./value-coercion.js";
+import { IrInvariantError, IrUnsupportedError } from "./outcomes.js";
 
 export interface PreparedAsyncPromiseAllPlan {
   readonly target: IrFuncRef;
@@ -16,12 +17,46 @@ export interface PreparedAsyncPromiseAllPlan {
 export interface PreparedAsyncAwaitSite {
   /** The value delivered by the fulfilled await edge. */
   readonly resultType: IrType;
+  /** Complete-program semantic type of the original operand, before PromiseResolve. */
+  readonly operandType?: IrType;
   /** B3 source proof: retain the original non-thenable operand exactly once. */
   readonly settledNonThenable?: true;
   /** Structural owner carried through the source→IR handoff. */
   readonly settledOwnerUnitId?: string;
   /** Frozen source receipt key carried through the source→IR handoff. */
   readonly settledOwnerProofKey?: string;
+}
+
+/** Retain a typed source operand and its await edge; runtime providers own the Promise boundary. */
+export function emitPreparedAsyncAwait(
+  builder: IrFunctionBuilder,
+  operand: IrValueId,
+  site: PreparedAsyncAwaitSite,
+): IrValueId {
+  if (site.settledNonThenable || site.settledOwnerUnitId !== undefined || site.settledOwnerProofKey !== undefined) {
+    throw new IrInvariantError(
+      "type-map-failure",
+      "build",
+      "typed await evidence cannot carry a settled-owner receipt",
+    );
+  }
+  const actual = builder.valueType(operand);
+  if (!site.operandType || !actual || !irTypeEquals(actual, site.operandType)) {
+    throw new IrInvariantError("type-map-failure", "build", "prepared await operand contradicts its semantic type");
+  }
+  if (
+    !(
+      actual.kind === "extern" ||
+      (actual.kind === "val" && (actual.val.kind === "externref" || actual.val.kind === "f64"))
+    )
+  ) {
+    throw new IrUnsupportedError(
+      "operand-coercion-unsupported",
+      "build",
+      `prepared await cannot represent operand type ${actual.kind}`,
+    );
+  }
+  return builder.emitAwait(operand, site.resultType);
 }
 
 /** Prepared-async evidence consumed by AST-to-IR lowering. */

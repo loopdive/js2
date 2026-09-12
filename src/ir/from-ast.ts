@@ -35,6 +35,7 @@
 //     call's return type comes from `callReturnTypes` (same TypeMap),
 //     with arg types validated against the propagated callee param types.
 
+import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import { ts, forEachChild } from "../ts-api.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 
@@ -136,7 +137,8 @@ export type {
 } from "./ast-lowering-plans.js";
 import { irDateSnapshotGetterSymbol } from "./date-runtime.js";
 import type { AllocSiteRegistry } from "./alloc-registry.js";
-import { classifyLiteral, inferEncoding, joinEncoding, type Encoding } from "./analysis/encoding.js";
+import { classifyLiteral, joinEncoding, type Encoding } from "./analysis/encoding.js";
+import { inferEncoding } from "./analysis/encoding-inference.js";
 import { proveTypedStringAppend, proveTypedStringMethod, type TypedValueEvidence } from "./analysis/string-evidence.js";
 import {
   EmptyArrayElementInference,
@@ -156,6 +158,7 @@ import {
   tryLowerVecPush,
 } from "./array-element-lowering.js";
 import {
+  emitPreparedAsyncAwait,
   preparedAsyncAwaitResultType,
   tryLowerPreparedAsyncPromiseAll,
   type PreparedAsyncFromAstResolver,
@@ -4051,6 +4054,10 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
     // PromiseResolve/adoption and the subsequent reaction.
     const preparedAwait = cx.resolver?.preparedAsyncAwaitSite?.(expr);
     if (preparedAwait) {
+      if (preparedAwait.operandType) {
+        const operand = lowerExpr(expr.expression, cx, preparedAwait.operandType);
+        return emitPreparedAsyncAwait(cx.builder, operand, preparedAwait);
+      }
       if (
         preparedAwait.settledNonThenable === true &&
         (!preparedAwait.settledOwnerUnitId || !preparedAwait.settledOwnerProofKey)
@@ -8563,7 +8570,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
  * mode decision in `resolveFunc` (not from-ast) mirrors the #3156 charCodeAt
  * sentinel pattern, so from-ast reads no `nativeStrings`.
  */
-export const IR_STRING_COMPARE_FN = "__ir_str_compare";
+export { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 
 /**
  * (#3167) Emit a both-string relational `<`/`>`/`<=`/`>=`. Calls the mode-

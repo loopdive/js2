@@ -11,11 +11,42 @@ import { isFatalCodegenDiagnostic } from "../codegen/context/errors.js";
 import { extractCHeaderExports, generateCHeader } from "../emit/c-header.js";
 import { emitObject } from "../emit/object.js";
 import { preprocessImports } from "../import-resolver.js";
-import type { CompileError, CompileOptions } from "../index.js";
+import type { CompileError, CompileOptions, CompileResult } from "../index.js";
 import type { Instr, ValType, WasmModule } from "../ir/types.js";
 import { resolveCompileTargetProfile } from "../target-profile.js";
 import { DOWNGRADE_DIAG_CODES } from "./import-manifest.js";
 import { hasExportModifier, pushSourceAnchoredDiagnostic } from "./validation.js";
+
+export type FailureTelemetry = Pick<
+  CompileResult,
+  "fallbackCounts" | "irPostClaimErrors" | "irCompiledFuncs" | "irFirstSkipped" | "irOutcomes" | "irBodyRouteAudit"
+>;
+
+export const EMPTY_FAILURE_TELEMETRY: Partial<FailureTelemetry> = Object.freeze({
+  fallbackCounts: undefined,
+  irPostClaimErrors: undefined,
+  irCompiledFuncs: undefined,
+  irFirstSkipped: undefined,
+  irOutcomes: undefined,
+  irBodyRouteAudit: undefined,
+});
+
+/** Existing public failure contract; never used to disguise a prepared-driver refusal. */
+export function failResult(errors: CompileError[], telemetry: Partial<FailureTelemetry> = {}): CompileResult {
+  return {
+    binary: new Uint8Array(0),
+    wat: "",
+    dts: "",
+    importsHelper: "",
+    success: false,
+    errors,
+    stringPool: [],
+    imports: [],
+    hasMain: false,
+    hasTopLevelStatements: false,
+    ...telemetry,
+  };
+}
 
 /** TS-level type text for an exported function's params + return. */
 interface CabiTsTypes {
@@ -379,13 +410,18 @@ export function compileToObjectSource(source: string, options: CompileOptions = 
     return { object: new Uint8Array(0), success: false, errors };
   }
 
+  return finalizeObjectModule(mod, ast.sourceFile, errors);
+}
+
+/** Preserve the relocatable writer's own index spaces and failure contract. */
+function finalizeObjectModule(mod: WasmModule, sourceFile: ts.SourceFile, errors: CompileError[]): ObjectCompileResult {
   let object: Uint8Array;
   try {
     object = emitObject(mod);
   } catch (e) {
     pushSourceAnchoredDiagnostic(
       errors,
-      ast.sourceFile,
+      sourceFile,
       `Object emit error: ${e instanceof Error ? e.message : String(e)}`,
       "error",
     );

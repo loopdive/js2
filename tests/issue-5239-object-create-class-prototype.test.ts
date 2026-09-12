@@ -171,16 +171,12 @@ describe("#5239 — Object.create on a compiled class prototype reached as a val
     });
 
     const { instance } = await instantiateLinkedProject(result);
-    // Reported, NOT fixed here: across the linked seam the consumer's
-    // `PlainDate.prototype` read answers the ctor-mirror facade's prototype
-    // rather than the provider's own prototype global, so this identity
-    // comparison is false in this lane and true in the single-module control.
-    // Every MEMBER answer is identical in both lanes — which is what #5239 is
-    // about — so the difference is PINNED here rather than asserted away. It
-    // belongs to the #5237 cross-module identity family.
-    expect(readAll(instance.exports as unknown as Record<string, unknown>)).toEqual({
-      ...EXPECTED,
-      dynProtoIdentity: "false",
-    });
+    // (#5354) `dynProtoIdentity` was PINNED to "false" here — across the seam
+    // the consumer's `PlainDate.prototype` answers the ctor-mirror's facade
+    // while the instance's [[Prototype]] answered a hardcoded
+    // `Object.prototype`, two unrelated objects. #5354 joined them (the
+    // instance proxy now answers that same facade), so this lane matches the
+    // control and the pin is gone: both lanes assert EXPECTED verbatim.
+    expect(readAll(instance.exports as unknown as Record<string, unknown>)).toEqual(EXPECTED);
   });
 });

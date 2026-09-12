@@ -7,8 +7,9 @@
  */
 import type { ArrayTypeDef, FieldDef, FuncTypeDef, StructTypeDef, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
+import { internFunctionType } from "../../wasm/physical/function-types.js";
 import { getArgumentsVecTypeIdx } from "../arguments-carrier-brand.js";
-import { closureBagField } from "../closures/funcref-wrapper-types.js"; // (#4241)
+import { closureBagField } from "../closures/closure-header-layout.js"; // (#4241)
 
 /**
  * (#3268) Register a WasmGC struct type: append it to `ctx.mod.types` and wire
@@ -30,60 +31,8 @@ export function registerStructType(ctx: CodegenContext, name: string, fields: Fi
   return typeIdx;
 }
 
-/** Build a cache key for a function type signature (params + results). */
-function funcTypeKey(params: ValType[], results: ValType[]): string {
-  const part = (v: ValType): string => {
-    let s = v.kind;
-    if (v.kind === "ref" || v.kind === "ref_null") s += ":" + (v as { typeIdx: number }).typeIdx;
-    // (#2795) An `i32` Wasm slot backs `number`, `boolean` (1/0) and symbol
-    // HANDLES, which box to the host DIFFERENTLY (`__box_number` vs
-    // `__box_boolean` vs `__box_symbol`). The brand rides on the ValType but the
-    // bare `kind` is identical, so a brand-blind dedup collapses e.g. a
-    // `(f64)->boolean` signature onto a previously-registered `(f64)->number`
-    // one — and `getWasmFuncReturnType` then hands callers a PLAIN i32, so a
-    // boolean-returning recursive kernel's result boxed as the number 1 instead
-    // of `true` (#2795 closures/10-mutual). Keep branded i32 signatures distinct.
-    else if (v.kind === "i32") {
-      if ((v as { boolean?: true }).boolean) s += ":bool";
-      else if ((v as { symbol?: true }).symbol) s += ":sym";
-    }
-    // (#2846) Same brand-propagation hazard as i32 (#2795), one slot down: a
-    // bigint-branded `i64` (`{ kind:"i64"; bigint:true }`) backs a BigInt and
-    // boxes to the host via `__box_bigint`, whereas a plain native `i64`
-    // (`type i64 = number`) boxes via `__box_number` (`f64.convert_i64_s`,
-    // lossy past 2^53). A brand-blind dedup collapses a `(...)->bigint`
-    // signature onto a previously-registered plain-`i64` one, so
-    // `getWasmFuncReturnType` hands callers a PLAIN i64 and acorn's
-    // `stringToBigInt` return got boxed as a rounded number (#2846). Keep the
-    // branded i64 signature distinct.
-    else if (v.kind === "i64") {
-      if ((v as { bigint?: true }).bigint) s += ":big";
-    }
-    // An f64 undefined sentinel has the same Wasm carrier as an ordinary
-    // number, but callers must preserve the brand so boxing can recover
-    // `undefined`. Keep it out of the plain-number cache entry just like the
-    // i32/i64 semantic carriers above.
-    else if (v.kind === "f64") {
-      if ((v as { undefSentinel?: true }).undefSentinel) s += ":undef";
-    }
-    return s;
-  };
-  return params.map(part).join(",") + "|" + results.map(part).join(",");
-}
-
 export function addFuncType(ctx: CodegenContext, params: ValType[], results: ValType[], name?: string): number {
-  const key = funcTypeKey(params, results);
-  const cached = ctx.funcTypeCache.get(key);
-  if (cached !== undefined) return cached;
-  const idx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "func",
-    name: name ?? `type${idx}`,
-    params,
-    results,
-  });
-  ctx.funcTypeCache.set(key, idx);
-  return idx;
+  return internFunctionType(ctx.mod.types, ctx.funcTypeCache, params, results, name);
 }
 
 /**
@@ -240,6 +189,19 @@ export function getOrRegisterVecType(ctx: CodegenContext, elemKind: string, elem
     kind: "struct",
     name: `__vec_${cacheKey}`,
     superTypeIdx: vecBaseIdx,
+    // (#5349) Brand the packed-byte TypedArray carrier. `$__vec_i8_byte` and
+    // the ArrayBuffer's `$__vec_i32_byte` declare the same two fields over
+    // structurally identical `(array (mut i8))` data, so once BOTH are marked
+    // `final` by `markLeafStructsFinal` Wasm GC canonicalizes them to ONE
+    // runtime type and no `ref.test` can separate a `Uint8Array` from an
+    // ArrayBuffer (the §25.1.5.3 step-16 slot check). Declaring `final` here,
+    // while `finalizeLeafStructTypes` keeps `i32_byte` open, makes the two
+    // distinct canonical types. Sound because the packed-byte vec has no
+    // subtype anywhere: every `superTypeIdx` in `src/codegen` names
+    // `$__vec_base`, the externref vec, `$__vec_i32_byte` (`$__resizable_ab`)
+    // or a class/brand struct. Declared, not post-seal mutated, so
+    // `programAbiSession.recordLeafTypeFinalization` is not involved.
+    ...(cacheKey === "i8_byte" ? { final: true } : {}),
     fields: [
       { name: "length", type: { kind: "i32" }, mutable: true },
       {

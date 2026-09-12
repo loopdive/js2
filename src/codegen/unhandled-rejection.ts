@@ -29,6 +29,7 @@
 // async-frame / promise-combinators; only the standalone helper family lives here.
 
 import type { Instr } from "../ir/types.js";
+import { buildNoteUnhandledRejection as buildUnhandledRejectionInstructions } from "../runtime/wasmgc/promise/settlement-bodies.js";
 import type { CodegenContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -149,16 +150,7 @@ export function ensureUnhandledRejectionTracking(ctx: CodegenContext): void {
  * tracking is inactive (non-wasi). The value is consumed (not left on stack).
  */
 export function buildNoteUnhandledRejection(state: AsyncSchedulerState, promiseOnStack: Instr[]): Instr[] {
-  if (state.unhandledHeadGlobalIdx < 0 || state.unhandledNodeTypeIdx < 0) return [];
-  return [
-    // node = $__unhandled_node{ promise: <p>, next: __unhandled_head, handled: 0 }
-    ...promiseOnStack,
-    { op: "global.get", index: state.unhandledHeadGlobalIdx },
-    { op: "i32.const", value: 0 },
-    { op: "struct.new", typeIdx: state.unhandledNodeTypeIdx },
-    { op: "extern.convert_any" },
-    { op: "global.set", index: state.unhandledHeadGlobalIdx },
-  ];
+  return buildUnhandledRejectionInstructions(state, promiseOnStack);
 }
 
 /**

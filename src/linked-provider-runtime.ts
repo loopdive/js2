@@ -19,6 +19,15 @@ import {
   wrapLinkedProviderValue,
 } from "./runtime.js";
 
+// (#5364) Re-exported so the ONE test262 instantiate seam
+// (`scripts/test262-import-object.mjs`) can retire the previous row's project
+// through the SAME runtime copy that `instantiateLinkedProviders` registers
+// into. The in-process lanes reach that copy by dynamically importing THIS
+// module; the sharded worker passes `scripts/runtime-bundle.mjs` instead. Both
+// therefore need the reset on the same object as the wiring — a reset in the
+// other copy is the silent-wrong-copy bug #5353 finding 3 describes.
+export { resetLinkedProjectRegistry } from "./runtime.js";
+
 function wasmBytes(binary: Uint8Array): BufferSource {
   return binary as unknown as BufferSource;
 }
@@ -243,8 +252,19 @@ export function instantiateLinkedProviders(
     // consumer-minted argument arrives undecodable.
     registerLinkedProviderModule(rawExports);
     const exposedExports: Record<string, any> = { ...rawExports };
+    // (#5383 S2d) A provider compiled for a NON-JavaScript environment
+    // (`--target standalone`) hands its values to a WASM consumer, not to a
+    // host. `wrapLinkedProviderValue` replaces the value with a JS host mirror
+    // bound to this provider's `__struct_field_names` / `__sget_*` exports —
+    // exactly right for the JS lane, and a dead end for the standalone one:
+    // those exports do not exist in a standalone binary (#4035 strips the host
+    // bridge), and the consumer is wasm, which cannot read a JS proxy at all.
+    // Measured: with the mirror in place the consumer sees an object with zero
+    // own keys and every read `undefined`. Passing the raw struct through is
+    // what lets the #5383 S2d boundary terminals decode it.
+    const noHostMirror = manifest.providerMetadata.targetProfile?.environment !== "javascript";
     for (const boundary of Object.values(manifest.exportBoundaries)) {
-      if (boundary.kind === "function") continue;
+      if (boundary.kind === "function" || noHostMirror) continue;
       const getter = rawExports[boundary.field];
       if (typeof getter !== "function") {
         throw new Error(`Linked provider ${artifact.namespace} has no getter ${boundary.field}`);
