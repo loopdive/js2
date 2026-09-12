@@ -6,6 +6,7 @@ import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
+import { tryEmitSpreadHostArgs } from "./host-method-args.js";
 import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
 
@@ -33,12 +34,17 @@ export function compileArrayMethodExtern(
 
   const argsLocal = allocLocal(fctx, `__array_ext_args_${fctx.locals.length}`, externref);
   fctx.body.push({ op: "local.set", index: argsLocal });
-  for (const arg of callExpr.arguments) {
-    fctx.body.push({ op: "local.get", index: argsLocal });
-    const argType = compileExpression(ctx, fctx, arg, externref);
-    if (argType === null) fctx.body.push({ op: "ref.null.extern" });
-    else if (argType.kind !== "externref") coerceType(ctx, fctx, argType, externref);
-    fctx.body.push({ op: "call", funcIdx: arrPushIdx });
+  // (#5361 follow-up) A spread argument contributes its RUNTIME element count,
+  // not one slot; without this the source array is handed to the host as a
+  // single item. No spread ⇒ the unrolled loop below, byte-identical.
+  if (!tryEmitSpreadHostArgs(ctx, fctx, callExpr.arguments, argsLocal, "__js_array_push", arrPushIdx)) {
+    for (const arg of callExpr.arguments) {
+      fctx.body.push({ op: "local.get", index: argsLocal });
+      const argType = compileExpression(ctx, fctx, arg, externref);
+      if (argType === null) fctx.body.push({ op: "ref.null.extern" });
+      else if (argType.kind !== "externref") coerceType(ctx, fctx, argType, externref);
+      fctx.body.push({ op: "call", funcIdx: arrPushIdx });
+    }
   }
 
   fctx.body.push(
@@ -102,15 +108,19 @@ export function compileArrayConcatExternHost(
   const argsLocal = allocLocal(fctx, `__cat_ext_args_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: argsLocal });
 
-  for (const arg of callExpr.arguments) {
-    fctx.body.push({ op: "local.get", index: argsLocal });
-    const argType = compileExpression(ctx, fctx, arg, { kind: "externref" });
-    if (argType === null) {
-      fctx.body.push({ op: "ref.null.extern" });
-    } else if (argType.kind !== "externref") {
-      fctx.body.push({ op: "extern.convert_any" });
+  // (#5361 follow-up) `[].concat(...arrays)` pushed the spread SOURCE as one
+  // argument, so `Array.prototype.concat` flattened one level too few.
+  if (!tryEmitSpreadHostArgs(ctx, fctx, callExpr.arguments, argsLocal, "__js_array_push", arrPushIdx)) {
+    for (const arg of callExpr.arguments) {
+      fctx.body.push({ op: "local.get", index: argsLocal });
+      const argType = compileExpression(ctx, fctx, arg, { kind: "externref" });
+      if (argType === null) {
+        fctx.body.push({ op: "ref.null.extern" });
+      } else if (argType.kind !== "externref") {
+        fctx.body.push({ op: "extern.convert_any" });
+      }
+      fctx.body.push({ op: "call", funcIdx: arrPushIdx });
     }
-    fctx.body.push({ op: "call", funcIdx: arrPushIdx });
   }
 
   // Call __array_concat_any(receiver_ext, args_array) -> externref JS array

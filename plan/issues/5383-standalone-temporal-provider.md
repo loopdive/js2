@@ -2157,6 +2157,102 @@ ToNumber stop above rather than on `Object.fromEntries`.
 `tests/issue-1051.test.ts` (3) — the same 6 recorded on the S2k base.
 `tests/issue-5318-r4-computed-accessor-keys.test.ts` OOMs on both trees.
 
+## S2i regression fix (2026-09-12) — a computed static FIELD, shadowed by the class-value call arm
+
+PR #5820 (merged at `ec27f08b`) regressed **32 standalone rows**, one cluster:
+`test/language/{statements,expressions}/class/cpn-class-{decl,expr}-fields-methods-computed-property-name-from-*.js`.
+Every one failed `Expected SameValue(«null», «<value>»)` under
+`--target standalone`; the JS-host lane was untouched. This is the fix, based on
+`origin/main` and independent of the rest of the Temporal stack.
+
+### Root cause — S2i's gate was right, its callee resolution was not
+
+S2i widened `classDynamicMemberCallApplies`
+(`src/codegen/expressions/class-dynamic-member-call.ts`) to claim **every**
+`C[k](…)` whose receiver is an identifier naming a compiled class, and then let
+that call reuse the INSTANCE arm's lowering:
+`__apply_closure(__extern_get(recv, key), recv, args)`, where `recv` is the
+lazily materialized `$ClassName` class-object struct.
+
+That struct does not carry a **computed static field**. The ordinary READ
+lowering of `C[k]` does reach it; `__extern_get` on the raw class-object struct
+does not. So the fused call form answered null while the identical read answered
+the closure — a split the suspects named in the dispatch brief (the
+`class-static-sidecar` widening, the `class-proto-lookup` class-object arm, the
+`standalone-class-dyn-member` prototype widening) did **not** cause: probes that
+disabled `prependClassMethodCallArm` produced a byte-identical module
+(`wasm_sha 2afb8fcfed63` both ways), so the call arm was never even emitted for
+these modules.
+
+The split, measured on the reduction (one module, runner
+`runTest262File(…, "standalone")`):
+
+| probe on `let C = class { [1.1] = () => 3; static [1.1] = () => { hit++; return 2 } }` | main `cf82f78d` | fix |
+| ------------------------------------------------------------------------------------- | --------------- | --- |
+| `typeof C[String(1.1)]` — the READ                                                      | `"function"`    | `"function"` |
+| `C[String(1.1)]()` — the fused CALL                                                     | `null`          | `2`  |
+| `hit` after that call — was the closure INVOKED?                                        | `0`             | `1`  |
+| `const f = C[String(1.1)]; f()` — read, then call                                       | `2`             | `2`  |
+| `c[String(1.1)]()` — the INSTANCE half                                                  | `2`             | `2`  |
+
+The `hit` row is why the encoded probe exists in
+`tests/issue-5383-class-value-dynamic-call.test.ts`: a result-only assertion
+cannot tell "called, returned null" from "never called", and it was the latter.
+
+### The fix — ask the read lowering instead of re-deriving the callee
+
+`emitClassValueDynamicCall` handles the class-VALUE receiver separately: it
+compiles `elemAccess` itself for the callee (the read lowering knows about the
+static sidecar — S2i's win — **and** the `staticProps`/own-property surface —
+the regression), then recompiles the identifier for `this`.
+
+Recompiling the receiver is sound **only** here, and that is why the two arms
+stay split: `classValueReceiverApplies` requires an IDENTIFIER, so the second
+evaluation is a global read of the same lazy singleton. The instance arm cannot
+do this — `new C()[k]()` would construct twice — which is the constraint that
+forced S2i's single-evaluation shape in the first place.
+
+### Measurements (base = `origin/main` `cf82f78d6d`, a detached worktree; fix = this branch)
+
+Full `cpn-*` families, **all 248 rows** (`language/statements/class` +
+`language/expressions/class`), run solo per row:
+
+| lane           | base pass/fail | fix pass/fail | delta   |
+| -------------- | -------------- | ------------- | ------- |
+| `standalone`   | 152 / 96       | **184 / 64**  | **+32** |
+| gc (JS host)   | 136 / 112      | 136 / 112     | 0       |
+
+Per-TEST diff, not per-count: **32 fixed, 0 newly broken** on standalone, and the
+gc lane's failing-row LIST is byte-identical (`diff` empty). The 32 are exactly
+the `fields-methods` rows of both families — the cluster #5820 broke.
+
+Byte A/B on the gc lane: **13 modules** under `website/playground/examples/`
+compiled on both trees, sha256 of each binary **identical**. Expected — the gate
+is `ctx.standalone`-only.
+
+Suites: `#5383` (incl. the real-provider S2 smoke test), `#5195` ×4, `#5358`,
+`#2158` ×2, `#4628` ×2, `#5225`, `#5353`, `#5364` — **256 passed, 0 failed**
+(the one failure in the first batch was this PR's own new test before its host
+decode was fixed; a standalone export returns a WasmGC ref, so the probe encodes
+its four answers as one number).
+
+`npm run -s test:equivalence:gate` →
+`equivalence-gate: 22 failing, 1720 passing, 22 known-failures in baseline.`
+(exit 0).
+
+Pre-existing red, unchanged and re-measured on this tree: `issue-2151` (1),
+`issue-2151-mixed-spread` (1), `issue-3610-standalone-prototype-receiver-brand`
+(1), `issue-1051` (3), `issue-5382-temporal-project-publication` (1),
+`issue-2358-array-toprimitive` (1) — 8 total, the same 8 recorded on the S2k/S2l
+bases.
+
+### What this does NOT claim
+
+S2i's headline probe shape (`class C { static mk(a){…} }`, `C["mk"](5)`) still
+answers `NaN` under the test262 harness on **both** trees — measured, identical
+before and after. That is a separate residual of the static-method surface, not
+something this fix regressed or repaired.
+
 ## S3 findings (2026-09-12) — the lane is wired per TARGET, and linking is not free
 
 S2l's provider is reachable from every test262 lane now. The slice's own
