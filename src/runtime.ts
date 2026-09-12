@@ -92,6 +92,12 @@ import {
   writeWasmStructSidecar,
   type WasmStructSidecarState,
 } from "./runtime/wasm-struct-sidecar.js";
+// (#5370) typed-array brand identity at the host boundary (inbound + `.constructor`)
+import {
+  COMPILED_TYPED_ARRAY_CTORS as _COMPILED_TYPED_ARRAY_CTORS,
+  adoptTypedArrayBrand,
+  compiledTypedArrayConstructorFor as _typedArrayCtorFor,
+} from "./runtime/typed-array-host-brand.js";
 import { createHostCallImport, isHostCallImportName } from "./runtime/host-call-abi.js";
 import { createDynamicFunctionImport } from "./runtime/dynamic-function-import.js"; // (#2960/#4650)
 import { createBoundaryObjectAdapter } from "./runtime/boundary-object-adapter.js";
@@ -582,23 +588,6 @@ const _abHostBufferReverse = new WeakMap<ArrayBuffer, object>();
 const _compiledTypedArrayKinds = new WeakMap<object, number>();
 const _compiledTypedArrayMirrors = new WeakMap<object, ArrayBufferView>();
 const _compiledTypedArrayBuffers = new WeakMap<object, ArrayBuffer>();
-// Codegen contract: keep in lock-step with TYPED_ARRAY_HOST_TAGS in
-// expressions/typed-array-host-carrier.ts. Index zero is intentionally empty.
-const _COMPILED_TYPED_ARRAY_CTORS: ReadonlyArray<Function | undefined> = [
-  undefined,
-  Int8Array,
-  Uint8Array,
-  Uint8ClampedArray,
-  Int16Array,
-  Uint16Array,
-  Int32Array,
-  Uint32Array,
-  Float32Array,
-  Float64Array,
-  typeof BigInt64Array === "function" ? BigInt64Array : undefined,
-  typeof BigUint64Array === "function" ? BigUint64Array : undefined,
-];
-
 function _compiledTypedArrayMirror(carrier: any, callbackState?: MarshalExportSource): ArrayBufferView | undefined {
   if (!_canBeWeakKey(carrier)) return undefined;
   const kind = _compiledTypedArrayKinds.get(carrier);
@@ -3376,14 +3365,12 @@ function _sidecarSet(obj: any, key: any, val: any): void {
   writeWasmStructSidecar(_wasmSidecars, obj, key, val);
 }
 
+const _sidecarNormalize = (value: any): any => vecForMirror(value) ?? _unwrapForHost(value);
+
 function _copyWasmStructSidecar(source: any, destination: any): void {
-  copyWasmStructSidecar(
-    _wasmSidecars,
-    source,
-    destination,
-    (value) => vecForMirror(value) ?? _unwrapForHost(value),
-    _canBeWeakKey,
-  );
+  copyWasmStructSidecar(_wasmSidecars, source, destination, _sidecarNormalize, _canBeWeakKey);
+  // (#5370) The same bridge carries a typed array's BRAND across a rep change.
+  adoptTypedArrayBrand(source, destination, _sidecarNormalize, _compiledTypedArrayKinds, _canBeWeakKey);
 }
 
 // Keep native consumers of cached callable bridges in sync with raw-closure sidecar writes.
@@ -16096,7 +16083,12 @@ assert._isSameValue = isSameValue;
           return inst;
         };
       // ArrayBuffer.isView(arg) — checks if arg is a TypedArray or DataView (#965)
-      if (name === "__arraybuffer_isView") return (arg: any): number => (ArrayBuffer.isView(arg) ? 1 : 0);
+      // (#5370) The arg arrives as the RAW carrier (`extern.convert_any`, no
+      // marshalling), so the direct ask answers `false` for every compiled
+      // TypedArray. Re-ask through the mirror every other host API sees.
+      if (name === "__arraybuffer_isView")
+        return (arg: any): number =>
+          ArrayBuffer.isView(arg) || ArrayBuffer.isView(_wrapForHost(arg, callbackState?.getExports())) ? 1 : 0;
       // Array.from(iterable, mapFn?) — creates array from iterable (#965).
       //
       // (#1382) Two interop hazards:
@@ -18619,6 +18611,11 @@ assert._isSameValue = isSameValue;
           }
         }
         if (key === "constructor" && obj != null && _isWasmStruct(obj)) {
+          // (#5370) A BRANDED TypedArray carrier answers its OWN constructor,
+          // not the %Array% the vec arm below gives every other vec — matching
+          // the real `Uint8Array` `_wrapForHost` hands the next host call.
+          const taCtor = _typedArrayCtorFor(obj, _compiledTypedArrayKinds, _canBeWeakKey, globalSandbox);
+          if (taCtor !== undefined) return taCtor;
           const exports = callbackState?.getExports();
           const isVec = exports?.__is_vec as ((v: any) => number) | undefined;
           const vecLen = exports?.__vec_len;
