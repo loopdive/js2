@@ -2076,6 +2076,22 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     if (!ctx.funcMap.has("Promise_settle_reject")) {
       addImport(ctx, "env", "Promise_settle_reject", { kind: "func", typeIdx: settleTypeIdx });
     }
+    // (#5372) `Promise_then2_frame(p, onFulfilled, onRejected, resultPromise)`
+    // — the reaction registration the resume machine uses instead of
+    // `Promise_then2`. A wasm TRAP raised while a state resumes (a `ref.cast`
+    // failure is uncatchable by `catch_all`, even after crossing JS frames)
+    // used to escape the reaction as an unhandled rejection and kill the host
+    // process; the runtime now catches it in the reaction wrapper and REJECTS
+    // the frame's result promise, as the synchronous pass-through's caller
+    // would have observed a thrown error.
+    if (!ctx.funcMap.has("Promise_then2_frame")) {
+      const typeIdx = addFuncType(
+        ctx,
+        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      addImport(ctx, "env", "Promise_then2_frame", { kind: "func", typeIdx });
+    }
   }
 
   // ── collectFunctionalArrayImports finalize ──
