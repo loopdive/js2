@@ -766,6 +766,10 @@ export interface FunctionContext {
    * / `liftedCaptureBoxSlot` in closures/capture-source-slot.ts.
    */
   liftedCaptureBoxes?: Map<string, number>;
+  /** (#5356) Cells `emitEagerCaptureBoxes` minted at function top, keyed by the RAW
+   * pre-hoisted slot each was seeded from — scope-hiding-proof, unlike the name-keyed
+   * maps above. Resolved through `statements/eager-capture-box.ts`. */
+  eagerCaptureBoxes?: Map<number, { cellSlot: number; refCellTypeIdx: number; valType: ValType }>;
   /**
    * Source-visible bindings owned by a function whose lexical descendants may
    * perform direct eval. These functions alone promote bindings to the shared
