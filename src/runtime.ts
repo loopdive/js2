@@ -97,6 +97,7 @@ import { createDynamicFunctionImport } from "./runtime/dynamic-function-import.j
 import { createBoundaryObjectAdapter } from "./runtime/boundary-object-adapter.js";
 import { createBoundaryCallbackAdapter } from "./runtime/boundary-callback-adapter.js";
 import { createBoundaryPromiseAdapter } from "./runtime/boundary-promise-adapter.js";
+import { createPromiseThenImport } from "./runtime/promise-then-reactions.js"; // (#5372)
 import { createBoundaryValueAdapter, isBoundaryValueImportIntent } from "./runtime/boundary-value-adapter.js";
 import { createInstanceLifecycleAdapter } from "./runtime/instance-lifecycle-adapter.js";
 import {
@@ -16948,9 +16949,8 @@ assert._isSameValue = isSameValue;
         return (executor: any) => new PromiseCtor(_maybeWrapCallable(executor, 2, callbackState));
       }
       // (#1382) `onFulfilled` / `onRejected` callbacks are arity-1 (the value or reason).
-      if (name === "Promise_then") return (p: any, cb: any) => p.then(_wrapPromiseReaction(cb));
-      if (name === "Promise_then2")
-        return (p: any, cb1: any, cb2: any) => p.then(_wrapPromiseReaction(cb1), _wrapPromiseReaction(cb2));
+      if (name === "Promise_then" || name === "Promise_then2" || name === "Promise_then2_frame")
+        return createPromiseThenImport(name, _wrapPromiseReaction); // (#5372) the frame variant rejects the frame on a trap
       if (name === "Promise_catch") return (p: any, cb: any) => p.catch(_maybeWrapCallable(cb, 1, callbackState));
       // (#1382) `onFinally` is arity-0 (no arg per spec §27.2.5.3).
       if (name === "Promise_finally") return (p: any, cb: any) => p.finally(_maybeWrapCallable(cb, 0, callbackState));
