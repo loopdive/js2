@@ -1020,6 +1020,9 @@ PR wholesale. The source delta is deliberately limited to:
   before the existing derived-constructor fallthrough error; and
 - eight focused regression cases in
   `tests/issue-5350-super-property-r1.test.ts`.
+- `scripts/compiler-boundaries.json`: classify the new helper exactly like its
+  adjacent class-codegen modules (`unmigrated` / `mixed-needs-split` /
+  `backend-wasmgc`) so the boundary inventory retains a complete import graph.
 
 The guard rejects return/lexical-`this`/`eval`/nested callable or class shapes,
 parameter `super` references, and super write targets. That keeps the change at
@@ -1089,3 +1092,11 @@ pin makes the focused suite 40/41 on current main. It becomes ready only after
 #6420 lands, this branch integrates the resulting current main, and the focused
 suite plus CI are green. No broad object-literal or class-value/callability
 change belongs in this checkpoint.
+
+**Post-push CI correction (2026-09-12).** The PR's compiler-boundary inventory
+initially reported only the new helper as unclassified, which in turn left the
+two imports from `declarations.ts` and `property-access.ts` unresolved. The
+single matching inventory entry above restores that evidence without changing
+the boundary policy or any super-property semantics; the exact quality command
+`node --max-old-space-size=2048 scripts/check-compiler-boundaries.mjs --mode
+inventory --base HEAD^1` now reports `errors: []` and `inventoryValid: true`.
