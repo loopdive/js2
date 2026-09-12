@@ -1,10 +1,11 @@
 {
   "id": "5365",
   "assignee": "ttraenkler/sendev-5365",
-  "requested_by": "ttraenkler/sendev-5365",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "issue-5365-s1-host-closure-length",
   "claimed_at": "2026-09-12T14:38:14Z",
-  "updated_at": "2026-09-12T14:38:14Z",
-  "write_id": "31973-n1s0avbb"
+  "updated_at": "2026-09-12T19:45:38Z",
+  "write_id": "6666-b4gtr1d1",
+  "released_at": "2026-09-12T19:45:38Z"
 }
