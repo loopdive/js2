@@ -10385,6 +10385,11 @@
       "layer": "legacy-host"
     },
     {
+      "path": "src/runtime/compiled-closure-length.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
       "path": "src/runtime/compiled-entry-pair.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
