@@ -108,6 +108,13 @@ other compiler/runtime surfaces. Both were normally merged without conflict at
 `66c44d6470fb6b73624ab9f5fc06915dd00f241e`; no rebase or force update was
 used.
 
+The merge queue subsequently advanced main to
+`b433de9ffe4e0c165fe65ff9d4a20bc91854cc1d` (#5756) and automatically merged
+that into the published fork branch at
+`95b55dbe2387915d54b93228c2bd8d949ce4bf4a`. The locally completed checkpoint
+was reconciled with that bot merge normally at
+`22181e55b23e807256c59bc146beafa55c5e973e`; no remote history was overwritten.
+
 The port intentionally excludes the stale PR's super and TypedArray hunks. It
 does not modify the TypedArray lane's `ta-dyn-mop.ts`, `native-proto.ts`, or
 `proto-index-store.ts`. The only shared surfaces are ordinary prototype/object
@@ -242,15 +249,16 @@ The c645 provider build is retained only as intermediate provenance
 (`a67d940e…` bundle and `a520c80d…` adapter); no c645 cohort result is used as
 publication evidence.
 
-### Post-d03 final validation — `ffb338c45b`
+### Post-d03 intermediate validation — `ffb338c45b`
 
-The normal merge tip is
+This measured the post-d03 merge tip
 `66c44d6470fb6b73624ab9f5fc06915dd00f241e`, whose second parent is current
-upstream `ffb338c45b9ce26c0b430a7345f498c403d35441`. #5849 at `d03c2248`
+upstream at that time, `ffb338c45b9ce26c0b430a7345f498c403d35441`. #5849 at `d03c2248`
 touches compiler/runtime inputs, so the compiler bundle and the QuickJS
 **evaluation** provider were rebuilt even though it has no direct generator
 source-file overlap. The later `d03..ffb338` range is only #5341 documentation
-and npm-compat artifacts.
+and npm-compat artifacts. The merge queue later added #5756, so this evidence
+is retained as intermediate provenance rather than the current PR basis.
 
 The rebuilt compiler bundle is
 `31bd3f5b3afcaeda6222bc1017be10a7cdd4f878d7e8801df7e2aa5f8aa09dd2`.
@@ -273,6 +281,34 @@ corpus commands used `COMPILER_POOL_SIZE=1` and
 - `pnpm run typecheck`, `pnpm run lint`, Prettier, LOC/function budgets all
   passed on this head.
 
+### Current merge-queue validation — `b433de9f`
+
+The merge-queue bot's fork commit
+`95b55dbe2387915d54b93228c2bd8d949ce4bf4a` merges main
+`b433de9ffe4e0c165fe65ff9d4a20bc91854cc1d` (#5756) into the previously
+published generator branch. Its IR-planning changes have no direct generator
+source-file conflict, but they change compiler inputs, so the local normal
+reconciliation tip `22181e55b23e807256c59bc146beafa55c5e973e` rebuilt both the
+compiler bundle and QuickJS **evaluation** provider before remeasurement.
+
+The current compiler bundle is
+`461ad8ef1ae4a7ddd958b02ebf4345a5994ff5048b23c9a1ffd99512105b6e0d`.
+The QuickJS artifact remains `073742801ba76347`; evaluation adapter
+`6054229e6f1cf236` (1,826,684 bytes) was built and canary-verified. All corpus
+commands used `COMPILER_POOL_SIZE=1` and `JS2WASM_EVAL_ENGINE=quickjs`.
+
+- Unchanged original prototype11, generic27, and permanent bridge/legacy suite
+  are again **43/43 pass** under one Vitest fork. The standalone fixtures retain
+  successful compile, `imports=[]`, valid Wasm, and result `1` assertions.
+- Original bridge9 is again **9/9 pass**, with only its ordinary test-entry
+  export wrapper and no diagnostic cast or behavior rewrite; all rows compile
+  standalone with `imports=[]`, valid Wasm, and result `1`.
+- The exact **2026-09-12 protocol36+B8** matrix is **44/44 pass** again:
+  owned A is **36/36** and authority B is **8/8**, with zero B-control losses.
+  It is still not the unrecoverable historical protocol44 list.
+- `pnpm run typecheck`, `pnpm run lint`, Prettier, LOC/function budgets all
+  passed on this current merge-queue head.
+
 ### Separate numeric-payload and closed-identity residual
 
 Numeric generators still need an independent payload ABI decision. Do not
@@ -289,12 +325,12 @@ the yield element is numeric. The follow-up implementation plan is:
    completed return, ignored next) with `imports=[]` and valid Wasm before
    counting a Test262 gain.
 
-On the post-d03 final head, the tracked original payload source bodies from the
-stale checkpoint were rerun as a residual diagnostic (with only an export
-wrapper to invoke `test`): all three compile with `imports=[]` and valid Wasm,
-but all three return `0` rather than the Node-oracle `1`. The retained failures
-are **0/3** for suspended `return(object)`, completed `return(object)`, and
-ignored `next(object)`. They are not a Test262 gain and remain a separately
+On the current merge-queue head, the tracked original payload source bodies
+from the stale checkpoint were rerun as a residual diagnostic (with only an
+export wrapper to invoke `test`): all three compile with `imports=[]` and valid
+Wasm, but all three return `0` rather than the Node-oracle `1`. The retained
+failures are **0/3** for suspended `return(object)`, completed `return(object)`,
+and ignored `next(object)`. They are not a Test262 gain and remain a separately
 scoped ABI follow-up.
 
 The historical closed-object identity control was untracked and is unavailable
@@ -305,7 +341,7 @@ an object-carrier substrate dependency to coordinate with its owner.
 ### Readiness
 
 This bounded protocol bridge remains ready for a non-draft review PR:
-post-d03-final-head source fixtures, bridge controls, provider provenance, and
+current-merge-queue source fixtures, bridge controls, provider provenance, and
 the reproducible protocol36+B8 matrix are green. That readiness does not claim
 complete ES2015 or close the separately recorded numeric-payload/closed-object
 mechanisms.
