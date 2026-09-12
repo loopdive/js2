@@ -221,3 +221,50 @@ required current-merge-queue source and exact-corpus evidence is green, and the
 numeric-payload and closed-identity residuals are explicitly separate
 mechanisms. This remains neither a claim of complete generator semantics nor a
 claim of full ES2015 conformance.
+
+## Post-#5850 final integrated validation — `f41432d1`
+
+During CI repair upstream advanced to
+`f84b3a3de56afd2f6ddd6c91a77ef407d92f4f19` (#5850). It was normally merged
+at `f41432d1ba59d8f8a744960c1de7d69e68ed5ad6`, with no rebase or force update.
+The auto-merge preserved #5850's async-thenable and boundary-inventory work as
+well as all #5199 generator entries; the only shared policy surface is
+`scripts/compiler-boundaries.json`.
+
+The CI failure was a real host-lane generator regression. Generic delegated
+result getters and the open `IteratorResult` property fallback used
+`nativeStringLiteralInstrs` even when no native-string heap type existed. That
+emitted `__strlit_0` with heap type index `-1`. The repair reserves the exact
+protocol strings before ABI finalization via `addStringConstantGlobals`, then
+uses target-aware `stringConstantExternrefInstrs`; it keeps the known-native
+result and host-free protocol paths unchanged. This is a narrow key-material
+planning repair, not global signature loosening or broad capture reclassification.
+
+The final compiler bundle SHA-256 is
+`ad4110377653290332b121425869b72ed61b21c3757bc66fba4ea59c51e9651c`. The
+QuickJS evaluation provider reused artifact `073742801ba76347` and
+built/canary-verified adapter `a8544ea4802d2a14` (1,826,684 bytes).
+
+- Permanent original-source generator pins: **46/46 pass** (prototype11,
+  generic27, seven bridge/legacy pins, and prepared admission). The unchanged
+  standalone rows retain compile success, `imports=[]`, valid Wasm, and result
+  assertions.
+- Original bridge9: **9/9 pass**, every row standalone with `imports=[]`,
+  valid Wasm, and result `1`, using only its normal export entry wrapper.
+- Exact current **2026-09-12 protocol36+B8**: **44/44 pass** — A **36/36**,
+  B **8/8**, zero B losses. This is not the lost historical protocol44 cohort.
+- The four #439 and two #763 CI regressions pass. The exact direct file run is
+  **8/9** because the separate, pre-existing #763 static diagnostic (`Type
+  'undefined' is not assignable to type 'number'`) remains baselined.
+- CI-style equivalence gate: **1,720 pass**, **22 known baseline failures**,
+  **zero new regressions**. Boundary inventory has `errors: []`; typecheck,
+  lint, Prettier, LOC/function, and oracle ratchets pass.
+- Numeric-payload diagnostic: **0/3**. All three tracked original bodies still
+  compile with `imports=[]` and valid Wasm but return `0`, not Node-oracle `1`.
+  The numeric payload ABI and historical closed-object identity residual remain
+  separate mechanisms and do not make this bounded bridge draft-only.
+
+All final corpus and compiler-backed cohorts used `COMPILER_POOL_SIZE=1`; the
+corpus run also used `JS2WASM_EVAL_ENGINE=quickjs`. The PR can remain
+**draft** until this refreshed head is published and confirmed mergeable; it can
+be marked ready/non-draft once that refreshed head is green and mergeable.

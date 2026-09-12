@@ -346,5 +346,71 @@ the reproducible protocol36+B8 matrix are green. That readiness does not claim
 complete ES2015 or close the separately recorded numeric-payload/closed-object
 mechanisms.
 
+### Post-#5850 final integrated validation — `f41432d1`
+
+Upstream main advanced to `f84b3a3de56afd2f6ddd6c91a77ef407d92f4f19` while
+the CI-repair validation was in progress. It was normally merged, without a
+rebase or force update, at `f41432d1ba59d8f8a744960c1de7d69e68ed5ad6`.
+`#5850` adds async-thenable adoption and one boundary-inventory entry. The
+merge auto-resolved the shared policy, `closures.ts`, and
+`nested-declarations.ts`; both #5850's and #5199's classifications and source
+semantics are present. This is the final source head measured below.
+
+#### CI repair: host IteratorResult key planning
+
+The six CI equivalence regressions were real, not base drift: the generic
+delegated-result getter and the open `IteratorResult` dynamic-property fallback
+called `nativeStringLiteralInstrs` on the ordinary WasmGC host lane. That helper
+requires a native-string heap type, so its `__strlit_0` global had heap type
+index `-1` there. The #5756 prepared-admission order made that invalid global
+observable during compilation.
+
+The repair does not relax heap-type checks or mark unrelated captures mutable.
+It reserves the exact protocol keys through `addStringConstantGlobals` before
+the program ABI finalizes, then uses `stringConstantExternrefInstrs`, which is
+target-aware. `next`, `throw`, `return`, `done`, and `value` are reserved when
+the generic delegated-result helpers are emitted; `value`/`done` are reserved
+only when the open-result dynamic fallback is selected. The known-native result
+struct path and host-free native protocol paths are unchanged.
+
+Permanent evidence now includes the exact original #439 IteratorResult read
+and #763 yield-as-IIFE-argument sources in the bridge suite, plus the prepared
+admission pin. No `any` cast or source rewrite is counted as a gain. The three
+newly classified generator runtime modules are also in
+`scripts/compiler-boundaries.json`, alongside #5850's classification.
+
+The compiler bundle rebuilt from `f41432d1` is
+`ad4110377653290332b121425869b72ed61b21c3757bc66fba4ea59c51e9651c`.
+The correct QuickJS **evaluation** provider reused artifact
+`073742801ba76347` and built/canary-verified adapter `a8544ea4802d2a14`
+(1,826,684 bytes). All compiler-backed cohorts used
+`COMPILER_POOL_SIZE=1`; the exact corpus also used
+`JS2WASM_EVAL_ENGINE=quickjs`.
+
+- Permanent generator pins are **46/46 pass**: unchanged prototype11,
+  generic27, the seven-test bridge/legacy suite, and the prepared-admission
+  pin. The original standalone fixtures retain their compile, `imports=[]`,
+  valid-Wasm, and result assertions.
+- Original bridge9 is **9/9 pass** from the retained bodies with only the
+  normal `test` export wrapper. Every row compiled standalone with
+  `imports=[]`, valid Wasm, and result `1`.
+- Exact **2026-09-12 protocol36+B8** is **44/44 pass**: owned A is **36/36**,
+  authority-selected B is **8/8**, and there are zero B losses. It remains
+  distinct from the historical, unrecoverable protocol44 list.
+- The four #439 and two #763 rows that regressed in CI now pass. The direct
+  files report **8/9** only because the pre-existing baseline row `yield with
+  value used as expression` still reports `Type 'undefined' is not assignable
+  to type 'number'`; it is not a new or claimed #5199 gain.
+- `pnpm run test:equivalence:gate` is green: **1,720 pass**, **22 known
+  baseline failures**, and **zero new regressions**. The CI-equivalent boundary
+  inventory is also green (`errors: []`, 1,333 tracked, 0 untracked), as are
+  typecheck, lint, Prettier, LOC/function budgets, and the oracle ratchet.
+
+The three tracked numeric-payload controls were rerun again from their stale
+checkpoint source bodies with only the export wrapper. They compile with
+`imports=[]` and valid Wasm but return `0`, not the Node-oracle `1`: **0/3**.
+The separate payload ABI plan above remains the handoff; this is neither a
+Test262 gain nor a reason to hold the bounded protocol bridge draft.
+
 Full resumption details and exact local commands are in
 [the 2026-09-12 rescue handoff](../log/2026-09-12-es2015-generator-protocol-rescue-handoff.md).
