@@ -10,6 +10,11 @@ import { integrityVarKey } from "../widened-var-key.js";
 import { classMemberFuncKey } from "../class-member-keys.js"; // (#5195 Step 9 H) static setter key
 import { PROP_FLAG_ACCESSOR, PROP_FLAG_WRITABLE } from "../object-ops.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
+import {
+  prepareStrictSingleArrayWrite,
+  emitStrictSingleArrayWrite,
+  emitEarlyStrictArrayWrite,
+} from "./destructuring-unresolved.js";
 import { emitBoundsCheckedArrayGet, resolveArrayInfo } from "../array-methods.js";
 import { emitArraySetLengthValidation } from "../array-length-define.js"; // (#4222) §10.4.2.4 step 3
 import { emitHoleToUndefined, holeSentinelInstrs } from "../array-holes.js";
@@ -32,6 +37,7 @@ import { reportError } from "../context/errors.js";
 import { fnShadowSlot, isShadowedTopLevelFn, withShadowReadSuppressed } from "../fn-global-shadow.js"; // (#4630)
 import { reportSilentFallback } from "../fallback-telemetry.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
+import { recordSidecarPropertyOwner } from "../sidecar-owner-scope.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import {
   addFuncType,
@@ -95,7 +101,6 @@ import { tryCompileFnctorPrototypeAssign } from "./fnctor-prototype.js";
 import { reserveAccessorSetDriver } from "../accessor-driver.js";
 import { S5C_STRUCT_ACCESSOR_CLOSURE } from "../struct-accessor-closure.js";
 import {
-  findUnresolvableInArrayPattern,
   findUnresolvableInObjectPattern,
   isUnresolvableIdent,
   NOT_UNRESOLVABLE,
@@ -188,22 +193,11 @@ import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
 import { emitToPropertyKeyOnce } from "./computed-member-reference.js";
 import { inheritedSetAffectsKey } from "../inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import { compileRuntimeEvalShadowedAssignment } from "./runtime-eval-assignment.js";
+import { hostTypedArrayCarrierNameForExpression } from "./typed-array-host-carrier.js";
 
 /** Numeric and BigInt TypedArray view name for the native vec element lane. */
 function vecElementTypedArrayName(ctx: CodegenContext, receiver: ts.Expression): string | undefined {
-  const numericName = elementAccessTypedArrayName(ctx, receiver);
-  if (numericName !== undefined) return numericName;
-  const type = ctx.checker.getTypeAtLocation(receiver);
-  let name = type.getSymbol()?.name ?? type.aliasSymbol?.name;
-  if (
-    name !== "BigInt64Array" &&
-    name !== "BigUint64Array" &&
-    ts.isNewExpression(receiver) &&
-    ts.isIdentifier(receiver.expression)
-  ) {
-    name = receiver.expression.text;
-  }
-  return name === "BigInt64Array" || name === "BigUint64Array" ? name : undefined;
+  return elementAccessTypedArrayName(ctx, receiver) ?? hostTypedArrayCarrierNameForExpression(ctx, receiver);
 }
 
 /**
@@ -1989,9 +1983,11 @@ function compileArrayDestructuringAssignment(
   target: ts.ArrayLiteralExpression,
   value: ts.Expression,
 ): InnerResult {
+  const singleUnresolved = prepareStrictSingleArrayWrite(ctx, fctx, target, value);
   // Compile the RHS — should produce a struct ref (either tuple or vec)
   const resultType = compileExpression(ctx, fctx, value);
   if (!resultType) return null;
+  if (singleUnresolved) return emitStrictSingleArrayWrite(ctx, fctx, resultType);
   // (#1719 CPR-2) When the program overrode Array.prototype[@@iterator] and the
   // RHS is a real array, drive the captured override instead of the backing
   // store (§13.15.5.2 ArrayAssignmentPattern → GetIterator). Strictly gated
@@ -2008,23 +2004,7 @@ function compileArrayDestructuringAssignment(
     if (drove) return { kind: "externref" };
   }
 
-  // §6.2.4 PutValue: strict-mode assignment to unresolvable reference throws.
-  // Nested patterns must observe a nullish element before PutValue resolves
-  // their leaf targets. In `[[x]] = []`, the missing outer element therefore
-  // throws the required TypeError before strict-mode's unresolved `x` check
-  // (#4719). Leaf-only patterns retain the existing early ReferenceError path.
-  const hasNestedPattern = target.elements.some(
-    (element) => ts.isArrayLiteralExpression(element) || ts.isObjectLiteralExpression(element),
-  );
-  if (
-    isStrictContext(target, ctx.inferModuleStrictArguments) &&
-    findUnresolvableInArrayPattern(ctx, fctx, target) &&
-    !hasNestedPattern
-  ) {
-    emitStrictPutValueThrow(ctx, fctx);
-    fctx.body.push({ op: "ref.null.extern" });
-    return { kind: "externref" };
-  }
+  if (emitEarlyStrictArrayWrite(ctx, fctx, target)) return { kind: "externref" };
 
   // Externref fallback: use __extern_get(obj, boxed_index) for each element
   if (resultType.kind !== "ref" && resultType.kind !== "ref_null") {
@@ -2794,7 +2774,9 @@ function emitDynamicMemberSet(
   // choice so a later statically-typed `obj.prop` read does not auto-add a new,
   // still-default struct field and thereby hide the value just written.
   if (ts.isIdentifier(target.expression)) {
-    ctx.sidecarDefinedPropertyKeys.add(`${target.expression.text}:${propName}`);
+    const sidecarKey = `${target.expression.text}:${propName}`;
+    ctx.sidecarDefinedPropertyKeys.add(sidecarKey);
+    recordSidecarPropertyOwner(ctx, sidecarKey, target.expression);
   }
 
   // Receiver (reference before value, matching plain `obj.x = v` ordering) → externref local.
@@ -5012,7 +4994,36 @@ function compilePropertyAssignment(
     if (ctx.standalone) {
       const ownWrite = emitExternrefBackedOwnFieldWrite(ctx, fctx, target, value, fieldName, typeName);
       if (ownWrite !== undefined) return ownWrite;
-      // undefined → not applicable (e.g. helper unavailable); fall through.
+      // (#5383 S2b) `undefined` means the class has NO known native backing —
+      // an Array/TypedArray/String/… carrier rather than an `$Error_struct` or
+      // a native `$Object` (`externrefBackedOwnFieldBacking`). The struct path
+      // below is not merely unhelpful there, it is UNREACHABLE-BY-DESIGN: the
+      // instance is an externref carrier and never a `$typeName` WasmGC struct,
+      // so its `ref.test $typeName` always misses. The receiver then narrows to
+      // `ref.null $typeName` and the #2084 null guard throws
+      // `TypeError: Cannot access property on null or undefined` — which is
+      // exactly what `class B extends Array { constructor(n, s) { super(n);
+      // this.sign = s; } }` did on this lane, and (via jsbi's `class JSBI
+      // extends Array`) what stopped the standalone @js-temporal/polyfill's
+      // `__module_init`.
+      //
+      // The field only reaches the struct path at all because the constructor's
+      // own `this.sign = …` FLOW-GROWS a `sign` slot onto the vestigial `$B`
+      // struct; an assignment from outside the class (`b.sign = 1`) finds no
+      // slot, takes the #4149 `fieldIdx === -1` arm below, and has always
+      // worked. So route the unknown-backing case to the SAME dynamic store the
+      // outside write already uses — one behaviour for both, instead of a slot
+      // that decides which of the two throws.
+      //
+      // Nothing that works today changes: every write this redirects previously
+      // threw or trapped, so there is no valid artifact to perturb. The
+      // JS-host/`gc` lane never enters this branch (it is `ctx.standalone`-only
+      // and the `!ctx.wasi` arm below is untouched).
+      const backing = externrefBackedOwnFieldBacking(ctx, typeName);
+      if (backing === undefined) {
+        return compilePropertyAssignmentExternSet(ctx, fctx, target, value, fieldName);
+      }
+      // A known backing whose helper was unavailable — fall through unchanged.
     } else if (!ctx.wasi) {
       return compilePropertyAssignmentExternSet(ctx, fctx, target, value, fieldName, true);
     }
@@ -5992,7 +6003,7 @@ function compileElementAssignment(
     // proves `i < arr.length`, the index is in [0, length) so capacity is
     // already sufficient and `vec.length` does not need to grow. Skip the
     // grow check + length-update entirely and emit a direct `array.set`.
-    if (isSafeBoundsEliminated(fctx, target)) {
+    if (isSafeBoundsEliminated(fctx, target) && (!isTypedArray || noJsHost(ctx))) {
       // Vec data field is `(ref $arr)` (non-nullable), so struct.get yields
       // a non-null ref directly — no ref.as_non_null needed.
       fctx.body.push({ op: "local.get", index: vecLocal });
@@ -6034,6 +6045,21 @@ function compileElementAssignment(
     // compare below turns UNSIGNED (the local holds a u32 bit pattern — index
     // 2**32-2 arrives as `-2`). Full rationale in vec-sparse-index.ts.
     const unbackedLocal = emitUnbackableIndexFlag(fctx, idxLocal);
+    if (isTypedArray) {
+      // Integer-indexed writes outside a TypedArray's current logical length
+      // are ignored. A host transfer sets that length to zero while retaining
+      // the Wasm backing, so this also prevents detached writes from exposing
+      // or resurrecting stale capacity after RHS coercion has completed.
+      fctx.body.push(
+        { op: "local.get", index: unbackedLocal },
+        { op: "local.get", index: idxLocal },
+        { op: "local.get", index: vecLocal },
+        { op: "struct.get", typeIdx, fieldIdx: 0 },
+        { op: "i32.ge_u" },
+        { op: "i32.or" },
+        { op: "local.set", index: unbackedLocal },
+      );
+    }
     fctx.body.push(...needsGrowCondInstrs(unbackedLocal, idxLocal, dataLocal));
     fctx.body.push({
       op: "if",
@@ -6175,25 +6201,26 @@ function compileElementAssignment(
     // array.set: data[idx] = val (skipped for an unbackable index).
     fctx.body.push(...guardedElementSetInstrs(unbackedLocal, dataLocal, idxLocal, valLocal, arrTypeIdx));
 
-    // Update length if idx+1 > current length:
-    // if (idx + 1 > vec.length) vec.length = idx + 1
-    fctx.body.push({ op: "local.get", index: idxLocal });
-    fctx.body.push({ op: "i32.const", value: 1 });
-    fctx.body.push({ op: "i32.add" });
-    fctx.body.push({ op: "local.get", index: vecLocal });
-    fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 0 }); // get length
-    fctx.body.push({ op: "i32.gt_u" });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: vecLocal },
-        { op: "local.get", index: idxLocal },
-        { op: "i32.const", value: 1 },
-        { op: "i32.add" },
-        { op: "struct.set", typeIdx, fieldIdx: 0 },
-      ],
-    });
+    if (!isTypedArray) {
+      // Ordinary arrays grow their logical length after an indexed write.
+      fctx.body.push({ op: "local.get", index: idxLocal });
+      fctx.body.push({ op: "i32.const", value: 1 });
+      fctx.body.push({ op: "i32.add" });
+      fctx.body.push({ op: "local.get", index: vecLocal });
+      fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 0 });
+      fctx.body.push({ op: "i32.gt_u" });
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: vecLocal },
+          { op: "local.get", index: idxLocal },
+          { op: "i32.const", value: 1 },
+          { op: "i32.add" },
+          { op: "struct.set", typeIdx, fieldIdx: 0 },
+        ],
+      });
+    }
     // Mapped arguments reverse sync: arguments[i] = X → update param local (#849)
     if (fctx.mappedArgsInfo && ts.isIdentifier(target.expression) && target.expression.text === "arguments") {
       emitMappedArgReverseSync(ctx, fctx, idxLocal, valLocal);

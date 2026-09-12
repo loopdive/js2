@@ -101,6 +101,8 @@ const NEW_ID_SET: ReadonlySet<string> = new Set(NEW_IDS);
  * rather than drifting into "everything that is not new today".
  */
 const LATER_SLICE_IDS = [
+  "async.exception.caught",
+  "error.reference.construct",
   "string.concat.many",
   // (#3526 F3-S2) Family 3's eleven callable rows. They join this list for the
   // reason the list exists: without them the "twelve pre-existing rows" pin
@@ -222,9 +224,10 @@ describe("#3526 F2-S2 the capability schema is kind-discriminated and closed", (
         ...RUNTIME_HOST_CAPABILITY_EXPORT_IDS,
       ].sort(),
     );
-    expect(RUNTIME_HOST_CAPABILITY_IDS).toHaveLength(30);
+    expect(RUNTIME_HOST_CAPABILITY_IDS).toHaveLength(32);
     expect([...RUNTIME_HOST_CAPABILITY_IDS]).toEqual([
       "async.callback.wrap",
+      "async.exception.caught",
       "async.promise.capability.create",
       "async.promise.react",
       "async.promise.resolve",
@@ -243,6 +246,7 @@ describe("#3526 F2-S2 the capability schema is kind-discriminated and closed", (
       "callable.host_call.fixed",
       "callback.wrap.ctor",
       "callback.wrap.getter",
+      "error.reference.construct",
       "extern.is_undefined",
       "number.box",
       "number.unbox",
@@ -575,8 +579,8 @@ describe("#3526 F2-S8 every new row is now selected, and by the right KIND", () 
 // --------------------------------------------------------------------------
 
 describe("#3526 F2-S2 the async projection is unmoved", () => {
-  it("still carries exactly the seven async rows", () => {
-    expect(ASYNC_HOST_CAPABILITY_RECORDS).toHaveLength(7);
+  it("carries the exact eight async rows including caught-exception support", () => {
+    expect(ASYNC_HOST_CAPABILITY_RECORDS).toHaveLength(8);
     for (const id of NEW_IDS) {
       expect(ASYNC_HOST_CAPABILITY_RECORDS.map((record) => record.capability)).not.toContain(id);
     }

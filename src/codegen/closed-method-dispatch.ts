@@ -66,6 +66,9 @@ import { buildFnctorArrayHofTargetTest } from "./fnctor-array-prototype.js";
 import { resolveVecHostBridgeHelper } from "./vec-access-exports.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
 import { defaultValueInstrs } from "./type-coercion.js";
+// (#5383 S2g) The externref-argument marshalling this file used to own inline;
+// `standalone-class-construct.ts` is the second caller.
+import { buildCoerceIdxs, type CoerceIdxs, externArgCoercionInstrs, resultBoxingInstrs } from "./extern-arg-marshal.js";
 import { closedDispatchGuardsOwnSlot } from "./expressions/own-property-method-shadow.js";
 
 /**
@@ -638,16 +641,6 @@ function collectFieldEntries(ctx: CodegenContext, methodName: string): FieldEntr
   return entries;
 }
 
-/** Coerce helper funcIdxs, read once per fill pass (registered at reserve). */
-type CoerceIdxs = {
-  boxNumIdx?: number;
-  /** (#5241) `__box_boolean` — a boolean-returning method's `i32` result. */
-  boxBoolIdx?: number;
-  unboxNumIdx?: number;
-  unboxBoolIdx?: number;
-  undefinedIdx?: number;
-};
-
 /**
  * Build one closed-struct call arm: cast recv→`this`, push each declared arg
  * (sourced via `pushArg(a)` — fixed dispatcher params OR `__extern_get_idx`),
@@ -662,7 +655,6 @@ function buildEntryArm(
   pushArg: (a: number) => Instr[],
   providedArity: number | null = null,
 ): Instr[] {
-  const { boxNumIdx, boxBoolIdx, unboxNumIdx, unboxBoolIdx } = ci;
   const arm: Instr[] = [
     { op: "local.get", index: anyLocalIdx },
     { op: "ref.cast", typeIdx: entry.typeIdx }, // `this`
@@ -698,48 +690,19 @@ function buildEntryArm(
       continue;
     }
     arm.push(...pushArg(a)); // the arg, as externref, onto the stack
-    if (want.kind === "f64") {
-      if (unboxNumIdx !== undefined) arm.push({ op: "call", funcIdx: unboxNumIdx });
-      else arm.push({ op: "drop" }, { op: "f64.const", value: 0 });
-    } else if (want.kind === "i32") {
-      if ((want as { boolean?: true }).boolean && unboxBoolIdx !== undefined) {
-        arm.push({ op: "call", funcIdx: unboxBoolIdx });
-      } else if (unboxNumIdx !== undefined) {
-        arm.push({ op: "call", funcIdx: unboxNumIdx });
-        arm.push({ op: "i32.trunc_sat_f64_s" });
-      } else {
-        arm.push({ op: "drop" }, { op: "i32.const", value: 0 });
-      }
-    } else if (want.kind === "ref" || want.kind === "ref_null") {
-      arm.push({ op: "any.convert_extern" });
-      arm.push({ op: "ref.cast", typeIdx: (want as { typeIdx: number }).typeIdx });
-    }
-    // externref param: already externref — no coercion.
+    // (#5380) A PRESENT-but-undefined argument to a DEFAULTED f64 formal must
+    // still run the default; only that formal takes the sentinel-preserving
+    // unboxer, so every other numeric argument keeps its previous bytes.
+    arm.push(
+      ...externArgCoercionInstrs(
+        ci,
+        want,
+        entry.optionalParams.some((candidate) => candidate.index === a),
+      ),
+    );
   }
   arm.push({ op: "call", funcIdx: entry.funcIdx });
-  // Box-coerce the result back to externref.
-  if (entry.resultType.kind === "ref" || entry.resultType.kind === "ref_null") {
-    arm.push({ op: "extern.convert_any" });
-  } else if (entry.resultType.kind === "f64") {
-    if (boxNumIdx !== undefined) arm.push({ op: "call", funcIdx: boxNumIdx });
-    else arm.push({ op: "drop" }, { op: "ref.null.extern" });
-  } else if (entry.resultType.kind === "i32") {
-    // (#5241) A BOOLEAN return also lowers to `i32`, and the ValType carries
-    // the `boolean` marker the ARGUMENT coercion above already honours. Boxing
-    // it as a number answered `1`/`0` where the same call on a TYPED receiver
-    // answered `true`/`false` — measured on a plain class,
-    // `String(inst.bigger(0))` → `"1"` through this dispatcher, `"true"`
-    // direct. Pre-existing; it became reachable for more names once #5241
-    // stopped the extern-class hijack from consuming those calls first.
-    if ((entry.resultType as { boolean?: true }).boolean && boxBoolIdx !== undefined) {
-      arm.push({ op: "call", funcIdx: boxBoolIdx });
-    } else {
-      arm.push({ op: "f64.convert_i32_s" });
-      if (boxNumIdx !== undefined) arm.push({ op: "call", funcIdx: boxNumIdx });
-      else arm.push({ op: "drop" }, { op: "ref.null.extern" });
-    }
-  }
-  // externref result: no coercion.
+  arm.push(...resultBoxingInstrs(ci, entry.resultType));
   return arm;
 }
 
@@ -752,13 +715,7 @@ function buildEntryArm(
  */
 export function fillClosedMethodDispatch(ctx: CodegenContext): void {
   const mod = ctx.mod;
-  const ci: CoerceIdxs = {
-    boxNumIdx: ctx.funcMap.get("__box_number"),
-    boxBoolIdx: ctx.funcMap.get("__box_boolean"),
-    unboxNumIdx: ctx.funcMap.get("__unbox_number"),
-    unboxBoolIdx: ctx.funcMap.get("__unbox_boolean"),
-    undefinedIdx: ctx.funcMap.get("__get_undefined"),
-  };
+  const ci: CoerceIdxs = buildCoerceIdxs(ctx);
   const methodCallIdx = ctx.funcMap.get("__extern_method_call");
   const objVecNewIdx = ctx.funcMap.get(ctx.standalone || ctx.wasi ? "__objvec_new" : "__js_array_new");
   const objVecPushIdx = ctx.funcMap.get(ctx.standalone || ctx.wasi ? "__objvec_push" : "__js_array_push");

@@ -30,9 +30,12 @@ import { popBody, pushBody } from "./context/bodies.js";
 import { resolveWidenedVarKey, integrityVarKey } from "./widened-var-key.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
+import { recordRuntimeKeyClassMethodRead } from "./runtime-key-class-methods.js"; // (#5358)
+import { recordStandaloneRuntimeKeyClassMemberRead } from "./standalone-class-dyn-member.js"; // (#5383 S2h)
 import { emitOverlayRoutedElementGet, overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4159 S3)
 import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js"; // (#2580 M2 slice 1) (#2984)
+import { sidecarKeyCoversReceiver } from "./sidecar-owner-scope.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import {
   emitCachedFuncClosureAccess,
@@ -152,6 +155,7 @@ import {
 } from "./array-object-proto.js";
 import { isBuiltinSubtype, isBuiltinTypeName } from "./builtin-tags.js";
 import {
+  type ExternrefBackedOwnFieldBacking,
   externrefBackedOwnFieldBacking,
   getOrRegisterErrorStructType,
   isWasiErrorName,
@@ -2051,8 +2055,10 @@ export function emitExternrefBackedOwnFieldRead(
   expr: ts.PropertyAccessExpression,
   propName: string,
   className?: string,
+  backingOverride?: ExternrefBackedOwnFieldBacking,
 ): ValType | null | undefined {
-  const backing = className === undefined ? "error-struct" : externrefBackedOwnFieldBacking(ctx, className);
+  const backing =
+    backingOverride ?? (className === undefined ? "error-struct" : externrefBackedOwnFieldBacking(ctx, className));
   if (backing === undefined) return undefined;
   ensureObjectRuntime(ctx);
   const externGetIdx = ensureLateImport(
@@ -4021,7 +4027,7 @@ export function compilePropertyAccess(
   // host object and must stay externref.
   if (ts.isIdentifier(expr.expression)) {
     const sidecarKey = `${expr.expression.text}:${propName}`;
-    if (ctx.sidecarDefinedPropertyKeys.has(sidecarKey)) {
+    if (ctx.sidecarDefinedPropertyKeys.has(sidecarKey) && sidecarKeyCoversReceiver(ctx, sidecarKey, expr.expression)) {
       const runtimeResult = emitRuntimeDescriptorGet(ctx, fctx, expr.expression, propName, expr, true);
       if (runtimeResult !== null) return runtimeResult;
     }
@@ -4668,6 +4674,9 @@ function emitTypedArrayUndefinedOobGet(
   // View-name-driven signedness (`"s"` Int*, `"u"` Uint*); undefined for float
   // views. Drives both the bounded read's extension AND the i32→f64 conversion.
   signedness: "s" | "u" | undefined,
+  // Host-lane compiled TypedArrays can become detached while retaining their
+  // fixed-capacity Wasm backing. In that case field 0 is the observable bound.
+  lengthBoundInstrs?: readonly Instr[],
 ): void {
   // Save index + array ref (consumed by the bounds test AND the bounded read).
   const idxLocal = allocLocal(fctx, `__taoob_idx_${fctx.locals.length}`, { kind: "i32" });
@@ -4679,8 +4688,12 @@ function emitTypedArrayUndefinedOobGet(
   // unsigned value > any length, so it falls into the OOB (undefined) arm.
   const inBoundsLocal = allocLocal(fctx, `__taoob_in_${fctx.locals.length}`, { kind: "i32" });
   fctx.body.push({ op: "local.get", index: idxLocal });
-  fctx.body.push({ op: "local.get", index: arrLocal });
-  fctx.body.push({ op: "array.len" });
+  if (lengthBoundInstrs) {
+    fctx.body.push(...lengthBoundInstrs.map((instr) => ({ ...instr })));
+  } else {
+    fctx.body.push({ op: "local.get", index: arrLocal });
+    fctx.body.push({ op: "array.len" });
+  }
   fctx.body.push({ op: "i32.lt_u" });
   fctx.body.push({ op: "local.set", index: inBoundsLocal });
 
@@ -5465,6 +5478,17 @@ export function compileElementAccessBody(
     // no compile-time name and registers nothing.
     if (ts.isStringLiteral(expr.argumentExpression)) {
       recordDynamicClassAccessorRead(ctx, objType, expr.argumentExpression.text);
+    } else if (
+      !ts.isNumericLiteral(expr.argumentExpression) &&
+      !isNumericIndexExpression(ctx, expr.argumentExpression, fctx)
+    ) {
+      // (#5358) A non-numeric runtime key may name a prototype method of
+      // whichever class instance the `any` holds: publish every class's bridges.
+      recordRuntimeKeyClassMethodRead(ctx, undefined);
+      // (#5383 S2h) The standalone twin of the same demand — nothing narrows
+      // which instance the `any` holds, so every class's prototype `$Object`
+      // has to be reachable. Lane-disjoint with the call above.
+      recordStandaloneRuntimeKeyClassMemberRead(ctx, undefined);
     }
     // (#2784 S3) Native-vec-aware element read. A numeric `recv[i]` on an
     // `any`/externref receiver that is actually a NATIVE vec (a reconstructed-
@@ -6086,7 +6110,10 @@ export function compileElementAccessBody(
         }
 
         const sidecarKey = ts.isIdentifier(expr.expression) ? `${expr.expression.text}:${fieldName}` : undefined;
-        const isDynamicSidecarRead = sidecarKey !== undefined && ctx.sidecarDefinedPropertyKeys.has(sidecarKey);
+        const isDynamicSidecarRead =
+          sidecarKey !== undefined &&
+          ctx.sidecarDefinedPropertyKeys.has(sidecarKey) &&
+          sidecarKeyCoversReceiver(ctx, sidecarKey, expr.expression);
         if (runtimeAccessorDescriptorKey(ctx, expr.expression, fieldName) !== undefined || isDynamicSidecarRead) {
           const runtimeResult = emitRuntimeDescriptorGet(
             ctx,
@@ -6220,6 +6247,14 @@ export function compileElementAccessBody(
         }
       }
       // Non-vec, non-tuple struct: fallback to externref conversion + __extern_get
+      // (#5358) A non-numeric key: publish the receiver class family's method
+      // bridges the host resolver needs (runtime-key-class-methods.ts).
+      if (!isNumericIndexExpression(ctx, expr.argumentExpression, fctx)) {
+        recordRuntimeKeyClassMethodRead(ctx, typeIdx, fieldName);
+        // (#5383 S2h) …and the standalone twin, narrowed to the receiver's own
+        // class family (the struct type IS known on this arm).
+        recordStandaloneRuntimeKeyClassMemberRead(ctx, typeIdx);
+      }
       // Convert struct ref (already on stack) to externref
       fctx.body.push({ op: "extern.convert_any" });
       // Compile the key as externref
@@ -6409,9 +6444,11 @@ export function compileElementAccessBody(
     // popped slot instead of being OOB. That broke the test262 HOF "-c-ii-5"
     // family on iteration 2+ (`kIndex[1]` after `kIndex[0]=1` grew capacity to 4).
     // Tee the vec ref so the length field is available to the bounded-read arms
-    // below; skipped on the proven fast path and the TA arm (a typed-array view
-    // is fixed-length — capacity === length — so its bytes stay identical).
-    const useLenBound = !isSafeBoundsEliminated(fctx, expr) && !oobUndefinedTypedArray;
+    // below. Host-lane TypedArrays deliberately retain their Wasm backing after
+    // transfer, so their logical length must remain the bound even when a loop
+    // had proved an index in range before an intervening host call detached it.
+    const boundsEliminated = isSafeBoundsEliminated(fctx, expr) && (taClass === "other" || noJsHost(ctx));
+    const useLenBound = !boundsEliminated;
     let vecLenBoundInstrs: Instr[] | undefined;
     if (useLenBound) {
       const vecRefLocal = allocLocal(fctx, `__vecref_${fctx.locals.length}`, { kind: "ref_null", typeIdx });
@@ -6429,7 +6466,7 @@ export function compileElementAccessBody(
     compileElementIndexI32(ctx, fctx, expr.argumentExpression);
     const valueType: ValType =
       arrDef.element.kind === "i8" || arrDef.element.kind === "i16" ? { kind: "i32" } : arrDef.element;
-    if (isSafeBoundsEliminated(fctx, expr)) {
+    if (boundsEliminated) {
       // Bounds check elided: loop guard guarantees index < array.length
       const getOp =
         arrDef.element.kind === "i8" || arrDef.element.kind === "i16"
@@ -6485,7 +6522,7 @@ export function compileElementAccessBody(
       // threads the view-name signedness (so `Int8Array`/`Uint16Array`/
       // `Uint32Array` read with the right extension) and boxes as a number —
       // dedicated, so the shared helper / plain-array helper are untouched.
-      emitTypedArrayUndefinedOobGet(ctx, fctx, arrTypeIdx, arrDef.element, taSignedness);
+      emitTypedArrayUndefinedOobGet(ctx, fctx, arrTypeIdx, arrDef.element, taSignedness, vecLenBoundInstrs);
       return { kind: "externref" };
     } else {
       // (#2001 S1) Pass `ctx` so the in-bounds `$Hole → undefined` read-boundary

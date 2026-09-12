@@ -163,14 +163,86 @@ export function compiledBodyReadsThis(ctx: CodegenContext, methodFuncIdx: number
   return methodBodyReadsThis(ctx, methodFuncIdx);
 }
 
+/**
+ * (#5383 S2b) Is `objStructTypeIdx` the vestigial `$ClassName` struct of an
+ * EXTERNREF-BACKED class (`class B extends Array`)?
+ *
+ * Such a class has a registered struct type but never a struct INSTANCE — its
+ * objects are the parent's native carrier (a `$__vec_externref` for `extends
+ * Array`), reached as `externref` (`externref-backed-class-rep.ts`, #5201). So
+ * the `ref.test $B` the ordinary `this`-slot performs on `__current_this` can
+ * NEVER match, and the receiver silently degrades to `ref.null` — the #2025
+ * "foreign receiver" passthrough firing on the class's OWN instances.
+ *
+ * Reverse-mapped from `ctx.structMap` rather than threaded through the call
+ * chain: the trampoline is a per-method-NAME singleton built by whichever site
+ * touches the method first, so the owning class is not otherwise in scope here.
+ * Runs once per trampoline.
+ */
+function structTypeIdxIsExternrefBackedClass(ctx: CodegenContext, objStructTypeIdx: number): boolean {
+  for (const [name, idx] of ctx.structMap) {
+    if (idx === objStructTypeIdx) return ctx.classExternrefBackedSet.has(name);
+  }
+  return false;
+}
+
+/**
+ * (#5383 S2b) True when {@link buildTrampolineThisSlot} takes its
+ * externref-carrier arm, i.e. the receiver it leaves on the stack is ALREADY
+ * the method's declared `externref` `this`. The caller then skips
+ * {@link coerceTrampolineThisSlot}, whose whole job is bridging the struct
+ * receiver to that carrier.
+ */
+function externrefCarrierThisSlot(
+  ctx: CodegenContext,
+  objStructTypeIdx: number,
+  methodThisType: ValType | undefined,
+): boolean {
+  return (
+    methodThisType?.kind === "externref" &&
+    structTypeIdxIsExternrefBackedClass(ctx, objStructTypeIdx) &&
+    ensureCurrentThisGlobal(ctx) >= 0
+  );
+}
+
 function buildTrampolineThisSlot(
   ctx: CodegenContext,
   objStructTypeIdx: number,
   anyTempLocalIdx: number,
   methodUsesThis: boolean,
+  // (#5383 S2b) The method's declared `this` parameter, when known. Only an
+  // `externref` one on an externref-backed class takes the carrier arm below;
+  // every other method keeps the struct arm and its exact previous bytes.
+  methodThisType?: ValType,
 ): Instr[] {
   const currentThisGlobalIdx = ensureCurrentThisGlobal(ctx);
   const nullThis: Instr[] = [{ op: "ref.null", typeIdx: objStructTypeIdx }];
+  if (
+    methodThisType?.kind === "externref" &&
+    structTypeIdxIsExternrefBackedClass(ctx, objStructTypeIdx) &&
+    currentThisGlobalIdx >= 0
+  ) {
+    // The carrier IS the receiver — hand `__current_this` straight to the
+    // method. `coerceTrampolineThisSlot` must not run after this (the value is
+    // already the method's declared carrier); the caller skips it.
+    const externThrow = methodUsesThis ? buildNullThisTypeErrorThrow(ctx) : null;
+    if (!externThrow) return [{ op: "global.get", index: currentThisGlobalIdx }];
+    return [
+      { op: "global.get", index: currentThisGlobalIdx },
+      { op: "any.convert_extern" },
+      { op: "local.tee", index: anyTempLocalIdx },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        // A genuinely absent receiver is the same catchable TypeError the
+        // struct arm raises; a present one is passed through unconditionally,
+        // because no `ref.test` can recognise it.
+        then: externThrow,
+        else: [{ op: "local.get", index: anyTempLocalIdx }, { op: "extern.convert_any" }],
+      },
+    ];
+  }
   if (currentThisGlobalIdx < 0) return nullThis;
   // (#2025) When the resolved `this` isn't the method's struct, distinguish a
   // GENUINELY-ABSENT receiver (`__current_this` null — the unbound extraction
@@ -388,8 +460,16 @@ export function emitObjectMethodAsClosure(
   ensureNullThisTypeError(ctx, fctx);
   const ntShift = ctx.numImportFuncs - importsBeforeNT;
   if (ntShift > 0 && inLiveShiftRange(methodFuncIdx, importsBeforeNT)) methodFuncIdx += ntShift;
-  const trampolineBody: Instr[] = buildTrampolineThisSlot(ctx, objStructTypeIdx, anyTempLocalIdx, methodUsesThis);
-  coerceTrampolineThisSlot(ctx, trampolineBody, objStructTypeIdx, sig.params[0], methodUsesThis, fctx);
+  const trampolineBody: Instr[] = buildTrampolineThisSlot(
+    ctx,
+    objStructTypeIdx,
+    anyTempLocalIdx,
+    methodUsesThis,
+    sig.params[0],
+  );
+  if (!externrefCarrierThisSlot(ctx, objStructTypeIdx, sig.params[0])) {
+    coerceTrampolineThisSlot(ctx, trampolineBody, objStructTypeIdx, sig.params[0], methodUsesThis, fctx);
+  }
   for (let i = 0; i < userParams.length; i++) {
     // Skip closure_self at param 0; user params start at index 1
     trampolineBody.push({ op: "local.get", index: i + 1 });
@@ -607,7 +687,7 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
       // here where `t.methodFuncIdx` may be stale). Fall back to a fresh body
       // scan only when it wasn't recorded.
       const usesThis = t.methodUsesThis ?? methodBodyReadsThis(ctx, t.methodFuncIdx);
-      newBody = buildTrampolineThisSlot(ctx, t.objStructTypeIdx, anyTempLocalIdx, usesThis);
+      newBody = buildTrampolineThisSlot(ctx, t.objStructTypeIdx, anyTempLocalIdx, usesThis, sig.params[0]);
       // (#4466) Do NOT re-coerce the receiver here, and do NOT alias
       // `tFctx.body` to `newBody` to make that possible. The emit-time call
       // sites (`emitObjectMethodAsClosure`, `ensureMethodClosureSingleton`)
@@ -882,8 +962,11 @@ export function ensureMethodClosureSingleton(
       objStructTypeIdx,
       anyTempLocalIdx,
       methodUsesThisCached,
+      sig.params[0],
     );
-    coerceTrampolineThisSlot(ctx, trampolineBody, objStructTypeIdx, sig.params[0], methodUsesThisCached, fctx);
+    if (!externrefCarrierThisSlot(ctx, objStructTypeIdx, sig.params[0])) {
+      coerceTrampolineThisSlot(ctx, trampolineBody, objStructTypeIdx, sig.params[0], methodUsesThisCached, fctx);
+    }
     for (let i = 0; i < userParams.length; i++) {
       trampolineBody.push({ op: "local.get", index: i + 1 });
     }

@@ -555,6 +555,7 @@ export function getStringToNumberProvider(ctx: CodegenContext): number | undefin
  *   f64          → |x| > 0       (NaN, +0, -0 all falsy)
  *   externref    → __is_truthy   (0/NaN/null/undefined/"" → falsy); ref.is_null fallback
  *   any-boxed ref→ __any_unbox_bool (proper JS truthiness on the boxed value)
+ *   anyref/eqref → extern.convert_any → __is_truthy (#5383; untyped GC ref)
  *   native str ref→ flatten → len > 0 (empty string falsy)
  *   other ref    → non-null (ref.is_null; i32.eqz)
  *   i64          → nonzero
@@ -623,6 +624,34 @@ export function emitToBoolean(ctx: CodegenContext, valType: ValType | null, sink
       }
     }
     // Opaque struct ref — non-null is truthy.
+    sink.push({ op: "ref.is_null" }, { op: "i32.eqz" });
+    return sink;
+  }
+  if (kind === "anyref" || kind === "eqref") {
+    // (#5383) An UNTYPED GC reference — the shape `__map_get` / `WeakMap.get`
+    // hand back in standalone (`{ kind: "anyref" }`, weak-collections-runtime.ts
+    // / map-runtime.ts). Before this row the cascade fell through to the i32
+    // no-op tail and left an `anyref` where the consuming `if`/`select` needs
+    // i32, i.e. INVALID Wasm — that is the `@js-temporal/polyfill`
+    // `OneObjectCache_setObject` failure ("if[0] expected type i32, found ...
+    // anyref"). No validating module can have reached this tail, so adding the
+    // row cannot perturb existing bytes in either lane.
+    //
+    // `extern.convert_any` is total (no trap, no null special case) and
+    // `__is_truthy` is the SAME ToBoolean provider the `externref` row above
+    // uses, so the answer agrees with the boxed-value lane by construction:
+    // standalone's native body classifies the `$AnyValue` tag-0/1 null/
+    // undefined singletons, i31, boxed number/bool/bigint and `$AnyString`
+    // (empty string falsy); the host lane keeps its import.
+    addUnionImports(ctx);
+    const anyTruthyIdx = ensureLateImport(ctx, "__is_truthy", [{ kind: "externref" }], [{ kind: "i32" }]);
+    if (anyTruthyIdx !== undefined) {
+      // Re-read the canonical index: registering a late helper shifts function
+      // indices (same hazard the externref row documents).
+      sink.push({ op: "extern.convert_any" }, { op: "call", funcIdx: ctx.funcMap.get("__is_truthy") ?? anyTruthyIdx });
+      return sink;
+    }
+    // Fallback: non-null → true.
     sink.push({ op: "ref.is_null" }, { op: "i32.eqz" });
     return sink;
   }

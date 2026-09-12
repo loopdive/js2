@@ -5,10 +5,11 @@
  * This module owns function-type caches plus reusable GC array/vec/ref-cell
  * registrations so leaf modules can depend on a narrow type-registry surface.
  */
-import type { ArrayTypeDef, FieldDef, FuncTypeDef, StructTypeDef, ValType } from "../../ir/types.js";
+import type { ArrayTypeDef, FieldDef, FuncTypeDef, Instr, StructTypeDef, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
+import { internFunctionType } from "../../wasm/physical/function-types.js";
 import { getArgumentsVecTypeIdx } from "../arguments-carrier-brand.js";
-import { closureBagField } from "../closures/funcref-wrapper-types.js"; // (#4241)
+import { closureBagField } from "../closures/closure-header-layout.js"; // (#4241)
 
 /**
  * (#3268) Register a WasmGC struct type: append it to `ctx.mod.types` and wire
@@ -30,60 +31,8 @@ export function registerStructType(ctx: CodegenContext, name: string, fields: Fi
   return typeIdx;
 }
 
-/** Build a cache key for a function type signature (params + results). */
-function funcTypeKey(params: ValType[], results: ValType[]): string {
-  const part = (v: ValType): string => {
-    let s = v.kind;
-    if (v.kind === "ref" || v.kind === "ref_null") s += ":" + (v as { typeIdx: number }).typeIdx;
-    // (#2795) An `i32` Wasm slot backs `number`, `boolean` (1/0) and symbol
-    // HANDLES, which box to the host DIFFERENTLY (`__box_number` vs
-    // `__box_boolean` vs `__box_symbol`). The brand rides on the ValType but the
-    // bare `kind` is identical, so a brand-blind dedup collapses e.g. a
-    // `(f64)->boolean` signature onto a previously-registered `(f64)->number`
-    // one — and `getWasmFuncReturnType` then hands callers a PLAIN i32, so a
-    // boolean-returning recursive kernel's result boxed as the number 1 instead
-    // of `true` (#2795 closures/10-mutual). Keep branded i32 signatures distinct.
-    else if (v.kind === "i32") {
-      if ((v as { boolean?: true }).boolean) s += ":bool";
-      else if ((v as { symbol?: true }).symbol) s += ":sym";
-    }
-    // (#2846) Same brand-propagation hazard as i32 (#2795), one slot down: a
-    // bigint-branded `i64` (`{ kind:"i64"; bigint:true }`) backs a BigInt and
-    // boxes to the host via `__box_bigint`, whereas a plain native `i64`
-    // (`type i64 = number`) boxes via `__box_number` (`f64.convert_i64_s`,
-    // lossy past 2^53). A brand-blind dedup collapses a `(...)->bigint`
-    // signature onto a previously-registered plain-`i64` one, so
-    // `getWasmFuncReturnType` hands callers a PLAIN i64 and acorn's
-    // `stringToBigInt` return got boxed as a rounded number (#2846). Keep the
-    // branded i64 signature distinct.
-    else if (v.kind === "i64") {
-      if ((v as { bigint?: true }).bigint) s += ":big";
-    }
-    // An f64 undefined sentinel has the same Wasm carrier as an ordinary
-    // number, but callers must preserve the brand so boxing can recover
-    // `undefined`. Keep it out of the plain-number cache entry just like the
-    // i32/i64 semantic carriers above.
-    else if (v.kind === "f64") {
-      if ((v as { undefSentinel?: true }).undefSentinel) s += ":undef";
-    }
-    return s;
-  };
-  return params.map(part).join(",") + "|" + results.map(part).join(",");
-}
-
 export function addFuncType(ctx: CodegenContext, params: ValType[], results: ValType[], name?: string): number {
-  const key = funcTypeKey(params, results);
-  const cached = ctx.funcTypeCache.get(key);
-  if (cached !== undefined) return cached;
-  const idx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "func",
-    name: name ?? `type${idx}`,
-    params,
-    results,
-  });
-  ctx.funcTypeCache.set(key, idx);
-  return idx;
+  return internFunctionType(ctx.mod.types, ctx.funcTypeCache, params, results, name);
 }
 
 /**
@@ -578,6 +527,60 @@ export function getOrRegisterTaCtorType(ctx: CodegenContext): number {
   ctx.typeIdxToStructName.set(idx, name);
   ctx.structFields.set(name, fields);
   return idx;
+}
+
+/**
+ * (#5383 S2f R11) The `$__ta_ctor` IDENTITY test — `ref.test` **plus** the
+ * `brand` VALUE — leaving i32 (1 = this really is a TypedArray constructor).
+ * `pushAnyValue` is the (side-effect-free, re-emittable) instruction sequence
+ * that pushes the value as an anyref — a `local.get`, or the `local.get` +
+ * `any.convert_extern` pair the externref call sites already used. It is
+ * emitted twice, which every call site could already do.
+ *
+ * `ref.test` alone asks a STRUCTURAL question and WasmGC canonicalizes
+ * structurally-identical struct types, so it cannot answer a NOMINAL one.
+ * #5194 r3 F1 met this once already (the one-field shape was also
+ * `__box_boolean_struct`, so `typeof true === "function"`) and answered it by
+ * widening the struct to two immutable i32 fields — which is EXACTLY the shape
+ * #2158/#2009 gives an empty class ROOT (`(field $__tag i32)` +
+ * `(field $__shape_brand i32)`, see `class-bodies.ts`). Two independent
+ * "make the shape unique" fixes landed on the same shape, so in any module that
+ * both holds a TypedArray constructor value and declares a field-less class,
+ * every instance of that class passes `ref.test $__ta_ctor`.
+ *
+ * Measured 2026-09-08 on the standalone `@js-temporal/polyfill` provider
+ * (`--target standalone`, `hostBridge:"off"`): `typeof` through a one-parameter
+ * indirection answered `"function"` for `new qi.Duration(0,0,0,0,1)` and
+ * `new qi.PlainDate(2024,1,1)`; dumping the matched struct's two fields gave
+ * `{35, 0}` and `{33, 0}` — the class TAG and the `__shape_brand`, not
+ * `{kind, TA_CTOR_BRAND}`. The polyfill's own brand check
+ * (`if (!e || "object" != typeof e) return !1`) then rejected every Temporal
+ * receiver, so every Temporal method and accessor threw `invalid receiver`.
+ *
+ * Widening the shape a third time would only move the collision, so the
+ * discriminator has to be the brand VALUE, which no other type's field 1 holds
+ * by accident. Answer-preserving for a genuine `$__ta_ctor` (both mint sites
+ * write `TA_CTOR_BRAND`); it can only ever REMOVE a false positive.
+ */
+export function taCtorIdentityTestInstrs(ctx: CodegenContext, pushAnyValue: Instr[]): Instr[] {
+  const taCtorTypeIdx = ctx.taCtorTypeIdx;
+  if (taCtorTypeIdx === undefined || taCtorTypeIdx < 0) return [{ op: "i32.const", value: 0 }];
+  return [
+    ...pushAnyValue,
+    { op: "ref.test", typeIdx: taCtorTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [
+        ...pushAnyValue,
+        { op: "ref.cast", typeIdx: taCtorTypeIdx },
+        { op: "struct.get", typeIdx: taCtorTypeIdx, fieldIdx: 1 },
+        { op: "i32.const", value: TA_CTOR_BRAND },
+        { op: "i32.eq" },
+      ],
+      else: [{ op: "i32.const", value: 0 }],
+    },
+  ];
 }
 
 /**

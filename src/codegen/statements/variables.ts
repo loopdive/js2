@@ -2,6 +2,7 @@
 /**
  * Variable declaration statement lowering.
  */
+import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
 import { ts, forEachChild } from "../../ts-api.js";
 import { isNullablePrimitiveType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
@@ -880,6 +881,9 @@ export function usageInferredLocalType(ctx: CodegenContext, decl: ts.VariableDec
 }
 
 function localTypeForDeclaration(ctx: CodegenContext, type: ts.Type, decl?: ts.VariableDeclaration): ValType {
+  if (decl?.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer)) {
+    return { kind: "externref" };
+  }
   // (#3673) Explicit native type annotation — `let x: i32` where
   // `type i32 = number`; the annotation node is the only surviving evidence.
   // It is a user assertion and outranks every inference below it.

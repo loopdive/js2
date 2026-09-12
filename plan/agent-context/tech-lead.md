@@ -1,12 +1,40 @@
 ---
 agent: tech-lead
-session_end: 2026-04-27-sprint-45-partial
+session_end: 2026-09-07
 next_session_entry_point: >
-  Read this file + plan/issues/sprints/46/sprint.md.
-  Two open PRs: #76 (hold for investigation) and #77 (CI tooling, check CI result first).
-  S46 has 9 issues ready to dispatch. Tag sprint-46/begin before spawning devs.
-last_handoff_reason: "Sprint 45 winding down at 75% weekly token budget. 4 PRs merged today."
+  Temporal → STANDALONE lane: read
+  plan/agent-context/temporal-standalone-handover-2026-09-07.md, then
+  plan/issues/5383-standalone-temporal-provider.md. In flight: PR #5723
+  (#5384 + #5383 S2), #5712 (#5380), #5704 (#5379 draft). No lane running.
+  ES2015 standalone lane: plan/agent-context/es2015-standalone-handover-2026-09-07.md.
+last_handoff_reason: "Owner re-targeted Temporal to standalone only; S1 landed (#5721), S2 half-done (#5723); session wound down on owner request."
 ---
+
+## CURRENT STATE (as of 2026-09-07 18:00, Temporal → standalone lane)
+
+- Host-lane whole corpus **38,343 / 48,735** (baselines jsonl 17:33 UTC);
+  Temporal host 2,925 / 4,611. **Standalone Temporal 170 / 4,603 — the goal.**
+- Landed today (this lane): #5678 #5682 #5685 #5691 #5699 #5706 #5709 (host)
+  and **#5721 (#5383 S1: the polyfill validates under standalone, import-free)**.
+- Open: #5723 (#5384 exn-render exports + S2 R3/R4/R5), #5712 (#5380), #5704.
+- Next: #5383 S2b (jsbi `subtract(null)` init throw — suspect a property write on
+  a `class extends Array` instance), then S3–S5. Details in the handover file.
+
+
+## CURRENT STATE (as of 2026-09-07, ES2015 standalone lane)
+
+- ES2015 standalone **10,228 / 11,704 = 87.4 %** (baseline fetched 04:35 UTC);
+  whole corpus standalone 35,213 / 48,735.
+- Merged this session: #5688, #5694, #5696, #5698 — all through the queue.
+- Open PRs of this lane: none. Session branch
+  `claude/es6-test262-standalone-g10c7u` == `origin/main`.
+- Next work, in order: #5350's block-scoped-class captured-`var` write defect
+  (7 rows), the TypedArray cluster (#5349 steps 6–7, #5359, the `u8.buffer`
+  snapshot family), ArrayBuffer-subclass species, the wasi own-key ladder,
+  `Reflect.defineProperty`'s missing catch, #3371 r3; then plans for the
+  unowned regexp / generators / promise / for-of clusters.
+- The older sections below (Sprint 45, 2026-04-27) are historical.
+
 
 ## CURRENT STATE (as of 2026-04-27)
 

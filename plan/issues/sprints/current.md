@@ -194,3 +194,85 @@ figure. Each child issue's test plan = its cluster's standalone-CE/fail tests
 flip to host-free pass under full `merge_group` + the standalone high-water floor
 (`check-standalone-highwater.mjs`), with zero host-mode regression (all changes
 `ctx.standalone`-gated).
+
+## Results (interim — 2026-09-07, protected standalone lane, ES2015 wave 5)
+
+**ES2015 standalone:** 10,188 → **10,228** pass / 11,704 = **87.4 %** (+40 over
+waves 4→5's close; whole corpus standalone 35,213 / 48,735). Goal (100 %) not
+yet met; 1,476 rows remain (1,146 fail, 329 compile_error, 1 compile_timeout).
+
+### Merged
+- **#5688 wave-5 PR-1** (#5316 r5, #5350 r1, #5318 r4/round 2, #3371 r2, #5351;
+  +46 / −2 whole corpus)
+- **#5694 #5349 species r5** (rounds 1–5; +19 owned, +21 / 0)
+- **#5696 #5316 r6** (the 2-row Annex B regression #5688 introduced; both rows
+  back)
+- **#5698 docs** (umbrella #4444 wave-5 close)
+
+### Closed without merging
+- none
+
+### Interim retro
+- **Went well**: plan → Opus implement → Opus adversarial review → fix rounds
+  converged on every lane; the post-merge baseline set-diff caught a loss no
+  gate saw; a finisher workflow recovered a lane killed by a container restart
+  without re-running its ~5 h of controls.
+- **Went badly**: five fix rounds on #5350 and five on #5349 — static
+  predicates over dynamic facts, and a gated emitter returning a local, each
+  needed a reviewer to loop what the pins ran once; the Temporal host bucket
+  parked a green PR after a benchmark-artifact push rebuilt its queue group.
+- **Process improvements**: every pin that exercises a codegen site must run
+  it at least twice on different arms; set-diff the promoted baseline after
+  every merge as a standing step; quarantine the Temporal host cluster if it
+  parks a second PR.
+- **Remaining for the lane**: see
+  `plan/agent-context/es2015-standalone-handover-2026-09-07.md` (priority
+  list: #5350 captured-`var` defect, the TypedArray cluster, ArrayBuffer
+  subclass species, wasi own-key ladder, `Reflect.defineProperty`, #3371 r3,
+  then the unowned regexp / generators / promise / for-of clusters).
+
+
+## Results (interim — 2026-09-07 18:00, Temporal lane, re-targeted to standalone)
+
+**Baseline progress (host lane, whole corpus):** 35,498 → **38,343** pass / 48,735
+(+2,845 over the window). Standalone `built-ins/Temporal/**`: **170 / 4,603** —
+unchanged yet; the standalone goal opened today with #5383.
+
+### Merged
+- **#5364 registry leaks across linked projects** (#5678) — batch == solo.
+- **#5373 Array-subclass toString dispatch** (#5685).
+- **#5374 valueOf across the linked seam** (#5682).
+- **#5376 accessor-bearing literal stored as null** (#5691).
+- **#5377 constructor identity through any-typed receivers** (#5699, +7 on 481).
+- **#5378 absent number-typed property reads as undefined + DateTimeFormat options** (#5706, +54 on 334).
+- **#5381 extern-class constructors marshal struct arguments by default** (#5709, +82 on 325).
+- **#5383 S1 — the standalone polyfill validates, import-free** (#5721).
+- docs: #5679 #5686 #5700 #5701 #5707 #5719.
+
+### In flight
+- **#5723** — #5384 (standalone exception renderer exports) + #5383 S2 R3/R4/R5.
+- **#5712** — #5380 (defaulted numeric formal through the host class-method bridge; 9 hangs → 0).
+- **#5704** — #5379 (draft; 0 delta, pins that #5364 closed the channel).
+
+### Closed without merging
+- none.
+
+### Interim retro (Temporal lane)
+- **Went well**: plan/implement split held — every lane shipped with per-row A/B
+  measurements and 0 pass→fail; parks were diagnosed by measurement, not by
+  re-running until green (three collateral parks, all proven with byte-identical
+  wasm or solo re-runs).
+- **Went badly**: the goal was read as host-lane for the whole window until the
+  owner said "standalone only"; a worktree cleanup deleted the shared test262
+  tree box-wide; the runtime.ts ceiling had to be re-measured on every re-merge;
+  the queue dropped PRs to BEHIND on every CI bot push.
+- **Process improvements**: make `test262/` in the main checkout a real
+  submodule (done) and never symlink a worktree's copy into another worktree;
+  read the goal's target mode before planning; release runtime.ts-growing PRs
+  one at a time (kept).
+- **Sprint-close criteria remaining (standalone Temporal, #5383)**: S2 (the
+  host-free smoke test — the provider now constructs, but a dynamic read of a
+  prototype accessor/method still answers `undefined`, and a method call on a
+  provider-owned instance has no boundary terminal), S3 (runner + CI wiring),
+  S4 (retire the #661 lowering), S5 (measure). The init throw is fixed; see
+  `plan/agent-context/temporal-standalone-handover-2026-09-08.md`.

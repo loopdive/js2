@@ -1,16 +1,17 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { createIrBindingId, type IrBindingId, type IrClassId, type IrSourceId, type IrUnitId } from "./identity.js";
+import {
+  requireNonEmpty,
+  requireBindingId,
+  requireSourceGlobalCapability,
+  keyPart,
+  irSourceGlobalBindingKey,
+} from "./core/binding-key-primitives.js";
+import { createIrBindingId } from "./identity-values.js";
+import type { IrBindingId, IrClassId, IrSourceId, IrUnitId } from "./identity.js";
 import type { IrGlobalBinding, IrGlobalRef, IrTypeBinding, IrTypeRef } from "./nodes.js";
 
 type IrBindingOwnerId = IrSourceId | IrUnitId | IrClassId;
-
-function requireNonEmpty(value: string, label: string): string {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new TypeError(`${label} must be a non-empty string`);
-  }
-  return value;
-}
 
 function requireString(value: string, label: string): string {
   if (typeof value !== "string") {
@@ -19,23 +20,8 @@ function requireString(value: string, label: string): string {
   return value;
 }
 
-function requireBindingId(value: IrBindingId, label: string, domain: "global" | "type" | "class"): IrBindingId {
-  const checked = requireNonEmpty(value, label);
-  if (!checked.startsWith(`ir-binding:v1:${domain}:`)) {
-    throw new TypeError(`${label} must belong to the ${domain} binding domain`);
-  }
-  return checked as IrBindingId;
-}
-
 function compatibilityName(explicit: string | undefined, fallback: string, label: string): string {
   return requireNonEmpty(explicit ?? fallback, label);
-}
-
-function requireSourceGlobalCapability(value: "dom" | undefined): "dom" | undefined {
-  if (value !== undefined && value !== "dom") {
-    throw new TypeError("source global capability must be dom when present");
-  }
-  return value;
 }
 
 function globalRef(name: string, binding: IrGlobalBinding): IrGlobalRef {
@@ -353,18 +339,12 @@ export function irFnctorLayoutTypeRef(unitId: IrUnitId, adapterName: string): Ir
   return irSupportTypeRef(unitId, "fnctor-layout", adapterName);
 }
 
-function keyPart(value: string): string {
-  return `${value.length}:${value}`;
-}
-
 /** Canonical global-binding key. Compatibility names are deliberately excluded. */
 export function irGlobalBindingKey(binding: IrGlobalBinding): string {
   const bindingId = keyPart(requireBindingId(binding.bindingId, "global bindingId", "global"));
   switch (binding.kind) {
-    case "source": {
-      const capability = requireSourceGlobalCapability(binding.capability);
-      return capability === undefined ? `source|${bindingId}` : `source|${bindingId}|capability|${keyPart(capability)}`;
-    }
+    case "source":
+      return irSourceGlobalBindingKey(binding.bindingId, binding.capability);
     case "support":
       return `${binding.kind}|${bindingId}`;
     case "import":

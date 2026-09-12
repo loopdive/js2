@@ -29,10 +29,14 @@
 //   (`numImportFuncs + mod.functions.length`) stays at registration sites
 //   until S3 replaces it with registry handle minting.
 // ---------------------------------------------------------------------------
-export * from "./multi-source-ir-integration.js";
 import type { FuncTypeDef, FuncHandle, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
-import { STABLE_FUNC_BASE } from "../emit/resolve-layout.js";
+import {
+  STABLE_FUNC_BASE,
+  mintDefinedFunc as mintPhysicalDefinedFunc,
+  commitDefinedFuncOrdinal,
+  appendDefinedFunc,
+} from "../wasm/physical/function-handles.js";
 
 /**
  * Position of a handle's function in `mod.functions`, or a negative number
@@ -197,11 +201,7 @@ function traceSlotWrite(position: number, writer: string, fn: WasmFunction): voi
  * handle fails loudly at first resolution (`absoluteFuncIndex` throws).
  */
 export function mintDefinedFunc(ctx: CodegenContext): FuncHandle {
-  const ordinal = ctx.mod.funcOrdinalToPosition.length;
-  // Reserve the ordinal slot now (NaN = minted, not yet pushed) so nested
-  // mints get distinct ordinals even before this one's push happens.
-  ctx.mod.funcOrdinalToPosition.push(Number.NaN);
-  return STABLE_FUNC_BASE + ordinal;
+  return mintPhysicalDefinedFunc(ctx.mod);
 }
 
 /**
@@ -209,20 +209,9 @@ export function mintDefinedFunc(ctx: CodegenContext): FuncHandle {
  * position. Throws on a double-push or a non-stable handle.
  */
 export function pushDefinedFunc(ctx: CodegenContext, funcIdx: FuncHandle, fn: WasmFunction): void {
-  if (funcIdx < STABLE_FUNC_BASE) {
-    throw new Error(`pushDefinedFunc: ${funcIdx} is not a stable-regime handle`);
-  }
-  const ordinal = funcIdx - STABLE_FUNC_BASE;
-  const existing = ctx.mod.funcOrdinalToPosition[ordinal];
-  if (existing === undefined) {
-    throw new Error(`pushDefinedFunc: handle ${funcIdx} was never minted`);
-  }
-  if (!Number.isNaN(existing)) {
-    throw new Error(`pushDefinedFunc: handle ${funcIdx} already pushed at position ${existing}`);
-  }
-  ctx.mod.funcOrdinalToPosition[ordinal] = ctx.mod.functions.length;
+  commitDefinedFuncOrdinal(ctx.mod, funcIdx);
   traceSlotWrite(ctx.mod.functions.length, "pushDefinedFunc", fn);
-  ctx.mod.functions.push(fn);
+  appendDefinedFunc(ctx.mod, fn);
 }
 
 /**

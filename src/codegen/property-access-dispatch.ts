@@ -169,7 +169,11 @@ import { isSealedNominalStructParent } from "./struct-hierarchy-layout.js";
 import { isBuiltinSubtype, isBuiltinTypeName } from "./builtin-tags.js";
 import { receiverIsPrimitiveWrapper } from "./object-ctor-primitive-receiver.js";
 import { tryObjectCoercionFnctorPrototypeIdentity } from "./object-coercion-fnctor-prototype.js";
-import { getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
+import {
+  externrefBackedOwnFieldBacking,
+  getOrRegisterErrorStructType,
+  isWasiErrorName,
+} from "./registry/error-types.js";
 import {
   classExpressionDefinesOwnName,
   classifyPlainCtorReceiverNamespace,
@@ -4050,6 +4054,29 @@ export function tryStringLengthIteratorAndExternClassReads(
  * compiled type is `f64`/`i32` and `__box_number` resolved, which is the same
  * condition tested here.
  */
+/**
+ * (#5378) Does the checker's type for this access explicitly admit `undefined`
+ * ALONGSIDE something else — `number | undefined`, `string | undefined`, … ?
+ *
+ * This is the checker TELLING US the property may be absent. A scalar wasm
+ * representation cannot carry that answer, so a site that resolves such a union
+ * to a bare `f64`/`i32` has silently discarded the `undefined` arm. See the call
+ * site for the measured `@js-temporal/polyfill` case.
+ *
+ * A bare `undefined` (no other constituent) is NOT this shape — it has no scalar
+ * to launder into and resolves honestly on its own.
+ */
+function accessTypeAdmitsUndefined(accessType: ts.Type): boolean {
+  if (!accessType.isUnion()) return false;
+  let admitsUndefined = false;
+  let admitsValue = false;
+  for (const constituent of accessType.types) {
+    if ((constituent.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0) admitsUndefined = true;
+    else admitsValue = true;
+  }
+  return admitsUndefined && admitsValue;
+}
+
 function emitExternGetReceiverGuard(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -4361,6 +4388,26 @@ export function finalizeStructAndDynamicMemberGet(
     if (ctx.standalone && ctx.classExternrefBackedSet.has(typeName)) {
       const ownRead = emitExternrefBackedOwnFieldRead(ctx, fctx, expr, propName, typeName);
       if (ownRead !== undefined) return ownRead;
+      // (#5383 S2b) The READ twin of the write fix in `assignment.ts`. When the
+      // class has no known native backing (an Array/TypedArray/… carrier), the
+      // own-field WRITE now stores through `__extern_set` on the carrier
+      // itself, so the read has to look in the same place — otherwise the
+      // struct.get path below reads the vestigial `$typeName` slot the write no
+      // longer fills, and (the carrier never being a `$typeName`) throws
+      // `TypeError: Cannot access property on null or undefined`.
+      //
+      // Scoped to properties that actually HAVE such a flow-grown slot, which
+      // is exactly the set the doomed struct path would have claimed. A builtin
+      // member of the parent (`length`, `push`, an index) has no slot, so it
+      // still reaches the array/builtin member paths below unchanged — that
+      // scoping is why this cannot swallow inherited behaviour.
+      if (
+        externrefBackedOwnFieldBacking(ctx, typeName) === undefined &&
+        (ctx.structFields.get(typeName)?.some((field) => field.name === propName) ?? false)
+      ) {
+        const selfStoreRead = emitExternrefBackedOwnFieldRead(ctx, fctx, expr, propName, typeName, "plain-object");
+        if (selfStoreRead !== undefined) return selfStoreRead;
+      }
       // undefined → helper unavailable; fall through to the legacy path.
     }
 
@@ -4552,10 +4599,51 @@ export function finalizeStructAndDynamicMemberGet(
   // Keep the read as externref so an absent property is not unboxed through
   // the widened numeric field type before `=== undefined` / `typeof` sees it.
   const openObjectReceiver = ts.isIdentifier(expr.expression) && ctx.objectHashConsumerVars.has(expr.expression.text);
+  // (#5378) Third member of the same family as the two arms above: the wasm
+  // representation is not a sound carrier for the checker's own answer.
+  //
+  // Here the checker is RIGHT and we discard it. For a property that some shape
+  // in play does not carry, `getTypeAtLocation` answers `number | undefined` —
+  // and `resolveWasmType` collapses that to a bare `f64`, which has no
+  // `undefined`. The `__extern_get` miss arm below then feeds a real host
+  // `undefined` through `__unbox_number` and the read reports `typeof "number"`,
+  // `x !== undefined`, for a property that is genuinely absent. That is the
+  // #5251 laundering hazard reached through the STATIC door: the dynamic door
+  // (`accessWasm.kind === \"externref\"`) already brands its narrowed f64 as
+  // undefined-sentinel-carrying, but that whole block is guarded on the access
+  // being statically dynamic, which this one is not.
+  //
+  // Measured (#5378, through the test262 runner, provider linked). The
+  // `@js-temporal/polyfill`'s time-zone resolver returns one of two shapes —
+  //   `function Rt(e){ … return $t.test(e) ? {offsetMinutes: sr(e)/6e10} : {tzName:e} }`
+  // — and its caller is
+  //   `const n = Rt(e).offsetMinutes; return void 0 !== n ? 6e10*n : lr(e,t)`.
+  // For `\"UTC\"` the second shape is returned, `offsetMinutes` read as NaN
+  // instead of `undefined`, `void 0 !== NaN` took the fixed-OFFSET branch, and
+  // every `ZonedDateTime` offset became `6e10 * NaN`. Two frames later
+  // `BalanceISODate` rejected the resulting non-finite year with
+  // `RangeError: infinity is out of range` — which is why every ISO/UTC
+  // `year`/`month`/`day`/`daysInMonth`/`toPlainDate()` read threw while
+  // `epochMilliseconds` (which never consults a time-zone offset) stayed correct.
+  // The minimal repro is four lines and needs no Temporal at all:
+  //   `function f(k){ return k ? {a:1} : {b:2} } typeof f(0).a  // \"number\", NaN`
+  //
+  // Keeping the honest externref costs one box/unbox on reads the checker has
+  // ALREADY flagged as possibly-absent; the caller's own coercion re-narrows
+  // numeric consumers, exactly as the #4420 note above describes. Scoped to
+  // scalar access types because only f64/i32 can launder `undefined` —
+  // ref/externref results already carry it.
+  const optionalScalarAccess = accessTypeAdmitsUndefined(accessType);
+  const staticAccessWasm = symbolBrand(
+    accessType,
+    widenBooleanDynamicAccess(accessType, resolveWasmType(ctx, accessType)),
+  );
   const accessWasm: ValType =
-    foreignReturnReceiver || openObjectReceiver
+    foreignReturnReceiver ||
+    openObjectReceiver ||
+    (optionalScalarAccess && (staticAccessWasm.kind === "f64" || staticAccessWasm.kind === "i32"))
       ? { kind: "externref" }
-      : symbolBrand(accessType, widenBooleanDynamicAccess(accessType, resolveWasmType(ctx, accessType)));
+      : staticAccessWasm;
 
   // For struct types with the property, try to compile the object and do struct.get
   // but NEVER for class struct types — their fields are fixed at collection time

@@ -12,6 +12,7 @@ import {
   AllocSiteRegistry,
   IrFunctionBuilder,
   LinearMemoryPlan,
+  irModuleGlobalRef,
   irVal,
   planLinearMemory,
   planLinearRecordLayout,
@@ -19,6 +20,7 @@ import {
   type IrType,
 } from "../src/ir/index.js";
 import { getLastLinearIrReport } from "../src/ir/backend/linear-integration.js";
+import { bindLinearStringRuntime } from "../src/ir/analysis/linear-string-runtime.js";
 import { computeClassLayout } from "../src/codegen-linear/layout.js";
 import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
@@ -44,14 +46,15 @@ function buildPlanningFixture() {
   builder.emitRefCellNew(n, { kind: "f64" });
   builder.emitVecNewFixed([n], F64, LINEAR_PTR);
   builder.emitExternNew("Date", []);
-  builder.emitGlobalSet({ name: "savedLabel" }, hello);
+  const savedLabel = irModuleGlobalRef(identities.sourceId, 0, "savedLabel");
+  builder.emitGlobalSet(savedLabel, hello);
   builder.terminate({ kind: "return", values: [n] });
-  return { registry, shape, fn: builder.finish() };
+  return { registry, shape, savedLabel, fn: builder.finish() };
 }
 
 describe("#3298 — target-neutral LinearMemoryPlan", () => {
   it("plans canonical layouts and allocation sites from the shared analyses", () => {
-    const { registry, shape, fn } = buildPlanningFixture();
+    const { registry, shape, savedLabel, fn } = buildPlanningFixture();
     const plan = planLinearMemory({ functions: [fn] }, registry);
 
     expect(plan.policy).toBe("arena-v1");
@@ -107,7 +110,7 @@ describe("#3298 — target-neutral LinearMemoryPlan", () => {
 
     expect(plan.globals).toEqual([
       {
-        id: "savedLabel",
+        id: savedLabel.binding.bindingId,
         allocationClass: "static",
         storage: "pointer",
         sizeBytes: 4,
@@ -117,6 +120,7 @@ describe("#3298 — target-neutral LinearMemoryPlan", () => {
         initializer: "zero",
       },
     ]);
+    expect(plan.globals[0]!.id).not.toBe(savedLabel.name);
     expect(plan.dataSegments.map((segment) => segment.bytes)).toEqual([[33], [104, 195, 169]]);
 
     const stringEncodings = plan.allocations
@@ -222,14 +226,36 @@ describe("#3298 — target-neutral LinearMemoryPlan", () => {
 
     const report = getLastLinearIrReport();
     expect(report?.compiled).not.toContain("unicode");
-    expect(report?.rejected).toContainEqual({
-      func: "unicode",
-      reason: "build",
-      detail: "ir/linear-string: ASCII encoding proof required for constant result (got utf8-guaranteed)",
-    });
-    const allocation = report?.memoryPlan.allocations.find((candidate) => candidate.dataSegmentId !== undefined);
+    expect(report?.rejected).toContainEqual(
+      expect.objectContaining({
+        func: "unicode",
+        reason: "build",
+        detail: "ir/linear-string: ASCII encoding proof required for constant result (got utf8-guaranteed)",
+        outcome: expect.objectContaining({
+          kind: "unsupported",
+          code: "string-evidence-unsupported",
+          stage: "resolve",
+        }),
+      }),
+    );
+    expect(report?.irModule.functions).toEqual([]);
+    expect(report?.memoryPlan.allocations).toEqual([]);
+
+    // Refused production owners contribute no executable allocation facts.
+    // Independently preserve the memory planner's canonical UTF-8 contract.
+    const registry = new AllocSiteRegistry();
+    const builder = new IrFunctionBuilder(identities.next("unicodePlan"), [{ kind: "string" }], true, registry);
+    builder.openBlock();
+    const value = builder.emitStringConst("hé");
+    builder.terminate({ kind: "return", values: [value] });
+    const plan = planLinearMemory({ functions: [builder.finish()] }, registry);
+    expect(plan.allocations).toHaveLength(1);
+    const allocation = plan.allocations.find((candidate) => candidate.dataSegmentId !== undefined);
     expect(allocation?.dataSegmentId).toBeDefined();
-    expect(report?.memoryPlan.requireDataSegment(allocation!.dataSegmentId!).bytes).toEqual([104, 195, 169]);
+    expect(plan.requireDataSegment(allocation!.dataSegmentId!).bytes).toEqual([104, 195, 169]);
+    expect(() => bindLinearStringRuntime(plan, { intrinsic: "constant", alloc: allocation!.id })).toThrow(
+      "ir/linear-string: ASCII encoding proof required for constant result (got utf8-guaranteed)",
+    );
 
     const instance = await WebAssembly.instantiate(result.binary!);
     expect((instance.instance.exports.unicode as () => number)()).toBe(2);

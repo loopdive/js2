@@ -1,0 +1,426 @@
+{
+  "ref_read": "ok",
+  "ref": "issue-assignments",
+  "tip": "a49968cdd47872a5221ef97367214e9f7072e2db",
+  "total_records": 2120,
+  "held_count": 800,
+  "held": [
+    {
+      "id": "3090",
+      "slice": "",
+      "assignee": "ttraenkler/opus-dead",
+      "status": "in-progress",
+      "branch": "issue-3090-delete-dead-handlers",
+      "claimed_at": "2026-07-13T07:53:23Z"
+    },
+    {
+      "id": "3518",
+      "slice": "application-evidence",
+      "assignee": "ttraenkler/luna-ir-evidence-d-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-whole-program-d-20260905",
+      "claimed_at": "2026-09-05T21:20:26Z"
+    },
+    {
+      "id": "3518",
+      "slice": "async-iife-return-scope",
+      "assignee": "ttraenkler/astra-ir-producers-b-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-async-iife-return-scope-20260906",
+      "claimed_at": "2026-09-06T22:12:01Z"
+    },
+    {
+      "id": "3518",
+      "slice": "authoritative-preparation",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-whole-program-a-20260905",
+      "claimed_at": "2026-09-05T21:20:15Z"
+    },
+    {
+      "id": "3518",
+      "slice": "backend-consumption-replay",
+      "assignee": "ttraenkler/claude-fable-ir-backend-c-20260906",
+      "status": "in-progress",
+      "branch": "claude/3518-whole-program-c-20260906",
+      "claimed_at": "2026-09-05T22:10:50Z"
+    },
+    {
+      "id": "3518",
+      "slice": "bench-string-c2",
+      "assignee": "ttraenkler/codex-3518-bench-string-prepared-cutover",
+      "status": "in-progress",
+      "branch": "codex/3518-bench-string-prepared-cutover",
+      "claimed_at": "2026-08-27T04:32:09Z"
+    },
+    {
+      "id": "3518",
+      "slice": "call-arg-ref-nullability",
+      "assignee": "ttraenkler/astra-ir-producers-b-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-call-arg-ref-nullability-20260906",
+      "claimed_at": "2026-09-06T19:16:00Z"
+    },
+    {
+      "id": "3518",
+      "slice": "compiler-result-finalizer",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-result-finalizer-20260906",
+      "claimed_at": "2026-09-06T15:53:55Z"
+    },
+    {
+      "id": "3518",
+      "slice": "driver-output-planning",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-driver-output-plan-20260906",
+      "claimed_at": "2026-09-06T14:37:15Z"
+    },
+    {
+      "id": "3518",
+      "slice": "error-message-bridge-leaves",
+      "assignee": "ttraenkler/astra-reference-error-runtime-20260906",
+      "status": "in-progress",
+      "branch": "codex/3518-error-message-bridge-20260906",
+      "claimed_at": "2026-09-06T15:17:38Z"
+    },
+    {
+      "id": "3518",
+      "slice": "evidence-runner-acceptance",
+      "assignee": "ttraenkler/astra-evidence-acceptance-b-20260906",
+      "status": "in-progress",
+      "branch": "codex/3518-evidence-acceptance-b-20260906",
+      "claimed_at": "2026-09-06T01:44:35Z"
+    },
+    {
+      "id": "3518",
+      "slice": "export-marshalling",
+      "assignee": "ttraenkler/astra-reference-error-runtime-20260906",
+      "status": "in-progress",
+      "branch": "codex/3518-export-marshalling-20260907",
+      "claimed_at": "2026-09-07T01:45:38Z"
+    },
+    {
+      "id": "3518",
+      "slice": "host-js-string-provider",
+      "assignee": "ttraenkler/astra-reference-error-runtime-20260906",
+      "status": "in-progress",
+      "branch": "codex/3518-host-js-string-provider-20260907",
+      "claimed_at": "2026-09-07T00:38:42Z"
+    },
+    {
+      "id": "3518",
+      "slice": "host-value-service",
+      "assignee": "ttraenkler/astra-reference-error-runtime-20260906",
+      "status": "in-progress",
+      "branch": "codex/3518-host-value-service-20260906",
+      "claimed_at": "2026-09-06T16:44:59Z"
+    },
+    {
+      "id": "3518",
+      "slice": "initializer-evidence-consumer",
+      "assignee": "ttraenkler/astra-evidence-acceptance-b-20260906",
+      "status": "in-progress",
+      "branch": "codex/3518-evidence-acceptance-b-20260906",
+      "claimed_at": "2026-09-06T14:05:32Z"
+    },
+    {
+      "id": "3518",
+      "slice": "integration-consolidation",
+      "assignee": "ttraenkler/astra-ir-integration-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-ir-integration-20260905",
+      "claimed_at": "2026-09-05T17:37:34Z"
+    },
+    {
+      "id": "3518",
+      "slice": "ir-source-positions",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "status": "in-progress",
+      "branch": "codex/44-ir-source-positions-20260906",
+      "claimed_at": "2026-09-06T18:00:51Z"
+    },
+    {
+      "id": "3518",
+      "slice": "module-init-source-audit",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-module-init-source-audit-20260906",
+      "claimed_at": "2026-09-06T13:33:13Z"
+    },
+    {
+      "id": "3518",
+      "slice": "object-emitter-function-layout",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "status": "in-progress",
+      "branch": "codex/33-object-function-layout-20260906",
+      "claimed_at": "2026-09-06T21:39:56Z"
+    },
+    {
+      "id": "3518",
+      "slice": "object-link-function-indices",
+      "assignee": "ttraenkler/astra-reference-error-runtime-20260906",
+      "status": "in-progress",
+      "branch": "codex/3518-object-link-function-indices-20260906",
+      "claimed_at": "2026-09-06T21:31:05Z"
+    },
+    {
+      "id": "3518",
+      "slice": "object-result-finalizer",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-object-result-finalizer-20260906",
+      "claimed_at": "2026-09-06T20:03:20Z"
+    },
+    {
+      "id": "3518",
+      "slice": "prepared-async-frame-engine",
+      "assignee": "ttraenkler/astra-ir-producers-b-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-prepared-async-frame-reconciled-20260907",
+      "claimed_at": "2026-09-07T00:49:54Z"
+    },
+    {
+      "id": "3518",
+      "slice": "presentation-output-split",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-presentation-output-20260906",
+      "claimed_at": "2026-09-06T15:06:06Z"
+    },
+    {
+      "id": "3518",
+      "slice": "private-observation-collector",
+      "assignee": "ttraenkler/astra-evidence-acceptance-b-20260906",
+      "status": "in-progress",
+      "branch": "codex/3518-evidence-acceptance-b-20260906",
+      "claimed_at": "2026-09-06T13:31:08Z"
+    },
+    {
+      "id": "3518",
+      "slice": "program-observation-authority",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-whole-program-a-20260905",
+      "claimed_at": "2026-09-06T13:19:20Z"
+    },
+    {
+      "id": "3518",
+      "slice": "reference-error-host-adapter",
+      "assignee": "ttraenkler/astra-reference-error-runtime-20260906",
+      "status": "in-progress",
+      "branch": "codex/3518-reference-error-runtime-20260906",
+      "claimed_at": "2026-09-06T14:08:10Z"
+    },
+    {
+      "id": "3518",
+      "slice": "reference-error-materialization",
+      "assignee": "ttraenkler/astra-reference-error-runtime-20260906",
+      "status": "in-progress",
+      "branch": "codex/3518-reference-error-runtime-20260906",
+      "claimed_at": "2026-09-06T13:08:53Z"
+    },
+    {
+      "id": "3518",
+      "slice": "reference-error-runtime",
+      "assignee": "ttraenkler/astra-reference-error-runtime-20260906",
+      "status": "in-progress",
+      "branch": "codex/3518-reference-error-runtime-20260906",
+      "claimed_at": "2026-09-06T10:11:43Z"
+    },
+    {
+      "id": "3518",
+      "slice": "runtime-callable-abi",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-whole-program-a-20260905",
+      "claimed_at": "2026-09-06T10:13:42Z"
+    },
+    {
+      "id": "3518",
+      "slice": "semantic-runtime-producers",
+      "assignee": "ttraenkler/astra-ir-producers-b-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-whole-program-b-20260905",
+      "claimed_at": "2026-09-05T21:20:20Z"
+    },
+    {
+      "id": "3518",
+      "slice": "wasi-startup-handoff",
+      "assignee": "ttraenkler/astra-ir-program-a-20260905",
+      "status": "in-progress",
+      "branch": "codex/3518-wasi-startup-handoff-20260907",
+      "claimed_at": "2026-09-07T01:43:35Z"
+    },
+    {
+      "id": "3520",
+      "slice": "c30-vec-host-bridge",
+      "assignee": "ttraenkler/codex-r1-c30",
+      "status": "in-progress",
+      "branch": "codex/3520-c30-vec-host-bridge",
+      "claimed_at": "2026-07-30T04:44:42Z"
+    },
+    {
+      "id": "3520",
+      "slice": "c31-closure-host-bridge",
+      "assignee": "ttraenkler/codex-r1-c31",
+      "status": "in-progress",
+      "branch": "codex/3520-c31-closure-host-bridge",
+      "claimed_at": "2026-07-30T06:03:22Z"
+    },
+    {
+      "id": "3520",
+      "slice": "c32-date-civil-support",
+      "assignee": "ttraenkler/codex-c32-date-civil-019f7cb9",
+      "status": "in-progress",
+      "branch": "codex/3520-c32-date-civil-support",
+      "claimed_at": "2026-07-30T06:34:53Z"
+    },
+    {
+      "id": "3520",
+      "slice": "c33-data-struct-host-bridge",
+      "assignee": "ttraenkler/codex-c33-data-struct-host-bridge",
+      "status": "in-progress",
+      "branch": "codex/3520-c33-data-struct-host-bridge",
+      "claimed_at": "2026-07-30T08:57:36Z"
+    },
+    {
+      "id": "3520",
+      "slice": "w1g-implicit-ctor-param",
+      "assignee": "ttraenkler/opus-3520-w1g",
+      "status": "in-progress",
+      "branch": "claude/issue-3520-w1g-implicit-ctor-param",
+      "claimed_at": "2026-09-04T03:26:41Z"
+    },
+    {
+      "id": "3521",
+      "slice": "prepared-program-core",
+      "assignee": "ttraenkler/codex-3521-prepared-core-019f7cb9",
+      "status": "in-progress",
+      "branch": "codex/3521-r2-prepared-program-core",
+      "claimed_at": "2026-07-30T07:33:48Z"
+    },
+    {
+      "id": "3521",
+      "slice": "production-routing",
+      "assignee": "ttraenkler/codex-lead",
+      "status": "in-progress",
+      "branch": "codex/3521-r2-production-routing",
+      "claimed_at": "2026-07-30T12:52:02Z"
+    },
+    {
+      "id": "3521",
+      "slice": "program-abi-session-seal",
+      "assignee": "ttraenkler/codex-r2-session",
+      "status": "in-progress",
+      "branch": "codex/3521-r2-program-abi-session-seal",
+      "claimed_at": "2026-07-30T05:22:50Z"
+    },
+    {
+      "id": "3521",
+      "slice": "r2f1",
+      "assignee": "ttraenkler/opus-3521-r2f1",
+      "status": "in-progress",
+      "branch": "claude/issue-3521-r2f1-fast-mixed-signature",
+      "claimed_at": "2026-09-02T21:54:38Z"
+    },
+    {
+      "id": "3521",
+      "slice": "scoped-prepared-abi-seal",
+      "assignee": "codex-3521-scoped-abi",
+      "status": "in-progress",
+      "branch": "",
+      "claimed_at": "2026-07-30T08:54:39Z"
+    },
+    {
+      "id": "3522",
+      "slice": "w1c-super-accessor",
+      "assignee": "ttraenkler/opus-3522-w1c",
+      "status": "in-progress",
+      "branch": "claude/issue-3522-w1c-super-accessor",
+      "claimed_at": "2026-09-04T02:49:03Z"
+    },
+    {
+      "id": "3523",
+      "slice": "r4m1",
+      "assignee": "ttraenkler/opus-3523-r4m1",
+      "status": "in-progress",
+      "branch": "claude/issue-3523-r4m1-string-module-storage",
+      "claimed_at": "2026-09-03T00:05:13Z"
+    },
+    {
+      "id": "3523",
+      "slice": "w2b",
+      "assignee": "ttraenkler/fable-3523-w2b",
+      "status": "in-progress",
+      "branch": "fable-3523-w2b",
+      "claimed_at": "2026-09-03T17:15:28Z"
+    },
+    {
+      "id": "3525",
+      "slice": "m2-p2a-atomic-init-batch",
+      "assignee": "ttraenkler/luna-ir-r5-m2p2a-20260905",
+      "status": "in-progress",
+      "branch": "codex/3525-m2-p2a-luna-20260905",
+      "claimed_at": "2026-09-05T11:16:23Z"
+    },
+    {
+      "id": "3526",
+      "slice": "a1",
+      "assignee": "ttraenkler/codex",
+      "status": "in-progress",
+      "branch": "codex/3526-async-capability-catalog-plan",
+      "claimed_at": "2026-08-26T03:53:45Z"
+    },
+    {
+      "id": "3526",
+      "slice": "f3s1",
+      "assignee": "ttraenkler/opus-3526-f3s1",
+      "status": "in-progress",
+      "branch": "claude/issue-3526-f3s1-host-callback-maker",
+      "claimed_at": "2026-09-02T14:26:54Z"
+    },
+    {
+      "id": "3526",
+      "slice": "f3s2",
+      "assignee": "ttraenkler/opus-3526-f3s2",
+      "status": "in-progress",
+      "branch": "claude/issue-3526-f3s2-callable-schema",
+      "claimed_at": "2026-09-02T21:09:40Z"
+    },
+    {
+      "id": "3526",
+      "slice": "f3s3",
+      "assignee": "ttraenkler/opus-3526-f3s3",
+      "status": "in-progress",
+      "branch": "claude/issue-3526-f3s3-function-prototype-call",
+      "claimed_at": "2026-09-03T17:12:33Z"
+    },
+    {
+      "id": "3527",
+      "slice": "r7-b2-linear-suspension-liveness",
+      "assignee": "ttraenkler/luna-ir-r7-b2-20260905",
+      "status": "in-progress",
+      "branch": "codex/3527-b2-luna-20260905",
+      "claimed_at": "2026-09-05T09:49:15Z"
+    },
+    {
+      "id": "3527",
+      "slice": "r7-b3-settled-nonthenable-owners",
+      "assignee": "ttraenkler/luna-ir-r7-b3-20260905",
+      "status": "in-progress",
+      "branch": "codex/3527-b3-luna-20260905",
+      "claimed_at": "2026-09-05T12:15:45Z"
+    },
+    {
+      "id": "3528",
+      "slice": "l0-p1-frozen-body-batch",
+      "assignee": "ttraenkler/luna-ir-r8-l0p1-20260905",
+      "status": "in-progress",
+      "branch": "codex/3528-l0-p1-luna-20260905",
+      "claimed_at": "2026-09-05T11:52:00Z"
+    }
+  ],
+  "scope": "Filtered migration claims; original held_count is ledger-wide. Claims do not prove process liveness. No process/session IDs are recorded by this ledger."
+}

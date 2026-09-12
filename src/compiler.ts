@@ -49,7 +49,15 @@ import {
   DOWNGRADE_DIAG_CODES,
   looksLikeTsSyntaxOnJs,
 } from "./compiler/import-manifest.js";
-import { applyCabiTransform, generateDts, generateImportsHelper, widenNonDefaultableTypes } from "./compiler/output.js";
+import {
+  applyCabiTransform,
+  EMPTY_FAILURE_TELEMETRY,
+  failResult,
+  generateDts,
+  generateImportsHelper,
+  widenNonDefaultableTypes,
+  type FailureTelemetry,
+} from "./compiler/output.js";
 import {
   detectEarlyErrors,
   pushSourceAnchoredDiagnostic,
@@ -651,37 +659,6 @@ function detectRawWasiImports(source: string): { rawWasi: Set<string>; memAccess
   return { rawWasi, memAccessors };
 }
 
-type FailureTelemetry = Pick<
-  CompileResult,
-  "fallbackCounts" | "irPostClaimErrors" | "irCompiledFuncs" | "irFirstSkipped" | "irOutcomes" | "irBodyRouteAudit"
->;
-
-const EMPTY_FAILURE_TELEMETRY: Partial<FailureTelemetry> = Object.freeze({
-  fallbackCounts: undefined,
-  irPostClaimErrors: undefined,
-  irCompiledFuncs: undefined,
-  irFirstSkipped: undefined,
-  irOutcomes: undefined,
-  irBodyRouteAudit: undefined,
-});
-
-/** The canonical failure result, retaining any telemetry codegen already produced. */
-function failResult(errors: CompileError[], telemetry: Partial<FailureTelemetry> = {}): CompileResult {
-  return {
-    binary: new Uint8Array(0),
-    wat: "",
-    dts: "",
-    importsHelper: "",
-    success: false,
-    errors,
-    stringPool: [],
-    imports: [],
-    hasMain: false,
-    hasTopLevelStatements: false,
-    ...telemetry,
-  };
-}
-
 /**
  * Capture the frozen runtime-type ABI after all codegen/DCE passes have run.
  *
@@ -1006,7 +983,6 @@ function detectStandaloneDynamicImports(sourceFile: ts.SourceFile): CompileError
 function runPipeline(input: PipelineInput): CompileResult {
   const { errors, options, entryAst, multiAst, diagnosticAnchor, userSourceFiles } = input;
   const targetProfile = resolveCompileTargetProfile(options);
-  const targetEnvironment = targetProfile.environment;
   const emitWatOutput = options.emitWat !== false;
 
   // Each validation pass below gates on the errors IT produced, NOT on the whole
@@ -1168,6 +1144,24 @@ function runPipeline(input: PipelineInput): CompileResult {
     );
     return failResult(errors, telemetry);
   }
+
+  return finalizePipelineModule(input, mod, telemetry, { targetProfile, emitWatOutput, emitSourceMap });
+}
+
+/** Shared output contract; generation and its diagnostics finish before entry. */
+function finalizePipelineModule(
+  input: PipelineInput,
+  mod: WasmModule,
+  telemetry: Partial<FailureTelemetry>,
+  output: {
+    targetProfile: ReturnType<typeof resolveCompileTargetProfile>;
+    emitWatOutput: boolean;
+    emitSourceMap: boolean;
+  },
+): CompileResult {
+  const { errors, options, entryAst, diagnosticAnchor } = input;
+  const { targetProfile, emitWatOutput, emitSourceMap } = output;
+  const targetEnvironment = targetProfile.environment;
 
   // Step 2b: Apply C ABI transformations if requested (linear target only).
   let cHeader: string | undefined;
