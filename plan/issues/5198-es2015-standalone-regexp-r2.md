@@ -404,6 +404,107 @@ owned by #4041. The five generic `flags` failures remain deferred until the
 standalone open-object repeated-assignment defect has an independently viable
 plan. No GitHub issue should be created for either family.
 
+### C3a implementation checkpoint (2026-09-12; before final integration)
+
+The bounded implementation branch starts at planning commit
+`286d4ba5f22a234848783c6bdfd9f2cdd64ff327`, whose parent is freshly fetched
+`loopdive/js2` main `c645a7627e099173b0b3e0c5daa1d7b5a110a9d5`.
+
+Before editing, all 17 C3a A/B rows ran in fresh isolated child processes with
+one compiler worker. Host was `17 pass`; standalone was `7 fail / 10 pass /
+0 compile_error / 0 timeout / 0 skip`. The seven standalone failures were the
+owned A paths listed above, while every B control passed.
+
+The implementation keeps the ordinary closed
+`String.prototype.replace`/`replaceAll` route at its existing zero-cursor
+call. Only a direct, static/backend-created `@@replace` receiver now supplies
+cursor inputs to the native replacement loop:
+
+- a global receiver performs the descriptor-aware `Set(lastIndex, 0)` before
+  the loop and returns the terminating zero cursor;
+- a sticky non-global receiver reads the existing deferred raw lastIndex via
+  `ToLength`, searches once from that position, and writes either the match end
+  or zero through the existing non-writable guard;
+- `g+y` uses the native sticky search on every iteration and therefore stops
+  at the first gap; and
+- empty global matches use Unicode `AdvanceStringIndex` for static `u`/`v`
+  patterns, including a valid surrogate pair.
+
+On this pre-integration branch, the same fresh isolated A/B rerun is `17 pass`
+in host and `17 pass / 0 compile_error / 0 timeout / 0 skip` in standalone.
+The standalone runner rejects a non-empty host-import manifest before
+instantiation, so that pass count also proves zero standalone host imports.
+Both TypeScript 5 and TypeScript 7 checks pass, as does lint; formatting was
+applied to the three implementation/test files.
+
+The optional three-row `@@match` extension is deliberately not folded in. Its
+result collection still needs the separate `ensureRegexMatchAll` path and
+would make cursor writeback observable across a different match-array helper;
+that is not the same proved replacement-loop invariant. It remains the next
+bounded handoff.
+
+Two older Slice-A `RegExp.prototype.exec` access rows currently fail when
+rerun in a fresh standalone process on the planning checkout despite the
+minimal direct exec probe remaining correct. They are not reached by the
+replacement helper and are recorded as an integrated-head control to remeasure
+after the required merge, not claimed by C3a. Final evidence must be rerun
+after a normal merge of exact upstream
+`cbeffc55aaf12cd26a52fcae811d2efa224c4dce`.
+
+### C3a final integrated-head evidence and handoff (2026-09-12)
+
+The implementation branch was normally fast-forwarded through the requested
+upstream integrations (including `cbeffc55aaf12cd26a52fcae811d2efa224c4dce`
+and `d03c2248002723c01c412ec48c3b585851e38bd0`) to final exact
+`loopdive/js2` main `ffb338c45b9ce26c0b430a7345f498c403d35441`; it was not
+rebased or reset. That records both the planning branch point
+`286d4ba5f22a234848783c6bdfd9f2cdd64ff327` (parent
+`c645a7627e099173b0b3e0c5daa1d7b5a110a9d5`) and the publication head.
+
+On that final head, `pnpm run build:compiler-bundle` passed. The exact seven A
+and ten B paths were rerun in fresh isolated host and standalone processes
+with one compiler worker:
+
+- host: `17 pass` before and after; and
+- standalone: pre-change `7 fail / 10 pass`, final `17 pass / 0 compile_error
+  / 0 timeout / 0 skip`.
+
+The standalone path runner rejects a non-empty host-import manifest before it
+instantiates a module, so the final `17 pass` also proves zero host imports.
+The exact standalone transition list is seven owned `fail -> pass` paths and
+ten B-control `pass -> pass` paths; there is no pass loss in either lane.
+
+The permanent pins are deliberately in the narrowly named
+`tests/issue-5198-es2015-regexp-replace-cursor.test.ts`, rather than extending
+the older Slice-A file. In one fork they pass `14/14` (the seven rows in each
+lane). The small `afterEach` yield only lets Vitest drain reporter RPCs between
+synchronous standalone compiles; it does not change test execution or verdicts.
+
+TS5, TS7, lint, Prettier, `git diff --check`, LOC/function budgets,
+coercion-site and oracle ratchets, dead-export check, numeric-local parity
+(`18/18`), and issue integrity all pass on the final head. The LOC/function
+allowances are limited to the two C3a helper functions already declared in
+this issue.
+
+The optional three-row `@@match` cohort remains deferred: its result-array
+collection is still a separate `ensureRegexMatchAll` mechanism, so this
+replacement-only helper does not prove the same invariant. The broad 238-row
+RegExp-prototype remeasurement was begun on the earlier `cbeffc55` integrated
+head but was stopped without an aggregate result when the required final
+upstream advance arrived. The final `ffb338c4` validation is therefore
+explicitly proportional (the exact A/B cohort and focused static pins), not a
+claimed transition table for untouched residual rows.
+
+Two pre-existing standalone controls remain outside this slice:
+
+1. `built-ins/RegExp/prototype/exec/failure-lastindex-access.js`
+2. `built-ins/RegExp/prototype/exec/success-lastindex-access.js`
+
+They fail on final `ffb338c4` exactly as on the planning checkout, while the
+replacement A/B cohort is green. They exercise `RegExp.prototype.exec` and do
+not call the replacement helper; leave them to the existing Slice-A/exec
+owner. No other full-residual status is inferred from this bounded fix.
+
 ## Acceptance criteria
 
 - All 165 exact rows pass standalone with zero host imports; interim PRs pass
