@@ -45,9 +45,10 @@
       "entries": [
         "src/wasm/physical/function-handles.ts",
         "src/wasm/physical/function-types.ts",
-        "src/wasm/physical/module-reservations.ts"
+        "src/wasm/physical/module-reservations.ts",
+        "src/wasm/physical/exception-control.ts"
       ],
-      "minModules": 3
+      "minModules": 4
     },
     {
       "id": "wasm-emit",
@@ -185,9 +186,11 @@
       "required": true,
       "entries": [
         "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
-        "src/runtime/wasmgc/promise/settlement-bodies.ts"
+        "src/runtime/wasmgc/promise/settlement-bodies.ts",
+        "src/runtime/wasmgc/async/frame-engine.ts",
+        "src/runtime/wasmgc/async/native-await.ts"
       ],
-      "minModules": 2
+      "minModules": 4
     },
     {
       "id": "standalone-platform",
@@ -426,6 +429,26 @@
     }
   ],
   "activationHistory": [
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts",
+        "src/runtime/wasmgc/async/frame-engine.ts",
+        "src/runtime/wasmgc/async/native-await.ts"
+      ],
+      "minModules": 4
+    },
+    {
+      "layer": "wasm-physical",
+      "entries": [
+        "src/wasm/physical/function-handles.ts",
+        "src/wasm/physical/function-types.ts",
+        "src/wasm/physical/module-reservations.ts",
+        "src/wasm/physical/exception-control.ts"
+      ],
+      "minModules": 4
+    },
     {
       "layer": "native-runtime",
       "entries": [
@@ -9490,6 +9513,13 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/planning-sites.ts",
+      "state": "unmigrated",
+      "layer": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Source-bound AST identity validation shared with the legacy overlay; not a pure IR contract or physical runtime owner. Relocate under frontend/ts with its planning identity dependencies before frontend retirement."
+    },
+    {
       "path": "src/ir/planning-identity.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -10480,6 +10510,11 @@
       "layer": "legacy-host"
     },
     {
+      "path": "src/runtime/typed-array-host-brand.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
       "path": "src/runtime/vec-mirror-writeback.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
@@ -10508,6 +10543,16 @@
       "path": "src/runtime/wasm-vec-prototype.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
+    },
+    {
+      "path": "src/runtime/wasmgc/async/frame-engine.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/async/native-await.ts",
+      "state": "clean",
+      "layer": "native-runtime"
     },
     {
       "path": "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
@@ -10649,6 +10694,11 @@
       "path": "src/wasm/model/module-records.ts",
       "state": "clean",
       "layer": "wasm-model"
+    },
+    {
+      "path": "src/wasm/physical/exception-control.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
     },
     {
       "path": "src/wasm/physical/function-handles.ts",

@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
+import { requireExactPlanSiteOwner } from "./planning-sites.js";
+import type { IrOwnedSupportUnitRecord } from "../shared/contracts/ir-unit-inventory.js";
 import type { IrFunctionBuilder } from "./builder.js";
 import { irImportFuncRef, irRuntimeFuncRef, irUnitFuncRef } from "./callable-bindings.js";
 import { createDerivedIrUnitId, type IrSourceId, type IrUnitId } from "./identity.js";
@@ -83,6 +85,107 @@ export interface IrPromiseDelayLoweringHost {
 
 function planningInvariant(code: IrPlanningIdentityInvariantCode, message: string): never {
   throw new IrPlanningIdentityInvariantError(code, message);
+}
+
+export function validatePromiseDelayPlansByIdentity(
+  sourceFile: ts.SourceFile,
+  identityContext: IrPlanningIdentityContext,
+  plans: IrPromiseDelayLoweringPlans,
+): readonly IrPromiseDelayLoweringPlan[] {
+  const uniquePlans = new Set<IrPromiseDelayLoweringPlan>();
+  const collect = <TNode extends ts.Node>(
+    entries: ReadonlyMap<TNode, IrPromiseDelayLoweringPlan>,
+    expectedNode: (plan: IrPromiseDelayLoweringPlan) => ts.Node,
+    kind: string,
+  ): void => {
+    for (const [node, plan] of entries) {
+      if (node !== expectedNode(plan)) {
+        planningInvariant("unit-record-mismatch", `${kind} map does not retain its exact certified AST node`);
+      }
+      uniquePlans.add(plan);
+    }
+  };
+  collect(plans.constructions, (plan) => plan.construction, "Promise construction");
+  collect(plans.timers, (plan) => plan.timerCall, "Promise timer");
+  collect(plans.resolves, (plan) => plan.resolveCall, "Promise resolve");
+
+  for (const plan of uniquePlans) {
+    if (
+      plans.constructions.get(plan.construction) !== plan ||
+      plans.timers.get(plan.timerCall) !== plan ||
+      plans.resolves.get(plan.resolveCall) !== plan
+    ) {
+      planningInvariant("unit-record-mismatch", "Promise delay plan is incomplete across its exact AST-site maps");
+    }
+    for (const [site, kind] of [
+      [plan.construction, "Promise construction"],
+      [plan.executor, "Promise executor"],
+      [plan.timerCall, "Promise timer"],
+      [plan.timerCallback, "Promise timer callback"],
+      [plan.resolveCall, "Promise resolve"],
+    ] as const) {
+      requireExactPlanSiteOwner(sourceFile, identityContext, plan.ownerUnitId, plan.ownerName, site, `${kind} plan`);
+    }
+  }
+  return [...uniquePlans];
+}
+
+/** Native elision keeps these exact original arrows, never certification lift IDs. */
+export function validateNativePromiseDelaySupportByIdentity(
+  sourceFile: ts.SourceFile,
+  identityContext: IrPlanningIdentityContext,
+  plans: IrPromiseDelayLoweringPlans,
+): readonly IrOwnedSupportUnitRecord[] {
+  const validated = validatePromiseDelayPlansByIdentity(sourceFile, identityContext, plans);
+  const sourceId = requireIrPlanningSourceId(identityContext, sourceFile);
+  const support: IrOwnedSupportUnitRecord[] = [];
+  const seen = new Set<IrUnitId>();
+  for (const plan of validated) {
+    if (plan.runtimeProjection !== "standalone-native") {
+      planningInvariant("unit-record-mismatch", "native Promise-delay support requires standalone-native projection");
+    }
+    let lexicalOwnerId = plan.ownerUnitId;
+    for (const declaration of [plan.executor, plan.timerCallback]) {
+      const id = identityContext.unitIdByDeclaration.get(declaration);
+      const unit = id === undefined ? undefined : identityContext.unitByUnitId.get(id);
+      if (
+        id === undefined ||
+        !unit ||
+        identityContext.declarationByUnitId.get(id) !== declaration ||
+        identityContext.inventory.allUnits.filter((record) => record.id === id).length !== 1 ||
+        !identityContext.inventory.allUnits.includes(unit) ||
+        identityContext.terminalByUnitId.has(id) ||
+        identityContext.inventory.terminalUnits.some((record) => record.id === id) ||
+        !ts.isArrowFunction(declaration) ||
+        declaration.getSourceFile() !== sourceFile ||
+        unit.sourceId !== sourceId ||
+        unit.kind !== "arrow-function" ||
+        unit.syntheticRole !== undefined ||
+        unit.terminal ||
+        unit.terminalOwnerId === null ||
+        unit.terminalOwnerId !== plan.ownerUnitId ||
+        unit.lexicalOwnerId !== lexicalOwnerId ||
+        unit.declarationStart !== declaration.getStart(sourceFile) ||
+        unit.declarationEnd !== declaration.end
+      ) {
+        planningInvariant(
+          "unit-record-mismatch",
+          `native Promise-delay support is not its exact original arrow in ${plan.ownerUnitId}`,
+        );
+      }
+      const position = sourceFile.getLineAndCharacterOfPosition(declaration.getStart(sourceFile));
+      if (unit.line !== position.line + 1 || unit.column !== position.character + 1 || seen.has(id)) {
+        planningInvariant(
+          "unit-record-mismatch",
+          `native Promise-delay support has stale location or duplicate ownership in ${plan.ownerUnitId}`,
+        );
+      }
+      seen.add(id);
+      support.push(unit);
+      lexicalOwnerId = id;
+    }
+  }
+  return support;
 }
 
 interface ValidatedPromiseDelayOwnerPopulation {

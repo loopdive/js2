@@ -1967,6 +1967,13 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
   //     callable JS functions to the outside, so this is conservatively 0.
   registerNative("__typeof_function", externrefToI32, [{ op: "i32.const", value: 0 }]);
 
+  // 14a. __is_callable(externref) -> i32 — deliberately DISTINCT from
+  // `__typeof_function`: class constructors report typeof "function" but have
+  // no [[Call]]. `fillStandaloneTypeofClosureArms` fills this conservative
+  // placeholder at finalize from the same host-free carrier inventory, omitting
+  // only class-object singletons.
+  registerNative("__is_callable", externrefToI32, [{ op: "i32.const", value: 0 }]);
+
   // 15. __typeof(externref) -> externref — the MATERIALIZED typeof result.
   //     (#2965) This was a `ref.null.extern` stub ("defer until a wasi caller
   //     needs the typeof RESULT as a string"), which silently broke every
