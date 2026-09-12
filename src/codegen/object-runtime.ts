@@ -240,7 +240,11 @@ import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) o
 import { backedBoundsGuard, canonicalIndexDigitStep } from "./vec-index-domain.js"; // (#4434) index domain + sparse tail
 import { buildVecIndexKeyPush, reserveVecIndexEnumerable } from "./vec-index-enumerable.js"; // (#4491) overlay-aware key flags
 import { fillHostArrayCarrierPredicate } from "./host-array-carrier.js"; // (#4649) js-host late-bound carrier test
-import { emitStandaloneLinkBoundaryTerminals, standaloneLinkBoundaryPeerIndices } from "./standalone-link-boundary.js"; // (#5383 S2d) wasm→wasm peer terminals
+import {
+  emitStandaloneLinkBoundaryTerminals,
+  standaloneLinkBoundaryPeerIndex,
+  standaloneLinkBoundaryPeerIndices,
+} from "./standalone-link-boundary.js"; // (#5383 S2d/S2f) wasm→wasm peer terminals
 import {
   buildOwnToPrimitiveOverridePresent,
   buildWrapperSlotShortCircuit,
@@ -7490,7 +7494,13 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   // guarded on the matching __call_fn_method_N being registered.
   const callMethod = (n: number): number | undefined => ctx.funcMap.get(`__call_fn_method_${n}`);
   const linkedCallName = ctx.standaloneGlobalThisImport?.call;
-  const linkedCallIdx = linkedCallName === undefined ? undefined : ctx.funcMap.get(linkedCallName);
+  // (#5383 S2f R12) …or, on the standalone wasm→wasm lane, the linked
+  // provider's own `__apply_closure`, published as `__js2wasm_link_apply`.
+  // Reached only after every module-local arity dispatcher has already
+  // missed, so a caller-owned closure never crosses the boundary.
+  const linkedCallIdx =
+    (linkedCallName === undefined ? undefined : ctx.funcMap.get(linkedCallName)) ??
+    standaloneLinkBoundaryPeerIndex(ctx, "apply");
   const linkedFallback = (): Instr[] =>
     linkedCallIdx === undefined
       ? undefinedSentinel()

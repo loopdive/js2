@@ -749,3 +749,166 @@ describe("#5383 S2e R10 — a defineProperty sidecar key is scoped to its own bi
     expect(callExport(mod)).toBe(1);
   });
 });
+
+// ── S2f R11 — `ref.test $__ta_ctor` is a STRUCTURAL test used as a NOMINAL one ─
+//
+// `$__ta_ctor` is `(struct (field kind i32) (field brand i32))`, both immutable
+// (#5194 r3 F1 widened it from one field exactly to dodge a canonicalization
+// collision with `__box_boolean_struct`). #2158/#2009 gives an empty class ROOT
+// the SAME shape — `(field $__tag i32)` + `(field $__shape_brand i32)`. WasmGC
+// canonicalizes structurally-identical types, so in any module that both holds
+// a TypedArray constructor VALUE and declares a field-less class, every
+// instance of that class passes `ref.test $__ta_ctor` — and the standalone
+// `typeof` natives answered `"function"` for it.
+//
+// Measured 2026-09-08 on the compiled `@js-temporal/polyfill` under
+// `--target standalone`, `hostBridge:"off"`: `typeof` through a one-parameter
+// indirection said `"function"` for `new qi.Duration(0,0,0,0,1)` and
+// `new qi.PlainDate(2024,1,1)`; the matched struct's two fields dumped as
+// `{35, 0}` and `{33, 0}` — a class TAG and a `__shape_brand`, not
+// `{kind, TA_CTOR_BRAND}`. The polyfill's own brand check
+// `ne(e,…){ if (!e || "object" != typeof e) return !1; … }` therefore rejected
+// every Temporal receiver, so every Temporal method and accessor threw
+// `invalid receiver`. The fix checks the brand VALUE, not the shape
+// (`taCtorIdentityTestInstrs`, `registry/types.ts`).
+describe("#5383 S2f R11 — a field-less class instance is not a TypedArray constructor", () => {
+  const MODULE = `
+    const ctors = [Uint8Array, Int16Array];
+    class Empty {}
+    class Slots { constructor() { Slots.seen = 1; } }
+    function tof(v) { return typeof v; }
+    function isFn(v) { return typeof v === "function" ? 1 : 0; }
+    export function test() { return tof(new Empty()) === "object" ? 1 : 0; }
+    export function emptyIsFn() { return isFn(new Empty()); }
+    export function slotsIsFn() { return isFn(new Slots()); }
+    export function objIsFn() { return isFn({ a: 1 }); }
+    export function ctorIsFn() { return isFn(ctors[0]); }
+    export function bpe() { return ctors[1].BYTES_PER_ELEMENT; }
+  `;
+
+  it("`typeof` through a call boundary says `object`, not `function`", async () => {
+    const mod = await compileStandalone(MODULE);
+    // Base (before this fix) answered 0 here and 1 for `emptyIsFn`.
+    expect(callExport(mod)).toBe(1);
+    expect(callExport(mod, "emptyIsFn")).toBe(0);
+    expect(callExport(mod, "slotsIsFn")).toBe(0);
+    expect(callExport(mod, "objIsFn")).toBe(0);
+  });
+
+  it("a GENUINE TypedArray constructor keeps both answers", async () => {
+    const mod = await compileStandalone(MODULE);
+    expect(callExport(mod, "ctorIsFn")).toBe(1);
+    expect(callExport(mod, "bpe")).toBe(2);
+  });
+});
+
+// ── S2f R13 — a class VALUE is callable, and R12 carries that across the link ─
+//
+// S2e recorded this as a BOUNDARY defect ("a class value crosses but reports
+// `typeof "object"`"). Re-measured 2026-09-08, it is not: a class value answers
+// `typeof "object"` inside ONE standalone module too, the moment it is read
+// through a parameter rather than as a bare identifier. A class VALUE is a
+// `$ClassName` struct with the same type AND the same `__tag` as an instance
+// (#3976 / `class-object-of.ts`), so nothing about its TYPE distinguishes it —
+// only its IDENTITY, the lazily-materialised class-object singleton global.
+// The compile-time fold answers `"function"` for the bare identifier, which is
+// why the gap only shows through an indirection (#2984 path-dependence).
+describe('#5383 S2f R13 — a class VALUE answers `typeof "function"` at runtime', () => {
+  const MODULE = `
+    class PlainDate { constructor(y) { this.y = y; } day() { return 1; } }
+    function isFn(x) { return typeof x === "function" ? 1 : 0; }
+    function tofn(x) { return typeof x; }
+    export function test() { const v = PlainDate; return isFn(v); }
+    export function materialized() { const v = PlainDate; return tofn(v) === "function" ? 1 : 0; }
+    export function instanceIsObject() { const d = new PlainDate(1); return tofn(d) === "object" ? 1 : 0; }
+    export function plainObjectIsObject() { return isFn({ a: 1 }); }
+    export function realFn() { const f = function () { return 1; }; return isFn(f); }
+  `;
+
+  it("through a parameter — the inline compare and the materialized result agree", async () => {
+    const mod = await compileStandalone(MODULE);
+    // Base answered 0 for both: the runtime natives had no arm for the carrier.
+    expect(callExport(mod)).toBe(1);
+    expect(callExport(mod, "materialized")).toBe(1);
+  });
+
+  it("an INSTANCE, a plain object and a real function keep their answers", async () => {
+    const mod = await compileStandalone(MODULE);
+    // The instance shares the class value's struct TYPE and `__tag`; only
+    // identity separates them, which is what makes this arm exact.
+    expect(callExport(mod, "instanceIsObject")).toBe(1);
+    expect(callExport(mod, "plainObjectIsObject")).toBe(0);
+    expect(callExport(mod, "realFn")).toBe(1);
+  });
+});
+
+describe("#5383 S2f R12 — a provider-owned class VALUE is callable in the consumer", () => {
+  // The polyfill's own namespace shape:
+  // `var qi = Object.freeze({__proto__: null, Duration, Instant, PlainDate, …})`.
+  const PROVIDER = `class PlainDate { constructor(y) { this.y = y; } day() { return 1; } }
+    const Now = { a: 1 };
+    export const NS = Object.freeze({ __proto__: null, PlainDate, Now, b: 2 });`;
+
+  const CONSUMER = `
+    export function keys() { return Object.keys(NS).length; }
+    export function b() { return NS.b; }
+    export function nowA() { return NS.Now.a; }
+    export function hasPD() { return NS.PlainDate === undefined ? 0 : 1; }
+    export function typeofPD() { const v = NS.PlainDate; return typeof v === "function" ? 1 : (typeof v === "object" ? 2 : 3); }
+  `;
+
+  async function linkAndRun() {
+    const root = mkdtempSync(join(tmpdir(), "issue-5383-s2f-"));
+    const packageRoot = join(root, "node_modules", "ns5383f");
+    mkdirSync(packageRoot, { recursive: true });
+    writeFileSync(
+      join(packageRoot, "package.json"),
+      JSON.stringify({ name: "ns5383f", version: "0.0.0", main: "index.js" }),
+    );
+    writeFileSync(join(packageRoot, "index.js"), PROVIDER);
+    const entry = join(root, "entry.js");
+    writeFileSync(entry, `import { NS } from "ns5383f";\nexport function __probe() { return typeof NS; }\n`);
+    const standalone = { target: "standalone" as const, hostBridge: "off" as const };
+    const built = await compileProject(entry, {
+      allowJs: true,
+      skipSemanticDiagnostics: true,
+      packageCacheDir: join(root, "providers"),
+      ...standalone,
+    });
+    expect(built.success).toBe(true);
+    expect(built.linkPlan?.mode).toBe("separate");
+    const artifact = (built.linkedModules ?? []).find((e) => e.packageName === "ns5383f")!;
+    const field = artifact.exportBoundaries!.NS!.field;
+    const stub = "/__ns_stub.ts";
+    const consumerEntry = "/__main.js";
+    const result = await compileMulti(
+      {
+        [stub]: `export declare function ${field}(): any;\n`,
+        [consumerEntry]: `import { ${field} } from "/__ns_stub";\nconst NS = ${field}();\n${CONSUMER}`,
+      },
+      consumerEntry,
+      {
+        allowJs: true,
+        skipSemanticDiagnostics: true,
+        canonicalRuntimeTypes: true,
+        sharedExceptionTag: true,
+        link: [artifact.namespace],
+        linkedPackageBindings: new Map([[field, { module: artifact.namespace, field }]]),
+        ...standalone,
+      },
+    );
+    (result as { linkedModules?: unknown[] }).linkedModules = [artifact];
+    expect(result.success).toBe(true);
+    // EMPTY import object — the host-free contract.
+    const { instance } = await instantiateLinkedProject(result, {});
+    const ex = instance.exports as unknown as Record<string, () => unknown>;
+    return { keys: ex.keys(), b: ex.b(), nowA: ex.nowA(), hasPD: ex.hasPD(), typeofPD: ex.typeofPD() };
+  }
+
+  it("host-free: the class value crosses AND reports `function`", { timeout: 300_000 }, async () => {
+    // Base answered `typeofPD: 2` ("object"), which is what made
+    // `new Temporal.PlainDate(…)` unreachable from a consumer. The other four
+    // answers are S2d's, restated here so this case also guards them.
+    expect(await linkAndRun()).toEqual({ keys: 3, b: 2, nowA: 1, hasPD: 1, typeofPD: 1 });
+  });
+});

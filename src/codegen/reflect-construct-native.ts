@@ -6,7 +6,7 @@ import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { protoIndexOwnViewSubstituteInstrs } from "./proto-index-store.js";
-import { addFuncType } from "./registry/types.js";
+import { addFuncType, taCtorIdentityTestInstrs } from "./registry/types.js";
 
 const HELPER = "__reflect_is_constructor";
 const NATIVE_TARGET_HELPER = "__is_native_reflect_target";
@@ -113,9 +113,7 @@ export function fillNativeReflectOwnPropertyMop(ctx: CodegenContext): void {
     then.push({ op: "local.get", index: vecLocal }, { op: "return" });
     ownNamesFn.body.unshift(
       ...ownNamesProtoArm,
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "ref.test", typeIdx: taCtorTypeIdx },
+      ...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }]),
       { op: "if", blockType: { kind: "empty" }, then },
     );
   } else if (ownNamesFn && ownNamesProtoArm.length > 0) {
@@ -182,9 +180,7 @@ export function fillNativeReflectOwnPropertyMop(ctx: CodegenContext): void {
     ];
     gopdFn.body.unshift(
       ...gopdProtoArm,
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "ref.test", typeIdx: taCtorTypeIdx },
+      ...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }]),
       { op: "if", blockType: { kind: "empty" }, then: taThen },
     );
   } else if (gopdFn && gopdProtoArm.length > 0) {
