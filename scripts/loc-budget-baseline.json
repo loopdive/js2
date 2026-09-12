@@ -1,7 +1,7 @@
 {
   "generated": "2026-09-12",
   "threshold": 1500,
-  "totalCeiling": 857429,
+  "totalCeiling": 858707,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -10,7 +10,7 @@
     "src/codegen/array-object-proto.ts": 3989,
     "src/codegen/async-cps.ts": 4080,
     "src/codegen/async-frame.ts": 3615,
-    "src/codegen/async-scheduler.ts": 5139,
+    "src/codegen/async-scheduler.ts": 5046,
     "src/codegen/binary-ops-typed-dispatch.ts": 1593,
     "src/codegen/binary-ops.ts": 3854,
     "src/codegen/builtin-value-read.ts": 1820,
