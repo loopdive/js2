@@ -7793,6 +7793,36 @@ export function fillApplyClosure(ctx: CodegenContext): void {
     );
   }
 
+  // (#6420) A standalone linked peer knows whether a foreign value has
+  // [[Call]]. Route a positive peer-owned callable before the local closure
+  // dispatcher: that dispatcher returns the legacy null sentinel for an
+  // unrecognised foreign closure, which otherwise shadows the peer fallback.
+  // Classes publish construct-only (bit 1), so the dynamic IsCallable guard
+  // rejects them before this bridge and they never enter the provider apply
+  // terminal. Caller-owned closures make the peer predicate false and retain
+  // the existing local dispatch unchanged.
+  const linkedStandaloneCallableKindIdx = standaloneLinkBoundaryPeerIndex(ctx, "callableKind");
+  const linkedStandaloneApplyIdx = standaloneLinkBoundaryPeerIndex(ctx, "apply");
+  if (linkedStandaloneCallableKindIdx !== undefined && linkedStandaloneApplyIdx !== undefined) {
+    body.unshift(
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: linkedStandaloneCallableKindIdx },
+      { op: "i32.const", value: 1 },
+      { op: "i32.and" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: linkedStandaloneApplyIdx },
+          { op: "return" },
+        ],
+      },
+    );
+  }
+
   // (#4397) `Proxy.revocable`'s zero-argument revoker is a Wasm-owned callable
   // carrier rather than a JavaScript closure. Invoke it at the same dynamic
   // call boundary used for ordinary compiled closures, then return undefined.

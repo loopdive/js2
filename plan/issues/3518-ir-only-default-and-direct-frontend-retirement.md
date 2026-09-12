@@ -6129,3 +6129,30 @@ Normal signed commit/push hooks remain required, with actual outcomes recorded
 on the existing PR when published. Local receipts are in
 `.tmp/5758-queue-drain/`. Keep ordered delivery 5755→5756→5757→5758→5759→5760 and
 retain the signed standard-EH delay repair at PR5759, including both catch forms.
+
+### Preserve delivered async spill typing in the family queue refresh — 2026-09-13
+
+Existing PR 5758, “feat(ir): prepare the complete native async source family”,
+was cleanly merged with delivered main ee2ee09062e587e882e6be6e47d5bdde5472ecbe
+in its owned queue-drain worktree. This brings the legitimate async spill
+typing repair from PR 5869 into the inherited compiler. The initial complete
+frame preservation file passed 39/41 with two receipt mismatches; the public
+source comparison passed. Its original failure report remains retained.
+
+The scoped repair changes only the frame source-preservation test and its
+forward provenance fixture. Two independently read and authenticated incoming
+spans now precede the unchanged historical reconstruction. The original seven
+span records, original a426 donor hash and 0194 receipts remain unchanged;
+the runtime bodies and the complete public comparator remain unchanged.
+Six added controls reject removal, semantic corruption, module retargeting
+and a type-only import. All nine unique/disjoint spans recover the original
+a426 bytes exactly, with no unadmitted source delta.
+
+Fresh serialized validation passed 422/422 across ten complete files, with
+zero skips: the existing eight-file 371-case family/preparation/boundary group,
+47 frame preservation cases and four incoming spill regression cases. This
+is current-root evidence, not a fresh historical compiler comparison. Normal
+gates and signed hooks remain required before publication; main delivery of
+PR 5757 remains the prerequisite. Public cutover and direct retirement are
+still open. Exact independent provenance and initial/final reports remain in
+.tmp/5758-queue-drain, with the published handoff updated at delivery.
