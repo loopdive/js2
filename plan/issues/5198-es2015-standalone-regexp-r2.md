@@ -4,7 +4,7 @@ title: "ES2015 standalone regexp — r2 residual pass"
 status: in-progress
 sprint: current
 created: 2026-08-29
-updated: 2026-08-30
+updated: 2026-09-12
 priority: high
 horizon: m
 feasibility: hard
@@ -21,6 +21,10 @@ loc-budget-allow:
   - src/codegen/type-coercion.ts
 func-budget-allow:
   - src/codegen/native-regex.ts::ensureRegexSearch
+  - src/codegen/native-regex.ts::ensureRegexReplace
+  - src/codegen/native-regex.ts::ensureRegexMatchAll
+  - src/codegen/regexp-standalone.ts::emitStandaloneRegExpMatchCore
+  - src/codegen/regexp-standalone.ts::emitStandaloneRegExpReplaceCore
   - src/codegen/type-coercion.ts::coerceType
 ---
 
@@ -276,6 +280,129 @@ checkpoints to `ttraenkler/js2` without force, and open a completed fix as a
 non-draft PR on `loopdive/js2`. A semantically incomplete/non-mergeable
 checkpoint may remain draft with explicit blockers. No GitHub issue is to be
 created.
+
+## 2026-09-12 current-census handoff: static `@@replace` / `@@match` cursor slice
+
+This handoff supersedes the old temporary-file pointers for the next bounded
+implementation slice. The planning branch is based on freshly fetched
+`loopdive/js2` main `c645a7627e099173b0b3e0c5daa1d7b5a110a9d5`. The census
+source is the retained authoritative standalone JSONL captured at main
+`405dfb5cacac05f98aaf20d41c794034c6d9f41f`:
+
+- artifact: `.test262-cache/test262-standalone-current.jsonl`;
+- SHA-256: `45ff56e7570bba0a1bff6590d19d35de2525928adb7e3054789ba35aebb29360`;
+- oracle: v13, honest standalone lane, semantic providers `auto`;
+- raw/unique rows: 48,735 / 48,735;
+- exact ES2015 edition-map slice: 11,704 rows, comprising 10,230 pass,
+  1,144 fail, 329 compile errors, one compile timeout, and zero skips.
+
+Under the exact non-Annex-B prefix `built-ins/RegExp/prototype/`, 238 ES2015
+rows divide into 120 pass, 109 fail, and nine compile errors. The residual is
+therefore exactly 118 rows: `Symbol.replace` 37, `Symbol.match` 25,
+`Symbol.split` 30, `Symbol.search` 13, `flags` five, `exec` two, and six
+cross-realm accessor rows. This is a census, not a claim that unrelated commits
+between `405dfb5c` and `c645a762` preserve every status; the implementer must
+rerun the exact A/B cohorts below on the integrated head before editing code.
+
+The next independently bounded mechanism is the static/backend-created RegExp
+global/sticky cursor loop. It excludes dynamic flags, custom `exec`, generic
+result objects, species construction, cross-realm accessors, and the five
+generic `flags` rows. It is independent of the generator, TypedArray, super,
+and class-IsCallable workstreams.
+
+### Slice C3a — static `@@replace` global/sticky cursor (seven owned rows)
+
+Exact failing A cohort at the retained baseline:
+
+1. `built-ins/RegExp/prototype/Symbol.replace/g-init-lastindex-err.js`
+2. `built-ins/RegExp/prototype/Symbol.replace/y-init-lastindex.js`
+3. `built-ins/RegExp/prototype/Symbol.replace/y-set-lastindex.js`
+4. `built-ins/RegExp/prototype/Symbol.replace/y-fail-lastindex.js`
+5. `built-ins/RegExp/prototype/Symbol.replace/y-fail-lastindex-no-write.js`
+6. `built-ins/RegExp/prototype/Symbol.replace/y-fail-return.js`
+7. `built-ins/RegExp/prototype/Symbol.replace/y-fail-global-return.js`
+
+Exact passing B controls:
+
+1. `built-ins/RegExp/prototype/Symbol.replace/g-init-lastindex.js`
+2. `built-ins/RegExp/prototype/Symbol.replace/u-advance-after-empty.js`
+3. `built-ins/RegExp/prototype/Symbol.replace/match-failure.js`
+4. `built-ins/RegExp/prototype/Symbol.replace/replace-without-trailing.js`
+5. `built-ins/RegExp/prototype/Symbol.replace/replace-with-trailing.js`
+6. `built-ins/RegExp/prototype/Symbol.replace/length.js`
+7. `built-ins/RegExp/prototype/Symbol.replace/name.js`
+8. `built-ins/RegExp/prototype/Symbol.replace/prop-desc.js`
+9. `built-ins/RegExp/prototype/Symbol.replace/not-a-constructor.js`
+10. `built-ins/RegExp/prototype/Symbol.replace/this-val-non-obj.js`
+
+Implementation plan:
+
+1. Keep the change limited to static/backend-created RegExp receivers and
+   string replacements in the direct `@@replace` path.
+2. Perform the observable global initialization
+   `Set(rx, "lastIndex", 0, true)` through the existing descriptor-aware guard.
+3. For sticky non-global replacement, read `lastIndex` through the existing
+   deferred raw/`ToLength` helper and search only at that position.
+4. Write the match end after global/sticky success, write zero after sticky
+   failure, and propagate non-writable-property errors in spec order.
+5. Stop a global+sticky loop at its first gap. Apply `AdvanceStringIndex`,
+   including the Unicode surrogate-pair rule, after an empty match.
+6. Reuse `emitRegexSearchCall`, `ensureRegexReplace`, and the existing native
+   search machinery. Add only a cursor-aware wrapper/helper if required; keep
+   the ordinary closed string-receiver path unchanged.
+
+### Optional same-mechanism extension — static `@@match` cursor (three rows)
+
+Fold these rows into the same implementation PR only if the shared helper makes
+them the same proved invariant. Otherwise leave them for the next separate PR.
+
+Exact failing A cohort:
+
+1. `built-ins/RegExp/prototype/Symbol.match/g-init-lastindex-err.js`
+2. `built-ins/RegExp/prototype/Symbol.match/builtin-failure-g-set-lastindex-err.js`
+3. `built-ins/RegExp/prototype/Symbol.match/y-fail-global-return.js`
+
+Exact passing B controls:
+
+1. `built-ins/RegExp/prototype/Symbol.match/g-init-lastindex.js`
+2. `built-ins/RegExp/prototype/Symbol.match/g-match-empty-advance-lastindex.js`
+3. `built-ins/RegExp/prototype/Symbol.match/builtin-failure-g-set-lastindex.js`
+4. `built-ins/RegExp/prototype/Symbol.match/y-init-lastindex.js`
+5. `built-ins/RegExp/prototype/Symbol.match/builtin-failure-return-val.js`
+6. `built-ins/RegExp/prototype/Symbol.match/builtin-success-return-val.js`
+7. `built-ins/RegExp/prototype/Symbol.match/length.js`
+8. `built-ins/RegExp/prototype/Symbol.match/name.js`
+9. `built-ins/RegExp/prototype/Symbol.match/prop-desc.js`
+10. `built-ins/RegExp/prototype/Symbol.match/not-a-constructor.js`
+
+The `@@match` extension has the same guarded initial Set(0), static sticky-bit
+propagation, and correct stop/reset behavior. It explicitly excludes
+`g-success-return-val.js`, whose remaining failure is the separate plain-array
+result-shape defect.
+
+### Acceptance and publication handoff
+
+1. Run each exact A and B list in fresh isolated standalone and host processes
+   with `scripts/run-test262-paths.mts` on current upstream main before and
+   after the change. A must become all pass, B must remain unchanged, and the
+   standalone cohort must have zero host imports, compile errors, timeouts, or
+   skips.
+2. Rerun the full 118-row current residual plus the established green
+   `Symbol.match`, `Symbol.replace`, `Symbol.search`, `Symbol.split`, `exec`,
+   and `flags` controls. Record every status transition; allow no pass loss.
+3. Run TS5/TS7, lint/format, LOC/function/coercion/oracle/dead-export ratchets,
+   numeric-local parity, issue integrity, and the complete repository hooks.
+4. Update this issue with integrated-head before/after evidence and an explicit
+   remaining-row handoff. Commit and push from a dedicated implementation
+   worktree without force. Open one non-draft PR against `loopdive/js2:main`
+   only when the completed fix is mergeable; otherwise publish a draft with
+   its exact blocker. A dedicated shepherd must audit conflicts, review
+   threads, CI, body/template, attribution, and readiness.
+
+The six current `env::Object_set_constructor` species compile errors remain
+owned by #4041. The five generic `flags` failures remain deferred until the
+standalone open-object repeated-assignment defect has an independently viable
+plan. No GitHub issue should be created for either family.
 
 ## Acceptance criteria
 
