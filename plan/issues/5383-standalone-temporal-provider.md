@@ -2525,6 +2525,203 @@ not re-run — those are unrelated to a struct-registration guard, and the
 equivalence gate plus the byte A/B cover the blast radius better than re-running
 a static list would.
 
+## S2p findings (2026-09-12) — the splice is gone; the artifact still stays opt-in
+
+S2o left one named, unfixed defect: `emitNativeGlobalThisObject` caches the
+realm object in a module GLOBAL at runtime but spliced its whole
+~5,000-instruction lazy-init seed into the CALLER's body at every call site, at
+compile time. That is now outlined into one helper. The multi-source penalty
+S2o measured is essentially gone; the per-row cost is roughly halved; and the
+target that would have flipped the test262 artifact on is still not met, by a
+margin small enough to name exactly.
+
+### 1. Why the two lanes differed — it was never the linker, and never `compileMulti` as such
+
+The emitter is reached **5 times** on a single-source compile of the 10.6 KB
+assembled harness and **134 times** on a `compileMulti` of the SAME source
+(`.tmp/s2p-sites.mts`, stack-tagged counter). The 134 break down as:
+
+| callers | calls |
+| --- | --- |
+| `compileRuntimeEvalGlobalLexicalRead` (via `emitGlobalEnvironmentObject`) | **105** |
+| `tryGlobalThisAndProcessRead` (`compilePropertyAccess`) | 20 |
+| the eval/binding-sync runtimes + two plain identifier reads | 9 |
+
+The switch is `ctx.runtimeEvalGlobalFunctionBindings`, set when the IR
+runtime-eval boundary plan finds any site. Same source, **0 sites single / 3
+sites multi** — and the three are `globalThis.eval`, `__js2wasm_global_script_eval(...)`
+and `eval(sourceText)`, all inside the harness's `$262` object.
+
+`compile()` never sees them: `src/compiler.ts` runs the #3418 dead-top-level
+binding elision for host-free targets, which length-preserving-BLANKS the unread
+`var $262 = { … }`. (Proof, not inference: at offset 2874 the single-source
+`sourceFile.text` is whitespace where the multi one reads `eval: globalThis.eval`;
+the walk visits 875 nodes against 1,123.) `compileMulti()` does not run that
+elision, keeps `$262`, and every bare global lexical read then routes through the
+realm object.
+
+So the elision was hiding a per-site cost, not creating one. Fixing the emitter
+rather than widening the elision is what makes the win independent of which
+entry point erased the evidence.
+
+### 2. The fix, and the two things that make it safe
+
+`src/codegen/native-globalthis-outline.ts` (new): build the seed once into
+`__native_globalThis_ensure()`, emit `call` + `global.get` at each site.
+`emitNativeGlobalThisObject` splits into the cached-global accessor, the
+unchanged seed builder (now RETURNING its init body), and a four-line dispatch.
+
+- **Order-independence** comes from `mintDefinedFunc`'s STABLE handle
+  (`func-space.ts`): no late-import shifter renumbers it, so the `call` immediate
+  baked at the first site survives arbitrary later import churn. This is a
+  resolve-or-reserve at the site, never a finalize-pass rewrite — the
+  multi-module finalize order differs from the single-module one (S2n).
+- **Runtime behaviour is unchanged** because the cached global already made the
+  seed run at most once: only the first site to execute can observe the null
+  global, spliced or called.
+- The **inline arm is kept and is not dead code.** A realm-global read raised
+  from inside the seed's own construction must stay inline — calling a
+  not-yet-initialized ensure helper from within its own initializer recurses at
+  runtime. Measured residual on the 10.6 KB row: **3** inline splices remain, all
+  in runtime-eval bridge functions built during the seed
+  (`__js2wasm_intrinsic_indirect_eval`, `__runtime_eval_push_globals`,
+  `__runtime_eval_pull_globals`), against 131 sites that now call.
+
+The caller's body and saved bodies are published to `ctx.liveBodies` for the
+duration of a first-time build: the seed still registers late imports, and it is
+now built against the HELPER's context, so that is where the coverage
+`flushLateImportShifts(ctx, fctx)` used to give the caller directly has to come
+from.
+
+### 3. Per-row cost (median of 3, one process, standalone)
+
+`.tmp/s2p-cost.mts`. `single` = `compile()` (what the UNLINKED lane runs),
+`linked` = `compileWithTemporalGlobal`.
+
+| row | route | base | S2p | change |
+| --- | --- | --- | --- | --- |
+| `built-ins/…/PlainDate/prototype/day/basic.js` (10.6 KB) | `compile` | 1831 ms | 1647 ms | −10 % |
+| | `compileMulti` | 4469 ms | **2695 ms** | **−40 %** |
+| | linked | 5105 ms | **2894 ms** | **−43 %** |
+| `intl402/…/PlainDate/from/era-japanese.js` (60 KB) | `compile` | 7810 ms | 8244 ms | +6 % (noise) |
+| | `compileMulti` | 15333 ms | **8729 ms** | **−43 %** |
+| | linked | 29438 ms | **15057 ms** | **−49 %** |
+
+Module scale on the same runs — spliced seed locals and WAT lines:
+
+| row / route | seed locals base → S2p | WAT lines base → S2p |
+| --- | --- | --- |
+| 10.6 KB `compileMulti` | 117 → 4 | 641 k → 339 k |
+| 10.6 KB linked | 150 → 4 | 722 k → 364 k |
+| 60 KB `compileMulti` | 490 → 4 | 1.62 M → 851 k |
+| 60 KB linked | 789 → 4 | 3.75 M → 1.85 M |
+
+### 4. The artifact stays OPT-IN, and the residual is no longer this defect
+
+Target was ≤1.3× linked-vs-unlinked. Measured **1.76×** (10.6 KB) and **1.83×**
+(60 KB). **The 60 KB row is 15.06 s linked — exactly at the 15 s in-process
+compile limit**, and the 30 s fork kill is the softer of the two. Flipping
+`standalone_temporal` on at that number trades a known-safe opt-in for the
+per-row timeout storm the pre-warm doctrine exists to prevent, so no runner,
+worker, shared-harness or workflow file is touched by this slice either.
+
+What the residual now IS, stated so the next slice does not re-measure S2o's
+question: on the 60 KB row `compileMulti` is within **6 %** of `compile` — the
+multi-source penalty is gone. The remaining 1.83× is the PROVIDER: linked adds
+214 functions and doubles the WAT again (851 k → 1.85 M). That is a different
+problem from the one S2o and S2p worked, and it is where the next ~2× has to
+come from.
+
+### 5. Byte A/B
+
+`.tmp/s2o-bytes.mts`, 10 modules × {gc, standalone} × {`compile`, `compileMulti`},
+base tree vs branch by file copy: **all 8 gc pairs byte-identical**, and 9 of 10
+standalone modules byte-identical.
+
+| module | lane | base bytes | S2p bytes |
+| --- | --- | --- | --- |
+| `gt` (`var $262 = { global: globalThis, … }`) | standalone `compile` | 270,485 | 270,526 |
+| `gt` | standalone `compileMulti` | 267,792 | 267,833 |
+
++41 bytes on both routes — the helper's own type, function entry and guard,
+which a module with ONE call site has nothing to amortise against. The brief
+asked for single-source standalone to be identical unless the outlining measured
+neutral there; it is +41 bytes on the trivial case and a clear win on a real one
+(the 10.6 KB harness row's `compile` WAT: 159,386 → 146,944 lines, −7.8 %), so
+it is kept for both.
+
+### 6. Measured: the two NON-Intl families, standalone lane
+
+First 40 rows in path order of `built-ins/Temporal/PlainDate/**` and
+`built-ins/Temporal/Duration/**` (`.tmp/s2p-family.mts`, one TSV row per test,
+`runTest262File(file, "s2p", 15000, "standalone")`). Fresh
+`JS2WASM_TEMPORAL_CACHE` per side; the linked side carries a standalone pre-warm
+stamp, the base side none. QuickJS eval provider built first
+(`npx tsx scripts/build-quickjs-eval-provider.mjs`) — S2o recorded why that is a
+prerequisite and not a detail. Two runs at a time, so the ms column carries
+consistent contention and is comparable across sides but not with §3.
+
+| | PlainDate base (unlinked) | PlainDate linked | Duration base (unlinked) | Duration linked |
+| --- | --- | --- | --- | --- |
+| rows | 40 | 40 | 40 | 40 |
+| pass | **2** | **0** | 0 | 0 |
+| fail | 35 | 39 | 37 | 38 |
+| compile_error | 3 | 1 | 3 | 2 |
+| — of those, TIMEOUT | 0 | 1 | 0 | 2 |
+| `Temporal is not defined` | 17 | **0** | 22 | **0** |
+| `__temporal_*` leak | 3 | **0** | 3 | **0** |
+| median row ms | 1309 | 2979 | 1346 | 3314 |
+| status flips vs base | — | 6 | — | 5 |
+
+**Two rows flip `pass` -> `fail`, and they are S2o's two — the same
+`PlainDate/calendar-string.js` and `PlainDate/calendar-undefined.js`, failing
+linked at the same line on the same real standalone gap
+(`Object.prototype.toString is not yet implemented in --target standalone`).
+S2o established why those unlinked passes are FALSE: both are ordinary positive
+tests that construct `new Temporal.PlainDate(...)` and cannot legitimately pass
+without a `Temporal` global, which the unlinked side does not have. Zero
+legitimate passes are lost, and Duration flips none.**
+
+What S2p changes relative to S2o's table is the COST column and the timeouts,
+which is the whole point of the slice:
+
+| | S2o linked | S2p linked |
+| --- | --- | --- |
+| PlainDate median row ms | 6142 | **2979** |
+| PlainDate compile_error / timeouts | 3 / 3 | **1 / 1** |
+| Duration median row ms | 7026 | **3314** |
+| Duration compile_error / timeouts | 6 / 6 | **2 / 2** |
+
+`Temporal is not defined` 39 -> 0 and the `__temporal_*` host-import leak 6 -> 0
+across both families, unchanged from S2o: the provider still does its job, it is
+now roughly half the price and times out a third as often.
+
+### 7. Gates and suites
+
+`npm run -s test:equivalence:gate` → `equivalence-gate: 22 failing, 1720
+passing, 22 known-failures in baseline. ✓ No new equivalence regressions.`
+
+typecheck · loc-budget (also `LOC_GATE_BASE=origin/main`) · func-budget ·
+coercion-sites · oracle-ratchet · dead-exports · compiler-boundaries
+(`--mode inventory --base origin/main`) · host-import-policy ·
+`biome lint src tests scripts` — all exit 0.
+
+Two gate notes worth keeping: the new module had to be **classified in
+`scripts/compiler-boundaries.json`** (an unclassified new file under `src/` fails
+the inventory outright, with `unclassified-module` + `unclassified-target`), and
+the only LOC grant this slice needs is `array-object-proto.ts` +29 — the
+mechanism itself was put in a new module precisely so the god-file would not
+absorb it.
+
+Suites: #5383 (×3), #4628 (×2), #5353, #3365, #4638, the #4394 globalThis/error
+family (×8), and the S2n pass-order test — 102 + 32 + 116 passing across the
+runs. One pre-existing red, **measured on the base tree by file copy and
+identical there**: `issue-4638` fails 2 (`Expect test to fail` on the empty-string
+gOPD row — a test262 expectation that now passes — and
+`WebAssembly.instantiate(): Import #0 module="js2wasm:runtime-eval"` on the
+eval-thisArg row). The brief's known-red list was not re-run; the equivalence
+gate plus the byte A/B bound the blast radius better than a static list would.
+
 ## S3 findings (2026-09-12) — the lane is wired per TARGET, and linking is not free
 
 S2l's provider is reachable from every test262 lane now. The slice's own
