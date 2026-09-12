@@ -242,6 +242,37 @@ export function reportDeclinedAsyncRejectionHazard(ctx: CodegenContext, decl: ts
 }
 
 /**
+ * (#6412) Pre-pass / body-time agreement check on the activated-async result.
+ *
+ * `collectDeclarations` bakes the Promise carrier (`externref`) into a
+ * FunctionDeclaration's registered result when {@link asyncEngineWouldActivate}
+ * says the engine will claim it. If the engine claims it HERE but the
+ * registered result is something else, the pre-pass predicate and the body-time
+ * decision disagreed — and every call site compiled before this body already
+ * emitted a coercion against the stale result (that is exactly the invalid
+ * `extern.convert_any (call $callee)` this issue is about). Fail loudly instead
+ * of shipping a mistyped call.
+ */
+function reportDeclaredAsyncResultDisagreement(
+  ctx: CodegenContext,
+  decl: ts.FunctionLikeDeclaration,
+  func: WasmFunction,
+): void {
+  if (!ts.isFunctionDeclaration(decl)) return;
+  const ft = ctx.mod.types[func.typeIdx];
+  if (!ft || ft.kind !== "func") return;
+  if (ft.results.length === 1 && ft.results[0]?.kind === "externref") return;
+  reportError(
+    ctx,
+    decl,
+    `internal: async function \`${func.name}\` activates a state machine (result: Promise/externref) ` +
+      `but its declaration-time signature registered ${ft.results.length === 0 ? "no result" : `a \`${ft.results[0]?.kind}\` result`}. ` +
+      "Call sites compiled before this body coerced against the stale result, which emits invalid " +
+      "Wasm. The declaration pre-pass and the body-time activation decision must agree (#6412)",
+  );
+}
+
+/**
  * Emit the async body for a decided lane into `fctx.body`. Does NOT rewrite the
  * result type — callers that own the signature (the closure path bakes
  * `externref` into the lifted func/struct type up front) must ensure
@@ -294,7 +325,12 @@ export function maybeActivateAsync(
   }
 
   // The async function returns a Promise object (externref), not the unwrapped
-  // value. Rewrite the registered signature's result + fctx before emitting.
+  // value. `collectDeclarations` already bakes that carrier into the registered
+  // signature at declaration time (#6412), so this rewrite is a no-op for every
+  // declaration that went through the pre-pass — it stays for the shapes that
+  // did not. A pre-pass/body-time DISAGREEMENT is a mistyped call at every site
+  // compiled before this body, so it must be loud rather than silent.
+  reportDeclaredAsyncResultDisagreement(ctx, decl, func);
   rewriteFuncResultType(ctx, func, { kind: "externref" });
   fctx.returnType = { kind: "externref" };
   emitAsyncLane(ctx, fctx, decl, decision);

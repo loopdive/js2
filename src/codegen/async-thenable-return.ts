@@ -39,6 +39,7 @@
 import { forEachChild, ts } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { asyncEngineWouldActivate } from "./async-activation.js";
 
 /** Per-context memo — the body walk is O(body) and every declaration asks once per registration site. */
 const thenableReturnCache = new WeakMap<CodegenContext, WeakMap<ts.Node, boolean>>();
@@ -134,4 +135,31 @@ export function widenAsyncThenableResults(
   if (results.length !== 1) return results;
   const widened = widenAsyncThenableResult(ctx, fn, results[0]!);
   return widened === results[0] ? results : [widened!];
+}
+
+/**
+ * (#6412) Bake the Promise CARRIER into an engine-activated async declaration's
+ * result at DECLARATION time.
+ *
+ * `maybeActivateAsync` rewrites an activated async function's registered result
+ * to `externref` only when that function's own BODY compiles. A caller compiled
+ * earlier — i.e. one that textually PRECEDES the callee — reads the stale
+ * unwrapped-`Promise<T>` result through `funcSignatureOf` and wraps the call in
+ * `extern.convert_any` to feed its `await`; the later rewrite then leaves
+ * `extern.convert_any (call $callee)` over an already-`externref` value, which
+ * the engine rejects (`expected type anyref, found call of type externref` —
+ * hono's `importPublicKey` → `exportPublicJwkFrom`). Deciding the carrier here
+ * makes the registered signature declaration-ORDER independent.
+ *
+ * Call it AFTER `prepareAsyncCallableAbi` / {@link widenAsyncThenableResults}
+ * so the prepared-IR ABI fingerprint still sees the fulfillment results.
+ */
+export function bakeActivatedAsyncPromiseResult(
+  ctx: CodegenContext,
+  fn: ts.FunctionLikeDeclaration,
+  results: ValType[],
+): ValType[] {
+  if (!isAsyncNonGenerator(fn)) return results;
+  if (!asyncEngineWouldActivate(ctx, fn)) return results;
+  return [{ kind: "externref" }];
 }
