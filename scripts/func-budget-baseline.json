@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-26",
+  "generated": "2026-09-12",
   "threshold": 300,
   "functions": {
     "src/codegen-linear/index.ts::compileBinaryExpression": 420,
@@ -43,7 +43,7 @@
     "src/codegen/dynamic-proto.ts::fillDynamicProtoHelpers": 477,
     "src/codegen/escape-native.ts::emitNativeUnescape": 301,
     "src/codegen/expressions.ts::compileExpressionInner": 632,
-    "src/codegen/expressions/assignment.ts::compileArrayDestructuringAssignment": 543,
+    "src/codegen/expressions/assignment.ts::compileArrayDestructuringAssignment": 534,
     "src/codegen/expressions/assignment.ts::compileAssignment": 461,
     "src/codegen/expressions/assignment.ts::compileDestructuringAssignment": 643,
     "src/codegen/expressions/assignment.ts::compileElementAssignment": 674,
