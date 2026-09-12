@@ -1,4 +1,8 @@
-import { initializeNativeGeneratorFunctionValue } from "../generators-factory-prototype.js";
+import {
+  initializeNativeGeneratorFunctionValue,
+  nativeGeneratorFunctionValueNeedsResultBridge,
+  nativeGeneratorFunctionValueWrapperResults,
+} from "../generators-factory-prototype.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * Funcref-as-closure wrapping for js2wasm.
@@ -462,7 +466,8 @@ export function emitFuncRefAsClosure(
     // Captures stay leading raw ABI slots; only the declaration's TS-only
     // pseudo-this slot is removed from the first-class callable signature.
     const userParams = explicitThisParam ? sourceUserParams.slice(1) : sourceUserParams;
-    const results = sig.results;
+    const nativeGeneratorResultBridge = nativeGeneratorFunctionValueNeedsResultBridge(ctx, sig.results);
+    const results = nativeGeneratorFunctionValueWrapperResults(ctx, sig.results);
 
     const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, userParams, results);
     if (!wrapperTypes) return null;
@@ -581,6 +586,7 @@ export function emitFuncRefAsClosure(
       trampolineBody.push({ op: "local.get", index: i + 1 });
     }
     trampolineBody.push(trampolineForwardCall(funcIdx));
+    if (nativeGeneratorResultBridge) trampolineBody.push({ op: "extern.convert_any" });
 
     const trampolineFuncIdx = mintDefinedFunc(ctx);
     ctx.trampolineForwarders.add(trampolineFuncIdx);
@@ -641,9 +647,11 @@ export function emitFuncRefAsClosure(
 
   const userParams = explicitThisParam ? sig.params.slice(1) : sig.params;
 
+  const nativeGeneratorResultBridge = nativeGeneratorFunctionValueNeedsResultBridge(ctx, sig.results);
+  const wrapperResults = nativeGeneratorFunctionValueWrapperResults(ctx, sig.results);
   const wrapperTypes = constructible
-    ? getOrCreateConstructibleFuncRefWrapperTypes(ctx, userParams, sig.results)
-    : getOrCreateFuncRefWrapperTypes(ctx, userParams, sig.results);
+    ? getOrCreateConstructibleFuncRefWrapperTypes(ctx, userParams, wrapperResults)
+    : getOrCreateFuncRefWrapperTypes(ctx, userParams, wrapperResults);
   if (!wrapperTypes) return null;
 
   const { structTypeIdx, liftedFuncTypeIdx, closureInfo } = wrapperTypes;
@@ -664,6 +672,7 @@ export function emitFuncRefAsClosure(
     trampolineBody.push({ op: "local.get", index: i + 1 });
   }
   trampolineBody.push(trampolineForwardCall(funcIdx));
+  if (nativeGeneratorResultBridge) trampolineBody.push({ op: "extern.convert_any" });
 
   const trampolineFuncIdx = mintDefinedFunc(ctx);
   ctx.trampolineForwarders.add(trampolineFuncIdx);

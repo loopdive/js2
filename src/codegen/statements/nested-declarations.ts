@@ -60,6 +60,7 @@ import {
   extractConstantDefault,
   hoistLetConstWithTdz,
   hoistVarDeclarations,
+  nativeGeneratorBindingType,
   ensureStructForType,
   resolveInstallableClassMemberName,
   resolveWasmType,
@@ -302,6 +303,34 @@ function initializerMaterializesHoistedFunction(
   return initializer.properties.some(
     (property) =>
       ts.isShorthandPropertyAssignment(property) && ctx.oracle.valueDeclarationOf(property.name) === functionDecl,
+  );
+}
+
+/**
+ * A direct native-generator factory call is a representation-changing
+ * initializer: the declaration path replaces its pre-hoisted `externref`
+ * carrier with a nominal generator-state local. A nested declaration's
+ * capture plan is made before that replacement, so an immutable capture can
+ * otherwise copy the pre-init `undefined` forever when the function value is
+ * observed before the initializer runs. Carry exactly this binding through the
+ * established ref-cell path instead. Ordinary initializer captures retain
+ * their by-value timing.
+ */
+function initializerRefinesToNativeGeneratorState(
+  ctx: CodegenContext,
+  capturedDecl: ts.VariableDeclaration | undefined,
+  capturingDeclaration: ts.FunctionDeclaration,
+): boolean {
+  // Only a synchronous generator declaration initializes its factory's
+  // prototype/view while its value is being materialized. A plain nested
+  // function retains the ordinary lazy capture timing, so do not change its
+  // capture mode merely because the captured initializer happens to return a
+  // native generator state.
+  return (
+    capturingDeclaration.asteriskToken !== undefined &&
+    !capturingDeclaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) &&
+    capturedDecl?.initializer !== undefined &&
+    nativeGeneratorBindingType(ctx, capturedDecl.initializer) !== null
   );
 }
 
@@ -1680,7 +1709,8 @@ function compileNestedFunctionDeclarationInScope(
       writtenInBody.has(name) ||
       mutatedInSiblingScope.has(name) ||
       writtenAfterDeclaration.has(name) ||
-      initializerMaterializesHoistedFunction(ctx, capturedDecl, stmt);
+      initializerMaterializesHoistedFunction(ctx, capturedDecl, stmt) ||
+      initializerRefinesToNativeGeneratorState(ctx, capturedDecl, stmt);
     // #2623 Slice A: detect a capture whose outer slot is already the canonical
     // ref cell (the outer scope boxed it). For such a name `type` above is the
     // cell ref type, so the generic mutable-capture path would re-box to a

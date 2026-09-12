@@ -30,6 +30,7 @@ loc-budget-allow:
   - src/codegen/property-access-dispatch.ts
   - src/codegen/proto-function-value.ts
   - src/codegen/statements/nested-declarations.ts
+  - src/codegen/statements/variables.ts
 func-budget-allow:
   - src/codegen/expressions/object-get-prototype-of.ts::tryCompileEs5GetPrototypeOfEarly
   - src/codegen/generators-native-consumer.ts::tryCompileNativeGeneratorResultProperty
@@ -43,7 +44,9 @@ func-budget-allow:
   - src/codegen/iterator-native.ts::fillNativeIteratorLateArms
   - src/codegen/object-runtime-prototype.ts::buildObjectPrototypeHelpers
   - src/codegen/property-access-dispatch.ts::tryIdentifierNamespaceAndStaticReceiverRead
+  - src/codegen/closures/funcref-as-closure.ts::emitFuncRefAsClosure
   - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
+  - src/codegen/statements/variables.ts::compileVariableStatement
 ---
 
 # #5199 — generators r2: cluster and fix the residual generator-bucket failures
@@ -92,7 +95,7 @@ the stale mixed draft PR #5736 (`b3a21dfcd1fc28c13a9f2ef168a8114deee347b0`),
 reviewed relative to `357b05f68c8c76b8c4888690941edf9d247243ab`. It starts from
 fresh main `d4108568d43f14c361ecc3a58c82633027eaae39` in the isolated branch
 `codex/5199-generator-protocol-rescue-20260912`; before publication it must
-merge, never rebase, current `upstream/main` `06f4cfa4aca3cfa20f1e5c03738956407ec2fedb`.
+merge, never rebase, current `upstream/main` `c645a7627e099173b0b3e0c5daa1d7b5a110a9d5`.
 
 The port intentionally excludes the stale PR's super and TypedArray hunks. It
 does not modify the TypedArray lane's `ta-dyn-mop.ts`, `native-proto.ts`, or
@@ -129,6 +132,37 @@ generator semantics or full ES2015 conformance.
   historical only. The compiler bundle and QuickJS provider must be rebuilt
   after the upstream merge before any exact-corpus comparison.
 
+### Current bridge repairs and why they are bounded
+
+- A captured `var g = producer()` was planned against its hoisted `externref`
+  slot before the initializer refined `g` to the native generator-state ref.
+  A synchronous generator declaration that captures exactly such a binding now
+  uses the existing capture cell; its initializer writes the cell rather than
+  leaving the captured pre-init carrier at `undefined`. This is deliberately
+  limited to synchronous generator declarations, whose function-value
+  materialization initializes the factory/prototype view. Plain nested
+  functions retain their by-value timing.
+- A direct native generator factory returns its private state struct, while a
+  first-class function value must match the checker-visible `Generator`
+  closure ABI. Generator-state-only wrapper signatures now publish
+  `externref`, with `extern.convert_any` at the trampoline return. This makes
+  the registry's `ClosureInfo.returnType` agree with the dynamic call
+  candidates without loosening any unrelated reference result signature.
+- State instances use the ordinary identity-keyed expando bag but are not
+  callable closure wrappers. The delete carrier recognizes only the exact
+  registered native-state type set, restoring inherited `next` and
+  `Symbol.iterator` after an own shadow is deleted; it does not widen the
+  generic closure-carrier predicate.
+
+The rebuilt local bundle is
+`33dba5253a70deebe42a5f35ef04bfbb2244bbc2b8b6f484725416588188ac9a`.
+Its QuickJS provider used artifact
+`073742801ba76347` and canary-verified adapter `d9d66a61210e4856`. On this
+pre-integration source, original bridge9 is **9/9** with successful compile,
+`imports=[]`, valid Wasm, and result `1`; original prototype11 and generic27
+plus the three isolated bridge tests are **41/41**. These remain source-level
+evidence until the required integrated-head rerun.
+
 The authoritative standalone ES2015 JSONL for subsequent measurements is
 `/Users/thomas/Code/js2/.test262-cache/test262-standalone-current.jsonl`,
 SHA-256 `45ff56e7570bba0a1bff6590d19d35de2525928adb7e3054789ba35aebb29360`:
@@ -137,10 +171,30 @@ cohorts use one compiler worker and exact corpus paths.
 
 ### Required integrated validation
 
-After the normal upstream merge and provider rebuild, rerun the exact original
-prototype11, the 27 generic-yield-star pins, original bridge9, the exact44
-protocol/control paths, the legacy-producer positive control, and the focused
-27 Vitest pins. Record zero losses over the applicable controls and keep
+The historical `44/44` path list and legacy-control script were untracked
+artifacts and cannot be recovered. Their result remains historical and is not
+an acceptance claim. Do not reconstruct a lookalike list or report it as an
+exact rerun.
+
+The reproducible **2026-09-12 protocol36+B8** current-head protocol/control
+matrix is
+[`2026-09-12-es2015-generator-protocol-current-head-paths.txt`](../log/2026-09-12-es2015-generator-protocol-current-head-paths.txt):
+
+- Lines 1–36 are the current exact corpus set of all
+  `test/language/expressions/yield/star-rhs-iter-*.js`, plus
+  `star-iterable.js`, `star-return-is-null.js`, and `star-throw-is-null.js`.
+  They are the owned protocol rows and must be remeasured, not inferred from
+  stale output.
+- Lines 37–44 are the B controls selected from the authoritative JSONL, all
+  currently `pass`: `star-array.js`, `star-string.js`, `rhs-iter.js`,
+  `rhs-omitted.js`, `in-iteration-stmt.js`, `from-try.js`,
+  `from-catch.js`, and `then-return.js`.
+
+After the normal upstream merge and provider rebuild, rerun that exact
+2026-09-12 protocol36+B8 matrix
+matrix with the maintained isolated runner, the original prototype11, the 27
+generic-yield-star pins, original bridge9, and the permanent named
+legacy-producer test. Record zero losses across the B controls and keep
 `imports=[]` plus valid Wasm for standalone fixture claims. The result of that
 integrated run, not the local checkpoint above, decides whether the PR is
 merge-ready or a useful draft.

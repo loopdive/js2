@@ -11,7 +11,7 @@ evidence cannot be conflated.
 - Branch: `codex/5199-generator-protocol-rescue-20260912`
 - Local base: `d4108568d43f14c361ecc3a58c82633027eaae39`
 - Required next integration: normal merge of `upstream/main`
-  `06f4cfa4aca3cfa20f1e5c03738956407ec2fedb`; never rebase this work.
+  `c645a7627e099173b0b3e0c5daa1d7b5a110a9d5`; never rebase this work.
 - Port source: generator-only hunks manually reviewed from the second commit of
   stale mixed PR #5736, `b3a21dfcd1fc28c13a9f2ef168a8114deee347b0`, relative to
   `357b05f68c8c76b8c4888690941edf9d247243ab`. Do not cherry-pick that commit.
@@ -66,23 +66,42 @@ struct. An `any` cast proved the runtime method/receiver path but was only a
 diagnostic. The unchanged original source is now among the 11/11 passes and
 must be reported that way; do not count the diagnostic separately.
 
-No rebuilt compiler bundle or QuickJS provider exists for this exact local
-source after the latest changes. Earlier provider and `44/44` protocol results
-are stale evidence and must not be used for acceptance.
+The current pre-integration compiler bundle is
+`33dba5253a70deebe42a5f35ef04bfbb2244bbc2b8b6f484725416588188ac9a`.
+Its QuickJS evaluation provider used artifact `073742801ba76347` and
+canary-verified adapter `d9d66a61210e4856`. Original bridge9 is 9/9 under that
+bundle; every row compiled successfully with `imports=[]`, valid Wasm, and
+result `1`. The unchanged original prototype11 and generic27 runs are 11/11
+and 27/27; the separate bridge suite is 4/4, including a named host-lane
+legacy-producer positive control. This is still pre-integration evidence.
+
+The old `44/44` protocol/control output belongs to the stale source/provider.
+Its `.tmp/protocol-paths.txt` and legacy-control script were untracked and are
+gone, so that exact matrix is unverifiable and must never be reconstructed or
+claimed as a current result.
 
 ## Required continuation order
 
-1. Commit this local checkpoint, then merge `upstream/main` at `06f4cfa4` in the
-   worktree normally. Resolve the two #5683 overlap files by preserving both
-   intents.
+1. Commit this local checkpoint, then merge `upstream/main` at
+   `c645a7627e099173b0b3e0c5daa1d7b5a110a9d5` in the worktree normally.
+   Resolve the two #5683 overlap files by preserving both intents.
 2. Rebuild the compiler bundle and the QuickJS evaluation provider (not the
    interpreter provider) against the integrated head. Capture provider/artifact
    provenance before running exact Test262 paths.
 3. Rerun, with `COMPILER_POOL_SIZE=1`: original prototype11, 27 generic pins,
-   original bridge9, exact44 protocol/control cohort, legacy-producer positive
-   control, and 27 focused Vitest pins. All source fixtures must remain
-   `imports=[]` and valid Wasm. Claims about Test262 use only its exact corpus
-   paths.
+   original bridge9, and the current reproducible **2026-09-12 protocol36+B8**
+   Test262 matrix in
+   [`2026-09-12-es2015-generator-protocol-current-head-paths.txt`](./2026-09-12-es2015-generator-protocol-current-head-paths.txt).
+   The first 36 rows are every current
+   `yield/star-rhs-iter-*.js` path plus `star-iterable.js`,
+   `star-return-is-null.js`, and `star-throw-is-null.js`; the final eight are
+   exact authoritative-JSONL passing controls: `star-array.js`,
+   `star-string.js`, `rhs-iter.js`, `rhs-omitted.js`,
+   `in-iteration-stmt.js`, `from-try.js`, `from-catch.js`, and
+   `then-return.js`. Run the permanent named legacy-producer test and the
+   focused 27 original Vitest pins as well. All standalone source fixtures must
+   remain `imports=[]` and valid Wasm. Claims about Test262 use only its exact
+   corpus paths.
 4. Compare Test262 runs only to
    `/Users/thomas/Code/js2/.test262-cache/test262-standalone-current.jsonl`
    (SHA-256 `45ff56e7570bba0a1bff6590d19d35de2525928adb7e3054789ba35aebb29360`,
