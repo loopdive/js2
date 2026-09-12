@@ -17,6 +17,69 @@ const nativePath = "src/runtime/wasmgc/async/native-await.ts";
 const ehPath = "src/wasm/physical/exception-control.ts";
 type Reader = (path: string) => string;
 
+const forwardMainFixture = "tests/fixtures/issue-3518-async-frame-forward-main.json";
+const forwardMainFixtureHash = "3f01c4d7c04f39f8be68e00bc34025228e759287292bcb7739f5292c266ddbb7";
+const forwardMainSpanIds = [
+  "host-planner-import",
+  "frame-import-abi",
+  "frame-import-lookup",
+  "frame-import-result",
+  "host-combinator-gate",
+  "host-spill-plan",
+  "frame-reaction",
+] as const;
+
+interface ForwardMainSpan {
+  id: (typeof forwardMainSpanIds)[number];
+  beforeLine: number;
+  afterLine: number;
+  before: string[];
+  after: string[];
+}
+
+interface ForwardMainFixture {
+  schema: string;
+  path: string;
+  before: { sha256: string };
+  spans: ForwardMainSpan[];
+}
+
+// These seven narrow fragments were read from 06f4cfa4 Git content, independently
+// of the merged candidate. Their inverse fragments come from a42660c8. The JSON
+// records both complete commit/blob/source hashes and each original line range.
+// No runtime Git fallback or candidate-derived expected receipt is permitted.
+function readForwardMainFixture(reader: Reader): ForwardMainFixture {
+  const text = reader(forwardMainFixture);
+  assert.equal(sha(text), forwardMainFixtureHash, "pinned forward-main provenance");
+  const fixture = JSON.parse(text) as ForwardMainFixture;
+  assert.equal(fixture.schema, "async-frame-forward-main-v1");
+  assert.equal(fixture.path, donor);
+  assert.deepEqual(
+    fixture.spans.map((item) => item.id),
+    forwardMainSpanIds,
+  );
+  return fixture;
+}
+
+function inverseProjectMain(text: string, reader: Reader): string {
+  const { spans } = readForwardMainFixture(reader);
+  let end = 0;
+  const changes = spans.map((item) => {
+    const after = `${item.after.join("\n")}\n`;
+    const before = `${item.before.join("\n")}\n`;
+    assert.notEqual(after, before, `nonempty forward main span ${item.id}`);
+    assert.equal(text.split(after).length - 1, 1, `exact forward main span ${item.id}`);
+    const start = text.indexOf(after);
+    assert(start >= end, `ordered disjoint forward main span ${item.id}`);
+    end = start + after.length;
+    return { start, end, before };
+  });
+  for (const change of changes.reverse()) text = text.slice(0, change.start) + change.before + text.slice(change.end);
+  // Only the admitted spans have changed. The original 0194 reconstruction and
+  // its unchanged syntax/comment receipts still govern every remaining byte.
+  return text;
+}
+
 function parse(text: string): ts.SourceFile {
   const file = ts.createSourceFile("receipt.ts", text, ts.ScriptTarget.Latest, true);
   assert.equal(
@@ -159,7 +222,7 @@ function bridge(label: string, text: string): void {
 }
 
 function reconstructFrame(reader: Reader): string {
-  const current = reader(donor),
+  const current = inverseProjectMain(reader(donor), reader),
     live = reader(canonical);
   const currentFile = parse(current),
     liveFile = parse(live);
@@ -414,6 +477,81 @@ describe("0194 historical bodies reconstructed from mandatory current owners", (
       expect(() =>
         verifyHistorical((file) => (file === path ? read(file).replace(before!, after!) : read(file))),
       ).toThrow();
+    });
+  }
+});
+
+describe("pinned incoming main changes before historical reconstruction", () => {
+  it("requires all seven independently pinned forward spans before checking the original receipts", () => {
+    const fixture = readForwardMainFixture(read);
+    expect(fixture.spans.map((item) => item.id)).toEqual(forwardMainSpanIds);
+    const projected = inverseProjectMain(read(donor), read);
+    expect(projected).not.toBe(read(donor));
+    expect(sha(projected)).toBe(fixture.before.sha256);
+    verifyHistorical(read);
+  });
+  it("rejects missing forward source provenance", () => {
+    expect(() =>
+      verifyHistorical((path) => {
+        if (path === forwardMainFixture) throw new Error("missing pinned forward-main fixture");
+        return read(path);
+      }),
+    ).toThrow("missing pinned forward-main fixture");
+  });
+  it("rejects a changed forward fixture instead of accepting a candidate-derived receipt", () => {
+    const changed = replace(read(forwardMainFixture), '"afterLine": 41', '"afterLine": 42');
+    expect(() => verifyHistorical((path) => (path === forwardMainFixture ? changed : read(path)))).toThrow(
+      "pinned forward-main provenance",
+    );
+  });
+  it("rejects a duplicated incoming reaction span before inverse projection", () => {
+    const reaction = readForwardMainFixture(read).spans.find((item) => item.id === "frame-reaction")!;
+    const changed = read(donor) + `${reaction.after.join("\n")}\n`;
+    expect(() => verifyHistorical((path) => (path === donor ? changed : read(path)))).toThrow(
+      "exact forward main span frame-reaction",
+    );
+  });
+  for (const [name, before, after] of [
+    ["module source", 'from "./async-cps.js";', 'from "./other-planner.js";'],
+    ["import kind", "import {\n", "import type {\n"],
+  ]) {
+    it(`rejects changed incoming host-planner ${name}`, () => {
+      const imported = readForwardMainFixture(read).spans.find((item) => item.id === "host-planner-import")!;
+      const original = `${imported.after.join("\n")}\n`;
+      const changedImport = replace(original, before!, after!);
+      expect(changedImport).not.toBe(original);
+      const changed = replace(read(donor), original, changedImport);
+      expect(() => verifyHistorical((path) => (path === donor ? changed : read(path)))).toThrow(
+        "exact forward main span host-planner-import",
+      );
+    });
+  }
+  const corruptions: Record<(typeof forwardMainSpanIds)[number], (text: string) => string> = {
+    "host-planner-import": (text) => replace(text, "  isHostAsyncLane,", "  isHostAsyncLane as alteredHostLane,"),
+    "frame-import-abi": (text) => replace(text, "then2FrameIdx?: number;", "then2FrameIdx?: string;"),
+    "frame-import-lookup": (text) => replace(text, 'get("Promise_then2_frame")', 'get("Promise_then2")'),
+    "frame-import-result": (text) => replace(text, "? { then2FrameIdx }", "? { then2FrameIdx: then2Idx }"),
+    // The admitted forward fragment is the comment replacing the deleted gate.
+    // Injecting a gate after it must still fail the ORIGINAL remainder receipt.
+    "host-combinator-gate": (text) => `${text}  if (linear.segments.length === 1) return false;\n`,
+    "host-spill-plan": (text) => replace(text, "isHostAsyncLane(ctx)", "false"),
+    "frame-reaction": (text) => replace(text, "index: resultPromiseLocal", "index: awaitedLocal"),
+  };
+  for (const item of readForwardMainFixture(read).spans) {
+    const after = `${item.after.join("\n")}\n`;
+    const before = `${item.before.join("\n")}\n`;
+    it(`rejects removal of the landed ${item.id} change`, () => {
+      const changed = replace(read(donor), after, before);
+      expect(changed).not.toBe(read(donor));
+      expect(() => verifyHistorical((path) => (path === donor ? changed : read(path)))).toThrow(
+        `exact forward main span ${item.id}`,
+      );
+    });
+    it(`rejects semantic corruption of the landed ${item.id} change`, () => {
+      const corrupt = corruptions[item.id](after);
+      expect(corrupt).not.toBe(after);
+      const changed = replace(read(donor), after, corrupt);
+      expect(() => verifyHistorical((path) => (path === donor ? changed : read(path)))).toThrow();
     });
   }
 });

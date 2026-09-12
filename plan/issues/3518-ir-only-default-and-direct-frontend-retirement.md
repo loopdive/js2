@@ -30,7 +30,7 @@ loc-budget-allow:
   - src/ir/builder.ts
   - src/ir/from-ast.ts
   - src/ir/integration.ts
-  - src/ir/lower.ts
+  - src/ir/lower-generic.ts
   - src/ir/core/nodes.ts
   - src/ir/runtime/manifest.ts
   - src/ir/prepared-component-dependencies.ts
@@ -44,8 +44,8 @@ func-budget-allow:
   - src/ir/from-ast.ts::lowerFunctionAstToIr
   - src/ir/integration.ts::compileIrPathFunctions
   - src/ir/integration.ts::makeResolver
-  - src/ir/lower.ts::emitInstrTree
-  - src/ir/lower.ts::lowerIrFunctionBody
+  - src/ir/lower-generic.ts::emitInstrTree
+  - src/ir/lower-generic.ts::lowerIrFunctionBody
   - src/ir/passes/inline-small.ts::renameInstrOperands
   - src/ir/prepared-component-dependencies.ts::collectFunctionEvidence
   - src/ir/select-identity.ts::planIrCompilationByIdentity
@@ -120,7 +120,163 @@ Foundation PR 5733 landed at `fa9e1ea0c7986b53f290e88822b262ab10ca62f4`;
 the published F0 head is verified in upstream/main ancestry. The isolated ABI
 draft has 59/59 tests and typecheck passing, with parent composition and artifact
 parity still pending. The [lowering-cycle proposal](../agent-context/3518-lowering-cycle-plan-2026-09-08.md)
-is the next bounded plan, not a competing dispatch or completed dependency split.
+was dispatched as the bounded checkpoint below. Neither is direct-codegen retirement.
+
+### Lowering-cycle implementation checkpoint — 2026-09-08
+
+The Astra High [lowering-cycle plan](../agent-context/3518-lowering-cycle-plan-2026-09-08.md)
+is implemented by the existing Astra Low native agent, with parent-owned
+integration and controls. The new authoritative claim is
+`3518:lowering-cycle-separation`, owner
+`ttraenkler/codex-astra-lowering-cycle-20260908`, write ID `33574-pj5u0k6s`.
+The old linear handoff PR 5618 was verified merged at
+`e204b64fc810e1cb359f0530dfd7c1c4ec461258`, with its exact head in main's
+ancestry. The earlier recorded Luna stand-down and parent integration scope
+were reconciled. Historical claims and all P/C/ABI drafts remain untouched.
+
+Generic lowering now lives in `src/ir/lower-generic.ts`; concrete Wasm assembly,
+constant instructions and resolver/result contracts live in three explicitly
+named backend modules. `src/ir/lower.ts` is an explicit compatibility facade.
+All eight original runtime exports retain object identity. Generic lowering
+still requires its emitter/converter and no longer imports the concrete
+emitter, convenience wrapper or facade. The measured bounded value graph has
+17 modules/19 edges, including all 12 direct dependencies; negative controls
+inject reverse, unknown, unresolved and unparsed edges. This does not certify
+resolver callbacks, pure IR types or the whole compiler's closure.
+
+The 4595-line original splits into 4193 generic, 313 contract, 90 wrapper,
+31 constant and 22 facade lines: 4649 combined, a 54-line scaffolding increase.
+Three additional import-splitting lines in consumers give net source growth
+of 57 lines. All 22 named function-declaration bodies were compared unchanged;
+the nested `emitInstrTree` arrow was checked separately. The function-budget
+spans remain 2297 and 3380 respectively. Exact braced-body SHA256s are:
+
+- `emitInstrTree`: `75c0cceb6224dda24e892bcc5433532f10985c863b09fd4ae4245037811a2424`.
+- `lowerIrFunctionBody`: `ed92c0a576009ab30571152c9b01dfc6caf19a2e2ca3dfb436edef32b4436739`.
+
+Only the existing issue's one file allowance and two function allowance keys
+move to the new canonical path; old allowance keys are retired. Neither budget
+baseline nor checker is changed. The initial-relocation test verifies exact
+bodies/spans, unchanged baseline contents and the one-for-one allowance map,
+and fails if the comparison base is unavailable. It explicitly skips this
+initial-only receipt after a canonical lowering implementation already exists
+at the comparison base; the ongoing raw-emission controls remain active.
+
+The real pushRaw gate now requires all five resulting files, including in its
+whole-tree and JSON modes. For the first split it compares generic lowering
+against the old file using actual text diffs, including untracked destinations;
+the facade and other new files receive no duplicate legacy-site credit. Later
+changes compare canonical paths against themselves. All 60 current raw sites
+remain (10 tagged, 50 untagged), with zero added sites. The old fallback ceiling
+of 82 untagged sites is unchanged, not reseeded upward or silently reduced by
+the move. Missing destinations, new untagged sites, count-neutral replacements,
+duplicate facade sites and incomplete coverage metadata are negative controls.
+
+One test-only write-map amendment repairs an existing bytecode call fixture:
+`tests/ir-bytecode-proof.test.ts` used a target with no required binding.
+The parent reproduced its exact `binding.kind` failure on clean foundation
+`d71fab8b9565ad3a2bb567ed82f22e8750e804a4` (one selected failure, 22 explicitly
+skipped), before integrating `irUnitFuncRef(irIdentities.next("add"))`.
+Its resolver and exact `LOAD 0 / LOAD 1 / CALL 1 / RET` expectation remain.
+The original existing cohort is now 45/45, while new lowering/relocation plus
+retained pushRaw controls are 57/57; no tests are hidden from those counts.
+After syncing the artifact-only main update `120cd638cf2a971934eaaccf47aaf65f06491f3d`,
+the final combined gate/boundary/self-host cohort passed 101/101: those 57
+controls, all 42 existing D0 controls and both existing self-host producer tests.
+Typecheck and both source-size gates pass. The six N1 production witnesses
+remain 6/6 full and 6/6 with the legacy handlers cut, while both nonliteral
+imports and the strict closure/retirement failures remain visible.
+
+Exact local paired evidence uses Node v22.23.2 + tsx, unoptimized standalone
+WasmGC: clean N1 head `36ea5ce9f54190c1f2c7af0466cf768afb453394` versus that
+source plus this split composed on `b46055f4fefc817368095afbfe1a9b85d72b3082`.
+Incoming main commits changed only artifacts and the existing LOC dashboard.
+The public IR branch/loop fixture has identical full bytes, WAT, imports,
+exports, string pool and results `[7,-2,-7,0,0,10]`: 22707 bytes, SHA256
+`80e45e15ecaa4a83a9319595b0e04236a6865814ae0baf806e86b69982c9706f`.
+The real `emitSelfHostedFunc` producer/registration/lowering fixture preserves
+the complete function/type/global/ordinal order and results `[42,0]`: 114
+bytes, SHA256 `67b02ec78d47fe382c9c2815d1cd42d1ebe472dcafc0d1fc77c5c8f7490cc388`.
+Both modules validate and instantiate with zero imports. This is not an
+optimization-enabled or full-conformance result.
+
+The composed D0 inventory covers 1248 modules, retains six clean modules and
+all older debt, and observes 9770 resolved edges (2502 type-only/7268 runtime),
+four unknown edges and zero inventory errors. All four new lowering files
+remain explicitly unmigrated/mixed; removing this cycle does not promote them
+to certified pure modules. Complete architecture remains false.
+
+### Generic-lowering main compatibility handoff — 2026-09-10
+
+Local no-commit integration of PR 5738 head
+`c257b46620fb4996bf5233763b80298c1fd03dc6` with main
+`1429cfdf2167f31532d70c5304430a9300c2a982` reconciles only the LOC allowance
+conflict: retain `lower-generic.ts`, `core/nodes.ts` and `runtime/manifest.ts`
+under `src/ir/`, preserving the other allowances without budget increases.
+The first focused run passed 139/140 tests: its old exact graph count expected
+17 modules/19 edges, while main's canonical core/analysis paths yield 21/24.
+The reviewed delta adds five reachable canonical modules and removes the
+compatibility `ir/identity-values.ts` path from reachability, with eight added
+and three removed edges; changed reachable source blobs are exact main blobs.
+The compatibility test now pins all 21 module identities and all 24 ordered
+edges, retaining the original 12 direct-edge assertion, shared identity witness,
+all forbidden/unknown-input rejection controls and fresh-process execution.
+No production source, checker or baseline is changed by this follow-up.
+
+The original failed log, before/after graph and blob proof remain preserved in
+`/private/tmp/js2-5738-conflict-repair.q0RndK/{focused-tests.log,assessment.json}`;
+the failed log SHA256 is
+`a4e0a986526d440e7b22633b2104b2b35dfca3ca682410f3a67579d8583b6650`.
+The identical seven-file cohort rerun passed **140/140**, zero skips, exit 0
+(Node 25.9.0, Vitest 3.2.4, one fork, 2048 MB fork heap, 42.85 seconds), with
+`LOC_GATE_BASE` pinned to the exact main above and ordinary integration
+dependencies. Its separate log is `focused-tests-exact-graph.log` in the same
+directory. Formatting and main-relative whitespace checks pass.
+This bounded compatibility repair does not clear the historical host-regression
+hold, certify complete architecture or replace cumulative validation.
+
+### N1 landed CI incident and publication hold — 2026-09-08
+
+PR 5735 landed as `b9a67c10b4b06cabcc020e0dea1dfa105267661e`; its published
+head and exact source/gate/test content were verified on upstream main.
+This is **not a clean CI landing**. Its [actual merge-group regression job](https://github.com/loopdive/js2/actions/runs/34167945399/job/101885705677)
+failed at 23:10:38 UTC September 7 with 20 host pass-to-fail transitions: 18
+Temporal and two BigInt typed-array tests. A hold label was applied at
+23:10:56, but the merge bot landed it at 23:12:42.
+
+Read-only inspection found that ruleset 16700772 uses `HEADGREEN`: only the
+final cumulative head must be green. The subsequent metadata-only PR 5734
+compared `b9a67c10...` to its cumulative head `b46055f4...`, selected no shards,
+and received a [successful no-op regression job](https://github.com/loopdive/js2/actions/runs/34169177677/job/101886099044)
+at 23:11:37. Its comparison excluded N1's changes. The parking helper adds a
+label but does not dequeue. The evidence supports cumulative-head/path-filter
+interaction, not an administrative bypass. Repository settings and CI have
+not been changed; permission for a separate CI-safety PR has been requested.
+
+The failing gate used cached foundation `fa9e1ea0...`, one artifact-only commit
+behind its exact base `8b679f89...`. Direct comparison of that foundation's
+run 34165082130 and N1 run 34167945399 artifacts reproduces exactly 20 host
+transitions and zero standalone status transitions, with 48735 unique paths
+per side per lane. No paired Wasm hashes are present in those JSONL records;
+the gate's "with wasm-hash change" count is not positive evidence of different
+binaries. The two downloaded CI Temporal providers are independently identical:
+1701142 bytes, SHA256
+`332629e79db0b0c3b7e773cb6bb34b4711a17d39ef8bf8cb5936184983eb7ff2`.
+
+Bounded local follow-up used the actual bundled CI worker and honest original
+harness, with fresh workers per row and the normal primary/strict sequence.
+On both clean d71 foundation and published N1, both BigInt failures and three
+representative Temporal failures pass, along with one non-BigInt typed-array
+and one Temporal positive control: 14/14 variants per side, identical complete
+binaries, imports and pools. Temporal uses each side's downloaded CI provider
+and a verified warm cache hit. This samples five of the twenty failing paths;
+it does not reproduce long-lived CI shard history, erase the CI failures or
+establish their cause. The other fifteen paths have not been locally rerun.
+
+The lowering checkpoint may be published non-draft for review, but must retain
+an explicit hold until inherited host-failure attribution and safe queue
+validation are resolved. Do not weaken a gate, waive these rows, claim IR
+retirement, or treat the ABI compatibility question as approved.
 
 ### Source-free typed preparation — active checkpoint, 2026-09-08
 
@@ -5991,3 +6147,423 @@ Commit creation then failed after hooks, exit 128: the inherited SSH agent
 socket was missing. No commit was created in that attempt. Root verified the
 existing desktop agent and will retry signing with full normal hooks again.
 Root owns the signed local checkpoint; existing PR/claim holds remain untouched.
+
+
+
+### Capability contract extraction checkpoint (2026-09-08)
+
+The [Astra High capability-schema plan](../agent-context/3518-capability-schema-checkpoint-plan-2026-09-08.md)
+specifies an independent checkpoint from canonical main
+`16498efb481cb022ee5c4dcc9bb137b6d4c91a50`. It extracts the complete closed
+capability-record data schema (25 types/interfaces, 14 constants) into
+`src/runtime/contracts/host-capability-schema.ts`, without changing provider
+selection, host/linear behavior, catalog construction or authentication.
+The old module imports/re-exports the same bindings and retains every
+function, private set/map and canonical record object. This removes an
+implementation dependency needed by the subsequent manifest contract split;
+it is not new host-backend work.
+
+Reconciled claim `3518:capability-schema-separation` is held by
+`ttraenkler/codex-astra-capability-schema-20260908`, branch
+`codex/3518-capability-schema-worker-20260908`, verified in ledger
+`d31c011bfbdca1f743d8102f82c9404ce743e15b` (815 held records). Historical
+claims and P/C's twelve/five dirty files remain preserved. Astra Low source
+and evidence workers have disjoint worktrees; the parent owns shared policy,
+integration and non-draft PR publication. No main push or force push.
+
+The boundary policy activates only the canonical schema leaf with zero new
+allowed edges. The old catalog implementation and the planned full runtime
+contracts index remain explicit debt. Core may not import this upward
+contract: full semantic-function/prepared-function separation still needs
+the reader, writer, generic-pass and codec obligations in the linked plan.
+
+PR #5742 (core type construction/equality) was independently observed at
+`acfd3e37b8765c4c4788c1fa94718d62c60e473c` with 29 successful and 13 skipped
+PR-head checks, mergeable/CLEAN, no unresolved review threads and `hold`
+retained. That is not merge-group or full-conformance proof. This checkpoint
+does not stack its source. PRs #5738/#5739/#5741/#5742 retain the inherited
+N1 host-regression/merge-queue-safety hold; the separate ABI caller decision
+also remains open. No CI/ruleset change, hold removal, enqueue or retirement
+claim is authorized by this checkpoint.
+
+Validated handoff: 39/39 moved declarations and 48/48 retained declarations
+(all 28 functions) are text/documentation-identical; source net +100 LOC,
+no budget exemption. All 76 new controls pass, plus all 42 existing D0
+controls. The full distinct focused population is **216/217 passing**: the
+one existing host-async concat fixture fails on untouched main too. Exact
+base/candidate byte, WAT, import-order, pool and outcome comparison matches
+at 10,122 bytes, SHA `9cc61132c3cea9c609e93fc3ec5fa85af99e7d17bca888eb457373d3c9fa3450`,
+28 function imports and concat5 index 22. Its old 10,021-byte/27-import/index-21
+expectations are not changed or waived. No claim that the fixture passes or
+that its prior mismatch is fixed.
+
+Three original public standalone scalar/vector/closure programs execute
+twice each with zero Wasm imports and full baseline/candidate equality
+(bytes/WAT/descriptors/pools/IR outcomes/results). Two complete async manifests
+retain seven providers each and 0/7 standalone/host capability records;
+all 32 catalog objects remain canonical. Typecheck passed. Inventory:
+1,245 tracked modules, seven clean, two compatibility adapters, 1,236 debt,
+9,751 resolved edges, four unknowns, zero inventory errors. Complete mode
+fails honestly; N1 preservation retains all six witnesses and its original
+25-entry legacy baseline, while strict closure still fails on the same two
+dynamic imports. No retirement credit. The linked plan records exact frozen
+hashes, test commands/receipts, next prepared-function obligations and
+Astra High's held-publication review.
+
+### Queue-drain main refresh (2026-09-09)
+
+Capability-schema PR #5743 actually landed on `loopdive/js2/main` at
+`129e3efd4530ae1be56dbf5fdea54ddbbd87443e` (parents `4efa01e569b01fb5993b98eb461a8b82e28141d3`
+and reviewed `c2d900d4fa9811f3359c308369bfb2b4184e90a9`). Its real merge-group
+regression job `102532626515`, run `34368952422`, compared 48,735 host rows
+against 48,735 using verified donor `9b52a113071f94499407b6584124aee9ff3b426b`:
+zero raw non-timeout regressions and zero hard errors. The no-op step was
+skipped. Standalone merge-report success has the existing count-only limitation;
+it is not a full per-file standalone non-regression claim.
+
+PR #5751 was refreshed from `84b04810c99061918fe015980c5875cb293b98ac` onto
+that landed main. Five conflicts were reconciled: preserve the canonical
+host-capability implementation and old-path facade; retain the stronger schema
+reconstruction tests and four-module contract minimum; retain all prior policy
+layers, allowed edges and activation history; add main's four new inventory
+rows without duplicating the schema entry; preserve both complete issue-history
+sections. Independent High review verified all 73 main-only staged file blobs
+match the incoming main tree. Canonical catalog text differs from main's former
+location only in three relative import/re-export paths.
+
+Validation session `23400` exited zero. Source TS7 passed (its configuration
+excludes test sources); actual inventory passed with no errors and architecture
+still incomplete. The full ten-file refresh passed 280/280, zero pending and
+zero failed, in 99.24 seconds: schema boundary49/seam27, allocation replay29,
+program replay8, semantic/provider boundary85, typed async26, GVN diagnostics15,
+callable contracts4, typed preparation30 and fresh-process source-free7.
+Receipts are retained in `.tmp/queue-drain-5751-main-refresh-{ts7,inventory,tests}.log`
+and `.tmp/queue-drain-5751-main-refresh-tests.json` in the integration checkout.
+
+The historical 2,891-regression dispatch executed an ancestor shared by main
+and this PR, not this refreshed delta. It is retained as unresolved historical
+evidence, not waived or attributed to instrumentation. Landing now requires a
+fresh exact-candidate merge-group comparison with verified baseline provenance;
+any demonstrated new candidate regression blocks it. Full native async execution,
+ABI30/public caller proof and strict retirement remain separate unfinished work.
+No older PR closes until its actual content is verified on main.
+
+### Physical reservation queue refresh (2026-09-10)
+
+PR5752 is refreshed against main `1429cfdf2167f31532d70c5304430a9300c2a982`
+in an isolated checkout. Its only textual merge conflict was competing appended
+issue history; both complete sections are retained. All thirteen PR-owned
+production/helper/test files match head
+`1731cf377a9ae3a55af7b9d9447c3b5b2fa144fd` byte-for-byte. Other source changes
+come from already-landed main, not a new implementation. The physical kernel,
+whole-program completion and semantic-provider boundary suites pass254/254
+tests across three files on Node25.9.0/macOS ARM64. This refresh does not repeat
+the historical source pairs or establish fresh merge-group conformance.
+
+The semantic-provider parent is already on main, so main is the appropriate
+landing base after publication. The BigInt conformance discrepancy remains
+tracked in issue5807 on the cumulative PR5798; keep this checkpoint held until
+that landing evidence is reconciled. Local tests and conflict repair do not
+waive that hold or certify complete native async/IR retirement. Older references
+above are historical records, not current dispatch or merge authorization.
+
+
+## 2026-09-12: resume existing PR queue, refresh frame extraction against main
+
+User direction: pause new migration scope and deliver the existing non-draft
+PR chain 5755 → 5756 → 5757 → 5758 → 5759 → 5760 dependency-first through the
+protected merge queue. Routine scoped fixes and normal validation, commits,
+pushes and queue submission are authorized. Delivery requires verified main
+ancestry and content; an open PR or green local suite is not completion.
+
+The supplied old temporary worktree and Markdown handoff are absent on this
+host. Published comment 5646241014 contains only an `@`-prefixed local path,
+not the handoff body. Preserve the earlier committed refresh record and
+original failures/receipts; reconstruct from the existing published PR head.
+
+PR5755 starts at published a42660c8974d75a06586cd7ce890e1c61d73c0f2 and cleanly
+merges main 06f4cfa4aca3cfa20f1e5c03738956407ec2fedb in the isolated
+`codex/5755-queue-drain-20260912` worktree. Eight of the nine original frame
+source/test files remain byte-identical. The async-frame wrapper incorporates
+main's Promise.all suspension and conditional-await spill/reaction fixes;
+the extracted engine and the landed native-delay exception repair remain
+unchanged. Boundary policy adds 16 unmigrated records and updates the existing
+lowering facade description; it removes no records or allowed-edge rules.
+
+Before compiler tests or hooks, an independent test262 repository was checked
+out at the exact shared gitlink b363f29d3c43c626dc852744ad64a0b48a003693.
+All 53,889 test files and 44 harness files match their raw Git blob hashes,
+file sets and modes (86,743,051 bytes); no untracked or ignored extras occur.
+The object store has no alternates or shared hardlinks. Original corpus links,
+25 untracked records and seven ignored records remain preserved. Verification
+manifest SHA256: fcaaff56a78c134e3875a00b743d5e6435939c38f304eeec1ffb35bc3c611ffb.
+The first checker refused an unmeasured same-name object comparison after Git
+repacked the clone; that failure remains archived. The corrected checker
+compares all three clone object-file inodes against all 411 source files.
+
+The original historical source positive was run before any test repair:
+1 failed, 20 filtered. Its reconstructed population remains 51 statements,
+47 functions and 92 bodies, but main's legitimate edits change its hash from
+`d842bc14445082f874a698a6778286ad511e51e7f7cc446dbe164eedfa0ce9d3` to
+`40bece50928038d795a05a31219cf4cfba82f528891311902b3fd6f2814bea87`.
+Preserve the original receipt; authenticate main's forward changes separately
+before inverse projection, with mutation controls. This is a scoped merge
+validation repair, not permission to reseed historical expectations.
+
+Validation and queue delivery remain in progress. Keep the hold until the
+refreshed head is validated; retarget the existing PR to main before pushing.
+At PR5756 use published e3a01efa44f68da1b93c16b1a728d0ba099183f9, never stale
+fea8c3f413. At PR5759 carry signed repair
+561853c00d76c72eb44dbee14340dc15e9841e41 into the extracted delay implementation,
+retaining both tagged and foreign catches and all original donor ledgers.
+
+
+The forward source-preservation repair is now validated: 41/41 tests pass,
+including all 20 original source controls, 20 additional forward-provenance
+controls and the unchanged public-source oracle. The seven admitted spans
+are verified against pinned a42660c8/06f4cfa4 Git blobs and recorded line
+ranges; the full ordinary async-cps import includes its module source and
+import kind. Reverting, corrupting or duplicating a forward span is refused.
+The inverse projection matches the complete original a426 wrapper SHA256
+before the unchanged 0194 donor receipts are checked. No original historical
+or bridge receipt was reseeded; the public comparator is byte-identical.
+Fixture raw SHA256:
+3f01c4d7c04f39f8be68e00bc34025228e759287292bcb7739f5292c266ddbb7.
+
+The final scoped population is 219/219 across five files (178 existing
+ownership/boundary/main regressions plus 41 preservation tests), no failures
+or skips. Full normal commit/push hooks remain mandatory. The default
+pre-commit selector currently sees 26 inherited root test changes relative
+to its old merge base and therefore self-skips its >20-file lane; the 219
+scoped tests were run directly and are not a claim that those 26 files ran.
+Actual signed commit, push-hook and CI/queue outcomes will be recorded in the
+existing PR follow-up. Preserve the retained original positive failure and
+all corpus verification artifacts.
+
+
+## 2026-09-12: certified native-delay admission queue refresh
+
+Refresh existing PR5756, “feat(ir): admit certified native delay through source
+preparation”, from published e3a01efa44f68da1b93c16b1a728d0ba099183f9 onto
+signed and published frame parent b6f1dba796d71e045a80d18b219ccc6d42adbca0.
+The isolated branch is `codex/5756-queue-drain-20260912`. Do not push stale
+fea8c3f413. No child push or queue action is authorized by this local validation
+record before confirmed parent delivery to main; the user's existing ordered
+delivery authorization remains in force.
+
+Only appended issue history conflicted. Both complete sections are retained,
+with their original bytes recorded separately in the merge receipt. All five
+published production files and two authored test files remain byte-identical
+to e3a01efa. The policy retains every parent record and rule and adds only the
+unmigrated frontend planning-sites record. No implementation or failure fixture
+was changed during this refresh.
+
+The independent test262 checkout pins b363f29d3c43c626dc852744ad64a0b48a003693.
+All 53,889 test and 44 harness files match raw Git blob hashes, exact file and
+directory sets and modes; no extras, alternates or shared object hardlinks.
+The existing corpora remain preserved. Manifest SHA256:
+fcaaff56a78c134e3875a00b743d5e6435939c38f304eeec1ffb35bc3c611ffb.
+
+Fresh serialized Node25.9.0/macOS ARM64 validation passed **158/158**, with no
+failures or skips: admission (41), identity/relocation (45), typed preparation (30),
+data-contract replay (8), public native family (14), native delay (12), closure
+compile-once (4) and plan identity (4). The source typecheck, explicit-parent-base
+LOC/function gates, coercion, oracle and preservation-v1 dead-export checks
+passed. Conformance synchronization updated zero files. Strict graph closure
+remains OPEN for the existing two nonliteral dynamic imports; the preservation
+witness pass is not retirement certification.
+
+The behavior remains deliberately limited. Explicit certified native-delay
+source selection preserves three original units, one terminal, one IR body,
+zero derived units and the native delay call. Whole-program preparation still
+refuses the real missing `__ir_promise_delay_native` declaration with
+invariant / unknown-function-ref / resolve on the original owner. Omitted or
+disabled projection retains unsupported / unknown-class-construction / build.
+The complete five-function playground retains its located
+unsupported / type-resolution-unsupported / build at fetchAllSequential.
+No placeholder declaration, fabricated support body or later-chain repair was
+introduced to make those controls pass. All four historical relocation
+receipts remain unchanged.
+
+The default pre-commit selector sees 30 root test changes from its older
+merge base 535ee6b6ba19239394ee50f8235e6c528212688b; its existing >20-file self-skip must be reported as such.
+The 158 scoped tests were run directly and are not a claim that this inherited
+population ran. Normal signed commit and push hooks remain mandatory; their
+actual outcomes and parent delivery will be recorded on the existing PR.
+Detailed local receipts are in `.tmp/5756-queue-drain/` in the owned worktree.
+
+Delivery order remains 5755→5756→5757→5758→5759→5760. At PR5759 retain the signed
+standard-EH delay repair 561853c00d76c72eb44dbee14340dc15e9841e41 with both tagged
+and foreign catches. New migration scope remains paused.
+
+
+## 2026-09-12: logical vector and native-main lowering queue refresh
+
+Refresh existing PR5757, “feat(ir): lower certified vectors and prepared native
+main operations”, from published 1cb0f5c7f36be14d7be7eb4592973aea84a8c4e5 onto
+signed local admission parent 1f611285c35c6d1c42f4eff577441c79ee7ec706 in
+`codex/5757-queue-drain-20260912`. Publication remains behind confirmed parent
+delivery to main; the existing PR remains the only publication target.
+
+The only conflict was appended issue history. Both complete sections remain
+preserved. The two production files and two authored tests match the published
+head byte-for-byte; the refreshed parent policy, frame engine/wrapper, standard
+native-delay EH and all five source-admission implementation files remain
+unchanged. This refresh introduces no lowerer edit or new migration scope.
+
+Preserve the console newline correction and ordinary logical-concat positive
+when the optional target is absent. Source-bound vector facts must still be
+complete and owned by the exact actual expressions. Preserve receiver/length/
+effectful-argument/growth/result ordering, actual nullability and out-of-bounds
+carriers, and refusals for missing, foreign or physical-layout-bearing facts.
+Symbolic prepared-main targets still avoid physical capability lookup. These
+controls do not certify the complete async family, providers or physical
+whole-program acceptance.
+
+An independent pinned test262 repository at
+b363f29d3c43c626dc852744ad64a0b48a003693 passed all 53,933 raw blob comparisons
+(53,889 tests and 44 harness files), exact file/directory sets and modes,
+with no extras, alternates or shared object hardlinks. Existing corpora remain
+preserved. Manifest SHA256:
+fcaaff56a78c134e3875a00b743d5e6435939c38f304eeec1ffb35bc3c611ffb.
+
+Fresh serialized Node25.9.0/macOS ARM64 validation measured **213 passed,
+zero failed, two existing conditional skips / 215 total** across seven files.
+The lowerer/regression group is 100 passed and two skipped; the unchanged
+semantic/provider boundary group is 113/113. The skips are the original native
+Porffor C ASan/UBSan allocation-growth/alias case and untouched public-source
+comparison, selected by their unchanged prerequisite condition. No environment
+flag or added skip forced them; native Porffor C execution is not claimed.
+
+Source typechecking, explicit-parent-base LOC/function gates, coercion, oracle
+and preservation-v1 dead-export checks passed. Conformance synchronization
+changed zero files. Strict graph closure remains OPEN at the two existing
+nonliteral imports; preservation witness success is not IR retirement.
+
+The default pre-commit selector sees 32 inherited root test changes against
+535ee6b6ba19239394ee50f8235e6c528212688b and self-skips its existing >20 lane. The
+215-case cohort was run directly; do not claim this inherited population ran.
+Normal signed commit and push hooks remain mandatory; their actual outcomes
+and parent delivery belong in the existing PR follow-up. Local evidence is
+under `.tmp/5757-queue-drain/`. Keep ordered delivery 5755→5756→5757→5758→5759→5760
+and carry the signed standard-EH delay repair into PR5759 with both catch forms.
+
+
+## 2026-09-12: full-family source preparation queue refresh
+
+Refresh existing PR5758, “feat(ir): prepare the complete native async source
+family”, from published 37e169c4903c29ab46fe99de0910634723a19dac onto signed local
+vector/main parent 6cf4e423b4481a9fa003b1cd58a84cfa9100116c in
+`codex/5758-queue-drain-20260912`. Keep the existing PR as the sole publication
+target, behind confirmed parent delivery to main.
+
+Only appended Issue3518 history conflicted; both complete sections remain.
+All five published production files and two authored tests match the published
+head byte-for-byte. The boundary registry preserves every refreshed parent
+entry and adds only program-logical-types.ts and program-native-async-source.ts
+as frontend-ts / unmigrated. No additional implementation scope was added.
+The original playground async.ts fixture remains SHA256
+6bc4fc96cc65881c9919a39b840afaf1001dfd3d0e05ef0cc141441a051f7915.
+
+Preserve explicit native-family selection, exact checker/source ownership and
+retained-plan revalidation. Preparation yields seven original units, five
+terminal bodies, five awaits, two vector allocations and zero derived bodies;
+both original delay arrows remain inventory records. The original/export-only,
+GVN on/off, original/decoded cases retain invariant / unknown-function-ref /
+resolve for the real missing __ir_promise_delay_native provider, located at the
+original delay owner. Fresh-process replay must retain that refusal. Omitted
+or disabled family selection remains unsupported / type-resolution-unsupported
+/ build. These are refusal controls, not physical whole-program execution.
+The discarded-expression correction must erase only checker-proven ambient
+undefined after effectful cases; shadowed, unchecked and valued returns retain
+their original rejection behavior. Keep all actual forbidden-import controls.
+
+Fresh serialized Node25.9.0/macOS ARM64 validation passed **371/371** across
+eight files, with no failures or skips: family source contract 36, family source
+identity 55, unchanged native family 14, discarded effects 37, delay admission
+41, delay identity 45, typed preparation 30 and semantic/provider boundary 113.
+Source TS7, explicit-parent LOC/function budgets, coercion, oracle and
+preservation-v1 dead-export checks passed. Conformance synchronization changed
+zero files. Strict closure remains OPEN at the two existing nonliteral imports;
+preservation witnesses do not establish IR retirement.
+
+The isolated test262 checkout at b363f29d3c43c626dc852744ad64a0b48a003693 has its
+own Git objects and verified exact bytes, modes and file/directory inventories:
+53,889 tests plus 44 harness files, no extras. Existing corpora were preserved.
+Manifest SHA256:
+fcaaff56a78c134e3875a00b743d5e6435939c38f304eeec1ffb35bc3c611ffb.
+
+The default pre-commit selector sees 34 root test changes from its older base
+535ee6b6ba19239394ee50f8235e6c528212688b, so its existing >20 lane self-skips.
+The 371 controls above ran directly; do not claim this inherited population ran.
+Normal signed commit/push hooks remain required, with actual outcomes recorded
+on the existing PR when published. Local receipts are in
+`.tmp/5758-queue-drain/`. Keep ordered delivery 5755→5756→5757→5758→5759→5760 and
+retain the signed standard-EH delay repair at PR5759, including both catch forms.
+
+
+## 2026-09-12: native delay/combinator extraction queue refresh
+
+Refresh existing PR5759, “refactor(ir): extract native delay and combinator
+runtime bodies”, preserving published de2f1072ebb32771272d24a58407814f9d2a5d38
+and its signed scoped EH repair 561853c00d76c72eb44dbee14340dc15e9841e41. Merge
+signed source-family parent ceda2670821124e09c5a674e01e3632ac52b46b8 in
+`codex/5759-queue-drain-20260912`. Publish only to the existing PR, after parent
+delivery through the protected queue; no new migration scope is included.
+
+The two conflicts were appended issue history and ir-native-promise-delay.ts.
+Both complete history sections remain. The adapter resolves to the exact
+extracted checkpoint adapter, without a duplicate inline body or stray EH
+import. The signed runtime leaf retains canonical buildStandardTryTable,
+tagged externref payload rejection and foreign-exception null sentinel
+rejection. Allocation, timer registration, Promise lifecycle and return order
+remain unchanged. Runtime leaf SHA256:
+e60283bf8303025e4faa430707a9f5651c78db98202feba9aa6ccd285056e29c.
+
+All ten source/test files changed by the repaired checkpoint remain byte-for-
+byte identical to 561853. Refreshed parent frame wrapper/engine, frame forward
+fixture/test and source-family preparation remain unchanged. The exact policy
+composition retains every parent rule, adds delay-bodies.ts and
+combinator-bodies.ts to native-runtime, raises its minimum from four to six,
+and prepends the corresponding activation record. No allowed edge is widened.
+The boundary inventory remains 65 modules and 212 edges (150 type-only +62
+runtime); this is not a physical IR retirement claim.
+
+The original thirteen source hashes, thirteen supplemental semantic hashes,
+both five-file glue ledgers and all twenty-four declaration records remain
+unchanged. Preserve all seventeen forward-EH controls, including whole ordinary
+import authentication, attributes/assert/defer refusals, handler order,
+payload/tag/target checks and the foreign null sentinel. The old verifier still
+rejects the repaired body before its strictly authenticated inverse projection.
+
+Fresh serialized Node25.9.0/macOS ARM64 validation passed **610/610** across
+thirteen files, with zero failures or skips: frame ownership 29, frame source
+preservation 41, delay admission 41, delay identity 45, vectors 24, extracted
+body ownership 33, extracted source preservation 143, family source contract
+36, family source identity 55, prepared main 14, semantic/provider boundary
+121, native delay 14 and native family 14. The two added native-delay cases
+validate a real mixed-EH artifact and actual exported-tag payload identity.
+
+Public current-root preservation passed five frame artifacts / twelve
+executions and eleven delay/combinator artifacts / nineteen executions,
+including eight native-family scenarios. Both verdicts explicitly record
+historicalPair NOT_RUN, physicalAcceptanceCertified false and retirementCertified
+false. Do not relabel this fresh current-root evidence as historical byte/WAT
+identity against the pre-EH baseline.
+
+Source TS7, explicit-parent LOC/function budgets, coercion, oracle and
+preservation-v1 dead-export checks passed; conformance sync changed zero files.
+Strict closure remains OPEN at the two existing nonliteral imports. The
+independent b363f29d3c43c626dc852744ad64a0b48a003693 corpus verified all 53,933
+raw files, exact modes/directories and no extras/shared objects. Corpus manifest
+SHA256 fcaaff56a78c134e3875a00b743d5e6435939c38f304eeec1ffb35bc3c611ffb.
+Existing corpora and fixtures remain preserved.
+
+The default pre-commit selector sees 37 inherited root test changes against
+535ee6b6ba19239394ee50f8235e6c528212688b and its existing >20 lane self-skips.
+The 610 tests above ran directly. Normal signed commit/push hooks remain
+mandatory, with actual outcomes recorded at publication. Detailed local
+receipts are under `.tmp/5759-queue-drain/`; public verdicts are under
+`.tmp/frame-body-preservation-HWMbr5/` and
+`.tmp/delay-combinator-preservation-ZE3n0z/`. Keep dependency-first delivery
+5755→5756→5757→5758→5759→5760; only verified delivery to main counts.

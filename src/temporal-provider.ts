@@ -40,6 +40,7 @@ import * as nodeCrypto from "node:crypto";
 
 import type { CompileOptions, CompileResult, LinkedModuleArtifact } from "./index.js";
 import { compileMulti, compileProject } from "./index.js";
+import { standaloneIntlShimSource } from "./temporal-intl-shim.js";
 import { getDefaultEnvironment } from "./env.js";
 
 /** npm package name the polyfill bundle is presented to the linker under. */
@@ -120,7 +121,26 @@ function fingerprint(parts: readonly string[]): string {
  * `scripts/prewarm-temporal-provider.mjs` carries this exact key.
  */
 export function temporalProviderCacheKey(options: { polyfillSource: string; compileOptions?: CompileOptions }): string {
-  return fingerprint([options.polyfillSource, providerOptionFingerprint(options.compileOptions)]);
+  return fingerprint([providerSource(options), providerOptionFingerprint(options.compileOptions)]);
+}
+
+/**
+ * The text actually written to the synthetic package's `index.js`.
+ *
+ * On the JS-host lane (`--target gc`, the default) this is the bundle verbatim,
+ * so the host provider's cache key and artifact bytes are unchanged by this
+ * function's existence — proven by an A/B of both in #5383 S2c.
+ *
+ * On the standalone / WASI lanes the #5383 S2c `Intl` refusal shim is prepended
+ * (see `temporal-intl-shim.ts` for why the polyfill cannot initialise without a
+ * module-scoped `Intl` there). Because the KEY is computed from this same text,
+ * editing the shim re-keys the standalone artifact: a stale binary can never be
+ * served for a changed shim.
+ */
+function providerSource(options: { polyfillSource: string; compileOptions?: CompileOptions }): string {
+  const target = options.compileOptions?.target ?? "gc";
+  if (target !== "standalone" && target !== "wasi") return options.polyfillSource;
+  return `${standaloneIntlShimSource()}\n${options.polyfillSource}`;
 }
 
 function providerOptionFingerprint(options: CompileOptions | undefined): string {
@@ -228,19 +248,28 @@ function materializeTemporalProject(fs: ProjectFilesystem, cacheDir: string, key
 /**
  * Compile the polyfill once into a linked provider artifact.
  *
- * STANDALONE MODE IS OUT OF SCOPE HERE, and that is a real gap, not an
- * oversight: this lane is `--target gc` with the JS host adapter. The polyfill
- * reaches the host through the ordinary compiled-object bridge — no NEW host
- * import is introduced by this module (it adds none; the provider's import set
- * is whatever the polyfill's own compile needs, and the linker refuses any
- * namespace outside `env` / the string namespaces / declared `link:` targets).
- * So the dual-mode principle is not violated by a new host dependency, but a
- * standalone (`--target wasi` / `--no-host-imports`) Temporal global does NOT
- * exist yet: the provider deferred-init export the linker requires is
- * documented as unavailable for WASI (`src/package-linker.ts`, "the deferred
- * export is unavailable for WASI, whose startup contract is `_start`"). Wiring
- * standalone needs that provider-startup lifecycle first and is deliberately
- * left to a follow-up.
+ * The DEFAULT lane is `--target gc` with the JS host adapter: the polyfill
+ * reaches the host through the ordinary compiled-object bridge, and this module
+ * introduces no host import of its own (the provider's import set is whatever
+ * the polyfill's compile needs, and the linker refuses any namespace outside
+ * `env` / the string namespaces / declared `link:` targets).
+ *
+ * STANDALONE (#5383) is now BUILDABLE, not yet usable end to end. With
+ * `compileOptions: { target: "standalone", hostBridge: "off" }` this returns a
+ * `separate` plan whose artifact imports NOTHING and whose `__module_init`
+ * RETURNS (measured 2026-09-08: 44 s, 3.17 MB, import list empty) — the
+ * `Intl` refusal shim in `temporal-intl-shim.ts` is what got init that far.
+ * What does NOT work yet is the value that crosses the getter boundary: a
+ * consumer compiled with `compileWithTemporalGlobal(..., standalone)` sees
+ * `typeof Temporal === "object"` with ZERO own keys, while the SAME module
+ * read from inside itself has all nine (`Object.keys(qi).length === 9`). So
+ * the remaining gap is the standalone cross-module object boundary, not the
+ * polyfill and not this module's plumbing. Details in #5383's "S2c findings".
+ *
+ * The historical claim that the deferred-init export is unavailable for
+ * standalone is FALSE and was retired in S1: it is a `--target wasi` statement
+ * (`src/package-linker.ts`, "the deferred export is unavailable for WASI,
+ * whose startup contract is `_start`"), and standalone exports `__module_init`.
  */
 export async function buildTemporalProvider(options: BuildTemporalProviderOptions): Promise<TemporalProvider> {
   const key = temporalProviderCacheKey(options);
@@ -254,7 +283,7 @@ export async function buildTemporalProvider(options: BuildTemporalProviderOption
   // The linker consumes a real module graph, so the bundle is materialized as
   // a one-file npm package next to its own provider cache. The directory is
   // keyed by the source fingerprint, so a bundle bump never reuses stale text.
-  const entryPath = materializeTemporalProject(fs, options.cacheDir, key, options.polyfillSource);
+  const entryPath = materializeTemporalProject(fs, options.cacheDir, key, providerSource(options));
 
   const result = await compileProject(entryPath, {
     ...options.compileOptions,
