@@ -4540,6 +4540,16 @@ export function tryEmitInlineDynamicCall(
     (ctx.standalone === true || ctx.wasi === true) &&
     (ctx.taCtorTypeIdx >= 0 || ctx.builtinObjectGlobals.has("ctor:Int8Array"));
   const wantApplyFallback = ctx.standalone === true || ctx.wasi === true;
+  // (#6420) The generic host-free dynamic-call path used to fall through to
+  // `__apply_closure` for every carrier it did not understand. That is wrong
+  // for a class VALUE: it intentionally has `typeof === "function"` and
+  // [[Construct]], but no [[Call]]. Register the shared predicate before any
+  // funcIdx is captured; the actual check is emitted after every argument has
+  // evaluated, matching EvaluateCall's observable order.
+  const wantIsCallableGuard = noJsHost(ctx);
+  if (wantIsCallableGuard) {
+    ensureLateImport(ctx, "__is_callable", [{ kind: "externref" }], [{ kind: "i32" }]);
+  }
   if (allCandidates.length === 0 && !wantProxyArm && !wantBoundArm && !wantTaCtorArm && !wantApplyFallback) return null;
 
   // Dedupe by funcTypeIdx — concrete subtypes share funcTypeIdx with their
@@ -4686,6 +4696,7 @@ export function tryEmitInlineDynamicCall(
   let unboxNumberIdx = ctx.funcMap.get(UNBOX_NUMBER);
   let isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
   let unwrapForWasmIdx = ctx.funcMap.get("__unwrap_for_wasm");
+  let isCallableIdx = ctx.funcMap.get("__is_callable");
   if (
     boxNumberIdx === undefined ||
     unboxNumberIdx === undefined ||
@@ -4799,6 +4810,7 @@ export function tryEmitInlineDynamicCall(
   unboxNumberIdx = ctx.funcMap.get(UNBOX_NUMBER);
   isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
   unwrapForWasmIdx = ctx.funcMap.get("__unwrap_for_wasm");
+  isCallableIdx = ctx.funcMap.get("__is_callable");
   if (
     boxNumberIdx === undefined ||
     unboxNumberIdx === undefined ||
@@ -4826,6 +4838,22 @@ export function tryEmitInlineDynamicCall(
     };
   }
   if (applyFallback !== undefined) applyFallback = reserveDynamicApplyFallback(ctx);
+
+  if (wantIsCallableGuard && isCallableIdx !== undefined) {
+    // Arguments are already materialised in locals. Throwing here therefore
+    // preserves §13.3.6's callee → arguments → IsCallable order and prevents a
+    // rejected class from reaching `__apply_closure`'s legacy null fallback.
+    const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "called value is not a function", {
+      flush: fctx,
+    });
+    fctx.body.push(
+      { op: "local.get", index: anyLocal },
+      { op: "extern.convert_any" },
+      { op: "call", funcIdx: isCallableIdx },
+      { op: "i32.eqz" },
+      { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
+    );
+  }
 
   // Build dispatch chain (innermost = default, outermost = first).
   // Default: ref.null.extern (matches existing fallback semantics).
