@@ -150,6 +150,53 @@ function constructorBodyHasSuperCall(node: ts.Node): boolean {
   return found;
 }
 
+function isSuperWriteTarget(node: ts.Node): boolean {
+  let child = node.parent;
+  for (let parent = child?.parent; parent; child = parent, parent = parent.parent) {
+    if (
+      (ts.isBinaryExpression(parent) &&
+        parent.left === child &&
+        parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
+      ((ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+        (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken)) ||
+      ((ts.isForInStatement(parent) || ts.isForOfStatement(parent)) && parent.initializer === child)
+    )
+      return true;
+    if (ts.isStatement(parent)) break;
+  }
+  return false;
+}
+
+// A missing-super constructor must execute its body before the fallthrough
+// GetThisBinding throw. Keep return/this, eval, and nested callable lowering separate
+// until their constructor-completion semantics can use the same path. Scan
+// parameter initializers too: a default this read must prevent body effects.
+function canReplayMissingSuperBody(ctor: ts.ConstructorDeclaration): boolean {
+  let safe = true;
+  let inParameters = true;
+  const visit = (node: ts.Node): void => {
+    if (!safe) return;
+    if (
+      ts.isReturnStatement(node) ||
+      node.kind === ts.SyntaxKind.ThisKeyword ||
+      (node.kind === ts.SyntaxKind.SuperKeyword && (inParameters || isSuperWriteTarget(node))) ||
+      (ts.isIdentifier(node) && node.text === "eval") ||
+      ts.isFunctionLike(node) ||
+      ts.isClassDeclaration(node) ||
+      ts.isClassExpression(node)
+    ) {
+      safe = false;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  for (const parameter of ctor.parameters) visit(parameter);
+  inParameters = false;
+  if (ctor.body) visit(ctor.body);
+  return safe;
+}
+
 function getBuiltinConstructorForwardArity(ctx: CodegenContext, builtinParent: string): number {
   const declaredArity = ctx.externClasses.get(builtinParent)?.constructorParams.length ?? 0;
   return Math.max(1, declaredArity);
@@ -2864,11 +2911,16 @@ function compileClassBodiesInner(
     // §13.3.7.1 SuperCall, accessing `this` or returning from such a
     // constructor must throw a ReferenceError. We detect the statically-provable
     // case (no lexical `super()` anywhere in the constructor body) and emit an
-    // unconditional throw at the constructor entry, skipping the (now dead)
-    // body compilation.
+    // fallthrough throw after bounded standalone bodies. Other shapes retain
+    // the entry throw until constructor return/this lowering supports them.
     const ctorMissingSuper = isDerivedClass && ctor?.body !== undefined && !constructorBodyHasSuperCall(ctor.body);
 
     if (ctorMissingSuper) {
+      if (ctx.standalone && ctor?.body && canReplayMissingSuperBody(ctor)) {
+        hoistVarDeclarations(ctx, fctx, ctor.body.statements);
+        hoistLetConstWithTdz(ctx, fctx, ctor.body.statements);
+        for (const stmt of ctor.body.statements) compileStatement(ctx, fctx, stmt);
+      }
       // A derived constructor that returns a primitive before calling
       // `super()` still reaches [[Construct]]'s return-value check.  The
       // missing-`super` ReferenceError is correct when the body falls through

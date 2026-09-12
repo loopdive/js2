@@ -35,6 +35,121 @@ async function runStandalone(source: string): Promise<number> {
 }
 
 describe("#5350 r1 — standalone super property reads", () => {
+  it("keeps top-level class prototype writes in source order", async () => {
+    expect(
+      await runStandalone(`
+class A {}
+class B extends A { read() { return super.value; } }
+let sequence = 0;
+function mark(value: number): number { sequence = sequence * 10 + value; return value; }
+(A as any).prototype.value = mark(1);
+(A as any)["prototype"]["value"] += mark(2);
+export function test(): number {
+  return A["prototype"] === A.prototype ? (B as any).prototype.read() * 100 + sequence : -1;
+}
+`),
+    ).toBe(312);
+  });
+
+  it("stores top-level super reads into module variables", async () => {
+    expect(
+      await runStandalone(`
+var fromA, fromB;
+class A {}
+class B extends A {}
+class C extends B {
+  method() { fromA = super.fromA; fromB = (() => super["fromB"])(); }
+}
+A.prototype.fromA = 'a';
+A.prototype.fromB = 'a';
+B.prototype.fromB = 'b';
+C.prototype.fromA = 'c';
+C.prototype.fromB = 'c';
+C.prototype.method();
+export function test(): number { return (fromA === 'a' ? 1 : 0) + (fromB === 'b' ? 2 : 0); }
+`),
+    ).toBe(3);
+  });
+
+  it("executes missing-super constructor effects and catches before its fallthrough throw", async () => {
+    expect(
+      await runStandalone(`
+var sequence = 0;
+var caught;
+class C extends Object {
+  constructor() {
+    sequence = sequence * 10 + 1;
+    try { super.x; } catch (err) { caught = err; sequence = sequence * 10 + 2; }
+    sequence = sequence * 10 + 3;
+  }
+}
+try { new C(); } catch (err) { if (err instanceof ReferenceError) sequence = sequence * 10 + 4; }
+export function test(): number { return caught instanceof ReferenceError ? sequence : -1; }
+`),
+    ).toBe(1234);
+  });
+
+  it("preserves an exception thrown by a missing-super constructor body", async () => {
+    expect(
+      await runStandalone(`
+var caught = 0;
+class C extends Object { constructor() { throw 42; } }
+try { new C(); } catch (err) { caught = err === 42 ? 1 : -1; }
+export function test(): number { return caught; }
+`),
+    ).toBe(1);
+  });
+
+  it("keeps primitive-return and nested-function missing-super controls", async () => {
+    expect(
+      await runStandalone(`
+export function test(): number {
+  let result = 0;
+  class Primitive extends Object { constructor() { return 42; } }
+  class Nested extends Object { constructor() { function unused() { return 1; } } }
+  try { new Primitive(); } catch (e) { if (e instanceof TypeError) result += 1; }
+  try { new Nested(); } catch (e) { if (e instanceof ReferenceError) result += 2; }
+  return result;
+}
+`),
+    ).toBe(3);
+  });
+
+  it("does not replay body effects after an uninitialised-this parameter default", async () => {
+    expect(
+      await runStandalone(`
+var seen = 0;
+class C extends Object { constructor(value = this) { seen = 1; } }
+try { new C(); } catch (e) {}
+export function test(): number { return seen; }
+`),
+    ).toBe(0);
+  });
+
+  it("does not replay writes through an uninitialised super reference", async () => {
+    expect(
+      await runStandalone(`
+var seen = 0;
+class A extends Object { constructor() { super.x = (seen = 1); } }
+class B extends Object { constructor() { super.x += (seen = 2); } }
+try { new A(); } catch (e) {}
+try { new B(); } catch (e) {}
+export function test(): number { return seen; }
+`),
+    ).toBe(0);
+  });
+
+  it("does not replay body effects after a super-property parameter default", async () => {
+    expect(
+      await runStandalone(`
+var seen = 0;
+class C extends Object { constructor(value = super.x) { seen = 1; } }
+try { new C(); } catch (e) {}
+export function test(): number { return seen; }
+`),
+    ).toBe(0);
+  });
+
   it("reads a class super property through the runtime prototype chain", async () => {
     // 1 = `super.fromB` sees B.prototype's own property, 2 = `super['fromA']`
     // walks past it to A.prototype. Node 22 answers 3.
