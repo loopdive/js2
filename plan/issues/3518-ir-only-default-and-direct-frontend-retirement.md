@@ -5202,11 +5202,126 @@ implementation status must be verified separately, not inferred from dispatch.
 The independent source-admission prerequisite is recorded in
 `plan/agent-context/3518-certified-delay-source-admission-plan-2026-09-08.md`.
 Fresh whole-program probes refuse the unchanged certified delay at unknown
-Promise construction, and the complete async family at the array-returning
-signature. Existing public-route success does not remove either gap. Preserve
+Promise construction, and the complete async family at the `number[]` parameter
+of `fetchAllSequential(ids: number[]): Promise<number>`. Existing public-route
+success does not remove either gap. Preserve
 the exact closure inventory while wiring certification; logical vector/await
 typing and all runtime/physical/public-cutover requirements remain in scope.
 
+### Native settlement implementation integrated (2026-09-08)
+
+The settlement checkpoint moves six executable builders and seven constants
+into `src/runtime/wasmgc/promise/settlement-bodies.ts`. Four existing scheduler
+registrations call the canonical builders. Context-bearing hook and unhandled
+rejection adapters retain their signatures and allocation order. Identity
+fulfillment still targets resolve/adoption, not direct fulfillment. Original
+13-declaration receipt and all 88 retained donor declarations remain checked.
+
+High review found no production regression, but identified three test-control
+gaps: reconstructed headers could hide signature/modifier changes; forwarding
+checks missed type-only clauses and aliases; source receipts did not independently
+pin compile recipes/counts. Revision 2 repairs these without changing the three
+production blobs or reseeding original receipts. The composed branch passes
+148/148 focused controls (129 ownership and 19 source). Revision 1 and its reports
+remain preserved rather than relabelled.
+
+Final composed regression measurement passes 45/45 across the existing delay,
+native async-family, hook, adoption and rejection-tracking suites. TS7 typecheck
+also exits zero. These are measured on the integrated physical/settlement source,
+not inferred from the earlier standalone worker results.
+
+Boundary activation now requires 60 canonical modules, adding exactly settlement
+to the prior 59. All 23 previous activation records and allowed edges remain
+unchanged. The complete selected closure measures 203 resolved edges (145
+type-only, 58 runtime), and all 101 boundary controls pass. This selected closure
+is not the full compiler graph or a retirement certificate.
+
+The full inventory check exits zero with `inventoryValid: true` but
+`architectureComplete: false`: 1,305 modules (60 clean, five compatibility
+adapters, 1,240 unmigrated), zero classification errors and zero unresolved
+imports. Four unknown dynamic-import edges remain: two in the Porffor loader,
+one in optimize, and one in the platform-capability adapter. Inventory validity
+must not be reported as static graph closure.
+
+The revision-2 historical pair compares an independently clean exact-e3de root
+with the composed settlement branch based on published `1731cf377a`. All eight
+pairs match with no pending rows; both children exit zero with no signal/error.
+Serialized-report SHA256s are
+`aa2915cb82b0322e223f99c3eb1eb60d2adeb4cf68dea4ec2f6c9406dcb7b721`
+(baseline) and `bee9a2f9e1429193b97dbc18581f1b7f71e415f6f4e69755087cbf31a991aa3a`
+(candidate), retained under `.tmp/native-promise-settlement-historical-r2` in
+the settlement integration worktree. Four standalone rows and four legacy WASI
+rows remain separately labelled. Acceptance is limited to these public-route
+fixtures, not whole-program source admission, physical async acceptance, ABI30,
+public cutover or retirement.
+
+The exact source-admission API and seven-file implementation contract are now
+in `plan/agent-context/3518-certified-delay-source-api-contract-2026-09-08.md`.
+The explicit default-off frontend request does not imply provider availability;
+the next missing runtime declaration must remain a located refusal. Full-family
+logical vector/await typing remains mandatory and independent.
+
+The frame worker's scoped claim was independently verified upstream with owner
+`ttraenkler/codex-astra-native-async-frame-bodies-20260908`, write ID
+`67945-bzg89dfn`, claim commit `178447ad6adedc33d882ab35f412f7c5b495caa6`.
+Its hook process completed and released the serialized test slot; static
+implementation proceeds separately. No frame implementation is implied here.
+
+### Full-family signature attribution corrected (2026-09-08)
+
+The unchanged playground source declares both sequential and parallel functions
+as `(ids: number[]): Promise<number>`. The earlier array-returning-signature
+description was incorrect. A direct invocation of the current `typeNodeToIr`
+on the exact parsed annotations rejects both `number[]` parameters with
+`type-resolution-unsupported`, while both unwrapped `number` returns lower to
+f64. This is a signature-lowering probe, not successful whole-program preparation.
+Parallel additionally requires its original `Promise<number>[]` local and
+the `number[]` result of `await Promise.all(pending)`; neither is removed from
+the full-family scope.
+
+Source-admission implementation is now claimed separately by
+`ttraenkler/codex-astra-certified-delay-source-admission-20260908`, verified
+upstream write `79476-841vjtpq`, claim commit
+`57e7f2be986125df69c4d16bdbf282937a0272ea`. The claim hook completed and released
+the shared validation slot. The seven-file source-admission implementation is
+still pending and is not included in this documentation correction.
+
+### Complete native-family next dispatch (2026-09-08)
+
+The source-grounded High plan is
+`plan/agent-context/3518-complete-native-family-source-plan-2026-09-08.md`;
+the exact shared interface is
+`plan/agent-context/3518-native-family-logical-vector-interface-2026-09-08.md`.
+These describe the next dispatch, after current delay-admission and frame drafts
+freeze. They do not expand those workers' current write scopes.
+
+The connected source goal retains all five original functions: certified delay,
+fetchUser, sequential, parallel, and main. It includes array parameters,
+effectful Promise-vector push, awaited Promise.all number-vector results, and
+main's real clock/logging/string operations. Pure logical vector lowering must
+not fabricate physical indices, resolver flags, providers or continuation bodies.
+
+The frozen frontend interface is per-function `logicalVectorTypes`, keyed by
+exact original parameter/variable declarations and vector-valued expressions.
+Producer identity validation and lowerer assignability/type validation are both
+required; missing entries must not fall back to physical registration. The
+separate default-off `asyncFamilyProjection` requires explicit native delay
+selection and compatible standalone/WasmGC source/runtime projections. Neither
+selection is inferred from legacy fast/default settings.
+
+Immediate acceptance remains eight separately reported preparation runs
+(original/export-only source, original/decoded input, GVN off/on), complete
+support inventory, and five original await sites. These are not eight executions.
+Final native execution still requires all eight existing behavioral scenarios,
+the unchanged 14-case public-family suite, real runtime declarations/providers,
+vector layouts/growth, frame transport and full public cutover/retirement proof.
+
+Preliminary reviews of the current, still-unfrozen drafts identified two
+requirements for their handoff: source admission must distinguish actual
+structural references from ordinary string/debug-label text equal to a unit ID;
+frame preservation tests must run self-contained in ordinary CI and keep the
+external-baseline comparison explicit, with no child timeout killing. These
+are repair requests, not approvals or measured failures of frozen candidates.
 ### Capability contract extraction checkpoint (2026-09-08)
 
 The [Astra High capability-schema plan](../agent-context/3518-capability-schema-checkpoint-plan-2026-09-08.md)

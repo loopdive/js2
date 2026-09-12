@@ -183,8 +183,11 @@
       "status": "active",
       "roots": ["src/runtime/wasmgc"],
       "required": true,
-      "entries": ["src/runtime/wasmgc/async/microtask-queue-bodies.ts"],
-      "minModules": 1
+      "entries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts"
+      ],
+      "minModules": 2
     },
     {
       "id": "standalone-platform",
@@ -423,6 +426,14 @@
     }
   ],
   "activationHistory": [
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts"
+      ],
+      "minModules": 2
+    },
     {
       "layer": "wasm-model",
       "entries": ["src/wasm/model/instructions.ts", "src/wasm/model/module-records.ts"],
@@ -10423,6 +10434,11 @@
     },
     {
       "path": "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/promise/settlement-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
     },

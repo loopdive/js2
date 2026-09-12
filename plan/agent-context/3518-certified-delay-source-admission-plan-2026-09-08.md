@@ -73,8 +73,12 @@ required work, not implied by admission.
 
 ## Independent full-family dependency
 
-`Promise<number[]>` requires logical vector typing for signatures and await/body
-typing. The current `checkerScalar` await resolver is insufficient. Do not reuse
+The unchanged fixture's `fetchAllSequential(ids: number[]): Promise<number>`
+first fails on its array parameter, not an array return. Both sequential and
+parallel owners return numeric Promises. Parallel additionally needs the local
+`Promise<number>[]` vector and the `number[]` result of `await Promise.all(pending)`.
+These require logical vector typing for signatures and await/body typing.
+The current `checkerScalar` await resolver is insufficient. Do not reuse
 public `resolvePositionType` wholesale: some branches allocate physical vector
 types through compiler context. Complete logical vector/async preparation stays
 in scope alongside certified-delay admission and the frame-body implementation.
