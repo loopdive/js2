@@ -20,6 +20,7 @@ import { isVoidType, unwrapPromiseType, isPromiseType } from "../checker/type-ma
 import type { FieldDef, Instr, LocalDef, StructTypeDef, ValType } from "../ir/types.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2867 Gap 1) native-$Promise carrier gate
 import { emitEagerAsyncPromiseWrap, parkedAsyncClosureWrapsPromise } from "./async-eager-promise.js"; // (#4630)
+import { widenAsyncThenableResult } from "./async-thenable-return.js"; // (#5371)
 import { definedFuncAt, funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { pushProgramAbiNestedCallable, pushProgramAbiTypedThisTwin } from "./program-abi-source-callable-planning.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3b) manual import-shift must skip stable handles
@@ -2229,7 +2230,13 @@ export function computeClosureWrapperSig(
       }
     }
   }
-  return { params: arrowParams, returnType: widenEvalReturn(ctx, arrow, closureReturnType), hasRestParam };
+  return {
+    params: arrowParams,
+    // (#5371) A never-suspending async closure that returns a thenable keeps its
+    // result on the externref carrier so the call-site `Promise.resolve` adopts it.
+    returnType: widenAsyncThenableResult(ctx, arrow, widenEvalReturn(ctx, arrow, closureReturnType)),
+    hasRestParam,
+  };
 }
 
 /**
