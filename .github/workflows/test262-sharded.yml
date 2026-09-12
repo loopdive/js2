@@ -65,6 +65,11 @@ on:
     - cron: "23 2 * * *"
   workflow_dispatch:
     inputs:
+      standalone_temporal:
+        description: "(#5383 S3) Build the STANDALONE Temporal provider and let standalone shards link it. OFF by default: linking multiplies a standalone row's compile time ~2.5-3.5x (measured 2026-09-12), which pushes large-harness rows past the 30 s fork kill. The wiring is always present; this only decides whether the artifact exists."
+        required: false
+        default: false
+        type: boolean
       native_first:
         description: "Also measure native-first semantics in the JS environment (separate artifacts, never promotes host baselines)"
         type: boolean
@@ -846,20 +851,31 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=3072
         run: node scripts/prewarm-temporal-provider.mjs --target host
 
-      # (#5383 S3) SOFT failure, deliberately the opposite of the host step
-      # above, and the difference is not timidity — it is what the two artifacts
-      # certify. The published baseline is measured WITH the host provider, so a
-      # missing host artifact makes the shards lie. NO standalone baseline has
-      # ever been measured with one: if this build fails, no standalone stamp is
-      # written, `test262TemporalLaneEnabled` answers false, and every standalone
-      # Temporal row runs unlinked — which is exactly the pre-#5383 baseline the
-      # regression gate compares against. Failing the job instead would block the
-      # merge queue on a lane whose numbers cannot move either way.
+      # (#5383 S3) OPT-IN, and SOFT when it does run. Two different decisions,
+      # each measured rather than assumed:
       #
-      # ~60 s measured (2026-09-12, 3.31 MB artifact), inside the job's existing
-      # 20-minute budget, and skipped entirely on a host-only run.
+      #  OPT-IN, because linking is not free on this lane. Compiling an ASSEMBLED
+      #  standalone row costs ~2.5-3.5x more linked than unlinked (measured
+      #  2026-09-12 on a loaded box: `intl402/.../era-japanese.js`, 60 KB of
+      #  harness, 17.4 s unlinked vs 61.1 s linked; `PlainDate/prototype/day/
+      #  basic.js`, 10.6 KB, 4.2 s vs 10.9 s). The fork kill is 30 s, so turning
+      #  this on by default would convert large-harness Temporal rows from an
+      #  honest `Temporal is not defined` fail into a per-row TIMEOUT — the exact
+      #  storm the pre-warm doctrine exists to prevent, and a slower shard for a
+      #  lane whose baseline was never measured linked. The wiring is complete
+      #  either way; this flag only decides whether the ARTIFACT exists, and the
+      #  stamp gate does the rest. Flip it on a `workflow_dispatch` measurement
+      #  run; make it the default once the linked-compile cost is addressed.
+      #
+      #  SOFT, because the published standalone baseline is measured UNLINKED. A
+      #  failed build writes no stamp, `test262TemporalLaneEnabled` answers
+      #  false, and the rows run exactly as that baseline expects. Failing the
+      #  job would block the merge queue on a lane whose numbers cannot move.
+      #  (The host step above is the opposite on both counts, deliberately: its
+      #  baseline IS measured linked, so a missing host artifact makes the shards
+      #  lie.) Build cost when it runs: ~60 s, 3.31 MB (measured 2026-09-12).
       - name: Build and stamp the provider (standalone)
-        if: needs.changes.outputs.run_standalone != 'false'
+        if: needs.changes.outputs.run_standalone != 'false' && inputs.standalone_temporal
         continue-on-error: true
         env:
           NODE_OPTIONS: --max-old-space-size=3072

@@ -1910,6 +1910,20 @@ describe("#5383 S3 the pre-warm step and the CI job", () => {
     expect(script).toContain("buildTemporalProvider({ polyfillSource, cacheDir, compileOptions })");
   });
 
+  it("the standalone provider is OPT-IN, in CI and locally", () => {
+    // Measured 2026-09-12: linking multiplies an ASSEMBLED standalone row's
+    // compile time ~2.5-3.5x (17.4 s → 61.1 s on a 60 KB-harness intl402 row;
+    // 4.2 s → 10.9 s on a 10.6 KB one). The fork kill is 30 s, so a default-on
+    // artifact would convert large rows from an honest fail into a per-row
+    // TIMEOUT. The wiring is complete either way — the flag only decides
+    // whether the artifact EXISTS, and the stamp gate does the rest.
+    const workflow = readRepoFile(".github", "workflows", "test262-sharded.yml");
+    expect(workflow).toContain("standalone_temporal:");
+    expect(workflow).toContain("needs.changes.outputs.run_standalone != 'false' && inputs.standalone_temporal");
+    const script = readRepoFile("scripts", "run-test262-vitest.sh");
+    expect(script).toContain("JS2WASM_TEST262_TEMPORAL_STANDALONE");
+  });
+
   it("the workflow builds the standalone provider SOFT and the host one HARD", () => {
     const workflow = readRepoFile(".github", "workflows", "test262-sharded.yml");
     expect(workflow).toContain("node scripts/prewarm-temporal-provider.mjs --target host");
@@ -1945,5 +1959,17 @@ describe("#5383 S3 the pre-warm step and the CI job", () => {
     const script = readRepoFile("scripts", "run-test262-vitest.sh");
     expect(script).toContain("--target standalone");
     expect(script).toContain("--target host");
+  });
+
+  it("a run with no standalone artifact is byte-identical to the pre-S3 behaviour", () => {
+    // The whole fail-soft argument in one assertion: with the artifact off (the
+    // default), the standalone lane's answer comes from the stamp gate, not
+    // from any lane-local condition that could drift.
+    const worker = readRepoFile("scripts", "test262-worker.mjs");
+    expect(worker).toContain("test262TemporalLaneEnabled");
+    const shared = readRepoFile("tests", "test262-shared.ts");
+    expect(shared).toContain("test262TemporalLaneEnabled(TEST262_TARGET)");
+    const runner = readRepoFile("tests", "test262-runner.ts");
+    expect(runner).toContain("test262TemporalLaneEnabled(target)");
   });
 });
