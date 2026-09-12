@@ -38,6 +38,45 @@ describe("#5199 native generator protocol bridge", () => {
     });
   }
 
+  it("keeps the original #439 host IteratorResult reads in the planned string-constant path", async () => {
+    const result = await compile(`function* gen(): Generator<number> {
+      yield 10;
+      yield 20;
+      yield 30;
+    }
+    export function test(): number {
+      const it = gen();
+      const r1 = it.next();
+      const r2 = it.next();
+      return r1.value + r2.value;
+    }`);
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    expect(WebAssembly.validate(result.binary!)).toBe(true);
+    expect(result.stringPool).toEqual(expect.arrayContaining(["value", "done"]));
+    const instance = await instantiateWithRuntime(result);
+    expect((instance.exports.test as () => number)()).toBe(30);
+  });
+
+  it("keeps the original #763 yield-as-IIFE-argument fixture runnable on the host lane", async () => {
+    const result = await compile(`
+      function *gen(): Generator<undefined, number, number> {
+        return (function(arg: number): number {
+          return arg + 1;
+        }(yield));
+      }
+      export function test(): number {
+        const iter = gen();
+        iter.next();
+        const result = iter.next(42);
+        return result.done ? 1 : 0;
+      }
+    `);
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    expect(WebAssembly.validate(result.binary!)).toBe(true);
+    const instance = await instantiateWithRuntime(result);
+    expect((instance.exports.test as () => number)()).toBe(1);
+  });
+
   it("keeps a deliberately legacy rest-parameter generator producer runnable", async () => {
     // Rest parameters are intentionally outside the native generator candidate
     // gate. This positive control proves the generator protocol work does not

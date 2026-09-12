@@ -34,7 +34,7 @@ import { canonicalUndefinedExternInstrs } from "./any-helpers.js"; // (#2864 wav
 import { addUnionImports } from "./index.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { getOrRegisterVecType, getArrTypeIdxFromVec, addFuncType } from "./registry/types.js";
-import { ensureExnTag } from "./registry/imports.js";
+import { addStringConstantGlobals, ensureExnTag } from "./registry/imports.js";
 import {
   ensureExternIsUndefinedImport,
   ensureGetUndefined,
@@ -44,7 +44,7 @@ import {
 import { buildStandardTryTable } from "../ir/try-table.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { NATIVE_GENERATOR_PROTOCOL_GET } from "./generators-native-protocol.js";
-import { nativeStringLiteralInstrs } from "./native-strings.js";
+import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { emitSetExtrasArgv, ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
 import { reserveAnyIterNext } from "./iterator-native.js";
 import {
@@ -819,8 +819,7 @@ function compileNativeGeneratorProtocolCall(
   fctx.body.push(
     { op: "local.set", index: self },
     { op: "local.get", index: self },
-    ...nativeStringLiteralInstrs(ctx, methodName),
-    { op: "extern.convert_any" },
+    ...stringConstantExternrefInstrs(ctx, methodName),
     { op: "call", funcIdx: ctx.funcMap.get(NATIVE_GENERATOR_PROTOCOL_GET)! },
     { op: "local.set", index: method },
     { op: "local.set", index: handled },
@@ -1098,6 +1097,12 @@ export function tryCompileNativeGeneratorResultProperty(
   // numeric/boolean reader selection below; narrowing an override result to
   // the native `{ value, done }` layout made `r.value` silently read `0`.
   if (dynamicResultCarrier) {
+    // This open-result fallback is the only reader that needs ordinary
+    // property-name values. Reserve both fixed IteratorResult names before
+    // constructing its body so the GC host lane receives planned
+    // `string_constants` globals instead of a native literal with no registered
+    // native-string type. Fully statically-known result structs stay unchanged.
+    addStringConstantGlobals(ctx, ["value", "done"]);
     const dynamicGetIdx = ensureLateImport(
       ctx,
       "__extern_get",
@@ -1114,8 +1119,7 @@ export function tryCompileNativeGeneratorResultProperty(
       return [
         { op: "local.get", index: anyLocal },
         { op: "extern.convert_any" },
-        ...nativeStringLiteralInstrs(ctx, name),
-        { op: "extern.convert_any" },
+        ...stringConstantExternrefInstrs(ctx, name),
         { op: "call", funcIdx: getIdx },
       ];
     };

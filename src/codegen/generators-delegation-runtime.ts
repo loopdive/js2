@@ -6,7 +6,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { addFuncType, getOrRegisterVecType, getArrTypeIdxFromVec } from "./registry/types.js";
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { ensureNativeIteratorRuntime, externIsObjectInstrs } from "./iterator-native.js";
-import { nativeStringLiteralInstrs } from "./native-strings.js";
+import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { canonicalUndefinedExternInstrs } from "./any-helpers.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { emitToBoolean } from "./coercion-engine.js";
@@ -15,6 +15,7 @@ import {
   fillNativeGeneratorProtocol,
   buildNativeGeneratorProtocolGet,
 } from "./generators-native-protocol.js";
+import { addStringConstantGlobals } from "./registry/imports.js";
 import { coerceType, ensureLateImport, flushLateImportShifts } from "./shared.js";
 
 const ER: ValType = { kind: "externref" };
@@ -77,6 +78,15 @@ export function ensureNativeGeneratorNumericPayload(ctx: CodegenContext): number
 /** Reserve before emitting callers; the existing iterator finalization fills bodies. */
 export function ensureNativeDelegatedResultHelpers(ctx: CodegenContext): void {
   if (ctx.funcMap.has("__gen_delegate_start")) return;
+  // `fillNativeDelegationRuntime` builds the property-reader bodies only after
+  // source-body compilation. Reserve their ordinary string keys while the
+  // source/Program-ABI population is still open: host builds receive the
+  // planned `string_constants` globals, while native-string builds retain the
+  // sentinel and materialize the same keys natively at the eventual read.
+  // Calling `nativeStringLiteralInstrs` unconditionally here instead minted an
+  // invalid `(ref -1)` global in the ordinary GC host lane, where native string
+  // types are deliberately absent.
+  addStringConstantGlobals(ctx, ["next", "throw", "return", "done", "value"]);
   ensureNativeIteratorRuntime(ctx);
   ensureObjectRuntime(ctx);
   reserveApplyClosure(ctx);
@@ -147,9 +157,7 @@ function buildGetter(ctx: CodegenContext, key: Key): { body: Instr[]; locals: Fu
   };
   const property = key === "iterator" ? "@@iterator" : key;
   const keyValue = (): Instr[] =>
-    key === "iterator"
-      ? [num(1), call(ctx, "__box_symbol")]
-      : [...nativeStringLiteralInstrs(ctx, key), { op: "extern.convert_any" }];
+    key === "iterator" ? [num(1), call(ctx, "__box_symbol")] : stringConstantExternrefInstrs(ctx, key);
   let fallback: Instr[] = [load(0), ...keyValue(), call(ctx, "__extern_get")];
   const sget = ctx.funcMap.get(`__sget_${property}`);
   if (sget !== undefined) {
