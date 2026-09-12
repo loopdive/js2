@@ -528,6 +528,27 @@ remain standalone `fail` with the same Test262 `SameValue` errors described
 above. They are therefore residuals attributable to the pre-existing exec
 path, not a status change from this replacement-only implementation.
 
+### C3a final publication refresh after upstream #5854/#5855 (2026-09-12)
+
+The live pre-push check then found current `loopdive/js2` main at final exact
+`781915e21a1b1a71aae3b3aac7256813284af8f8`. The branch normally merged that
+tip without a conflict or rebase. Its range from `b433de9f` contains the #6420
+handoff document and npm-compat benchmark/website artifacts only; no compiler,
+RegExp, or C3a test source changed. The `b433de9f` source-sensitive static
+gates therefore remain applicable, and this final artifact-only integration
+reran the proportional executable proof:
+
+- `pnpm run build:compiler-bundle` passed;
+- fresh isolated host A/B was `17 pass`;
+- fresh isolated standalone A/B was `17 pass / 0 compile_error / 0 timeout /
+  0 skip / 0 host imports`; and
+- the dedicated C3a test passed `14/14` in one fork.
+
+This supersedes `b433de9f` as the publication head while preserving all earlier
+head evidence above. The unchanged two-row exec residual and deferred
+three-row `@@match` handoff remain exactly as recorded; no broad residual
+transition is inferred from the artifact-only merge.
+
 ## Acceptance criteria
 
 - All 165 exact rows pass standalone with zero host imports; interim PRs pass
