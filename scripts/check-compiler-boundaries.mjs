@@ -713,6 +713,22 @@ export function checkCompilerBoundaries({
   return { report, exitCode: report.inventoryValid && (mode === "inventory" || report.architectureComplete) ? 0 : 1 };
 }
 
+/**
+ * Print a human-readable failure verdict to stderr (#6418).
+ *
+ * stdout stays pure JSON (the artifact upload and
+ * `tests/issue-3518-compiler-boundaries.test.ts` both parse it), so the reason
+ * a run failed has to travel on stderr or it is invisible in the CI job log —
+ * which is exactly what made an auto-park citing this gate unreadable.
+ * Silent on success to keep green logs quiet.
+ */
+function printVerdict(report, exitCode) {
+  if (!exitCode) return;
+  const lines = [`compiler-boundaries: ${report.status} (mode=${report.mode ?? "unknown"}, exit ${exitCode})`];
+  for (const error of report.errors ?? []) lines.push(`  ${error.code}: ${error.detail}`);
+  process.stderr.write(lines.join("\n") + "\n");
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const args = process.argv.slice(2);
@@ -725,16 +741,17 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     }
     const { report, exitCode } = checkCompilerBoundaries(options);
     console.log(JSON.stringify(report, null, 2));
+    printVerdict(report, exitCode);
     process.exitCode = exitCode;
   } catch (cause) {
-    console.log(
-      JSON.stringify({
-        mode: "unknown",
-        status: "checker-error",
-        architectureComplete: false,
-        errors: [{ code: "checker-error", detail: cause.message }],
-      }),
-    );
+    const report = {
+      mode: "unknown",
+      status: "checker-error",
+      architectureComplete: false,
+      errors: [{ code: "checker-error", detail: cause.message }],
+    };
+    console.log(JSON.stringify(report));
+    printVerdict(report, 2);
     process.exitCode = 2;
   }
 }

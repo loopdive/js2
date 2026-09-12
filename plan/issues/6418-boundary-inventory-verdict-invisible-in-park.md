@@ -1,10 +1,11 @@
 ---
 id: 6418
 title: "An auto-park citing the #3518 boundary-inventory gate shows no reason in the job log — the step redirects its verdict into the artifact, so the shepherd sees only `exit code 1`"
-status: ready
+status: done
 sprint: current
 created: 2026-09-12
 updated: 2026-09-12
+completed: 2026-09-12
 priority: medium
 horizon: s
 feasibility: easy
@@ -97,3 +98,74 @@ re-park on the next pass.
 ## Dispatch
 
 **Model: sonnet.** Mechanical CI/infra change: one stderr summary in a script whose output contract is already pinned by tests, one workflow-step tweak, and a contract test modelled on an existing file; the diagnosis and audit are done above.
+
+## Resolution
+
+Fixed 2026-09-12. The verdict now travels on **stderr**; stdout stays the pure
+JSON report the artifact upload and `tests/issue-3518-compiler-boundaries.test.ts`
+parse.
+
+- `scripts/check-compiler-boundaries.mjs` — new `printVerdict(report, exitCode)`
+  writes `compiler-boundaries: <status> (mode=<mode>, exit <n>)` plus one
+  `  <code>: <detail>` line per `errors[]` entry, on a non-zero exit only.
+  Called from both CLI exits: the normal path (after the JSON `console.log`) and
+  the `checker-error` catch, which now builds the report object once and prints
+  it both ways. A passing run writes zero bytes of stderr.
+- `.github/workflows/ci.yml` — the `>` redirect and the artifact upload are
+  unchanged; the command gains an `|| { echo "::error::…"; exit 1; }` handler
+  naming the artifact. No `tee` (the report is large), no `2>/dev/null`.
+
+**Probe (parent, at `e8a778638f`).** `touch src/codegen/zz-probe.ts` then
+`node scripts/check-compiler-boundaries.mjs --mode inventory --base HEAD^1
+> .tmp/r.json 2> .tmp/r.err` → exit 1, **0 bytes** of stderr. With the fix, the
+same run prints:
+
+```
+compiler-boundaries: invalid-inventory (mode=inventory, exit 1)
+  unclassified-module: src/codegen/zz-probe.ts
+```
+
+**AC3 audit — independently re-verified, and it confirms the plan.** The
+boundary-inventory step was the only `quality` step with the
+`> file.json`-and-no-verdict shape. The other two redirect sites in `ci.yml`
+(`select-changed-issue-tests.mjs --pinned` at L781, `--changed` at L801) already
+carry `::error::` / `::warning::` handlers, and the lint/format/typecheck lanes
+`cat` their captured logs. Nothing further to change.
+
+**Regression tests (fail on parent, pass with fix).**
+- `tests/issue-3518-compiler-boundaries.test.ts` — `run()` now returns
+  `stderr`; all six `fails closed for %s` rows assert the expected error code
+  reaches stderr, and the `extra` row additionally asserts `invalid-inventory`
+  and the offending path `src/foundation/unclassified.ts`.
+  Anti-vacuity control: a new valid-inventory case asserts `stderr === ""` and
+  that stdout still parses — it passes on the parent too, which is the point.
+- `tests/issue-6418-boundary-verdict-in-log.test.ts` — workflow contract: the
+  step still writes `compiler-boundaries-report.json`, the upload still has
+  `if-no-files-found: error`, the command carries no `2>` of any form, the
+  `::error::` annotation names the artifact, and `printVerdict` writes to
+  `process.stderr` rather than `console.log`.
+
+Parent run: 8 failures (6 `fails closed` rows + 2 of the 4 new workflow
+assertions). With the fix: 50/50 across
+`issue-6418-boundary-verdict-in-log`, `issue-3518-compiler-boundaries` and
+`ci-quality-failfast`.
+
+**No compiler source changed** — `scripts/` and `.github/` only — so no dogfood
+suite A/B was run and every anchor is unaffected by construction.
+
+### Second finding, fixed here: agent commits reformat bot-owned artifacts
+
+Merging `upstream/main` into this branch silently reformatted four published
+test262 report artifacts — 414 lines of whitespace, zero data change.
+`lint-staged` runs `prettier --write` on every staged `*.json`, and
+`.prettierignore` covers `benchmarks/results/` but not its two published copies
+(`public/benchmarks/results/`, and the two `website/public/` test262 reports),
+which the baseline-sync bot writes unformatted. `git log` shows only bots have
+ever touched those files, so the reformat would have gone DIRTY on the bot's
+next push to main.
+
+It could not be reverted by hand — restoring the content and staging it just
+re-invokes the same `prettier --write` — so the fix is the missing ignore
+entries, which is also what stops the next branch from hitting it. Same family
+as the issue above: a mechanism doing something invisible until it costs
+someone a cycle.
