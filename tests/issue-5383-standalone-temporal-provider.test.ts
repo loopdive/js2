@@ -38,8 +38,14 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compile, compileMulti, compileProject, instantiateLinkedProject } from "../src/index.js";
+import { runDogfoodScript } from "./dogfood/run-dogfood-script.js";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const S2K_HERE = dirname(fileURLToPath(import.meta.url));
 import { standaloneIntlShimSource } from "../src/temporal-intl-shim.js";
 import { temporalProviderCacheKey } from "../src/temporal-provider.js";
+import { RUNTIME_RECGROUP_TYPE_NAMES } from "../src/emit/canonical-recgroup.js";
 
 interface StandaloneModule {
   binary: Uint8Array;
@@ -69,6 +75,82 @@ async function compileStandalone(source: string): Promise<StandaloneModule> {
   expect(imports, "standalone module leaked host imports (#2961)").toEqual([]);
   const instance = await WebAssembly.instantiate(wasmModule, {});
   return { binary: result.binary, imports, instance };
+}
+
+/**
+ * (#5383 S2k) A structural fingerprint of the canonical runtime rec group —
+ * the first recursive group in `binary`'s type section, which codegen emits
+ * ahead of everything else and which holds exactly
+ * `RUNTIME_RECGROUP_TYPE_NAMES`.
+ *
+ * WasmGC canonicalizes a rec group AS A WHOLE, so this has to compare the
+ * group's own encoding and nothing else — in particular it must see the one
+ * bit that distinguishes `sub` from `sub final` on a member, which is
+ * invisible to any comparison made by type NAME or by absolute index. Returns
+ * "" when the module has no leading rec group.
+ */
+function canonicalGroupFingerprint(binary: Uint8Array): string {
+  let p = 8;
+  const leb = (): number => {
+    let v = 0;
+    let shift = 0;
+    let b: number;
+    do {
+      b = binary[p++]!;
+      v |= (b & 0x7f) << shift;
+      shift += 7;
+    } while (b & 0x80);
+    return v >>> 0;
+  };
+  while (p < binary.length) {
+    const id = binary[p++]!;
+    const size = leb();
+    if (id !== 1) {
+      p += size;
+      continue;
+    }
+    leb(); // type count
+    if (binary[p] !== 0x4e) return "";
+    const groupStart = p;
+    p++;
+    const count = leb();
+    expect(count, "the canonical group must hold exactly the frozen ABI members").toBe(
+      RUNTIME_RECGROUP_TYPE_NAMES.length,
+    );
+    const valType = (): void => {
+      const b = binary[p++]!;
+      if (b === 0x63 || b === 0x64) leb(); // (ref null? <heaptype>) — signed, but LEB-shaped
+    };
+    const comp = (): void => {
+      const k = binary[p++]!;
+      if (k === 0x5f) {
+        const n = leb();
+        for (let i = 0; i < n; i++) {
+          valType();
+          p++; // mutability
+        }
+      } else if (k === 0x5e) {
+        valType();
+        p++; // mutability
+      } else if (k === 0x60) {
+        const a = leb();
+        for (let i = 0; i < a; i++) valType();
+        const r = leb();
+        for (let i = 0; i < r; i++) valType();
+      }
+    };
+    for (let i = 0; i < count; i++) {
+      const tag = binary[p]!;
+      if (tag === 0x50 || tag === 0x4f) {
+        p++;
+        const n = leb();
+        for (let j = 0; j < n; j++) leb();
+      }
+      comp();
+    }
+    return createHash("sha256").update(binary.subarray(groupStart, p)).digest("hex").slice(0, 32);
+  }
+  return "";
 }
 
 function callExport(mod: StandaloneModule, name = "test"): unknown {
@@ -1373,39 +1455,199 @@ describe("#5383 S2i — STATIC members of a PROVIDER-owned class value, host-fre
     }).toEqual({ staticTypeof: 1, staticCall: 8, staticAccessor: 5, protoAccessor: 1, keys: 2 });
   });
 
-  // STILL OPEN — the S2 three-assertion smoke test through the REAL
-  // `buildTemporalProvider` + `compileWithTemporalGlobal` provider. All three
-  // assertions fail on the first one, and (#5383 S2j) the reason is NOT the
-  // namespace, NOT `Object.freeze`, NOT `__proto__: null` and NOT the member
-  // surface: from the polyfill provider, **no reference value crosses at all**.
-  // Measured host-free, `--target standalone` / `hostBridge:"off"`, with the
-  // tiny hand-built provider as the control and the SAME consumer source
-  // (`.tmp/s2j-valueabi.mts` — four one-line value exports, a nine-line
-  // consumer, ~60 s):
+  // (#5383 S2k) RESOLVED — S2j's "no reference value crosses from this
+  // provider" was a rec-group canonicalization failure, and the mechanism is
+  // one bit. The permanent guards for it are the two `describe` blocks below.
+});
+
+describe("#5383 S2k — the shared VALUE ABI survives a provider that uses `arguments`", () => {
+  // WasmGC canonicalizes a recursive type group AS A WHOLE. The ten types in
+  // `RUNTIME_RECGROUP_TYPE_NAMES` (the vec family + the string family) are the
+  // frozen ABI of a wasm→wasm link, so if ONE member's `final` bit differs
+  // between provider and consumer, all ten become different runtime types in
+  // the engine and EVERY `ref.test` on a peer-minted value fails: a
+  // provider-minted string is not a string, an array is not an array, an
+  // object enumerates nothing.
   //
-  //   | consumer read of a provider-minted value | tiny | polyfill |
-  //   | ---------------------------------------- | ---- | -------- |
-  //   | `num` (unboxed f64)                      | 42   | 42       |
-  //   | `typeof str === "string"`                | 1    | 0        |
-  //   | `str.length`                             | 5    | 0        |
-  //   | `Array.isArray(arr)` / `arr.length`      | 1/3  | 0/0      |
-  //   | `Object.keys({a:1,b:2}).length`          | 2    | 0        |
+  // That is exactly what a provider using `arguments` did. It registers
+  // `$__arguments_vec_externref` as a subtype of the group member
+  // `$__vec_externref`, so `markLeafStructsFinal` left that member `sub`
+  // (non-final) — while a consumer with no `arguments` emitted it `sub final`.
+  // Measured on the type sections (`.tmp/s2k-types.mjs`): group [0..9] hashed
+  // `2d74afdb81b1` in the consumer and `bc74a429728b` in the polyfill
+  // provider, differing in that single member and nothing else.
   //
-  // A number crosses because it is not a reference. A string is not even a
-  // string. So `Temporal` was simply the first value anyone read — the whole
-  // wasm↔wasm value ABI is dead for this provider, and the next slice's target
-  // is why its type space is not shared with its consumer's.
+  // `arguments` is only the trigger that happened to be reachable — any
+  // module-local subtype of any group member would do it. The fix pins every
+  // member open whenever the canonical group is emitted, so the group's
+  // identity is a constant of the ABI rather than a function of module
+  // content. This reduction uses `arguments` because it is the cheap,
+  // real-world trigger; the polyfill is not needed to reproduce it.
+  const PROVIDER = `
+    function argCount() { return arguments.length; }
+    export const probe = argCount(1, 2, 3);
+    export const str = "hello";
+    export const arr = [1, 2, 3];
+    export const obj = { a: 1, b: 2 };
+  `;
+
+  const CONSUMER = `
+    export function probe() { return NS.probe; }
+    export function strType() { return typeof NS.str === "string" ? 1 : 0; }
+    export function strLen() { const v = NS.str.length; return typeof v === "number" ? v : -1; }
+    export function strEq() { return NS.str === "hello" ? 1 : 0; }
+    export function arrIs() { return Array.isArray(NS.arr) ? 1 : 0; }
+    export function arrLen() { const v = NS.arr.length; return typeof v === "number" ? v : -1; }
+    export function arr0() { const v = NS.arr[0]; return typeof v === "number" ? v : -1; }
+    export function objKeys() { return Object.keys(NS.obj).length; }
+    export function objA() { const v = NS.obj.a; return typeof v === "number" ? v : -1; }
+  `;
+
+  it(
+    "a string, an array and an object all cross from a provider that uses `arguments`",
+    { timeout: 300_000 },
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "issue-5383-s2k-"));
+      const packageRoot = join(root, "node_modules", "ns5383k");
+      mkdirSync(packageRoot, { recursive: true });
+      writeFileSync(
+        join(packageRoot, "package.json"),
+        JSON.stringify({ name: "ns5383k", version: "0.0.0", main: "index.js" }),
+      );
+      writeFileSync(join(packageRoot, "index.js"), PROVIDER);
+      const entry = join(root, "entry.js");
+      writeFileSync(
+        entry,
+        `import { probe, str, arr, obj } from "ns5383k";\nconst NS = { probe, str, arr, obj };\n${CONSUMER}\n`,
+      );
+      const built = await compileProject(entry, {
+        allowJs: true,
+        skipSemanticDiagnostics: true,
+        packageCacheDir: join(root, "providers"),
+        target: "standalone",
+        hostBridge: "off",
+      });
+      expect(built.success).toBe(true);
+      expect(built.linkPlan?.mode, "the provider must be a SEPARATE module for this to test anything").toBe("separate");
+      const { instance } = await instantiateLinkedProject(built, {});
+      const ex = instance.exports as unknown as Record<string, () => unknown>;
+      // Base (before this fix): every reference row answered 0 / -1 while
+      // `probe` (an unboxed f64) answered 3 — the S2j signature exactly.
+      expect({
+        probe: ex.probe(),
+        strType: ex.strType(),
+        strLen: ex.strLen(),
+        strEq: ex.strEq(),
+        arrIs: ex.arrIs(),
+        arrLen: ex.arrLen(),
+        arr0: ex.arr0(),
+        objKeys: ex.objKeys(),
+        objA: ex.objA(),
+      }).toEqual({
+        probe: 3,
+        strType: 1,
+        strLen: 5,
+        strEq: 1,
+        arrIs: 1,
+        arrLen: 3,
+        arr0: 1,
+        objKeys: 2,
+        objA: 1,
+      });
+    },
+  );
+
+  it("the canonical rec group is byte-identical whether or not the module uses `arguments`", async () => {
+    // The direct statement of the invariant, independent of any link: two
+    // standalone modules that differ ONLY in whether they use `arguments`
+    // must emit the same canonical group. `canonicalRuntimeTypes: true` is
+    // what a linked artifact carries.
+    const opts = {
+      fileName: "issue-5383-s2k.js",
+      target: "standalone" as const,
+      hostBridge: "off" as const,
+      allowJs: true,
+      skipSemanticDiagnostics: true,
+      canonicalRuntimeTypes: true,
+    };
+    const withArgs = await compile(
+      `function f() { return arguments.length; }\nexport function test() { return f(1, 2) + "x".length; }`,
+      opts as never,
+    );
+    const without = await compile(`export function test() { return "x".length; }`, opts as never);
+    expect(withArgs.success && without.success).toBe(true);
+    const a = canonicalGroupFingerprint(withArgs.binary);
+    const b = canonicalGroupFingerprint(without.binary);
+    // Base: `sub final` vs `sub` on the `$__vec_externref` member — the two
+    // fingerprints differed and the link silently lost every reference value.
+    expect(a).toEqual(b);
+    expect(a).not.toBe("");
+  });
+});
+
+describe("#5383 S2 smoke — the real standalone Temporal provider", () => {
+  // The S2 acceptance test, through `buildTemporalProvider` +
+  // `compileWithTemporalGlobal` (the shipped path), host-free. Two of the
+  // three assertions pass as of S2k; the third has a named stop with its own
+  // reduction, below.
+  it(
+    "Object.keys(Temporal).length === 9 and new Temporal.PlainDate(2024,1,1).day === 1",
+    {
+      timeout: 1_800_000,
+    },
+    async () => {
+      // Child process: the 3.3 MB provider compile OOMs a vitest worker when run
+      // in-process (measured 2026-09-12, V8 OOM before the first assertion) and
+      // would stall its RPC heartbeat besides — the same reason every other
+      // dogfood adapter is a child process.
+      const report = JSON.parse(
+        await runDogfoodScript(join(S2K_HERE, "dogfood", "temporal-s2-smoke-harness.mjs"), ["--json"]),
+      );
+      expect(report.provider.binaryBytes).toBeGreaterThan(1_000_000);
+      const value = (label: string): unknown => {
+        const probe = report.probes[label];
+        return probe.status === "ok" ? probe.value : `${probe.status}: ${probe.error}`;
+      };
+      // Base (S2j, and every point its bisect covered — this was never 9 across
+      // a real provider): keys 0, hasPlainDate 0, day -1, durationHours -1.
+      expect({
+        keys: value("keys"),
+        hasPlainDate: value("hasPlainDate"),
+        day: value("day"),
+        durationHours: value("durationHours"),
+      }).toEqual({ keys: 9, hasPlainDate: 1, day: 1, durationHours: 1 });
+    },
+  );
+
+  // STILL OPEN — the third assertion,
+  // `Temporal.Duration.from({hours:1}).total("minutes") === 60`. It is no
+  // longer a boundary problem: the Duration itself crosses and reads
+  // correctly (`Duration.from({hours:1}).hours === 1`, `typeof d.total ===
+  // "function"`), and `.total(…)` fails IDENTICALLY inside the provider's own
+  // module, so the link is not involved. It throws
   //
-  // Also measured in S2j, and worth not re-deriving: the polyfill works fully
-  // INSIDE its own module through the generic dynamic path (keys 9,
-  // `"PlainDate" in qi` true, `new qi.PlainDate(2024,1,1).day === 1`); the
-  // provider's own boundary terminals answer correctly when called with
-  // PROVIDER-minted arguments; and the consumer's S2d miss path is never
-  // reached for this receiver at all (`ref.test $Object` succeeds on it, peer
-  // call count zero) — so a miss-path change alone cannot fix it. The bisect
-  // that establishes this was never working (not a regression) and the full
-  // measurement set are in #5383's "S2j findings".
+  //   RangeError: unit must be one of year, month, week, day, hour, minute,
+  //   second, millisecond, microsecond, nanosecond, null, null, null, null,
+  //   null, null, null, null, null, null, not minutes
+  //
+  // — the ten PLURAL unit names are missing. They come from the polyfill's
+  // `ot = Object.fromEntries(nt.map(([e, t]) => [t, e]))`, and the stop is
+  // `Object.fromEntries` on the standalone target. Reduced
+  // (`.tmp/s2k-red2.mts`, `--target standalone` / `hostBridge:"off"`):
+  //
+  //   | form                                                  | result |
+  //   | ----------------------------------------------------- | ------ |
+  //   | `Object.fromEntries([["year","years"]])` (literal)     | works |
+  //   | `Object.fromEntries(nt.map(([e,t]) => [t,e]))`         | keys present (3), **values `undefined`** |
+  //   | `Object.fromEntries(nt.map(e => [e[1],e[0]]))`         | **COMPILE FAIL** — `'__object_fromEntries' (dynamic-shape object/property operation) is not yet supported in --target standalone` |
+  //   | `Object.fromEntries(nt.map(function (e) {…}))`         | **COMPILE FAIL** — same |
+  //
+  // So `Object.fromEntries` over a computed pair list is partly unimplemented
+  // on the standalone lane and — in the destructured-arrow form the polyfill
+  // happens to use — SILENTLY builds the right keys with lost values, which is
+  // the worse of the two failures. That is the next slice's target and is
+  // independent of the value ABI fixed here.
   it.todo(
-    "the S2 smoke test through the real Temporal provider (blocked: no reference value crosses from this provider — #5383 S2j)",
+    "Temporal.Duration.from({hours:1}).total('minutes') === 60 (blocked: `Object.fromEntries` over a computed pair list loses its values on --target standalone — #5383 S2k)",
   );
 });

@@ -1779,3 +1779,143 @@ consumer declares 130 of, in a different order. The reduction is
 `.tmp/s2j-valueabi.mts`: four one-line value exports, a nine-line consumer, tiny
 vs polyfill, ~60 s. It needs no Temporal knowledge at all, and every earlier
 Temporal-specific symptom should fall out of it.
+
+## S2k findings (2026-09-12) — confirmed: one `final` bit on one rec-group member killed the whole value ABI
+
+S2j's stop is resolved. The rec-group hypothesis was correct, and the mechanism
+is narrower and more mundane than "the polyfill's type space is different".
+
+### The type-section comparison
+
+`.tmp/s2k-types.mjs` reads a module's type section raw (no Binaryen, no names,
+no absolute indices) and renders each recursive group index-relatively.
+Measured on the four binaries S2j's `.tmp/s2j-dump.mts` produces:
+
+| module | groups / types | canonical group `[0..9]` hash |
+| --- | --- | --- |
+| consumer (identical source in both runs) | 121 / 130 | `2d74afdb81b1` |
+| tiny provider (works) | 123 / 132 | `2d74afdb81b1` |
+| **polyfill provider (fails)** | 1057 / 1066 | **`bc74a429728b`** |
+
+Group `[0..9]` is the frozen link ABI — `RUNTIME_RECGROUP_TYPE_NAMES`: the vec
+family (`__vec_base`, `__arr_externref`, `__vec_externref`, `__arr_f64`,
+`__vec_f64`) and the string family (`__str_data`, `AnyString`, `NativeString`,
+`ConsString`, `HashedString`). Diffing it member by member, **nine of ten are
+byte-identical and exactly one differs**:
+
+```
+2 DIFF
+   consumer: subfinal[t0] struct(mut i32,mut (ref null t1))   # $__vec_externref
+   provider: sub     [t0] struct(mut i32,mut (ref null t1))
+```
+
+S2j's note that "the first rec group is textually identical in both providers"
+compared the two PROVIDERS to each other at a coarser granularity; the
+difference is provider-vs-consumer, and it is one bit.
+
+### The mechanism
+
+WasmGC canonicalizes a recursive type group **as a whole**, and finality is
+part of a member's structure. So a single differing `final` bit makes all ten
+types a *different runtime type* in the engine. Every consumer-side check on a
+peer-minted value is a type-identity test — `ref.test $AnyString` for
+`typeof x === "string"`, `ref.test $__vec_externref` for `Array.isArray`, the
+`$Object` walk for `Object.keys` — so all of them fail at once, while an
+unboxed `f64` crosses fine because it is not a reference. That is precisely the
+S2j table, and `Temporal` was only the first value anyone happened to read.
+
+**Why the bit differed.** `markLeafStructsFinal` (`src/codegen/fixups.ts`)
+marks a struct `final` when nothing in *that module* subtypes it. The polyfill
+uses `arguments`; on the standalone lane that registers
+`$__arguments_vec_externref` as a subtype of `$__vec_externref`
+(`getOrRegisterArgumentsVecType`, `src/codegen/registry/types.ts`), and
+`arguments-length-brand.ts` hangs a further 5-field subtype off that. The
+consumer uses no `arguments`, so its `$__vec_externref` stayed a leaf and went
+`final`. Confirmed by walking the subtype chain in the failing binary
+(`.tmp/s2k-chain.mjs`): `t697 <: t2`, `t698 <: t697`, and nothing else in the
+module touches the group.
+
+`arguments` is only the *trigger that happened to be reachable*. Any
+module-local subtype of any group member does the same thing, which is the real
+defect: **the identity of a frozen cross-module ABI was a function of module
+content.**
+
+### The fix
+
+`finalizeLeafStructTypes` (`src/codegen/index.ts`) now adds every member of the
+canonical group to `keepOpenTypeIdxs`, so all ten are emitted non-final
+unconditionally and the group's encoding is a constant of the ABI. This reuses
+the mechanism `markLeafStructsFinal` already documents for exactly this reason
+("ABI roots whose non-finality is observable across separately compiled
+modules" — the funcref-wrapper root, and #5349's ArrayBuffer byte vec).
+
+Gated on `mod.canonicalRuntimeRecGroup` being present, which
+`createCodegenContext` sets only for runtime providers, linked namespaces, or
+explicit `canonicalRuntimeTypes`. **Byte A/B over 20 artifacts** (10 module
+shapes × {gc, unlinked standalone}, `.tmp/s2k-ab.mts`, base captured by file
+copy before the first edit): every sha256 identical. The JS-host lane and any
+standalone module that is not part of a link are untouched.
+
+No struct-shape collision is reintroduced (#2158 `$AnyString` vs the empty-class
+root, #5194 `$__ta_ctor`, S2f R11): the change only clears `final`, it does not
+merge, reshape or reorder anything, and `tests/issue-2158-class-identity-standalone.test.ts`
+(whose whole subject is AnyString canonicalization) passes.
+
+After the fix all three canonical groups hash `2a034407b1d9`, and S2j's own
+`.tmp/s2j-valueabi.mts` reduction reads identically for the tiny and polyfill
+providers: `strType 1, strLen 5, strEq 1, arrIs 1, arrLen 3, arr0 1,
+objKeys 2, objA 1`.
+
+### The S2 smoke test, per assertion
+
+Through the shipped path (`buildTemporalProvider` + `compileWithTemporalGlobal`,
+`--target standalone` / `hostBridge:"off"`, host-free), now a permanent test via
+`tests/dogfood/temporal-s2-smoke-harness.mjs`:
+
+| assertion | base (S2j, all three bisect points) | S2k |
+| --- | --- | --- |
+| `Object.keys(Temporal).length === 9` | 0 | **9 — passes** |
+| `new Temporal.PlainDate(2024,1,1).day === 1` | −1 | **1 — passes** |
+| `Temporal.Duration.from({hours:1}).total("minutes") === 60` | threw | still throws — `it.todo` |
+
+The harness runs as a child process: the 3.3 MB provider compile OOMs a vitest
+worker in-process (measured — a V8 OOM before the first assertion), the same
+reason every other dogfood adapter is a child process.
+
+### The next stop, exactly (`total`)
+
+Not a boundary problem any more, and not this slice's lane. The Duration
+crosses and reads correctly (`Duration.from({hours:1}).hours === 1`,
+`typeof d.total === "function"`), and `.total(…)` fails **identically inside the
+provider's own module** (`.tmp/s2k-inside-total.mts`, via the S2j value-export
+trick), with the error text:
+
+```
+RangeError: unit must be one of year, month, week, day, hour, minute, second,
+millisecond, microsecond, nanosecond, null, null, null, null, null, null,
+null, null, null, null, not minutes
+```
+
+The ten PLURAL unit names are missing. They come from the polyfill's
+`ot = Object.fromEntries(nt.map(([e, t]) => [t, e]))`. Reduced
+(`.tmp/s2k-red2.mts`, standalone / host-free):
+
+| form | result |
+| --- | --- |
+| `Object.fromEntries([["year","years"]])` (literal pairs) | works |
+| `Object.fromEntries(nt.map(([e,t]) => [t,e]))` | keys present (3), **values `undefined`** |
+| `Object.fromEntries(nt.map(e => [e[1],e[0]]))` | **COMPILE FAIL** — `'__object_fromEntries' (dynamic-shape object/property operation) is not yet supported in --target standalone` |
+| `Object.fromEntries(nt.map(function (e) {…}))` | **COMPILE FAIL** — same |
+
+So `Object.fromEntries` over a computed pair list is partly unimplemented on the
+standalone lane, and in the destructured-arrow form the polyfill happens to use
+it **silently builds the right keys with lost values** — the worse of the two
+failures, and the one to fix first.
+
+### Pre-existing red, unchanged by this slice
+
+`tests/issue-2151.test.ts` (1), `tests/issue-2151-mixed-spread.test.ts` (1),
+`tests/issue-3610-standalone-prototype-receiver-brand.test.ts` (1) and
+`tests/issue-1051.test.ts` (3) — 6 failures, exactly the count recorded on the
+base branch. `tests/issue-5318-r4-computed-accessor-keys.test.ts` OOMs on both
+trees and is not a signal either way.
