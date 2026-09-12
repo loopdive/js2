@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
+import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 
 const repository = resolve(import.meta.dirname, "..");
@@ -23,10 +24,13 @@ const groups = {
     "src/wasm/physical/function-handles.ts",
     "src/wasm/physical/function-types.ts",
     "src/wasm/physical/module-reservations.ts",
+    "src/wasm/physical/exception-control.ts",
   ],
   "native-runtime": [
     "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
     "src/runtime/wasmgc/promise/settlement-bodies.ts",
+    "src/runtime/wasmgc/async/frame-engine.ts",
+    "src/runtime/wasmgc/async/native-await.ts",
   ],
   "ir-core": [
     "types",
@@ -81,6 +85,11 @@ const groups = {
 };
 const required = Object.values(groups).flat();
 const settlementAdditions = ["src/runtime/wasmgc/promise/settlement-bodies.ts"];
+const frameAdditions = [
+  "src/runtime/wasmgc/async/frame-engine.ts",
+  "src/runtime/wasmgc/async/native-await.ts",
+  "src/wasm/physical/exception-control.ts",
+];
 const physicalAdditions = [
   "src/wasm/model/module-records.ts",
   "src/wasm/physical/function-types.ts",
@@ -103,19 +112,29 @@ const additions = [
 const policy = () => JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 function assertNewActivations(history: unknown[]) {
-  expect(history.slice(0, 6)).toEqual(
+  expect(history.slice(0, 2)).toEqual(
+    (["native-runtime", "wasm-physical"] as const).map((layer) => ({
+      layer,
+      entries: groups[layer],
+      minModules: groups[layer].length,
+    })),
+  );
+  expect(history.slice(2, 8)).toEqual(
     (["native-runtime", "wasm-model", "wasm-physical", "ir-core", "ir-analysis", "ir-runtime"] as const).map(
       (layer) => ({
         layer,
-        entries: groups[layer],
-        minModules: groups[layer].length,
+        entries: groups[layer].filter((path) => !frameAdditions.includes(path)),
+        minModules: groups[layer].filter((path) => !frameAdditions.includes(path)).length,
       }),
     ),
   );
 }
 const scratch: string[] = [];
-afterEach(() => {
+afterEach(async () => {
   for (const root of scratch.splice(0)) rmSync(root, { recursive: true, force: true });
+  // Each detector invocation is synchronous. Let worker result acknowledgments
+  // drain between controls instead of starving RPC for the entire population.
+  await setImmediate();
 });
 
 function fixture() {
@@ -182,20 +201,28 @@ function fixture() {
 }
 
 describe("semantic verification and provider ownership boundary", () => {
-  it("pins the original 56 modules plus three physical owners and settlement without relaxing historical policy", () => {
-    expect(required).toHaveLength(60);
-    expect(new Set(required).size).toBe(60);
+  it("pins the original 60 modules plus three frame owners without relaxing historical policy", () => {
+    expect(required).toHaveLength(63);
+    expect(new Set(required).size).toBe(63);
+    expect(frameAdditions).toHaveLength(3);
     expect(physicalAdditions).toHaveLength(3);
     expect(settlementAdditions).toHaveLength(1);
-    expect(required.filter((path) => ![...physicalAdditions, ...settlementAdditions].includes(path))).toHaveLength(56);
+    expect(
+      required.filter((path) => ![...physicalAdditions, ...settlementAdditions, ...frameAdditions].includes(path)),
+    ).toHaveLength(56);
     expect(additions).toHaveLength(12);
     expect(new Set(additions).size).toBe(12);
-    for (const path of [...additions, ...physicalAdditions, ...settlementAdditions]) expect(required).toContain(path);
+    for (const path of [...additions, ...physicalAdditions, ...settlementAdditions, ...frameAdditions])
+      expect(required).toContain(path);
     const p = policy();
     assertNewActivations(p.activationHistory);
+    expect(p.activationHistory).toHaveLength(26);
+    expect(digest(p.activationHistory.slice(2))).toBe(
+      "3437a59aacf39df9dffcafa8099ac9f47c0f43a7a0ecc423df4c1fe3e638f002",
+    );
     expect(digest(p.allowedEdges)).toBe("efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7");
     // Exact full activation history at b4c116639a, not a selected subset.
-    expect(digest(p.activationHistory.slice(6))).toBe(
+    expect(digest(p.activationHistory.slice(8))).toBe(
       "a6d07b900b0837832707ce083202ab6ffa40f0bbe6bfce25f3062270882b26da",
     );
     for (const [id, entries] of Object.entries(groups)) {
@@ -212,12 +239,12 @@ describe("semantic verification and provider ownership boundary", () => {
   it("loads the complete actual canonical type-and-value closure", () => {
     const r = fixture().run();
     expect(r.status, JSON.stringify(r.report.errors)).toBe(0);
-    expect(r.report.counts.total).toBe(60);
+    expect(r.report.counts.total).toBe(63);
     expect(r.report.errors).toEqual([]);
     for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
       expect(r.report[field]).toEqual([]);
-    expect(r.report.resolvedEdgeCount).toBe(203);
-    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 145, runtime: 58 });
+    expect(r.report.resolvedEdgeCount).toBe(207);
+    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 148, runtime: 59 });
   });
 
   it.each(["delete", "reorder", "layer", "entries", "minimum"] as const)(
@@ -233,7 +260,7 @@ describe("semantic verification and provider ownership boundary", () => {
     },
   );
 
-  it.each([...additions, ...physicalAdditions, ...settlementAdditions])(
+  it.each([...additions, ...physicalAdditions, ...settlementAdditions, ...frameAdditions])(
     "rejects deleting %s and its classification",
     (path) => {
       const f = fixture();
@@ -247,7 +274,7 @@ describe("semantic verification and provider ownership boundary", () => {
     },
   );
 
-  it.each([...additions, ...physicalAdditions, ...settlementAdditions])(
+  it.each([...additions, ...physicalAdditions, ...settlementAdditions, ...frameAdditions])(
     "rejects an aliased frontend type dependency from %s",
     (path) => {
       const f = fixture();
@@ -266,7 +293,7 @@ describe("semantic verification and provider ownership boundary", () => {
     ["const target = globalThis.toString(); import(target);", "unknownEdges"],
     ['export type { Missing } from "./missing-owner.js";', "unresolvedEdges"],
   ] as const) {
-    it.each([...additions, ...physicalAdditions, ...settlementAdditions])(
+    it.each([...additions, ...physicalAdditions, ...settlementAdditions, ...frameAdditions])(
       `reports ${field} from %s instead of treating it as closed`,
       (path) => {
         const f = fixture();
