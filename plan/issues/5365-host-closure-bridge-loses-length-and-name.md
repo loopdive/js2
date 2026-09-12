@@ -1,10 +1,11 @@
 ---
 id: 5365
 title: "JS-host closure bridge loses Function.prototype.length and .name once a compiled closure crosses a call boundary as a value"
-status: ready
+status: done
 sprint: current
 created: 2026-09-06
-updated: 2026-09-06
+updated: 2026-09-12
+completed: 2026-09-12
 priority: high
 horizon: l
 feasibility: hard
@@ -12,6 +13,22 @@ reasoning_effort: high
 task_type: bug
 area: compiler
 goal: correctness
+# 2026-09-12 (#5365 slice 1): +13 lines in src/runtime.ts. The fix is one new
+# leaf module (src/runtime/compiled-closure-length.ts); these 13 are the three
+# CALL SITES it has to be wired into — the by-name `__extern_get` binding, its
+# `case "extern_get"` intent twin, and `__extern_length` — plus the import.
+# Each site is 4 lines: hoist the existing `_structOwnFieldStatus` verdict,
+# call the helper, return on a hit. They cannot move out of runtime.ts: the
+# answer has to land AHEAD of that file's `__sget_` probe, which is what was
+# returning the wrong 0.
+loc-budget-allow:
+  - src/runtime.ts
+# 2026-09-12 (#5365 slice 1): +12 of those 13 lines land inside `resolveImport`,
+# which is where BOTH `__extern_get` bindings live (the by-name one and its
+# `case "extern_get"` intent twin) and `__extern_length` too. Splitting that
+# function is #3399's job, not this fix's.
+func-budget-allow:
+  - src/runtime.ts::resolveImport
 ---
 
 ## Problem
@@ -154,3 +171,146 @@ cannot be a declaration-indexed table — that design question is the only
 hard part, and it should be decided by measurement (size delta, wrap-time
 cost) before any per-instance field is added. Dispatch after PR #5676 lands
 (it carries this file); not blocked on anything else.
+
+## Resolution — slice 1 (`length`), 2026-09-12
+
+Landed. `length` is closed for every shape except a defaulted parameter; `name`
+is unchanged and moves to
+[#6427](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6427-host-mode-closure-name-carrier),
+with the static-fold half at
+[#6429](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6429-namedevaluation-static-name-folds).
+
+### The plan's mechanism was wrong, and measuring it first is what fixed this
+
+The plan (and the issue's own `String(f)` row) said the value the callee sees at
+the boundary is the **host bridge wrapper** `_wrapWasmClosure` mints, so slice 1
+should `defineProperty` a `length` onto it at wrap time. It is not. Probed
+through the dogfood runner on `upstream/main` d4108568d4:
+
+```
+wasm:   len=0  name=undefined  hasOwnName=false  str=function () { [native code] }
+        tag=[object Object]  typeof=function
+native: len=2  name=f          hasOwnName=true   str=(a, b) => a + b
+        tag=[object Function]  typeof=function
+```
+
+`[object Object]` and `hasOwnName=false` are not a JS function — the callee holds
+the **raw WasmGC closure carrier**. `String(f)` looks bridge-shaped only because
+`compiledClosureNativeSource` applies the same native-code facade to a carrier.
+A marker return placed at the head of `_wrapWasmClosure` never fired; one placed
+in the `extern_get` intent binding did. The read lowers to
+`__extern_get(carrier, "length")` — no wrap on this path at all.
+
+### Root cause — a wrong answer, not a missing one
+
+`__extern_get`'s WasmGC arm walks: sidecar → descriptor table → delete tombstone
+→ `masksField` → `__sget_<key>` field getter. A closure struct has no field-name
+registry, so `_structOwnFieldStatus` answers `undefined` ("unknown shape") and
+`wsh.readField` probes the getter anyway. `__sget_length` exists in almost every
+real module — minted for the vec shape whose struct genuinely has a `length`
+field — it cast-succeeds on the closure and returns its **miss-default 0**. That
+is the #1629 anti-pattern, on the one receiver with no positive discriminator.
+(In a module with no vec there is no getter to probe and the read answered
+`undefined` instead; both are wrong, the `0` is the silent one, and it is the one
+every package hits.)
+
+### Fix
+
+`src/runtime/compiled-closure-length.ts` (new) answers `length` from
+`__closure_arity(carrier)` — the `$arity` header slot (#3673) every
+funcref-wrapper struct already carries, via an export that already exists. No
+codegen, no new struct field, no module-size delta.
+
+Wired in **ahead of** the `__sget_` probe at three call sites in
+`src/runtime.ts`, gated on `ownFieldStatus !== true`:
+
+- `__extern_get`, by-name binding;
+- `__extern_get`, the `case "extern_get"` intent binding — the live one for a
+  compiled module, and a twin that had to be found by marker (the by-name edit
+  alone changed nothing);
+- `__extern_length`, for the numeric lowering (`handler.length > 1`).
+
+The sidecar, the descriptor table and the delete tombstone all run before it, so
+`defineProperty(f, "length", …)` and `delete f.length` still win; a struct that
+genuinely owns a `length` field keeps the field read.
+
+### Counts both ways
+
+`tests/issue-5365-host-closure-length.test.ts`, untyped `.js` two-file fixtures:
+**7 failed / 5 passed** on the parent → **12 passed** with the fix. The 5 that
+pass both ways are the anti-vacuity controls: the direct `f.length` read, a live
+array length, a string length, an object that really owns a `length` field, and
+an explicit `defineProperty` override.
+
+| declaration        | parent | fix   | spec |
+| ------------------ | ------ | ----- | ---- |
+| `(a, b) => a + b`  | 0      | **2** | 2 ✓  |
+| `function g(a,b,c)`| 0      | **3** | 3 ✓  |
+| `() => 1`          | 0      | 0     | 0 ✓  |
+| `(a, ...rest) => a`| 0      | **1** | 1 ✓  |
+| `(a, b = 1) => a`  | 0      | **2** | 1 ✗  |
+
+A rest parameter is already excluded from `$arity`; a defaulted one is not — see
+residuals.
+
+### A/B — 17 dogfood suites, base vs fix at one head (upstream/main d4108568d4)
+
+| suite | base | fix | delta |
+| --- | --- | --- | --- |
+| webpack | 16/16 | 16/16 | +0 |
+| three | 17/18 | 17/18 | +0 |
+| clsx | 32/32 | 32/32 | +0 |
+| cookie | 63740/63740 | 63740/63740 | +0 |
+| lodash | 59/62 | 59/62 | +0 |
+| redux | 67/82 | 67/82 | +0 |
+| axios | 202/231 | 202/231 | +0 |
+| stylelint | 108/108 | 108/108 | +0 |
+| tailwindcss | 13/13 | 13/13 | +0 |
+| jsdom | 6/6 | 6/6 | +0 |
+| styled-components | 9/9 | 9/9 | +0 |
+| uuid | 75/75 | 75/75 | +0 |
+| marked | 16/30 | 16/30 | +0 |
+| moment | 10/10 | 10/10 | +0 |
+| prettier | 105/151 | 105/151 | +0 |
+| jest | 335/356 | 335/356 | +0 |
+| **hono** | **258/324** | **261/324** | **+3** |
+
+Per-file movers — one file, no losses anywhere:
+
+- hono `src/helper/dev/index.test.ts` **1/8 → 4/8** (+3): "should render not
+  colorized output" (registered twice upstream) and "should render colorized
+  output if colorize: true".
+
+### Residuals
+
+1. **`name` is untouched** — `undefined` across the boundary. #6427.
+2. **A defaulted parameter still reports the declared count** (`(a, b = 1)` → 2,
+   §15.1.5 says 1). `$arity` cannot be re-pointed: `closure-exports.ts` widens an
+   under-applied dispatch to `max(n, $arity)` and would stop padding omitted
+   arguments (#4436 R2). Needs the same carrier as `name`. #6427.
+3. **The static folds still answer the storage key** — `o.h.name` → `"h"`,
+   `arr[0].name` → `""`, unchanged by this PR because they never reach the
+   runtime. #6429.
+4. **hono dev/index reaches 4/8, not the 5/8 the issue predicted** for `length`
+   alone. The remaining four all print a route table whose `handlerName` is
+   `handler.name || …`, so they need #6427.
+5. **The bridge path is not covered.** `_wrapWasmClosure`'s wrapper still reports
+   `length === 0` when a compiled closure is handed to a *real host* function
+   that reflects on it. No dogfood suite measured it, and the `arity` that
+   function is handed is the call-site expectation rather than the declaration's,
+   so stamping it there would have been wrong as often as right. Folded into
+   #6427, which has the per-declaration carrier the stamp needs.
+
+### Slice 2's carrier question, decided by this measurement
+
+The plan preferred "a declaration-indexed `__closure_name(idx)` table the bridge
+reads at wrap time", with `$__fn_instance_meta` (#4437) as the fallback. Both
+halves of that preference fail on the evidence above: there is **no wrap** on this
+path, so nothing can hand a table an index — the reader holds only the carrier;
+and a `ref.test` ladder over struct types cannot separate declarations, because
+WasmGC canonicalizes types structurally (`function-instance-meta.ts` states this
+itself), so two declarations with the same capture shape and signature are the
+same type and would get each other's name. The index must live **on** the
+carrier, which is exactly what `$fnmeta` is — a per-declaration `{name, length}`
+singleton reached by pointer instead of by index, already carrying the §15.1.5
+`length`. #6427 is written against that.
