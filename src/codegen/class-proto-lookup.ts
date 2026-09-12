@@ -48,6 +48,7 @@ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { standaloneClassProtoObjectApplies } from "./class-proto-object.js";
 import { classStaticSidecarApplies } from "./class-static-sidecar.js"; // (#5195 Step 2)
 import { classProtoBuilderName } from "./standalone-class-dyn-member.js"; // (#5383 S2h)
+import { classStaticBuilderName } from "./standalone-class-dyn-static.js"; // (#5383 S2i)
 
 const LOOKUP_NAME = "__class_proto_lookup";
 
@@ -89,6 +90,15 @@ interface ProtoLookupEntry {
   depth: number;
   /** (#5195 Step 2) The static sidecar `$Object`, when this class has one. */
   sidecarGlobalIdx?: number;
+  /**
+   * (#5383 S2i) The class `sidecarGlobalIdx` belongs to — this class or the
+   * nearest ancestor that has one. A #5195 seed's sidecar is built eagerly at
+   * ClassDefinitionEvaluation and its global is non-null before any read can
+   * run; one admitted by the runtime-key demand is NOT, so its arm calls
+   * `__class_static_build_<C>` first. The builder is resolved BY NAME at fill
+   * time and is simply absent for the seeds, keeping their arms byte-identical.
+   */
+  sidecarClassName?: string;
   /** The class-object singleton to compare the receiver against, for the above. */
   classObjectGlobalIdx?: number;
 }
@@ -166,13 +176,16 @@ function collectEntries(ctx: CodegenContext): ProtoLookupEntry[] {
     // [[Prototype]] the parent CLASS OBJECT, and this is that link for the one
     // surface a `$ClassName` struct cannot carry.
     let sidecarGlobalIdx: number | undefined;
+    let sidecarClassName: string | undefined;
     let sidecarDepth = 0;
     for (
       let current: string | undefined = className;
       current !== undefined && sidecarDepth < 64 && sidecarGlobalIdx === undefined;
       current = ctx.classParentMap.get(current), sidecarDepth++
     ) {
-      if (classStaticSidecarApplies(ctx, current)) sidecarGlobalIdx = ctx.classStaticSidecarGlobals.get(current);
+      if (!classStaticSidecarApplies(ctx, current)) continue;
+      sidecarGlobalIdx = ctx.classStaticSidecarGlobals.get(current);
+      if (sidecarGlobalIdx !== undefined) sidecarClassName = current;
     }
     const classObjectGlobalIdx = ctx.classObjectGlobals.get(className);
     entries.push({
@@ -189,6 +202,7 @@ function collectEntries(ctx: CodegenContext): ProtoLookupEntry[] {
       // needed most precisely when there is no sidecar to send it to.
       ...(classObjectGlobalIdx !== undefined ? { classObjectGlobalIdx } : {}),
       ...(sidecarGlobalIdx !== undefined ? { sidecarGlobalIdx } : {}),
+      ...(sidecarClassName !== undefined ? { sidecarClassName } : {}),
     });
   }
   // `ref.test` succeeds for a SUBTYPE too, so a base-class arm placed first
@@ -226,6 +240,24 @@ export function fillClassProtoLookupArm(ctx: CodegenContext): void {
     // `global.get` may still be null (the class object is lazily built);
     // `ref.eq` with a null side is simply false, which is the right answer for
     // "not that object".
+    // (#5383 S2i) …and when that sidecar is one the runtime-key demand
+    // admitted rather than a #5195 seed, its global is still null here: build
+    // it on first ask. Self-guarded and idempotent (the emitted body carries
+    // `emitClassStaticSidecar`'s own `ref.is_null` lazy guard), so the null
+    // test below is a cost saver, not a correctness requirement. Absent for a
+    // seed, whose arm therefore stays byte-identical.
+    const sidecarBuilderIdx =
+      entry.sidecarClassName === undefined
+        ? undefined
+        : ctx.funcMap.get(classStaticBuilderName(entry.sidecarClassName));
+    const buildSidecar: Instr[] =
+      sidecarBuilderIdx === undefined || entry.sidecarGlobalIdx === undefined
+        ? []
+        : [
+            { op: "global.get", index: entry.sidecarGlobalIdx },
+            { op: "ref.is_null" },
+            { op: "if", blockType: { kind: "empty" }, then: [{ op: "call", funcIdx: sidecarBuilderIdx }] },
+          ];
     const classObjectArm: Instr[] =
       entry.classObjectGlobalIdx === undefined
         ? []
@@ -248,6 +280,7 @@ export function fillClassProtoLookupArm(ctx: CodegenContext): void {
                   op: "if",
                   blockType: { kind: "empty" },
                   then: [
+                    ...buildSidecar,
                     entry.sidecarGlobalIdx === undefined
                       ? ({ op: "ref.null.extern" } satisfies Instr)
                       : ({ op: "global.get", index: entry.sidecarGlobalIdx } satisfies Instr),
@@ -399,8 +432,93 @@ export function fillClassProtoLookupArm(ctx: CodegenContext): void {
     );
   }
 
+  prependClassMethodCallArm(ctx, lookupIdx, externGetIdx);
+
   const scratch = 2 + externGetFn.locals.length;
   externGetFn.locals.push({ name: "__class_proto_target", type: { kind: "externref" } });
+  emitClassProtoReadArm(ctx, externGetFn, lookupIdx, externGetIdx, hasOwnIdx, scratch);
+}
+
+/**
+ * (#5383 S2i) The CALL twin of {@link fillClassProtoLookupArm}'s read arm,
+ * prepended into `__extern_method_call`.
+ *
+ * That native's resolve-then-apply is gated on `ref.test $Object`; a compiled
+ * class receiver — an instance, and equally the class OBJECT singleton, which
+ * #3976 keeps a `$ClassName` struct — takes the non-`$Object` else arm, where
+ * it reached the resolved-callee guard and THREW "is not a function". Measured
+ * (`.tmp/probe2.mts`): with the read arm in place, `typeof K.mk` already
+ * answered `1` and `const f = C[k]; f(5)` already answered `6`, while
+ * `K.mk(7)` threw — the VALUE was correct and only the invocation path was
+ * missing. `Temporal.Duration.from({…})` has exactly that shape.
+ *
+ * PREPENDED rather than spliced into that else arm for two reasons. The arm is
+ * nested inside a `val externref` `if`, so a structural splice would have to
+ * pattern-match the native's shape the way `fillExternGetIdxVecArms` does and
+ * would break when it changes; and the guard here — resolve FIRST, take over
+ * only when the member actually resolves — makes position irrelevant. An
+ * unresolved name falls through to the unmodified body, so every receiver this
+ * pass does not own keeps its exact previous answer, including a provider-owned
+ * one routed to the S2h peer terminal (the lookup answers null for it, the same
+ * test the read arm already relies on).
+ */
+function prependClassMethodCallArm(ctx: CodegenContext, lookupIdx: number, externGetIdx: number): void {
+  const externMethodCallFn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_method_call");
+  const applyClosureIdx = ctx.funcMap.get("__apply_closure");
+  if (externMethodCallFn && applyClosureIdx !== undefined) {
+    const calleeScratch = 3 + externMethodCallFn.locals.length;
+    externMethodCallFn.locals.push({ name: "__class_proto_callee", type: { kind: "externref" } });
+    const nullishToNullIdx = ctx.funcMap.get("__nullish_to_null");
+    externMethodCallFn.body.unshift(
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: lookupIdx },
+      { op: "ref.is_null" },
+      { op: "i32.eqz" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: externGetIdx },
+          // A missing member resolves to the undefined SINGLETON, not null, so
+          // normalize before the null test — otherwise every miss would be
+          // claimed here and `__apply_closure` would answer null where the
+          // native's own guard raises the §7.3.11 TypeError.
+          ...(nullishToNullIdx === undefined ? [] : ([{ op: "call", funcIdx: nullishToNullIdx }] satisfies Instr[])),
+          { op: "local.tee", index: calleeScratch },
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: calleeScratch },
+              { op: "local.get", index: 0 },
+              { op: "local.get", index: 2 },
+              { op: "call", funcIdx: applyClosureIdx },
+              { op: "return" },
+            ],
+          },
+        ],
+      },
+    );
+  }
+}
+
+/**
+ * (#5195 Step 1.7) The prototype-delegating READ arm prepended into
+ * `__extern_get` — extracted from {@link fillClassProtoLookupArm} only to keep
+ * that function under the #3400 budget; the emission is unchanged.
+ */
+function emitClassProtoReadArm(
+  ctx: CodegenContext,
+  externGetFn: { body: Instr[] },
+  lookupIdx: number,
+  externGetIdx: number,
+  hasOwnIdx: number,
+  scratch: number,
+): void {
   // (#5383 S2h) The delegate call binds the ORIGINAL receiver as the accessor's
   // `this`. §6.2.5.5 OrdinaryGet threads the RECEIVER, not the prototype the
   // walk is standing on, and `__reflect_get_receiver` is the runtime's existing

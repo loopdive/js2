@@ -285,6 +285,7 @@ import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
 import { fillClassProtoLookupArm } from "./class-proto-lookup.js"; // (#5195 Step 1.7)
 import { mintStandaloneClassProtoBuilders } from "./standalone-class-dyn-member.js"; // (#5383 S2h)
+import { mintStandaloneClassStaticBuilders } from "./standalone-class-dyn-static.js"; // (#5383 S2i)
 import { scanForArrayHoles, ensureHoleType } from "./array-holes.js"; // (#2001 S1)
 import {
   hoistedVarRetypesToConcreteRef,
@@ -6209,6 +6210,10 @@ export function generateModule(
     // `-1` with the mint at the lookup fill, `7` from here — the METHOD read
     // worked either way, which is exactly what made the miss look like an
     // accessor-install bug rather than a dispatcher-arity one).
+    // (#5383 S2i) The STATIC twin, minted first for the same dispatcher-arity
+    // reason: a static ACCESSOR installed on the sidecar is invoked through
+    // `__call_accessor_get` -> `__call_fn_method_<arity>`, emitted just below.
+    mintStandaloneClassStaticBuilders(ctx);
     mintStandaloneClassProtoBuilders(ctx);
     emitClosureMethodCallExportN(ctx, 0);
     emitClosureMethodCallExportN(ctx, 1);
@@ -11347,6 +11352,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // two satisfies both constraints. Getting this wrong is silent: the fill
     // simply saw an empty demand set and emitted nothing (measured — every
     // boundary probe answered `undefined` while the single-module ones passed).
+    profilePhase("mint-class-static-builders", () => mintStandaloneClassStaticBuilders(ctx));
     profilePhase("mint-class-proto-builders", () => mintStandaloneClassProtoBuilders(ctx));
     profilePhase("fill-class-proto-lookup", () => fillClassProtoLookupArm(ctx));
     profilePhase("fill-dynamic-proto-helpers", () => fillDynamicProtoHelpers(ctx));

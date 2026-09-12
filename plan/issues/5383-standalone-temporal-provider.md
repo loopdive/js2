@@ -11,6 +11,17 @@ reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-07
 loc-budget-allow:
+  # 2026-09-12 (S2i) — the runtime-key STATIC-member read on a class VALUE. The
+  # mechanism is the new module src/codegen/standalone-class-dyn-static.ts; the
+  # only god-file line this slice adds is ONE:
+  #   registry/imports.ts  +1  `shiftMap(ctx.classStaticSidecarGlobals)`, next to
+  #     the `protoGlobals` / `classObjectGlobals` lines it mirrors. The sidecar
+  #     global was the one class-global map NOT shifted when a late string
+  #     constant inserts an import global — a latent #2043 staleness that
+  #     predates this slice and that S2i makes reachable, because it now
+  #     registers that global at FINALIZE rather than at class collection. It
+  #     cannot live anywhere but in that shift block.
+  - src/codegen/registry/imports.ts
   # 2026-09-08 (S2h) — the runtime-key PROTOTYPE-member read, standalone. The
   # mechanism is the new module src/codegen/standalone-class-dyn-member.ts;
   # what lands in these files is only the wiring, and each line has to sit
@@ -1496,3 +1507,144 @@ branch with the four touched files reverted by file copy): `tests/issue-2151.tes
 (1, "wasi: custom iterable driven via any-method .next()") and
 `tests/issue-2151-mixed-spread.test.ts` (1, "empty dynamic spread: trailing
 numeric param reads 0") fail **identically — the same 2 — before and after**.
+
+## S2i findings (2026-09-12) — the STATIC read fixed, module-locally and across the boundary; the stop moves OFF the class surface entirely
+
+### The precedence question S2h deferred, answered by measurement BEFORE widening
+
+The sidecar carries static METHODS and ACCESSORS and deliberately not static
+FIELDS (a mirrored mutable slot would be two sources of truth). S2h's stated
+blocker was that routing every class-value read through it "would shadow the
+`staticProps` lowering for a static field".
+
+**It does not, and there was never an overlap to shadow.** `ctx.staticProps` is
+a purely SYNTACTIC lowering — `C.sf` becomes `global.get __static_C_sf`
+(`property-access-dispatch.ts`). There is no runtime name→slot map, so the
+DYNAMIC read never consulted it. Measured on the six-export reduction
+(`.tmp/probe.mts`, one module, `--target standalone` / `hostBridge:"off"`),
+base = this branch with the five touched files reverted by file copy:
+
+| probe (`readDyn(o,k)` is an externref-receiver runtime-key read) | base | after |
+| --- | --- | --- |
+| `readDyn(C, "mk")` — static METHOD value, then `f(5)` | `undefined` (−1) | **6** |
+| `readDyn(C, "acc")` — static ACCESSOR | −1 | **11** |
+| `C[k](5)`, `k` not const-folded — static CALL | −1 | **6** |
+| `K.mk(7)` via a dynamic receiver — named static CALL | **THROW** "is not a function" | **8** |
+| `typeof K.mk` via a dynamic receiver | 0 | **1** |
+| `K.acc` via a dynamic receiver | −1 | **11** |
+| `readDyn(C, "sf")` — static FIELD | `undefined` | `undefined` |
+| `readDyn(C, "sf")` AFTER `C.sf = 42` | `undefined` | `undefined` |
+| `C.sf` / `C.sf` after the write — TYPED | 7 / 42 | 7 / 42 |
+| `C.mk(5)` / `C.acc` — TYPED (controls) | 6 / 11 | 6 / 11 |
+| `readDyn(new C(3), "day")` — S2h prototype (control) | 3 | 3 |
+| `new K(3)._d` via a dynamic receiver (S2g control) | 3 | 3 |
+
+So the answer is: **the typed ladders keep `staticProps` as the one source of
+truth for a static field — including after a write — and the sidecar answers
+only the method/accessor surface.** The residual is the pre-existing #5195 one
+(a dynamic read of a static FIELD is `undefined` rather than its value),
+unchanged in either direction. Closing it does NOT require the two-sources-of-
+truth mirror S2h feared: the field could be installed as an ACCESSOR PAIR over
+its own `staticProps` global, which keeps the global authoritative. That is a
+slice of its own (a per-field minted getter/setter) and is not done here.
+
+### The mechanism
+
+```
+read site (o[k] / C[k], k not numeric, standalone)  ->  the SAME demand set S2h
+                                                        records, ctx.standaloneRuntimeKeyClassProtos
+finalize (before the closure dispatchers)           ->  mint __class_static_build_<C>()
+                                                        ( = register the sidecar global,
+                                                          then emitClassStaticSidecar + drop )
+__class_proto_lookup class-object arm               ->  if __static_<C> is null: call the builder
+__extern_method_call (prepended)                    ->  lookup non-null? resolve via __extern_get,
+                                                        and if it RESOLVES, __apply_closure
+```
+
+Three findings worth not re-deriving.
+
+- **The demand set is SHARED with S2h's, not a new one, and that is forced.**
+  A class OBJECT and its instances are the SAME wasm struct type (`$C`) — the
+  whole of #3976. At a read site the only narrowing available is the receiver's
+  struct type (or nothing, for an externref), so "may land on an instance of C"
+  and "may land on the class object C" are literally the same predicate. A
+  separate set would be populated from the identical condition at the identical
+  two sites.
+- **The sidecar global is registered at FINALIZE**, not at class collection,
+  which is what keeps a module with statics but no dynamic read byte-identical
+  (`m3-statics` in the A/B below). That exposed a latent bug: of the class
+  global maps, `classStaticSidecarGlobals` was the only one NOT in the
+  late-import shift block, so a string-constant import inserted after
+  registration left every baked read one slot off. Fixed in the same place as
+  `protoGlobals` / `classObjectGlobals`.
+- **Making the VALUE resolve did not make the CALL work, and the split is the
+  same one S2h hit at the boundary.** With only the read arm in place,
+  `typeof K.mk` answered `1` and `const f = C[k]; f(5)` answered `6` while
+  `K.mk(7)` still threw: `__extern_method_call`'s resolve-then-apply is
+  `ref.test $Object`-gated and a class object is a `$ClassName` struct, so it
+  fell to the non-`$Object` arm and hit the resolved-callee guard. The prepended
+  arm resolves FIRST and takes over only when the member actually resolves,
+  which is why it can sit at the front without claiming any receiver it does not
+  own.
+
+**Byte A/B** (sha256, 7 modules × {gc, standalone}, `.tmp/ab-base.txt` vs
+`.tmp/ab-new.txt`): **13 of 14 identical**. The gc lane is identical for all
+seven. The one that moves is `m7-dynread` under standalone
+(147,837 → 148,141 B, +304) — the only module in the corpus that performs a
+runtime-key class-member read, which is the gate. In particular `m3-statics`
+(a class with a static field, a static method and a static accessor, no dynamic
+read) is byte-identical under BOTH targets, and so is `m4-inherit` (statics
+across an `extends`). The refactor that split `fillClassProtoLookupArm` for the
+#3400 budget was separately verified byte-neutral.
+
+### The S2 smoke test is still not writable — and the stop moved OFF the class surface
+
+Through a REAL provider (`buildTemporalProvider` + `compileWithTemporalGlobal`,
+`--target standalone` / `hostBridge:"off"`, host-free
+`instantiateLinkedProject(result, {})`, provider 3,311,806 B, `.tmp/smoke.mts`):
+
+| consumer probe on the linked `Temporal` | answer |
+| --- | --- |
+| `Temporal === null` / `Temporal === undefined` | 0 / 0 |
+| `Object.keys(Temporal).length` | **0** (needs 9) |
+| `Object.getOwnPropertyNames(Temporal).length` | 0 |
+| `"PlainDate" in Temporal` | 0 |
+| `new Temporal.PlainDate(2024,1,1).day` | −1 |
+| `Temporal.Duration.from({hours:1}).total("minutes")` | throws |
+
+This is a stop **AHEAD** of the static read this slice fixes, not behind it:
+the namespace OBJECT crosses (non-null, `typeof` an object) while its entire
+member surface reads empty, so all three smoke assertions fail on the FIRST
+one — including `Object.keys(Temporal).length === 9`, which S2h's notes recorded
+as already passing (that was the reduction lane, not the real provider).
+
+What the measurement rules OUT: it is not the plumbing this slice touches, and
+not the S2d/S2h boundary terminals in general. The identical shape built by
+hand — `Object.freeze({__proto__: null, PlainDate, b: 2})` through a real
+`compileProject` provider, host-free — crosses correctly in
+`tests/issue-5383-standalone-temporal-provider.test.ts` ("STATIC members of a
+PROVIDER-owned class value"): keys 2, static value, static CALL, static
+accessor and the prototype accessor all reachable. The provider's raw export
+list confirms every terminal is present (`__js2wasm_link_member_get`,
+`__js2wasm_link_object_keys`, `__js2wasm_link_method_call`, …) and its import
+list is empty.
+
+What it does NOT yet isolate: whether the polyfill's exported `Temporal` is a
+shape the provider's own `__extern_get` cannot serve, or whether the object
+that crosses is a different one from the populated one. Calling the provider's
+`__js2wasm_link_member_get` from JS answers null for `"PlainDate"`, but that is
+NOT evidence — a standalone module's keys are wasm-native i16 arrays, so a JS
+string argument is undecodable by construction. The decisive probe is one
+INSIDE the provider, and the linker does not publish it: an extra
+`export function __probe_keys()` appended to the polyfill source produces a
+provider whose `exportBoundaries` still contains only `Temporal` (measured).
+Getting that probe published is the first step of the next slice.
+
+**Pre-existing red, NOT caused by this slice** (measured both ways, base = this
+branch with the five touched files reverted by file copy and the new module
+removed): `tests/issue-2151.test.ts` (1), `tests/issue-2151-mixed-spread.test.ts`
+(1), `tests/issue-3610-standalone-prototype-receiver-brand.test.ts` (1) and
+`tests/issue-1051.test.ts` (3) fail **identically before and after**.
+`tests/issue-5318-r4-computed-accessor-keys.test.ts` OOMs the vitest worker on
+BOTH trees (also at `--max-old-space-size=6144`), so it is not a signal either
+way.
