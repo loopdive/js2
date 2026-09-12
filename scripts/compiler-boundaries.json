@@ -45,9 +45,10 @@
       "entries": [
         "src/wasm/physical/function-handles.ts",
         "src/wasm/physical/function-types.ts",
-        "src/wasm/physical/module-reservations.ts"
+        "src/wasm/physical/module-reservations.ts",
+        "src/wasm/physical/exception-control.ts"
       ],
-      "minModules": 3
+      "minModules": 4
     },
     {
       "id": "wasm-emit",
@@ -185,9 +186,11 @@
       "required": true,
       "entries": [
         "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
-        "src/runtime/wasmgc/promise/settlement-bodies.ts"
+        "src/runtime/wasmgc/promise/settlement-bodies.ts",
+        "src/runtime/wasmgc/async/frame-engine.ts",
+        "src/runtime/wasmgc/async/native-await.ts"
       ],
-      "minModules": 2
+      "minModules": 4
     },
     {
       "id": "standalone-platform",
@@ -426,6 +429,26 @@
     }
   ],
   "activationHistory": [
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts",
+        "src/runtime/wasmgc/async/frame-engine.ts",
+        "src/runtime/wasmgc/async/native-await.ts"
+      ],
+      "minModules": 4
+    },
+    {
+      "layer": "wasm-physical",
+      "entries": [
+        "src/wasm/physical/function-handles.ts",
+        "src/wasm/physical/function-types.ts",
+        "src/wasm/physical/module-reservations.ts",
+        "src/wasm/physical/exception-control.ts"
+      ],
+      "minModules": 4
+    },
     {
       "layer": "native-runtime",
       "entries": [
@@ -10510,6 +10533,16 @@
       "layer": "legacy-host"
     },
     {
+      "path": "src/runtime/wasmgc/async/frame-engine.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/async/native-await.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
       "path": "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
@@ -10649,6 +10682,11 @@
       "path": "src/wasm/model/module-records.ts",
       "state": "clean",
       "layer": "wasm-model"
+    },
+    {
+      "path": "src/wasm/physical/exception-control.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
     },
     {
       "path": "src/wasm/physical/function-handles.ts",
