@@ -1,10 +1,32 @@
 ---
 id: 6415
 title: "`ArrayBuffer.isView` read as a FIRST-CLASS VALUE answers false for every carrier on the JS-host lane"
-status: ready
+status: done
 sprint: current
 created: 2026-09-12
 updated: 2026-09-12
+completed: 2026-09-12
+loc-budget-allow:
+  # 2026-09-12 (#6415): +24 lines in the funcref-ladder return bridge — one
+  # externref -> boolean-i32 arm (4 lines) plus the comment recording why the
+  # arm is brand-restricted and why widening to plain i32 is wrong. The arm
+  # must live beside the other `scalarBridgePlan` rows: they are one ordered
+  # ladder whose pre-pass decides late-import reservation from their combined
+  # answer, so extracting one row to a new module would split that decision.
+  - src/codegen/expressions/call-identifier.ts
+func-budget-allow:
+  # 2026-09-12 (#6415): same +24 lines, same rationale — `scalarBridgePlan` is
+  # a closure inside `compileIdentifierCall` because it reads that call's
+  # `sigParamWasmTypes`/`expectedReturn`/`ctx` frame.
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+coercion-sites-allow:
+  # 2026-09-12 (#6415): `__is_truthy` 1 -> 2 in this file. This is NOT a
+  # hand-rolled ToBoolean matrix — `__is_truthy` IS the coercion engine's
+  # canonical host-lane ToBoolean primitive (src/ir/builder.ts L563,
+  # src/ir/core/dialect/js.ts L125), and the new site is a single `call` to it.
+  # Routing the bridge anywhere else is what the gate is asking for and what
+  # this already does.
+  - src/codegen/expressions/call-identifier.ts
 priority: medium
 horizon: s
 feasibility: medium
@@ -101,3 +123,77 @@ radius.
 ## Dispatch
 
 Model: **opus**. A ~15-line bridge arm in a ladder with a known late-import ordering hazard plus a dead-arm invariant; the diagnosis is done, but the pre-pass plumbing and the anti-vacuity test need care beyond mechanical.
+
+## Resolution
+
+Fixed on branch `issue-6415`. **The plan's diagnosis held in full; nothing in
+it needed contradicting.** One change in
+`src/codegen/expressions/call-identifier.ts`, arm A as planned.
+
+**Reduction (probe `.tmp/6415/probe.mts`, measured on `e8a778638f`):** the
+defect is not `ArrayBuffer.isView`-specific and not a property-read defect. The
+untyped callee is correct — the same `f(value)` computed INSIDE `mod.js`
+answers `"view"` on the parent. The value is lost at the **typed caller**: the
+untyped callee's Wasm signature returns externref (it boxes via
+`__box_boolean`), the `as unknown as (v) => boolean` call site expects the
+boolean-branded i32 this lane lowers `boolean` to, and the funcref-ladder
+return bridge had no externref → boolean-i32 arm — so the **live** arm fell
+into the dead-arm placeholder `drop; i32.const 0`. Parent probe:
+
+| probe | parent | fixed |
+| --- | --- | --- |
+| `isView` of compiled `Uint8Array(3)` | `not-view` | `view` |
+| `isView` of host `TextEncoder` bytes | `not-view` | `view` |
+| `Array.isArray([1,2,3])` | `no` | `yes` |
+| `Object.is(1, 1)` | `no` | `yes` |
+| `isView([1,2,3])` (anti-vacuity) | `not-view` | `not-view` |
+| `Array.isArray(new Uint8Array(3))` (anti-vacuity) | `no` | `no` |
+| `Object.is(1, 2)` (anti-vacuity) | `no` | `no` |
+| `f(v) ? true : false` (i32-return control) | `view` | `view` |
+| same predicate computed inside `mod.js` | `view` | `view` |
+
+**Fix:** one arm at the end of `scalarBridgePlan`, before its final
+`return null` —
+
+```ts
+if (isHostExtern(from) && to.kind === "i32" && to.boolean === true) {
+  return helpers.isTruthyIdx === null ? null : [{ op: "call", funcIdx: helpers.isTruthyIdx }];
+}
+```
+
+plus `isTruthyIdx` plumbed through the `helpers` type, `dispatchBridgePlan`
+(`ctx.funcMap.get("__is_truthy") ?? null`) and `theoreticalHelpers`
+(`isTruthyIdx: 0`). The `theoreticalHelpers` field is what makes the
+`needsScalarBridge` pre-pass see a non-null plan and run
+`addUnionImports` + `flushLateImportShifts` BEFORE the ladder is baked, so no
+late import can shift an already-emitted `ref.func` (#2174). Brand-restricted
+to `boolean === true` on purpose: plain `i32` also spells native ints and
+symbol ids. `scalarAbiTypesMatch` untouched.
+
+**Regression test:** `tests/issue-6415-host-value-predicate-boolean-return.test.ts`
+— untyped `mod.js` + typed `entry.ts`, results as strings, `target: "gc"`,
+`platform: "web"`, `deferTopLevelInit`. **Parent 4 failed / 5 passed; with the
+fix 9 / 9.** Three anti-vacuity cases and the i32-return control are among the
+5 that already passed.
+
+**Acceptance criteria:**
+
+1. ✅ Met for a compiled carrier, a host-built typed array, a plain array
+   literal (`false`) and a `DataView`. The `DataView` case is asserted as
+   AGREEMENT between the two spellings only — the DIRECT
+   `ArrayBuffer.isView(new DataView(new ArrayBuffer(8)))` also answers `false`
+   on this HEAD (measured, `.tmp/6415/probe-dv.mts`), a separate pre-existing
+   defect filed as #6433 and deliberately not folded in here.
+2. ✅ Exact counts above.
+3. ✅ A/B over the 17 dogfood suites at one HEAD — see the PR body; no suite
+   moved, as predicted (the shape needs a typed caller casting an untyped
+   module's function to `=> boolean`; the suites are untyped-to-untyped).
+4. ✅ Standalone byte-identical — `scalarBridgePlan` returns `null` for
+   `ctx.standalone || ctx.wasi` two lines in, above every arm.
+   `tests/issue-5150-es2015-buffers.test.ts` has the SAME 8 failed / 10 passed
+   on the parent and with the fix (identical failure set, pre-existing on
+   `upstream/main`).
+
+**Growth:** +24 lines in `call-identifier.ts` /
+`compileIdentifierCall`, and `__is_truthy` 1 → 2 in that file. All three
+granted in this file's frontmatter with dated rationale.
