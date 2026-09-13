@@ -1,0 +1,225 @@
+{
+  "schema": "async-frame-forward-main-v1",
+  "purpose": "Inverse-project only authenticated incoming main changes before the unchanged 0194 historical donor reconstruction. Source bytes were read once from the pinned Git objects below; tests never read Git or accept candidate-derived expected hashes.",
+  "path": "src/codegen/async-frame.ts",
+  "before": {
+    "commit": "a42660c8974d75a06586cd7ce890e1c61d73c0f2",
+    "blob": "58ab54cc18ba71cb3d1643d88794f414f342e437",
+    "sha256": "a1a8356e4851d90d51e34c31b69049ac1f8ece992885774eb41a10ebce1bc2df"
+  },
+  "after": {
+    "commit": "06f4cfa4aca3cfa20f1e5c03738956407ec2fedb",
+    "blob": "27aaffee8fdec547287a36df16227c8ba8a5af44",
+    "sha256": "7ca4518372223a5edc96c577bb9168630dce9592b7949c10bde1f4555ffc6ee2"
+  },
+  "spans": [
+    {
+      "id": "host-planner-import",
+      "beforeLine": 41,
+      "afterLine": 41,
+      "before": [
+        "import {",
+        "  ASYNC_CPS_ENABLED,",
+        "  FORAWAIT_ITER_SPILL,",
+        "  type AsyncGenDelegates,",
+        "  analyzeAsyncBody,",
+        "  asyncFnNeedsCps,",
+        "  awaitedExprIsPromiseCombinator,",
+        "  forAwaitAsyncNeedsDrive,",
+        "  forAwaitNeedsDrive,",
+        "  asyncGenOwnLocalDecls,",
+        "  forAwaitSpillInfo,",
+        "  isAwaitFreeAsyncGenBody,",
+        "  isBoundedAsyncGenBody,",
+        "  isEmitOperand,",
+        "  listTopLevelYieldStarCalls,",
+        "  listTopLevelRtDelegateYieldStars,",
+        "  loopAsyncSpillInfo,",
+        "  planAsyncCfg,",
+        "  planAsyncGenCfg,",
+        "  planLinearAwaits,",
+        "  tryCatchAsyncSpillInfo,",
+        "} from \"./async-cps.js\";"
+      ],
+      "after": [
+        "import {",
+        "  ASYNC_CPS_ENABLED,",
+        "  FORAWAIT_ITER_SPILL,",
+        "  type AsyncGenDelegates,",
+        "  analyzeAsyncBody,",
+        "  asyncFnNeedsCps,",
+        "  awaitedExprIsPromiseCombinator,",
+        "  forAwaitAsyncNeedsDrive,",
+        "  forAwaitNeedsDrive,",
+        "  asyncGenOwnLocalDecls,",
+        "  forAwaitSpillInfo,",
+        "  isAwaitFreeAsyncGenBody,",
+        "  isBoundedAsyncGenBody,",
+        "  isEmitOperand,",
+        "  listTopLevelYieldStarCalls,",
+        "  listTopLevelRtDelegateYieldStars,",
+        "  loopAsyncSpillInfo,",
+        "  planAsyncCfg,",
+        "  planAsyncGenCfg,",
+        "  planLinearAwaits,",
+        "  isHostAsyncLane,",
+        "  tryCatchAsyncSpillInfo,",
+        "} from \"./async-cps.js\";"
+      ]
+    },
+    {
+      "id": "resume-undefined-carrier-import",
+      "beforeLine": 98,
+      "afterLine": 99,
+      "before": ["import { ensureI32Condition, resolveWasmType } from \"./index.js\";"],
+      "after": [
+        "import { ensureI32Condition, resolveWasmType, varBindingNeedsExternrefForUndefined } from \"./index.js\";"
+      ]
+    },
+    {
+      "id": "frame-import-abi",
+      "beforeLine": 152,
+      "afterLine": 146,
+      "before": ["  settleRejectIdx: number;"],
+      "after": [
+        "  settleRejectIdx: number;",
+        "  /**",
+        "   * (#5372) `Promise_then2_frame(p, onFulfilled, onRejected, resultPromise) ->",
+        "   * Promise` — reaction registration whose wrapper rejects `resultPromise`",
+        "   * when the resuming step TRAPS (uncatchable in wasm). Optional: the prepared",
+        "   * IR frames resolve imports by capability and keep plain `Promise_then2`.",
+        "   */",
+        "  then2FrameIdx?: number;"
+      ]
+    },
+    {
+      "id": "frame-import-lookup",
+      "beforeLine": 175,
+      "afterLine": 176,
+      "before": ["  const settleRejectIdx = ctx.funcMap.get(\"Promise_settle_reject\");"],
+      "after": [
+        "  const settleRejectIdx = ctx.funcMap.get(\"Promise_settle_reject\");",
+        "  const then2FrameIdx = ctx.funcMap.get(\"Promise_then2_frame\");"
+      ]
+    },
+    {
+      "id": "frame-import-result",
+      "beforeLine": 186,
+      "afterLine": 188,
+      "before": [
+        "  return {",
+        "    promiseResolveIdx,",
+        "    then2Idx,",
+        "    makeCbIdx,",
+        "    newPendingIdx,",
+        "    settleResolveIdx,",
+        "    settleRejectIdx,",
+        "  };"
+      ],
+      "after": [
+        "  return {",
+        "    promiseResolveIdx,",
+        "    then2Idx,",
+        "    makeCbIdx,",
+        "    newPendingIdx,",
+        "    settleResolveIdx,",
+        "    settleRejectIdx,",
+        "    ...(then2FrameIdx !== undefined ? { then2FrameIdx } : {}),",
+        "  };"
+      ]
+    },
+    {
+      "id": "host-combinator-gate",
+      "beforeLine": 261,
+      "afterLine": 264,
+      "before": [
+        "  // Parity with asyncFnNeedsCps/asyncFnNeedsDrive: a lone `await Promise.all(...)`",
+        "  // already yields a real Promise the legacy identity path resolves correctly.",
+        "  if (",
+        "    linear.finalizer === null &&",
+        "    linear.segments.length === 1 &&",
+        "    awaitedExprIsPromiseCombinator(linear.segments[0]!.awaitedExpr)",
+        "  ) {",
+        "    return false;",
+        "  }"
+      ],
+      "after": [
+        "  // (#5367) The former \"lone `await Promise.all(...)` stays on the legacy",
+        "  // identity path\" carve-out is GONE here: with a resume binding that path",
+        "  // delivered the un-awaited Promise object coerced into the STATIC awaited",
+        "  // type (a default-initialised tuple struct / an empty vec) and never",
+        "  // suspended, so pending continuations never ran. Its other rationale (#2028",
+        "  // host-method marshaling) is fixed. `asyncFnNeedsDrive` (wasi) keeps its gate."
+      ]
+    },
+    {
+      "id": "resume-undefined-carrier-type",
+      "beforeLine": 770,
+      "afterLine": 777,
+      "before": [
+        "  const typeSite = rb.type ?? rb.target ?? rb.awaitTarget;",
+        "  return typeSite ? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(typeSite)) : { kind: \"externref\" };"
+      ],
+      "after": [
+        "  const checker = ctx.checker;",
+        "  // (#6414) A `let x = void 0` binding assigned from an await and read after a",
+        "  // LATER await: the resume body re-compiles that declaration through the",
+        "  // var-decl path, which routes a void-EXPRESSION initializer to externref",
+        "  // (#2806), while the checker types it pure `undefined` → `resolveWasmType` i32.",
+        "  // The i32 field then took `local.get <externref>` from `storeSpills` — an",
+        "  // invalid module. Reuse #2806's predicate so both halves agree by construction;",
+        "  // it is narrow by design, so #1112's f64-sentinel bindings stay numeric.",
+        "  if (rb.target !== undefined) {",
+        "    const bound = checker.getSymbolAtLocation(rb.target)?.valueDeclaration;",
+        "    if (bound !== undefined && ts.isVariableDeclaration(bound) && varBindingNeedsExternrefForUndefined(bound, ctx)) {",
+        "      return { kind: \"externref\" };",
+        "    }",
+        "  }",
+        "  const typeSite = rb.type ?? rb.target ?? rb.awaitTarget;",
+        "  return typeSite ? resolveWasmType(ctx, checker.getTypeAtLocation(typeSite)) : { kind: \"externref\" };"
+      ]
+    },
+    {
+      "id": "host-spill-plan",
+      "beforeLine": 1084,
+      "afterLine": 1084,
+      "before": ["  const info = tryCatchAsyncSpillInfo(decl, plan);"],
+      "after": ["  const info = tryCatchAsyncSpillInfo(decl, plan, isHostAsyncLane(ctx));"]
+    },
+    {
+      "id": "frame-reaction",
+      "beforeLine": 2182,
+      "afterLine": 2162,
+      "before": ["            out.push({ op: \"call\", funcIdx: hostImports!.then2Idx });"],
+      "after": [
+        "            // (#5372) Frame-aware reaction: a trap while this frame resumes",
+        "            // rejects `result_promise` instead of escaping the host reaction as",
+        "            // an unhandled rejection (which killed the whole process).",
+        "            if (hostImports!.then2FrameIdx !== undefined) {",
+        "              out.push({ op: \"local.get\", index: resultPromiseLocal });",
+        "              out.push({ op: \"call\", funcIdx: hostImports!.then2FrameIdx });",
+        "            } else {",
+        "              out.push({ op: \"call\", funcIdx: hostImports!.then2Idx });",
+        "            }"
+      ]
+    }
+  ],
+  "additionalSources": [
+    {
+      "change": "PR 5869 async resume undefined carrier agreement",
+      "before": {
+        "commit": "475a5ab2779320cb46c8bfb2984d21562332b299",
+        "blob": "79073fcb1a79755cb0bb3d2479665a071af53707",
+        "sha256": "beef344cd26f327b459e3f3b9c334bde676c43c09fef4d54c717b02dba01f665"
+      },
+      "after": {
+        "commit": "ee2ee09062e587e882e6be6e47d5bdde5472ecbe",
+        "implementationCommit": "25040db67019ba7c1befc8f9656b0d17672eea3a",
+        "blob": "fa9cf19fe02c70329349a8928bb420598bd22559",
+        "sha256": "7d94f3eaf43010ff14702bff132c1345074aa1ebf629555ceb7f0c8d03fb822f"
+      },
+      "spanIds": ["resume-undefined-carrier-import", "resume-undefined-carrier-type"],
+      "provenance": "The two added forward spans were independently read from the published patch and verified against delivered main; their inverse text also occurs uniquely in the unchanged a426 donor. The original seven spans retain their original 06f4 provenance and line ranges."
+    }
+  ]
+}

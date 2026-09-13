@@ -1,3 +1,5 @@
+import { attributeRejections } from "./upstream-unhandled-rejections.mjs";
+
 export const WORKER_COMPILE_COMPLETE_PREFIX = "__JS2WASM_COMPILE_COMPLETE__:";
 
 export function signalWorkerCompileComplete(durationMs, stream = process.stderr) {
@@ -55,9 +57,25 @@ export async function withUpstreamTestTimeout(run, timeoutMs, label) {
   }
 }
 
-export async function runSequentialUpstreamTests({ ids, invoke, timeoutMs, failureText, thrownText }) {
+/**
+ * Run the module's tests one at a time, attributing host rejections as it goes.
+ *
+ * `rejections` is the worker's unhandled-rejection sink (#5369). Draining it
+ * after each test is what turns "the worker died somewhere in this file" into
+ * "test N leaked this reason": the drain yields an event-loop turn, which is
+ * the only point at which Node reports a rejection nothing observed.
+ */
+export async function runSequentialUpstreamTests({
+  ids,
+  invoke,
+  timeoutMs,
+  failureText,
+  thrownText,
+  rejections = null,
+}) {
   const statuses = [];
   const errors = [];
+  const moduleRejections = [];
   for (const id of ids) {
     let value;
     let thrown = null;
@@ -66,11 +84,32 @@ export async function runSequentialUpstreamTests({ ids, invoke, timeoutMs, failu
     } catch (error) {
       thrown = error;
     }
-    const passed = Number(value) === 1;
+    let passed = Number(value) === 1;
+    let error = passed ? "" : thrown ? thrownText(thrown) : await failureText(id);
+    if (rejections) {
+      ({ passed, error } = attributeRejections({ reasons: await rejections.drain(), passed, error }));
+    }
     statuses.push(passed);
-    if (passed) errors.push("");
-    else if (thrown) errors.push(thrownText(thrown));
-    else errors.push(await failureText(id));
+    errors.push(error);
   }
-  return { statuses, errors };
+  if (rejections) {
+    // A rejection that only surfaces after the last test settled still came
+    // from a test — the one that leaked it — so it lands there, marked late.
+    // With no tests at all it can only belong to the module.
+    const trailing = await rejections.drain();
+    const last = statuses.length - 1;
+    if (trailing.length > 0 && last >= 0) {
+      const applied = attributeRejections({
+        reasons: trailing,
+        passed: statuses[last],
+        error: errors[last],
+        late: true,
+      });
+      statuses[last] = applied.passed;
+      errors[last] = applied.error;
+    } else if (trailing.length > 0) {
+      moduleRejections.push(...trailing);
+    }
+  }
+  return { statuses, errors, moduleRejections };
 }

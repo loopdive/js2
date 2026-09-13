@@ -270,5 +270,9 @@ unchanged yet; the standalone goal opened today with #5383.
   submodule (done) and never symlink a worktree's copy into another worktree;
   read the goal's target mode before planning; release runtime.ts-growing PRs
   one at a time (kept).
-- **Sprint-close criteria remaining (standalone Temporal, #5383)**: S2 (init
-  throw), S3 (runner + CI wiring), S4 (retire the #661 lowering), S5 (measure).
+- **Sprint-close criteria remaining (standalone Temporal, #5383)**: S2 (the
+  host-free smoke test — the provider now constructs, but a dynamic read of a
+  prototype accessor/method still answers `undefined`, and a method call on a
+  provider-owned instance has no boundary terminal), S3 (runner + CI wiring),
+  S4 (retire the #661 lowering), S5 (measure). The init throw is fixed; see
+  `plan/agent-context/temporal-standalone-handover-2026-09-08.md`.

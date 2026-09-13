@@ -4,7 +4,7 @@ title: "UMBRELLA: ES6 (ES2015) standalone authoritative 11,704-row close-out →
 status: in-progress
 sprint: current
 created: 2026-08-15
-updated: 2026-09-01
+updated: 2026-09-12
 assignee: codex/es6-test262-closeout
 priority: high
 horizon: xl
@@ -17,6 +17,65 @@ related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445
 ---
 
 # #4444 — UMBRELLA: ES6 (ES2015) standalone edition close-out
+
+## Resume checkpoint (2026-09-12, Codex)
+
+The authoritative standalone baseline was force-refetched after synchronising
+with `loopdive/js2:main` at `d4108568d43f14c361ecc3a58c82633027eaae39`.
+The JSONL has **48,735 physical rows** and the checked-in edition map selects
+exactly **11,704 unique official ES2015 paths** (edition index 4). It reports:
+
+- **10,230 pass / 11,704 total (87.4%)**;
+- **1,144 fail, 329 compile errors, 1 compile timeout, 0 skips**;
+- oracle version 13, lane `honest`, semantic providers `auto`;
+- compiler baseline SHA `52d1bb7809de26f5c12fca1f887fe7be78f4479c`,
+  which is an ancestor of current main by three non-compiler commits;
+- JSONL SHA-256
+  `45ff56e7570bba0a1bff6590d19d35de2525928adb7e3054789ba35aebb29360`.
+
+This is complete dispatch evidence, not completion evidence: the acceptance bar
+remains a maintained-runner execution on the final integrated head with exactly
+**11,704 pass and zero rows in every other verdict**.
+
+Draft PR #5736 preserves three 2026-09-08 increments but deliberately combines
+two completed-looking fixes with unfinished generator work. It is 202 mainline
+commits behind its two unique commits and must stay draft while mixed and
+unverified on current main. The latest baseline proves all eleven claimed
+completed-row gains are still absent from main: seven `super` rows owned by
+#5350 and four inherited TypedArray-constructor rows owned by #5317 remain
+`fail` with their pre-fix signatures.
+
+### Implementation plan
+
+1. **#5350 — class prototype writes and bounded missing-super bodies.** Extract
+   only commit `357b05f68c8c76b8c4888690941edf9d247243ab` onto a fresh
+   current-main worktree, resolve against current class changes without
+   broadening its semantic whitelist, and rerun the exact 58-row super cohort,
+   41 focused pins, class/capture neighbours, and host/WASI parity controls.
+   Require the seven still-failing rows to pass with zero lost rows. Update the
+   issue handoff and open one ready, non-draft PR only after that proof.
+2. **#5317 — inherited TypedArray constructor Get.** Extract only the three
+   TypedArray source changes and their focused test from the second checkpoint
+   commit. Preserve actual getter results and receiver identity; default
+   constructor selection remains in SpeciesConstructor. Rerun the exact 55-row
+   cohort and 15 focused/neighbor pins, requiring the four current failures to
+   pass with zero losses. Update the issue handoff and open a separate ready,
+   non-draft PR.
+3. **#5199 — generic generator protocol.** Continue separately from current
+   main. The 2026-09-08 bridge checkpoint is WIP: 4/9 bridge fixtures pass and
+   numeric next/return payload preservation is unresolved. Rebuild compiler and
+   QuickJS artifacts, strengthen the extracted-method positive control, then
+   rerun the 27 pins, bridge/prototype fixtures, 44 protocol rows, and the full
+   2,486-row ES2015 generator feature cohort. Keep its PR draft unless every
+   owned acceptance check is current and mergeable.
+4. Run all implementation lanes in separate worktrees with Terra at maximum
+   reasoning. A separate shepherd owns body-template, exact-head, mergeability,
+   CI, regression, ready-state, and queue verification for every resulting PR.
+5. After each fix lands, force-refetch the baseline and set-diff every passing
+   row. Recluster the remaining complete 11,704-row record, update or allocate
+   one repository-local markdown issue per unowned mechanism, and repeat. Do
+   not create GitHub issues; #5091 and #5099 already exist as completed records
+   under `plan/issues/`.
 
 ## Handover (2026-09-06, session claude/es6-test262-standalone-g10c7u, wave 5)
 
@@ -928,6 +987,44 @@ PR from `ttraenkler/js2` to `loopdive/js2`; only an incomplete or genuinely
 non-mergeable checkpoint may remain draft. A separate shepherd agent verifies
 the required PR body, mergeability, reviews, CI, exact tested head, and
 ready/queue state before landing.
+
+## 2026-09-13 continuous implementation plan
+
+Continuation starts at upstream `e0023dbbe6c37e15c1f56ed0c8bc8d15d0afbac3`.
+PRs #5853 and #5862 are merged. A freshly downloaded canonical standalone
+snapshot (first physical row timestamp 2026-09-13 00:32:03, SHA-256
+`07c89a5c2626f3312ff611f008a69ed6d8826e9802da024df39726ddabc1e9ba`)
+contains 48,735 rows. The official ES2015 intersection is 11,704 rows:
+10,255 pass, 1,104 fail, 344 compile_error, and 1 compile_timeout.
+This is dispatch evidence, not a census attributed to the checkout above.
+
+Implementation ownership and order:
+
+1. #5199: reproduce the three retained generator payload controls on current
+   main; implement the separately documented payload/result representation
+   plan, preserve protocol controls, and measure exact affected Test262 rows.
+2. #5198: reproduce remaining exec lastIndex and deferred Symbol.match rows;
+   extend observable cursor handling with focused positive controls and paired
+   host/standalone validation. Keep its source changes separate from generators.
+3. Coordinator: validate baseline provenance and the complete 11,704-path
+   acceptance instrument, refresh the remaining-failure inventory, and select
+   subsequent clusters from measured rows as workers become available.
+
+Implementation agents use Terra Max in separate worktrees. Each owner updates
+its issue with evidence and opens a separate upstream PR per completed fix.
+A dedicated shepherd checks published PRs. Finished mergeable work is ready;
+unfinished work is draft. PR completion is a checkpoint: continue to the next
+measured residual until the full acceptance condition below is met.
+
+Runner contract correction: `scripts/run-test262-vitest.sh` currently computes
+paths relative to the `test262` root, so its exact filter must retain `test/`.
+The separate `scripts/run-test262-paths.mts` interface expects paths below
+`test262/test`. Do not reuse one filter spelling across those interfaces.
+The first 2026-09-13 census attempt used the historical normalized spelling:
+all 16 suites registered no tests, produced zero rows, and the completeness
+validator correctly exited 2. This is an invalid measurement, not a pass rate.
+The retry retains `test/` for all 11,704 selected paths. Earlier instructions
+below that prescribe stripping it for the Vitest wrapper are superseded.
 
 ## 2026-08-30 current integrated-head census implementation plan
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { parseTest262SemanticProviders } from "./test262-lane.mjs";
 import { createReadStream, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
@@ -1000,6 +1001,7 @@ async function main() {
   // merged report carries the same identity. If rows disagree (a merge of
   // shards produced under different oracles) we keep the LOWEST seen and flag
   // it as mixed — a mixed report should never be promoted to a baseline.
+  let semanticProviders;
   let oracleVersion;
   let oracleVersionMixed = false;
 
@@ -1032,6 +1034,11 @@ async function main() {
   for await (const line of rl) {
     if (!line.trim()) continue;
     const record = JSON.parse(line);
+    const rowProviders = parseTest262SemanticProviders(record.semantic_providers);
+    if (semanticProviders !== undefined && semanticProviders !== rowProviders) {
+      throw new Error("Cannot merge test262 rows from different semantic providers");
+    }
+    semanticProviders = rowProviders;
     if (typeof record.oracle_version === "number") {
       if (oracleVersion === undefined) {
         oracleVersion = record.oracle_version;
@@ -1157,6 +1164,7 @@ async function main() {
     ...(oracleVersionMixed ? { oracle_version_mixed: true } : {}),
     mode: {
       target,
+      semantic_providers: semanticProviders ?? "auto",
       include_proposals: args.includeProposals ? 1 : 0,
       label: args.includeProposals ? "official test262 + proposals" : "official test262 (default scope)",
     },

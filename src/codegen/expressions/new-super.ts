@@ -80,6 +80,7 @@ import {
   reserveNativeConstructDriver,
   reserveTypedNativeConstructDriver,
 } from "../native-construct.js"; // (#3981 / #1058)
+import { markClassValueConstructSite } from "../standalone-class-construct.js"; // (#5383 S2g)
 import { linkCompatibleDeclaredStructAncestor } from "../struct-hierarchy-layout.js";
 import { emitBoundConstructOnNull } from "../construct-bound.js"; // (#4196) §10.4.1.2
 import { emitRuntimeEvalConstructOnNull } from "../runtime-eval-construct.js"; // (#4438) §10.2.2
@@ -1107,8 +1108,10 @@ function compileStandaloneObjectLiteralSuperMethodCall(
   const externref: ValType = { kind: "externref" };
   ensureObjectRuntime(ctx);
   ensureLateImport(ctx, "__apply_closure", [externref, externref, externref], [externref]);
-  // (#5350 r3 review, S2) IsCallable for the resolved super member.
-  ensureLateImport(ctx, "__typeof_function", [externref], [{ kind: "i32" }]);
+  // (#6420) IsCallable is deliberately distinct from `typeof === "function"`:
+  // class constructors must fail this EvaluateCall gate while still preserving
+  // their runtime typeof tag and their [[Construct]] path.
+  ensureLateImport(ctx, "__is_callable", [externref], [{ kind: "i32" }]);
   if (expr.arguments.length > 0) {
     ensureLateImport(ctx, "__objvec_new", [], [externref]);
     ensureLateImport(ctx, "__objvec_push", [externref, externref], []);
@@ -1168,22 +1171,21 @@ function compileStandaloneObjectLiteralSuperMethodCall(
     fctx.body.push({ op: "local.get", index: methodLocal });
     fctx.body.push({ op: "ref.is_null" });
     fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: buildNotCallableThrow() });
-    // (#5350 r3 review, S2) POSITIVE callable test. The r2 guard tested only
+    // (#5350 r3 review, S2 / #6420) POSITIVE callable test. The r2 guard tested only
     // absence plus the three primitive brands, so a resolved super member that
     // is a plain OBJECT (`{ v: { q: 1 } }`) or a CLASS fell through to
     // `__apply_closure`'s legacy `undefined` — probes xb6/xb7 answered
-    // undefined where node throws a TypeError. `__typeof_function` is the
-    // module's canonical standalone IsCallable predicate (the same one
-    // `ensureNativeArrayHof` uses for `callbackfn is not a function`), so it
-    // recognises every callable carrier — ordinary function, bound function,
-    // arrow, builtin, generator, async function, class — and the throw fires
-    // only on a genuine non-callable. When the module never registered it the
-    // primitive-brand guard stands in unchanged, so nothing regresses to a
-    // silent default.
-    const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
-    if (typeofFunctionIdx !== undefined) {
+    // undefined where node throws a TypeError. `__is_callable` shares the
+    // host-free carrier inventory with the typeof native but deliberately
+    // excludes class-object singletons, so it recognises ordinary, bound,
+    // arrow, builtin, generator and async callables without conflating a class
+    // with its `typeof "function"` tag. When the helper cannot be registered,
+    // retain the old primitive-brand fallback rather than manufacture a new
+    // callability classifier here.
+    const isCallableIdx = ctx.funcMap.get("__is_callable");
+    if (isCallableIdx !== undefined) {
       fctx.body.push({ op: "local.get", index: methodLocal });
-      fctx.body.push({ op: "call", funcIdx: typeofFunctionIdx });
+      fctx.body.push({ op: "call", funcIdx: isCallableIdx });
       fctx.body.push({ op: "i32.eqz" });
       fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: buildNotCallableThrow() });
     } else {
@@ -3866,7 +3868,19 @@ function tryCompileNativeConstructFromValue(
 ): ValType | undefined {
   if (!noJsHost(ctx) && ctx.targetProfile.semanticProviders !== "native-first") return undefined;
   const runtimeEvalCallableResult = isRuntimeEvalCallableResultExpression(ctx, calleeExpr);
-  if (!ts.isIdentifier(calleeExpr) && !runtimeEvalCallableResult) return undefined;
+  // (#5383 S2g) A MEMBER callee holding a genuinely-dynamic ctor value —
+  // `new NS.PlainDate(…)`, the shape EVERY linked-provider namespace has. The
+  // host lane already routes it through `__construct_closure`
+  // (`usesHostConstructClosureBase`); standalone had no equivalent, so it fell
+  // through to the legacy `__new_<name>` extern-class import and evaluated to
+  // NULL. `resolvesToDynamicAnyCtorValue` is the same admission the host lane
+  // uses, and it declines an UNDECLARED base (#4728) — so the host-global
+  // `new Temporal.X(…)` lane is untouched.
+  const dynamicMemberCtorValue =
+    noJsHost(ctx) &&
+    (ts.isPropertyAccessExpression(calleeExpr) || ts.isElementAccessExpression(calleeExpr)) &&
+    resolvesToDynamicAnyCtorValue(ctx, calleeExpr);
+  if (!ts.isIdentifier(calleeExpr) && !runtimeEvalCallableResult && !dynamicMemberCtorValue) return undefined;
   // A compiled fnctor for this binding means the typed-struct path owns it.
   if (ts.isIdentifier(calleeExpr) && ctx.funcConstructorMap.has(calleeExpr.text)) return undefined;
   const runtimeFunctionAlias =
@@ -3882,6 +3896,7 @@ function tryCompileNativeConstructFromValue(
     !runtimeEvalCallableResult &&
     !proxyValue &&
     !proxyCtorValue &&
+    !dynamicMemberCtorValue &&
     !resolvesToConstructableFunctionValue(ctx, calleeExpr) &&
     !resolvesToLateAssignedConstructSignatureValue(ctx, calleeExpr)
   )
@@ -3912,6 +3927,9 @@ function tryCompileNativeConstructFromValue(
   ensureLateImport(ctx, "__object_create", [{ kind: "externref" }], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
   addStringConstantGlobal(ctx, "prototype");
+  // (#5383 S2g) This is a construct from a runtime VALUE, so the callee may be
+  // a class-object singleton — arm the class trampolines for this module.
+  markClassValueConstructSite(ctx);
   const driverIdx = reserveNativeConstructDriver(ctx, args.length, stringConstantExternrefInstrs(ctx, "prototype"));
 
   // Evaluate the callee, then each argument, exactly once and in source order.
@@ -7127,7 +7145,12 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // `!className` block because inferred names can still identify function values.
   if (
     (calleeIdent && !ctx.classSet.has(calleeIdent.text) && !(className && ctx.classSet.has(className))) ||
-    isRuntimeEvalCallableResultExpression(ctx, expr.expression)
+    isRuntimeEvalCallableResultExpression(ctx, expr.expression) ||
+    // (#5383 S2g) the standalone member-callee form; the helper re-checks the
+    // admission itself, so this only opens the door.
+    (noJsHost(ctx) &&
+      (ts.isPropertyAccessExpression(expr.expression) || ts.isElementAccessExpression(expr.expression)) &&
+      resolvesToDynamicAnyCtorValue(ctx, expr.expression))
   ) {
     const nativeCtor = tryCompileNativeConstructFromValue(ctx, fctx, expr.expression, expr.arguments ?? []);
     if (nativeCtor) return nativeCtor;
