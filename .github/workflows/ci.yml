@@ -163,8 +163,14 @@ jobs:
           # Inventory mode enforces real activated closures while reporting
           # remaining migration debt; it does not certify IR-only completion.
           # Compare with the immutable first parent, not HEAD's new policy.
+          # The verdict reason goes to stderr (#6418) so a failing run names the
+          # offending files in the job log, not only in the uploaded artifact.
           node --max-old-space-size=2048 scripts/check-compiler-boundaries.mjs \
-            --mode inventory --base HEAD^1 > compiler-boundaries-report.json
+            --mode inventory --base HEAD^1 > compiler-boundaries-report.json \
+            || {
+              echo "::error::compiler-boundaries gate failed - reason above (full report in artifact compiler-boundaries-${{ github.run_id }}-${{ github.run_attempt }})"
+              exit 1
+            }
 
       - name: Preserve compiler boundary evidence (#3518)
         if: always() && steps.compiler_boundaries.outcome != 'skipped' && steps.compiler_boundaries.outcome != ''

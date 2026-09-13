@@ -53,11 +53,13 @@ import {
 import { createLinkedProviderMirrorOwnership } from "./runtime/linked-provider-mirror-ownership.js";
 import { createCrossModuleStructOwners } from "./runtime/cross-module-struct-owners.js";
 import { decodeCompiledEntryPair } from "./runtime/compiled-entry-pair.js";
+import { rawExportsStructDecodeError } from "./runtime/raw-exports-struct-authority.js"; // (#6438)
 import { isHostStringSymbolDispatch, makeHostStringPredicateAdapter } from "./runtime/string-predicate-adapter.js";
 import { fixedExternMethodCallArity, makeFixedExternMethodCall } from "./runtime/fixed-extern-method-call.js";
 import { DATE_HOST_METHOD_UNHANDLED, tryCallWasmDateHostMethod, wasmDateHostView } from "./runtime/date-host-method.js";
 import { wasmCarrierBuiltinPrototype } from "./runtime/wasm-carrier-prototype.js"; // (#5325)
 import { compiledClassInstancePrototype } from "./runtime/compiled-class-prototype.js"; // (#5347)
+import { compiledClosureLength } from "./runtime/compiled-closure-length.js"; // (#5365)
 import { getWasmVecPrototypeMember as vecProtoGet, WASM_VEC_PROTOTYPE_MISS } from "./runtime/wasm-vec-prototype.js";
 import { fnctorInstanceofResult, fnctorOrNative, type FnctorIoHooks } from "./runtime/fnctor-instanceof.js";
 export { buildStringConstants, buildStringConstants16 };
@@ -92,11 +94,18 @@ import {
   writeWasmStructSidecar,
   type WasmStructSidecarState,
 } from "./runtime/wasm-struct-sidecar.js";
+// (#5370) typed-array brand identity at the host boundary (inbound + `.constructor`)
+import {
+  COMPILED_TYPED_ARRAY_CTORS as _COMPILED_TYPED_ARRAY_CTORS,
+  adoptTypedArrayBrand,
+  compiledTypedArrayConstructorFor as _typedArrayCtorFor,
+} from "./runtime/typed-array-host-brand.js";
 import { createHostCallImport, isHostCallImportName } from "./runtime/host-call-abi.js";
 import { createDynamicFunctionImport } from "./runtime/dynamic-function-import.js"; // (#2960/#4650)
 import { createBoundaryObjectAdapter } from "./runtime/boundary-object-adapter.js";
 import { createBoundaryCallbackAdapter } from "./runtime/boundary-callback-adapter.js";
 import { createBoundaryPromiseAdapter } from "./runtime/boundary-promise-adapter.js";
+import { createPromiseThenImport } from "./runtime/promise-then-reactions.js"; // (#5372)
 import { createBoundaryValueAdapter, isBoundaryValueImportIntent } from "./runtime/boundary-value-adapter.js";
 import { createInstanceLifecycleAdapter } from "./runtime/instance-lifecycle-adapter.js";
 import {
@@ -581,23 +590,6 @@ const _abHostBufferReverse = new WeakMap<ArrayBuffer, object>();
 const _compiledTypedArrayKinds = new WeakMap<object, number>();
 const _compiledTypedArrayMirrors = new WeakMap<object, ArrayBufferView>();
 const _compiledTypedArrayBuffers = new WeakMap<object, ArrayBuffer>();
-// Codegen contract: keep in lock-step with TYPED_ARRAY_HOST_TAGS in
-// expressions/typed-array-host-carrier.ts. Index zero is intentionally empty.
-const _COMPILED_TYPED_ARRAY_CTORS: ReadonlyArray<Function | undefined> = [
-  undefined,
-  Int8Array,
-  Uint8Array,
-  Uint8ClampedArray,
-  Int16Array,
-  Uint16Array,
-  Int32Array,
-  Uint32Array,
-  Float32Array,
-  Float64Array,
-  typeof BigInt64Array === "function" ? BigInt64Array : undefined,
-  typeof BigUint64Array === "function" ? BigUint64Array : undefined,
-];
-
 function _compiledTypedArrayMirror(carrier: any, callbackState?: MarshalExportSource): ArrayBufferView | undefined {
   if (!_canBeWeakKey(carrier)) return undefined;
   const kind = _compiledTypedArrayKinds.get(carrier);
@@ -3375,14 +3367,12 @@ function _sidecarSet(obj: any, key: any, val: any): void {
   writeWasmStructSidecar(_wasmSidecars, obj, key, val);
 }
 
+const _sidecarNormalize = (value: any): any => vecForMirror(value) ?? _unwrapForHost(value);
+
 function _copyWasmStructSidecar(source: any, destination: any): void {
-  copyWasmStructSidecar(
-    _wasmSidecars,
-    source,
-    destination,
-    (value) => vecForMirror(value) ?? _unwrapForHost(value),
-    _canBeWeakKey,
-  );
+  copyWasmStructSidecar(_wasmSidecars, source, destination, _sidecarNormalize, _canBeWeakKey);
+  // (#5370) The same bridge carries a typed array's BRAND across a rep change.
+  adoptTypedArrayBrand(source, destination, _sidecarNormalize, _compiledTypedArrayKinds, _canBeWeakKey);
 }
 
 // Keep native consumers of cached callable bridges in sync with raw-closure sidecar writes.
@@ -4403,7 +4393,7 @@ function _hostToPrimitive(
 // allocation is paid once per shape instead of per call. Callers of
 // `_structFieldNamesRaw` must treat the returned array as immutable — it is
 // shared across calls.
-const _csvSplitCache = new Map<string, readonly string[]>();
+const _csvSplitCache = new Map<string, readonly string[]>([["", []]]); // "" = known shape, no fields (#6430)
 
 function _structFieldNamesRaw(obj: any, exports: Record<string, Function> | undefined): readonly string[] | null {
   exports = _decoderExportsFor(obj, exports); // (#5225)
@@ -4411,7 +4401,7 @@ function _structFieldNamesRaw(obj: any, exports: Record<string, Function> | unde
   const fn = exports.__struct_field_names;
   if (typeof fn !== "function") return null;
   const csv = fn(obj);
-  if (csv == null || typeof csv !== "string" || csv === "") return null;
+  if (csv == null || typeof csv !== "string") return null;
   let names = _csvSplitCache.get(csv);
   if (!names) {
     // (#4616) Codegen escapes commas INSIDE a field name as U+0001 (see
@@ -12578,8 +12568,13 @@ assert._isSameValue = isSameValue;
             const tomb = _wasmStructDeletedKeys.get(obj);
             if (tomb && tomb.has(key)) return undefined;
             const exports = _decoderExportsFor(obj, callbackState?.getExports()); // (#5225)
+            const ownFieldStatus = _structOwnFieldStatus(obj, key, exports);
+            // (#5365) A compiled closure's `.length`, AHEAD of the `__sget_`
+            // probe that answered an unrelated vec getter's miss-default `0`.
+            const closureLength = compiledClosureLength(obj, key, ownFieldStatus, exports);
+            if (closureLength !== undefined) return closureLength;
             const getter = exports?.[`__sget_${key}`];
-            const fieldValue = wsh.readField(getter, obj, _structOwnFieldStatus(obj, key, exports));
+            const fieldValue = wsh.readField(getter, obj, ownFieldStatus);
             if (fieldValue !== wsh.NO_GENERATED_FIELD) return _restoreF64Undefined(fieldValue);
             // Generic `.byteLength` on an ArrayBuffer/DataView byte vec (#3097).
             if (key === "byteLength") {
@@ -12922,6 +12917,9 @@ assert._isSameValue = isSameValue;
             // (#4536) A tuple struct's length is its field count.
             const tupleLen = _tupleFieldCount(obj, exports);
             if (tupleLen !== undefined) return tupleLen;
+            // (#5365) The same closure answer, for the numeric lowering.
+            const closureLength = compiledClosureLength(obj, "length", undefined, exports);
+            if (closureLength !== undefined) return closureLength;
             return 0;
           }
           const len = obj.length;
@@ -13817,7 +13815,7 @@ assert._isSameValue = isSameValue;
           // ES §20.1.2.22 Object.values → ToObject (§7.1.18) throws on null/undefined.
           if (obj == null) throw new TypeError(`Cannot convert ${obj === null ? "null" : "undefined"} to object`);
           if (_isWasmStruct(obj)) {
-            const exports = callbackState?.getExports();
+            const exports = _decoderExportsFor(obj, callbackState?.getExports()); // (#5225/#6426)
             const fieldNames = _getStructFieldNames(obj, exports);
             if (fieldNames) {
               const descs = _wasmPropDescs.get(obj);
@@ -13842,7 +13840,7 @@ assert._isSameValue = isSameValue;
           // ES §20.1.2.5 Object.entries → ToObject (§7.1.18) throws on null/undefined.
           if (obj == null) throw new TypeError(`Cannot convert ${obj === null ? "null" : "undefined"} to object`);
           if (_isWasmStruct(obj)) {
-            const exports = callbackState?.getExports();
+            const exports = _decoderExportsFor(obj, callbackState?.getExports()); // (#5225/#6426)
             const fieldNames = _getStructFieldNames(obj, exports);
             if (fieldNames) {
               const descs = _wasmPropDescs.get(obj);
@@ -13871,7 +13869,7 @@ assert._isSameValue = isSameValue;
           if (typeof arr === "string") return Array.from(arr).slice(start);
           // Handle WasmGC structs (tuples) — extract fields from index onwards
           if (_isWasmStruct(arr)) {
-            const exports = callbackState?.getExports();
+            const exports = _decoderExportsFor(arr, callbackState?.getExports()); // (#5225/#6426)
             const fieldNames = _getStructFieldNames(arr, exports);
             if (fieldNames && exports) {
               const result: any[] = [];
@@ -13908,7 +13906,7 @@ assert._isSameValue = isSameValue;
           };
           // For WasmGC structs, use exported getters to read fields
           if (_isWasmStruct(obj)) {
-            const exports = callbackState?.getExports();
+            const exports = _decoderExportsFor(obj, callbackState?.getExports()); // (#5225/#6426)
             const fieldNames = _getStructFieldNames(obj, exports);
             if (fieldNames) {
               for (const key of fieldNames) {
@@ -16095,7 +16093,12 @@ assert._isSameValue = isSameValue;
           return inst;
         };
       // ArrayBuffer.isView(arg) — checks if arg is a TypedArray or DataView (#965)
-      if (name === "__arraybuffer_isView") return (arg: any): number => (ArrayBuffer.isView(arg) ? 1 : 0);
+      // (#5370) The arg arrives as the RAW carrier (`extern.convert_any`, no
+      // marshalling), so the direct ask answers `false` for every compiled
+      // TypedArray. Re-ask through the mirror every other host API sees.
+      if (name === "__arraybuffer_isView")
+        return (arg: any): number =>
+          ArrayBuffer.isView(arg) || ArrayBuffer.isView(_wrapForHost(arg, callbackState?.getExports())) ? 1 : 0;
       // Array.from(iterable, mapFn?) — creates array from iterable (#965).
       //
       // (#1382) Two interop hazards:
@@ -16948,9 +16951,8 @@ assert._isSameValue = isSameValue;
         return (executor: any) => new PromiseCtor(_maybeWrapCallable(executor, 2, callbackState));
       }
       // (#1382) `onFulfilled` / `onRejected` callbacks are arity-1 (the value or reason).
-      if (name === "Promise_then") return (p: any, cb: any) => p.then(_wrapPromiseReaction(cb));
-      if (name === "Promise_then2")
-        return (p: any, cb1: any, cb2: any) => p.then(_wrapPromiseReaction(cb1), _wrapPromiseReaction(cb2));
+      if (name === "Promise_then" || name === "Promise_then2" || name === "Promise_then2_frame")
+        return createPromiseThenImport(name, _wrapPromiseReaction); // (#5372) the frame variant rejects the frame on a trap
       if (name === "Promise_catch") return (p: any, cb: any) => p.catch(_maybeWrapCallable(cb, 1, callbackState));
       // (#1382) `onFinally` is arity-0 (no arg per spec §27.2.5.3).
       if (name === "Promise_finally") return (p: any, cb: any) => p.finally(_maybeWrapCallable(cb, 0, callbackState));
@@ -18495,8 +18497,8 @@ assert._isSameValue = isSameValue;
               }
               return wsh.normalizeSandboxValue(obj, v, key, globalSandbox, callbackState, _unwrapForHost);
             }
-          } catch {
-            /* fall through to the generic path */
+          } catch (e) {
+            if (e instanceof RangeError) throw e; // (#5375) exhausted stack / throwing accessor: never re-run the read
           }
         }
         const val = _safeGet(obj, key, callbackState, intent.rawCallable === true);
@@ -18532,8 +18534,12 @@ assert._isSameValue = isSameValue;
           const tomb = _wasmStructDeletedKeys.get(obj);
           if (tomb && tomb.has(key)) return undefined;
           const exports = _decoderExportsFor(obj, callbackState?.getExports()); // (#5225)
+          const ownFieldStatus = _structOwnFieldStatus(obj, key, exports);
+          // (#5365) Closure `.length` — see the by-name `__extern_get` binding.
+          const closureLength = compiledClosureLength(obj, key, ownFieldStatus, exports);
+          if (closureLength !== undefined) return closureLength;
           const getter = exports?.[`__sget_${key}`];
-          const fieldValue = wsh.readField(getter, obj, _structOwnFieldStatus(obj, key, exports));
+          const fieldValue = wsh.readField(getter, obj, ownFieldStatus);
           if (fieldValue !== wsh.NO_GENERATED_FIELD) return _restoreF64Undefined(fieldValue);
           // Generic `.byteLength` on an ArrayBuffer/DataView byte vec (#3097).
           if (key === "byteLength") {
@@ -18619,6 +18625,11 @@ assert._isSameValue = isSameValue;
           }
         }
         if (key === "constructor" && obj != null && _isWasmStruct(obj)) {
+          // (#5370) A BRANDED TypedArray carrier answers its OWN constructor,
+          // not the %Array% the vec arm below gives every other vec — matching
+          // the real `Uint8Array` `_wrapForHost` hands the next host call.
+          const taCtor = _typedArrayCtorFor(obj, _compiledTypedArrayKinds, _canBeWeakKey, globalSandbox);
+          if (taCtor !== undefined) return taCtor;
           const exports = callbackState?.getExports();
           const isVec = exports?.__is_vec as ((v: any) => number) | undefined;
           const vecLen = exports?.__vec_len;
@@ -19374,7 +19385,11 @@ function marshalTypedArrayArgs(
  * arguments and return values marshal correctly across the JS↔Wasm boundary.
  *
  * Prefer passing the genuine `WebAssembly.Instance`. Passing its raw exports
- * record retains the historical API.
+ * record retains the historical API, but (#6438) that overload can only CONSUME
+ * a data-struct authority, never establish one: an export that returns an
+ * object decodes only after `importObject.__setInstance(instance)` (or an
+ * earlier `wrapExports(instance)` for the same module). Without that, a struct
+ * result throws a `TypeError` instead of silently marshalling to `{}`.
  *
  * Pass the per-export type metadata from {@link CompileResult.exportSignatures}
  * as `options.signatures`; without it the wrapper is a passthrough. Returns a
@@ -19415,6 +19430,11 @@ export function wrapExports(
     mayEstablishDataStructAuthority: brandedExports !== undefined,
     mayConsumeGlobalDataStructAuthority: true,
   });
+  // (#6438) The raw-exports overload may never ESTABLISH data-struct authority,
+  // so a module that ships a decoder can have it masked to `undefined` in the
+  // view above. Struct results would then marshal to `{}` in silence.
+  const dataStructDecoderMasked =
+    _hasOwn(rawExports, "__struct_field_names") && typeof exportsForMarshal.__struct_field_names !== "function";
   const callFn0 = exportsForMarshal.__call_fn_0 as ((closure: any) => any) | undefined;
   const callFn1 = exportsForMarshal.__call_fn_1 as ((closure: any, arg: any) => any) | undefined;
   // (#1700) Vec allocator + byte-writer for Uint8Array args. Either may be
@@ -19469,6 +19489,13 @@ export function wrapExports(
   // was not, so step 4 is written out explicitly and the behaviour is unchanged.
   const isClosureFn = exportsForMarshal.__is_closure as ((v: any) => number) | undefined;
   const hasVecLen = typeof exportsForMarshal.__vec_len === "function";
+  // (#6438) Predicates the fail-closed raw-record guard borrows from this module.
+  const structDecodeProbes = {
+    isStruct: _isWasmStruct,
+    isVec: _isWasmVec,
+    fieldNames: _structFieldNamesRaw,
+    isClosure: isClosureFn,
+  };
   const looksMarshalable = (val: any): boolean => {
     if (val == null || typeof val !== "object") return false;
     // No positively discovered compiler closure family means this module
@@ -19476,16 +19503,24 @@ export function wrapExports(
     // label or the historical old-module fallback turn class instances into
     // callable wrappers.
     if (typeof isClosureFn !== "function") return true;
-    if (typeof isClosureFn === "function") {
-      try {
-        if (isClosureFn(val) === 1) return false;
-      } catch {
-        /* fall through to next probe */
-      }
+    // `_hostBridgeExportView` maps `__is_closure` to the authenticated compiler
+    // classifier when a closure family was discovered, or to `undefined`
+    // otherwise (see the `typeof isClosureFn !== "function"` branch above for
+    // the latter). So a classifier that returns without throwing is
+    // authoritative — a `0` verdict means "not a closure", full stop; do not
+    // fall through to the `__vec_len` guess (#6441) just because this
+    // field-less/array-free module never exports `__vec_len`.
+    let closureVerdictKnown = false;
+    try {
+      if (isClosureFn(val) === 1) return false;
+      closureVerdictKnown = true;
+    } catch {
+      /* module too old to answer the classifier cleanly — fall through to
+       * the `__vec_len` guess below, same as the pre-#6441 behaviour. */
     }
     if (_structFieldNamesRaw(val, exportsForMarshal) != null) return true;
     if (_isWasmVec(val, exportsForMarshal)) return true;
-    return hasVecLen;
+    return closureVerdictKnown ? true : hasVecLen;
   };
 
   const wrapped: Record<string, any> = Object.create(null);
@@ -19571,6 +19606,16 @@ export function wrapExports(
       const resultMarshal = hasMarshalOverride
         ? marshal
         : (marshalModeForBoundaryPolicy(exportBoundaryPolicy?.result.policy) ?? marshal);
+      if (dataStructDecoderMasked && resultMarshal !== false) {
+        // (#6438) `marshal: false` still hands back the raw handle; every
+        // decoding mode refuses rather than answering `{}` / `[{}, …]`. The
+        // NOT-marshalable arm is covered too: with the decoder masked and no
+        // `__vec_len` export, `looksMarshalable` falls through and a plain
+        // struct would be handed to JS as a callable (#1308 fallback) — just as
+        // wrong, and just as silent. `__is_closure` still exempts real closures.
+        const undecodable = rawExportsStructDecodeError(result, exportsForMarshal, key, structDecodeProbes);
+        if (undecodable) throw undecodable;
+      }
       if (resultMarshal === "copy" && marshalable) {
         const plain = _wasmToPlain(result, exportsForMarshal);
         // (#1700) Uint8Array fidelity on the return side. The Wasm signature

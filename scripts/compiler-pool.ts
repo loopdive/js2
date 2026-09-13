@@ -188,6 +188,7 @@ export class CompilerPool {
     target?: "gc" | "linear" | "wasi" | "standalone",
     // (#2119) false ⇒ keep mapped arguments for script tests; see runTest.
     inferModuleStrictArguments?: boolean,
+    semanticProviders?: "auto" | "native-first",
   ): Promise<PoolResult> {
     return this.enqueue(
       {
@@ -196,6 +197,7 @@ export class CompilerPool {
         wasmPath,
         metaPath,
         target,
+        semanticProviders,
         inferModuleStrictArguments,
         execute: false,
       },
@@ -223,6 +225,7 @@ export class CompilerPool {
       metaPath?: string;
       label?: string;
       target?: "gc" | "linear" | "wasi" | "standalone";
+      semanticProviders?: "auto" | "native-first";
       // (#2119) false ⇒ do not infer module-strictness (→ keep mapped
       // arguments) despite the synthetic `export function test()` wrapper.
       inferModuleStrictArguments?: boolean;
@@ -254,6 +257,7 @@ export class CompilerPool {
         wasmPath: opts.wasmPath,
         metaPath: opts.metaPath,
         target: opts.target,
+        semanticProviders: opts.semanticProviders,
         inferModuleStrictArguments: opts.inferModuleStrictArguments,
         // (#3461) forwarded only in fast native-harness mode; undefined ⇒ the
         // worker takes its unchanged honest path.

@@ -58,6 +58,52 @@ export function resolvesToNamedAmbientGlobal(ctx: CodegenContext, expr: ts.Expre
   return ts.isIdentifier(expr) && expr.text === name && resolvesToAmbientGlobal(ctx, expr);
 }
 
+/** Strip `(x)` / `x as T` / `x!` wrappers — the value is the same either way. */
+function unwrapValueExpression(expr: ts.Expression): ts.Expression {
+  let e: ts.Expression = expr;
+  while (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isNonNullExpression(e)) {
+    e = e.expression;
+  }
+  return e;
+}
+
+/**
+ * (#6419) Is `init` a generator / async METHOD value read straight off an
+ * OBJECT LITERAL — `{ *m(){} }.m`, `{ async m(){} }.m`?
+ *
+ * §15.x creates such a method with `OrdinaryFunctionCreate` and NO
+ * `[[Construct]]` slot, so `new m()` is a §13.3.5.1 step-5 TypeError. The
+ * `X.prototype.m` spelling of the same thing (`class K { *m(){} }`,
+ * `K.prototype.m`) is already decided by the `.prototype` arm of
+ * `classifyNonConstructableValue`; the object-literal spelling had no arm at
+ * all, so `const gen: any = { *m(){} }.m; new gen()` was claimed by the
+ * `any`-typed dynamic-ctor gate and routed into the `__construct_closure`
+ * bridge, which CONSTRUCTS it (`tests/issue-1528-closure-construct.test.ts`
+ * "does NOT route a generator-method value through the construct bridge",
+ * red on main).
+ *
+ * Deliberately narrow: only `*m(){}` and `async m(){}` members. A PLAIN
+ * `{ m(){} }.m` keeps its existing bridge route — the bridge's runtime
+ * IsConstructor probe is constructable-agnostic there, and moving it is a
+ * separate behaviour change this does not make.
+ */
+export function objectLiteralMethodWithoutConstruct(init: ts.Expression): boolean {
+  const access = unwrapValueExpression(init);
+  if (!ts.isPropertyAccessExpression(access)) return false;
+  const obj = unwrapValueExpression(access.expression);
+  if (!ts.isObjectLiteralExpression(obj)) return false;
+  const wanted = access.name.text;
+  for (const member of obj.properties) {
+    if (!ts.isMethodDeclaration(member)) continue;
+    const name = member.name;
+    const text = ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : undefined;
+    if (text !== wanted) continue;
+    if (member.asteriskToken !== undefined) return true;
+    return ts.getModifiers(member)?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) === true;
+  }
+  return false;
+}
+
 /**
  * The strength of a non-constructability conclusion.
  *

@@ -41,7 +41,7 @@ import type { IrFunction, IrType } from "../nodes.js";
 import type { FuncHandle, GlobalDef, GlobalHandle, TypeDef, TypeHandle, ValType, WasmFunction } from "../types.js";
 import type { ModuleLayout } from "../../emit/resolve-layout.js";
 import type { BackendEmitter } from "./emitter.js";
-import type { IrLowerResolver } from "../lower.js";
+import type { IrLowerResolver } from "./lower-contracts.js";
 import { type IrBackendKind, type IrBackendLegalityError, verifyIrBackendLegality } from "./legality.js";
 
 // ---------------------------------------------------------------------------
@@ -75,7 +75,7 @@ export type { IrBackendKind, IrBackendLegalityError } from "./legality.js";
 // of integration.ts so `src/ir/` stops importing `src/codegen/`; the shape a
 // backend implements is already exactly this. Layout handles are per-backend
 // data and are NEVER serialized (#3030 D4).
-export type { IrLowerResolver, IrLowerResolver as LayoutResolver } from "../lower.js";
+export type { IrLowerResolver, IrLowerResolver as LayoutResolver } from "./lower-contracts.js";
 export type {
   IrBoxedLowering,
   IrClassLowering,
