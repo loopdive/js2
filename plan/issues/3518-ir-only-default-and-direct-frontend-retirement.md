@@ -23,6 +23,7 @@ origin: "2026-07-21 explicit user directive: enable IR-only by default and retir
 oracle-ratchet-allow:
   - src/codegen/multi-prepared-array-leaf.ts
 loc-budget-allow:
+  - src/codegen/map-runtime.ts
   - src/codegen/index.ts
   - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/multi-prepared-scalar-leaf.ts
@@ -7269,3 +7270,45 @@ zero files. All54 earlier validated IR pins remain unchanged. Preserve the
 original1,819/1,819 as earlier-head evidence, with this345/345 current merge
 validation separately identified. Normal signed hooks and renewed exact-head
 publication/queue checks remain required.
+
+## Reconcile the refreshed main base e06f7674 — 2026-09-13
+
+The same-PR close/reopen refreshed stale GitHub metadata: exact headc06c5575
+stayed unchanged and the PR reopened held, while the reported base changed
+from7adc0a6e to actualmaine06f7674. Preserve the refused base-equality
+postcondition and both responses; reopening itself succeeded. The fixed7adc
+comparison proved no conflict only for that reported pair, not for the newly
+revealed main. The actual e06 merge has conflicts in compiler-boundaries,
+map-runtime and standalone-subclass-ctors. Do not repeat the metadata refresh
+or claim a source-free merge against this newer base.
+
+Incoming main contains the already-delivered closure-area repair and baseline
+refresh. Reconcile COLLECTION_KIND to one canonical object in main's new
+collection-kind.ts, preserving map-runtime and prior builtin-brands identity,
+tags, public ReadonlyMap and cold-import behavior. Equal-valued duplicate
+objects are insufficient. Review auto-merged collections-brand and preserve
+all other main fixes, especially undefined/constructability and prepared ABI
+transaction behavior. Keep original tests and receipt hashes; identified
+closed-method-dispatch changes are outside the authenticated named Promise
+helper declaration and do not justify reseeding its fixture.
+
+Preserve the IR policy's exact activation histories, allowed edges and layers
+while integrating main's legitimate inventory entries. A owns the four
+collection source files; B owns only policy; root owns integration, issue
+history and serial runtime checks. Run complete incoming regressions plus
+current collection/ABI/IR overlap controls, then source gates and normal signed
+hooks. Preserve all actual failures and qualify all earlier test evidence by
+its revision. Keep PR5760 held until the exact refreshed head is validated and
+published; use protected queue admission and verify delivery to main.
+
+## Ownership reconciliation — 2026-09-13
+
+The shared issue-assignments ref was refreshed to 2c2c1d20e2d4b95d15bb54653568359ecaa5aeee. The collection-kind and standalone parent-table change came from ttraenkler/issue-6419 (PR5876, already merged); its follow-up reservation identifies ttraenkler/sendev-6419. The older local Claude Desktop session cb1cd4f9-cdfd-4248-b476-1c7f5bbe9354 / ir-migration-coordination-35a148-90 is package C, not evidence of current ES2015 ownership.
+
+Current open-PR census: 28 PRs. Relevant external boundary changes are independent added entries: PR5911 issue-6440 adds runtime/promise-try-polyfill.ts; PR5909 issue-5383-standalone-temporal-s12 (dev-5383-s12) adds codegen/static-spread-arity.ts; PR5889 issue-6421 (reservation by sendev-5370) adds array-of-spread.ts and from-char-code-spread.ts; PR5839 codex/5350-super-property-rescue-20260912 adds class-prototype-write-keeps.ts. None changes the collection-kind/undefined-extern-import entries or IR activation history owned by this reconciliation. Existing Deno/TypeScript/audit and downstream IR PRs are preserved. No peer branch or worktree was edited.
+
+The shared-file ownership question no longer requires user identification. Resume only the existing isolated PR5760 integration, preserve the single main collection object and both sets of regressions, and union independently owned inventory entries on freshly fetched main. Keep downstream refreshes paused until verified PR5760 delivery. This is a file/branch evidence reconciliation, not a claim that another session acknowledged a message.
+
+### PR5760 collection compatibility export allowance — 2026-09-13
+
+The exact e06 reconciliation adds one public re-export line to map-runtime.ts (3,099 versus the 3,098-line baseline). It preserves the established COLLECTION_KIND/CollectionKind entry point while sourcing the same import-free collection-kind object used by main. This PR-specific allowance covers that single compatibility declaration; no function body grows. The original failed LOC result is retained in e06-frozen-loc-20260913.log. All 453 complete-file regression assertions and typechecking passed before this metadata-only grant.

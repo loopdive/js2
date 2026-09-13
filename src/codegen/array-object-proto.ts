@@ -64,7 +64,8 @@ import {
   nativeStringLiteralInstrs,
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
-import { COLLECTION_KIND, MAP_LAYOUT, ensureMapHelpers } from "./map-runtime.js"; // (#3171) size getter
+import { COLLECTION_KIND } from "./collection-kind.js"; // (#6419) import-free leaf — map-runtime.js is in an import cycle
+import { MAP_LAYOUT, ensureMapHelpers } from "./map-runtime.js"; // (#3171) size getter
 import { emitReceiverBrandCheck } from "./receiver-brand.js"; // (#3171) shared brand preamble
 import { pushMarkBuiltinCarrierCallable } from "./builtin-callable-brand.js"; // %TypedArray% carrier is a function
 import { emitTransferredCharAtProtoMemberBody, unboxProtoArgToI32 as unboxArgToI32 } from "./char-at-transfer.js";

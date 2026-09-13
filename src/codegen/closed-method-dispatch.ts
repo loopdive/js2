@@ -47,7 +47,8 @@ import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3125) Is
 import type { CodegenContext, OptionalParamInfo } from "./context/types.js";
 import { classMemberFuncKey } from "./class-member-keys.js";
 import { ensureNativeArrayHof, NATIVE_HOF_METHODS } from "./hof-native.js";
-import { COLLECTION_KIND, ensureMapHelpers, MAP_LAYOUT } from "./map-runtime.js"; // (#3309) $Map brand arm
+import { COLLECTION_KIND } from "./collection-kind.js"; // (#6419) import-free leaf — map-runtime.js is in an import cycle
+import { ensureMapHelpers, MAP_LAYOUT } from "./map-runtime.js"; // (#3309) $Map brand arm
 import { ensureSetHelpers } from "./set-runtime.js"; // (#3309) __set_add for the `add` arm
 import { ensureNativeIterHof, isIterHofForm, NATIVE_ITER_HOF_METHODS } from "./iter-hof-native.js"; // (#2903)
 import { ensureNativeLazyIter, isLazyIterForm, LAZY_ITER_ARG2_METHODS, LAZY_ITER_METHODS } from "./iter-lazy-native.js"; // (#2903 R3)

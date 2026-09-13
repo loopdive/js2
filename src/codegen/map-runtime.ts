@@ -24,8 +24,8 @@
  * is active (`ctx.standalone || ctx.wasi`). The JS-host path is untouched.
  */
 import { ts } from "../ts-api.js";
-import { COLLECTION_KIND } from "./builtin-brands.js";
 import { isVoidType } from "../checker/type-mapper.js";
+import { COLLECTION_KIND } from "./collection-kind.js"; // (#6419) import-free leaf — see the note at COLLECTION_KIND below
 import type { Instr, StructTypeDef, ArrayTypeDef, ValType } from "../ir/types.js";
 import { canonicalUndefinedExternInstrs, ensureAnyValueType, undefinedSingletonActive } from "./any-helpers.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
@@ -81,7 +81,11 @@ export const MAP_LAYOUT = {
   TOMBSTONE_BIT,
 } as const;
 
-export { COLLECTION_KIND, type CollectionKind } from "./builtin-brands.js";
+// (#3171 / #6419) `COLLECTION_KIND` lives in the import-free leaf
+// `collection-kind.js`. It used to be declared here, but this module sits in an
+// import cycle, so a module that entered the cycle from the other side could
+// read the binding while it was still in TDZ. Import it from the leaf.
+export { COLLECTION_KIND, type CollectionKind } from "./collection-kind.js";
 
 /**
  * Register the WasmGC struct/array types backing the native Map. Idempotent.
