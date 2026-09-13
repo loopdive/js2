@@ -40,6 +40,7 @@ import { emitArrayBufferProtoMemberBody, emitDataViewProtoMemberBody, emitTaCtor
 import { emitDateProtoMemberBody } from "./expressions/builtins.js"; // (#3219) reflective Date getter bodies
 import { emitDateReflectiveSetterBody } from "./date-reflective-setters.js"; // (#3174) reflective Date setter/toISOString bodies
 import { allocLocal } from "./context/locals.js";
+import { emitOutlinedNativeGlobalThisRead } from "./native-globalthis-outline.js"; // (#5383 S2p)
 import { emitBoxedProtoValueOfBody } from "./boxed-proto-valueof.js"; // (#4582)
 import { emitThisReceiverGuardConvert } from "./property-access.js";
 import { compileArraySliceFromVecLocal } from "./array-methods.js";
@@ -3697,6 +3698,32 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
     fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(linkedGlobal.name) ?? getterIdx });
     return { kind: "externref" };
   }
+  const globalIdx = ensureNativeGlobalThisGlobal(ctx);
+  const buildSeed = (seedFctx: FunctionContext): Instr[] | null => buildNativeGlobalThisSeed(ctx, seedFctx, globalIdx);
+
+  // (#5383 S2p) Prefer the ONE outlined seed helper — see
+  // native-globalthis-outline.ts for why splicing it per site cost 3.3x on the
+  // multi-source lane and why the runtime behaviour is unchanged.
+  const outlined = emitOutlinedNativeGlobalThisRead(ctx, fctx, globalIdx, buildSeed);
+  if (outlined !== null) return outlined;
+
+  // Re-entrant (a realm-global read raised while the seed itself is being
+  // built) or the seed could not be constructed: keep the historical inline
+  // splice, byte-for-byte. NOT dead code: a realm-global read raised from
+  // inside the seed's own construction must stay inline, because calling a
+  // not-yet-initialized ensure helper from within its own initializer would
+  // recurse at runtime.
+  const initBody = buildNativeGlobalThisSeed(ctx, fctx, globalIdx);
+  if (initBody === null) return null;
+  fctx.body.push({ op: "global.get", index: globalIdx });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });
+  fctx.body.push({ op: "global.get", index: globalIdx });
+  return { kind: "externref" };
+}
+
+/** The cached module global holding the native standalone realm object. */
+function ensureNativeGlobalThisGlobal(ctx: CodegenContext): number {
   const globalName = "__native_globalThis";
   let globalIdx = ctx.builtinObjectGlobals.get(globalName);
   if (globalIdx === undefined) {
@@ -3709,7 +3736,16 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
     });
     ctx.builtinObjectGlobals.set(globalName, globalIdx);
   }
+  return globalIdx;
+}
 
+/**
+ * The realm object's lazy-init instruction sequence — allocate the object,
+ * seed it, and store it in `globalIdx`. Locals are allocated in `fctx`, which
+ * is the outlined helper's own context on the fast path and the caller's on
+ * the re-entrant fallback.
+ */
+function buildNativeGlobalThisSeed(ctx: CodegenContext, fctx: FunctionContext, globalIdx: number): Instr[] | null {
   // Lazy init: allocate the one realm object and install the three immutable
   // ES5 global value properties plus the ES5 global function properties on
   // that real carrier. The old gOPD special case assumed top-level script
@@ -3885,12 +3921,7 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
   ];
   ctx.liveBodies.delete(evalSeeds);
   ctx.liveBodies.delete(namespaceSeeds);
-  fctx.body.push({ op: "global.get", index: globalIdx });
-  fctx.body.push({ op: "ref.is_null" });
-  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });
-
-  fctx.body.push({ op: "global.get", index: globalIdx });
-  return { kind: "externref" };
+  return initBody;
 }
 
 /**

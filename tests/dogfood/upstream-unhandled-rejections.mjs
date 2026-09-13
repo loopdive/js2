@@ -38,6 +38,7 @@ export function rejectionText(reason) {
  */
 export function createUnhandledRejectionSink({ label = "dogfood", stream = process.stderr } = {}) {
   const pending = [];
+  const pendingUncaught = [];
   const onRejection = (reason) => {
     const text = rejectionText(reason);
     pending.push(text);
@@ -45,14 +46,53 @@ export function createUnhandledRejectionSink({ label = "dogfood", stream = proce
     // existing failure reason, so this is the record that never gets dropped.
     stream.write(`[${label}] unhandled host rejection: ${text}\n`);
   };
+  const onUncaught = (error) => {
+    const text = rejectionText(error);
+    pendingUncaught.push(text);
+    stream.write(`[${label}] uncaught host exception: ${text}\n`);
+  };
+  let armed = false;
   process.on("unhandledRejection", onRejection);
+  const takeAfterOneTurn = async (queue) => {
+    await new Promise((resolve) => setImmediate(resolve));
+    return queue.splice(0, queue.length);
+  };
   return {
     async drain() {
-      await new Promise((resolve) => setImmediate(resolve));
-      return pending.splice(0, pending.length);
+      return takeAfterOneTurn(pending);
+    },
+    /**
+     * Start capturing `uncaughtException` — deliberately NOT on by default.
+     *
+     * (#6424) A stray host timer scheduled by a guest test throws outside every
+     * awaited body, so without a listener Node kills the whole worker and the
+     * file reads 0/N. But an uncaught exception is more often a HARNESS bug
+     * (bad import object, compiler crash) than guest behaviour, and swallowing
+     * one of those replaces a readable fast failure with a worker timeout — the
+     * worker would never reach its `emit`. So the listener is armed only for
+     * the window in which a test is actually running, and the returned
+     * `disarm()` puts the fast-fail behaviour back for compile, instantiation,
+     * module init, teardown and emit.
+     */
+    armUncaughtExceptions() {
+      if (armed) return () => {};
+      armed = true;
+      process.on("uncaughtException", onUncaught);
+      let disarmed = false;
+      return () => {
+        if (disarmed) return;
+        disarmed = true;
+        armed = false;
+        process.off("uncaughtException", onUncaught);
+      };
+    },
+    async drainUncaught() {
+      return takeAfterOneTurn(pendingUncaught);
     },
     dispose() {
       process.off("unhandledRejection", onRejection);
+      process.off("uncaughtException", onUncaught);
+      armed = false;
     },
   };
 }
@@ -65,10 +105,13 @@ export function createUnhandledRejectionSink({ label = "dogfood", stream = proce
  * promise, so those failures arrive through the test's own error channel; a
  * second, identical-looking "unhandled rejection: ..." on top of them would be
  * a double report of one defect.
+ *
+ * `kind` names the channel the reasons came from, so an uncaught host
+ * exception (#6424) reads as itself rather than borrowing the rejection label.
  */
-export function attributeRejections({ reasons, passed, error, late = false }) {
+export function attributeRejections({ reasons, passed, error, late = false, kind = "unhandled rejection" }) {
   if (reasons.length === 0) return { passed, error };
-  const text = `unhandled rejection${late ? " (late)" : ""}: ${reasons.join("; ")}`;
+  const text = `${kind}${late ? " (late)" : ""}: ${reasons.join("; ")}`;
   if (!passed) return { passed, error: error || text };
   return { passed: false, error: text };
 }

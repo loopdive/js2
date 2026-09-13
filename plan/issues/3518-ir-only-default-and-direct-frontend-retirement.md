@@ -7312,3 +7312,11 @@ The shared-file ownership question no longer requires user identification. Resum
 ### PR5760 collection compatibility export allowance — 2026-09-13
 
 The exact e06 reconciliation adds one public re-export line to map-runtime.ts (3,099 versus the 3,098-line baseline). It preserves the established COLLECTION_KIND/CollectionKind entry point while sourcing the same import-free collection-kind object used by main. This PR-specific allowance covers that single compatibility declaration; no function body grows. The original failed LOC result is retained in e06-frozen-loc-20260913.log. All 453 complete-file regression assertions and typechecking passed before this metadata-only grant.
+
+### PR5760 exact current-main merge — 2026-09-13
+
+Signed resolution 8121918f96dae2598e0fea0e4226e295bc50e721 preserves the tested e06 join; its source/test/policy pins remained unchanged after normal hooks. The subsequent actual merge uses 9578edf5ef01ca428b0ff34df63f7188ead8c1ad, freshly fetched from origin/main. All source and regression files merge cleanly; only scripts/compiler-boundaries.json conflicts. Resolve its independent main inventory additions alongside unchanged IR histories, then validate this resulting current tree. The old 453 assertions are prior-join evidence, not a rerun of this newer merge. Downstream refreshes remain paused.
+
+#### Validation of the 9578 current-main join
+
+44 complete files collected 826 cases: 822 passed, zero failures or pending/skipped rows, and four existing TODOs (three Temporal/class-member cases and one link-boundary error-constructor case). Both original Test262 regex rows and the real Temporal provider smoke child passed. All tracked source/test/helper/fixture pins remained unchanged. TS7, LOC/function budgets, measured coercion, oracle, inventory mode against exact main, and preservation-v1 passed; inventory remains graph-incomplete and retirement is not certified. Conformance synchronization changed no files, and the independent corpus matched all 53,933 canonical raw blobs. Normal signed hooks and exact publication/queue verification follow.

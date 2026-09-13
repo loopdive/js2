@@ -5494,6 +5494,40 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
             },
           ] satisfies Instr[])
         : []),
+      // (#6432) …and the native `$Symbol` carrier — the FOURTH instance of the
+      // same action-at-a-distance hazard the boxed-boolean and error-struct
+      // arms above document, and the one that blocked the whole linked
+      // standalone Temporal lane. §7.1.1 step 1: a Symbol is ALREADY a
+      // primitive, so ToPrimitive must hand it straight back; `returnIfPrimitive`
+      // below has always agreed (its `includeSymbol` arm), but the INPUT
+      // cascade did not, so a Symbol fell through the `$Object` test into
+      // `__class_to_primitive`. That answered correctly only while
+      // `__class_to_primitive` had no generic runtime walk; the moment the
+      // module gained one (`buildClassToPrimitiveRuntimeWalk`, emitted as soon
+      // as its probe natives resolve — which a LINKED standalone module always
+      // has), the walk's `__typeof_object(sym) || __typeof_function(sym)` guard
+      // answered TRUE for the Symbol carrier (`__typeof_object` has no Symbol
+      // arm) and sent a property read at it: `sym.toString()` → the inherited
+      // `Object.prototype.toString` glue → its loud standalone refusal.
+      //
+      // Measured 2026-09-12 (#6432): that refusal fired from INSIDE
+      // `__protoidx_companion` → `__nativeproto_seed_<Array>` →
+      // `__defineProperty_accessor(Array, @@species, …)` → `__obj_find` →
+      // `__to_property_key` → here, i.e. during MODULE INIT, before any user
+      // statement — which is why every linked test262 Temporal row reported
+      // "Object.prototype.toString is not yet implemented in --target
+      // standalone" and scored 0 pass.
+      ...(symbolKeysEnabled
+        ? ([
+            { op: "local.get", index: L_ANY },
+            { op: "ref.test", typeIdx: symbolTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "local.get", index: 0 }, { op: "return" }],
+            },
+          ] satisfies Instr[])
+        : []),
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.tee", index: L_ANY },

@@ -36,7 +36,7 @@
  * protocol, and the bulk of test262 any-method patterns). Methods invoked with
  * arguments fall through to the existing path (the dispatcher is not used).
  */
-import type { Instr, ValType, WasmFunction } from "../ir/types.js";
+import type { FuncHandle, Instr, ValType, WasmFunction } from "../ir/types.js";
 import {
   canonicalUndefinedExternInstrs,
   ensureExternSameValueZeroHelper,
@@ -46,6 +46,11 @@ import {
 import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3125) IsCallable arms
 import type { CodegenContext, OptionalParamInfo } from "./context/types.js";
 import { classMemberFuncKey } from "./class-member-keys.js";
+import {
+  DYN_ARRAY_PRODUCER_METHODS,
+  ensureNativeArrayProducer,
+  isDynArrayProducerForm,
+} from "./dyn-array-producers.js"; // (#6447)
 import { ensureNativeArrayHof, NATIVE_HOF_METHODS } from "./hof-native.js";
 import { COLLECTION_KIND } from "./collection-kind.js"; // (#6419) import-free leaf — map-runtime.js is in an import cycle
 import { ensureMapHelpers, MAP_LAYOUT } from "./map-runtime.js"; // (#3309) $Map brand arm
@@ -64,7 +69,7 @@ import { CLOSURE_ARITY_FIELD_IDX, getFuncRefWrapperRootTypeIdx } from "./closure
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { wrapClosureCallFastArm } from "./closure-call-fast.js"; // (#4185) closure-receiver fast `.call` arm
 import { buildFnctorArrayHofTargetTest } from "./fnctor-array-prototype.js";
-import { resolveVecHostBridgeHelper } from "./vec-access-exports.js";
+import { reserveVecMethodHelper, resolveVecHostBridgeHelper } from "./vec-access-exports.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
 import { defaultValueInstrs } from "./type-coercion.js";
 // (#5383 S2g) The externref-argument marshalling this file used to own inline;
@@ -387,6 +392,20 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
   if (ctx.standalone && NATIVE_HOF_METHODS.has(methodName) && arity >= 1) {
     getOrRegisterVecBaseType(ctx);
     ensureNativeArrayHof(ctx, methodName);
+  }
+
+  // (#6447) For the pure Array PRODUCER methods (`concat`/`sort`) emit the
+  // array-like-substrate helper `__arrprod_<name>` NOW (append-only defined
+  // funcs; the fill only READS funcMap — #1719) and register the `$__vec_base`
+  // supertype the fill's brand test needs. Without the arm a genuinely-`any`
+  // array receiver falls to the open-`$Object` bottom arm, and
+  // `__extern_method_call` answers `undefined` for a non-`$Object` brand by
+  // construction — which is how `n.concat(r, i)` came back undefined inside the
+  // compiled Temporal provider and took every property-bag entry point with it.
+  // Same shape and same gate as the #2927 mutator arm above. Standalone only.
+  if (ctx.standalone && DYN_ARRAY_PRODUCER_METHODS.has(methodName) && isDynArrayProducerForm(methodName, arity)) {
+    getOrRegisterVecBaseType(ctx);
+    ensureNativeArrayProducer(ctx, methodName);
   }
 
   // (#2903) For the EAGER Iterator-helper methods (find/every/some/forEach/
@@ -1347,13 +1366,37 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     // never fires standalone). Route to the carrier-generic `__vec_push` /
     // `__vec_pop` helpers (reserved at reserve-time; body filled in the finalize
     // vec-export pass).
-    const vecPushIdx = resolveVecHostBridgeHelper(ctx, "push");
-    const vecPopIdx = resolveVecHostBridgeHelper(ctx, "pop");
     const wantVecMutArm =
       (ctx.standalone || ctx.wasi) &&
       VEC_MUTATE_METHODS.has(methodName) &&
       isVecMutateForm(methodName, arity) &&
       ctx.vecBaseTypeIdx >= 0;
+    // (#5383 S2n) RESOLVE-OR-RESERVE, not resolve. The bridge allocation is
+    // made by `emitVecAccessExports`, and the two generate entry points call
+    // that at OPPOSITE SIDES of this fill: `generateModule` before it,
+    // `generateMultiModule` after it. So a plain resolve answers a handle in a
+    // single-module compile and `undefined` in a multi-module one — the arm was
+    // silently dropped for every multi-module standalone/wasi program, which is
+    // the #2927 data-loss bug re-opened (measured: `this.pop()` inside a
+    // `class X extends Array` method returned `undefined` and mutated nothing,
+    // so JSBI's `__trim` never trimmed, `JSBI.subtract(x, x)` answered 2^29
+    // instead of 0, and `Temporal.Duration.from({hours:1}).total("minutes")`
+    // answered NaN through the compiled polyfill).
+    //
+    // Reserving here makes the arm ORDER-INDEPENDENT rather than reordering the
+    // finalize passes. It is byte-neutral for the lane that already worked: in
+    // a single-module compile the resolve succeeds and the reserve never runs,
+    // and the whole block is gated on standalone/wasi, so the gc lane is
+    // untouched. `reserveVecMethodHelper` also sets `usesVecValue`, which is
+    // what makes the finalize vec-export pass fill the placeholder bodies the
+    // arm calls into.
+    const resolveOrReserveVecHelper = (kind: "push" | "pop"): FuncHandle | undefined => {
+      const resolved = resolveVecHostBridgeHelper(ctx, kind);
+      if (resolved !== undefined || !wantVecMutArm) return resolved;
+      return reserveVecMethodHelper(ctx, kind);
+    };
+    const vecPushIdx = resolveOrReserveVecHelper("push");
+    const vecPopIdx = resolveOrReserveVecHelper("pop");
     if (wantVecMutArm) {
       let mutArmBody: Instr[] | undefined;
       if (methodName === "push" && vecPushIdx !== undefined && ci.boxNumIdx !== undefined) {
@@ -1402,6 +1445,45 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
             op: "if",
             blockType: { kind: "val", type: { kind: "externref" } },
             then: mutArmBody,
+            else: current,
+          },
+        ];
+      }
+    }
+
+    // (#6447) `$__vec_base` brand arm for the pure Array PRODUCER methods
+    // (`concat` any arity, `sort` arity 0/1). The twin of the #2927 mutator arm
+    // directly above, for the same reason and with the same guard: a
+    // genuinely-`any` array receiver is a `$__vec_base`-subtyped struct that
+    // matches no `entries` arm, and the open-`$Object` bottom arm's
+    // `__extern_method_call` returns `undefined` for every non-`$Object` brand
+    // (its own comment says so). The helper was minted at reserve time; this
+    // only READS funcMap (#1719).
+    //
+    // `$ObjVec` subtypes `$__vec_base`, so one `ref.test` admits BOTH the
+    // concrete `__vec_<k>` carriers and the dynamic boxed-any carrier that
+    // `concat`/`map`/`Object.keys` themselves produce — which is what makes
+    // `n.concat(r, i).sort()` work end-to-end rather than only its first half.
+    if (
+      ctx.standalone &&
+      DYN_ARRAY_PRODUCER_METHODS.has(methodName) &&
+      isDynArrayProducerForm(methodName, arity) &&
+      ctx.vecBaseTypeIdx >= 0 &&
+      objVecNewIdx !== undefined
+    ) {
+      const producerIdx = ctx.funcMap.get(`__arrprod_${methodName}`);
+      if (producerIdx !== undefined) {
+        current = [
+          { op: "local.get", index: anyLocalIdx },
+          { op: "ref.test", typeIdx: ctx.vecBaseTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: [
+              { op: "local.get", index: 0 },
+              ...buildFixedArgVec(arity, anyLocalIdx + 1, objVecNewIdx, objVecPushIdx),
+              { op: "call", funcIdx: producerIdx },
+            ],
             else: current,
           },
         ];

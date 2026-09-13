@@ -1,10 +1,10 @@
 ---
 id: 4444
-title: "UMBRELLA: ES6 (ES2015) standalone authoritative 11,704-row close-out → 100%"
+title: "UMBRELLA: ES6 (ES2015) standalone close-out → 100% (discovery scope audit open)"
 status: in-progress
 sprint: current
 created: 2026-08-15
-updated: 2026-09-12
+updated: 2026-09-13
 assignee: codex/es6-test262-closeout
 priority: high
 horizon: xl
@@ -17,6 +17,179 @@ related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445
 ---
 
 # #4444 — UMBRELLA: ES6 (ES2015) standalone edition close-out
+
+## Active continuation (2026-09-13, Codex)
+
+### Cross-session ownership
+
+The user explicitly identified a parallel IR-migration session. The ES2015
+team has sent that session its exact source paths and requested current
+ownership and landing order. Until the shared seams are agreed, hold new
+overlapping compiler/IR edits and merges; preserve existing work and allow
+already-running tests and hooks to finish. Validation of frozen conformance
+source and issue/test documentation can continue.
+
+The app task titled `IR migration` replied that it is inactive after handoff,
+with no current writers or reservations in these conformance paths. Its old
+worktree and staged merge must remain untouched; the landed extraction
+supersedes that old state. The active successor has not yet been identified.
+The user was asked for its task/worktree, and overlapping new implementation
+remains held rather than assuming that the inactive task speaks for it.
+
+Proposed boundary, pending acknowledgment: migration retains program
+preparation, native body extraction, and migration receipts; this team owns
+scoped generator, Promise, and RegExp conformance behavior and regression
+pins. Shared context/declarations/index/literal-allocation edits require
+explicit coordination. In particular, do not start the queued true-realm IR
+implementation independently of that session, duplicate its extraction, or
+weaken its checks. The Promise successor preserves the landed legacy
+combinator adapter exactly and passes the current forward-preservation oracle.
+
+### Measured state and active slices
+
+The latest verified canonical record for the current runner discovery is the
+standalone baseline for
+`6aac84c0b6ef418bbfa6a97cceca25960db7a3f6`: **10,294 pass, 1,116 fail,
+293 compile errors, and one compile timeout**, exactly **11,704**
+current-runner-selected ES2015 rows. This measured cohort has **1,410 non-pass rows**, not
+zero; the separate Intl402 discovery/scope question below is still unresolved.
+
+The fresh download is pinned to baselines-repository commit
+`357f932973bfa09c31b09b0ed750c98e621c29d3`; its Git blob
+`277c7454dbe7c7dcf7bf12ac547b14e31aee826a` matches the downloaded bytes.
+The JSONL SHA-256 is
+`728d1aebe31b432ffa208da78dd6113c735182d92aec5576fa04f6512e627e3f`.
+Metadata from that same pinned commit records generation at
+`2026-09-13T03:29:24.408Z`, target `standalone`, official scope with proposals
+disabled, and oracle version 13. Every selected row is `honest` with semantic
+providers `auto`. The 48,735 physical rows contain exactly 11,704 selected
+rows and 11,704 unique selected paths; there are no missing selected-manifest
+paths.
+
+### Discovery-scope audit: Intl402 is unmeasured
+
+The current edition map has **11,778 ES2015-labelled paths**, not 11,704.
+All **74 additional paths** are real files under `intl402/` in the pinned
+Test262 checkout; they are neither stale entries nor missing files. They are
+absent from the baseline because `tests/test262-runner.ts` does not include
+`intl402` in `TEST_CATEGORIES`. Its separate `classifyTestScope` function
+would classify these non-proposal files as `standard`, `official: true`.
+Examples include `intl402/Collator/proto-from-ctor-realm.js`,
+`intl402/DisplayNames/ctor-custom-prototype.js`, and
+`intl402/TypedArray/prototype/toLocaleString/calls-toLocaleString-number-elements.js`.
+
+No current authoritative ECMA-402 exclusion policy was found in the bounded
+repository review. `plan/goals/full-conformance.md` explicitly leaves Intl
+conditional on scope; historical exclusion from an ES5 landing census is not
+a project-wide scope decision. ECMA-402 may be a separate-standard exclusion,
+but discovery omission alone does not prove that policy. The user has been
+asked whether the 100% target includes these Intl402 tests or ECMA-262 only.
+Until that is resolved, label 11,704 as the **current maintained-runner-selected
+ES2015 cohort**, not all edition-map-labelled or all official Test262 coverage.
+The 74 additional tests are **unmeasured**, not passing or failing. Do not
+silently shrink the denominator or certify the full goal from this cohort
+alone. If Intl402 is included, correct discovery and obtain verdicts for the
+full required selection rather than assigning results from metadata.
+
+### Comparison and active implementation slices
+
+The previous complete `e0023dbbe6c37e15c1f56ed0c8bc8d15d0afbac3` record
+(`07c89a5c2626f3312ff611f008a69ed6d8826e9802da024df39726ddabc1e9ba`)
+had 10,255 pass, 1,104 fail, 344 compile errors, and one compile timeout.
+An exact pass-set comparison finds **39 gained passes and zero lost passes**.
+The gains include the sticky-match original and generator-method tests; these
+are baseline differences, not attribution of every change to a single PR.
+Earlier, that previous record gained 63 and lost 38 versus September 12
+(net +25); retain the distinction between the two comparisons.
+
+The ongoing local census
+`test262-standalone-results-20260913-010438.jsonl` remains live and partial on
+its frozen older source. Do not replace the canonical denominator or infer
+the current integrated pass rate from it. Preserve the running process; it
+must not be killed without the user's permission.
+
+Implementation ownership remains partitioned into three isolated Terra Max
+worktrees, with peer PR shepherding. Compiler-heavy validation and git hooks
+share one team lease alongside the census; no active tests may be killed
+without user permission.
+
+- **Generator method regression:** upstream PR #5874 merged as
+  `85496937328e9b5d7477946b64fcf213920ad554`. Its four changed files match
+  the tested head `5322242ffcdc7d40005925c0955f32060538aaf4` exactly. The
+  previously passing floor measured 37/37 and protocol controls 44/44.
+  This does not close generator issue 5199: `default-proto.js` remains a
+  separate measured regression. The successor's unchanged `default-proto.js`
+  and `prototype-value.js` now pass 2/2. Allocation-time prototype-source
+  promotion fixes the closed-literal prototype boundary: runtime controls
+  now pass 8/8 and selector guards 2/2, including identity and inherited
+  property liveness. An additional immediate-read diagnostic still fails
+  (30/31 bits): the replacement uses externref while the saved immediate
+  getter result has a concrete struct slot and is cast to null. This remains
+  a documented blocker; no successor PR or clean diagnostic is claimed.
+  Shared source changes are held for migration-owner coordination.
+- **Sticky RegExp matching:** upstream PR #5878 merged as
+  `302f341bc24a8eeaa216805b536e42292ed0d994`, an ancestor of the new
+  baseline compiler commit. All five changed files match tested head
+  `9e8203925cc6fa9a352d6a3b2a768297575850b3` exactly. One original failure
+  and ten positive controls passed in each lane, plus 3/3 focused pins. The
+  fresh complete baseline also records the sticky original as passing.
+  Raw lastIndex identity and conditional descriptor state remain unfinished
+  in issue 5198. The raw-slot successor's isolated selector tests pass 6/6;
+  two runtime tests were excluded by the name filter, so this is not runtime
+  integration evidence. A new unsuppressed negative proves a receiver
+  redeclaration can invalidate its native-receiver assumption (one selected
+  failure, expected false but received true). A new direct contextual checker
+  call also needs an oracle-based replacement. Both corrections and allocation
+  integration remain unimplemented under the shared-source ownership hold.
+- **Observable Promise combinators:** issue 5197 checkpoint `6e684e2950`
+  records 13/13 focused pins and the original `all/invoke-resolve.js` plus
+  its positive control passing 2/2 before integration. Integration with
+  captured upstream `7adc0a6e897556cee50a7024d24a47a0fb1c8052` exposed a
+  source-declaration ledger conflict. Observable helpers now live in a
+  dedicated module, preserving the landed legacy adapter byte-for-byte and
+  passing the current source-preservation verifier. Integrated compiler bundle
+  `ee8a61289b2547f6` with rebuilt QuickJS adapter `ade903d7c361865e` passes
+  the focused suite 13/13 and unchanged original/control pair 2/2; canonical
+  TS7 also passes. Ready upstream PR #5883 publishes integrated head
+  `df94fdac9b9a43b579975ee7e57506aecd272809`. Mandatory merge hooks passed
+  all 12 changed-root suites; pre-push checks passed, including numeric-local
+  18/18 and issue integrity. The frozen fix is complete, but issue 5197's
+  remaining protocol work and the full-suite goal remain open.
+- **Non-overlapping early-error work:** issue 3444 now has a source-current
+  implementation plan for `language/global-code/new.target-arrow.js`, which
+  still fails in the fresh baseline. A global arrow does not establish its
+  own NewTarget environment. The claimed `3444:newtarget-arrow` slice starts
+  at verified upstream `3e92241ecc3ee81df38df29cdd228537364bd19b` in an
+  isolated Terra Max worktree. The parent/slice claim check and complete
+  issue-file PR scan were clear. A separate source-path scan of all 25 open
+  PRs, including all 213 files in #5753 and 238 files in #5798, found no edits
+  to its two proposed early-error source files. Only
+  `src/compiler/early-errors/predicates.ts`, `node-checks.ts`, a dedicated
+  test, and issue 3444 are assigned. Do not modify generic function-scope
+  predicates or broaden into the held IR/codegen seams. The author now reports
+  23/23 expanded focused controls and the unchanged maintained original/control
+  pair passing 2/2, following a starting 1/2 pair and an initial 18-case matrix
+  with 8 failures and 10 passes.
+  This is candidate evidence, not a promoted full-suite gain. A broader
+  neighboring test reports a runtime import LinkError. The exact four-test
+  issue-189 suite was rerun on untouched starting head and candidate with the
+  same environment: both return one failure, three passes, and the identical
+  `__get_undefined` LinkError. This narrow baseline-identical failure is not
+  presented as a green suite. TS7 also passes after the final test additions;
+  remaining hooks are pending. Peer review's five requested
+  accessor/static-field controls are included in the expanded 23-case run.
+  No completed PR is claimed for this slice. A separate peer shepherd is
+  assigned for its eventual tested head.
+- **Next substrate work:** issue 4274 now has a refreshed realm implementation
+  plan, exact manifests, and negative provenance controls. It remains queued
+  until a worker is available and ownership is rechecked; no source changes
+  or full-cohort improvement are claimed.
+
+Continue toward the full 100% goal. Passing all currently selected 11,704 rows
+is necessary, but must not become a completion claim while the Intl402 scope
+audit remains unresolved. Keep one upstream PR per completed fix, update each
+issue with measured evidence and remaining work, and do not turn these
+checkpoints into issue-completion claims.
 
 ## Resume checkpoint (2026-09-12, Codex)
 
