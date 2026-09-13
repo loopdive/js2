@@ -4458,3 +4458,226 @@ S12 run adds one qualification that the earlier updates could not make — the
 base column was measured **on this tree**, by file-copy revert, so the 170 is a
 self-consistent before/after and not a comparison across worktrees. No
 full-corpus number is claimed; a corpus run remains the tech lead's to schedule.
+
+## S13 findings (2026-09-13) — the `from()` results are repaired; the linked lane goes 170 → 177, and the defect was never at the link
+
+**#6464 is the slice.**
+
+### 1. The hand-off attribution was wrong for the FIFTH slice running, and the pattern is now nameable
+
+S13 was handed "boundary identity: the consumer reads a provider-created
+`Object.create(proto)` object through the link". It is neither a link defect nor
+an `Object.create` defect in general. It reproduces in ONE standalone module
+with no provider, no package edge and no linker, and the variable is the
+**spelling of the prototype argument** (`.tmp/s13/c7.out`):
+
+| carrier, `--target standalone`, one module | `o.self() === o` | `o.day` |
+| --- | --- | --- |
+| `Object.create(K.prototype)`, `K` a VALUE | **false** | **−1** |
+| `Object.create(C.prototype)`, `C` a class identifier | true | 18 |
+| `new C()` | true | 18 |
+
+The pattern across S10–S13 is not "the brief points the wrong way"; it is that
+**the brief names the place the symptom was OBSERVED, and the census finds the
+place the decision was MADE.** Those are different in four of the last four
+slices, and they are different in opposite directions (S12 was handed
+module-local and found cross-module; S13 was handed cross-module and found
+module-local). The only procedure that survives both is: reduce, and let the
+single-module control decide.
+
+### 2. A harness property that makes a whole class of census UNATTRIBUTABLE
+
+The first two probe sets of this slice put every probe in one consumer module,
+and they **disagreed with each other over the same provider** — `NS.num()`
+answered `18` in one set and `null` in another. Module CONTENT decides the
+answer (the #6432 action-at-a-distance hazard), so a shared-module census cannot
+attribute anything. Every number in #6464 comes from `.tmp/s13/pair2.mjs`, which
+builds the provider once and compiles **one probe per consumer module**. The
+shared-module harness is kept only as the record of why.
+
+### 3. Root cause
+
+`tryCompileObjectCreateStaticPrototype` lowers the *syntactic*
+`<ClassIdentifier>.prototype` to `struct.new $C`. A dynamic `K.prototype` misses
+it and falls to the native `__object_create`, which returns a plain `$Object`
+that merely inherits from the class prototype — and a compiled class member takes
+`this` as a concrete `(ref $C)`, which a plain `$Object` can never satisfy, so
+the bridge binds the PROTOTYPE as the receiver. Every WeakMap slot keyed on the
+created object then misses.
+
+#5239 fixed exactly this for the JS-host lane. Its emitter opens
+`if (ctx.wasi || ctx.standalone || noJsHost(ctx)) return;` — it is an export the
+JS runtime's `__object_create` calls back into, so it has no meaning without a
+host — and **nothing ever replaced it**. The polyfill emits the dynamic spelling
+seven times, once per `X.from(…)` result builder:
+
+```js
+function pn(e,t){ const n = ce("%Temporal.PlainDate%");
+                  const r = Object.create(n.prototype); return yn(r,e,t), r; }
+```
+
+(`Object.create(<var>.prototype)` ×7; `Object.create(null)` ×14, untouched; no
+`Object.create(<ClassIdentifier>.prototype)` at all.)
+
+### 4. What was fixed
+
+New module `src/codegen/standalone-object-create-class-instance.ts`: a native
+dispatcher that answers a freshly defaulted `struct.new $C` when its argument IS
+the class's prototype singleton and `ref.null.extern` for every other shape.
+Reserved at the call site (`mintDefinedFunc`, a stable handle), filled at both
+finalize sites where `ctx.protoGlobals` is complete. Two deliberate differences
+from #5239 and the reasons they are load-bearing are in #6464.
+
+Real linked provider, fresh cache (`cacheHit=false`, namespace
+`js2wasm:npm:@js-temporal/polyfill:065e8cd918020d98`):
+
+| probe | base | S13 |
+| --- | --- | --- |
+| `PlainDate.from("1976-11-18").day` | `null` | **18** |
+| `PlainDate.from(…).calendarId` | `null` | **"iso8601"** |
+| `typeof PlainDate.from(…).calendarId` | **`"object"`** | **`"string"`** |
+| `PlainDate.from(…).year` | `null` | **1976** |
+| `PlainDate.from({year,month,day}).day` | `null` | **18** |
+| `PlainTime.from("12:30").hour` | `null` | **12** |
+| `Instant.from(…).epochNanoseconds` | `null` | a value |
+| `new Temporal.PlainDate(1976,11,18).day` | 18 | 18 |
+
+### The three-family sample, LINKED, re-measured
+
+120 rows each, `--target standalone`, provider linked, families run
+**sequentially**, FRESH `JS2WASM_TEMPORAL_CACHE` per label
+(`.tmp/s13famcache-{base,new}`), quickjs eval provider **and adapter** present as
+real files. The base column is **this worktree's own base run**, taken by
+file-copy revert of the two edited source files on this tree.
+
+| family | rows | base pass | **S13 pass** | fail | compile_error | pass→fail |
+| --- | --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 62 | **64** | 52 | 4 | **0** |
+| `built-ins/Temporal/Duration/**` | 120 | 43 | **43** | 71 | 6 | **0** |
+| `built-ins/Temporal/ZonedDateTime/prototype/**` | 120 | 65 | **70** | 46 | 4 | **0** |
+| **total** | **360** | **170** | **177** | **169** | **14** | **0** |
+
+`fail→pass`: 7 — PlainDate `from/argument-string-calendar-case-insensitive.js`,
+`from/options-basic.js`; ZonedDateTime `prototype/day/basic.js`,
+`prototype/daysInYear/basic.js`, `prototype/equals/argument-object.js`,
+`prototype/equals/argument-valid.js`,
+`prototype/equals/constructed-from-equivalent-parameters-are-equal.js`.
+`__temporal_*` leaks: **0** in all six TSVs.
+
+Every CE↔fail flip in the sample (9 rows) was re-run **solo at 60 s on BOTH
+trees** and every one agrees across trees, so all nine are compile-budget
+artifacts, not movement:
+
+| row | base solo | S13 solo |
+| --- | --- | --- |
+| `PlainDate/compare/argument-plaindatetime.js` | fail 18.5 s | fail 19.0 s |
+| `PlainDate/from/argument-propertybag-calendar-string.js` | fail 14.0 s | fail 13.5 s |
+| `PlainDate/from/overflow-undefined.js` | fail 14.5 s | fail 14.6 s |
+| `PlainDate/from/argument-object-valid.js` | fail 15.0 s | fail 14.3 s |
+| `Duration/from/argument-existing-object.js` | fail 13.9 s | fail 13.1 s |
+| `Duration/microseconds-undefined.js` | fail 14.9 s | fail 14.0 s |
+| `Duration/compare/relativeto-propertybag-infinity-throws-rangeerror.js` | fail 13.2 s | fail 13.3 s |
+| `ZonedDateTime/prototype/add/cross-epoch.js` | fail 15.1 s | fail 14.4 s |
+| `ZonedDateTime/prototype/add/math-order-of-operations-add-none.js` | fail 13.2 s | fail 13.3 s |
+
+Every one lands at 13–19 s against a 15 s sample budget, which is the artifact
+itself.
+
+### Top error buckets, LINKED, S13
+
+PlainDate (52 fail): 20 `calendar must be string in canonicalizeCalendarEra` ·
+3 compilation timeout · 2 `illegal cast in __class_construct_dispatch()` ·
+2 `year is required` · 2 `prototype Expected SameValue(«null», «[object Function]»)`.
+
+Duration (71 fail): 5 `years result: Expected SameValue(«undefined», «N»)` ·
+5 `explicit: years result …` · 5 `dereferencing a null pointer in sn()` (two
+distinct call paths) · 5 compilation timeout.
+
+ZonedDateTime/prototype (46 fail): 7 `required property 'timeZone' missing` ·
+5 `Cannot read properties of undefined (reading 'equals')` (was 6) ·
+4 `dereferencing a null pointer in sn()` · 4 compilation timeout ·
+3 `Expected a RangeError but got a undefined`.
+
+### The 20-row `canonicalizeCalendarEra` bucket did NOT move, and that is a finding
+
+S12 attributed ~40 rows to this residual and this slice repaired the mechanism
+those 20 rows sit on — `typeof PlainDate.from(…).calendarId` answers `"string"`
+now, measured directly against the linked provider — yet the bucket is still
+exactly 20. So the harness's `assert.sameValue(typeof calendarId, "string")` is
+failing on a value that answers `"string"` when the same read is spelled inline
+in the consumer. The difference is that the harness passes it through its own
+function PARAMETER first (`TemporalHelpers.canonicalizeCalendarEra(date.calendarId, …)`).
+
+That is a second, independent defect, and it is the single largest remaining
+bucket in the sample. It should be the next slice's census target, reduced as:
+a provider-owned string read in the consumer, passed into a consumer function
+with an untyped parameter, and `typeof`-ed there. Do not assume it is the same
+mechanism as this one — that assumption is what cost the last five slices.
+
+### Two standalone samples that must NOT move, and a third, and none did
+
+`--target standalone`, base by file-copy revert on the same tree, 120 rows each.
+Tied to what this slice touches: the `Object.create` lowering itself, the dynamic
+object surface around it, and the class surface whose prototype singleton the
+dispatcher compares against.
+
+| sample | base | S13 | pass→fail | flips |
+| --- | --- | --- | --- | --- |
+| `built-ins/Object/create/**` (first 120 of 320) | 120 pass / 0 fail | 120 / 0 | **0** | **0** |
+| `built-ins/Object/**` (first 120) | 106 pass / 14 fail | 106 / 14 | **0** | **0** |
+| `language/expressions/class/**` (first 120) | 70 pass / 38 fail / 12 CE | 70 / 38 / 12 | **0** | **0** |
+
+### Order preservation
+
+Base captured by file copy at the FIRST edit
+(`.tmp/base-{call-builtin-static,index}.ts`):
+
+- 40 modules (`website/playground/examples/**` + `tests/fixtures/**`) ×
+  {gc, standalone}: **80/80 sha256-identical**. That corpus contains no dynamic
+  `Object.create`, so it is a no-collateral control.
+- a targeted 9-shape corpus supplies the positive control: **all 9 `gc`
+  artifacts identical**, and on standalone exactly two move — `ocDynProto` and
+  `ocDynProtoCall`, the two shapes this slice repairs. Every control is
+  byte-identical: `ocStaticProto`, `ocNull`, `ocPlainObject`,
+  `ocNoClassInModule`, `ocDescriptors`, `classesOnly`, `plainArith`.
+
+### Traps, carried forward and added to
+
+- All prior traps still bite. This worktree arrived with `test262` **absent**
+  and no `node_modules`.
+- **NEW, and it cost a full round of family measurements: the S12 note to check
+  `.test262-cache/quickjs-artifact-*/libquickjs.wasm` is necessary but NOT
+  sufficient.** The runner also needs
+  `.test262-cache/quickjs-eval-adapter-<hash>.wasm`. With the artifact directory
+  present and the adapter missing, every row fails with a message naming the
+  adapter and PlainDate scores **0 pass / 118 fail** — indistinguishable at a
+  glance from a catastrophic regression. Check for BOTH before believing any
+  family number.
+- **NEW: `pkill` on a measurement sweep leaves ORPHANS that keep writing your
+  TSVs.** Killing the driver script does not kill the `family.mts` child it had
+  already spawned, and two writers of one TSV (one at limit 400, one at 120)
+  produce a file whose row count means nothing. Kill the children by their own
+  pids and re-check with `ps` before restarting; a duplicate sweep also doubles
+  the load and manufactures compile-timeout flips.
+- **The S12 note that the provider namespace hash does not change after a
+  codegen edit is not general.** This slice's fix moved it
+  (`2c0506a30fe8f23d` → `065e8cd918020d98`). `cacheHit=false` against a FRESH
+  cache directory remains the tell that actually works.
+
+### Artifacts
+
+`.tmp/s13fam/{pd,du,zdt,mnm-oc,mnm-obj,mnm-cls}-{base,new}.tsv` (+ `.log`),
+`.tmp/s13fam/solo-{base,new}.tsv`,
+`.tmp/s13/{c1..c7,t1}*.out`, `.tmp/s13/byteab{,2}-{base,new}.tsv`, and the probe
+sets `.tmp/s13/{c1..c7,t1}.mjs` in this worktree
+(`/home/user/js2/.claude/worktrees/agent-a85a674efc7243492`), produced by
+`.tmp/s13/{pair2.mjs,family.mts,rerun13.mts,byteab.mts,byteab2.mts}` and compared
+with `.tmp/s13/table13.mjs`.
+
+### Acceptance criterion 4 — S13 update
+
+MET-for-the-sample at **177/360** (was 170), measured on the same three
+families, with **0 pass→fail**, all three must-not-move samples flat and 0
+`__temporal_*` leaks. Base and branch were both measured on this tree by
+file-copy revert, so the delta is a self-consistent before/after. No full-corpus
+number is claimed; a corpus run remains the tech lead's to schedule.

@@ -1,7 +1,8 @@
 ---
 id: 6464
-title: "standalone: an `Object.create(C.prototype)` instance handed across the module link answers `null` for every accessor and method read — the Temporal polyfill builds every `X.from(…)` result this way, so all five `from` constructors return objects whose `.day`/`.equals`/`String()` are `null`"
-status: in-progress
+title: "standalone: `Object.create(<value>.prototype)` produces a plain object, not a compiled instance, so every member read binds the PROTOTYPE as `this` and every WeakMap slot misses — #5239 fixed this for the JS-host lane and returns early on `ctx.standalone`; the Temporal polyfill uses that exact spelling for all seven `X.from(…)` result builders, which is why `PlainDate.from(…).day` answered `null` while `new PlainDate(…).day` answered 18"
+status: done
+completed: 2026-09-13
 assignee: ttraenkler/dev-5383-s13
 sprint: current
 priority: high
@@ -65,8 +66,12 @@ The polyfill does not use `new` for `from`: it builds results with
 `Object.create(intrinsic.prototype)` plus WeakMap slot writes (bundle symbol
 `pn`, ~L1946 of `linkPolyfillSource(setupTemporalPolyfill()).source`).
 
-S12 measured the same shape **inside one module** and it answers correctly, so
-this is a cross-module (link-boundary) defect, not a module-local one.
+S12 measured "the same shape" inside one module, saw it answer correctly, and
+concluded this was a cross-module (link-boundary) defect. **That conclusion was
+wrong, and the census below says why**: S12's single-module control used the
+SYNTACTIC spelling `Object.create(C.prototype)`, which is lowered to
+`struct.new $C` and has never been broken. The polyfill uses the DYNAMIC
+spelling, which is broken in one module too.
 
 S12 attributed ~40 of the 360 rows in the three-family sample to this residual.
 
@@ -246,3 +251,51 @@ question). Reduction: `.tmp/s13/c1.mjs`, probes `oc instanceof C`,
 ZonedDateTime `reading 'equals'` bucket:
 `Object.getOwnPropertyNames(C.prototype)` **traps** (`illegal cast`) in BOTH
 lanes — a separate, pre-existing defect the census pinned but did not attribute.
+
+## Results (2026-09-13)
+
+Every acceptance criterion met. Full tables, the solo flip re-runs and the byte
+A/B are in `plan/issues/5383-standalone-temporal-provider.md` § "S13 findings".
+
+| criterion | result |
+| --- | --- |
+| 1. `Object.create(K.prototype).day` answers the instance's own slot | −1 → **18** single-module, `null` → **18** linked |
+| 2. `o.self() === o` for the dynamic shape | false → **true** |
+| 3. three linked Temporal families | **170 → 177**, 0 `pass→fail`, 0 `__temporal_*` leaks |
+| 4. must-not-move samples | `Object/create` 120/120 flat · `Object/**` 106/14 flat · `class/**` 70/38/12 flat, 0 flips each |
+| 5. byte A/B | 80/80 corpus artifacts identical; 9/9 `gc` targeted artifacts identical; on standalone exactly the two repaired shapes move |
+
+Real linked provider, fresh cache (`cacheHit=false`):
+`PlainDate.from("1976-11-18").day` `null` → **18**; `.calendarId` `null` →
+**"iso8601"**, `typeof` `"object"` → **"string"**; `.year` `null` → **1976**;
+`from({year,month,day}).day` `null` → **18**; `PlainTime.from("12:30").hour`
+`null` → **12**; `Instant.from(…).epochNanoseconds` `null` → a value.
+
+### One result that is NOT a win, stated plainly
+
+The 20-row PlainDate `calendar must be string in canonicalizeCalendarEra` bucket
+— the largest single bucket S12 attributed to this residual — **did not move**,
+even though `typeof PlainDate.from(…).calendarId` now answers `"string"` when
+read inline in the consumer. The harness reads it through its own function
+PARAMETER (`TemporalHelpers.canonicalizeCalendarEra(date.calendarId, …)`), so
+there is a second, independent defect on that path. It is now the largest
+remaining bucket in the sample and is written up as the next slice's census
+target in #5383 § "S13 findings".
+
+### Residual, unchanged by this slice
+
+Link-boundary **prototype identity**: `instance instanceof C`,
+`getPrototypeOf(instance) === C.prototype` and `"prototype" in C` answer `false`
+across the link while answering `true` in one module, for `new`-built and
+`Object.create`-built instances alike. `Object.getOwnPropertyNames(C.prototype)`
+traps (`illegal cast`) in BOTH lanes. Reductions: `.tmp/s13/c1.mjs`.
+
+### A behaviour that changed and is intentional
+
+`Object.getPrototypeOf(Object.create(K.prototype)) === K.prototype` went
+`true` → `false` for the dynamic shape. That is the dynamic shape adopting the
+answer the STATIC shape and `new` already give under standalone — a separate,
+pre-existing `getPrototypeOf`-on-a-class-instance gap — in exchange for every
+member read, `this` binding and slot lookup going from broken to correct. The
+`built-ins/Object/create/**` sample is 120/120 on both trees, so it costs
+nothing measurable there.
