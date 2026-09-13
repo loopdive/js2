@@ -1,10 +1,11 @@
 ---
 id: 6426
 title: "`Object.assign(this, options)` in a base class drops the value when the class lives in a separately-linked package"
-status: ready
+status: done
 sprint: current
 created: 2026-09-12
-updated: 2026-09-12
+updated: 2026-09-13
+completed: 2026-09-13
 priority: medium
 horizon: m
 feasibility: medium
@@ -97,3 +98,73 @@ Then delete `LINKED_RESIDUALS` in `tests/issue-5366-nullish-join-carrier.test.ts
 ## Dispatch
 
 **Model: opus.** The defect is located to four one-line sites in `src/runtime.ts` with a known template (#5225), but the work needs a correct three-lane linked-package fixture (the fallback-to-bundled trap above) and a per-file dogfood A/B read honestly — medium, not mechanical.
+
+## Resolution
+
+**Fixed 2026-09-13** in `src/runtime.ts` (host runtime only, no codegen change),
+PR on `issue-6426`. The plan's diagnosis was right and its four sites were the
+right four; the probe confirmed it before any edit and added one row it did not
+predict.
+
+**Mechanism.** Four host helpers read a WasmGC struct in two steps: field NAMES
+from `_getStructFieldNames`, then each VALUE from `exports["__sget_<key>"]`.
+Since #5225 the name step routes through `_decoderExportsFor`, so it answers
+with the struct OWNER's decoder — but the value step still used the READER's
+own exports. A `__sget_<key>` getter is module-global by field NAME and does not
+trap on a foreign struct type: it `ref.test`-misses and returns its miss default.
+So when a consumer mints an options bag and a linked provider does
+`const { strict, ...rest } = options; Object.assign(this, rest)`, every key
+survives and every value is lost — `null` for references, `0` for numbers.
+`typeof null === "object"` is the whole reason the issue's function row looked
+like a different defect from its object row; both are the same lost value.
+
+The fix is one line at each of the four sites — `_decoderExportsFor(obj,
+callbackState?.getExports())`, exactly the L12569 template — in
+`__extern_rest_object`, `__object_values`, `__object_entries` and the tuple arm
+of `__extern_slice`. `__object_keys` is names-only and was already correct;
+nothing on the write side moved. The diff is 4 changed lines and **zero net
+lines**: `src/runtime.ts` sits exactly at the #4401 ceiling (19735), so the
+mechanism is written up here and in the test header rather than inline, and the
+sites carry the repo's existing `// (#5225/#6426)` marker.
+
+**Probe (`.tmp/6426-repro.mts`, `linkPlan.mode === "separate"`), base → fix.**
+6 of 9 rows wrong on base, 0 after; the 3 controls never moved.
+
+| row | base | fix | node |
+| --- | --- | --- | --- |
+| `restObj` (object through `...rest`) | `"null"` | `"R"` | `"R"` |
+| `restFn` (function through `...rest`) | `"object"` | `"function"` | `"function"` |
+| `restNum` (number through `...rest`) | `"0"` | `"7"` | `"7"` |
+| `restKeys` (`Object.keys(rest)` + `rest.router`) | `"router\|no"` | `"router\|has"` | `"router\|has"` |
+| `Object.values` of a consumer struct in the provider | `"undefined,undefined"` | `"number,string"` | `"number,string"` |
+| `Object.entries` of same | `"a:undefined,b:undefined"` | `"a:number,b:string"` | `"a:number,b:string"` |
+| control: direct `Object.assign(this, options)` | `"R"` | `"R"` | `"R"` |
+| control: `{ ...options }` spread source | `"R"` | `"R"` | `"R"` |
+| control: `this.router = options.router` | `"R"` | `"R"` | `"R"` |
+
+The number row (`0`, not `undefined`) is the sharpest confirmation of the
+mechanism: that is a `ref.test`-miss default, not a missing key.
+
+**Regression test** `tests/issue-6426-linked-object-rest-source.test.ts`, 12 rows
+x 3 lanes, one shared `EXPECTED` table:
+
+- parent: single 0 wrong / one-unit multi 0 / separately-linked **6** = 6
+- fix: 0 / 0 / 0 = 0
+
+The 6 are `restObj`, `restFn`, `restNum`, `restKeys`, `restValues`,
+`restEntries`. The other 6 rows are anti-vacuity controls that already passed on
+the parent (direct assign, spread source, plain field store, `Object.keys`,
+rest-with-an-excluded-key, empty bag), and the linked lane additionally asserts
+that all 6 regressed rows are actually present in that module's exports.
+
+**Acceptance 2** — `LINKED_RESIDUALS` is deleted from
+`tests/issue-5366-nullish-join-carrier.test.ts` and its linked lane now asserts
+the shared `EXPECTED` table; all three lanes of that file pass.
+
+**Dogfood A/B** — base vs fix at one HEAD over all 17 upstream suites, results
+in the PR body. Flat, as the plan predicted: these suites compile the package's
+own source as the root unit, so the consumer→provider rest seam never fires.
+
+**Residual.** `tests/issue-2131.test.ts` fails 6/7 on `upstream/main`
+`3e92241ecc` and fails identically with this change — pre-existing, untouched,
+not this issue's.

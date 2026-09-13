@@ -22,9 +22,10 @@
 // Parent's wrong rows are optionRouter "null", optionRouterIdentity
 // "different", optionRouterThroughField "null" in every lane, plus
 // nullishShortCircuits "THREW: dereferencing a null pointer" in the two
-// single-unit lanes. The 2 that remain are the linked lane's baseObjectAssign /
-// otherOptionKey, wrong identically on BOTH sides and pinned in
-// LINKED_RESIDUALS below. Every other row is an anti-vacuity control that
+// single-unit lanes. The 2 that remained were the linked lane's
+// baseObjectAssign / otherOptionKey — a separate cross-module defect, closed as
+// #6426 (2026-09-13), so all three lanes now assert the same table.
+// Every other row is an anti-vacuity control that
 // already passed on the parent: the default arm, a same-class option, a
 // post-construction store, and the primitive-default `??` shapes.
 
@@ -163,21 +164,14 @@ const REGRESSED_ROWS = [
   "nullishShortCircuits",
 ] as const;
 
-/**
- * Two rows that are wrong in the separately-linked lane on BOTH sides of this
- * fix, asserted at the value the compiler actually produces (measured
- * 2026-09-12, parent and fix identical). Neither contains a `??`:
- * `baseObjectAssign` is `Object.assign(this, {...rest})` in the base class, and
- * `otherOptionKey` reads a FUNCTION copied by that same `Object.assign` and
- * gets `"object"`. So the option-bag copy loses the value's identity across a
- * separately-linked package boundary — a different defect, tracked as #6426.
- * Asserting them here makes that claim testable: if #6426 lands, this override
- * fails and is deleted; if this fix ever starts moving them, it fails first.
- */
-const LINKED_RESIDUALS: Record<string, unknown> = {
-  baseObjectAssign: "null", // node: "RegExpRouter"
-  otherOptionKey: "object", // node: "function"
-};
+// The two rows that used to be pinned here as LINKED_RESIDUALS —
+// `baseObjectAssign` "null" and `otherOptionKey` "object" — were the
+// separately-linked lane's residual after this fix, and were NOT a `??` defect:
+// the base class's `const { strict, ...rest } = options; Object.assign(this,
+// rest)` lost every value of a consumer-minted options bag because the host
+// rest helper read `__sget_<key>` from the READER's exports instead of the
+// struct owner's. Fixed as #6426 (2026-09-13); the linked lane now asserts the
+// shared EXPECTED table like the other two.
 
 function readAll(exports: Record<string, unknown>): Record<string, unknown> {
   const observed: Record<string, unknown> = {};
@@ -251,9 +245,6 @@ describe("#5366 — `??` joins on a carrier that holds both arms", () => {
     expect(result.linkPlan?.mode).toBe("separate");
 
     const { instance } = await instantiateLinkedProject(result);
-    expect(readAll(instance.exports as unknown as Record<string, unknown>)).toEqual({
-      ...EXPECTED,
-      ...LINKED_RESIDUALS,
-    });
+    expect(readAll(instance.exports as unknown as Record<string, unknown>)).toEqual(EXPECTED);
   });
 });
