@@ -10837,6 +10837,11 @@
       "layer": "legacy-host"
     },
     {
+      "path": "src/runtime/raw-exports-struct-authority.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
       "path": "src/runtime/standalone-dom-string-bridge.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
