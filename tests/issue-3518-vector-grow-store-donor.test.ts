@@ -306,6 +306,17 @@ const layoutDonorPath = "./fixtures/issue-3518-native-string-error-donors.json";
 const layoutSourcePath = "../src/runtime/wasmgc/values/string-layouts.ts";
 const readRelative = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 const layoutForwardHash = "a9352c68a14308b47fe61534a0cec083b44e30c09d80f8a04596bdfb482452a2";
+// Independently published ea0f05c3 -> 5404151b shape/wrapper changes. Invert
+// only these exact spans before the original eight-factory payload checks.
+const declaredLayoutForwardText = readRelative("./fixtures/issue-3518-string-layout-shape-forward.json");
+const declaredLayoutForwardHash = "1edabade58d599f6c2ca2941879833132c6a50ca4f81b6df546e66022eedc9d1";
+const declaredLayoutForward = JSON.parse(declaredLayoutForwardText) as {
+  path: string;
+  spans: { id: string; before: string; after: string }[];
+};
+function inverseDeclaredStringLayouts(canonical: string, fixtureText = declaredLayoutForwardText): string {
+  return inversePreparedSourceForward(canonical, fixtureText, declaredLayoutForwardHash);
+}
 interface LayoutFactory {
   name: string;
   header: string;
@@ -453,7 +464,7 @@ function inversePreparedRegistry(registry: string, fixtureText = preparedRegistr
 }
 
 function verifyLayoutInverse(registry = read("registry"), canonical = readRelative(layoutSourcePath)): string {
-  const restored = inverseStringLayouts(inversePreparedRegistry(registry), canonical);
+  const restored = inverseStringLayouts(inversePreparedRegistry(registry), inverseDeclaredStringLayouts(canonical));
   const originalText = readRelative(layoutDonorPath);
   expect(sha(originalText), "unchanged original layout donor fixture").toBe(
     "b579a8d1d0c251ec9a5661f2602da72a90d96991e5915304a013dadc9fc5de61",
@@ -486,36 +497,42 @@ describe("independently authenticated string/Error extraction in the vector regi
     expect(restored).not.toBe(read("registry"));
     expect(layoutForward().factories).toHaveLength(8);
   });
+  // Keep each public factory case; fields now owned by a generic shape are
+  // mutated in that actual live declaration, not in its numeric wrapper.
   it.each([
     [
+      "createErrorStructType",
       "createErrorStructType",
       '{ name: "stack", type: { kind: "externref" }, mutable: true }',
       '{ name: "stack", type: { kind: "externref" }, mutable: false }',
     ],
-    ["createStringDataType", 'element: { kind: "i16" }', 'element: { kind: "i8" }'],
-    ["createAnyStringType", "mutable: false", "mutable: true"],
-    ["createNativeStringType", "layout.nativeStrDataTypeIdx", "layout.anyStrTypeIdx"],
+    ["createStringDataType", "createStringDataType", 'element: { kind: "i16" }', 'element: { kind: "i8" }'],
+    ["createAnyStringType", "createAnyStringShape", "mutable: false", "mutable: true"],
+    ["createNativeStringType", "createNativeStringType", "layout.nativeStrDataTypeIdx", "layout.anyStrTypeIdx"],
     [
       "createConsStringType",
-      '{ name: "left", type: { kind: "ref", typeIdx: layout.anyStrTypeIdx }, mutable: true }',
-      '{ name: "left", type: { kind: "ref", typeIdx: layout.anyStrTypeIdx }, mutable: false }',
+      "createConsStringShape",
+      '{ name: "left", type: { ...anyString }, mutable: true }',
+      '{ name: "left", type: { ...anyString }, mutable: false }',
     ],
     [
       "createHashedStringType",
+      "createHashedStringShape",
       '{ name: "cacheProps", type: { kind: "anyref" }, mutable: true }',
       '{ name: "cacheProps", type: { kind: "externref" }, mutable: true }',
     ],
-    ["createUtf8StringDataType", 'element: { kind: "i8" }', 'element: { kind: "i16" }'],
+    ["createUtf8StringDataType", "createUtf8StringDataType", 'element: { kind: "i8" }', 'element: { kind: "i16" }'],
     [
       "createUtf8StringType",
+      "createUtf8StringShape",
       '{ name: "off", type: { kind: "i32" }, mutable: false }',
       '{ name: "off", type: { kind: "i32" }, mutable: true }',
     ],
-  ])("detects changed live %s descriptor", (name, before, after) => {
+  ])("detects changed live %s descriptor", (_name, owner, before, after) => {
     verifyLayoutInverse();
     const canonical = readRelative(layoutSourcePath),
       file = parse(canonical),
-      fn = exactFunction(file, name!);
+      fn = exactFunction(file, owner!);
     const changed =
       canonical.slice(0, fn.getStart(file)) + replaceOne(fn.getText(file), before!, after!) + canonical.slice(fn.end);
     expect(() => verifyLayoutInverse(read("registry"), changed)).toThrow();
@@ -562,7 +579,9 @@ describe("independently authenticated string/Error extraction in the vector regi
       canonical.slice(0, fn.getStart(file)) +
       replaceOne(fn.getText(file), "layout.nativeStrDataTypeIdx", "ctx.nativeStrDataTypeIdx") +
       canonical.slice(fn.end);
-    expect(() => verifyLayoutInverse(read("registry"), changed)).toThrow("unbound ctx in canonical layout payload");
+    expect(() => verifyLayoutInverse(read("registry"), changed)).toThrow(
+      "prepared forward span missing or duplicated: any-native-cons-wrapper-and-shape-entry",
+    );
   });
   it("rejects a differently quoted duplicate canonical namespace import", () => {
     verifyLayoutInverse();
@@ -874,5 +893,185 @@ describe("real legacy adapters retain dense and hole behavior", () => {
     expect(ensureVecNewSized(ctx, dense)).toBe(first);
     expect(ensureHoleyArrayNew(ctx)).toBe(holey);
     expect(ctx.mod.functions).toHaveLength(count);
+  });
+});
+
+// Each mutation keeps a genuine live-source positive ahead of its refusal.
+const declaredLayoutMutations: [string, [string, string][]][] = [
+  [
+    "generic-shape-types-and-numeric-adapter",
+    [
+      ["import type { FieldDef, ArrayTypeDef }", "import { FieldDef, ArrayTypeDef }"],
+      ['from "../../../wasm/model/instructions.js"', 'from "../../../ir/types.js"'],
+      ["const { parent, ...descriptor } = shape;", "const { ...descriptor } = shape;"],
+      ["return { ...descriptor, superTypeIdx: parent };", "return { ...descriptor, superTypeIdx: -1 };"],
+      ["return { ...descriptor, superTypeIdx: parent };", "return { superTypeIdx: parent };"],
+    ],
+  ],
+  ["string-data-return-type", [["createStringDataType(): ArrayTypeDef", "createStringDataType(): TypeDef"]]],
+  [
+    "any-native-cons-wrapper-and-shape-entry",
+    [
+      ["numericStringShape(createAnyStringShape(-1))", "numericStringShape(createAnyStringShape(0))"],
+      [
+        'createNativeStringShape({ kind: "ref", typeIdx: layout.nativeStrDataTypeIdx }, layout.anyStrTypeIdx)',
+        'createNativeStringShape({ kind: "ref", typeIdx: layout.anyStrTypeIdx }, layout.nativeStrDataTypeIdx)',
+      ],
+      ['createNativeStringShape({ kind: "ref",', 'createNativeStringShape({ kind: "ref_null",'],
+      [
+        'createConsStringShape({ kind: "ref", typeIdx: layout.anyStrTypeIdx }, layout.anyStrTypeIdx)',
+        'createConsStringShape({ kind: "ref", typeIdx: layout.anyStrTypeIdx }, layout.nativeStrTypeIdx)',
+      ],
+    ],
+  ],
+  [
+    "cons-fields-and-hashed-wrapper-shape",
+    [
+      ['{ name: "left", type: { ...anyString }, mutable: true }', '{ name: "left", type: anyString, mutable: true }'],
+      ['{ name: "right", type: { ...anyString }, mutable: true }', '{ name: "right", type: anyString, mutable: true }'],
+      [
+        '{ name: "left", type: { ...anyString }, mutable: true }',
+        '{ name: "left", type: { ...anyString }, mutable: false }',
+      ],
+      [
+        'createHashedStringShape({ kind: "ref", typeIdx: layout.nativeStrDataTypeIdx }, layout.nativeStrTypeIdx)',
+        'createHashedStringShape({ kind: "ref", typeIdx: layout.nativeStrDataTypeIdx }, layout.anyStrTypeIdx)',
+      ],
+      ['{ name: "data", type: data, mutable: false }', '{ name: "data", type: data, mutable: true }'],
+    ],
+  ],
+  [
+    "hashed-parent-and-utf8-data-return-type",
+    [
+      ["    parent,", "    parent: -1,"],
+      ["createUtf8StringDataType(): ArrayTypeDef", "createUtf8StringDataType(): TypeDef"],
+    ],
+  ],
+  [
+    "utf8-wrapper-and-shape-entry",
+    [
+      ["typeIdx: layout.utf8StrDataTypeIdx", "typeIdx: layout.nativeStrDataTypeIdx"],
+      ["}, layout.anyStrTypeIdx)", "}, layout.nativeStrTypeIdx)"],
+      ["    createUtf8StringShape(", "    createNativeStringShape("],
+    ],
+  ],
+  [
+    "utf8-data-field-and-parent",
+    [
+      ['{ name: "data", type: data, mutable: false }', '{ name: "data", type: { kind: "externref" }, mutable: false }'],
+      ["    parent,", "    parent: -1,"],
+    ],
+  ],
+];
+
+describe("independently published generic string-shape forward receipts", () => {
+  it("authenticates seven ordered shape spans before the unchanged ten-statement inverse", () => {
+    const canonical = readRelative(layoutSourcePath);
+    expect(sha(declaredLayoutForwardText)).toBe(declaredLayoutForwardHash);
+    expect(declaredLayoutForward.path).toBe("src/runtime/wasmgc/values/string-layouts.ts");
+    expect(declaredLayoutForward.spans.map((span) => span.id)).toEqual(declaredLayoutMutations.map(([id]) => id));
+    expect(declaredLayoutForward.spans).toHaveLength(7);
+    const restored = inverseDeclaredStringLayouts(canonical);
+    // Fixed published parent ea0f05c3, independently retained before this join.
+    expect(sha(restored)).toBe("c821a11a15d7fbdb9caa71de856a2da588489795c6fd9d1ab6d2fcb4ecada9fc");
+    expect(parse(restored).statements).toHaveLength(10);
+    verifyLayoutInverse();
+  });
+
+  for (const [id, changes] of declaredLayoutMutations) {
+    it(`rejects semantic changes, removal and duplication of ${id} after a genuine positive`, () => {
+      verifyLayoutInverse();
+      const canonical = readRelative(layoutSourcePath);
+      const matches = declaredLayoutForward.spans.filter((span) => span.id === id);
+      expect(matches).toHaveLength(1);
+      expect(changes.length).toBeGreaterThan(0);
+      const span = matches[0]!;
+      const replacements = changes.map(([before, after]) => replaceOne(span.after, before, after));
+      replacements.push(span.before, span.after + span.after);
+      for (const replacement of replacements) {
+        const mutant = replaceOne(canonical, span.after, replacement);
+        expect(() => verifyLayoutInverse(read("registry"), mutant)).toThrow(/prepared forward span/);
+      }
+    });
+  }
+
+  for (const mutation of ["missing", "provenance", "span"] as const) {
+    it(`rejects ${mutation} shape-forward evidence without reseeding a historical receipt`, () => {
+      verifyLayoutInverse();
+      const canonical = readRelative(layoutSourcePath);
+      let mutant: string;
+      if (mutation === "missing") mutant = "";
+      else if (mutation === "provenance")
+        mutant = replaceOne(
+          declaredLayoutForwardText,
+          "5404151bfc1b49d6cffed4a87a8985c51bd3dd93",
+          "0000000000000000000000000000000000000000",
+        );
+      else {
+        const changed = JSON.parse(declaredLayoutForwardText) as typeof declaredLayoutForward;
+        changed.spans[0]!.after += "void 0;\n";
+        mutant = JSON.stringify(changed);
+      }
+      expect(mutant).not.toBe(declaredLayoutForwardText);
+      expect(() => inverseDeclaredStringLayouts(canonical, mutant)).toThrow(/fixture digest mismatch/);
+    });
+  }
+
+  it("rejects reordered complete wrapper spans even when each individual span is unchanged", () => {
+    verifyLayoutInverse();
+    const canonical = readRelative(layoutSourcePath);
+    const first = declaredLayoutForward.spans[1]!.after;
+    const last = declaredLayoutForward.spans[5]!.after;
+    const firstStart = canonical.indexOf(first);
+    const lastStart = canonical.indexOf(last);
+    expect(firstStart).toBeGreaterThanOrEqual(0);
+    expect(lastStart).toBeGreaterThan(firstStart + first.length);
+    const mutant =
+      canonical.slice(0, firstStart) +
+      last +
+      canonical.slice(firstStart + first.length, lastStart) +
+      first +
+      canonical.slice(lastStart + last.length);
+    expect(mutant).not.toBe(canonical);
+    expect(() => verifyLayoutInverse(read("registry"), mutant)).toThrow(/prepared forward span order mismatch/);
+  });
+
+  for (const mutation of ["removed-shape", "duplicate-shape", "extra-declaration"] as const) {
+    it(`rejects ${mutation} without filtering away unapproved factory statements`, () => {
+      verifyLayoutInverse();
+      const canonical = readRelative(layoutSourcePath);
+      const file = parse(canonical);
+      const declaration = exactFunction(file, "createNativeStringShape").getText(file);
+      const mutant =
+        mutation === "removed-shape"
+          ? replaceOne(canonical, declaration, "")
+          : canonical +
+            "\n" +
+            (mutation === "duplicate-shape" ? declaration : "export function extraStringShape() { return {}; }") +
+            "\n";
+      expect(mutant).not.toBe(canonical);
+      if (mutation === "removed-shape") {
+        expect(() => verifyLayoutInverse(read("registry"), mutant)).toThrow(/prepared forward span/);
+      } else {
+        const restored = inverseDeclaredStringLayouts(mutant);
+        expect(restored).toContain(mutation === "duplicate-shape" ? declaration : "export function extraStringShape");
+        expect(parse(restored).statements).toHaveLength(11);
+        expect(() => verifyLayoutInverse(read("registry"), mutant)).toThrow();
+      }
+    });
+  }
+
+  it("retains the historical AST free-ctx collision guard after authenticating the new wrappers", () => {
+    verifyLayoutInverse();
+    const registry = inversePreparedRegistry(read("registry"));
+    const canonical = inverseDeclaredStringLayouts(readRelative(layoutSourcePath));
+    inverseStringLayouts(registry, canonical);
+    const file = parse(canonical);
+    const fn = exactFunction(file, "createNativeStringType");
+    const mutant =
+      canonical.slice(0, fn.getStart(file)) +
+      replaceOne(fn.getText(file), "layout.nativeStrDataTypeIdx", "ctx.nativeStrDataTypeIdx") +
+      canonical.slice(fn.end);
+    expect(() => inverseStringLayouts(registry, mutant)).toThrow("unbound ctx in canonical layout payload");
   });
 });

@@ -1,6 +1,20 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { TypeDef } from "../../../wasm/model/module-records.js";
+import type { FieldDef, ArrayTypeDef } from "../../../wasm/model/module-records.js";
+import type { ValType } from "../../../wasm/model/instructions.js";
+
+type StringScalar = Exclude<ValType, { kind: "ref" | "ref_null" }>;
+interface StringStructShape<R, P> {
+  kind: "struct";
+  name: string;
+  fields: (Omit<FieldDef, "type"> & { type: StringScalar | R })[];
+  parent: P;
+}
+function numericStringShape(shape: StringStructShape<Extract<ValType, { kind: "ref" }>, number>): TypeDef {
+  const { parent, ...descriptor } = shape;
+  return { ...descriptor, superTypeIdx: parent };
+}
 
 export interface NativeStringLayout {
   readonly nativeStrDataTypeIdx: number;
@@ -63,7 +77,7 @@ export function createErrorStructType(): TypeDef {
   };
 }
 
-export function createStringDataType(): TypeDef {
+export function createStringDataType(): ArrayTypeDef {
   return {
     kind: "array",
     name: "__str_data",
@@ -73,28 +87,41 @@ export function createStringDataType(): TypeDef {
 }
 
 export function createAnyStringType(): TypeDef {
+  return numericStringShape(createAnyStringShape(-1));
+}
+export function createAnyStringShape<P>(parent: P): StringStructShape<never, P> {
   return {
     kind: "struct",
     name: "AnyString",
     fields: [{ name: "len", type: { kind: "i32" }, mutable: false }],
-    superTypeIdx: -1,
+    parent,
   };
 }
 
 export function createNativeStringType(layout: NativeStringLayout): TypeDef {
+  return numericStringShape(
+    createNativeStringShape({ kind: "ref", typeIdx: layout.nativeStrDataTypeIdx }, layout.anyStrTypeIdx),
+  );
+}
+export function createNativeStringShape<R, P>(data: R, parent: P): StringStructShape<R, P> {
   return {
     kind: "struct",
     name: "NativeString",
     fields: [
       { name: "len", type: { kind: "i32" }, mutable: false },
       { name: "off", type: { kind: "i32" }, mutable: false },
-      { name: "data", type: { kind: "ref", typeIdx: layout.nativeStrDataTypeIdx }, mutable: false },
+      { name: "data", type: data, mutable: false },
     ],
-    superTypeIdx: layout.anyStrTypeIdx,
+    parent,
   };
 }
 
 export function createConsStringType(layout: NativeStringLayout): TypeDef {
+  return numericStringShape(
+    createConsStringShape({ kind: "ref", typeIdx: layout.anyStrTypeIdx }, layout.anyStrTypeIdx),
+  );
+}
+export function createConsStringShape<R extends object, P>(anyString: R, parent: P): StringStructShape<R, P> {
   return {
     kind: "struct",
     name: "ConsString",
@@ -105,21 +132,26 @@ export function createConsStringType(layout: NativeStringLayout): TypeDef {
       // right=""), turning every later flatten of the same rope into a two-
       // field fast path instead of an O(len) re-copy. `len` stays immutable —
       // the rewrite preserves the total length.
-      { name: "left", type: { kind: "ref", typeIdx: layout.anyStrTypeIdx }, mutable: true },
-      { name: "right", type: { kind: "ref", typeIdx: layout.anyStrTypeIdx }, mutable: true },
+      { name: "left", type: { ...anyString }, mutable: true },
+      { name: "right", type: { ...anyString }, mutable: true },
     ],
-    superTypeIdx: layout.anyStrTypeIdx,
+    parent,
   };
 }
 
 export function createHashedStringType(layout: NativeStringLayout): TypeDef {
+  return numericStringShape(
+    createHashedStringShape({ kind: "ref", typeIdx: layout.nativeStrDataTypeIdx }, layout.nativeStrTypeIdx),
+  );
+}
+export function createHashedStringShape<R, P>(data: R, parent: P): StringStructShape<R, P> {
   return {
     kind: "struct",
     name: "HashedString",
     fields: [
       { name: "len", type: { kind: "i32" }, mutable: false },
       { name: "off", type: { kind: "i32" }, mutable: false },
-      { name: "data", type: { kind: "ref", typeIdx: layout.nativeStrDataTypeIdx }, mutable: false },
+      { name: "data", type: data, mutable: false },
       { name: "hash", type: { kind: "i32" }, mutable: true },
       { name: "cacheGen", type: { kind: "i32" }, mutable: true },
       { name: "cacheOwner", type: { kind: "anyref" }, mutable: true },
@@ -131,11 +163,11 @@ export function createHashedStringType(layout: NativeStringLayout): TypeDef {
       // build). Field 4 degrades to a populated flag (0/1).
       { name: "cacheProps", type: { kind: "anyref" }, mutable: true },
     ],
-    superTypeIdx: layout.nativeStrTypeIdx,
+    parent,
   };
 }
 
-export function createUtf8StringDataType(): TypeDef {
+export function createUtf8StringDataType(): ArrayTypeDef {
   return {
     kind: "array",
     name: "__str_data_u8",
@@ -145,6 +177,11 @@ export function createUtf8StringDataType(): TypeDef {
 }
 
 export function createUtf8StringType(layout: NativeStringLayout): TypeDef {
+  return numericStringShape(
+    createUtf8StringShape({ kind: "ref", typeIdx: layout.utf8StrDataTypeIdx }, layout.anyStrTypeIdx),
+  );
+}
+export function createUtf8StringShape<R, P>(data: R, parent: P): StringStructShape<R, P> {
   return {
     kind: "struct",
     name: "Utf8String",
@@ -155,8 +192,8 @@ export function createUtf8StringType(layout: NativeStringLayout): TypeDef {
       // Canonical-ABI byte length (>= len for multi-byte scalars; == len for ascii).
       { name: "byteLen", type: { kind: "i32" }, mutable: false },
       { name: "off", type: { kind: "i32" }, mutable: false },
-      { name: "data", type: { kind: "ref", typeIdx: layout.utf8StrDataTypeIdx }, mutable: false },
+      { name: "data", type: data, mutable: false },
     ],
-    superTypeIdx: layout.anyStrTypeIdx,
+    parent,
   };
 }
