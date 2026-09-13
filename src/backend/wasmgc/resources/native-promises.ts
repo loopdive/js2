@@ -16,6 +16,11 @@ import { preparedIrDataMismatch, freezePreparedIrValue } from "../../../ir/progr
 import type { NativePromiseResourcePlan, NativePromiseOwner } from "../../../ir/program/native-promise-resources.js";
 import { resolveNativeVectorForElement, type NativeVectorTypeReservations } from "./native-vectors.js";
 import {
+  requireNativeClosureReservations,
+  type NativeClosureReservations,
+  type NativeClosureMetadataBinding,
+} from "./native-closures.js";
+import {
   buildGrowLocals,
   buildGrowBody,
   buildEnqueueBody,
@@ -54,8 +59,8 @@ export interface NativePromiseReservationDependencies {
   readonly vectors: NativeVectorTypeReservations;
   readonly exceptionTag: Tag;
   /** Actual canonical closure root and builtin metadata reservation from the value materializer. */
-  readonly closureRoot: TypeReservation;
-  readonly settleMetadata: TypeReservation;
+  readonly closures: NativeClosureReservations;
+  readonly settleMetadataRequestId: string;
 }
 export interface NativePromiseReservations {
   readonly types: {
@@ -154,6 +159,7 @@ const owners = new WeakMap<
     tx: PhysicalModuleReservations;
     plan: NativePromiseResourcePlan;
     dependencies: NativePromiseReservationDependencies;
+    settleMetadata: NativeClosureMetadataBinding;
     snapshots: readonly { token: TypeReservation; descriptor: TypeDef }[];
     filled: boolean;
   }
@@ -168,11 +174,22 @@ function structFields(token: TypeReservation) {
   if (token.object.kind !== "struct") fail("expected concrete struct reservation");
   return token.object.fields;
 }
-const closureFields = () => [
-  { name: "func", type: { kind: "funcref" } as ValType, mutable: false },
-  { name: "$arity", type: I32, mutable: false },
-  { name: "$bag", type: EXTERN, mutable: true },
-];
+function requireSettleMetadata(tx: PhysicalModuleReservations, dependencies: NativePromiseReservationDependencies) {
+  const closures = requireNativeClosureReservations(tx, dependencies.closures);
+  const rows = closures.metadata.filter((row) => row.id === dependencies.settleMetadataRequestId);
+  if (rows.length !== 1) fail("missing or ambiguous settle metadata request");
+  const binding = rows[0]!.binding;
+  same(
+    binding.metadata,
+    { key: "promise:settle", name: "", length: 1, id: binding.type.typeIndex },
+    "invalid settle metadata",
+  );
+  if (!closures.signatures.some((row) => row.binding === binding.signature)) fail("foreign settle signature binding");
+  same(binding.signature.info.paramTypes, [EXTERN], "invalid settle parameters");
+  same(binding.signature.info.returnType, null, "invalid settle result");
+  if (binding.signature.liftedSelfTypeIndex !== closures.root.typeIndex) fail("invalid settle closure root");
+  return binding;
+}
 
 /** Reserve only: empty bodies are ledger obligations, never accepted fallback implementations. */
 export function reserveNativePromiseResources(
@@ -181,6 +198,8 @@ export function reserveNativePromiseResources(
   dependencies: NativePromiseReservationDependencies,
 ): NativePromiseReservations {
   if (!plan.required || !plan.anchor) fail("missing required native Promise plan");
+  const settleMetadata = requireSettleMetadata(tx, dependencies);
+  const closureRoot = dependencies.closures.root;
   const layout = resolveNativeVectorForElement(dependencies.vectors, EXTERN);
   const argumentArray = dependencies.vectors.layouts.find((row) => row.element === "externref")?.array;
   if (!layout || !argumentArray || argumentArray.typeIndex !== layout.arrayTypeIdx)
@@ -190,13 +209,7 @@ export function reserveNativePromiseResources(
     { kind: "array", name: "__arr_externref", element: EXTERN, mutable: true },
     "shared array descriptor mismatch",
   );
-  same(structFields(dependencies.closureRoot), closureFields(), "noncanonical closure root");
-  const metadataFields = [
-    ...closureFields(),
-    { name: "bfnstate", type: I32, mutable: true },
-    { name: "bfnid", type: I32, mutable: false },
-  ];
-  same(structFields(dependencies.settleMetadata), metadataFields, "noncanonical settle metadata fields");
+  const metadataFields = structFields(settleMetadata.type);
   // The actual metadata subtype may sit below a signature wrapper; ancestry is checked by the ledger.
   const key = (role: string) => `physical:promise:${JSON.stringify(plan.anchor)}:${role}`;
   const functionsType = tx.reserveType(key("queue:function-array"), {
@@ -282,11 +295,14 @@ export function reserveNativePromiseResources(
   const settleCapture = tx.reserveType(key("settle-capture"), {
     kind: "struct",
     name: "$__promise_settle_cap",
-    superTypeIdx: dependencies.settleMetadata.typeIndex,
-    fields: [...metadataFields, { name: "cap_promise", type: promiseRef, mutable: false }],
+    superTypeIdx: settleMetadata.type.typeIndex,
+    fields: [
+      ...metadataFields.map((field) => ({ ...field })),
+      { name: "cap_promise", type: promiseRef, mutable: false },
+    ],
   });
   const trampoline = {
-    params: [{ kind: "ref", typeIdx: dependencies.closureRoot.typeIndex } as ValType, EXTERN],
+    params: [{ kind: "ref", typeIdx: closureRoot.typeIndex } as ValType, EXTERN],
     results: [],
   };
   const resolveClosure = reserve("resolve-closure", "__promise_resolve_cl", trampoline);
@@ -337,13 +353,14 @@ export function reserveNativePromiseResources(
     callback,
     captures,
     settleCapture,
-    dependencies.closureRoot,
-    dependencies.settleMetadata,
+    closureRoot,
+    settleMetadata.type,
   ].map((token) => ({ token, descriptor: freezePreparedIrValue(token.object) as TypeDef }));
   owners.set(result, {
     tx,
     plan: freezePreparedIrValue(plan) as NativePromiseResourcePlan,
     dependencies: Object.freeze({ ...dependencies }),
+    settleMetadata,
     snapshots,
     filled: false,
   });
@@ -378,6 +395,7 @@ export function fillNativePromiseResources(
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) fail("foreign Promise pack");
   if (owner.filled) fail("duplicate Promise pack fill");
+  if (requireSettleMetadata(tx, owner.dependencies) !== owner.settleMetadata) fail("changed settle metadata binding");
   if (!dependencies?.inventory || !dependencies.values || !dependencies.resolution)
     fail("complete native dependencies are missing");
   same(dependencies.inventory.owners, owner.plan.owners, "classification owner population differs");
@@ -475,7 +493,7 @@ export function fillNativePromiseResources(
       fields.push({ typeIdx: index, fieldIdx: row.fieldIndex });
     }
   }
-  if (!seenTypes.has(owner.dependencies.closureRoot)) fail("closure root absent from finalized inventory");
+  if (!seenTypes.has(owner.dependencies.closures.root)) fail("closure root absent from finalized inventory");
   const av = inventory.anyValue;
   const avFields = structFields(av.type);
   if (av.tag !== 0 || av.ref !== 3 || av.extern !== 4) fail("invalid AnyValue peel descriptor");
@@ -546,7 +564,7 @@ export function fillNativePromiseResources(
   const queue = promiseQueueReservations(tx, pack);
   const cap = {
     capTypeIdx: t.settleCapture.typeIndex,
-    capMetaTypeIdx: owner.dependencies.settleMetadata.typeIndex,
+    capMetaTypeIdx: owner.settleMetadata.type.typeIndex,
     capPromiseFieldIdx: 5,
   };
   const target = { wasi: false, standalone: true };
@@ -579,7 +597,7 @@ export function fillNativePromiseResources(
     bagHasIdx: bagHas,
     externGetIdx: externGet,
     typeofFunctionIdx: typeofFunction,
-    callableRootTypeIdx: owner.dependencies.closureRoot.typeIndex,
+    callableRootTypeIdx: owner.dependencies.closures.root.typeIndex,
   });
   const thenableInventory: PromiseThenableInventory = {
     finalized: true,

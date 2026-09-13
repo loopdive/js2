@@ -238,7 +238,26 @@ const additions = [
 ];
 const policy = () => JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+// Preserve the exact published prerequisite composition as an ordered subsequence,
+// alongside the complete delivered-main history. The first two records retain
+// their original entry ordering, even where the active populations now agree.
+const originalCompositionOffsets = [
+  0, 1, 3, 4, 7, 8, 10, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
+  38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62,
+];
+function assertOriginalComposition(history: unknown[]) {
+  const original = originalCompositionOffsets.map((index) => history[index]);
+  expect(digest(original)).toBe("4aa271504137eac71e91ef4956fc1b3fe6ced60bd3262c3375046c11d9f0b329");
+  expect(digest([...original.slice(2, 9), ...original.slice(13)])).toBe(
+    "4040a7108cfae3cc4746d38c1f68167d51556ba84d9a8f2f6fb44534ccb08680",
+  );
+  expect(digest([...original.slice(9, 13), ...original.slice(13)])).toBe(
+    "dfd3286a35182705e7d692244e756c3b592803831013232a5c0f2f71cdf8e9ac",
+  );
+}
 function assertNewActivations(history: unknown[]) {
+  assertOriginalComposition(history);
+  history = history.slice(2);
   // The combined declaration and both published 9ccad45c additions precede
   // the exact complete activation history independently read from eac9f741.
   expect(history[0]).toEqual({
@@ -547,13 +566,13 @@ describe("semantic verification and provider ownership boundary", () => {
       expect(required).toContain(path);
     const p = policy();
     assertNewActivations(p.activationHistory);
-    expect(p.activationHistory).toHaveLength(61);
-    expect(digest(p.activationHistory.slice(37))).toBe(
+    expect(p.activationHistory).toHaveLength(63);
+    expect(digest(p.activationHistory.slice(39))).toBe(
       "3437a59aacf39df9dffcafa8099ac9f47c0f43a7a0ecc423df4c1fe3e638f002",
     );
     expect(digest(p.allowedEdges)).toBe("efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7");
     // Exact full activation history at b4c116639a, not a selected subset.
-    expect(digest(p.activationHistory.slice(43))).toBe(
+    expect(digest(p.activationHistory.slice(45))).toBe(
       "a6d07b900b0837832707ce083202ab6ffa40f0bbe6bfce25f3062270882b26da",
     );
     for (const [id, entries] of Object.entries(groups)) {
@@ -574,12 +593,13 @@ describe("semantic verification and provider ownership boundary", () => {
     expect(r.report.errors).toEqual([]);
     for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
       expect(r.report[field]).toEqual([]);
-    // Measured complete composed closure, retained in the September 13 receipt.
+    // Measured complete composed closure: Promise now imports its authenticated
+    // closure producer (+1 runtime edge); the September 13 failed census is retained.
     // Historical parent and published activation records remain unchanged.
     expect({ edges: r.report.resolvedEdgeCount, ...r.report.counts.resolvedEdgesByType }).toEqual({
-      edges: 391,
+      edges: 392,
       typeOnly: 248,
-      runtime: 143,
+      runtime: 144,
     });
   });
 
@@ -624,11 +644,11 @@ describe("semantic verification and provider ownership boundary", () => {
       const history = policy().activationHistory;
       assertNewActivations(history);
       const before = digest(history);
-      if (mutation === "delete") history.splice(0, 1);
-      if (mutation === "reorder") [history[0], history[1]] = [history[1], history[0]];
-      if (mutation === "layer") history[0].layer = "ir-core";
-      if (mutation === "entries") history[0].entries.pop();
-      if (mutation === "minimum") history[0].minModules--;
+      if (mutation === "delete") history.splice(2, 1);
+      if (mutation === "reorder") [history[2], history[3]] = [history[3], history[2]];
+      if (mutation === "layer") history[2].layer = "ir-core";
+      if (mutation === "entries") history[2].entries.pop();
+      if (mutation === "minimum") history[2].minModules--;
       expect(digest(history), "mutation must alter the accepted activation records").not.toBe(before);
       expect(() => assertNewActivations(history)).toThrow();
     },
@@ -637,9 +657,9 @@ describe("semantic verification and provider ownership boundary", () => {
   it.each(
     (
       [
-        ["published backend", 1],
-        ["published demand", 2],
-        ["refreshed parent", 3],
+        ["published backend", 3],
+        ["published demand", 4],
+        ["refreshed parent", 5],
       ] as const
     ).flatMap(([owner, index]) =>
       (["delete", "reorder", "layer", "entries", "minimum"] as const).map((mutation) => ({
@@ -658,6 +678,25 @@ describe("semantic verification and provider ownership boundary", () => {
     if (mutation === "entries") history[index].entries.pop();
     if (mutation === "minimum") history[index].minModules--;
     expect(digest(history), "mutation must alter the authenticated parent record").not.toBe(before);
+    expect(() => assertNewActivations(history)).toThrow();
+  });
+
+  it.each(
+    [0, 2, 9].flatMap((offset) =>
+      (["delete", "reorder", "layer", "entries", "minimum"] as const).map((mutation) => ({ offset, mutation })),
+    ),
+  )("rejects $mutation corruption of original prerequisite activation records at $offset", ({ offset, mutation }) => {
+    const history = policy().activationHistory;
+    assertNewActivations(history);
+    const index = originalCompositionOffsets[offset]!;
+    const next = originalCompositionOffsets[offset + 1]!;
+    const before = digest(history);
+    if (mutation === "delete") history.splice(index, 1);
+    if (mutation === "reorder") [history[index], history[next]] = [history[next], history[index]];
+    if (mutation === "layer") history[index].layer = "ir-core";
+    if (mutation === "entries") history[index].entries.pop();
+    if (mutation === "minimum") history[index].minModules--;
+    expect(digest(history), "mutation must alter the original prerequisite record").not.toBe(before);
     expect(() => assertNewActivations(history)).toThrow();
   });
 

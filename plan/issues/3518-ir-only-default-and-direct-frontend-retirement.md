@@ -6938,6 +6938,47 @@ whole-family execution, replay, public IR-only cutover and strict static
 closure/direct-codegen retirement remain open. This checkpoint does not
 claim those acceptance conditions.
 
+### Native Promise / closure producer join — 2026-09-09
+
+High approved the implementation specification in
+agent-context/3518-native-promise-closure-join-high-plan-2026-09-09.md.
+Euclid owns exactly native-promises.ts and its existing resource test,
+based on closure PR #5778. Replace independent raw root/metadata tokens
+with the issued closure pack and metadata request ID. Authenticate before
+allocations and again before fills, preserving genuine cache aliases,
+lazy-arity semantics and existing Promise capture/runtime ownership.
+Parent owns boundary updates, integration checks and non-draft publication.
+
+This is a producer-provenance join, not complete Promise execution. Full
+carrier inventory, callable dispatch, fill dependencies, native-family
+execution, public cutover and the ABI30 planningSealed witness remain open.
+
+The bounded join is implemented and independently approved after two R2
+repairs: inherited metadata field descriptors are copied as in the donor;
+rejection proofs preserve lossless data, object identities and future
+reservation ordinals. Composed Promise/closure95/95 tests and221/221
+boundary controls pass. The single new runtime import links the existing
+Promise and closure owners; no boundary permissions were relaxed. Final
+post-repair typecheck and normal publication checks remain next. See
+agent-context/3518-native-promise-closure-join-integration-2026-09-09.md.
+
+### Native async prerequisite composition (2026-09-09)
+
+The native-string consumer checkpoint #5793 is being composed with the published
+argument-vector, closure and Promise/closure join stack (#5776, #5778, #5779).
+All production changes merged without conflicts. High approved the explicit
+1,351-file classification union, unchanged remaining policy/allowed edges,
+and both complete activation histories preserved in order. Mandatory boundary
+coverage is 102 modules and 391 edges (248 type-only, 143 runtime).
+
+Full boundary run 70325 passed 284/284 with no skips; unfiltered TS7 run 58123
+exited zero. Resource and actual consumer regression run 9776 passed 201/201
+across five files in 329.49 seconds (terminal exit zero).
+The shared resource-declaration implementation contract is frozen in
+agent-context/3518-native-async-resource-declarations-spec-2026-09-09.md;
+the frame API and object-access donor map are also preserved for the next lanes.
+This composition does not remove the async acceptance refusal or establish
+native async execution, public default cutover or retirement.
 ### Existing string-admission PR dependency refresh — 2026-09-13
 
 Queue draining remains limited to existing published migration checkpoints.
@@ -8310,3 +8351,18 @@ remain1,370 files each; current candidate census is1,418. All128 new receipts
 are archived byte-exactly. No historical expectation or gate was weakened.
 Source gates and normal signed hooks precede exact-head publication and queue
 admission. This checkpoint is not full IR retirement.
+
+
+## 2026-09-13 — PR #5794 refresh after native string consumer delivery
+
+The existing native async prerequisite composition at `cf6ac354d8d305864baf2646e5fe632860ec7c3c` is refreshed onto verified main `95f7b21061fd4618cac76258f0dd51f062b18160`, which contains delivered consumer PR #5793 (`d842ff991952de26aa791c4feacc6717b5a1e962`). Production merges without conflicts; the remaining source delta is the original authenticated Promise/closure dependency join and its original regression tests. Both complete issue-history conflict sides are retained.
+
+Boundary composition retains all 1,390 main classifications and all 1,351 original paths. Main’s complete 61-record activation history remains an exact suffix; two original records retain their original entry order, producing 63 records. The complete original 56-record history remains an exact ordered subsequence. Original parent-history digests and 15 original-prefix corruption controls are retained alongside main’s existing controls; no allowed edge or historical digest is relaxed. The independent corpus verifies 53,933 raw blobs (53,889 tests and 44 harness files) against pinned `b363f29d3c43c626dc852744ad64a0b48a003693`, with no shared object files or extra paths.
+
+The complete six-file Promise, closure, argument-vector, reservation-authentication, string-consumer and semantic-boundary suite is running. Results, source gates, normal hooks, protected queue checks and delivery must be recorded before this refresh is accepted. This composition does not remove the async acceptance refusal or certify direct frontend retirement.
+
+Validation update: the complete six-file run finished 547/566, no skipped tests, with all source/test/helper/fixture/policy input hashes unchanged. All 261 production/resource tests passed. The boundary suite passed 286/305: one census failure measured 392 edges (248 type-only + 144 runtime) versus the old 391; the single added mixed import from the Promise producer to its authenticated closure producer accounts for the runtime edge. The expectation is updated to that measured population. Eighteen child-process errors occurred near the existing 30-second timeout; their original failures are preserved. The complete boundary suite will be rerun with the same timeout and controls outside the sandbox before attributing those errors or accepting the refresh.
+
+The complete boundary rerun passes 305/305 with the same 30-second child timeout and all controls, outside the sandbox; input hashes remain unchanged during the run. The only input difference from the original six-file run is the measured boundary census correction. Combined with the original five production/resource files (261/261), all 566 tests in the six-file population now have passing evidence. The initial 547/566 run remains preserved; the successful rerun does not retrospectively convert its child-process errors into passes. Required source gates are running before normal commit hooks and publication.
+
+Pre-commit source validation passes all seven checks against `95f7b21061fd4618cac76258f0dd51f062b18160`: full TS7, LOC and function budgets, coercion inventory, oracle ratchet, moved-reference preservation/dead exports, and conformance-number synchronization. Source/test input hashes remain unchanged. These are refresh validation receipts, not proof of completed async materialization or IR-only retirement.
