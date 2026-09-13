@@ -36,19 +36,22 @@ loc-budget-allow:
   # conditions from elsewhere.
   - src/codegen/promise-combinators.ts
   - src/codegen/expressions/call-namespace-static.ts
-  # 2026-09-03 (r3 plan, steps R3-1..R3-10): every r3 step extends a mechanism
-  # that already lives in one of these files, and the plan forbids forking a
-  # second protocol beside it. Expected growth per step is stated in the step
-  # itself; the totals are roughly:
-  #   promise-combinators   ~+420 (R3-2 generic element pipeline + resolve-element
-  #                          builtin-fn closures, R3-3 `.call(C, iter)` widening,
-  #                          R3-4 interleaved iterator drive, R3-1/R3-9 executor)
+  # 2026-09-03 (r3 plan, steps R3-1..R3-10): each later slice extends its
+  # existing owner unless a landed source-preservation receipt freezes that
+  # file. Expected growth per step is stated in the step itself; the totals are
+  # roughly:
+  #   promise-combinators   R3-3 `.call(C, iter)` widening, R3-4 interleaved
+  #                          iterator drive, R3-1/R3-9 executor
+  #   promise-observable-combinators ~+1,020 (R3-2 bounded direct-VEC
+  #                          Get/Call/Invoke pipeline, one-Get then dispatch,
+  #                          sentinel settlement, and resolve-element
+  #                          builtin-fn closures; isolated by #5759's receipt)
   #   async-scheduler        ~+150 (R3-5 own-`then` capture in Resolve, R3-6
   #                          SpeciesConstructor read in `then`, R3-8 boolean box)
   #   call-namespace-static  ~+120 (R3-2 observable Get(C,"resolve") gate,
   #                          R3-3 admission widening — the gate IS the dispatch)
   #   closed-method-dispatch ~+60  (R3-5 bag-`then` arms in the two fills)
-  #   calls.ts               ~+30  (R3-2 f64-vec boxing arm in the dynamic path)
+  #   calls.ts               future unrelated call lowering work
   #   array-object-proto     ~+40  (R3-7 `p.then` value read → proto closure)
   #   property-access-dispatch ~+30 (R3-7, if the read site is there instead)
   - src/codegen/closed-method-dispatch.ts
@@ -69,6 +72,12 @@ loc-budget-allow:
   # generic builtin static patches.
   - src/codegen/declarations.ts
   - src/codegen/builtin-write-keeps.ts
+  # 2026-09-13 (#5759 integration): #5759's source-preservation receipt keeps
+  # the legacy combinator adapter's full bridge surface immutable. The new R3-2
+  # observable pipeline therefore lives in a dedicated codegen module reached
+  # directly from the static-call dispatcher; it does not add declarations or
+  # imports to src/codegen/promise-combinators.ts or weaken that ledger.
+  - src/codegen/promise-observable-combinators.ts
 func-budget-allow:
   # 2026-09-01 (Slice B): one extra `registerNative` call in the object-runtime
   # reservation block, and two three-line guard call sites on the `new` path.
@@ -175,8 +184,8 @@ import counts are overlapping symptoms, not independent gain claims.
 
 The next implementation owns R3-2 only: verify current call admission, reproduce
 original observable `resolve`/`then` rows and intrinsic positive controls, then
-implement the documented per-element pipeline in the existing combinator
-lowering. Re-derive source locations and carrier assumptions from current main.
+implement the documented per-element pipeline behind the bounded observable
+dispatcher route. Re-derive source locations and carrier assumptions from current main.
 Record an exact current path manifest and paired standalone measurements;
 retain all previously passing Promise controls and run relevant equivalence
 and host controls. R3-3 custom constructors and R3-4 iterator closing remain
@@ -227,16 +236,38 @@ already run. Native Node rejects the marker from
 `{ then(ok) { ok(1); throw marker; } }`; the focused standalone control covers
 that rejection and the corresponding successful one-element result vector.
 
-Current bounded evidence on the e002 baseline is a 10/10 focused standalone
-protocol suite (54.62 s, single fork): literal evaluation/Get order, one
-captured resolve and call receiver/arity, contrasting and original-order
-callback-arity probes, one captured `then`, abrupt Call rejection, the
-remaining-elements sentinel, per-slot f64 boxing, and race handler identity.
-The unchanged official `all/invoke-resolve.js` previously failed with
-`callCount` 0 versus 3 and remains the acceptance row; its exact assembled
-harness diagnostic is still required before claiming it fixed. A filtered WAT
-compile registered the observable resolve-cap type, which proves route
-registration but not the exact callback execution path.
+### #5759 integration boundary (2026-09-13)
+
+The one captured fresh-main merge exposed #5759's source-preservation receipt:
+it fixes both the full declaration order and bridge receipt of
+`src/codegen/promise-combinators.ts`. The observable route must therefore not
+extend that legacy adapter. Its helpers and f64 vector recognizer belong in
+`src/codegen/promise-observable-combinators.ts`; the static-call dispatcher
+calls its two narrow literal/direct-vector entry points only when the existing
+observable admission gate is true. The legacy emitter remains byte-stable and
+continues to delegate its vector body to #5759's
+`buildNativePromiseCombinatorVectorBody`. Do not weaken or rewrite #5759's
+receipt/test to admit this work.
+
+At the one captured fresh-main integration on
+`7adc0a6e897556cee50a7024d24a47a0fb1c8052`, canonical TS7 passed and the
+fresh compiler bundle / linked QuickJS provider canary completed before the
+runtime rows. The focused standalone suite passed **13/13** in 39.94 seconds
+(single fork): module-scope write retention; user-binding and import-rewriter
+negative guards; literal evaluation/Get order; captured resolve / receiver /
+one-argument Call; both callback-arity probes; one captured `then`; abrupt
+Call rejection; the remaining-elements sentinel; successful full-vector
+settlement; per-slot f64 boxing; and race handler identity. Its durable log is
+`.tmp/5197-focused.o4Wpk3` in the implementation worktree.
+
+The isolated standalone Test262 positive control
+`built-ins/Promise/all/S25.4.4.1_A2.2_T1.js` and unchanged official acceptance
+row `built-ins/Promise/all/invoke-resolve.js` both returned `ROW pass`
+(**2/2**, 7.85 s and 7.36 s respectively; durable logs
+`.tmp/5197-test262-control.wOFwwa` and
+`.tmp/5197-test262-original.WI7qya`). The latter is one measured official
+conformance gain over its prior `callCount` 0-versus-3 failure. It does not
+close the full 23-row R3-2 cohort or the documented direct-VEC limitations.
 
 ## Problem
 

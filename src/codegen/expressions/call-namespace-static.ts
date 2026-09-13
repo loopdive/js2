@@ -78,9 +78,13 @@ import {
   emitStandalonePromiseCustomSettle,
   emitStandalonePromiseCombinatorRuntime,
   isNativeCombinatorMethod,
-  resolveF64VecArg,
   resolveExternrefVecArg,
 } from "../promise-combinators.js";
+import {
+  emitObservableStandalonePromiseCombinatorLiteral,
+  emitObservableStandalonePromiseCombinatorRuntime,
+  resolveF64VecArg,
+} from "../promise-observable-combinators.js";
 import type { InnerResult } from "../shared.js";
 import { brandExternMethodResult, coerceType, compileExpression, VOID_RESULT } from "../shared.js";
 import { emitSetExtrasArgv, maybeSetArgcForKnownCall } from "../statements/nested-declarations.js";
@@ -2586,13 +2590,9 @@ export function compileNamespaceStaticCall(
             fctx.savedBodies.push(buf);
             pushedBufs++;
           }
-          return emitStandalonePromiseCombinator(
-            ctx,
-            fctx,
-            methodName,
-            elementInstrs,
-            observableCombinator ? { observableResolve: true } : undefined,
-          );
+          return observableCombinator
+            ? emitObservableStandalonePromiseCombinatorLiteral(ctx, fctx, methodName, elementInstrs)
+            : emitStandalonePromiseCombinator(ctx, fctx, methodName, elementInstrs);
         } finally {
           fctx.savedBodies.length -= pushedBufs + 1;
         }
@@ -2682,15 +2682,24 @@ export function compileNamespaceStaticCall(
             typeIdx: admittedVecShape.vecTypeIdx,
           });
           fctx.body.push({ op: "local.set", index: argVecLocal });
-          return emitStandalonePromiseCombinatorRuntime(
-            ctx,
-            fctx,
-            methodName,
-            argVecLocal,
-            admittedVecShape.vecTypeIdx,
-            admittedVecShape.arrTypeIdx,
-            observableCombinator ? { observableResolve: true, boxF64Elements: observableF64Vec } : undefined,
-          );
+          return observableCombinator
+            ? emitObservableStandalonePromiseCombinatorRuntime(
+                ctx,
+                fctx,
+                methodName,
+                argVecLocal,
+                admittedVecShape.vecTypeIdx,
+                admittedVecShape.arrTypeIdx,
+                { boxF64Elements: observableF64Vec },
+              )
+            : emitStandalonePromiseCombinatorRuntime(
+                ctx,
+                fctx,
+                methodName,
+                argVecLocal,
+                admittedVecShape.vecTypeIdx,
+                admittedVecShape.arrTypeIdx,
+              );
         }
         // Didn't lower as an externref vec — roll back, then either take the
         // (#2922 arms 2+3) dynamic path or fall through to the host path.

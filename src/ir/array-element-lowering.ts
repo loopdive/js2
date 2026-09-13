@@ -16,8 +16,8 @@ import { IrFunctionBuilder } from "./builder.js";
 import { irIntrinsicFuncRef } from "./callable-bindings.js";
 import type { I32PureNames } from "./i32-pure-bitwise.js";
 import type { IrVecLowering } from "./lower.js";
-import { asVal, irVal, type IrConst, type IrType, type IrValueId } from "./nodes.js";
-import { demoteToLegacy, IrUnsupportedError } from "./outcomes.js";
+import { asVal, irTypeEquals, irVal, type IrConst, type IrType, type IrValueId } from "./nodes.js";
+import { demoteToLegacy, IrInvariantError, IrUnsupportedError } from "./outcomes.js";
 import type { ValType } from "./types.js";
 import { irVecElemSetSymbol } from "./vector-runtime.js";
 
@@ -42,6 +42,10 @@ export interface ArrayElementLoweringHost {
   readonly emptyArrayInference: EmptyArrayElementInference;
   readonly i32PureNames: I32PureNames;
   readonly moduleBindings?: unknown;
+  readonly logicalVectorTypes?: ReadonlyMap<
+    ts.ParameterDeclaration | ts.VariableDeclaration | ts.Expression,
+    Extract<IrType, { kind: "vec" }>
+  >;
 }
 
 const IR_F64: IrType = irVal({ kind: "f64" });
@@ -377,16 +381,30 @@ export function tryLowerVecPush(
   if (!ts.isPropertyAccessExpression(expr.expression)) return undefined;
   const receiverExpression = expr.expression.expression;
   if (methodName !== "push") return undefined;
+  const logical = host.logicalVectorTypes !== undefined;
+  if (logical) {
+    if (recvType.kind !== "vec") return undefined;
+    const fact = host.logicalVectorTypes!.get(receiverExpression);
+    if (!fact || !irTypeEquals(fact, recvType)) {
+      throw new IrInvariantError(
+        "type-map-failure",
+        "build",
+        `ir/from-ast: logical vector push receiver contradicts its source entry (${host.funcName})`,
+      );
+    }
+  }
   const vecRecvVal = asVal(recvType);
   const logicalElement = recvType.kind === "vec" ? asVal(recvType.elementType) : null;
-  const vec = logicalElement
-    ? host.resolver?.resolveVecForElement?.(logicalElement)
-    : vecRecvVal
-      ? host.resolver?.resolveVec?.(vecRecvVal)
-      : null;
-  if (!vec) return undefined;
+  const vec = logical
+    ? null
+    : logicalElement
+      ? host.resolver?.resolveVecForElement?.(logicalElement)
+      : vecRecvVal
+        ? host.resolver?.resolveVec?.(vecRecvVal)
+        : null;
+  if (!vec && !logical) return undefined;
   const scalarVecReceiver =
-    (vec.valueType?.kind === "i32" || vecRecvVal?.kind === "i32") &&
+    (vec?.valueType?.kind === "i32" || vecRecvVal?.kind === "i32") &&
     (host.resolver?.isVecValueExpression?.(receiverExpression) === true ||
       host.emptyArrayInference.isResolvedVectorExpression(receiverExpression));
   if (recvType.kind !== "vec" && (!vecRecvVal || (vecRecvVal.kind !== "ref" && !scalarVecReceiver))) {
@@ -399,8 +417,8 @@ export function tryLowerVecPush(
     );
   }
 
-  const elem = vec.elementValType;
-  const narrowedI32 = isNarrowedI32Vec(vec, receiverExpression, host);
+  const elem = logical ? logicalElement! : vec!.elementValType;
+  const narrowedI32 = vec !== null && vec !== undefined && isNarrowedI32Vec(vec, receiverExpression, host);
   if (!narrowedI32 && elem.kind !== "f64" && elem.kind !== "externref") {
     demoteToLegacy(
       "method-call-unsupported",
@@ -427,6 +445,15 @@ export function tryLowerVecPush(
         );
       }
       value = raw;
+    } else if (logical) {
+      if (!irTypeEquals(host.builder.typeOf(raw), irVal(elem))) {
+        throw new IrInvariantError(
+          "type-map-failure",
+          "build",
+          `ir/from-ast: logical vector push value contradicts its Promise carrier (${host.funcName})`,
+        );
+      }
+      value = raw;
     } else {
       value = ops.coerceToExpectedExtern(raw, elem, "value of .push");
     }
@@ -439,7 +466,7 @@ export function tryLowerVecPush(
     host.builder.emitVecSetLength(recv, nextLength);
   } else {
     const symbol =
-      recvType.kind === "vec" ? irVecElemSetSymbol(recvType.elementType) : `__vec_elem_set_${vec.vecStructTypeIdx}`;
+      recvType.kind === "vec" ? irVecElemSetSymbol(recvType.elementType) : `__vec_elem_set_${vec!.vecStructTypeIdx}`;
     host.builder.emitCall(irIntrinsicFuncRef(symbol), [recv, lenI32, value], null);
   }
   if (statementPosition) return null;
