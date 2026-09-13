@@ -34,6 +34,8 @@ export type RuntimeFeature =
   | StringConstRuntimeFeature
   | HostCallbackWrapRuntimeFeature
   | FunctionPrototypeCallRuntimeFeature
+  | NativeAsyncCallableRuntimeFeature
+  | VectorCallableRuntimeFeature
   | ReferenceErrorRuntimeFeature;
 
 export type HostCapabilityId = RuntimeHostCapabilityId;
@@ -360,6 +362,33 @@ export const REFERENCE_ERROR_RUNTIME_PROVIDER_IDS = Object.freeze([
 
 export type ReferenceErrorRuntimeProviderId = (typeof REFERENCE_ERROR_RUNTIME_PROVIDER_IDS)[number];
 
+/** Whole-program builtin demands; deliberately not async frame runtime intents. */
+export const NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES = Object.freeze([
+  "async.native.delay",
+  "async.native.all",
+  "async.native.clock-zero",
+  "async.native.number-to-string",
+  "async.native.console-append",
+] as const);
+
+export type NativeAsyncCallableRuntimeFeature = (typeof NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES)[number];
+
+export const NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS = Object.freeze([
+  "native.async.delay",
+  "native.async.all",
+  "native.async.clock-zero",
+  "native.async.number-to-string",
+  "native.async.console-append",
+] as const);
+
+export type NativeAsyncCallableRuntimeProviderId = (typeof NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS)[number];
+
+/** One measured grow/store callable; not a prefix registry or async frame intent. */
+export const VECTOR_CALLABLE_RUNTIME_FEATURES = Object.freeze(["js.vector.elem-set.externref"] as const);
+export type VectorCallableRuntimeFeature = (typeof VECTOR_CALLABLE_RUNTIME_FEATURES)[number];
+export const VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS = Object.freeze(["native.js.vector.elem-set.externref"] as const);
+export type VectorCallableRuntimeProviderId = (typeof VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS)[number];
+
 export type RuntimeProviderId =
   | MathRuntimeProviderId
   | NumericCoercionRuntimeProviderId
@@ -377,9 +406,15 @@ export type RuntimeProviderId =
   | HostCallbackWrapRuntimeProviderId
   | FunctionPrototypeCallRuntimeProviderId
   | ReferenceErrorRuntimeProviderId
+  | NativeAsyncCallableRuntimeProviderId
+  | VectorCallableRuntimeProviderId
   | AsyncRuntimeProviderId;
 
 export type RuntimeProviderImplementation =
+  | {
+      /** Authenticated standalone constant projection; never a callable or frame service. */
+      readonly kind: "standalone-clock-zero";
+    }
   | {
       readonly kind: "backend-op";
       readonly opcode: IrIntrinsicBackendOp;

@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-13T14:21:10.793Z",
-  "baseline_generated_at": "2026-09-13T14:21:10.793Z",
-  "baseline_sha": "91c107291b4f8281476885b3de72bb89babf6786",
+  "timestamp": "2026-09-13T17:44:04.686Z",
+  "baseline_generated_at": "2026-09-13T17:44:04.686Z",
+  "baseline_sha": "2c6a0f1daa3d43cdf68b0d2d07fe7e3fa58b97f0",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -1293,16 +1293,16 @@
         },
         "sample_files": [
           "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
-          "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
+          "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
+          "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/PlainDate/prototype/toPlainDateTime/argument-string-unknown-annotation.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: null Expected a RangeError but got a TypeError",
-          "type_error:TypeError: Cannot read properties of undefined (reading 'until')",
-          "host_import_leak:standalone target emitted host imports: env::__temporal_plain_date_add_field, env::__temporal_plain_date_from_string_field (##)",
           "type_error:TypeError: Cannot read properties of undefined (reading 'round')",
+          "host_import_leak:standalone target emitted host imports: env::__temporal_plain_date_add_field, env::__temporal_plain_date_from_string_field (##)",
+          "type_error:TypeError: Cannot read properties of undefined (reading 'until')",
           "type_error:TypeError: called value is not a function"
         ]
       },
@@ -2755,7 +2755,7 @@
           "test/built-ins/Promise/any/capability-reject-throws-no-close.js",
           "test/built-ins/Promise/any/invoke-then-error-close.js",
           "test/built-ins/Promise/any/invoke-resolve-on-values-every-iteration-of-custom.js",
-          "test/built-ins/Promise/any/invoke-resolve-on-values-every-iteration-of-promise.js"
+          "test/built-ins/Promise/any/resolve-from-same-thenable.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::Promise_any (##)",
@@ -2912,9 +2912,9 @@
         "sample_files": [
           "test/language/identifiers/part-unicode-16.0.0-escaped.js",
           "test/language/identifiers/start-unicode-17.0.0-class.js",
-          "test/language/identifiers/part-unicode-17.0.0-class.js",
           "test/language/identifiers/start-unicode-16.0.0-escaped.js",
-          "test/language/identifiers/start-unicode-17.0.0.js"
+          "test/language/identifiers/part-unicode-17.0.0-class.js",
+          "test/language/identifiers/part-unicode-17.0.0.js"
         ],
         "sample_signatures": [
           "runtime_error:L#:## Invalid character.; L#:## Invalid character.; L#:## ',' expected.; L#:## An identifier or keyword cannot immediately follow a numeric literal.; L#:## Invalid character.; L#:## ',' expected.; L#:## An identifier or keyword cannot immed",
@@ -3040,8 +3040,8 @@
           "ES2022": 20
         },
         "sample_files": [
-          "test/built-ins/Atomics/xor/validate-arraytype-before-index-coercion.js",
           "test/built-ins/Atomics/add/validate-arraytype-before-index-coercion.js",
+          "test/built-ins/Atomics/xor/validate-arraytype-before-index-coercion.js",
           "test/built-ins/Atomics/or/non-views.js",
           "test/built-ins/Atomics/notify/notify-nan.js",
           "test/built-ins/Atomics/add/non-views.js"

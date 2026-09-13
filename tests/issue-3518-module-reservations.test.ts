@@ -88,7 +88,41 @@ function nanPayload(bits: bigint): number {
   return view.getFloat64(0, true);
 }
 
-describe("temporary explicit-rec grouping admission", () => {
+it("retains all four collection brands after importing the low-level context first", async () => {
+  // Keep the original eager import order above: collection must succeed before
+  // this test imports the brand helpers, so the cold import cycle stays covered.
+  const { COLLECTION_KIND, MAP_LAYOUT, ensureMapRuntimeTypes } = await import("../src/codegen/map-runtime.js");
+  const { collectionBrandSpec } = await import("../src/codegen/collections-brand.js");
+  const { COLLECTION_KIND: canonicalCollectionKind } = await import("../src/codegen/builtin-brands.js");
+  const { STANDALONE_COLLECTION_BUILTIN_PARENTS } = await import("../src/codegen/standalone-subclass-ctors.js");
+  expect(COLLECTION_KIND).toBe(canonicalCollectionKind);
+  expect(STANDALONE_COLLECTION_BUILTIN_PARENTS).toBeInstanceOf(Map);
+  expect([...STANDALONE_COLLECTION_BUILTIN_PARENTS]).toEqual([
+    ["Map", 0],
+    ["Set", 1],
+    ["WeakMap", 2],
+    ["WeakSet", 3],
+  ]);
+  const ctx = context();
+  ensureMapRuntimeTypes(ctx);
+  expect(ctx.mapTypeIdx).toBeGreaterThanOrEqual(0);
+  expect(MAP_LAYOUT.M_KIND).toBe(4);
+  for (const [cls, key, value] of [
+    ["Map", "MAP", 0],
+    ["Set", "SET", 1],
+    ["WeakMap", "WEAKMAP", 2],
+    ["WeakSet", "WEAKSET", 3],
+  ] as const) {
+    expect(COLLECTION_KIND[key]).toBe(value);
+    expect(collectionBrandSpec(ctx, cls)).toEqual({
+      message: `TypeError: Method ${cls}.prototype.* called on incompatible receiver`,
+      structTypeIdx: ctx.mapTypeIdx,
+      kindField: { fieldIdx: 4, accept: [value] },
+    });
+  }
+});
+
+describe("explicit-rec grouping admission", () => {
   const forms = ["params", "results", "field", "array", "struct-super", "sub-super"] as const;
   function referencing(form: (typeof forms)[number], target: number): Canonical.TypeDef {
     const type: ValType = { kind: "ref_null", typeIdx: target };
@@ -116,8 +150,9 @@ describe("temporary explicit-rec grouping admission", () => {
 
   for (const position of ["earlier", "at-first", "internal-forward", "trailing-forward"] as const) {
     for (const form of forms) {
-      it(`rejects ${position} ${form} type-definition refs into/beyond the first explicit rec`, () => {
-        const tx = new PhysicalModuleReservations(createEmptyModule());
+      it(`checks ${position} ${form} type-definition refs in flattened coordinates`, () => {
+        const module = createEmptyModule();
+        const tx = new PhysicalModuleReservations(module);
         const prefix: Canonical.StructTypeDef = { kind: "struct", name: "prefix", fields: [], superTypeIdx: -1 };
         const target: Canonical.StructTypeDef = { kind: "struct", name: "target", fields: [], superTypeIdx: -1 };
         tx.reserveType("prefix", position === "earlier" ? referencing(form, 2) : prefix);
@@ -135,10 +170,22 @@ describe("temporary explicit-rec grouping admission", () => {
           tx.reserveType("trailing-target", { kind: "struct", name: "tail", fields: [], superTypeIdx: -1 });
         }
         const fn = tx.reserveFunction("fn", "fn", voidSignature);
-        expect(() => tx.freezeReservations()).toThrow("unsupported explicit-rec type-definition grouping");
-        expect(tx.state).toBe("failed");
-        expect(() => tx.fillFunction(fn, { locals: [], body: [] })).toThrow("observed failed");
-        expect(() => tx.seal()).toThrow("observed failed");
+        if (form === "struct-super" || form === "sub-super" || position === "earlier") {
+          expect(() => tx.freezeReservations()).toThrow(
+            form === "struct-super" || form === "sub-super" ? "must precede subtype" : "merge an explicit rec group",
+          );
+          expect(tx.state).toBe("failed");
+          expect(() => tx.fillFunction(fn, { locals: [], body: [] })).toThrow("observed failed");
+          expect(() => tx.seal()).toThrow("observed failed");
+        } else {
+          tx.freezeReservations();
+          tx.fillFunction(fn, { locals: [], body: [] });
+          tx.seal();
+          expect(WebAssembly.validate(emitBinary(module))).toBe(true);
+          expect(new WebAssembly.Instance(new WebAssembly.Module(emitBinary(module)))).toBeInstanceOf(
+            WebAssembly.Instance,
+          );
+        }
       });
     }
   }
@@ -164,8 +211,9 @@ describe("temporary explicit-rec grouping admission", () => {
     });
   }
 
-  it("rejects High's no-prefix rec([A ref1, B]) plus function counterexample", () => {
-    const tx = new PhysicalModuleReservations(createEmptyModule());
+  it("emits High's no-prefix rec([A ref1, B]) plus function counterexample", () => {
+    const module = createEmptyModule();
+    const tx = new PhysicalModuleReservations(module);
     tx.reserveType("group", {
       kind: "rec",
       types: [
@@ -173,9 +221,11 @@ describe("temporary explicit-rec grouping admission", () => {
         { kind: "struct", name: "B", fields: [] },
       ],
     });
-    tx.reserveFunction("fn", "fn", voidSignature);
-    expect(() => tx.freezeReservations()).toThrow("target 1 is at/after first explicit rec member 0");
-    expect(tx.state).toBe("failed");
+    const fn = tx.reserveFunction("fn", "fn", voidSignature);
+    tx.freezeReservations();
+    tx.fillFunction(fn, { locals: [], body: [] });
+    tx.seal();
+    expect(new WebAssembly.Instance(new WebAssembly.Module(emitBinary(module)))).toBeInstanceOf(WebAssembly.Instance);
   });
 });
 
@@ -339,8 +389,9 @@ describe("review controls — exact emitter-affecting state", () => {
     expect(WebAssembly.validate(emitBinary(module))).toBe(true);
   });
 
-  it("reports the existing forced-group emitter coordinate limitation rather than certifying a different group", () => {
-    const tx = new PhysicalModuleReservations(createEmptyModule());
+  it("retains the canonical group after an explicit group in flattened coordinates", () => {
+    const module = createEmptyModule();
+    const tx = new PhysicalModuleReservations(module);
     tx.reserveType("explicit", {
       kind: "rec",
       types: [
@@ -350,8 +401,11 @@ describe("review controls — exact emitter-affecting state", () => {
     });
     tx.reserveType("canonical-member", { kind: "struct", name: "c", fields: [] });
     tx.reserveCanonicalRuntimeRecGroup("canonical", { start: 2, end: 2, abiVersion: 2 });
-    tx.reserveFunction("fn", "fn", voidSignature);
-    expect(() => tx.freezeReservations()).toThrow("emitter outer/physical coordinates");
+    const fn = tx.reserveFunction("fn", "fn", voidSignature);
+    tx.freezeReservations();
+    tx.fillFunction(fn, { locals: [], body: [] });
+    expect(tx.seal().types).toBe(4);
+    expect(new WebAssembly.Instance(new WebAssembly.Module(emitBinary(module)))).toBeInstanceOf(WebAssembly.Instance);
   });
 
   for (const phase of ["reserving", "filling"] as const) {

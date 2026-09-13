@@ -115,3 +115,19 @@ export function functionLikeReferencesOwnThis(declaration: ts.FunctionLikeDeclar
     (declaration.body !== undefined && bodyReferencesOwnThis(declaration.body))
   );
 }
+
+/**
+ * (#6436) Does this declaration's `this` resolve through the ambient
+ * `__current_this` module global?
+ *
+ * True when the body wants a receiver AND nothing else supplies one. A
+ * TypeScript `this` parameter is an ordinary Wasm param, so such a declaration
+ * never consults the global and must not be routed through the plain-call
+ * receiver trampoline — the same exclusion `resolveNamedThisCallTarget` makes
+ * for the `.call` trampoline.
+ */
+export function readsAmbientThisGlobal(declaration: ts.FunctionLikeDeclaration): boolean {
+  const first = declaration.parameters[0];
+  if (first !== undefined && ts.isIdentifier(first.name) && first.name.text === "this") return false;
+  return functionLikeReferencesOwnThis(declaration);
+}

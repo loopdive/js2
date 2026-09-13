@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const repository = resolve(import.meta.dirname, "..");
 // Fixed specification population, independent of discovered imports and policy.
-const groups = {
+const historicalGroups = {
   foundation: [
     "source-origin",
     "ir-identity",
@@ -25,6 +25,7 @@ const groups = {
     "src/wasm/physical/function-types.ts",
     "src/wasm/physical/module-reservations.ts",
     "src/wasm/physical/exception-control.ts",
+    "src/wasm/physical/type-layout.ts",
   ],
   "native-runtime": [
     "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
@@ -50,6 +51,8 @@ const groups = {
     "intrinsic-contracts",
     "intrinsics",
     "callable-bindings",
+    "async-callables",
+    "vector-runtime",
   ].map((x) => `src/ir/core/${x}.ts`),
   "ir-analysis": ["contracts/allocations", "alloc-registry", "effects", "intrinsics", "async-plan"].map(
     (x) => `src/ir/analysis/${x}.ts`,
@@ -66,6 +69,8 @@ const groups = {
     "manifest",
     "async-attachment",
     "intrinsic-verification",
+    "native-async-callables",
+    "vector-callables",
   ].map((x) => `src/ir/runtime/${x}.ts`),
   "ir-program": [
     "abi-inventory",
@@ -85,7 +90,103 @@ const groups = {
     (x) => `src/runtime/contracts/${x}.ts`,
   ),
 };
+const physicalVectorAdditions = [
+  "src/ir/program/native-vector-resources.ts",
+  "src/runtime/wasmgc/values/vector-grow-store.ts",
+  "src/backend/wasmgc/resources/native-vectors.ts",
+];
+const vectorGroups = {
+  ...historicalGroups,
+  "ir-program": [...historicalGroups["ir-program"], physicalVectorAdditions[0]!],
+  "native-runtime": [...historicalGroups["native-runtime"], physicalVectorAdditions[1]!],
+  "backend-wasmgc": [physicalVectorAdditions[2]!],
+};
+const resolutionAdditions = [
+  "src/runtime/wasmgc/promise/resolution-bodies.ts",
+  "src/runtime/wasmgc/promise/thenable-bodies.ts",
+];
+const resolutionGroups = {
+  ...vectorGroups,
+  "native-runtime": [...vectorGroups["native-runtime"], ...resolutionAdditions],
+};
+const promiseResourceAdditions = [
+  "src/ir/program/native-promise-resources.ts",
+  "src/backend/wasmgc/resources/native-promises.ts",
+];
+const promiseGroups = {
+  ...resolutionGroups,
+  "ir-program": [...resolutionGroups["ir-program"], promiseResourceAdditions[0]!],
+  "backend-wasmgc": [...resolutionGroups["backend-wasmgc"], promiseResourceAdditions[1]!],
+};
+const stringErrorAdditions = [
+  "src/runtime/wasmgc/values/string-layouts.ts",
+  "src/runtime/wasmgc/values/string-literal-bodies.ts",
+  "src/runtime/wasmgc/values/error-bodies.ts",
+  "src/backend/wasmgc/resources/native-string-literals.ts",
+  "src/backend/wasmgc/resources/native-errors.ts",
+];
+const stringErrorGroups = {
+  ...promiseGroups,
+  "native-runtime": [...promiseGroups["native-runtime"], ...stringErrorAdditions.slice(0, 3)],
+  "backend-wasmgc": [...promiseGroups["backend-wasmgc"], ...stringErrorAdditions.slice(3)],
+};
+const nativeValueAdditions = [
+  "src/ir/program/native-value-resources.ts",
+  "src/runtime/wasmgc/values/primitive-layouts.ts",
+  "src/runtime/wasmgc/values/number-bodies.ts",
+  "src/backend/wasmgc/resources/native-values.ts",
+];
+const nativeValueGroups = {
+  ...stringErrorGroups,
+  "ir-program": [...stringErrorGroups["ir-program"], nativeValueAdditions[0]!],
+  "native-runtime": [...stringErrorGroups["native-runtime"], ...nativeValueAdditions.slice(1, 3)],
+  "backend-wasmgc": [...stringErrorGroups["backend-wasmgc"], nativeValueAdditions[3]!],
+};
+const scannerAdditions = [
+  "src/wasm/model/instruction-walk.ts",
+  "src/runtime/wasmgc/values/string-number-grammar.ts",
+  "src/runtime/wasmgc/values/decimal-scale-bodies.ts",
+  "src/runtime/wasmgc/values/string-number-bodies.ts",
+  "src/runtime/wasmgc/values/string-flatten-bodies.ts",
+  "src/runtime/wasmgc/values/string-utf8-decode-bodies.ts",
+  "src/backend/wasmgc/resources/native-string-number.ts",
+  "src/backend/wasmgc/resources/native-string-flatten.ts",
+];
+const scannerGroups = {
+  ...nativeValueGroups,
+  "wasm-model": [...nativeValueGroups["wasm-model"], scannerAdditions[0]!],
+  "native-runtime": [...nativeValueGroups["native-runtime"], ...scannerAdditions.slice(1, 6)],
+  "backend-wasmgc": [...nativeValueGroups["backend-wasmgc"], ...scannerAdditions.slice(6)],
+};
+const argumentVectorAdditions = [
+  "src/runtime/wasmgc/values/argument-vector-bodies.ts",
+  "src/backend/wasmgc/resources/native-argument-vectors.ts",
+];
+const argumentVectorGroups = {
+  ...nativeValueGroups,
+  "native-runtime": [...nativeValueGroups["native-runtime"], argumentVectorAdditions[0]!],
+  "backend-wasmgc": [...nativeValueGroups["backend-wasmgc"], argumentVectorAdditions[1]!],
+};
+const closureAdditions = [
+  "src/runtime/wasmgc/values/closure-layouts.ts",
+  "src/backend/wasmgc/resources/native-closures.ts",
+];
+const closureGroups = {
+  ...argumentVectorGroups,
+  "native-runtime": [...argumentVectorGroups["native-runtime"], closureAdditions[0]!],
+  "backend-wasmgc": [...argumentVectorGroups["backend-wasmgc"], closureAdditions[1]!],
+};
+const demandAdditions = ["src/ir/program/native-string-value-demands.ts"];
+const groups = {
+  ...scannerGroups,
+  "ir-program": [...scannerGroups["ir-program"], ...demandAdditions],
+  "native-runtime": [...scannerGroups["native-runtime"], argumentVectorAdditions[0]!, closureAdditions[0]!],
+  "backend-wasmgc": [...scannerGroups["backend-wasmgc"], argumentVectorAdditions[1]!, closureAdditions[1]!],
+};
 const required = Object.values(groups).flat();
+const callableAdditions = ["src/ir/core/async-callables.ts", "src/ir/runtime/native-async-callables.ts"];
+const vectorAdditions = ["src/ir/core/vector-runtime.ts", "src/ir/runtime/vector-callables.ts"];
+const typeLayoutAdditions = ["src/wasm/physical/type-layout.ts"];
 const delayCombinatorAdditions = [
   "src/runtime/wasmgc/promise/delay-bodies.ts",
   "src/runtime/wasmgc/promise/combinator-bodies.ts",
@@ -118,21 +219,141 @@ const additions = [
 const policy = () => JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 function assertNewActivations(history: unknown[]) {
-  expect(history[0]).toEqual({ layer: "native-runtime", entries: groups["native-runtime"], minModules: 6 });
-  expect(history.slice(1, 3)).toEqual(
-    (["native-runtime", "wasm-physical"] as const).map((layer) => ({
+  expect(history[0]).toEqual({
+    layer: "ir-program",
+    entries: groups["ir-program"],
+    minModules: groups["ir-program"].length,
+  });
+  history = history.slice(1);
+  expect(history.slice(0, 3)).toEqual(
+    (["wasm-model", "native-runtime", "backend-wasmgc"] as const).map((layer) => ({
       layer,
-      entries: groups[layer].filter((path) => !delayCombinatorAdditions.includes(path)),
-      minModules: groups[layer].filter((path) => !delayCombinatorAdditions.includes(path)).length,
+      entries: groups[layer],
+      minModules: groups[layer].length,
     })),
   );
-  expect(history.slice(3, 9)).toEqual(
+  history = history.slice(3);
+  expect(history.slice(0, 3)).toEqual(
+    (["wasm-model", "native-runtime", "backend-wasmgc"] as const).map((layer) => ({
+      layer,
+      entries: scannerGroups[layer],
+      minModules: scannerGroups[layer].length,
+    })),
+  );
+  history = history.slice(3);
+  expect(history.slice(0, 2)).toEqual(
+    (["native-runtime", "backend-wasmgc"] as const).map((layer) => ({
+      layer,
+      entries: closureGroups[layer],
+      minModules: closureGroups[layer].length,
+    })),
+  );
+  history = history.slice(2);
+  expect(history.slice(0, 2)).toEqual(
+    (["native-runtime", "backend-wasmgc"] as const).map((layer) => ({
+      layer,
+      entries: argumentVectorGroups[layer],
+      minModules: argumentVectorGroups[layer].length,
+    })),
+  );
+  history = history.slice(2);
+  expect(history.slice(0, 3)).toEqual(
+    (["ir-program", "native-runtime", "backend-wasmgc"] as const).map((layer) => ({
+      layer,
+      entries: nativeValueGroups[layer],
+      minModules: nativeValueGroups[layer].length,
+    })),
+  );
+  history = history.slice(3);
+  expect(history.slice(0, 2)).toEqual(
+    (["native-runtime", "backend-wasmgc"] as const).map((layer) => ({
+      layer,
+      entries: stringErrorGroups[layer],
+      minModules: stringErrorGroups[layer].length,
+    })),
+  );
+  history = history.slice(2);
+  expect(history.slice(0, 2)).toEqual(
+    (["ir-program", "backend-wasmgc"] as const).map((layer) => ({
+      layer,
+      entries: promiseGroups[layer],
+      minModules: promiseGroups[layer].length,
+    })),
+  );
+  history = history.slice(2);
+  expect(history[0]).toEqual({
+    layer: "native-runtime",
+    entries: resolutionGroups["native-runtime"],
+    minModules: 9,
+  });
+  history = history.slice(1);
+  expect(history.slice(0, 3)).toEqual(
+    (["ir-program", "native-runtime", "backend-wasmgc"] as const).map((layer) => ({
+      layer,
+      entries: vectorGroups[layer],
+      minModules: vectorGroups[layer].length,
+    })),
+  );
+  history = history.slice(3);
+  expect(history.slice(0, 2)).toEqual(
+    (["ir-core", "ir-runtime"] as const).map((layer) => ({
+      layer,
+      entries: historicalGroups[layer],
+      minModules: historicalGroups[layer].length,
+    })),
+  );
+  history = history.slice(2);
+  expect(history.slice(0, 2)).toEqual(
+    (["ir-core", "ir-runtime"] as const).map((layer) => ({
+      layer,
+      entries: historicalGroups[layer].filter((path) => !vectorAdditions.includes(path)),
+      minModules: historicalGroups[layer].length - 1,
+    })),
+  );
+  history = history.slice(2);
+  expect(history[0]).toEqual({ layer: "wasm-physical", entries: historicalGroups["wasm-physical"], minModules: 5 });
+  expect(history[1]).toEqual({ layer: "native-runtime", entries: historicalGroups["native-runtime"], minModules: 6 });
+  expect(history.slice(2, 4)).toEqual(
+    (["native-runtime", "wasm-physical"] as const).map((layer) => ({
+      layer,
+      entries: historicalGroups[layer].filter(
+        (path) =>
+          ![...delayCombinatorAdditions, ...typeLayoutAdditions, ...callableAdditions, ...vectorAdditions].includes(
+            path,
+          ),
+      ),
+      minModules: historicalGroups[layer].filter(
+        (path) =>
+          ![...delayCombinatorAdditions, ...typeLayoutAdditions, ...callableAdditions, ...vectorAdditions].includes(
+            path,
+          ),
+      ).length,
+    })),
+  );
+  expect(history.slice(4, 10)).toEqual(
     (["native-runtime", "wasm-model", "wasm-physical", "ir-core", "ir-analysis", "ir-runtime"] as const).map(
       (layer) => ({
         layer,
-        entries: groups[layer].filter((path) => ![...frameAdditions, ...delayCombinatorAdditions].includes(path)),
-        minModules: groups[layer].filter((path) => ![...frameAdditions, ...delayCombinatorAdditions].includes(path))
-          .length,
+        entries: historicalGroups[layer].filter(
+          (path) =>
+            ![
+              ...frameAdditions,
+              ...delayCombinatorAdditions,
+              ...typeLayoutAdditions,
+              ...callableAdditions,
+              ...vectorAdditions,
+            ].includes(path),
+        ),
+        minModules: historicalGroups[layer].filter(
+          (path) =>
+            ![
+              ...frameAdditions,
+              ...delayCombinatorAdditions,
+              ...typeLayoutAdditions,
+              ...callableAdditions,
+              ...vectorAdditions,
+            ].includes(path),
+        ).length,
       }),
     ),
   );
@@ -209,9 +430,12 @@ function fixture() {
 }
 
 describe("semantic verification and provider ownership boundary", () => {
-  it("pins the original 63 modules plus two delay/combinator owners without relaxing historical policy", () => {
-    expect(required).toHaveLength(65);
-    expect(new Set(required).size).toBe(65);
+  it("pins the original 70 modules plus seven Promise/vector and five string/error owners without relaxing historical policy", () => {
+    expect(required).toHaveLength(99);
+    expect(new Set(required).size).toBe(99);
+    expect(callableAdditions).toHaveLength(2);
+    expect(vectorAdditions).toHaveLength(2);
+    expect(typeLayoutAdditions).toHaveLength(1);
     expect(delayCombinatorAdditions).toHaveLength(2);
     expect(frameAdditions).toHaveLength(3);
     expect(physicalAdditions).toHaveLength(3);
@@ -219,9 +443,24 @@ describe("semantic verification and provider ownership boundary", () => {
     expect(
       required.filter(
         (path) =>
-          ![...physicalAdditions, ...settlementAdditions, ...frameAdditions, ...delayCombinatorAdditions].includes(
-            path,
-          ),
+          ![
+            ...physicalAdditions,
+            ...settlementAdditions,
+            ...frameAdditions,
+            ...delayCombinatorAdditions,
+            ...typeLayoutAdditions,
+            ...callableAdditions,
+            ...vectorAdditions,
+            ...physicalVectorAdditions,
+            ...resolutionAdditions,
+            ...promiseResourceAdditions,
+            ...stringErrorAdditions,
+            ...nativeValueAdditions,
+            ...scannerAdditions,
+            ...demandAdditions,
+            ...argumentVectorAdditions,
+            ...closureAdditions,
+          ].includes(path),
       ),
     ).toHaveLength(56);
     expect(additions).toHaveLength(12);
@@ -232,17 +471,29 @@ describe("semantic verification and provider ownership boundary", () => {
       ...settlementAdditions,
       ...frameAdditions,
       ...delayCombinatorAdditions,
+      ...typeLayoutAdditions,
+      ...callableAdditions,
+      ...vectorAdditions,
+      ...physicalVectorAdditions,
+      ...resolutionAdditions,
+      ...promiseResourceAdditions,
+      ...stringErrorAdditions,
+      ...nativeValueAdditions,
+      ...scannerAdditions,
+      ...demandAdditions,
+      ...argumentVectorAdditions,
+      ...closureAdditions,
     ])
       expect(required).toContain(path);
     const p = policy();
     assertNewActivations(p.activationHistory);
-    expect(p.activationHistory).toHaveLength(27);
-    expect(digest(p.activationHistory.slice(3))).toBe(
+    expect(p.activationHistory).toHaveLength(54);
+    expect(digest(p.activationHistory.slice(30))).toBe(
       "3437a59aacf39df9dffcafa8099ac9f47c0f43a7a0ecc423df4c1fe3e638f002",
     );
     expect(digest(p.allowedEdges)).toBe("efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7");
     // Exact full activation history at b4c116639a, not a selected subset.
-    expect(digest(p.activationHistory.slice(9))).toBe(
+    expect(digest(p.activationHistory.slice(36))).toBe(
       "a6d07b900b0837832707ce083202ab6ffa40f0bbe6bfce25f3062270882b26da",
     );
     for (const [id, entries] of Object.entries(groups)) {
@@ -259,55 +510,88 @@ describe("semantic verification and provider ownership boundary", () => {
   it("loads the complete actual canonical type-and-value closure", () => {
     const r = fixture().run();
     expect(r.status, JSON.stringify(r.report.errors)).toBe(0);
-    expect(r.report.counts.total).toBe(65);
+    expect(r.report.counts.total).toBe(99);
     expect(r.report.errors).toEqual([]);
     for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
       expect(r.report[field]).toEqual([]);
-    expect(r.report.resolvedEdgeCount).toBe(212);
-    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 150, runtime: 62 });
+    expect(r.report.resolvedEdgeCount).toBe(358);
+    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 229, runtime: 129 });
   });
 
   it.each(["delete", "reorder", "layer", "entries", "minimum"] as const)(
     "rejects %s corruption of the new activation records",
     (mutation) => {
       const history = policy().activationHistory;
+      assertNewActivations(history);
+      const before = digest(history);
       if (mutation === "delete") history.splice(0, 1);
       if (mutation === "reorder") [history[0], history[1]] = [history[1], history[0]];
-      if (mutation === "layer") history[0].layer = "ir-program";
+      if (mutation === "layer") history[0].layer = "ir-core";
       if (mutation === "entries") history[0].entries.pop();
       if (mutation === "minimum") history[0].minModules--;
+      expect(digest(history), "mutation must alter the accepted activation records").not.toBe(before);
       expect(() => assertNewActivations(history)).toThrow();
     },
   );
 
-  it.each([...additions, ...physicalAdditions, ...settlementAdditions, ...frameAdditions, ...delayCombinatorAdditions])(
-    "rejects deleting %s and its classification",
-    (path) => {
-      const f = fixture();
-      rmSync(resolve(f.root, path));
-      f.p.files = f.p.files.filter((row: { path: string }) => row.path !== path);
-      for (const mode of ["inventory", "complete"]) {
-        const r = f.run(mode);
-        expect(r.status).not.toBe(0);
-        expect(r.report.errors.map((e: { code: string }) => e.code)).toContain("missing-activated-root");
-      }
-    },
-  );
+  it.each([
+    ...additions,
+    ...physicalAdditions,
+    ...settlementAdditions,
+    ...frameAdditions,
+    ...delayCombinatorAdditions,
+    ...typeLayoutAdditions,
+    ...callableAdditions,
+    ...vectorAdditions,
+    ...physicalVectorAdditions,
+    ...resolutionAdditions,
+    ...promiseResourceAdditions,
+    ...stringErrorAdditions,
+    ...nativeValueAdditions,
+    ...scannerAdditions,
+    ...demandAdditions,
+    ...argumentVectorAdditions,
+    ...closureAdditions,
+  ])("rejects deleting %s and its classification", (path) => {
+    const f = fixture();
+    rmSync(resolve(f.root, path));
+    f.p.files = f.p.files.filter((row: { path: string }) => row.path !== path);
+    for (const mode of ["inventory", "complete"]) {
+      const r = f.run(mode);
+      expect(r.status).not.toBe(0);
+      expect(r.report.errors.map((e: { code: string }) => e.code)).toContain("missing-activated-root");
+    }
+  });
 
-  it.each([...additions, ...physicalAdditions, ...settlementAdditions, ...frameAdditions, ...delayCombinatorAdditions])(
-    "rejects an aliased frontend type dependency from %s",
-    (path) => {
-      const f = fixture();
-      f.put("src/forbidden.ts", "export interface Hidden { value: number }");
-      f.p.files.push({ path: "src/forbidden.ts", layer: "frontend-ts", state: "unmigrated" });
-      f.append(path, 'export type { Hidden } from "@forbidden";');
-      const r = f.run();
-      expect(r.status).toBe(1);
-      expect(r.report.forbiddenEdges).toContainEqual(
-        expect.objectContaining({ from: path, to: "src/forbidden.ts", typeOnly: true }),
-      );
-    },
-  );
+  it.each([
+    ...additions,
+    ...physicalAdditions,
+    ...settlementAdditions,
+    ...frameAdditions,
+    ...delayCombinatorAdditions,
+    ...typeLayoutAdditions,
+    ...callableAdditions,
+    ...vectorAdditions,
+    ...physicalVectorAdditions,
+    ...resolutionAdditions,
+    ...promiseResourceAdditions,
+    ...stringErrorAdditions,
+    ...nativeValueAdditions,
+    ...scannerAdditions,
+    ...demandAdditions,
+    ...argumentVectorAdditions,
+    ...closureAdditions,
+  ])("rejects an aliased frontend type dependency from %s", (path) => {
+    const f = fixture();
+    f.put("src/forbidden.ts", "export interface Hidden { value: number }");
+    f.p.files.push({ path: "src/forbidden.ts", layer: "frontend-ts", state: "unmigrated" });
+    f.append(path, 'export type { Hidden } from "@forbidden";');
+    const r = f.run();
+    expect(r.status).toBe(1);
+    expect(r.report.forbiddenEdges).toContainEqual(
+      expect.objectContaining({ from: path, to: "src/forbidden.ts", typeOnly: true }),
+    );
+  });
 
   for (const [source, field] of [
     ["const target = globalThis.toString(); import(target);", "unknownEdges"],
@@ -319,6 +603,18 @@ describe("semantic verification and provider ownership boundary", () => {
       ...settlementAdditions,
       ...frameAdditions,
       ...delayCombinatorAdditions,
+      ...typeLayoutAdditions,
+      ...callableAdditions,
+      ...vectorAdditions,
+      ...physicalVectorAdditions,
+      ...resolutionAdditions,
+      ...promiseResourceAdditions,
+      ...stringErrorAdditions,
+      ...nativeValueAdditions,
+      ...scannerAdditions,
+      ...demandAdditions,
+      ...argumentVectorAdditions,
+      ...closureAdditions,
     ])(`reports ${field} from %s instead of treating it as closed`, (path) => {
       const f = fixture();
       f.append(path, source);

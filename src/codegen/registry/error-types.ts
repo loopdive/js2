@@ -46,6 +46,8 @@ import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S
 import type { Instr, ValType } from "../../ir/types.js";
 
 import { BUILTIN_TYPE_TAGS } from "../builtin-tags.js";
+import { buildErrorConstructorBody, type ErrorNameValue } from "../../runtime/wasmgc/values/error-bodies.js";
+import { nativeStringLiteralMaterialization } from "../native-string-literals.js";
 import { userErrorCtorCarrierGlobal } from "../error-ctor-carrier.js"; // (#4262) carrier precedence
 import { addFuncType, getOrRegisterErrorStructType } from "./types.js";
 import { addStringConstantGlobal } from "./imports.js";
@@ -283,36 +285,27 @@ function emitErrorStructConstructor(
   // materialized below. Must run BEFORE building the body so the dual-mode
   // helper finds the interned global.
   addStringConstantGlobal(ctx, displayName);
-  const nameInstrs = stringConstantExternrefInstrs(ctx, displayName);
+  let name: ErrorNameValue;
+  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
+    const literal = nativeStringLiteralMaterialization(ctx, displayName);
+    name =
+      literal.kind === "global"
+        ? { kind: "global", index: literal.globalIdx, representation: "gc" }
+        : { kind: "callable", handle: literal.funcIdx, representation: "gc" };
+  } else {
+    const index = ctx.stringGlobalMap.get(displayName);
+    name =
+      index === undefined || index < 0
+        ? { kind: "legacy-missing" }
+        : { kind: "global", index, representation: "externref" };
+  }
 
   const params: ValType[] = Array.from({ length: argCount }, () => ({ kind: "externref" }) as ValType);
   const typeIdx = addFuncType(ctx, params, [{ kind: "externref" }], `${importName}_type`);
   const funcIdx = mintDefinedFunc(ctx);
   ctx.funcMap.set(importName, funcIdx);
 
-  // Body: push fields in struct field order (tag, message, name), then
-  // `struct.new $Error_struct`, then `extern.convert_any` so the result has
-  // the externref ABI shape that the `__new_<Name>` callers expect.
-  const body: Instr[] = [
-    { op: "i32.const", value: tagValue },
-    // $message — first arg if present, else null
-    argCount > 0 ? { op: "local.get", index: 0 } : { op: "ref.null.extern" },
-    // $name — #1536 Phase 2: materialized class-name string ("TypeError" …)
-    // as externref, replacing the Phase-1 `ref.null.extern` placeholder.
-    ...nameInstrs,
-    // $stack — (#1536) non-standard; standalone has no stack-capture
-    // primitive, so initialize to null (reads back as `undefined`).
-    { op: "ref.null.extern" },
-    // $userClassId — (#2188) -1 sentinel: a plain builtin Error (or the shared
-    // parent ctor of a user subclass) carries no per-user-class brand. The
-    // subclass `super()` site overwrites this field after construction.
-    { op: "i32.const", value: -1 },
-    // $props — (#2101a R5) own-field backing store; null until the subclass's
-    // first own-field write lazily allocates an `$Object` here.
-    { op: "ref.null.extern" },
-    { op: "struct.new", typeIdx: structIdx },
-    { op: "extern.convert_any" },
-  ];
+  const body = buildErrorConstructorBody(structIdx, tagValue, argCount, name);
 
   pushDefinedFunc(ctx, funcIdx, {
     name: importName,
