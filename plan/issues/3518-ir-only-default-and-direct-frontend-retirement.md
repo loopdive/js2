@@ -6694,6 +6694,37 @@ prepared-program emitter has not yet wired these string/value producers.
 See agent-context/3518-native-string-consumer-census-2026-09-09.md for the
 next required production integration boundary and ownership coordination.
 
+### Native string type reservation for real consumer integration
+
+The independent type-split draft now preserves a types-first import window,
+authenticates single-use literal ownership and exposes a complete private-chunk
+inventory. Revised TS7 and 54/54 focused tests pass; final review has no blockers
+and 188/188 existing flatten/scanner/value caller regressions pass. Exact provenance and
+limitations are recorded in
+agent-context/3518-native-string-types-split-2026-09-09.md. This is a prerequisite
+for actual prepared-consumer wiring, not evidence that the public direct path
+has been replaced. Paused P/C async drafts remain untouched.
+
+### Native string/value demand census checkpoint (2026-09-09)
+
+The provider-free collector now preserves the exact ordered owner, buffer,
+instruction, intrinsic and literal populations across program/projection and
+async views. It preserves borrowed allocation metadata and presence semantics;
+it is not an acceptance authority. High review approved the source and focused
+tests after local validation, exact occurrence controls and a non-number
+intrinsic control were added. The final focused suite passes 40/40 and TS7
+passes. See agent-context/3518-native-string-value-demands-2026-09-09.md for
+hashes and the retained initial fixture failure.
+
+The collector is registered as a mandatory clean ir-program module without
+changing allowed edges or historical activation records. This is preparatory
+work: shared symbolic producer declarations, actual prepared-consumer wiring,
+original/decoded execution, public cutover and direct retirement remain open.
+
+Final composed validation passes 281/281 (241 boundary controls, 40 collector
+tests), with an exact bounded census of 95 modules and 345 imports. This does
+not establish strict whole-compiler closure or direct-codegen retirement.
+
 ### Explicit native string-number source admission — 2026-09-09
 
 High approved the three production changes and the revision-3 source tests
@@ -6735,6 +6766,8 @@ pending the serialized slot; this section does not claim publication or
 completion of the epic. Exact hashes, commands, failure history and remaining
 obligations are in the
 [source-admission handoff](../agent-context/3518-native-string-source-admission-handoff-2026-09-09.md).
+
+
 
 ### Native string/value demand census checkpoint (2026-09-09)
 
@@ -6791,6 +6824,46 @@ and unfiltered TS7 (session 54286 exit 0). Full caller revalidation passed
 322/322 across eight suites (session 46568 exit 0). Checkpoint validation is
 complete; this is not a migration-completion claim.
 
+### Real native-string prepared-consumer integration (2026-09-09)
+
+The composed consumer now accepts native string/value demands, seals their
+typed ABI before allocation, uses canonical resource declarations and owned
+reservations, and binds final indices after the single physical freeze.
+Original and decoded prepared programs execute through the real consumer;
+68/68 execution cases passed (handle 69379, exit 0). These include numeric
+edge cases, large/private-chunk literals, encoding checks on actual module
+objects, startup modes, aliases, and dependency initialization order.
+
+The first combined run failed 69/129: one ABI countermodel was unchanged and
+all 68 execution fixtures omitted explicit native string storage. Both are
+test-only repairs; no production policy or validator was relaxed. Follow-up
+ABI controls, no-demand old/new parity, full composed typecheck/boundaries and
+normal publication hooks remain pending. Exact hashes, preserved failures,
+dependency merge receipts and review scope are recorded in
+agent-context/3518-native-string-value-consumer-integration-2026-09-09.md.
+
+Public compilation still uses direct generateModule/generateMultiModule.
+Native-string execution does not satisfy the remaining native families,
+async/ABI30, cross-backend, fail-closed default, strict closure, or retirement
+requirements; every outstanding epic acceptance criterion stays open.
+
+Follow-up validation completed: ABI 61/61, boundary 258/258, materialization/
+codec/module regressions 51/51, and full TS7 exit zero. The three-arm comparison
+(76083, exit zero) reproduces the original vector CompileError, then proves
+complete repaired-baseline/candidate artifact and value parity for five source
+executions, one exact source refusal and one canonical-producer IR execution.
+The vector repair is published separately as #5792; ordinary vector source
+admission is still unsupported. All three arm receipts, runtime/input hashes,
+original/decoded versions and retained binaries/WAT are documented in the
+consumer integration handoff. No original-baseline vector success is claimed.
+
+The next complete native async-consumer implementation plan is recorded in
+agent-context/3518-native-async-consumer-implementation-spec-2026-09-09.md,
+including frame/state lowering, delay/combinator publication, real object and
+closure invocation dependencies, complete number formatting and string output.
+The ordinary-vector source proposal and explicit P/C scope releases are also
+preserved in the handoffs. These plans are not execution or retirement proof.
+
 ### Isolated vector construction nullability repair (2026-09-09)
 
 Claim 3518:vector-data-nonnull owns a one-instruction WasmGC emitter fix at
@@ -6804,6 +6877,8 @@ physical-fixture resolver, one IR-builder externref spare-capacity row, and
 one refusal control. This is not whole-source admission or consumer execution.
 See agent-context/3518-vector-data-nonnull-2026-09-09.md for exact receipts and
 the separate historical-baseline/common-fix application requirement.
+
+
 
 ## Native argument-vector checkpoint — 2026-09-08
 
@@ -7989,6 +8064,77 @@ remain unchanged. The independent b363f29d corpus matches all53,933 canonical
 test/harness blobs, exact modes and inventory, with no linked/shared objects.
 Normal signed hooks remain required; no gate or historical fixture was relaxed.
 
+## Implementation plan: refresh prepared native string consumer — 2026-09-13
+
+Continue existing PR5793, “feat(ir): execute native string values through
+prepared consumer”, from published9ccad45c onto signed predecessor eac9f741.
+Preserve the published production delta and the predecessor's one-instruction
+vector backing refinement and canonical lowering imports. Keep both complete
+issue histories, original fixtures and published execution limitations. New
+migration scope remains paused; no later unpublished provider work is adopted.
+
+Preserve already-integrated producer and demand changes byte for byte. Resolve
+only cumulative boundary policy/test history: retain exact predecessor records,
+published activation records, original allowed edges and all positive-first
+per-root negatives. Measure the actual composed import closure before changing
+current census expectations; retain initial failures and historical receipts.
+
+Execute complete reviewed child component/consumer tests and relevant parent
+vector/import-cycle controls with exact source/test/fixture pins. Keep component
+and whole-consumer denominators separate. Run TS7, budgets, oracle, measured
+coercion, preservation-v1 and conformance sync. Use the independent pinned
+corpus and normal signed hooks. Publish only after predecessor5792 is verified
+delivered through the protected queue. Historical compiler-pair execution,
+complete physical async support and frontend retirement remain uncertified.
+
+### Scoped comparison-runner import provenance repair
+
+The unchanged published three-arm runner refuses the composed candidate before
+execution: its exact repaired-emitter equality does not include the already-
+landed pure import split. Independent commit c257b466, parent120cd638, supplies
+the exact before/after emitter proof (a23bbcb0→49a1de06). Keep that relocation
+and the vector refinement; do not restore an upward lowerer import.
+
+Implement a pure test-helper verifier for only that authenticated import
+forwarding, update only the runner's candidate-emitter guard to use it, and
+add positive-first focused regressions for missing, duplicate, retargeted or
+unrelated edits and bad provenance. The inverse must reproduce the exact
+repaired emitter. Preserve original→repaired as exactly one ref.as_non_null,
+external whole-source/helper/config pins, runtime identity, explicit2GB child
+configuration and all seven comparison rows. Root owns runtime execution and
+fresh isolated original2ccdcffd and repaired baselines; the historical contract
+permits the repaired baseline's externally pinned one-instruction working-tree
+difference. Do not claim archived CLI results as new execution evidence.
+
+The first actual boundary diagnostic selected only the complete-closure case:
+it failed on the provisional prior edge count, with289 cases unselected and
+no execution credit. Its full report measures102 modules and391 imports
+(248 type-only,143 runtime), zero graph errors. The temporary report-writing
+observation was removed and original test bytes restored before updating only
+the current count assertion. All61 activation records, both original histories
+and allowed edges remain unchanged. The complete18-file cohort is pending;
+no diagnostic pass or full-suite success is inferred.
+
+### Prepared consumer validation — 2026-09-13
+
+The complete18-file cohort passes838/838 assertions, zero failures or pending
+cases, with all execution inputs unchanged. The import-forward verifier's
+separate focused run passes8/8. Policy composition preserves all1,377 parent
+records, adds one consumer record, retains61 activation records and both
+histories, and leaves allowed edges unchanged. The read-only policy audit
+initially assumed a map instead of the actual list schema; corrected exact
+record comparison passes. The earlier boundary diagnostic failure is retained.
+
+The actual three-arm CLI passes with authenticated original/repaired inputs
+of1,370 files each and candidate1,406. It reproduces the original nullable
+vector CompileError and compares repaired/candidate across five real source
+executions, one exact source refusal, and one canonical-producer IR vector
+execution. This is seven comparison rows, not seven successful source apps.
+The128 original receipts are archived byte-exactly in the owned worktree.
+No expected failure, runtime identity, historical donor or census guard was
+relaxed. Source gates and normal signed hooks remain required before this
+prepared merge; refresh to delivered main follows before publication.
+
 ## Queue admission reconciliation: current main — 2026-09-13
 
 Existing PR5760 reported DIRTY against main7adc0a6e after publishing signed
@@ -8148,3 +8294,19 @@ TS7, LOC/functions, measured coercion, oracle, preservation-v1 dead exports
 including core types/nodes, and conformance sync check pass. Normal signed
 hooks and exact-head protected queue checks remain required. This does not
 certify full IR retirement.
+
+### Consumer refresh onto delivered main — 2026-09-13
+
+Fresh mainccfa93df merges cleanly into signed prepared checkpointad57b0bb
+for production, tests and policy. The only conflict was appended issue
+history; both sides are retained. All1,389 main policy records remain exact,
+one consumer record is added,61 activation records and allowed edges are
+unchanged. The complete18-file current-tree run passes847/847, zero failures
+or pending cases, with unchanged inputs; earlier838/838 remains separate.
+The authenticated three-arm CLI again reproduces the original vector defect
+and preserves repaired/candidate parity for five source executions, one exact
+source refusal and one producer-IR vector execution. Original/repaired inputs
+remain1,370 files each; current candidate census is1,418. All128 new receipts
+are archived byte-exactly. No historical expectation or gate was weakened.
+Source gates and normal signed hooks precede exact-head publication and queue
+admission. This checkpoint is not full IR retirement.
