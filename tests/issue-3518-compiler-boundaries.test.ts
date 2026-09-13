@@ -92,7 +92,7 @@ function fixture(sources: Record<string, string> = {}) {
     );
     expect(result.error).toBeUndefined();
     expect(result.signal).toBeNull();
-    return { exit: result.status, report: JSON.parse(result.stdout) };
+    return { exit: result.status, report: JSON.parse(result.stdout), stderr: result.stderr };
   };
   return { root, policy, put, run };
 }
@@ -364,8 +364,25 @@ describe("#3518 real compiler boundary detector", () => {
       const result = f.run("inventory", save);
       expect(result.exit).not.toBe(0);
       expect(codes(result)).toContain(expected[kind]);
+      // #6418: the reason must reach stderr, or a CI job log shows only the
+      // exit code and an auto-park citing this gate is undiagnosable.
+      expect(result.stderr).toContain(expected[kind]);
+      if (kind === "extra") {
+        expect(result.stderr).toContain("invalid-inventory");
+        expect(result.stderr).toContain("src/foundation/unclassified.ts");
+      }
     },
   );
+
+  it("stays silent on stderr when the inventory is valid (#6418)", () => {
+    const f = fixture();
+    const result = f.run("inventory");
+    expect(result.exit).toBe(0);
+    // Anti-vacuity control: a passing run adds no noise, and stdout is still
+    // the pure JSON report the artifact upload and these tests parse.
+    expect(result.stderr).toBe("");
+    expect(result.report.status).not.toBe("checker-error");
+  });
 
   it("reports a controlled unreadable file even under privileged runners", () => {
     const f = fixture();

@@ -286,6 +286,7 @@ import { ensureMapRuntimeTypes } from "./map-runtime.js";
 import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
 import { fillClassProtoLookupArm } from "./class-proto-lookup.js"; // (#5195 Step 1.7)
+import { fillClassPrototypeReadArm } from "./standalone-class-prototype-read.js"; // (#6457)
 import { mintStandaloneClassProtoBuilders } from "./standalone-class-dyn-member.js"; // (#5383 S2h)
 import { mintStandaloneClassStaticBuilders } from "./standalone-class-dyn-static.js"; // (#5383 S2i)
 import { scanForArrayHoles, ensureHoleType } from "./array-holes.js"; // (#2001 S1)
@@ -6714,6 +6715,11 @@ export function generateModule(
     // prototype singleton. No-op unless the module has a class with a
     // runtime-keyed member.
     fillClassProtoLookupArm(ctx);
+    // (#6457) …and the `prototype` key on a class OBJECT, which that lookup
+    // routes to the STATIC sidecar and therefore misses. Between the two fills:
+    // in front of the sidecar delegation (which would only miss), behind #802's
+    // dynamic-proto arm, which must keep the front slot.
+    fillClassPrototypeReadArm(ctx);
     fillDynamicProtoHelpers(ctx);
 
     // A separately compiled runtime-eval provider can invoke caller-owned AOT
@@ -11404,6 +11410,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("mint-class-static-builders", () => mintStandaloneClassStaticBuilders(ctx));
     profilePhase("mint-class-proto-builders", () => mintStandaloneClassProtoBuilders(ctx));
     profilePhase("fill-class-proto-lookup", () => fillClassProtoLookupArm(ctx));
+    // (#6457) Same position as the twin site above, same reason.
+    profilePhase("fill-class-prototype-read", () => fillClassPrototypeReadArm(ctx));
     profilePhase("fill-dynamic-proto-helpers", () => fillDynamicProtoHelpers(ctx));
     profilePhase("fill-runtime-eval-callable-get-arm", () => fillRuntimeEvalCallablePropertyGetArm(ctx));
     profilePhase("fill-runtime-eval-intrinsic-own-props", () => fillRuntimeEvalIntrinsicFunctionOwnProps(ctx));

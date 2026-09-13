@@ -192,21 +192,39 @@ the new module in `scripts/compiler-boundaries.json`. `tsc --noEmit` clean. The
 loc/func growth (+15 / +14, the probe + rollback pair that cannot leave the call
 site) is granted in this file's frontmatter.
 
-**The first cut was too strict, and the merge queue caught it.** It admitted
-only an exact `typeIdx === vecTypeIdx` match and diverted every other WasmGC ref
-to the fallback. All 17 dogfood suites stayed flat and every PR-level check was
-green — but the `merge_group` re-validation failed the #2097 standalone
-host-free high-water floor: **`pass=35567`, mark `35686`, delta `-119`**
-(PR #5894, run 34743292750, auto-parked 2026-09-13T07:01Z). A GC struct whose
-index differs from the checker-derived vec is routinely cast-compatible with it,
-so the repair's `ref.cast` SUCCEEDS there and the `array.copy` path was correct
-all along; diverting those changed a working lowering for no reason. The shipped
+**The first cut was narrowed after a merge-queue park — but the park was NOT
+this change's regression. Correcting the record (2026-09-13).**
+
+PR #5894 was auto-parked on the #2097 standalone host-free high-water floor
+(`pass=35567`, mark `35686`, delta `-119`; run 34743292750). That was attributed
+here to the first cut, which admitted only an exact
+`typeIdx === vecTypeIdx` match and diverted every other WasmGC ref to the
+fallback. **The attribution was wrong.** Two measurements settle it:
+
+- After the predicate was relaxed, the very next merge group for this PR
+  (57d135c8, run 34748482771) reported the **identical** `pass=35567`. A change
+  that had cost standalone passes would have recovered some; it recovered
+  exactly zero.
+- The unrelated PR #5897 reported the byte-identical breach in its own merge
+  group (run 34746428311): `pass=35567, mark=35742, delta=-175`. So did #5885,
+  #5890, #5896 and #5899 in the same window. The measured standalone count sat
+  at 35567 for **everyone** while main's high-water mark kept being promoted
+  upward past it — main-side drift in the standalone shard, not this change.
+
+The lesson is the one CLAUDE.md already states: a number read off an artifact
+is not a measurement of your own change until you have compared it against a
+control. The control here cost one API call — the same gate's numbers on a
+concurrent, unrelated PR.
+
+The relaxation stands on its own merits and was kept: a GC struct whose index
+differs from the checker-derived vec is routinely cast-compatible with it, so
+the repair's `ref.cast` succeeds there and the `array.copy` path was correct all
+along. Being stricter than the trap requires was unjustified. The shipped
 predicate diverts or materializes only the two carriers that provably trap
 (non-GC value, `$__ta_view`) and leaves every other ref byte-identical to the
 parent — strictly less divergence from base than the variant the A/B measured
-flat. This is also the standing argument for why the dogfood A/B was not
-re-run after the relaxation: it cannot uncover a divergence the measured,
-stricter variant did not already have.
+flat, which is also why the dogfood A/B was not re-run after the relaxation: it
+cannot uncover a divergence the measured, stricter variant did not already have.
 
 **Residuals.**
 

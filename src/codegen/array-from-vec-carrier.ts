@@ -28,14 +28,18 @@
  * the native/host `Array.from` fallback rather than widening the cast.
  *
  * **It admits every OTHER WasmGC ref unchanged, on purpose.** The first cut
- * admitted only an exact `typeIdx === vecTypeIdx` match and refused the rest —
- * and that cost **119 standalone host-free test262 passes**, caught by the
- * #2097 high-water floor in the merge_group (PR #5894, 2026-09-13). A GC struct
- * whose index differs from the checker-derived vec is routinely cast-compatible
- * with it; the repair's `ref.cast` SUCCEEDS there and the `array.copy` path was
- * correct all along. Diverting those to the fallback changed a working lowering
- * for no reason. Only the two carriers that provably TRAP are diverted or
- * materialized; everything else keeps the pre-#6422 behaviour byte for byte.
+ * admitted only an exact `typeIdx === vecTypeIdx` match and refused the rest. A
+ * GC struct whose index differs from the checker-derived vec is routinely
+ * cast-compatible with it; the repair's `ref.cast` SUCCEEDS there and the
+ * `array.copy` path was correct all along, so diverting those to the fallback
+ * changed a working lowering for no reason. Only the two carriers that provably
+ * TRAP are diverted or materialized; everything else keeps the pre-#6422
+ * behaviour byte for byte.
+ *
+ * (The narrowing was prompted by a #2097 standalone high-water park on PR
+ * #5894 — which turned out NOT to be this change: the same `pass=35567` was
+ * reported for unrelated concurrent PRs, main-side drift. See the issue file's
+ * Resolution for the correction. The narrowing was kept on its own merits.)
  */
 import type { FunctionContext, CodegenContext } from "./context/types.js";
 import type { InnerResult } from "./shared.js";
@@ -66,7 +70,7 @@ export function admitArrayFromVecCarrier(
     emitTaViewToVec(ctx, fctx, srcType.typeIdx, vecTypeIdx);
     return true;
   }
-  // Any other GC ref: pre-#6422 behaviour, unchanged. See the header — being
-  // stricter here regressed 119 standalone passes.
+  // Any other GC ref: pre-#6422 behaviour, unchanged. See the header for why
+  // being stricter here is not worth it.
   return true;
 }
