@@ -16752,6 +16752,24 @@
           "standalone": {}
         }
       }
+    },
+    {
+      "generatedAt": "2026-09-13T07:21:30.326Z",
+      "sourceRevision": "0bba1b92bf2624315bb06223396e4991b0f9b9ce",
+      "optimizationLevels": {
+        "js-host": 4,
+        "js-host-native": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHostNative": {},
+          "jsHost": {
+            "dynamic": 0.009944173587202662
+          },
+          "standalone": {}
+        }
+      }
     }
   ]
 }
