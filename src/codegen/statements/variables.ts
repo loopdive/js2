@@ -24,6 +24,7 @@ import {
   varBindingNeedsExternrefForUndefined,
 } from "../index.js";
 import { nativeTypeOfDeclaration } from "../native-type-annotations.js";
+import { nullableNativeStringElemBindingType } from "../nullable-native-string-elem-binding.js"; // (#6476)
 import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import { concatCallYieldsDynamicCarrier } from "../array-concat-carrier.js"; // (#4655) concat result-slot carrier
 import { filterResultNeedsDynamicCarrier } from "../array-filter-spec-access.js";
@@ -2062,9 +2063,13 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // initializer had its global widened to externref; the module-init shadow
     // local is the same binding and must not be narrowed back by the checker's
     // (first-declaration) symbol type. See `redeclared-var-widening.ts`.
-    const wasmType: ValType =
+    const wasmType: ValType = nullableNativeStringElemBindingType(
+      ctx,
+      fctx,
+      decl,
       redeclarationWidenedLocalSlotType(ctx, decl) ??
-      (wasmTypeBase.kind === "externref" ? (resolveFnctorTypedBindingType(ctx, decl) ?? wasmTypeBase) : wasmTypeBase);
+        (wasmTypeBase.kind === "externref" ? (resolveFnctorTypedBindingType(ctx, decl) ?? wasmTypeBase) : wasmTypeBase),
+    );
 
     // (#2814) Bug C: re-align a block-scoped let/const with its OWN pre-hoisted
     // slot. `saveBlockScopedShadows` removed this name's localMap (and TDZ-flag)
