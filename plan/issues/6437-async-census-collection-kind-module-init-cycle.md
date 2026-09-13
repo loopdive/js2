@@ -1,10 +1,11 @@
 ---
 id: 6437
 title: "tests/async-census.test.ts fails at collect time with a module-init cycle: `Cannot read properties of undefined (reading 'MAP')` in collections-brand.ts"
-status: ready
+status: done
 sprint: current
 created: 2026-09-13
 updated: 2026-09-13
+completed: 2026-09-13
 priority: low
 horizon: s
 feasibility: medium
@@ -64,3 +65,23 @@ both with and without an unrelated `src/codegen/async-frame.ts` edit in the tree
    `import "../src/index.js"` line in the test — that only moves the trap to the
    next test that forgets it.
 3. A note in the relevant module explaining which edge of the cycle is load-bearing.
+
+## Resolution
+
+**Already fixed on `main` before this file landed** — by
+[#6419](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6419-three-closure-area-tests-red-on-main)
+(`53ba0b7b46`, merged as PR #5876 on 2026-09-13), which extracted
+`COLLECTION_KIND` into its own module `src/codegen/collection-kind.ts` and so cut
+the edge of the cycle this issue describes.
+
+Timeline: reproduced at `e8a778638f` and `7adc0a6e89` (both `Test Files 1 failed`,
+`Tests no tests`); at `f1462c4d15` the same command gives
+`Test Files 1 passed — Tests 13 passed`. No further work is needed; the file is
+kept so the reserved id is not a hole in the sequence and so the failure mode
+(`KIND_OF` reading a not-yet-initialized module constant, reachable from any test
+that imports a codegen module without `src/index.js` first) stays searchable.
+
+Acceptance criterion 2 is satisfied by construction — the fix was in the module
+graph, not an added import in the test. Criterion 3 (a note naming the
+load-bearing edge) was **not** done and remains open as a small follow-up on
+`collection-kind.ts` if anyone wants it.
