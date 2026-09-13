@@ -149,7 +149,7 @@ describe("#2043 validateModuleIndices covers every index space", () => {
       // main has 0 params + 1 local → valid locals are [0, 1).
       body(m).unshift({ op: "local.get", index: 9 } as Instr, { op: "drop" } as Instr);
     });
-    expect(() => emitBinary(mod)).toThrow(/local index out of range.*9/s);
+    expect(() => emitBinary(mod)).toThrow(/local \(local\.get\) index out of range.*9/s);
   });
 
   it("throw with stale exception tag index", () => {

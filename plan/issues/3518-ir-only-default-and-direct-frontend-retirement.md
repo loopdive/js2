@@ -23,6 +23,7 @@ origin: "2026-07-21 explicit user directive: enable IR-only by default and retir
 oracle-ratchet-allow:
   - src/codegen/multi-prepared-array-leaf.ts
 loc-budget-allow:
+  - src/codegen/map-runtime.ts
   - src/codegen/index.ts
   - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/multi-prepared-scalar-leaf.ts
@@ -5914,6 +5915,517 @@ non-draft, MERGEABLE/CLEAN with reported checks successful and auto-merge null.
 The recursive emitter's precise diagnostic assertion repair independently passed
 29/29 focused tests; its production review and composition remain separate work.
 
+### Recursive-type integration handoff — 2026-09-08
+
+Delay/combinator checkpoint committed as de2f1072ebb32771272d24a58407814f9d2a5d38
+and pushed to upstream with all normal hooks. First commit attempt was refused
+only for a missing Model trailer; the retry included the required Default
+attribution and passed hooks. No bypass was used. High cleared B rev2 and the
+recursive-type production patch without a remaining concrete blocker.
+
+This isolated worktree, `/private/tmp/js2-3518-explicit-rec-integration-20260908`,
+branch `codex/3518-explicit-rec-integration-20260908`, starts at de2f1072 and now
+contains all eight reviewed recursive-type files. Seven hashes match the
+original frozen manifest; the repaired explicit-rec test hash is
+7a136f2558f6162a55c1964f076cc0e520399438377f3499af0e7b273929dfe6,
+with its focused 29/29 result measured after repair. All eight composed hashes
+were independently verified. Root dependencies are symlinked, not installed.
+Initial Git status/diff checks hit sandboxed LFS temporary-file permissions;
+these are access failures, not evidence of LFS corruption.
+
+Next: activate the new physical type-layout owner and additive boundary controls,
+validate composed types/tests and historical paired preservation, then publish
+this separate non-draft checkpoint. Do not alter the historical paired outputs
+or remove their failing controls merely to obtain green. Three old failures
+remain independently reproduced on baseline as documented above.
+
+Published delay/combinator checkpoint: https://github.com/loopdive/js2/pull/5759,
+non-draft creation on base #5758 with hold label. Remote branch independently
+matches de2f1072ebb32771272d24a58407814f9d2a5d38. This integration builds on
+that published checkpoint; it must receive its own PR after validation.
+
+### Composed recursive-type validation — 2026-09-08
+
+Mandatory physical type-layout activation passed session 9063: 125/125 controls,
+66 clean closure modules and 214 resolved edges (152 type-only, 62 runtime).
+Four new deletion/forbidden-type/unknown/unresolved import controls cover the
+new owner. All 27 previous activation records and all allowed edges were
+independently compared against HEAD and remain unchanged; one record was added.
+
+Session 68973 passed canonical TS7 followed by eight suites, 258/258. Parent
+also repaired three independently baseline-reproduced stale assertions: the
+issue-2043 regex now names the actual local.get guard, and the foundation test
+requires the exact two canonical type-only imports plus four allocator names
+moved in an earlier checkpoint. Runtime behavior, historical output receipts
+and production code were not changed to make these tests pass. High was sent
+the parent boundary and test delta for review.
+
+PR 5759 watch session 51627 exited 0, including the real-Wasmtime smoke check.
+Fresh remote read confirms MERGEABLE/CLEAN, all reported checks successful,
+non-draft, head de2f1072 and no auto-merge. Complete IR migration remains open.
+
+Initial rec paired-preservation session 43200 exited 1 (125/126): candidate
+completed, but parent incorrectly supplied de2f1072 as baseline. The unchanged
+recorder explicitly pins baseline source to 1cb0f5c7 and rejected that mismatch
+before running it. This is not a compiler regression or a passing pair. Evidence
+remains under `.tmp/delay-combinator-preservation-xTJKNb/`; rerun uses the original
+clean 1cb0f5c7 worktree without changing/reseeding the historical guard.
+
+Corrected paired session 55354 exited 0: 126/126, 11 artifacts and 19 executions
+per compiler, complete bytes/WAT/resources/outcomes equal. Evidence remains at
+`.tmp/delay-combinator-preservation-cceiUu/`. High approved the parent test and
+boundary delta without weakening or production-change concerns. This validates
+preservation through the composed emitter, not complete prepared async execution.
+
+Full inventory session 75347 exited 0: 1,314 modules (66 clean, five adapters,
+1,243 unmigrated), no errors, and the same four unknown dynamic-import sites.
+The first compact-report wrapper incorrectly read the outer result instead of
+its report field; it failed locally and was corrected, not counted as evidence.
+Strict architecture completion remains false.
+
+The existing semantic-provider historical instrument is additionally running
+against clean b4c116639a ownership-integration source, to retain synchronous
+prepared source/bytes/WAT/resources/value comparisons across both GVN modes.
+Outputs remain under `.tmp/explicit-rec-semantic-pair-20260908/`; no outcome
+is claimed until its exact running handle reaches terminal completion.
+
+Semantic historical pair session 56110 exited 1: raw preservation is false,
+with four differing rows per GVN mode (alias/startup, original/reversed order).
+Parent recursively inspected every differing field: only original/replayed
+physical modules' funcOrdinalToPosition entries and startup call handles differ
+(0/2 versus stable 2097152/2097154). Complete bytes, WAT, outcomes, canonical
+prepared data and all other row fields match. Do not normalize this raw result
+into a historical pass. The same instrument now runs with published de2f1072
+as its candidate in `.tmp/explicit-rec-parent-semantic-pair-20260908/` so the
+new emitter's delta can be compared directly to the actual PR base and the
+stable-handle attribution verified, rather than assumed.
+
+Parent-control session 52106 exited 1 with the same raw older-baseline differences.
+Independent deep comparisons then proved all 15 complete candidate rows per GVN
+mode (30 total) exactly equal between published de2f1072 and this emitter patch,
+without normalizing any field. Both full comparison reports are also identical,
+including all eight stable-handle differences. Thus this checkpoint preserves
+the published source/physical outputs, while the b4 historical report remains
+honestly different. Only eight of those 30 rows execute prepared physical code;
+the other rows retain their documented preparation/provider refusals or public
+controls. Neither report is full native-async physical acceptance.
+
+All scoped formatting checks pass. High approved the production and parent
+integration delta. The next action is normal-hook commit and a non-draft PR on
+base #5759, with hold retained and no new merge authority.
+
+### Native-callable integration start — 2026-09-08
+
+Recursive emitter checkpoint committed as 2b9cb408c18446361fcf9837045067d1fd97c642
+and pushed to loopdive/js2 with normal hooks, all eight worker hashes unchanged.
+This worktree `/private/tmp/js2-3518-native-callables-integration-20260908`, branch
+`codex/3518-native-callables-integration-20260908`, starts at that checkpoint.
+Only A's ten production files are composed so far; all ten SHA-256 hashes match
+the fully read revision1 frozen manifest from native-family-callables worktree.
+No tests/typecheck have run on this composition yet. Existing dependencies are
+symlinked; no install was performed.
+
+High cleared A production but requested a test-only revision: pin each of six
+bindings to its exact feature/provider/implementation, demand them separately,
+pin all eight delay/all dependencies, and add feature-swap and missing-settlement
+controls. A is repairing only the three focused test files. Do not compose an
+unfrozen partial test revision. Parent still owns constant forwarding, authenticated
+clock projection in ordinary/derived bodies, additive clean-boundary activation,
+full-source eight-scenario validation, and physical materialization. The original
+goal and ABI30/retirement obligations remain open.
+
+Recursive emitter checkpoint is now published as non-draft
+https://github.com/loopdive/js2/pull/5760, base #5759, head 2b9cb408c1.
+The remote branch was independently verified at the full recorded commit.
+
+### Native-callable composed evidence — 2026-09-08
+
+TS7 session 96067 passed on the ten frozen production files. Rev2 tests were
+composed after fully reading their manifest and verifying all three blobs.
+First session 17059 was 81/82: only an empty void logical source fixture failed
+before its ABI assertions. Worker rev3 changed only that fixture to an explicit
+bare return (replay blob 95ddd43ac88a25f06b8fca6787b0097dde16353c).
+
+Parent forwarded all six compatibility constants from core/async-callables and
+added a static exact-forwarding control. Actual full-family session 47412 passed
+82/91, including all 55 source-identity tests; eight family scenarios and fresh
+source-free replay exposed Promise.all's argument validator incorrectly refusing
+the actual non-null externref vector against its nullable parameter. The saved
+packet independently confirms that precise type in fetchAllParallel. Parent
+fixed only one-way false-to-true vector argument compatibility, retaining exact
+element types and strict result types, with reverse/number/Promise-carrier
+negatives. Session 85743 then passed 25 declaration controls; all eight source
+scenarios advanced to the explicit native-string-policy refusal rather than
+the obsolete unknown-declaration refusal. The old expectations are not yet
+updated; neither run is claimed fully green.
+
+With explicit native-string/concat policy, the unchanged full-family packet
+now reaches a separate real gap: assertPreparedIrProgram throws for undeclared
+intrinsic __ir_vec_elem_set_externref in fetchAllParallel's derived state zero.
+The complete callable-declaration check remains intact. High is specifying the
+closed vector-helper contracts together with authenticated ordinary/derived
+clock projection; do not skip the missing declaration or claim native acceptance.
+
+Focused session 54317 passed 83/83 after the fixture/forwarding/nullability fixes
+(25 declarations, 46 providers, 12 replay). Rev2 provider-oracle repair was
+approved by High. The two new modules are now classified as mandatory clean
+owners; compact inventory 37239 has no errors and independently measures 68
+selected modules, 228 edges (158 type-only, 70 runtime). Boundary controls are
+running after adding all eight owner-specific negative cases. No PR has yet
+been created for these uncommitted callable changes.
+
+Boundary session 65096 subsequently exited 0: 133/133, including all eight
+negative controls for the two new owners. Parent independently compared all
+28 previous activation records and the allowed-edge policy against HEAD; all
+remain exact. Two new activation records are prepended. High confirmed the
+non-null-to-nullable argument fix is correct and identified the vector-set call
+already in the retained source packet (the async transform carries it forward).
+The missing canonical vector declaration is not solely a transform artifact.
+
+### Clock/vector continuation — 2026-09-08
+
+The recovered Astra High specification is recorded in
+`plan/agent-context/3518-clock-vector-admission-plan-2026-09-08.md`.
+Implementation is split between Astra Low native subagents in isolated trees:
+`codex/3518-vector-callable-admission-20260908` owns the single measured
+externref vector-store callable contract; `codex/3518-clock-projection-20260908`
+owns ordinary/derived clock projection and independent positional validation.
+Parent owns their shared demand join, source-family tests, boundary updates,
+integration and non-draft PR publication. Existing frozen worker trees remain
+untouched. Neither slice admits physical native async execution.
+
+Prior validation handle 18810 is missing; a process-table check confirmed no
+live matching TypeScript/Vitest process before replacement validation 6170.
+The replacement passed TS7, then exited 1 with 63/66 tests: runtime-manifest
+8/8 and historical reconstruction 55/58. The three failures reject current
+manifest declaration order and changed intrinsic-support receipts. High is
+specifying an explicit historical reconstruction adaptation, retaining original
+hashes and adding checked deltas; they are not waived or counted green.
+
+The original eight policy-omitting full-family cases now explicitly test the
+measured native-storage-policy refusal. Eight additional native-policy cases
+require actual complete preparation and record separate source, post-async and
+post-optimization call populations, including empty owners and unrecognized
+references. These are acceptance tests, not a replacement refusal gate; their
+new execution is pending and the vector/clock implementation remains open.
+
+Native-family session 12153 exited 1 with 36/44 passing: all eight new explicit
+native-policy cases reject the missing externref-vector declaration. All prior
+36 controls pass, including located missing-policy source-free replay and all
+eleven real forbidden imports. Parent read all eight recorded stage censuses:
+source 5 owners/22 call references; post-async 16/33; post-optimization 16/33;
+independent final validation recollection 16/33. Each population has exactly
+one unresolved reference, the vector-store helper (source owner
+fetchAllParallel, derived owner fetchAllParallel__ir_async_state_0). All empty
+owners remain recorded. Initial census labeling omitted the fourth validation
+scan; corrected to retain explicitly named validation stages, not discard it.
+Receipts remain under `.tmp/native-family-native-policy-*` in the integration
+tree. TS7 session 97422 exited 0 after the new tests. A further fresh-process
+native-policy acceptance case is now added and awaits its measured run.
+Upstream main was rechecked with ls-remote and remains
+04c8e72156cf576cf584a3ed3a5a66ec5a2b91b0; no root checkout changes or merges.
+
+Session 51223 then exited 1 with 36/45: the added fresh-process native-policy
+case reproduces exactly the same missing-vector declaration (child exit 1,
+no signal), while all prior controls still pass. Its terminal and forbidden-load
+census are retained in the source-free temporary receipt directory. No native
+preparation or physical execution success is claimed. The checkpoint remains
+unpublished pending its implementation fixes and historical-receipt repair.
+
+The High-reviewed historical reconstruction specification is saved in
+`plan/agent-context/3518-callable-historical-reconstruction-plan-2026-09-08.md`.
+A third Astra Low native subagent owns only its shared test helper and four
+receipt/ownership suites in isolated branch
+`codex/3518-callable-historical-reconstruction-20260908`. It must authenticate
+each approved addition before inverting it and applying unchanged historical
+hashes; future vector/clock deltas are not pre-authorized by a generic filter.
+All three new worker trees are seeded from 2b9cb408 plus the current reviewed
+callable changes, preserving prior frozen trees. Parent retains integration and
+PR publication. Heavy tests remain serialized: the vector worker now holds the
+exclusive next TS7/focused-test slot; clock and receipt workers must wait for an
+explicit grant. No parent heavy process remains live after session 51223.
+
+Continuation revalidation found vector implementation had not started: its
+slice was UNASSIGNED, and the worker interpreted the implementation no-commit
+instruction as blocking normal claim acquisition. Parent clarified that normal
+reservation commits/hooks are authorized, without hook bypass or force-steal.
+The unused heavy slot was transferred to the ready clock worker; vector and
+receipt claim hooks queue behind it. Clock implementation is present in its
+isolated tree but is not yet frozen or integrated. Parent preliminary review
+requested explicit `clock projection` diagnostic attribution for selected-clock
+corruption tests, because generic rejection could be caused by reproduction or
+attachment identity checks instead. No completed clock test result is claimed.
+
+Clock TS7 handle 20287 subsequently exited 0. Its first suite run 88288 exited
+1 during setup (37 skipped, zero tests executed): the synthetic async state
+fixture omitted a typed entry block. The subsequent fixture attempt also
+stopped during setup; worker corrected a cross-state SSA fixture reference by
+moving its clock after await, retaining the derived-body clock regression.
+No setup failure is counted as either passing tests or a demonstrated
+production defect. Further clock reruns are paused until claim hooks finish.
+
+Vector reservation 54899 exited 0 and the worker verified its upstream record:
+write 22123-8oqnd4vn, claim commit
+01fb870b2d117cdc815470ca8625c2f5387103a6. Static implementation has now started
+in the assigned isolated tree. The historical worker holds the next claim-only
+slot, then clock receives the validation slot again. No tests were killed.
+
+Parent independently confirmed vector ownership with check70455 (exit3 means
+the intended worker holds the claim, not a failed read). Historical check38881
+likewise confirms the intended owner since 15:44:53Z. No additional claim is
+needed. A parent fallback claim attempt20108 failed before creating a commit
+because an added signing request expected unavailable GPG; no retry or signing
+configuration change was made. The temporary helper was removed. Clock now has
+the heavy-test slot again while both claimed workers implement independently.
+
+Parent prepared the two new vector boundary activations and eight negative
+controls, without claiming validation before the modules are integrated. All
+30 previous activation records compare exactly after the two new records;
+allowedEdges remains byte-for-byte equivalent. Closure edge counts still await
+measurement on composed production code. Historical digest values are unchanged.
+
+Clock slice frozen and composed: worker TS7 36183 exited0, suite88182 exited0
+with 37/37 passing. Parent fully read the incremental manifest, verified both
+seed hashes against its current files, copied only the three owned files, and
+verified all resulting SHA256s exactly: intrinsic-support
+81efcacea391a614899489c24dc184ccf886337880b89b4520d3a2a6b155e3fb;
+program-runtime-validation
+bb4006f9bcdf641f665b6b1ee10ea6fd8ced30e168d09faf8439358d574f2b0c;
+clock test ea7c9df0ca480f3dd5782a5f2e0b011b81e6f3db5b89b525d229be5e785312ea.
+Manifest SHA256 c48c0e5b6cb62bcb1c5a49227053e1aa3ccd3cd588f98e90c8736ebadc52ba62.
+The suite uses independently prepared fixture groups; corruption cases assert
+the clock-specific witness diagnostic, while replay is separately exercised.
+Parent composed TS7/four-suite validation90450 is pending. High production
+review is also pending. No vector declaration or physical guard is bypassed.
+
+The next connected physical vector implementation specification is saved in
+`plan/agent-context/3518-native-vector-physical-materialization-plan-2026-09-08.md`.
+It includes canonical grow/store bodies, shared layouts, reservation-backed
+provider binding and consumer integration. Dispatch waits for this logical
+checkpoint's freeze; an isolated body extraction is not its acceptance target.
+
+Parent validation90450 exited0: TS7 passed, then all 120/120 focused tests
+(37 clock, 12 callable replay, 46 provider, 25 declaration). This proves the
+composed clock/callable slice, not full-family preparation or physical execution.
+No parent heavy process remains live. Vector admission and exact historical
+receipt reconstruction remain the next integration obligations.
+
+High completed production-only approval of the exact composed clock hashes:
+no concrete blocker found in explicit-demand/provider authentication,
+copy-on-write block/state projection, positive-zero/site preservation, allocation
+rejection or independent positional checks. Reproduction and attachment-current
+checks remain intact. This is not a physical-native acceptance or retirement
+approval. Vector draft is now under separate production review before composition.
+
+Vector admission is now composed, including the separate occurrence-demand
+population and parent-owned clock/vector join. High production review approved
+all eight vector production files and the composed join without concrete
+blockers. Parent validation88927 exited0: TS7 and 106/106 tests (61 vector,
+45 full-family source-contract). The original/export-only source, each with
+GVN on/off and raw/decoded input, now prepares in all eight native-policy
+cases. The fresh source-free child also prepares; missing-policy and forbidden
+import controls remain enforced. Saved successful receipts remain under
+`.tmp/native-family-native-policy-*/receipt.json`. This proves preparation,
+not physical execution, public cutover, or retirement.
+
+Recovery inventory46161 exited0 with 70 selected modules and 239 edges:
+163 type-only and 76 runtime. Current closure-count assertions were updated
+to that measured population; historical hashes were not changed. Boundary
+suite77191 is running; no pass is claimed yet. The four-file pre-clock/vector
+historical inverse is frozen in the isolated historical worker tree, with
+tests still unrun and separate clock/vector inverse layers still required.
+
+Boundary77191 subsequently exited0: 141/141 tests passed in 76.85 seconds,
+including actual closure and deletion/type/runtime/unresolved-edge controls.
+The historical worker now owns the exclusive heavy-validation slot for its
+three pre-clock/vector suites. High reviews the frozen inverse concurrently;
+no historical pass or complete compiler-closure/retirement claim is made.
+
+With logical production frozen and reviewed, the two Low native subagents
+received the connected physical vector specification: Maxwell owns the pure
+grow/store body, shared descriptors and legacy adapter; Hilbert owns the
+reservation-backed resource planner/materializer. Both must use fresh isolated
+trees, preserve their earlier diffs, and claim before source edits. Claim hooks
+wait for the historical test slot to release. Parent retains physical-plan and
+consumer integration. This dispatch overlaps setup with historical validation;
+it does not waive that validation or authorize publishing an unchecked checkpoint.
+
+Historical pre-clock/vector validation11005 exited0: 3/3 suites, 470/470
+tests in 47.63 seconds, using the documented 2GiB single-fork command. Parent
+read the saved validation receipt and independently matched all four current
+Git blobs to frozen rev1. No repair or TS7 run was needed/performed. This pass
+does not cover the composed clock/vector extensions; their checked inverse
+and composed validation remain required. Maxwell received the released
+claim-only slot for physical vector body ownership.
+
+High historical review found a positive-first control defect: mutation setup
+was inside some expected-rejection closures, allowing setup failure to satisfy
+the negative. Worker is correcting that before adding the exact checked
+clock/vector inverse. The complete High extension contract is saved in section5
+of the historical reconstruction plan. No historical hashes are rebaselined.
+
+Upstream main reverified unchanged at
+04c8e72156cf576cf584a3ed3a5a66ec5a2b91b0. Maxwell reports claim1146 exit0,
+write30305-t7ft6tyi/commit2d54499bd399a269b9a872109047ee6700b2d59a and
+remote ownership verification; its source implementation is active. Hilbert
+received the released claim-only slot for the independent physical resources.
+High is now specifying the subsequent connected Promise/frame resources while
+these vector slices proceed. Full-family physical execution remains open.
+
+Parent consumer slice now has its own isolated tree:
+`/private/tmp/js2-3518-native-vector-consumer-20260908`, branch
+`codex/3518-native-vector-consumer-20260908`, base2b9cb408c18446361fcf9837045067d1fd97c642.
+Claim22518 exited0 and verified upstream ownership; temporary operational
+helper removed, no main push. Two production files now retain logical vector
+signatures until reservation and wire shared types, the required helper slot,
+ABI binding, fill and cache-only resolvers into the consumer. Exact unit-order
+receipt excludes only the reserved helper and startup objects. The async guard
+and unrelated physical gaps remain. These changes are untested until Hilbert's
+resource implementation and Maxwell's body implementation compose; they are
+not mixed into the current logical checkpoint. Hilbert is checking the API join.
+
+Parent physical tree now includes Maxwell's three frozen grow/store production
+files, copied only after matching the recorded SHA256s and unchanged target
+base. The full new builder and legacy adapter diff were reviewed; the replaced
+hole-sentinel wrapper calls the same allocator and produces the same two
+instructions. Final copied SHA256s match production-r1 exactly. Focused tests,
+public byte pairing and execution are still pending; no static comparison is
+counted as an execution pass. Hilbert's API review found no shape mismatch in
+the consumer join; resource implementation remains in progress.
+
+The physical consumer tree now also carries all16 frozen logical-admission
+production files. Each existing target matched the exact base before copying;
+parent verified final byte equality for16/16 against this logical checkpoint.
+The logical checkpoint itself was not changed by that composition. Maxwell has
+the exclusive focused grow/store test and sequential TS7 slot; execution results
+are not yet available. The composed historical inverse remains in progress.
+
+Physical consumer composition now includes Hilbert's two frozen resource files:
+program planner SHA256 b7f82b5c7afe14aa0e38acaf9b5e0b922f9a9b8d3ae2c9081c25b81da870a045;
+backend materializer SHA2564da46ab8bc0340894e426ff35f061d193d3fcb3406d1f73b59da05584287341e.
+Parent read both complete sources, verified hashes before/after copying, and
+linked existing dependencies without installation. The combined tree contains
+16logical +3body +2resource +2consumer production files; TS7 remains unrun.
+Maxwell's first body suite reports14/22 passing, with eight failures at the
+donor text receipt; no full execution or preservation pass is claimed. Its
+isolated TS7 runs next, then parent combined typecheck receives the slot.
+
+The complete High native Promise/frame resource specification is saved in
+`plan/agent-context/3518-native-promise-frame-materialization-plan-2026-09-08.md`.
+It requires real resolve-value/thenable dependencies, shared queue/vector
+identity, frame materialization, timer publication and native strings; it does
+not permit temporary classifier fallback bodies as completed implementations.
+
+Combined physical TS79890 exited1 with two resolver-shape errors only:
+`IrVecLowering` also requires length/data field indices. Parent added0/1 from
+the already-authenticated two-field descriptor in its own lowering adapter;
+no worker resource/body changes. Recheck40245 exited0. This is the first TS7
+pass over all23 composed production files. Existing typed-preparation and
+program-codec-replay suites are now running as54407; no test pass is claimed
+before termination. Formatting was unchanged and scoped diff checks passed.
+
+Regression54407 subsequently exited0:2/2 suites,57/57 tests in28.76seconds.
+These are existing typed-program preparation and program-codec replay tests,
+not new vector physical execution coverage. Hilbert receives the next focused
+resource-test slot after freezing/copying its tests into the composed parent;
+the unseeded isolated worker tree is not an authoritative combined test target.
+
+Resource suite15231 exited0 in the composed physical parent:28/28 tests,
+including four complete-source planning/replay/GVN cases and four actual
+reserved-helper execution cases (local/shared exception tag, with/without
+function-import offset), plus descriptor/provenance/lifecycle negatives.
+No test or production repairs; copied test SHA256 remains
+1211e2b1b24c1beb03cd90bfca20cda3f9e29e128887ce0053fbf17761596385.
+This proves isolated physical vector helper execution, not whole-family
+consumer execution. Maxwell receives the released slot for repaired body and
+donor preservation suites. High physical review and boundary closure remain
+open; parent identified new resource imports through mixed program facades as
+a boundary concern requiring repair without weakening validation.
+
+Parent changed only the backend resource utility import from `ir/program.js`
+to its exact re-export owner `ir/program/data.js`; no algorithm or validation
+was removed. This post-r1 delta still needs composed validation.
+
+Parent read grow/store validation-r3 and frozen-r2 records:22/22 body tests and
+20/20 donor tests pass (42/42, zero skipped); isolated TS770823 exited0 on the
+same unchanged production snapshot. The eight earlier failures were repaired
+only by restoring one extraction-boundary newline in the test reconstruction;
+original construction/locals hashes remain unchanged. Public compiler byte
+pairing is still required and now granted to Maxwell against exact2b9 baseline.
+
+Physical resource r2 is now integrated with the checked parent wrapper. The
+canonical calculation consumes seven narrow data fields, while the parent
+retains full program/projection authentication and the private acceptance
+authority. Exact provider ID/feature checks and three independent negative
+controls were added. R1's28/28 does not validate this revision; new checks await
+the historical worker's test slot. The physical boundary policy now activates
+the three new modules. Parent independently verified all32 prior activation
+records and allowedEdges unchanged. Closure edge counts and the expanded
+negative suite are not yet measured; historical hashes remain unchanged.
+
+The four frozen composed-rev3 historical test files are now integrated into
+this logical checkpoint. Each target matched base2b9 before copying and each
+source matched the rev3 manifest; final Git blobs match a20d372c5135f47a348b9e46bd643bba5f679713,
+6282bf27e03d540f87ddb61fc30b8d80bc7ae30e,6b0986c882129c9f75a784fcd84308eba4af00f8,
+693227c2413412d030ae47f1db0be09674c5c738 respectively. The worker's required
+three-suite run is confirmed live (process39150 with Vitest39158/39168), not
+timed out or restarted. No composed historical pass is claimed yet; High
+review and logical checkpoint TS7 remain before publication.
+
+High source review approved the exact four copied rev3 hashes. Final sign-off
+still requires the existing suite's terminal result and parent TS7; no repeat
+review, parallel suite, cancellation or restart is needed.
+
+Composed historical run10243 subsequently exited1:629 reported passes and two
+failed controls out of631, plus a Vitest worker `onTaskUpdate` timeout. It is
+not a clean full-three-suite verdict. The missed controls are callable import
+movement and changed clock inverse span0. Worker is repairing those exact
+acceptance holes without dropping controls or changing historical hashes, and
+will yield via `setImmediate` between synchronous tests so RPC updates drain.
+The failed run is preserved. Parent logical TS797404 is now running; further
+suite runs remain serialized. Source review approval did not override this
+contradictory execution evidence.
+
+Logical TS797404 and physical-r2 TS717919 both exited0. Physical inventory77057
+exited0 with73 activated modules,259 edges (174 type-only/85 runtime), no errors.
+Current edge assertions were updated from those measurements; historical hashes
+were not changed. Physical resource/boundary suite16994 is now running. The
+historical worker repairs the two missed mutation controls statically, then
+receives the next slot for focused reproductions before a full rerun.
+
+Physical run16994 exited1:31/31 resource tests and152/153 boundary tests passed.
+The remaining boundary control assigned `ir-program` to the already-ir-program
+first record, so it was a no-op. Parent changed it to `ir-core` and added an
+accepted positive plus explicit changed-digest check outside the rejection
+closure. Focused rerun passed5/5 selected controls (148 unselected); the full
+corrected boundary suite remains to rerun. No production repair. Historical
+worker receives the released slot for focused repaired controls, then full
+three-suite validation if those controls pass.
+
+Historical revision4 terminal20877 supersedes the failed revision3 verdict:
+763/763 tests passed across3/3 suites, exit0, no unhandled errors,429.01s.
+The full rerun was already live when focused-first sequencing was requested;
+no separate focused run was performed. The run overlapped parent checks and
+must not be described as exclusively serialized. Both original failing
+controls passed without removing controls or reseeding historical hashes.
+The repair checks complete import-block placement and the complete leading
+clock-projection documentation; afterEach yields for Vitest RPC updates.
+Parent integrated the two changed files and verified SHA256 values
+114a21cb1bc05bfe64045a12f8fa5474a729284f442afc4c155234bc3e08aafc
+and5f79142356e98679cb4087e001c0fe6bc9c5a8af0cd75b37d80360284eb28ec3.
+Repair-delta High review and post-integration TS7 remain before publication.
+This preservation evidence does not establish full native physical execution,
+public IR-only cutover, strict graph closure, or direct-codegen retirement.
+
+Post-integration TS7 session16199 exited0. High repair-delta review approved
+the exact revision4 blobs, with no remaining concrete repair blocker. Parent
+also compared all16 changed production files against the tested worker tree:
+16/16 byte-identical, zero mismatches. PR shepherd's fresh19-PR pass found no
+conflicts, unresolved review threads, or reported failing/pending checks.
+Stacked PRs5752 and5754–5760 lack required checks because CI targets main;
+their mergeability is not evidence of complete CI coverage. Existing holds
+remain, and neither this checkpoint nor those checks establish retirement.
+
 ### Implementation Plan — forward the native delay EH repair through the held extraction — 2026-09-12
 
 **Plan recorded before source edits; the exact seven-file repair is now
@@ -6568,6 +7080,83 @@ receipts are under `.tmp/5759-queue-drain/`; public verdicts are under
 `.tmp/delay-combinator-preservation-ZE3n0z/`. Keep dependency-first delivery
 5755→5756→5757→5758→5759→5760; only verified delivery to main counts.
 
+
+## 2026-09-12: expanded recursive-type/callable checkpoint queue refresh
+
+Refresh existing PR5760, “fix(wasm): emit explicit recursive groups in physical
+type space”, from published 2e227aaa298d3a7406071dbe34bf6d8c41431407 onto signed
+parent 1a18aba4354dfcc40e0ae6cb39974f061706f0ba in
+`codex/5760-queue-drain-20260912`. The published head includes merged PR5763,
+so its complete callable/clock/vector and reconstruction changes remain part
+of this delivery. No later unpublished physical-materialization work is added.
+Keep the existing PR and dependency-first protected-queue publication.
+
+The parent merge retained both complete appended histories. All twenty-one
+published production files remain unchanged. The boundary assertion includes
+one inherited standard-EH runtime dependency: 240 edges, 163 type-only and 77
+runtime, across seventy selected modules. No allowed edge or guard changed.
+All non-file policy fields match the published checkpoint; twenty-one inherited
+inventory rows match the refreshed parent exactly. The signed delay runtime,
+its adapter, historical source/declaration ledgers and both catch forms remain
+unchanged, as do the refreshed frame engine/wrapper and its forward receipt.
+
+Initial validation is preserved: 1,659/1,660 collected assertions passed, one
+obsolete delay-admission expectation failed, and module-reservations failed
+collection before its 148 original tests ran. Isolated execution reproduced
+the COLLECTION_KIND.MAP import failure in collections-brand.ts; a first local
+deferred-lookup attempt exposed the same eager dependency in subclass setup.
+That intermediate attempt and both failure reports remain recorded. It was
+replaced by the shared fix below, not combined with an import-order workaround.
+
+The scoped initialization repair moves the unchanged COLLECTION_KIND object
+and CollectionKind type into existing import-free builtin-brands.ts, preserves
+the map-runtime value/type re-export and directs both eager consumers to the
+leaf. Numeric tags, runtime bodies, private table and public ReadonlyMap remain
+unchanged. The additional regression retains the original cold import order;
+its dynamic-only checks verify re-export object identity, all four public Map
+entries, exact 0/1/2/3 tags and M_KIND field 4.
+
+The existing delay transport case now reflects the published provider contract.
+Raw, decoded and whole-source preparation must first succeed under explicit
+native string storage while retaining the original inventory, one body and
+canonical native delay provider. The original policy must still refuse with
+exact original owner/location and unsupported / body-shape-rejected / build:
+“async.native.delay requires explicit native string storage”. Re-encoding must
+remain byte-identical. The fixture and forty-one-case population are unchanged.
+
+Focused verification passed 190/190: 149 module-reservations cases and forty-one
+delay admission cases. The final serialized Node25.9.0/macOS ARM64 cohort
+passed **1,809/1,809 across twenty-six files**, with no failures or skips. It covers every published changed root test plus the parent
+frame, extraction, source identity and native runtime regressions. Earlier
+258/125/126 figures belong to the older recursive-emitter checkpoint and are
+not evidence for this expanded head. All initial failed artifacts are retained.
+
+Preparation-positive evidence remains distinct from physical execution:
+eight native-policy combinations and the source-free child preserve seven
+original units/five terminals, 5→16→16 owner and 22→33→33 call populations.
+Missing native policy still refuses; callable replay still requires the located
+“physical setup cannot be materialized” refusal for __ir_promise_delay_native.
+Historical reconstruction retains original ledgers/hashes and positive-first
+mutation controls. Public frame and delay/combinator comparisons are current-
+root evidence; no new historical byte/WAT equality or IR retirement is claimed.
+
+Source TS7, explicit-parent LOC/function budgets, coercion, oracle and
+preservation-v1 dead-export checks passed. Conformance synchronization changed
+zero files. Strict closure remains OPEN at the two existing nonliteral imports.
+The independent b363f29d3c43c626dc852744ad64a0b48a003693 corpus verified all
+53,933 raw blobs, exact modes/directories, no extras and independent objects.
+Manifest SHA256:
+fcaaff56a78c134e3875a00b743d5e6435939c38f304eeec1ffb35bc3c611ffb.
+Existing corpora, fixtures and dirty-root tracked files remain preserved.
+
+The default pre-commit selector sees fifty inherited root test changes against
+535ee6b6ba19239394ee50f8235e6c528212688b, so its existing >20 lane self-skips.
+The focused and final cohorts above ran directly; do not claim this inherited
+population ran through that lane. Normal signed commit/push hooks remain
+mandatory; actual outcomes and parent delivery are recorded at publication.
+Local evidence is in `.tmp/5760-queue-drain/`. Only verified delivery to main
+counts; keep new migration scope paused while draining 5755→5756→5757→5758→5759→5760.
+
 ### Preserve delivered async spill typing in the family queue refresh — 2026-09-13
 
 Existing PR 5758, “feat(ir): prepare the complete native async source family”,
@@ -6619,3 +7208,119 @@ retirement. New receipts use `.tmp/5759-queue-drain/refreshed-parent-*`.
 Normal signed hooks remain required. Publish this existing PR only after
 PR5758 is verified delivered to main, then retain dependency-first delivery
 through PR5760 and the existing later stack. No new migration scope is added.
+
+## September 13 signed-parent reconciliation
+
+Merge refreshed delay/combinator parent
+`fd387c97e508e5902b0638f5bcfd0a3087932616` into the existing expanded
+recursive-type checkpoint. Only appended issue history conflicted; both
+complete records are retained. All 42 owned source/test files are byte-identical,
+including the positive-first delay-admission repair, cold-import collection
+repair and standard-EH runtime body with tagged and foreign catches. All prior
+policy records and activations remain exact, with seven incoming unmigrated
+classifications and the authenticated frame/spill controls carried forward.
+
+Fresh current-root validation passed **1,819/1,819 assertions in 27 complete
+files**, zero failures or skips. This retains the previous 26-file population,
+adds six authenticated frame mutation cases and four spill cases. Counts are
+assertion occurrences; repeated parameterized names are not asserted unique.
+TS7, LOC/function budgets, oracle and preservation-v1 dead-export checks passed
+against the exact signed parent. Conformance synchronization changed zero files.
+The coercion gate was run through a space-free alias with
+`--preserve-symlinks-main --verbose`: 124 files containing 511 sites were
+actually scanned, and the scoped four-codegen-file comparison passed.
+
+Evidence correction: older ordinary coercion invocations on the spaced
+checkout path can silently return an empty scan and are not treated as scan
+evidence. Supplemental unchanged-gate runs also measured and passed PR5758
+and PR5759 (124 files/511 sites) and PR5787 (124 files/510 sites). No gate,
+baseline or historical receipt was weakened. Keep original outputs and failures;
+the new receipts are under each owned worktree's `.tmp/` queue-drain directory.
+
+Historical reconstruction ledgers, ownership/call censuses, located physical
+refusals and public current-root controls remain intact. Historical-pair
+execution, physical async acceptance and IR retirement remain uncertified.
+Normal signed hooks and dependency-first delivery still apply: publish only
+after PR5759 is verified on main, then continue the existing later stack.
+
+## Queue admission reconciliation: current main — 2026-09-13
+
+Existing PR5760 reported DIRTY against main7adc0a6e after publishing signed
+11392975. The actual local merge of that exact main completed cleanly with
+no conflicts. Restore the hold while validating and committing the merge;
+no queue entry existed. The queue-arm workflow was independently a no-op due
+to its CONTRIBUTOR trust gate, so do not count its green job as admission.
+
+The incoming changes are already-delivered generator protocol initialization
+and benchmark/baseline artifacts. All54 validated IR source/test/policy pins
+remain unchanged. Preserve all incoming main bytes. Execute the complete new
+generator prototype regression file plus reservation, delay admission and
+boundary controls on the composed tree; rerun source gates and normal hooks.
+Keep earlier1,819/1,819 validation as evidence on11392975, not a rerun claim
+on this merged head. Retain its direct results and all initial failures.
+Queue only the exact republished head after current checks and hold release.
+
+The actual current-main reconciliation passes345/345 assertions across four
+complete files, zero skipped: generator prototype14, reservations149, delay
+admission41 and boundary141. All execution pins remain unchanged. TS7, LOC and
+function budgets, oracle, preservation-v1 with required core types and nodes,
+and the unchanged coercion checker (124 files/511 sites through a space-free
+alias) pass against exact main7adc0a6e. Conformance synchronization changes
+zero files. All54 earlier validated IR pins remain unchanged. Preserve the
+original1,819/1,819 as earlier-head evidence, with this345/345 current merge
+validation separately identified. Normal signed hooks and renewed exact-head
+publication/queue checks remain required.
+
+## Reconcile the refreshed main base e06f7674 — 2026-09-13
+
+The same-PR close/reopen refreshed stale GitHub metadata: exact headc06c5575
+stayed unchanged and the PR reopened held, while the reported base changed
+from7adc0a6e to actualmaine06f7674. Preserve the refused base-equality
+postcondition and both responses; reopening itself succeeded. The fixed7adc
+comparison proved no conflict only for that reported pair, not for the newly
+revealed main. The actual e06 merge has conflicts in compiler-boundaries,
+map-runtime and standalone-subclass-ctors. Do not repeat the metadata refresh
+or claim a source-free merge against this newer base.
+
+Incoming main contains the already-delivered closure-area repair and baseline
+refresh. Reconcile COLLECTION_KIND to one canonical object in main's new
+collection-kind.ts, preserving map-runtime and prior builtin-brands identity,
+tags, public ReadonlyMap and cold-import behavior. Equal-valued duplicate
+objects are insufficient. Review auto-merged collections-brand and preserve
+all other main fixes, especially undefined/constructability and prepared ABI
+transaction behavior. Keep original tests and receipt hashes; identified
+closed-method-dispatch changes are outside the authenticated named Promise
+helper declaration and do not justify reseeding its fixture.
+
+Preserve the IR policy's exact activation histories, allowed edges and layers
+while integrating main's legitimate inventory entries. A owns the four
+collection source files; B owns only policy; root owns integration, issue
+history and serial runtime checks. Run complete incoming regressions plus
+current collection/ABI/IR overlap controls, then source gates and normal signed
+hooks. Preserve all actual failures and qualify all earlier test evidence by
+its revision. Keep PR5760 held until the exact refreshed head is validated and
+published; use protected queue admission and verify delivery to main.
+
+## Ownership reconciliation — 2026-09-13
+
+The shared issue-assignments ref was refreshed to 2c2c1d20e2d4b95d15bb54653568359ecaa5aeee. The collection-kind and standalone parent-table change came from ttraenkler/issue-6419 (PR5876, already merged); its follow-up reservation identifies ttraenkler/sendev-6419. The older local Claude Desktop session cb1cd4f9-cdfd-4248-b476-1c7f5bbe9354 / ir-migration-coordination-35a148-90 is package C, not evidence of current ES2015 ownership.
+
+Current open-PR census: 28 PRs. Relevant external boundary changes are independent added entries: PR5911 issue-6440 adds runtime/promise-try-polyfill.ts; PR5909 issue-5383-standalone-temporal-s12 (dev-5383-s12) adds codegen/static-spread-arity.ts; PR5889 issue-6421 (reservation by sendev-5370) adds array-of-spread.ts and from-char-code-spread.ts; PR5839 codex/5350-super-property-rescue-20260912 adds class-prototype-write-keeps.ts. None changes the collection-kind/undefined-extern-import entries or IR activation history owned by this reconciliation. Existing Deno/TypeScript/audit and downstream IR PRs are preserved. No peer branch or worktree was edited.
+
+The shared-file ownership question no longer requires user identification. Resume only the existing isolated PR5760 integration, preserve the single main collection object and both sets of regressions, and union independently owned inventory entries on freshly fetched main. Keep downstream refreshes paused until verified PR5760 delivery. This is a file/branch evidence reconciliation, not a claim that another session acknowledged a message.
+
+### PR5760 collection compatibility export allowance — 2026-09-13
+
+The exact e06 reconciliation adds one public re-export line to map-runtime.ts (3,099 versus the 3,098-line baseline). It preserves the established COLLECTION_KIND/CollectionKind entry point while sourcing the same import-free collection-kind object used by main. This PR-specific allowance covers that single compatibility declaration; no function body grows. The original failed LOC result is retained in e06-frozen-loc-20260913.log. All 453 complete-file regression assertions and typechecking passed before this metadata-only grant.
+
+### PR5760 exact current-main merge — 2026-09-13
+
+Signed resolution 8121918f96dae2598e0fea0e4226e295bc50e721 preserves the tested e06 join; its source/test/policy pins remained unchanged after normal hooks. The subsequent actual merge uses 9578edf5ef01ca428b0ff34df63f7188ead8c1ad, freshly fetched from origin/main. All source and regression files merge cleanly; only scripts/compiler-boundaries.json conflicts. Resolve its independent main inventory additions alongside unchanged IR histories, then validate this resulting current tree. The old 453 assertions are prior-join evidence, not a rerun of this newer merge. Downstream refreshes remain paused.
+
+#### Validation of the 9578 current-main join
+
+44 complete files collected 826 cases: 822 passed, zero failures or pending/skipped rows, and four existing TODOs (three Temporal/class-member cases and one link-boundary error-constructor case). Both original Test262 regex rows and the real Temporal provider smoke child passed. All tracked source/test/helper/fixture pins remained unchanged. TS7, LOC/function budgets, measured coercion, oracle, inventory mode against exact main, and preservation-v1 passed; inventory remains graph-incomplete and retirement is not certified. Conformance synchronization changed no files, and the independent corpus matched all 53,933 canonical raw blobs. Normal signed hooks and exact publication/queue verification follow.
+
+#### Artifact-only base advance after validation
+
+Fresh main advanced from 9578edf5 to a9dbfe402a880a1ca38a48a336f576ec5792c255 through PR5920, changing exactly six npm-compat JSON artifacts and no source, tests, policy or build inputs. Merge those artifacts before publication. The complete validated source/test/helper/fixture/policy pins are checked unchanged across this merge and its normal hooks; no new test execution is claimed for the unchanged population.

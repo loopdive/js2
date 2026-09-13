@@ -25,6 +25,7 @@ import {
 import { verifyIrFunction, type IrVerificationOptions } from "./verify.js";
 import { assertPreparedIrClassLayouts } from "./program-class-layouts.js";
 import { assertPreparedIrProgramAllocations } from "./program-allocations.js";
+import { irRuntimeCallableHasNoSlot } from "./runtime/native-async-callables.js";
 import {
   assertPreparedIrRuntimeProjection,
   assertPreparedIrSemanticRuntimeSeparation,
@@ -138,7 +139,9 @@ function validateRuntimeCallables(program: PreparedIrProgram): void {
       `${collected.sourceFile}:${collected.location.line}:${collected.location.column} (${collected.unitId}): ${collected.detail}`,
     );
   const actual = program.abi.entries.filter(
-    (entry) => entry.contract.kind === "callable" && entry.contract.ref.binding.kind === "runtime",
+    (entry) =>
+      entry.contract.kind === "callable" &&
+      (entry.contract.ref.binding.kind === "runtime" || entry.contract.ref.binding.kind === "intrinsic"),
   );
   if (actual.length !== collected.declarations.length)
     invalid("runtime ABI declaration population differs from final semantic demand");
@@ -160,11 +163,12 @@ function validateRuntimeCallables(program: PreparedIrProgram): void {
         order: { sourceOrder: anchor.order, declarationOrder: firstOrder + index },
         displayName: declaration.ref.name,
         structuralReferenceKey: key,
-        slotPolicy: "required",
-        slotSpace: "function",
+        ...(irRuntimeCallableHasNoSlot(declaration.ref)
+          ? { slotPolicy: "none" as const }
+          : { slotPolicy: "required" as const, slotSpace: "function" as const }),
         intent: {
           kind: "callable",
-          origin: "runtime",
+          origin: declaration.ref.binding.kind === "intrinsic" ? "intrinsic" : "runtime",
           signature: preparedIrCallableSignature(declaration.params, declaration.results),
         },
       },

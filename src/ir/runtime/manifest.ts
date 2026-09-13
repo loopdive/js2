@@ -24,25 +24,23 @@ import {
   STRING_CONST_POLICY_DISABLED,
   HOST_CALLBACK_WRAP_POLICY_DISABLED,
   FUNCTION_PROTOTYPE_CALL_POLICY_DISABLED,
-} from "../../runtime/contracts/provider-policy.js";
-import type {
-  RuntimeTarget,
-  RuntimeBackend,
-  NumberBoundaryPolicy,
-  BooleanBoundaryPolicy,
-  ExternIsUndefinedPolicy,
-  GeneratorNumberBoxPolicy,
-  StringComparePolicy,
-  StringEqPolicy,
-  StringLenPolicy,
-  StringConcatPolicy,
-  StringCharCodeAtPolicy,
-  StringConcatManyPolicy,
-  StringConstPolicy,
-  HostCallbackWrapPolicy,
-  FunctionPrototypeCallPolicy,
-  RuntimeManifestPolicy,
-  FrozenRuntimeManifestPolicy,
+  type RuntimeTarget,
+  type RuntimeBackend,
+  type NumberBoundaryPolicy,
+  type BooleanBoundaryPolicy,
+  type ExternIsUndefinedPolicy,
+  type GeneratorNumberBoxPolicy,
+  type StringComparePolicy,
+  type StringEqPolicy,
+  type StringLenPolicy,
+  type StringConcatPolicy,
+  type StringCharCodeAtPolicy,
+  type StringConcatManyPolicy,
+  type StringConstPolicy,
+  type HostCallbackWrapPolicy,
+  type FunctionPrototypeCallPolicy,
+  type RuntimeManifestPolicy,
+  type FrozenRuntimeManifestPolicy,
 } from "../../runtime/contracts/provider-policy.js";
 export {
   NUMBER_BOUNDARY_POLICY_DISABLED,
@@ -108,41 +106,45 @@ import {
   FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDER_IDS,
   REFERENCE_ERROR_RUNTIME_FEATURES,
   REFERENCE_ERROR_RUNTIME_PROVIDER_IDS,
-} from "./contracts/manifest.js";
-import type {
-  RuntimeFeature,
-  HostCapabilityId,
-  RuntimeBackendRequirement,
-  NumberBoundaryRuntimeProviderId,
-  BooleanBoundaryRuntimeProviderId,
-  ExternBoundaryRuntimeProviderId,
-  GeneratorNumberBoxRuntimeFeature,
-  GeneratorNumberBoxRuntimeProviderId,
-  StringCompareRuntimeFeature,
-  StringCompareRuntimeProviderId,
-  StringEqRuntimeFeature,
-  StringEqRuntimeProviderId,
-  StringLenRuntimeFeature,
-  StringLenRuntimeProviderId,
-  StringConcatRuntimeFeature,
-  StringConcatRuntimeProviderId,
-  StringCharCodeAtRuntimeFeature,
-  StringCharCodeAtRuntimeProviderId,
-  StringConcatManyRuntimeFeature,
-  StringConcatManyRuntimeProviderId,
-  StringConstRuntimeFeature,
-  StringConstRuntimeProviderId,
-  HostCallbackWrapRuntimeFeature,
-  HostCallbackWrapRuntimeProviderId,
-  FunctionPrototypeCallRuntimeFeature,
-  FunctionPrototypeCallRuntimeProviderId,
-  ReferenceErrorRuntimeFeature,
-  RuntimeProviderId,
-  RuntimeProviderImplementation,
-  RuntimeProviderDefinition,
-  RuntimeProviderPlan,
-  RuntimeProviderComponent,
-  FrozenRuntimeManifest,
+  VECTOR_CALLABLE_RUNTIME_FEATURES,
+  VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS,
+  NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES,
+  NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS,
+  type RuntimeFeature,
+  type HostCapabilityId,
+  type RuntimeBackendRequirement,
+  type NumberBoundaryRuntimeProviderId,
+  type BooleanBoundaryRuntimeProviderId,
+  type ExternBoundaryRuntimeProviderId,
+  type GeneratorNumberBoxRuntimeFeature,
+  type GeneratorNumberBoxRuntimeProviderId,
+  type StringCompareRuntimeFeature,
+  type StringCompareRuntimeProviderId,
+  type StringEqRuntimeFeature,
+  type StringEqRuntimeProviderId,
+  type StringLenRuntimeFeature,
+  type StringLenRuntimeProviderId,
+  type StringConcatRuntimeFeature,
+  type StringConcatRuntimeProviderId,
+  type StringCharCodeAtRuntimeFeature,
+  type StringCharCodeAtRuntimeProviderId,
+  type StringConcatManyRuntimeFeature,
+  type StringConcatManyRuntimeProviderId,
+  type StringConstRuntimeFeature,
+  type StringConstRuntimeProviderId,
+  type HostCallbackWrapRuntimeFeature,
+  type HostCallbackWrapRuntimeProviderId,
+  type FunctionPrototypeCallRuntimeFeature,
+  type FunctionPrototypeCallRuntimeProviderId,
+  type ReferenceErrorRuntimeFeature,
+  type NativeAsyncCallableRuntimeFeature,
+  type VectorCallableRuntimeFeature,
+  type RuntimeProviderId,
+  type RuntimeProviderImplementation,
+  type RuntimeProviderDefinition,
+  type RuntimeProviderPlan,
+  type RuntimeProviderComponent,
+  type FrozenRuntimeManifest,
 } from "./contracts/manifest.js";
 export {
   RUNTIME_BACKEND_REQUIREMENTS,
@@ -217,8 +219,18 @@ export type {
 } from "./contracts/manifest.js";
 
 import { irTypeEquals } from "../core/types.js";
-import { irRuntimeFuncRef } from "../core/callable-bindings.js";
-import { irRuntimeCallableDeclaration } from "./callable-declarations.js";
+import { REFERENCE_ERROR_SIGNATURE, REFERENCE_ERROR_RUNTIME_PROVIDERS } from "./callable-declarations.js";
+import {
+  VECTOR_CALLABLE_RUNTIME_PROVIDERS,
+  vectorProviderMismatch,
+  vectorCallablePolicyMismatch,
+} from "./vector-callables.js";
+export { REFERENCE_ERROR_RUNTIME_PROVIDERS } from "./callable-declarations.js";
+import {
+  NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,
+  nativeAsyncProviderMismatch,
+  nativeAsyncCallablePolicyMismatch,
+} from "./native-async-callables.js";
 import {
   ASYNC_OPTIONAL_RUNTIME_FEATURES,
   ASYNC_RUNTIME_FEATURES,
@@ -352,13 +364,6 @@ export class RuntimeManifestInvariantError extends Error {
 
 const ALL_TARGETS = Object.freeze<readonly RuntimeTarget[]>(["host", "standalone", "strict-no-host", "wasi"]);
 const ALL_BACKENDS = Object.freeze<readonly RuntimeBackend[]>(["linear", "wasmgc"]);
-
-const REFERENCE_ERROR_DECLARATION = irRuntimeCallableDeclaration(irRuntimeFuncRef("__new_ReferenceError"))!;
-const REFERENCE_ERROR_SIGNATURE: IntrinsicSignature = Object.freeze({
-  version: 1,
-  params: REFERENCE_ERROR_DECLARATION.params,
-  result: REFERENCE_ERROR_DECLARATION.results[0]!,
-});
 
 export const RUNTIME_FEATURE_SIGNATURES: Readonly<Partial<Record<RuntimeFeature, IntrinsicSignature>>> = Object.freeze({
   "error.reference.construct": REFERENCE_ERROR_SIGNATURE,
@@ -1319,32 +1324,6 @@ function isFunctionPrototypeCallFeature(feature: RuntimeFeature): feature is Fun
   return FUNCTION_PROTOTYPE_CALL_FEATURE_SET.has(feature);
 }
 
-/** TDZ constructor providers use target policy and the shared callable signature. */
-export const REFERENCE_ERROR_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
-  Object.freeze({
-    id: "host.error.reference.construct",
-    feature: REFERENCE_ERROR_DECLARATION.feature,
-    signature: REFERENCE_ERROR_SIGNATURE,
-    dependencies: Object.freeze([]),
-    hostCapabilities: Object.freeze(["error.reference.construct"] as const),
-    supportedTargets: Object.freeze(["host"] as const),
-    supportedBackends: Object.freeze(["wasmgc"] as const),
-    implementation: Object.freeze({ kind: "host-callable", capability: "error.reference.construct" } as const),
-  }),
-  Object.freeze({
-    id: "native.error.reference.construct",
-    feature: REFERENCE_ERROR_DECLARATION.feature,
-    signature: REFERENCE_ERROR_SIGNATURE,
-    dependencies: Object.freeze([]),
-    hostCapabilities: Object.freeze([]),
-    supportedTargets: Object.freeze(["standalone", "wasi"] as const),
-    // The existing native constructor builds a WasmGC Error struct and
-    // converts it to externref. Its name does not establish a linear adapter.
-    supportedBackends: Object.freeze(["wasmgc"] as const),
-    implementation: Object.freeze({ kind: "runtime-callable", symbol: "__new_ReferenceError" } as const),
-  }),
-]);
-
 /** Closed, canonically ordered catalogue used by production manifest builders. */
 export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze(
   [
@@ -1364,6 +1343,8 @@ export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.fr
     ...HOST_CALLBACK_WRAP_RUNTIME_PROVIDERS,
     ...FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDERS,
     ...REFERENCE_ERROR_RUNTIME_PROVIDERS,
+    ...NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,
+    ...VECTOR_CALLABLE_RUNTIME_PROVIDERS,
     ...ASYNC_RUNTIME_PROVIDERS,
   ].sort((left, right) => left.id.localeCompare(right.id)),
 );
@@ -1385,6 +1366,8 @@ const FEATURE_SET: ReadonlySet<string> = new Set([
   ...FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURES,
   ...REFERENCE_ERROR_RUNTIME_FEATURES,
   ...PURE_MATH_RUNTIME_FEATURES,
+  ...NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES,
+  ...VECTOR_CALLABLE_RUNTIME_FEATURES,
   ...ASYNC_RUNTIME_FEATURES,
   ...ASYNC_OPTIONAL_RUNTIME_FEATURES,
 ]);
@@ -1405,6 +1388,8 @@ const PROVIDER_ID_SET: ReadonlySet<string> = new Set([
   ...FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDER_IDS,
   ...REFERENCE_ERROR_RUNTIME_PROVIDER_IDS,
   ...PURE_MATH_RUNTIME_PROVIDER_IDS,
+  ...NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS,
+  ...VECTOR_CALLABLE_RUNTIME_PROVIDER_IDS,
   ...ASYNC_RUNTIME_PROVIDER_IDS,
 ]);
 const HOST_CAPABILITY_ID_SET: ReadonlySet<string> = new Set(RUNTIME_HOST_CAPABILITY_IDS);
@@ -1743,6 +1728,8 @@ export class RuntimeManifestBuilder {
   resolveProvider(feature: AsyncRuntimeFeature): RuntimeProviderDefinition;
   resolveProvider(feature: GeneratorNumberBoxRuntimeFeature): RuntimeProviderDefinition;
   resolveProvider(feature: ReferenceErrorRuntimeFeature): RuntimeProviderDefinition;
+  resolveProvider(feature: NativeAsyncCallableRuntimeFeature): RuntimeProviderDefinition;
+  resolveProvider(feature: VectorCallableRuntimeFeature): RuntimeProviderDefinition;
   resolveProvider(feature: RuntimeFeature): RuntimeProviderDefinition {
     this.#assertFrozen();
     const provider = this.#providerPlans.get(feature);
@@ -1875,6 +1862,14 @@ export class RuntimeManifestBuilder {
     const ids = new Set<RuntimeProviderId>();
     const byFeature = new Map<RuntimeFeature, RuntimeProviderDefinition[]>();
     for (const provider of this.#providers) {
+      const nativeMismatch = nativeAsyncProviderMismatch(provider) ?? vectorProviderMismatch(provider);
+      if (nativeMismatch)
+        throw new RuntimeManifestInvariantError(
+          "provider-signature-mismatch",
+          nativeMismatch,
+          provider.feature,
+          provider.feature,
+        );
       if (!PROVIDER_ID_SET.has(provider.id)) {
         throw new RuntimeManifestInvariantError(
           "unknown-runtime-provider",
@@ -2092,6 +2087,11 @@ export class RuntimeManifestBuilder {
     providers: ReadonlyMap<RuntimeFeature, readonly RuntimeProviderDefinition[]>,
   ): RuntimeProviderDefinition {
     const candidates = providers.get(feature) ?? [];
+    const nativePolicyMismatch = NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES.some((entry) => entry === feature)
+      ? nativeAsyncCallablePolicyMismatch(feature, this.#policy)
+      : vectorCallablePolicyMismatch(feature, this.#policy);
+    if (nativePolicyMismatch)
+      throw new RuntimeManifestInvariantError("provider-target-unavailable", nativePolicyMismatch);
     if (candidates.length === 0) {
       throw new RuntimeManifestInvariantError("missing-runtime-provider", `runtime feature ${feature} has no provider`);
     }

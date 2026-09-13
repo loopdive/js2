@@ -18,6 +18,7 @@ import type { PreparedIrAbiEntry } from "./program/prepared-contracts.js";
 import type { TypedIrProgramGlobal } from "./program/input-contracts.js";
 import type { IrProgramCallableBindingRecord } from "./program/callable-bindings.js";
 import type { IrRuntimeCallableDeclaration } from "./runtime-callable-declarations.js";
+import { irRuntimeCallableHasNoSlot } from "./runtime/native-async-callables.js";
 import {
   assertPreparedIrRuntimeCallableDeclaration,
   preparedIrRuntimeAbiAnchor,
@@ -239,11 +240,12 @@ export function prepareIrProgramAbiEntries(
         order: order(anchor.id),
         displayName: declaration.ref.name,
         structuralReferenceKey: key,
-        slotPolicy: "required",
-        slotSpace: "function",
+        ...(irRuntimeCallableHasNoSlot(declaration.ref)
+          ? { slotPolicy: "none" as const }
+          : { slotPolicy: "required" as const, slotSpace: "function" as const }),
         intent: {
           kind: "callable",
-          origin: "runtime",
+          origin: declaration.ref.binding.kind === "intrinsic" ? "intrinsic" : "runtime",
           signature: preparedIrCallableSignature(declaration.params, declaration.results),
         },
       },
