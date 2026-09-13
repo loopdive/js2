@@ -6767,6 +6767,30 @@ agent-context/3518-native-string-types-split-2026-09-09.md. This is a prerequisi
 for actual prepared-consumer wiring, not evidence that the public direct path
 has been replaced. Paused P/C async drafts remain untouched.
 
+### Shared native resource declarations (2026-09-09)
+
+String, flatten, scanner and primitive-value producers now share symbolic
+declarations with their reservation implementations. This lets checked consumer
+acceptance know the complete resource ABI before allocation without a second
+allocator or duplicated signature table. Canonical allocation order, type
+metadata and existing ownership authority remain load-bearing.
+
+High review's sparse-preflight and signature-observation findings are repaired;
+the owned declaration suite passes 20/20. Parent scanner integration resolves
+the previously failing dependency census and passes 140/140 combined scanner
+and declaration tests. New mandatory boundary records and model-only type
+controls are in place; full boundary/clean typecheck/caller validation is pending.
+See agent-context/3518-native-resource-declarations-checkpoint-2026-09-09.md
+for exact provenance, initial failures and the limits of this checkpoint.
+
+This does not establish actual prepared-consumer execution or public default
+cutover. Those joins and all other #3518 acceptance requirements remain open.
+
+The clean producer checkpoint now also passes 250/250 full boundary controls
+and unfiltered TS7 (session 54286 exit 0). Full caller revalidation passed
+322/322 across eight suites (session 46568 exit 0). Checkpoint validation is
+complete; this is not a migration-completion claim.
+
 ## Native argument-vector checkpoint — 2026-09-08
 
 Parent integrated the independently reviewed six-file argument-vector slice
@@ -7829,6 +7853,89 @@ Physical async acceptance, historical compiler-pair execution and frontend
 retirement remain uncertified. Publication still waits for predecessor
 delivery through the existing protected queue.
 
+## Implementation plan: refresh shared native declarations — 2026-09-13
+
+Continue existing PR5789 from its exact published5404151 checkpoint, merging
+validated immediate parent4bbdc154. Preserve all eight published production
+files and the declaration test/number-resource changes; the production join
+requires no additional implementation. Preserve all source algorithms, ABI
+reservation order, ownership identities, dense own-slot preflight and precise
+late-failure behavior. Keep the published checkpoint handoff unchanged.
+
+Resolve cumulative boundary policy/test history by retaining the current54
+records, both published declaration records and two explicitly combined
+snapshots; keep both prior histories verbatim. Add the two declaration roots
+to the existing99 (backend minimum10, native minimum22). Preserve all
+existing allowed edges and mandatory per-root negatives, add the published
+model-only declaration checks, and measure actual resolved-edge counts from
+the composed positive report before updating current expectations.
+
+Run initial declaration, Error and strict vector-donor controls before any
+receipt adaptation, preserving the original failures. The independently
+published string-layout shape factories/bridge/wrappers may require an exact
+forward adapter before the old ten-statement inverse; derive its authority
+only from committed parent/published blobs, retain original hashes and all
+51 donor cases, and add positive-first field/argument/ownership/provenance
+negatives. No candidate hash may become a replacement historical receipt.
+
+Then execute the full reviewed17-file producer/caller/boundary population
+with exact input pins, source TS7, budgets, oracle, measured nonempty coercion
+scan and preservation-v1. Use normal signed hooks and the verified independent
+corpus. Publish only after the existing predecessors reach main through the
+protected queue. Preserve numeric-precision debt, whole-program-not-assessed
+and frontend-retirement limitations; new migration scope remains paused.
+
+The actual initial declaration/Error/vector run completed100 assertions:
+80 passed,20 failed,zero skipped. All20 failures are strict vector-donor
+positive checks rejecting the published20-statement canonical layout source
+against the old10-statement premise. Declaration20/20 and Error29/29 pass.
+The raw failures and execution pins remain in initial-declaration-controls.
+The independently reviewed source comparison verifies all eight published
+production files remain exact after the merge; no production repair is made.
+
+The next13 complete producer/caller files passed684/684 assertions,zero skips,
+with unchanged execution pins. This is separate from the initial failed
+receipt run and excludes the pending boundary and vector-donor adaptations.
+All original51 donor cases remain required; changes to four descriptor-owner
+mutation targets and the unbound-ctx refusal stage must be explicit, preserve
+corruption intent, and retain the old fixtures/hashes rather than silently
+claiming identical test bodies.
+
+The composed boundary/layout run passed336/337 assertions. All67 repaired
+vector-donor cases passed, including all51 prior case intents and16 new
+controls. Four descriptor mutations now target the actual generic shape
+owners; the live unbound-ctx mutation asserts its exact earlier authenticated
+span refusal, and a new direct positive-first check retains the original
+historical AST collision guard. The13 prepared-registry case bodies and all
+original donor/forward fixture hashes remain unchanged.
+
+The sole composed failure was the deliberately provisional old graph count.
+A diagnostic invocation of that same positive fixture captured the complete
+actual report:101 modules,374 resolved imports (240 type-only,134 runtime),
+with zero graph errors. The temporary report-writing observation was removed
+and the original test bytes restored before changing only the current count
+expectation. The diagnostic's unselected cases receive no execution credit.
+The full270-case boundary suite is rerunning on the measured expectation.
+All58 activation records retain the exact54-parent suffix and the two exact
+published declaration records; allowed edges are unchanged.
+
+The final complete boundary run passed270/270. The disjoint per-file union
+of17 complete files now passes1,070/1,070 assertions,zero skipped. Exact
+execution/source/report hashes are in final-validation-20260913.json; the
+initial80/100 and provisional336/337 failures remain preserved. All eight
+published production files remain byte-identical to5404151. The authenticated
+seven-span layout adapter preserves the old full-source/AST receipts; no
+candidate-derived replacement hash or runtime behavior change was admitted.
+
+TS7, LOC/function budgets, oracle and preservation-v1 with required core types
+and nodes passed. The unchanged coercion checker through a space-free alias
+measured124 files/511 sites against exactparent4bbdc154; a spaced-path empty
+scan receives no credit. Conformance synchronization changed0 files. Normal
+signed hooks and exact-head queue checks remain required. Keep the existing
+PR held until5787 is verified on main; numerical precision debt, historical
+compiler-pair execution, whole-program execution and frontend retirement
+remain uncertified.
+
 ## Queue admission reconciliation: current main — 2026-09-13
 
 Existing PR5760 reported DIRTY against main7adc0a6e after publishing signed
@@ -7881,6 +7988,15 @@ its main-owned prototype test. All scanner/runtime/receipt/policy bytes remain
 unchanged. TS7, LOC/function budgets, oracle, preservation-v1 and measured
 coercion124/511 pass against exact parentc06c5575; conformance sync changes
 zero files. Earlier2,715/2,715 remains explicitly earlier-head evidence.
+
+
+### September 13: resume existing resource-declaration PR5789 after verified delivery
+
+PR5787, “feat(ir): admit native string numeric source lowering”, is verified delivered as `e29390e349faf7992c9193665cb44240142f903c`: complete tree equals published `e9c2d8c3b70be1096918b79c51eee730a843697e`; all 102 shards, final regression gate, differential and merge-group CI passed. Broader IR retirement remains incomplete.
+
+Resume existing PR5789, “refactor(ir): share native resource declarations before allocation”, preserving local signed `c77eb9658132ee63cc4ca80128a987c15c4b1d63` and its unfinished merge of `5b59430597315b08b2d7a1365324b56551230308`. Both issue histories are retained. Finish that earlier merge before integrating the delivered parent; never discard the existing prepared work. Current remote remains `5404151bfc1b49d6cffed4a87a8985c51bd3dd93`, held. The earlier merge changes only generators-native.ts and its prototype regression test in src/tests. Validation and normal signed hooks are required before publication; earlier evidence retains its named revisions.
+
+The preserved-parent validation passed 304/304 across three complete files (generator14, declarations20, boundary270), with unchanged execution inputs. Fresh corpus verification matched all53,933 raw pinned blobs. These results cover the preserved5b594 parent composition, not the forthcoming delivered-main refresh.
 
 ## Reconcile the refreshed main base e06f7674 — 2026-09-13
 
@@ -7956,3 +8072,12 @@ On the uncommitted merge of delivered main `2c6a0f1daa3d43cdf68b0d2d07fe7e3fa58b
 The complete delivered-main behavior-intersection cohort subsequently finished: 226 passed, zero failed, four existing TODO cases, 230 total across 16 files. The real Temporal provider test retained its 1,800,000 ms timeout and executed. All recorded source inputs stayed unchanged. TODOs remain the static provider method, chained Duration member read, and two builtin-error constructor-name cases; none receives pass credit. Raw evidence: `.tmp/5787-queue-drain/delivered-main-behavior-20260913.json`.
 
 The fresh-process closure behavior file passed 14/14. Current-merge TS7, LOC/function budgets, measured coercion gate, oracle, preservation-v1 (including core types/nodes), conformance synchronization check, and boundary inventory passed. Inventory remains architecture-incomplete and does not prove retirement. Fresh remote main advanced to `0cb1e829d521c9a804f56991e9ab54593bde1f70` via baseline refresh only; no `src` or `tests` changes. Commit this validated merge before integrating that refresh.
+
+
+### September 13: resource declarations composed with delivered main
+
+The actual merge of freshly fetched `e1a865f6f7f203df6d85ae81f39fe6073795abe8` into signed `04b2d2be1062a7ffd35b9f0d38128ea6948e0138` merged all production and policy files cleanly. Both appended issue histories are retained above. Validate the reviewed 20 complete files and canonical source gates before publication; retain the local seven-span layout receipt and the three delivered source-forward fixtures without replacing their historical donors.
+
+Current delivered-main validation passes 1,112/1,112 assertions across 20 complete files, zero failures/pending/skips. This comprises the 18-file cohort962, separate cold import1, and fresh-process reservations149. Execution inputs stayed unchanged. All1,387 incoming policy entries match the parent exactly; two declaration entries are added, all58 local activation records retained, and allowed edges unchanged. Source gates and signed hooks remain required; this is not a retirement claim.
+
+Delivered-main source gates passed: TS7, LOC/functions, measured coercion census (no changed codegen paths), oracle, preservation-v1 with required core types/nodes, conformance sync check, and boundary inventory. Inventory is valid while architecture remains incomplete. All current execution pins remain unchanged before normal signed hooks.

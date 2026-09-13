@@ -9,19 +9,155 @@ import type {
 import type { Instr } from "../../../wasm/model/instructions.js";
 import {
   createStringDataType,
-  createAnyStringType,
-  createNativeStringType,
-  createConsStringType,
-  createHashedStringType,
+  createAnyStringShape,
+  createNativeStringShape,
+  createConsStringShape,
+  createHashedStringShape,
   createUtf8StringDataType,
-  createUtf8StringType,
+  createUtf8StringShape,
   type NativeStringLayout,
 } from "../../../runtime/wasmgc/values/string-layouts.js";
 import {
   planNativeStringLiteral,
+  selectNativeStringLiteral,
   buildOversizedNativeStringLiteral,
   type StringEncoding,
 } from "../../../runtime/wasmgc/values/string-literal-bodies.js";
+import type {
+  NativeResourceRecipe,
+  NativeStringValueDeclaration,
+  NativeStringValueReservationStep,
+  NativeDeclaredType,
+} from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
+import {
+  executeNativeResourceRecipe,
+  requireNativeDeclaredReservation,
+  freezeNativeResourceRecipe,
+  nativeScalarTypeDeclaration,
+} from "./native-resource-declarations.js";
+
+export function nativeStringTypeKeys(key: string) {
+  return {
+    data: `${key}:data`,
+    any: `${key}:any`,
+    flat: `${key}:flat`,
+    cons: `${key}:cons`,
+    hashed: `${key}:hashed`,
+    utf8Data: `${key}:utf8-data`,
+    utf8: `${key}:utf8`,
+  } as const;
+}
+export function declareNativeStringLiteralTypes(key: string, utf8Storage: boolean): NativeResourceRecipe {
+  if (typeof key !== "string" || !key || typeof utf8Storage !== "boolean")
+    throw new Error("native strings: invalid type recipe key/config");
+  const keys = nativeStringTypeKeys(key);
+  const ref = (typeKey: string) => ({ kind: "ref" as const, typeKey });
+  const parent = (typeKey: string) => ({ kind: "resource" as const, typeKey });
+  const declarations: NativeStringValueDeclaration[] = [];
+  const add = (role: string, resourceKey: string, shape: NativeDeclaredType) =>
+    declarations.push({ key: resourceKey, role: ["string-type", role], space: "type", shape });
+  add("data", keys.data, nativeScalarTypeDeclaration(createStringDataType()));
+  add("any", keys.any, createAnyStringShape({ kind: "root" } as const));
+  add("flat", keys.flat, createNativeStringShape(ref(keys.data), parent(keys.any)));
+  add("cons", keys.cons, createConsStringShape(ref(keys.any), parent(keys.any)));
+  add("hashed", keys.hashed, createHashedStringShape(ref(keys.data), parent(keys.flat)));
+  if (utf8Storage) {
+    add("utf8-data", keys.utf8Data, nativeScalarTypeDeclaration(createUtf8StringDataType()));
+    add("utf8", keys.utf8, createUtf8StringShape(ref(keys.utf8Data), parent(keys.any)));
+  }
+  return freezeNativeResourceRecipe({
+    declarations,
+    reservationSteps: declarations.map((row) => ({
+      phase: "string-types" as const,
+      kind: "reserve" as const,
+      resourceKey: row.key,
+    })),
+  });
+}
+export interface NativeStringLiteralRecipe extends NativeResourceRecipe {
+  readonly requests: readonly { readonly cacheKey: string }[];
+  readonly globals: readonly {
+    readonly cacheKey: string;
+    readonly value: string;
+    readonly encoding?: StringEncoding;
+  }[];
+  readonly functions: readonly {
+    readonly cacheKey: string;
+    readonly chunks: readonly string[];
+    readonly chunkKeys: readonly string[];
+  }[];
+}
+function checkedDemands(requirements: NativeStringLiteralRequirements) {
+  if (
+    !requirements ||
+    typeof requirements.key !== "string" ||
+    !requirements.key ||
+    typeof requirements.utf8Storage !== "boolean" ||
+    !Array.isArray(requirements.literals)
+  )
+    throw new Error("native strings: invalid reservation phase/key/config/demands");
+  const demands: { value: string; encoding?: StringEncoding }[] = [];
+  for (let i = 0; i < requirements.literals.length; i++) {
+    const row = requirements.literals[i];
+    if (
+      !Object.hasOwn(requirements.literals, i) ||
+      !row ||
+      typeof row.value !== "string" ||
+      (row.encoding !== undefined &&
+        row.encoding !== "ascii" &&
+        row.encoding !== "utf8-guaranteed" &&
+        row.encoding !== "wtf16")
+    )
+      throw new Error("native strings: invalid literal demand");
+    demands.push({ value: row.value, encoding: row.encoding });
+  }
+  return demands;
+}
+/** Complete private chunk topology and exact per-space names/order from the canonical selector. */
+export function declareNativeStringLiteralResources(
+  requirements: NativeStringLiteralRequirements,
+): NativeStringLiteralRecipe {
+  const demands = checkedDemands(requirements),
+    keys = nativeStringTypeKeys(requirements.key);
+  const declarations: NativeStringValueDeclaration[] = [],
+    reservationSteps: NativeStringValueReservationStep[] = [];
+  const globals: { cacheKey: string; value: string; encoding?: StringEncoding }[] = [];
+  const functions: { cacheKey: string; chunks: readonly string[]; chunkKeys: readonly string[] }[] = [];
+  const cache = new Set<string>();
+  const add = (row: NativeStringValueDeclaration) => {
+    declarations.push(row);
+    reservationSteps.push({ phase: "resources", kind: "reserve", resourceKey: row.key });
+  };
+  const visit = (value: string, encoding?: StringEncoding): string => {
+    const selected = selectNativeStringLiteral(requirements.utf8Storage, requirements.utf8Storage, value, encoding);
+    if (cache.has(selected.key)) return selected.key;
+    if (selected.kind === "global") {
+      add({
+        key: `${requirements.key}:${selected.key}`,
+        role: ["literal-global", selected.key],
+        space: "global",
+        name: `__strlit_${globals.length}`,
+        valueType: { kind: "ref", typeKey: selected.encoding === "utf8" ? keys.utf8 : keys.flat },
+        mutable: false,
+      });
+      globals.push({ cacheKey: selected.key, value, encoding });
+    } else {
+      const chunkKeys = selected.chunks.map((chunk) => visit(chunk, "wtf16"));
+      add({
+        key: `${requirements.key}:${selected.key}`,
+        role: ["literal-materializer", selected.key],
+        space: "function",
+        name: `__strlit_materialize_${functions.length}`,
+        signature: { params: [], results: [{ kind: "ref", typeKey: keys.any }] },
+      });
+      functions.push({ cacheKey: selected.key, chunks: selected.chunks, chunkKeys });
+    }
+    cache.add(selected.key);
+    return selected.key;
+  };
+  const requests = demands.map(({ value, encoding }) => ({ cacheKey: visit(value, encoding) }));
+  return freezeNativeResourceRecipe({ declarations, reservationSteps, requests, globals, functions });
+}
 
 export interface NativeStringLiteralRequirements {
   readonly key: string;
@@ -102,31 +238,20 @@ export function reserveNativeStringLiteralTypes(
 ): NativeStringLiteralTypeReservations {
   if (typeof resourceKey !== "string" || !resourceKey || typeof utf8Storage !== "boolean" || tx.state !== "reserving")
     throw new Error("native strings: invalid reservation phase/key/config");
-  const key = (role: string) => `${resourceKey}:${role}`;
-  const types: TypeReservation[] = [];
-  const reserve = (role: string, descriptor: Parameters<PhysicalModuleReservations["reserveType"]>[1]) => {
-    const token = tx.reserveType(key(role), descriptor);
-    types.push(token);
-    return token.typeIndex;
-  };
+  const recipe = declareNativeStringLiteralTypes(resourceKey, utf8Storage);
+  const records = executeNativeResourceRecipe(tx, recipe),
+    keys = nativeStringTypeKeys(resourceKey);
+  const types = recipe.declarations.map((row) => requireNativeDeclaredReservation(records, row.key, "type"));
+  const index = (key: string) => requireNativeDeclaredReservation(records, key, "type").typeIndex;
   const layout = {
-    nativeStrDataTypeIdx: -1,
-    anyStrTypeIdx: -1,
-    nativeStrTypeIdx: -1,
-    consStrTypeIdx: -1,
-    hashedStrTypeIdx: -1,
-    utf8StrDataTypeIdx: -1,
-    utf8StrTypeIdx: -1,
+    nativeStrDataTypeIdx: index(keys.data),
+    anyStrTypeIdx: index(keys.any),
+    nativeStrTypeIdx: index(keys.flat),
+    consStrTypeIdx: index(keys.cons),
+    hashedStrTypeIdx: index(keys.hashed),
+    utf8StrDataTypeIdx: utf8Storage ? index(keys.utf8Data) : -1,
+    utf8StrTypeIdx: utf8Storage ? index(keys.utf8) : -1,
   };
-  layout.nativeStrDataTypeIdx = reserve("data", createStringDataType());
-  layout.anyStrTypeIdx = reserve("any", createAnyStringType());
-  layout.nativeStrTypeIdx = reserve("flat", createNativeStringType(layout));
-  layout.consStrTypeIdx = reserve("cons", createConsStringType(layout));
-  layout.hashedStrTypeIdx = reserve("hashed", createHashedStringType(layout));
-  if (utf8Storage) {
-    layout.utf8StrDataTypeIdx = reserve("utf8-data", createUtf8StringDataType());
-    layout.utf8StrTypeIdx = reserve("utf8", createUtf8StringType(layout));
-  }
   Object.freeze(layout);
   const pack = Object.freeze({ key: resourceKey, utf8Storage, layout, types: Object.freeze(types) });
   typeOwners.set(pack, { tx, consumed: false });
@@ -171,9 +296,12 @@ export function reserveNativeStringLiteralResources(
     throw new Error("native strings: type key/config mismatch");
   if (typeOwner.consumed) throw new Error("native strings: type pack already consumed");
   const { layout, types } = typePack;
-  const plans = demands.map(({ value, encoding }) =>
-    planNativeStringLiteral(layout, typePack.utf8Storage, value, encoding),
-  );
+  const recipe = declareNativeStringLiteralResources({ ...requirements, literals: demands });
+  const plans = recipe.globals.map(({ value, encoding, cacheKey }) => {
+    const plan = planNativeStringLiteral(layout, typePack.utf8Storage, value, encoding);
+    if (plan.kind !== "global" || plan.key !== cacheKey) throw new Error("native strings: contradictory leaf recipe");
+    return plan;
+  });
   const key = (role: string) => `${requirements.key}:${role}`;
   const globals: { cacheKey: string; token: GlobalReservation; init: Instr[] }[] = [];
   const functions: {
@@ -183,47 +311,30 @@ export function reserveNativeStringLiteralResources(
     globals: readonly GlobalReservation[];
   }[] = [];
   const cache = new Map<string, NativeStringLiteralBinding>();
-  const literal = (
-    value: string,
-    encoding?: StringEncoding,
-    planned?: ReturnType<typeof planNativeStringLiteral>,
-  ): NativeStringLiteralBinding => {
-    const plan = planned ?? planNativeStringLiteral(layout, typePack.utf8Storage, value, encoding);
-    const existing = cache.get(plan.key);
-    if (existing) return existing;
-    let binding: NativeStringLiteralBinding;
-    if (plan.kind === "global") {
-      const token = tx.reserveGlobal(
-        key(plan.key),
-        `__strlit_${globals.length}`,
-        { kind: "ref", typeIdx: plan.refTypeIdx },
-        false,
-      );
-      globals.push({ cacheKey: plan.key, token, init: plan.init });
-      binding = Object.freeze({ kind: "global", text: value, global: token, representation: "gc" });
-    } else {
-      const leaves = plan.chunks.map((chunk) => {
-        const leaf = literal(chunk, "wtf16");
-        if (leaf.kind !== "global") throw new Error("native strings: oversized leaf");
-        return leaf.global;
-      });
-      const token = tx.reserveFunction(key(plan.key), `__strlit_materialize_${functions.length}`, {
-        params: [],
-        results: [{ kind: "ref", typeIdx: layout.anyStrTypeIdx }],
-      });
-      functions.push({ cacheKey: plan.key, token, chunks: plan.chunks, globals: leaves });
-      binding = Object.freeze({ kind: "callable", text: value, function: token, representation: "gc" });
-    }
-    cache.set(plan.key, binding);
-    return binding;
-  };
   // Allocation failures consume this pack; there is no rollback contract.
   typeOwner.consumed = true;
-  const literals = demands.map(({ value, encoding }, i) => literal(value, encoding, plans[i]));
+  const records = executeNativeResourceRecipe(tx, recipe, new Map(types.map((token) => [token.key, token])));
+  recipe.globals.forEach((row, i) => {
+    const token = requireNativeDeclaredReservation(records, key(row.cacheKey), "global");
+    globals.push({ cacheKey: row.cacheKey, token, init: plans[i]!.init });
+    cache.set(row.cacheKey, Object.freeze({ kind: "global", text: row.value, global: token, representation: "gc" }));
+  });
+  for (const row of recipe.functions) {
+    const token = requireNativeDeclaredReservation(records, key(row.cacheKey), "function");
+    const leaves = row.chunkKeys.map((cacheKey) => requireNativeDeclaredReservation(records, key(cacheKey), "global"));
+    functions.push({ cacheKey: row.cacheKey, token, chunks: row.chunks, globals: leaves });
+    cache.set(
+      row.cacheKey,
+      Object.freeze({ kind: "callable", text: row.chunks.join(""), function: token, representation: "gc" }),
+    );
+  }
+  const literals = recipe.requests.map(({ cacheKey }) => cache.get(cacheKey)!);
   const pack = Object.freeze({ layout, types: Object.freeze(types), literals: Object.freeze(literals) });
   const inventory = Object.freeze({
     typePack,
-    requests: Object.freeze(literals.map((binding, i) => Object.freeze({ cacheKey: plans[i]!.key, binding }))),
+    requests: Object.freeze(
+      literals.map((binding, i) => Object.freeze({ cacheKey: recipe.requests[i]!.cacheKey, binding })),
+    ),
     globals: Object.freeze(globals.map((row) => Object.freeze({ cacheKey: row.cacheKey, global: row.token }))),
     functions: Object.freeze(
       functions.map((row) =>
