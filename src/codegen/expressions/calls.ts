@@ -511,6 +511,7 @@ import {
 } from "../native-strings.js";
 import { ensureTextEncodingHelpers } from "../text-encoding-native.js";
 import { emitVariadicStringConcat, hostStringRepr, nativeStringRepr } from "../builtin-scaffold.js";
+import { compileFromCharCodeFamilySpread, needsFromCharCodeSpread } from "./from-char-code-spread.js";
 import { URI_DECODE_MASK, URI_ENCODE_MASK } from "../uri-encoding-native.js";
 import {
   buildInt8ArrayCarrierMatch,
@@ -531,7 +532,11 @@ import {
   sourceParamCountFromExpanded,
   wasmParamIndexForSourceParam,
 } from "../linear-uint8-signatures.js";
-import { resolveNamedThisCallTarget, tryReshapeApplyToNamedThisCall } from "../named-this-call.js";
+import {
+  resolveNamedThisCallTarget,
+  resolveUndefinedReceiverTrampoline,
+  tryReshapeApplyToNamedThisCall,
+} from "../named-this-call.js";
 import {
   emitClosureReceiverInstall,
   finishClosureReceiverCall,
@@ -6131,6 +6136,13 @@ export function compileFromCharCodeFamily(
   opts: { native: boolean; helperIdx: number; isFromCodePoint?: boolean },
 ): ValType | null {
   const { native, helperIdx, isFromCodePoint } = opts;
+  // (#6430) `...src` has no lowering in the per-node fold below (it unwraps to
+  // `src` → NaN → one NUL char); the shared builder expands it. It emits
+  // nothing before it can decline, so `null` leaves the fold a clean slate.
+  if (needsFromCharCodeSpread(expr)) {
+    const spread = compileFromCharCodeFamilySpread(ctx, fctx, expr, opts);
+    if (spread !== null) return spread;
+  }
   const repr = native ? nativeStringRepr(ctx) : hostStringRepr(ctx);
   if (repr === undefined) return null;
 
@@ -8725,7 +8737,12 @@ function compileCallExpression(
               getFuncParamTypes(ctx, funcIdx!)?.length ?? remainingArgs.length,
             );
             const finalFuncIdx = ctx.funcMap.get(funcName) ?? funcIdx!;
-            fctx.body.push({ op: "call", funcIdx: namedThisCall?.trampolineFuncIdx ?? finalFuncIdx });
+            // (#6436) `.call(undefined, …)` dropped its receiver here.
+            const undefinedThis =
+              namedThisCall === undefined
+                ? resolveUndefinedReceiverTrampoline(ctx, funcName, finalFuncIdx, expr.arguments[0])
+                : undefined;
+            fctx.body.push({ op: "call", funcIdx: namedThisCall?.trampolineFuncIdx ?? undefinedThis ?? finalFuncIdx });
 
             // Use actual Wasm return type — TS checker reports `any` for .call()/.apply()
             // which resolves to externref, but the actual function may return f64/i32/ref.
@@ -8806,7 +8823,9 @@ function compileCallExpression(
                 elements.length,
                 getFuncParamTypes(ctx, finalFuncIdx)?.length ?? elements.length,
               );
-              fctx.body.push({ op: "call", funcIdx: finalFuncIdx });
+              // (#6436) Same as the `.call` arm: `.apply(undefined, [...])`.
+              const applyThis = resolveUndefinedReceiverTrampoline(ctx, funcName, finalFuncIdx, expr.arguments[0]);
+              fctx.body.push({ op: "call", funcIdx: applyThis ?? finalFuncIdx });
               // Use actual Wasm return type for .apply()
               if (wasmFuncReturnsVoid(ctx, finalFuncIdx)) return VOID_RESULT;
               return getWasmFuncReturnType(ctx, finalFuncIdx) ?? VOID_RESULT;

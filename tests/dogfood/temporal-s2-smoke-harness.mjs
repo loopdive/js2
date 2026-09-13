@@ -48,6 +48,20 @@ const PROBES = {
     const v = Temporal.Duration.from({ hours: 1 }).total("minutes");
     return typeof v === "number" ? v : -1;
   }`,
+  // (#5383 S2m) The same two questions through a BOUND LOCAL. S2l measured the
+  // chained spelling above answering 0 / null where this one answers the real
+  // value — #2984's path-dependent member read on a chained call result, not a
+  // Temporal defect. Kept as its own probe so the two spellings are scored
+  // separately and a future #2984 fix shows up as `total` joining `totalBound`.
+  durationHasTotalBound: `export function run() {
+    const d = Temporal.Duration.from({ hours: 1 });
+    return typeof d.total === "function" ? 1 : 0;
+  }`,
+  totalBound: `export function run() {
+    const d = Temporal.Duration.from({ hours: 1 });
+    const v = d.total("minutes");
+    return typeof v === "number" ? v : -1;
+  }`,
 };
 
 const STANDALONE = { target: "standalone", hostBridge: "off" };

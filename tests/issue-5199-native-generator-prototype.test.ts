@@ -47,6 +47,18 @@ const cases = [
     name: "factory prototype descriptor and alias bracket identity",
     source: `function* base(){yield 1;}function test(){var alias=base,d=Object.getOwnPropertyDescriptor(alias,'prototype');var p=alias['prototype'];return d&&d.value===p&&d.writable===true&&d.enumerable===false&&d.configurable===false&&Object.getPrototypeOf(base())===p?1:0;}`,
   },
+  {
+    name: "object generator method with trailing comma remains callable",
+    source: `function test(){var calls=0,obj={*method(a,){if(a===42)calls=calls+1;}};obj.method(42,39).next();var ref=obj.method;return calls===1&&typeof ref==='function'?1:0;}`,
+  },
+  {
+    name: "object generator method preserves default parameter evaluation",
+    source: `function test(){var obj={*method(x,y=x,z=y){return x===3&&y===3&&z===3?1:0;}};var r=obj.method(3).next();return r.done===true&&r.value===1?1:0;}`,
+  },
+  {
+    name: "object method protocol coexists with a free generator factory",
+    source: `function* free(){yield 1;}function test(){var method={*method(){yield 2;}}.method;return typeof method==='function'&&free().next().value===1&&method().next().value===2?1:0;}`,
+  },
 ];
 
 describe("#5199 native generator factory/prototype bridge", () => {

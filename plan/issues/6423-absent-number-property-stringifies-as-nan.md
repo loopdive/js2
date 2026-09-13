@@ -1,10 +1,11 @@
 ---
 id: 6423
 title: "An ABSENT number-typed property stringifies as `\"NaN\"` instead of `\"undefined\"` — the f64 absence sentinel leaks through `String()`"
-status: ready
+status: done
 sprint: current
 created: 2026-09-12
-updated: 2026-09-12
+updated: 2026-09-13
+completed: 2026-09-13
 priority: high
 horizon: m
 feasibility: medium
@@ -12,6 +13,16 @@ reasoning_effort: high
 task_type: bug
 area: compiler
 goal: correctness
+# 2026-09-13 (#6423): the four ToString call sites are one-for-one substitutions
+# (`push call number_toString` -> `emitNumberToStringSentinelAware`); the added
+# lines are the comments that say why the brand gate is a bit-pattern compare and
+# not a NaN test. Both files are god-files sitting at their ceiling.
+loc-budget-allow:
+  - src/codegen/string-ops.ts
+  - src/codegen/expressions/call-identifier.ts
+func-budget-allow:
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/codegen/string-ops.ts::compileStringBinaryOp
 ---
 
 ## Problem
@@ -110,3 +121,119 @@ this is not an easy ticket.
 ## Dispatch
 
 Model: **opus** — four mechanical call-site substitutions behind one brand-gated helper, but criterion 2 (sentinel vs. real NaN) and the mid-body funcMap/stack-shape constraints need someone who reads the surrounding arms rather than pattern-replacing.
+
+## Resolution
+
+Fixed in the four f64 ToString arms, behind one brand-gated helper.
+
+**Mechanism.** `__extern_get` narrows a dynamic property read whose slot is
+number-shaped to `{ kind: "f64", undefSentinel: true }` and materialises an
+ABSENT slot as `UNDEF_F64_BITS` (`property-access-dispatch.ts` ~L5052, #5251).
+The read was never wrong — that brand is exactly what makes `typeof o.maxAge`,
+`o.maxAge === undefined` and `"maxAge" in o` answer correctly. The ToString arms
+then ignored the brand and called `number_toString` on the raw f64, and the host
+import renders that bit pattern as `"NaN"`.
+
+New helper `emitNumberToStringSentinelAware(ctx, fctx, valType, toStrIdx)` in
+`src/codegen/coercion-engine.ts`. For an unbranded operand it emits the same
+single `call number_toString` as before, byte for byte. For a branded f64 it
+tees the value into a scratch local, tests the exact `UNDEF_F64_BITS` i64
+pattern via `emitIsUndefF64` (`value-tags.ts`), and selects the `"undefined"`
+string constant or the number call. It always leaves an **externref** — the
+same shape `number_toString` leaves, in native-strings mode too, because
+`stringConstantExternrefInstrs` appends `extern.convert_any` — so every caller's
+tail (`emitNativeStringRefFromExternref`, `emitStringBuiltinNumberResult`, the
+host `concat`) is untouched. It registers no late import; `addStringConstantGlobal`
+adds only an imported GLOBAL, whose shift `fixupModuleGlobalIndices` repairs
+across `ctx.currentFunc.body`, and the instructions are built after that call so
+no index is captured across it.
+
+Criterion 2 is the whole risk, and the bit-pattern compare is what satisfies it:
+`UNDEF_F64_BITS` is a *signaling*-NaN payload JS arithmetic cannot produce, a
+genuine `NaN` is the quiet `0x7FF8000000000000`. An `f64.ne` self-compare would
+have mapped every NaN to `"undefined"` — worse than the bug. `HOLE_F64_BITS` is
+deliberately not tested: reads already map HOLE → UNDEF at the boundary
+(`vec-f64-hole-presence.ts`).
+
+**Call sites routed** (each a one-for-one substitution, no stack-shape change):
+
+| site | file |
+| ---- | ---- |
+| `emitToString` f64/i32/i64 arm — also covers the js-host template span, which already delegates here | `src/codegen/coercion-engine.ts` |
+| `String(x)` f64 arm, before `emitStringBuiltinNumberResult` | `src/codegen/expressions/call-identifier.ts` |
+| `+` concat left and right f64 arms | `src/codegen/string-ops.ts` |
+| `String.raw` substitution f64 arm | `src/codegen/string-ops.ts` |
+
+**JS-host lane only.** A first cut also routed `compileNativeConcatOperand` and
+the native template span through the helper — the same defect, the other lane.
+The merge group then failed the standalone host-free pass-count floor (#2097):
+`current pass=35567, mark=35686, delta=-119`. Attribution looked ambiguous at
+the time (the mark was set at `e8a778638f`, 2026-09-12T21:36Z, and every merge
+group in between skipped the shard matrix, so that run was the first to exercise
+the floor in ~8.5 hours), so rather than guess, the helper was narrowed to
+return the plain call unless `coercionMode(ctx) === "js-host"`. That makes the
+standalone/WASI/native-strings binary **byte-identical to the parent by
+construction** — verified by SHA-256 of the emitted binaries across three
+fixtures (for-of numeric concat, the full String/template/`+`/String.raw set,
+and generators) in all three non-js-host configurations: all nine hashes equal.
+
+**The breach was then refuted as this PR's, on the record.** PR #5897 — no
+relation to this change — failed the same floor at 2026-09-13T08:27Z reporting
+the *identical* `current pass=35567`, against a newer mark (`35742`, set at
+`6aac84c0b6`, 06:43Z), for `delta=-175`. Same current value, different PR,
+different mark: the drop is **main-side**, and this change never caused it.
+
+The narrowing is kept anyway, and deliberately: the native extension is still
+covered by **no measurement available here** — the 17-suite dogfood A/B is
+entirely js-host (`target: "gc"`) and structurally blind to that lane — and it
+carries hazards the js-host arm does not (see #6458). Landing an unmeasured
+codegen change late in a green PR on the strength of a *refuted* alarm would be
+the same error in the opposite direction. It belongs in #6458, behind a
+standalone measurement.
+
+The js-host codegen is unaffected by the narrowing (same fixture, same hash
+before and after), so the 17-suite A/B below — which is entirely js-host,
+`target: "gc"` — stands as measured.
+
+The native lanes do have branded-f64 producers the js-host lane lacks (`for-of`
+over a numeric vec yields `{kind:"f64", undefSentinel:true}`,
+`statements/loops.ts`; native generator IteratorResult reads do too), so
+extending the fix there is real work — filed as
+[#6458](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6458-native-lane-f64-sentinel-tostring),
+which needs a standalone test262 measurement rather than the dogfood A/B (that
+lane is js-host and structurally blind to it).
+
+**Probe** (`.tmp/6423/run.mjs`, `compileAndRunUpstreamModule`, untyped two-file
+fixture): parent wasm **3/9** (only the three present-value controls), native
+9/9 → fixed wasm **9/9**, native 9/9.
+
+**Regression test** `tests/issue-6423-absent-number-stringify.test.ts`: parent
+`448` (`0b111000000`), fixed `511`. One note worth carrying forward — the calls
+have to be **unspecializable**. Written as straight-line calls with literal
+arguments inside one exported function, the same nine cases answer 9/9 *on the
+parent*: the compiler resolves the read statically and no sentinel is ever
+produced. Registering each case as a closure (what the dogfood harness does with
+its `test(name, fn)` callbacks) keeps the read dynamic. A future refactor that
+makes this file pass without the fix has most likely re-specialized the call.
+
+**Standalone lane**: already correct on the parent and unchanged — probe `127`
+before *and* after (measured both ways, not assumed), and now unchanged at the
+byte level too (see above). Its ToString goes through `$__any_to_string` rather
+than the narrowed f64, so it never saw the sentinel. Pinned by the second `it`.
+
+**A/B, 17 dogfood suites, one HEAD (`e06f76745b`), base vs fix**: every headline
+identical and **zero per-test movers** across all 17 (63,740 + 1,900 tests
+compared by name and status). webpack 16/16 · three 17/18 · clsx 32/32 · cookie
+63740/63740 · lodash 59/62 · redux 67/82 · axios 208/231 · stylelint 108/108 ·
+tailwindcss 13/13 · jsdom 6/6 · styled-components 9/9 · uuid 75/75 · marked
+16/30 · moment 10/10 · prettier 108/151 · jest 335/356 · hono 261/324. (This
+base measured prettier 108 and hono 261 where the 2026-09-12 anchors read 107
+and 259; main advanced in between. Both are unchanged base→fix.)
+
+hono's spurious `Max-Age=0` is untouched, as expected — that is the guard
+misfiring, not ToString, and it stays unattributed per the note above.
+
+**Not addressed here**: hono's `Max-Age=0` and the `serializeLike(name, value,
+{})` null-struct `TypeError` (both listed above as adjacent measurements), plus
+the native/standalone lanes' own branded-f64 ToString, deliberately left to
+[#6458](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6458-native-lane-f64-sentinel-tostring).

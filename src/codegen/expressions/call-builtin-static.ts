@@ -16,6 +16,7 @@ import { integrityVarKey, widenedVarKeyFromDecl } from "../widened-var-key.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "../../ir/object-integrity.js";
 import { resolveArrayInfo } from "../array-methods.js";
+import { admitArrayFromVecCarrier } from "../array-from-vec-carrier.js";
 import { numberIsPredicateOps } from "../number-is-predicate-ops.js";
 import { sameValueNumberOps } from "../same-value-number-ops.js";
 import {
@@ -1412,64 +1413,78 @@ export function compileBuiltinStaticCall(
       const arrInfo = resolveArrayInfo(ctx, argTsType);
       if (arrInfo) {
         const { vecTypeIdx, arrTypeIdx, elemType } = arrInfo;
-        // Compile the source array
-        compileExpression(ctx, fctx, expr.arguments[0]!);
-        const srcVec = allocLocal(fctx, `__arrfrom_src_${fctx.locals.length}`, {
-          kind: "ref_null",
-          typeIdx: vecTypeIdx,
-        });
-        const srcData = allocLocal(fctx, `__arrfrom_sdata_${fctx.locals.length}`, {
-          kind: "ref_null",
-          typeIdx: arrTypeIdx,
-        });
-        const lenTmp = allocLocal(fctx, `__arrfrom_len_${fctx.locals.length}`, { kind: "i32" });
-        const dstData = allocLocal(fctx, `__arrfrom_ddata_${fctx.locals.length}`, {
-          kind: "ref_null",
-          typeIdx: arrTypeIdx,
-        });
+        // (#6422) This arm's `$Vec` comes from the CHECKER type, so `Uint8Array`
+        // lands here even when the argument lowers to a `$__ta_view` share or a
+        // host externref. #1919 transactional try-lower: probe-compile, let
+        // `admitArrayFromVecCarrier` decide (de-viewing a view), and roll the
+        // probe back into the fallbacks below for anything it refuses — rather
+        // than `local.set`ting a non-vec into the `ref null $Vec` local, which
+        // `repairStructTypeMismatches` papered over with a `ref.cast_null $Vec`
+        // that TRAPPED. Reading the COMPILED type also covers the bound form
+        // (`const v = new Uint8Array(buf); Array.from(v)`).
+        const snap = snapshotSpeculative(ctx, fctx);
+        const srcType = compileExpression(ctx, fctx, expr.arguments[0]!);
+        if (admitArrayFromVecCarrier(ctx, fctx, srcType, vecTypeIdx)) {
+          const srcVec = allocLocal(fctx, `__arrfrom_src_${fctx.locals.length}`, {
+            kind: "ref_null",
+            typeIdx: vecTypeIdx,
+          });
+          const srcData = allocLocal(fctx, `__arrfrom_sdata_${fctx.locals.length}`, {
+            kind: "ref_null",
+            typeIdx: arrTypeIdx,
+          });
+          const lenTmp = allocLocal(fctx, `__arrfrom_len_${fctx.locals.length}`, { kind: "i32" });
+          const dstData = allocLocal(fctx, `__arrfrom_ddata_${fctx.locals.length}`, {
+            kind: "ref_null",
+            typeIdx: arrTypeIdx,
+          });
 
-        fctx.body.push({ op: "local.set", index: srcVec });
-        // Get length
-        fctx.body.push({ op: "local.get", index: srcVec });
-        fctx.body.push({
-          op: "struct.get",
-          typeIdx: vecTypeIdx,
-          fieldIdx: 0,
-        });
-        fctx.body.push({ op: "local.set", index: lenTmp });
-        // Get source data
-        fctx.body.push({ op: "local.get", index: srcVec });
-        fctx.body.push({
-          op: "struct.get",
-          typeIdx: vecTypeIdx,
-          fieldIdx: 1,
-        });
-        fctx.body.push({ op: "local.set", index: srcData });
-        // Create new data array with default value — defaultValueInstrs
-        // handles externref/ref/ref_null/i32/f64/i64 uniformly. Hand-rolling
-        // `ref.null typeIdx: -1` for the externref element case produced
-        // "Unknown heap type -1" wasm_compile errors (#1338).
-        for (const ins of defaultValueInstrs(elemType)) fctx.body.push(ins);
-        fctx.body.push({ op: "local.get", index: lenTmp });
-        fctx.body.push({ op: "array.new", typeIdx: arrTypeIdx });
-        fctx.body.push({ op: "local.set", index: dstData });
-        // Copy elements: array.copy dst dstOff src srcOff len
-        fctx.body.push({ op: "local.get", index: dstData });
-        fctx.body.push({ op: "i32.const", value: 0 });
-        fctx.body.push({ op: "local.get", index: srcData });
-        fctx.body.push({ op: "i32.const", value: 0 });
-        fctx.body.push({ op: "local.get", index: lenTmp });
-        fctx.body.push({
-          op: "array.copy",
-          dstTypeIdx: arrTypeIdx,
-          srcTypeIdx: arrTypeIdx,
-        });
-        // Create new vec struct with copied data
-        fctx.body.push({ op: "local.get", index: lenTmp });
-        fctx.body.push({ op: "local.get", index: dstData });
-        fctx.body.push({ op: "ref.as_non_null" });
-        fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
-        return { kind: "ref", typeIdx: vecTypeIdx };
+          fctx.body.push({ op: "local.set", index: srcVec });
+          // Get length
+          fctx.body.push({ op: "local.get", index: srcVec });
+          fctx.body.push({
+            op: "struct.get",
+            typeIdx: vecTypeIdx,
+            fieldIdx: 0,
+          });
+          fctx.body.push({ op: "local.set", index: lenTmp });
+          // Get source data
+          fctx.body.push({ op: "local.get", index: srcVec });
+          fctx.body.push({
+            op: "struct.get",
+            typeIdx: vecTypeIdx,
+            fieldIdx: 1,
+          });
+          fctx.body.push({ op: "local.set", index: srcData });
+          // Create new data array with default value — defaultValueInstrs
+          // handles externref/ref/ref_null/i32/f64/i64 uniformly. Hand-rolling
+          // `ref.null typeIdx: -1` for the externref element case produced
+          // "Unknown heap type -1" wasm_compile errors (#1338).
+          for (const ins of defaultValueInstrs(elemType)) fctx.body.push(ins);
+          fctx.body.push({ op: "local.get", index: lenTmp });
+          fctx.body.push({ op: "array.new", typeIdx: arrTypeIdx });
+          fctx.body.push({ op: "local.set", index: dstData });
+          // Copy elements: array.copy dst dstOff src srcOff len
+          fctx.body.push({ op: "local.get", index: dstData });
+          fctx.body.push({ op: "i32.const", value: 0 });
+          fctx.body.push({ op: "local.get", index: srcData });
+          fctx.body.push({ op: "i32.const", value: 0 });
+          fctx.body.push({ op: "local.get", index: lenTmp });
+          fctx.body.push({
+            op: "array.copy",
+            dstTypeIdx: arrTypeIdx,
+            srcTypeIdx: arrTypeIdx,
+          });
+          // Create new vec struct with copied data
+          fctx.body.push({ op: "local.get", index: lenTmp });
+          fctx.body.push({ op: "local.get", index: dstData });
+          fctx.body.push({ op: "ref.as_non_null" });
+          fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
+          return { kind: "ref", typeIdx: vecTypeIdx };
+        }
+        // Not this vec (a `$__ta_view` share, a host externref, …) — undo the
+        // probe and let the paths below read the real carrier.
+        rollbackSpeculative(ctx, fctx, snap);
       }
     }
     // (#5268 r3 R3-1) Native standalone `Array.from(items[, mapFn[, thisArg]])`

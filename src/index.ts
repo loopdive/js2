@@ -365,6 +365,12 @@ export interface CompileResult {
    * r.importObject.__setInstance?.(instance);
    * ```
    *
+   * `__setInstance(instance)` is what establishes the data-struct authority the
+   * boundary needs to decode a returned object. (#6438) The legacy
+   * `__setExports(instance.exports)` wiring does not: after it, passing the raw
+   * exports record to `wrapExports` makes any struct-returning export throw
+   * rather than answer `{}`. Pass the instance to both.
+   *
    * Standalone / `wasi` mode is the zero-import portable default and needs no
    * import object; for those targets this is an empty object. Computed lazily —
    * accessing it builds the runtime once and caches the result.
