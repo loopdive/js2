@@ -32,6 +32,17 @@ loc-budget-allow:
   #   and their builder are replaced by one call. The grant is here only in
   #   case the merge preview scores the header rewrite as growth.
   - src/temporal-intl-shim.ts
+  # 2026-09-13 — STRANDED GRANT restated. `src/codegen/map-runtime.ts` (+11) is
+  #   grown by #5267 (`fix(#5267): Map/Set @@iterator yields the live record`),
+  #   which this branch carries through the S7/S8 stack it is based on; S9
+  #   itself does not touch that file. Its own grant lives in
+  #   plan/issues/5267-es2015-standalone-forof-iterators-collections-r2.md,
+  #   which this PR does not modify, so against `origin/main`'s merge preview
+  #   CI sees the growth here with no allowance in the diff. Restated in a file
+  #   this PR DOES modify (#3102's stranded-grant case). Found exactly the way
+  #   CLAUDE.md says to find it: the gate passes on the merge-base and fails
+  #   only under `LOC_GATE_BASE=origin/main`.
+  - src/codegen/map-runtime.ts
 ---
 
 ## Problem
@@ -177,6 +188,39 @@ answers `2` on **both** sides, and a direct read shows why:
 returns `"[object Object]"` on both trees. That is #5408 / the #5406-class
 boundary defect the S8 findings already attribute, plus #2984's
 path-dependent member read; the zone resolution in front of it is fixed.
+
+### What it moved, linked (full tables in #5383's "S9 findings")
+
+Three families, 120 rows each, `--target standalone`, provider linked
+(`cacheHit=true`, 0 `__temporal_*` leaks), families run sequentially:
+
+| family | S8 pass | **S9 pass** | fail | CE | pass→fail |
+| --- | --- | --- | --- | --- | --- |
+| `Temporal/PlainDate/**` | 51 | **55** | 64 | 1 | **0** |
+| `Temporal/Duration/**` | 32 | **35** | 82 | 3 | **0** |
+| `Temporal/ZonedDateTime/prototype/**` | 2 | **32** | 86 | 2 | **0** |
+| **total** | **85** | **122** | 232 | 6 | **0** |
+
+`RangeError: unknown time zone UTC` is **69 → 0** across the three families.
+All six S9 `compile_error` rows carry `compilation timeout` in their detail, as
+do all eight on the S8 side.
+
+Two standalone samples that must not move, and did not — base by file-copy
+revert on the same tree: `intl402/DateTimeFormat/**` 2 pass / 115 fail / 3 CE on
+both sides, `built-ins/Date/prototype/**` 120 pass on both, **0 flips** in
+either. Byte A/B: all 22 (module, target) artifacts identical on `gc` and
+`standalone`; the `gc` Temporal provider key is unchanged (`372a41be…`) while
+standalone and wasi re-key by design.
+
+### One deliberate contract change
+
+`#5383 S2c`'s "a method on the refusal class throws the same way" assertion is
+updated. `DateTimeFormat` is no longer a pure refusal, so a call on the bare
+**prototype** is now a brand-check **TypeError** — which is what the spec says —
+rather than the refusal-era `RangeError`. The property that assertion exists for
+is unchanged and still asserted: touching `ai.prototype` can never trap and the
+throw is catchable. The `"formatToParts" in ai.prototype` probe the polyfill
+actually performs is asserted in the new suite.
 
 ### Notes / follow-ups
 

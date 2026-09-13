@@ -620,13 +620,23 @@ describe("#5383 S2c — the standalone provider's `Intl` refusal shim", () => {
     expect(callExport(mod)).toBe(2);
   });
 
-  it("a method on the refusal class throws the same way, so `in`-probing it is safe", async () => {
+  it("a method called on the bare PROTOTYPE still throws catchably, so `in`-probing it is safe", async () => {
+    // CONTRACT CHANGE, #6442: `DateTimeFormat` is no longer a pure refusal —
+    // it has a real body for the table-free zones. So a call on the PROTOTYPE
+    // (no constructor ever ran, so no zone state) is now a brand-check
+    // failure — a **TypeError** — which is what the spec says, rather than the
+    // refusal-era `RangeError`. The property this test exists for is unchanged
+    // and is what the polyfill actually needs: touching `ai.prototype` can
+    // never trap, and the throw is catchable. The polyfill only ever performs
+    // `"formatToParts" in ai.prototype`, which is asserted in
+    // `tests/issue-6442-standalone-intl-datetimeformat-fixed-offset.ts`.
     const mod = await compileStandalone(
       withIntlShim(`
         const ai = Intl.DateTimeFormat;
         export function test() {
           const proto = ai.prototype;
-          try { proto.formatToParts(); } catch (e) { return e instanceof RangeError ? 1 : 2; }
+          if (!("formatToParts" in proto)) return 4;
+          try { proto.formatToParts(); } catch (e) { return e instanceof TypeError ? 1 : (e instanceof Error ? 2 : 3); }
           return 0;
         }
       `),
