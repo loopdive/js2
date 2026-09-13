@@ -436,6 +436,10 @@ export interface DeferredCallablePropertyDispatchPlan {
 
 /** Metadata for a generator lowered to an in-module WasmGC state machine (#680). */
 export interface NativeGeneratorInfo {
+  /** Generic yield-star uses an externref payload and preserves raw IteratorResults. */
+  nativeDelegates?: boolean;
+  /** Generic protocol callbacks must reject reentrant next/return/throw. */
+  executingFieldIdx?: number;
   /** Source-level generator function name. */
   functionName: string;
   /**

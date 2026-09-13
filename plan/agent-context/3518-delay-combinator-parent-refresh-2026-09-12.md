@@ -65,3 +65,28 @@ receipts are under `.tmp/5759-queue-drain/`; public verdicts are under
 `.tmp/frame-body-preservation-HWMbr5/` and
 `.tmp/delay-combinator-preservation-ZE3n0z/`. Keep dependency-first delivery
 5755→5756→5757→5758→5759→5760; only verified delivery to main counts.
+
+## September 13 refreshed source-family parent
+
+Merge the published source-family head
+`00dae7e4c6428a8d78ad86bb731ac78d0318800d` into this existing extraction PR.
+The only conflict was appended issue history; both complete records remain.
+All ten pinned extraction/repair source and test files are byte-identical,
+including the standard-EH delay body with tagged and foreign catches. The
+parent's two authenticated async-spill forward spans and six mutation controls
+are carried exactly. Every previous policy record and activation stays exact;
+seven incoming unmigrated classifications are added without widening edges.
+
+Fresh serialized validation passed **620/620 across fourteen full files**,
+zero failures or skips. This is the original thirteen-file cohort with frame
+preservation expanded from 41 to 47 and four incoming spill controls. The
+143 delay/combinator preservation controls and 121 boundary controls all ran.
+TS7 and all five source gates passed against the exact parent above;
+conformance synchronization changed zero files. Original historical fixtures,
+source hashes, failures and prior receipts remain intact. Current-root evidence
+does not certify a historical compiler pair, physical async acceptance or
+retirement. New receipts use `.tmp/5759-queue-drain/refreshed-parent-*`.
+
+Normal signed hooks remain required. Publish this existing PR only after
+PR5758 is verified delivered to main, then retain dependency-first delivery
+through PR5760 and the existing later stack. No new migration scope is added.

@@ -51,3 +51,38 @@ Normal signed commit/push hooks remain required, with actual outcomes recorded
 on the existing PR when published. Local receipts are in
 `.tmp/5758-queue-drain/`. Keep ordered delivery 5755→5756→5757→5758→5759→5760 and
 retain the signed standard-EH delay repair at PR5759, including both catch forms.
+
+## September 13 delivered-main reconciliation
+
+The owned branch now merges delivered main
+`ee2ee09062e587e882e6be6e47d5bdde5472ecbe` without conflicts. Its incoming
+async spill fix is preserved exactly. The initial full frame source check
+passed 39/41, with the two historical/forward receipts failing; the public
+comparator passed. The original report is retained.
+
+Two independently authenticated spans extend the existing forward fixture.
+All seven original records, the a426 hash and 0194 historical receipts stay
+unchanged, and the complete public comparator remains byte-identical. Six new
+mutation controls reject removed/corrupt spans, import retargeting and type-only
+imports. All nine spans reconstruct the exact original a426 bytes.
+
+Fresh current-root validation passed 422/422 across ten complete files, with
+zero skips: prior family/preparation/boundary 371, amended frame 47, incoming
+spill regression four. TS7 and all five source gates passed against the actual
+delivered-main base; conformance synchronization changed zero files. The
+initial failures, independent provenance and exact final results are under
+`.tmp/5758-queue-drain/main-5869-*` and `incoming-5869-*`. Normal signed hooks
+and confirmed parent delivery remain mandatory before publishing this exact
+head to the existing PR. No public cutover or physical async acceptance is
+implied by this source-preservation repair.
+
+The first refreshed head `eb3bd066d8db925f58e86aa803935bb7cdb82c41`
+was pushed with all normal hooks passing, including 302 actual changed-root
+tests at commit and 18 numeric-parity tests at push. Post-push corpus and all
+1,340 source files matched the signed state. GitHub nevertheless reported a
+merge conflict against `699df289e10826ae9074deb943ff147d2ab08324`; the local
+merge had two merge bases and a clean preview. An explicit merge of that exact
+main succeeded and changed only six benchmark artifacts and issue 4444. No
+source or test changed, so the 422 direct-test evidence remains applicable.
+The hold remains until publication and required-check verification; only exact
+merge-group validation and confirmed main content count as delivery.
