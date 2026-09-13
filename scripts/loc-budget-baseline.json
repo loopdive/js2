@@ -1,7 +1,7 @@
 {
   "generated": "2026-09-13",
   "threshold": 1500,
-  "totalCeiling": 869325,
+  "totalCeiling": 870097,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -52,7 +52,7 @@
     "src/codegen/iterator-native.ts": 5697,
     "src/codegen/json-codec-native.ts": 4554,
     "src/codegen/literals.ts": 6734,
-    "src/codegen/map-runtime.ts": 3098,
+    "src/codegen/map-runtime.ts": 3099,
     "src/codegen/multi-prepared-program.ts": 2553,
     "src/codegen/native-regex.ts": 4389,
     "src/codegen/native-strings.ts": 2678,
@@ -89,7 +89,7 @@
     "src/codegen/wasi.ts": 2268,
     "src/compiler.ts": 2027,
     "src/compiler/early-errors/node-checks.ts": 2297,
-    "src/emit/binary.ts": 2326,
+    "src/emit/binary.ts": 2245,
     "src/import-resolver.ts": 1534,
     "src/index.ts": 1519,
     "src/interp/emitter.ts": 2398,
