@@ -3350,6 +3350,17 @@ export function emitClosureCallArgcExtras(
 ): void {
   if (args.length > paramCount) {
     emitSetExtrasArgv(ctx, fctx, args as unknown as ts.Expression[], paramCount);
+  } else if (ctx.extrasArgvGlobalIdx >= 0) {
+    // (#6416) This call has no extras — but `arguments.length` is
+    // `argc + extrasLen`, so a vec left parked in the global by an earlier
+    // over-applied call (one whose callee never materialised `arguments` and
+    // therefore never consumed it) would be counted here. Null it out. Uses
+    // the no-lazy-registration convention of `buildArgcResetNoLazyExtras`:
+    // with no global yet, nothing in the module has ever written a vec.
+    fctx.body.push(
+      { op: "ref.null", typeIdx: ctx.extrasArgvVecTypeIdx },
+      { op: "global.set", index: ctx.extrasArgvGlobalIdx },
+    );
   }
   emitSetArgc(ctx, fctx, args.length, paramCount);
   appendForwardedOptionalArgcOverride(ctx, fctx, fctx.body, args, paramCount);
