@@ -8,8 +8,8 @@
 // `this` resolves through the `__current_this` module global read whatever a
 // dispatcher had parked there:
 //
-//     function withArguments(a, b) { return (this ? this.t : 'NO-THIS') + '|' + arguments.length; }
-//     register('x', () => withArguments(1));
+//     function tagOf(a, b) { return (this ? this.t : 'NO-THIS') + '|' + String(a); }
+//     register('x', () => tagOf(1));
 //     tests[0].body({});     // native NO-THIS|1 · wasm undefined|1
 //
 // `tests[0].body(...)` is a METHOD call, so `emitClosureMethodCallExportN`
@@ -62,8 +62,22 @@ async function runModule(moduleSource: string): Promise<string> {
   return String((instance.exports as Record<string, () => unknown>).test());
 }
 
-/** The reported reader: reports its receiver tag and its `arguments.length`. */
-const WITH_ARGUMENTS = `function withArguments(a, b) { return (this ? this.t : 'NO-THIS') + '|' + arguments.length; }`;
+/**
+ * The reported reader: one argument into two formals, reporting its receiver
+ * tag and its first argument.
+ *
+ * It does NOT read `arguments.length`. The issue as filed used that as the
+ * second half of the probe, but the two halves are independent bugs and
+ * `arguments.length` under an over-applied replay is
+ * [#6416](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6416-arguments-length-under-applied-call),
+ * whose fix main REVERTED on 2026-09-13 (`f9a31b48d5`, the standalone
+ * floor-breach revert). Asserting on it here would make this suite red for a
+ * reason that has nothing to do with the receiver — and would turn a
+ * deliberate main-side revert into a failure attributed to this change. The
+ * under-applied shape is kept because it is what the upstream harness does;
+ * only the assertion moved off the argc protocol.
+ */
+const WITH_ARGUMENTS = `function tagOf(a, b) { return (this ? this.t : 'NO-THIS') + '|' + String(a); }`;
 
 /** The upstream-harness shape, reduced: a registry over-applied on replay. */
 const HARNESS = `const tests = [];
@@ -76,7 +90,7 @@ const cases: Array<[string, string, string]> = [
     "the repro: plain call inside an over-applied body (was ✗: undefined|1)",
     `${WITH_ARGUMENTS}
 ${HARNESS}
-register('x', () => withArguments(1));
+register('x', () => tagOf(1));
 export function run() { return tests[0].body({}); }`,
     "NO-THIS|1",
   ],
@@ -84,7 +98,7 @@ export function run() { return tests[0].body({}); }`,
     "`.call(undefined, 1)` in the same window (was ✗: undefined|1)",
     `${WITH_ARGUMENTS}
 ${HARNESS}
-register('x', () => withArguments.call(undefined, 1));
+register('x', () => tagOf.call(undefined, 1));
 export function run() { return tests[0].body({}); }`,
     "NO-THIS|1",
   ],
@@ -92,7 +106,7 @@ export function run() { return tests[0].body({}); }`,
     "`.apply(undefined, [1])` in the same window (was ✗: undefined|1)",
     `${WITH_ARGUMENTS}
 ${HARNESS}
-register('x', () => withArguments.apply(undefined, [1]));
+register('x', () => tagOf.apply(undefined, [1]));
 export function run() { return tests[0].body({}); }`,
     "NO-THIS|1",
   ],
@@ -100,7 +114,7 @@ export function run() { return tests[0].body({}); }`,
     "a dispatched function EXPRESSION plain-calls (was ✗: undefined|1)",
     `${WITH_ARGUMENTS}
 ${HARNESS}
-register('x', function () { return withArguments(1); });
+register('x', function () { return tagOf(1); });
 export function run() { return tests[0].body({}); }`,
     "NO-THIS|1",
   ],
@@ -108,7 +122,7 @@ export function run() { return tests[0].body({}); }`,
     "plain call inside a METHOD call inside the window (was ✗: undefined|1)",
     `${WITH_ARGUMENTS}
 ${HARNESS}
-const o = { m: function () { return withArguments(1); } };
+const o = { m: function () { return tagOf(1); } };
 register('x', () => o.m());
 export function run() { return tests[0].body({}); }`,
     "NO-THIS|1",
@@ -117,7 +131,7 @@ export function run() { return tests[0].body({}); }`,
     "the enclosing method's own `this` survives the plain call (was ✗: O|1/O)",
     `${WITH_ARGUMENTS}
 ${HARNESS}
-const o = { t: 'O', m: function () { return withArguments(1) + '/' + this.t; } };
+const o = { t: 'O', m: function () { return tagOf(1) + '/' + this.t; } };
 register('x', () => o.m());
 export function run() { return tests[0].body({}); }`,
     "NO-THIS|1/O",
@@ -126,7 +140,7 @@ export function run() { return tests[0].body({}); }`,
     "the dispatcher's receiver is RESTORED after the plain call (was ✗: undefined|1/x)",
     `${WITH_ARGUMENTS}
 ${HARNESS}
-register('x', function () { const a = withArguments(1); return a + '/' + String(this.name); });
+register('x', function () { const a = tagOf(1); return a + '/' + String(this.name); });
 export function run() { return tests[0].body({}); }`,
     "NO-THIS|1/x",
   ],
@@ -135,7 +149,7 @@ export function run() { return tests[0].body({}); }`,
     `${WITH_ARGUMENTS}
 function boom() { throw new Error('x'); }
 ${HARNESS}
-register('x', function () { try { boom(); } catch (e) {} return withArguments(1) + '/' + String(this.name); });
+register('x', function () { try { boom(); } catch (e) {} return tagOf(1) + '/' + String(this.name); });
 export function run() { return tests[0].body({ t: 'T' }); }`,
     "NO-THIS|1/x",
   ],
@@ -143,14 +157,14 @@ export function run() { return tests[0].body({ t: 'T' }); }`,
     "optional call `f?.(1)` inside the window (was ✗: undefined|1)",
     `${WITH_ARGUMENTS}
 ${HARNESS}
-register('x', () => withArguments?.(1));
+register('x', () => tagOf?.(1));
 export function run() { return tests[0].body({}); }`,
     "NO-THIS|1",
   ],
   [
     "plain call in TAIL position inside the window (was ✗: undefined|1)",
     `${WITH_ARGUMENTS}
-function tail() { return withArguments(1); }
+function tail() { return tagOf(1); }
 ${HARNESS}
 register('x', () => tail());
 export function run() { return tests[0].body({}); }`,
@@ -161,7 +175,7 @@ export function run() { return tests[0].body({}); }`,
     "control: `.call({t:'T'}, 1)` in the window still installs T (#5341)",
     `${WITH_ARGUMENTS}
 ${HARNESS}
-register('x', () => withArguments.call({ t: 'T' }, 1));
+register('x', () => tagOf.call({ t: 'T' }, 1));
 export function run() { return tests[0].body({}); }`,
     "T|1",
   ],
@@ -169,7 +183,7 @@ export function run() { return tests[0].body({}); }`,
     "control: `.apply({t:'T'}, [1])` in the window still installs T (#3983)",
     `${WITH_ARGUMENTS}
 ${HARNESS}
-register('x', () => withArguments.apply({ t: 'T' }, [1]));
+register('x', () => tagOf.apply({ t: 'T' }, [1]));
 export function run() { return tests[0].body({}); }`,
     "T|1",
   ],
@@ -177,7 +191,7 @@ export function run() { return tests[0].body({}); }`,
     "control: `.bind({t:'T'})(1)` in the window still installs T (#4203)",
     `${WITH_ARGUMENTS}
 ${HARNESS}
-register('x', () => withArguments.bind({ t: 'T' })(1));
+register('x', () => tagOf.bind({ t: 'T' })(1));
 export function run() { return tests[0].body({}); }`,
     "T|1",
   ],
@@ -191,14 +205,14 @@ export function run() { return tests[0].body({ t: 'T' }); }`,
   [
     "control: class-method caller, plain call reads no receiver",
     `${WITH_ARGUMENTS}
-class C { m() { return withArguments(1); } }
+class C { m() { return tagOf(1); } }
 export function run() { return new C().m(); }`,
     "NO-THIS|1",
   ],
   [
     "control: object-literal-method caller, plain call reads no receiver",
     `${WITH_ARGUMENTS}
-const o = { m: function () { return withArguments(1); } };
+const o = { m: function () { return tagOf(1); } };
 export function run() { return o.m(); }`,
     "NO-THIS|1",
   ],
@@ -206,13 +220,13 @@ export function run() { return o.m(); }`,
     "control: plain call through a closure PARAMETER was already right",
     `${WITH_ARGUMENTS}
 function invoke(body) { return body({}); }
-export function run() { return invoke(() => withArguments(1)); }`,
+export function run() { return invoke(() => tagOf(1)); }`,
     "NO-THIS|1",
   ],
   [
     "control: top-level plain call was already right",
     `${WITH_ARGUMENTS}
-export function run() { return withArguments(1); }`,
+export function run() { return tagOf(1); }`,
     "NO-THIS|1",
   ],
   [
@@ -220,7 +234,7 @@ export function run() { return withArguments(1); }`,
     `${WITH_ARGUMENTS}
 ${HARNESS}
 register('x', () => 0);
-export function run() { tests[0].body({}); return withArguments(1); }`,
+export function run() { tests[0].body({}); return tagOf(1); }`,
     "NO-THIS|1",
   ],
   [
@@ -253,13 +267,13 @@ describe("#6436 — a plain call installs `undefined`, not the ambient receiver"
   it("mints no `__named_plain_call_` helper for a `this`-free callee", async () => {
     const withThis = await compile(`${WITH_ARGUMENTS}
 ${HARNESS}
-register('x', () => withArguments(1));
+register('x', () => tagOf(1));
 export function run() { return tests[0].body({}); }`);
     const thisFree = await compile(`function plain(a) { return 'P|' + a; }
 ${HARNESS}
 register('x', () => plain(1));
 export function run() { return tests[0].body({}); }`);
-    expect(withThis.wat).toContain("__named_plain_call_withArguments");
+    expect(withThis.wat).toContain("__named_plain_call_tagOf");
     expect(thisFree.wat).not.toContain("__named_plain_call_");
   });
 });
