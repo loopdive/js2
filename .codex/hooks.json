@@ -10,6 +10,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Bash|exec_command|shell_command|mcp__.*github.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/block-github-issue-create.py\"",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PostToolUse": [
