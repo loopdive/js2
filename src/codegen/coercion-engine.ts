@@ -31,6 +31,7 @@
  * `coercionPlan` (coercion-plan.ts); this module is the JS-semantic layer on
  * top and never re-hand-rolls a box/unbox row.
  */
+import { emitNativeBigIntFormat } from "./bigint-format-native.js";
 import { isBooleanType, isStringType } from "../checker/type-mapper.js";
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { TypeFact } from "../checker/oracle.js";
@@ -246,6 +247,15 @@ export function emitToString(
   if (valType.kind === "i32" && (isStaticBooleanType(staticType) || (valType as { boolean?: true }).boolean)) {
     emitBoolToString(ctx, fctx);
     return native ? nativeStringType(ctx) : { kind: "externref" };
+  }
+
+  // #5399: an i64 BigInt string conversion must not round through f64.
+  if (native && valType.kind === "i64") {
+    emitNativeBigIntFormat(ctx, new Set(["bigint_toString"]));
+    flushLateImportShifts(ctx, fctx);
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("bigint_toString")! });
+    emitNativeStringRefFromExternref(ctx, fctx);
+    return nativeStringType(ctx);
   }
 
   // ── f64 / i32 / i64 → number_toString ──

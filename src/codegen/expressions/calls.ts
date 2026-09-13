@@ -6029,7 +6029,7 @@ export function compileNumberIsPredicate(
     const t = compileExpression(ctx, fctx, arg);
     if (t) fctx.body.push({ op: "drop" });
     fctx.body.push({ op: "i32.const", value: 0 });
-    return { kind: "i32" };
+    return { kind: "i32", boolean: true };
   }
 
   // Several non-Number primitive types reuse a numeric Wasm representation that
@@ -6054,7 +6054,7 @@ export function compileNumberIsPredicate(
     const valTmp = allocLocal(fctx, `__numpred_${fctx.locals.length}`, { kind: "f64" });
     fctx.body.push({ op: "local.set", index: valTmp });
     for (const instr of emitPredicate(valTmp)) fctx.body.push(instr);
-    return { kind: "i32" };
+    return { kind: "i32", boolean: true };
   }
 
   // Any-typed argument: inspect the box's runtime type. Non-numbers are `false`
@@ -6082,7 +6082,7 @@ export function compileNumberIsPredicate(
     ],
     else: [{ op: "i32.const", value: 0 }],
   });
-  return { kind: "i32" };
+  return { kind: "i32", boolean: true };
 }
 
 /**

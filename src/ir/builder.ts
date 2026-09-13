@@ -402,7 +402,7 @@ export class IrFunctionBuilder {
 
   emitStringEq(lhs: IrValueId, rhs: IrValueId, negate: boolean): IrValueId {
     const result = this.allocator.fresh();
-    const resultType: IrType = { kind: "val", val: { kind: "i32" } };
+    const resultType: IrType = { kind: "val", val: { kind: "i32", boolean: true } };
     this.valueTypes.set(result, resultType);
     this.pushInstr({ kind: "string.eq", lhs, rhs, negate, result, resultType });
     return result;

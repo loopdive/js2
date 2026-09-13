@@ -7,6 +7,7 @@
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { ensureAnyValueType } from "./any-helpers.js";
+import { emitToString } from "./coercion-engine.js";
 import { getArgumentsVecTypeIdx } from "./arguments-carrier-brand.js";
 import { ensureDateAnyToStringHelper } from "./date-any-to-string.js"; // (#4491 T4-B)
 import { emitNativeHtmlWrapperHelpers } from "./html-wrapper-native.js";
@@ -2532,8 +2533,8 @@ export function ensureStandaloneStdoutSink(ctx: CodegenContext): void {
  *
  * Lives in native-strings.ts (the coercion-engine-sanctioned owner of
  * `__any_to_string`) so the #2108 coercion-drift gate does not count this as a
- * new hand-rolled coercion site outside the engine. Bare scalars (f64/i32/i64 — a
- * number/boolean passed directly, never a marker) are dropped best-effort.
+ * new hand-rolled coercion site outside the engine. Primitive scalars use the
+ * same native formatter and boolean branding as other string conversions.
  */
 export function emitStandaloneStdoutAppendValue(
   ctx: CodegenContext,
@@ -2546,10 +2547,42 @@ export function emitStandaloneStdoutAppendValue(
     return;
   }
   if (valType === null) return; // void arg — nothing was pushed
-  if (valType.kind === "externref") {
+  if (valType.kind === "f64" || valType.kind === "i32" || valType.kind === "i64") {
+    // (#5392) A legacy body must preserve ordinary console arguments too, even when
+    // IR selection declines the module initializer. Use the runtime carrier's
+    // boolean brand, never an asserted checker type, to choose the rendering.
+    if (valType.kind !== "i32" || !valType.boolean) {
+      emitNativeNumberFormat(ctx, new Set(["number_toString"]));
+      flushLateImportShifts(ctx, fctx);
+    }
+    // Console inspects primitive numbers: unlike String(), it preserves -0
+    // and adds the BigInt suffix. Classify the emitted carrier, never TS types.
+    const numberLocal =
+      valType.kind === "f64" ? allocLocal(fctx, `__console_number_${fctx.locals.length}`, valType) : undefined;
+    if (numberLocal !== undefined) fctx.body.push({ op: "local.tee", index: numberLocal });
+    emitToString(ctx, fctx, valType, { kind: "unknown" }, "string");
+    if (numberLocal !== undefined) {
+      const rendered = allocLocal(fctx, `__console_rendered_${fctx.locals.length}`, nativeStringType(ctx));
+      fctx.body.push({ op: "local.set", index: rendered });
+      fctx.body.push({ op: "local.get", index: numberLocal });
+      fctx.body.push({ op: "i64.reinterpret_f64" });
+      fctx.body.push({ op: "i64.const", value: -9223372036854775808n });
+      fctx.body.push({ op: "i64.eq" });
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: nativeStringType(ctx) },
+        then: nativeStringLiteralInstrs(ctx, "-0"),
+        else: [{ op: "local.get", index: rendered }],
+      });
+    }
+    if (valType.kind === "i64" && valType.bigint === true) {
+      fctx.body.push(...nativeStringLiteralInstrs(ctx, "n"));
+      fctx.body.push({ op: "call", funcIdx: ctx.nativeStrHelpers.get("__str_concat")! });
+    }
+  } else if (valType.kind === "externref") {
     // externref is a separate hierarchy from anyref — convert first.
     fctx.body.push({ op: "any.convert_extern" });
-  } else if (valType.kind !== "ref" && valType.kind !== "ref_null") {
+  } else if (valType.kind !== "ref" && valType.kind !== "ref_null" && valType.kind !== "anyref") {
     fctx.body.push({ op: "drop" }); // scalar — best-effort, never a marker
     return;
   }

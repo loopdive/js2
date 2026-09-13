@@ -115,21 +115,16 @@ const builtinFragment: symbol | object =
 
 function resolveConsole(variant: string, deps?: Record<string, any>): Function {
   const supplied: Record<string, any> = deps?.console ?? console;
-  let method = "log";
-  let booleanValue = variant === "bool";
-  for (const candidate of ["warn", "error", "info", "debug", "log"] as const) {
-    if (variant.startsWith(`${candidate}_`)) {
-      method = candidate;
-      booleanValue = variant === `${candidate}_bool`;
-      break;
-    }
-  }
-  const write = (value: unknown): void => {
+  const named = /^(log|warn|error|info|debug)_(.+)$/.exec(variant);
+  const method = named?.[1] ?? "log";
+  const format = named?.[2] ?? variant;
+  const tags = format.startsWith("group_") ? format.slice(6) : format === "bool" ? "b" : "e";
+  return (...values: unknown[]) => {
     const fallback = console as unknown as Record<string, any>;
     const target = typeof supplied[method] === "function" ? supplied : fallback;
-    (target[method] as (...args: any[]) => void).call(target, value);
+    const args = values.map((value, index) => (tags[index] === "b" ? Boolean(value) : value));
+    (target[method] as (...args: unknown[]) => void).apply(target, args);
   };
-  return booleanValue ? (value: number) => write(Boolean(value)) : (value: unknown) => write(value);
 }
 
 /**

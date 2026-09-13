@@ -1741,7 +1741,7 @@ export function tryCompileNativeMapMethodCall(
       compileCollectionElementArg(ctx, fctx, args[0]);
       fctx.body.push({ op: "call", funcIdx: helperIdx });
       // get → anyref value; has/delete → i32 (boolean).
-      return methodName === "get" ? ({ kind: "anyref" } as ValType) : ({ kind: "i32" } as ValType);
+      return methodName === "get" ? ({ kind: "anyref" } as ValType) : ({ kind: "i32", boolean: true } as ValType);
     }
     case "set": {
       compileCollectionElementArg(ctx, fctx, args[0]);

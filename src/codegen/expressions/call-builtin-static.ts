@@ -694,7 +694,7 @@ export function compileBuiltinStaticCall(
       (method === "isNaN" || method === "isInteger" || method === "isFinite" || method === "isSafeInteger")
     ) {
       fctx.body.push({ op: "i32.const", value: 0 });
-      return { kind: "i32" };
+      return { kind: "i32", boolean: true };
     }
     if (method === "isNaN" && expr.arguments.length >= 1) {
       // NaN !== NaN is true; for any other number it's false.
@@ -3628,7 +3628,7 @@ export function compileBuiltinStaticCall(
   ) {
     if (expr.arguments.length === 0) {
       fctx.body.push({ op: "i32.const", value: 1 });
-      return { kind: "i32" };
+      return { kind: "i32", boolean: true };
     }
     const onlyArg = expr.arguments[0]!;
     const argType = compileExpression(ctx, fctx, onlyArg);
@@ -3642,11 +3642,11 @@ export function compileBuiltinStaticCall(
       const resolved = ctx.funcMap.get("__extern_is_undefined") ?? isUndefIdx;
       if (resolved !== undefined) {
         fctx.body.push({ op: "call", funcIdx: resolved });
-        return { kind: "i32" };
+        return { kind: "i32", boolean: true };
       }
     }
     fctx.body.push({ op: "ref.is_null" });
-    return { kind: "i32" };
+    return { kind: "i32", boolean: true };
   }
 
   // Handle Object.is(x, y) — SameValue comparison (#965)
@@ -3682,7 +3682,7 @@ export function compileBuiltinStaticCall(
         const yt = compileExpression(ctx, fctx, yArgEarly);
         if (yt && yt.kind !== "i32") coerceType(ctx, fctx, yt, { kind: "i32" });
         fctx.body.push({ op: "i32.eq" });
-        return { kind: "i32" };
+        return { kind: "i32", boolean: true };
       }
 
       if (bothNumber) {
@@ -3702,7 +3702,7 @@ export function compileBuiltinStaticCall(
         // SameValue(Number, Number): (bits(x) == bits(y)) | bothNaN — shared with
         // the reified `Object.is` value closure so the two never drift.
         for (const instr of sameValueNumberOps(xLocal, yLocal)) fctx.body.push(instr);
-        return { kind: "i32" };
+        return { kind: "i32", boolean: true };
       }
 
       if (bothString && ctx.nativeStrings) {
@@ -3718,7 +3718,7 @@ export function compileBuiltinStaticCall(
           void yt;
           fctx.body.push({ op: "call", funcIdx: flattenIdx });
           fctx.body.push({ op: "call", funcIdx: eqIdx });
-          return { kind: "i32" };
+          return { kind: "i32", boolean: true };
         }
       }
     }
@@ -3751,10 +3751,10 @@ export function compileBuiltinStaticCall(
     flushLateImportShifts(ctx, fctx);
     if (isIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx: isIdx });
-      return { kind: "i32" };
+      return { kind: "i32", boolean: true };
     }
     fctx.body.push({ op: "i32.const", value: 0 });
-    return { kind: "i32" };
+    return { kind: "i32", boolean: true };
   }
 
   // Handle Object.assign(target, ...sources) — shallow copy properties (#965)

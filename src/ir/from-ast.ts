@@ -7581,7 +7581,27 @@ function lowerHostFreeConsoleArgument(value: IrValueId, cx: LowerCtx, methodName
         `ir/from-ast: console.${methodName} numeric argument needs a host-free number formatter (${cx.funcName})`,
       );
     }
-    return lowerNativeNumberToString(value, cx.funcName, cx);
+    // Console inspection preserves the sign of zero, while the shared
+    // Number::toString formatter intentionally renders either zero as "0".
+    const bits = cx.builder.emitUnary("i64.reinterpret_f64", value, IR_I64);
+    const negativeZero = cx.builder.emitConst({ kind: "i64", value: -9223372036854775808n }, IR_I64);
+    const isNegativeZero = cx.builder.emitBinary("i64.eq", bits, negativeZero, IR_BOOL);
+    let whenTrue!: IrValueId;
+    const thenBody = cx.builder.collectBodyInstrs(() => {
+      whenTrue = cx.builder.emitStringConst("-0");
+    });
+    let whenFalse!: IrValueId;
+    const elseBody = cx.builder.collectBodyInstrs(() => {
+      whenFalse = lowerNativeNumberToString(value, cx.funcName, cx);
+    });
+    return cx.builder.emitIfElse({
+      cond: isNegativeZero,
+      then: thenBody,
+      thenValue: whenTrue,
+      else: elseBody,
+      elseValue: whenFalse,
+      resultType: { kind: "string" },
+    });
   }
   if (irTypeIsBoolean(valueType)) return lowerBooleanToString(cx.builder, value);
   // A number that propagation narrowed to i32 is still a number; widen and use
@@ -8892,7 +8912,7 @@ function emitStringRelational(
     throw new Error(`ir/from-ast: string compare produced void result (${cx.funcName})`);
   }
   const zero = cx.builder.emitConst({ kind: "i32", value: 0 }, irVal({ kind: "i32" }));
-  return cx.builder.emitBinary(foldOp, sign, zero, irVal({ kind: "i32" }));
+  return cx.builder.emitBinary(foldOp, sign, zero, irBool());
 }
 
 interface StringMethodSig {
