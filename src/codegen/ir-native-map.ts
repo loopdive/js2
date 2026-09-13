@@ -37,7 +37,8 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { COLLECTION_KIND, ensureMapHelpers } from "./map-runtime.js";
+import { COLLECTION_KIND } from "./collection-kind.js"; // (#6419) import-free leaf — map-runtime.js is in an import cycle
+import { ensureMapHelpers } from "./map-runtime.js";
 import { addUnionImports } from "./registry/imports.js";
 
 /** Allocate the native `$Map` backing an IR-owned module binding. */

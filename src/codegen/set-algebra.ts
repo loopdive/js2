@@ -31,7 +31,8 @@ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3
 import type { InnerResult } from "./shared.js";
 import { compileExpression } from "./shared.js";
 import { emitSetAlgebraAnyArgDispatch, ensureSetAlgebraAnyDispatch } from "./collections-es2025.js";
-import { COLLECTION_KIND, ensureMapHelpers } from "./map-runtime.js";
+import { COLLECTION_KIND } from "./collection-kind.js"; // (#6419) import-free leaf — map-runtime.js is in an import cycle
+import { ensureMapHelpers } from "./map-runtime.js";
 import { emitSetBrandCheck, ensureSetHelpers } from "./set-runtime.js";
 
 const TOMBSTONE_BIT = 0x40000000; // mirrors map-runtime.ts

@@ -23,7 +23,20 @@ async function run(src: string): Promise<any> {
   const importObject: any = result.importObject ?? {};
   const { instance } = await WebAssembly.instantiate(result.binary, importObject);
   importObject.__setExports?.(instance.exports);
-  return { exp: wrapExports(instance.exports, { signatures: result.exportSignatures }), raw: instance.exports };
+  // (#6419) Hand `wrapExports` the genuine `WebAssembly.Instance`, not its raw
+  // exports record. Only the instance carries the data-struct authority the
+  // boundary needs to DECODE a returned struct: with the bare exports record
+  // `__struct_field_names` cannot be trusted through the host-bridge export
+  // view, `_wasmToPlain` finds no fields, and a returned fnctor instance
+  // marshals to `{}` — which is how the acorn-shape row below read
+  // `ast.type === undefined` while the raw struct was perfectly well-formed
+  // (`__sget_type(raw) === "Program"`). Measured 2026-09-13: same module, same
+  // call, `wrapExports(instance, …)` answers `{type:"Program"}` and
+  // `wrapExports(instance.exports, …)` answers `{}`. That silent degradation
+  // of the raw-exports overload is a real runtime defect and is filed
+  // separately; this file's subject is closure dispatch, so it uses the
+  // documented preferred input.
+  return { exp: wrapExports(instance, { signatures: result.exportSignatures }), raw: instance.exports };
 }
 
 describe("#1712 — fnctor-capturing closure dispatch through the host bridge", () => {
