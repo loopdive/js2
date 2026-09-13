@@ -10,6 +10,11 @@ import { integrityVarKey } from "../widened-var-key.js";
 import { classMemberFuncKey } from "../class-member-keys.js"; // (#5195 Step 9 H) static setter key
 import { PROP_FLAG_ACCESSOR, PROP_FLAG_WRITABLE } from "../object-ops.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
+import {
+  prepareStrictSingleArrayWrite,
+  emitStrictSingleArrayWrite,
+  emitEarlyStrictArrayWrite,
+} from "./destructuring-unresolved.js";
 import { emitBoundsCheckedArrayGet, resolveArrayInfo } from "../array-methods.js";
 import { emitArraySetLengthValidation } from "../array-length-define.js"; // (#4222) §10.4.2.4 step 3
 import { emitHoleToUndefined, holeSentinelInstrs } from "../array-holes.js";
@@ -32,6 +37,7 @@ import { reportError } from "../context/errors.js";
 import { fnShadowSlot, isShadowedTopLevelFn, withShadowReadSuppressed } from "../fn-global-shadow.js"; // (#4630)
 import { reportSilentFallback } from "../fallback-telemetry.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
+import { recordSidecarPropertyOwner } from "../sidecar-owner-scope.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import {
   addFuncType,
@@ -95,7 +101,6 @@ import { tryCompileFnctorPrototypeAssign } from "./fnctor-prototype.js";
 import { reserveAccessorSetDriver } from "../accessor-driver.js";
 import { S5C_STRUCT_ACCESSOR_CLOSURE } from "../struct-accessor-closure.js";
 import {
-  findUnresolvableInArrayPattern,
   findUnresolvableInObjectPattern,
   isUnresolvableIdent,
   NOT_UNRESOLVABLE,
@@ -1978,9 +1983,11 @@ function compileArrayDestructuringAssignment(
   target: ts.ArrayLiteralExpression,
   value: ts.Expression,
 ): InnerResult {
+  const singleUnresolved = prepareStrictSingleArrayWrite(ctx, fctx, target, value);
   // Compile the RHS — should produce a struct ref (either tuple or vec)
   const resultType = compileExpression(ctx, fctx, value);
   if (!resultType) return null;
+  if (singleUnresolved) return emitStrictSingleArrayWrite(ctx, fctx, resultType);
   // (#1719 CPR-2) When the program overrode Array.prototype[@@iterator] and the
   // RHS is a real array, drive the captured override instead of the backing
   // store (§13.15.5.2 ArrayAssignmentPattern → GetIterator). Strictly gated
@@ -1997,23 +2004,7 @@ function compileArrayDestructuringAssignment(
     if (drove) return { kind: "externref" };
   }
 
-  // §6.2.4 PutValue: strict-mode assignment to unresolvable reference throws.
-  // Nested patterns must observe a nullish element before PutValue resolves
-  // their leaf targets. In `[[x]] = []`, the missing outer element therefore
-  // throws the required TypeError before strict-mode's unresolved `x` check
-  // (#4719). Leaf-only patterns retain the existing early ReferenceError path.
-  const hasNestedPattern = target.elements.some(
-    (element) => ts.isArrayLiteralExpression(element) || ts.isObjectLiteralExpression(element),
-  );
-  if (
-    isStrictContext(target, ctx.inferModuleStrictArguments) &&
-    findUnresolvableInArrayPattern(ctx, fctx, target) &&
-    !hasNestedPattern
-  ) {
-    emitStrictPutValueThrow(ctx, fctx);
-    fctx.body.push({ op: "ref.null.extern" });
-    return { kind: "externref" };
-  }
+  if (emitEarlyStrictArrayWrite(ctx, fctx, target)) return { kind: "externref" };
 
   // Externref fallback: use __extern_get(obj, boxed_index) for each element
   if (resultType.kind !== "ref" && resultType.kind !== "ref_null") {
@@ -2783,7 +2774,9 @@ function emitDynamicMemberSet(
   // choice so a later statically-typed `obj.prop` read does not auto-add a new,
   // still-default struct field and thereby hide the value just written.
   if (ts.isIdentifier(target.expression)) {
-    ctx.sidecarDefinedPropertyKeys.add(`${target.expression.text}:${propName}`);
+    const sidecarKey = `${target.expression.text}:${propName}`;
+    ctx.sidecarDefinedPropertyKeys.add(sidecarKey);
+    recordSidecarPropertyOwner(ctx, sidecarKey, target.expression);
   }
 
   // Receiver (reference before value, matching plain `obj.x = v` ordering) → externref local.
@@ -5001,7 +4994,36 @@ function compilePropertyAssignment(
     if (ctx.standalone) {
       const ownWrite = emitExternrefBackedOwnFieldWrite(ctx, fctx, target, value, fieldName, typeName);
       if (ownWrite !== undefined) return ownWrite;
-      // undefined → not applicable (e.g. helper unavailable); fall through.
+      // (#5383 S2b) `undefined` means the class has NO known native backing —
+      // an Array/TypedArray/String/… carrier rather than an `$Error_struct` or
+      // a native `$Object` (`externrefBackedOwnFieldBacking`). The struct path
+      // below is not merely unhelpful there, it is UNREACHABLE-BY-DESIGN: the
+      // instance is an externref carrier and never a `$typeName` WasmGC struct,
+      // so its `ref.test $typeName` always misses. The receiver then narrows to
+      // `ref.null $typeName` and the #2084 null guard throws
+      // `TypeError: Cannot access property on null or undefined` — which is
+      // exactly what `class B extends Array { constructor(n, s) { super(n);
+      // this.sign = s; } }` did on this lane, and (via jsbi's `class JSBI
+      // extends Array`) what stopped the standalone @js-temporal/polyfill's
+      // `__module_init`.
+      //
+      // The field only reaches the struct path at all because the constructor's
+      // own `this.sign = …` FLOW-GROWS a `sign` slot onto the vestigial `$B`
+      // struct; an assignment from outside the class (`b.sign = 1`) finds no
+      // slot, takes the #4149 `fieldIdx === -1` arm below, and has always
+      // worked. So route the unknown-backing case to the SAME dynamic store the
+      // outside write already uses — one behaviour for both, instead of a slot
+      // that decides which of the two throws.
+      //
+      // Nothing that works today changes: every write this redirects previously
+      // threw or trapped, so there is no valid artifact to perturb. The
+      // JS-host/`gc` lane never enters this branch (it is `ctx.standalone`-only
+      // and the `!ctx.wasi` arm below is untouched).
+      const backing = externrefBackedOwnFieldBacking(ctx, typeName);
+      if (backing === undefined) {
+        return compilePropertyAssignmentExternSet(ctx, fctx, target, value, fieldName);
+      }
+      // A known backing whose helper was unavailable — fall through unchanged.
     } else if (!ctx.wasi) {
       return compilePropertyAssignmentExternSet(ctx, fctx, target, value, fieldName, true);
     }

@@ -35,7 +35,7 @@ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { getOrCreateFuncRefWrapperTypes } from "./closures.js";
 import { ensureBuiltinFnMetaType, pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
-import { addFuncType, getOrRegisterVecType } from "./registry/types.js";
+import { addFuncType, getOrRegisterVecType, taCtorKindOf } from "./registry/types.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureSymbolCarrier } from "./symbol-native.js";
@@ -415,8 +415,9 @@ export function buildLazyNativeProtoGetInstrs(ctx: CodegenContext, brand: number
   // brand's proto-index companion. Emits nothing into `initBody` — the seeder
   // is a separate function invoked from `__protoidx_companion` when that
   // companion is first minted — so the instruction sequence returned below is
-  // byte-identical to before this slice. Self-gated (see its doc): a module
-  // that is not `protoMemberDirty` gets `undefined` and pays nothing.
+  // byte-identical to before this slice. Concrete TypedArray prototypes seed
+  // their own constructor even without source-level reflection; other brands
+  // retain the member-dirty demand gate.
   ensureNativeProtoCompanionSeeder(ctx, brand);
 
   // A flowing builtin prototype is a read-only value in the common reflection
@@ -426,12 +427,11 @@ export function buildLazyNativeProtoGetInstrs(ctx: CodegenContext, brand: number
   // registered seeder is never reached: dynamic reads see an empty
   // `$NativeProto` and static `Date.prototype.k` reads are the only ones that
   // work. Materialize the companion once, immediately after the prototype
-  // singleton, only for the same demand-gated standalone/member-dirty lane.
-  // This keeps ordinary prototype materialization byte-inert and lets the
-  // seeder install the spec `{ writable: true, enumerable: false,
+  // singleton whenever this brand has a registered standalone seeder. This
+  // lets the seeder install the spec `{ writable: true, enumerable: false,
   // configurable: true }` entries before any flowing read occurs.
   const companionIdx = ctx.funcMap.get("__protoidx_companion");
-  if (ctx.standalone && ctx.protoMemberDirty === true && companionIdx !== undefined) {
+  if (ctx.standalone && nativeProtoSeederRegistry(ctx).has(brand) && companionIdx !== undefined) {
     initBody.push(
       { op: "i32.const", value: brand - BUILTIN_BRAND_BASE },
       { op: "i32.const", value: 1 },
@@ -663,8 +663,10 @@ const PROTO_ACCESSOR_DEFINE_FLAGS = (1 << 4) | (1 << 5) | (1 << 2);
  * with the glue's own members. Returns its name, or `undefined` when the brand
  * has no glue, the module is not armed, or the object runtime is absent.
  *
- * Demand-gating, in two independent layers — both must hold, so a module that
- * does not reflect emits ZERO of this:
+ * Demand-gating for method-bearing prototypes uses two independent layers.
+ * Concrete TypedArray prototypes additionally seed their constructor and
+ * BYTES_PER_ELEMENT whenever materialized, because ordinary dynamic instance
+ * reads need those properties without source-level reflection.
  *   1. `ctx.protoMemberDirty` — the pre-scan saw a builtin `.prototype` that
  *      can reach the dynamic reader as a value (or an `Object.getPrototypeOf`
  *      call). A polyfill-only module (`String.prototype.foo = …`) reserves the
@@ -684,13 +686,18 @@ const PROTO_ACCESSOR_DEFINE_FLAGS = (1 << 4) | (1 << 5) | (1 << 2);
  * exactly as today).
  */
 export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: number): string | undefined {
-  if (!ctx.standalone || ctx.protoMemberDirty !== true) return undefined;
+  if (!ctx.standalone) return undefined;
   const registry = nativeProtoSeederRegistry(ctx);
   const existing = registry.get(brand);
   if (existing !== undefined) return existing;
 
   const glue = getNativeProtoBuiltinGlue(ctx, brand);
   if (!glue) return undefined;
+  // A dynamic TypedArray instance reads its intrinsic prototype's constructor
+  // even when no source-level prototype reflection marks the module member-dirty.
+  // Concrete view glues contain only constructor and BYTES_PER_ELEMENT: seed
+  // those real properties rather than defaulting an ordinary Get(undefined).
+  if (ctx.protoMemberDirty !== true && taCtorKindOf(glue.name) < 0) return undefined;
 
   // ORDERING (measured, not assumed). A proto can be materialized BEFORE the
   // object runtime exists, and then `__defineProperty_value` — which the seeder

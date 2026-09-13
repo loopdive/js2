@@ -175,8 +175,10 @@ async function loadWasmFn(wasmPath, importsPath, exportName) {
   // The runtime helpers bundle is generated alongside the wasm so the child can
   // build imports identically to how the in-process sidebar does it.
   const helpersUrl = pathToFileURL(importsManifest.runtimeHelpersPath).href;
-  const { buildImports, instantiateWasm } = await import(helpersUrl);
-  const imports = buildImports(importsManifest.imports ?? [], {}, importsManifest.stringPool ?? []);
+  const { buildImports, buildCompiledAdapterImports, instantiateWasm } = await import(helpersUrl);
+  const imports = importsManifest.adapterManifest
+    ? buildCompiledAdapterImports(importsManifest.adapterManifest)
+    : buildImports(importsManifest.imports ?? [], {}, importsManifest.stringPool ?? []);
   const { instance } = await instantiateWasm(wasmBytes, imports.env, imports.string_constants);
   imports.setInstance?.(instance);
   const fn = instance.exports?.[exportName];

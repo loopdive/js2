@@ -90,6 +90,7 @@ import { ensureDateStruct } from "./expressions/builtins.js";
 import { getOrRegisterDvWindowType } from "./dataview-native.js";
 import { addFuncType, getOrRegisterTaDynViewType, getOrRegisterTaViewType, TA_CTOR_KINDS } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { LINK_BOUNDARY_TO_STRING_TAG } from "./link-boundary-names.js"; // (#5406) boundary-carrier arm
 
 /** §20.1.3.6 result string for a builtin tag. */
 const tagString = (tag: string): string => `[object ${tag}]`;
@@ -586,6 +587,40 @@ export function emitObjectProtoToStringClassifier(
       { op: "any.convert_extern" },
       { op: "ref.test", typeIdx: fnctorTypeIdx },
       { op: "if", blockType: { kind: "empty" }, then: returnTag("Object") },
+    );
+  }
+
+  // ── (#5406) LAST: a carrier that came across a standalone `link:` boundary.
+  //
+  // Every arm above is a type test, and a type test only sees the types THIS
+  // module declared. `$Object` is not in the canonical rec group (the string +
+  // vec families are), so a provider-minted object misses all of them and the
+  // receiver reaches the loud refusal — measured, while the consumer's own
+  // object answers and the provider's ARRAY answers (its carrier type IS
+  // shared). Ask the owner, exactly like the `__extern_get` / method-call miss
+  // paths do; a null answer means "not mine" and leaves the refusal in place.
+  //
+  // Reached ONLY after every local arm has missed, so a receiver this module
+  // can decode never pays the call, and a module with no linked provider emits
+  // nothing here — which is what keeps the single-module lane byte-identical.
+  // The provider registers this same name in its OWN `funcMap` (that is how it
+  // gets exported), so the `exportsConsumedByWasm` guard is load-bearing:
+  // without it a provider would call itself.
+  const peerToStringTagIdx =
+    ctx.standalone && ctx.exportsConsumedByWasm !== true ? ctx.funcMap.get(LINK_BOUNDARY_TO_STRING_TAG) : undefined;
+  if (peerToStringTagIdx !== undefined) {
+    const peerLocal = allocLocal(fctx, `__opts_peer_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push(
+      { op: "local.get", index: receiverIndex },
+      { op: "call", funcIdx: peerToStringTagIdx },
+      { op: "local.tee", index: peerLocal },
+      { op: "ref.is_null" },
+      { op: "i32.eqz" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "local.get", index: peerLocal }, { op: "return" }],
+      },
     );
   }
 

@@ -600,6 +600,103 @@ export function verifyHistorical(reader) {
   return { historicalDonors: 8, delayRows: 4, vectorLoops: 1, sharedDispatchHelpers: 1 };
 }
 
+// Separate forward-fix evidence from landed d4108568, never a replacement for
+// ORIGINAL_EVIDENCE, ORIGINAL_SEMANTIC_EVIDENCE, or either glue ledger above.
+// The landed call uses exnTagIdx/runtime.rejectFuncIdx and its local externref
+// type. Only those three resolved-resource spellings are mapped to the leaf.
+export const DELAY_EH_FORWARD_EVIDENCE = {
+  commit: "d4108568d43f14c361ecc3a58c82633027eaae39",
+  path: "src/codegen/ir-native-promise-delay.ts",
+  sourceSha256: "e52f83aee0ff2192ebfcfc34e3e94adcdd8b0cac7c91156e5e2f4b5d704cfabe",
+  landedCall: "ed21085cbd0394075d627ff948908dc7fe5d5b2a49135a397744b2beccd245e5",
+  landedSemanticCall: "517ee198ae4aca0787fbd05b811885849429cc94407b1828b7c6ee5e09c33994",
+  resolvedCall: "e27863302cd60268ad946cd98579e04526f7707da15da28c2af0faf7089fb6d8",
+  resolvedSemanticCall: "3df72324e4e5370a7e32acb13ab745040f8676b6f36a3cb8c2a74ee2188a3c1f",
+};
+
+export function verifyForwardDelayHistorical(reader) {
+  const live = reader(delayPath),
+    file = parse(live);
+  const importNode = one(
+    file.statements.filter(
+      (node) =>
+        ts.isImportDeclaration(node) &&
+        ts.isStringLiteral(node.moduleSpecifier) &&
+        node.moduleSpecifier.text === "../../../wasm/physical/exception-control.js",
+    ),
+    "one direct downward EH import",
+  );
+  assert(!importNode.attributes && !importNode.assertClause, "ordinary EH import without attributes or assertions");
+  assert.equal(importNode.modifiers, undefined, "ordinary EH import without modifiers");
+  const clause = importNode.importClause;
+  assert(clause && !clause.isTypeOnly && !clause.name && ts.isNamedImports(clause.namedBindings));
+  assert.equal(clause.phaseModifier, undefined, "ordinary EH import without a phase modifier");
+  const binding = one([...clause.namedBindings.elements], "one canonical EH binding");
+  assert(!binding.propertyName && !binding.isTypeOnly && binding.name.text === "buildStandardTryTable");
+  const canonicalImport = 'import { buildStandardTryTable } from "../../../wasm/physical/exception-control.js";';
+  assert.equal(receipt(importNode.getText()), receipt(canonicalImport), "complete canonical EH import");
+  assert.equal(semanticReceipt(importNode.getText()), semanticReceipt(canonicalImport), "complete semantic EH import");
+  const provider = fn(live, "buildNativePromiseDelayProviderBody");
+  const result = one(provider.body.statements.filter(ts.isReturnStatement), "one delay return").expression;
+  assert(ts.isArrayLiteralExpression(result));
+  assert.equal(result.elements.length, 9, "unchanged allocation/guard/return population");
+  const call = result.elements[6];
+  assert(ts.isCallExpression(call) && ts.isIdentifier(call.expression));
+  assert.equal(call.expression.text, "buildStandardTryTable", "canonical EH call");
+  const calls = [];
+  function visit(node) {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "buildStandardTryTable"
+    )
+      calls.push(node);
+    ts.forEachChild(node, visit);
+  }
+  visit(file);
+  assert.equal(calls.length, 1, "one canonical EH call in the complete leaf");
+  assert.equal(receipt(call.getText()), DELAY_EH_FORWARD_EVIDENCE.resolvedCall, "landed standard-EH call");
+  assert.equal(
+    semanticReceipt(call.getText()),
+    DELAY_EH_FORWARD_EVIDENCE.resolvedSemanticCall,
+    "landed standard-EH semantic call",
+  );
+
+  // Only after the complete landed call has passed both independent receipts
+  // may its envelope be reversed. All instruction bodies and the sentinel
+  // documentation below are read from the live candidate, not copied donors.
+  assert.equal(call.arguments.length, 3);
+  const [blockType, body, handlers] = call.arguments;
+  assert(ts.isArrayLiteralExpression(handlers));
+  assert.equal(handlers.elements.length, 2);
+  const [tagged, foreign] = handlers.elements;
+  function value(node, name) {
+    assert(ts.isObjectLiteralExpression(node));
+    return one(
+      node.properties.filter(
+        (property) =>
+          ts.isPropertyAssignment(property) && ts.isIdentifier(property.name) && property.name.text === name,
+      ),
+      "one handler property " + name,
+    ).initializer.getText();
+  }
+  const documentation = live.slice(foreign.pos, foreign.getStart());
+  const legacyEnvelope = `{
+    op: "try", blockType: ${blockType.getText()}, body: ${body.getText()},
+    catches: [{ tagIdx: ${value(tagged, "tagIdx")}, body: ${value(tagged, "body")} }],
+    ${documentation}
+    catchAll: ${value(foreign, "body")},
+  }`;
+  let projected = live;
+  for (const [start, end, replacement] of [
+    [call.getStart(), call.end, legacyEnvelope],
+    [importNode.getStart(), importNode.end, ""],
+  ])
+    projected = projected.slice(0, start) + replacement + projected.slice(end);
+  const historical = verifyHistorical((path) => (path === delayPath ? projected : reader(path)));
+  return { historical, forwardEh: { reference: DELAY_EH_FORWARD_EVIDENCE.commit, tagged: 1, foreign: 1 } };
+}
+
 // Public-source preservation, not physical admission. One fresh child per
 // explicit compiler root, with terminal/progress receipts and no kill timer.
 export const publicArmSource = String.raw`
