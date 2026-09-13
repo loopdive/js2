@@ -69,6 +69,23 @@ const PINNED = [
   "tests/ir/inline-small.test.ts",
   // The phase-3c pass pipeline the prepared bodies are lowered through.
   "tests/ir/phase3c.test.ts",
+  // #6419: eight files an A/B sweep found ALREADY RED on main — a module-eval
+  // import cycle, a null-for-undefined array pad, a generator-method value on
+  // the construct bridge, a prepared class-layout descriptor read as stale, a
+  // marshal that answered `{}`, a stale standalone-drain premise, a host
+  // `Promise.try` assumption, and an over-broad closure-bridge assertion.
+  // Nothing ran them: PR-time runs only the files a PR TOUCHES, and the
+  // post-merge detector detects without enforcing — so eleven red tests sat in
+  // the repo behind a green CI. Pin them so each is fatal from now on.
+  "tests/illegal-cast-closures-585.test.ts",
+  "tests/issue-1058-function-hoist-facts.test.ts",
+  "tests/issue-1128-dstr-tdz.test.ts",
+  "tests/issue-1528-closure-construct.test.ts",
+  "tests/issue-1712-capture-closure-dispatch.test.ts",
+  "tests/issue-2637-b2-ctor-closure-registration.test.ts",
+  "tests/issue-3036-late-microtask-closure.test.ts",
+  "tests/issue-3520-closure-host-bridge-abi.test.ts",
+  "tests/issue-6419-closure-area-red-on-main.test.ts",
 ];
 
 // `tests/issue-<x>.test.ts` and `tests/ir/<x>.test.ts` — the two directories a

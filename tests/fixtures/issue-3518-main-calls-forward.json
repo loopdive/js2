@@ -1,0 +1,55 @@
+{
+  "schema": "prepared-source-forward-v1",
+  "path": "src/codegen/expressions/calls.ts",
+  "sourceProvenance": {
+    "previousMain": {
+      "revision": "c06c5575472728b6a17b68480a373503eab88215",
+      "blob": "5f01550e99bb62f1dabf32f3040c1282ff9edb43",
+      "sha256": "6d3d2da37671d44d32b2f85f9dc790768d1159cc05c3b8bfdf4f84c02a70c8ae",
+      "bytes": 503787
+    },
+    "deliveredMain": {
+      "revision": "2c6a0f1daa3d43cdf68b0d2d07fe7e3fa58b97f0",
+      "blob": "a353f03c9e4d1026a0260048c8a15bfa42f31cde",
+      "sha256": "705a447923932e8047de2a7836edc1826808b5d57253ad8a5075dd34dcc8ac48",
+      "bytes": 504830
+    }
+  },
+  "spans": [
+    {
+      "id": "from-char-code-spread-import",
+      "before": "} from \"../native-strings.js\";\nimport { ensureTextEncodingHelpers } from \"../text-encoding-native.js\";\nimport { emitVariadicStringConcat, hostStringRepr, nativeStringRepr } from \"../builtin-scaffold.js\";\nimport { URI_DECODE_MASK, URI_ENCODE_MASK } from \"../uri-encoding-native.js\";\nimport {\n  buildInt8ArrayCarrierMatch,\n",
+      "after": "} from \"../native-strings.js\";\nimport { ensureTextEncodingHelpers } from \"../text-encoding-native.js\";\nimport { emitVariadicStringConcat, hostStringRepr, nativeStringRepr } from \"../builtin-scaffold.js\";\nimport { compileFromCharCodeFamilySpread, needsFromCharCodeSpread } from \"./from-char-code-spread.js\";\nimport { URI_DECODE_MASK, URI_ENCODE_MASK } from \"../uri-encoding-native.js\";\nimport {\n  buildInt8ArrayCarrierMatch,\n",
+      "beforeSha256": "31eeabb0ba14a2fc03a67aafa411c7924bf193762ab1bffdf00eaac7f22426be",
+      "afterSha256": "8967b33cecdfe40ba521fa013ef59b33087752ed65c37c9b256f225ed0bb3fa5"
+    },
+    {
+      "id": "undefined-receiver-import",
+      "before": "  sourceParamCountFromExpanded,\n  wasmParamIndexForSourceParam,\n} from \"../linear-uint8-signatures.js\";\nimport { resolveNamedThisCallTarget, tryReshapeApplyToNamedThisCall } from \"../named-this-call.js\";\nimport {\n  emitClosureReceiverInstall,\n  finishClosureReceiverCall,\n",
+      "after": "  sourceParamCountFromExpanded,\n  wasmParamIndexForSourceParam,\n} from \"../linear-uint8-signatures.js\";\nimport {\n  resolveNamedThisCallTarget,\n  resolveUndefinedReceiverTrampoline,\n  tryReshapeApplyToNamedThisCall,\n} from \"../named-this-call.js\";\nimport {\n  emitClosureReceiverInstall,\n  finishClosureReceiverCall,\n",
+      "beforeSha256": "69fd19cd8420157f687d6ac209fa133aa023a8ce149920fbd9f933d09e6d7e92",
+      "afterSha256": "3b1c32f435b4542d72b223dbae039b1a5e65e34a79a68e11c9f6648a81c31938"
+    },
+    {
+      "id": "from-char-code-spread-dispatch",
+      "before": "  opts: { native: boolean; helperIdx: number; isFromCodePoint?: boolean },\n): ValType | null {\n  const { native, helperIdx, isFromCodePoint } = opts;\n  const repr = native ? nativeStringRepr(ctx) : hostStringRepr(ctx);\n  if (repr === undefined) return null;\n\n",
+      "after": "  opts: { native: boolean; helperIdx: number; isFromCodePoint?: boolean },\n): ValType | null {\n  const { native, helperIdx, isFromCodePoint } = opts;\n  // (#6430) `...src` has no lowering in the per-node fold below (it unwraps to\n  // `src` \u2192 NaN \u2192 one NUL char); the shared builder expands it. It emits\n  // nothing before it can decline, so `null` leaves the fold a clean slate.\n  if (needsFromCharCodeSpread(expr)) {\n    const spread = compileFromCharCodeFamilySpread(ctx, fctx, expr, opts);\n    if (spread !== null) return spread;\n  }\n  const repr = native ? nativeStringRepr(ctx) : hostStringRepr(ctx);\n  if (repr === undefined) return null;\n\n",
+      "beforeSha256": "282020d19de5a17ab2d1072b5d79345e9a1462ae367d0053996942fc5e868799",
+      "afterSha256": "af5e15d6d6d4bb3f5fb18a47ee300d10e0abf5abbe779d87fcae0a4633f05284"
+    },
+    {
+      "id": "call-undefined-receiver",
+      "before": "              getFuncParamTypes(ctx, funcIdx!)?.length ?? remainingArgs.length,\n            );\n            const finalFuncIdx = ctx.funcMap.get(funcName) ?? funcIdx!;\n            fctx.body.push({ op: \"call\", funcIdx: namedThisCall?.trampolineFuncIdx ?? finalFuncIdx });\n\n            // Use actual Wasm return type \u2014 TS checker reports `any` for .call()/.apply()\n            // which resolves to externref, but the actual function may return f64/i32/ref.\n",
+      "after": "              getFuncParamTypes(ctx, funcIdx!)?.length ?? remainingArgs.length,\n            );\n            const finalFuncIdx = ctx.funcMap.get(funcName) ?? funcIdx!;\n            // (#6436) `.call(undefined, \u2026)` dropped its receiver here.\n            const undefinedThis =\n              namedThisCall === undefined\n                ? resolveUndefinedReceiverTrampoline(ctx, funcName, finalFuncIdx, expr.arguments[0])\n                : undefined;\n            fctx.body.push({ op: \"call\", funcIdx: namedThisCall?.trampolineFuncIdx ?? undefinedThis ?? finalFuncIdx });\n\n            // Use actual Wasm return type \u2014 TS checker reports `any` for .call()/.apply()\n            // which resolves to externref, but the actual function may return f64/i32/ref.\n",
+      "beforeSha256": "ddc85e114892ec07da9fddbca1b13bb2bf727216a100f65fa1ffe09098fea4f5",
+      "afterSha256": "fbbbd1fa0a5df141703b429e7b7fc12e371faaafedbc8be73b1f2a53687f2401"
+    },
+    {
+      "id": "apply-undefined-receiver",
+      "before": "                elements.length,\n                getFuncParamTypes(ctx, finalFuncIdx)?.length ?? elements.length,\n              );\n              fctx.body.push({ op: \"call\", funcIdx: finalFuncIdx });\n              // Use actual Wasm return type for .apply()\n              if (wasmFuncReturnsVoid(ctx, finalFuncIdx)) return VOID_RESULT;\n              return getWasmFuncReturnType(ctx, finalFuncIdx) ?? VOID_RESULT;\n",
+      "after": "                elements.length,\n                getFuncParamTypes(ctx, finalFuncIdx)?.length ?? elements.length,\n              );\n              // (#6436) Same as the `.call` arm: `.apply(undefined, [...])`.\n              const applyThis = resolveUndefinedReceiverTrampoline(ctx, funcName, finalFuncIdx, expr.arguments[0]);\n              fctx.body.push({ op: \"call\", funcIdx: applyThis ?? finalFuncIdx });\n              // Use actual Wasm return type for .apply()\n              if (wasmFuncReturnsVoid(ctx, finalFuncIdx)) return VOID_RESULT;\n              return getWasmFuncReturnType(ctx, finalFuncIdx) ?? VOID_RESULT;\n",
+      "beforeSha256": "a2a656aaa79db6fd7f3a66c9a37cb8d5d2a6492111b5e5dd1258b49440559b5e",
+      "afterSha256": "00a2746aff1836dbbdf2e4415548c8a52a43d45237c7bd2774bfce3afc12e1e3"
+    }
+  ]
+}

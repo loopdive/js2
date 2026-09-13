@@ -40,6 +40,33 @@ interface PreparedForwardSpan {
   before: string;
   after: string;
 }
+// The independently committed Symbol input arm is newer than the eleven
+// prepared spans. Authenticate its exact placement before applying that older
+// inverse; the original donor and prepared-forward receipts remain unchanged.
+const mainForwardDigest = "0fd52e36fb7e44c9ffc7f710228be16da332859fa0c22e26644d67be588528e9";
+const mainForwardText = readFileSync(
+  new URL("./fixtures/issue-3518-main-object-runtime-forward.json", import.meta.url),
+  "utf8",
+);
+const mainForward = JSON.parse(mainForwardText) as {
+  path: string;
+  independentRecordSha256: string;
+  sourceProvenance: Record<
+    "implementationParent" | "implementation" | "deliveredMain" | "priorCheckpoint",
+    { revision: string; blob: string; sha256: string; bytes: number }
+  >;
+  change: {
+    addedLines: number;
+    addedText: string;
+    leftAnchor: string;
+    rightAnchor: string;
+    priorCheckpointProjectedSha256: string;
+  };
+  spans: PreparedForwardSpan[];
+};
+function inverseMainObjectForward(source: string): string {
+  return inversePreparedSourceForward(source, mainForwardText, mainForwardDigest);
+}
 const preparedForward = JSON.parse(preparedForwardText) as {
   path: string;
   independentRecordSha256: string;
@@ -179,7 +206,8 @@ const approvedEarly = replaceExactlyOnce(
 
 function reconstructLegacySource(source: string, file: "object" | "linear"): string {
   if (file === "object") {
-    const beforePrepared = inversePreparedSourceForward(source, preparedForwardText, preparedForwardDigest);
+    const beforeMain = inverseMainObjectForward(source);
+    const beforePrepared = inversePreparedSourceForward(beforeMain, preparedForwardText, preparedForwardDigest);
     const withoutImport = replaceExactlyOnce(beforePrepared, canonicalObjectImport, "");
     const withLayout = replaceExactlyOnce(withoutImport, approvedLayout, donor("layout"));
     return replaceExactlyOnce(withLayout, approvedHelpers, donor("helpers"));
@@ -709,7 +737,11 @@ describe("prepared object-runtime forward source receipts", () => {
     );
     expect(preparedForward.spans.map((span) => span.id)).toEqual(preparedSpanMutations.map(([id]) => id));
     expect(preparedForward.spans).toHaveLength(11);
-    const beforePrepared = inversePreparedSourceForward(liveObject, preparedForwardText, preparedForwardDigest);
+    const beforePrepared = inversePreparedSourceForward(
+      inverseMainObjectForward(liveObject),
+      preparedForwardText,
+      preparedForwardDigest,
+    );
     // Fixed scanner source 1ce5d057, not a receipt derived from the joined tree.
     expect(sha256(beforePrepared)).toBe("0c09bfbf102535500cee07df72a73dd06d7506ffd750ce1545323b5d6f994edd");
     requireFullLegacyReceipt(liveObject, "object");
@@ -795,4 +827,116 @@ describe("prepared object-runtime forward source receipts", () => {
     expect(reconstructLegacySource(mutant, "object")).toContain("export const INITIAL_CAP = 8;\nvoid 0;");
     expect(() => requireFullLegacyReceipt(mutant, "object")).toThrow(/full-source donor receipt mismatch/);
   });
+});
+
+describe("committed main Symbol input forward source receipt", () => {
+  it("authenticates the published insertion before restoring the exact prior checkpoint and original donor", () => {
+    expect(sha256(mainForwardText)).toBe(mainForwardDigest);
+    expect(mainForward.path).toBe("src/codegen/object-runtime.ts");
+    expect(mainForward.independentRecordSha256).toBe(
+      "8a869edcdb09c68547c16bc09658a31095d781eb5f120a5bcf4c7bc529bb39f1",
+    );
+    expect(mainForward.sourceProvenance.implementationParent.revision).toBe("9dcd771d809f9e0736a4664dfbd9db86cd350bf9");
+    expect(mainForward.sourceProvenance.implementation.revision).toBe("3050552a1646a6af87f8f6c9c06dc83cb04407c5");
+    expect(mainForward.sourceProvenance.deliveredMain.revision).toBe("2c6a0f1daa3d43cdf68b0d2d07fe7e3fa58b97f0");
+    expect(mainForward.sourceProvenance.deliveredMain.blob).toBe(mainForward.sourceProvenance.implementation.blob);
+    expect(mainForward.sourceProvenance.priorCheckpoint.revision).toBe("5b59430597315b08b2d7a1365324b56551230308");
+    expect(mainForward.spans.map((span) => span.id)).toEqual(["symbol-input-primitive-pass-through-6432"]);
+    expect(mainForward.change.addedLines).toBe(34);
+    expect(mainForward.spans[0]!.before).toBe(mainForward.change.leftAnchor + mainForward.change.rightAnchor);
+    expect(mainForward.spans[0]!.after).toBe(
+      mainForward.change.leftAnchor + mainForward.change.addedText + mainForward.change.rightAnchor,
+    );
+    expect(sha256(liveObject)).toBe(mainForward.change.priorCheckpointProjectedSha256);
+    const beforeMain = inverseMainObjectForward(liveObject);
+    expect(sha256(beforeMain)).toBe("5a745c07555e8183682a5014701eb4cd674da5d2ffd8367676a8a22024a50b06");
+    expect(sha256(beforeMain)).toBe(mainForward.sourceProvenance.priorCheckpoint.sha256);
+    requireFullLegacyReceipt(liveObject, "object");
+  });
+
+  const semanticMutations = [
+    ["guard", "...(symbolKeysEnabled", "...(!symbolKeysEnabled"],
+    ["tested input", '{ op: "local.get", index: L_ANY },', '{ op: "local.get", index: 0 },'],
+    ["Symbol type", "typeIdx: symbolTypeIdx", "typeIdx: objectTypeIdx"],
+    ["predicate opcode", 'op: "ref.test"', 'op: "ref.cast"'],
+    ["branch result", 'blockType: { kind: "empty" }', 'blockType: { kind: "f64" }'],
+    [
+      "returned payload",
+      'then: [{ op: "local.get", index: 0 }, { op: "return" }]',
+      'then: [{ op: "local.get", index: L_ANY }, { op: "return" }]',
+    ],
+    [
+      "required return",
+      'then: [{ op: "local.get", index: 0 }, { op: "return" }]',
+      'then: [{ op: "local.get", index: 0 }]',
+    ],
+    [
+      "predicate operand order",
+      '{ op: "local.get", index: L_ANY },\n            { op: "ref.test", typeIdx: symbolTypeIdx },',
+      '{ op: "ref.test", typeIdx: symbolTypeIdx },\n            { op: "local.get", index: L_ANY },',
+    ],
+  ] as const;
+  for (const [name, before, after] of semanticMutations) {
+    it(`rejects an altered Symbol ${name} after a genuine full-receipt positive`, () => {
+      requireFullLegacyReceipt(liveObject, "object");
+      const span = mainForward.spans[0]!;
+      const changedAddition = replaceExactlyOnce(mainForward.change.addedText, before, after);
+      const changedSpan = replaceExactlyOnce(span.after, mainForward.change.addedText, changedAddition);
+      const mutant = replaceExactlyOnce(liveObject, span.after, changedSpan);
+      expect(mutant).not.toBe(liveObject);
+      expect(() => requireFullLegacyReceipt(mutant, "object")).toThrow(/prepared forward span/);
+    });
+  }
+
+  for (const mutation of ["removed", "duplicated", "moved past object guard"] as const) {
+    it(`rejects the ${mutation} Symbol input arm while preserving the original receipt`, () => {
+      requireFullLegacyReceipt(liveObject, "object");
+      const span = mainForward.spans[0]!;
+      const replacement =
+        mutation === "removed"
+          ? span.before
+          : mutation === "duplicated"
+            ? span.after + span.after
+            : mainForward.change.leftAnchor + mainForward.change.rightAnchor + mainForward.change.addedText;
+      const mutant = replaceExactlyOnce(liveObject, span.after, replacement);
+      expect(mutant).not.toBe(liveObject);
+      expect(() => requireFullLegacyReceipt(mutant, "object")).toThrow(/prepared forward span/);
+    });
+  }
+
+  for (const mutation of [
+    "missing",
+    "provenance",
+    "modified span",
+    "removed span",
+    "duplicated span",
+    "reversed before/after evidence",
+  ] as const) {
+    it(`rejects ${mutation} in the main fixture without accepting a replacement digest`, () => {
+      requireFullLegacyReceipt(liveObject, "object");
+      let mutant: string;
+      if (mutation === "missing") {
+        mutant = "";
+      } else if (mutation === "provenance") {
+        mutant = replaceExactlyOnce(
+          mainForwardText,
+          "3050552a1646a6af87f8f6c9c06dc83cb04407c5",
+          "0000000000000000000000000000000000000000",
+        );
+      } else {
+        const changed = JSON.parse(mainForwardText) as typeof mainForward;
+        if (mutation === "modified span") changed.spans[0]!.after += "void 0;\n";
+        if (mutation === "removed span") changed.spans.pop();
+        if (mutation === "duplicated span") changed.spans.push({ ...changed.spans[0]! });
+        if (mutation === "reversed before/after evidence") {
+          [changed.spans[0]!.before, changed.spans[0]!.after] = [changed.spans[0]!.after, changed.spans[0]!.before];
+        }
+        mutant = JSON.stringify(changed);
+      }
+      expect(mutant).not.toBe(mainForwardText);
+      expect(() => inversePreparedSourceForward(liveObject, mutant, mainForwardDigest)).toThrow(
+        /fixture digest mismatch/,
+      );
+    });
+  }
 });

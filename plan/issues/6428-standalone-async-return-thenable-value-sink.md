@@ -1,10 +1,11 @@
 ---
 id: 6428
 title: "Standalone / WASI: `return <thenable>` from a never-suspending async function still reads NaN through the #1727 raw-value sink"
-status: ready
+status: done
 sprint: current
 created: 2026-09-12
-updated: 2026-09-12
+updated: 2026-09-13
+completed: 2026-09-13
 priority: medium
 horizon: m
 feasibility: medium
@@ -85,3 +86,74 @@ returning `value`), the consumer must unwrap a settled `$Promise` (the AG0
 ## Dispatch
 
 **opus** — one gated arm plus a drain-ordering question the reduction answers up front; medium, not hard.
+
+## Resolution
+
+**Mechanism.** New module `src/codegen/async-value-sink-unwrap.ts` holds the
+native-`$Promise` unwrap for both consuming sites:
+
+- `emitStandaloneAwaitUnwrap` — moved out of `expressions.ts` unchanged (the
+  #3102 god-file); `expressions.ts` imports it back for the `await` site.
+- `emitAsyncValueSinkUnwrap` — the new #6428 arm. On the native-`$Promise`
+  carrier lane only, when the consumer kind is `value` (not `await`) and the
+  call result is an **externref**, it emits that same one-level guarded unwrap
+  (`ref.test $Promise` → `struct.get $Promise.value`) before the consumer's
+  externref→f64 coercion; otherwise it hands `callResult` straight back and the
+  stack is untouched.
+
+`expressions.ts`'s `asyncResultConsumedAsValue` became `asyncConsumerKind`
+(returns the `AsyncConsumerKind` instead of collapsing it to a boolean) so the
+one call site can pass the kind through — no new `ctx.checker` query anywhere,
+which is what keeps the oracle ratchet flat. `await` consumers are untouched;
+off the carrier (gc/host) the gate is false, so the host ABI is byte-identical.
+
+**Measured (probe `.tmp/probe-6428.mjs`, `compile()` + `WebAssembly.instantiate(bin, {})`):**
+
+| case | before (wasi / standalone) | after (wasi / standalone) |
+| --- | --- | --- |
+| r1 `return Promise.resolve(7)` | NaN / NaN | 7 / 7 |
+| r2 `return mk()` | NaN / NaN | 8 / 8 |
+| r3 `const p = …; return p` | NaN / NaN | 9 / 9 |
+| r4 `const v = await f(); return v` | NaN / NaN | 7 / 7 |
+| c1 `return await Promise.resolve(7)` (control) | 7 / 7 | 7 / 7 |
+| c2 `return 7` (control) | 7 / 7 | 7 / 7 |
+
+**Two deliberate departures from the Implementation Plan, both measured:**
+
+1. **Step 3 (the microtask drain) is NOT needed and was not written.** The plan
+   asked the reduction to decide whether row 4's drive-lowered frame settles
+   synchronously. It does: `call $__async_resume_ff` runs the inlined frame to
+   completion before the resultp externref reaches the sink, so r4 answers `7`
+   with the unwrap alone. Calling the exported `__drain_microtasks` before
+   re-reading changes nothing in any row, before or after the fix. No
+   `emitDrainMicrotasks` call and no `calleeIsDriveLowered` branch were added.
+2. **The regression fixture's producer half is `mod.ts`, not the planned
+   `mod.js`.** An untyped `.js` module anywhere in a `compileProject` graph
+   breaks every call into it independently of this issue — a plain
+   `export function c2() { return 7 }` traps on wasi/standalone and silently
+   returns `0` on gc, with `success: true` and no diagnostic. That is a separate
+   pre-existing defect (identical on the parent commit), filed as
+   [#6456](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6456-untyped-js-module-in-project-graph-breaks-imported-call);
+   using it here would have made this test measure that bug instead.
+
+Step 4's IR-lane check came back negative as the plan predicted: the cast-sink
+consumer compiles through `expressions.ts` (the WAT shows the legacy `__inl*`
+inlined frame), so no `src/ir/lower-generic.ts` mirror was needed.
+
+**Regression test** `tests/issue-6428-standalone-async-value-sink.test.ts` — a
+two-file project (`mod.ts` producers + `.ts` entry holding the cast sinks),
+`compileProject` per target, 6 rows × 2 targets = **12 assertions**: **8 red / 4
+green on the parent**, **12 green with the fix**. The 4 green-on-parent
+assertions are c1/c2 on both targets — the anti-vacuity control that pins the
+raw-f64 shapes an "unwrap everything" fix would have moved. `tests/async-await`,
+`async-census`, `issue-2865-standalone-async-await-unwrap`,
+`issue-3469-standalone-async-completion-sink` and
+`tests/equivalence/async-function` also run green (41 tests).
+
+**Gates**: loc / func / coercion-sites / oracle-ratchet / dead-exports /
+host-import-policy all green with **no growth allowance** — extracting the
+unwrap shrank `expressions.ts` by 38 lines and left `compileExpressionInner` at
+its baseline size. `check:compiler-boundaries` reports `errors: []` and
+`inventoryValid: true` with the new module classified in
+`scripts/compiler-boundaries.json`; its non-zero exit is the repo-wide
+`architectureComplete: false` steady state, unchanged by this PR.

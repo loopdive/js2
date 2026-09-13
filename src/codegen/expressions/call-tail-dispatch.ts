@@ -72,7 +72,7 @@ import {
 import { patchInlinedIifeReturns } from "./iife-return-patch.js"; // (#5339)
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
-import { tryReshapeBindToNamedThisCall } from "../named-this-call.js"; // (#4203)
+import { resolvePlainCallThisTrampoline, tryReshapeBindToNamedThisCall } from "../named-this-call.js"; // (#4203, #6436)
 import { compileSuperElementMethodCall } from "./new-super.js";
 import { compileCallDispatchTail, tryEmitStoredMemberClosureCall } from "./stored-member-closure-call.js";
 import { classMemberFuncKey } from "../class-member-keys.js";
@@ -1684,7 +1684,9 @@ export function compileTailDispatch(
             allArgs.length,
             getFuncParamTypes(ctx, finalFuncIdx)?.length ?? allArgs.length,
           );
-          fctx.body.push({ op: "call", funcIdx: finalFuncIdx });
+          // (#6436) Plain call ⇒ install `undefined` as the receiver.
+          const plainThis = resolvePlainCallThisTrampoline(ctx, funcName, finalFuncIdx);
+          fctx.body.push({ op: "call", funcIdx: plainThis ?? finalFuncIdx });
 
           const sig = ctx.checker.getResolvedSignature(expr);
           if (sig) {

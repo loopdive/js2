@@ -2716,6 +2716,22 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   funcUsesArguments: Set<string>;
   /**
+   * (#6436) Named function declarations whose own `this` reads the ambient
+   * `__current_this` module global, minus the ones that take an explicit
+   * `this` parameter.
+   *
+   * A PLAIN `f(x)` call installs no receiver, so inside a window where some
+   * dispatcher has parked one in `__current_this` (a host-facing closure
+   * method call, an array-HOF `thisArg`) the callee read the DISPATCHER's
+   * receiver instead of the `undefined` §10.2.1.2 specifies. Callers consult
+   * this set to route such a call through a per-target trampoline that
+   * installs `undefined` for the duration.
+   *
+   * Populated at COLLECT time (alongside `funcUsesArguments`), because call
+   * sites compile before hoisted bodies do.
+   */
+  funcReadsOwnThis: Set<string>;
+  /**
    * Object-literal method declaration → the function handle containing that
    * literal's body. Struct-shape deduplication can fork a method body while
    * leaving the name-keyed placeholder shared; direct calls must select the
@@ -2814,6 +2830,14 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * either way (imported tags occupy the low indices).
    */
   sharedExnTag: boolean;
+  /**
+   * (#5383 S2m) True when this standalone module's exception tag is IMPORTED
+   * from a linked PROVIDER's `__exn_tag` export rather than module-defined, so
+   * a provider-side `throw` is caught by the consumer's own `try`/`catch`.
+   * Host-free twin of {@link sharedExnTag}; like it, `exnTagIdx` is then
+   * already an ABSOLUTE tag index.
+   */
+  exnTagImported: boolean;
   /** (#5247) True for a linked provider: its exports are called by another WASM
    *  module, so the export-boundary throw unwrapping is suppressed. */
   exportsConsumedByWasm: boolean;
@@ -4052,6 +4076,11 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   standalone: boolean;
   /** Linked zero-argument getter for the canonical standalone realm-global object. */
   standaloneGlobalThisImport?: { module: string; name: string; call?: string };
+  /** (#5383 S2p) True while the outlined `__native_globalThis_ensure` seed body
+   *  is under construction, so a re-entrant realm-global read inside the seed
+   *  itself takes the legacy inline splice instead of calling a function whose
+   *  cached global is not set yet (which would recurse at runtime). */
+  nativeGlobalThisSeedBuilding?: boolean;
   /** Resolved JS-host direct-eval lowering. */
   directEvalMode: "legacy" | "reified-host";
   /** Private externref-array carrier used only by reified JS-host direct eval. */

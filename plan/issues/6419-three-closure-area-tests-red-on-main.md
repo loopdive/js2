@@ -1,10 +1,11 @@
 ---
 id: 6419
 title: "Eleven closure-area tests across ten files are red on current main — found by an A/B sweep, every one identical on both arms"
-status: ready
+status: done
+completed: 2026-09-12
 sprint: current
 created: 2026-09-12
-updated: 2026-09-12
+updated: 2026-09-13
 priority: high
 horizon: l
 feasibility: medium
@@ -12,6 +13,23 @@ reasoning_effort: high
 task_type: bug
 area: compiler
 goal: correctness
+# (#6419, 2026-09-13) Growth is comment, not mechanism. `new-super.ts` +11 /
+# `compileNewExpression` +6: the #5141 generator-value detector now also
+# recognises `{ *m(){} }.m` (2 lines of logic; the predicate itself lives in
+# `non-constructable.ts`) and the rest is the note explaining WHY a method
+# value has no [[Construct]]. `literals.ts` +11: one `ensureCanonicalUndefinedExtern`
+# call in each of the two tuple-padding arms plus the note explaining that the
+# host-lane `undefined` producer is an import that must exist before it is read
+# — the single fact this whole arm turns on. `array-object-proto.ts` and
+# `closed-method-dispatch.ts` +1 each: one import line, splitting COLLECTION_KIND
+# off `map-runtime.js` onto the new import-free leaf.
+loc-budget-allow:
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/literals.ts
+  - src/codegen/array-object-proto.ts
+  - src/codegen/closed-method-dispatch.ts
+func-budget-allow:
+  - src/codegen/expressions/new-super.ts::compileNewExpression
 ---
 
 ## Problem
@@ -140,3 +158,116 @@ Re-measured on upstream/main 23a0ddaa26, one vitest fork per file: **9 of the 11
 
 ## Dispatch
 Model: **opus** — every arm is pinned to a file/function and six of eight are mechanical; escalate #4 alone to fable if the named-field probe does not point at a single re-observe site.
+
+## Resolution
+
+Fixed 2026-09-13 on `upstream/main` e0023dbbe6. **Eleven tests in ten files were
+still red on that head** — including the two `#2623` rows the plan had dropped,
+which fail only because the `test262/` submodule is not checked out in a fresh
+worktree (`ENOENT … Promise/allSettled/call-resolve-element.js`). That is an
+environment fact, not a defect, and nothing in this PR touches it. The other
+nine are eight distinct root causes; six were real product defects, two were
+stale test premises.
+
+### The product defects
+
+**1. Module-eval import cycle (`#1058`).** `collections-brand.ts` read
+`COLLECTION_KIND` in the TOP-LEVEL `KIND_OF` initializer across the cycle
+`map-runtime → statements/nested-declarations → … → expressions/calls →
+collections-brand → map-runtime`. Entering from the `nested-declarations` side
+evaluated `collections-brand` while `map-runtime` was mid-evaluation, so the
+binding was `undefined`. Moved the constant into a new import-free leaf
+`src/codegen/collection-kind.ts` and pointed **every** importer at it —
+`standalone-subclass-ctors.ts` had the same top-level table and failed the
+moment the first one was fixed, and two other test files already carried
+hand-written workarounds for this cycle. A leaf with no imports can never be
+mid-evaluation when someone reads it, which is why this shape is the fix rather
+than a re-ordering.
+
+**2. An absent array element read back as `null`, not `undefined` (`#1128`).**
+A short/empty array literal pads its tuple slot with
+`canonicalUndefinedExternInstrs`, which on the HOST lane is a **read-only**
+`funcMap` lookup for `__get_undefined` and silently degrades to
+`ref.null.extern` when nothing registered that import yet. §8.5.3 defaults fire
+on `=== undefined` only — and the checker is `__extern_is_undefined`, which
+correctly answers `false` for a null — so the default never ran. Visible as
+`let [y = y] = []` returning `0` instead of throwing the §13.3.1
+ReferenceError, and as `let [a = ({z:1} as any)] = []` binding `null`. New
+`src/codegen/undefined-extern-import.ts` registers the producer before the read
+via the established `ensureLateImport` + `flushLateImportShifts` pair. Both
+padding arms in `compileTupleLiteral` call it. The `[null]` control still binds
+`null`.
+
+**3. A generator/async METHOD value routed into the construct bridge
+(`#1528`).** `{ *m(){} }.m` has no `[[Construct]]` (§15.x), but an `any`-typed
+binding holding it reached the dynamic-ctor gate and `__construct_closure`
+CONSTRUCTED it. The three sibling shapes passed because each was already
+decided earlier. New `objectLiteralMethodWithoutConstruct` in
+`non-constructable.ts`, consumed by both generator-value detectors in
+`new-super.ts`. `{ async m(){} }.m` leaked the same way and is fixed with it.
+A PLAIN `{ m(){} }.m` deliberately keeps its bridge route.
+
+**4. A prepared class-layout descriptor read as stale on a benign commit
+(`#585`).** The bare `descriptor is stale` message was replaced with one naming
+the first divergent field — kept permanently, and it produced the diagnosis in
+one run: `session.draft`, `undefined → committed`. Two prepared components
+depending on the same class hit this as a matter of course; the lifted arrow
+(`() => o.doSomething()`) is the second one. The layout itself (`draft`) was
+byte-identical. The five `session.*` fields now tolerate exactly the
+`undefined → committed-identically` transition, which
+`describePreparedClassLayoutEntry` has already proven is lockstep-consistent
+and which staging already treats as `committedReuse`. The reverse direction
+still fails and `preparedProgramAbiDraftsEqual` is untouched. A field
+initializer is NOT required, contrary to the plan's probe — the
+constructor-assigned variant fails identically.
+
+**5. `wrapExports` on a raw exports record (`#1712`).** Not a closure-dispatch
+defect: the returned fnctor instance is well-formed
+(`__struct_field_names(raw) === "type"`, `__sget_type(raw) === "Program"`), but
+`wrapExports(instance.exports, …)` marshals it to `{}` while
+`wrapExports(instance, …)` answers `{type:"Program"}` — only the Instance
+overload carries the data-struct decoding authority. The test now passes the
+documented preferred input. The silent degradation of the historical
+raw-exports overload is real and is filed as
+[#6438](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6438-wrapexports-raw-exports-marshals-struct-to-empty).
+
+**6. The lane gap (acceptance 4).** There is no missing glob. `ci.yml` runs
+only the `tests/*.test.ts` files a PR TOUCHES, plus a small pinned manifest;
+the full suite is deferred to the post-merge `issue-tests.yml` detector, which
+**detects but does not enforce**. That is the documented two-layer design, and
+it is exactly how eleven red tests sat behind a green CI. All eight fixed files
+plus the new one are added to the pinned list in
+`scripts/select-changed-issue-tests.mjs`, so each is fatal at PR time from now
+on.
+
+### The two stale premises
+
+**7. `#3036` standalone drain.** Standalone now has its own native promise and
+job queue: `run()` only ENQUEUES the reaction and nothing outside the module
+drains it, so a Node macrotask wait observed `out === 0` forever. The module
+exports the drain; each instance is drained after its `run()`, and in the
+multi-instance case only AFTER every `setExports` swap, so the ordering the
+case exists to guard is preserved.
+
+**8. `#2637` `Promise.try`.** Environment, not compiler: `Promise.try` is a
+host intrinsic that landed in Node 23, `package.json` declares
+`engines: node >=20`, and CI runs Node 24/25. The row is gated on host support;
+the underlying `engines`-vs-lowering mismatch is filed as
+[#6440](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6440-promise-try-host-intrinsic-below-declared-engines).
+
+### Regression coverage
+
+`tests/issue-6419-closure-area-red-on-main.test.ts` — 14 tests across the four
+product arms, each with an anti-vacuity control that passes on the parent
+(explicit `[undefined]` fires the default, `[null]` does not, a plain function
+value still reaches the bridge, the class without the capturing arrow already
+compiled). Its FIRST import is deliberately
+`../src/codegen/statements/nested-declarations.js`, the 1058 file's own entry
+into the cycle; on the parent the whole file fails at COLLECTION, which is the
+cycle reproducing.
+
+### Residual
+
+`let [a = ({z:1} as any)] = []` still reads `undefined` — unchanged by this work
+in both directions, a separate arm of the default machinery, filed as
+[#6439](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6439-object-default-for-absent-array-element-reads-undefined).

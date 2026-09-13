@@ -448,13 +448,22 @@ function verifyCommentReceipt(text: string, owner: keyof Sources): void {
   if (actual.count !== expected.count || actual.sha256 !== expected.sha256)
     throw Error("complete comment receipt: " + owner);
 }
+const mainImportsForwardText = readFileSync(
+  resolve(import.meta.dirname, "fixtures/issue-3518-native-value-delivered-main-import-forward.json"),
+  "utf8",
+);
+const mainImportsForwardHash = "ca30cadbb7ff0c73b21d920de6ac9a1b9ba6d734d16e23eb7e9fbb7b533b5a17";
+function inverseMainImports(text: string, fixtureText = mainImportsForwardText): string {
+  return inversePreparedSourceForward(text, fixtureText, mainImportsForwardHash);
+}
+
 const preparedImportsForwardText = readFileSync(
   resolve(import.meta.dirname, "fixtures/issue-3518-native-value-prepared-import-forward.json"),
   "utf8",
 );
 const preparedImportsForwardHash = "aeba4c5c88a91a4af71fe2c6dd804655500b9027b66ad1d44d7e7e3081ff69de";
 function inversePreparedImports(text: string, fixtureText = preparedImportsForwardText): string {
-  return inversePreparedSourceForward(text, fixtureText, preparedImportsForwardHash);
+  return inversePreparedSourceForward(inverseMainImports(text), fixtureText, preparedImportsForwardHash);
 }
 
 function historicalSources(live: Sources): Pick<Sources, "any" | "union"> {
@@ -537,6 +546,74 @@ function verifySourceReceipts(live: Sources): void {
     verifyCommentReceipt(historical[owner], owner);
   }
 }
+
+describe("independently authenticated delivered-main native-value import update", () => {
+  const fixture = JSON.parse(mainImportsForwardText) as { spans: { before: string; after: string }[] };
+  if (fixture.spans.length !== 1) throw Error("native-value main-forward span population");
+  const span = fixture.spans[0]!;
+
+  it("restores the signed prepared source before both unchanged historical donor receipts", () => {
+    const live = liveSources();
+    expect(createHash("sha256").update(inverseMainImports(live.union)).digest("hex")).toBe(
+      "be46472568a57e877571770c817ede6af9ad6e8ca71d04da77aa6c20bca68668",
+    );
+    verifySourceReceipts(live);
+  });
+
+  const mutations: readonly [string, (source: string) => string][] = [
+    ["M1 removed exported tag span", (source) => replaceOnce(source, span.after, "")],
+    ["M2 duplicated exported tag span", (source) => replaceOnce(source, span.after, span.after + span.after)],
+    [
+      "M3 altered imported-tag condition",
+      (source) =>
+        replaceOnce(
+          source,
+          span.after,
+          replaceOnce(span.after, "ctx.sharedExnTag || ctx.exnTagImported", "ctx.sharedExnTag && ctx.exnTagImported"),
+        ),
+    ],
+    [
+      "M4 changed import-space documentation",
+      (source) => replaceOnce(source, span.after, replaceOnce(span.after, "IMPORT space", "DEFINED space")),
+    ],
+  ];
+  it.each(mutations)("rejects %s after the complete live positive", (_name, mutate) => {
+    const live = liveSources();
+    verifySourceReceipts(live);
+    const union = mutate(live.union);
+    expect(union).not.toBe(live.union);
+    expect(() => inverseMainImports(union)).toThrow("prepared forward span");
+    expect(() => verifySourceReceipts({ ...live, union })).toThrow("prepared forward span");
+  });
+
+  it("rejects relocating the authentic function through the unchanged full-module receipt", () => {
+    const live = liveSources();
+    verifySourceReceipts(live);
+    const earlier = "export function localGlobalIdx(ctx: CodegenContext, absIdx: number): number {";
+    const union = replaceOnce(replaceOnce(live.union, span.after, ""), earlier, span.after + earlier);
+    expect(union).not.toBe(live.union);
+    expect(() => inverseMainImports(union)).not.toThrow();
+    expect(() => verifySourceReceipts({ ...live, union })).toThrow("historical donor receipt: union");
+  });
+
+  it.each([
+    ["union", "ctx.nativeBoxNumberTypeIdx = boxNumStructIdx;", "ctx.nativeBoxNumberTypeIdx = boxBoolStructIdx;"],
+    ["any", "ctx.undefinedGlobalIdx = globalIdx;", "ctx.undefinedGlobalIdx = globalIdx + 1;"],
+  ] as const)("retains the original %s corruption guard after the new inverse", (owner, before, after) => {
+    const live = liveSources();
+    verifySourceReceipts(live);
+    const changed = { ...live, [owner]: replaceOnce(live[owner], before, after) };
+    expect(changed[owner]).not.toBe(live[owner]);
+    expect(() => inversePreparedImports(changed.union)).not.toThrow();
+    expect(() => verifySourceReceipts(changed)).toThrow("historical donor receipt: " + owner);
+  });
+
+  it("rejects edited main-forward provenance after the complete live positive", () => {
+    const live = liveSources();
+    verifySourceReceipts(live);
+    expect(() => inverseMainImports(live.union, mainImportsForwardText + " ")).toThrow("fixture digest mismatch");
+  });
+});
 
 describe("independently authenticated prepared native-value import additions", () => {
   it("restores the exact committed scanner before the unchanged complete donor receipts", () => {

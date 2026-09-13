@@ -23,6 +23,7 @@ origin: "2026-07-21 explicit user directive: enable IR-only by default and retir
 oracle-ratchet-allow:
   - src/codegen/multi-prepared-array-leaf.ts
 loc-budget-allow:
+  - src/codegen/map-runtime.ts
   - src/codegen/index.ts
   - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/multi-prepared-scalar-leaf.ts
@@ -7880,3 +7881,78 @@ its main-owned prototype test. All scanner/runtime/receipt/policy bytes remain
 unchanged. TS7, LOC/function budgets, oracle, preservation-v1 and measured
 coercion124/511 pass against exact parentc06c5575; conformance sync changes
 zero files. Earlier2,715/2,715 remains explicitly earlier-head evidence.
+
+## Reconcile the refreshed main base e06f7674 — 2026-09-13
+
+The same-PR close/reopen refreshed stale GitHub metadata: exact headc06c5575
+stayed unchanged and the PR reopened held, while the reported base changed
+from7adc0a6e to actualmaine06f7674. Preserve the refused base-equality
+postcondition and both responses; reopening itself succeeded. The fixed7adc
+comparison proved no conflict only for that reported pair, not for the newly
+revealed main. The actual e06 merge has conflicts in compiler-boundaries,
+map-runtime and standalone-subclass-ctors. Do not repeat the metadata refresh
+or claim a source-free merge against this newer base.
+
+Incoming main contains the already-delivered closure-area repair and baseline
+refresh. Reconcile COLLECTION_KIND to one canonical object in main's new
+collection-kind.ts, preserving map-runtime and prior builtin-brands identity,
+tags, public ReadonlyMap and cold-import behavior. Equal-valued duplicate
+objects are insufficient. Review auto-merged collections-brand and preserve
+all other main fixes, especially undefined/constructability and prepared ABI
+transaction behavior. Keep original tests and receipt hashes; identified
+closed-method-dispatch changes are outside the authenticated named Promise
+helper declaration and do not justify reseeding its fixture.
+
+Preserve the IR policy's exact activation histories, allowed edges and layers
+while integrating main's legitimate inventory entries. A owns the four
+collection source files; B owns only policy; root owns integration, issue
+history and serial runtime checks. Run complete incoming regressions plus
+current collection/ABI/IR overlap controls, then source gates and normal signed
+hooks. Preserve all actual failures and qualify all earlier test evidence by
+its revision. Keep PR5760 held until the exact refreshed head is validated and
+published; use protected queue admission and verify delivery to main.
+
+## Ownership reconciliation — 2026-09-13
+
+The shared issue-assignments ref was refreshed to 2c2c1d20e2d4b95d15bb54653568359ecaa5aeee. The collection-kind and standalone parent-table change came from ttraenkler/issue-6419 (PR5876, already merged); its follow-up reservation identifies ttraenkler/sendev-6419. The older local Claude Desktop session cb1cd4f9-cdfd-4248-b476-1c7f5bbe9354 / ir-migration-coordination-35a148-90 is package C, not evidence of current ES2015 ownership.
+
+Current open-PR census: 28 PRs. Relevant external boundary changes are independent added entries: PR5911 issue-6440 adds runtime/promise-try-polyfill.ts; PR5909 issue-5383-standalone-temporal-s12 (dev-5383-s12) adds codegen/static-spread-arity.ts; PR5889 issue-6421 (reservation by sendev-5370) adds array-of-spread.ts and from-char-code-spread.ts; PR5839 codex/5350-super-property-rescue-20260912 adds class-prototype-write-keeps.ts. None changes the collection-kind/undefined-extern-import entries or IR activation history owned by this reconciliation. Existing Deno/TypeScript/audit and downstream IR PRs are preserved. No peer branch or worktree was edited.
+
+The shared-file ownership question no longer requires user identification. Resume only the existing isolated PR5760 integration, preserve the single main collection object and both sets of regressions, and union independently owned inventory entries on freshly fetched main. Keep downstream refreshes paused until verified PR5760 delivery. This is a file/branch evidence reconciliation, not a claim that another session acknowledged a message.
+
+### PR5760 collection compatibility export allowance — 2026-09-13
+
+The exact e06 reconciliation adds one public re-export line to map-runtime.ts (3,099 versus the 3,098-line baseline). It preserves the established COLLECTION_KIND/CollectionKind entry point while sourcing the same import-free collection-kind object used by main. This PR-specific allowance covers that single compatibility declaration; no function body grows. The original failed LOC result is retained in e06-frozen-loc-20260913.log. All 453 complete-file regression assertions and typechecking passed before this metadata-only grant.
+
+### PR5760 exact current-main merge — 2026-09-13
+
+Signed resolution 8121918f96dae2598e0fea0e4226e295bc50e721 preserves the tested e06 join; its source/test/policy pins remained unchanged after normal hooks. The subsequent actual merge uses 9578edf5ef01ca428b0ff34df63f7188ead8c1ad, freshly fetched from origin/main. All source and regression files merge cleanly; only scripts/compiler-boundaries.json conflicts. Resolve its independent main inventory additions alongside unchanged IR histories, then validate this resulting current tree. The old 453 assertions are prior-join evidence, not a rerun of this newer merge. Downstream refreshes remain paused.
+
+#### Validation of the 9578 current-main join
+
+44 complete files collected 826 cases: 822 passed, zero failures or pending/skipped rows, and four existing TODOs (three Temporal/class-member cases and one link-boundary error-constructor case). Both original Test262 regex rows and the real Temporal provider smoke child passed. All tracked source/test/helper/fixture pins remained unchanged. TS7, LOC/function budgets, measured coercion, oracle, inventory mode against exact main, and preservation-v1 passed; inventory remains graph-incomplete and retirement is not certified. Conformance synchronization changed no files, and the independent corpus matched all 53,933 canonical raw blobs. Normal signed hooks and exact publication/queue verification follow.
+
+#### Artifact-only base advance after validation
+
+Fresh main advanced from 9578edf5 to a9dbfe402a880a1ca38a48a336f576ec5792c255 through PR5920, changing exactly six npm-compat JSON artifacts and no source, tests, policy or build inputs. Merge those artifacts before publication. The complete validated source/test/helper/fixture/policy pins are checked unchanged across this merge and its normal hooks; no new test execution is claimed for the unchanged population.
+
+## Resume string admission after verified PR5760 delivery — 2026-09-13
+
+PR5760 is delivered on main as 2c6a0f1daa3d43cdf68b0d2d07fe7e3fa58b97f0, with its entire tree equal to validated published head df7fd983. All 102 merge-group conformance shards, aggregation and final regression gate passed; raw coverage contains 48,735 unique results per lane. Existing failures remain. The merge-group advisory issue job was cancelled and receives no pass credit.
+
+Resume existing held PR5787 from preserved signed head 5b594305. Its remote head remains bda70f02 and it is outside the queue. The exact delivered-main merge combines source and boundary inventory cleanly; only appended issue history conflicts, resolved by preserving both complete sides. Root owns integration and all Git mutations; a native subagent reviews the complete validation scope read-only. Preserve earlier fixture hashes, all prepared work and current main fixes. Validate the combined source before normal signed hooks, retargeting the existing PR to main and publishing. No new migration scope or completion claim is introduced.
+
+### Delivered-main receipt validation
+
+The original three-file receipt check is preserved: 128/201 passed, 73 failures, zero skips, unchanged execution inputs. The failures are full-source reconstruction refusals: 25 object argument-vector, 35 native-value and 13 closure observer. Preserve the old donor and previous forward fixtures; authorize only exact new forward spans derived from independently committed main, inverted before the unchanged original receipt. No production fallback or candidate-derived donor hash is permitted.
+
+The closure observer now inverts five exact committed changes from c06c5575 to delivered 2c6a0f1d before the old four-span inverse. The committed source blobs authenticate spread expansion and undefined-receiver handling. All 84 complete-file tests pass, including ten additional positive-first mutation/evidence/order controls; original full-source hash remains unchanged. The three carried Promise files separately pass 90/90, with zero skips and unchanged pins. Object and value receipt repairs remain in progress; neither these results nor prior 2,715/307 evidence certifies the complete current join.
+
+
+### September 13: PR5787 delivered-main preservation repairs validated
+
+On the uncommitted merge of delivered main `2c6a0f1daa3d43cdf68b0d2d07fe7e3fa58b97f0` into signed prepared head `5b59430597315b08b2d7a1365324b56551230308`, the full scanner and physical-boundary cohort passed 664/664 assertions in 13 files, zero pending, with unchanged source pins. The complete argument-vector and native-value receipt files passed 154/154 assertions, zero pending, after authenticated inversions of independently committed main changes. The earlier 73 receipt failures remain recorded; no original donor fixture or digest was replaced. Closure preservation separately passed 84/84 and received independent read-only review. These checks establish source preservation, not frontend retirement or new runtime coverage. Reports are in `.tmp/5787-queue-drain/delivered-main-{scanner-physical,argument-value-forward,closure-forward}-20260913-terminal.json`. Existing behavior-intersection testing is running; no new publication or delivery is claimed.
+
+The complete delivered-main behavior-intersection cohort subsequently finished: 226 passed, zero failed, four existing TODO cases, 230 total across 16 files. The real Temporal provider test retained its 1,800,000 ms timeout and executed. All recorded source inputs stayed unchanged. TODOs remain the static provider method, chained Duration member read, and two builtin-error constructor-name cases; none receives pass credit. Raw evidence: `.tmp/5787-queue-drain/delivered-main-behavior-20260913.json`.
+
+The fresh-process closure behavior file passed 14/14. Current-merge TS7, LOC/function budgets, measured coercion gate, oracle, preservation-v1 (including core types/nodes), conformance synchronization check, and boundary inventory passed. Inventory remains architecture-incomplete and does not prove retirement. Fresh remote main advanced to `0cb1e829d521c9a804f56991e9ab54593bde1f70` via baseline refresh only; no `src` or `tests` changes. Commit this validated merge before integrating that refresh.
