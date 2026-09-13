@@ -2049,14 +2049,17 @@ export function computeClosureWrapperSig(
         : !ts.isFunctionDeclaration(arrow) && setAccessorParamIsDynamic(arrow)
           ? EXTERNREF_PARAM
           : // (#6475) The receiver's element type wins over the checker's ONLY
-            // when the checker handed back its exact non-null twin — the
-            // `RegExpExecArray extends Array<string>` nullability lie. Any
-            // other pair is returned unchanged, so no other callback shape can
-            // move a byte. `map` never reaches here: its unconditional
-            // override above already fired.
+            // at the callback's ELEMENT parameter (0 for the predicate family,
+            // 1 for `reduce`/`reduceRight` whose parameter 0 is the
+            // accumulator), and only when the checker handed back that type's
+            // exact non-null twin — the `RegExpExecArray extends Array<string>`
+            // nullability lie. Any other pair is returned unchanged, so no
+            // other callback shape can move a byte. `map` never reaches here:
+            // its unconditional override above already fired.
             applyNullableElemParamOverride(
               resolveWasmType(ctx, paramType),
-              runtimeIndex === 0 ? ctx.arrayHofNullableElemParamOverride : undefined,
+              ctx.arrayHofNullableElemParamOverride,
+              runtimeIndex,
             );
     // JSDoc optional parameters (for example `@param {number=} size`) are
     // commonly exported from JavaScript modules and called from a different

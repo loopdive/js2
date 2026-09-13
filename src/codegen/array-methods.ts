@@ -6622,6 +6622,12 @@ function setupArrayCallback(
    * has its own unconditional override.
    */
   elemType?: ValType,
+  /**
+   * (#6475) Runtime parameter index that receives the element. 0 for the
+   * predicate family `(element, index, array)`; **1** for
+   * `reduce`/`reduceRight`, whose parameter 0 is the accumulator.
+   */
+  elemParamIndex = 0,
 ): ArrayCallbackSetup | null {
   const cbArg = callExpr.arguments[0]!;
   const hoistedCallback =
@@ -6636,7 +6642,7 @@ function setupArrayCallback(
   // type, and the consumer only honours it against the exact non-null twin, so
   // every other receiver compiles byte-for-byte as before.
   const savedNullableElemOverride = ctx.arrayHofNullableElemParamOverride;
-  ctx.arrayHofNullableElemParamOverride = nullableElemParamOverrideFor(elemType);
+  ctx.arrayHofNullableElemParamOverride = nullableElemParamOverrideFor(elemType, elemParamIndex);
   const cbResult =
     hoistedCallback ??
     (ts.isArrowFunction(cbArg) || ts.isFunctionExpression(cbArg)
@@ -7795,7 +7801,7 @@ function compileArrayReduce(
 
   const numKind = ctx.fast ? "i32" : "f64";
   const bridgeName = ctx.fast ? "__call_2_i32" : "__call_2_f64";
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "reduce", "red", bridgeName, undefined, elemType);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "reduce", "red", bridgeName, undefined, elemType, 1);
   if (!setup) return null;
 
   // The accumulator local must match the actual accumulator type, not always
@@ -7982,7 +7988,7 @@ function compileArrayReduceRight(
     flushLateImportShifts(ctx, fctx);
   }
 
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "reduceRight", "rr", bridgeName, undefined, elemType);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "reduceRight", "rr", bridgeName, undefined, elemType, 1);
   if (!setup) return null;
 
   // The accumulator local must match the actual accumulator type, not always

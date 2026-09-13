@@ -99,22 +99,37 @@ closure wrapper signature — and only when it IS that lie:
    `arrayMapCallbackFirstParamOverride`.
 2. New module `src/codegen/array-hof-nullable-elem-param.ts` (classified in
    `scripts/compiler-boundaries.json`) owning:
-   - `nullableElemParamOverrideFor(elemType)` — returns `elemType` only when it
-     is `ref_null`, else `undefined`;
-   - `applyNullableElemParamOverride(resolved, override)` — returns the
-     override **only** when `resolved` is `{kind:"ref", typeIdx: X}` and the
-     override is `{kind:"ref_null", typeIdx: X}` (the exact non-null twin).
-     Every other pair is left alone, so the emitted bytes cannot move for any
-     shape that is not the lie.
-3. `src/codegen/closures.ts` `computeClosureWrapperSig` — consult (2) for
-   parameter 0, **after** `resolveWasmType`, and only when the existing
+   - `nullableElemParamOverrideFor(elemType, paramIndex)` — returns
+     `{elemType, paramIndex}` only when `elemType` is `ref_null`, else
+     `undefined`;
+   - `applyNullableElemParamOverride(resolved, override, runtimeIndex)` —
+     returns the override's type **only** at `override.paramIndex`, and only
+     when `resolved` is `{kind:"ref", typeIdx: X}` against an override
+     `{kind:"ref_null", typeIdx: X}` (the exact non-null twin). Every other
+     pair is left alone, so the emitted bytes cannot move for any shape that is
+     not the lie.
+3. `src/codegen/closures.ts` `computeClosureWrapperSig` — consult (2) for every
+   parameter, **after** `resolveWasmType`, and only when the existing
    `arrayMapCallbackFirstParamOverride` did not already fire. `map`'s
    unconditional override keeps its exact current behaviour.
 4. `src/codegen/array-methods.ts` `setupArrayCallback` — set/restore the new
    context field around the callback compile. Because every HOF arm funnels
    through `setupArrayCallback`, this is one edit for the whole family.
    `setupArrayCallback` has no `elemType` parameter today; thread it through
-   (all call sites already have `elemType` in scope).
+   (all call sites already have `elemType` in scope), together with the
+   **element parameter index**.
+
+### Why the override carries a parameter INDEX (S15 correction, measured)
+
+The first cut pinned parameter **0** unconditionally. That is right for the
+predicate family `(element, index, array)` and **wrong for `reduce` /
+`reduceRight`**, whose callback is `(accumulator, element, index, array)` —
+parameter 0 is the accumulator. Measured on the reduction, that cut fixed 7 of
+8 arms and left `reduce` answering `!dereferencing a null pointer`; pinning
+parameter 0 there would also have re-typed the accumulator, which is a
+different value entirely. Carrying the index with the type is what lets one
+mechanism cover both callback shapes, and it is why the witness asserts
+`reduce`/`reduceRight` explicitly.
 
 Downstream effects considered:
 
