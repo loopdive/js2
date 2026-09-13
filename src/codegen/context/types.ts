@@ -2814,6 +2814,14 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * either way (imported tags occupy the low indices).
    */
   sharedExnTag: boolean;
+  /**
+   * (#5383 S2m) True when this standalone module's exception tag is IMPORTED
+   * from a linked PROVIDER's `__exn_tag` export rather than module-defined, so
+   * a provider-side `throw` is caught by the consumer's own `try`/`catch`.
+   * Host-free twin of {@link sharedExnTag}; like it, `exnTagIdx` is then
+   * already an ABSOLUTE tag index.
+   */
+  exnTagImported: boolean;
   /** (#5247) True for a linked provider: its exports are called by another WASM
    *  module, so the export-boundary throw unwrapping is suppressed. */
   exportsConsumedByWasm: boolean;
@@ -4052,6 +4060,11 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   standalone: boolean;
   /** Linked zero-argument getter for the canonical standalone realm-global object. */
   standaloneGlobalThisImport?: { module: string; name: string; call?: string };
+  /** (#5383 S2p) True while the outlined `__native_globalThis_ensure` seed body
+   *  is under construction, so a re-entrant realm-global read inside the seed
+   *  itself takes the legacy inline splice instead of calling a function whose
+   *  cached global is not set yet (which would recurse at runtime). */
+  nativeGlobalThisSeedBuilding?: boolean;
   /** Resolved JS-host direct-eval lowering. */
   directEvalMode: "legacy" | "reified-host";
   /** Private externref-array carrier used only by reified JS-host direct eval. */

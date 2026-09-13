@@ -1,10 +1,11 @@
 ---
 id: 6416
 title: "`arguments.length` inside an under-applied `.call`/`.apply` target reports the FORMAL count, not the supplied one"
-status: ready
+status: done
 sprint: current
 created: 2026-09-12
 updated: 2026-09-12
+completed: 2026-09-12
 priority: medium
 horizon: s
 feasibility: medium
@@ -12,6 +13,27 @@ reasoning_effort: high
 task_type: bug
 area: compiler
 goal: correctness
+# 2026-09-12 — the `arguments` protocol (`__argc` + `__extras_argv`) is written
+# at four sites and read at one, and each of the four leaked a stale extras vec
+# on its no-extras path. The fix has to land at each writer: the two host-facing
+# closure dispatchers (closure-exports.ts), the known-callee helper
+# (nested-declarations.ts) and the direct-closure-call helper (calls.ts). There
+# is no shared seam to extract them to — each writer is a different arm of a
+# different emitter — so the growth is 4-6 instructions plus the mechanism
+# comment at each site, in files that are already the owners of those emitters.
+loc-budget-allow:
+  - src/codegen/closure-exports.ts
+  - src/codegen/statements/nested-declarations.ts
+  - src/codegen/expressions/calls.ts
+# 2026-09-12 — same reason, at function granularity: the reset is a RETURN-PATH
+# epilogue, so it has to sit in the dispatcher emitter that owns the return
+# path (both of these already tee their result through a save local to restore
+# `__current_this`, and the reset must run after that restore). Extracting it
+# would mean handing a helper the local layout, the two global indices and the
+# ordering contract — more surface than the six instructions it replaces.
+func-budget-allow:
+  - src/codegen/closure-exports.ts::emitClosureCallExportN
+  - src/codegen/closure-exports.ts::emitClosureMethodCallExportN
 ---
 
 ## Problem
@@ -86,3 +108,124 @@ confirm that on the emitted WAT rather than assuming it.
 ## Dispatch
 
 opus — the fix is ~30 lines in two generated dispatchers with a load-bearing local layout and an ordering contract against the `__current_this` restore, plus a suite-wide A/B; the diagnosis and reduction are already done here, so no further investigation is needed.
+
+## Resolution
+
+Fixed 2026-09-12. Measured on `upstream/main` `e8a778638f`.
+
+**The issue's own diagnosis was wrong, and so was the plan's — in the same
+direction but not far enough.** The reader is fine: a top-level
+`f.call({t:'T'}, 1)` into `function f(a, b)` answers `T|1` on the parent commit.
+The plan correctly re-diagnosed it as a *stale `__extras_argv`* left behind by
+an over-applied closure call, and correctly identified the two host-facing
+dispatchers as leaking it. But it located the repair on the **return path only**,
+and that is not where the reported symptom comes from: with the dispatcher
+epilogue alone, 8 of the 9 originally-failing probe cases still failed. The
+contaminated read happens *inside* the over-applied callback, before any
+dispatcher has returned.
+
+**Mechanism.** `arguments.length` is `argc + extrasLen`
+(`emitArgumentsVecBody`), and the two globals are written at four sites and
+consumed at one. A callee that never materialises `arguments` never consumes
+them — so an over-applied call parks a non-null extras vec in `__extras_argv`
+and walks away. The reduced harness shape:
+
+```js
+function withArguments(a, b) { return arguments.length; }
+register('x', () => withArguments.call({}, 1));  // arrow declares 0 params
+tests[0].body({});                               // invoked with 1 → extras = [{}]
+```
+
+`__call_fn_method_1` seeds `__argc = 0`, `__extras_argv = [{}]` for the arrow;
+the arrow ignores `arguments`; the inner `.call` then seeds its own
+`__argc = 1` and inherits the arrow's extras → `1 + 1 = 2`. Every npm upstream
+harness over-applies every test callback, which is why the first `arguments`
+reader in each test body was contaminated.
+
+The four writers each had the same hole — a no-extras path that seeds `__argc`
+but leaves the extras global alone:
+
+| site | file | shape it fixes |
+| --- | --- | --- |
+| `maybeSetArgcForKnownCall` | `statements/nested-declarations.ts` | known callee, `.call`/`.apply`/`.bind`, direct call |
+| `emitClosureCallArgcExtras` | `expressions/calls.ts` | call to a closure **variable**, object-literal method |
+| `buildArgcExtrasSetupFromLocals` | `expressions/argc-extras.ts` | dynamic closure-ref call |
+| `emitClosureCallExportN` / `emitClosureMethodCallExportN` | `closure-exports.ts` | leak surviving *past* the dispatcher's return |
+
+The first three null `__extras_argv` immediately before their `call`, guarded so
+an over-applied caller's own extras are never wiped (`maybeSetArgcForKnownCall`
+guards on `actualArgCount <= paramCount`; the other two on "this call has no
+extras"). They use the no-lazy-registration convention of
+`buildArgcResetNoLazyExtras`: with no extras global yet, nothing in the module
+has ever written a vec. The fourth is a return-path epilogue in both
+dispatchers, teeing the result through a save local so the two `global.set`s do
+not disturb it; in the method dispatcher it runs **after** the `__current_this`
+restore and reuses that restore's existing `__result` slot, so the result is
+re-loaded once rather than twice. The plain dispatcher gained one externref
+local, appended after `__fallback_args` (index `arity + 5`) — `anyLocal`,
+`funcLocal` and `linkedArgsLocal` index the locals list positionally and must
+not be renumbered.
+
+**Which change carries which case** (measured, one change at a time):
+
+| change | regression cases it fixes alone |
+| --- | --- |
+| `maybeSetArgcForKnownCall` | 14 of 15 |
+| dispatcher epilogues | 1 (a dynamic closure-ref call *after* an over-applied body) |
+| `buildArgcExtrasSetupFromLocals` | 1 (dynamic closure-ref call *inside* one) |
+| `emitClosureCallArgcExtras` | 2 (closure **variable** / object-literal method) |
+
+All four are load-bearing; none is redundant.
+
+**Regression test** `tests/issue-6416-stale-extras-argv.test.ts` — 22 cases on
+untyped two-file `.js` fixtures via `compileProject` (gc/node). **15 fail on the
+parent commit, 7 controls pass there; 22 pass with the fix.** Controls cover
+exact-arity replay, the over-applied `.call(t,1,2,3)` extras ABI, the
+over-applied closure's own `arguments.length`, and padded formals into a callee
+that ignores `arguments`. The anti-vacuity control asserts a rest-parameter
+callback really does see the surplus argument (`1/0`) — it reads `0/0` the
+moment the fixture stops over-applying and the whole file would otherwise pass
+for the wrong reason. Neighbour suites `issue-1511`, `issue-2745`, `issue-5341`
+and `issue-1053-arguments-global-staleness` were run on base and branch and
+read **identically** (4 pre-existing failures in `issue-1511` /
+`issue-1053-arguments-global-staleness` are on `upstream/main` too — unrelated
+to this change).
+
+**Host-only verified.** The dispatchers and both globals are mode-agnostic, but
+the reduction reaches them through the JS-host closure bridge; `issue-5341` has
+no standalone lane either, so no standalone case was added and no floor
+movement is expected.
+
+**A/B over all 17 dogfood suites** (same HEAD `e8a778638f`, base vs branch, one
+suite at a time). Every suite identical — **and identical at per-file
+granularity too** (`diff` over every `[dogfood] <file>: n/m native; n/m Wasm`
+line across all 17 logs is empty):
+
+| suite | base | branch | | suite | base | branch |
+| --- | --- | --- | --- | --- | --- | --- |
+| webpack | 16/16 | 16/16 | | styled-components | 9/9 | 9/9 |
+| three | 17/18 | 17/18 | | uuid | 75/75 | 75/75 |
+| clsx | 32/32 | 32/32 | | marked | 16/30 | 16/30 |
+| cookie | 63740/63740 | 63740/63740 | | moment | 10/10 | 10/10 |
+| lodash | 59/62 | 59/62 | | prettier | 107/151 | 107/151 |
+| redux | 67/82 | 67/82 | | jest | 335/356 | 335/356 |
+| axios | 208/231 | 208/231 | | hono | 261/324 | 261/324 |
+| stylelint | 108/108 | 108/108 | | | | |
+| tailwindcss | 13/13 | 13/13 | | | | |
+| jsdom | 6/6 | 6/6 | | | | |
+
+The plan expected lodash/moment/marked/prettier/jest/hono/redux to move. **None
+did.** The contamination is real and now fixed, but no admitted upstream test in
+the 17 suites was gated on it — the tests that read `arguments.length` inside an
+over-applied callback were already failing for other reasons, or did not read it
+at all. Recorded as a measurement, not a disappointment: the acceptance bar was
+"no suite may drop", and none did.
+
+**Residual, filed separately.** `arguments.length` was only half of the reported
+expression. In the same shape, a *plain* call inside a host-dispatched closure
+still inherits the dispatcher's `__current_this` instead of `undefined`:
+`register('x', () => withArguments(1)); tests[0].body({})` reads
+`undefined|1` where native reads `NO-THIS|1`. The count is now right; the
+receiver is not. That is a `__current_this` leak, orthogonal to the `arguments`
+protocol, and is
+[#6436](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6436-plain-call-inherits-ambient-this).

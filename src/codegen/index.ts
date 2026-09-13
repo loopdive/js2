@@ -179,6 +179,7 @@ import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-sessi
 import { sourceFunctionHandleForDeclaration } from "./program-abi-source-callable-planning.js";
 import { stripHostBridgeExports } from "./host-bridge-exports.js";
 import { publishStandaloneLinkBoundaryExports } from "./standalone-link-boundary.js"; // (#5383 S2d)
+import { fillLinkBoundaryToStringTagTerminal } from "./link-boundary-tostring.js"; // (#5406)
 import { eliminateDeadLayoutAndPlanProgramAbi } from "./program-abi-finalization.js";
 import { emitDataStructHostBridgeManifest } from "./data-struct-host-bridge.js";
 import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_ROLE } from "./program-abi-planning.js";
@@ -7080,6 +7081,10 @@ function finalizeStandaloneTimerCallbackExports(ctx: CodegenContext): void {
   // removes the JS-facing decoder family from a standalone binary, and these
   // wasm-facing terminals are its replacement for a linked consumer. Publishing
   // before it would leave the export to be stripped again.
+  // (#5406) Fill the §20.1.3.6 terminal before publishing: its body composes
+  // `__typeof_*` and the native-proto brand table, which are only complete at
+  // finalize. A provider that declines keeps the reserved "not mine" body.
+  fillLinkBoundaryToStringTagTerminal(ctx);
   publishStandaloneLinkBoundaryExports(ctx);
 }
 
@@ -13203,6 +13208,36 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
   // Skip registration — these types map to `externref` everywhere. (#1287)
   const dtsDecls = tsType.symbol?.getDeclarations?.();
   if (dtsDecls && dtsDecls.length > 0 && dtsDecls.every((d) => d.getSourceFile().isDeclarationFile)) {
+    return;
+  }
+  // (#5383) The realm GLOBAL OBJECT — `typeof globalThis` — is never a compiled
+  // WasmGC struct. That is not a new rule: #3365 widens `var t = this` to
+  // externref, #4394 routes `Object.defineProperty(globalThis, …)` off the
+  // struct fast path, and #4638 re-represents a data-only literal holding it,
+  // all because a `(ref null $__anon_globalThis)` slot can never `ref.test`
+  // against the host externref (or the standalone `$Object` singleton) that the
+  // value actually is. Those three are use-site repairs for a type that should
+  // not have been registered in the first place; this is the registration-site
+  // rule they each work around.
+  //
+  // Registering it is also the single largest cost in any compile that touches
+  // it, because the type carries EVERY ambient global: lib.dom's ~950 members
+  // become ~950 struct fields, and `emitStructFieldGetters`/`Setters` then mint
+  // an `__sget_<name>`/`__sset_<name>` pair per field. Measured on a test262
+  // `built-ins/Temporal/PlainDate/prototype/day/basic.js` original-harness row
+  // (10.6 KB) through `compileMulti`, whose harness prefix opens with the
+  // `var $262 = { global: globalThis, … }` that mints it: 2,766 functions and
+  // 694 k instructions, of which 1,942 functions are those accessors. Every
+  // whole-module finalize pass is O(instructions), so the 10.6 KB row cost
+  // ~8.7 s instead of ~3.6 s. None of those accessors is reachable — no value
+  // of this type can exist at runtime to be read through one.
+  //
+  // The global scope's symbol is transient and has NO declarations, which is
+  // why the `.d.ts` guard directly above does not catch it (it requires at
+  // least one declaration, all of them in declaration files). Both conditions
+  // are checked so an ordinary user type that merely happens to be named
+  // `globalThis` keeps its struct.
+  if (tsType.symbol?.name === "globalThis" && (dtsDecls?.length ?? 0) === 0) {
     return;
   }
   // #1247: Array types compile to vec structs (length+data) via getOrRegisterVecType,
