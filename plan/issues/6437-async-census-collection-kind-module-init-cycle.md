@@ -85,3 +85,26 @@ Acceptance criterion 2 is satisfied by construction — the fix was in the modul
 graph, not an added import in the test. Criterion 3 (a note naming the
 load-bearing edge) was **not** done and remains open as a small follow-up on
 `collection-kind.ts` if anyone wants it.
+
+## Verdict (planning pass, 2026-09-13)
+
+already-fixed: Reproduction no longer occurs on 54c36a9fe3: tests/async-census.test.ts collects and passes standalone (13/13). Fixed by #6419 (collection-kind.ts leaf). Issue already status: done; its claim that criterion 3 (cycle note) is still open is stale — the note exists in src/codegen/collection-kind.ts and collections-brand.ts:44-49.
+
+## Implementation Plan
+
+No work remains. Measured on this HEAD (`54c36a9fe3`, detached upstream/main):
+`node node_modules/vitest/vitest.mjs run tests/async-census.test.ts` (standalone, no other file loaded first)
+→ `Test Files 1 passed — Tests 13 passed (13)`, collect 12.2s.
+
+The cycle edge was cut by #6419 (`53ba0b7b46`, PR #5876): `COLLECTION_KIND` now lives in the import-free leaf `src/codegen/collection-kind.ts`, and `src/codegen/collections-brand.ts:50` imports it from that leaf instead of `map-runtime.js`, so the top-level `KIND_OF` initializer (`collections-brand.ts:106`) can never observe a mid-evaluation module.
+
+Acceptance criteria status:
+1. Standalone collect + pass — met (measurement above).
+2. Fix in the module graph, not an added test import — met (`tests/async-census.test.ts` imports are unchanged: vitest, typescript, codegen modules; no `src/index.js` prepended).
+3. Note naming the load-bearing edge — **already met**, contrary to the issue's Resolution text: `collection-kind.ts` header doc ("Why its own file (#6419)") spells out the full `map-runtime → nested-declarations → … → expressions/calls → collections-brand → map-runtime` cycle and why a leaf is the fix, and `collections-brand.ts:44-49` carries a sibling comment at the import site. The issue's "criterion 3 remains open" line is stale.
+
+Only optional follow-up: strike the "Criterion 3 … was not done" sentence from the issue file's Resolution section (docs-only; ride the open docs PR). No dogfood or standalone-lane movement — this was a vitest collect-time failure of one unit test file, never a compiler behaviour change.
+
+## Dispatch
+
+sonnet — nothing to implement; at most a one-line docs correction in the issue file, bundled into the existing docs-only PR.
