@@ -13814,7 +13814,7 @@ assert._isSameValue = isSameValue;
           // ES §20.1.2.22 Object.values → ToObject (§7.1.18) throws on null/undefined.
           if (obj == null) throw new TypeError(`Cannot convert ${obj === null ? "null" : "undefined"} to object`);
           if (_isWasmStruct(obj)) {
-            const exports = callbackState?.getExports();
+            const exports = _decoderExportsFor(obj, callbackState?.getExports()); // (#5225/#6426)
             const fieldNames = _getStructFieldNames(obj, exports);
             if (fieldNames) {
               const descs = _wasmPropDescs.get(obj);
@@ -13839,7 +13839,7 @@ assert._isSameValue = isSameValue;
           // ES §20.1.2.5 Object.entries → ToObject (§7.1.18) throws on null/undefined.
           if (obj == null) throw new TypeError(`Cannot convert ${obj === null ? "null" : "undefined"} to object`);
           if (_isWasmStruct(obj)) {
-            const exports = callbackState?.getExports();
+            const exports = _decoderExportsFor(obj, callbackState?.getExports()); // (#5225/#6426)
             const fieldNames = _getStructFieldNames(obj, exports);
             if (fieldNames) {
               const descs = _wasmPropDescs.get(obj);
@@ -13868,7 +13868,7 @@ assert._isSameValue = isSameValue;
           if (typeof arr === "string") return Array.from(arr).slice(start);
           // Handle WasmGC structs (tuples) — extract fields from index onwards
           if (_isWasmStruct(arr)) {
-            const exports = callbackState?.getExports();
+            const exports = _decoderExportsFor(arr, callbackState?.getExports()); // (#5225/#6426)
             const fieldNames = _getStructFieldNames(arr, exports);
             if (fieldNames && exports) {
               const result: any[] = [];
@@ -13905,7 +13905,7 @@ assert._isSameValue = isSameValue;
           };
           // For WasmGC structs, use exported getters to read fields
           if (_isWasmStruct(obj)) {
-            const exports = callbackState?.getExports();
+            const exports = _decoderExportsFor(obj, callbackState?.getExports()); // (#5225/#6426)
             const fieldNames = _getStructFieldNames(obj, exports);
             if (fieldNames) {
               for (const key of fieldNames) {
