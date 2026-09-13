@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { compile, type CompileResult, type IrObservedOutcome } from "../src/index.js";
@@ -277,6 +279,51 @@ describe("#4573 standalone native Promise-delay compile-once ownership", () => {
     expect(ir.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
   });
 
+  it("validates the unchanged native-family artifact with the forwarded standard-EH delay guard", async () => {
+    const source = readFileSync(new URL("../website/playground/examples/js/async.ts", import.meta.url), "utf8")
+      .replace("async function fetchUser", "export async function fetchUser")
+      .replace("async function fetchAllSequential", "export async function fetchAllSequential")
+      .replace("async function fetchAllParallel", "export async function fetchAllParallel");
+    expect(createHash("sha256").update(source).digest("hex")).toBe(
+      "fb644cafb5d7125d1906519dd330642a53e05cbf8a9f5a4af6eef4bbf7a74b9e",
+    );
+    // Exact controls from the unchanged settlement recorder's failing family.
+    // Scope them to this new case; the original twelve cases keep their flags.
+    const controls = {
+      JS2WASM_IR_GVN: "0",
+      JS2WASM_IR_OWNERSHIP: "0",
+      JS2WASM_IR_ESCAPE: "0",
+      IR_VERIFY_ALLOC: "0",
+      JS2WASM_IR_VERIFY_DOMINANCE_NAIVE: "0",
+      JS2WASM_IR_INLINE: "0",
+    };
+    const saved = new Map(Object.keys(controls).map((key) => [key, process.env[key]]));
+    try {
+      for (const [key, value] of Object.entries(controls)) process.env[key] = value;
+      const result = await compileDelay(source, true, "settlement-native-family.ts", "always");
+      expectSuccess(result);
+      const module = new WebAssembly.Module(result.binary);
+      expect(WebAssembly.Module.imports(module).map(({ module, name }) => `${module}.${name}`)).toEqual([
+        "env.__timer_set_timeout",
+      ]);
+      expect(terminalOutcome(result, "delay")).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+      });
+      const provider = watFunction(result, "__ir_promise_delay_native").body;
+      expect(provider.match(/\(try_table\b/g)).toHaveLength(1);
+      expect(provider).toMatch(/\(try_table \(catch \d+ 0\) \(catch_all 1\)/);
+      expect(provider).toContain("(block (result externref)");
+      expect(provider).not.toMatch(/\(try(?:\s|\))/);
+    } finally {
+      for (const [key, value] of saved) {
+        if (value === undefined) Reflect.deleteProperty(process.env, key);
+        else process.env[key] = value;
+      }
+    }
+  });
+
   it("settles concurrent fast and slow native promises exactly once with direct-backend parity", async () => {
     const [ir, direct] = await Promise.all([
       compileDelay(EXACT_DELAY, true, "issue-4573-concurrent-ir.ts"),
@@ -492,6 +539,35 @@ describe("#4573 standalone native Promise-delay compile-once ownership", () => {
     // synchronous leak by rejecting, using null as the documented boundary
     // sentinel until the capability contract grows a typed error channel.
     await expect(runRejectedRegistration(ir)).resolves.toEqual({ state: 2, reason: null });
+  });
+
+  it("preserves the actual module-tag payload identity when timer registration throws", async () => {
+    const result = await compileDelay(EXACT_DELAY, true, "issue-4573-tagged-registration-throw.ts");
+    expectSuccess(result);
+    expect(actualImportNames(result)).toEqual(["env.__timer_set_timeout"]);
+    const reason = { marker: "tagged registration rejection" };
+    const timerState: { exception?: WebAssembly.Exception } = {};
+    let registrations = 0;
+    const imports = importsWithCapturedSetTimeout(result, (() => {
+      registrations++;
+      if (!timerState.exception) throw new Error("test has not bound the actual module tag");
+      throw timerState.exception;
+    }) as typeof setTimeout);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    const tag = instance.exports.__exn_tag;
+    expect(tag).toBeInstanceOf(WebAssembly.Tag);
+    timerState.exception = new WebAssembly.Exception(tag as WebAssembly.Tag, [reason]);
+    imports.setInstance?.(instance);
+    const exports = instance.exports as unknown as Record<string, Function>;
+    for (const name of ["delay", "__promise_boundary_state", "__promise_boundary_value"])
+      expect(exports[name]).toBeTypeOf("function");
+    let promise: unknown;
+    expect(() => {
+      promise = exports.delay!(1, 73);
+    }).not.toThrow();
+    expect(registrations).toBe(1);
+    expect(exports.__promise_boundary_state!(promise)).toBe(2);
+    expect(exports.__promise_boundary_value!(promise)).toBe(reason);
   });
 
   it("fails closed on native-provider collisions and injected late registration", async () => {

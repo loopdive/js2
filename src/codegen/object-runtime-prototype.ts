@@ -1,3 +1,4 @@
+import { NATIVE_GENERATOR_PROTO_VIEW } from "./generators-native-protocol.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#3274, subtask of #3182) Object-runtime **prototype-chain** helper builders,
@@ -440,6 +441,9 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
     };
     const body: Instr[] = [
       { op: "local.get", index: 0 },
+      ...(ctx.funcMap.has(NATIVE_GENERATOR_PROTO_VIEW)
+        ? [{ op: "call", funcIdx: ctx.funcMap.get(NATIVE_GENERATOR_PROTO_VIEW)! } as Instr]
+        : []),
       { op: "any.convert_extern" },
       { op: "local.tee", index: 1 },
       { op: "ref.test", typeIdx: objectTypeIdx },
@@ -557,6 +561,9 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
     const body: Instr[] = [
       // o = (obj is $Object ? cast : null); if not an $Object → return obj as-is
       { op: "local.get", index: 0 },
+      ...(ctx.funcMap.has(NATIVE_GENERATOR_PROTO_VIEW)
+        ? [{ op: "call", funcIdx: ctx.funcMap.get(NATIVE_GENERATOR_PROTO_VIEW)! } as Instr]
+        : []),
       { op: "any.convert_extern" },
       { op: "local.tee", index: 5 },
       { op: "ref.test", typeIdx: objectTypeIdx },
@@ -709,6 +716,9 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
     const body: Instr[] = [
       // Not an ordinary `$Object` receiver → not this native's business → 1.
       { op: "local.get", index: 0 },
+      ...(ctx.funcMap.has(NATIVE_GENERATOR_PROTO_VIEW)
+        ? [{ op: "call", funcIdx: ctx.funcMap.get(NATIVE_GENERATOR_PROTO_VIEW)! } as Instr]
+        : []),
       { op: "any.convert_extern" },
       { op: "local.tee", index: 5 },
       { op: "ref.test", typeIdx: objectTypeIdx },

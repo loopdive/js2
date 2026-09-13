@@ -16,6 +16,24 @@
  * per-slot history and the append-only contract.
  */
 
+/**
+ * (#3171) Which keyed collection a `$Map` struct instance backs. All four
+ * collections share the `$Map` hash table (Set/WeakSet store key === value), so
+ * struct identity alone cannot distinguish `[[MapData]]` / `[[SetData]]` /
+ * `[[WeakMapData]]` / `[[WeakSetData]]` for the spec receiver brand checks
+ * (`Map.prototype.get.call(new Set())` must throw a TypeError). The immutable
+ * `kind` field (MAP_LAYOUT.M_KIND), stamped at construction by `__map_new`,
+ * carries the brand. These four tags are separate from the NativeProto brand
+ * band below; this import-free leaf permits eager collection brand tables.
+ */
+export const COLLECTION_KIND = {
+  MAP: 0,
+  SET: 1,
+  WEAKMAP: 2,
+  WEAKSET: 3,
+} as const;
+export type CollectionKind = (typeof COLLECTION_KIND)[keyof typeof COLLECTION_KIND];
+
 /** Brand ids sit far below zero so they can never collide with a class tag. */
 export const BUILTIN_BRAND_BASE = -0x4000_0000; // far from any plausible classTag count
 

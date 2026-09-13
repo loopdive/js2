@@ -23,6 +23,12 @@ async function instantiate(src: string): Promise<Record<string, (...a: unknown[]
   return exports;
 }
 
+// (#5372) These two rows used to assert the RAW value (`pick(1) === 7`), which
+// only held because `return cond ? await x() : y` was not a shape the async
+// engine could drive — the function fell to the legacy synchronous
+// pass-through and returned the value directly. The await in a conditional
+// operand is a real suspension point now, so `pick` returns a Promise; the
+// value is asserted through it (which the legacy path would also satisfy).
 describe("#3722 — await in a ternary's consequent branch is not a label", () => {
   it("`cond ? await x() : y` compiles and runs (true branch)", async () => {
     const exports = await instantiate(`
@@ -31,7 +37,7 @@ describe("#3722 — await in a ternary's consequent branch is not a label", () =
         return useAsync ? await fetchIt() : 3;
       }
     `);
-    expect(exports.pick(1)).toBe(7);
+    expect(await exports.pick(1)).toBe(7);
   });
 
   it("`cond ? await x() : y` compiles and runs (false branch)", async () => {
@@ -41,7 +47,7 @@ describe("#3722 — await in a ternary's consequent branch is not a label", () =
         return useAsync ? await fetchIt() : 3;
       }
     `);
-    expect(exports.pick(0)).toBe(3);
+    expect(await exports.pick(0)).toBe(3);
   });
 
   it("a member/call expression after await inside a ternary compiles", async () => {

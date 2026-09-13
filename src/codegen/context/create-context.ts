@@ -221,6 +221,7 @@ export function createCodegenContext(
     hostDynamicClassMethodNames: new Set(),
     hostDynamicClassAccessorReads: new Set(),
     runtimeKeyClassMethodNames: new Set(),
+    standaloneRuntimeKeyClassProtos: new Set(),
     genericResolved: new Map(),
     funcRestParams: new Map(),
     funcUsesArguments: new Set(),

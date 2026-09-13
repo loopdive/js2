@@ -43,7 +43,9 @@
  * Spec: ECMA-262 §7.4 (GetIterator / IteratorStep / IteratorValue /
  * IteratorClose). See plan/issues/2038-standalone-iterator-next-illegal-cast-async-dstr.md.
  */
+import { fillNativeDelegationRuntime } from "./generators-delegation-runtime.js";
 import type { Instr, ValType } from "../ir/types.js";
+import { ensureNonIterableThrowDeps, nonIterableThrowInstrs } from "./iterator-errors.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
@@ -243,6 +245,7 @@ interface SyncGenCarrierDeps {
   producers: {
     stateTypeIdx: number;
     resumeIdx: number;
+    nativeDelegates?: boolean;
     resultTypeIdx: number;
     elemValType: ValType;
     /** Terminal state id — IteratorClose writes it into the frame's `state`. */
@@ -253,6 +256,7 @@ interface SyncGenCarrierDeps {
   /** Index of the f64 scratch local appended to `__iterator_next` at fill
    *  time (sentinel-aware f64 boxing needs one). */
   f64TmpIdx: number;
+  delegatedResultIdx?: number;
 }
 
 /** (#3164) `$GenState_*` field layout (generators-native.ts frame ABI):
@@ -1652,7 +1656,7 @@ export function reserveAnyIterNext(ctx: CodegenContext): number | undefined {
   ensureNativeIteratorRuntime(ctx);
   if (ensureNativeIterResultObject(ctx) === undefined) return undefined;
   if (ctx.funcMap.get("__iterator_next") === undefined) return undefined;
-  const genNextIdxAtReserve = ctx.funcMap.get("__gen_next");
+  const genNextIdxAtReserve = ctx.legacyGenBufferEmitted === true ? ctx.funcMap.get("__gen_next") : undefined;
   const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
   const funcIdx = mintDefinedFunc(ctx);
   ctx.funcMap.set("__any_iter_next", funcIdx);
@@ -1670,7 +1674,7 @@ export function reserveAnyIterNext(ctx: CodegenContext): number | undefined {
     // old answer instead of trapping.
     body:
       genNextIdxAtReserve === undefined
-        ? [{ op: "ref.null.extern" }]
+        ? (nonIterableThrowInstrs(ctx) ?? [{ op: "unreachable" }])
         : [
             { op: "local.get", index: 0 },
             { op: "call", funcIdx: genNextIdxAtReserve },
@@ -1727,7 +1731,7 @@ export function fillAnyIterNext(ctx: CodegenContext): void {
   if (!fn) return;
   const iterRecTypeIdx = ctx.structMap.get("__IterRec");
   const lazyTypeIdx = ctx.structMap.get("$LazyIterHelper");
-  const genNextIdx = ctx.funcMap.get("__gen_next");
+  const genNextIdx = ctx.legacyGenBufferEmitted === true ? ctx.funcMap.get("__gen_next") : undefined;
 
   // recognized = ref.test $IterRec ∨ ref.test $LazyIterHelper
   const recognized: Instr[] = [];
@@ -1740,7 +1744,7 @@ export function fillAnyIterNext(ctx: CodegenContext): void {
     // Nothing native to recognize — behave exactly like the legacy route.
     fn.body =
       genNextIdx === undefined
-        ? [{ op: "ref.null.extern" }]
+        ? (nonIterableThrowInstrs(ctx) ?? [{ op: "unreachable" }])
         : [
             { op: "local.get", index: 0 },
             { op: "call", funcIdx: genNextIdx },
@@ -1768,7 +1772,7 @@ export function fillAnyIterNext(ctx: CodegenContext): void {
       ],
     },
     ...(genNextIdx === undefined
-      ? ([{ op: "ref.null.extern" }] satisfies Instr[])
+      ? (nonIterableThrowInstrs(ctx) ?? ([{ op: "unreachable" }] satisfies Instr[]))
       : ([
           { op: "local.get", index: 0 },
           { op: "call", funcIdx: genNextIdx },
@@ -2573,6 +2577,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
       sgProducers.push({
         stateTypeIdx: info.stateTypeIdx,
         resumeIdx: info.resumeFuncIdx,
+        nativeDelegates: info.nativeDelegates,
         resultTypeIdx: info.resultTypeIdx,
         elemValType: info.elemValType,
         doneState: info.doneState,
@@ -2580,7 +2585,12 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
     }
     sgProducers.sort((a, b) => a.stateTypeIdx - b.stateTypeIdx);
     if (sgProducers.length > 0) {
-      sgDeps = { producers: sgProducers, boxNumIdx: ctx.funcMap.get("__box_number"), f64TmpIdx: 7 };
+      sgDeps = {
+        producers: sgProducers,
+        delegatedResultIdx: ctx.funcMap.get("__gen_delegate_iter_result"),
+        boxNumIdx: ctx.funcMap.get("__box_number"),
+        f64TmpIdx: 7,
+      };
     }
   }
 
@@ -2850,10 +2860,9 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
     }
   }
 
-  // (#3100 S5) IteratorClose: rebuild `__iterator_return` with the USER close
-  // arm when a `return` dispatcher exists. Without one, close on a USER record
-  // finds no `return` method ⇒ NormalCompletion (§7.4.9 step 4) — the eager
-  // empty body is already exactly that, so it stays untouched (byte-identical).
+  // (#3100 S5) Close USER records through their method dispatcher or the
+  // strict provider's property bridge; absence of a dispatcher alone does not
+  // establish absence of a return method.
   // (#3119) The OBJ close arm (`__extern_get(iterObj, "return")` +
   // `__apply_closure`) fills independently — a plain-object iterator's
   // `return` is a PROPERTY, reachable without any closed-struct dispatcher.
@@ -2885,6 +2894,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
         hostDeps,
         sgDeps,
         closeCheck,
+        Boolean(strictRuntime && objDeps?.sgetReturnIdx !== undefined && deps?.callReturnIdx === undefined),
       );
     }
   }
@@ -2934,6 +2944,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
       }
     }
   }
+  fillNativeDelegationRuntime(ctx);
 }
 
 /** (#5268 r3) funcMap key of the `HasIteratorMethod` predicate. */
@@ -3119,6 +3130,7 @@ function buildIteratorReturnBody(
    * keeps the legacy `drop`.
    */
   closeResultCheck?: () => Instr[],
+  closeUserViaProperties = false,
 ): Instr[] {
   const { iterRecTypeIdx } = types;
   const validateClose: Instr[] = closeResultCheck ? closeResultCheck() : [{ op: "drop" }];
@@ -3254,6 +3266,19 @@ function buildIteratorReturnBody(
         { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 0 },
         { op: "i32.const", value: ITER_KIND_OBJ },
         { op: "i32.eq" },
+        // Strict stepping also accepts USER records carrying closure-valued
+        // fields. Without a method dispatcher, close through the same property
+        // bridge instead of silently treating their return method as absent.
+        ...(closeUserViaProperties
+          ? ([
+              { op: "local.get", index: 1 },
+              { op: "ref.cast", typeIdx: iterRecTypeIdx },
+              { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 0 },
+              { op: "i32.const", value: ITER_KIND_USER },
+              { op: "i32.eq" },
+              { op: "i32.or" },
+            ] as Instr[])
+          : []),
         {
           op: "if",
           blockType: { kind: "empty" },
@@ -3375,39 +3400,6 @@ function buildIteratorReturnBody(
  * reuses it for iterFn/iterObj), 3=i(i32)/4=len(i32)/5=out(arr) — scratch for
  * the family-arm normalize loops.
  */
-/** (#3388) The §7.4.1 GetIterator TypeError message for a non-iterable subject. */
-const NOT_ITERABLE_MSG = "value is not iterable";
-
-/**
- * (#3388) Eagerly register the native `TypeError` constructor + the
- * "not iterable" message string global (both idempotent) so `__iterator`'s
- * non-iterable tail can throw a catchable `TypeError` instead of trapping.
- * Standalone/wasi only (host mode keeps the legacy loud trap — its `__iterator`
- * is a JS host import that already throws). Call from `ensureNativeIteratorRuntime`
- * BEFORE `buildIteratorBody`, so `nonIterableThrowInstrs` (below) only READS
- * already-registered symbols at both the eager and finalize build sites.
- */
-function ensureNonIterableThrowDeps(ctx: CodegenContext): void {
-  if (!(ctx.standalone || ctx.wasi)) return;
-  emitWasiErrorConstructor(ctx, "TypeError", 1); // idempotent (funcMap.has guard)
-  addStringConstantGlobal(ctx, NOT_ITERABLE_MSG); // idempotent (keyed by value)
-}
-
-/**
- * (#3388) FRESH throw-`TypeError` instrs for the §7.4.1 non-iterable tail, or
- * `undefined` to keep the legacy trap (host mode, or the ctor/global was not
- * pre-registered). Builds a new instr array each call (never share — the DCE
- * in-place remap double-applies to an aliased object, #2169b). Reads only
- * pre-registered symbols, so it is safe at BOTH the eager and finalize
- * `buildIteratorBody` sites.
- */
-function nonIterableThrowInstrs(ctx: CodegenContext): Instr[] | undefined {
-  if (!(ctx.standalone || ctx.wasi)) return undefined;
-  const ctorIdx = ctx.funcMap.get("__new_TypeError");
-  if (ctorIdx === undefined) return undefined;
-  const tagIdx = ensureExnTag(ctx);
-  return [...throwMsgExternrefInstrs(ctx, NOT_ITERABLE_MSG), { op: "call", funcIdx: ctorIdx }, { op: "throw", tagIdx }];
-}
 
 /** Build the unbounded strict spread materializer. */
 function buildStrictSpreadMaterializerBody(
@@ -5240,6 +5232,22 @@ function buildIteratorNextBody(
                   op: "if",
                   blockType: { kind: "empty" },
                   then: [
+                    ...(p.nativeDelegates
+                      ? ([
+                          { op: "local.get", index: 6 },
+                          { op: "any.convert_extern" },
+                          { op: "ref.cast", typeIdx: p.stateTypeIdx },
+                          { op: "call", funcIdx: p.resumeIdx },
+                          { op: "extern.convert_any" },
+                          {
+                            op: "call",
+                            funcIdx: strictCtx?.funcMap.get("__gen_delegate_iter_result") ?? sgDeps.delegatedResultIdx!,
+                          },
+                          { op: "local.set", index: 5 },
+                          { op: "local.set", index: 4 },
+                          { op: "br", depth: 1 },
+                        ] as Instr[])
+                      : []),
                     // res := extern(resume(cast(frame)))  — the {value, done} result
                     { op: "local.get", index: 6 },
                     { op: "any.convert_extern" },
