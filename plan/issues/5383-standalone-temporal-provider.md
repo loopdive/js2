@@ -4914,3 +4914,121 @@ three must-not-move samples flat, the `gc` lane byte-identical on both corpora,
 and 0 `__temporal_*` leaks. Base and branch were both measured on this tree by
 file-copy revert, so the delta is a self-consistent before/after. No full-corpus
 number is claimed; a corpus run remains the tech lead's to schedule.
+
+### S15 findings (2026-09-13) — `sn()` did not need a Temporal fix; it needed the array-HOF callback to stop asserting a nullable element non-null. 199 → 201, and the whole 22-row `sn()` bucket moved one step
+
+**#6475 is the slice.** Full write-up, tables and residuals in the issue file
+`plan/issues/6475-standalone-nullable-vec-element-callback-param.md`.
+
+#### 1. Root cause, and why six slices of Temporal work never reached it
+
+The largest remaining bucket — 16 Duration + 6 ZonedDateTime rows reading
+`dereferencing a null pointer in sn()` — had **nothing Temporal-specific in
+it**. `sn` is the minified `ToTemporalDuration`, and its first act on a
+duration STRING is
+
+```js
+const t = Ye.exec(e);
+if (t.every((e, t) => t < 2 || void 0 === e)) throw new RangeError(…);
+```
+
+Standalone `exec` returns a vec whose element type is `ref_null $anyStr` — an
+unmatched capture group is a NULL native string, the compiler's `undefined` for
+that slot. TypeScript types the same array `RegExpExecArray extends
+Array<string>`, i.e. NON-null. So the callback's element parameter resolved to
+`ref $anyStr`, the call site coerced the loaded element with a bare
+`ref.as_non_null`, and the first unmatched group trapped.
+
+The reduction is ten lines and needs no provider, no link and no harness:
+`/^(a)?(b)$/.exec("b").every((e, i) => i < 2 || true)` traps; `.map(…)` and
+`m[1]` do not. `map` is the one arm that already pins its callback's first
+parameter to the receiver's real element type (#4527/#5319) — the asymmetry was
+sitting in the compiler the whole time.
+
+**Method note, and it is the same one S13 and S14 wrote down from the other
+side.** S13 learned "reduce in ONE standalone module"; S14 learned "the harness
+is part of the input". S15 adds the third: **a trace frame names the function
+that traps, not the mechanism that is wrong.** `sn()` in the trace made six
+slices read this as a Temporal/provider defect. The question that broke it open
+was not "what does `sn` do" but "what is the FIRST compiler mechanism `sn`
+touches", and that question is answerable without the provider at all.
+
+#### 2. Fix
+
+One mechanism: `setupArrayCallback` windows the receiver's real element type —
+and the index of the parameter that receives it — over the callback compile;
+the closure wrapper signature honours it only where the checker handed back
+that type's exact non-null twin. `map` keeps its own unconditional override.
+
+The parameter INDEX is load-bearing: `reduce`/`reduceRight` pass the element as
+parameter **1**. The first cut pinned parameter 0, fixed 7 of 8 arms and left
+`reduce` trapping — measured, not reasoned.
+
+#### 3. The measurement, and the honest version of the win
+
+| family | rows | base pass | **S15 pass** | pass→fail |
+| --- | --- | --- | --- | --- |
+| `PlainDate/**` | 120 | 78 | 78 | 0 |
+| `Duration/**` | 120 | 49 | **51** | 0 |
+| `ZonedDateTime/prototype/**` | 120 | 72 | 72 | 0 |
+| **total** | **360** | **199** | **201** | **0** |
+
+Base reproduces S14's 199/360 exactly on this tree. `__temporal_*` leaks: 0.
+Must-not-move (120 `Array.prototype` HOF rows, standalone): 54/66 on both, 0
+flips. `gc` lane: 84/84 + 14/14 artifacts byte-identical.
+
+**+2 rows understates it and the bucket movement is the real number.** All 22
+`sn()` rows stopped trapping at the `every`; **18 of them now trap one step
+later in the same function**, at `__str_flatten`, on a genuinely different
+defect. The row count will move properly when that one goes.
+
+#### 4. Next target, already reduced
+
+**Implicit truthiness of a null native string traps; the explicit
+`Boolean(…)` call does not.** `t[4] ? "T" : "F"` and `t[4] || "x"` trap;
+`Boolean(t[4])` answers `"false"` correctly; `"" + t[4]` answers `"undefined"`
+correctly. The polyfill hits it at `if (d ?? h ?? u ?? l) …` inside `sn`.
+Worth 13 Duration + 5 ZonedDateTime rows in this sample — more than this slice
+was — and it is the same family of defect: a null native string IS `undefined`,
+and each lowering that forgets it has to be taught separately.
+
+Still open behind it: `instanceof` across the provider link with a dynamic RHS
+(S11 residual, gates 2 Duration rows), ZonedDateTime's 7-row
+`required property 'timeZone' missing`, PlainDate's 6-row `year is required`
+and its 3-row `__closure_N()` null pointer — **measured NOT to be the #6475
+family**, since PlainDate did not move at all.
+
+#### 5. Traps, carried forward
+
+All S11–S14 traps still bite (provider cache not keyed on the compiler; the
+pre-warm STAMP, without which rows read `Temporal is not defined`; both quickjs
+artifacts as real files; never swap source files during a measurement; re-run
+every flip solo at 60 s on both trees). Two additions:
+
+- **A `vitest` run can exit 1 with every test passing.** The first suite batch
+  reported `Test Files 5 passed (5) / Tests 95 passed` and exit 1, on an
+  unhandled `[vitest-worker]: Timeout calling "onTaskUpdate"` — an RPC timeout
+  under load, not a failure. Read the summary, not only the status.
+- **A targeted byte A/B earns its keep by falsifying the plan's own claim.**
+  This one showed a CONTROL moving (`["x","y"].every(…)`), because a plain
+  string array's element type in standalone is already nullable. The claim
+  "nothing else can move a byte" was wrong; the mechanism was right. A corpus
+  hash alone would have said "84/84 identical" and told nobody.
+
+### Artifacts
+
+`.tmp/s15fam/{pd,du,zdt}-{base,new}.tsv` (+ logs and prewarm logs),
+`.tmp/s15fam/mnm-{base,new}.tsv`, `.tmp/s15/byteab{,2}-{base,new}.tsv`, the
+reduction `.tmp/s15/red.mjs`, the residual census `.tmp/s15/q8.mjs`, the
+revert copies `.tmp/s15base/*.ts` and the drivers
+`.tmp/s15/{run-fam.sh,family.mts,prewarm.mts,mnm.mts,byteab.mts,byteab2.mts,table15.mjs,localpre.mjs}`
+in this worktree (`/home/user/js2/.claude/worktrees/agent-a743fbf47ab9ca4bb`).
+
+### Acceptance criterion 4 — S15 update
+
+MET-for-the-sample at **201/360** (was 199), same three families, **0
+pass→fail** (none, vacuous or otherwise), the must-not-move Array-HOF sample
+flat at 54/66 with 0 flips, the `gc` lane byte-identical on both corpora, and 0
+`__temporal_*` leaks. Base and branch were both measured on this tree by
+file-copy revert. No full-corpus number is claimed; a corpus run remains the
+tech lead's to schedule.

@@ -2,7 +2,8 @@
 id: 6475
 title: "standalone: a nullable vec element is asserted non-null at every array-HOF callback boundary"
 slug: 6475-standalone-nullable-vec-element-callback-param
-status: in-progress
+status: done
+completed: 2026-09-13
 sprint: current
 priority: high
 horizon: m
@@ -149,8 +150,107 @@ Downstream effects considered:
 `join` over an element that is `undefined` traps independently of this
 (`["x", undefined].join("|")`) — written down in `## Residuals`, not fixed here.
 
+## Outcome (S15, measured 2026-09-13 on this branch)
+
+Everything below was measured on THIS tree: base by file-copy revert of the
+three edited sources (captured at the first edit, `.tmp/s15base/`), branch =
+the committed state. Same worktree, same quickjs artifacts, fresh
+`JS2WASM_TEMPORAL_CACHE` + pre-warm STAMP per label (`cacheHit=false` on both).
+
+### The reduction, `--target standalone`, ONE module, no link
+
+| receiver / HOF | base | S15 |
+| --- | --- | --- |
+| `m.every((e, i) => i < 2 \|\| true)` | `!dereferencing a null pointer` | `true` |
+| `m.every((e, i) => i < 2 \|\| undefined === e)` | trap | `false` |
+| `m.some((e) => undefined === e)` | trap | `true` |
+| `m.filter((e) => undefined !== e).length` | trap | `2` |
+| `m.forEach` counting `undefined` | trap | `1` |
+| `m.find((e) => undefined === e)` | trap | `undefined` |
+| `m.findIndex((e) => undefined === e)` | trap | `1` |
+| `m.findLast` / `m.findLastIndex` | trap | `undefined` / `1` |
+| `m.reduce((a, e) => a + (undefined === e), 0)` | trap | `1` |
+| `m.reduceRight(…)` | trap | `1` |
+| `m.map(…)` (control) | `"S,u,S"` | `"S,u,S"` |
+| `m[1]` index read (control) | `"u"` | `"u"` |
+| `["x","y"].every(…)`, `[1,2,3].every/reduce/filter` (controls) | correct | correct |
+
+`m` is `/^(a)?(b)$/.exec("b")` = `["b", undefined, "b"]`.
+
+### Three-family linked sample, 120 rows each, sequential
+
+| family | rows | base pass | **S15 pass** | fail | CE | pass→fail |
+| --- | --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 78 | 78 | 41 | 1 | **0** |
+| `built-ins/Temporal/Duration/**` | 120 | 49 | **51** | 66 | 3 | **0** |
+| `built-ins/Temporal/ZonedDateTime/prototype/**` | 120 | 72 | 72 | 46 | 2 | **0** |
+| **total** | **360** | **199** | **201** | **153** | **6** | **0** |
+
+`fail→pass`: 2 (`Duration/from/argument-string-fractional-with-zero-subparts.js`,
+`Duration/from/argument-string-is-infinity.js`). `__temporal_*` leaks: **0** in
+all six TSVs. The base column reproduces S14's 199/360 exactly, which is what
+makes this a self-consistent before/after rather than a comparison across runs.
+
+**The `sn()` bucket is GONE and that is the finding, not the +2.** All 22
+`dereferencing a null pointer in sn()` rows (16 Duration + 6 ZonedDateTime)
+stopped trapping at the `every`. Eighteen of them now trap ONE step further
+into the SAME function, at `__str_flatten` — a different defect (see
+`## Residuals`). So this slice removed the first of two blockers in `sn`; the
+row count moves properly only when the second one goes too.
+
+### Must-not-move, and nothing moved
+
+`built-ins/Array/prototype/{map,filter,forEach,reduce,reduceRight,every,some,findIndex}`,
+15 rows each = 120, `--target standalone`, base by file-copy revert on this
+tree: **54 pass / 66 fail on BOTH**, **0 flips**, 0 pass→fail. Fifteen per
+directory rather than "the first 120 files" on purpose — the alphabetical
+first-120 never reaches `reduce`, which is the arm whose element parameter is
+index 1.
+
+### Order preservation
+
+- 42 modules (`website/playground/examples/**` + `tests/fixtures/**`) ×
+  {gc, standalone} = 84 artifacts: **84/84 sha256-identical**, both lanes.
+- A targeted 14-shape corpus supplies the positive control: **all 14 `gc`
+  artifacts identical**; on standalone exactly the five nullable-element HOF
+  shapes move — plus one CONTROL, see the honest correction below.
+
+### Correction to this issue's own claim (measured, 2026-09-13)
+
+The plan said "no other callback shape can move a byte". That is **too
+strong**, and the targeted byte A/B is what caught it: `["x","y"].every(…)`
+also moves on standalone, because a plain string array's element type there is
+ALREADY `ref_null $anyStr` (array holes), so the predicate fires for it too.
+The accurate statement is: **the override fires for every receiver whose real
+element type is nullable while the checker called it non-null** — which is the
+correct generalisation, not a leak. Number-element and object-element arrays do
+not move; the `gc` lane does not move at all; and the 120-row must-not-move
+sample plus the controls in the witness are the behavioural evidence that the
+widening is inert (the emitted bytes differ by a removed `ref.as_non_null`,
+which can only remove a trap, never add one).
+
 ## Residuals (measured, not fixed in this slice)
 
+- **THE NEXT BLOCKER, and it is the same 18 rows: TRUTHINESS of a null native
+  string traps.** Reduced (`--target standalone`, one module, no link, match
+  `t` from a regexp with optional groups, `t[4]` unmatched):
+
+  | probe | answer |
+  | --- | --- |
+  | `t[4] ? "T" : "F"` | `!dereferencing a null pointer` |
+  | `t[4] \|\| "fallback"` | trap |
+  | `Boolean(t[4] ?? t[6])` (both null) | trap |
+  | `Boolean(t[4])` (explicit call) | `"false"` — correct |
+  | `Boolean(t[4] ?? "x")` (result non-null) | `"true"` — correct |
+  | `"" + t[4]` | `"undefined"` — correct |
+  | `let a = null; Boolean(a ?? null)` (no native string) | `"false"` — correct |
+
+  So the explicit `Boolean(…)` call is null-aware and the implicit truthiness
+  lowering is not. The polyfill's `sn` hits it at
+  `if (d ?? h ?? u ?? l) throw …` — `__str_flatten` at `sn` L315/L354 in the
+  linked traces. This is the next slice's target and it is worth more than this
+  one was: 13 Duration + 5 ZonedDateTime rows in the three-family sample sit on
+  it today.
 - `Array.prototype.join` / `Array.prototype.toString` trap on an `undefined`
   element (`["x", undefined].join("|")` → `dereferencing a null pointer`;
   `["x", null].join("|")` → `"x|"`, correct). Independent of RegExp.
