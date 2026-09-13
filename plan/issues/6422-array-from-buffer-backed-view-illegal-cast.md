@@ -192,6 +192,22 @@ the new module in `scripts/compiler-boundaries.json`. `tsc --noEmit` clean. The
 loc/func growth (+15 / +14, the probe + rollback pair that cannot leave the call
 site) is granted in this file's frontmatter.
 
+**The first cut was too strict, and the merge queue caught it.** It admitted
+only an exact `typeIdx === vecTypeIdx` match and diverted every other WasmGC ref
+to the fallback. All 17 dogfood suites stayed flat and every PR-level check was
+green — but the `merge_group` re-validation failed the #2097 standalone
+host-free high-water floor: **`pass=35567`, mark `35686`, delta `-119`**
+(PR #5894, run 34743292750, auto-parked 2026-09-13T07:01Z). A GC struct whose
+index differs from the checker-derived vec is routinely cast-compatible with it,
+so the repair's `ref.cast` SUCCEEDS there and the `array.copy` path was correct
+all along; diverting those changed a working lowering for no reason. The shipped
+predicate diverts or materializes only the two carriers that provably trap
+(non-GC value, `$__ta_view`) and leaves every other ref byte-identical to the
+parent — strictly less divergence from base than the variant the A/B measured
+flat. This is also the standing argument for why the dogfood A/B was not
+re-run after the relaxation: it cannot uncover a divergence the measured,
+stricter variant did not already have.
+
 **Residuals.**
 
 - `__extern_get_idx` has no `$__ta_view` arm: a view reaching the generic

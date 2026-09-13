@@ -23,9 +23,19 @@
  * speculatively compiled its argument: does this value belong in that `$Vec`
  * local? A `$__ta_view` is admitted by DE-VIEWING it first (#3054 B1's
  * `emitTaViewToVec`, the same materialization the TypedArray prototype methods
- * take), which keeps the fast path AND the element values. Anything else is
- * refused, and the caller rolls the probe back into the native/host
- * `Array.from` fallback rather than widening the cast.
+ * take), which keeps the fast path AND the element values. A non-GC value
+ * (externref, a scalar) is refused, and the caller rolls the probe back into
+ * the native/host `Array.from` fallback rather than widening the cast.
+ *
+ * **It admits every OTHER WasmGC ref unchanged, on purpose.** The first cut
+ * admitted only an exact `typeIdx === vecTypeIdx` match and refused the rest —
+ * and that cost **119 standalone host-free test262 passes**, caught by the
+ * #2097 high-water floor in the merge_group (PR #5894, 2026-09-13). A GC struct
+ * whose index differs from the checker-derived vec is routinely cast-compatible
+ * with it; the repair's `ref.cast` SUCCEEDS there and the `array.copy` path was
+ * correct all along. Diverting those to the fallback changed a working lowering
+ * for no reason. Only the two carriers that provably TRAP are diverted or
+ * materialized; everything else keeps the pre-#6422 behaviour byte for byte.
  */
 import type { FunctionContext, CodegenContext } from "./context/types.js";
 import type { InnerResult } from "./shared.js";
@@ -34,7 +44,7 @@ import { emitTaViewToVec, taViewDecode } from "./dataview-native.js";
 /**
  * Decide whether the just-compiled `Array.from` source (`srcType`, its value on
  * the stack) may be consumed as `vecTypeIdx`, materializing it when that takes
- * a de-view. Returns `true` only when the stack top is now exactly that vec.
+ * a de-view.
  *
  * Emits nothing — and so is safe to call inside a speculative probe the caller
  * may still roll back — unless it returns `true` for a `$__ta_view`.
@@ -45,10 +55,18 @@ export function admitArrayFromVecCarrier(
   srcType: InnerResult,
   vecTypeIdx: number,
 ): boolean {
+  // Not a WasmGC reference at all — a host externref, or a scalar. `ref.cast`
+  // cannot produce a `$Vec` from it, so the repaired cast traps.
   if (!srcType || typeof srcType === "symbol") return false;
   if (srcType.kind !== "ref" && srcType.kind !== "ref_null") return false;
   if (srcType.typeIdx === vecTypeIdx) return true;
-  if (taViewDecode(ctx, srcType.typeIdx) === undefined) return false;
-  emitTaViewToVec(ctx, fctx, srcType.typeIdx, vecTypeIdx);
+  // A `$__ta_view` IS a GC struct, but not one a `$Vec` cast accepts. De-view
+  // it into the vec the arm is about to copy out of.
+  if (taViewDecode(ctx, srcType.typeIdx) !== undefined) {
+    emitTaViewToVec(ctx, fctx, srcType.typeIdx, vecTypeIdx);
+    return true;
+  }
+  // Any other GC ref: pre-#6422 behaviour, unchanged. See the header — being
+  // stricter here regressed 119 standalone passes.
   return true;
 }
