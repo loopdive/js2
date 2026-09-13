@@ -4392,7 +4392,7 @@ function _hostToPrimitive(
 // allocation is paid once per shape instead of per call. Callers of
 // `_structFieldNamesRaw` must treat the returned array as immutable — it is
 // shared across calls.
-const _csvSplitCache = new Map<string, readonly string[]>();
+const _csvSplitCache = new Map<string, readonly string[]>([["", []]]); // "" = known shape, no fields (#6430)
 
 function _structFieldNamesRaw(obj: any, exports: Record<string, Function> | undefined): readonly string[] | null {
   exports = _decoderExportsFor(obj, exports); // (#5225)
@@ -4400,7 +4400,7 @@ function _structFieldNamesRaw(obj: any, exports: Record<string, Function> | unde
   const fn = exports.__struct_field_names;
   if (typeof fn !== "function") return null;
   const csv = fn(obj);
-  if (csv == null || typeof csv !== "string" || csv === "") return null;
+  if (csv == null || typeof csv !== "string") return null;
   let names = _csvSplitCache.get(csv);
   if (!names) {
     // (#4616) Codegen escapes commas INSIDE a field name as U+0001 (see
