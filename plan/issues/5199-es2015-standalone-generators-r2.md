@@ -4,7 +4,7 @@ title: "ES2015 standalone generators — r2 residual pass"
 status: in-progress
 sprint: current
 created: 2026-08-29
-updated: 2026-09-12
+updated: 2026-09-13
 priority: medium
 horizon: m
 feasibility: hard
@@ -14,7 +14,7 @@ area: codegen
 es_edition: ES2015
 goal: standalone-mode
 requested_by: claude/fable-es2015
-assignee: ttraenkler/codex-5199-generator-protocol-rescue-20260912
+assignee: ttraenkler/codex-5199-generator-payload-20260913
 loc-budget-allow:
   - src/codegen/array-object-proto.ts
   - src/codegen/closures.ts
@@ -338,13 +338,170 @@ for a current rerun. Its previously recorded no-generator failure is not
 attributable to this protocol bridge and is not relabeled as passing; it remains
 an object-carrier substrate dependency to coordinate with its owner.
 
-### Readiness
+### 2026-09-13 factory-identity regression investigation plan
 
-This bounded protocol bridge remains ready for a non-draft review PR:
+On the freshly fetched standalone snapshot SHA-256
+`07c89a5c2626f3312ff611f008a69ed6d8826e9802da024df39726ddabc1e9ba`,
+53 official ES2015 rows contain `Missing native generator factory identity`.
+Comparison with the previous snapshot finds 37 previously passing rows,
+15 previous failures, and one previous compile error. This establishes a
+regression candidate population, not attribution to a particular PR.
+
+The same snapshot diff reports 63 gains and 38 losses overall. Thirty-seven
+losses carry this factory-identity diagnostic; the remaining loss is the
+original `test/language/statements/generators/default-proto.js` source, which
+answers `Expected SameValue two objects`. It is an investigation/control row,
+not evidence that every generator loss has the same cause.
+
+Before continuing the three payload controls, the generator owner will:
+
+1. Reproduce an original affected object-method source and a passing factory
+   control on current upstream `e0023dbbe6c37e15c1f56ed0c8bc8d15d0afbac3`.
+2. Trace prepared factory admission and registration through the landed
+   protocol bridge; compare the relevant parent implementation to establish
+   causality rather than infer it from matching diagnostics.
+3. Repair confirmed factory identity loss, preserve parameter/default and
+   generator protocol behavior, and pin the original affected source shape.
+4. Measure all 53 paths against the same runner on both revisions, retaining
+   the 37 previous passes as a regression floor and positive controls.
+5. Publish this as a separately reviewed fix with issue evidence, then resume
+   the independent payload ABI work. Do not conflate the two fixes.
+
+#### 2026-09-13 original-source A/B and repair boundary
+
+The maintained isolated standalone runner establishes the original-source
+regression before any repair: on the pre-#5853 first parent
+`bc8d2d30827923a049c68d93e5a34958eed3a8ce`,
+`language/expressions/object/method-definition/gen-meth-params-trailing-comma-single.js`
+is **pass 1/1**. On current `e0023dbbe6c37e15c1f56ed0c8bc8d15d0afbac3`,
+the same unchanged path is a compile error:
+`Missing native generator factory identity`. This is not an `any`-cast or
+rewritten-fixture result.
+
+The landed #5853 factory-prototype bridge added that throw in
+`compileNativeGeneratorFunction`. Its new fallback asks
+`ctx.funcMap` for `info.functionName` and calls
+`emitCachedFuncClosureAccess`. Object-literal method registration deliberately
+uses a per-literal `&lt;fullName&gt;__lit&lt;n&gt;` native-generator key while the
+function map contains only the ordinary method name. More importantly, a
+`MethodDeclaration` factory's observable identity is the per-object closure
+from `emitObjectMethodAsClosure`, not the cached function-declaration/expression
+closure represented by `ctx.funcMap`. Adding an alias would therefore hide the
+compile error by substituting a semantically different factory identity.
+
+The first `MethodDeclaration` exclusion was insufficient: the original sources
+then compiled but failed at execution with `TypeError: Generator method is not
+callable`, because the raw state had no `%GeneratorPrototype%` view for
+`.next()`. The repair must therefore retain `NATIVE_GENERATOR_INIT_PROTO` for
+methods, supplying its established default generator protocol prototype rather
+than fabricating a cached factory closure. `FunctionDeclaration` and
+`FunctionExpression` retain the factory-prototype initialization where their
+cached identity is canonical. This neither broadens closure-signature matching
+nor changes the independent payload representation. Per-method factory
+`prototype` transport remains a deliberately separate residual; the historical
+`generator-prototype-prop.js` row was already a failure. The separate
+`default-proto.js` loss will be measured as its own control; its different
+assertion is not attributed to this method-identity failure without a second
+A/B.
+
+An interim six-row original-source smoke before the final method wiring review
+reported **4 pass / 2 fail**: both affected originals,
+`generator-prototype.js`, and free-generator `star-array.js` passed. The final
+wiring moves `NATIVE_GENERATOR_FACTORY_PROTO` wholly into the non-method arms,
+so that smoke must be repeated before it is treated as acceptance evidence.
+The two known non-passes remain intentionally separated:
+`generator-prototype-prop.js` is the old method-factory-prototype residual (it
+no longer compile-errors), while `default-proto.js` is the distinct
+free-factory SameValue failure. The exact null-prototype behavior belongs to
+the latter residual and is deliberately not installed as a passing permanent
+pin until its own original-source A/B and repair are complete.
+
+As a non-regression check on that boundary, all 63 old-to-fresh ES2015 gains
+were parsed as original sources with the TypeScript AST. **Zero** contain a
+generator `MethodDeclaration`; the gains are free-factory/protocol, RegExp, or
+TypedArray rows. The method exclusion therefore cannot discard a measured new
+generator-method gain, but it still requires current-head method-prototype and
+protocol controls before publication.
+
+The exact 53-row diagnostic population contains 52 generator
+`MethodDeclaration` sources and one module free declaration,
+`language/module-code/instn-uniq-env-rec.js`. The latter was an old failure,
+not a lost pass. It is a separate registration/lookup residual: do not add a
+generic missing-`ctx.funcMap` fallback merely to change its failure class,
+because an ordinary generator factory may require the bridge's prototype
+semantics. Trace its canonical factory registration separately; the first
+repair accepts a 52-improved/one-remaining diagnostic cohort if that identity
+cannot be established safely.
+
+The exact 37 formerly-passing regression floor is checked in as
+[`2026-09-13-es2015-generator-factory-identity-previous-pass-paths.txt`](../log/2026-09-13-es2015-generator-factory-identity-previous-pass-paths.txt).
+It is derived mechanically from the old comparison snapshot's `pass` rows and
+the fresh snapshot's factory-identity diagnostic. It is a targeted current-head
+regression floor, not a replacement for the fresh authoritative census.
+
+#### 2026-09-13 current-candidate repair evidence — `e0023dbb` + local diff
+
+The final method-only wiring was measured on upstream
+`e0023dbbe6c37e15c1f56ed0c8bc8d15d0afbac3` plus this candidate diff, using
+the maintained isolated standalone runner with `COMPILER_POOL_SIZE=1` and
+`JS2WASM_EVAL_ENGINE=quickjs`. The corrected six-row original-source smoke is
+**4 pass / 2 fail**:
+
+- Pass: the two original affected method rows,
+  `generator-prototype.js`, and free-generator `star-array.js`.
+- Existing method-prototype residual:
+  `generator-prototype-prop.js` fails its own descriptor assertion but no
+  longer compile-errors; it was already an old-snapshot failure.
+- Separate free-factory residual: `default-proto.js` fails its exact
+  `SameValue` assertion. It is neither hidden by this repair nor installed as
+  a red permanent test.
+
+The exact 37-row former-pass floor is **37 pass / 0 non-pass** on that same
+candidate. Every listed path therefore regained its original standalone
+verdict after the narrow `MethodDeclaration` protocol initialization. There
+were no unexpected pass-to-nonpass rows needing individual pre-#5853 A/B.
+The runner transcript is retained locally at
+`.tmp/2026-09-13-generator-factory-identity-floor.log`; the checked-in path
+manifest above, not that transient log, is the reproducible cohort definition.
+
+The existing exact **2026-09-12 protocol36+B8** control matrix is also **44
+pass / 0 non-pass** on this candidate with QuickJS evaluation under the same
+one-worker limit. It remains 36 owned `yield*` protocol rows plus eight
+authority-selected generator controls, not the unrecoverable historical
+protocol44 list. Its local transcript is
+`.tmp/2026-09-13-generator-factory-identity-protocol36-b8.log`.
+
+#### Separate method function-prototype identity residual
+
+The following mixed original-shape control is a real conformance residual, not
+an invalid assertion:
+
+```js
+function* free() { yield 1; }
+var method = { *method() { yield 2; } }.method;
+Object.getPrototypeOf(method) === Object.getPrototypeOf(free) &&
+  free().next().value === 1 && method().next().value === 2;
+```
+
+Node v22.23.2 answers `1`; the candidate's standalone permanent-test execution
+answers `0`. Thus the two callable generator functions do not yet share the
+required `%GeneratorFunction.prototype%` identity even though the method is
+callable and its generator instance has the protocol view. This is separate
+from the per-method `prototype` data-property residual and from free-factory
+`default-proto.js`. The accepted method-fix pin intentionally checks the
+bounded behavior it repairs—method callability plus both `.next()` paths—while
+this stronger identity source remains recorded for a subsequent dedicated
+repair. It is not reported as passing or erased from the handoff.
+
+### Historical pre-regression bridge readiness (superseded)
+
+This recorded the bounded protocol bridge's prior non-draft readiness:
 current-merge-queue source fixtures, bridge controls, provider provenance, and
-the reproducible protocol36+B8 matrix are green. That readiness does not claim
-complete ES2015 or close the separately recorded numeric-payload/closed-object
-mechanisms.
+the reproducible protocol36+B8 matrix were green. The 2026-09-13
+factory-identity regression above supersedes it as current acceptance; no
+reviewer should interpret this historical checkpoint as approval of the new
+method repair. It never claimed complete ES2015 or closed the separately
+recorded numeric-payload/closed-object mechanisms.
 
 ### Post-#5850 final integrated validation — `f41432d1`
 

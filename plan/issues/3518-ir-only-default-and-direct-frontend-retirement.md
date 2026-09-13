@@ -7241,3 +7241,31 @@ refusals and public current-root controls remain intact. Historical-pair
 execution, physical async acceptance and IR retirement remain uncertified.
 Normal signed hooks and dependency-first delivery still apply: publish only
 after PR5759 is verified on main, then continue the existing later stack.
+
+## Queue admission reconciliation: current main — 2026-09-13
+
+Existing PR5760 reported DIRTY against main7adc0a6e after publishing signed
+11392975. The actual local merge of that exact main completed cleanly with
+no conflicts. Restore the hold while validating and committing the merge;
+no queue entry existed. The queue-arm workflow was independently a no-op due
+to its CONTRIBUTOR trust gate, so do not count its green job as admission.
+
+The incoming changes are already-delivered generator protocol initialization
+and benchmark/baseline artifacts. All54 validated IR source/test/policy pins
+remain unchanged. Preserve all incoming main bytes. Execute the complete new
+generator prototype regression file plus reservation, delay admission and
+boundary controls on the composed tree; rerun source gates and normal hooks.
+Keep earlier1,819/1,819 validation as evidence on11392975, not a rerun claim
+on this merged head. Retain its direct results and all initial failures.
+Queue only the exact republished head after current checks and hold release.
+
+The actual current-main reconciliation passes345/345 assertions across four
+complete files, zero skipped: generator prototype14, reservations149, delay
+admission41 and boundary141. All execution pins remain unchanged. TS7, LOC and
+function budgets, oracle, preservation-v1 with required core types and nodes,
+and the unchanged coercion checker (124 files/511 sites through a space-free
+alias) pass against exact main7adc0a6e. Conformance synchronization changes
+zero files. All54 earlier validated IR pins remain unchanged. Preserve the
+original1,819/1,819 as earlier-head evidence, with this345/345 current merge
+validation separately identified. Normal signed hooks and renewed exact-head
+publication/queue checks remain required.
