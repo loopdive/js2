@@ -128,3 +128,53 @@ would re-measure the same root cause twice.
 **Not RegExp-related** (this is the answer to the question the S8 brief asked):
 the `from(d, {overflow})` half never went through the regexps, was unaffected by
 #5404, and is unchanged.
+
+## S10 update (2026-09-13) — the `from(object)` half was NOT this issue; it was #6447, and it is fixed. The `from(string)` residual remains.
+
+The S8 update above concluded that the two residual halves were "the *same*
+defect, reached by two entry points, sitting in the object the provider hands
+back". **Measured in S10, that is half right and half wrong**, and the
+correction matters because it sends the next slice somewhere else.
+
+### `from(object)` was the dynamic-Array-producer defect, one level below
+
+`from({y,m,d})` did not merely return a wrong object — through the shipped
+linked path it **threw** `TypeError: Cannot read properties of undefined
+(reading 'sort')` (`.tmp/s10/reduce2.mjs` in the S10 worktree), and so did
+`PlainDate.compare(bag, ·)`, `ZonedDateTime.equals(bag)` and
+`plainDate.with(bag)`. All four reach `PrepareCalendarFields`, whose first
+statement is `const a = n.concat(r, i)` with `n` an untyped parameter — and
+`Array.prototype.concat` on an `any` receiver answered `undefined` under
+`--target standalone`. That is **#6447**, a module-LOCAL codegen defect inside
+the provider, reproducible with no link at all. Fixed there.
+
+| probe, linked, host-free | S8 | S10 |
+| --- | --- | --- |
+| `Temporal.PlainDate.from({year, month, day})` | throws `reading 'sort'` | **returns, no throw** |
+| `Temporal.PlainDate.compare({y,m,d}, d2)` | throws | **−1, correct** |
+| `zdt.equals({y,m,d,timeZone})` | throws | **true, correct** |
+| `plainDate.with({year})` | throws | **returns, no throw** |
+| `from({y,m,d}).year` | (unreachable) | still not 1976 |
+
+So the ENTRY point is unblocked and the failure has moved one step later, into
+field EXTRACTION: in the S10 three-family sample a new PlainDate bucket appears,
+`TypeError: year is required` × 7, entirely on `from/argument-*` rows that
+previously died at `sort`. **That** is what is left of this issue's
+`from(object)` half.
+
+### `from(string)` is a different, still-open residual
+
+`Temporal.PlainDate.from("1976-11-18")` never went through `concat` and is
+unchanged: it returns without throwing, but `.day` reads `undefined`,
+`d instanceof Temporal.PlainDate` is `false` and `typeof d.constructor` is not
+`"function"`, while the `new Temporal.PlainDate(1976,11,18)` control answers
+`.day === 18` correctly (`.tmp/s10/reduce.mjs`). The S8 reading that both halves
+were one defect does not survive: one was #6447, this one is not.
+
+### Also measured, and relevant to whoever takes this next
+
+`x instanceof <provider class>` read through an `any` **function parameter**
+answers `false` where the same test on a directly-bound local answers `true` —
+independent of `from`. Since the S8 evidence for "the result is not a PlainDate"
+leaned on an `instanceof` probe, re-establish that claim with a non-`instanceof`
+oracle (e.g. `.day`) before attributing the residual to result construction.
