@@ -1,10 +1,11 @@
 ---
 id: 6424
 title: "An uncaught exception in the dogfood Wasm worker still zeroes the whole test file — the other half of #5369"
-status: ready
+status: done
 sprint: current
 created: 2026-09-12
 updated: 2026-09-12
+completed: 2026-09-12
 priority: medium
 horizon: s
 feasibility: medium
@@ -89,3 +90,75 @@ in-loop/out-of-loop rule.
 ## Dispatch
 
 **opus** — small diff, but the in-loop/out-of-loop arm window and the event-loop ordering of the fixture (async test 1) are the whole correctness of the change; a mechanical lane is likely to ship a flaky fixture or an always-on listener that reintroduces the 180 s-timeout hazard the issue explicitly rejects.
+
+## Resolution
+
+Implemented as planned; the plan's diagnosis held on `e06f76745b` without
+amendment. Harness-only — no `src/` change.
+
+**Reduction (before).** `.tmp/probe-6424.mjs`, a 3-test module whose test 1 is
+`async`, schedules `setTimeout(function () { throw … }, 0)` and then awaits a
+5 ms timer: `compile.success false`, `wasm: null`, headline **0/3**, all three
+`wasmError: null`; the control module 3/3. The compiled closure is invoked from
+Node's timers phase and rethrown by `normalizeModuleCallbackException`
+(`src/runtime.ts:2189`), so it reaches the worker as an `uncaughtException` for
+which no listener existed. Node killed the worker and the parent found no JSON
+on stdout. Same probe after the change: **2/3**, test 1 carrying
+`uncaught host exception: Error: …`.
+
+**Mechanism.**
+
+- `tests/dogfood/upstream-unhandled-rejections.mjs` — the sink gained a second,
+  **unarmed-by-default** channel: `armUncaughtExceptions()` installs the
+  `uncaughtException` listener and returns an idempotent `disarm()`;
+  `drainUncaught()` takes what it captured after the same one-`setImmediate`
+  turn `drain()` uses. `attributeRejections` takes a `kind` label so the folded
+  text reads `uncaught host exception: …` rather than borrowing the rejection
+  wording. Existing signatures and return shapes are unchanged.
+- `tests/dogfood/upstream-suite-worker-protocol.mjs` —
+  `runSequentialUpstreamTests` arms before the first `invoke` and disarms in a
+  `finally` after the trailing drain. Per test the uncaught fold runs **after**
+  the rejection fold, so a test that already has a reason keeps it (#5823) and
+  the worker's `unhandledRejections` field keeps meaning only what its name
+  says. A trailing uncaught folds onto the last test as `(late)`, the same rule
+  trailing rejections follow.
+- `tests/dogfood/upstream-suite-compile-worker.mjs` — comment only. Compile,
+  instantiation, `__module_init`, `cleanupUpstreamTestEnvironment` and `emit`
+  all run with the listener absent, so a throw there still kills the worker
+  immediately and still surfaces as `compile.errors[0]` (acceptance 2: no
+  silent 180 s timeout).
+
+**Acceptance.**
+
+1. ✅ attributed to the running test, remaining tests still run — 2/3 with the
+   message on test 1.
+2. ✅ out-of-loop stays fatal — guarded by the listener-count assertion in
+   `tests/dogfood/upstream-suite-worker-protocol.test.ts` (equal before and
+   after the call, +1 inside `invoke`) and by the arm window itself.
+3. ✅ `tests/dogfood/uncaught-host-exception.test.ts`, 5 cases. On the parent
+   the new work fails **5 of 8** (with
+   `tests/dogfood/upstream-suite-worker-protocol.test.ts`): `wasm.statuses`
+   `undefined` instead of `[false, true, true]`, headline 0/3, the two sink
+   unit tests, and the listener-count guard. With the change **8 of 8** pass.
+   The control case (3/3 both lanes, no stray throw) passes on both sides —
+   the anti-vacuity control.
+4. ✅ A/B over all 17 upstream suites at `e06f76745b`: **no count changes.**
+
+**A/B (base vs fix, one HEAD `e06f76745b`).** webpack 16/16 · three 17/18 ·
+clsx 32/32 · cookie 63740/63740 · lodash 59/62 · redux 67/82 · axios 208/231 ·
+stylelint 108/108 · tailwindcss 13/13 · jsdom 6/6 · styled-components 9/9 ·
+uuid 75/75 · marked 16/30 · moment 10/10 · prettier 108/151 · jest 335/356 ·
+hono 261/324. Fifteen matched the recorded 2026-09-12 anchors exactly. Two read
+**above** them — hono 261 (anchor 259) and prettier 108 (anchor 107) — so both
+were re-measured on the unmodified harness at this same HEAD and came back
+**identical** (hono 261/324, prettier 108/151), with a per-file diff of the
+report JSON showing **0 files differing** on each. That movement is main-side
+drift in the anchors, not this change.
+
+**Residual.** A module that registers **zero** tests still arms the channel for
+the two drain turns that follow, so a host throw landing in exactly that window
+is recorded on the module instead of being fatal — and, because
+`moduleRejectionText` owns that field's wording, it reads
+`unhandled rejection: …`. Reaching it needs a file with no registered tests and
+a stray timer left by module init firing inside two event-loop turns; no
+upstream suite exercises it today.
