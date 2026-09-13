@@ -151,12 +151,20 @@ were run against the parent and against the fix (`.tmp/chunks-base` vs
 `.tmp/chunks`): **zero new failures**. Every site that now throws was ALREADY
 red on main, reading `{}` where it asserted fields — the plan's predicted
 "suite-wide sweep" did not materialize because the affected sites were already
-broken. Six helpers were then re-wired with the documented one-liner
+broken. Four helpers were then re-wired with the documented one-liner
 (`__setInstance(instance)` next to the existing `__setExports`), which turned
-**21 previously-red tests green**: `issue-2747` (5), `issue-2806` (3),
-`issue-2841` (4), `issue-2851` (4), `issue-3637` (5). Three failures in those
-files survive and are unrelated to this issue (`#2747` multi-level `__proto__`
-chain; `#2836` two vec round-trip cases).
+**16 previously-red tests green**: `issue-2806` (3), `issue-2841` (4),
+`issue-2851` (4), `issue-3637` (5).
+
+Two more files were re-wired and then REVERTED: `tests/issue-2747.test.ts` and
+`tests/issue-2836-typed-vec-dynamic-dispatch-arg.test.ts` still fail after it,
+for defects unrelated to the boundary — #2747's `walks a multi-level __proto__
+chain` yields `a,shared,p,` where V8 yields `a,shared,p,g,` (the grandparent key
+is missing from the for-in chain walk), and #2836's two vec round-trip cases are
+unchanged by the re-wiring. The `quality` lane's "Changed root test files must
+pass (#3008)" step makes any touched test file a gate, so a file that cannot be
+made green in this PR's scope must not be touched by it. Both were already red
+on main and are no worse here; they are filed separately.
 
 `tests/issue-3520-data-struct-host-bridge-abi.test.ts` moves three `toEqual({})`
 assertions to `toThrow(/data-struct authority/)`: same fail-closed outcome, no
