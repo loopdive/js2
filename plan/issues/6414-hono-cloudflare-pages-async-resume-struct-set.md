@@ -1,10 +1,11 @@
 ---
 id: 6414
 title: "hono's `adapter/cloudflare-pages` emits an invalid module — `struct.set[1] expected type i32, found local.get of type externref` in an async resume"
-status: ready
+status: done
 sprint: current
 created: 2026-09-12
 updated: 2026-09-12
+completed: 2026-09-12
 priority: medium
 horizon: m
 feasibility: medium
@@ -12,6 +13,14 @@ reasoning_effort: high
 task_type: bug
 area: codegen
 goal: correctness
+loc-budget-allow:
+  # 2026-09-12 (#6414): +14 lines in `resumeBindingValType` -- one guard arm
+  # plus the comment recording why the frame field and the resume local must be
+  # typed from the SAME #2806 predicate. The fix belongs in this function by
+  # construction (it is the single place all three spill-layout builders, both
+  # spill-safety gates and the delivery-local typing route through); splitting it
+  # into another module would recreate the two-sources-of-truth defect.
+  - src/codegen/async-frame.ts
 ---
 
 ## Problem
@@ -73,3 +82,62 @@ node --import tsx tests/dogfood/dogfood-surface-probe.mjs \
 ## Dispatch
 
 **opus** — the diagnosis is complete and the fix is a one-arm change in `resumeBindingValType` with a ready reduction, but the spill-layout/gate/delivery lockstep and the #1112 sentinel constraint need judgment beyond a mechanical edit.
+
+## Resolution
+
+**Fixed** by one guard arm in `resumeBindingValType` (`src/codegen/async-frame.ts`),
+exactly as planned.
+
+`let response = void 0` gives the binding the declared TS type `undefined` (a bare
+`undefined` initializer would get evolving-`any` instead), and
+`resolveWasmType(undefined)` is **i32** -- so the async frame laid the spill field
+out as i32. The resume function then re-compiles that same declaration through the
+var-decl path, where #2806's `varBindingNeedsExternrefForUndefined` routes a
+void-EXPRESSION initializer to an **externref** slot. `storeSpills` wrote
+`local.get <externref>` into the i32 field, and the engine rejected the module.
+
+The fix resolves `rb.target`'s symbol declaration and, when it is a
+`ts.VariableDeclaration` that `varBindingNeedsExternrefForUndefined` accepts,
+returns `{ kind: "externref" }` before the checker query. Both halves now come
+from one predicate. `storeSpills` / `restoreSpills` and `resolveWasmType`'s
+`undefined` -> i32 arm were deliberately left alone (the #1112 delete /
+optional-property f64-sentinel machinery depends on the latter). The narrow
+void-only arm was kept; the more general `resolveSpillBindingValType` form was not
+needed.
+
+### Reduction (`.tmp/6414/probe.mjs`)
+
+`e` (try/catch, hono's `handleMiddleware` shape), `g` (no try, two awaits) and
+`j` (plain named `async function`) were all `struct.set[1] expected type i32,
+found local.get of type externref` before and `valid` after. Controls `f`
+(`let response;`), `h` (`= undefined`) and `i` (`= null`) were valid both ways.
+
+`node --import tsx tests/dogfood/dogfood-surface-probe.mjs --package hono
+--modules dist/adapter/cloudflare-pages/index.js` goes
+`"verdict":"invalid" ... "__async_resume_fanon_467"` -> `"verdict":"valid"`
+(251,181 bytes).
+
+### Correction to the plan
+
+The plan expected the standalone lane to already validate. It does **not** --
+`target: "wasi"` and `target: "standalone"` both emitted the same invalid
+`struct.set` on the parent (`__async_resume_fhandle`, @+97099 / @+133139) and both
+validate with the fix. The native drive layer shares the layout, so the
+one-function fix covers all three lanes; the regression test asserts gc and
+standalone.
+
+Not folded with
+[#6412](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6412-hono-jwt-async-resume-extern-convert-any):
+that one is an `extern.convert_any` on an already-external value in
+`importPublicKey`, a different instruction and a different defect. hono's
+`dist/middleware/jwk|jwt/index.js` rows stay in `KNOWN_INVALID_MODULES`.
+
+### Acceptance
+
+1. `validateEmittedBinary` passes for the module -- yes (verdict `valid`).
+2. The `dist/adapter/cloudflare-pages/index.js` row is deleted from
+   `KNOWN_INVALID_MODULES` (`scripts/check-dogfood-validation.mjs`);
+   `check:dogfood-validation` is green (6/6 packages, 20/20 subpath modules).
+3. `tests/issue-6414-void-init-async-resume-spill.test.ts` -- 3 of 4 tests fail on
+   the parent with the exact `struct.set[1]` message and all 4 pass with the fix;
+   the 4th is the `let response;` anti-vacuity control, green both ways.
