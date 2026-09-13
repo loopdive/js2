@@ -988,6 +988,44 @@ non-mergeable checkpoint may remain draft. A separate shepherd agent verifies
 the required PR body, mergeability, reviews, CI, exact tested head, and
 ready/queue state before landing.
 
+## 2026-09-13 continuous implementation plan
+
+Continuation starts at upstream `e0023dbbe6c37e15c1f56ed0c8bc8d15d0afbac3`.
+PRs #5853 and #5862 are merged. A freshly downloaded canonical standalone
+snapshot (first physical row timestamp 2026-09-13 00:32:03, SHA-256
+`07c89a5c2626f3312ff611f008a69ed6d8826e9802da024df39726ddabc1e9ba`)
+contains 48,735 rows. The official ES2015 intersection is 11,704 rows:
+10,255 pass, 1,104 fail, 344 compile_error, and 1 compile_timeout.
+This is dispatch evidence, not a census attributed to the checkout above.
+
+Implementation ownership and order:
+
+1. #5199: reproduce the three retained generator payload controls on current
+   main; implement the separately documented payload/result representation
+   plan, preserve protocol controls, and measure exact affected Test262 rows.
+2. #5198: reproduce remaining exec lastIndex and deferred Symbol.match rows;
+   extend observable cursor handling with focused positive controls and paired
+   host/standalone validation. Keep its source changes separate from generators.
+3. Coordinator: validate baseline provenance and the complete 11,704-path
+   acceptance instrument, refresh the remaining-failure inventory, and select
+   subsequent clusters from measured rows as workers become available.
+
+Implementation agents use Terra Max in separate worktrees. Each owner updates
+its issue with evidence and opens a separate upstream PR per completed fix.
+A dedicated shepherd checks published PRs. Finished mergeable work is ready;
+unfinished work is draft. PR completion is a checkpoint: continue to the next
+measured residual until the full acceptance condition below is met.
+
+Runner contract correction: `scripts/run-test262-vitest.sh` currently computes
+paths relative to the `test262` root, so its exact filter must retain `test/`.
+The separate `scripts/run-test262-paths.mts` interface expects paths below
+`test262/test`. Do not reuse one filter spelling across those interfaces.
+The first 2026-09-13 census attempt used the historical normalized spelling:
+all 16 suites registered no tests, produced zero rows, and the completeness
+validator correctly exited 2. This is an invalid measurement, not a pass rate.
+The retry retains `test/` for all 11,704 selected paths. Earlier instructions
+below that prescribe stripping it for the Vitest wrapper are superseded.
+
 ## 2026-08-30 current integrated-head census implementation plan
 
 The numeric title no longer repeats the stale 2026-08-28 snapshot. Historical
