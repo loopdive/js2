@@ -134,11 +134,10 @@ const KNOWN_INVALID = [{ name: "lit", issue: 3977, detail: 'local.set[0] in "y_c
  * from reading as an undifferentiated pile of red, and it is the list a future
  * widening of the gated surface has to empty first. Fixing one deletes its row.
  *
- * Two distinct codegen bugs, four modules: #6413 (a closure falling through
- * with externref where i32 is expected) and #6414 (a `struct.set` expecting i32
- * and given externref in an async resume). #6412 (`extern.convert_any` expecting
- * anyref where an async resume produced externref) is FIXED — its three hono
- * jwt/jwk rows are gone.
+ * One codegen bug, three modules: #6413 (a closure falling through with
+ * externref where i32 is expected). #6412 (`extern.convert_any` expecting anyref
+ * where an async resume produced externref) is FIXED — its three hono jwt/jwk
+ * rows are gone; #6414's row was retired on main.
  */
 const KNOWN_INVALID_MODULES = [
   {
@@ -149,12 +148,6 @@ const KNOWN_INVALID_MODULES = [
   },
   { name: "hono", module: "dist/jsx/dom/jsx-runtime.js", issue: 6413, detail: "same __closure_35 fallthru shape" },
   { name: "hono", module: "dist/jsx/dom/jsx-dev-runtime.js", issue: 6413, detail: "same __closure_35 fallthru shape" },
-  {
-    name: "hono",
-    module: "dist/adapter/cloudflare-pages/index.js",
-    issue: 6414,
-    detail: 'struct.set[1] expected i32, got externref in "__async_resume_fanon_467"',
-  },
 ];
 
 function usage(message) {
