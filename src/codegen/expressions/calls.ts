@@ -532,7 +532,11 @@ import {
   sourceParamCountFromExpanded,
   wasmParamIndexForSourceParam,
 } from "../linear-uint8-signatures.js";
-import { resolveNamedThisCallTarget, tryReshapeApplyToNamedThisCall } from "../named-this-call.js";
+import {
+  resolveNamedThisCallTarget,
+  resolveUndefinedReceiverTrampoline,
+  tryReshapeApplyToNamedThisCall,
+} from "../named-this-call.js";
 import {
   emitClosureReceiverInstall,
   finishClosureReceiverCall,
@@ -8744,7 +8748,12 @@ function compileCallExpression(
               getFuncParamTypes(ctx, funcIdx!)?.length ?? remainingArgs.length,
             );
             const finalFuncIdx = ctx.funcMap.get(funcName) ?? funcIdx!;
-            fctx.body.push({ op: "call", funcIdx: namedThisCall?.trampolineFuncIdx ?? finalFuncIdx });
+            // (#6436) `.call(undefined, …)` dropped its receiver here.
+            const undefinedThis =
+              namedThisCall === undefined
+                ? resolveUndefinedReceiverTrampoline(ctx, funcName, finalFuncIdx, expr.arguments[0])
+                : undefined;
+            fctx.body.push({ op: "call", funcIdx: namedThisCall?.trampolineFuncIdx ?? undefinedThis ?? finalFuncIdx });
 
             // Use actual Wasm return type — TS checker reports `any` for .call()/.apply()
             // which resolves to externref, but the actual function may return f64/i32/ref.
@@ -8825,7 +8834,9 @@ function compileCallExpression(
                 elements.length,
                 getFuncParamTypes(ctx, finalFuncIdx)?.length ?? elements.length,
               );
-              fctx.body.push({ op: "call", funcIdx: finalFuncIdx });
+              // (#6436) Same as the `.call` arm: `.apply(undefined, [...])`.
+              const applyThis = resolveUndefinedReceiverTrampoline(ctx, funcName, finalFuncIdx, expr.arguments[0]);
+              fctx.body.push({ op: "call", funcIdx: applyThis ?? finalFuncIdx });
               // Use actual Wasm return type for .apply()
               if (wasmFuncReturnsVoid(ctx, finalFuncIdx)) return VOID_RESULT;
               return getWasmFuncReturnType(ctx, finalFuncIdx) ?? VOID_RESULT;

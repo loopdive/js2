@@ -2716,6 +2716,22 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   funcUsesArguments: Set<string>;
   /**
+   * (#6436) Named function declarations whose own `this` reads the ambient
+   * `__current_this` module global, minus the ones that take an explicit
+   * `this` parameter.
+   *
+   * A PLAIN `f(x)` call installs no receiver, so inside a window where some
+   * dispatcher has parked one in `__current_this` (a host-facing closure
+   * method call, an array-HOF `thisArg`) the callee read the DISPATCHER's
+   * receiver instead of the `undefined` §10.2.1.2 specifies. Callers consult
+   * this set to route such a call through a per-target trampoline that
+   * installs `undefined` for the duration.
+   *
+   * Populated at COLLECT time (alongside `funcUsesArguments`), because call
+   * sites compile before hoisted bodies do.
+   */
+  funcReadsOwnThis: Set<string>;
+  /**
    * Object-literal method declaration → the function handle containing that
    * literal's body. Struct-shape deduplication can fork a method body while
    * leaving the name-keyed placeholder shared; direct calls must select the

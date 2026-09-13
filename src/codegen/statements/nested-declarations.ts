@@ -3,7 +3,11 @@
 import { ts } from "../../ts-api.js";
 import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
 import { needsImplicitArgumentsObject } from "../helpers/body-uses-arguments.js";
-import { bodyReferencesOwnThis, functionLikeReferencesOwnThis } from "../helpers/body-references-own-this.js";
+import {
+  bodyReferencesOwnThis,
+  functionLikeReferencesOwnThis,
+  readsAmbientThisGlobal,
+} from "../helpers/body-references-own-this.js";
 import { isStrictFunction, isSimpleParameterList } from "../helpers/is-strict-function.js";
 import { normalizeSloppyExplicitThisParameter } from "../helpers/sloppy-this-global.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
@@ -1818,6 +1822,8 @@ function compileNestedFunctionDeclarationInScope(
   if (needsImplicitArgumentsObject(stmt)) {
     ctx.funcUsesArguments.add(funcName);
   }
+  // (#6436) A plain call to this name must install `undefined` as the receiver.
+  if (readsAmbientThisGlobal(stmt)) ctx.funcReadsOwnThis.add(funcName);
 
   // (#5148 checkpoint) Classify referenced sibling registry functions for the
   // lift-time transitive-capture promotion both branches below perform. The

@@ -83,6 +83,7 @@ import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./conte
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
 import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.js"; // (#3024/#4638) module-global externref routing in lockstep with the literal's own host-path gate
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
+import { readsAmbientThisGlobal } from "./helpers/body-references-own-this.js";
 import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.js";
 import { markIdentityPreservingStructuralParam } from "./identity-preserving-structural-param.js";
 import { genericCallbackResultDeclaration } from "./generic-callback-result.js";
@@ -1878,6 +1879,8 @@ function registerBodylessFunctionDeclaration(
   if (needsImplicitArgumentsObject(stmt)) {
     ctx.funcUsesArguments.add(name);
   }
+  // (#6436) A plain call to this name must install `undefined` as the receiver.
+  if (readsAmbientThisGlobal(stmt)) ctx.funcReadsOwnThis.add(name);
 
   const typeIdx = addFuncType(ctx, params, results, `${name}_type`);
   const funcIdx = mintDefinedFunc(ctx);
@@ -3025,6 +3028,8 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       if (needsImplicitArgumentsObject(stmt)) {
         ctx.funcUsesArguments.add(name);
       }
+      // (#6436) A plain call to this name must install `undefined` as the receiver.
+      if (readsAmbientThisGlobal(stmt)) ctx.funcReadsOwnThis.add(name);
 
       const typeIdx = addFuncType(ctx, params, results, `${name}_type`);
       const funcIdx = mintDefinedFunc(ctx);
