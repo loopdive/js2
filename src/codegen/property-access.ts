@@ -32,6 +32,7 @@ import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
 import { recordRuntimeKeyClassMethodRead } from "./runtime-key-class-methods.js"; // (#5358)
 import { recordStandaloneRuntimeKeyClassMemberRead } from "./standalone-class-dyn-member.js"; // (#5383 S2h)
+import { recordStandaloneDynamicPrototypeRead } from "./standalone-class-prototype-read.js"; // (#6457)
 import { emitOverlayRoutedElementGet, overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4159 S3)
 import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js"; // (#2580 M2 slice 1) (#2984)
@@ -3987,6 +3988,11 @@ export function compilePropertyAccess(
   const propName = ts.isPrivateIdentifier(expr.name) ? "__priv_" + expr.name.text.slice(1) : expr.name.text;
 
   recordDynamicClassAccessorRead(ctx, resolveWasmType(ctx, objType), propName);
+  // (#6457) The standalone twin, for `prototype` only: a dynamic receiver has no
+  // class to resolve the name against, so this read lowers to
+  // `__extern_get(recv, "prototype")` and needs the same per-class demand a
+  // computed key raises. See `standalone-class-prototype-read.ts`.
+  recordStandaloneDynamicPrototypeRead(ctx, resolveWasmType(ctx, objType), propName);
 
   // A JavaScript binding initialized from `new RegExp(...)` is commonly
   // widened to `any`, so its `.constructor` read cannot reach the later
