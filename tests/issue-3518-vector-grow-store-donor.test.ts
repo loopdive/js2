@@ -300,9 +300,250 @@ const ADAPTER_SHAPES = [
   ["registry", "getOrRegisterVecType", "c5a11ee88d8c7c7d341146708fbf5d9b212f05a0501af93381cb74f2e6282f47"],
 ] as const;
 
+const layoutForwardPath = "./fixtures/issue-3518-vector-registry-layout-forward.json";
+const layoutDonorPath = "./fixtures/issue-3518-native-string-error-donors.json";
+const layoutSourcePath = "../src/runtime/wasmgc/values/string-layouts.ts";
+const readRelative = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
+const layoutForwardHash = "a9352c68a14308b47fe61534a0cec083b44e30c09d80f8a04596bdfb482452a2";
+interface LayoutFactory {
+  name: string;
+  header: string;
+  call: string;
+  extraIndent: number;
+  owner: string;
+}
+interface LayoutForward {
+  schema: string;
+  registryImport: string;
+  canonicalPrefix: string;
+  factorySeparator: string;
+  canonicalSuffix: string;
+  factories: LayoutFactory[];
+}
+
+function layoutForward(text = readRelative(layoutForwardPath)): LayoutForward {
+  expect(sha(text), "independent layout forward provenance").toBe(layoutForwardHash);
+  const fixture = JSON.parse(text) as LayoutForward;
+  expect(fixture.schema).toBe("vector-registry-layout-forward-v1");
+  expect(fixture.factories).toHaveLength(8);
+  return fixture;
+}
+
+function exactFunction(file: ts.SourceFile, name: string): ts.FunctionDeclaration {
+  const matches = file.statements.filter(
+    (node): node is ts.FunctionDeclaration => ts.isFunctionDeclaration(node) && node.name?.text === name,
+  );
+  expect(matches, `one declaration ${name}`).toHaveLength(1);
+  return matches[0]!;
+}
+
+// Reconstruct from the actual canonical payload, preserving its comments and
+// expressions. Only the declared layout parameter's property-access bases move.
+function layoutPayload(file: ts.SourceFile, fn: ts.FunctionDeclaration, spec: LayoutFactory): string {
+  expect(file.text.slice(fn.getStart(file), fn.body!.getStart(file)), spec.name).toBe(spec.header);
+  expect(fn.body!.statements, `single return ${spec.name}`).toHaveLength(1);
+  const statement = fn.body!.statements[0]!;
+  expect(ts.isReturnStatement(statement), spec.name).toBe(true);
+  const expression = (statement as ts.ReturnStatement).expression!;
+  expect(expression && ts.isObjectLiteralExpression(expression), spec.name).toBe(true);
+  expect(file.text.slice(fn.body!.getStart(file) + 1, expression.getStart(file))).toBe("\n  return ");
+  expect(file.text.slice(expression.end, fn.end)).toBe(";\n}");
+  const bases: ts.Identifier[] = [];
+  const visit = (node: ts.Node): void => {
+    // The inverse introduces ctx; accepting an existing free ctx would conceal
+    // a broken canonical binding behind the same reconstructed source text.
+    if (ts.isIdentifier(node) && node.text === "ctx") throw new Error("unbound ctx in canonical layout payload");
+    if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "layout")
+      bases.push(node.expression);
+    ts.forEachChild(node, visit);
+  };
+  visit(expression);
+  let payload = expression.getText(file);
+  for (const base of bases.reverse()) {
+    const start = base.getStart(file) - expression.getStart(file);
+    payload = payload.slice(0, start) + "ctx" + payload.slice(start + base.getWidth(file));
+  }
+  return payload.replaceAll("\n", `\n${" ".repeat(spec.extraIndent)}`);
+}
+
+function inverseStringLayouts(registry: string, canonical: string, forwardText?: string): string {
+  const fixture = layoutForward(forwardText);
+  const source = parse(registry),
+    live = parse(canonical);
+  const imports = source.statements.filter(
+    (node): node is ts.ImportDeclaration =>
+      ts.isImportDeclaration(node) &&
+      ((ts.isStringLiteral(node.moduleSpecifier) &&
+        node.moduleSpecifier.text === "../../runtime/wasmgc/values/string-layouts.js") ||
+        Boolean(
+          node.importClause?.namedBindings &&
+          ts.isNamedImports(node.importClause.namedBindings) &&
+          node.importClause.namedBindings.elements.some((item) =>
+            fixture.factories.some((spec) => spec.name === item.name.text || spec.name === item.propertyName?.text),
+          ),
+        )),
+  );
+  expect(imports, "one canonical ordinary layout import").toHaveLength(1);
+  expect(imports[0]!.getText(source), "complete canonical layout import").toBe(fixture.registryImport);
+  expect(live.statements).toHaveLength(10);
+  const functions = live.statements.slice(2);
+  expect(functions.map((node) => (ts.isFunctionDeclaration(node) ? node.name?.text : null))).toEqual(
+    fixture.factories.map((spec) => spec.name),
+  );
+  expect(canonical.slice(0, functions[0]!.getStart(live))).toBe(fixture.canonicalPrefix);
+  const changes: { start: number; end: number; payload: string }[] = [];
+  for (const [index, spec] of fixture.factories.entries()) {
+    const fn = functions[index] as ts.FunctionDeclaration;
+    expect(canonical.slice(fn.end, functions[index + 1]?.getStart(live) ?? canonical.length)).toBe(
+      index === functions.length - 1 ? fixture.canonicalSuffix : fixture.factorySeparator,
+    );
+    const owner = exactFunction(source, spec.owner);
+    const calls: ts.CallExpression[] = [];
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isCallExpression(node) &&
+        node.expression.getText(source) === "ctx.mod.types.push" &&
+        node.arguments.length === 1 &&
+        node.arguments[0]!.getText(source) === spec.call
+      )
+        calls.push(node);
+      ts.forEachChild(node, visit);
+    };
+    visit(owner);
+    expect(calls, `exact owned layout call ${spec.call}`).toHaveLength(1);
+    const argument = calls[0]!.arguments[0]!;
+    changes.push({ start: argument.getStart(source), end: argument.end, payload: layoutPayload(live, fn, spec) });
+  }
+  expect(changes.map((change) => change.start)).toEqual(changes.map((change) => change.start).sort((a, b) => a - b));
+  for (const change of changes.reverse())
+    registry = registry.slice(0, change.start) + change.payload + registry.slice(change.end);
+  return registry;
+}
+
+function verifyLayoutInverse(registry = read("registry"), canonical = readRelative(layoutSourcePath)): string {
+  const restored = inverseStringLayouts(registry, canonical);
+  const originalText = readRelative(layoutDonorPath);
+  expect(sha(originalText), "unchanged original layout donor fixture").toBe(
+    "b579a8d1d0c251ec9a5661f2602da72a90d96991e5915304a013dadc9fc5de61",
+  );
+  const original = JSON.parse(originalText);
+  expect(original.base).toBe("5118637e0e9b34291465230428447e511958faa1");
+  expect(original.sources[0].sourceSha256).toBe("0001ca01391b5c85cc16f4db8cde593729dec80843443f7466812c8ea63a8cd5");
+  const before = parse(original.sources[0].text),
+    after = parse(restored);
+  for (const name of ["getOrRegisterErrorStructType", "registerNativeStringTypes"]) {
+    const fn = exactFunction(after, name);
+    expect(sha(fn.getFullText(after)), name).toBe(
+      ORIGINAL_DECLARATIONS.registry.find((row) => row.name === name)!.sha256,
+    );
+    expect(fn.getText(after), `independent original ${name}`).toBe(exactFunction(before, name).getText(before));
+  }
+  return restored;
+}
+
+function replaceOne(text: string, before: string, after: string): string {
+  expect(text.split(before), `one mutation target ${before}`).toHaveLength(2);
+  const changed = text.replace(before, after);
+  expect(changed).not.toBe(text);
+  return changed;
+}
+
+describe("independently authenticated string/Error extraction in the vector registry", () => {
+  it("reconstructs both unchanged original receipts from all eight live factory payloads", () => {
+    const restored = verifyLayoutInverse();
+    expect(restored).not.toBe(read("registry"));
+    expect(layoutForward().factories).toHaveLength(8);
+  });
+  it.each([
+    [
+      "createErrorStructType",
+      '{ name: "stack", type: { kind: "externref" }, mutable: true }',
+      '{ name: "stack", type: { kind: "externref" }, mutable: false }',
+    ],
+    ["createStringDataType", 'element: { kind: "i16" }', 'element: { kind: "i8" }'],
+    ["createAnyStringType", "mutable: false", "mutable: true"],
+    ["createNativeStringType", "layout.nativeStrDataTypeIdx", "layout.anyStrTypeIdx"],
+    [
+      "createConsStringType",
+      '{ name: "left", type: { kind: "ref", typeIdx: layout.anyStrTypeIdx }, mutable: true }',
+      '{ name: "left", type: { kind: "ref", typeIdx: layout.anyStrTypeIdx }, mutable: false }',
+    ],
+    [
+      "createHashedStringType",
+      '{ name: "cacheProps", type: { kind: "anyref" }, mutable: true }',
+      '{ name: "cacheProps", type: { kind: "externref" }, mutable: true }',
+    ],
+    ["createUtf8StringDataType", 'element: { kind: "i8" }', 'element: { kind: "i16" }'],
+    [
+      "createUtf8StringType",
+      '{ name: "off", type: { kind: "i32" }, mutable: false }',
+      '{ name: "off", type: { kind: "i32" }, mutable: true }',
+    ],
+  ])("detects changed live %s descriptor", (name, before, after) => {
+    verifyLayoutInverse();
+    const canonical = readRelative(layoutSourcePath),
+      file = parse(canonical),
+      fn = exactFunction(file, name!);
+    const changed =
+      canonical.slice(0, fn.getStart(file)) + replaceOne(fn.getText(file), before!, after!) + canonical.slice(fn.end);
+    expect(() => verifyLayoutInverse(read("registry"), changed)).toThrow();
+  });
+  it.each([
+    [
+      "import source",
+      'from "../../runtime/wasmgc/values/string-layouts.js";',
+      'from "../../runtime/wasmgc/values/other-layouts.js";',
+    ],
+    ["import kind", "import {\n  createErrorStructType,", "import type {\n  createErrorStructType,"],
+    ["layout argument", "createNativeStringType(ctx)", "createNativeStringType({ ...ctx })"],
+    ["UTF8 condition", "if (ctx.utf8Storage)", "if (!ctx.utf8Storage)"],
+    ["Error cache publication", "ctx.errorStructTypeIdx = idx;", "ctx.errorStructTypeIdx = 0;"],
+  ])("rejects changed %s without accepting a new receipt", (_name, before, after) => {
+    verifyLayoutInverse();
+    expect(() => verifyLayoutInverse(replaceOne(read("registry"), before!, after!))).toThrow();
+  });
+  it("rejects a removed canonical factory", () => {
+    verifyLayoutInverse();
+    const canonical = readRelative(layoutSourcePath),
+      file = parse(canonical),
+      fn = exactFunction(file, "createErrorStructType");
+    const changed = canonical.slice(0, fn.getStart(file)) + canonical.slice(fn.end);
+    expect(changed).not.toBe(canonical);
+    expect(() => verifyLayoutInverse(read("registry"), changed)).toThrow();
+  });
+  it("rejects an extra executable statement before the canonical return", () => {
+    verifyLayoutInverse();
+    const canonical = readRelative(layoutSourcePath);
+    const changed = replaceOne(
+      canonical,
+      "export function createErrorStructType(): TypeDef {\n  return",
+      "export function createErrorStructType(): TypeDef {\n  console.log('unexpected');\n  return",
+    );
+    expect(() => verifyLayoutInverse(read("registry"), changed)).toThrow("single return createErrorStructType");
+  });
+  it("rejects an unbound ctx read that would collide with the layout inverse", () => {
+    verifyLayoutInverse();
+    const canonical = readRelative(layoutSourcePath),
+      file = parse(canonical),
+      fn = exactFunction(file, "createNativeStringType");
+    const changed =
+      canonical.slice(0, fn.getStart(file)) +
+      replaceOne(fn.getText(file), "layout.nativeStrDataTypeIdx", "ctx.nativeStrDataTypeIdx") +
+      canonical.slice(fn.end);
+    expect(() => verifyLayoutInverse(read("registry"), changed)).toThrow("unbound ctx in canonical layout payload");
+  });
+  it("rejects a differently quoted duplicate canonical namespace import", () => {
+    verifyLayoutInverse();
+    const changed =
+      read("registry") + "\nimport * as extraLayouts from '../../runtime/wasmgc/values/string-layouts.js';\n";
+    expect(changed).not.toBe(read("registry"));
+    expect(() => verifyLayoutInverse(changed)).toThrow("one canonical ordinary layout import");
+  });
+});
+
 describe("complete donor/registry preservation", () => {
   it.each(["donor", "registry"] as const)("retains every declaration and original order in %s", (key) => {
-    const sf = parse(read(key)),
+    const sf = parse(key === "registry" ? verifyLayoutInverse() : read(key)),
       declarations = sf.statements.filter((s) => !ts.isImportDeclaration(s));
     const name = (s: ts.Statement) =>
       ts.isVariableStatement(s)

@@ -9,6 +9,7 @@
 // array-object-proto, linear-uint8-codegen) never transitively pull WASI IO.
 // index.ts re-exports these for backward-compatible import paths.
 
+import { createArgumentVectorArrayType } from "../runtime/wasmgc/values/argument-vector-bodies.js";
 import type { FieldDef, Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { addFuncType, getOrRegisterSubviewType } from "./registry/types.js";
@@ -101,12 +102,7 @@ export function reserveTypedArraySubviewTypes(ctx: CodegenContext): void {
 export function reserveObjVecArrType(ctx: CodegenContext): void {
   if (ctx.reservedObjVecArrTypeIdx !== undefined) return;
   const idx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "array",
-    name: "$ObjVecArr",
-    element: { kind: "externref" },
-    mutable: true,
-  });
+  ctx.mod.types.push(createArgumentVectorArrayType());
   ctx.reservedObjVecArrTypeIdx = idx;
 }
 

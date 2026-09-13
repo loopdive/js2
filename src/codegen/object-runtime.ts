@@ -55,6 +55,13 @@
  * runtime — it emits `struct.get`/`struct.set` directly and never calls
  * `ensureLateImport` for these names.
  */
+import {
+  createArgumentVectorArrayType,
+  createArgumentVectorType,
+  buildArgumentVectorNewBody,
+  buildArgumentVectorPushLocals,
+  buildArgumentVectorPushBody,
+} from "../runtime/wasmgc/values/argument-vector-bodies.js";
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
@@ -1172,26 +1179,13 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     objVecArrTypeIdx = ctx.reservedObjVecArrTypeIdx;
   } else {
     objVecArrTypeIdx = ctx.mod.types.length;
-    ctx.mod.types.push({
-      kind: "array",
-      name: "$ObjVecArr",
-      element: { kind: "externref" },
-      mutable: true,
-    });
+    ctx.mod.types.push(createArgumentVectorArrayType());
   }
 
   // Growable externref Array carrier; vec-base exposes length to shared reflection.
   const objVecBaseTypeIdx = getOrRegisterVecBaseType(ctx);
   const objVecTypeIdx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: "$ObjVec",
-    superTypeIdx: objVecBaseTypeIdx,
-    fields: [
-      { name: "length", type: { kind: "i32" }, mutable: true },
-      { name: "data", type: { kind: "ref", typeIdx: objVecArrTypeIdx }, mutable: true },
-    ],
-  });
+  ctx.mod.types.push(createArgumentVectorType(objVecBaseTypeIdx, objVecArrTypeIdx));
 
   // (#1100/#1355) `$ProxyTraps` — trap fields for the standalone Proxy. A null
   // field means "no trap" → forward to the ordinary operation on the proxy
@@ -4380,139 +4374,17 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // Insert/append uses doubling growth; INITIAL_CAP keeps small objects cheap.
   // ════════════════════════════════════════════════════════════════════════
 
-  // ── __objvec_new() -> externref ─────────────────────────────────────────
-  // struct.new $ObjVec { len: 0, data: new $ObjVecArr[INITIAL_CAP] }, wrapped.
-  {
-    const body: Instr[] = [
-      { op: "i32.const", value: 0 }, // len
-      { op: "i32.const", value: INITIAL_CAP }, // data: array.new_default count
-      { op: "array.new_default", typeIdx: objVecArrTypeIdx },
-      { op: "struct.new", typeIdx: objVecTypeIdx },
-      { op: "extern.convert_any" },
-    ];
-    registerNative("__objvec_new", [], [{ kind: "externref" }], [], body);
-  }
+  // Canonical ObjVec bodies, registered at the historical new-before-push points.
+  const argumentVectorLayout = { objVecArrTypeIdx, objVecTypeIdx };
+  registerNative("__objvec_new", [], [{ kind: "externref" }], [], buildArgumentVectorNewBody(argumentVectorLayout));
   const objVecNewIdx = ctx.funcMap.get("__objvec_new")!;
-
-  // ── __objvec_push(externref vec, externref elem) -> void ─────────────────
-  //
-  // Append elem to the wrapped $ObjVec, doubling the backing array when full.
-  // No-op (silently) if vec is not a $ObjVec — keeps the helper total.
-  //
-  // params: 0=vec(externref) 1=elem(externref)
-  // locals: 2=any(anyref) 3=v(ref null $ObjVec) 4=arr(ref null $ObjVecArr)
-  //         5=len 6=cap 7=narr(ref null $ObjVecArr) 8=i
-  {
-    const body: Instr[] = [
-      // any = any.convert_extern(vec); if !$ObjVec → return
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "local.tee", index: 2 },
-      { op: "ref.test", typeIdx: objVecTypeIdx },
-      { op: "i32.eqz" },
-      { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
-      // v = cast<$ObjVec>(any)
-      { op: "local.get", index: 2 },
-      { op: "ref.cast", typeIdx: objVecTypeIdx },
-      { op: "local.set", index: 3 },
-      // arr = v.data ; len = v.len ; cap = arr.len
-      { op: "local.get", index: 3 },
-      { op: "ref.as_non_null" },
-      { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 1 },
-      { op: "local.tee", index: 4 },
-      { op: "array.len" },
-      { op: "local.set", index: 6 },
-      { op: "local.get", index: 3 },
-      { op: "ref.as_non_null" },
-      { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 0 },
-      { op: "local.set", index: 5 },
-      // if len >= cap → grow: narr = new[cap*2]; copy 0..len; v.data = narr; arr = narr
-      { op: "local.get", index: 5 },
-      { op: "local.get", index: 6 },
-      { op: "i32.ge_s" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          // narr = array.new_default(cap*2)  (cap is always >=1)
-          { op: "local.get", index: 6 },
-          { op: "i32.const", value: 2 },
-          { op: "i32.mul" },
-          { op: "array.new_default", typeIdx: objVecArrTypeIdx },
-          { op: "local.set", index: 7 },
-          // i = 0; while i < len: narr[i] = arr[i]; i++
-          { op: "i32.const", value: 0 },
-          { op: "local.set", index: 8 },
-          {
-            op: "block",
-            blockType: { kind: "empty" },
-            body: [
-              {
-                op: "loop",
-                blockType: { kind: "empty" },
-                body: [
-                  { op: "local.get", index: 8 },
-                  { op: "local.get", index: 5 },
-                  { op: "i32.ge_s" },
-                  { op: "br_if", depth: 1 },
-                  // narr[i] = arr[i]
-                  { op: "local.get", index: 7 },
-                  { op: "ref.as_non_null" },
-                  { op: "local.get", index: 8 },
-                  { op: "local.get", index: 4 },
-                  { op: "ref.as_non_null" },
-                  { op: "local.get", index: 8 },
-                  { op: "array.get", typeIdx: objVecArrTypeIdx },
-                  { op: "array.set", typeIdx: objVecArrTypeIdx },
-                  // i++
-                  { op: "local.get", index: 8 },
-                  { op: "i32.const", value: 1 },
-                  { op: "i32.add" },
-                  { op: "local.set", index: 8 },
-                  { op: "br", depth: 0 },
-                ],
-              },
-            ],
-          },
-          // v.data = narr ; arr = narr
-          { op: "local.get", index: 3 },
-          { op: "ref.as_non_null" },
-          { op: "local.get", index: 7 },
-          { op: "ref.as_non_null" },
-          { op: "struct.set", typeIdx: objVecTypeIdx, fieldIdx: 1 },
-          { op: "local.get", index: 7 },
-          { op: "local.set", index: 4 },
-        ],
-      },
-      // arr[len] = elem ; v.len = len + 1
-      { op: "local.get", index: 4 },
-      { op: "ref.as_non_null" },
-      { op: "local.get", index: 5 },
-      { op: "local.get", index: 1 },
-      { op: "array.set", typeIdx: objVecArrTypeIdx },
-      { op: "local.get", index: 3 },
-      { op: "ref.as_non_null" },
-      { op: "local.get", index: 5 },
-      { op: "i32.const", value: 1 },
-      { op: "i32.add" },
-      { op: "struct.set", typeIdx: objVecTypeIdx, fieldIdx: 0 },
-    ];
-    registerNative(
-      "__objvec_push",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [],
-      [
-        { name: "any", type: { kind: "anyref" } },
-        { name: "v", type: { kind: "ref_null", typeIdx: objVecTypeIdx } },
-        { name: "arr", type: { kind: "ref_null", typeIdx: objVecArrTypeIdx } },
-        { name: "len", type: { kind: "i32" } },
-        { name: "cap", type: { kind: "i32" } },
-        { name: "narr", type: { kind: "ref_null", typeIdx: objVecArrTypeIdx } },
-        { name: "i", type: { kind: "i32" } },
-      ],
-      body,
-    );
-  }
+  registerNative(
+    "__objvec_push",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [],
+    buildArgumentVectorPushLocals(argumentVectorLayout),
+    buildArgumentVectorPushBody(argumentVectorLayout),
+  );
   const objVecPushIdx = ctx.funcMap.get("__objvec_push")!;
 
   // ── __hasOwnProperty / __object_hasOwn (externref obj, externref key) -> i32 ─
