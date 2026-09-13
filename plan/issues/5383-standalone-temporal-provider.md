@@ -501,14 +501,22 @@ criterion 4 is **not**, and the issue stays `in-progress` for that reason. The
    because the #661 lowering covers only PlainDate/PlainTime/Duration).
 4. S5: samples measured, 0 pass→fail, counts with artifacts; the standalone
    Temporal bucket moves from 170 pass.
+   **MET for the sampled families (re-measured S8, 2026-09-12, after #5404).**
+   Linked, the three sampled families score **85 pass / 267 fail / 8
+   compile_error out of 360** (PlainDate 51, Duration 32, ZonedDateTime 2),
+   against 44 on the S7-linked side and **0** on the S5/S6-linked sides —
+   **0 pass→fail**, 44 `fail→pass` vs S7, and 1 `pass→compile_error` that is a
+   15 s compile TIMEOUT and comes back `pass` when re-run solo. The
+   `Unsupported dynamic regular expression pattern` bucket went **101 → 0**.
+   The full-corpus "moves from 170 pass" number is still unmeasured; only the
+   360-row sample is. Per-family counts, flip lists and the new top buckets are
+   in "S8 findings" below. The S7 text that follows is kept for the record:
    **MET for the sampled families (re-measured S7, 2026-09-12, after #6432).**
    Linked, the three sampled families score **44 pass / 310 fail / 6
    compile_error out of 360** (PlainDate 17, Duration 26, ZonedDateTime 1),
    against **0 pass** on the S5- and S6-linked sides — **0 pass→fail**, 44
-   `fail→pass`, 2 `compile_error→fail` (both S5 compile-timeouts). The full-corpus
-   "moves from 170 pass" number is still unmeasured; only the 360-row sample is.
-   Per-family counts, flip lists and the new top buckets are in "S7 findings"
-   below. The S6 text that follows is kept for the record:
+   `fail→pass`, 2 `compile_error→fail` (both S5 compile-timeouts). The S6 text
+   that follows is kept for the record:
    **NOT MET (re-measured S6, 2026-09-12).** Linked, the three sampled families
    still score **0 pass** (120 rows each: PlainDate 0 pass / 109 fail / 11
    compile-timeout, Duration 0 / 110 / 10, ZonedDateTime 0 / 111 / 9), so
@@ -3609,3 +3617,121 @@ kept beneath it for the record. Nothing here claims the full-corpus number: only
 first, UNLINKED run is kept at `.tmp/s7fam-UNLINKED/` as the worked example of
 the pre-warm trap. Provider: `cacheHit=true`,
 `js2wasm:npm:@js-temporal/polyfill:75c71eaf308041cb`, 3,273,995 B.
+
+## S8 findings (2026-09-12) — the RegExp wall is gone; the linked lane nearly doubles to 85/360
+
+**#5404 is fixed** (details, census and mechanism in that issue's "Resolution").
+The one-line version: the standalone backend already const-folded
+`new RegExp("^" + a.source + "$")`, but **not** the two spellings the polyfill
+actually uses — a template literal with substitutions and `[…].join("")`. It
+was never a "runtime pattern" problem; it was two missing spellings of the same
+compile-time composition, so no runtime regex compiler was needed. The fold is
+gated on a trial compile, because `reportStandaloneRegExpUnsupported` is a
+STICKY compile error and a widened fold onto an unsupported construct would
+have turned a catchable `TypeError` into a hard build failure for the bundle.
+
+### The three-family sample, LINKED, re-measured
+
+120 rows each, `--target standalone`, provider linked, families run
+**sequentially**, fresh `JS2WASM_TEMPORAL_CACHE` (`.tmp/s8cache`), quickjs eval
+provider present. Linking confirmed both ways: the run log carries
+`Temporal provider (standalone) js2wasm:npm:@js-temporal/polyfill:1528a7d22b729f99
+(3278839 B) … cacheHit=true`, and `__temporal_*` leaks are **0** in all three
+TSVs.
+
+| family | rows | S7 linked pass | **S8 linked pass** | fail | compile_error | pass→fail |
+| --- | --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 17 | **51** | 68 | 1 | **0** |
+| `built-ins/Temporal/Duration/**` | 120 | 26 | **32** | 83 | 5 | **0** |
+| `built-ins/Temporal/ZonedDateTime/prototype/**` | 120 | 1 | **2** | 116 | 2 | **0** |
+| **total** | **360** | **44** | **85** | **267** | **8** | **0** |
+
+44 rows flipped `fail→pass`. One row flipped `pass→compile_error`
+(`Duration/from/argument-propertybag-optional-properties.js`) — it is a **15 s
+compile timeout**, and re-run solo with a 60 s budget it comes back **`pass`**;
+the other new CE (`Duration/from/argument-duration.js`) re-runs to **`fail`**,
+the same verdict it had in S7. So there is **no genuine pass→not-pass row**.
+Every `compile_error` in both runs is a compilation timeout, which S5/S6/S7
+already characterised as contention-sensitive.
+
+The `Unsupported dynamic regular expression pattern` bucket is **101 → 0**
+across the three families (PlainDate 16→0, Duration 15→0, ZonedDateTime 70→0).
+
+`built-ins/Temporal/PlainDate/from/**` alone — the sub-family #5408 is about —
+went **7 pass → 19 pass**.
+
+### Top error buckets, LINKED, S8
+
+PlainDate (68 fail):
+
+| count | text |
+| --- | --- |
+| 21 | `Test262Error: calendar must be string in canonicalizeCalendarEra Expected SameValue(«"undefined"», «"string"»)` |
+| 8 | `TypeError: Cannot read properties of undefined (reading 'sort')` |
+| 4 | `TypeError: map callbackfn is not a function` |
+| 4 | `Test262Error: Expected a RangeError but got a undefined` |
+| 4 | `RangeError: unknown time zone UTC` |
+
+Duration (83 fail):
+
+| count | text |
+| --- | --- |
+| 9 | `TypeError: Cannot access property on null or undefined at 164:22` |
+| 4 | `TypeError: expected a string, not null` |
+| 4 | `TypeError: Cannot read properties of undefined (reading 'sort')` |
+| 4 | `Test262Error: years result: Expected SameValue(«undefined», «0») to be true` |
+| 3 | `TypeError: called value is not a function` |
+
+ZonedDateTime/prototype (116 fail):
+
+| count | text |
+| --- | --- |
+| 62 | `RangeError: unknown time zone UTC` |
+| 18 | `TypeError: Cannot convert undefined or null to object` |
+| 6 | `TypeError: Cannot read properties of undefined (reading 'equals')` |
+| 3 | `TypeError: Cannot read properties of undefined (reading 'sort')` |
+| 3 | `Test262Error: Expected a RangeError but got a undefined` |
+
+### What the new buckets say about the next slices
+
+- **`RangeError: unknown time zone UTC` is the new ZonedDateTime wall — 62 of
+  116, and it did not exist before.** It is the *successor* of the RegExp
+  bucket: the ISO/offset strings now parse, and the very next thing the
+  polyfill does is resolve a time-zone identifier, which the standalone `Intl`
+  refusal shim (`src/temporal-intl-shim.ts`, #5383 S2c) cannot answer. That is
+  a self-contained, high-value next slice: the polyfill needs `"UTC"` (and
+  fixed-offset zones) to resolve without an `Intl` time-zone database.
+- **`canonicalizeCalendarEra` reading a calendar as `undefined` (21 PlainDate
+  rows)** is unchanged from S7 — untouched by this slice, still the largest
+  PlainDate bucket, still self-contained.
+- **`Cannot read properties of undefined` / `Cannot access property on null or
+  undefined` (≈45 rows)** is still several different missing members, not one
+  bug.
+- #5408's residual is attributed in that issue: `from(string)` no longer
+  throws, but the object it returns is not a `PlainDate` — and `from(object)`,
+  which touches no RegExp, fails the same way. One defect, two entry points,
+  in the #5406 class.
+
+### Artifacts
+
+`.tmp/s8fam/{pd,du,zdt}-link.tsv` (+ `.log`) in the S8 worktree
+`/home/user/js2/.claude/worktrees/agent-a7074906c110b4c3f`, produced by
+`.tmp/s8/s8-family.mts` (a copy of S7's, label `s8`) and compared against
+`/home/user/js2/.claude/worktrees/agent-ab8c96460934f2664/.tmp/s7fam/*-link.tsv`
+with `.tmp/s8/s7-table.mjs`. Provider `cacheHit=true`,
+`js2wasm:npm:@js-temporal/polyfill:1528a7d22b729f99`, 3,278,839 B (S7:
+`75c71eaf308041cb`, 3,273,995 B — the artifact re-keys because the composed
+patterns now lower to native programs).
+
+### A trap worth repeating from S7, plus one new one
+
+- The pre-warm stamp trap is unchanged: without a standalone-keyed stamp in the
+  cache dir, every row runs UNLINKED and fails soft, which looks like a bad
+  linked run. Tells: the `cacheHit=` log line, and zero `__temporal_*` leaks.
+- **New: the quickjs eval provider must be present in the worktree, or every
+  row fails with `JS2WASM_EVAL_ENGINE=quickjs but the quickjs provider is not
+  built`** — 120 rows of a uniform, Temporal-shaped-looking `Error:` that has
+  nothing to do with Temporal. Two artifacts are needed, not one: the
+  `.test262-cache/quickjs-artifact-<hash>/` directory AND the
+  `.test262-cache/quickjs-eval-adapter-<key>.wasm` file. Symlinking only the
+  first produces a second, differently-worded refusal naming the adapter.

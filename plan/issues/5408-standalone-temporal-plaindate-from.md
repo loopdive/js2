@@ -1,12 +1,13 @@
 ---
 id: 5408
 title: "standalone: through the linked Temporal provider `Temporal.PlainDate.from(\"1976-11-18\")` throws and `PlainDate.from(date, options).year` is not a number, while `new Temporal.PlainDate(…)`, `.calendarId` and `PlainDate.compare` are all correct (124 `assert.sameValue` rows sit behind this class)"
-status: ready
+status: in-progress
 sprint: current
 priority: medium
 horizon: m
 goal: standalone
 reasoning_effort: high
+assignee: ttraenkler/sendev-5383-s8
 requested_by: ttraenkler/fable-lead
 created: 2026-09-12
 ---
@@ -72,3 +73,58 @@ drop, and if it does not, that is itself the finding).
 - Found by #5383 S5. Do not confuse with #5406 (the boundary/identity class,
   which masks this one in the reported error text) or #5407 (compile cost).
 - Artifacts: `.tmp/s5-firstfail.out`, `.tmp/pd-link.tsv`.
+
+## S8 update (2026-09-12) — the `from(string)` half is FIXED; the residual is NOT RegExp
+
+Step 1 of the plan above was right about the suspect and right about the lane:
+the `from(string)` throw was the standalone RegExp backend refusing the
+polyfill's composed ISO parsers. **#5404 fixed it** (the composition fold; see
+that issue's "Resolution" for the census and the mechanism).
+
+### What moved, measured
+
+Same probe script the table above was measured with (`.tmp/s8/s8-firstfail.mts`,
+a copy of `.tmp/s5-firstfail.mts`), host-free through
+`buildTemporalProvider` + `compileWithTemporalGlobal` + `instantiateLinkedProject(result, {})`
+with an empty import object:
+
+| probe | S5 | S8 |
+| --- | --- | --- |
+| `Temporal.PlainDate.from("1976-11-18")` | **throws** (`[object WebAssembly.Exception]`) | **returns, no throw** |
+| …`.day` | (unreachable) | still not a number |
+| `Temporal.PlainDate.from(d, { overflow })`.`year` | not a number | still not a number |
+| `new Temporal.PlainDate(1976,11,18).day` | 18 ✓ | 18 ✓ |
+
+And in the three-family sample (#5383 S8), `built-ins/Temporal/PlainDate/from/**`
+went **7 pass → 19 pass** while its `Unsupported dynamic regular expression
+pattern` bucket went **4 → 0**. Family-wide the whole PlainDate sample went
+17 → 51 and the bucket went 16 → 0. Nothing regressed.
+
+### The residual, attributed
+
+`from("1976-11-18")` now returns an **object that is not a `Temporal.PlainDate`**:
+`typeof d === "object"` but `typeof d.constructor !== "function"`, and
+`d.toString()` is the 15-character `"[object Object]"` (measured by char code,
+`.tmp/s8/s8-from2.mts`) — whereas the direct constructor's `toString()` is a
+29-character real ISO string. So the parse succeeds and the *construction* of
+the result is what is wrong.
+
+**That is the #5406 class, not this one.** The evidence: `from({year, month,
+day})` — which touches no RegExp at all — **also fails** on the same probe (it
+throws), and the residual failure texts under `PlainDate/from/**` are now
+`calendar must be string in canonicalizeCalendarEra` (20), `Expected a
+RangeError but got a undefined` (4), `map callbackfn is not a function` (4) —
+i.e. the calendar/identity buckets #5383 S7 already named, with no
+RegExp text left.
+
+**What remains for #5408**, therefore, is the SECOND row of the original table
+(`from(date, options).year` is not a number) plus the newly-exposed
+`from(string)` result-construction defect — and the measurement above says both
+are the *same* defect, reached by two entry points, sitting in the object the
+provider hands back rather than in `from`'s parsing. The next slice should
+attack it as one item and should read #5406 first; splitting it by entry point
+would re-measure the same root cause twice.
+
+**Not RegExp-related** (this is the answer to the question the S8 brief asked):
+the `from(d, {overflow})` half never went through the regexps, was unaffected by
+#5404, and is unchanged.
