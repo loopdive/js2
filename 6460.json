@@ -1,12 +1,11 @@
 {
   "id": "6460",
   "assignee": "ttraenkler/dev-5383-s12",
-  "requested_by": "ttraenkler/dev-5383-s12",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-5383-standalone-temporal-s12",
-  "reserved_at": "2026-09-13T08:30:55Z",
   "claimed_at": "2026-09-13T08:30:55Z",
-  "updated_at": "2026-09-13T08:30:55Z",
-  "write_id": "7307-33sej80q",
-  "pr_scan": "off"
+  "updated_at": "2026-09-13T12:01:31Z",
+  "write_id": "14234-qj5a3f3q",
+  "released_at": "2026-09-13T12:01:31Z"
 }
