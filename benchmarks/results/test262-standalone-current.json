@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-13T21:17:50.834Z",
-  "baseline_generated_at": "2026-09-13T21:17:50.834Z",
-  "baseline_sha": "d842ff991952de26aa791c4feacc6717b5a1e962",
+  "timestamp": "2026-09-13T22:27:48.860Z",
+  "baseline_generated_at": "2026-09-13T22:27:48.860Z",
+  "baseline_sha": "70a844b54593f04783d8d1bc2cd86f53d9c89e0e",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -13,8 +13,8 @@
     "total": 48232,
     "pass": 35531,
     "fail": 9655,
-    "compile_error": 3021,
-    "compile_timeout": 7,
+    "compile_error": 3020,
+    "compile_timeout": 8,
     "skip": 18,
     "compilable": 45186,
     "host_free_pass": 35531,
@@ -24,8 +24,8 @@
         "total": 47146,
         "pass": 34502,
         "fail": 9617,
-        "compile_error": 3002,
-        "compile_timeout": 7,
+        "compile_error": 3001,
+        "compile_timeout": 8,
         "skip": 18,
         "compilable": 44119,
         "host_free_pass": 34502,
@@ -60,8 +60,8 @@
         "total": 48232,
         "pass": 35531,
         "fail": 9655,
-        "compile_error": 3021,
-        "compile_timeout": 7,
+        "compile_error": 3020,
+        "compile_timeout": 8,
         "skip": 18,
         "compilable": 45186,
         "host_free_pass": 35531,
@@ -72,8 +72,8 @@
         "total": 48735,
         "pass": 35766,
         "fail": 9671,
-        "compile_error": 3177,
-        "compile_timeout": 7,
+        "compile_error": 3176,
+        "compile_timeout": 8,
         "skip": 114,
         "compilable": 45437,
         "host_free_pass": 35766,
@@ -86,8 +86,8 @@
     "total": 48232,
     "pass": 35531,
     "fail": 9655,
-    "compile_error": 3021,
-    "compile_timeout": 7,
+    "compile_error": 3020,
+    "compile_timeout": 8,
     "skip": 18,
     "compilable": 45186,
     "host_free_pass": 35531,
@@ -97,8 +97,8 @@
     "total": 48735,
     "pass": 35766,
     "fail": 9671,
-    "compile_error": 3177,
-    "compile_timeout": 7,
+    "compile_error": 3176,
+    "compile_timeout": 8,
     "skip": 114,
     "compilable": 45437,
     "host_free_pass": 35766,
@@ -108,8 +108,8 @@
     "total": 45721,
     "pass": 33252,
     "fail": 9514,
-    "compile_error": 2930,
-    "compile_timeout": 7,
+    "compile_error": 2929,
+    "compile_timeout": 8,
     "skip": 18,
     "compilable": 42766,
     "host_free_pass": 33252,
@@ -142,8 +142,8 @@
       "total": 47146,
       "pass": 34502,
       "fail": 9617,
-      "compile_error": 3002,
-      "compile_timeout": 7,
+      "compile_error": 3001,
+      "compile_timeout": 8,
       "skip": 18,
       "compilable": 44119,
       "host_free_pass": 34502,
@@ -805,8 +805,8 @@
       "path": "built-ins/TypedArray",
       "pass": 922,
       "fail": 512,
-      "compile_error": 12,
-      "compile_timeout": 0,
+      "compile_error": 11,
+      "compile_timeout": 1,
       "skip": 0,
       "total": 1446,
       "host_free_pass": 922
@@ -1205,7 +1205,7 @@
     "negative_test_fail": 4,
     "null_deref": 25,
     "oob": 7,
-    "other": 3231,
+    "other": 3230,
     "promise_error": 57,
     "range_error": 14,
     "runtime_error": 165,
@@ -1296,7 +1296,7 @@
           "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/with/disambiguation-wrong-type.js"
+          "test/built-ins/Temporal/PlainDate/prototype/toPlainDateTime/argument-string-unknown-annotation.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: null Expected a RangeError but got a TypeError",
@@ -1335,8 +1335,8 @@
         "sample_files": [
           "test/built-ins/AsyncDisposableStack/prototype/move/not-a-constructor.js",
           "test/built-ins/AsyncDisposableStack/prototype/move/sets-state-to-disposed.js",
-          "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.asyncDispose-property-not-callable.js",
           "test/built-ins/AsyncDisposableStack/instance-extensible.js",
+          "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.asyncDispose-property-not-callable.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.dispose-property-not-callable.js"
         ],
         "sample_signatures": [
@@ -1461,15 +1461,15 @@
         "sample_files": [
           "test/built-ins/JSON/stringify/value-tojson-object-circular.js",
           "test/built-ins/JSON/stringify/replacer-function-result-undefined.js",
-          "test/built-ins/JSON/stringify/value-function.js",
           "test/built-ins/JSON/parse/reviver-wrapper.js",
+          "test/built-ins/JSON/stringify/value-function.js",
           "test/built-ins/JSON/stringify/value-object-abrupt.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
           "assertion_fail:Test262Error: Expected SameValue(«\"#\"», «undefined») to be true",
-          "assertion_fail:Test262Error: Expected SameValue(«\"null\"», «undefined») to be true",
           "assertion_fail:Test262Error: [[Set]] should not be called.",
+          "assertion_fail:Test262Error: Expected SameValue(«\"null\"», «undefined») to be true",
           "assertion_fail:Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all"
         ]
       },
@@ -1903,15 +1903,15 @@
         },
         "sample_files": [
           "test/language/expressions/class/dstr/async-gen-meth-dflt-obj-ptrn-prop-eval-err.js",
-          "test/language/expressions/class/elements/multiple-definitions-rs-static-privatename-identifier-by-classname.js",
           "test/language/expressions/class/dstr/async-private-gen-meth-static-ary-ptrn-elem-ary-empty-init.js",
+          "test/language/expressions/class/elements/multiple-definitions-rs-static-privatename-identifier-by-classname.js",
           "test/language/expressions/class/async-gen-method/yield-star-getiter-async-undefined-sync-get-abrupt.js",
           "test/language/expressions/class/private-setter-brand-check-multiple-evaluations-of-class-realm-function-ctor.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected a Test262Error but got a TypeError",
-          "assertion_fail:Test262Error: Expected SameValue(«null», «#») to be true",
           "runtime_error:Test262:AsyncTestFailure:Test262Error: TypeError: Cannot destructure 'null' or 'undefined'",
+          "assertion_fail:Test262Error: Expected SameValue(«null», «#») to be true",
           "type_error:TypeError: Cannot read properties of undefined (reading a class field)",
           "type_error:TypeError: called value is not a function"
         ]
@@ -1978,8 +1978,8 @@
         "statuses": {
           "pass": 0,
           "fail": 1604,
-          "compile_error": 210,
-          "compile_timeout": 7,
+          "compile_error": 209,
+          "compile_timeout": 8,
           "skip": 0,
           "total": 1821,
           "host_free_pass": 0
@@ -1990,7 +1990,7 @@
           "illegal_cast": 176,
           "type_error": 253,
           "host_import_leak": 180,
-          "other": 35,
+          "other": 34,
           "wasm_compile": 4,
           "oob": 5
         },
@@ -2912,9 +2912,9 @@
         "sample_files": [
           "test/language/identifiers/part-unicode-16.0.0-escaped.js",
           "test/language/identifiers/start-unicode-17.0.0-class.js",
-          "test/language/identifiers/start-unicode-16.0.0-escaped.js",
           "test/language/identifiers/part-unicode-17.0.0-class.js",
-          "test/language/identifiers/part-unicode-17.0.0.js"
+          "test/language/identifiers/start-unicode-16.0.0-escaped.js",
+          "test/language/identifiers/start-unicode-17.0.0.js"
         ],
         "sample_signatures": [
           "runtime_error:L#:## Invalid character.; L#:## Invalid character.; L#:## ',' expected.; L#:## An identifier or keyword cannot immediately follow a numeric literal.; L#:## Invalid character.; L#:## ',' expected.; L#:## An identifier or keyword cannot immed",
