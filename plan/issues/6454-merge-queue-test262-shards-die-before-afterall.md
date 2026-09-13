@@ -1,6 +1,6 @@
 ---
 id: 6454
-title: "Merge queue is wedged: every `merge_group` test262 shard dies before `afterAll`, so no PR can land"
+title: "A ~15-minute merge_group outage parked 3 PRs on evidence-free `hold`s — shards died before `afterAll`"
 status: ready
 sprint: current
 created: 2026-09-13
@@ -16,11 +16,27 @@ goal: correctness
 
 ## Problem
 
-Every `merge_group` re-validation on 2026-09-13 fails `Test262 Sharded`, so
-`auto-park` `hold`-labels the PR and **nothing merges**. This is not one PR's
-regression — it is the whole queue.
+Between roughly **05:08Z and 05:22Z on 2026-09-13**, every `merge_group`
+re-validation failed `Test262 Sharded`, so `auto-park` `hold`-labelled each PR
+in turn. The outage itself was transient — PR #5891's group passed at **05:45Z**
+— but the `hold`s it left behind are not: `auto-enqueue` skips a held PR, so
+each one strands until a human clears it.
 
-Observed on three consecutive, unrelated PRs:
+**Exactly three PRs were parked by this outage**, and it is worth being precise
+about that number. 18 open PRs currently carry a `hold`, which is the figure a
+label query returns — but checking *when and by whom* each label was applied
+(`gh api repos/loopdive/js2/issues/<n>/events`) shows only three were added by
+`github-actions[bot]` inside the window. The other 15 are manual holds from
+`ttraenkler` or bot parks from earlier days, and sweeping them as collateral of
+this incident would silently re-admit work someone deliberately paused.
+
+| PR | `hold` applied | by |
+| --- | --- | --- |
+| #5889 | 05:12:21Z | `github-actions[bot]` |
+| #5885 | 05:15:57Z | `github-actions[bot]` |
+| #5890 | 05:22:56Z | `github-actions[bot]` |
+
+Observed on those three consecutive, unrelated PRs:
 
 | PR | merge_group run | `Test262 Sharded` |
 | --- | --- | --- |
@@ -56,21 +72,31 @@ park may be spurious").
 
 ## Why this matters more than a normal red gate
 
-`auto-enqueue` skips a `hold`-labelled PR, so each parked PR **strands** until a
-human clears it — and clearing it just sends the PR back through the same
-failing group. Work is accumulating behind a gate that is not measuring
-anything.
+A `hold` from `github-actions[bot]` is *supposed* to mean "a real regression the
+PR-level checks could not catch", and the handling rules say never to remove one
+without diagnosing it. That contract is what makes even three of these
+expensive: each costs a full diagnosis to clear, and each reaches the same
+conclusion — that no verdict was ever produced. A park carrying no evidence
+devalues the parks that do.
+
+It also makes the queue's held set harder to read. "18 PRs are held" invites
+exactly the wrong inference; the actionable set here is three, and telling them
+apart needs the label's *event history*, not the label.
 
 ## Acceptance criteria
 
-1. Name the change that made `tests/test262-chunk-dynamic.test.ts` return in
-   ~10 s without reaching `afterAll`, and when it landed (bisect over main
-   between the last green `merge_group` and 2026-09-13 05:08Z).
+1. Explain what made `tests/test262-chunk-dynamic.test.ts` return in ~10 s
+   without reaching `afterAll` during that window, and why it stopped by 05:45Z
+   on its own. A self-healing failure points at infrastructure (a runner image,
+   an artifact/cache service, a rate limit) rather than at a commit — so check
+   that before bisecting main.
 2. The shard either runs to completion or fails with a message that says *why*
    collection produced nothing — a ten-second silent no-op that trips a
    downstream evidence guard is the expensive part of this incident.
-3. Every PR parked by this outage is re-admitted once the queue is green, and
-   each one's `hold` is removed only after confirming its own group passed.
+3. #5885, #5889 and #5890 are re-admitted — the queue is already green again.
+   Identify the set by **when the bot applied the label**, not by the label:
+   `gh api repos/loopdive/js2/issues/<n>/events --jq '[.[]|select(.event=="labeled" and .label.name=="hold")]|last'`.
+   The other 15 held PRs are manual or older parks and must be left alone.
 4. Consider whether the completion-marker guard should distinguish "shard
    crashed" from "shard collected zero tests" — they need different responses,
    and today they produce the same message.
@@ -79,5 +105,6 @@ anything.
 
 - Failing job log: <https://github.com/loopdive/js2/actions/runs/34739996390/job/103678140919>
 - Same signature on an unrelated PR: <https://github.com/loopdive/js2/actions/runs/34739544544> (job 103676937051)
-- Enumerate more:
+- The recovery, same query: `pr-5891-…` is `success` at 05:45:22Z.
+- Enumerate the window:
   `gh api 'repos/loopdive/js2/actions/runs?event=merge_group&per_page=20' --jq '.workflow_runs[] | "\(.created_at) \(.conclusion) \(.name) \(.head_branch)"'`
