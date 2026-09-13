@@ -90,6 +90,7 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { externrefBackedOwnFieldBacking } from "./registry/error-types.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
+import { rollbackSpeculative, snapshotSpeculative } from "./context/speculative.js";
 import { flushLateImportShifts } from "./shared.js";
 
 /**
@@ -144,17 +145,17 @@ function pushSubclassConstructorInstall(
   subName: string,
   defineIdx: number,
 ): boolean {
-  const mark = fctx.body.length;
+  const snap = snapshotSpeculative(ctx, fctx);
   fctx.body.push({ op: "local.get", index: selfLocal });
   addStringConstantGlobal(ctx, "constructor");
   const keyInstrs = stringConstantExternrefInstrs(ctx, "constructor");
   if (keyInstrs.length === 0) {
-    fctx.body.length = mark;
+    rollbackSpeculative(ctx, fctx, snap);
     return false;
   }
   for (const instr of keyInstrs) fctx.body.push(instr);
   if (!emitLazyClassObjectGet(ctx, fctx, subName)) {
-    fctx.body.length = mark;
+    rollbackSpeculative(ctx, fctx, snap);
     return false;
   }
   // The class-object materializer can register a late import, which shifts
