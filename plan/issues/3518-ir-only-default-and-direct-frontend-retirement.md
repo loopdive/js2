@@ -7934,3 +7934,65 @@ signed hooks and exact-head queue checks remain required. Keep the existing
 PR held until5787 is verified on main; numerical precision debt, historical
 compiler-pair execution, whole-program execution and frontend retirement
 remain uncertified.
+
+## Queue admission reconciliation: current main — 2026-09-13
+
+Existing PR5760 reported DIRTY against main7adc0a6e after publishing signed
+11392975. The actual local merge of that exact main completed cleanly with
+no conflicts. Restore the hold while validating and committing the merge;
+no queue entry existed. The queue-arm workflow was independently a no-op due
+to its CONTRIBUTOR trust gate, so do not count its green job as admission.
+
+The incoming changes are already-delivered generator protocol initialization
+and benchmark/baseline artifacts. All54 validated IR source/test/policy pins
+remain unchanged. Preserve all incoming main bytes. Execute the complete new
+generator prototype regression file plus reservation, delay admission and
+boundary controls on the composed tree; rerun source gates and normal hooks.
+Keep earlier1,819/1,819 validation as evidence on11392975, not a rerun claim
+on this merged head. Retain its direct results and all initial failures.
+Queue only the exact republished head after current checks and hold release.
+
+The actual current-main reconciliation passes345/345 assertions across four
+complete files, zero skipped: generator prototype14, reservations149, delay
+admission41 and boundary141. All execution pins remain unchanged. TS7, LOC and
+function budgets, oracle, preservation-v1 with required core types and nodes,
+and the unchanged coercion checker (124 files/511 sites through a space-free
+alias) pass against exact main7adc0a6e. Conformance synchronization changes
+zero files. All54 earlier validated IR pins remain unchanged. Preserve the
+original1,819/1,819 as earlier-head evidence, with this345/345 current merge
+validation separately identified. Normal signed hooks and renewed exact-head
+publication/queue checks remain required.
+
+## Forward the validated main reconciliation into string admission
+
+Refresh existing PR5787 from signed4bbdc154 onto signed immediate parent
+c06c5575. Preserve both issue histories and all prior scanner, object, closure,
+value and layout forward receipts. The parent carries the already-delivered
+generator protocol repair and current baseline artifacts; no new scanner or
+IR behavior is introduced. Keep the published PR held until5760 reaches main.
+
+Verify the exact changed source population and all earlier owned inputs.
+Run complete current generator, scanner-admission and boundary files plus the
+canonical source gates and normal signed hooks. Preserve earlier2,715/2,715
+as evidence at4bbdc154, not a full rerun claim on this merged source. The current
+check population will be reported separately; no original fixture or gate is
+changed to accommodate main. All physical/historical/retirement limits remain.
+
+The current reconciled-parent check passes307/307 assertions across three
+complete files, zero skipped: generator14, scanner admission36 and boundary257.
+All current execution pins remain unchanged. Of the earlier1,431 selected
+inputs, only the already-delivered generators-native.ts changes; all other
+1,430 stay exact. The only incoming source/test paths are that generator and
+its main-owned prototype test. All scanner/runtime/receipt/policy bytes remain
+unchanged. TS7, LOC/function budgets, oracle, preservation-v1 and measured
+coercion124/511 pass against exact parentc06c5575; conformance sync changes
+zero files. Earlier2,715/2,715 remains explicitly earlier-head evidence.
+
+
+### September 13: resume existing resource-declaration PR5789 after verified delivery
+
+PR5787, “feat(ir): admit native string numeric source lowering”, is verified delivered as `e29390e349faf7992c9193665cb44240142f903c`: complete tree equals published `e9c2d8c3b70be1096918b79c51eee730a843697e`; all 102 shards, final regression gate, differential and merge-group CI passed. Broader IR retirement remains incomplete.
+
+Resume existing PR5789, “refactor(ir): share native resource declarations before allocation”, preserving local signed `c77eb9658132ee63cc4ca80128a987c15c4b1d63` and its unfinished merge of `5b59430597315b08b2d7a1365324b56551230308`. Both issue histories are retained. Finish that earlier merge before integrating the delivered parent; never discard the existing prepared work. Current remote remains `5404151bfc1b49d6cffed4a87a8985c51bd3dd93`, held. The earlier merge changes only generators-native.ts and its prototype regression test in src/tests. Validation and normal signed hooks are required before publication; earlier evidence retains its named revisions.
+
+The preserved-parent validation passed 304/304 across three complete files (generator14, declarations20, boundary270), with unchanged execution inputs. Fresh corpus verification matched all53,933 raw pinned blobs. These results cover the preserved5b594 parent composition, not the forthcoming delivered-main refresh.
