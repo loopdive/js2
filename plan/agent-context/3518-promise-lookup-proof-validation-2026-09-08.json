@@ -1,0 +1,74 @@
+{
+  "revision": "getter-lookup-proof-v1-validated",
+  "worktree": "/private/tmp/js2-3518-promise-getter-capture-20260908",
+  "typecheck": {
+    "session": 99136,
+    "exitCode": 0,
+    "command": "NODE_OPTIONS=--max-old-space-size=2048 node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json",
+    "output": ""
+  },
+  "suite": {
+    "session": 49086,
+    "exitCode": 0,
+    "command": "NODE_OPTIONS=--max-old-space-size=2048 VITEST_FORK_MAX_OLD_SPACE_SIZE=2048 VITEST_MAX_FORKS=1 pnpm exec vitest run tests/issue-3518-promise-resolution-preservation.test.ts tests/issue-3518-promise-getter-capture.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism --reporter=dot",
+    "passed": 65,
+    "total": 65,
+    "filesPassed": 2,
+    "filesTotal": 2,
+    "preservation": 51,
+    "runtime": 14,
+    "skipped": 0,
+    "durationSeconds": 17.61,
+    "output": "\n RUN  v3.2.4 /private/tmp/js2-3518-promise-getter-capture-20260908\n\n·································································\n\n Test Files  2 passed (2)\n      Tests  65 passed (65)\n   Start at  20:28:14\n   Duration  17.61s (transform 7.49s, setup 0ms, collect 63ms, tests 17.25s, environment 0ms, prepare 45ms)\n\n"
+  },
+  "proofControls": {
+    "signaturePositive": "passed",
+    "actualRegisteredObjectFillPositive": "passed",
+    "positiveBeforeMutants": true,
+    "executedMutants": [
+      {
+        "name": "wrong parameter type",
+        "rejected": true
+      },
+      {
+        "name": "missing captured-function result",
+        "rejected": true
+      },
+      {
+        "name": "reversed result order",
+        "rejected": true
+      },
+      {
+        "name": "wrong reserved function type binding",
+        "rejected": true
+      },
+      {
+        "name": "omitted lookup fill",
+        "rejected": true
+      },
+      {
+        "name": "classifier substituted for lookup",
+        "rejected": true
+      },
+      {
+        "name": "unreachable placeholder retained",
+        "rejected": true
+      },
+      {
+        "name": "fill written to predicate instead",
+        "rejected": true
+      },
+      {
+        "name": "lookup locals omitted",
+        "rejected": true
+      }
+    ]
+  },
+  "heavySlotReleased": true,
+  "exclusive": true,
+  "serial": true,
+  "heapMiB": 2048,
+  "singleFork": true,
+  "productionChanged": false,
+  "limits": "Worker proof additions and explicit-lane runtime coverage only; parent composed integration and High review remain separate."
+}

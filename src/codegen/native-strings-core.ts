@@ -18,7 +18,11 @@
  * to the pre-split inline blocks (verified via `prove-emit-identity`).
  */
 import type { Instr, ValType } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import {
+  buildStringCopyTreeDefinition,
+  buildStringFlattenDefinition,
+} from "../runtime/wasmgc/values/string-flatten-bodies.js";
+import { buildStringUtf8ToFlatDefinition } from "../runtime/wasmgc/values/string-utf8-decode-bodies.js";
 import { flushLateImportShifts } from "./expressions/late-imports.js";
 import { addFuncType, getOrRegisterArrayType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -31,115 +35,6 @@ import type { NativeStrShared } from "./native-strings-shared.js";
  * so the Utf8String dispatch arm can wrap it. Operates on locals: s(0), len(1),
  * buf(2). Returns the rope flattened to a `NativeString`.
  */
-function flattenConsBody(
-  ctx: CodegenContext,
-  strDataTypeIdx: number,
-  strTypeIdx: number,
-  anyStrTypeIdx: number,
-  copyTreeIdx: number,
-): Instr[] {
-  const consTypeIdx = ctx.consStrTypeIdx;
-  // (#3673) Interned "" literal — the memoization writes it into `right`.
-  const emptyInstrs = nativeStringLiteralInstrs(ctx, "");
-  return [
-    // (#3673) Memoized-cons fast path: a previously-flattened cons was
-    // rewritten in place to (left=flat, right=""). Return the flat left
-    // without re-copying. Also catches a natural `x + ""` whose left is
-    // already flat.
-    { op: "local.get", index: 0 },
-    { op: "ref.test", typeIdx: consTypeIdx },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        // right.len == 0 ?
-        { op: "local.get", index: 0 },
-        { op: "ref.cast", typeIdx: consTypeIdx },
-        { op: "struct.get", typeIdx: consTypeIdx, fieldIdx: 2 },
-        { op: "struct.get", typeIdx: anyStrTypeIdx, fieldIdx: 0 },
-        { op: "i32.eqz" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            // left is flat ?
-            { op: "local.get", index: 0 },
-            { op: "ref.cast", typeIdx: consTypeIdx },
-            { op: "struct.get", typeIdx: consTypeIdx, fieldIdx: 1 },
-            { op: "ref.test", typeIdx: strTypeIdx },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                { op: "local.get", index: 0 },
-                { op: "ref.cast", typeIdx: consTypeIdx },
-                { op: "struct.get", typeIdx: consTypeIdx, fieldIdx: 1 },
-                { op: "ref.cast", typeIdx: strTypeIdx },
-                { op: "return" },
-              ],
-            },
-          ],
-        },
-      ],
-    },
-    // len = s.len (field 0 of AnyString)
-    { op: "local.get", index: 0 },
-    { op: "struct.get", typeIdx: anyStrTypeIdx, fieldIdx: 0 },
-    { op: "local.set", index: 1 },
-    // buf = array.new_default(len)
-    { op: "local.get", index: 1 },
-    { op: "array.new_default", typeIdx: strDataTypeIdx },
-    { op: "local.set", index: 2 },
-    // copy_tree(s, buf, 0)
-    { op: "local.get", index: 0 },
-    { op: "local.get", index: 2 },
-    { op: "i32.const", value: 0 },
-    { op: "call", funcIdx: copyTreeIdx },
-    { op: "drop" },
-    // flat = struct.new $HashedString(len, 0, buf, 0) — (#3673 round 9) the
-    // memoized flat copy carries an uncomputed (0) hash slot so `__obj_hash`
-    // can cache into it on first probe; plain $NativeString when the hashed
-    // subtype isn't registered. Subtype of $NativeString — every consumer
-    // (incl. the memoized-cons fast path's `ref.test`/`ref.cast`) unchanged.
-    { op: "local.get", index: 1 },
-    { op: "i32.const", value: 0 },
-    { op: "local.get", index: 2 },
-    ...(ctx.hashedStrTypeIdx >= 0
-      ? ([
-          { op: "i32.const", value: 0 }, // hash: uncomputed
-          { op: "i32.const", value: 0 }, // cacheGen: never populated
-          { op: "ref.null", typeIdx: -18 }, // cacheOwner
-          { op: "ref.null", typeIdx: -18 }, // cacheEntry
-          { op: "ref.null", typeIdx: -18 }, // cacheProps (round 21)
-          { op: "struct.new", typeIdx: ctx.hashedStrTypeIdx },
-        ] satisfies Instr[])
-      : ([{ op: "struct.new", typeIdx: strTypeIdx }] satisfies Instr[])),
-    { op: "local.set", index: 3 },
-    // (#3673) Memoize: rewrite the cons in place to (left=flat, right="") so
-    // the next flatten of this rope takes the fast path above. `len` is
-    // untouched (flat.len == s.len).
-    { op: "local.get", index: 0 },
-    { op: "ref.test", typeIdx: consTypeIdx },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: 0 },
-        { op: "ref.cast", typeIdx: consTypeIdx },
-        { op: "local.get", index: 3 },
-        { op: "ref.as_non_null" },
-        { op: "struct.set", typeIdx: consTypeIdx, fieldIdx: 1 },
-        { op: "local.get", index: 0 },
-        { op: "ref.cast", typeIdx: consTypeIdx },
-        ...emptyInstrs,
-        { op: "struct.set", typeIdx: consTypeIdx, fieldIdx: 2 },
-      ],
-    },
-    // return flat
-    { op: "local.get", index: 3 },
-    { op: "ref.as_non_null" },
-  ];
-}
 
 /**
  * Rope flattening: `__str_copy_tree` (iterative rope→buffer copy),
@@ -168,7 +63,6 @@ export function emitStrFlattenHelpers(shared: NativeStrShared): void {
     const wlElemKey = `ref_${anyStrTypeIdx}`;
     const wlElemType: ValType = { kind: "ref_null", typeIdx: anyStrTypeIdx };
     const wlArrTypeIdx = getOrRegisterArrayType(ctx, wlElemKey, wlElemType);
-    const wlArrRefNull: ValType = { kind: "ref_null", typeIdx: wlArrTypeIdx };
 
     const typeIdx = addFuncType(ctx, [strRef, strDataRef, { kind: "i32" }], [{ kind: "i32" }]);
     const funcIdx = mintDefinedFunc(ctx);
@@ -183,277 +77,14 @@ export function emitStrFlattenHelpers(shared: NativeStrShared): void {
     //   worklist(7): ref_null $AnyString_arr — pending right-children
     //   wlTop(8): i32 — number of items currently on the worklist
     //   newWl(9): ref_null $AnyString_arr — scratch slot for grow-on-push reallocation (#1184)
-    const FLAT = 3;
-    const FLAT_OFF = 4;
-    const FLAT_LEN = 5;
-    const CUR = 6;
-    const WL = 7;
-    const WL_TOP = 8;
-    const NEW_WL = 9;
 
-    const body: Instr[] = [
-      // Fast path: if node is already a FlatString, copy directly and return.
-      { op: "local.get", index: 0 },
-      { op: "ref.test", typeIdx: strTypeIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: 0 },
-          { op: "ref.cast", typeIdx: strTypeIdx },
-          { op: "local.set", index: FLAT },
-
-          { op: "local.get", index: FLAT },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 }, // off
-          { op: "local.set", index: FLAT_OFF },
-
-          { op: "local.get", index: FLAT },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 }, // len
-          { op: "local.set", index: FLAT_LEN },
-
-          // array.copy(buf, pos, flat.data, flatOff, flatLen)
-          { op: "local.get", index: 1 },
-          { op: "local.get", index: 2 },
-          { op: "local.get", index: FLAT },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 }, // data
-          { op: "local.get", index: FLAT_OFF },
-          { op: "local.get", index: FLAT_LEN },
-          {
-            op: "array.copy",
-            dstTypeIdx: strDataTypeIdx,
-            srcTypeIdx: strDataTypeIdx,
-          },
-
-          // return pos + flatLen
-          { op: "local.get", index: 2 },
-          { op: "local.get", index: FLAT_LEN },
-          { op: "i32.add" },
-          { op: "return" },
-        ],
-      },
-
-      // Slow path: rope traversal with an explicit worklist of right-children.
-      //
-      // #1184: pre-#1184, this allocated a worklist sized at `node.len` (a generous
-      // upper bound on rope depth — depth ≤ leaves ≤ chars). For balanced ropes
-      // (depth ~log N) on a long string, that's a huge over-allocation: a 1MB
-      // ConsString with a balanced rope has depth ~20 but allocates 1M ref slots
-      // (≈8MB on 64-bit WasmGC). Each `String.prototype.charAt` / `charCodeAt` /
-      // `substring` etc. on a ConsString triggers a fresh flatten → copy_tree →
-      // huge allocation, producing severe GC pressure on string-heavy workloads.
-      //
-      // Strategy: dynamic growth. Start with a small fixed initial capacity (16
-      // slots — enough for any rope of depth ≤ 16, which covers virtually all
-      // balanced ropes up to ~1MB). When the worklist would overflow on push,
-      // double its capacity via array.copy. Final capacity is at most the rope
-      // depth; geometric reallocation gives O(depth) total allocation.
-      //
-      // Worst-case (left-leaning rope of depth N): log2(N/16) reallocations,
-      // total slots allocated = 2N (geometric series). Same order as the
-      // pre-#1184 N-slot single-allocation, but spread across log N small
-      // allocations. The common case (depth ≤ 16) does ONE 16-slot allocation
-      // — orders of magnitude smaller than `node.len`.
-      //
-      // worklist = array.new_default<ref_null $AnyString>(16)
-      { op: "i32.const", value: 16 },
-      { op: "array.new_default", typeIdx: wlArrTypeIdx },
-      { op: "local.set", index: WL },
-
-      // wlTop = 0
-      { op: "i32.const", value: 0 },
-      { op: "local.set", index: WL_TOP },
-
-      // cur = node
-      { op: "local.get", index: 0 },
-      { op: "local.set", index: CUR },
-
-      // Outer loop: descend left, copy a flat segment, pop next right-child.
-      {
-        op: "block",
-        blockType: { kind: "empty" },
-        body: [
-          {
-            op: "loop",
-            blockType: { kind: "empty" },
-            body: [
-              // Inner loop: walk left while cur is a ConsString, pushing
-              // right-children onto the worklist. Exits when cur is FlatString.
-              {
-                op: "block",
-                blockType: { kind: "empty" },
-                body: [
-                  {
-                    op: "loop",
-                    blockType: { kind: "empty" },
-                    body: [
-                      // if cur is FlatString: br to end of inner block (depth 1)
-                      { op: "local.get", index: CUR },
-                      { op: "ref.as_non_null" },
-                      { op: "ref.test", typeIdx: strTypeIdx },
-                      { op: "br_if", depth: 1 },
-
-                      // #1184: grow worklist if full (wlTop >= worklist.len).
-                      // Doubling-grow: array.new_default(len * 2), array.copy old → new.
-                      { op: "local.get", index: WL_TOP },
-                      { op: "local.get", index: WL },
-                      { op: "ref.as_non_null" },
-                      { op: "array.len" },
-                      { op: "i32.ge_s" },
-                      {
-                        op: "if",
-                        blockType: { kind: "empty" },
-                        then: [
-                          // newWl = array.new_default(worklist.len << 1)
-                          { op: "local.get", index: WL },
-                          { op: "ref.as_non_null" },
-                          { op: "array.len" },
-                          { op: "i32.const", value: 1 },
-                          { op: "i32.shl" },
-                          {
-                            op: "array.new_default",
-                            typeIdx: wlArrTypeIdx,
-                          },
-                          { op: "local.set", index: NEW_WL },
-
-                          // array.copy(newWl, 0, worklist, 0, wlTop)
-                          { op: "local.get", index: NEW_WL },
-                          { op: "ref.as_non_null" },
-                          { op: "i32.const", value: 0 },
-                          { op: "local.get", index: WL },
-                          { op: "ref.as_non_null" },
-                          { op: "i32.const", value: 0 },
-                          { op: "local.get", index: WL_TOP },
-                          {
-                            op: "array.copy",
-                            dstTypeIdx: wlArrTypeIdx,
-                            srcTypeIdx: wlArrTypeIdx,
-                          },
-
-                          // worklist = newWl
-                          { op: "local.get", index: NEW_WL },
-                          { op: "local.set", index: WL },
-                        ],
-                      },
-
-                      // worklist[wlTop] = (cur as ConsString).right
-                      { op: "local.get", index: WL },
-                      { op: "ref.as_non_null" },
-                      { op: "local.get", index: WL_TOP },
-                      { op: "local.get", index: CUR },
-                      { op: "ref.as_non_null" },
-                      { op: "ref.cast", typeIdx: consStrTypeIdx },
-                      {
-                        op: "struct.get",
-                        typeIdx: consStrTypeIdx,
-                        fieldIdx: 2,
-                      },
-                      { op: "array.set", typeIdx: wlArrTypeIdx },
-
-                      // wlTop++
-                      { op: "local.get", index: WL_TOP },
-                      { op: "i32.const", value: 1 },
-                      { op: "i32.add" },
-                      { op: "local.set", index: WL_TOP },
-
-                      // cur = (cur as ConsString).left
-                      { op: "local.get", index: CUR },
-                      { op: "ref.as_non_null" },
-                      { op: "ref.cast", typeIdx: consStrTypeIdx },
-                      {
-                        op: "struct.get",
-                        typeIdx: consStrTypeIdx,
-                        fieldIdx: 1,
-                      },
-                      { op: "local.set", index: CUR },
-
-                      // continue inner loop
-                      { op: "br", depth: 0 },
-                    ],
-                  },
-                ],
-              },
-
-              // cur is a FlatString — copy its contents into buf at pos.
-              { op: "local.get", index: CUR },
-              { op: "ref.as_non_null" },
-              { op: "ref.cast", typeIdx: strTypeIdx },
-              { op: "local.set", index: FLAT },
-
-              { op: "local.get", index: FLAT },
-              { op: "ref.as_non_null" },
-              { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 }, // off
-              { op: "local.set", index: FLAT_OFF },
-
-              { op: "local.get", index: FLAT },
-              { op: "ref.as_non_null" },
-              { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 }, // len
-              { op: "local.set", index: FLAT_LEN },
-
-              // array.copy(buf, pos, flat.data, flatOff, flatLen)
-              { op: "local.get", index: 1 },
-              { op: "local.get", index: 2 },
-              { op: "local.get", index: FLAT },
-              { op: "ref.as_non_null" },
-              { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 }, // data
-              { op: "local.get", index: FLAT_OFF },
-              { op: "local.get", index: FLAT_LEN },
-              {
-                op: "array.copy",
-                dstTypeIdx: strDataTypeIdx,
-                srcTypeIdx: strDataTypeIdx,
-              },
-
-              // pos += flatLen
-              { op: "local.get", index: 2 },
-              { op: "local.get", index: FLAT_LEN },
-              { op: "i32.add" },
-              { op: "local.set", index: 2 },
-
-              // if wlTop == 0: br to end of outer block (depth 1) — done
-              { op: "local.get", index: WL_TOP },
-              { op: "i32.eqz" },
-              { op: "br_if", depth: 1 },
-
-              // wlTop--
-              { op: "local.get", index: WL_TOP },
-              { op: "i32.const", value: 1 },
-              { op: "i32.sub" },
-              { op: "local.set", index: WL_TOP },
-
-              // cur = worklist[wlTop]
-              { op: "local.get", index: WL },
-              { op: "ref.as_non_null" },
-              { op: "local.get", index: WL_TOP },
-              { op: "array.get", typeIdx: wlArrTypeIdx },
-              { op: "local.set", index: CUR },
-
-              // continue outer loop
-              { op: "br", depth: 0 },
-            ],
-          },
-        ],
-      },
-
-      // return pos
-      { op: "local.get", index: 2 },
-    ];
+    const definition = buildStringCopyTreeDefinition(ctx, wlArrTypeIdx);
 
     pushDefinedFunc(ctx, funcIdx, {
       name: "__str_copy_tree",
       typeIdx,
-      locals: [
-        { name: "flat", type: { kind: "ref_null", typeIdx: strTypeIdx } },
-        { name: "flatOff", type: { kind: "i32" } },
-        { name: "flatLen", type: { kind: "i32" } },
-        { name: "cur", type: { kind: "ref_null", typeIdx: anyStrTypeIdx } },
-        { name: "worklist", type: wlArrRefNull },
-        { name: "wlTop", type: { kind: "i32" } },
-        { name: "newWl", type: wlArrRefNull },
-      ],
-      body,
+      locals: definition.locals,
+      body: definition.body,
       exported: false,
     });
   }
@@ -472,265 +103,12 @@ export function emitStrFlattenHelpers(shared: NativeStrShared): void {
     // params: u(0)
     // locals: len(1) code-unit count, byteLen(2), data(3) i8 array, out(4) i16 array,
     //         b(5) byte index, o(6) out index, c0(7) lead byte, cp(8) code point
-    const body: Instr[] = [
-      { op: "local.get", index: 0 },
-      { op: "struct.get", typeIdx: ctx.utf8StrTypeIdx, fieldIdx: 0 }, // len
-      { op: "local.set", index: 1 },
-      { op: "local.get", index: 0 },
-      { op: "struct.get", typeIdx: ctx.utf8StrTypeIdx, fieldIdx: 1 }, // byteLen
-      { op: "local.set", index: 2 },
-      { op: "local.get", index: 0 },
-      { op: "struct.get", typeIdx: ctx.utf8StrTypeIdx, fieldIdx: 3 }, // data (ref $__str_data_u8)
-      { op: "local.set", index: 3 },
-      // out = array.new_default $__str_data(len)
-      { op: "local.get", index: 1 },
-      { op: "array.new_default", typeIdx: strDataTypeIdx },
-      { op: "local.set", index: 4 },
-      { op: "i32.const", value: 0 },
-      { op: "local.set", index: 5 }, // b = 0
-      { op: "i32.const", value: 0 },
-      { op: "local.set", index: 6 }, // o = 0
-      {
-        op: "block",
-        blockType: { kind: "empty" },
-        body: [
-          {
-            op: "loop",
-            blockType: { kind: "empty" },
-            body: [
-              // if b >= byteLen break
-              { op: "local.get", index: 5 },
-              { op: "local.get", index: 2 },
-              { op: "i32.ge_s" },
-              { op: "br_if", depth: 1 },
-              // c0 = data[b] & 0xFF (array.get_u zero-extends an i8 lane)
-              { op: "local.get", index: 3 },
-              { op: "local.get", index: 5 },
-              { op: "array.get_u", typeIdx: ctx.utf8StrDataTypeIdx },
-              { op: "local.set", index: 7 },
-              // dispatch on c0
-              { op: "local.get", index: 7 },
-              { op: "i32.const", value: 0x80 },
-              { op: "i32.lt_u" },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  // 1-byte: cp = c0
-                  { op: "local.get", index: 7 },
-                  { op: "local.set", index: 8 },
-                  { op: "local.get", index: 5 },
-                  { op: "i32.const", value: 1 },
-                  { op: "i32.add" },
-                  { op: "local.set", index: 5 },
-                ],
-                else: [
-                  { op: "local.get", index: 7 },
-                  { op: "i32.const", value: 0xe0 },
-                  { op: "i32.lt_u" },
-                  {
-                    op: "if",
-                    blockType: { kind: "empty" },
-                    then: [
-                      // 2-byte: cp = ((c0 & 0x1F)<<6) | (data[b+1] & 0x3F)
-                      { op: "local.get", index: 7 },
-                      { op: "i32.const", value: 0x1f },
-                      { op: "i32.and" },
-                      { op: "i32.const", value: 6 },
-                      { op: "i32.shl" },
-                      { op: "local.get", index: 3 },
-                      { op: "local.get", index: 5 },
-                      { op: "i32.const", value: 1 },
-                      { op: "i32.add" },
-                      { op: "array.get_u", typeIdx: ctx.utf8StrDataTypeIdx },
-                      { op: "i32.const", value: 0x3f },
-                      { op: "i32.and" },
-                      { op: "i32.or" },
-                      { op: "local.set", index: 8 },
-                      { op: "local.get", index: 5 },
-                      { op: "i32.const", value: 2 },
-                      { op: "i32.add" },
-                      { op: "local.set", index: 5 },
-                    ],
-                    else: [
-                      { op: "local.get", index: 7 },
-                      { op: "i32.const", value: 0xf0 },
-                      { op: "i32.lt_u" },
-                      {
-                        op: "if",
-                        blockType: { kind: "empty" },
-                        then: [
-                          // 3-byte: cp = ((c0&0x0F)<<12)|((b1&0x3F)<<6)|(b2&0x3F)
-                          { op: "local.get", index: 7 },
-                          { op: "i32.const", value: 0x0f },
-                          { op: "i32.and" },
-                          { op: "i32.const", value: 12 },
-                          { op: "i32.shl" },
-                          { op: "local.get", index: 3 },
-                          { op: "local.get", index: 5 },
-                          { op: "i32.const", value: 1 },
-                          { op: "i32.add" },
-                          {
-                            op: "array.get_u",
-                            typeIdx: ctx.utf8StrDataTypeIdx,
-                          },
-                          { op: "i32.const", value: 0x3f },
-                          { op: "i32.and" },
-                          { op: "i32.const", value: 6 },
-                          { op: "i32.shl" },
-                          { op: "i32.or" },
-                          { op: "local.get", index: 3 },
-                          { op: "local.get", index: 5 },
-                          { op: "i32.const", value: 2 },
-                          { op: "i32.add" },
-                          {
-                            op: "array.get_u",
-                            typeIdx: ctx.utf8StrDataTypeIdx,
-                          },
-                          { op: "i32.const", value: 0x3f },
-                          { op: "i32.and" },
-                          { op: "i32.or" },
-                          { op: "local.set", index: 8 },
-                          { op: "local.get", index: 5 },
-                          { op: "i32.const", value: 3 },
-                          { op: "i32.add" },
-                          { op: "local.set", index: 5 },
-                        ],
-                        else: [
-                          // 4-byte: cp = ((c0&0x07)<<18)|((b1&0x3F)<<12)|((b2&0x3F)<<6)|(b3&0x3F)
-                          { op: "local.get", index: 7 },
-                          { op: "i32.const", value: 0x07 },
-                          { op: "i32.and" },
-                          { op: "i32.const", value: 18 },
-                          { op: "i32.shl" },
-                          { op: "local.get", index: 3 },
-                          { op: "local.get", index: 5 },
-                          { op: "i32.const", value: 1 },
-                          { op: "i32.add" },
-                          {
-                            op: "array.get_u",
-                            typeIdx: ctx.utf8StrDataTypeIdx,
-                          },
-                          { op: "i32.const", value: 0x3f },
-                          { op: "i32.and" },
-                          { op: "i32.const", value: 12 },
-                          { op: "i32.shl" },
-                          { op: "i32.or" },
-                          { op: "local.get", index: 3 },
-                          { op: "local.get", index: 5 },
-                          { op: "i32.const", value: 2 },
-                          { op: "i32.add" },
-                          {
-                            op: "array.get_u",
-                            typeIdx: ctx.utf8StrDataTypeIdx,
-                          },
-                          { op: "i32.const", value: 0x3f },
-                          { op: "i32.and" },
-                          { op: "i32.const", value: 6 },
-                          { op: "i32.shl" },
-                          { op: "i32.or" },
-                          { op: "local.get", index: 3 },
-                          { op: "local.get", index: 5 },
-                          { op: "i32.const", value: 3 },
-                          { op: "i32.add" },
-                          {
-                            op: "array.get_u",
-                            typeIdx: ctx.utf8StrDataTypeIdx,
-                          },
-                          { op: "i32.const", value: 0x3f },
-                          { op: "i32.and" },
-                          { op: "i32.or" },
-                          { op: "local.set", index: 8 },
-                          { op: "local.get", index: 5 },
-                          { op: "i32.const", value: 4 },
-                          { op: "i32.add" },
-                          { op: "local.set", index: 5 },
-                        ],
-                      },
-                    ],
-                  },
-                ],
-              },
-              // emit cp into out: BMP → one code unit; astral → surrogate pair
-              { op: "local.get", index: 8 },
-              { op: "i32.const", value: 0xffff },
-              { op: "i32.gt_u" },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  // cp -= 0x10000; high = 0xD800 | (cp>>10); low = 0xDC00 | (cp&0x3FF)
-                  { op: "local.get", index: 8 },
-                  { op: "i32.const", value: 0x10000 },
-                  { op: "i32.sub" },
-                  { op: "local.set", index: 8 },
-                  // out[o] = 0xD800 | (cp>>10)
-                  { op: "local.get", index: 4 },
-                  { op: "local.get", index: 6 },
-                  { op: "i32.const", value: 0xd800 },
-                  { op: "local.get", index: 8 },
-                  { op: "i32.const", value: 10 },
-                  { op: "i32.shr_u" },
-                  { op: "i32.or" },
-                  { op: "array.set", typeIdx: strDataTypeIdx },
-                  { op: "local.get", index: 6 },
-                  { op: "i32.const", value: 1 },
-                  { op: "i32.add" },
-                  { op: "local.set", index: 6 },
-                  // out[o] = 0xDC00 | (cp & 0x3FF)
-                  { op: "local.get", index: 4 },
-                  { op: "local.get", index: 6 },
-                  { op: "i32.const", value: 0xdc00 },
-                  { op: "local.get", index: 8 },
-                  { op: "i32.const", value: 0x3ff },
-                  { op: "i32.and" },
-                  { op: "i32.or" },
-                  { op: "array.set", typeIdx: strDataTypeIdx },
-                  { op: "local.get", index: 6 },
-                  { op: "i32.const", value: 1 },
-                  { op: "i32.add" },
-                  { op: "local.set", index: 6 },
-                ],
-                else: [
-                  // out[o] = cp
-                  { op: "local.get", index: 4 },
-                  { op: "local.get", index: 6 },
-                  { op: "local.get", index: 8 },
-                  { op: "array.set", typeIdx: strDataTypeIdx },
-                  { op: "local.get", index: 6 },
-                  { op: "i32.const", value: 1 },
-                  { op: "i32.add" },
-                  { op: "local.set", index: 6 },
-                ],
-              },
-              { op: "br", depth: 0 },
-            ],
-          },
-        ],
-      },
-      // return struct.new $NativeString(len, 0, out)
-      { op: "local.get", index: 1 },
-      { op: "i32.const", value: 0 },
-      { op: "local.get", index: 4 },
-      { op: "struct.new", typeIdx: strTypeIdx },
-    ];
+    const definition = buildStringUtf8ToFlatDefinition(ctx);
     pushDefinedFunc(ctx, funcIdx, {
       name: "__str_utf8_to_flat",
       typeIdx,
-      locals: [
-        { name: "len", type: { kind: "i32" } },
-        { name: "byteLen", type: { kind: "i32" } },
-        {
-          name: "data",
-          type: { kind: "ref", typeIdx: ctx.utf8StrDataTypeIdx },
-        },
-        { name: "out", type: strDataRef },
-        { name: "b", type: { kind: "i32" } },
-        { name: "o", type: { kind: "i32" } },
-        { name: "c0", type: { kind: "i32" } },
-        { name: "cp", type: { kind: "i32" } },
-      ],
-      body,
+      locals: definition.locals,
+      body: definition.body,
       exported: false,
     });
   }
@@ -758,49 +136,23 @@ export function emitStrFlattenHelpers(shared: NativeStrShared): void {
 
     // params: s(0)
     // locals: len(1), buf(2)
-    const body: Instr[] = [
-      // if s is already a FlatString, return it
-      { op: "local.get", index: 0 },
-      { op: "ref.test", typeIdx: strTypeIdx },
-      {
-        op: "if",
-        blockType: { kind: "val", type: flatStrRef },
-        then: [
-          { op: "local.get", index: 0 },
-          { op: "ref.cast", typeIdx: strTypeIdx },
-        ],
-        else:
-          ctx.utf8Storage && ctx.utf8StrTypeIdx >= 0 && utf8ToFlatIdx !== undefined
-            ? [
-                // #1588 PR-B part 2: if s is a Utf8String, decode it to a NativeString.
-                { op: "local.get", index: 0 },
-                { op: "ref.test", typeIdx: ctx.utf8StrTypeIdx },
-                {
-                  op: "if",
-                  blockType: { kind: "val", type: flatStrRef },
-                  then: [
-                    { op: "local.get", index: 0 },
-                    { op: "ref.cast", typeIdx: ctx.utf8StrTypeIdx },
-                    { op: "call", funcIdx: utf8ToFlatIdx },
-                  ],
-                  else: flattenConsBody(ctx, strDataTypeIdx, strTypeIdx, anyStrTypeIdx, copyTreeIdx),
-                },
-              ]
-            : flattenConsBody(ctx, strDataTypeIdx, strTypeIdx, anyStrTypeIdx, copyTreeIdx),
-      },
-    ];
+    const emptyInstrs = nativeStringLiteralInstrs(ctx, "");
+    if (emptyInstrs.length !== 1 || emptyInstrs[0]?.op !== "global.get")
+      throw new Error("native string flatten: empty literal must be a global");
+    const definition = buildStringFlattenDefinition(ctx, {
+      copyTree: copyTreeIdx,
+      emptyLiteralGlobalIndex: emptyInstrs[0].index,
+      utf8Decoder:
+        ctx.utf8Storage && ctx.utf8StrTypeIdx >= 0 && utf8ToFlatIdx !== undefined
+          ? { kind: "present", handle: utf8ToFlatIdx }
+          : { kind: "absent" },
+    });
 
     pushDefinedFunc(ctx, funcIdx, {
       name: "__str_flatten",
       typeIdx,
-      locals: [
-        { name: "len", type: { kind: "i32" } },
-        { name: "buf", type: strDataRef },
-        // (#3673) holds the freshly-built flat result across the memoization
-        // writeback (flattenConsBody local index 3).
-        { name: "flat", type: { kind: "ref_null", typeIdx: strTypeIdx } },
-      ],
-      body,
+      locals: definition.locals,
+      body: definition.body,
       exported: false,
     });
   }
