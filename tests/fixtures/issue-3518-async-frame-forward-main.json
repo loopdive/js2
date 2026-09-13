@@ -68,6 +68,15 @@
       ]
     },
     {
+      "id": "resume-undefined-carrier-import",
+      "beforeLine": 98,
+      "afterLine": 99,
+      "before": ["import { ensureI32Condition, resolveWasmType } from \"./index.js\";"],
+      "after": [
+        "import { ensureI32Condition, resolveWasmType, varBindingNeedsExternrefForUndefined } from \"./index.js\";"
+      ]
+    },
+    {
       "id": "frame-import-abi",
       "beforeLine": 152,
       "afterLine": 146,
@@ -76,7 +85,7 @@
         "  settleRejectIdx: number;",
         "  /**",
         "   * (#5372) `Promise_then2_frame(p, onFulfilled, onRejected, resultPromise) ->",
-        "   * Promise` \u2014 reaction registration whose wrapper rejects `resultPromise`",
+        "   * Promise` — reaction registration whose wrapper rejects `resultPromise`",
         "   * when the resuming step TRAPS (uncatchable in wasm). Optional: the prepared",
         "   * IR frames resolve imports by capability and keep plain `Promise_then2`.",
         "   */",
@@ -144,6 +153,33 @@
       ]
     },
     {
+      "id": "resume-undefined-carrier-type",
+      "beforeLine": 770,
+      "afterLine": 777,
+      "before": [
+        "  const typeSite = rb.type ?? rb.target ?? rb.awaitTarget;",
+        "  return typeSite ? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(typeSite)) : { kind: \"externref\" };"
+      ],
+      "after": [
+        "  const checker = ctx.checker;",
+        "  // (#6414) A `let x = void 0` binding assigned from an await and read after a",
+        "  // LATER await: the resume body re-compiles that declaration through the",
+        "  // var-decl path, which routes a void-EXPRESSION initializer to externref",
+        "  // (#2806), while the checker types it pure `undefined` → `resolveWasmType` i32.",
+        "  // The i32 field then took `local.get <externref>` from `storeSpills` — an",
+        "  // invalid module. Reuse #2806's predicate so both halves agree by construction;",
+        "  // it is narrow by design, so #1112's f64-sentinel bindings stay numeric.",
+        "  if (rb.target !== undefined) {",
+        "    const bound = checker.getSymbolAtLocation(rb.target)?.valueDeclaration;",
+        "    if (bound !== undefined && ts.isVariableDeclaration(bound) && varBindingNeedsExternrefForUndefined(bound, ctx)) {",
+        "      return { kind: \"externref\" };",
+        "    }",
+        "  }",
+        "  const typeSite = rb.type ?? rb.target ?? rb.awaitTarget;",
+        "  return typeSite ? resolveWasmType(ctx, checker.getTypeAtLocation(typeSite)) : { kind: \"externref\" };"
+      ]
+    },
+    {
       "id": "host-spill-plan",
       "beforeLine": 1084,
       "afterLine": 1084,
@@ -166,6 +202,24 @@
         "              out.push({ op: \"call\", funcIdx: hostImports!.then2Idx });",
         "            }"
       ]
+    }
+  ],
+  "additionalSources": [
+    {
+      "change": "PR 5869 async resume undefined carrier agreement",
+      "before": {
+        "commit": "475a5ab2779320cb46c8bfb2984d21562332b299",
+        "blob": "79073fcb1a79755cb0bb3d2479665a071af53707",
+        "sha256": "beef344cd26f327b459e3f3b9c334bde676c43c09fef4d54c717b02dba01f665"
+      },
+      "after": {
+        "commit": "ee2ee09062e587e882e6be6e47d5bdde5472ecbe",
+        "implementationCommit": "25040db67019ba7c1befc8f9656b0d17672eea3a",
+        "blob": "fa9cf19fe02c70329349a8928bb420598bd22559",
+        "sha256": "7d94f3eaf43010ff14702bff132c1345074aa1ebf629555ceb7f0c8d03fb822f"
+      },
+      "spanIds": ["resume-undefined-carrier-import", "resume-undefined-carrier-type"],
+      "provenance": "The two added forward spans were independently read from the published patch and verified against delivered main; their inverse text also occurs uniquely in the unchanged a426 donor. The original seven spans retain their original 06f4 provenance and line ranges."
     }
   ]
 }

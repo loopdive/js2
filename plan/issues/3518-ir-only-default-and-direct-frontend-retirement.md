@@ -5508,6 +5508,276 @@ eight data-contract replay, 14 public native family, 12 native delay, four
 closure compile-once and four planning identity). No suite was omitted or
 rebaselined to admit the refactor. Publication uses the normal hooks again.
 
+### Logical vector/main checkpoint integration — 2026-09-08
+
+Source admission is published as non-draft PR #5756 at
+`e3a01efa44f68da1b93c16b1a728d0ba099183f9`, stacked on #5755. Remote SHA
+and clean integration checkout were verified after normal hooks. The fresh
+PR read reports mergeable/CLEAN with successful checks, hold retained and
+auto-merge null; no unresolved review threads (complete first page).
+
+The next isolated integration is
+`/private/tmp/js2-3518-logical-vector-integration-20260908`, branch
+`codex/3518-logical-vector-integration-20260908`, based on that exact checkpoint.
+All four initial worker blobs match: from-ast
+`35be9d83b656d81a4310509b3e6191d03618c294`, array-element-lowering
+`2acf0fc4ae77dd5974f039b5914706ff8a31e275`, vector test
+`062c104dd33f98ce81dde64b12923bc9ad9fa5e2`, main test
+`5faaeb03147407e0c941a8f64be15f3b3d56ab20`.
+
+Initial integration session 1100 passed typecheck, then its Vitest fork exhausted
+the configured 512 MiB heap before a test verdict. NODE_OPTIONS alone does not
+override the repository's fork execArgv. No test success was inferred. Rerun
+92007 used the intended explicit 2 GiB fork setting and exited 1: 24/24 vector
+and 13/14 main controls passed, 37/38 total. The missing-concat-target test
+incorrectly expected refusal: the unchanged lowerer legitimately emits ordinary
+logical string.concat when the optional prepared concat target is absent.
+The next revision must positively verify that fallback's real operations and
+evaluation order, not add a new refusal to satisfy the incorrect expectation.
+The full-family source producer still owes complete source-certified targets.
+
+Function-budget session 80623 exited 1: lowerMethodCall grew 932 to 991 lines,
+new lowerExprUnchecked is 370 lines and lowerVarDecl is 317. The worker is
+extracting bounded helpers without a new allowance or baseline change; old
+revision files and failed evidence remain preserved. Measurements above do not
+prove the forthcoming refactor until its exact hashes are revalidated.
+
+Low A's disjoint full-family source claim is independently verified on upstream:
+`3518:native-family-source`, owner
+`ttraenkler/codex-astra-native-family-source-20260908`, write `33104-inpo4zu6`,
+commit `455c7dbcc13e5dcee7ba6fb17b8860586199472b`. Claim session 12560 exited
+0 and released the heavy slot; the agent implements only its six source/test
+files. Parent composes B before A validation. High separately specifies exact
+delay/combinator builder resources for the following executable movement.
+
+Full-family runtime materialization, source-free replay, actual native execution,
+public IR-only cutover, static closure, retirement and ABI30 remain unproven.
+
+Broader initial-revision regression session 55096 exited 1: 60 passed, two
+failed and two existing skips across 64 cases. The 30 i32-array and nine push
+cases passed; empty-array inference had nine passes and two skips. The unchanged
+14-case native family had 12 passes and two stdout failures. The new early
+prepared-console branch omitted the newline construction performed by the
+existing lowerHostFreeConsoleCall. Source inspection confirms the real fix is
+to concatenate the newline to the validated logical string before the single
+append call. Provider behavior and historical expected output must not change.
+The worker's next revision includes this behavioral repair and explicit
+four-console-call newline dataflow controls, separately from helper extraction.
+
+The next exact High dispatch contract is retained at
+`plan/agent-context/3518-native-delay-combinator-body-interface-2026-09-08.md`,
+grounded on published `e3a01efa44`. It specifies four delay builders, all eight
+historical combinator donors plus their explicit shared dispatch suffix, and
+the detached vector-body builder. Existing compatibility adapters retain
+registration, cache publication, real callers and exact currentFunc restoration.
+Canonical subscription requires a real resolve-value handle; only the old
+adapter retains its historical fallback. The plan keeps real byte/resource/
+execution comparisons and separate complete-provider/physical obligations.
+Implementation dispatch waits for the current vector writer's validated freeze.
+
+Initial composed boundary inventory session 71811 exited 0 with
+`inventory-valid-architecture-incomplete`, architectureComplete false and no
+inventory errors. All 1,309 modules were tracked at measurement: 63 clean,
+five compatibility adapters and 1,241 unmigrated. No new module was classified
+clean and no boundary policy was relaxed. This initial-revision measurement
+must not be presented as proof of full static closure or the revised worker
+patch's acceptance.
+
+The unchanged public native-family positive control was rerun on the exact
+published source-admission base `e3a01efa44` in session 39850: 14/14 passed,
+exit 0, using the same explicit 2 GiB single-fork configuration. Compared with
+the composed candidate's 12/14 in session 55096, this attributes both stdout
+newline failures to the new vector/main patch, not the published stack or
+the test environment. This remains historical-path evidence, not whole-program
+IR-only physical execution acceptance.
+
+Parent took a provisional isolated source snapshot while the worker finished
+its test controls: from-ast blob `8c77424de1f0aa3c66fe6f774bb90147bf8180ab`.
+Session 88446 exited 0 after typecheck and 38/38 tests: the unchanged 14-case
+native family plus the 24 logical-vector controls. Both prior stdout regressions
+are repaired in this exact source. Function-budget session 84167 exited 0
+without adding any allowance or changing the baseline. The existing historical
+lowerFunctionAstToIr allowance is still reported by the unchanged gate.
+The full revision is not yet accepted: amended main-operation controls and
+independent final-revision review remain required. No implementation PR is
+published from this provisional snapshot.
+
+Parent read and executed the complete worker static reconstruction script
+`.tmp/logical-vector-refactor-static-rev2.mjs`: all three modified original
+bodies reconstruct with token/comment order preserved, except the authorized
+newline fix. It also verifies 313 unchanged top-level statements. Measured
+sizes are lowerVarDecl 300, lowerExprUnchecked 298, lowerMethodCall 850;
+the five new helpers are 19/17/66/103/70 lines. This is static preservation
+evidence, not runtime acceptance.
+
+An interim main-test snapshot `8fa40169511d36b3e1f4a19e46c8648f53ed120b`
+adds explicit four-call newline dataflow/order checks. Session 99838 exited 1:
+13/14 passed including those new assertions; the unchanged mistaken absent-
+concat refusal expectation still fails. The worker has not yet replaced that
+control with the required positive generic-concat assertions. No test was
+silently omitted and no passing 14-case result is claimed for this snapshot.
+
+The worker froze the three source/vector files and handed main-test ownership
+to the parent. Its last worker-only main snapshot `b2655cadae4ece86efdc2db23230fdfb6c355c5b`
+remains preserved and was not overwritten or adopted. Parent completed the
+positive fallback control at main-test blob
+`4c9dacc0153109a6641ebee701057d312e1752ec`: 14 ordered calls, two awaits,
+zero result types, two five-leaf concat trees and four newline joins account
+for all 12 actual concat nodes without a physical lookup. The test denominator
+remains 14. Session 54497 passed 14/14, exit 0.
+
+High independently approved the exact repaired source and this test design;
+its required test condition is satisfied by session 54497. Final composed
+session 47299 exited 0 after typecheck and all six suites: 100 passed and
+two existing skips out of 102 (24 vector, 14 main, 14 native family, 30 i32
+array, nine push, nine passing/two skipped empty-array inference). Scoped
+Prettier and Biome lint both passed in session 53544. All earlier failures
+remain above; no expected native output or production gate was weakened.
+
+Final unchanged semantic/provider boundary regression session 86951 exited 0:
+113/113 passed, including mandatory canonical-root deletion and forbidden
+dependency controls. No boundary policy or test denominator changed. Final
+source/test blobs are `8c77424de1f0aa3c66fe6f774bb90147bf8180ab`,
+`2acf0fc4ae77dd5974f039b5914706ff8a31e275`,
+`062c104dd33f98ce81dde64b12923bc9ad9fa5e2` and
+`4c9dacc0153109a6641ebee701057d312e1752ec` in the order recorded above.
+Publication proceeds through normal commit and push hooks, stacked on #5756.
+
+### Full-family source integration preparation — 2026-09-08
+
+The vector/main checkpoint is now published as non-draft PR #5757 at
+`1cb0f5c7f36be14d7be7eb4592973aea84a8c4e5`. Normal commit/push hooks
+completed, including the additional 18 numeric-local controls. The fresh PR
+read is mergeable/CLEAN with all reported checks successful, hold retained,
+auto-merge null and no unresolved review threads. All four source/test blobs
+remain unchanged after hooks. Upstream main remains `04c8e72156cf576cf584a3ed3a5a66ec5a2b91b0`.
+
+This new isolated integration branch starts at the published vector checkpoint.
+Low A continues the six-file full-family source producer; High reviews its
+source identity, logical type and closure contracts before final acceptance.
+Low B has a disjoint next assignment for real delay/combinator runtime-body
+movement, using the exact interface plan already published in #5757. Its new
+claim has not yet been independently observed; no ownership success is inferred
+from dispatch alone.
+
+The complete High recursive-type physical-emission plan is retained at
+`plan/agent-context/3518-explicit-recursive-type-emission-plan-2026-09-08.md`.
+It specifies shared flattened type coordinates across reservations, binary,
+WAT and runtime-group extraction, with explicit group identities preserved.
+The temporary guard must be removed only with the real composed emitter fix;
+the plan itself supplies no execution or retirement acceptance.
+
+### Full-family source first composed measurement — 2026-09-08
+
+The six-file source revision 1 was independently hash-checked against
+`/private/tmp/js2-3518-native-family-source-20260908/.tmp/native-family-source-revision1-frozen-20260908.json`
+and composed onto published `1cb0f5c7f36be14d7be7eb4592973aea84a8c4e5`.
+Both the historical TypeScript 5 check (session 23134) and the repository's
+canonical TypeScript 7 check (26117) exited 0. The two new frontend modules
+are explicitly unmigrated in the boundary inventory: session 68170 exited 0,
+1,311 modules, 63 clean, five compatibility adapters, 1,243 unmigrated,
+zero inventory errors, architecture incomplete.
+
+The first composed test run (28200) exited 1: 50/51 tests passed, comprising
+24/24 source contracts and 26/27 identity controls. The remaining control
+incorrectly calls `.set` on an immutable identity-map view, so it fails in
+setup rather than proving the intended owner-span rejection. Repair is
+required; this is not counted as a successful negative control.
+
+All eight original/export-only × GVN off/on × original/decoded preparation
+rows were read from their retained `.tmp/native-family-preparation-*/receipt.json`
+artifacts. Each genuinely reaches the next canonical runtime-declaration
+refusal: `unknown-function-ref`, stage `resolve`, symbol
+`__ir_promise_delay_native`, original delay location line 11, span 520–674.
+This proves full five-function/five-await logical source admission in these
+rows, not native physical materialization or execution.
+
+High's frozen-source review requires four additional repairs before publication:
+reject valued returns for zero-result main; retain resolver/method and mutable
+Promise.all target identities; retain the operand/callee identities underlying
+source certification even when the outer call object survives; and strengthen
+the fresh-process forbidden-import guard to the existing complete population
+with a real rejection control. Low A owns these repairs and the broken
+owner-span test in its original isolated worktree. Revision 1 remains retained
+in this integration until a new frozen manifest is independently verified.
+
+Unchanged historical regression session 46709 exited 0: 130/130 across
+certified-delay admission (41), certified-delay identity (45), typed-program
+preparation (30), and the original standalone native async-family suite (14).
+These retain historical behavior and do not erase the new revision's 50/51
+failure or High findings.
+
+The disjoint runtime-body claim is now independently verified on upstream
+`issue-assignments`: record `3518-native-delay-combinator-bodies.json`, blob
+`a2810ef444e00be0d40bf82418a4ba8509e3733b`, write ID `57815-2v4g2ji4`,
+assignee/requester `ttraenkler/codex-astra-native-delay-combinator-bodies-20260908`,
+claimed at `2026-09-08T14:00:35Z`. Low B is actively editing the three legacy
+adapters in its separate body-movement worktree; that draft is not yet frozen
+or composed into this source checkpoint.
+
+Unchanged semantic/provider boundary controls also passed: session 61332,
+exit 0, 113/113. The boundary policy classifies the two new frontend modules
+without promoting them to clean or weakening any mandatory canonical-root
+deletion/forbidden-dependency control. These results apply to composed source
+revision 1 only; the pending repair revision needs its own validation.
+
+### Full-family source repair and undefined discard — 2026-09-08
+
+Worker revision 2 was independently read and matched in all six files against
+`.tmp/native-family-source-revision2-frozen-20260908.json` in the source worker.
+Its changed blobs are native source `d19f26a04ac67aa324738f8231ed3d25ad5fca9c`,
+contract tests `e6706bfc92f8a51623c72d7606794e11f08412f8` and identity tests
+`585bb7b6441dfd8bf4219b160f676410cf50ace0`. It pins full plan descriptors,
+resolver methods, Promise.all targets and original syntax children/operands;
+rejects incompatible returns; proves immutable owner-span mutation prevention;
+and adds eleven genuine forbidden-import rejection processes with exact
+terminal/error/census attribution. Existing source-free exclusions are retained.
+
+The first repair run (4838) exited 1: 84/85 passed, 36/36 source contracts and
+48/49 identity controls. The new explicit `return undefined` positive exposed
+an actual lowerer omission: `lowerDiscardedExpression` could not resolve that
+identifier. Canonical TypeScript 7 passed in session 68744. The original eight
+family rows still reached the exact delay-declaration refusal.
+
+High specified a minimal existing-checker fix, implemented by the parent only
+in `from-ast.ts`. After all existing effectful branches, a discarded identifier
+read is erased only when it is `undefined`, has no lexical scope binding, and
+the actual checker proves exact global symbol identity and Undefined type.
+Missing checker and shadowed names retain the previous lowering path. No new
+resolver protocol, runtime value, fabricated provider or source-selection
+heuristic was added. Current source blob is
+`9055e676d75fbc00565464dfdd1b7c2be8195287`.
+
+Session 70397 exited 0: 125/125, comprising 36 source contracts, 52 identity
+controls and all 37 unchanged #4459 discarded-effect regressions. The latter
+retain actual IR/legacy execution, comma evaluation and taken-branch ordering.
+Three additional direct-lowerer shadow controls were authored while that run
+used its previously collected test module; they are explicitly not included
+in its denominator. The final identity blob
+`43d09b399dce161dc0dce22df055f999cbbfe880` contains 55 controls and awaits
+its own final run (25348), together with typecheck and the original 14 native
+family behavior controls. Parent owns this integration; the old worker's
+frozen revisions remain untouched.
+
+Parallel implementation now also covers the explicit recursive-type emission
+plan. The upstream claim `3518:explicit-rec-emission` was independently read:
+assignee/requester `ttraenkler/codex-3518-explicit-rec-emission-20260908`,
+write ID `65804-08drhqei`, claimed `2026-09-08T14:12:55Z`. Its normal claim
+hook completed in session 18001, and its isolated writer may perform static
+implementation while the parent owns heavy validation. No emitter change
+is included in this source checkpoint.
+
+Final session 25348 exited 0 after canonical TypeScript 7 and all 105 tests:
+55 identity controls, 36 source contracts and 14 unchanged native-family
+behavior tests. All three new direct-lowerer shadow controls ran and passed.
+Scoped Prettier and Biome lint passed in session 81868 (seven source/test
+files, plus the boundary JSON in the formatting check). High independently
+approved the exact final source/test hashes and closed all four review
+findings; its final-test condition is now satisfied. Normal publication
+hooks remain required. No tests, budget policies, CI rules or historical
+expected runtime outputs were weakened.
+
+
 
 ### Capability contract extraction checkpoint (2026-09-08)
 
@@ -5754,3 +6024,135 @@ Detailed local receipts are in `.tmp/5756-queue-drain/` in the owned worktree.
 Delivery order remains 5755→5756→5757→5758→5759→5760. At PR5759 retain the signed
 standard-EH delay repair 561853c00d76c72eb44dbee14340dc15e9841e41 with both tagged
 and foreign catches. New migration scope remains paused.
+
+
+## 2026-09-12: logical vector and native-main lowering queue refresh
+
+Refresh existing PR5757, “feat(ir): lower certified vectors and prepared native
+main operations”, from published 1cb0f5c7f36be14d7be7eb4592973aea84a8c4e5 onto
+signed local admission parent 1f611285c35c6d1c42f4eff577441c79ee7ec706 in
+`codex/5757-queue-drain-20260912`. Publication remains behind confirmed parent
+delivery to main; the existing PR remains the only publication target.
+
+The only conflict was appended issue history. Both complete sections remain
+preserved. The two production files and two authored tests match the published
+head byte-for-byte; the refreshed parent policy, frame engine/wrapper, standard
+native-delay EH and all five source-admission implementation files remain
+unchanged. This refresh introduces no lowerer edit or new migration scope.
+
+Preserve the console newline correction and ordinary logical-concat positive
+when the optional target is absent. Source-bound vector facts must still be
+complete and owned by the exact actual expressions. Preserve receiver/length/
+effectful-argument/growth/result ordering, actual nullability and out-of-bounds
+carriers, and refusals for missing, foreign or physical-layout-bearing facts.
+Symbolic prepared-main targets still avoid physical capability lookup. These
+controls do not certify the complete async family, providers or physical
+whole-program acceptance.
+
+An independent pinned test262 repository at
+b363f29d3c43c626dc852744ad64a0b48a003693 passed all 53,933 raw blob comparisons
+(53,889 tests and 44 harness files), exact file/directory sets and modes,
+with no extras, alternates or shared object hardlinks. Existing corpora remain
+preserved. Manifest SHA256:
+fcaaff56a78c134e3875a00b743d5e6435939c38f304eeec1ffb35bc3c611ffb.
+
+Fresh serialized Node25.9.0/macOS ARM64 validation measured **213 passed,
+zero failed, two existing conditional skips / 215 total** across seven files.
+The lowerer/regression group is 100 passed and two skipped; the unchanged
+semantic/provider boundary group is 113/113. The skips are the original native
+Porffor C ASan/UBSan allocation-growth/alias case and untouched public-source
+comparison, selected by their unchanged prerequisite condition. No environment
+flag or added skip forced them; native Porffor C execution is not claimed.
+
+Source typechecking, explicit-parent-base LOC/function gates, coercion, oracle
+and preservation-v1 dead-export checks passed. Conformance synchronization
+changed zero files. Strict graph closure remains OPEN at the two existing
+nonliteral imports; preservation witness success is not IR retirement.
+
+The default pre-commit selector sees 32 inherited root test changes against
+535ee6b6ba19239394ee50f8235e6c528212688b and self-skips its existing >20 lane. The
+215-case cohort was run directly; do not claim this inherited population ran.
+Normal signed commit and push hooks remain mandatory; their actual outcomes
+and parent delivery belong in the existing PR follow-up. Local evidence is
+under `.tmp/5757-queue-drain/`. Keep ordered delivery 5755→5756→5757→5758→5759→5760
+and carry the signed standard-EH delay repair into PR5759 with both catch forms.
+
+
+## 2026-09-12: full-family source preparation queue refresh
+
+Refresh existing PR5758, “feat(ir): prepare the complete native async source
+family”, from published 37e169c4903c29ab46fe99de0910634723a19dac onto signed local
+vector/main parent 6cf4e423b4481a9fa003b1cd58a84cfa9100116c in
+`codex/5758-queue-drain-20260912`. Keep the existing PR as the sole publication
+target, behind confirmed parent delivery to main.
+
+Only appended Issue3518 history conflicted; both complete sections remain.
+All five published production files and two authored tests match the published
+head byte-for-byte. The boundary registry preserves every refreshed parent
+entry and adds only program-logical-types.ts and program-native-async-source.ts
+as frontend-ts / unmigrated. No additional implementation scope was added.
+The original playground async.ts fixture remains SHA256
+6bc4fc96cc65881c9919a39b840afaf1001dfd3d0e05ef0cc141441a051f7915.
+
+Preserve explicit native-family selection, exact checker/source ownership and
+retained-plan revalidation. Preparation yields seven original units, five
+terminal bodies, five awaits, two vector allocations and zero derived bodies;
+both original delay arrows remain inventory records. The original/export-only,
+GVN on/off, original/decoded cases retain invariant / unknown-function-ref /
+resolve for the real missing __ir_promise_delay_native provider, located at the
+original delay owner. Fresh-process replay must retain that refusal. Omitted
+or disabled family selection remains unsupported / type-resolution-unsupported
+/ build. These are refusal controls, not physical whole-program execution.
+The discarded-expression correction must erase only checker-proven ambient
+undefined after effectful cases; shadowed, unchecked and valued returns retain
+their original rejection behavior. Keep all actual forbidden-import controls.
+
+Fresh serialized Node25.9.0/macOS ARM64 validation passed **371/371** across
+eight files, with no failures or skips: family source contract 36, family source
+identity 55, unchanged native family 14, discarded effects 37, delay admission
+41, delay identity 45, typed preparation 30 and semantic/provider boundary 113.
+Source TS7, explicit-parent LOC/function budgets, coercion, oracle and
+preservation-v1 dead-export checks passed. Conformance synchronization changed
+zero files. Strict closure remains OPEN at the two existing nonliteral imports;
+preservation witnesses do not establish IR retirement.
+
+The isolated test262 checkout at b363f29d3c43c626dc852744ad64a0b48a003693 has its
+own Git objects and verified exact bytes, modes and file/directory inventories:
+53,889 tests plus 44 harness files, no extras. Existing corpora were preserved.
+Manifest SHA256:
+fcaaff56a78c134e3875a00b743d5e6435939c38f304eeec1ffb35bc3c611ffb.
+
+The default pre-commit selector sees 34 root test changes from its older base
+535ee6b6ba19239394ee50f8235e6c528212688b, so its existing >20 lane self-skips.
+The 371 controls above ran directly; do not claim this inherited population ran.
+Normal signed commit/push hooks remain required, with actual outcomes recorded
+on the existing PR when published. Local receipts are in
+`.tmp/5758-queue-drain/`. Keep ordered delivery 5755→5756→5757→5758→5759→5760 and
+retain the signed standard-EH delay repair at PR5759, including both catch forms.
+
+### Preserve delivered async spill typing in the family queue refresh — 2026-09-13
+
+Existing PR 5758, “feat(ir): prepare the complete native async source family”,
+was cleanly merged with delivered main ee2ee09062e587e882e6be6e47d5bdde5472ecbe
+in its owned queue-drain worktree. This brings the legitimate async spill
+typing repair from PR 5869 into the inherited compiler. The initial complete
+frame preservation file passed 39/41 with two receipt mismatches; the public
+source comparison passed. Its original failure report remains retained.
+
+The scoped repair changes only the frame source-preservation test and its
+forward provenance fixture. Two independently read and authenticated incoming
+spans now precede the unchanged historical reconstruction. The original seven
+span records, original a426 donor hash and 0194 receipts remain unchanged;
+the runtime bodies and the complete public comparator remain unchanged.
+Six added controls reject removal, semantic corruption, module retargeting
+and a type-only import. All nine unique/disjoint spans recover the original
+a426 bytes exactly, with no unadmitted source delta.
+
+Fresh serialized validation passed 422/422 across ten complete files, with
+zero skips: the existing eight-file 371-case family/preparation/boundary group,
+47 frame preservation cases and four incoming spill regression cases. This
+is current-root evidence, not a fresh historical compiler comparison. Normal
+gates and signed hooks remain required before publication; main delivery of
+PR 5757 remains the prerequisite. Public cutover and direct retirement are
+still open. Exact independent provenance and initial/final reports remain in
+.tmp/5758-queue-drain, with the published handoff updated at delivery.
