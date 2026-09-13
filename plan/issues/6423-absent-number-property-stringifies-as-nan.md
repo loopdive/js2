@@ -163,7 +163,33 @@ deliberately not tested: reads already map HOLE → UNDEF at the boundary
 | `String(x)` f64 arm, before `emitStringBuiltinNumberResult` | `src/codegen/expressions/call-identifier.ts` |
 | `+` concat left and right f64 arms | `src/codegen/string-ops.ts` |
 | `String.raw` substitution f64 arm | `src/codegen/string-ops.ts` |
-| `compileNativeConcatOperand` and the native template span (beyond the plan — same defect, other lane) | `src/codegen/string-ops.ts` |
+
+**JS-host lane only, and that narrowing is itself a finding.** A first cut also
+routed `compileNativeConcatOperand` and the native template span through the
+helper — the same defect, the other lane. The merge group then failed the
+standalone host-free pass-count floor (#2097): `current pass=35567, mark=35686,
+delta=-119`. Attribution was genuinely ambiguous — a lot of standalone-touching
+source had landed since the mark was set (`e8a778638f`, 2026-09-12T21:36Z) and
+every merge group in between skipped the shard matrix, so that run was the first
+to exercise the floor in ~8.5 hours. Rather than guess, the helper now returns
+the plain call unless `coercionMode(ctx) === "js-host"`, which makes the
+standalone/WASI/native-strings binary **byte-identical to the parent by
+construction** — verified by SHA-256 of the emitted binaries across three
+fixtures (for-of numeric concat, the full String/template/`+`/String.raw set,
+and generators) in all three non-js-host configurations: all nine hashes equal.
+A repeat breach is therefore provably not this change.
+
+The js-host codegen is unaffected by the narrowing (same fixture, same hash
+before and after), so the 17-suite A/B below — which is entirely js-host,
+`target: "gc"` — stands as measured.
+
+The native lanes do have branded-f64 producers the js-host lane lacks (`for-of`
+over a numeric vec yields `{kind:"f64", undefSentinel:true}`,
+`statements/loops.ts`; native generator IteratorResult reads do too), so
+extending the fix there is real work — filed as
+[#6458](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6458-native-lane-f64-sentinel-tostring),
+which needs a standalone test262 measurement rather than the dogfood A/B (that
+lane is js-host and structurally blind to it).
 
 **Probe** (`.tmp/6423/run.mjs`, `compileAndRunUpstreamModule`, untyped two-file
 fixture): parent wasm **3/9** (only the three present-value controls), native
@@ -179,9 +205,9 @@ its `test(name, fn)` callbacks) keeps the read dynamic. A future refactor that
 makes this file pass without the fix has most likely re-specialized the call.
 
 **Standalone lane**: already correct on the parent and unchanged — probe `127`
-before *and* after (measured both ways, not assumed). Its ToString goes through
-`$__any_to_string` rather than the narrowed f64, so it never saw the sentinel.
-Pinned by the second `it`.
+before *and* after (measured both ways, not assumed), and now unchanged at the
+byte level too (see above). Its ToString goes through `$__any_to_string` rather
+than the narrowed f64, so it never saw the sentinel. Pinned by the second `it`.
 
 **A/B, 17 dogfood suites, one HEAD (`e06f76745b`), base vs fix**: every headline
 identical and **zero per-test movers** across all 17 (63,740 + 1,900 tests
@@ -195,6 +221,7 @@ and 259; main advanced in between. Both are unchanged base→fix.)
 hono's spurious `Max-Age=0` is untouched, as expected — that is the guard
 misfiring, not ToString, and it stays unattributed per the note above.
 
-**Not addressed here** (both still open, both listed above as adjacent
-measurements): hono's `Max-Age=0`, and the `serializeLike(name, value, {})`
-null-struct `TypeError`.
+**Not addressed here**: hono's `Max-Age=0` and the `serializeLike(name, value,
+{})` null-struct `TypeError` (both listed above as adjacent measurements), plus
+the native/standalone lanes' own branded-f64 ToString, deliberately left to
+[#6458](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6458-native-lane-f64-sentinel-tostring).

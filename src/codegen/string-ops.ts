@@ -331,11 +331,12 @@ function compileNativeConcatOperand(ctx: CodegenContext, fctx: FunctionContext, 
   if ((opType.kind === "f64" || opType.kind === "i32" || opType.kind === "i64") && toStrIdx !== undefined) {
     if (opType.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" });
     else if (opType.kind === "i64") fctx.body.push({ op: "f64.convert_i64_s" });
-    // (#6423) sentinel-aware. The helper registers nothing (it takes the
-    // already-resolved index), so this arm's decline-rather-than-register
-    // contract is unaffected, and it leaves the same externref the native
-    // unwrap below consumes.
-    emitNumberToStringSentinelAware(ctx, fctx, opType, toStrIdx);
+    // (#6423) NOT routed through `emitNumberToStringSentinelAware`. This is a
+    // native-strings arm, and the sentinel-aware ToString is js-host-only by
+    // design — see that helper's doc comment for why (this lane has its own
+    // branded-f64 producers, chiefly `for-of` over a numeric vec, and no
+    // standalone measurement backs changing it here).
+    fctx.body.push({ op: "call", funcIdx: toStrIdx });
     emitNativeStringRefFromExternref(ctx, fctx);
     return true;
   }
@@ -863,9 +864,9 @@ export function compileNativeTemplateExpression(
       // but "did this externref come from the native formatter?", and here it
       // always did. The dynamic-externref / struct arms below KEEP the bridge:
       // those really do carry host strings.
-      // (#6423) sentinel-aware — an absent number-shaped property span prints
-      // "undefined", not the sentinel's "NaN".
-      emitNumberToStringSentinelAware(ctx, fctx, spanType, toStrIdx);
+      // (#6423) NOT sentinel-aware, deliberately — native-strings arm; see
+      // `emitNumberToStringSentinelAware`'s doc comment.
+      fctx.body.push({ op: "call", funcIdx: toStrIdx });
       emitNativeStringRefFromExternref(ctx, fctx);
     } else if (spanType && spanType.kind === "i32" && toStrIdx !== undefined) {
       // (#3912) native-formatter box — see the f64 arm above.

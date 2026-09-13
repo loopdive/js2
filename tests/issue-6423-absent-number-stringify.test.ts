@@ -12,7 +12,7 @@
  * object with no `maxAge` printed `"NaN"` where §7.1.17 says `"undefined"`.
  *
  * The fix is one brand-gated helper (`emitNumberToStringSentinelAware`,
- * coercion-engine.ts) that every f64 ToString arm routes through.
+ * coercion-engine.ts) that the js-host f64 ToString arms route through.
  *
  * Why the fixture is shaped this way:
  *  - **The calls must be unspecializable.** Reading `o.maxAge` dynamically is
@@ -40,8 +40,11 @@
  * The second `it` pins the standalone lane, which was ALREADY correct on the
  * parent (probe `127` before and after — measured, not assumed): its ToString
  * goes through `$__any_to_string` rather than the narrowed f64, so it never saw
- * the sentinel. It is here so a later change to the helper cannot quietly
- * regress the lane that did not need it.
+ * the sentinel. The helper is js-host-only by design for exactly that reason —
+ * standalone / native-strings codegen is byte-identical to the parent here,
+ * verified by hashing the emitted binaries both ways — and this `it` is what
+ * keeps a later widening of the helper from silently regressing the lane that
+ * did not need it. See `emitNumberToStringSentinelAware`'s doc comment.
  */
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";

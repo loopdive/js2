@@ -239,12 +239,34 @@ export function installCompiledClosureToStringArm(ctx: CodegenContext): void {
  * bug than the one being fixed.
  *
  * Leaves exactly one **externref** on the stack — the same shape
- * `number_toString` leaves — in every mode, so each caller's tail
- * (`emitNativeStringRefFromExternref`, `emitStringBuiltinNumberResult`, a host
- * `concat`) is untouched. `stringConstantExternrefInstrs` is externref-valued
- * in native-strings mode too (it appends `extern.convert_any`).
+ * `number_toString` leaves — so each caller's tail
+ * (`emitStringBuiltinNumberResult`, a host `concat`) is untouched.
  *
  * Unbranded operands emit the plain call, byte-for-byte as before.
+ *
+ * **JS-HOST LANE ONLY, deliberately.** In `standalone` / `native-strings-host`
+ * the brand-aware arm is skipped and the plain call is emitted, so codegen in
+ * those lanes is byte-identical to the parent *by construction*. Two reasons,
+ * and the second is the load-bearing one:
+ *
+ *  1. Those lanes do not have the defect. Their ToString goes through
+ *     `$__any_to_string` rather than the narrowed f64, and the standalone probe
+ *     answers all seven cases (127) on the parent *and* with this change —
+ *     measured both ways, so there is nothing here to fix.
+ *  2. They have OTHER branded-f64 producers that the js-host lane does not —
+ *     `for-of` over a numeric vec yields `{kind:"f64", undefSentinel:true}`
+ *     (statements/loops.ts), as do native generator IteratorResult reads. A
+ *     first cut of this change routed `compileNativeConcatOperand` and the
+ *     native template span through the helper as well; that change is NOT
+ *     covered by any measurement available here (the 17-suite dogfood A/B is
+ *     entirely js-host, `target: "gc"`), and the standalone host-free
+ *     pass-count floor (#2097) went red in the merge group while it was in.
+ *     Attribution was ambiguous — a lot of standalone-touching source had
+ *     landed since the high-water mark without the shard matrix running — and
+ *     restricting the helper is what makes the question answerable: with this
+ *     gate the standalone binary cannot differ from the parent's, so a repeat
+ *     breach is provably not this change. Extending the fix to those lanes
+ *     wants its own issue, with a standalone measurement behind it.
  *
  * `HOLE_F64_BITS` is deliberately NOT tested here: every value-producing read
  * of a slot that may hold it already maps HOLE → UNDEF at the read boundary
@@ -262,7 +284,7 @@ export function emitNumberToStringSentinelAware(
   valType: ValType | null,
   toStrIdx: number,
 ): void {
-  if (!valType || valType.kind !== "f64" || valType.undefSentinel !== true) {
+  if (!valType || valType.kind !== "f64" || valType.undefSentinel !== true || coercionMode(ctx) !== "js-host") {
     fctx.body.push({ op: "call", funcIdx: toStrIdx });
     return;
   }
