@@ -188,9 +188,11 @@
         "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
         "src/runtime/wasmgc/promise/settlement-bodies.ts",
         "src/runtime/wasmgc/async/frame-engine.ts",
-        "src/runtime/wasmgc/async/native-await.ts"
+        "src/runtime/wasmgc/async/native-await.ts",
+        "src/runtime/wasmgc/promise/delay-bodies.ts",
+        "src/runtime/wasmgc/promise/combinator-bodies.ts"
       ],
-      "minModules": 4
+      "minModules": 6
     },
     {
       "id": "standalone-platform",
@@ -429,6 +431,18 @@
     }
   ],
   "activationHistory": [
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts",
+        "src/runtime/wasmgc/async/frame-engine.ts",
+        "src/runtime/wasmgc/async/native-await.ts",
+        "src/runtime/wasmgc/promise/delay-bodies.ts",
+        "src/runtime/wasmgc/promise/combinator-bodies.ts"
+      ],
+      "minModules": 6
+    },
     {
       "layer": "native-runtime",
       "entries": [
@@ -9792,6 +9806,20 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/program-logical-types.ts",
+      "state": "unmigrated",
+      "layer": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Checker-bound logical vector facts for original source nodes; relocate under frontend/ts with source preparation before retirement. No physical type authority or pure IR closure claim."
+    },
+    {
+      "path": "src/ir/program-native-async-source.ts",
+      "state": "unmigrated",
+      "layer": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Original-AST native async family certification and logical lowering plans; relocate under frontend/ts with planning identity before retirement. Keep runtime declarations and physical providers separate."
+    },
+    {
       "path": "src/ir/program-observation.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -10625,6 +10653,16 @@
     },
     {
       "path": "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/promise/delay-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/promise/combinator-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
     },
