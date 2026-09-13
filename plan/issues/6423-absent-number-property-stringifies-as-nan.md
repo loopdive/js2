@@ -164,20 +164,32 @@ deliberately not tested: reads already map HOLE → UNDEF at the boundary
 | `+` concat left and right f64 arms | `src/codegen/string-ops.ts` |
 | `String.raw` substitution f64 arm | `src/codegen/string-ops.ts` |
 
-**JS-host lane only, and that narrowing is itself a finding.** A first cut also
-routed `compileNativeConcatOperand` and the native template span through the
-helper — the same defect, the other lane. The merge group then failed the
-standalone host-free pass-count floor (#2097): `current pass=35567, mark=35686,
-delta=-119`. Attribution was genuinely ambiguous — a lot of standalone-touching
-source had landed since the mark was set (`e8a778638f`, 2026-09-12T21:36Z) and
-every merge group in between skipped the shard matrix, so that run was the first
-to exercise the floor in ~8.5 hours. Rather than guess, the helper now returns
-the plain call unless `coercionMode(ctx) === "js-host"`, which makes the
+**JS-host lane only.** A first cut also routed `compileNativeConcatOperand` and
+the native template span through the helper — the same defect, the other lane.
+The merge group then failed the standalone host-free pass-count floor (#2097):
+`current pass=35567, mark=35686, delta=-119`. Attribution looked ambiguous at
+the time (the mark was set at `e8a778638f`, 2026-09-12T21:36Z, and every merge
+group in between skipped the shard matrix, so that run was the first to exercise
+the floor in ~8.5 hours), so rather than guess, the helper was narrowed to
+return the plain call unless `coercionMode(ctx) === "js-host"`. That makes the
 standalone/WASI/native-strings binary **byte-identical to the parent by
 construction** — verified by SHA-256 of the emitted binaries across three
 fixtures (for-of numeric concat, the full String/template/`+`/String.raw set,
 and generators) in all three non-js-host configurations: all nine hashes equal.
-A repeat breach is therefore provably not this change.
+
+**The breach was then refuted as this PR's, on the record.** PR #5897 — no
+relation to this change — failed the same floor at 2026-09-13T08:27Z reporting
+the *identical* `current pass=35567`, against a newer mark (`35742`, set at
+`6aac84c0b6`, 06:43Z), for `delta=-175`. Same current value, different PR,
+different mark: the drop is **main-side**, and this change never caused it.
+
+The narrowing is kept anyway, and deliberately: the native extension is still
+covered by **no measurement available here** — the 17-suite dogfood A/B is
+entirely js-host (`target: "gc"`) and structurally blind to that lane — and it
+carries hazards the js-host arm does not (see #6458). Landing an unmeasured
+codegen change late in a green PR on the strength of a *refuted* alarm would be
+the same error in the opposite direction. It belongs in #6458, behind a
+standalone measurement.
 
 The js-host codegen is unaffected by the narrowing (same fixture, same hash
 before and after), so the 17-suite A/B below — which is entirely js-host,

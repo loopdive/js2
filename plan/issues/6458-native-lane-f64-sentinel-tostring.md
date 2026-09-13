@@ -24,13 +24,20 @@ printing `"NaN"` instead of `"undefined"` — but the helper it added,
 `native-strings-host` it returns the plain `call number_toString`, exactly as
 before.
 
-That was a deliberate, evidence-driven narrowing, not an oversight — see the
-`## Resolution` on #6423. The first cut also routed `compileNativeConcatOperand`
-and the native template span through the helper; the merge group then breached
-the standalone host-free pass floor (#2097) at `pass=35567, mark=35686,
-delta=-119`, attribution was ambiguous, and the js-host gate is what made the
-question answerable (standalone binaries became byte-identical to the parent,
-verified by hash).
+That was a deliberate narrowing, not an oversight — see the `## Resolution` on
+#6423. The first cut also routed `compileNativeConcatOperand` and the native
+template span through the helper; the merge group then breached the standalone
+host-free pass floor (#2097) at `pass=35567, mark=35686, delta=-119`, and the
+js-host gate is what made the attribution question answerable (standalone
+binaries became byte-identical to the parent, verified by hash).
+
+**That breach was subsequently refuted as #6423's**: PR #5897, unrelated, failed
+the same floor at 2026-09-13T08:27Z with the *identical* `current pass=35567`
+against a newer mark. The drop is main-side. So the native extension was never
+shown to cost anything — but it was also never shown to be *safe*, which is why
+it lives here rather than being re-added late to a green PR. **The standalone
+floor being ~175 below its mark on main is a separate, live problem and is not
+this issue.**
 
 ## Why this is not simply "apply the same patch to two more arms"
 
