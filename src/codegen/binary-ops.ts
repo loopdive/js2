@@ -5,6 +5,7 @@
  * bitwise, modulo, boolean, and any-typed binary operations.
  */
 import { expressionHasWidenedPropertyType } from "./strict-eq-stale-type.js";
+import { isInertUndefinedLiteral } from "./void-undefined-operand.js"; // (#6477)
 import { ts } from "../ts-api.js";
 import type { TypeFact } from "../checker/oracle.js";
 import {
@@ -861,10 +862,30 @@ export function compileBinaryExpression(
     const trackedScalarOmission = compileTrackedScalarOmissionComparison(ctx, fctx, expr);
     if (trackedScalarOmission) return trackedScalarOmission;
     const rightIsNullKeyword = expr.right.kind === ts.SyntaxKind.NullKeyword;
-    const rightIsUndefinedId = ts.isIdentifier(expr.right) && expr.right.text === "undefined";
+    // (#6477) `void 0` IS the undefined literal here — see
+    // void-undefined-operand.ts. This arm RECOGNISES the literal side instead
+    // of compiling it, which is why the helper admits `void` only over an inert
+    // literal; `void f()` keeps its evaluated lowering.
+    //
+    // NATIVE-SEMANTICS ONLY, and that is a measured distinction, not a
+    // byte-preservation dodge. With a JS host the generic fallback this arm
+    // would replace hands both operands to the host `===`, which already
+    // implements §7.2.16 for `void 0` — probed on both trees, all seven shapes
+    // correct before and after (`.tmp/s16/gcprobe.mjs`). Widening the predicate
+    // there would move bytes for an answer that is already right. Standalone
+    // has no such fallback: it compares the carriers structurally and reports
+    // `void 0 !== undefined` as TRUE, which is the defect this fixes.
+    const voidUndefinedIsLiteral = ctx.targetProfile.semanticProviders === "native-first";
+    const rightIsUndefinedId =
+      voidUndefinedIsLiteral && isInertUndefinedLiteral(expr.right)
+        ? true
+        : ts.isIdentifier(expr.right) && expr.right.text === "undefined";
     const rightIsNullish = rightIsNullKeyword || rightIsUndefinedId;
     const leftIsNullKeyword = expr.left.kind === ts.SyntaxKind.NullKeyword;
-    const leftIsUndefinedId = ts.isIdentifier(expr.left) && expr.left.text === "undefined";
+    const leftIsUndefinedId =
+      voidUndefinedIsLiteral && isInertUndefinedLiteral(expr.left)
+        ? true
+        : ts.isIdentifier(expr.left) && expr.left.text === "undefined";
     const leftIsNullish = leftIsNullKeyword || leftIsUndefinedId;
     // A declaration binding whose element type is a heterogeneous primitive
     // union is physically a nullable `$AnyValue`.  Do not consume its
