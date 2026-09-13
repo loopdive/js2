@@ -1,7 +1,12 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "../ts-api.js";
 import type { AnalyzeOptions, MultiTypedAST, TypedAST } from "./index.js";
-import { filterRecognizedDenoStdioDiagnostics, getLibSourceFile, isKnownLibName } from "./index.js";
+import {
+  filterRecognizedDenoStdioDiagnostics,
+  getLibSourceFile,
+  getUserSemanticDiagnostics,
+  isKnownLibName,
+} from "./index.js";
 import {
   buildBareSpecifierLookup,
   multiFileScriptKind,
@@ -436,7 +441,7 @@ export class IncrementalProjectLanguageService {
     const syntacticDiagnostics = program.getSyntacticDiagnostics();
     const semanticDiagnostics = analyzeOptions?.skipSemanticDiagnostics
       ? ([] as ts.Diagnostic[])
-      : program.getSemanticDiagnostics();
+      : getUserSemanticDiagnostics(program);
     const diagnostics = filterRecognizedDenoStdioDiagnostics([...syntacticDiagnostics, ...semanticDiagnostics]);
 
     return {

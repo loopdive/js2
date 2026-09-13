@@ -11,6 +11,7 @@ import { mintDefinedFunc, pushDefinedFunc } from "../src/codegen/func-space.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { emitWat } from "../src/emit/wat.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
+import { inversePreparedSourceForward } from "./helpers/prepared-source-forward-receipts.js";
 import {
   createVectorBaseType,
   createVectorBackingArrayType,
@@ -25,6 +26,31 @@ import {
 const base = "a6cc59a2cdfad5141d75faadf1530a9de63bebd7";
 const fixtureDigest = "6c1406df64d99bef6f62ce43d3d98f60a517093244979fb226626043c38851ab";
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
+
+// These forward spans come from fixed published source blobs, including the
+// original #6420 implementation. They are inverted before the unchanged donor
+// reconstruction; neither live source nor runtime Git can authorize new text.
+const preparedForwardDigest = "96d5cdc49a12420667d2ea47311a15ed142ce78d22991aba06ab76b061a7f874";
+const preparedForwardText = readFileSync(
+  new URL("./fixtures/issue-3518-prepared-object-runtime-forward.json", import.meta.url),
+  "utf8",
+);
+interface PreparedForwardSpan {
+  id: string;
+  before: string;
+  after: string;
+}
+const preparedForward = JSON.parse(preparedForwardText) as {
+  path: string;
+  independentRecordSha256: string;
+  spans: PreparedForwardSpan[];
+};
+
+function preparedForwardSpan(id: string): PreparedForwardSpan {
+  const matches = preparedForward.spans.filter((span) => span.id === id);
+  if (matches.length !== 1) throw new Error(`missing or duplicate prepared forward record: ${id}`);
+  return matches[0]!;
+}
 interface Span {
   role: string;
   start: number;
@@ -153,7 +179,8 @@ const approvedEarly = replaceExactlyOnce(
 
 function reconstructLegacySource(source: string, file: "object" | "linear"): string {
   if (file === "object") {
-    const withoutImport = replaceExactlyOnce(source, canonicalObjectImport, "");
+    const beforePrepared = inversePreparedSourceForward(source, preparedForwardText, preparedForwardDigest);
+    const withoutImport = replaceExactlyOnce(beforePrepared, canonicalObjectImport, "");
     const withLayout = replaceExactlyOnce(withoutImport, approvedLayout, donor("layout"));
     return replaceExactlyOnce(withLayout, approvedHelpers, donor("helpers"));
   }
@@ -538,4 +565,234 @@ describe("native argument-vector resources", () => {
       expect(() => expect(mutant).toEqual(original.body)).toThrow();
     });
   }
+});
+
+// Each semantic edit is made inside one independently pinned span. The same
+// case also removes and duplicates that complete span, after a genuine positive.
+const preparedSpanMutations: [string, [string, string][]][] = [
+  [
+    "peer-terminal-import",
+    [
+      ['from "./standalone-link-boundary.js"', 'from "./other-link-boundary.js"'],
+      ["import {\n  emitStandaloneLinkBoundaryTerminals,", "import type {\n  emitStandaloneLinkBoundaryTerminals,"],
+      ["  standaloneLinkBoundaryPeerIndices,", "  standaloneLinkBoundaryPeerIndices as otherPeerIndices,"],
+    ],
+  ],
+  [
+    "early-peer-terminal-reservation",
+    [
+      ["memberGet: peerMemberGetIdx", "objectKeys: peerMemberGetIdx"],
+      ["methodCall: peerMethodCallIdx,", ""],
+      ["standaloneLinkBoundaryPeerIndices(ctx)", "standaloneLinkBoundaryPeerIndices({ ...ctx })"],
+    ],
+  ],
+  [
+    "peer-member-get-fallback",
+    [
+      [
+        "...((boundaryObjectGetIdx ?? peerMemberGetIdx) !== undefined",
+        "...((boundaryObjectGetIdx || peerMemberGetIdx) !== undefined",
+      ],
+      ["funcIdx: (boundaryObjectGetIdx ?? peerMemberGetIdx)!", "funcIdx: (boundaryObjectGetIdx ?? peerObjectKeysIdx)!"],
+      ['{ op: "local.tee", index: 6 }', '{ op: "local.tee", index: 5 }'],
+    ],
+  ],
+  [
+    "peer-key-reader-fallbacks",
+    [
+      [
+        "boundaryObjectKeysIdx: boundaryObjectKeysIdx ?? peerObjectKeysIdx",
+        "boundaryObjectKeysIdx: boundaryObjectKeysIdx ?? peerMemberGetIdx",
+      ],
+      [
+        "boundaryObjectForInKeysIdx: boundaryObjectForInKeysIdx ?? peerObjectKeysIdx",
+        "boundaryObjectForInKeysIdx: boundaryObjectForInKeysIdx || peerObjectKeysIdx",
+      ],
+    ],
+  ],
+  [
+    "peer-method-call-local",
+    [
+      ["boundaryObjectCallIdx ?? peerMethodCallIdx", "boundaryObjectCallIdx || peerMethodCallIdx"],
+      ["3 + methodCallLocals.length", "2 + methodCallLocals.length"],
+      ['type: { kind: "externref" }', 'type: { kind: "eqref" }'],
+    ],
+  ],
+  [
+    "peer-method-call-arm",
+    [
+      [
+        '{ op: "local.get", index: 1 },\n                { op: "local.get", index: 2 }',
+        '{ op: "local.get", index: 2 },\n                { op: "local.get", index: 1 }',
+      ],
+      ["funcIdx: boundaryOrPeerCallIdx", "funcIdx: boundaryObjectCallIdx"],
+      ['{ op: "local.tee", index: boundaryCallResultLocal }', '{ op: "local.tee", index: 0 }'],
+    ],
+  ],
+  [
+    "late-peer-terminal-emission",
+    [
+      [
+        "emitStandaloneLinkBoundaryTerminals(ctx, registerNative);",
+        "emitStandaloneLinkBoundaryTerminals(ctx, () => undefined);",
+      ],
+      [
+        "emitStandaloneLinkBoundaryTerminals(ctx, registerNative);",
+        "emitStandaloneLinkBoundaryTerminals({ ...ctx }, registerNative);",
+      ],
+    ],
+  ],
+  [
+    "peer-apply-fallback",
+    [
+      ['standaloneLinkBoundaryPeerIndex(ctx, "apply")', 'standaloneLinkBoundaryPeerIndex(ctx, "memberGet")'],
+      ["ctx.funcMap.get(linkedCallName)) ??", "ctx.funcMap.get(linkedCallName)) ||"],
+    ],
+  ],
+  [
+    "peer-callable-pre-dispatch-main-6420",
+    [
+      ['standaloneLinkBoundaryPeerIndex(ctx, "callableKind")', 'standaloneLinkBoundaryPeerIndex(ctx, "construct")'],
+      ['standaloneLinkBoundaryPeerIndex(ctx, "apply")', 'standaloneLinkBoundaryPeerIndex(ctx, "memberGet")'],
+      [
+        "linkedStandaloneCallableKindIdx !== undefined && linkedStandaloneApplyIdx !== undefined",
+        "linkedStandaloneApplyIdx !== undefined",
+      ],
+      [
+        "linkedStandaloneCallableKindIdx !== undefined && linkedStandaloneApplyIdx !== undefined",
+        "linkedStandaloneCallableKindIdx !== undefined",
+      ],
+      ["body.unshift(", "body.push("],
+      ['{ op: "i32.const", value: 1 }', '{ op: "i32.const", value: 2 }'],
+      ['{ op: "i32.and" }', '{ op: "i32.or" }'],
+      [
+        '{ op: "local.get", index: 1 },\n          { op: "local.get", index: 2 }',
+        '{ op: "local.get", index: 2 },\n          { op: "local.get", index: 1 }',
+      ],
+      ['{ op: "call", funcIdx: linkedStandaloneApplyIdx }', '{ op: "call", funcIdx: linkedStandaloneCallableKindIdx }'],
+      ['          { op: "return" },\n', ""],
+    ],
+  ],
+  [
+    "tuple-candidate-and-layout",
+    [
+      ["new Set(ctx.tupleTypeMap.values())", "new Set(ctx.structMap.values())"],
+      ["!seen.has(typeIdx) && tupleTypeIdxs.has(typeIdx)", "tupleTypeIdxs.has(typeIdx)"],
+      ["fields.every((f, i) => f.name === `_${i}`)", "fields.some((f, i) => f.name === `_${i}`)"],
+      ["lengthFieldIdx: -1", "lengthFieldIdx: 0"],
+      ['lengthFieldType: { kind: "f64" }', 'lengthFieldType: { kind: "i32" }'],
+      ["constLength: fields.length", "constLength: fields.length + 1"],
+      ["fieldIdx: i, fieldType: f.type", "fieldIdx: i + 1, fieldType: f.type"],
+    ],
+  ],
+  [
+    "tuple-constant-length-arm",
+    [
+      ["if (cand.constLength !== undefined)", "if (cand.constLength)"],
+      ['{ op: "ref.test", typeIdx: cand.typeIdx }', '{ op: "ref.test", typeIdx: 0 }'],
+      ['{ op: "f64.const", value: cand.constLength }', '{ op: "i32.const", value: cand.constLength }'],
+      [
+        'then: [{ op: "f64.const", value: cand.constLength }, { op: "return" }]',
+        'then: [{ op: "f64.const", value: cand.constLength }]',
+      ],
+      ["        continue;", "        break;"],
+    ],
+  ],
+];
+
+describe("prepared object-runtime forward source receipts", () => {
+  it("authenticates all eleven ordered spans before the original full-source donor receipt", () => {
+    expect(sha256(preparedForwardText)).toBe(preparedForwardDigest);
+    expect(preparedForward.path).toBe("src/codegen/object-runtime.ts");
+    expect(preparedForward.independentRecordSha256).toBe(
+      "6aca0046b06ee23938660785b00f0eb302b0a06005af2bb6157214fc106de3f8",
+    );
+    expect(preparedForward.spans.map((span) => span.id)).toEqual(preparedSpanMutations.map(([id]) => id));
+    expect(preparedForward.spans).toHaveLength(11);
+    const beforePrepared = inversePreparedSourceForward(liveObject, preparedForwardText, preparedForwardDigest);
+    // Fixed scanner source 1ce5d057, not a receipt derived from the joined tree.
+    expect(sha256(beforePrepared)).toBe("0c09bfbf102535500cee07df72a73dd06d7506ffd750ce1545323b5d6f994edd");
+    requireFullLegacyReceipt(liveObject, "object");
+  });
+
+  for (const [id, changes] of preparedSpanMutations) {
+    it(`rejects semantic edits, removal and duplication of the authenticated ${id} span`, () => {
+      requireFullLegacyReceipt(liveObject, "object");
+      const span = preparedForwardSpan(id);
+      expect(changes.length).toBeGreaterThan(0);
+      const replacements = changes.map(([before, after]) => replaceExactlyOnce(span.after, before, after));
+      replacements.push(span.before, span.after + span.after);
+      for (const replacement of replacements) {
+        const mutant = replaceExactlyOnce(liveObject, span.after, replacement);
+        expect(mutant).not.toBe(liveObject);
+        expect(() => requireFullLegacyReceipt(mutant, "object")).toThrow(/prepared forward span/);
+      }
+    });
+  }
+
+  for (const mutation of ["missing", "provenance", "span"] as const) {
+    it(`rejects a ${mutation} forward-fixture mutation without accepting new hashes`, () => {
+      requireFullLegacyReceipt(liveObject, "object");
+      let mutant: string;
+      if (mutation === "missing") {
+        mutant = "";
+      } else if (mutation === "provenance") {
+        mutant = replaceExactlyOnce(
+          preparedForwardText,
+          "4fd5a582bbe7de375f2d0781cfd3cd06aa7fcda1",
+          "0000000000000000000000000000000000000000",
+        );
+      } else {
+        const changed = JSON.parse(preparedForwardText) as typeof preparedForward;
+        changed.spans[0]!.after += "void 0;\n";
+        mutant = JSON.stringify(changed);
+      }
+      expect(mutant).not.toBe(preparedForwardText);
+      expect(() => inversePreparedSourceForward(liveObject, mutant, preparedForwardDigest)).toThrow(
+        /fixture digest mismatch/,
+      );
+    });
+  }
+
+  it("rejects reordered complete callable and tuple spans despite unchanged individual text", () => {
+    requireFullLegacyReceipt(liveObject, "object");
+    const first = preparedForwardSpan("peer-callable-pre-dispatch-main-6420").after;
+    const second = preparedForwardSpan("tuple-candidate-and-layout").after;
+    const firstStart = liveObject.indexOf(first);
+    const secondStart = liveObject.indexOf(second);
+    expect(firstStart).toBeGreaterThanOrEqual(0);
+    expect(secondStart).toBeGreaterThan(firstStart + first.length);
+    const mutant =
+      liveObject.slice(0, firstStart) +
+      second +
+      liveObject.slice(firstStart + first.length, secondStart) +
+      first +
+      liveObject.slice(secondStart + second.length);
+    expect(mutant).not.toBe(liveObject);
+    expect(() => requireFullLegacyReceipt(mutant, "object")).toThrow(/prepared forward span order mismatch/);
+  });
+
+  for (const extraImport of [
+    'import { standaloneLinkBoundaryPeerIndex } from "./standalone-link-boundary.js";\n',
+    "import * as duplicatePeer from './standalone-link-boundary.js';\n",
+    'import "./standalone-link-boundary.js";\n',
+  ]) {
+    it(`rejects an extra retained peer import: ${extraImport.trim()}`, () => {
+      requireFullLegacyReceipt(liveObject, "object");
+      const mutant = liveObject + extraImport;
+      expect(reconstructLegacySource(mutant, "object")).toContain(extraImport);
+      expect(() => requireFullLegacyReceipt(mutant, "object")).toThrow(/full-source donor receipt mismatch/);
+    });
+  }
+
+  it("rejects an extra executable statement outside all forward spans", () => {
+    requireFullLegacyReceipt(liveObject, "object");
+    const mutant = replaceExactlyOnce(
+      liveObject,
+      "export const INITIAL_CAP = 8;",
+      "export const INITIAL_CAP = 8;\nvoid 0;",
+    );
+    expect(reconstructLegacySource(mutant, "object")).toContain("export const INITIAL_CAP = 8;\nvoid 0;");
+    expect(() => requireFullLegacyReceipt(mutant, "object")).toThrow(/full-source donor receipt mismatch/);
+  });
 });

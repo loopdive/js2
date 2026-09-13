@@ -88,6 +88,40 @@ function nanPayload(bits: bigint): number {
   return view.getFloat64(0, true);
 }
 
+it("retains all four collection brands after importing the low-level context first", async () => {
+  // Keep the original eager import order above: collection must succeed before
+  // this test imports the brand helpers, so the cold import cycle stays covered.
+  const { COLLECTION_KIND, MAP_LAYOUT, ensureMapRuntimeTypes } = await import("../src/codegen/map-runtime.js");
+  const { collectionBrandSpec } = await import("../src/codegen/collections-brand.js");
+  const { COLLECTION_KIND: canonicalCollectionKind } = await import("../src/codegen/builtin-brands.js");
+  const { STANDALONE_COLLECTION_BUILTIN_PARENTS } = await import("../src/codegen/standalone-subclass-ctors.js");
+  expect(COLLECTION_KIND).toBe(canonicalCollectionKind);
+  expect(STANDALONE_COLLECTION_BUILTIN_PARENTS).toBeInstanceOf(Map);
+  expect([...STANDALONE_COLLECTION_BUILTIN_PARENTS]).toEqual([
+    ["Map", 0],
+    ["Set", 1],
+    ["WeakMap", 2],
+    ["WeakSet", 3],
+  ]);
+  const ctx = context();
+  ensureMapRuntimeTypes(ctx);
+  expect(ctx.mapTypeIdx).toBeGreaterThanOrEqual(0);
+  expect(MAP_LAYOUT.M_KIND).toBe(4);
+  for (const [cls, key, value] of [
+    ["Map", "MAP", 0],
+    ["Set", "SET", 1],
+    ["WeakMap", "WEAKMAP", 2],
+    ["WeakSet", "WEAKSET", 3],
+  ] as const) {
+    expect(COLLECTION_KIND[key]).toBe(value);
+    expect(collectionBrandSpec(ctx, cls)).toEqual({
+      message: `TypeError: Method ${cls}.prototype.* called on incompatible receiver`,
+      structTypeIdx: ctx.mapTypeIdx,
+      kindField: { fieldIdx: 4, accept: [value] },
+    });
+  }
+});
+
 describe("explicit-rec grouping admission", () => {
   const forms = ["params", "results", "field", "array", "struct-super", "sub-super"] as const;
   function referencing(form: (typeof forms)[number], target: number): Canonical.TypeDef {

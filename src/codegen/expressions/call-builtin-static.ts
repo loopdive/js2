@@ -23,7 +23,6 @@ import {
   emitIteratorPrototypeSingleton,
   emitFunctionPrototypeObjectSingleton,
   emitGeneratorFunctionPrototypeSingleton,
-  emitGeneratorPrototypeSingleton,
   emitTypedArrayIntrinsicCtorObject,
   isWiredTypedArrayViewName,
 } from "../array-object-proto.js";
@@ -2237,42 +2236,6 @@ export function compileBuiltinStaticCall(
     if (es5Early) return es5Early;
     const arg0 = expr.arguments[0]!;
 
-    // (#4748) The native standalone generator-instance getPrototypeOf arm
-    // returns the intrinsic `%GeneratorPrototype%` singleton directly. The
-    // exact ES2015 bootstrap expression asks for one more prototype walk:
-    // `Object.getPrototypeOf(Object.getPrototypeOf(function*(){}()))`.
-    // Preserve that intrinsic result instead of sending the `$Object` GP
-    // singleton through its unmodeled `$proto` field (which otherwise yields
-    // null and makes the following `Symbol.toStringTag` read trap). Evaluate
-    // the inner call normally for source-order side effects, then reuse the
-    // same identity-stable GP singleton. Host/gc remains on its existing path.
-    if ((ctx.standalone || ctx.wasi) && ts.isCallExpression(arg0)) {
-      const innerCallee = arg0.expression;
-      if (
-        ts.isPropertyAccessExpression(innerCallee) &&
-        ts.isIdentifier(innerCallee.expression) &&
-        innerCallee.expression.text === "Object" &&
-        innerCallee.name.text === "getPrototypeOf" &&
-        arg0.arguments.length === 1
-      ) {
-        const innerArg = arg0.arguments[0]!;
-        let innerTypeName: string | undefined;
-        try {
-          innerTypeName = ctx.checker.getTypeAtLocation(innerArg).getSymbol()?.name;
-        } catch {
-          innerTypeName = undefined;
-        }
-        if (innerTypeName === "Generator") {
-          const innerType = compileExpression(ctx, fctx, arg0);
-          if (innerType) fctx.body.push({ op: "drop" });
-          const protoType = emitGeneratorPrototypeSingleton(ctx, fctx);
-          if (protoType) return protoType;
-          fctx.body.push({ op: "ref.null.extern" });
-          return { kind: "externref" };
-        }
-      }
-    }
-
     // (#5099) The iterator allocation is an unobservable intermediate in this
     // intrinsic bootstrap query. Route directly to the metadata-bearing
     // singleton so the generic standalone `__iterator` fallback cannot throw
@@ -2472,31 +2435,8 @@ export function compileBuiltinStaticCall(
       return { kind: "externref" };
     }
 
-    // (#3236 S2) `Object.getPrototypeOf(<sync generator instance>)` → the same
-    // native `%GeneratorPrototype%` singleton that `genFn.prototype` /
-    // `getPrototypeOf(genFn).prototype` resolve to (§27.5.1). A generator
-    // INSTANCE (`g()`) is OrdinaryCreateFromConstructor(g, "%GeneratorPrototype%")
-    // — its `[[Prototype]]` is the intrinsic %GeneratorPrototype% captured at
-    // instantiation, INDEPENDENT of any later mutation of `g.prototype`
-    // (default-proto.js sets `g.prototype = null` yet still expects GP). The
-    // native generator model doesn't carry a per-instance proto slot, so we
-    // route to the identity-stable GP singleton directly — the SAME cached
-    // global `emitGeneratorPrototypeSingleton` returns everywhere, so the
-    // `getPrototypeOf(g()) === getPrototypeOf(g).prototype` identity holds.
-    // The TS checker names a sync generator's result type `Generator`
-    // (distinct from `AsyncGenerator`, which keeps the host path), so this
-    // routes genuinely. Compile+drop the arg for its evaluation side effects
-    // (`g()` evaluates arguments; the generator body itself stays suspended).
-    // Host/gc mode keeps the `__getPrototypeOf` import (byte-inert).
-    if ((ctx.standalone || ctx.wasi) && argTsType.getSymbol()?.name === "Generator") {
-      const argType = compileExpression(ctx, fctx, arg0);
-      if (argType) fctx.body.push({ op: "drop" });
-      const protoType = emitGeneratorPrototypeSingleton(ctx, fctx);
-      if (protoType) return protoType;
-      // Runtime unavailable: preserve the historical null return.
-      fctx.body.push({ op: "ref.null.extern" });
-      return { kind: "externref" };
-    }
+    // Native generator instances carry a mutable canonical prototype view;
+    // the generic runtime read below preserves changes and opaque receivers.
 
     const className = resolveStructName(ctx, argTsType);
     if (objectGetPrototypeOf.tryNativeCollectionGpo(ctx, fctx, arg0, argTsType)) return { kind: "externref" };
@@ -3959,6 +3899,45 @@ export function compileBuiltinStaticCall(
       fctx.body.push({ op: "drop" });
       fctx.body.push({ op: "ref.null.extern" });
       return { kind: "externref" };
+    }
+    // (#5383 S2l) STANDALONE, non-literal entries. Until now the ONLY standalone
+    // shape with a native lowering was the array-LITERAL-of-pairs above;
+    // everything else fell through to `ensureLateImport`, whose funcMap lookup
+    // decided the outcome — and `__object_fromEntries` is in funcMap only when
+    // something ELSE in the module already pulled in `ensureObjectRuntime`. So
+    // the same source line compiled or was REFUSED depending on unrelated module
+    // content: `Object.fromEntries(nt.map(([e,t]) => [t,e]))` compiled (the
+    // array-literal callback body ensures the runtime) while
+    // `Object.fromEntries(nt)`, `nt.slice(0)`, `nt.map((e) => e)` and
+    // `Object.fromEntries(mk())` all failed with the #1472 Phase B refusal.
+    // That is not a capability boundary, it is an accident of ordering.
+    //
+    // Ensure the runtime explicitly and call the self-hosted native directly
+    // when the argument is statically an ARRAY or TUPLE — the shapes the
+    // native's `__extern_length` / `__extern_get_idx` walk genuinely indexes
+    // (typed-vec arms + the closed-struct/tuple arms in
+    // `fillExternArrayLikeStructArms`). No new host import: the native is a
+    // defined function, so this adds no import and shifts no index (#1984).
+    //
+    // A NON-indexable iterable (a `Map`, a generator) deliberately keeps the
+    // refusal. The native would walk it with `__extern_length` → 0 and return
+    // `{}` — a silent wrong answer, which is exactly the failure this slice
+    // exists to remove. Native iterator-protocol consumption is the #2190
+    // follow-up; until then the loud compile error is the correct answer.
+    if (ctx.standalone) {
+      const entriesFact = ctx.oracle.typeFactOf(entriesArg);
+      if (entriesFact.kind === "array" || entriesFact.kind === "tuple") {
+        ensureObjectRuntime(ctx);
+        const feNativeIdx = ctx.funcMap.get("__object_fromEntries");
+        if (feNativeIdx !== undefined) {
+          const nativeArgType = compileExpression(ctx, fctx, entriesArg, { kind: "externref" });
+          if (nativeArgType && nativeArgType.kind !== "externref")
+            coerceType(ctx, fctx, nativeArgType, { kind: "externref" });
+          if (nativeArgType === null) fctx.body.push({ op: "ref.null.extern" });
+          fctx.body.push({ op: "call", funcIdx: feNativeIdx });
+          return { kind: "externref" };
+        }
+      }
     }
     const argType = compileExpression(ctx, fctx, entriesArg, { kind: "externref" });
     if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });

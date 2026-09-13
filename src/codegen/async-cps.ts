@@ -7,6 +7,7 @@ import { awaitIsStaticallyResolved, staticPromiseResolveSettledExpr } from "../i
 import { isPromiseType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { forEachChild, ts } from "../ts-api.js";
+import { lowerAwaitingStatementByHoisting } from "./async-await-hoist.js";
 import { collectBindingPatternNames, collectReferencedIdentifiers } from "./closures.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -196,6 +197,20 @@ export function asyncBodyHasConditionalSuspension(fn: ts.FunctionLikeDeclaration
 // them without an import cycle (this file imports codegen/index.ts, which
 // imports ir/select.ts). Re-exported here for existing callers.
 export { awaitIsStaticallyResolved, staticPromiseResolveSettledExpr } from "../ir/async-static.js";
+
+/**
+ * (#5372) The JS-host async lane (host settle backend). Expression-level await
+ * hoisting (`async-await-hoist.ts`) is admitted ONLY here: the wasi / standalone
+ * CFG machine mistypes a re-declared own-local's spill for the newly admitted
+ * shapes (measured on `--target standalone`: `__async_resume_fr10` failed
+ * validation with `struct.set` field `(ref null $Promise)` vs a `.then()`
+ * closure-typed local), so those lanes keep their pre-#5372 planner
+ * byte-identically. Every planner caller derives the flag from this ONE
+ * predicate so the activation gate, the spill layout and the resume CFG agree.
+ */
+export function isHostAsyncLane(ctx: CodegenContext): boolean {
+  return ctx.wasi !== true && ctx.standalone !== true;
+}
 
 /** Promise static combinators whose call result is already a real Promise. */
 const PROMISE_COMBINATOR_NAMES = new Set(["all", "race", "any", "allSettled"]);
@@ -1332,7 +1347,7 @@ export function planAsyncCfg(
   }
   // (#2906 3c) Bounded try/catch-around-await — catch region as states.
   if (opts.allowTryCatch) {
-    const tryCatchCfg = planTryCatchCfg(fn, plan);
+    const tryCatchCfg = planTryCatchCfg(fn, plan, isHostAsyncLane(ctx));
     if (tryCatchCfg !== null) return tryCatchCfg;
   }
   return null;
@@ -1565,7 +1580,7 @@ export function loopAsyncSpillInfo(
 // ---------------------------------------------------------------------------
 
 /** One linear-lowered statement chunk of the 3c shape. */
-interface TryCatchChunk {
+export interface TryCatchChunk {
   readonly segs: LinearAwaitSegment[];
   /** Trailing statements after the chunk's last await (or the whole chunk). */
   readonly tail: ts.Statement[];
@@ -1626,7 +1641,13 @@ interface TryCatchGroup {
 }
 
 /** A lowered statement region: alternating linear chunks and try/catch groups. */
-interface RegionBody {
+export interface RegionBody {
+  /**
+   * (#5372) Set when an item came from expression-level await hoisting
+   * (`async-await-hoist.ts`) — a shape the linear planner cannot own, so
+   * `analyzeTryCatchAsync` may claim an all-chunk body carrying it.
+   */
+  readonly hoisted?: boolean;
   readonly items: ReadonlyArray<
     | { readonly kind: "chunk"; readonly chunk: TryCatchChunk }
     | { readonly kind: "group"; readonly group: TryCatchGroup }
@@ -1692,97 +1713,6 @@ function asyncForOfIndexSpill(stmt: ts.ForOfStatement): string {
   return `__async_forof_index_${stmt.pos >= 0 ? stmt.pos : stmt.getStart()}`;
 }
 
-function bodyOfChunk(chunk: TryCatchChunk): RegionBody {
-  return { items: [{ kind: "chunk", chunk }] };
-}
-
-function assignmentStatement(target: ts.Identifier, value: ts.Expression): ts.ExpressionStatement {
-  return ts.factory.createExpressionStatement(
-    ts.factory.createBinaryExpression(target, ts.factory.createToken(ts.SyntaxKind.EqualsToken), value),
-  );
-}
-
-/**
- * Lower a multi-declarator statement whose initializers suspend in source
- * order. This is the minified-package form of sequential declarations such as
- * `let a = await p, b = cond ? await q : fallback`.
- *
- * Locals are allocated from the original declarations before body emission,
- * so the CFG only needs to deliver/assign their initializer values. A
- * conditional await becomes a real branch: the non-await arm assigns directly
- * and does not manufacture an extra microtask turn.
- */
-function lowerAwaitingVariableStatement(
-  stmt: ts.VariableStatement,
-  awaitSet: ReadonlySet<ts.AwaitExpression>,
-): RegionBody | null {
-  const decls = stmt.declarationList.declarations;
-  if (decls.length < 2) return null;
-  const items: RegionBody["items"] extends readonly (infer T)[] ? T[] : never = [];
-  let seen = 0;
-  for (const decl of decls) {
-    if (!ts.isIdentifier(decl.name) || decl.initializer === undefined) return null;
-    const initializer = decl.initializer;
-    if (ts.isAwaitExpression(initializer) && awaitSet.has(initializer)) {
-      items.push({
-        kind: "chunk",
-        chunk: {
-          segs: [
-            {
-              leadStmts: [],
-              awaitedExpr: initializer.expression,
-              resumeBinding: { name: decl.name.text, type: decl.type, target: decl.name },
-              isReturnAwait: false,
-              awaitInTry: false,
-              leadInTry: [],
-            },
-          ],
-          tail: [],
-          sawReturnAwait: false,
-        },
-      });
-      seen++;
-      continue;
-    }
-    if (ts.isConditionalExpression(initializer)) {
-      const trueAwait = ts.isAwaitExpression(initializer.whenTrue) && awaitSet.has(initializer.whenTrue);
-      const falseAwait = ts.isAwaitExpression(initializer.whenFalse) && awaitSet.has(initializer.whenFalse);
-      if (trueAwait === falseAwait) return null; // exactly one branch suspends
-      const awaited = (trueAwait ? initializer.whenTrue : initializer.whenFalse) as ts.AwaitExpression;
-      const immediate = (trueAwait ? initializer.whenFalse : initializer.whenTrue) as ts.Expression;
-      const suspendChunk: TryCatchChunk = {
-        segs: [
-          {
-            leadStmts: [],
-            awaitedExpr: awaited.expression,
-            resumeBinding: { name: decl.name.text, type: decl.type, target: decl.name },
-            isReturnAwait: false,
-            awaitInTry: false,
-            leadInTry: [],
-          },
-        ],
-        tail: [],
-        sawReturnAwait: false,
-      };
-      const immediateChunk: TryCatchChunk = {
-        segs: [],
-        tail: [assignmentStatement(decl.name, immediate)],
-        sawReturnAwait: false,
-      };
-      items.push({
-        kind: "conditional",
-        condition: initializer.condition,
-        whenTrue: bodyOfChunk(trueAwait ? suspendChunk : immediateChunk),
-        whenFalse: bodyOfChunk(trueAwait ? immediateChunk : suspendChunk),
-      });
-      seen++;
-      continue;
-    }
-    return null;
-  }
-  return seen === decls.length ? { items } : null;
-}
-
 function asyncForOfBodyHasUnsupportedControl(body: ts.Statement): boolean {
   let unsupported = false;
   const walk = (node: ts.Node): void => {
@@ -1817,20 +1747,28 @@ function lowerRegionBody(
   statements: readonly ts.Statement[],
   awaitSet: ReadonlySet<ts.AwaitExpression>,
   depth: number,
+  hoist: boolean,
 ): RegionBody | null {
   const items: Array<RegionBody["items"][number]> = [];
   let cursor = 0;
+  let hoisted = false;
   for (let i = 0; i < statements.length; i++) {
     const stmt = statements[i]!;
     const awaitsHere = countAwaitsInStatement(stmt, awaitSet);
     if (awaitsHere === 0) continue;
 
-    if (ts.isVariableStatement(stmt)) {
-      const variableBody = lowerAwaitingVariableStatement(stmt, awaitSet);
-      if (variableBody === null) continue;
+    if (ts.isVariableStatement(stmt) || ts.isExpressionStatement(stmt) || ts.isReturnStatement(stmt)) {
+      // (#5372) JS-host lane: awaits nested inside the statement's expression
+      // (conditional operand, `cond && await p`, awaited call with an awaiting
+      // callee, `return cond ? await a : b`). Null ⇒ linear-canonical or
+      // off-shape, and the statement stays in the surrounding chunk exactly as
+      // before. Non-host lanes keep the multi-declarator-only arm.
+      const hoistedBody = lowerAwaitingStatementByHoisting(stmt, awaitSet, hoist);
+      if (hoistedBody === null) continue;
       const pre = lowerChunk(statements.slice(cursor, i), awaitSet);
       if (pre === null || pre.sawReturnAwait) return null;
-      items.push({ kind: "chunk", chunk: pre }, ...variableBody.items);
+      items.push({ kind: "chunk", chunk: pre }, ...hoistedBody.items);
+      if (hoistedBody.hoisted === true) hoisted = true;
       cursor = i + 1;
       continue;
     }
@@ -1851,8 +1789,9 @@ function lowerRegionBody(
       const pre = lowerChunk(statements.slice(cursor, i), awaitSet);
       if (pre === null || pre.sawReturnAwait) return null;
       const bodyStatements = ts.isBlock(stmt.statement) ? stmt.statement.statements : [stmt.statement];
-      const loopBody = lowerRegionBody(bodyStatements, awaitSet, depth);
+      const loopBody = lowerRegionBody(bodyStatements, awaitSet, depth, hoist);
       if (loopBody === null || bodySegCount(loopBody) === 0) return null;
+      if (loopBody.hoisted === true) hoisted = true;
       items.push(
         { kind: "chunk", chunk: pre },
         {
@@ -1878,9 +1817,10 @@ function lowerRegionBody(
           : ts.isBlock(stmt.elseStatement)
             ? stmt.elseStatement.statements
             : [stmt.elseStatement];
-      const whenTrue = lowerRegionBody(thenStatements, awaitSet, depth);
-      const whenFalse = lowerRegionBody(elseStatements, awaitSet, depth);
+      const whenTrue = lowerRegionBody(thenStatements, awaitSet, depth, hoist);
+      const whenFalse = lowerRegionBody(elseStatements, awaitSet, depth, hoist);
       if (whenTrue === null || whenFalse === null) return null;
+      if (whenTrue.hoisted === true || whenFalse.hoisted === true) hoisted = true;
       items.push(
         { kind: "chunk", chunk: pre },
         { kind: "conditional", condition: stmt.expression, whenTrue, whenFalse },
@@ -1908,8 +1848,9 @@ function lowerRegionBody(
     const pre = lowerChunk(statements.slice(cursor, i), awaitSet);
     if (pre === null || pre.sawReturnAwait) return null; // `return await` → the try is unreachable
     items.push({ kind: "chunk", chunk: pre });
-    const tryBody = lowerRegionBody(stmt.tryBlock.statements, awaitSet, depth + 1);
+    const tryBody = lowerRegionBody(stmt.tryBlock.statements, awaitSet, depth + 1, hoist);
     if (tryBody === null || bodySegCount(tryBody) === 0) return null;
+    if (tryBody.hoisted === true) hoisted = true;
     if (finallyStmts !== null && bodyHasGroup(tryBody)) return null; // combined + nested — bounded out
     // A `return await` inside the try body may only be its FINAL item, and only
     // when nothing follows this group in the SOURCE body (checked by the
@@ -1925,7 +1866,7 @@ function lowerRegionBody(
   const tail = lowerChunk(statements.slice(cursor), awaitSet);
   if (tail === null) return null;
   items.push({ kind: "chunk", chunk: tail });
-  return { items };
+  return hoisted ? { items, hoisted: true } : { items };
 }
 
 /**
@@ -1936,19 +1877,23 @@ function lowerRegionBody(
  * linear-canonical chunks (awaits allowed). Returns `null` (→ Gap-3 linear /
  * legacy fallback) for anything outside the slice.
  */
-export function analyzeTryCatchAsync(fn: ts.FunctionLikeDeclaration, plan: AsyncCpsPlan): { body: RegionBody } | null {
+export function analyzeTryCatchAsync(
+  fn: ts.FunctionLikeDeclaration,
+  plan: AsyncCpsPlan,
+  hoist = false,
+): { body: RegionBody } | null {
   if (plan.awaitPoints.length === 0) return null;
   const body = fn.body;
   if (body === undefined || !ts.isBlock(body)) return null;
   const awaitSet = new Set<ts.AwaitExpression>(plan.awaitPoints);
 
-  const region = lowerRegionBody(body.statements, awaitSet, 0);
+  const region = lowerRegionBody(body.statements, awaitSet, 0, hoist);
   if (region === null) return null;
   // At least one non-linear construct (else the linear path owns the body), and
   // every await accounted for by the region's chunks (no stray positions).
   // Conditionals reuse the same branch-capable CFG builder as try/catch; no
   // handler region is created when the body contains only `if` branches.
-  if (!bodyHasGroup(region) && !bodyHasConditional(region)) return null;
+  if (!bodyHasGroup(region) && !bodyHasConditional(region) && region.hoisted !== true) return null;
   if (bodySegCount(region) !== plan.awaitPoints.length) return null;
   return { body: region };
 }
@@ -1964,8 +1909,12 @@ export function analyzeTryCatchAsync(fn: ts.FunctionLikeDeclaration, plan: Async
  * the next group's entry (or the post chain). Handlers: one region per group
  * `{ id: r, catchState, catchParamName? }`.
  */
-export function planTryCatchCfg(fn: ts.FunctionLikeDeclaration, plan: AsyncCpsPlan): AsyncCfgPlan | null {
-  const shape = analyzeTryCatchAsync(fn, plan);
+export function planTryCatchCfg(
+  fn: ts.FunctionLikeDeclaration,
+  plan: AsyncCpsPlan,
+  hoist = false,
+): AsyncCfgPlan | null {
+  const shape = analyzeTryCatchAsync(fn, plan, hoist);
   if (shape === null) return null;
 
   const asLead = (stmts: readonly ts.Statement[], handler: number): AsyncCfgStmt[] =>
@@ -2346,6 +2295,7 @@ export function planTryCatchCfg(fn: ts.FunctionLikeDeclaration, plan: AsyncCpsPl
 export function tryCatchAsyncSpillInfo(
   fn: ts.FunctionLikeDeclaration,
   plan: AsyncCpsPlan,
+  hoist = false,
 ): {
   segments: readonly LinearAwaitSegment[];
   catchParamNames: string[];
@@ -2355,7 +2305,7 @@ export function tryCatchAsyncSpillInfo(
     source: ts.Expression;
   }>;
 } | null {
-  const shape = analyzeTryCatchAsync(fn, plan);
+  const shape = analyzeTryCatchAsync(fn, plan, hoist);
   if (shape === null) return null;
   const segments: LinearAwaitSegment[] = [];
   const catchParamNames: string[] = [];

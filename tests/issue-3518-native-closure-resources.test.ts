@@ -18,6 +18,7 @@ import {
 } from "../src/backend/wasmgc/resources/native-closures.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { emitWat } from "../src/emit/wat.js";
+import { inversePreparedSourceForward } from "./helpers/prepared-source-forward-receipts.js";
 
 const base = "bfe31c8bd96d748e867562e3e9b78343b72d1877";
 // Prettier changed only the fixture's JSON whitespace at publication. All
@@ -60,6 +61,22 @@ function authenticate(text: string): Fixture {
 // Independent exact-base originals and enumerated extraction edits; no runtime Git/fallback.
 const fixtureText = read("tests/fixtures/issue-3518-native-closure-donors.json");
 const fixture = authenticate(fixtureText);
+// Exact additions from original implementation 4fd5a582, independently present
+// in signed parent 113929. The old minimum-observer source hash stays authoritative.
+const callsForwardHash = "b647a86fe682a5eb6696c9ce4b12a37b99f0db487664149284a16b1574a33c80";
+const callsForwardText = read("tests/fixtures/issue-3518-prepared-calls-forward.json");
+const callsForward = JSON.parse(callsForwardText) as {
+  path: string;
+  spans: { id: string; before: string; after: string }[];
+};
+const liveCalls = read(fixture.minimumObserver.path);
+function beforePreparedCalls(source: string): string {
+  return inversePreparedSourceForward(source, callsForwardText, callsForwardHash);
+}
+function requireMinimumObserverReceipt(source: string): void {
+  if (hash(beforePreparedCalls(source)) !== fixture.minimumObserver.sourceSha256)
+    throw new Error("full minimum-observer source receipt mismatch");
+}
 const [headerDonor, wrapperDonor, metadataDonor] = fixture.sources as [Donor, Donor, Donor];
 function inverse(source: string, donor: Donor): string {
   const lines = source.split("\n");
@@ -455,7 +472,7 @@ describe("native closure identities and settlement metadata", () => {
   });
   it("retains original source controls and the full minimum-arity authority", () => {
     for (const control of fixture.controls) expect(hash(read(control.path))).toBe(control.sha256);
-    expect(hash(read(fixture.minimumObserver.path))).toBe(fixture.minimumObserver.sourceSha256);
+    expect(hash(beforePreparedCalls(read(fixture.minimumObserver.path)))).toBe(fixture.minimumObserver.sourceSha256);
   });
   it("rejects retained catalog changes and publication reorder", () => {
     const source = read(metadataDonor.path);
@@ -891,5 +908,156 @@ describe("native closure identities and settlement metadata", () => {
       expect(api[`read${index}_3`]!(closure)).toBe(0);
       expect(api[`read${index}_4`]!(closure)).toBe(pack.metadata[index]!.binding.metadata.id);
     }
+  });
+});
+
+// Positive-first changes target exact independently committed additions.
+const callsForwardMutations: [string, [string, string][]][] = [
+  [
+    "callability-early-reservation",
+    [
+      ["const wantIsCallableGuard = noJsHost(ctx);", "const wantIsCallableGuard = ctx.standalone === true;"],
+      [
+        'ensureLateImport(ctx, "__is_callable", [{ kind: "externref" }], [{ kind: "i32" }]);',
+        'ensureLateImport(ctx, "__is_callable", [{ kind: "eqref" }], [{ kind: "i32" }]);',
+      ],
+      ['ensureLateImport(ctx, "__is_callable",', 'ensureLateImport(ctx, "__apply_closure",'],
+    ],
+  ],
+  [
+    "callability-index-capture",
+    [
+      [
+        'let isCallableIdx = ctx.funcMap.get("__is_callable");',
+        'let isCallableIdx = ctx.funcMap.get("__apply_closure");',
+      ],
+      [
+        'let isCallableIdx = ctx.funcMap.get("__is_callable");',
+        'const isCallableIdx = ctx.funcMap.get("__is_callable");',
+      ],
+    ],
+  ],
+  [
+    "callability-index-refresh",
+    [
+      ['isCallableIdx = ctx.funcMap.get("__is_callable");', 'isCallableIdx ??= ctx.funcMap.get("__is_callable");'],
+      ['isCallableIdx = ctx.funcMap.get("__is_callable");', 'isCallableIdx = ctx.funcMap.get("__apply_closure");'],
+    ],
+  ],
+  [
+    "callability-post-argument-guard",
+    [
+      ["wantIsCallableGuard && isCallableIdx !== undefined", "wantIsCallableGuard || isCallableIdx !== undefined"],
+      ['buildThrowJsErrorInstrs(ctx, "TypeError",', 'buildThrowJsErrorInstrs(ctx, "Error",'],
+      ['"called value is not a function"', '"called value is a function"'],
+      ["flush: fctx,", "flush: undefined,"],
+      ["fctx.body.push(", "fctx.body.unshift("],
+      ['{ op: "local.get", index: anyLocal }', '{ op: "local.get", index: anyLocal + 1 }'],
+      ['{ op: "extern.convert_any" }', '{ op: "any.convert_extern" }'],
+      ['{ op: "call", funcIdx: isCallableIdx }', '{ op: "call", funcIdx: isCallableIdx + 1 }'],
+      ['{ op: "i32.eqz" }', '{ op: "nop" }'],
+    ],
+  ],
+];
+
+describe("prepared callability forward receipts preserve closure observers", () => {
+  it("authenticates four ordered additions and reconstructs the unchanged full minimum observer source", () => {
+    expect(hash(callsForwardText)).toBe(callsForwardHash);
+    expect(callsForward.path).toBe(fixture.minimumObserver.path);
+    expect(callsForward.spans.map((span) => span.id)).toEqual(callsForwardMutations.map(([id]) => id));
+    expect(callsForward.spans).toHaveLength(4);
+    const restored = beforePreparedCalls(liveCalls);
+    expect(hash(restored)).toBe(fixture.minimumObserver.sourceSha256);
+    expect(restored.slice(fixture.minimumObserver.start, fixture.minimumObserver.end)).toBe(
+      fixture.minimumObserver.text,
+    );
+    requireMinimumObserverReceipt(liveCalls);
+  });
+
+  for (const [id, changes] of callsForwardMutations) {
+    it(`rejects altered, removed or duplicated ${id} after a genuine positive`, () => {
+      requireMinimumObserverReceipt(liveCalls);
+      const matches = callsForward.spans.filter((span) => span.id === id);
+      expect(matches).toHaveLength(1);
+      const span = matches[0]!;
+      expect(changes.length).toBeGreaterThan(0);
+      const replacements = changes.map(([before, after]) => replaceOnce(span.after, before, after));
+      replacements.push(span.before, span.after + span.after);
+      for (const replacement of replacements) {
+        const mutant = replaceOnce(liveCalls, span.after, replacement);
+        expect(mutant).not.toBe(liveCalls);
+        expect(() => requireMinimumObserverReceipt(mutant)).toThrow(/prepared forward span/);
+      }
+    });
+  }
+
+  for (const mutation of ["missing", "provenance", "span"] as const) {
+    it(`rejects ${mutation} calls-forward evidence without accepting a replacement digest`, () => {
+      requireMinimumObserverReceipt(liveCalls);
+      let mutant: string;
+      if (mutation === "missing") mutant = "";
+      else if (mutation === "provenance")
+        mutant = replaceOnce(
+          callsForwardText,
+          "4fd5a582bbe7de375f2d0781cfd3cd06aa7fcda1",
+          "0000000000000000000000000000000000000000",
+        );
+      else {
+        const changed = JSON.parse(callsForwardText) as typeof callsForward;
+        changed.spans[0]!.after += "void 0;\n";
+        mutant = JSON.stringify(changed);
+      }
+      expect(mutant).not.toBe(callsForwardText);
+      expect(() => inversePreparedSourceForward(liveCalls, mutant, callsForwardHash)).toThrow(
+        /fixture digest mismatch/,
+      );
+    });
+  }
+
+  it("rejects moving the whole emitted guard ahead of reservation and argument evaluation", () => {
+    requireMinimumObserverReceipt(liveCalls);
+    const first = callsForward.spans[0]!.after;
+    const last = callsForward.spans[3]!.after;
+    const firstStart = liveCalls.indexOf(first);
+    const lastStart = liveCalls.indexOf(last);
+    expect(firstStart).toBeGreaterThanOrEqual(0);
+    expect(lastStart).toBeGreaterThan(firstStart + first.length);
+    const mutant =
+      liveCalls.slice(0, firstStart) +
+      last +
+      liveCalls.slice(firstStart + first.length, lastStart) +
+      first +
+      liveCalls.slice(lastStart + last.length);
+    expect(mutant).not.toBe(liveCalls);
+    expect(() => requireMinimumObserverReceipt(mutant)).toThrow(/prepared forward span order mismatch/);
+  });
+
+  for (const mutation of ["persistent-index", "minimum-synchronization"] as const) {
+    it(`rejects retained observer ${mutation} corruption outside the forward additions`, () => {
+      requireMinimumObserverReceipt(liveCalls);
+      const original = fixture.minimumObserver.text;
+      const altered =
+        mutation === "persistent-index"
+          ? replaceOnce(
+              original,
+              "ctx.closureMinimumArgumentCountByFuncTypeIdx.set(funcTypeIdx, effectiveMinimum);",
+              "ctx.closureMinimumArgumentCountByFuncTypeIdx.set(funcTypeIdx + 1, effectiveMinimum);",
+            )
+          : replaceOnce(
+              original,
+              "info.minimumArgumentCount = Math.min(current, effectiveMinimum);",
+              "info.minimumArgumentCount = Math.max(current, effectiveMinimum);",
+            );
+      const mutant = replaceOnce(liveCalls, original, altered);
+      expect(beforePreparedCalls(mutant)).toContain(altered);
+      expect(() => requireMinimumObserverReceipt(mutant)).toThrow(/full minimum-observer source receipt mismatch/);
+    });
+  }
+
+  it("retains and rejects an extra executable statement outside the four approved additions", () => {
+    requireMinimumObserverReceipt(liveCalls);
+    const mutant = liveCalls + "\nvoid 0;\n";
+    expect(beforePreparedCalls(mutant)).toContain("\nvoid 0;\n");
+    expect(() => requireMinimumObserverReceipt(mutant)).toThrow(/full minimum-observer source receipt mismatch/);
   });
 });

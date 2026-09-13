@@ -133,6 +133,10 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
 import { isUserDeclaredStruct } from "./user-declared-structs.js";
+import {
+  reserveNativeGeneratorProtocolLookup,
+  nativeGeneratorProtocolReadPrefix,
+} from "./generators-native-protocol.js";
 import { buildVecOrClosurePropSetMissArm } from "./vec-props.js";
 
 /** `(externref v) -> i32` — 1 iff `v` is an instance of a user-declared shape. */
@@ -166,6 +170,7 @@ const ANY: ValType = { kind: "anyref" };
  */
 export function reserveInstanceProps(ctx: CodegenContext): void {
   if (!(ctx.standalone || ctx.wasi)) return;
+  reserveNativeGeneratorProtocolLookup(ctx);
   if (ctx.funcMap.get(IS_INSTANCE_EXPANDO_CARRIER) !== undefined) return;
 
   const reserve = (name: string, params: ValType[], results: ValType[], placeholder: Instr[]): void => {
@@ -204,6 +209,14 @@ function instanceCarrierTypeIdxs(ctx: CodegenContext): number[] {
     if (typeIdx === undefined || seen.has(typeIdx)) continue;
     seen.add(typeIdx);
     idxs.push(typeIdx);
+  }
+  // Generator frames are ordinary extensible objects. Reuse the identity bag
+  // for public properties; their private frame fields are never enumerated.
+  for (const info of ctx.nativeGenerators.values()) {
+    if (!seen.has(info.stateTypeIdx)) {
+      seen.add(info.stateTypeIdx);
+      idxs.push(info.stateTypeIdx);
+    }
   }
   return idxs;
 }
@@ -280,6 +293,7 @@ export function buildInstancePropGetArm(ctx: CodegenContext, scratchLocal: numbe
   const getIdx = ctx.funcMap.get(INSTANCE_PROP_GET);
   if (isIdx === undefined || getIdx === undefined) return [];
   return [
+    ...nativeGeneratorProtocolReadPrefix(ctx, scratchLocal),
     { op: "local.get", index: 0 },
     { op: "call", funcIdx: isIdx },
     {

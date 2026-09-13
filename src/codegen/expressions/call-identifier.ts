@@ -32,6 +32,7 @@ import { compileArrowAsClosure, getClosureFuncSelfTypeIdx, getOrCreateFuncRefWra
 import { emitToNumber, emitToString } from "../coercion-engine.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
+import { eagerCaptureCellForCall } from "../statements/eager-capture-box.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import {
   addImport,
@@ -2338,6 +2339,7 @@ export function compileIdentifierCall(
               boxNumberIdx: number | null;
               boxBooleanIdx: number | null;
               unboxNumberIdx: number | null;
+              isTruthyIdx: number | null;
             },
             allowProvenNumberUnbox: boolean,
             allowGeneralRefExport: boolean,
@@ -2422,6 +2424,27 @@ export function compileIdentifierCall(
             if (allowProvenNumberUnbox && isHostExtern(from) && to.kind === "f64" && to.undefSentinel !== true) {
               return helpers.unboxNumberIdx === null ? null : [{ op: "call", funcIdx: helpers.unboxNumberIdx }];
             }
+
+            // (#6415) An untyped module's `return f(x)` — where `f` was read as
+            // a first-class VALUE from a host builtin (`const f =
+            // ArrayBuffer.isView`) — leaves the callee returning the boxed host
+            // result as externref, while a typed caller that cast the import to
+            // `=> boolean` expects the boolean-branded i32 this lane lowers
+            // `boolean` to. Without a bridge the live arm fell into the
+            // dead-arm placeholder below, which DROPS the result and answers
+            // `i32.const 0` — so `const f = ArrayBuffer.isView; f(bytes)`
+            // answered false where the direct `ArrayBuffer.isView(bytes)` call
+            // answered true, for every predicate (`Array.isArray`, `Object.is`
+            // measured the same way).
+            //
+            // `__is_truthy` is ToBoolean of the boxed result: exact for a real
+            // boolean, and spec-correct if the callee hands back a non-boolean
+            // that the caller's declared type says to read as one. Deliberately
+            // NOT widened to plain `i32`: that carrier also spells native ints
+            // and symbol ids, whose values are not a truthiness question.
+            if (isHostExtern(from) && to.kind === "i32" && to.boolean === true) {
+              return helpers.isTruthyIdx === null ? null : [{ op: "call", funcIdx: helpers.isTruthyIdx }];
+            }
             return null;
           };
           const argumentHasNumberBridgeProof = (index: number): boolean =>
@@ -2430,6 +2453,7 @@ export function compileIdentifierCall(
             boxNumberIdx: 0,
             boxBooleanIdx: 0,
             unboxNumberIdx: 0,
+            isTruthyIdx: 0,
           };
           // (#5334) On the host lane a trailing `$__vec_externref` formal is
           // marshalled by the runtime-disambiguating bridge (see
@@ -2482,6 +2506,7 @@ export function compileIdentifierCall(
                 boxNumberIdx: ctx.funcMap.get("__box_number") ?? null,
                 boxBooleanIdx: ctx.funcMap.get("__box_boolean") ?? null,
                 unboxNumberIdx: ctx.funcMap.get("__unbox_number") ?? null,
+                isTruthyIdx: ctx.funcMap.get("__is_truthy") ?? null,
               },
               allowProvenNumberUnbox,
               allowGeneralRefExport,
@@ -3818,23 +3843,31 @@ export function compileIdentifierCall(
             // explicitly recorded a lifted capture slot or can prove the old
             // slot is stale. This is not #1177's reverted blanket localMap-first
             // substitution.
-            const capSourceIdx = captureSourceSlot(fctx, cap);
-            fctx.body.push({ op: "local.get", index: capSourceIdx });
-            fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
-            // Also box the outer local so subsequent reads/writes go through the ref cell
-            const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}`, {
-              kind: "ref",
-              typeIdx: refCellTypeIdx,
-            });
-            // Duplicate: need the ref cell for the call AND for the outer local
-            fctx.body.push({ op: "local.tee", index: boxedLocalIdx });
-            // Re-register the original name to point to the boxed local
-            fctx.localMap.set(cap.name, boxedLocalIdx);
-            if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
-            fctx.boxedCaptures.set(cap.name, {
-              refCellTypeIdx,
-              valType: cap.valType,
-            });
+            // (#5356) …unless THIS frame minted the binding's cell at function
+            // top and only the NAME is hidden here (shadowing block / CaseBlock
+            // scope): forward that cell — see statements/eager-capture-box.ts.
+            const eagerCell = eagerCaptureCellForCall(fctx, cap, refCellTypeIdx);
+            if (eagerCell !== undefined) {
+              fctx.body.push({ op: "local.get", index: eagerCell });
+            } else {
+              const capSourceIdx = captureSourceSlot(fctx, cap);
+              fctx.body.push({ op: "local.get", index: capSourceIdx });
+              fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
+              // Also box the outer local so subsequent reads/writes go through the ref cell
+              const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}`, {
+                kind: "ref",
+                typeIdx: refCellTypeIdx,
+              });
+              // Duplicate: need the ref cell for the call AND for the outer local
+              fctx.body.push({ op: "local.tee", index: boxedLocalIdx });
+              // Re-register the original name to point to the boxed local
+              fctx.localMap.set(cap.name, boxedLocalIdx);
+              if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
+              fctx.boxedCaptures.set(cap.name, {
+                refCellTypeIdx,
+                valType: cap.valType,
+              });
+            }
           }
           // Coerce mutable capture (ref cell) to expected param type if they differ
           const expectedMutCapType = captureParamTypes?.[capIdx];

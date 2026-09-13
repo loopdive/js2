@@ -16,6 +16,7 @@ import {
   getOrRegisterHoleyArrayType,
 } from "../src/codegen/registry/types.js";
 import { HOLE_F64_BITS } from "../src/codegen/value-tags.js";
+import { inversePreparedSourceForward } from "./helpers/prepared-source-forward-receipts.js";
 import {
   buildVectorGrowStoreBody,
   createVectorBackingArrayType,
@@ -420,8 +421,39 @@ function inverseStringLayouts(registry: string, canonical: string, forwardText?:
   return registry;
 }
 
+const preparedRegistryFixtureText = readRelative("./fixtures/issue-3518-prepared-registry-types-forward.json");
+const preparedRegistryFixtureHash = "b2cf353c1779a8469be0c68eba497321cd1110c0e524c12f6dd357925025c2f9";
+const preparedRegistryImport =
+  'import type { FieldDef, FuncTypeDef, Instr, StructTypeDef, ValType } from "../../ir/types.js";';
+
+function inversePreparedRegistry(registry: string, fixtureText = preparedRegistryFixtureText): string {
+  const restored = inversePreparedSourceForward(registry, fixtureText, preparedRegistryFixtureHash);
+  const sf = parse(registry);
+  const imports = sf.statements.filter(
+    (node): node is ts.ImportDeclaration =>
+      ts.isImportDeclaration(node) &&
+      ((ts.isStringLiteral(node.moduleSpecifier) && node.moduleSpecifier.text === "../../ir/types.js") ||
+        Boolean(
+          node.importClause?.namedBindings &&
+          ts.isNamedImports(node.importClause.namedBindings) &&
+          node.importClause.namedBindings.elements.some((binding) => binding.name.text === "Instr"),
+        )),
+  );
+  expect(imports, "single prepared IR type import").toHaveLength(1);
+  expect(imports[0]!.getText(sf), "exact prepared IR type import").toBe(preparedRegistryImport);
+  const names = sf.statements.filter(ts.isFunctionDeclaration).map((fn) => fn.name?.text);
+  expect(names.filter((name) => name === "taCtorIdentityTestInstrs")).toHaveLength(1);
+  const position = names.indexOf("taCtorIdentityTestInstrs");
+  expect(names.slice(position - 1, position + 2), "prepared declaration ownership and order").toEqual([
+    "getOrRegisterTaCtorType",
+    "taCtorIdentityTestInstrs",
+    "getOrRegisterTaDynViewType",
+  ]);
+  return restored;
+}
+
 function verifyLayoutInverse(registry = read("registry"), canonical = readRelative(layoutSourcePath)): string {
-  const restored = inverseStringLayouts(registry, canonical);
+  const restored = inverseStringLayouts(inversePreparedRegistry(registry), canonical);
   const originalText = readRelative(layoutDonorPath);
   expect(sha(originalText), "unchanged original layout donor fixture").toBe(
     "b579a8d1d0c251ec9a5661f2602da72a90d96991e5915304a013dadc9fc5de61",
@@ -538,6 +570,96 @@ describe("independently authenticated string/Error extraction in the vector regi
       read("registry") + "\nimport * as extraLayouts from '../../runtime/wasmgc/values/string-layouts.js';\n";
     expect(changed).not.toBe(read("registry"));
     expect(() => verifyLayoutInverse(changed)).toThrow("one canonical ordinary layout import");
+  });
+});
+
+describe("independently authenticated prepared registry addition", () => {
+  it("inverts the exact ordered addition before checking the unchanged historical registry", () => {
+    const restored = inversePreparedRegistry(read("registry"));
+    expect(sha(restored)).toBe("8e30d0c98c75cb4feb3924050fe02a6e911eb0e9b459391ba2598fcd96b19979");
+    verifyLayoutInverse();
+  });
+  const importMutations: [string, (source: string) => string][] = [
+    [
+      "missing Instr",
+      (source) => replaceOne(source, preparedRegistryImport, preparedRegistryImport.replace(", Instr", "")),
+    ],
+    [
+      "value import",
+      (source) => replaceOne(source, preparedRegistryImport, preparedRegistryImport.replace("import type", "import")),
+    ],
+    [
+      "retargeted import",
+      (source) =>
+        replaceOne(
+          source,
+          preparedRegistryImport,
+          preparedRegistryImport.replace("../../ir/types.js", "../../ir/other.js"),
+        ),
+    ],
+    [
+      "renamed Instr",
+      (source) =>
+        replaceOne(source, preparedRegistryImport, preparedRegistryImport.replace("Instr,", "Instr as OtherInstr,")),
+    ],
+    ["duplicate decoded route", (source) => source + "\nimport type * as DuplicateIR from '../../ir/types.js';\n"],
+    ["shadowed Instr binding", (source) => source + '\nimport type { Instr } from "./different-types.js";\n'],
+  ];
+  it.each(importMutations)("refuses the %s", (_name, mutate) => {
+    inversePreparedRegistry(read("registry"));
+    const mutated = mutate(read("registry"));
+    expect(mutated).not.toBe(read("registry"));
+    expect(() => inversePreparedRegistry(mutated)).toThrow();
+  });
+  const declarationMutations: [string, (source: string) => string][] = [
+    [
+      "missing declaration",
+      (source) => {
+        const record = JSON.parse(preparedRegistryFixtureText).spans[1];
+        return replaceOne(source, record.after, record.before);
+      },
+    ],
+    [
+      "duplicated declaration span",
+      (source) => {
+        const record = JSON.parse(preparedRegistryFixtureText).spans[1];
+        return replaceOne(source, record.after, record.after + record.after);
+      },
+    ],
+    [
+      "wrong brand",
+      (source) => replaceOne(source, '{ op: "i32.const", value: TA_CTOR_BRAND },', '{ op: "i32.const", value: 0 },'),
+    ],
+    [
+      "wrong brand field",
+      (source) =>
+        replaceOne(
+          source,
+          '{ op: "struct.get", typeIdx: taCtorTypeIdx, fieldIdx: 1 },',
+          '{ op: "struct.get", typeIdx: taCtorTypeIdx, fieldIdx: 0 },',
+        ),
+    ],
+    [
+      "moved declaration",
+      (source) => {
+        const sf = parse(source),
+          fn = exactFunction(sf, "taCtorIdentityTestInstrs");
+        const text = fn.getFullText(sf);
+        return text + replaceOne(source, text, "");
+      },
+    ],
+  ];
+  it.each(declarationMutations)("refuses the %s", (_name, mutate) => {
+    inversePreparedRegistry(read("registry"));
+    const mutated = mutate(read("registry"));
+    expect(mutated).not.toBe(read("registry"));
+    expect(() => inversePreparedRegistry(mutated)).toThrow();
+  });
+  it("refuses edited forward provenance without replacing the original receipts", () => {
+    inversePreparedRegistry(read("registry"));
+    expect(() => inversePreparedRegistry(read("registry"), preparedRegistryFixtureText + " ")).toThrow(
+      "fixture digest mismatch",
+    );
   });
 });
 

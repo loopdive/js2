@@ -66,6 +66,9 @@ function closure(reader: (path: string) => string): void {
     visit(file);
     assert.deepEqual(edges, [
       ["../../../wasm/model/instructions.js", true, ["FuncHandle", "Instr", "LocalDef", "TypeHandle", "ValType"]],
+      ...(path.endsWith("delay-bodies.ts")
+        ? [["../../../wasm/physical/exception-control.js", false, ["buildStandardTryTable"]]]
+        : []),
       [
         "./settlement-bodies.js",
         false,
@@ -172,7 +175,7 @@ describe("context-free delay/combinator executable ownership", () => {
     ]);
   });
   it("preserves delay allocation/capture operand order and both nonaliasing exception routes", () => {
-    const body = delay.buildNativePromiseDelayProviderBody({
+    const providerResources: delay.NativePromiseDelayProviderResources = {
       promiseTypeIdx: 30,
       capture,
       timerCallbackFuncIdx: 40,
@@ -182,7 +185,8 @@ describe("context-free delay/combinator executable ownership", () => {
       exnTagIdx: 7,
       callbackArity: 0,
       bagInit: { op: "ref.null.extern" },
-    });
+    };
+    const body = delay.buildNativePromiseDelayProviderBody(providerResources);
     expect(delay.buildNativePromiseDelayProviderLocals(30)).toEqual([
       { name: "$promise", type: { kind: "ref", typeIdx: 30 } },
       { name: "$reason", type: { kind: "externref" } },
@@ -195,8 +199,23 @@ describe("context-free delay/combinator executable ownership", () => {
       { op: "struct.new", typeIdx: 30 },
       { op: "local.set", index: 2 },
     ]);
-    const guarded = body[6];
-    assert(guarded?.op === "try");
+    const join = body[6];
+    assert(join?.op === "block");
+    expect(join.blockType).toEqual({ kind: "empty" });
+    const foreignTarget = join.body[0];
+    assert(foreignTarget?.op === "block");
+    expect(foreignTarget.blockType).toEqual({ kind: "empty" });
+    const taggedTarget = foreignTarget.body[0];
+    assert(taggedTarget?.op === "block");
+    expect(taggedTarget.blockType).toEqual({ kind: "val", type: { kind: "externref" } });
+    const guarded = taggedTarget.body[0];
+    assert(guarded?.op === "try_table");
+    expect(guarded.blockType).toEqual({ kind: "empty" });
+    expect(guarded.catches).toEqual([
+      { kind: "catch", tagIdx: 7, depth: 0 },
+      { kind: "catch_all", depth: 1 },
+    ]);
+    expect(taggedTarget.body.slice(1)).toEqual([{ op: "br", depth: 2 }]);
     expect(guarded.body).toEqual([
       { op: "ref.func", funcIdx: 40 },
       { op: "i32.const", value: 0 },
@@ -210,28 +229,30 @@ describe("context-free delay/combinator executable ownership", () => {
       { op: "call", funcIdx: 41 },
       { op: "drop" },
     ]);
-    expect(guarded.catches).toEqual([
-      {
-        tagIdx: 7,
-        body: [
-          { op: "local.set", index: 3 },
-          { op: "local.get", index: 2 },
-          { op: "local.get", index: 3 },
-          { op: "call", funcIdx: 43 },
-          { op: "drop" },
-        ],
-      },
+    expect(foreignTarget.body.slice(1)).toEqual([
+      { op: "local.set", index: 3 },
+      { op: "local.get", index: 2 },
+      { op: "local.get", index: 3 },
+      { op: "call", funcIdx: 43 },
+      { op: "drop" },
+      { op: "br", depth: 1 },
     ]);
-    expect(guarded.catchAll).toEqual([
+    expect(join.body.slice(1)).toEqual([
       { op: "local.get", index: 2 },
       { op: "ref.null.extern" },
       { op: "call", funcIdx: 43 },
       { op: "drop" },
+      { op: "br", depth: 0 },
     ]);
     expect(body.slice(7)).toEqual([{ op: "local.get", index: 2 }, { op: "extern.convert_any" }]);
-    const tagged = new Set(walk(guarded.catches![0]!.body));
-    expect(walk(guarded.catchAll!).some((value) => tagged.has(value))).toBe(false);
+    expect(walk(body).filter((value) => value.op === "try")).toEqual([]);
+    const tagged = new Set(walk(foreignTarget.body.slice(1)));
+    expect(walk(join.body.slice(1)).some((value) => tagged.has(value))).toBe(false);
     expect(body[3]).not.toBe(guarded.body[2]);
+    const second = delay.buildNativePromiseDelayProviderBody(providerResources);
+    expect(second).toEqual(body);
+    const firstInstructions = new Set(walk(body));
+    expect(walk(second).some((value) => firstInstructions.has(value))).toBe(false);
   });
   for (const invalid of [undefined, -1, NaN])
     it(`rejects unresolved canonical resolve-value ${invalid}`, () => {

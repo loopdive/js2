@@ -571,3 +571,39 @@ isolated worktrees) on the Temporal goal. The owner's direction at ~14:00 UTC:
   — suspect: property write on a `class extends Array` instance).
 - **Handoff**: `plan/agent-context/temporal-standalone-handover-2026-09-07.md`
   (entry point) + `plan/issues/5383-standalone-temporal-provider.md`.
+
+## 2026-09-08 (evening) — standalone Temporal: the polyfill constructs, host-free
+
+- **Landed**: S2b (#5761), S2c (#5762), S2d (#5767), S2e (#5773). Four compiler
+  defects root-caused from the compiled polyfill, each with a reduction and a
+  byte A/B showing the gc lane unchanged.
+- **Open, stacked, both current with main**: S2f (#5777 — `$__ta_ctor` identity
+  by brand, a class value is `typeof "function"`, the callable-kind/construct
+  boundary twins) and S2g (#5780 — `new K(…)` on a class VALUE runs the
+  constructor body, in-module and across the link boundary).
+- **State reached**: with no JS host imports at all, the provider links,
+  `__module_init` completes, `Object.keys(Temporal)` answers nine, a class value
+  crosses the boundary as `typeof "function"`, and
+  `new Temporal.PlainDate(2024,1,1)` runs the real constructor.
+- **The remaining stop**: a dynamic read of a class instance's PROTOTYPE member
+  answers `undefined` — module-local, six-line reduction, no Temporal involved;
+  own fields and dynamic method CALLS both work. Across the boundary a method
+  call on a provider-owned instance additionally has no peer terminal. So of the
+  three smoke assertions only `Object.keys(Temporal).length === 9` passes, and
+  the smoke test is deliberately still unwritten rather than asserting the
+  passing subset.
+- **Key learnings**: two independent "widen the struct so its shape is unique"
+  fixes had landed on the SAME shape, so `ref.test $__ta_ctor` answered true for
+  every instance of a field-less class — a structural test can never answer a
+  nominal question, and the brand it needed was already being written and never
+  read; a class value and an instance share type and `__tag`, so identity
+  (`ref.eq` against the class-object singleton) is the only discriminator, and
+  the same fact drives `typeof`, construct dispatch and `is_constructor`; a
+  compiler key made of an identifier's TEXT is scope-blind, which routed every
+  `e.length` in a module through one binding's descriptor.
+- **Queue**: three parks, all collateral, all proven the same cheap way —
+  compile the named row on the PR head and on the park comment's exact baseline
+  compiler sha, compare the runner's `wasm_sha`. Identical bytes, hold removed,
+  #5773 then merged. Two minutes per diagnosis; worth doing every time before
+  touching a `hold`.
+- **Handoff**: `plan/agent-context/temporal-standalone-handover-2026-09-08.md`.

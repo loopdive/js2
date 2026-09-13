@@ -31,9 +31,11 @@ import { resolveWidenedVarKey, integrityVarKey } from "./widened-var-key.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
 import { recordRuntimeKeyClassMethodRead } from "./runtime-key-class-methods.js"; // (#5358)
+import { recordStandaloneRuntimeKeyClassMemberRead } from "./standalone-class-dyn-member.js"; // (#5383 S2h)
 import { emitOverlayRoutedElementGet, overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4159 S3)
 import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js"; // (#2580 M2 slice 1) (#2984)
+import { sidecarKeyCoversReceiver } from "./sidecar-owner-scope.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import {
   emitCachedFuncClosureAccess,
@@ -153,6 +155,7 @@ import {
 } from "./array-object-proto.js";
 import { isBuiltinSubtype, isBuiltinTypeName } from "./builtin-tags.js";
 import {
+  type ExternrefBackedOwnFieldBacking,
   externrefBackedOwnFieldBacking,
   getOrRegisterErrorStructType,
   isWasiErrorName,
@@ -2052,8 +2055,10 @@ export function emitExternrefBackedOwnFieldRead(
   expr: ts.PropertyAccessExpression,
   propName: string,
   className?: string,
+  backingOverride?: ExternrefBackedOwnFieldBacking,
 ): ValType | null | undefined {
-  const backing = className === undefined ? "error-struct" : externrefBackedOwnFieldBacking(ctx, className);
+  const backing =
+    backingOverride ?? (className === undefined ? "error-struct" : externrefBackedOwnFieldBacking(ctx, className));
   if (backing === undefined) return undefined;
   ensureObjectRuntime(ctx);
   const externGetIdx = ensureLateImport(
@@ -4022,7 +4027,7 @@ export function compilePropertyAccess(
   // host object and must stay externref.
   if (ts.isIdentifier(expr.expression)) {
     const sidecarKey = `${expr.expression.text}:${propName}`;
-    if (ctx.sidecarDefinedPropertyKeys.has(sidecarKey)) {
+    if (ctx.sidecarDefinedPropertyKeys.has(sidecarKey) && sidecarKeyCoversReceiver(ctx, sidecarKey, expr.expression)) {
       const runtimeResult = emitRuntimeDescriptorGet(ctx, fctx, expr.expression, propName, expr, true);
       if (runtimeResult !== null) return runtimeResult;
     }
@@ -5480,6 +5485,10 @@ export function compileElementAccessBody(
       // (#5358) A non-numeric runtime key may name a prototype method of
       // whichever class instance the `any` holds: publish every class's bridges.
       recordRuntimeKeyClassMethodRead(ctx, undefined);
+      // (#5383 S2h) The standalone twin of the same demand — nothing narrows
+      // which instance the `any` holds, so every class's prototype `$Object`
+      // has to be reachable. Lane-disjoint with the call above.
+      recordStandaloneRuntimeKeyClassMemberRead(ctx, undefined);
     }
     // (#2784 S3) Native-vec-aware element read. A numeric `recv[i]` on an
     // `any`/externref receiver that is actually a NATIVE vec (a reconstructed-
@@ -6101,7 +6110,10 @@ export function compileElementAccessBody(
         }
 
         const sidecarKey = ts.isIdentifier(expr.expression) ? `${expr.expression.text}:${fieldName}` : undefined;
-        const isDynamicSidecarRead = sidecarKey !== undefined && ctx.sidecarDefinedPropertyKeys.has(sidecarKey);
+        const isDynamicSidecarRead =
+          sidecarKey !== undefined &&
+          ctx.sidecarDefinedPropertyKeys.has(sidecarKey) &&
+          sidecarKeyCoversReceiver(ctx, sidecarKey, expr.expression);
         if (runtimeAccessorDescriptorKey(ctx, expr.expression, fieldName) !== undefined || isDynamicSidecarRead) {
           const runtimeResult = emitRuntimeDescriptorGet(
             ctx,
@@ -6239,6 +6251,9 @@ export function compileElementAccessBody(
       // bridges the host resolver needs (runtime-key-class-methods.ts).
       if (!isNumericIndexExpression(ctx, expr.argumentExpression, fctx)) {
         recordRuntimeKeyClassMethodRead(ctx, typeIdx, fieldName);
+        // (#5383 S2h) …and the standalone twin, narrowed to the receiver's own
+        // class family (the struct type IS known on this arm).
+        recordStandaloneRuntimeKeyClassMemberRead(ctx, typeIdx);
       }
       // Convert struct ref (already on stack) to externref
       fctx.body.push({ op: "extern.convert_any" });

@@ -93,6 +93,23 @@ function isTopLevelThis(expr: ts.Expression): boolean {
   return true;
 }
 
+/**
+ * Native standalone generator frames have a mutable per-instance prototype
+ * view.  They are checker-typed as `Generator`, but unlike an ordinary closed
+ * object their `[[Prototype]]` is not necessarily `%Object.prototype%` after
+ * an integrity operation: `Object.preventExtensions(g)` must not erase the
+ * factory-captured (or explicitly installed) link from a later
+ * `Object.getPrototypeOf(g)` read.
+ */
+function isNativeGeneratorInstance(ctx: CodegenContext, expr: ts.Expression): boolean {
+  if (!(ctx.standalone || ctx.wasi) || ctx.nativeGenerators.size === 0) return false;
+  try {
+    return ctx.checker.getTypeAtLocation(expr).getSymbol()?.name === "Generator";
+  } catch {
+    return false;
+  }
+}
+
 /** Emit the identity-stable standalone prototype for a native collection. */
 export function tryNativeCollectionGpo(
   ctx: CodegenContext,
@@ -200,7 +217,12 @@ export function tryCompileEs5GetPrototypeOfEarly(
   // Closed standalone plain objects keep their ordinary prototype implicit.
   // An integrity call marks the identifier, so preserve the argument read and
   // answer this exact query with the compiler-owned singleton.
-  if (ctx.standalone && ts.isIdentifier(arg0) && ctx.nonExtensibleVars.has(integrityVarKey(ctx, arg0))) {
+  if (
+    ctx.standalone &&
+    ts.isIdentifier(arg0) &&
+    ctx.nonExtensibleVars.has(integrityVarKey(ctx, arg0)) &&
+    !isNativeGeneratorInstance(ctx, arg0)
+  ) {
     const argType = compileExpression(ctx, fctx, arg0);
     if (argType) fctx.body.push({ op: "drop" });
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
