@@ -8404,3 +8404,9 @@ The original composition run terminated at 586/633, with all 328 production/reso
 
 
 The complete corrected boundary suite passes 305/305 with all input hashes unchanged during the run. Combined with the unchanged seven production/resource suites (328/328), all 633 tests in the eight-file population have passing evidence. The original 586/633 and isolated 632/633 failures remain archived; the only test repair is the independently explained import census. Normal signed hooks and publication remain pending. Fresh main advanced to `e27dbf482b1c01cb61c6dc34e8f6fccb51ae4cdd`, including the early-error fix merged by PR #5924; that additional source change must be incorporated and validated before protected queue admission.
+
+
+Signed merge `4256ebd2d5e65c4f13956266f9570327a5521d09` preserves the validated composition. Normal hooks pass; the changed-root lane self-skips at 90 inherited root test files, so it is not execution evidence. Post-hook source/test pins are unchanged. Fresh main `e27dbf482b1c01cb61c6dc34e8f6fccb51ae4cdd` then merges cleanly. Only `src/compiler/early-errors/node-checks.ts` and `predicates.ts` differ among previously pinned source inputs. All seven production suites plus the new early-error regression suite pass 351/351 with unchanged inputs. Together with the unaffected 305/305 boundary suite, the current nine-file population has 656 passing tests. Current-base source gates and normal hooks remain required before publication.
+
+
+All seven current-base source gates pass against `e27dbf482b1c01cb61c6dc34e8f6fccb51ae4cdd` with unchanged validation inputs. This is exact-base local evidence; protected head checks, merge-group checks and main delivery remain unverified.

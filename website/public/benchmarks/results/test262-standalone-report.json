@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-13T22:27:48.860Z",
-  "baseline_generated_at": "2026-09-13T22:27:48.860Z",
-  "baseline_sha": "70a844b54593f04783d8d1bc2cd86f53d9c89e0e",
+  "timestamp": "2026-09-13T23:10:14.292Z",
+  "baseline_generated_at": "2026-09-13T23:10:14.292Z",
+  "baseline_sha": "949390fd4500dbb3a99c9565b30e7ea37f5dfed0",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -11,24 +11,24 @@
   },
   "summary": {
     "total": 48232,
-    "pass": 35531,
-    "fail": 9655,
+    "pass": 35532,
+    "fail": 9654,
     "compile_error": 3020,
     "compile_timeout": 8,
     "skip": 18,
     "compilable": 45186,
-    "host_free_pass": 35531,
+    "host_free_pass": 35532,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 47146,
-        "pass": 34502,
-        "fail": 9617,
+        "pass": 34503,
+        "fail": 9616,
         "compile_error": 3001,
         "compile_timeout": 8,
         "skip": 18,
         "compilable": 44119,
-        "host_free_pass": 34502,
+        "host_free_pass": 34503,
         "stale": 0,
         "label": "ECMAScript current standard"
       },
@@ -58,25 +58,25 @@
       },
       "official": {
         "total": 48232,
-        "pass": 35531,
-        "fail": 9655,
+        "pass": 35532,
+        "fail": 9654,
         "compile_error": 3020,
         "compile_timeout": 8,
         "skip": 18,
         "compilable": 45186,
-        "host_free_pass": 35531,
+        "host_free_pass": 35532,
         "stale": 0,
         "label": "standard + annex_b (default)"
       },
       "full": {
         "total": 48735,
-        "pass": 35766,
-        "fail": 9671,
+        "pass": 35767,
+        "fail": 9670,
         "compile_error": 3176,
         "compile_timeout": 8,
         "skip": 114,
         "compilable": 45437,
-        "host_free_pass": 35766,
+        "host_free_pass": 35767,
         "stale": 0,
         "label": "standard + annex_b + proposals"
       }
@@ -84,35 +84,35 @@
   },
   "official_summary": {
     "total": 48232,
-    "pass": 35531,
-    "fail": 9655,
+    "pass": 35532,
+    "fail": 9654,
     "compile_error": 3020,
     "compile_timeout": 8,
     "skip": 18,
     "compilable": 45186,
-    "host_free_pass": 35531,
+    "host_free_pass": 35532,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
-    "pass": 35766,
-    "fail": 9671,
+    "pass": 35767,
+    "fail": 9670,
     "compile_error": 3176,
     "compile_timeout": 8,
     "skip": 114,
     "compilable": 45437,
-    "host_free_pass": 35766,
+    "host_free_pass": 35767,
     "stale": 0
   },
   "strict_summary": {
     "total": 45721,
-    "pass": 33252,
-    "fail": 9514,
+    "pass": 33253,
+    "fail": 9513,
     "compile_error": 2929,
     "compile_timeout": 8,
     "skip": 18,
     "compilable": 42766,
-    "host_free_pass": 33252,
+    "host_free_pass": 33253,
     "stale": 0
   },
   "scope_summaries": {
@@ -140,13 +140,13 @@
     },
     "standard": {
       "total": 47146,
-      "pass": 34502,
-      "fail": 9617,
+      "pass": 34503,
+      "fail": 9616,
       "compile_error": 3001,
       "compile_timeout": 8,
       "skip": 18,
       "compilable": 44119,
-      "host_free_pass": 34502,
+      "host_free_pass": 34503,
       "stale": 0
     }
   },
@@ -1023,13 +1023,13 @@
     {
       "name": "language/global-code",
       "path": "language/global-code",
-      "pass": 34,
-      "fail": 8,
+      "pass": 35,
+      "fail": 7,
       "compile_error": 0,
       "compile_timeout": 0,
       "skip": 0,
       "total": 42,
-      "host_free_pass": 34
+      "host_free_pass": 35
     },
     {
       "name": "language/identifier-resolution",
@@ -1202,7 +1202,7 @@
     "host_import_leak": 1935,
     "illegal_cast": 237,
     "missing_builtin": 2,
-    "negative_test_fail": 4,
+    "negative_test_fail": 3,
     "null_deref": 25,
     "oob": 7,
     "other": 3230,
@@ -1220,8 +1220,8 @@
   },
   "root_cause_map": {
     "target": "standalone",
-    "total_non_pass_non_skip": 12855,
-    "classified": 12855,
+    "total_non_pass_non_skip": 12854,
+    "classified": 12854,
     "unclassified_threshold": null,
     "has_edition_breakdown": true,
     "buckets": [
@@ -1296,14 +1296,14 @@
           "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
-          "test/built-ins/Temporal/PlainDate/prototype/toPlainDateTime/argument-string-unknown-annotation.js"
+          "test/built-ins/Temporal/Duration/prototype/round/subclassing-ignored.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: null Expected a RangeError but got a TypeError",
           "type_error:TypeError: Cannot read properties of undefined (reading 'round')",
           "type_error:TypeError: Cannot read properties of undefined (reading 'until')",
           "host_import_leak:standalone target emitted host imports: env::__temporal_plain_date_add_field, env::__temporal_plain_date_from_string_field (##)",
-          "type_error:TypeError: called value is not a function"
+          "other:ReferenceError: Temporal is not defined"
         ]
       },
       {
@@ -1461,15 +1461,15 @@
         "sample_files": [
           "test/built-ins/JSON/stringify/value-tojson-object-circular.js",
           "test/built-ins/JSON/stringify/replacer-function-result-undefined.js",
-          "test/built-ins/JSON/parse/reviver-wrapper.js",
           "test/built-ins/JSON/stringify/value-function.js",
+          "test/built-ins/JSON/parse/reviver-wrapper.js",
           "test/built-ins/JSON/stringify/value-object-abrupt.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
           "assertion_fail:Test262Error: Expected SameValue(«\"#\"», «undefined») to be true",
-          "assertion_fail:Test262Error: [[Set]] should not be called.",
           "assertion_fail:Test262Error: Expected SameValue(«\"null\"», «undefined») to be true",
+          "assertion_fail:Test262Error: [[Set]] should not be called.",
           "assertion_fail:Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all"
         ]
       },
@@ -2662,27 +2662,27 @@
           "#1726"
         ],
         "label": "Lexical scope, TDZ, and declaration semantics",
-        "count": 92,
+        "count": 91,
         "statuses": {
           "pass": 0,
-          "fail": 74,
+          "fail": 73,
           "compile_error": 18,
           "compile_timeout": 0,
           "skip": 0,
-          "total": 92,
+          "total": 91,
           "host_free_pass": 0
         },
         "error_categories": {
           "other": 32,
           "assertion_fail": 34,
-          "negative_test_fail": 3,
+          "negative_test_fail": 2,
           "type_error": 6,
           "host_import_leak": 16,
           "runtime_error": 1
         },
         "by_edition": {
           "Unclassified (untagged)": 25,
-          "ES2015": 19,
+          "ES2015": 18,
           "ES2023": 21,
           "ES2017": 6,
           "ES2027": 7,
