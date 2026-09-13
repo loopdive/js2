@@ -53,6 +53,7 @@ import {
 import { createLinkedProviderMirrorOwnership } from "./runtime/linked-provider-mirror-ownership.js";
 import { createCrossModuleStructOwners } from "./runtime/cross-module-struct-owners.js";
 import { decodeCompiledEntryPair } from "./runtime/compiled-entry-pair.js";
+import { rawExportsStructDecodeError } from "./runtime/raw-exports-struct-authority.js"; // (#6438)
 import { isHostStringSymbolDispatch, makeHostStringPredicateAdapter } from "./runtime/string-predicate-adapter.js";
 import { fixedExternMethodCallArity, makeFixedExternMethodCall } from "./runtime/fixed-extern-method-call.js";
 import { DATE_HOST_METHOD_UNHANDLED, tryCallWasmDateHostMethod, wasmDateHostView } from "./runtime/date-host-method.js";
@@ -19384,7 +19385,11 @@ function marshalTypedArrayArgs(
  * arguments and return values marshal correctly across the JS↔Wasm boundary.
  *
  * Prefer passing the genuine `WebAssembly.Instance`. Passing its raw exports
- * record retains the historical API.
+ * record retains the historical API, but (#6438) that overload can only CONSUME
+ * a data-struct authority, never establish one: an export that returns an
+ * object decodes only after `importObject.__setInstance(instance)` (or an
+ * earlier `wrapExports(instance)` for the same module). Without that, a struct
+ * result throws a `TypeError` instead of silently marshalling to `{}`.
  *
  * Pass the per-export type metadata from {@link CompileResult.exportSignatures}
  * as `options.signatures`; without it the wrapper is a passthrough. Returns a
@@ -19425,6 +19430,11 @@ export function wrapExports(
     mayEstablishDataStructAuthority: brandedExports !== undefined,
     mayConsumeGlobalDataStructAuthority: true,
   });
+  // (#6438) The raw-exports overload may never ESTABLISH data-struct authority,
+  // so a module that ships a decoder can have it masked to `undefined` in the
+  // view above. Struct results would then marshal to `{}` in silence.
+  const dataStructDecoderMasked =
+    _hasOwn(rawExports, "__struct_field_names") && typeof exportsForMarshal.__struct_field_names !== "function";
   const callFn0 = exportsForMarshal.__call_fn_0 as ((closure: any) => any) | undefined;
   const callFn1 = exportsForMarshal.__call_fn_1 as ((closure: any, arg: any) => any) | undefined;
   // (#1700) Vec allocator + byte-writer for Uint8Array args. Either may be
@@ -19479,6 +19489,13 @@ export function wrapExports(
   // was not, so step 4 is written out explicitly and the behaviour is unchanged.
   const isClosureFn = exportsForMarshal.__is_closure as ((v: any) => number) | undefined;
   const hasVecLen = typeof exportsForMarshal.__vec_len === "function";
+  // (#6438) Predicates the fail-closed raw-record guard borrows from this module.
+  const structDecodeProbes = {
+    isStruct: _isWasmStruct,
+    isVec: _isWasmVec,
+    fieldNames: _structFieldNamesRaw,
+    isClosure: isClosureFn,
+  };
   const looksMarshalable = (val: any): boolean => {
     if (val == null || typeof val !== "object") return false;
     // No positively discovered compiler closure family means this module
@@ -19589,6 +19606,16 @@ export function wrapExports(
       const resultMarshal = hasMarshalOverride
         ? marshal
         : (marshalModeForBoundaryPolicy(exportBoundaryPolicy?.result.policy) ?? marshal);
+      if (dataStructDecoderMasked && resultMarshal !== false) {
+        // (#6438) `marshal: false` still hands back the raw handle; every
+        // decoding mode refuses rather than answering `{}` / `[{}, …]`. The
+        // NOT-marshalable arm is covered too: with the decoder masked and no
+        // `__vec_len` export, `looksMarshalable` falls through and a plain
+        // struct would be handed to JS as a callable (#1308 fallback) — just as
+        // wrong, and just as silent. `__is_closure` still exempts real closures.
+        const undecodable = rawExportsStructDecodeError(result, exportsForMarshal, key, structDecodeProbes);
+        if (undecodable) throw undecodable;
+      }
       if (resultMarshal === "copy" && marshalable) {
         const plain = _wasmToPlain(result, exportsForMarshal);
         // (#1700) Uint8Array fidelity on the return side. The Wasm signature
