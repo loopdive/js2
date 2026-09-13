@@ -78,6 +78,7 @@ import {
   emitStandalonePromiseCustomSettle,
   emitStandalonePromiseCombinatorRuntime,
   isNativeCombinatorMethod,
+  resolveF64VecArg,
   resolveExternrefVecArg,
 } from "../promise-combinators.js";
 import type { InnerResult } from "../shared.js";
@@ -123,6 +124,7 @@ import {
   tryEmitJsonParsePrimitive,
   tryEmitJsonStringifyPrimitive,
 } from "./calls.js";
+import { sourceHasMethodOverride } from "./member-override-scan.js";
 
 function unwrapReflectConstructExpr(value: ts.Expression): ts.Expression {
   let current = value;
@@ -2535,6 +2537,21 @@ export function compileNamespaceStaticCall(
       const arg0 = expr.arguments[0];
       const nativeCombinatorEligible =
         isStandalonePromiseActive(ctx) && isNativeCombinatorMethod(methodName) && expr.arguments.length === 1;
+      // (#5197 R3-2) The ordinary native pipeline intentionally remains
+      // byte-identical unless source can observe the constructor's `resolve`
+      // or a per-promise `then`. In the observable case the emitter performs
+      // one real Get(C, "resolve"), captures it, then Calls/Invokes it for
+      // every element. The scan is deliberately source-wide and name-based:
+      // any syntactic `.resolve` / `.then` assignment or literal-key
+      // defineProperty/defineProperties admits the slower route, including
+      // aliases and unrelated false positives. Computed keys remain outside
+      // this bounded syntactic admission; it is an optimization gate, not a
+      // whole-program proof that the target is exactly `%Promise%`.
+      const observableCombinator =
+        nativeCombinatorEligible &&
+        !isPromiseSubclassReceiver &&
+        (methodName === "all" || methodName === "race") &&
+        (sourceHasMethodOverride(ctx, expr, "resolve") || sourceHasMethodOverride(ctx, expr, "then"));
       if (
         nativeCombinatorEligible &&
         arg0 !== undefined &&
@@ -2569,7 +2586,13 @@ export function compileNamespaceStaticCall(
             fctx.savedBodies.push(buf);
             pushedBufs++;
           }
-          return emitStandalonePromiseCombinator(ctx, fctx, methodName, elementInstrs);
+          return emitStandalonePromiseCombinator(
+            ctx,
+            fctx,
+            methodName,
+            elementInstrs,
+            observableCombinator ? { observableResolve: true } : undefined,
+          );
         } finally {
           fctx.savedBodies.length -= pushedBufs + 1;
         }
@@ -2581,6 +2604,9 @@ export function compileNamespaceStaticCall(
       // see them — handle them statically by materializing the same
       // projection (Set → values, Map → [k, v] entries) into a canonical
       // externref $Vec and driving the unchanged arm-1 runtime loop over it.
+      // R3-2 deliberately does NOT opt this projection into its observable
+      // pipeline: projection drains the collection before the combinator body,
+      // so it cannot establish the required iterator/resolve interleaving.
       // Checker-only guard first (no emission for non-Set/Map args), then a
       // #1919-transactional probe confirms the arg genuinely lowers to the
       // native `$Map` struct (mirrors compileForOfNativeCollection).
@@ -2632,16 +2658,28 @@ export function compileNamespaceStaticCall(
       // helper (a raw `body.length =` rollback would leak a phantom late
       // import); the (#2922) dynamic path below then decides whether to take
       // the probed shape at runtime or keep the host fallthrough
-      // byte-unchanged (f64-backed `number[]` vecs — the Gap-4
-      // output-representation escalation —, strings, native generators).
+      // byte-unchanged (f64-backed `number[]` vecs outside the bounded R3-2
+      // observable arm, strings, native generators).
       if (nativeCombinatorEligible && arg0 !== undefined) {
         const snap = snapshotSpeculative(ctx, fctx);
         const argType = compileExpression(ctx, fctx, arg0);
         const vecShape = resolveExternrefVecArg(ctx, argType);
-        if (vecShape) {
+        // R3-2's direct VEC admission also includes native `number[]`
+        // carriers, but only when the observable protocol is active. The
+        // runtime loop boxes each f64 slot as it consumes it; it deliberately
+        // does not copy the vector ahead of `Call(resolve, …)` because an
+        // earlier resolve call may mutate a later element.
+        const f64VecShape = observableCombinator ? resolveF64VecArg(ctx, argType) : null;
+        const observableF64Vec = f64VecShape !== null;
+        const admittedVecShape = vecShape ?? f64VecShape;
+        if (admittedVecShape) {
+          if (observableF64Vec) {
+            ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+            flushLateImportShifts(ctx, fctx);
+          }
           const argVecLocal = allocLocal(fctx, `__comb_argvec_${fctx.locals.length}`, {
             kind: "ref_null",
-            typeIdx: vecShape.vecTypeIdx,
+            typeIdx: admittedVecShape.vecTypeIdx,
           });
           fctx.body.push({ op: "local.set", index: argVecLocal });
           return emitStandalonePromiseCombinatorRuntime(
@@ -2649,8 +2687,9 @@ export function compileNamespaceStaticCall(
             fctx,
             methodName,
             argVecLocal,
-            vecShape.vecTypeIdx,
-            vecShape.arrTypeIdx,
+            admittedVecShape.vecTypeIdx,
+            admittedVecShape.arrTypeIdx,
+            observableCombinator ? { observableResolve: true, boxF64Elements: observableF64Vec } : undefined,
           );
         }
         // Didn't lower as an externref vec — roll back, then either take the

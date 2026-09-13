@@ -1,11 +1,10 @@
 ---
 id: 5197
 title: "ES2015 standalone promise — r2 residual pass"
-status: done
-completed: 2026-09-03
+status: in-progress
 sprint: current
 created: 2026-08-29
-updated: 2026-09-03
+updated: 2026-09-13
 loc-budget-allow:
   # 2026-09-01 (Slice B): the §27.2.1.3 settle closures gain the builtin-function
   # metadata carrier. Each grant lives in the module that already OWNS the
@@ -60,6 +59,16 @@ loc-budget-allow:
   # the runtime TypeError guard live in builtin-prototype-brand.ts beside the
   # static gate they complete; object-ops gains only the route (+~16).
   - src/codegen/object-ops.ts
+  # 2026-09-13 (R3-2 prerequisite): source-order retention of the direct,
+  # unshadowed intrinsic `Promise.resolve = …` write leaves a small dispatch
+  # branch in module-init collection. Its ~100-line semantic proof belongs next
+  # to the existing builtin-write keep owner: TypeScript appends a synthetic
+  # property-assignment Identifier to ambient symbol declarations, so the proof
+  # filters only that exact non-binding node and explicitly rejects the import
+  # rewriter's source-file `declare const Promise` stub. This does not broaden
+  # generic builtin static patches.
+  - src/codegen/declarations.ts
+  - src/codegen/builtin-write-keeps.ts
 func-budget-allow:
   # 2026-09-01 (Slice B): one extra `registerNative` call in the object-runtime
   # reservation block, and two three-line guard call sites on the `new` path.
@@ -92,6 +101,11 @@ func-budget-allow:
   # predicate, one `local.tee`, one guard call) — the route IS the arm's
   # admission condition, so it cannot live outside the function.
   - src/codegen/object-ops.ts::compilePropertyIntrospection
+  # 2026-09-13 (R3-2 prerequisite): the source-order keep remains one branch
+  # in the existing module-init collector. Its declaration-proven intrinsic
+  # predicate is factored beside builtin-write-keeps to keep this large
+  # collector from absorbing the supporting import/shadow proof.
+  - src/codegen/declarations.ts::collectDeclarations
 priority: high
 horizon: m
 feasibility: hard
@@ -104,6 +118,125 @@ pr: 5292
 ---
 
 # #5197 — promise r2: cluster and fix the residual promise-bucket failures
+
+## 2026-09-13 plan refinement: retain the original resolve assignment
+
+The R3-2 candidate's ten focused controls pass, but the unchanged original
+`built-ins/Promise/all/invoke-resolve.js` still fails with zero callback calls.
+An instrumented copy retaining the original module scope and assertion
+harness measured `entries=0 identity=0 argc=0 this=0 calls=0`; these zero
+assertion counters do not mean the assertions ran successfully. Full WAT
+shows the observable combinator in `__module_init_chunk_1`, while the user
+`Promise.resolve = function (...) { ... }` write is absent. The retained
+native resolve therefore bypasses the intended observable callback.
+
+The existing top-level intrinsic Promise property-write retention in
+`src/codegen/declarations.ts` is inside a host-only arm. Before any change to
+that file, the root reviewed open PR #5871 at head
+`1ba798b5ccd17f4af877112b95b47c18de8124fc`: its three declaration-time async
+signature hunks (import and function registration) are disjoint from this
+module-initialization statement-retention arm. Preserve those changes during
+any later normal integration; do not edit their async signature behavior.
+
+Bounded prerequisite implementation:
+
+1. Retain direct, unshadowed intrinsic `Promise.resolve = ...` assignments in
+   standalone module initialization, in original source order. Use ordinary
+   property-write lowering and the same canonical constructor carrier that
+   the combinator reads. Do not enable all builtin property patches at once
+   or key the decision to a Test262 filename or assertion shape.
+2. Preserve host behavior and shadowed user bindings; keep unrelated builtin
+   writes and the existing declaration-time async ABI out of this change.
+   Prove the receiver through the TypeOracle declaration set, ignoring only an
+   Identifier whose parent proves it is a property-assignment receiver (not a
+   binding), and reject actual imports plus the import rewriter's generated
+   `declare const Promise` binding. Record the narrow LOC/function budget
+   requirement in this issue before exceeding a repository gate.
+3. Add a permanent module-scope assignment/callback-observation control, not
+   only a function-local analogue. Verify the emitted user write precedes
+   the actual combinator call across initialization chunks and the saved
+   original resolve remains callable.
+4. Rerun the unchanged original and its passing control with the maintained
+   isolated runner, then the strengthened protocol suite. A
+   passing diagnostic cannot replace the unchanged original's verdict. Keep
+   this prerequisite and its measured evidence within the R3-2 PR; do not
+   claim the other Promise residual slices complete.
+
+## 2026-09-13 continuation: observable combinator pipeline
+
+Reopened because the documented R3-2/R3-3/R3-4 work below was not implemented;
+the prior completed slices do not satisfy this issue's residual scope.
+The canonical standalone baseline produced at upstream
+`e0023dbbe6c37e15c1f56ed0c8bc8d15d0afbac3` contains 99 official ES2015
+nonpasses under `built-ins/Promise`. Snapshot SHA-256:
+`07c89a5c2626f3312ff611f008a69ed6d8826e9802da024df39726ddabc1e9ba`.
+These rows include 25 `Promise_all` and 15 `Promise_race` host-import leaks;
+import counts are overlapping symptoms, not independent gain claims.
+
+The next implementation owns R3-2 only: verify current call admission, reproduce
+original observable `resolve`/`then` rows and intrinsic positive controls, then
+implement the documented per-element pipeline in the existing combinator
+lowering. Re-derive source locations and carrier assumptions from current main.
+Record an exact current path manifest and paired standalone measurements;
+retain all previously passing Promise controls and run relevant equivalence
+and host controls. R3-3 custom constructors and R3-4 iterator closing remain
+separate follow-ups, except shared prerequisites necessary for R3-2.
+
+Before editing, check active claims and upstream PR overlap, particularly the
+native async resource and combinator-body refactors. Coordinate shared files;
+do not overwrite or duplicate their implementations. Each completed fix gets
+its own upstream PR and a measured issue handoff.
+
+### R3-2 implementation decisions (2026-09-13)
+
+The historical R3-2 design steps 2 and 4 below are superseded for this bounded
+implementation. `Get(Promise, "resolve")` is emitted inline under the target
+exception tag, after JavaScript argument-list evaluation but before a direct
+VEC pipeline begins; a getter failure rejects the already-created aggregate.
+For literals this means every element expression is first evaluated into a
+local, then the one `resolve` Get occurs — compile-time instruction buffers are
+not evidence of runtime evaluation order.
+
+Each `Invoke(next, "then", handlers)` performs one `__extern_get(next,
+"then")`, classifies the captured value, and calls that exact captured closure
+with `next` as receiver. Do not pair a getter-based callability probe with a
+second dispatcher Get: an accessor may return a different closure on its second
+read. For `race`, the result capability's resolve and reject closure objects
+are minted once per aggregate and reused for every element; for `all`, each
+resolve-element closure remains per-element while the reject closure is shared.
+
+Admission remains direct VEC only: externref vectors and f64 `number[]`
+vectors are consumed in sequence. The latter box each slot at consumption time,
+so an earlier `resolve` Call can mutate a later slot. Generic iterables,
+Set/Map projection, custom constructors, and iterator closing remain outside
+this slice. These boundaries and the source-wide syntactic observable gate are
+admission constraints, not a claim that all 23 historical rows are closed.
+The direct loop snapshots the vector's initial length. That is a known remaining
+R3-2 limitation for ordinary arrays — source admission does not prove a fixed
+length — rather than an unmeasured fixed-length proof. Live array-length
+mutation remains follow-up ownership alongside the R3-4 generic-iterator work,
+even though later-slot replacement is covered. No full R3-2 completion claim
+is justified without that work and measured evidence.
+
+For admitted `Promise.all`, the result state's remaining-elements count starts
+with the iteration-completion sentinel. Each successful `Call(resolve, …)`
+increments it before its `then` Invoke; the sentinel is decremented only after
+the literal/direct-VEC iteration returns normally. This preserves an abrupt
+`then` completion even when an earlier synchronous resolve-element callback has
+already run. Native Node rejects the marker from
+`{ then(ok) { ok(1); throw marker; } }`; the focused standalone control covers
+that rejection and the corresponding successful one-element result vector.
+
+Current bounded evidence on the e002 baseline is a 10/10 focused standalone
+protocol suite (54.62 s, single fork): literal evaluation/Get order, one
+captured resolve and call receiver/arity, contrasting and original-order
+callback-arity probes, one captured `then`, abrupt Call rejection, the
+remaining-elements sentinel, per-slot f64 boxing, and race handler identity.
+The unchanged official `all/invoke-resolve.js` previously failed with
+`callCount` 0 versus 3 and remains the acceptance row; its exact assembled
+harness diagnostic is still required before claiming it fixed. A filtered WAT
+compile registered the observable resolve-cap type, which proves route
+registration but not the exact callback execution path.
 
 ## Problem
 
