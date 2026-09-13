@@ -10821,6 +10821,11 @@
       "layer": "legacy-host"
     },
     {
+      "path": "src/runtime/promise-try-polyfill.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
       "path": "src/runtime/standalone-dom-string-bridge.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
