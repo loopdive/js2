@@ -158,6 +158,13 @@ async function main() {
   // first unobserved host rejection, the parent finds no JSON on stdout, and
   // every test of the file — including the ones that already passed — is
   // recorded as failed with a null error.
+  //
+  // (#6424) Its `uncaughtException` channel starts UNARMED and is armed only
+  // inside `runSequentialUpstreamTests`. Everything below — compile,
+  // instantiation, `__module_init`, `cleanupUpstreamTestEnvironment`, `emit` —
+  // therefore runs with no listener, so a throw there still kills the worker
+  // immediately and the parent still reports the stderr text in
+  // `compile.errors[0]` rather than waiting out the 180 s deadline.
   const rejections = createUnhandledRejectionSink({ label: "dogfood wasm worker" });
   const started = performance.now();
   const platform = process.env.DOGFOOD_PLATFORM ?? "web";
