@@ -29,6 +29,19 @@ export function buildArgcExtrasSetupFromLocals(
       { op: "struct.new", typeIdx: vecTypeIdx },
       { op: "global.set", index: globalIdx },
     );
+  } else if (ctx.extrasArgvGlobalIdx >= 0) {
+    // (#6416) No extras for THIS call — but `arguments.length` is
+    // `argc + extrasLen`, so seeding `__argc` alone is not enough: a vec left
+    // behind by an earlier over-applied call whose callee never materialised
+    // `arguments` (and so never consumed it) would be counted here. Null it
+    // out, exactly as the closure dispatchers' no-extras arm does. Uses the
+    // no-lazy-registration convention of `buildArgcResetNoLazyExtras`: when
+    // the global does not exist yet, nothing in the module has ever written a
+    // vec, so there is nothing stale to clear.
+    out.push(
+      { op: "ref.null", typeIdx: ctx.extrasArgvVecTypeIdx },
+      { op: "global.set", index: ctx.extrasArgvGlobalIdx },
+    );
   }
   out.push(
     { op: "i32.const", value: Math.min(actualArgCount, paramCount) },
