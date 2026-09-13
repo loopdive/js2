@@ -54,7 +54,8 @@ import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitThrowTypeError } from "./expressions/helpers.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { COLLECTION_KIND, compileCollectionElementArg, ensureMapHelpers } from "./map-runtime.js";
+import { COLLECTION_KIND } from "./collection-kind.js"; // (#6419) import-free leaf — map-runtime.js is in an import cycle
+import { compileCollectionElementArg, ensureMapHelpers } from "./map-runtime.js";
 import { buildClosureRefTestArms } from "./closure-classifier.js";
 import { emitBrandCheckTypeError } from "./native-proto.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
