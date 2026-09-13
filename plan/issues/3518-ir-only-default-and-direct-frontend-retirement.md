@@ -3,7 +3,7 @@ id: 3518
 title: "IR-only default and direct front-end retirement"
 status: in-progress
 created: 2026-07-21
-updated: 2026-09-08
+updated: 2026-09-12
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -5643,6 +5643,511 @@ source/test blobs are `8c77424de1f0aa3c66fe6f774bb90147bf8180ab`,
 `4c9dacc0153109a6641ebee701057d312e1752ec` in the order recorded above.
 Publication proceeds through normal commit and push hooks, stacked on #5756.
 
+### Full-family source integration preparation — 2026-09-08
+
+The vector/main checkpoint is now published as non-draft PR #5757 at
+`1cb0f5c7f36be14d7be7eb4592973aea84a8c4e5`. Normal commit/push hooks
+completed, including the additional 18 numeric-local controls. The fresh PR
+read is mergeable/CLEAN with all reported checks successful, hold retained,
+auto-merge null and no unresolved review threads. All four source/test blobs
+remain unchanged after hooks. Upstream main remains `04c8e72156cf576cf584a3ed3a5a66ec5a2b91b0`.
+
+This new isolated integration branch starts at the published vector checkpoint.
+Low A continues the six-file full-family source producer; High reviews its
+source identity, logical type and closure contracts before final acceptance.
+Low B has a disjoint next assignment for real delay/combinator runtime-body
+movement, using the exact interface plan already published in #5757. Its new
+claim has not yet been independently observed; no ownership success is inferred
+from dispatch alone.
+
+The complete High recursive-type physical-emission plan is retained at
+`plan/agent-context/3518-explicit-recursive-type-emission-plan-2026-09-08.md`.
+It specifies shared flattened type coordinates across reservations, binary,
+WAT and runtime-group extraction, with explicit group identities preserved.
+The temporary guard must be removed only with the real composed emitter fix;
+the plan itself supplies no execution or retirement acceptance.
+
+### Full-family source first composed measurement — 2026-09-08
+
+The six-file source revision 1 was independently hash-checked against
+`/private/tmp/js2-3518-native-family-source-20260908/.tmp/native-family-source-revision1-frozen-20260908.json`
+and composed onto published `1cb0f5c7f36be14d7be7eb4592973aea84a8c4e5`.
+Both the historical TypeScript 5 check (session 23134) and the repository's
+canonical TypeScript 7 check (26117) exited 0. The two new frontend modules
+are explicitly unmigrated in the boundary inventory: session 68170 exited 0,
+1,311 modules, 63 clean, five compatibility adapters, 1,243 unmigrated,
+zero inventory errors, architecture incomplete.
+
+The first composed test run (28200) exited 1: 50/51 tests passed, comprising
+24/24 source contracts and 26/27 identity controls. The remaining control
+incorrectly calls `.set` on an immutable identity-map view, so it fails in
+setup rather than proving the intended owner-span rejection. Repair is
+required; this is not counted as a successful negative control.
+
+All eight original/export-only × GVN off/on × original/decoded preparation
+rows were read from their retained `.tmp/native-family-preparation-*/receipt.json`
+artifacts. Each genuinely reaches the next canonical runtime-declaration
+refusal: `unknown-function-ref`, stage `resolve`, symbol
+`__ir_promise_delay_native`, original delay location line 11, span 520–674.
+This proves full five-function/five-await logical source admission in these
+rows, not native physical materialization or execution.
+
+High's frozen-source review requires four additional repairs before publication:
+reject valued returns for zero-result main; retain resolver/method and mutable
+Promise.all target identities; retain the operand/callee identities underlying
+source certification even when the outer call object survives; and strengthen
+the fresh-process forbidden-import guard to the existing complete population
+with a real rejection control. Low A owns these repairs and the broken
+owner-span test in its original isolated worktree. Revision 1 remains retained
+in this integration until a new frozen manifest is independently verified.
+
+Unchanged historical regression session 46709 exited 0: 130/130 across
+certified-delay admission (41), certified-delay identity (45), typed-program
+preparation (30), and the original standalone native async-family suite (14).
+These retain historical behavior and do not erase the new revision's 50/51
+failure or High findings.
+
+The disjoint runtime-body claim is now independently verified on upstream
+`issue-assignments`: record `3518-native-delay-combinator-bodies.json`, blob
+`a2810ef444e00be0d40bf82418a4ba8509e3733b`, write ID `57815-2v4g2ji4`,
+assignee/requester `ttraenkler/codex-astra-native-delay-combinator-bodies-20260908`,
+claimed at `2026-09-08T14:00:35Z`. Low B is actively editing the three legacy
+adapters in its separate body-movement worktree; that draft is not yet frozen
+or composed into this source checkpoint.
+
+Unchanged semantic/provider boundary controls also passed: session 61332,
+exit 0, 113/113. The boundary policy classifies the two new frontend modules
+without promoting them to clean or weakening any mandatory canonical-root
+deletion/forbidden-dependency control. These results apply to composed source
+revision 1 only; the pending repair revision needs its own validation.
+
+### Full-family source repair and undefined discard — 2026-09-08
+
+Worker revision 2 was independently read and matched in all six files against
+`.tmp/native-family-source-revision2-frozen-20260908.json` in the source worker.
+Its changed blobs are native source `d19f26a04ac67aa324738f8231ed3d25ad5fca9c`,
+contract tests `e6706bfc92f8a51623c72d7606794e11f08412f8` and identity tests
+`585bb7b6441dfd8bf4219b160f676410cf50ace0`. It pins full plan descriptors,
+resolver methods, Promise.all targets and original syntax children/operands;
+rejects incompatible returns; proves immutable owner-span mutation prevention;
+and adds eleven genuine forbidden-import rejection processes with exact
+terminal/error/census attribution. Existing source-free exclusions are retained.
+
+The first repair run (4838) exited 1: 84/85 passed, 36/36 source contracts and
+48/49 identity controls. The new explicit `return undefined` positive exposed
+an actual lowerer omission: `lowerDiscardedExpression` could not resolve that
+identifier. Canonical TypeScript 7 passed in session 68744. The original eight
+family rows still reached the exact delay-declaration refusal.
+
+High specified a minimal existing-checker fix, implemented by the parent only
+in `from-ast.ts`. After all existing effectful branches, a discarded identifier
+read is erased only when it is `undefined`, has no lexical scope binding, and
+the actual checker proves exact global symbol identity and Undefined type.
+Missing checker and shadowed names retain the previous lowering path. No new
+resolver protocol, runtime value, fabricated provider or source-selection
+heuristic was added. Current source blob is
+`9055e676d75fbc00565464dfdd1b7c2be8195287`.
+
+Session 70397 exited 0: 125/125, comprising 36 source contracts, 52 identity
+controls and all 37 unchanged #4459 discarded-effect regressions. The latter
+retain actual IR/legacy execution, comma evaluation and taken-branch ordering.
+Three additional direct-lowerer shadow controls were authored while that run
+used its previously collected test module; they are explicitly not included
+in its denominator. The final identity blob
+`43d09b399dce161dc0dce22df055f999cbbfe880` contains 55 controls and awaits
+its own final run (25348), together with typecheck and the original 14 native
+family behavior controls. Parent owns this integration; the old worker's
+frozen revisions remain untouched.
+
+Parallel implementation now also covers the explicit recursive-type emission
+plan. The upstream claim `3518:explicit-rec-emission` was independently read:
+assignee/requester `ttraenkler/codex-3518-explicit-rec-emission-20260908`,
+write ID `65804-08drhqei`, claimed `2026-09-08T14:12:55Z`. Its normal claim
+hook completed in session 18001, and its isolated writer may perform static
+implementation while the parent owns heavy validation. No emitter change
+is included in this source checkpoint.
+
+Final session 25348 exited 0 after canonical TypeScript 7 and all 105 tests:
+55 identity controls, 36 source contracts and 14 unchanged native-family
+behavior tests. All three new direct-lowerer shadow controls ran and passed.
+Scoped Prettier and Biome lint passed in session 81868 (seven source/test
+files, plus the boundary JSON in the formatting check). High independently
+approved the exact final source/test hashes and closed all four review
+findings; its final-test condition is now satisfied. Normal publication
+hooks remain required. No tests, budget policies, CI rules or historical
+expected runtime outputs were weakened.
+
+### Published full-family source checkpoint and next integration — 2026-09-08
+
+Non-draft PR #5758 publishes the full-family source checkpoint at
+`37e169c4903c29ab46fe99de0910634723a19dac`, stacked on #5757. Normal commit
+session 32379 and push session 4237 both exited 0. All seven source/test blobs
+were unchanged after commit hooks. Push additionally passed typecheck, lint,
+formatting, oracle/coercion ratchets, 18/18 numeric-local regressions and issue
+integrity. The remote branch was independently read at the exact commit.
+No merge or auto-merge was requested; the checkpoint retains hold.
+
+The next isolated integration starts at that published source commit:
+`/private/tmp/js2-3518-delay-combinator-integration-20260908`, branch
+`codex/3518-delay-combinator-integration-20260908`. Worktree creation session
+58006 exited 0; HEAD and clean status were verified, with existing dependencies
+linked rather than installed. Low B's eight-file delay/combinator manifest
+was read completely at
+`/private/tmp/js2-3518-native-delay-combinator-bodies-20260908/.tmp/native-delay-combinator-frozen-20260908.json`.
+Its 76 authored tests, 13 donor receipts, 11 source artifacts and 19 executions
+per root remain unmeasured by the parent; no correctness or physical
+acceptance is inferred from its static receipt. High is reviewing the frozen
+slice before composition. Low A has a separate canonical-declaration/manifest
+assignment; its next claim hook may proceed now that the parent push finished.
+
+### Delay/combinator first composed measurement — 2026-09-08
+
+All eight files were independently checked against the frozen Git blobs and
+composed onto `37e169c4903c29ab46fe99de0910634723a19dac`. Canonical
+TypeScript 7 passed in session 28403. The initial patch transfer exceeded
+tool output limits; it was reapplied in bounded files/hunks and all eight
+final blobs were then verified, not assumed from partial tool success.
+
+Session 94422 exited 1: 75/76, comprising 32/33 ownership controls and 43/43
+preservation controls. The failed ownership fixture constructs a bare context
+without the real timer dependency, so it never reaches its callback-order
+assertions. Low B is repairing only the fixture, not weakening the provider's
+missing-dependency guard or fabricating a handle.
+
+The paired public-source run completed both child processes with exit 0,
+no signal. Candidate root is this integration; baseline is the independently
+verified clean source at `1cb0f5c7f36be14d7be7eb4592973aea84a8c4e5` in
+`/private/tmp/js2-3518-logical-vector-integration-20260908`. Eleven artifacts
+and nineteen executions per root have identical complete rows: bytes, WAT,
+compiler results, resource ordering, actual values and instantiated binaries.
+Both preserve 70, 3e9, sequential/reverse-parallel completion, empty timing,
+both rejection cases, and main's undefined result/stdout under repeated timer
+delivery. Delay concurrency and registration rejection, race, allSettled,
+any, invalid-before-empty, grown vectors, thenables and poisoned thenables
+also executed with their expected values.
+
+Receipts remain under `.tmp/delay-combinator-preservation-EK9dYV/`.
+SHA256 of JSON.stringify(parsed report): candidate
+`3aafe0b6b74d9be705e3a4e4ac6ff234d2f6e5a9e4941cb3f1f5f7ac128958f4`,
+baseline `dee09c362cba469ded3e0134cfc2a59e291b75c244c8aa4c893aa5be839ced27`.
+Their complete fixture and row populations were independently compared after
+reading the actual rows. This remains preservation evidence, not standalone
+prepared-path physical acceptance or retirement.
+
+High found no production defect but two additional receipt defects: child-only
+AST serialization misses unary operators/declaration kinds, and the claimed
+20 combinator plus four delay retained declarations lack a donor-derived
+ledger enforced by tests. Low B must supplement, not reseed, the existing
+13 donor hashes with semantic-field and fixed original-declaration controls.
+The five candidate whole-file glue hashes do not substitute for either proof.
+No publication occurs until these repairs and the fixture pass validation.
+
+Boundary activation session 28649 exited 0: 121/121 controls. Both new runtime
+owners are mandatory; eight additional deletion/forbidden-type/unknown-import/
+unresolved-import controls were added to the previous 113. The selected clean
+closure is exactly 65 modules and 211 edges (150 type-only, 61 runtime).
+All 26 previous activation records and the complete allowed-edge policy were
+independently compared with HEAD and are unchanged; one new activation record
+is prepended. No historical digest was reseeded.
+
+Full inventory session 1674 exited 0 with zero inventory errors: 1,313 modules,
+65 clean, five compatibility adapters, 1,243 unmigrated. The same four unknown
+dynamic imports remain (two Porffor loader sites, optimize, platform adapter),
+so architectureComplete remains false. This strengthens local runtime ownership
+without claiming complete compiler closure.
+
+Historical regression session 44597 exited 0: seven suites, 77/77 tests.
+This includes 4573 native delay (12), 4574 native async family (14),
+2867 all/race (25), 3137 allSettled (10), 3125 assimilation (8),
+3125 widened poisoned-then controls (4), and 2918 late function-index shifts
+(4). Both parent and fork heap budgets were explicitly 2 GiB, single fork.
+The earlier observation was lost; a live process inspection confirmed no
+remaining Vitest process before this measured run. No test was killed.
+These unchanged historical suites pass on the five frozen production files;
+the separate ownership-fixture and supplemental receipt repairs remain pending.
+
+### Recursive-type emitter parallel validation — 2026-09-08
+
+Hilbert's eight-file static manifest in
+`/private/tmp/js2-3518-explicit-rec-emission-20260908/.tmp/explicit-rec-emission-frozen-manifest.json`
+was fully read and all eight SHA-256 hashes independently verified. Canonical
+TS7 session 61467 exited 0. Eight-suite session 94227 exited 1: 253/258.
+All 25 layout and 148 reservation controls passed; actual recursive access
+returned 42, subtype casts and cross-module canonical value exchange passed.
+Two new tests expected `local index` while the actual guard reports
+`local (local.get) index out of range`; Hilbert owns only those assertion repairs.
+High independently reviews the frozen production changes.
+
+The other three failures reproduce on unchanged base 1cb0f5c7 in session
+30017 (20/23, exit 1): issue-2043's old local-error regex, and two foundation
+tests pinning obsolete import/name populations. These are not attributed to
+the recursive-type patch. No historical expectation has been reseeded.
+The emitter patch is not yet composed or published; boundary activation,
+paired preservation, High review and repaired focused tests remain required.
+
+### Delay/combinator rev2 composition — 2026-09-08
+
+The worker's full rev2 manifest was read, and only its three test/helper files
+were composed. Git blobs independently match: ownership
+`442ee5d2a78bd1489d038629bec8a5f98fac06f0`, preservation
+`848e6b843f5ee3b6a7f3841be9614b1b32274af9`, helper
+`b11067d35989b8a8fae5a77fd44e8e44bd97785f`.
+Parent independently recalculated both hashes for every retained declaration
+from original commit e3a01efa: all 24 original and semantic hashes match.
+The repaired real-timer ownership suite passes 33/33 within ongoing session
+87873; its expanded preservation suite and explicit historical pair must
+reach terminal completion before claiming the authored 159-test total.
+Receipts are under `.tmp/delay-combinator-preservation-xBNfCl/`.
+High has been sent the rev2 manifest to review both earlier receipt blockers.
+
+Session 87873 subsequently exited 0: 159/159, comprising 33 ownership and
+126 preservation controls. The explicit historical pair passed again with
+11 artifacts and 19 executions per root. This is preservation-only evidence;
+full prepared native physical acceptance remains uncertified. High review,
+normal commit hooks and non-draft PR publication are the next checkpoint steps.
+
+Final publication preparation: session 98446 completed TS7 and scoped Prettier
+checks without errors. Parent read both rev2 paired terminal receipts (candidate
+87331, baseline 87387: exit 0, no signal) and independently compared the complete
+11 fixture/row populations again. Upstream main remains 04c8e721; PR 5758 remains
+non-draft, MERGEABLE/CLEAN with reported checks successful and auto-merge null.
+The recursive emitter's precise diagnostic assertion repair independently passed
+29/29 focused tests; its production review and composition remain separate work.
+
+### Implementation Plan — forward the native delay EH repair through the held extraction — 2026-09-12
+
+**Plan recorded before source edits; the exact seven-file repair is now
+implemented, reviewed and validated locally.** Root supplied isolated
+worktree `.claude/worktrees/codex-3518-delay-eh-forward-20260912`, branch
+`codex/3518-delay-eh-forward-20260912`, at exact clean
+`de2f1072ebb32771272d24a58407814f9d2a5d38` (held PR 5759).
+Root retains the integration-consolidation claim. The original
+`3518:native-delay-combinator-bodies` owner, its PR/worktree, the cumulative
+held PR 5798, other agents' source and the earlier export-marshalling draft
+remain untouched. This is a forward integration repair, not a takeover or a
+repeat claim that the original extraction changed no behavior relative to
+today's main. No publication or commit is authorized by this plan.
+
+The landed reference is
+`d4108568d43f14c361ecc3a58c82633027eaae39:src/codegen/ir-native-promise-delay.ts`.
+Its provider already calls `buildStandardTryTable` with an externref-bearing
+tagged handler followed by a foreign-exception `catch_all` handler. The held
+extraction's `src/runtime/wasmgc/promise/delay-bodies.ts:57` still returns the
+old legacy `try` envelope around those same operations. The binary encoder
+has separate literal encodings for `try_table` and `try`
+(`src/emit/binary.ts:1765` and `:1799`); this repair must change the actual
+instruction body, not just its name or recorded hash.
+
+**Existing authority and dependency boundary.** No helper extraction is
+needed. `src/wasm/physical/exception-control.ts:107` already owns the canonical
+`buildStandardTryTable`; its only import is type-only from the Wasm model.
+`src/ir/try-table.ts` is already a compatibility re-export of the same function
+objects. The existing ownership test in
+`tests/issue-3518-async-frame-body-ownership.test.ts:129` checks that identity.
+The helper constructs observable nested blocks and `try_table` catches and
+retargets branches by mutating its supplied instruction arrays. The delay
+builder supplies newly constructed registration/handler arrays on each call;
+it must continue doing so, with no cross-call or cross-handler aliasing.
+
+The signed base has 23 production importing consumers of the two EH helpers:
+the native async frame engine, the WasmGC IR backend, and 21 codegen modules
+(function-body, runtime-eval-callable, async-closure-promise, disposable-runtime,
+array-filter-length-set, async-scheduler, promise-executor,
+generators-native-consumer, class-bodies, index, named-this-call,
+statements/nested-declarations, literals, statements/loops, closures,
+statements/exceptions, generators-native, array-from-native, expressions,
+expressions/calls, expressions/new-super). Their exact paths and source pins
+are recorded in `.tmp/delay-eh-forward-planning/source-plan-evidence.json`
+(SHA-256 `ee07dd243b133c46a19d5dfecd21cdcb4ce9263eecd800add76d881f5bd0f4af`).
+They remain read-only. In particular, do not use `buildTargetTaggedTry`:
+its host branch preserves legacy output, while its standalone/WASI branch
+currently passes only tagged catches to the standard helper and omits its
+optional `catchAll`. That would lose the delay provider's required foreign
+exception sentinel route.
+
+The native delay adapter's existing guard at
+`src/codegen/ir-native-promise-delay.ts:99` admits only standalone with native
+strings and excludes WASI. It already supplies the resolved tag, function and
+type handles. No new target policy, import, ABI field, allocator, context
+callback, frontend access or runtime-to-IR dependency is required.
+`scripts/compiler-boundaries.json` already admits `native-runtime` to
+`wasm-physical`; both endpoints are already clean. Do not change that policy,
+its activation history or module population. One added runtime edge predicts
+212 total edges (150 type-only, 62 runtime), still 65 modules; these are
+predictions to verify, not new measured results.
+
+**Implemented connected write set: seven existing files.**
+
+1. `src/runtime/wasmgc/promise/delay-bodies.ts`: add the direct downward import
+   from `../../../wasm/physical/exception-control.js`. Replace only the legacy
+   envelope with `buildStandardTryTable({ kind: "empty" }, timerRegistration,
+   handlers)`. Handler zero is `catch` for the existing `resources.exnTagIdx`
+   with externref payload; handler one is `catch_all`. Keep the original five
+   tagged operations, four foreign operations and attached sentinel comment.
+   Keep the six allocation-prefix operations, eleven registration operations,
+   two return operations, callback, locals, resource interfaces, capture fields,
+   dependency handles and fresh instruction identities unchanged.
+2. `tests/issue-3518-native-delay-combinator-body-ownership.test.ts`: extend only
+   the delay leaf's exact import expectation, keeping combinator expectations
+   and every forbidden-edge control. Replace its legacy-envelope assertion
+   with independently stated nested block/`try_table` shape, ordered catches
+   at depths zero/one, the tagged payload block and exact existing operation
+   arrays. Assert no legacy `try`, unchanged prefix/suffix and nonaliasing
+   across handlers and repeated builder calls. Do not define the expected
+   body by calling the production helper again.
+3. `tests/helpers/native-delay-combinator-source-receipts.mjs`: preserve all
+   13 `ORIGINAL_EVIDENCE` and 13 `ORIGINAL_SEMANTIC_EVIDENCE` entries, both
+   original five-file glue ledgers and all 24 retained-declaration records.
+   Add a separately named, fail-closed EH-forward verifier. It must first
+   authenticate the single direct helper import and the exact canonical call
+   envelope/handler metadata against independently captured landed-main
+   evidence. Only then may it reverse that one envelope and remove that one
+   import for the existing historical verifier. Live prefix, registration,
+   handler bodies, comment and suffix pass through into the old comparison;
+   no candidate-derived historical digest, missing-root fallback or generic
+   normalizer is allowed. Record the intentional legacy-to-standard delta
+   separately from the unchanged historical body proof. If this cannot be
+   expressed narrowly without weakening the old verifier, return the concrete
+   limitation for review instead of reseeding evidence.
+4. `tests/issue-3518-native-delay-combinator-source-preservation.test.ts`: route
+   current-root historical assertions through that explicit forward verifier,
+   with named negative controls for a missing/duplicate helper call, wrong
+   callee, lost/reordered handler, wrong tag/payload, changed rejection target
+   and changed foreign null sentinel. Keep the old retained-declaration and
+   live-body mutation controls meaningful. The previous explicit historical
+   binary/WAT pair is preserved as evidence of the old extraction; do not
+   change its strict equality comparison to pretend the new EH bytes equal
+   the old donor. Any later legacy pair run must report that intentional
+   non-equivalence separately. No source fixture or execution is removed.
+5. `tests/issue-3518-semantic-provider-boundary.test.ts`: amend only the two
+   affected edge-count expectations once the actual graph confirms the one
+   new downward edge. Keep the 65-module denominator, allowed-edge digest,
+   activation-history pins and all refusal controls unchanged.
+6. `tests/issue-4573-standalone-native-promise-delay.test.ts`: retain the twelve
+   existing source/options/behavior controls, including the foreign JavaScript
+   exception producing `{ state: 2, reason: null }`. Add a focused synchronous
+   compile/validate regression using the exact 2,061-character native-family
+   source and options captured by the unchanged settlement recorder (source
+   SHA-256 `fb644cafb5d7125d1906519dd330642a53e05cbf8a9f5a4af6eef4bbf7a74b9e`,
+   file name `settlement-native-family.ts`, standalone, experimental IR,
+   skip semantic diagnostics, fallback/outcome tracking, host bridge always,
+   WAT enabled). Derive it by the existing recorded source transformation;
+   do not maintain a divergent fixture copy. Require actual nonempty native
+   delay ownership and standard-EH output plus successful synchronous
+   `WebAssembly.Module` construction before any runtime execution. Add a paired real tagged
+   registration-throw control using the actual compiled instance's exported
+   exception tag and a distinct externref payload. The timer import throws
+   `WebAssembly.Exception` with that exact tag; the delay call must return
+   without a synchronous leak, state must be rejected and the payload object
+   identity must be preserved. Require the actual tag export and the unchanged
+   single timer import; do not manufacture an unrelated tag, add a production
+   export/import, substitute a JS Promise or silently skip a missing export.
+7. This Issue 3518 implementation/evidence section only.
+
+No changes are proposed to the shared EH helper/facade, codegen delay adapter,
+combinator/settlement/frame bodies, encoder, source fixtures, boundary policy,
+C consumer/codec/emission, A finalizer, B engine or shared baselines. No size
+exception is proposed. Final measured sizes and exact named test population
+will accompany the source draft before validation is scheduled.
+
+**Behavior and evidence checks, in dependency order.**
+
+- Preserve a pre-edit source map and all root baseline artifacts. Root's full
+  unchanged twelve-case delay attempt on Node 25.9 aborted in V8
+  `!job->compile_imports_.empty()` before producing test rows. Its narrower
+  first existing synchronous compile/validate control then passed 1/1, with
+  eleven unselected. Therefore the legacy source envelope is not evidence that
+  every scalar delay module is invalid, and the engine abort is not a measured
+  twelve-test compiler verdict. Root's unchanged eight-fixture settlement
+  recorder likewise aborted on the first delay fixture before a row existed.
+  Root's subsequent explicitly labeled `--no-wasm-async-compilation`
+  diagnostic completed all eight original rows: seven executed, while
+  `native-family` threw during `artifact-validation` with
+  `WebAssembly.Module(): Compiling function #314:"__ir_promise_delay_native"
+  failed: module uses a mix of legacy and new exception handling instructions
+  @+110573`. The compiler reported success with no errors for that artifact.
+  The raw report is `.tmp/delay-eh-forward/baseline-settlement-sync.json`,
+  SHA-256 `ef9c4780c215629db34db0a9e4b0617bbe704af1f82427bf4935d5db1dbc11e8`.
+  This is a measured context-sensitive baseline refusal, distinct from the
+  original asynchronous V8 crashes and the passing scalar 1/1 control.
+- The mixed-EH source-produced failure is now reproduced in the unchanged
+  settlement recorder. Reuse that exact artifact/source and/or the existing
+  `website/playground/examples/js/async.ts` native-family fixture through the
+  unchanged Issue 4574 compile options. Preserve complete binary/WAT, actual
+  compiler result, terminal owner observations and synchronous validation
+  result before any instantiate. Identify the actual function containing the
+  incompatible forms; do not infer them solely from source names or count an
+  engine crash as a validator refusal. No simpler replacement fixture is an
+  application pass. The expected repair is validation and execution of this
+  same original family, not only the scalar delay that already passed.
+- After the repair, verify emitted standard-EH structure, both real rejection
+  routes, normal concurrent settlement and exactly-once behavior on the same
+  original fixtures. Compare the live provider envelope with the landed-main
+  form while preserving all non-envelope body evidence. Run the focused
+  ownership, historical-preservation and boundary controls; collect actual
+  row counts rather than adding new controls to historical totals.
+- Then run the relevant unchanged delay/native-family controls and canonical
+  source TS7 in the sole granted heavy slot, each behind a fresh finite load
+  gate, one 4-GiB fork and no file parallelism. Record the actual worker VM
+  flags and every diagnostic runtime variant. The previously recorded 33,
+  126, 121, 12 and 14 populations describe historical suites, not results of
+  this repair. The initial planning-only assignment authorized no heavy run;
+  root subsequently scheduled the frozen draft and completed the checks
+  recorded below.
+- Preserve failed artifacts and exact input hashes. Any new failure, missing
+  actual exported tag, unexpected graph change or required scope beyond the
+  seven files above is reported before a dependent expansion. Signing and
+  publication remain separate decisions after source and evidence review.
+
+#### Forward-repair local implementation and final evidence — 2026-09-12
+
+The seven-file repair is implemented and independently reviewed locally.
+The sole production leaf remains `e60283bf8303025e4faa430707a9f5651c78db98202feba9aa6ccd285056e29c`
+(111 lines); every other source file and the canonical EH helper are unchanged.
+The original thirteen donor hashes, supplemental semantic hashes, five-file
+glue ledgers and 24 retained declarations remain unchanged and enforced.
+The separate forward verifier authenticates the full ordinary import and
+landed call before projecting only the authorized envelope. B accepted the
+attribute/assertion/modifier/phase guards and three positive-first negatives.
+
+The diagnostic pair used the same eight fixtures, options and runtime flags,
+with only that production leaf changed: baseline executed 7/8 and rejected
+the native-family module for mixed EH at function 314, offset 110573;
+candidate executed 8/8 with 22 executions, including four family scenarios twice.
+Raw pair: `.tmp/delay-eh-forward/{baseline,candidate}-settlement-sync.json`.
+The normal-runtime candidate also executed 8/8 fixtures and 22 executions,
+exit 0: `.tmp/delay-eh-forward/candidate-settlement.json` (`c7918ca4`).
+Earlier asynchronous V8 aborts remain preserved and unclassified; they produced
+no test rows and are separate from the diagnostic validation refusal.
+
+Frozen cohort 68636 exited 0: **325/325**, zero failed or pending. Actual rows:
+ownership 33, preservation 143, boundary 121, delay 14, unchanged family 14.
+The new real module-tag case preserves payload identity; the original foreign
+exception case still rejects with the null sentinel. All twelve old delay
+test bodies and the strict historical comparison remain intact.
+Report: `.tmp/delay-eh-forward/cohort-325.json`, SHA-256
+`b3bd048e1d74547579f34bfb3e747a34b75ff35b77e39a961eda3be8362f7afb`.
+All seven frozen input hashes matched before this issue-only evidence update.
+
+Source TS7, LOC, function-size and oracle gates passed. Boundary inventory is
+valid: 1,313 modules, 65 clean, 1,243 migration entries, five compatibility
+adapters and zero errors; `architectureComplete` remains false. The dead-export
+command exited 0 with preservation witnesses 6/6, but strict closure remains
+open on two existing unknown imports. Retirement is not certified.
+The 325/325 report is the pre-style-correction capture. A later normal commit
+attempt stopped before tests on a `useConst` lint error; its log is preserved
+as `.tmp/delay-eh-forward/commit-attempt-1.log`. Only the new tagged test now
+uses a constant mutable holder (`ebecacf8` to `cbac043a`); source, helper and
+expectations are unchanged. Scoped format/lint passed. Subsequent full normal
+hooks passed **576/576 across 12 files** (29+21+41+45+24+33+143+36+55+14+121+14),
+including the corrected 14-case delay file; budgets, lint and oracle passed.
+The raw record is `.tmp/delay-eh-forward/commit-attempt-2.log`. This is a
+separate hook cohort, preserving the original pre-style 325/325 capture.
+Commit creation then failed after hooks, exit 128: the inherited SSH agent
+socket was missing. No commit was created in that attempt. Root verified the
+existing desktop agent and will retry signing with full normal hooks again.
+Root owns the signed local checkpoint; existing PR/claim holds remain untouched.
+
 
 
 ### Capability contract extraction checkpoint (2026-09-08)
@@ -5942,3 +6447,175 @@ Normal signed commit and push hooks remain mandatory; their actual outcomes
 and parent delivery belong in the existing PR follow-up. Local evidence is
 under `.tmp/5757-queue-drain/`. Keep ordered delivery 5755→5756→5757→5758→5759→5760
 and carry the signed standard-EH delay repair into PR5759 with both catch forms.
+
+
+## 2026-09-12: full-family source preparation queue refresh
+
+Refresh existing PR5758, “feat(ir): prepare the complete native async source
+family”, from published 37e169c4903c29ab46fe99de0910634723a19dac onto signed local
+vector/main parent 6cf4e423b4481a9fa003b1cd58a84cfa9100116c in
+`codex/5758-queue-drain-20260912`. Keep the existing PR as the sole publication
+target, behind confirmed parent delivery to main.
+
+Only appended Issue3518 history conflicted; both complete sections remain.
+All five published production files and two authored tests match the published
+head byte-for-byte. The boundary registry preserves every refreshed parent
+entry and adds only program-logical-types.ts and program-native-async-source.ts
+as frontend-ts / unmigrated. No additional implementation scope was added.
+The original playground async.ts fixture remains SHA256
+6bc4fc96cc65881c9919a39b840afaf1001dfd3d0e05ef0cc141441a051f7915.
+
+Preserve explicit native-family selection, exact checker/source ownership and
+retained-plan revalidation. Preparation yields seven original units, five
+terminal bodies, five awaits, two vector allocations and zero derived bodies;
+both original delay arrows remain inventory records. The original/export-only,
+GVN on/off, original/decoded cases retain invariant / unknown-function-ref /
+resolve for the real missing __ir_promise_delay_native provider, located at the
+original delay owner. Fresh-process replay must retain that refusal. Omitted
+or disabled family selection remains unsupported / type-resolution-unsupported
+/ build. These are refusal controls, not physical whole-program execution.
+The discarded-expression correction must erase only checker-proven ambient
+undefined after effectful cases; shadowed, unchecked and valued returns retain
+their original rejection behavior. Keep all actual forbidden-import controls.
+
+Fresh serialized Node25.9.0/macOS ARM64 validation passed **371/371** across
+eight files, with no failures or skips: family source contract 36, family source
+identity 55, unchanged native family 14, discarded effects 37, delay admission
+41, delay identity 45, typed preparation 30 and semantic/provider boundary 113.
+Source TS7, explicit-parent LOC/function budgets, coercion, oracle and
+preservation-v1 dead-export checks passed. Conformance synchronization changed
+zero files. Strict closure remains OPEN at the two existing nonliteral imports;
+preservation witnesses do not establish IR retirement.
+
+The isolated test262 checkout at b363f29d3c43c626dc852744ad64a0b48a003693 has its
+own Git objects and verified exact bytes, modes and file/directory inventories:
+53,889 tests plus 44 harness files, no extras. Existing corpora were preserved.
+Manifest SHA256:
+fcaaff56a78c134e3875a00b743d5e6435939c38f304eeec1ffb35bc3c611ffb.
+
+The default pre-commit selector sees 34 root test changes from its older base
+535ee6b6ba19239394ee50f8235e6c528212688b, so its existing >20 lane self-skips.
+The 371 controls above ran directly; do not claim this inherited population ran.
+Normal signed commit/push hooks remain required, with actual outcomes recorded
+on the existing PR when published. Local receipts are in
+`.tmp/5758-queue-drain/`. Keep ordered delivery 5755→5756→5757→5758→5759→5760 and
+retain the signed standard-EH delay repair at PR5759, including both catch forms.
+
+
+## 2026-09-12: native delay/combinator extraction queue refresh
+
+Refresh existing PR5759, “refactor(ir): extract native delay and combinator
+runtime bodies”, preserving published de2f1072ebb32771272d24a58407814f9d2a5d38
+and its signed scoped EH repair 561853c00d76c72eb44dbee14340dc15e9841e41. Merge
+signed source-family parent ceda2670821124e09c5a674e01e3632ac52b46b8 in
+`codex/5759-queue-drain-20260912`. Publish only to the existing PR, after parent
+delivery through the protected queue; no new migration scope is included.
+
+The two conflicts were appended issue history and ir-native-promise-delay.ts.
+Both complete history sections remain. The adapter resolves to the exact
+extracted checkpoint adapter, without a duplicate inline body or stray EH
+import. The signed runtime leaf retains canonical buildStandardTryTable,
+tagged externref payload rejection and foreign-exception null sentinel
+rejection. Allocation, timer registration, Promise lifecycle and return order
+remain unchanged. Runtime leaf SHA256:
+e60283bf8303025e4faa430707a9f5651c78db98202feba9aa6ccd285056e29c.
+
+All ten source/test files changed by the repaired checkpoint remain byte-for-
+byte identical to 561853. Refreshed parent frame wrapper/engine, frame forward
+fixture/test and source-family preparation remain unchanged. The exact policy
+composition retains every parent rule, adds delay-bodies.ts and
+combinator-bodies.ts to native-runtime, raises its minimum from four to six,
+and prepends the corresponding activation record. No allowed edge is widened.
+The boundary inventory remains 65 modules and 212 edges (150 type-only +62
+runtime); this is not a physical IR retirement claim.
+
+The original thirteen source hashes, thirteen supplemental semantic hashes,
+both five-file glue ledgers and all twenty-four declaration records remain
+unchanged. Preserve all seventeen forward-EH controls, including whole ordinary
+import authentication, attributes/assert/defer refusals, handler order,
+payload/tag/target checks and the foreign null sentinel. The old verifier still
+rejects the repaired body before its strictly authenticated inverse projection.
+
+Fresh serialized Node25.9.0/macOS ARM64 validation passed **610/610** across
+thirteen files, with zero failures or skips: frame ownership 29, frame source
+preservation 41, delay admission 41, delay identity 45, vectors 24, extracted
+body ownership 33, extracted source preservation 143, family source contract
+36, family source identity 55, prepared main 14, semantic/provider boundary
+121, native delay 14 and native family 14. The two added native-delay cases
+validate a real mixed-EH artifact and actual exported-tag payload identity.
+
+Public current-root preservation passed five frame artifacts / twelve
+executions and eleven delay/combinator artifacts / nineteen executions,
+including eight native-family scenarios. Both verdicts explicitly record
+historicalPair NOT_RUN, physicalAcceptanceCertified false and retirementCertified
+false. Do not relabel this fresh current-root evidence as historical byte/WAT
+identity against the pre-EH baseline.
+
+Source TS7, explicit-parent LOC/function budgets, coercion, oracle and
+preservation-v1 dead-export checks passed; conformance sync changed zero files.
+Strict closure remains OPEN at the two existing nonliteral imports. The
+independent b363f29d3c43c626dc852744ad64a0b48a003693 corpus verified all 53,933
+raw files, exact modes/directories and no extras/shared objects. Corpus manifest
+SHA256 fcaaff56a78c134e3875a00b743d5e6435939c38f304eeec1ffb35bc3c611ffb.
+Existing corpora and fixtures remain preserved.
+
+The default pre-commit selector sees 37 inherited root test changes against
+535ee6b6ba19239394ee50f8235e6c528212688b and its existing >20 lane self-skips.
+The 610 tests above ran directly. Normal signed commit/push hooks remain
+mandatory, with actual outcomes recorded at publication. Detailed local
+receipts are under `.tmp/5759-queue-drain/`; public verdicts are under
+`.tmp/frame-body-preservation-HWMbr5/` and
+`.tmp/delay-combinator-preservation-ZE3n0z/`. Keep dependency-first delivery
+5755→5756→5757→5758→5759→5760; only verified delivery to main counts.
+
+### Preserve delivered async spill typing in the family queue refresh — 2026-09-13
+
+Existing PR 5758, “feat(ir): prepare the complete native async source family”,
+was cleanly merged with delivered main ee2ee09062e587e882e6be6e47d5bdde5472ecbe
+in its owned queue-drain worktree. This brings the legitimate async spill
+typing repair from PR 5869 into the inherited compiler. The initial complete
+frame preservation file passed 39/41 with two receipt mismatches; the public
+source comparison passed. Its original failure report remains retained.
+
+The scoped repair changes only the frame source-preservation test and its
+forward provenance fixture. Two independently read and authenticated incoming
+spans now precede the unchanged historical reconstruction. The original seven
+span records, original a426 donor hash and 0194 receipts remain unchanged;
+the runtime bodies and the complete public comparator remain unchanged.
+Six added controls reject removal, semantic corruption, module retargeting
+and a type-only import. All nine unique/disjoint spans recover the original
+a426 bytes exactly, with no unadmitted source delta.
+
+Fresh serialized validation passed 422/422 across ten complete files, with
+zero skips: the existing eight-file 371-case family/preparation/boundary group,
+47 frame preservation cases and four incoming spill regression cases. This
+is current-root evidence, not a fresh historical compiler comparison. Normal
+gates and signed hooks remain required before publication; main delivery of
+PR 5757 remains the prerequisite. Public cutover and direct retirement are
+still open. Exact independent provenance and initial/final reports remain in
+.tmp/5758-queue-drain, with the published handoff updated at delivery.
+
+## September 13 refreshed source-family parent
+
+Merge the published source-family head
+`00dae7e4c6428a8d78ad86bb731ac78d0318800d` into this existing extraction PR.
+The only conflict was appended issue history; both complete records remain.
+All ten pinned extraction/repair source and test files are byte-identical,
+including the standard-EH delay body with tagged and foreign catches. The
+parent's two authenticated async-spill forward spans and six mutation controls
+are carried exactly. Every previous policy record and activation stays exact;
+seven incoming unmigrated classifications are added without widening edges.
+
+Fresh serialized validation passed **620/620 across fourteen full files**,
+zero failures or skips. This is the original thirteen-file cohort with frame
+preservation expanded from 41 to 47 and four incoming spill controls. The
+143 delay/combinator preservation controls and 121 boundary controls all ran.
+TS7 and all five source gates passed against the exact parent above;
+conformance synchronization changed zero files. Original historical fixtures,
+source hashes, failures and prior receipts remain intact. Current-root evidence
+does not certify a historical compiler pair, physical async acceptance or
+retirement. New receipts use `.tmp/5759-queue-drain/refreshed-parent-*`.
+
+Normal signed hooks remain required. Publish this existing PR only after
+PR5758 is verified delivered to main, then retain dependency-first delivery
+through PR5760 and the existing later stack. No new migration scope is added.
