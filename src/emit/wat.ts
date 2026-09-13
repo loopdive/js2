@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { indexPhysicalTypes, planPhysicalTypeSection } from "../wasm/physical/type-layout.js";
-import { walkInstructions } from "../codegen/walk-instructions.js";
+import { walkInstructions } from "../wasm/model/instruction-walk.js";
 import type {
   BlockType,
   FieldDef,

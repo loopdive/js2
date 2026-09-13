@@ -802,6 +802,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
 
 export interface AstToIrOptions {
   readonly exported?: boolean;
+  /** Explicit string-typed unary numeric conversion; omission keeps historical lowering. */
+  readonly stringNumericCoercion?: "number-boundary";
   /** Authoritative identity for the main artifact and exact feature-plan owner. */
   readonly ownerUnitId: IrUnitId;
   /**
@@ -1331,6 +1333,7 @@ export function lowerFunctionAstToIr(
     funcName: name,
     ownerUnitId: options.ownerUnitId,
     returnType,
+    stringNumericCoercion: options.stringNumericCoercion,
     logicalVectorTypes: options.logicalVectorTypes,
     logicalVectorConsumed,
     calleeTypes: options.calleeTypes,
@@ -2342,6 +2345,7 @@ interface NestedCapture {
 
 interface LowerCtx {
   readonly builder: IrFunctionBuilder;
+  readonly stringNumericCoercion?: AstToIrOptions["stringNumericCoercion"];
   readonly logicalVectorTypes?: AstToIrOptions["logicalVectorTypes"];
   readonly logicalVectorConsumed?: Set<ts.Node>;
   readonly scope: Map<string, ScopeBinding>;
@@ -12668,13 +12672,21 @@ function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx): IrValue
  * selector-mirrored pre-claim reject is out of scope here — see the #3167
  * resolution note on select.ts being checker-free).
  */
-function emitUnaryToNumber(rand: IrValueId, randType: IrType, cx: LowerCtx): IrValueId | null {
+function emitUnaryToNumber(
+  rand: IrValueId,
+  randType: IrType,
+  cx: LowerCtx,
+  stringNumericCoercion?: AstToIrOptions["stringNumericCoercion"],
+): IrValueId | null {
   if (asVal(randType)?.kind === "i32") {
     // boolean (the only i32-typed IR operand reaching a `+`/`-` — a native
     // `type i32 = number` operand is already numeric and takes the f64 path).
     return cx.builder.emitUnary("f64.convert_i32_s", rand, irVal({ kind: "f64" }));
   }
   if (randType.kind === "string") {
+    if (stringNumericCoercion === "number-boundary") {
+      return cx.builder.emitIntrinsic("js.number.unbox", [coerceIrValueToExternref(cx.builder, rand)]);
+    }
     const boxed = cx.builder.emitBox(rand, irDynamic(JS_TAG_IDS.String));
     return cx.builder.emitDynToNumber(boxed);
   }
@@ -12757,7 +12769,7 @@ function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValue
       // (#3168) `-x` on a non-number operand is `-ToNumber(x)` (§13.5.5 →
       // §7.1.4). ToNumber the operand to f64, then `f64.neg` — sign-correct for
       // `-0` (`-"" === -0`), unlike `0 - x`. Mirrors legacy `expressions/unary.ts`.
-      const negToNumber = emitUnaryToNumber(rand, randType, cx);
+      const negToNumber = emitUnaryToNumber(rand, randType, cx, cx.stringNumericCoercion);
       if (negToNumber !== null) {
         return cx.builder.emitUnary("f64.neg", negToNumber, irVal({ kind: "f64" }));
       }
@@ -12779,7 +12791,7 @@ function lowerPrefixUnary(expr: ts.PrefixUnaryExpression, cx: LowerCtx): IrValue
       }
       // (#3168) `+x` IS `ToNumber(x)` (§13.5.4). A boolean / string operand
       // ToNumbers to f64 (boolean → 0/1; string → §7.1.4.1 StringToNumber).
-      const plusToNumber = emitUnaryToNumber(rand, randType, cx);
+      const plusToNumber = emitUnaryToNumber(rand, randType, cx, cx.stringNumericCoercion);
       if (plusToNumber !== null) {
         return plusToNumber;
       }
@@ -15139,6 +15151,7 @@ function liftNestedFunction(
     funcName: liftedName,
     ownerUnitId: cx.ownerUnitId,
     returnType: signature.returnType,
+    stringNumericCoercion: cx.stringNumericCoercion,
     calleeTypes: cx.calleeTypes,
     directCalls: cx.directCalls,
     importedCalls: cx.importedCalls,
@@ -15280,6 +15293,7 @@ function liftClosureBody(
     funcName: liftedName,
     ownerUnitId: cx.ownerUnitId,
     returnType: signature.returnType,
+    stringNumericCoercion: cx.stringNumericCoercion,
     calleeTypes: cx.calleeTypes,
     directCalls: cx.directCalls,
     importedCalls: cx.importedCalls,
