@@ -13,6 +13,7 @@ import {
   containsArguments,
   getMemberName,
   hasAsyncModifier,
+  hasNewTargetEnvironment,
   hasOptionalChain,
   isArgumentsOrEval,
   isAsiLetExpressionStatement,
@@ -2189,14 +2190,13 @@ on([ts.SyntaxKind.TaggedTemplateExpression], (ctx, node) => {
   }
 });
 
-// ── new.target outside function ─────────────────────────────────
-// ES spec: new.target is only valid inside functions (including arrow functions
-// which inherit from enclosing function) and class static blocks.
+// ── new.target lexical resolution environment ───────────────────
+// Arrow functions inherit it; computed member names run outside their member.
 on([ts.SyntaxKind.MetaProperty], (ctx, node) => {
   if (node.kind === ts.SyntaxKind.MetaProperty) {
     const meta = node as ts.MetaProperty;
     if (meta.keywordToken === ts.SyntaxKind.NewKeyword && meta.name.text === "target") {
-      if (!isInsideFunction(node) && !isInsideClassStaticBlock(node)) {
+      if (!hasNewTargetEnvironment(node)) {
         ctx.addError(node, "new.target is only valid inside functions");
       }
     }
