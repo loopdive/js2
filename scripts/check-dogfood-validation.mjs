@@ -134,30 +134,12 @@ const KNOWN_INVALID = [{ name: "lit", issue: 3977, detail: 'local.set[0] in "y_c
  * from reading as an undifferentiated pile of red, and it is the list a future
  * widening of the gated surface has to empty first. Fixing one deletes its row.
  *
- * Three distinct codegen bugs, seven modules: #6412 (`extern.convert_any`
- * expecting anyref where an async resume produced externref), #6413 (a closure
- * falling through with externref where i32 is expected), #6414 (a `struct.set`
- * expecting i32 and given externref in an async resume).
+ * One codegen bug, three modules: #6413 (a closure falling through with
+ * externref where i32 is expected). #6412 (`extern.convert_any` expecting anyref
+ * where an async resume produced externref) is FIXED — its three hono jwt/jwk
+ * rows are gone; #6414's row was retired on main.
  */
 const KNOWN_INVALID_MODULES = [
-  {
-    name: "hono",
-    module: "dist/utils/jwt/index.js",
-    issue: 6412,
-    detail: 'extern.convert_any in "__async_resume_fimportPublicKey"',
-  },
-  {
-    name: "hono",
-    module: "dist/middleware/jwk/index.js",
-    issue: 6412,
-    detail: "same __async_resume_fimportPublicKey shape",
-  },
-  {
-    name: "hono",
-    module: "dist/middleware/jwt/index.js",
-    issue: 6412,
-    detail: "same __async_resume_fimportPublicKey shape",
-  },
   {
     name: "hono",
     module: "dist/jsx/dom/client.js",
