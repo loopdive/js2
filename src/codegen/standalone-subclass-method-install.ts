@@ -85,8 +85,89 @@ import { classMemberFuncKey } from "./class-member-keys.js";
 import { emitClassMemberKeyOperand } from "./class-proto-accessors.js";
 import { installableInstanceMethodNames, METHOD_FLAGS } from "./class-proto-object.js";
 import { emitCachedMethodClosureAccess } from "./closures.js";
+import { emitLazyClassObjectGet } from "./expressions/extern.js";
+import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { externrefBackedOwnFieldBacking } from "./registry/error-types.js";
+import { addStringConstantGlobal } from "./registry/imports.js";
+import { rollbackSpeculative, snapshotSpeculative } from "./context/speculative.js";
+import { flushLateImportShifts } from "./shared.js";
+
+/**
+ * (#5383 S2m) Install `constructor` → the class-object singleton as an own data
+ * property of the instance in `selfLocal`.
+ *
+ * This is the standalone twin of the #5377 FOURTH argument to
+ * `__set_subclass_proto`, which is what makes `i.constructor === C` hold
+ * through an any-typed receiver on the JS-host lane. Standalone has no such
+ * import, and the carrier — a `$__vec_externref` for `extends Array` — is
+ * indistinguishable from a plain array, so the generic `__extern_get` ladder
+ * answered the ARRAY builtin's `constructor`: `Array`, not `C`.
+ *
+ * ## Why this is the site that mattered (measured, `.tmp/s2m-narrow*.mts`)
+ *
+ * `Temporal.Duration.from({hours:1}).total("minutes")` threw, inside the
+ * compiled polyfill, `` Convert JSBI instances to native numbers using
+ * `toNumber`. `` — JSBI's own deliberately-throwing `valueOf`. Nothing in our
+ * lowering applies ToNumber there; a 27-probe matrix over every operation JS
+ * does NOT coerce through (strict equality, `typeof`, ToBoolean, property
+ * read, `instanceof`, argument passing, destructuring, `for-of`, …) found ZERO
+ * divergences from node. The coercion is the POLYFILL's own:
+ * `JSBI.__toPrimitive`, `__isBigInt` and `BigInt` all open with
+ * `i.constructor === JSBI`, and when that reads false `__toPrimitive` falls
+ * through to `const t = i.valueOf; t.call(i)` — JSBI's throwing one. `class
+ * JSBI extends Array`, so it is exactly this shape.
+ *
+ * | probe, `class C extends Array`, standalone      | node | before | after |
+ * | ----------------------------------------------- | ---- | ------ | ----- |
+ * | `x.constructor === C`, `x` a typed local        | 1    | 1      | 1     |
+ * | `f(x)` where `function f(i){return i.constructor===C}` | 1 | **0** | 1 |
+ * | which constructor did it answer?                | `C`  | **`Array`** | `C` |
+ *
+ * A PLAIN `class C` is unaffected on either side — its instance is a closed
+ * `$ClassName` struct that the #5383 S2h prototype-lookup arm already serves.
+ *
+ * ## Deviation, stated
+ *
+ * `constructor` becomes an OWN property, where the spec puts it on
+ * `C.prototype`. So `b.hasOwnProperty("constructor")` answers `true`. That is
+ * the same trade the method install above documents and accepts, for the same
+ * reason (the carrier has no prototype channel), and it is carried by the same
+ * non-enumerable §17 flags, so `Object.keys` / `for…in` are unchanged.
+ *
+ * Pushes NOTHING and returns `false` when the class object or the string
+ * constant cannot be materialized, so a decline leaves no partial operands.
+ */
+function pushSubclassConstructorInstall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  selfLocal: number,
+  subName: string,
+  defineIdx: number,
+): boolean {
+  const snap = snapshotSpeculative(ctx, fctx);
+  fctx.body.push({ op: "local.get", index: selfLocal });
+  addStringConstantGlobal(ctx, "constructor");
+  const keyInstrs = stringConstantExternrefInstrs(ctx, "constructor");
+  if (keyInstrs.length === 0) {
+    rollbackSpeculative(ctx, fctx, snap);
+    return false;
+  }
+  for (const instr of keyInstrs) fctx.body.push(instr);
+  if (!emitLazyClassObjectGet(ctx, fctx, subName)) {
+    rollbackSpeculative(ctx, fctx, snap);
+    return false;
+  }
+  // The class-object materializer can register a late import, which shifts
+  // every DEFINED func index — including `defineIdx`, captured by the caller
+  // before this ran (#329/#1899). Flush and re-read, exactly as
+  // `pushCompanionConstructorSeed` does for the same reason.
+  flushLateImportShifts(ctx, fctx);
+  fctx.body.push({ op: "f64.const", value: METHOD_FLAGS });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__defineProperty_value") ?? defineIdx });
+  fctx.body.push({ op: "drop" }); // the helper returns the target
+  return true;
+}
 
 /**
  * Install `subName`'s declared instance methods as own data properties of the
@@ -112,12 +193,18 @@ export function emitStandaloneSubclassMethodInstall(
   // fix.
   if (externrefBackedOwnFieldBacking(ctx, subName) === "error-struct") return;
   const methodNames = installableInstanceMethodNames(ctx, subName);
-  if (methodNames.length === 0) return;
   const structTypeIdx = ctx.structMap.get(subName);
   if (structTypeIdx === undefined) return;
   ensureObjectRuntime(ctx);
   const defineIdx = ctx.funcMap.get("__defineProperty_value");
   if (defineIdx === undefined) return;
+
+  // (#5383 S2m) `constructor` first, and NOT gated on there being methods: a
+  // class with no declared instance method still has to answer
+  // `i.constructor === C` through a dynamic receiver.
+  pushSubclassConstructorInstall(ctx, fctx, selfLocal, subName, defineIdx);
+
+  if (methodNames.length === 0) return;
 
   // Everything below appends to `fctx.body` in receiver/key/value/flags order,
   // exactly as `emitStandaloneClassProtoObject` does for the prototype object.
