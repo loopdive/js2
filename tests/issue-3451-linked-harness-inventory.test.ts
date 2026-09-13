@@ -1,11 +1,22 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   consumedHarnessSymbols,
   harnessObjectSourceKey,
   inventoryHarnessAbi,
 } from "../scripts/test262-linked-harness-inventory.js";
 import { assembleLinkedHarness, type HarnessSourcePart } from "./test262-original-harness.js";
+
+// (#6463) The split invariants below need a strict rerun to exist for a
+// strict-neutral fixture body; pin the unconditional rerun.
+const savedStrictRerun = process.env.TEST262_STRICT_RERUN;
+beforeAll(() => {
+  process.env.TEST262_STRICT_RERUN = "always";
+});
+afterAll(() => {
+  // Assigning `undefined` would store the string "undefined"; "" is not "always".
+  process.env.TEST262_STRICT_RERUN = savedStrictRerun ?? "";
+});
 
 describe("#3451 linked-harness split and key", () => {
   it("keeps the harness strict-neutral and puts strictness first in the body unit", () => {
