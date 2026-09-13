@@ -4,7 +4,7 @@ title: "UMBRELLA: ES6 (ES2015) standalone authoritative 11,704-row close-out →
 status: in-progress
 sprint: current
 created: 2026-08-15
-updated: 2026-09-12
+updated: 2026-09-13
 assignee: codex/es6-test262-closeout
 priority: high
 horizon: xl
@@ -17,6 +17,95 @@ related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445
 ---
 
 # #4444 — UMBRELLA: ES6 (ES2015) standalone edition close-out
+
+## Active continuation (2026-09-13, Codex)
+
+### Cross-session ownership
+
+The user explicitly identified a parallel IR-migration session. The ES2015
+team has sent that session its exact source paths and requested current
+ownership and landing order. Until the shared seams are agreed, hold new
+overlapping compiler/IR edits and merges; preserve existing work and allow
+already-running tests and hooks to finish. Validation of frozen conformance
+source and issue/test documentation can continue.
+
+The app task titled `IR migration` replied that it is inactive after handoff,
+with no current writers or reservations in these conformance paths. Its old
+worktree and staged merge must remain untouched; the landed extraction
+supersedes that old state. The active successor has not yet been identified.
+The user was asked for its task/worktree, and overlapping new implementation
+remains held rather than assuming that the inactive task speaks for it.
+
+Proposed boundary, pending acknowledgment: migration retains program
+preparation, native body extraction, and migration receipts; this team owns
+scoped generator, Promise, and RegExp conformance behavior and regression
+pins. Shared context/declarations/index/literal-allocation edits require
+explicit coordination. In particular, do not start the queued true-realm IR
+implementation independently of that session, duplicate its extraction, or
+weaken its checks. The Promise successor preserves the landed legacy
+combinator adapter exactly and passes the current forward-preservation oracle.
+
+### Measured state and active slices
+
+The latest verified complete canonical record is the standalone baseline for
+`e0023dbbe6c37e15c1f56ed0c8bc8d15d0afbac3`: **10,255 pass, 1,104 fail,
+344 compile errors, and one compile timeout**, exactly **11,704** official
+ES2015 rows. Its JSONL SHA-256 is
+`07c89a5c2626f3312ff611f008a69ed6d8826e9802da024df39726ddabc1e9ba`.
+Compared with the September 12 record below, 63 rows gained and 38 lost pass
+status (net +25). These are baseline differences, not attribution of all
+changes to one PR. The ongoing local census
+`test262-standalone-results-20260913-010438.jsonl` remains partial; do not
+replace the canonical denominator or infer a new full-suite rate from it.
+
+Implementation ownership remains partitioned into three isolated Terra Max
+worktrees, with peer PR shepherding. Compiler-heavy validation and git hooks
+share one team lease alongside the census; no active tests may be killed
+without user permission.
+
+- **Generator method regression:** upstream PR #5874 merged as
+  `85496937328e9b5d7477946b64fcf213920ad554`. Its four changed files match
+  the tested head `5322242ffcdc7d40005925c0955f32060538aaf4` exactly. The
+  previously passing floor measured 37/37 and protocol controls 44/44.
+  This does not close generator issue 5199: `default-proto.js` remains a
+  separate measured regression. The successor's unchanged `default-proto.js`
+  and `prototype-value.js` now pass 2/2. Allocation-time prototype-source
+  promotion fixes the closed-literal prototype boundary: runtime controls
+  now pass 8/8 and selector guards 2/2, including identity and inherited
+  property liveness. An additional immediate-read diagnostic still fails
+  (30/31 bits): the replacement uses externref while the saved immediate
+  getter result has a concrete struct slot and is cast to null. This remains
+  a documented blocker; no successor PR or clean diagnostic is claimed.
+  Shared source changes are held for migration-owner coordination.
+- **Sticky RegExp matching:** ready upstream PR #5878 has tested head
+  `9e8203925cc6fa9a352d6a3b2a768297575850b3`. One original failure and ten
+  positive controls pass in each lane, plus 3/3 focused pins. The continuation
+  snapshot has successful quality, issue, smoke, linear, equivalence, and
+  regression checks; the PR is still open and mergeability is unknown, not
+  evidence of a conflict. Raw lastIndex identity and conditional descriptor
+  state remain separate unfinished slices in issue 5198.
+- **Observable Promise combinators:** issue 5197 checkpoint `6e684e2950`
+  records 13/13 focused pins and the original `all/invoke-resolve.js` plus
+  its positive control passing 2/2 before integration. Integration with
+  captured upstream `7adc0a6e897556cee50a7024d24a47a0fb1c8052` exposed a
+  source-declaration ledger conflict. Observable helpers now live in a
+  dedicated module, preserving the landed legacy adapter byte-for-byte and
+  passing the current source-preservation verifier. Integrated compiler bundle
+  `ee8a61289b2547f6` with rebuilt QuickJS adapter `ade903d7c361865e` passes
+  the focused suite 13/13 and unchanged original/control pair 2/2; canonical
+  TS7 also passes. Ready upstream PR #5883 publishes integrated head
+  `df94fdac9b9a43b579975ee7e57506aecd272809`. Mandatory merge hooks passed
+  all 12 changed-root suites; pre-push checks passed, including numeric-local
+  18/18 and issue integrity. The frozen fix is complete, but issue 5197's
+  remaining protocol work and the full-suite goal remain open.
+- **Next substrate work:** issue 4274 now has a refreshed realm implementation
+  plan, exact manifests, and negative provenance controls. It remains queued
+  until a worker is available and ownership is rechecked; no source changes
+  or full-cohort improvement are claimed.
+
+Continue until the original 11,704/11,704 acceptance bar is verified. Keep one
+upstream PR per completed fix, update each issue with measured evidence and
+remaining work, and do not turn these checkpoints into issue-completion claims.
 
 ## Resume checkpoint (2026-09-12, Codex)
 
