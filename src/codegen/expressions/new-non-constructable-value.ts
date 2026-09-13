@@ -167,10 +167,27 @@ export function tryNonConstructableNewTarget(
   // no position and therefore no checker symbol, so it looks exactly like an
   // undeclared name — this arm would turn every such rewrite into a
   // ReferenceError.
+  //
+  // (#6425) An unresolvable identifier that NAMES A REGISTERED HOST EXTERN
+  // CLASS is an ambient host global the *lib* failed to declare, not an
+  // undeclared name. `--platform node` type-checks against the DOM-free
+  // composite lib, which declares no `TextEncoder`/`TextDecoder`, so on that
+  // lane every `new TextEncoder()` looked unresolvable and was turned into a
+  // static `TypeError("TextEncoder is not a constructor")` — while the web
+  // lane, which has lib.dom, resolved the same name and emitted
+  // `TextEncoder_new`. Declining here lets flow reach the matching recovery
+  // arm in `new-super.ts` (`!className && externClasses.has(name) &&
+  // resolvesToAmbientGlobal`), which the synthetic registration in
+  // `extern-declarations.ts` exists to feed. The exemption is narrow by
+  // construction: only names in `ctx.externClasses` (populated solely for
+  // host-import targets — `!nativeStrings && !strictNoHostImports`), and
+  // "unresolvable" already guarantees no user binding shadows them, so
+  // `new undeclaredName()` still throws.
   if (
     ts.isIdentifier(callee) &&
     !nodeIsSynthesized(callee) &&
     !isInsideWithStatementBody(callee) &&
+    !ctx.externClasses.has(callee.text) &&
     ctx.oracle.isUnresolvableIdentifier(callee)
   ) {
     const unresolvedType = compileExpression(ctx, fctx, callee);

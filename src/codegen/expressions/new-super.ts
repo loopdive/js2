@@ -18,6 +18,7 @@ import { needsImplicitArgumentsObject } from "../helpers/body-uses-arguments.js"
 import { emitFnctorCtorArgumentsObject, fnctorCtorNeedsArguments } from "../fnctor-ctor-arguments.js";
 import {
   GLOBAL_NON_CONSTRUCTOR_FUNCTION_NAMES,
+  objectLiteralMethodWithoutConstruct,
   provablyNonConstructableStatically,
   resolvesToAmbientGlobal,
   resolvesToNamedAmbientGlobal,
@@ -56,7 +57,8 @@ import {
 } from "../dataview-native.js"; // (#2159/#38) DataView windowing wrapper; (#3054 B1/B2) shared-backing TA views + windowing; (#3054 D) dynamic ctor construct
 import { emitBoundsCheckedArrayGet } from "../array-methods.js";
 import { emitObjectCoercion } from "./calls-guards.js"; // (#3118) shared Object(...) / new Object(...) ToObject coercion
-import { COLLECTION_KIND, ensureMapHelpers, coerceMapKeyToAnyref } from "../map-runtime.js";
+import { COLLECTION_KIND } from "../collection-kind.js"; // (#6419) import-free leaf — map-runtime.js is in an import cycle
+import { ensureMapHelpers, coerceMapKeyToAnyref } from "../map-runtime.js";
 import { ensureDisposableStackNew } from "../disposable-runtime.js";
 import { emitSetNewTargetBeforeCall, ensureNewTargetGlobal } from "../new-target.js"; // (#2023)
 import {
@@ -304,15 +306,18 @@ function emitStaticNotAConstructorThrow(
  *
  * Generator functions have no `[[Construct]]` slot (§27.3.4), so `new g()`
  * throws. Kept to shapes that are provable without runtime information:
- * `new (function*(){})()`, a `function* g(){}` declaration name, and
- * `var g = function*(){}; new g()`.
+ * `new (function*(){})()`, a `function* g(){}` declaration name,
+ * `var g = function*(){}; new g()`, and (#6419) a generator/async METHOD value
+ * read off an object literal, `var m = { *m(){} }.m; new m()`.
  */
 function isStaticGeneratorFunctionTarget(ctx: CodegenContext, callee: ts.Expression): boolean {
   if (ts.isFunctionExpression(callee)) return !!callee.asteriskToken;
   if (!ts.isIdentifier(callee)) return false;
   if (ctx.generatorFunctions.has(callee.text)) return true;
   const init = ctx.oracle.variableInitializerOf(callee);
-  return init !== undefined && ts.isFunctionExpression(init) && !!init.asteriskToken;
+  if (init === undefined) return false;
+  if (ts.isFunctionExpression(init) && init.asteriskToken !== undefined) return true;
+  return objectLiteralMethodWithoutConstruct(init);
 }
 
 /**
@@ -6215,9 +6220,15 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     // lifted closure registers under its synthetic `__closure_N` name), so also
     // resolve the initializer through the oracle (#1930 — never the raw TS
     // checker).
+    // (#6419) …and a generator/async METHOD value read off an object literal
+    // (`var m = { *m(){} }.m`). Same §15.x "no [[Construct]] slot" conclusion;
+    // without it the `any`-typed binding reached the dynamic-ctor gate and the
+    // `__construct_closure` bridge constructed the method.
     const initIsGenerator = (id: ts.Identifier): boolean => {
       const init = ctx.oracle.variableInitializerOf(id);
-      return !!init && ts.isFunctionExpression(init) && init.asteriskToken !== undefined;
+      if (init === undefined) return false;
+      if (ts.isFunctionExpression(init) && init.asteriskToken !== undefined) return true;
+      return objectLiteralMethodWithoutConstruct(init);
     };
     const namedGenerator =
       ts.isIdentifier(gen) &&

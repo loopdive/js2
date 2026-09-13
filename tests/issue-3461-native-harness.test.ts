@@ -18,7 +18,7 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { assembleNativeHarness, assembleOriginalHarness, buildBindingShim } from "./test262-original-harness.js";
 
 function lineCount(s: string): number {
@@ -59,6 +59,17 @@ describe("#3461 buildBindingShim binds only referenced harness symbols", () => {
     // assert + compareArray + Array-not-referenced-here-as-token → 2 binds
     expect(lineCount(shim)).toBe(shim.split("\n").filter((l) => l.startsWith("var ")).length);
   });
+});
+
+// (#6463) These invariants describe the variant SPLIT, not the strict-neutral
+// rerun elision; pin the unconditional rerun so the fixture bodies keep one.
+const savedStrictRerun = process.env.TEST262_STRICT_RERUN;
+beforeAll(() => {
+  process.env.TEST262_STRICT_RERUN = "always";
+});
+afterAll(() => {
+  // Assigning `undefined` would store the string "undefined"; "" is not "always".
+  process.env.TEST262_STRICT_RERUN = savedStrictRerun ?? "";
 });
 
 describe("#3461 assembleNativeHarness split invariants", () => {

@@ -1,5 +1,9 @@
 import { emitCachedFuncClosureAccess } from "./closures/method-trampolines.js";
-import { NATIVE_GENERATOR_FACTORY_PROTO, NATIVE_GENERATOR_INIT_PROTO } from "./generators-native-protocol.js";
+import {
+  NATIVE_GENERATOR_DEFAULT_PROTO,
+  NATIVE_GENERATOR_FACTORY_PROTO,
+  NATIVE_GENERATOR_INIT_PROTO,
+} from "./generators-native-protocol.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * Wasm-native generator lowering (#680).
@@ -5650,22 +5654,33 @@ export function compileNativeGeneratorFunction(
   }
   if (info.executingFieldIdx !== undefined) fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "struct.new", typeIdx: info.stateTypeIdx });
+  // The factory-prototype bridge can only recover a factory identity for the
+  // declaration/expression closures cached in `ctx.funcMap`. A method factory
+  // is instead materialized as a per-object closure (and object-literal
+  // deduplication can give its native state a distinct `__lit<n>` key). Asking
+  // for a cached closure would either miss that key or substitute a different
+  // observable function object. A method still needs the canonical generator
+  // protocol view for `.next()` / `.return()` / `.throw()`, so initialize it
+  // from the intrinsic default instead of inventing a factory identity.
   if (ctx.standalone || ctx.wasi) {
     const state = allocLocal(fctx, "__new_generator_state", { kind: "ref", typeIdx: info.stateTypeIdx });
     fctx.body.push({ op: "local.set", index: state });
     ensureNativeDelegatedResultHelpers(ctx);
     fctx.body.push({ op: "local.get", index: state }, { op: "extern.convert_any" });
-    if (info.paramNames[0] === "__self" && fctx.localMap.has("__self")) {
+    if (ts.isMethodDeclaration(decl)) {
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(NATIVE_GENERATOR_DEFAULT_PROTO)! });
+    } else if (info.paramNames[0] === "__self" && fctx.localMap.has("__self")) {
       fctx.body.push({ op: "local.get", index: fctx.localMap.get("__self")! }, { op: "extern.convert_any" });
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(NATIVE_GENERATOR_FACTORY_PROTO)! });
     } else {
       const factory = ctx.funcMap.get(info.functionName);
       if (factory === undefined) throw new Error("Missing native generator factory identity");
       const type = emitCachedFuncClosureAccess(ctx, fctx, info.functionName, factory, false);
       if (!type) throw new Error("Unable to materialize native generator factory identity");
       if (type.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(NATIVE_GENERATOR_FACTORY_PROTO)! });
     }
     fctx.body.push(
-      { op: "call", funcIdx: ctx.funcMap.get(NATIVE_GENERATOR_FACTORY_PROTO)! },
       { op: "call", funcIdx: ctx.funcMap.get(NATIVE_GENERATOR_INIT_PROTO)! },
       { op: "any.convert_extern" },
       { op: "ref.cast", typeIdx: info.stateTypeIdx },

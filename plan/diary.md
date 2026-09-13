@@ -607,3 +607,45 @@ isolated worktrees) on the Temporal goal. The owner's direction at ~14:00 UTC:
   #5773 then merged. Two minutes per diagnosis; worth doing every time before
   touching a `hold`.
 - **Handoff**: `plan/agent-context/temporal-standalone-handover-2026-09-08.md`.
+
+## 2026-09-12 — standalone Temporal S1→S5 closed out: it works, it is measured, and it stays opt-in
+
+- **The arc landed.** Sixteen slices (S1 through S2p, PRs #5721 … #5847), each
+  one root-causing a compiler defect the compiled `@js-temporal/polyfill`
+  exposed. None of them was a Temporal defect. A real `Temporal` global now
+  exists for `--target standalone`, host-free: the provider links,
+  `Object.keys(Temporal)` is nine, `new Temporal.PlainDate(2024,1,1).day` is 1,
+  and `Temporal.Duration.from({hours:1}).total("minutes")` is 60 — all asserted
+  as a real test, instantiated with an **empty import object**.
+- **S5 measured it and the bar is not met.** Three non-Intl families ×120 rows,
+  linked vs unlinked: `Temporal is not defined` 123 → **0** and the
+  `__temporal_*` host-import leak 74 → **0**, but the linked lane scores **0
+  pass** against 10 unlinked, at 2.3× the compile time with 8 rows timing out.
+  10 pass→fail: 6 false passes, **4 legitimate**.
+- **The reported error text was hiding the reason, on 352 of 360 rows.** Every
+  linked failure said `Object.prototype.toString is not yet implemented in
+  --target standalone`. That call exists in exactly one place in the test262
+  harness — inside the `catch` of `String(value)` in `formatSimpleValue` —
+  which the harness reaches only after an assertion has ALREADY failed. The
+  method itself works fine for a consumer-owned object.
+- **The real cause is the link boundary (#5406).** A value that crosses a
+  `link:` boundary is not an ordinary object in the consumer: the provider's
+  error constructors are not the consumer's, so a thrown error has
+  `e instanceof Error` true, `e instanceof RangeError` false,
+  `e.constructor.name` **undefined** — and `assert.throws` compares
+  constructors by identity. **136 rows cannot pass however correct Temporal
+  is.** Two genuine Temporal value defects were isolated separately (#5408),
+  and the 1.83× link cost is #5407, the only blocker to the artifact being
+  default-on.
+- **Key learnings.** A "pass" is not evidence until its assertion shape is
+  checked — a throws-only row passes when the feature is ABSENT, because
+  `undefined.m()` throws the expected TypeError; that accounted for 6 of the 10
+  losses, and the other 4 were settled the expensive way, by compiling the row
+  and reading `WebAssembly.Module.imports` (zero imports + value assertions ⇒
+  the pass was real, which CORRECTED an earlier slice's argued claim that two
+  of them were false). Never attribute a failure to the error text a runner
+  hands you without finding where that text can physically be raised. And two
+  slices in a row had the wrong target named in their brief (S2o: linking costs
+  2 %, not 3.3×; S2p: the penalty was a per-call-site splice) — both cheap to
+  correct only because each measured first.
+- **Handoff**: `plan/agent-context/temporal-standalone-handover-2026-09-12.md`.
