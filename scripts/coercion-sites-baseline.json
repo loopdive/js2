@@ -36,7 +36,7 @@
   "codegen/declarations.ts": 1,
   "codegen/dyn-ops.ts": 1,
   "codegen/expressions/call-builtin-static.ts": 2,
-  "codegen/expressions/call-identifier.ts": 8,
+  "codegen/expressions/call-identifier.ts": 9,
   "codegen/expressions/call-namespace-static.ts": 1,
   "codegen/expressions/call-receiver-method.ts": 11,
   "codegen/expressions/call-tail-dispatch.ts": 2,

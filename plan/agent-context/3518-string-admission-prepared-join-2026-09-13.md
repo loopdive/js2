@@ -43,3 +43,15 @@ with existingPR5789, “refactor(ir): share native resource declarations before
 allocation”; its isolated published-head checkout and verified independent
 corpus are prepared. Its source join is reviewed, but cumulative boundary
 history and the strict string-layout inverse need actual composed validation.
+
+## Carry current-main reconciliation from the existing predecessor
+
+Join signedc06c5575 into4bbdc154. Preserve both complete issue histories.
+The only incoming source/test changes are the main-owned generator protocol
+repair and its regression file. Of1,431 earlier selected inputs, only the
+expected generator source changes; all1,430 others stay exact. Current checks
+pass307/307 across generator14, scanner admission36 and boundary257, zero skips.
+Source TS7, LOC/function, oracle, preservation-v1 and measured coercion124/511
+pass against exactc06c5575. Conformance synchronization changes zero files.
+Preserve2,715/2,715 as4bbdc154 evidence, not a full rerun claim. Normal signed
+hooks and predecessor delivery remain required before publishing this held PR.

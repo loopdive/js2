@@ -49,8 +49,8 @@
   {
     "edition": "ES2015",
     "pass": 9944,
-    "fail": 1701,
-    "ce": 59,
+    "fail": 1702,
+    "ce": 58,
     "skip": 0,
     "total": 11704,
     "pct": 85,
@@ -103,8 +103,8 @@
       {
         "name": "Symbol",
         "pass": 509,
-        "fail": 99,
-        "ce": 1,
+        "fail": 100,
+        "ce": 0,
         "skip": 0,
         "total": 609,
         "pct": 84
@@ -808,12 +808,12 @@
   },
   {
     "edition": "ES2017",
-    "pass": 517,
-    "fail": 170,
+    "pass": 536,
+    "fail": 151,
     "ce": 3,
     "skip": 0,
     "total": 690,
-    "pct": 75,
+    "pct": 78,
     "features": [
       {
         "name": "async-functions",
@@ -826,30 +826,30 @@
       },
       {
         "name": "SharedArrayBuffer",
-        "pass": 139,
-        "fail": 105,
+        "pass": 156,
+        "fail": 88,
         "ce": 1,
         "skip": 0,
         "total": 245,
-        "pct": 57
+        "pct": 64
       },
       {
         "name": "Atomics",
-        "pass": 109,
-        "fail": 100,
+        "pass": 128,
+        "fail": 81,
         "ce": 0,
         "skip": 0,
         "total": 209,
-        "pct": 52
+        "pct": 61
       },
       {
         "name": "TypedArray",
-        "pass": 88,
-        "fail": 104,
+        "pass": 107,
+        "fail": 85,
         "ce": 0,
         "skip": 0,
         "total": 192,
-        "pct": 46
+        "pct": 56
       },
       {
         "name": "default-parameters",
@@ -862,21 +862,21 @@
       },
       {
         "name": "Symbol",
-        "pass": 41,
-        "fail": 16,
+        "pass": 43,
+        "fail": 14,
         "ce": 0,
         "skip": 0,
         "total": 57,
-        "pct": 72
+        "pct": 75
       },
       {
         "name": "ArrayBuffer",
-        "pass": 51,
-        "fail": 5,
+        "pass": 54,
+        "fail": 2,
         "ce": 0,
         "skip": 0,
         "total": 56,
-        "pct": 91
+        "pct": 96
       },
       {
         "name": "arrow-function",
@@ -889,12 +889,12 @@
       },
       {
         "name": "DataView",
-        "pass": 28,
-        "fail": 4,
+        "pass": 29,
+        "fail": 3,
         "ce": 0,
         "skip": 0,
         "total": 32,
-        "pct": 88
+        "pct": 91
       },
       {
         "name": "class",
@@ -916,12 +916,12 @@
       },
       {
         "name": "Symbol.toPrimitive",
-        "pass": 0,
-        "fail": 12,
+        "pass": 1,
+        "fail": 11,
         "ce": 0,
         "skip": 0,
         "total": 12,
-        "pct": 0
+        "pct": 8
       },
       {
         "name": "rest-parameters",
@@ -2186,8 +2186,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4360,
-    "fail": 1384,
+    "pass": 4362,
+    "fail": 1382,
     "ce": 48,
     "skip": 0,
     "total": 5792,
@@ -2276,8 +2276,8 @@
       },
       {
         "name": "resizable-arraybuffer",
-        "pass": 176,
-        "fail": 256,
+        "pass": 178,
+        "fail": 254,
         "ce": 0,
         "skip": 0,
         "total": 432,
@@ -2348,12 +2348,12 @@
       },
       {
         "name": "TypedArray",
-        "pass": 105,
-        "fail": 26,
+        "pass": 107,
+        "fail": 24,
         "ce": 0,
         "skip": 0,
         "total": 131,
-        "pct": 80
+        "pct": 82
       },
       {
         "name": "object-rest",
@@ -2591,12 +2591,12 @@
       },
       {
         "name": "Atomics",
-        "pass": 0,
-        "fail": 4,
+        "pass": 2,
+        "fail": 2,
         "ce": 0,
         "skip": 0,
         "total": 4,
-        "pct": 0
+        "pct": 50
       },
       {
         "name": "optional-chaining",
@@ -3789,21 +3789,21 @@
   },
   {
     "edition": "ES2027",
-    "pass": 382,
-    "fail": 497,
-    "ce": 18,
+    "pass": 386,
+    "fail": 499,
+    "ce": 12,
     "skip": 0,
     "total": 897,
     "pct": 43,
     "features": [
       {
         "name": "explicit-resource-management",
-        "pass": 268,
-        "fail": 155,
+        "pass": 272,
+        "fail": 151,
         "ce": 7,
         "skip": 0,
         "total": 430,
-        "pct": 62
+        "pct": 63
       },
       {
         "name": "await-dictionary",
@@ -3817,8 +3817,8 @@
       {
         "name": "joint-iteration",
         "pass": 23,
-        "fail": 53,
-        "ce": 6,
+        "fail": 59,
+        "ce": 0,
         "skip": 0,
         "total": 82,
         "pct": 28
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4406,
-    "fail": 893,
+    "pass": 4422,
+    "fail": 877,
     "ce": 146,
     "skip": 0,
     "total": 5445,

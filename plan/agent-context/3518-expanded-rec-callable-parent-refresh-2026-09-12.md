@@ -109,3 +109,22 @@ refusals and public current-root controls remain intact. Historical-pair
 execution, physical async acceptance and IR retirement remain uncertified.
 Normal signed hooks and dependency-first delivery still apply: publish only
 after PR5759 is verified on main, then continue the existing later stack.
+
+## September 13 current-main queue reconciliation
+
+The first refreshed head11392975 was published after5759 delivery, but GitHub
+reported DIRTY against main7adc0a6e. Its arm workflow independently did not
+enqueue because the author trust gate selected CONTRIBUTOR. The hold was
+restored before another integration; no queued head was changed.
+
+The actual local merge of that exact main completed cleanly. Incoming source
+is the already-delivered generator-method protocol repair; other incoming
+changes are benchmark/baseline artifacts and its preserved regression/history.
+All54 previously validated IR inputs remain unchanged. Current merged-source
+checks pass345/345 across four complete files: generator14, reservation149,
+delay-admission41 and boundary141, zero skips. Source TS7, LOC/function,
+oracle, preservation-v1 and coercion124/511 pass against exact main7adc0a6e;
+conformance synchronization changes zero files. Preserve the earlier1,819/1,819
+as11392975 evidence rather than calling it a current rerun. Normal signed hooks
+and exact-head publication/queue admission remain required. All original
+fixture, historical comparison and physical-refusal limitations still apply.
