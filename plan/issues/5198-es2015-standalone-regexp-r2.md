@@ -4,7 +4,7 @@ title: "ES2015 standalone regexp — r2 residual pass"
 status: in-progress
 sprint: current
 created: 2026-08-29
-updated: 2026-09-12
+updated: 2026-09-13
 priority: high
 horizon: m
 feasibility: hard
@@ -17,6 +17,7 @@ pr: 5296
 loc-budget-allow:
   - src/codegen/regexp-standalone.ts
   - src/codegen/native-regex.ts
+  - src/codegen/string-proto-match-search.ts
   - src/codegen/context/types.ts
   - src/codegen/type-coercion.ts
 func-budget-allow:
@@ -24,6 +25,7 @@ func-budget-allow:
   - src/codegen/native-regex.ts::ensureRegexReplace
   - src/codegen/native-regex.ts::ensureRegexMatchAll
   - src/codegen/regexp-standalone.ts::emitStandaloneRegExpMatchCore
+  - src/codegen/string-proto-match-search.ts::emitMatchResult
   - src/codegen/regexp-standalone.ts::emitStandaloneRegExpReplaceCore
   - src/codegen/type-coercion.ts::coerceType
 ---
@@ -587,6 +589,125 @@ tests: the static/backend-created `@@replace` code is now landed in main, while
 the two standalone `RegExp.prototype.exec` lastIndex-access residuals and the
 separate three-row `@@match` cursor extension remain deferred. This is not a
 claim of complete RegExp-prototype or whole-suite conformance.
+
+## 2026-09-13 continuation plan — exact exec and `@@match` cursor residuals
+
+The implementation branch starts at exact upstream `main`
+`e0023dbbe6c37e15c1f56ed0c8bc8d15d0afbac3`. The coordinator's freshly
+maintained ES2015 selection has 11,704 rows (`10,255` pass / `1,449` non-pass;
+filter hash prefix `90d5e85a`), but this five-row plan is deliberately a
+bounded conformance fix, not a whole-edition claim.
+
+Fresh standalone evidence from that maintained JSONL identifies these exact
+owned failures; host is the paired passing control for each:
+
+1. `built-ins/RegExp/prototype/exec/failure-lastindex-access.js` — ordinary
+   `Get(lastIndex)` invokes `valueOf`, but a later ordinary `lastIndex` read
+   loses the assigned object's identity.
+2. `built-ins/RegExp/prototype/exec/success-lastindex-access.js` — the same
+   raw-slot identity loss after a successful non-global exec.
+3. `built-ins/RegExp/prototype/Symbol.match/g-init-lastindex-err.js` — global
+   `@@match` bypasses the descriptor-aware initial `Set(lastIndex, 0, true)`.
+4. `built-ins/RegExp/prototype/Symbol.match/builtin-failure-g-set-lastindex-err.js`
+   — the same missing global Set makes a required TypeError disappear.
+5. `built-ins/RegExp/prototype/Symbol.match/y-fail-global-return.js` — the
+   global match walker scans past a sticky gap and returns three matches where
+   the mandated sticky cursor loop returns two.
+
+An initial candidate tried to reuse `ctx.nonWritableExternKeys` for rows 3–4.
+That metadata is compile-time rather than branch-aware: the bounded exported
+`optionalWrite(flag)` probe passed on exact e002 as `false → 2, true → 2`, but
+the candidate threw a `WebAssembly.Exception` for both values. An uncalled
+later descriptor function alone did not throw, but the runtime-branch control
+proved the static guard unsound. The rejected A/B is retained in the local
+evidence log; do not ship or extend that guard.
+
+The delivery is therefore intentionally split into three independently
+reviewable PRs. The current PR claims only row 5, the sticky/global `@@match`
+cursor. A later descriptor PR must solve rows 3–4 with runtime, branch-aware
+property state. A third PR, from a fresh worktree after this one is published,
+owns only rows 1–2 and must prove original-reference identity through aliases,
+numeric overwrites, `exec` writeback, mutation in both directions, and
+rebinding.
+
+The current sticky-only delivery is limited to the native match-all loop and
+its two callers:
+
+1. Thread the statically known sticky bit into `__regex_match_all` so every
+   iteration uses an anchored native search for `/gy`; the first gap terminates
+   the loop. Keep the normal global scan and existing empty-match progression
+   unchanged. The shared helper's dynamic `String.prototype.match` caller must
+   pass its runtime sticky bit through the same ABI.
+2. Add one narrowly named cursor pin for row 5 in both host and standalone
+   lanes. Keep that pin small enough for the repository's default 512 MiB
+   single-fork issue gate; validate ten established `@@match` passing controls
+   through the maintained fresh-isolated runner manifest instead of retaining
+   full-harness compilations in one fork. Add a borrowed
+   `String.prototype.match.call` `/gy/` versus `/g/` pair so the second
+   `__regex_match_all` caller is exercised with runtime, rather than static,
+   flags.
+
+The sticky-only PR is acceptable only if row 5 passes in both lanes, the
+shared-helper controls pass, and rows 1–4 remain explicitly recorded as
+non-claimed residuals. It does not close #5198 or infer a whole
+RegExp-prototype/edition gain from this bounded cohort.
+
+### Sticky-only evidence at the e002 dispatch baseline
+
+The completed candidate keeps its evidence deliberately small and exact:
+
+- `y-fail-global-return.js` passes `1/1` through a fresh isolated host runner
+  and `1/1` through a fresh isolated standalone runner, with zero standalone
+  host imports.
+- Ten established `@@match` controls pass `10/10` in each fresh isolated lane.
+  The checked-in three-test issue gate (the claimed row in both lanes plus the
+  borrowed dynamic caller) passes `3/3` under the default 512 MiB single-fork
+  configuration. A larger 27-test one-fork aggregation exhausted that heap and
+  is not claimed as a passing result.
+- The dynamic caller has structural WAT evidence: its runtime `RE_FLAG_Y` mask
+  is read from the RegExp flags and supplied to the native match-all loop. Its
+  standalone runtime controls return `2` for `/a/gy/.match("aaba")` and `3`
+  for `/a/g/.match("aaba")`, so the second changed caller is not merely a
+  static-pattern proof.
+- Formatting, LOC/function budgets, oracle/coercion ratchets, issue integrity,
+  and compiler-boundary inventory all pass locally. The 238-row ES2015
+  RegExp-prototype intersection remains an authoritative-CI reconciliation,
+  not a completed local cohort claim.
+
+The candidate must still complete the normal pre-push hooks and CI at its PR
+head. These baseline results are provenance, not a claim that the current
+upstream integration or all #5198 residuals are solved.
+
+### Deferred descriptor boundary
+
+The rejected static guard does not make rows 3–4 safe to defer by adding a
+branch test only around `@@match`. The later runtime-state implementation must
+audit every reader and mutator that uses the existing
+`standaloneRegExpLastIndexSetGuardInstrs` / `emitRegExpLastIndexWriteGuard`,
+including the `exec` and `@@replace` consumers. The `optionalWrite(false)` /
+`optionalWrite(true)` branch probe remains a shared acceptance control: only
+the executed non-writable branch may throw.
+
+The deferred identity delivery starts with the existing WAT proof: raw
+assignment places the original closed-struct reference into the RegExp slot in
+`__module_init_chunk_0`, while a later generic struct-to-`$Object` conversion
+in `__module_init_chunk_1` materializes a copy. It must preserve that original
+reference across the specific escaped binding boundary rather than cache a
+value-copy object. No type-wide marker, raw-present-gated cache, or
+shared-source-spelling policy is acceptable: aliases and already-observed
+references must remain stable after a numeric overwrite or `exec` writeback.
+
+For each delivery, run its exact rows and controls through fresh isolated host
+and standalone `run-test262-paths.mts` invocations. The exact ES2015
+`built-ins/RegExp/prototype/**` corpus is the 238-row intersection of the same
+maintained JSONL and the checked-in `ES2015` edition map (baseline: `127 pass /
+102 fail / 9 compile_error`). Under shared-worker load, publish a ready
+sticky-only PR after its bounded proof and local quality gates, then reconcile
+that fixed corpus through authoritative CI at the PR head; record every status
+transition and allow no host or previously-passing loss. The standalone result
+must have zero host imports, compile errors, timeouts, and skips for the
+claimed cohort. Full TypeScript, formatting, ratchet, issue-integrity, and
+repository-hook evidence remains required before publication.
 
 ## Acceptance criteria
 

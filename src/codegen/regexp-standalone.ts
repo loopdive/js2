@@ -3995,8 +3995,9 @@ function staticRegExpFlags(
  * `String.prototype.match(regexp)` in standalone mode (#1539 Phase 2b).
  *
  * Non-global static RegExp arguments share the same result shape as `.exec`.
- * Global `match` returns an all-matches array and sticky/global lastIndex
- * details are intentionally left to the next capture-array slice.
+ * Global `match` returns an all-matches array and threads a static sticky bit
+ * through the shared cursor loop. Dynamic flags still fall through to the
+ * refusal path.
  * (#4016) Plain-`ToString` search values are handled in `string-search-value.ts`.
  */
 export function tryCompileStandaloneStringMatch(
@@ -4077,7 +4078,8 @@ function emitStandaloneRegExpMatchCore(
     const subjLocal = allocLocal(fctx, `__re_gm_subj_${fctx.locals.length}`, { kind: "ref", typeIdx: strTypeIdx });
     fctx.body.push({ op: "local.set", index: subjLocal });
 
-    // __regex_match_all(prog, classTable, nGroups, subjData, subjOff, subjLen, subject)
+    // __regex_match_all(prog, classTable, nGroups, subjData, subjOff, subjLen,
+    // subject, nScratch, sticky)
     fctx.body.push({ op: "local.get", index: regexpLocal });
     fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_PROG });
     fctx.body.push({ op: "local.get", index: regexpLocal });
@@ -4091,9 +4093,10 @@ function emitStandaloneRegExpMatchCore(
     fctx.body.push({ op: "local.get", index: subjLocal });
     fctx.body.push({ op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 }); // len
     fctx.body.push({ op: "local.get", index: subjLocal });
-    // nScratch (#1959) — PROGRESS empty-loop guard slots, last arg.
+    // nScratch (#1959) — PROGRESS empty-loop guard slots; sticky follows.
     fctx.body.push({ op: "local.get", index: regexpLocal });
     fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_NSCRATCH });
+    fctx.body.push({ op: "i32.const", value: flags.includes("y") ? 1 : 0 });
     fctx.body.push({ op: "call", funcIdx: matchAllIdx });
     // lastIndex = 0 (net effect of the spec's exec loop on a global regex).
     fctx.body.push({ op: "local.get", index: regexpLocal });

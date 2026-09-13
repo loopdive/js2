@@ -3086,7 +3086,7 @@ export function ensureRegexSplit(ctx: CodegenContext): number {
 
 /**
  * Emit `__regex_match_all(prog, classTable, nGroups, strData, strOff, strLen,
- * subject) -> ref null $__regexp_match_vec` (#1913).
+ * subject, nScratch, sticky) -> ref null $__regexp_match_vec` (#1913).
  *
  * `String.prototype.match` with a GLOBAL regex (§22.2.6.8 step 6): collect
  * every match's [0] substring, advancing past empty matches per
@@ -3128,6 +3128,7 @@ export function ensureRegexMatchAll(ctx: CodegenContext): number {
       { kind: "i32" }, // strLen
       strRef, // subject (flattened)
       { kind: "i32" }, // nScratch (#1959 — PROGRESS guard slots)
+      { kind: "i32" }, // sticky — anchor every search for a /gy/ walk
     ],
     [{ kind: "ref_null", typeIdx: matchVecTypeIdx }],
   );
@@ -3142,18 +3143,19 @@ export function ensureRegexMatchAll(ctx: CodegenContext): number {
     SOFF = 4,
     SLEN = 5,
     SUBJ = 6,
-    NSCRATCH = 7;
+    NSCRATCH = 7,
+    STICKY = 8;
   // locals
-  const NSLOTS = 8;
-  const CAPS = 9;
-  const POS = 10;
-  const RARR = 11;
-  const RLEN = 12;
-  const RCAP = 13;
-  const NEWARR = 14;
-  const MSTART = 15;
-  const MEND = 16;
-  const FIRSTMS = 17;
+  const NSLOTS = 9;
+  const CAPS = 10;
+  const POS = 11;
+  const RARR = 12;
+  const RLEN = 13;
+  const RCAP = 14;
+  const NEWARR = 15;
+  const MSTART = 16;
+  const MEND = 17;
+  const FIRSTMS = 18;
 
   const body: Instr[] = [
     // nSlots = 2 * nGroups + nScratch (#1959 scratch slots ride in caps)
@@ -3198,7 +3200,7 @@ export function ensureRegexMatchAll(ctx: CodegenContext): number {
             { op: "local.get", index: SOFF },
             { op: "local.get", index: SLEN },
             { op: "local.get", index: POS },
-            { op: "i32.const", value: 0 },
+            { op: "local.get", index: STICKY },
             { op: "local.get", index: CAPS },
             { op: "call", funcIdx: searchIdx },
             { op: "i32.eqz" },

@@ -100,7 +100,7 @@ import {
 } from "./native-strings.js";
 import { ensureRegexMatchAll, ensureRegexMatchVecType, regexI32ArrayType } from "./native-regex.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
-import { RE_FLAG_G } from "./regex/bytecode.js";
+import { RE_FLAG_G, RE_FLAG_Y } from "./regex/bytecode.js";
 import {
   RE_FIELD_CLASS_TABLE,
   RE_FIELD_FLAGS,
@@ -375,6 +375,14 @@ function emitMatchResult(
     { op: "local.get", index: subjLocal },
     { op: "local.get", index: regexpLocal },
     { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_NSCRATCH },
+    // The shared match-all helper also serves dynamic String.prototype.match;
+    // preserve a runtime `/gy/` receiver's anchored cursor walk.
+    { op: "local.get", index: regexpLocal },
+    { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_FLAGS },
+    { op: "i32.const", value: RE_FLAG_Y },
+    { op: "i32.and" },
+    { op: "i32.const", value: 0 },
+    { op: "i32.ne" },
     { op: "call", funcIdx: matchAllIdx },
     { op: "local.set", index: allLocal },
     // lastIndex = 0 — the net effect of the spec's exec loop on a global regex.
