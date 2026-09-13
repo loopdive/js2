@@ -75,3 +75,37 @@ population ran through that lane. Normal signed commit/push hooks remain
 mandatory; actual outcomes and parent delivery are recorded at publication.
 Local evidence is in `.tmp/5760-queue-drain/`. Only verified delivery to main
 counts; keep new migration scope paused while draining 5755→5756→5757→5758→5759→5760.
+
+## September 13 signed-parent reconciliation
+
+Merge refreshed delay/combinator parent
+`fd387c97e508e5902b0638f5bcfd0a3087932616` into the existing expanded
+recursive-type checkpoint. Only appended issue history conflicted; both
+complete records are retained. All 42 owned source/test files are byte-identical,
+including the positive-first delay-admission repair, cold-import collection
+repair and standard-EH runtime body with tagged and foreign catches. All prior
+policy records and activations remain exact, with seven incoming unmigrated
+classifications and the authenticated frame/spill controls carried forward.
+
+Fresh current-root validation passed **1,819/1,819 assertions in 27 complete
+files**, zero failures or skips. This retains the previous 26-file population,
+adds six authenticated frame mutation cases and four spill cases. Counts are
+assertion occurrences; repeated parameterized names are not asserted unique.
+TS7, LOC/function budgets, oracle and preservation-v1 dead-export checks passed
+against the exact signed parent. Conformance synchronization changed zero files.
+The coercion gate was run through a space-free alias with
+`--preserve-symlinks-main --verbose`: 124 files containing 511 sites were
+actually scanned, and the scoped four-codegen-file comparison passed.
+
+Evidence correction: older ordinary coercion invocations on the spaced
+checkout path can silently return an empty scan and are not treated as scan
+evidence. Supplemental unchanged-gate runs also measured and passed PR5758
+and PR5759 (124 files/511 sites) and PR5787 (124 files/510 sites). No gate,
+baseline or historical receipt was weakened. Keep original outputs and failures;
+the new receipts are under each owned worktree's `.tmp/` queue-drain directory.
+
+Historical reconstruction ledgers, ownership/call censuses, located physical
+refusals and public current-root controls remain intact. Historical-pair
+execution, physical async acceptance and IR retirement remain uncertified.
+Normal signed hooks and dependency-first delivery still apply: publish only
+after PR5759 is verified on main, then continue the existing later stack.

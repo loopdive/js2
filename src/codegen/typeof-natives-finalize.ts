@@ -90,6 +90,9 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
   // `isConstructor` harness throw "invoked with a non-function value". The arm
   // lives with the TYPE here, so every consumer of these three natives agrees.
   const revokerTypeIdx = ctx.proxyRevocableSite === true ? ctx.structMap.get("__proxy_revoker") : undefined;
+  // A class VALUE needs the typeof finalizer even if the module has no ordinary
+  // closure carrier: it is identified by its lazily materialised singleton.
+  const classObjectGlobalIdxs = [...ctx.classObjectGlobals.values()].sort((a, b) => a - b);
   if (
     baseTypeIdxs.length === 0 &&
     runtimeEvalCallbackTypeIdx === undefined &&
@@ -98,7 +101,8 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
     boundaryCallableKindIdx === undefined &&
     taCtorTypeIdx === undefined &&
     symbolTypeIdx === undefined &&
-    revokerTypeIdx === undefined
+    revokerTypeIdx === undefined &&
+    classObjectGlobalIdxs.length === 0
   )
     return;
 
@@ -122,7 +126,6 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
   // null, and `ref.eq` against a non-null value is false — so the arm degrades
   // to today's answer rather than to a wrong one.
   const EQ_HEAP_TYPE = -19;
-  const classObjectGlobalIdxs = [...ctx.classObjectGlobals.values()].sort((a, b) => a - b);
   const classObjectIdentityArms = (anyLocalIdx: number, onMatch: Instr[]): Instr[] => {
     if (classObjectGlobalIdxs.length === 0) return [];
     const inner: Instr[] = [];
@@ -158,10 +161,15 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
     ];
   };
 
+  type CallableArmMode = { includeClassObjects: boolean; boundaryMask: number };
+  const typeofFunctionMode: CallableArmMode = { includeClassObjects: true, boundaryMask: 3 };
+  const isCallableMode: CallableArmMode = { includeClassObjects: false, boundaryMask: 1 };
+
   // Chained `ref.test` arms over the anyref-converted param in local 0/1. Each
-  // i32-predicate arm returns `matchValue` on hit. Builds from the ONE shared
-  // closure-base-wrapper list (`closure-classifier.ts`).
-  const closureI32Arms = (anyLocalIdx: number, matchValue: number): Instr[] => {
+  // i32-predicate arm returns `matchValue` on hit. The class singleton arm is a
+  // `typeof` fact, not an IsCallable fact: the two modes share every genuine
+  // callable carrier but deliberately split there.
+  const callableI32Arms = (anyLocalIdx: number, matchValue: number, mode: CallableArmMode): Instr[] => {
     const onMatch: Instr[] = [{ op: "i32.const", value: matchValue }, { op: "return" }];
     const arms = buildClosureRefTestArms(ctx, anyLocalIdx, onMatch);
     if (runtimeEvalCallbackTypeIdx !== undefined) {
@@ -184,8 +192,9 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
     // natives" invariant. Deliberately NOT added to the closure-root classifier,
     // for exactly the reason stated for the runtime-eval marker above.
     arms.push(...buildBuiltinCallableTestArm(ctx, anyLocalIdx, onMatch));
-    // (#5383 S2f R13) …and the class-object singletons, by identity.
-    arms.push(...classObjectIdentityArms(anyLocalIdx, onMatch));
+    // (#5383 S2f R13) Class-object singletons are functions for `typeof`, but
+    // lack [[Call]]. Keep that identity arm out of the real call predicate.
+    if (mode.includeClassObjects) arms.push(...classObjectIdentityArms(anyLocalIdx, onMatch));
     if (proxyTypeIdx !== undefined) {
       const proxyAnswer: Instr[] = [
         { op: "local.get", index: anyLocalIdx },
@@ -211,9 +220,13 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
       arms.push(
         { op: "local.get", index: 0 },
         { op: "call", funcIdx: boundaryCallableKindIdx },
-        { op: "i32.const", value: 1 },
+        { op: "i32.const", value: mode.boundaryMask },
         { op: "i32.and" },
-        ...(matchValue === 0 ? ([{ op: "i32.eqz" }] satisfies Instr[]) : []),
+        // `& 1` was already a boolean. `typeof` must accept a foreign class's
+        // construct-only bit too, so normalise the wider `& 3` answer here.
+        ...(matchValue === 0
+          ? ([{ op: "i32.eqz" }] satisfies Instr[])
+          : ([{ op: "i32.eqz" }, { op: "i32.eqz" }] satisfies Instr[])),
         { op: "return" },
       );
     }
@@ -242,7 +255,31 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.set", index: 1 },
-      ...closureI32Arms(1, 1),
+      ...callableI32Arms(1, 1, typeofFunctionMode),
+      { op: "i32.const", value: 0 },
+    ];
+  }
+
+  // --- __is_callable: true only for values that can enter the host-free call
+  // bridge. A class constructor intentionally reaches the terminal 0 even
+  // though `__typeof_function` above reports it as a function.
+  const ic = fnByName("__is_callable");
+  if (ic) {
+    if (ic.locals.length === 0) {
+      ic.locals.push({ name: "$any_temp", type: { kind: "anyref" } });
+    }
+    ic.body = [
+      { op: "local.get", index: 0 },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+      },
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "local.set", index: 1 },
+      ...callableI32Arms(1, 1, isCallableMode),
       { op: "i32.const", value: 0 },
     ];
   }
@@ -258,7 +295,7 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
     const lastIdx = b.length - 1;
     const last = b[lastIdx] as { op?: string; value?: number } | undefined;
     if (last && last.op === "i32.const" && last.value === 1) {
-      const exclusionArms: Instr[] = closureI32Arms(1, 0);
+      const exclusionArms: Instr[] = callableI32Arms(1, 0, typeofFunctionMode);
       // (#3505 harness) typeof Symbol() is "symbol", never "object" — exclude
       // the $Symbol carrier exactly like closures.
       if (symbolTypeIdx !== undefined) {
@@ -375,7 +412,9 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
         valueArms.push(
           { op: "local.get", index: 0 },
           { op: "call", funcIdx: boundaryCallableKindIdx },
-          { op: "i32.const", value: 1 },
+          // A foreign class carries only [[Construct]] (bit 1) but still has
+          // `typeof === "function"`; both bits are therefore tag evidence.
+          { op: "i32.const", value: 3 },
           { op: "i32.and" },
           {
             op: "if",

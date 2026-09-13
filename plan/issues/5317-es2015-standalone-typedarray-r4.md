@@ -1,56 +1,161 @@
 ---
 id: 5317
-title: "ES2015 standalone typedarray — r4: species protocol, coercion order, sort, join traps, integer-indexed internals"
-status: in-progress
+title: "ES2015 standalone TypedArray inherited constructor lookup"
+status: done
 sprint: current
 created: 2026-09-04
-updated: 2026-09-04
+updated: 2026-09-12
+completed: 2026-09-12
 priority: high
-horizon: xl
-feasibility: hard
-model: opus
-reasoning_effort: medium
+horizon: s
+feasibility: medium
+model: codex
+reasoning_effort: max
 task_type: conformance
-area: codegen, runtime
-language_feature: typedarray, arraybuffer
+area: codegen
+language_feature: typedarray, species
 es_edition: ES2015
 goal: standalone-mode
-requested_by: claude.ai@loopdive.com/fable-es6
-related: [5194, 5561, 3371, 2175, 4444]
-loc-budget-allow:
-  # 2026-09-04 r4 plan: species-constructor validation, element-coercion
-  # ordering and the integer-indexed [[DefineOwnProperty]]/[[OwnPropertyKeys]]
-  # arms are new emitted natives; existing files grow by dispatch wiring.
-  - src/codegen/dataview-native.ts
+assignee: "ttraenkler/codex-5317-typedarray-constructor-rescue-20260912"
+branch: codex/5317-typedarray-constructor-rescue-20260912
+related: [4444, 4449, 5194, 5349]
+files:
   - src/codegen/ta-dyn-mop.ts
-  - src/codegen/builtin-static-gopd.ts
-  - src/codegen/expressions/call-builtin-static.ts
-  - src/codegen/expressions/call-namespace-static.ts
-  - src/codegen/index.ts
-  # 2026-09-04 r4 step 4 (Opus): the join separator's `ref.cast $AnyString`
-  # TRAPS on every non-string separator (§23.1.3.15 step 3 wants
-  # undefined ⇒ "," / Symbol ⇒ TypeError / else ToString). The emitter lives
-  # in the new `src/codegen/join-separator.ts`; array-methods.ts grows only by
-  # the two dispatch arms that call it (+15 LOC, measured
-  # `node scripts/check-loc-budget.mjs` 2026-09-04).
-  - src/codegen/array-methods.ts
-coercion-sites-allow:
-  # 2026-09-05 r4 review round 1 (Opus), F1: `buildJoinSeparatorToString` must
-  # ARM `__extern_toString`, not merely look it up. Only looking it up made the
-  # whole emitter INERT — in a module whose elements are plain numbers and whose
-  # separator is the only ToString consumer, nothing else mints the provider, so
-  # the emitter returned `null` and the caller kept the trapping
-  # `ref.cast $AnyString`. Measured on standalone AND wasi, byte-identical to the
-  # git-archive base f9bf876899: `[1,2,3].join({toString(){…}})`, `join(null)`,
-  # `new Uint8Array([1,2,3]).join(true)` and `join(c)` with `var c=0` all still
-  # trapped `illegal cast`. The arming goes through `ensureLateImport` — the
-  # SAME single chokepoint every other consumer uses, which routes to the
-  # Wasm-native object-runtime provider under standalone/wasi and to the host
-  # import otherwise. This is +1 site of EXISTING vocabulary at the canonical
-  # chokepoint, not a hand-rolled ToString matrix; the gate counts the arming
-  # call, hence this grant.
-  - src/codegen/join-separator.ts
+  - src/codegen/native-proto.ts
+  - src/codegen/proto-index-store.ts
+  - tests/issue-5317-r4-constructor-lookup.test.ts
+  - plan/issues/5317-es2015-standalone-typedarray-r4.md
+loc-budget-allow:
+  # 2026-09-12 standalone rescue: ordinary dynamic TypedArray constructor
+  # reads must retain the actual inherited value; concrete prototypes need
+  # their companion constructor entries even without reflection.
+  - src/codegen/ta-dyn-mop.ts
+  - src/codegen/proto-index-store.ts
 ---
+
+## 2026-09-12 standalone constructor-lookup rescue
+
+This record now tracks one deliberately narrow rescue from the stale mixed
+draft PR #5736. It does not carry forward generator, `super`, join,
+coercion, sort, or integer-indexed-internal work from the historical r4 plan
+below.
+
+### Scope and implementation
+
+The implementation owns only these mechanisms:
+
+- `src/codegen/ta-dyn-mop.ts` makes a dynamic TypedArray `constructor` read an
+  ordinary receiver-aware property lookup. An own or inherited value of
+  `undefined` is returned as `undefined`; it is no longer rewritten to the
+  intrinsic constructor inside `[[Get]]`.
+- `src/codegen/native-proto.ts` materializes a concrete TypedArray prototype's
+  companion and seeds its real `constructor` / `BYTES_PER_ELEMENT` entries
+  even when source-level prototype reflection did not set `protoMemberDirty`.
+  This retains ordinary default `view.constructor === C` identity without
+  inventing a fallback for an explicitly inherited `undefined`.
+- `src/codegen/proto-index-store.ts` reserves the companion store whenever a
+  module uses a dynamic TypedArray view, before helper indices are fixed.
+- `tests/issue-5317-r4-constructor-lookup.test.ts` pins intrinsic identities,
+  inherited data values, own/inherited accessors and receivers, deletion,
+  `Reflect.get`, `Reflect.construct`, abrupt completion, and an import-free
+  standalone module.
+
+The `SpeciesConstructor` ladder already performs its required defaulting after
+the ordinary read. Keeping that division is the key correctness boundary:
+`Get(O, "constructor")` must preserve an observed `undefined`; only
+`SpeciesConstructor(O, defaultConstructor)` may select the default from it.
+
+The relevant ES2015 algorithms are §7.3.20 `SpeciesConstructor` steps 2–3,
+§9.1.8.1 `OrdinaryGet` (including the original Receiver for an inherited
+accessor), and §22.2.4.7 `TypedArraySpeciesCreate` step 3. The four upstream
+tests exercise §22.2.3.9 `%TypedArray%.prototype.filter`, §22.2.3.19
+`%TypedArray%.prototype.map`, §22.2.3.24 `%TypedArray%.prototype.slice`, and
+§22.2.3.27 `%TypedArray%.prototype.subarray`, each of which delegates to
+`TypedArraySpeciesCreate`.
+
+### Current provenance
+
+The authoritative standalone snapshot is
+`/Users/thomas/Code/js2/.test262-cache/test262-standalone-current.jsonl`,
+SHA-256
+`45ff56e7570bba0a1bff6590d19d35de2525928adb7e3054789ba35aebb29360`.
+Its maintained ES2015 classifier produces 11,704 rows: 10,230 pass, 1,144
+fail, 329 compile errors, and 1 compile timeout. Those are provenance values,
+not a claim of complete ES2015 conformance.
+
+The focused cohort is the exact 55 distinct snapshot paths selected by
+`classifyEdition(parseFrontmatter(...)) === 2015` under
+`built-ins/TypedArray/prototype/{filter,map,slice,subarray}/` with
+`speciesctor` in the filename. Both sides used the original maintained runner:
+
+```text
+JS2WASM_ROW_TIMEOUT_MS=120000 node --import tsx scripts/run-test262-paths.mts \
+  /dev/stdin --isolate --standalone
+```
+
+### Validation and per-path artifacts
+
+On clean `d4108568d43f14c361ecc3a58c82633027eaae39`, the baseline was 44 pass
+and 11 fail. Its complete non-pass set was:
+
+- `built-ins/TypedArray/prototype/filter/speciesctor-get-ctor-inherited.js`
+- `built-ins/TypedArray/prototype/filter/speciesctor-get-species-custom-ctor-invocation.js`
+- `built-ins/TypedArray/prototype/map/speciesctor-get-ctor-inherited.js`
+- `built-ins/TypedArray/prototype/map/speciesctor-get-species-custom-ctor-invocation.js`
+- `built-ins/TypedArray/prototype/slice/speciesctor-get-ctor-inherited.js`
+- `built-ins/TypedArray/prototype/slice/speciesctor-get-species-custom-ctor-invocation.js`
+- `built-ins/TypedArray/prototype/slice/speciesctor-get-species-custom-ctor-returns-another-instance.js`
+- `built-ins/TypedArray/prototype/slice/speciesctor-return-same-buffer-with-offset.js`
+- `built-ins/TypedArray/prototype/subarray/speciesctor-get-ctor-inherited.js`
+- `built-ins/TypedArray/prototype/subarray/speciesctor-get-species-custom-ctor-invocation.js`
+- `built-ins/TypedArray/prototype/subarray/speciesctor-get-species-custom-ctor-returns-another-instance.js`
+
+The candidate was 48 pass and 7 fail. The exact set difference is four gains,
+with no new non-pass path:
+
+- `built-ins/TypedArray/prototype/filter/speciesctor-get-ctor-inherited.js`
+- `built-ins/TypedArray/prototype/map/speciesctor-get-ctor-inherited.js`
+- `built-ins/TypedArray/prototype/slice/speciesctor-get-ctor-inherited.js`
+- `built-ins/TypedArray/prototype/subarray/speciesctor-get-ctor-inherited.js`
+
+The complete candidate residual set is deliberately recorded for a real
+zero-loss comparison:
+
+- `built-ins/TypedArray/prototype/filter/speciesctor-get-species-custom-ctor-invocation.js`
+- `built-ins/TypedArray/prototype/map/speciesctor-get-species-custom-ctor-invocation.js`
+- `built-ins/TypedArray/prototype/slice/speciesctor-get-species-custom-ctor-invocation.js`
+- `built-ins/TypedArray/prototype/slice/speciesctor-get-species-custom-ctor-returns-another-instance.js`
+- `built-ins/TypedArray/prototype/slice/speciesctor-return-same-buffer-with-offset.js`
+- `built-ins/TypedArray/prototype/subarray/speciesctor-get-species-custom-ctor-invocation.js`
+- `built-ins/TypedArray/prototype/subarray/speciesctor-get-species-custom-ctor-returns-another-instance.js`
+
+Focused standalone controls also passed 15/15:
+
+```text
+VITEST_MAX_FORKS=1 COMPILER_POOL_SIZE=1 NODE_OPTIONS=--max-old-space-size=4096 \
+  node node_modules/vitest/vitest.mjs run \
+  tests/issue-5317-r4-constructor-lookup.test.ts \
+  tests/issue-4449-species-controls.test.ts
+```
+
+This includes ten #5317 pins and five existing #4449 species controls. Every
+#5317 compile result asserts `imports === []` before instantiation.
+
+### Status and handoff
+
+The narrow implementation and clean-base A/B proof are complete. The required
+handoff is to merge current `upstream/main`
+`fde4ddf315c98b4f8723b15e9edfb61d87a6076f` normally after this checkpoint,
+then rerun the four gained rows, the 15 focused controls, and the current-main
+Temporal S3 runner-routing smoke before pushing the branch and opening its
+separate non-draft PR. The seven residual species rows above remain out of
+scope; this issue makes no 100% ES2015 claim.
+
+## Superseded historical r4 record
+
+The material below is retained only as the pre-rescue historical planning
+record. It is not part of this branch's scope, implementation, validation, or
+handoff.
 
 ## Problem
 

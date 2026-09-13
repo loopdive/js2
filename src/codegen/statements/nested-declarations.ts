@@ -19,6 +19,7 @@ import {
 import { addFunctionOwnLocals } from "../../ir/analysis/binding-info.js"; // (#2103) memoized own-locals oracle
 import { condenseDirectedGraph } from "../analysis/strongly-connected-components.js";
 import { functionReturnsThroughWithScope } from "../declarations.js";
+import { widenAsyncThenableResult } from "../async-thenable-return.js"; // (#5371)
 import {
   collectNestedCaptureReferences,
   functionDeclarationObservesBindingValue,
@@ -60,6 +61,7 @@ import {
   extractConstantDefault,
   hoistLetConstWithTdz,
   hoistVarDeclarations,
+  nativeGeneratorBindingType,
   ensureStructForType,
   resolveInstallableClassMemberName,
   resolveWasmType,
@@ -302,6 +304,34 @@ function initializerMaterializesHoistedFunction(
   return initializer.properties.some(
     (property) =>
       ts.isShorthandPropertyAssignment(property) && ctx.oracle.valueDeclarationOf(property.name) === functionDecl,
+  );
+}
+
+/**
+ * A direct native-generator factory call is a representation-changing
+ * initializer: the declaration path replaces its pre-hoisted `externref`
+ * carrier with a nominal generator-state local. A nested declaration's
+ * capture plan is made before that replacement, so an immutable capture can
+ * otherwise copy the pre-init `undefined` forever when the function value is
+ * observed before the initializer runs. Carry exactly this binding through the
+ * established ref-cell path instead. Ordinary initializer captures retain
+ * their by-value timing.
+ */
+function initializerRefinesToNativeGeneratorState(
+  ctx: CodegenContext,
+  capturedDecl: ts.VariableDeclaration | undefined,
+  capturingDeclaration: ts.FunctionDeclaration,
+): boolean {
+  // Only a synchronous generator declaration initializes its factory's
+  // prototype/view while its value is being materialized. A plain nested
+  // function retains the ordinary lazy capture timing, so do not change its
+  // capture mode merely because the captured initializer happens to return a
+  // native generator state.
+  return (
+    capturingDeclaration.asteriskToken !== undefined &&
+    !capturingDeclaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) &&
+    capturedDecl?.initializer !== undefined &&
+    nativeGeneratorBindingType(ctx, capturedDecl.initializer) !== null
   );
 }
 
@@ -1466,6 +1496,10 @@ function compileNestedFunctionDeclarationInScope(
   if (asyncDecision !== null) {
     returnType = { kind: "externref" };
   }
+  // (#5371) A never-suspending nested async declaration that returns a thenable
+  // keeps its result on the externref carrier so the call site's adopting
+  // `Promise.resolve` settles with the inner value instead of `Number(promise)`.
+  returnType = widenAsyncThenableResult(ctx, stmt, returnType);
   // Analyze captured variables from the enclosing scope. Use scope-aware
   // collection so nested `var` declarations and parameter bindings inside the
   // function body shadow outer references — otherwise a function with its own
@@ -1680,7 +1714,8 @@ function compileNestedFunctionDeclarationInScope(
       writtenInBody.has(name) ||
       mutatedInSiblingScope.has(name) ||
       writtenAfterDeclaration.has(name) ||
-      initializerMaterializesHoistedFunction(ctx, capturedDecl, stmt);
+      initializerMaterializesHoistedFunction(ctx, capturedDecl, stmt) ||
+      initializerRefinesToNativeGeneratorState(ctx, capturedDecl, stmt);
     // #2623 Slice A: detect a capture whose outer slot is already the canonical
     // ref cell (the outer scope boxed it). For such a name `type` above is the
     // cell ref type, so the generic mutable-capture path would re-box to a
@@ -1744,8 +1779,14 @@ function compileNestedFunctionDeclarationInScope(
       ? registerNativeGenerator(ctx, stmt, funcName, paramTypes)
       : undefined;
   if (nativeGenInfo) {
-    // The generator factory returns the state struct, not a JS Generator object.
-    returnType = { kind: "ref", typeIdx: nativeGenInfo.stateTypeIdx };
+    // A pass-0 opaque factory reservation remains its public ABI even when
+    // pass 2 now admits a nominal native state. Never rewrite published callers.
+    const reservedType = opts.reuseReservedEntry && ctx.mod.types[opts.reuseReservedEntry.typeIdx];
+    const opaqueResult =
+      reservedType?.kind === "func" &&
+      reservedType.results.length === 1 &&
+      reservedType.results[0]?.kind === "externref";
+    returnType = opaqueResult ? { kind: "externref" } : { kind: "ref", typeIdx: nativeGenInfo.stateTypeIdx };
   }
 
   const results: ValType[] = returnType ? [returnType] : [];
@@ -1943,6 +1984,7 @@ function compileNestedFunctionDeclarationInScope(
       // Wasm-native generator factory (builds + returns the state struct), the
       // same body the top-level path emits. No host imports, no JS buffer.
       compileNativeGeneratorFunction(ctx, liftedFctx, stmt, nativeGenInfo);
+      if (returnType?.kind === "externref") liftedFctx.body.push({ op: "extern.convert_any" });
     } else if (isGenerator && isAsync && isAsyncGenDriveCandidate(ctx, stmt)) {
       // (#2865) NESTED async-generator producer (the dominant test262 shape —
       // the runner wraps every test body inside `export function test()`, so
