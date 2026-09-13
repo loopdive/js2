@@ -6979,6 +6979,22 @@ agent-context/3518-native-async-resource-declarations-spec-2026-09-09.md;
 the frame API and object-access donor map are also preserved for the next lanes.
 This composition does not remove the async acceptance refusal or establish
 native async execution, public default cutover or retirement.
+
+### Native async producer declarations (2026-09-09)
+
+The existing closure, argument-vector and Promise reservation callers now consume
+pure symbolic declaration plans before allocating. Issued inventories preserve
+ownership, request/cache ordering, adopted arrays and inherited metadata type
+identity. Promise still owns 25 declarations across 26 ordered operations.
+The declaration checkpoint passes 194/194 focused tests (77955, exit zero) and
+unfiltered TS7 (43844, exit zero). High approved the twelve frozen source/test
+files; earlier failing runs remain in the implementation handoff.
+
+Borrowed tag association is checked while reserving; actual tag provenance is
+authenticated only after freeze using the existing ledger. This limitation is
+explicit, not a claim of preallocation tag authentication. The full async
+consumer, staged cross-producer closure scheduling, complete runtime fills,
+public cutover and retirement remain unfinished.
 ### Existing string-admission PR dependency refresh — 2026-09-13
 
 Queue draining remains limited to existing published migration checkpoints.
@@ -8366,3 +8382,31 @@ Validation update: the complete six-file run finished 547/566, no skipped tests,
 The complete boundary rerun passes 305/305 with the same 30-second child timeout and all controls, outside the sandbox; input hashes remain unchanged during the run. The only input difference from the original six-file run is the measured boundary census correction. Combined with the original five production/resource files (261/261), all 566 tests in the six-file population now have passing evidence. The initial 547/566 run remains preserved; the successful rerun does not retrospectively convert its child-process errors into passes. Required source gates are running before normal commit hooks and publication.
 
 Pre-commit source validation passes all seven checks against `95f7b21061fd4618cac76258f0dd51f062b18160`: full TS7, LOC and function budgets, coercion inventory, oracle ratchet, moved-reference preservation/dead exports, and conformance-number synchronization. Source/test input hashes remain unchanged. These are refresh validation receipts, not proof of completed async materialization or IR-only retirement.
+
+
+## 2026-09-14 — PR #5796 refresh after authenticated Promise closure delivery
+
+Existing declaration/reservation checkpoint `5d7b6e831ac0140e866cf39834a3aa876fb99749` is composed with verified main `e0db9ec0cf20494022fbd8365a231c25f5b5779c`, containing delivered prerequisite PR #5794 (`70a844b54593f04783d8d1bc2cd86f53d9c89e0e`). All production files merge without conflicts. Both complete issue-history sides are retained, along with the original donor hashes, inverse controls, resource-order and exact-plan authentication requirements. Validation is pending; no completed async fill, consumer execution, or retirement is claimed.
+
+
+Refresh validation setup: the independent corpus matches all 53,933 raw blobs at pinned `b363f29d3c43c626dc852744ad64a0b48a003693` (53,889 tests and 44 harness files), with exact paths/modes, separate Git objects and no extra files. All seven published production hashes match the original R2 handoff; both complete issue-history conflict sides are retained. Receipts are in `.tmp/5796-queue-drain/corpus-initial-20260914.json` and `composition-preservation-20260914.json`.
+
+The original eight-file composition run remains in progress, with no terminal verdict yet. A non-interrupting sample of its live boundary-check child showed filesystem `lstat` waiting; the worker advances through fresh child processes using the unchanged 30-second limit. This observation does not establish a compiler failure, a passing boundary census, or permission to waive the run. Original commands and input hashes are preserved in `composition-original-20260914-command.json`; no test was killed or restarted.
+
+
+Environment diagnostic: the shared system temporary directory reports link count 65,535 and 6.6 MB directory metadata. A read-only 100-`lstat` comparison measured 1.015985 seconds for that directory versus 0.000462 seconds for the task's isolated temporary directory (`temp-metadata-probe-20260914.json`). This supports, but does not prove, metadata contention as the boundary-child delay. Existing fixtures are untouched. Any necessary rerun will use a task-owned temporary directory with the same source inputs, assertions and timeouts, after the original run terminates. Preliminary oracle and conformance synchronization checks both exit 0; final exact-base source gates remain required.
+
+
+All seven exact-base source gates pass against `e0db9ec0cf20494022fbd8365a231c25f5b5779c`, with source/test inputs unchanged: TS7, LOC/function budgets, coercion inventory, oracle ratchet, moved-reference preservation/dead exports and conformance synchronization. A byte-identical isolated copy of a live negative fixture (103 files) completes in 0.417 seconds and reports its deliberately missing module. This further supports the environmental diagnosis. Based on that new evidence, the same complete eight-file suite is running with a task-owned `TMPDIR` while the original run is preserved independently; the earlier intention to wait for the original terminal result before a comparison is superseded. Both runs pin identical source, test, helper, fixture and policy inputs. No assertion or timeout was changed, no original run was killed, and neither pending run is counted as a pass.
+
+
+The original composition run terminated at 586/633, with all 328 production/resource tests passing and 47 boundary subprocess errors; no input hash changed. The isolated-directory comparison terminated at 632/633, with no subprocess errors and one measured census mismatch: 399 imports (251 type-only, 148 runtime), versus the previous 392 (248/144). Both original reports are retained. An AST-based comparison against the exact main base accounts for all seven added imports: three type-only imports of declaration types, three runtime imports of the shared declaration executor, and the Promise producer's runtime closure-layout import. There are no removed imports. Only the census expectation/comment is corrected; allowed edges, historical records, source inputs, negative controls and timeouts remain unchanged. The complete 305-test boundary suite must pass after this correction before publication.
+
+
+The complete corrected boundary suite passes 305/305 with all input hashes unchanged during the run. Combined with the unchanged seven production/resource suites (328/328), all 633 tests in the eight-file population have passing evidence. The original 586/633 and isolated 632/633 failures remain archived; the only test repair is the independently explained import census. Normal signed hooks and publication remain pending. Fresh main advanced to `e27dbf482b1c01cb61c6dc34e8f6fccb51ae4cdd`, including the early-error fix merged by PR #5924; that additional source change must be incorporated and validated before protected queue admission.
+
+
+Signed merge `4256ebd2d5e65c4f13956266f9570327a5521d09` preserves the validated composition. Normal hooks pass; the changed-root lane self-skips at 90 inherited root test files, so it is not execution evidence. Post-hook source/test pins are unchanged. Fresh main `e27dbf482b1c01cb61c6dc34e8f6fccb51ae4cdd` then merges cleanly. Only `src/compiler/early-errors/node-checks.ts` and `predicates.ts` differ among previously pinned source inputs. All seven production suites plus the new early-error regression suite pass 351/351 with unchanged inputs. Together with the unaffected 305/305 boundary suite, the current nine-file population has 656 passing tests. Current-base source gates and normal hooks remain required before publication.
+
+
+All seven current-base source gates pass against `e27dbf482b1c01cb61c6dc34e8f6fccb51ae4cdd` with unchanged validation inputs. This is exact-base local evidence; protected head checks, merge-group checks and main delivery remain unverified.

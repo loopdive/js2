@@ -593,13 +593,13 @@ describe("semantic verification and provider ownership boundary", () => {
     expect(r.report.errors).toEqual([]);
     for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
       expect(r.report[field]).toEqual([]);
-    // Measured complete composed closure: Promise now imports its authenticated
-    // closure producer (+1 runtime edge); the September 13 failed census is retained.
+    // Shared async declarations add three type-only imports and four runtime
+    // imports to the measured closure; the September 14 failed census is retained.
     // Historical parent and published activation records remain unchanged.
     expect({ edges: r.report.resolvedEdgeCount, ...r.report.counts.resolvedEdgesByType }).toEqual({
-      edges: 392,
-      typeOnly: 248,
-      runtime: 144,
+      edges: 399,
+      typeOnly: 251,
+      runtime: 148,
     });
   });
 

@@ -34,7 +34,7 @@
  * {@link CLOSURE_CAPTURE_FIELD_BASE}, never a bare literal — and now so does
  * every VALIDATOR of the header.
  */
-import type { Instr, ValType, FuncHandle } from "../../../wasm/model/instructions.js";
+import type { Instr, FuncHandle } from "../../../wasm/model/instructions.js";
 import type { FieldDef, StructTypeDef } from "../../../wasm/model/module-records.js";
 
 /** Field 0 — the lifted function reference. */
@@ -47,7 +47,7 @@ export const CLOSURE_BAG_FIELD_IDX = 2;
 export const CLOSURE_CAPTURE_FIELD_BASE = 3;
 
 /** The `$arity` field definition — shared by every closure-struct mint site. */
-export function closureArityField(): { name: string; type: ValType; mutable: false } {
+export function closureArityField(): { name: string; type: { kind: "i32" }; mutable: false } {
   return { name: "$arity", type: { kind: "i32" }, mutable: false };
 }
 
@@ -67,7 +67,7 @@ export function closureArityField(): { name: string; type: ValType; mutable: fal
  */
 export const INSTANCE_BAG_FIELD = "$bag";
 
-export function closureBagField(): { name: string; type: ValType; mutable: true } {
+export function closureBagField(): { name: string; type: { kind: "externref" }; mutable: true } {
   return { name: "$bag", type: { kind: "externref" }, mutable: true };
 }
 
@@ -121,18 +121,31 @@ export const BFN_STATE_FIELD_IDX = 3;
 export const BFN_ID_FIELD_IDX = 4;
 
 export function createSignatureWrapperType(name: string, superTypeIdx: number): StructTypeDef {
+  const { parent, ...shape } = createSignatureWrapperShape(name, superTypeIdx);
+  return { ...shape, superTypeIdx: parent };
+}
+
+export function createSignatureWrapperShape<P>(name: string, parent: P) {
   const fields = [
     { name: "func", type: { kind: "funcref" as const }, mutable: false },
     closureArityField(),
     closureBagField(),
   ];
-  return { kind: "struct", name, fields, superTypeIdx };
+  return { kind: "struct" as const, name, fields, parent };
 }
 
 export function createBuiltinFunctionMetadataType(typeIndex: number, signatureWrapperTypeIndex: number): StructTypeDef {
+  const { parent, ...shape } = createBuiltinFunctionMetadataShape(
+    `__builtinfn_meta_${typeIndex}_struct`,
+    signatureWrapperTypeIndex,
+  );
+  return { ...shape, superTypeIdx: parent };
+}
+
+export function createBuiltinFunctionMetadataShape<N, P>(name: N, parent: P) {
   return {
-    kind: "struct",
-    name: `__builtinfn_meta_${typeIndex}_struct`,
+    kind: "struct" as const,
+    name,
     fields: [
       // Field 0 must mirror the supertype exactly (same type + mutability) —
       // as must the #3673 $arity slot at index 1.
@@ -145,7 +158,7 @@ export function createBuiltinFunctionMetadataType(typeIndex: number, signatureWr
       // subtypes cannot be distinguished by ref.test alone.
       { name: "bfnid", type: { kind: "i32" as const }, mutable: false },
     ],
-    superTypeIdx: signatureWrapperTypeIndex,
+    parent,
   };
 }
 
