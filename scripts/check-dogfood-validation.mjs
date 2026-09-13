@@ -166,12 +166,6 @@ const KNOWN_INVALID_MODULES = [
   },
   { name: "hono", module: "dist/jsx/dom/jsx-runtime.js", issue: 6413, detail: "same __closure_35 fallthru shape" },
   { name: "hono", module: "dist/jsx/dom/jsx-dev-runtime.js", issue: 6413, detail: "same __closure_35 fallthru shape" },
-  {
-    name: "hono",
-    module: "dist/adapter/cloudflare-pages/index.js",
-    issue: 6414,
-    detail: 'struct.set[1] expected i32, got externref in "__async_resume_fanon_467"',
-  },
 ];
 
 function usage(message) {
