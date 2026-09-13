@@ -1,10 +1,11 @@
 ---
 id: 6425
 title: "hono crypto: `new TextEncoder()` in compiled code answers `TextEncoder is not a constructor` — the whole of src/utils/crypto.test.ts (4 tests)"
-status: ready
+status: done
 sprint: current
 created: 2026-09-12
-updated: 2026-09-12
+updated: 2026-09-13
+completed: 2026-09-12
 priority: medium
 horizon: m
 feasibility: medium
@@ -88,3 +89,82 @@ reports the failure.
 ## Dispatch
 
 **opus** — one-line guard in a well-mapped arm, but the test must prove non-vacuity across two lanes and the A/B over 17 suites needs careful reading; no design ambiguity remains.
+
+## Resolution
+
+The plan's diagnosis held in full; the fix is the single guard it specified.
+
+**Mechanism.** `--platform node` type-checks against the DOM-free composite lib
+(`src/checker/index.ts`, `DOM_FREE_LIB_NAME`), which declares no `TextEncoder`
+or `TextDecoder`. So `ctx.oracle.isUnresolvableIdentifier(TextEncoder)` was
+true, and the #4246 unresolvable arm of `tryNonConstructableNewTarget`
+(`src/codegen/expressions/new-non-constructable-value.ts`) turned every
+`new TextEncoder()` into a **static** `TypeError("TextEncoder is not a
+constructor")` — reached at `new-super.ts:6583`, *before* the recovery arm at
+`new-super.ts:6905` (`!className && externClasses.has(name) &&
+resolvesToAmbientGlobal`) that the synthetic registration in
+`extern-declarations.ts` exists to feed. The web lane has lib.dom, resolved the
+same name, and emitted `TextEncoder_new` all along, which is why only hono's two
+node-lane files ever reported it. The binding was never missing: the node worker
+already supplies it (`upstream-suite-compile-worker.mjs` assigns
+`getWebHostConstructors()`).
+
+**Fix.** One guard on that arm — decline (`!ctx.externClasses.has(callee.text)`)
+when the unresolvable identifier names a registered host extern class. An
+unresolvable name that *is* a registered extern class is an ambient host global
+the lib failed to declare, not an undeclared name. Flow then reaches the L6905
+arm and emits `TextEncoder_new`. `+17` lines, all but one of them the comment.
+
+**Order preservation.** The arm stays where it is; only its unresolvable branch
+narrows. `new undeclaredName()` still throws (asserted as a control in the
+regression test). Standalone/WASI are untouched — the synthetic registration is
+gated `!nativeStrings && !strictNoHostImports`, so `externClasses` carries no
+`TextEncoder` there; `tests/issue-1752.test.ts` (5/5) and
+`tests/issue-1588-str-to-utf8.test.ts` (10/10) stay green.
+
+**Probe.** `.tmp/6425/probe.mjs` — a two-test `new TextEncoder()` module:
+node lane 0/2 → 2/2, web lane 2/2 → 2/2 (unchanged control).
+
+**Regression test.** `tests/issue-6425-node-lane-textencoder-construct.test.ts`
+with untyped JS fixtures at `tests/fixtures/issue-6425/`. 4 tests: 2 fail on the
+parent (`expected […] to include 'TextEncoder_new'`, and the round-trip), 4 pass
+with the fix. The two anti-vacuity controls — the same fixture on the web lane,
+and `new NoSuchCtor()` still pooling `NoSuchCtor is not a constructor` — pass on
+**both** parent and child, which is what proves the other two assertions measure
+the node lane specifically rather than the guard's mere existence.
+
+**A/B, 17 upstream suites at `3e92241ecc`, one arm at a time:**
+
+| suite | base | fix |
+| --- | --- | --- |
+| hono | **261/324** | **265/324** |
+| webpack | 16/16 | 16/16 |
+| three | 17/18 | 17/18 |
+| clsx | 32/32 | 32/32 |
+| cookie | 63740/63740 | 63740/63740 |
+| lodash | 59/62 | 59/62 |
+| redux | 67/82 | 67/82 |
+| axios | 208/231 | 208/231 |
+| stylelint | 108/108 | 108/108 |
+| tailwindcss | 13/13 | 13/13 |
+| jsdom | 6/6 | 6/6 |
+| styled-components | 9/9 | 9/9 |
+| uuid | 75/75 | 75/75 |
+| marked | 16/30 | 16/30 |
+| moment | 10/10 | 10/10 |
+| prettier | 108/151 | 108/151 |
+| jest | 335/356 | 335/356 |
+
+The 16 non-hono suites are **byte-identical per file**, not merely equal in
+headline. hono's +4 is exactly two files: `src/utils/crypto.test.ts` 0/4 → 3/4
+and `src/utils/buffer.test.ts` 4/10 → 5/10.
+
+**Acceptance criteria** 1-4 all met (AC2 asked for ≥3/4; measured 3/4).
+
+**Fourth test — diagnosed, filed, not bundled.** `Should create hash for Buffer`
+still reads `update is not a function`. Reduced independently of hono in
+`.tmp/6425/probe2.mjs`: on the node lane `import { createHash } from "crypto"`
+compiles to a **null** binding (native 2/2, Wasm 0/2, compile clean). Filed as
+[#6450](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6450-node-crypto-createhash-null-provider),
+together with the possible same-name local-export shadowing that makes hono's
+message differ from the bare reduction's.

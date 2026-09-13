@@ -511,6 +511,7 @@ import {
 } from "../native-strings.js";
 import { ensureTextEncodingHelpers } from "../text-encoding-native.js";
 import { emitVariadicStringConcat, hostStringRepr, nativeStringRepr } from "../builtin-scaffold.js";
+import { compileFromCharCodeFamilySpread, needsFromCharCodeSpread } from "./from-char-code-spread.js";
 import { URI_DECODE_MASK, URI_ENCODE_MASK } from "../uri-encoding-native.js";
 import {
   buildInt8ArrayCarrierMatch,
@@ -6142,6 +6143,13 @@ export function compileFromCharCodeFamily(
   opts: { native: boolean; helperIdx: number; isFromCodePoint?: boolean },
 ): ValType | null {
   const { native, helperIdx, isFromCodePoint } = opts;
+  // (#6430) `...src` has no lowering in the per-node fold below (it unwraps to
+  // `src` → NaN → one NUL char); the shared builder expands it. It emits
+  // nothing before it can decline, so `null` leaves the fold a clean slate.
+  if (needsFromCharCodeSpread(expr)) {
+    const spread = compileFromCharCodeFamilySpread(ctx, fctx, expr, opts);
+    if (spread !== null) return spread;
+  }
   const repr = native ? nativeStringRepr(ctx) : hostStringRepr(ctx);
   if (repr === undefined) return null;
 
