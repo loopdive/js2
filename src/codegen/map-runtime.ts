@@ -25,6 +25,7 @@
  */
 import { ts } from "../ts-api.js";
 import { isVoidType } from "../checker/type-mapper.js";
+import { COLLECTION_KIND } from "./collection-kind.js"; // (#6419) import-free leaf — see the note at COLLECTION_KIND below
 import type { Instr, StructTypeDef, ArrayTypeDef, ValType } from "../ir/types.js";
 import { canonicalUndefinedExternInstrs, ensureAnyValueType, undefinedSingletonActive } from "./any-helpers.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
@@ -80,22 +81,10 @@ export const MAP_LAYOUT = {
   TOMBSTONE_BIT,
 } as const;
 
-/**
- * (#3171) Which keyed collection a `$Map` struct instance backs. All four
- * collections share the `$Map` hash table (Set/WeakSet store key === value), so
- * struct identity alone cannot distinguish `[[MapData]]` / `[[SetData]]` /
- * `[[WeakMapData]]` / `[[WeakSetData]]` for the spec receiver brand checks
- * (`Map.prototype.get.call(new Set())` must throw a TypeError). The immutable
- * `kind` field (MAP_LAYOUT.M_KIND), stamped at construction by `__map_new`,
- * carries the brand.
- */
-export const COLLECTION_KIND = {
-  MAP: 0,
-  SET: 1,
-  WEAKMAP: 2,
-  WEAKSET: 3,
-} as const;
-export type CollectionKind = (typeof COLLECTION_KIND)[keyof typeof COLLECTION_KIND];
+// (#3171 / #6419) `COLLECTION_KIND` lives in the import-free leaf
+// `collection-kind.js`. It used to be declared here, but this module sits in an
+// import cycle, so a module that entered the cycle from the other side could
+// read the binding while it was still in TDZ. Import it from the leaf.
 
 /**
  * Register the WasmGC struct/array types backing the native Map. Idempotent.

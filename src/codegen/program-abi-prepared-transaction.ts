@@ -407,35 +407,95 @@ function describePreparedClassLayoutEntry(host: PreparedClassLayoutHost, classId
   return Object.freeze({ classRecord, observation, type, layoutKey, structuralReferenceKey, draft, session });
 }
 
+/**
+ * (#6419) Name the FIELD that diverged.
+ *
+ * This used to be one boolean `if` over thirteen comparisons that threw a bare
+ * "descriptor is stale". A bare verdict costs the whole diagnosis: the reader
+ * learns only that two descriptors differ somewhere, and every field has to be
+ * re-derived by hand. Keep the per-field list permanently — the first
+ * mismatching name is the entire finding.
+ */
+function firstPreparedClassLayoutEntryDivergence(
+  expected: PreparedClassLayoutEntry,
+  actual: PreparedClassLayoutEntry,
+): string | undefined {
+  const expectedSessionDraft = expected.session.draft;
+  const actualSessionDraft = actual.session.draft;
+  const sameSessionDraft =
+    expectedSessionDraft === undefined || actualSessionDraft === undefined
+      ? expectedSessionDraft === actualSessionDraft
+      : preparedProgramAbiDraftsEqual(expectedSessionDraft, actualSessionDraft);
+  // (#6419) The layout was COMMITTED between describe and prepare — and
+  // committed to exactly the layout this descriptor describes.
+  //
+  // The five `session.*` fields are not descriptions of the class; they are a
+  // reading of where the SESSION currently holds it, and `undefined →
+  // committed` is the one transition the session is supposed to make. Two
+  // prepared components that both depend on the same class hit it as a matter
+  // of course: the first commits the layout, the second was described before
+  // that and is then read as "stale" even though `draft` — the layout itself —
+  // is byte-identical. That is the whole of `illegal-cast-closures-585`'s
+  // `assert_throws` failure, where the lifted arrow (`() => o.doSomething()`)
+  // is the second component; the class body alone compiles fine.
+  //
+  // Accepting it is safe in both directions that matter. The transition is
+  // one-way: a committed → uncommitted reading still fails. And the committed
+  // reading is not taken on trust — `describePreparedClassLayoutEntry` has
+  // already asserted that all five session fields move in lockstep with the
+  // commit (it throws `disagrees with current Program-ABI ownership`
+  // otherwise), so `actual` is committed-consistent by construction. Staging
+  // then treats the re-contributed binding as `committedReuse`: the equal
+  // draft is accepted and nothing is written twice.
+  //
+  // `draft` itself is compared below and is NOT excused, so a layout that
+  // genuinely changed is still caught. `preparedProgramAbiDraftsEqual` is
+  // untouched.
+  const committedSincePrepare =
+    expectedSessionDraft === undefined &&
+    actualSessionDraft !== undefined &&
+    preparedProgramAbiDraftsEqual(actualSessionDraft, actual.draft);
+  const checks: readonly (readonly [string, boolean])[] = [
+    ["classRecord", expected.classRecord === actual.classRecord],
+    ["observation", expected.observation === actual.observation],
+    ["observation.displayName", expected.observation.displayName === actual.observation.displayName],
+    ["observation.cell", expected.observation.cell === actual.observation.cell],
+    ["type", expected.type === actual.type],
+    ["layoutKey", expected.layoutKey === actual.layoutKey],
+    ["structuralReferenceKey", expected.structuralReferenceKey === actual.structuralReferenceKey],
+    ["draft", preparedProgramAbiDraftsEqual(expected.draft, actual.draft)],
+    ["session.draft", committedSincePrepare || sameSessionDraft],
+    [
+      "session.structuralOrderOwner",
+      committedSincePrepare || expected.session.structuralOrderOwner === actual.session.structuralOrderOwner,
+    ],
+    ["session.locatorOwner", committedSincePrepare || expected.session.locatorOwner === actual.session.locatorOwner],
+    [
+      "session.hasExactLocator",
+      committedSincePrepare || expected.session.hasExactLocator === actual.session.hasExactLocator,
+    ],
+    [
+      "session.structuralReferenceBindingIds",
+      committedSincePrepare ||
+        (expected.session.structuralReferenceBindingIds.length ===
+          actual.session.structuralReferenceBindingIds.length &&
+          expected.session.structuralReferenceBindingIds.every(
+            (id, index) => id === actual.session.structuralReferenceBindingIds[index],
+          )),
+    ],
+  ];
+  return checks.find(([, same]) => !same)?.[0];
+}
+
 function assertSamePreparedClassLayoutEntry(
   expected: PreparedClassLayoutEntry,
   actual: PreparedClassLayoutEntry,
 ): void {
-  const expectedSessionDraft = expected.session.draft;
-  const actualSessionDraft = actual.session.draft;
-  if (
-    expected.classRecord !== actual.classRecord ||
-    expected.observation !== actual.observation ||
-    expected.observation.displayName !== actual.observation.displayName ||
-    expected.observation.cell !== actual.observation.cell ||
-    expected.type !== actual.type ||
-    expected.layoutKey !== actual.layoutKey ||
-    expected.structuralReferenceKey !== actual.structuralReferenceKey ||
-    !preparedProgramAbiDraftsEqual(expected.draft, actual.draft) ||
-    (expectedSessionDraft === undefined || actualSessionDraft === undefined
-      ? expectedSessionDraft !== actualSessionDraft
-      : !preparedProgramAbiDraftsEqual(expectedSessionDraft, actualSessionDraft)) ||
-    expected.session.structuralOrderOwner !== actual.session.structuralOrderOwner ||
-    expected.session.locatorOwner !== actual.session.locatorOwner ||
-    expected.session.hasExactLocator !== actual.session.hasExactLocator ||
-    expected.session.structuralReferenceBindingIds.length !== actual.session.structuralReferenceBindingIds.length ||
-    expected.session.structuralReferenceBindingIds.some(
-      (id, index) => id !== actual.session.structuralReferenceBindingIds[index],
-    )
-  ) {
+  const diverged = firstPreparedClassLayoutEntryDivergence(expected, actual);
+  if (diverged !== undefined) {
     throw new ProgramAbiInvariantError(
       "type-remap-mismatch",
-      `prepared class ${expected.classRecord.id} descriptor is stale`,
+      `prepared class ${expected.classRecord.id} descriptor is stale (${diverged} changed since prepare)`,
     );
   }
 }

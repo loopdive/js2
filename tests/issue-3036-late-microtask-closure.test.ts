@@ -26,6 +26,18 @@
  * a reintroduced null-deref surfaces as a captured error and fails the assert.
  *
  * No `JS2WASM_ASYNC_CARRIER_WIDEN` is needed (issue: "no widen needed").
+ *
+ * (#6419) The standalone lane no longer hands the continuation to a REAL Node
+ * promise: it has its own native promise + job queue, and `run()` only
+ * ENQUEUES the reaction. Nothing outside the module drains that queue, so
+ * waiting on a Node macrotask observed `out === 0` forever and this file went
+ * red on main — a stale test premise, not a compiler defect. The module
+ * exports the drain (`__drain_microtasks`, the same call
+ * `tests/deno-promise-hooks-standalone.test.ts` makes), so each instance is
+ * drained after its `run()`. Everything the file actually guards — the late
+ * invocation, the multi-instance `setExports` swap, and the refusal to swallow
+ * `uncaughtException` — is unchanged: a reintroduced null-deref still surfaces
+ * as a captured error.
  */
 
 import { describe, expect, it } from "vitest";
@@ -38,7 +50,7 @@ const SRC = `
   export function getOut(): number { return out; }
 `;
 
-async function makeInstance(): Promise<{ run: () => void; getOut: () => number }> {
+async function makeInstance(): Promise<{ run: () => void; getOut: () => number; drain: () => void }> {
   const r = await compile(SRC, { fileName: "t.ts", target: "standalone" });
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
@@ -46,7 +58,14 @@ async function makeInstance(): Promise<{ run: () => void; getOut: () => number }
   // very act that, before the fix, let a prior instance's late microtask
   // dispatch against the wrong instance's `__call_fn_*`.
   (imports as { setExports?: (e: unknown) => void }).setExports?.(instance.exports);
-  return instance.exports as unknown as { run: () => void; getOut: () => number };
+  const exports = instance.exports as unknown as {
+    run: () => void;
+    getOut: () => number;
+    __drain_microtasks: () => void;
+  };
+  // (#6419) The standalone promise lane's job queue is drained by the module,
+  // not by Node — `run()` only enqueues the `.then` reaction.
+  return { run: exports.run, getOut: exports.getOut, drain: () => exports.__drain_microtasks() };
 }
 
 /**
@@ -74,10 +93,11 @@ async function runCapturingLateErrors(body: () => Promise<void> | void): Promise
 
 describe("#3036 — late allSettled().then microtask must not null-deref the closure bridge", () => {
   it("single instance: the late callback fires cleanly and sets the module global", async () => {
-    let inst!: { run: () => void; getOut: () => number };
+    let inst!: { run: () => void; getOut: () => number; drain: () => void };
     const errors = await runCapturingLateErrors(async () => {
       inst = await makeInstance();
       inst.run();
+      inst.drain();
     });
     expect(errors, `late microtask crashed the closure bridge: ${errors[0]?.message}`).toHaveLength(0);
     // The callback actually ran (out flipped 0 -> 1), i.e. it was invoked and
@@ -86,7 +106,7 @@ describe("#3036 — late allSettled().then microtask must not null-deref the clo
   });
 
   it("back-to-back instances: an earlier instance's late microtask survives a later instance's setExports swap", async () => {
-    const instances: Array<{ run: () => void; getOut: () => number }> = [];
+    const instances: Array<{ run: () => void; getOut: () => number; drain: () => void }> = [];
     const errors = await runCapturingLateErrors(async () => {
       // Create + run three instances in one process. Each `makeInstance`
       // re-points the global callback bridge at the newest instance, so the
@@ -98,6 +118,11 @@ describe("#3036 — late allSettled().then microtask must not null-deref the clo
         inst.run();
         instances.push(inst);
       }
+      // (#6419) Drain only AFTER every `setExports` swap has happened — that
+      // ordering is the whole point of this case: each instance's pending
+      // reaction must still dispatch against ITS OWN exports, not the last
+      // instance's.
+      for (const inst of instances) inst.drain();
     });
     expect(errors, `a detached late microtask crashed the closure bridge: ${errors[0]?.message}`).toHaveLength(0);
     // Every instance's own callback ran against its own module global.
