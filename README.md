@@ -232,7 +232,9 @@ GC types or carry WasmGC bugs that can cause memory leaks or poor performance.
 Other standalone runtimes: WasmGC support in WAMR and WasmEdge is still
 maturing, so compiled output is not guaranteed to run there yet. Browser hosts
 (Chrome 119+, Firefox 120+) and Node.js 22+ run the JS-host target without extra
-flags.
+flags. `Promise.try` (Node 23+) is polyfilled by the JS-host runtime on older
+engines, so the declared `engines: node >=20` floor holds without a
+`Promise.try` gap (#6440).
 
 For reading STDIN and writing STDOUT/STDERR from standalone (`--target wasi`)
 output, see [docs/standalone-io.md](./docs/standalone-io.md).

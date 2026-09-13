@@ -19012,6 +19012,7 @@ export function buildImports(
     enabled: options?.ambientCompatibility !== false,
     deps,
     legacyRegExpState: instanceState.legacyRegExpState,
+    globalSandbox: options?.globalSandbox, // (#6440) Promise.try polyfill target
   });
 
   const env: Record<string, Function> = {};

@@ -2,11 +2,15 @@
 
 import { _installIteratorHelperPolyfills } from "./iterator-polyfills.js";
 import { _installLegacyRegExpAccessors, type LegacyRegExpState } from "./legacy-regexp.js";
+import { _installPromiseTryPolyfill, _promiseTryTargets } from "./promise-try-polyfill.js";
 
 export interface AmbientCompatibilityOptions {
   enabled: boolean;
   deps?: Record<string, any>;
   legacyRegExpState: LegacyRegExpState;
+  // (#6440) The `node:vm` sandbox realm in play, if any — its own `Promise`
+  // (distinct from the real global one) also gets checked for `Promise.try`.
+  globalSandbox?: Record<string, any>;
 }
 
 /**
@@ -18,4 +22,5 @@ export function installAmbientCompatibility(options: AmbientCompatibilityOptions
   _installIteratorHelperPolyfills();
   const RegExpConstructor = options.deps?.RegExp ?? (typeof RegExp !== "undefined" ? RegExp : undefined);
   if (RegExpConstructor) _installLegacyRegExpAccessors(RegExpConstructor, options.legacyRegExpState);
+  for (const C of _promiseTryTargets(options.globalSandbox)) _installPromiseTryPolyfill(C);
 }

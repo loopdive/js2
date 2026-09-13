@@ -100,7 +100,9 @@ node run.mjs
 ```
 
 Node 22 or newer is recommended (older versions may need
-`--experimental-wasm-gc`).
+`--experimental-wasm-gc`). `Promise.try` (Node 23+) is polyfilled by the
+JS-host runtime on older engines (#6440), so compiled output using it still
+runs down to the declared `engines: node >=20` floor.
 
 ## 4. Run in the browser
 
