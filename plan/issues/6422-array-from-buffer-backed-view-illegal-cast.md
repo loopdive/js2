@@ -1,10 +1,11 @@
 ---
 id: 6422
 title: "`Array.from(new Uint8Array(<host ArrayBuffer>))` traps with `illegal cast`"
-status: ready
+status: done
 sprint: current
 created: 2026-09-12
-updated: 2026-09-12
+updated: 2026-09-13
+completed: 2026-09-12
 priority: medium
 horizon: s
 feasibility: medium
@@ -12,6 +13,16 @@ reasoning_effort: high
 task_type: bug
 area: compiler
 goal: correctness
+# 2026-09-13 — the trapping `local.set` into the `ref null $Vec` local is one
+# statement inside `compileBuiltinStaticCall`'s array-copy arm, and making it
+# transactional needs the probe/rollback pair plus a guarded block around the
+# emission it already had. The carrier decision itself was moved OUT to the new
+# `src/codegen/array-from-vec-carrier.ts`; what stays is the +14 lines of
+# probe + comment that cannot leave the call site.
+loc-budget-allow:
+  - src/codegen/expressions/call-builtin-static.ts
+func-budget-allow:
+  - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
 ---
 
 ## Problem
@@ -87,3 +98,109 @@ the two TypedArray carriers rather than widening the cast.
 ## Dispatch
 
 Model: **opus** — one pinned site with a proven rollback idiom, but the fix must be transactional (roll back the compiled argument, not cast it) and keep four other `Array.from` arms and the standalone lane byte-identical, which needs judgment beyond a mechanical edit.
+
+## Resolution
+
+Fixed on `issue-6422`, measured on `7adc0a6e89` (2026-09-13).
+
+**Mechanism.** The `Array.from` array-copy fast path
+(`src/codegen/expressions/call-builtin-static.ts`, the
+`resolveArrayInfo(ctx, argTsType)` arm) picked its carrier from the CHECKER
+type: a declared or inferred `Uint8Array` resolves to a `$Vec`, so the arm
+compiled the argument and `local.set` it into a `ref null $Vec` local without
+ever looking at what the argument actually lowered to. `repairStructTypeMismatches`
+silently repaired the resulting validation mismatch with
+`any.convert_extern; ref.cast_null $Vec` — which **traps** at runtime, because
+the value was not a `$Vec`.
+
+**Both diagnoses in the plan hold, and the standalone half of it does not.**
+Two distinct carriers reach that arm behind the same static `Uint8Array`:
+
+| lane       | `new Uint8Array(buf)` builds                  | parent            |
+| ---------- | --------------------------------------------- | ----------------- |
+| JS host, untyped `buf` | a REAL host `Uint8Array` (externref) via `__construct_closure` | **illegal cast**  |
+| both lanes, compiled `ArrayBuffer` | the shared-backing `$__ta_view` struct (#3054) | **illegal cast**  |
+
+The plan recorded standalone as "measured 32, no trap, no change needed". It
+traps there too — for the `$__ta_view` reason this issue's own text originally
+guessed. Measured on the parent, `.tmp/p6422s`:
+`Array.from(new Uint8Array(buf)).length` → `RuntimeError: illegal cast`.
+
+**Fix.** One site, transactional, no widened cast. The argument is
+probe-compiled under `snapshotSpeculative`; the new
+`src/codegen/array-from-vec-carrier.ts` (`admitArrayFromVecCarrier`) decides
+whether the produced value belongs in that `$Vec` local:
+
+- already that vec → commit the `array.copy` lowering unchanged;
+- a registered `$__ta_view` → **de-view** it first with #3054 B1's
+  `emitTaViewToVec` (the same materialization the TypedArray prototype methods
+  take), then commit — which keeps the fast path *and* the element values;
+- anything else (a host externref, …) → `rollbackSpeculative` and fall through
+  to the existing native / host `Array.from` fallback, which reads a host typed
+  array correctly.
+
+The de-view arm is load-bearing, not a nicety: routing a `$__ta_view` to the
+fallback instead answers the right LENGTH with `NaN` ELEMENTS, because
+`__extern_get_idx` has no `$__ta_view` arm (see Residuals).
+
+**Probe, host lane (`.tmp/p6422`), parent → fix:**
+
+| case                                        | parent         | fix |
+| ------------------------------------------- | -------------- | --- |
+| `viewLen(hostAb)`                           | 32             | 32  |
+| `Array.from(new Uint8Array(hostAb)).length` | illegal cast   | 32  |
+| …byte sum                                   | illegal cast   | 96  |
+| `const v = new Uint8Array(buf); Array.from(v).length` | illegal cast | 32 |
+| `Array.from([1,2,3])`                       | 3              | 3   |
+| `Array.from(new Uint8Array([1,2,3,4]))`     | 4              | 4   |
+| `Array.from(<host Uint8Array via any>)`     | 2              | 2   |
+
+**Probe, standalone lane (`.tmp/p6422s`), parent → fix:** length
+`illegal cast` → 32, sum `illegal cast` → 96; `Array.from([1,2,3])` 3 → 3,
+`Array.from(new Uint8Array([1,2,3,4]))` sum 10 → 10.
+
+**Regression test.** `tests/issue-6422-array-from-host-typed-array-view.test.ts`
+— 12 cases, both lanes, untyped two-file fixture for the host half. On the
+parent: **5 fail** (3 host + 2 standalone, all as `RuntimeError: illegal cast`),
+**7 pass** (the anti-vacuity controls, including a WAT assertion that the
+compiled-carrier case still emits `array.copy` — so a fix that merely routed
+everything to the fallback would not pass). With the fix: 12/12.
+
+**A/B, 17 dogfood suites at one HEAD (`7adc0a6e89`), base vs fix — every
+suite FLAT:**
+
+| suite | base | fix | | suite | base | fix |
+| --- | --- | --- | --- | --- | --- | --- |
+| webpack | 16/16 | 16/16 | | uuid | 75/75 | 75/75 |
+| three | 17/18 | 17/18 | | marked | 16/30 | 16/30 |
+| clsx | 32/32 | 32/32 | | moment | 10/10 | 10/10 |
+| cookie | 63740/63740 | 63740/63740 | | prettier | 108/151 | 108/151 |
+| lodash | 59/62 | 59/62 | | jest | 335/356 | 335/356 |
+| redux | 67/82 | 67/82 | | hono | 261/324 | 261/324 |
+| axios | 208/231 | 208/231 | | stylelint | 108/108 | 108/108 |
+| tailwindcss | 13/13 | 13/13 | | jsdom | 6/6 | 6/6 |
+| styled-components | 9/9 | 9/9 | | | | |
+
+Two of the anchors in the plan were stale against this HEAD and moved in BOTH
+lanes, so they are not this change's doing: prettier 107 → **108** and hono
+259 → **261**. The defect was found by a probe, not a suite, and no suite
+exercises it.
+
+**Gates.** loc/func/coercion/oracle-ratchet/dead-exports/dogfood-validation/
+host-import-policy green; compiler-boundaries inventory green after classifying
+the new module in `scripts/compiler-boundaries.json`. `tsc --noEmit` clean. The
+loc/func growth (+15 / +14, the probe + rollback pair that cannot leave the call
+site) is granted in this file's frontmatter.
+
+**Residuals.**
+
+- `__extern_get_idx` has no `$__ta_view` arm: a view reaching the generic
+  array-like walk reads the right LENGTH (`__extern_length` handles it) and
+  `NaN` for every element. Measured directly in standalone at the intermediate
+  state of this change, before the de-view arm was added. It is dodged here,
+  not fixed, and still bites any other consumer of that walk — filed as a
+  follow-up.
+- Only `Array.from` was audited. `Array.of`, the spread arms and the other
+  `resolveArrayInfo` consumers pick their carrier from the checker type the same
+  way; the issue's own table shows `Math.max(...view)` is fine, but no
+  systematic sweep was done.
