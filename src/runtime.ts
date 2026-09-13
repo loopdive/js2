@@ -19503,16 +19503,24 @@ export function wrapExports(
     // label or the historical old-module fallback turn class instances into
     // callable wrappers.
     if (typeof isClosureFn !== "function") return true;
-    if (typeof isClosureFn === "function") {
-      try {
-        if (isClosureFn(val) === 1) return false;
-      } catch {
-        /* fall through to next probe */
-      }
+    // `_hostBridgeExportView` maps `__is_closure` to the authenticated compiler
+    // classifier when a closure family was discovered, or to `undefined`
+    // otherwise (see the `typeof isClosureFn !== "function"` branch above for
+    // the latter). So a classifier that returns without throwing is
+    // authoritative — a `0` verdict means "not a closure", full stop; do not
+    // fall through to the `__vec_len` guess (#6441) just because this
+    // field-less/array-free module never exports `__vec_len`.
+    let closureVerdictKnown = false;
+    try {
+      if (isClosureFn(val) === 1) return false;
+      closureVerdictKnown = true;
+    } catch {
+      /* module too old to answer the classifier cleanly — fall through to
+       * the `__vec_len` guess below, same as the pre-#6441 behaviour. */
     }
     if (_structFieldNamesRaw(val, exportsForMarshal) != null) return true;
     if (_isWasmVec(val, exportsForMarshal)) return true;
-    return hasVecLen;
+    return closureVerdictKnown ? true : hasVecLen;
   };
 
   const wrapped: Record<string, any> = Object.create(null);
