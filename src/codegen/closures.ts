@@ -21,6 +21,7 @@ import type { FieldDef, Instr, LocalDef, StructTypeDef, ValType } from "../ir/ty
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2867 Gap 1) native-$Promise carrier gate
 import { emitEagerAsyncPromiseWrap, parkedAsyncClosureWrapsPromise } from "./async-eager-promise.js"; // (#4630)
 import { widenAsyncThenableResult } from "./async-thenable-return.js"; // (#5371)
+import { applyNullableElemParamOverride } from "./array-hof-nullable-elem-param.js"; // (#6475) nullable vec element at the HOF callback boundary
 import { definedFuncAt, funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { pushProgramAbiNestedCallable, pushProgramAbiTypedThisTwin } from "./program-abi-source-callable-planning.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3b) manual import-shift must skip stable handles
@@ -2047,7 +2048,16 @@ export function computeClosureWrapperSig(
         ? ctx.arrayMapCallbackFirstParamOverride
         : !ts.isFunctionDeclaration(arrow) && setAccessorParamIsDynamic(arrow)
           ? EXTERNREF_PARAM
-          : resolveWasmType(ctx, paramType);
+          : // (#6475) The receiver's element type wins over the checker's ONLY
+            // when the checker handed back its exact non-null twin — the
+            // `RegExpExecArray extends Array<string>` nullability lie. Any
+            // other pair is returned unchanged, so no other callback shape can
+            // move a byte. `map` never reaches here: its unconditional
+            // override above already fired.
+            applyNullableElemParamOverride(
+              resolveWasmType(ctx, paramType),
+              runtimeIndex === 0 ? ctx.arrayHofNullableElemParamOverride : undefined,
+            );
     // JSDoc optional parameters (for example `@param {number=} size`) are
     // commonly exported from JavaScript modules and called from a different
     // source file. The local call-site scan cannot see those callers, so a
