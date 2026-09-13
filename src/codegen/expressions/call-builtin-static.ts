@@ -124,6 +124,10 @@ import { ensureStringRawHelper } from "../string-raw.js";
 import { defaultValueInstrs, pushDefaultValue } from "../type-coercion.js";
 import { compileMathCall } from "./builtins.js";
 import { tryCompileObjectCreateStaticPrototype } from "./call-object-builtins.js";
+import {
+  emitStandaloneObjectCreateClassInstance,
+  reserveStandaloneObjectCreateClassInstance,
+} from "../standalone-object-create-class-instance.js"; // (#6464)
 import { emitLazyProtoGet } from "./extern.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./helpers.js";
 import {
@@ -2551,6 +2555,12 @@ export function compileBuiltinStaticCall(
     flushLateImportShifts(ctx, fctx);
 
     if (hostIdx !== undefined) {
+      // (#6464) The standalone twin of #5239: a dynamic `<value>.prototype`
+      // misses the syntactic fast path above and would become a plain `$Object`
+      // whose members can never bind a compiled receiver. Reserved here (the
+      // body needs `ctx.protoGlobals`, complete only at finalize) and filled by
+      // `fillStandaloneObjectCreateClassInstance`.
+      let classInstanceIdx: number | undefined;
       // Compile the proto argument
       if (arg0.kind === ts.SyntaxKind.NullKeyword) {
         fctx.body.push({ op: "ref.null.extern" });
@@ -2562,6 +2572,7 @@ export function compileBuiltinStaticCall(
         // (identifiers, calls, Foo.prototype) keep the ordinary path inside
         // compileProtoArg.
         compileProtoArg(ctx, fctx, arg0);
+        classInstanceIdx = reserveStandaloneObjectCreateClassInstance(ctx);
       } else {
         const argType = compileExpression(ctx, fctx, arg0);
         if (!argType) {
@@ -2574,7 +2585,11 @@ export function compileBuiltinStaticCall(
           coerceType(ctx, fctx, argType, { kind: "externref" });
         }
       }
-      fctx.body.push({ op: "call", funcIdx: hostIdx });
+      if (classInstanceIdx !== undefined) {
+        emitStandaloneObjectCreateClassInstance(fctx, classInstanceIdx, hostIdx);
+      } else {
+        fctx.body.push({ op: "call", funcIdx: hostIdx });
+      }
 
       // Second argument (property descriptors): expand at compile time, but only
       // for descriptors this expansion can FULLY model. The admission test and

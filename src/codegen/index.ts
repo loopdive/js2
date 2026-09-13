@@ -287,6 +287,7 @@ import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
 import { fillClassProtoLookupArm } from "./class-proto-lookup.js"; // (#5195 Step 1.7)
 import { fillClassPrototypeReadArm } from "./standalone-class-prototype-read.js"; // (#6457)
+import { fillStandaloneObjectCreateClassInstance } from "./standalone-object-create-class-instance.js"; // (#6464)
 import { mintStandaloneClassProtoBuilders } from "./standalone-class-dyn-member.js"; // (#5383 S2h)
 import { mintStandaloneClassStaticBuilders } from "./standalone-class-dyn-static.js"; // (#5383 S2i)
 import { scanForArrayHoles, ensureHoleType } from "./array-holes.js"; // (#2001 S1)
@@ -6720,6 +6721,9 @@ export function generateModule(
     // in front of the sidecar delegation (which would only miss), behind #802's
     // dynamic-proto arm, which must keep the front slot.
     fillClassPrototypeReadArm(ctx);
+    // (#6464) The `Object.create(<value>.prototype)` dispatcher, reserved at its
+    // call sites and filled here because its body reads `ctx.protoGlobals`.
+    fillStandaloneObjectCreateClassInstance(ctx);
     fillDynamicProtoHelpers(ctx);
 
     // A separately compiled runtime-eval provider can invoke caller-owned AOT
@@ -11412,6 +11416,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fill-class-proto-lookup", () => fillClassProtoLookupArm(ctx));
     // (#6457) Same position as the twin site above, same reason.
     profilePhase("fill-class-prototype-read", () => fillClassPrototypeReadArm(ctx));
+    // (#6464) Same position and same reason as the twin site above.
+    profilePhase("fill-object-create-class-instance", () => fillStandaloneObjectCreateClassInstance(ctx));
     profilePhase("fill-dynamic-proto-helpers", () => fillDynamicProtoHelpers(ctx));
     profilePhase("fill-runtime-eval-callable-get-arm", () => fillRuntimeEvalCallablePropertyGetArm(ctx));
     profilePhase("fill-runtime-eval-intrinsic-own-props", () => fillRuntimeEvalIntrinsicFunctionOwnProps(ctx));
