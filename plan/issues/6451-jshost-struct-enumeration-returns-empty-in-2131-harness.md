@@ -1,10 +1,11 @@
 ---
 id: 6451
 title: "JS-host `Object.keys`/`values`/`entries`/`for-in` return nothing in the #2131 harness — 6 of 7 rows regressed on main"
-status: ready
+status: done
 sprint: current
 created: 2026-09-13
 updated: 2026-09-13
+completed: 2026-09-13
 priority: high
 horizon: m
 feasibility: medium
@@ -104,3 +105,99 @@ enumeration hole that nothing else in the corpus covers.
 ## Dispatch
 
 **sonnet** — a mechanical `setExports → setInstance` harness sweep with a per-file green/red check; the diagnosis and bisect are already done and no compiler judgement is needed.
+
+## Resolution
+
+Confirmed explanation 1: the harness was stale, not the compiler. Bisected to
+`708ebbd56d` "feat(codegen): authenticate data-struct host bridges"
+(2026-07-30), which migrated `tests/issue-forin.test.ts` to `setInstance` but
+missed every other hand-rolled harness. `tests/issue-2131.test.ts` now 7/7
+(was 1/7) after `run()` calls `imports.setInstance?.(instance)` instead of
+`imports.setExports?.(instance.exports)`.
+
+Swept the same-mechanism collateral (41 candidate files via
+`grep -l setExports tests/*.test.ts | xargs grep -L setInstance | xargs grep -l 'Object.keys\|for (const .* in \|Object.entries\|Object.values'`,
+run in batches of ≤10 to avoid the 8GB OOM). 19 files total (including 2131)
+flipped `setExports`/`__setExports` → `setInstance`/`__setInstance` and turned
+fully or partially green with no other change:
+
+| file | before | after |
+| --- | --- | --- |
+| issue-2131.test.ts | 1/7 | 7/7 |
+| issue-1243.test.ts | 11/21 | 21/21 |
+| issue-2849.test.ts | 6/11 | 11/11 |
+| issue-1462.test.ts | 14/15 | 15/15 |
+| issue-2138.test.ts | 6/7 | 7/7 |
+| issue-2742.test.ts | 13/15 | 15/15 |
+| issue-2792.test.ts | 13/14 | 14/14 |
+| issue-3486-fnctor-constructor-identity.test.ts | 5/6 | 6/6 |
+| issue-3643-array-dstr-getiterator.test.ts | 13/14 | 14/14 |
+| issue-1613.test.ts | 2/7 | 7/7 |
+| issue-1629-S1.test.ts | 3/7 | 7/7 |
+| issue-1830.test.ts | 1/3 | 3/3 |
+| issue-2066.test.ts | 0/6 | 6/6 |
+| issue-2179.test.ts | 4/10 | 10/10 |
+| issue-2739.test.ts | 1/6 | 6/6 |
+| issue-2747.test.ts | 2/8 | 7/8 (1 pre-existing unrelated failure remains, see below) |
+| issue-2805-init-time-any-receiver-write.test.ts | 2/3 | 3/3 |
+| issue-797-batch1.test.ts | 5/11 | 6/11 (5 pre-existing unrelated failures remain, see below) |
+| issue-2785.test.ts | 18/20 | 19/20 (1 pre-existing unrelated failure remains, see below) |
+
+Total: +58 tests fixed across the 18 collateral files, +6 on 2131 itself = **+64 tests** net.
+
+**Reverted, no net change:** `issue-2746.test.ts` — switching it to `setInstance`
+turned the M2 test's `Object.keys(new Date(0))` count from 2 (correct) to 3
+(a real Date-struct field leaking into enumeration once the host bridge is
+authenticated for this shape), regressing a previously-passing test. Left on
+`setExports`; its pre-existing, unrelated M1 (`arr.hasOwnProperty`) failure is
+unchanged either way. This Date-struct leak is a separate, real bug — flagged
+as a new issue below rather than fixed here (out of this issue's scope, and
+the plan's anti-vacuity control (#3520 tests) forbids papering over it with a
+`setExports` fallback in `_hostBridgeExportView`).
+
+**Confirmed NOT this mechanism** (per plan) — untouched: `issue-1277.test.ts`
+(export-name mapping), `issue-2900.test.ts` (module-init census, OOMs
+independent of this change).
+
+**Out of scope — same grep hit, different unrelated pre-existing bug, left on
+`setExports`/untouched:**
+- `issue-2166-objvec-element-index.test.ts` — target is `standalone`, no host
+  imports exist; `__setExports` was already a no-op, failure is a real
+  standalone positional-index bug, unrelated.
+- `issue-3186.test.ts` — failing row is array **element** access (`a[k]`), not
+  Object.keys/values/entries/for-in; unrelated numeric read bug.
+- `issue-2856-extern-in-ir.test.ts` — OOMs even run alone with 12GB heap;
+  pre-existing infra issue, independent of the setExports/setInstance choice.
+- `issue-3491-test262-fyi-module-fixtures.test.ts` — fails inside
+  `scripts/test262-fyi-reader.mjs` `loadOriginalHarnessTests`, a fixture/
+  submodule loading path unrelated to struct enumeration.
+- `issue-854-smoke.test.ts` — one failure is a missing test262 fixture file
+  (`SKIP: file not found`), the other is `Symbol.iterator` resolution via
+  `__extern_get`, not struct-field enumeration.
+- `issue-2747.test.ts` "walks a multi-level `__proto__` chain" — pre-existing
+  prototype-chain-depth bug, unaffected by the setInstance switch (same
+  failure before/after with a partially-improved-but-still-wrong string).
+- `issue-797-batch1.test.ts` WI2/WI4 (5 tests) — pre-existing compile-time
+  enumerability-flag bug (`Object.keys` still returns 3 fields instead of 2
+  after `defineProperty(..., {enumerable:false})`), unaffected by the switch.
+- `issue-2785.test.ts` "map-on-array-like" — pre-existing, identical
+  `TypeError: object is not a function` before and after.
+- `issue-3214-void-host-callback.test.ts` "rejects non-void before the IR
+  claim" — pre-existing IR-claim rejection-list bug, unrelated to enumeration.
+
+Gates: `check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`, `check:dogfood-validation`,
+`check:host-import-policy` all green (0 changed `src/` files). `tsc --noEmit`
+clean. `check:compiler-boundaries` reports pre-existing
+`inventory-valid-architecture-incomplete` (exit 1) identical to `upstream/main`
+HEAD `9760680f22` — no `src/` change in this PR, not a regression.
+
+No `src/` change → no dogfood A/B needed (the 17 upstream-package suites never
+used `setExports`; confirmed by the green `check:dogfood-validation` run
+above, itself unaffected by these test-file edits).
+
+New issues filed for the out-of-scope findings above:
+[#6471](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6471-jshost-date-struct-leaks-internal-field-into-enumeration)
+(Date-struct field leak once the host bridge is authenticated) and
+[#6472](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6472-jshost-defineproperty-enumerable-false-not-honored-by-object-keys)
+(`defineProperty(..., {enumerable:false})` ignored by `Object.keys`/`values`/`entries`/`propertyIsEnumerable`).

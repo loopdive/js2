@@ -20,7 +20,7 @@ async function run(source: string, options: Record<string, unknown> = {}, fn = "
   }
   const imports = buildImports(r.imports, {}, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
-  (imports as { setExports?: (e: object) => void }).setExports?.(instance.exports as object);
+  (imports as { setInstance?: (i: WebAssembly.Instance) => void }).setInstance?.(instance);
   return (instance.exports as any)[fn]();
 }
 

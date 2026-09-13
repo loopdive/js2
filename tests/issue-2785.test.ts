@@ -25,7 +25,7 @@ async function run(source: string, fn = "test"): Promise<unknown> {
   expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  imports.setInstance?.(instance);
   return (instance.exports as Record<string, (...a: unknown[]) => unknown>)[fn]();
 }
 
