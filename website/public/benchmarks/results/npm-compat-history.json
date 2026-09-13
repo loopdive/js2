@@ -16860,6 +16860,60 @@
           "standalone": {}
         }
       }
+    },
+    {
+      "generatedAt": "2026-09-13T14:44:03.930Z",
+      "sourceRevision": "9760680f2233e06e65374a8849407235e368abce",
+      "optimizationLevels": {
+        "js-host": 4,
+        "js-host-native": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHostNative": {},
+          "jsHost": {
+            "dynamic": 0.010205214549364811
+          },
+          "standalone": {}
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-09-13T15:24:24.835Z",
+      "sourceRevision": "91c107291b4f8281476885b3de72bb89babf6786",
+      "optimizationLevels": {
+        "js-host": 4,
+        "js-host-native": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHostNative": {},
+          "jsHost": {
+            "dynamic": 0.0069491194785550455
+          },
+          "standalone": {}
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-09-13T16:06:45.870Z",
+      "sourceRevision": "da5d15a1acaf02d589e11e73b28469b3e731b7ec",
+      "optimizationLevels": {
+        "js-host": 4,
+        "js-host-native": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHostNative": {},
+          "jsHost": {
+            "dynamic": 0.012072722046406166
+          },
+          "standalone": {}
+        }
+      }
     }
   ]
 }

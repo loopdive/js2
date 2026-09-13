@@ -3,7 +3,11 @@
 import { ts } from "../../ts-api.js";
 import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
 import { needsImplicitArgumentsObject } from "../helpers/body-uses-arguments.js";
-import { bodyReferencesOwnThis, functionLikeReferencesOwnThis } from "../helpers/body-references-own-this.js";
+import {
+  bodyReferencesOwnThis,
+  functionLikeReferencesOwnThis,
+  readsAmbientThisGlobal,
+} from "../helpers/body-references-own-this.js";
 import { isStrictFunction, isSimpleParameterList } from "../helpers/is-strict-function.js";
 import { normalizeSloppyExplicitThisParameter } from "../helpers/sloppy-this-global.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
@@ -1818,6 +1822,8 @@ function compileNestedFunctionDeclarationInScope(
   if (needsImplicitArgumentsObject(stmt)) {
     ctx.funcUsesArguments.add(funcName);
   }
+  // (#6436) A plain call to this name must install `undefined` as the receiver.
+  if (readsAmbientThisGlobal(stmt)) ctx.funcReadsOwnThis.add(funcName);
 
   // (#5148 checkpoint) Classify referenced sibling registry functions for the
   // lift-time transitive-capture promotion both branches below perform. The
@@ -3810,18 +3816,6 @@ export function maybeSetArgcForKnownCall(
   const argcGlobalIdx = ensureArgcGlobal(ctx);
   fctx.body.push({ op: "i32.const", value: Math.min(actualArgCount, paramCount) });
   fctx.body.push({ op: "global.set", index: argcGlobalIdx });
-  // (#6416) `arguments.length` is `argc + extrasLen`, so seeding `__argc` is
-  // only half the protocol: a non-null `__extras_argv` left behind by some
-  // EARLIER over-applied call — one whose callee never materialised
-  // `arguments` and so never consumed the vec — would be added to this
-  // call's count. This helper is emitted immediately before the `call`, after
-  // every argument has been compiled, so clearing here cannot wipe extras
-  // that belong to this call site. Guarded on `<=`: an over-applied caller
-  // has already run `emitSetExtrasArgv` for THIS callee and must keep it.
-  if (!ctx.funcUsesArguments.has(funcName) || actualArgCount > paramCount) return;
-  const { globalIdx: extrasGlobalIdx, vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
-  fctx.body.push({ op: "ref.null", typeIdx: vecTypeIdx });
-  fctx.body.push({ op: "global.set", index: extrasGlobalIdx });
 }
 
 /**

@@ -83,6 +83,7 @@ import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./conte
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
 import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.js"; // (#3024/#4638) module-global externref routing in lockstep with the literal's own host-path gate
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
+import { readsAmbientThisGlobal } from "./helpers/body-references-own-this.js";
 import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.js";
 import { markIdentityPreservingStructuralParam } from "./identity-preserving-structural-param.js";
 import { genericCallbackResultDeclaration } from "./generic-callback-result.js";
@@ -127,7 +128,7 @@ import {
 } from "./native-dynamic-boundary-tag.js";
 import { prepareStandaloneNativePromiseNumberBoundary } from "./native-promise-number-boundary.js";
 import { prepareAsyncCallableAbi } from "./async-ir-planning.js";
-import { bakeActivatedAsyncPromiseResult, widenAsyncThenableResults } from "./async-thenable-return.js";
+import { widenAsyncThenableResults } from "./async-thenable-return.js";
 import {
   ensureNativeStringBoundaryBridge,
   ensureNativeStringExternBridge,
@@ -1860,7 +1861,7 @@ function registerBodylessFunctionDeclaration(
   }
 
   [params, results] = prepareAsyncCallableAbi(ctx, stmt, expandLinearU8ParamTypes(ctx, stmt, params), results);
-  results = bakeActivatedAsyncPromiseResult(ctx, stmt, widenAsyncThenableResults(ctx, stmt, results));
+  results = widenAsyncThenableResults(ctx, stmt, results);
 
   const optionalParams: OptionalParamInfo[] = [];
   for (let i = 0; i < stmt.parameters.length; i++) {
@@ -1881,6 +1882,8 @@ function registerBodylessFunctionDeclaration(
   if (needsImplicitArgumentsObject(stmt)) {
     ctx.funcUsesArguments.add(name);
   }
+  // (#6436) A plain call to this name must install `undefined` as the receiver.
+  if (readsAmbientThisGlobal(stmt)) ctx.funcReadsOwnThis.add(name);
 
   const typeIdx = addFuncType(ctx, params, results, `${name}_type`);
   const funcIdx = mintDefinedFunc(ctx);
@@ -2999,7 +3002,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       }
 
       [params, results] = prepareAsyncCallableAbi(ctx, stmt, expandLinearU8ParamTypes(ctx, stmt, params), results);
-      results = bakeActivatedAsyncPromiseResult(ctx, stmt, widenAsyncThenableResults(ctx, stmt, results));
+      results = widenAsyncThenableResults(ctx, stmt, results);
 
       const optionalParams: OptionalParamInfo[] = [];
       for (let i = 0; i < stmt.parameters.length; i++) {
@@ -3028,6 +3031,8 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       if (needsImplicitArgumentsObject(stmt)) {
         ctx.funcUsesArguments.add(name);
       }
+      // (#6436) A plain call to this name must install `undefined` as the receiver.
+      if (readsAmbientThisGlobal(stmt)) ctx.funcReadsOwnThis.add(name);
 
       const typeIdx = addFuncType(ctx, params, results, `${name}_type`);
       const funcIdx = mintDefinedFunc(ctx);
