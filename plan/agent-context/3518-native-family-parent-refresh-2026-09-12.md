@@ -75,3 +75,14 @@ initial failures, independent provenance and exact final results are under
 and confirmed parent delivery remain mandatory before publishing this exact
 head to the existing PR. No public cutover or physical async acceptance is
 implied by this source-preservation repair.
+
+The first refreshed head `eb3bd066d8db925f58e86aa803935bb7cdb82c41`
+was pushed with all normal hooks passing, including 302 actual changed-root
+tests at commit and 18 numeric-parity tests at push. Post-push corpus and all
+1,340 source files matched the signed state. GitHub nevertheless reported a
+merge conflict against `699df289e10826ae9074deb943ff147d2ab08324`; the local
+merge had two merge bases and a clean preview. An explicit merge of that exact
+main succeeded and changed only six benchmark artifacts and issue 4444. No
+source or test changed, so the 422 direct-test evidence remains applicable.
+The hold remains until publication and required-check verification; only exact
+merge-group validation and confirmed main content count as delivery.
