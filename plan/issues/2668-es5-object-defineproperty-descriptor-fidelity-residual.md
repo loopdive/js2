@@ -960,3 +960,30 @@ finally converge only the readers/writers required by the 13-row matrix before
 the mutator audit, same-population kill-switch A/B, both-lane zero-loss gate,
 and switch removal. Do not claim a Test262 gain until the measured partitions
 exist.
+
+## PR 5738 landing blocker: inline length result
+
+The original maximum-length fixture causes OOM in both repaired baseline and
+candidate. A diagnostic bundle load hook identifies `__make_iterable` eagerly
+filling 2,147,483,647 entries after the inline length define. The setter also
+uses signed saturating conversion for a validated uint32 length.
+
+Bounded repair plan: use unsigned conversion, return the original typed vec
+reference from the inline setter, and let consumers perform any required
+boundary conversion. Test discarded large lengths, ordinary growth, consumed
+return identity, and invalid-length rejection; then run the unchanged original
+fixture and adjacent descriptor tests. Do not alter the generic iterable
+bridge, fixtures, timeout policy, or original raw comparison evidence. Apply
+the same reviewed repair to the measurement baseline before renewed equality
+measurement. This does not establish full sparse-array support or IR retirement.
+
+Implementation also treats a null empty-array backing store as capacity zero
+and avoids `array.copy` from that null backing. The empty-array trap reproduces
+on the unchanged baseline even at length 2; the repair covers the same setter.
+Validation: eight new controls and ten adjacent #3116 controls pass. The ten
+#3984 tests are skipped locally because they hard-code `/workspace/test262`;
+they are not counted as coverage. The unchanged original maximum-length
+Test262 fixture passes in both sloppy and strict modes with the normal worker,
+1024 MiB heap and 10-second limit (about 1.14s and 0.40s respectively).
+Original baseline/candidate reports remain preserved. Other PR5738 comparison
+differences remain unresolved; this checkpoint alone does not authorize landing.

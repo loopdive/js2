@@ -12,6 +12,7 @@ import { ensureI32Condition } from "../index.js";
 import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 import { defaultValueInstrs } from "../type-coercion.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { nullishJoinCarrier } from "./nullish-join-carrier.js";
 import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 
 type MappedArgsInfo = NonNullable<FunctionContext["mappedArgsInfo"]>;
@@ -338,19 +339,10 @@ function finishNullishBranch(
     return resultKind;
   }
 
-  // Types differ — use externref as the unified type when both sides are
-  // different types (e.g., struct ref vs f64). This ensures both branches
-  // can produce a compatible wasm type. If the RHS is already externref
-  // or a ref type, use externref; if both are numeric but different, prefer f64.
-  let unifiedType: ValType;
-  if (
-    rType.kind === "f64" &&
-    (resultKind.kind === "externref" || resultKind.kind === "ref" || resultKind.kind === "ref_null")
-  ) {
-    unifiedType = { kind: "externref" };
-  } else {
-    unifiedType = rType;
-  }
+  // Types differ — pick a carrier that holds BOTH arms. (#5366) Taking the RHS
+  // type outright made the LHS coercion an unproven guarded downcast, which
+  // substitutes `null` instead of trapping; see `nullish-join-carrier.ts`.
+  const unifiedType: ValType = nullishJoinCarrier(ctx, resultKind, rType);
 
   // Coerce RHS (then branch) to unified type if needed (usually already matches)
   if (!valTypesMatch(rType, unifiedType)) {

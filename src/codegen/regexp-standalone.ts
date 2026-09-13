@@ -4403,7 +4403,6 @@ function emitStandaloneRegExpReplaceCore(
     reportError(ctx, expr, "Codegen error: standalone RegExp backend missing native string helpers (#682).");
     return null;
   }
-  const replaceIdx = ensureRegexReplace(ctx);
   const strTypeIdx = ctx.nativeStrTypeIdx;
 
   // --- the compiled $NativeRegExp struct ---
@@ -4427,7 +4426,54 @@ function emitStandaloneRegExpReplaceCore(
   const replLocal = allocLocal(fctx, `__re_repl_${fctx.locals.length}`, { kind: "ref", typeIdx: strTypeIdx });
   fctx.body.push({ op: "local.set", index: replLocal });
 
-  // __regex_replace(prog, classTable, nGroups, subjData, subjOff, subjLen, subject, replacement, global)
+  // This slice deliberately proves only the direct `@@replace` protocol on
+  // static/backend-created g/y receivers. Dynamic flags, custom exec/result
+  // objects, and generic property dispatch stay on their existing paths; the
+  // ordinary closed String.prototype.replace/replaceAll route remains a
+  // zero-cursor native helper call.
+  const staticFlags = staticRegExpFlags(ctx, reExpr);
+  const cursorGlobal = staticFlags?.includes("g") ?? false;
+  const cursorSticky = staticFlags?.includes("y") ?? false;
+  const cursorMode = diag === "@@replace" && staticFlags !== null && (cursorGlobal || cursorSticky);
+  const cursorUnicode = (staticFlags?.includes("u") ?? false) || (staticFlags?.includes("v") ?? false);
+  let cursorStartLocal: number | undefined;
+
+  if (cursorMode && cursorGlobal) {
+    // RegExp.prototype[@@replace] initializes every global receiver before the
+    // loop. Preserve the ordinary descriptor-aware Set(0, true) rather than
+    // silently replacing the struct field when a known non-writable lastIndex
+    // must throw.
+    fctx.body.push(...standaloneRegExpLastIndexSetGuardInstrs(ctx, fctx, reExpr));
+    fctx.body.push(
+      { op: "local.get", index: regexpLocal },
+      { op: "f64.const", value: 0 },
+      { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX },
+      { op: "local.get", index: regexpLocal },
+      { op: "i32.const", value: 0 },
+      { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW_PRESENT },
+    );
+  } else if (cursorMode) {
+    // A sticky, non-global replace executes exactly once from ToLength of the
+    // deferred raw lastIndex. Do that conversion after subject/replacement
+    // coercion and before the write guard, matching RegExpBuiltinExec's order.
+    cursorStartLocal = allocLocal(fctx, `__re_replace_start_${fctx.locals.length}`, { kind: "i32" });
+    fctx.body.push(
+      ...standaloneRegExpLastIndexAsF64(ctx, fctx, regexpLocal, structTypeIdx),
+      { op: "i32.trunc_sat_f64_s" },
+      { op: "local.set", index: cursorStartLocal },
+      // The native matcher is pure for this bounded static path. Once ToLength
+      // has completed, a known non-writable success/failure Set may throw here
+      // without moving an observable user-code operation ahead of the throw.
+      ...standaloneRegExpLastIndexSetGuardInstrs(ctx, fctx, reExpr),
+    );
+  }
+
+  // Resolve after the descriptor/error paths above: they may introduce a late
+  // TypeError helper and shift defined function indices.
+  const replaceIdx = ensureRegexReplace(ctx);
+
+  // __regex_replace(prog, classTable, nGroups, subjData, subjOff, subjLen,
+  // subject, replacement, global, nScratch, names, start, sticky, unicode)
   fctx.body.push({ op: "local.get", index: regexpLocal });
   fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_PROG });
   fctx.body.push({ op: "local.get", index: regexpLocal });
@@ -4456,7 +4502,41 @@ function emitStandaloneRegExpReplaceCore(
   // #2588 — names table for `$<name>` substitution: [count, (idx,len,ch...)*].
   // Empty (count=0) when the pattern has no named groups → `$<…>` stays literal.
   for (const instr of buildRegexNamesTableInstrs(ctx, reExpr)) fctx.body.push(instr);
+  if (cursorMode) {
+    if (cursorStartLocal === undefined) fctx.body.push({ op: "i32.const", value: 0 });
+    else fctx.body.push({ op: "local.get", index: cursorStartLocal });
+    fctx.body.push({ op: "i32.const", value: cursorSticky ? 1 : 0 }, { op: "i32.const", value: cursorUnicode ? 1 : 0 });
+  } else {
+    fctx.body.push({ op: "i32.const", value: 0 }, { op: "i32.const", value: 0 }, { op: "i32.const", value: 0 });
+  }
   fctx.body.push({ op: "call", funcIdx: replaceIdx });
+  if (!cursorMode) {
+    // __regex_replace now returns the final cursor as a second result for the
+    // static g/y path. Closed ordinary replacement keeps the string result.
+    fctx.body.push({ op: "drop" });
+    return nativeStringType(ctx);
+  }
+
+  // Multi-value results are spilled immediately (last result first) so the
+  // normal stack-balance machinery never has to reason across the native call.
+  const finalLastIndexLocal = allocLocal(fctx, `__re_replace_lastindex_${fctx.locals.length}`, { kind: "i32" });
+  const resultLocal = allocLocal(fctx, `__re_replace_result_${fctx.locals.length}`, nativeStringType(ctx));
+  fctx.body.push({ op: "local.set", index: finalLastIndexLocal }, { op: "local.set", index: resultLocal });
+
+  // The helper's final cursor is the success end for a one-shot sticky regex,
+  // or zero after the terminating global failure. The global Set(0) and the
+  // sticky guard above already enforce the only statically-provable descriptor
+  // errors before the pure native loop.
+  fctx.body.push(
+    { op: "local.get", index: regexpLocal },
+    { op: "local.get", index: finalLastIndexLocal },
+    { op: "f64.convert_i32_s" },
+    { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX },
+    { op: "local.get", index: regexpLocal },
+    { op: "i32.const", value: 0 },
+    { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW_PRESENT },
+    { op: "local.get", index: resultLocal },
+  );
   return nativeStringType(ctx);
 }
 

@@ -1,3 +1,5 @@
+import { ensureNativeDelegatedResultHelpers } from "./generators-delegation-runtime.js";
+import { NATIVE_GENERATOR_FACTORY_PROTO } from "./generators-native-protocol.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * Property-access dispatch helpers (#3276, Wave B decomposition of #3182).
@@ -99,7 +101,6 @@ import {
   tryCompileStandaloneRegExpPropertyRead,
 } from "./regexp-standalone.js";
 import {
-  emitGeneratorPrototypeSingleton,
   emitNativeGlobalThisObject,
   emitTypedArrayIntrinsicCtorObject,
   ensureTypedArrayViewNativeProtoGlue,
@@ -169,7 +170,11 @@ import { isSealedNominalStructParent } from "./struct-hierarchy-layout.js";
 import { isBuiltinSubtype, isBuiltinTypeName } from "./builtin-tags.js";
 import { receiverIsPrimitiveWrapper } from "./object-ctor-primitive-receiver.js";
 import { tryObjectCoercionFnctorPrototypeIdentity } from "./object-coercion-fnctor-prototype.js";
-import { getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
+import {
+  externrefBackedOwnFieldBacking,
+  getOrRegisterErrorStructType,
+  isWasiErrorName,
+} from "./registry/error-types.js";
 import {
   classExpressionDefinesOwnName,
   classifyPlainCtorReceiverNamespace,
@@ -2057,8 +2062,13 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
       // native `%GeneratorPrototype%` singleton (host-free) instead of leaking
       // `__get_generator_prototype`. Async generators keep the host import.
       if (!isAsyncGen && (ctx.standalone || ctx.wasi)) {
-        const t = emitGeneratorPrototypeSingleton(ctx, fctx);
-        if (t) return t;
+        ensureNativeDelegatedResultHelpers(ctx);
+        const t = compileExpression(ctx, fctx, expr.expression, { kind: "externref" });
+        if (t) {
+          if (t.kind !== "externref") coerceType(ctx, fctx, t, { kind: "externref" });
+          fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(NATIVE_GENERATOR_FACTORY_PROTO)! });
+          return { kind: "externref" };
+        }
       }
       const helperName = isAsyncGen ? "__get_async_generator_prototype" : "__get_generator_prototype";
       const helperIdx = ensureLateImport(ctx, helperName, [], [{ kind: "externref" }]);
@@ -2183,8 +2193,13 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
       // native `%GeneratorPrototype%` singleton (host-free) instead of leaking
       // `__get_generator_prototype`. Async generators keep the host import.
       if (!isAsyncGen && (ctx.standalone || ctx.wasi)) {
-        const t = emitGeneratorPrototypeSingleton(ctx, fctx);
-        if (t) return t;
+        ensureNativeDelegatedResultHelpers(ctx);
+        const t = compileExpression(ctx, fctx, expr.expression, { kind: "externref" });
+        if (t) {
+          if (t.kind !== "externref") coerceType(ctx, fctx, t, { kind: "externref" });
+          fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(NATIVE_GENERATOR_FACTORY_PROTO)! });
+          return { kind: "externref" };
+        }
       }
       const helperName = isAsyncGen ? "__get_async_generator_prototype" : "__get_generator_prototype";
       const helperIdx = ensureLateImport(ctx, helperName, [], [{ kind: "externref" }]);
@@ -4384,6 +4399,26 @@ export function finalizeStructAndDynamicMemberGet(
     if (ctx.standalone && ctx.classExternrefBackedSet.has(typeName)) {
       const ownRead = emitExternrefBackedOwnFieldRead(ctx, fctx, expr, propName, typeName);
       if (ownRead !== undefined) return ownRead;
+      // (#5383 S2b) The READ twin of the write fix in `assignment.ts`. When the
+      // class has no known native backing (an Array/TypedArray/… carrier), the
+      // own-field WRITE now stores through `__extern_set` on the carrier
+      // itself, so the read has to look in the same place — otherwise the
+      // struct.get path below reads the vestigial `$typeName` slot the write no
+      // longer fills, and (the carrier never being a `$typeName`) throws
+      // `TypeError: Cannot access property on null or undefined`.
+      //
+      // Scoped to properties that actually HAVE such a flow-grown slot, which
+      // is exactly the set the doomed struct path would have claimed. A builtin
+      // member of the parent (`length`, `push`, an index) has no slot, so it
+      // still reaches the array/builtin member paths below unchanged — that
+      // scoping is why this cannot swallow inherited behaviour.
+      if (
+        externrefBackedOwnFieldBacking(ctx, typeName) === undefined &&
+        (ctx.structFields.get(typeName)?.some((field) => field.name === propName) ?? false)
+      ) {
+        const selfStoreRead = emitExternrefBackedOwnFieldRead(ctx, fctx, expr, propName, typeName, "plain-object");
+        if (selfStoreRead !== undefined) return selfStoreRead;
+      }
       // undefined → helper unavailable; fall through to the legacy path.
     }
 

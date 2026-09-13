@@ -1,3 +1,4 @@
+import { emitNativeGeneratorProtocolMethodBody } from "./generators-native-protocol.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#2193 / #43 harvest) Native `$NativeProto` glue for `Array.prototype` and
@@ -2452,6 +2453,7 @@ function makeGlue(
     // (#2875 slice 1) String.prototype.{charAt,at} likewise. Other Array/String
     // members + all Object members still degrade to a catchable TypeError.
     emitMemberBody: (c, fctx, member) =>
+      (name === "Generator" ? emitNativeGeneratorProtocolMethodBody(c, fctx, member) : null) ??
       // (#5269 D-2) The `Error.prototype.stack` accessor pair. First in the
       // ladder because its member names are synthetic — no other arm can claim
       // them — and the setter needs the brand to identify its home object.
@@ -2810,7 +2812,10 @@ export function ensureGeneratorPrototypeNativeProtoGlue(ctx: CodegenContext): nu
     // `name: "Generator"` drives the refusal message ("Generator.prototype.<m>
     // …"); the member CSV is the three §27.5.1 methods. next/return/throw are
     // each arity 1 (spec length 1) via makeGlue's default.
-    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Generator", ["next", "return", "throw"]));
+    registerNativeProtoBuiltin(ctx, {
+      ...makeGlue(ctx, brand, "Generator", ["next", "return", "throw", "@@1"]),
+      memberLength: (member) => (member === "@@1" ? 0 : 1),
+    });
   }
   return brand;
 }
@@ -3439,6 +3444,52 @@ export function emitGeneratorPrototypeSingleton(ctx: CodegenContext, fctx: Funct
       fctx.body.push({ op: "f64.const", value: METHOD_FLAGS });
       fctx.body.push({ op: "call", funcIdx: defineIdx });
       fctx.body.push({ op: "drop" }); // helper returns the target; discard
+    }
+    if (ok) {
+      // %GeneratorPrototype% inherits the generic iterator self method.
+      // Keep it off GP's own-property table and preserve the callable receiver.
+      const iterator = ensureStandaloneNativeMethodClosure(ctx, brand, "@@1", "method");
+      const setProtoIdx = ctx.funcMap.get("__object_setPrototypeOf");
+      if (!iterator || setProtoIdx === undefined) return null;
+      const iteratorGlobalName = "__native_generator_iterator_prototype_obj";
+      let iteratorGlobal = ctx.builtinObjectGlobals.get(iteratorGlobalName);
+      if (iteratorGlobal === undefined) {
+        iteratorGlobal = ctx.numImportGlobals + ctx.mod.globals.length;
+        ctx.mod.globals.push({
+          name: iteratorGlobalName,
+          type: { kind: "externref" },
+          mutable: true,
+          init: [{ op: "ref.null.extern" }],
+        });
+        ctx.builtinObjectGlobals.set(iteratorGlobalName, iteratorGlobal);
+      }
+      const parent = allocLocal(fctx, "__gen_iterator_proto", { kind: "externref" });
+      fctx.body.push(
+        { op: "global.get", index: iteratorGlobal },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "call", funcIdx: newObjectIdx },
+            { op: "local.tee", index: parent },
+            { op: "i32.const", value: 1 },
+            { op: "call", funcIdx: boxSymbolIdx },
+            ...pushBuiltinFnSingletonValueInstrs(ctx, iterator),
+            { op: "extern.convert_any" },
+            { op: "f64.const", value: 5 },
+            { op: "call", funcIdx: defineIdx },
+            { op: "drop" },
+            { op: "local.get", index: parent },
+            { op: "global.set", index: iteratorGlobal },
+          ],
+          else: [],
+        },
+        { op: "local.get", index: objLocal },
+        { op: "global.get", index: iteratorGlobal },
+        { op: "call", funcIdx: setProtoIdx },
+        { op: "drop" },
+      );
     }
     if (ok) {
       // Symbol.toStringTag = "Generator", with {writable:false,

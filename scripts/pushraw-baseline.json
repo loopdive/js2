@@ -1,6 +1,14 @@
 {
   "generated": "2026-07-16",
-  "path": "src/ir/lower.ts",
+  "path": "src/ir/lower-generic.ts",
+  "paths": [
+    "src/ir/lower.ts",
+    "src/ir/lower-generic.ts",
+    "src/ir/backend/lower-contracts.ts",
+    "src/ir/backend/wasm-constants.ts",
+    "src/ir/backend/wasm-lowering.ts"
+  ],
+  "relocatedFrom": "src/ir/lower.ts",
   "total": 82,
   "tagged": 0,
   "untagged": 82

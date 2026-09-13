@@ -116,6 +116,7 @@ import { emitSymbolOperandCoercionThrow } from "./tonumber-symbol-throw.js"; // 
 import { resolveObjectLiteralCarrier } from "./object-literal-carrier.js";
 import { tagAccessorObjectLiteralReceiver } from "./accessor-object-literal.js";
 import { widenUndefinedDefaultParamSlot } from "./destructuring-params.js";
+import { widenAsyncThenableResults } from "./async-thenable-return.js"; // (#5371)
 /**
  * Check if a TS expression is "undefined-like" — OmittedExpression (array hole),
  * undefined keyword, identifier `undefined`, void expression, or any of the
@@ -3675,7 +3676,7 @@ export function compileObjectLiteralForStruct(
       let rt = ctx.checker.getReturnTypeOfSignature(methodSig);
       const isAsync = prop.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
       if (isAsync) rt = unwrapPromiseType(rt, ctx.checker);
-      if (rt && !isVoidType(rt)) methodResult = [resolveWasmType(ctx, rt)];
+      if (rt && !isVoidType(rt)) methodResult = widenAsyncThenableResults(ctx, prop, [resolveWasmType(ctx, rt)]);
     }
     const freshTypeIdx = addFuncType(ctx, newParams, methodResult, `${fullName}__lit_type`);
     const freshFuncIdx = mintDefinedFunc(ctx);
@@ -4320,7 +4321,7 @@ export function compileObjectLiteralForStruct(
           ? [{ kind: "ref", typeIdx: objMethNativeGen.stateTypeIdx }]
           : [{ kind: "externref" }]
         : retType && !isVoidType(retType)
-          ? [resolveWasmType(ctx, retType)]
+          ? widenAsyncThenableResults(ctx, prop, [resolveWasmType(ctx, retType)])
           : [];
 
       // Track object-literal methods that read `arguments` (#1053) so

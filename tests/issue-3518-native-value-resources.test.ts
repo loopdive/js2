@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import ts from "typescript";
+import { inversePreparedSourceForward } from "./helpers/prepared-source-forward-receipts.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { createEmptyModule } from "../src/ir/types.js";
 import { emitBinary } from "../src/emit/binary.js";
@@ -447,6 +448,15 @@ function verifyCommentReceipt(text: string, owner: keyof Sources): void {
   if (actual.count !== expected.count || actual.sha256 !== expected.sha256)
     throw Error("complete comment receipt: " + owner);
 }
+const preparedImportsForwardText = readFileSync(
+  resolve(import.meta.dirname, "fixtures/issue-3518-native-value-prepared-import-forward.json"),
+  "utf8",
+);
+const preparedImportsForwardHash = "aeba4c5c88a91a4af71fe2c6dd804655500b9027b66ad1d44d7e7e3081ff69de";
+function inversePreparedImports(text: string, fixtureText = preparedImportsForwardText): string {
+  return inversePreparedSourceForward(text, fixtureText, preparedImportsForwardHash);
+}
+
 function historicalSources(live: Sources): Pick<Sources, "any" | "union"> {
   // Supplemental current delta pins include every new guard, signature, import
   // and attached document. They do not replace either original donor receipt.
@@ -472,7 +482,7 @@ function historicalSources(live: Sources): Pick<Sources, "any" | "union"> {
     singletonGuard,
     singletonGuard + "\nconst EQ_HEAP_TYPE = -19; // WasmGC `eq` abstract heap type",
   );
-  let union = removeImport(live.union, "../../runtime/wasmgc/values/primitive-layouts.js", [
+  let union = removeImport(inversePreparedImports(live.union), "../../runtime/wasmgc/values/primitive-layouts.js", [
     "buildBoxNumberType",
     "buildBoxBooleanType",
   ]);
@@ -527,6 +537,79 @@ function verifySourceReceipts(live: Sources): void {
     verifyCommentReceipt(historical[owner], owner);
   }
 }
+
+describe("independently authenticated prepared native-value import additions", () => {
+  it("restores the exact committed scanner before the unchanged complete donor receipts", () => {
+    const live = liveSources();
+    const restored = inversePreparedImports(live.union);
+    expect(createHash("sha256").update(restored).digest("hex")).toBe(
+      "03d1011f0a209e273ae5d86d551396742353148a1ec432dde8a774a8bca9639d",
+    );
+    verifySourceReceipts(live);
+  });
+  const sidecar =
+    "  shiftMap(ctx.classStaticSidecarGlobals); // (#5195 Step 2 / #5383 S2i) — ditto for the static sidecar\n";
+  const callable = '  registerNative("__is_callable", externrefToI32, [{ op: "i32.const", value: 0 }]);\n';
+  const mutations: readonly [string, (source: string) => string][] = [
+    ["S1 missing sidecar shift", (source) => replaceOnce(source, sidecar, "")],
+    ["S2 duplicate sidecar shift", (source) => replaceOnce(source, sidecar, sidecar + sidecar)],
+    [
+      "S3 wrong shifted map",
+      (source) => replaceOnce(source, sidecar, sidecar.replace("classStaticSidecarGlobals", "protoGlobals")),
+    ],
+    ["S4 wrong shift operation", (source) => replaceOnce(source, sidecar, sidecar.replace("shiftMap(", "shiftArray("))],
+    [
+      "S5 changed sidecar documentation",
+      (source) => replaceOnce(source, sidecar, sidecar.replace("static sidecar", "unrelated map")),
+    ],
+    [
+      "S6 reordered sidecar shift",
+      (source) => {
+        const following = "  shiftMap(ctx.methodClosureGlobals); // (#1394) — cached per-method closure globals\n";
+        return replaceOnce(replaceOnce(source, sidecar, ""), following, following + sidecar);
+      },
+    ],
+    ["C1 missing callable registration", (source) => replaceOnce(source, callable, "")],
+    ["C2 duplicate callable registration", (source) => replaceOnce(source, callable, callable + callable)],
+    [
+      "C3 changed callable name",
+      (source) => replaceOnce(source, callable, callable.replace("__is_callable", "__typeof_function")),
+    ],
+    [
+      "C4 changed callable signature",
+      (source) => replaceOnce(source, callable, callable.replace("externrefToI32", "f64ToExternref")),
+    ],
+    [
+      "C5 changed callable placeholder",
+      (source) => replaceOnce(source, callable, callable.replace("value: 0", "value: 1")),
+    ],
+    [
+      "C6 reordered callable registration",
+      (source) => {
+        const preceding = '  registerNative("__typeof_function", externrefToI32, [{ op: "i32.const", value: 0 }]);\n';
+        return replaceOnce(replaceOnce(source, callable, ""), preceding, callable + preceding);
+      },
+    ],
+    [
+      "C7 changed callable documentation",
+      (source) => replaceOnce(source, "  // only class-object singletons.\n", "  // also class-object singletons.\n"),
+    ],
+  ];
+  it.each(mutations)("rejects %s after the actual complete positive", (_name, mutate) => {
+    const live = liveSources();
+    verifySourceReceipts(live);
+    const union = mutate(live.union);
+    expect(union).not.toBe(live.union);
+    expect(() => verifySourceReceipts({ ...live, union })).toThrow();
+  });
+  it("rejects edited forward provenance without replacing any original receipt", () => {
+    const live = liveSources();
+    verifySourceReceipts(live);
+    expect(() => inversePreparedImports(live.union, preparedImportsForwardText + " ")).toThrow(
+      "fixture digest mismatch",
+    );
+  });
+});
 
 describe("mandatory live native-value donor reconstruction", () => {
   it("retains both complete donor modules, including nested bodies, docs and unrelated BigInt", () => {

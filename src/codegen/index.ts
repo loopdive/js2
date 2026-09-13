@@ -178,6 +178,7 @@ import { expressionHasWidenedPropertyType, markIndexedPropertyStale } from "./st
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
 import { sourceFunctionHandleForDeclaration } from "./program-abi-source-callable-planning.js";
 import { stripHostBridgeExports } from "./host-bridge-exports.js";
+import { publishStandaloneLinkBoundaryExports } from "./standalone-link-boundary.js"; // (#5383 S2d)
 import { eliminateDeadLayoutAndPlanProgramAbi } from "./program-abi-finalization.js";
 import { emitDataStructHostBridgeManifest } from "./data-struct-host-bridge.js";
 import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_ROLE } from "./program-abi-planning.js";
@@ -268,6 +269,7 @@ import {
 import { isDomCapabilityImportName, isDomInteractionImportName } from "../dom-capability-contract.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
+import { reinstallPreHoistedLetConstBinding } from "./statements/eager-capture-box.js";
 import type {
   ClosureInfo,
   CodegenContext,
@@ -283,6 +285,8 @@ import { ensureMapRuntimeTypes } from "./map-runtime.js";
 import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
 import { fillClassProtoLookupArm } from "./class-proto-lookup.js"; // (#5195 Step 1.7)
+import { mintStandaloneClassProtoBuilders } from "./standalone-class-dyn-member.js"; // (#5383 S2h)
+import { mintStandaloneClassStaticBuilders } from "./standalone-class-dyn-static.js"; // (#5383 S2i)
 import { scanForArrayHoles, ensureHoleType } from "./array-holes.js"; // (#2001 S1)
 import {
   hoistedVarRetypesToConcreteRef,
@@ -469,6 +473,7 @@ import {
 import { ensureUnhandledRejectionReporter } from "./unhandled-rejection.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3) stable handles never shift
+import { RUNTIME_RECGROUP_TYPE_NAMES } from "../emit/canonical-recgroup.js"; // (#5383 S2k) frozen link ABI roots
 import { profileCount, profilePhase } from "../compile-profile.js";
 import { reportModuleScale } from "./module-scale-profile.js"; // (#4645) scale checkpoints
 import { frameSnapshotAtCompile } from "./function-body.js";
@@ -4939,6 +4944,48 @@ function finalizeLeafStructTypes(ctx: CodegenContext): void {
   // gate makes host byte-identical to main again.
   const abVecIdx = ctx.wasi || ctx.standalone ? ctx.vecTypeMap.get("i32_byte") : undefined;
   if (abVecIdx !== undefined) keepOpenTypeIdxs.add(abVecIdx);
+  // (#5383 S2k) The canonical runtime rec group is the shared VALUE ABI of a
+  // wasm→wasm link, and WasmGC canonicalizes a rec group AS A WHOLE: one
+  // differing `final` bit on ONE member makes all ten a different runtime type
+  // in the engine, so every `ref.test $AnyString` / `$__vec_externref` on a
+  // peer-minted value fails. That is not hypothetical — it is the measured
+  // cause of "no reference value crosses the boundary": a provider that uses
+  // `arguments` registers `$__arguments_vec_externref` as a subtype of the
+  // group member `$__vec_externref`, which makes that member non-final, while
+  // a consumer that does not use `arguments` leaves it `sub final`. The two
+  // groups then canonicalize apart and a provider-minted string is not even a
+  // string to the consumer (`typeof s === "string"` → false).
+  //
+  // Finality of an ABI root must therefore be a CONSTANT of the ABI, never a
+  // function of what the individual module happens to subtype. Pinning every
+  // member open makes the group byte-stable across separately compiled
+  // modules regardless of their content. Same principle as the funcref-wrapper
+  // root above, applied to the whole frozen group.
+  //
+  // Gated on `canonicalRuntimeRecGroup` being present, which `createCodegenContext`
+  // sets only for runtime providers / linked namespaces / explicit
+  // `canonicalRuntimeTypes` — so an unlinked standalone module and the entire
+  // JS-host (gc) lane are byte-identical to before.
+  if (ctx.mod.canonicalRuntimeRecGroup !== undefined) {
+    const abiRootNames = new Set(RUNTIME_RECGROUP_TYPE_NAMES);
+    for (let i = 0; i < ctx.mod.types.length; i++) {
+      const td = ctx.mod.types[i];
+      // Index convention MUST match `markLeafStructsFinal`: it treats a rec
+      // group's members as occupying `i, i+1, …` from the group's own array
+      // position, so the keep-open set is built with the same arithmetic.
+      if (td.kind === "rec") {
+        let inner = i;
+        for (const member of td.types) {
+          if (member.kind !== "rec" && member.name !== undefined && abiRootNames.has(member.name)) {
+            keepOpenTypeIdxs.add(inner);
+          }
+          inner++;
+        }
+      } else if (td.name !== undefined && abiRootNames.has(td.name)) {
+        keepOpenTypeIdxs.add(i);
+      }
+    }
+  }
   const finalizedTypeIndices = markLeafStructsFinal(ctx.mod, ctx.wasi, keepOpenTypeIdxs);
   ctx.programAbiSession?.recordLeafTypeFinalization(finalizedTypeIndices);
 }
@@ -6195,6 +6242,23 @@ export function generateModule(
     // closure body observe the host's receiver. Used by `JSON.stringify`'s
     // live walk to thread the holder identity through `toJSON` and the
     // replacer function per §25.5.2.2 steps 2.b / 3.
+    // (#5383 S2h) Mint the per-class prototype builders `__class_proto_lookup`
+    // calls, BEFORE the closure-dispatcher emission below and not beside the
+    // lookup fill where they logically belong. The builder creates the getter's
+    // canonical closure singleton, and the `__call_accessor_get` driver
+    // dispatches through `__call_fn_method_<arity>` — which is emitted HERE,
+    // over the closure registry as it stands. Minting later left an
+    // accessor-only arity with no dispatcher, so `fillAccessorDrivers` used its
+    // return-undefined fallback and the read answered `undefined` while the
+    // prototype object itself was correct (measured: `.tmp/r6c.js` accessor
+    // `-1` with the mint at the lookup fill, `7` from here — the METHOD read
+    // worked either way, which is exactly what made the miss look like an
+    // accessor-install bug rather than a dispatcher-arity one).
+    // (#5383 S2i) The STATIC twin, minted first for the same dispatcher-arity
+    // reason: a static ACCESSOR installed on the sidecar is invoked through
+    // `__call_accessor_get` -> `__call_fn_method_<arity>`, emitted just below.
+    mintStandaloneClassStaticBuilders(ctx);
+    mintStandaloneClassProtoBuilders(ctx);
     emitClosureMethodCallExportN(ctx, 0);
     emitClosureMethodCallExportN(ctx, 1);
     emitClosureMethodCallExportN(ctx, 2);
@@ -7012,6 +7076,11 @@ function assertNoLeakedHostImports(ctx: CodegenContext, mod: WasmModule): void {
 function finalizeStandaloneTimerCallbackExports(ctx: CodegenContext): void {
   publishStandaloneTimerCallbackDispatch(ctx);
   stripHostBridgeExports(ctx);
+  // (#5383 S2d) AFTER the host-bridge strip, deliberately: the strip is what
+  // removes the JS-facing decoder family from a standalone binary, and these
+  // wasm-facing terminals are its replacement for a linked consumer. Publishing
+  // before it would leave the export to be stripped again.
+  publishStandaloneLinkBoundaryExports(ctx);
 }
 
 /**
@@ -11320,6 +11389,15 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // (#5195 Step 1.7 / Step 2) Same position and the same two reasons as the
     // twin site above: after `fillExternGetIdxVecArms`' preamble-shape probe,
     // before #802's dynamic-proto arm takes the front slot of `__extern_get`.
+    // (#5383 S2h) Mint the builders BEFORE the fill that calls them. This block
+    // orders the lookup fill AHEAD of the closure-dispatcher emission, the
+    // reverse of the twin site above, so "before the dispatchers" and "before
+    // the fill" are two different positions here — and only the earlier of the
+    // two satisfies both constraints. Getting this wrong is silent: the fill
+    // simply saw an empty demand set and emitted nothing (measured — every
+    // boundary probe answered `undefined` while the single-module ones passed).
+    profilePhase("mint-class-static-builders", () => mintStandaloneClassStaticBuilders(ctx));
+    profilePhase("mint-class-proto-builders", () => mintStandaloneClassProtoBuilders(ctx));
     profilePhase("fill-class-proto-lookup", () => fillClassProtoLookupArm(ctx));
     profilePhase("fill-dynamic-proto-helpers", () => fillDynamicProtoHelpers(ctx));
     profilePhase("fill-runtime-eval-callable-get-arm", () => fillRuntimeEvalCallablePropertyGetArm(ctx));
@@ -14201,11 +14279,9 @@ function reinstallPreHoistedCapturedSlots(
       capturedByPlainFn = true;
     }
     if (!capturedByPlainFn || cpsCaptured) continue;
-    fctx.localMap.set(name, record.valueSlot);
-    if (record.flagSlot !== undefined) {
-      if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
-      fctx.tdzFlagLocals.set(name, record.flagSlot);
-    }
+    // (#5356) The cell when the slot was capture-boxed at function top, else
+    // the raw slot — the declaration must write whichever the callee reads.
+    reinstallPreHoistedLetConstBinding(fctx, name, record);
   }
 }
 
