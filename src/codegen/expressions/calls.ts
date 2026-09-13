@@ -511,6 +511,7 @@ import {
 } from "../native-strings.js";
 import { ensureTextEncodingHelpers } from "../text-encoding-native.js";
 import { emitVariadicStringConcat, hostStringRepr, nativeStringRepr } from "../builtin-scaffold.js";
+import { emitCodeUnitPart, tryEmitFromCharCodeSpread } from "../from-char-code-spread.js";
 import { URI_DECODE_MASK, URI_ENCODE_MASK } from "../uri-encoding-native.js";
 import {
   buildInt8ArrayCarrierMatch,
@@ -6142,6 +6143,26 @@ export function compileFromCharCodeFamily(
   opts: { native: boolean; helperIdx: number; isFromCodePoint?: boolean },
 ): ValType | null {
   const { native, helperIdx, isFromCodePoint } = opts;
+  // The helper's NAME, not the caller's captured index: expanding a spread
+  // registers late imports, which shifts every index captured before them.
+  const helperName = native
+    ? isFromCodePoint === true
+      ? "__str_fromCodePoint"
+      : "__str_fromCharCode"
+    : isFromCodePoint === true
+      ? "String_fromCodePoint"
+      : "String_fromCharCode";
+  // (#6421) A SPREAD argument contributes its RUNTIME element count, which one
+  // part per AST node cannot express — the source array coerced to a single
+  // `NaN` code unit. The spread lane folds the parts with an accumulator
+  // instead; it emits nothing and hands the call back when there is no spread
+  // (or no expansion substrate), so a static argument list stays on the loop
+  // below byte for byte.
+  const spread = tryEmitFromCharCodeSpread(ctx, fctx, expr, { native, helperName, isFromCodePoint });
+  if (spread !== undefined) return spread;
+  // Declining can still have flushed a late import (the substrate probe
+  // registers before it can answer), so the loop re-reads both by name too.
+  const loopHelperIdx = (native ? ctx.nativeStrHelpers.get(helperName) : ctx.funcMap.get(helperName)) ?? helperIdx;
   const repr = native ? nativeStringRepr(ctx) : hostStringRepr(ctx);
   if (repr === undefined) return null;
 
@@ -6164,73 +6185,9 @@ export function compileFromCharCodeFamily(
         continue;
       }
       const argType = compileExpression(ctx, fctx, expr.arguments[i]!, { kind: "f64" });
-      // #2601 — §22.1.2.2 step 2b/2c: each fromCodePoint code point, after
-      // ToNumber, must be an INTEGRAL Number in [0, 0x10FFFF] else RangeError.
-      // (fromCharCode does ToUint16 with NO such check — fromCodePoint-only.)
-      // Scoped to standalone/WASI (`noJsHost`): the throw uses the in-module
-      // `__new_RangeError` constructor with no host bridge. The JS-host lane
-      // keeps its existing host-delegated behaviour (the slice is standalone).
-      const emitRangeGuard = isFromCodePoint === true && noJsHost(ctx);
-      if (emitRangeGuard) {
-        // Normalise to f64, then test `trunc(cp) != cp` (catches fractional AND
-        // NaN) OR `cp < 0` OR `cp > 0x10FFFF` (±∞ caught by the range test).
-        if (argType && argType.kind === "i32") buf.push({ op: "f64.convert_i32_s" });
-        const cpTmp = allocLocal(fctx, `__fcp_cp_${fctx.locals.length}`, { kind: "f64" });
-        buf.push({ op: "local.tee", index: cpTmp });
-        // integral: trunc(cp) != cp  → also true for NaN
-        buf.push({ op: "local.get", index: cpTmp });
-        buf.push({ op: "f64.trunc" });
-        buf.push({ op: "f64.ne" });
-        // range: cp < 0
-        buf.push({ op: "local.get", index: cpTmp });
-        buf.push({ op: "f64.const", value: 0 });
-        buf.push({ op: "f64.lt" });
-        // range: cp > 0x10FFFF
-        buf.push({ op: "local.get", index: cpTmp });
-        buf.push({ op: "f64.const", value: 0x10ffff });
-        buf.push({ op: "f64.gt" });
-        buf.push({ op: "i32.or" });
-        buf.push({ op: "i32.or" });
-        const throwBuf: Instr[] = [];
-        const savedForThrow = fctx.body;
-        fctx.body = throwBuf;
-        emitThrowRangeError(ctx, fctx, "RangeError: Invalid code point");
-        fctx.body = savedForThrow;
-        buf.push({ op: "if", blockType: { kind: "empty" }, then: throwBuf });
-        // Re-push the validated code point for the helper.
-        buf.push({ op: "local.get", index: cpTmp });
-      }
-      if (native) {
-        if (emitRangeGuard) {
-          // Already f64 in the temp above — trunc to the i32 the native helper wants.
-          buf.push({ op: "i32.trunc_sat_f64_s" });
-        } else if (argType && argType.kind !== "i32") {
-          // (#2875 slice 5) §7.1.8 ToUint16 computed in the f64 domain BEFORE
-          // the i32 conversion: t = trunc(x); m = t − floor(t/2^16)·2^16 ∈
-          // [0, 65535]. Division by 2^16 is a pure exponent shift, so every
-          // step is exact for all finite f64s; NaN and ±Inf propagate to a NaN
-          // m (Inf−Inf), which i32.trunc_sat then maps to the spec's +0.
-          // A bare `i32.trunc_sat_f64_s` SATURATES first — +Inf → 0x7FFFFFFF,
-          // which the helper's low-16 mask turns into 0xFFFF instead of 0
-          // (S9.7_A1 #5), and any |x| ≥ 2^31 loses its true modulo the same
-          // way. (The i32-typed arg arm needs none of this: the helper's mask
-          // IS ToUint16 for i32-representable integers.)
-          const u16Tmp = allocLocal(fctx, `__fcc_u16_${fctx.locals.length}`, { kind: "f64" });
-          buf.push({ op: "f64.trunc" });
-          buf.push({ op: "local.tee", index: u16Tmp });
-          buf.push({ op: "local.get", index: u16Tmp });
-          buf.push({ op: "f64.const", value: 65536 });
-          buf.push({ op: "f64.div" });
-          buf.push({ op: "f64.floor" });
-          buf.push({ op: "f64.const", value: 65536 });
-          buf.push({ op: "f64.mul" });
-          buf.push({ op: "f64.sub" });
-          buf.push({ op: "i32.trunc_sat_f64_s" });
-        }
-      } else {
-        if (argType && argType.kind === "i32") buf.push({ op: "f64.convert_i32_s" });
-      }
-      buf.push({ op: "call", funcIdx: helperIdx });
+      // The per-code-unit tail (ToUint16 / #2601 range guard / helper call) is
+      // shared with the spread lane so the two cannot drift (#6421).
+      emitCodeUnitPart(ctx, fctx, buf, argType, { native, helperIdx: loopHelperIdx, isFromCodePoint });
     } finally {
       fctx.body = savedBody;
     }

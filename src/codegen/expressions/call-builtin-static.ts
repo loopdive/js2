@@ -59,6 +59,9 @@ import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.js";
 import { rollbackSpeculative, snapshotSpeculative } from "../context/speculative.js";
+import { tryEmitArrayOfSpreadVec } from "../array-of-spread.js";
+import { tryEmitSpreadHostArgs } from "../host-method-args.js";
+import { hasSpreadArgument } from "../spread-arg-list.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { emitGlobalThisGopdFold } from "../dyn-read.js";
 import { dynamicProtoRootFor, dynamicProtoFieldIdx, reserveDynprotoNorm } from "../dynamic-proto.js"; // (#802)
@@ -840,7 +843,8 @@ export function compileBuiltinStaticCall(
       // 1-arg, so each code unit produces a 1-char string joined via the
       // js-string `concat` import — register it before the shared fold so the
       // host repr can resolve it.
-      if (expr.arguments.length > 1) addStringImports(ctx);
+      // (#6421) One spread yields N parts, so it is needed even at arity 1.
+      if (expr.arguments.length > 1 || hasSpreadArgument(expr.arguments)) addStringImports(ctx);
       const r = compileFromCharCodeFamily(ctx, fctx, expr, { native: false, helperIdx: funcIdx });
       if (r === null) return r;
       // In fast mode, marshal externref string to native string.
@@ -879,7 +883,8 @@ export function compileBuiltinStaticCall(
     if (funcIdx !== undefined) {
       // #2122: variadic — each code point produces a string joined via the
       // js-string `concat` import; register it before the shared fold.
-      if (expr.arguments.length > 1) addStringImports(ctx);
+      // (#6421) One spread yields N parts, so it is needed even at arity 1.
+      if (expr.arguments.length > 1 || hasSpreadArgument(expr.arguments)) addStringImports(ctx);
       const r = compileFromCharCodeFamily(ctx, fctx, expr, {
         native: false,
         helperIdx: funcIdx,
@@ -1577,11 +1582,12 @@ export function compileBuiltinStaticCall(
     // `__js_array_push`) imports don't exist — the old path leaked them and
     // returned a wrong/empty array standalone. Build a native vec directly,
     // mirroring the multi-arg `Array(a,b,c)` branch of
-    // `compileArrayConstructorCall` (no spread → fixed arity). Spread args keep
-    // the host path (handled by the generic spread-call lowering in host mode);
-    // a standalone spread of Array.of falls through to the existing path.
-    const hasSpreadArg = expr.arguments.some((a) => ts.isSpreadElement(a));
-    if (noJsHost(ctx) && !hasSpreadArg) {
+    // `compileArrayConstructorCall`. (#6421) A SPREAD is expanded at its runtime
+    // length by the shared builder rather than skipped: the old `!hasSpreadArg`
+    // gate dropped a standalone `Array.of(...xs)` onto the host path whose
+    // imports do not exist, so it answered length 0.
+    const hasSpreadArg = hasSpreadArgument(expr.arguments);
+    if (noJsHost(ctx)) {
       // Element type: contextual `Array<T>` type arg, else f64 for a numeric
       // arg set, else externref (mixed / non-numeric). Mirrors the untyped
       // dense-array default in compileArrayConstructorCall.
@@ -1593,10 +1599,16 @@ export function compileBuiltinStaticCall(
       } else {
         // No resolvable element type: pick f64 only when every arg is a static
         // number; otherwise box to externref so mixed/object elements survive.
-        const allNumeric = expr.arguments.every((a) => {
-          const t = ctx.checker.getTypeAtLocation(a);
-          return (t.flags & (ts.TypeFlags.Number | ts.TypeFlags.NumberLiteral)) !== 0;
-        });
+        // (#6421) A spread's ELEMENTS are invisible to this static scan — the
+        // node is a SpreadElement, not a number — so a spread-containing list
+        // can never be called all-numeric. Box to externref instead of guessing
+        // f64 (the choice #5361 made for `splice`).
+        const allNumeric =
+          !hasSpreadArg &&
+          expr.arguments.every((a) => {
+            const t = ctx.checker.getTypeAtLocation(a);
+            return (t.flags & (ts.TypeFlags.Number | ts.TypeFlags.NumberLiteral)) !== 0;
+          });
         elemWasm = expr.arguments.length > 0 && allNumeric ? { kind: "f64" } : { kind: "externref" };
       }
       const elemKey =
@@ -1605,7 +1617,18 @@ export function compileBuiltinStaticCall(
           : elemWasm.kind;
       const ofVecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemWasm);
       const ofArrTypeIdx = getArrTypeIdxFromVec(ctx, ofVecTypeIdx);
-      if (ofArrTypeIdx >= 0) {
+      // (#6421) A runtime-length argument list is sized and filled by the
+      // shared spread builder; it declines (emitting nothing) when this target
+      // cannot expand a spread, and the host path below still catches that.
+      if (ofArrTypeIdx >= 0 && hasSpreadArg) {
+        const ofSpread = tryEmitArrayOfSpreadVec(ctx, fctx, expr.arguments, {
+          vecTypeIdx: ofVecTypeIdx,
+          arrTypeIdx: ofArrTypeIdx,
+          elemType: elemWasm,
+        });
+        if (ofSpread) return ofSpread;
+      }
+      if (ofArrTypeIdx >= 0 && !hasSpreadArg) {
         if (expr.arguments.length === 0) {
           fctx.body.push({ op: "i32.const", value: 0 });
           fctx.body.push({ op: "i32.const", value: 0 });
@@ -1644,14 +1667,22 @@ export function compileBuiltinStaticCall(
       fctx.body.push({ op: "call", funcIdx: arrNewIdx });
       const itemsLocal = allocLocal(fctx, `__arrof_items_${fctx.locals.length}`, { kind: "externref" });
       fctx.body.push({ op: "local.set", index: itemsLocal });
-      for (const arg of expr.arguments) {
-        fctx.body.push({ op: "local.get", index: itemsLocal });
-        const argType = compileExpression(ctx, fctx, arg, { kind: "externref" });
-        if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
-        fctx.body.push({ op: "call", funcIdx: arrPushIdx });
+      // (#6421) With a spread present the whole list goes through the shared
+      // expanding builder — one `__js_array_push` per AST node handed
+      // `Array.of` the SOURCE array as a single element. Without one the
+      // unrolled loop is exact and stays byte-identical.
+      if (!tryEmitSpreadHostArgs(ctx, fctx, expr.arguments, itemsLocal, "__js_array_push", arrPushIdx)) {
+        for (const arg of expr.arguments) {
+          fctx.body.push({ op: "local.get", index: itemsLocal });
+          const argType = compileExpression(ctx, fctx, arg, { kind: "externref" });
+          if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+          fctx.body.push({ op: "call", funcIdx: arrPushIdx });
+        }
       }
       fctx.body.push({ op: "local.get", index: itemsLocal });
-      fctx.body.push({ op: "call", funcIdx: ofIdx });
+      // Expanding a spread can register late imports, which shifts every
+      // defined-function index captured before them — re-read by name.
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__array_of") ?? ofIdx });
       return { kind: "externref" };
     }
     fctx.body.push({ op: "ref.null.extern" });
