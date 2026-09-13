@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-09-13T11:45:56.284Z",
+  "generatedAt": "2026-09-13T12:25:14.657Z",
   "measuredRange": {
     "oldest": "2026-09-08T19:13:41.907Z",
-    "newest": "2026-09-13T11:45:09.481Z"
+    "newest": "2026-09-13T12:24:24.045Z"
   },
   "correctness": {
     "definition": {
@@ -6047,7 +6047,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 2431414,
+        "durationMs": 2447757,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -6086,7 +6086,7 @@
           "implementationInvalidTests": 2,
           "compile": {
             "success": false,
-            "durationMs": 167829,
+            "durationMs": 166325,
             "binaryBytes": 6042010,
             "invalidBatches": 4
           },
@@ -6106,7 +6106,7 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": false,
-            "durationMs": 273650,
+            "durationMs": 270773,
             "binaryBytes": 4280974,
             "invalidBatches": 8
           },
@@ -6126,7 +6126,7 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": false,
-            "durationMs": 93835,
+            "durationMs": 83801,
             "binaryBytes": 1649598,
             "invalidBatches": 3
           },
@@ -6146,7 +6146,7 @@
           "implementationInvalidTests": 0,
           "compile": {
             "success": true,
-            "durationMs": 23849,
+            "durationMs": 25679,
             "binaryBytes": 263318,
             "invalidBatches": 0
           },
@@ -12311,7 +12311,7 @@
             "diagnostic": "Native-first semantic-provider policy rejected implicit or unclassified host imports: env::__get_builtin (unknown, owner #4401), env::__get_process_env (unknown, owner #4401), env::__throw_reference_error (unknown, owner #4401), string_constants::__REACT_DEVTOOLS_GLOBAL_HOOK__ is not defined (legacy-semantic, owner #4397). Use the host-assisted compatibility profile for this source until its native provider is implemented.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 851.5334230000153,
+            "compileDurationMs": 905.6508720000274,
             "optimizationLevel": 4,
             "semanticProviders": "native-first",
             "environment": "javascript"
@@ -12328,7 +12328,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-13T11:45:09.481Z",
+      "measuredAt": "2026-09-13T12:24:24.045Z",
       "esEdition": {
         "required": 2015,
         "requiredLabel": "ES2015",
@@ -30131,7 +30131,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 9096,
+        "durationMs": 6836,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -32385,51 +32385,51 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "select one of two runtime-owned callbacks",
-            "wasmUs": 0.496642600719707,
-            "nodeUs": 0.00563069797322533,
-            "wasmStdUs": 0.0015136252599236531,
-            "nodeStdUs": 0.000014265404367167866,
-            "ratio": 0.011329971312403746,
-            "ratioStd": 0.000025163573026806394,
+            "wasmUs": 0.3095411241631395,
+            "nodeUs": 0.0025491637615969263,
+            "wasmStdUs": 0.001475136818921222,
+            "nodeStdUs": 0.0007440512854306189,
+            "ratio": 0.008227967310893262,
+            "ratioStd": 0.0024091072680009163,
             "ratioSamples": [
-              0.01134984335784353,
-              0.011368009943922673,
-              0.01131223016688556,
-              0.011329971312403746,
-              0.011292034133414917,
-              0.0113160008438879,
-              0.011353978588653857,
-              0.011312832058282526,
-              0.011363579694179058
+              0.008227967310893262,
+              0.008285564669184264,
+              0.008162572058178146,
+              0.008203742131628958,
+              0.010909849170979338,
+              0.015718610240802972,
+              0.008128791223033704,
+              0.008158667942898771,
+              0.008246987058712926
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 460734,
+            "iters": 782253,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.4969960628041387,
-              0.4953107888716701,
-              0.496642600719707,
-              0.4998037392508559,
-              0.49882827835586524,
-              0.49575669692273566,
-              0.4963805406156155,
-              0.49724642852490913,
-              0.49485544587547553
+              0.31168415972837205,
+              0.3076632508919755,
+              0.3106222347501312,
+              0.307760372922836,
+              0.3074174340015329,
+              0.3095411241631395,
+              0.31059176378997755,
+              0.3083372093171894,
+              0.31025275582197875
             ],
             "nodeSamplesUs": [
-              0.005640827462291939,
-              0.00563069797322533,
-              0.00561813541002197,
-              0.00566276202754432,
-              0.005632785945907028,
-              0.0056099832007407546,
-              0.0056358940299741245,
-              0.005625265337483083,
-              0.005623329296304478
+              0.002564527077568279,
+              0.0025491637615969263,
+              0.0025354763740202736,
+              0.0025247867377929094,
+              0.0033538778374862187,
+              0.0048655562842203895,
+              0.002524735603442527,
+              0.002515620905259021,
+              0.00255865046219388
             ],
-            "compileDurationMs": 723.7972819999995,
+            "compileDurationMs": 486.9323379999987,
             "binaryBytes": 1661,
             "moduleImportCount": 7,
             "functionImportCount": 7,
@@ -32465,53 +32465,53 @@
             "reason": "the pinned Lit callback probe currently covers the JS-host lane only"
           }
         },
-        "wasmUs": 0.496642600719707,
-        "nodeUs": 0.00563069797322533,
-        "wasmStdUs": 0.0015136252599236531,
-        "nodeStdUs": 0.000014265404367167866,
-        "ratio": 0.011329971312403746,
-        "ratioStd": 0.000025163573026806394,
+        "wasmUs": 0.3095411241631395,
+        "nodeUs": 0.0025491637615969263,
+        "wasmStdUs": 0.001475136818921222,
+        "nodeStdUs": 0.0007440512854306189,
+        "ratio": 0.008227967310893262,
+        "ratioStd": 0.0024091072680009163,
         "ratioSamples": [
-          0.01134984335784353,
-          0.011368009943922673,
-          0.01131223016688556,
-          0.011329971312403746,
-          0.011292034133414917,
-          0.0113160008438879,
-          0.011353978588653857,
-          0.011312832058282526,
-          0.011363579694179058
+          0.008227967310893262,
+          0.008285564669184264,
+          0.008162572058178146,
+          0.008203742131628958,
+          0.010909849170979338,
+          0.015718610240802972,
+          0.008128791223033704,
+          0.008158667942898771,
+          0.008246987058712926
         ],
         "measurementOrder": "alternating-paired",
         "ratioEstimator": "median-of-paired-ratios",
-        "iters": 460734,
+        "iters": 782253,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          0.4969960628041387,
-          0.4953107888716701,
-          0.496642600719707,
-          0.4998037392508559,
-          0.49882827835586524,
-          0.49575669692273566,
-          0.4963805406156155,
-          0.49724642852490913,
-          0.49485544587547553
+          0.31168415972837205,
+          0.3076632508919755,
+          0.3106222347501312,
+          0.307760372922836,
+          0.3074174340015329,
+          0.3095411241631395,
+          0.31059176378997755,
+          0.3083372093171894,
+          0.31025275582197875
         ],
         "nodeSamplesUs": [
-          0.005640827462291939,
-          0.00563069797322533,
-          0.00561813541002197,
-          0.00566276202754432,
-          0.005632785945907028,
-          0.0056099832007407546,
-          0.0056358940299741245,
-          0.005625265337483083,
-          0.005623329296304478
+          0.002564527077568279,
+          0.0025491637615969263,
+          0.0025354763740202736,
+          0.0025247867377929094,
+          0.0033538778374862187,
+          0.0048655562842203895,
+          0.002524735603442527,
+          0.002515620905259021,
+          0.00255865046219388
         ]
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-13T11:07:55.146Z",
+      "measuredAt": "2026-09-13T11:24:55.869Z",
       "esEdition": {
         "required": 2015,
         "requiredLabel": "ES2015",
