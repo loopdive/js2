@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-13T14:57:18.887Z",
-  "baseline_generated_at": "2026-09-13T14:57:18.887Z",
-  "baseline_sha": "18c5d50d6ab21947e777499a05448780322dc718",
+  "timestamp": "2026-09-13T15:43:17.085Z",
+  "baseline_generated_at": "2026-09-13T15:43:17.085Z",
+  "baseline_sha": "28e8983ed8a5475441fcf76106e46f8431666157",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -13,8 +13,8 @@
     "total": 48232,
     "pass": 35531,
     "fail": 9655,
-    "compile_error": 3021,
-    "compile_timeout": 7,
+    "compile_error": 3020,
+    "compile_timeout": 8,
     "skip": 18,
     "compilable": 45186,
     "host_free_pass": 35531,
@@ -24,8 +24,8 @@
         "total": 47146,
         "pass": 34502,
         "fail": 9617,
-        "compile_error": 3002,
-        "compile_timeout": 7,
+        "compile_error": 3001,
+        "compile_timeout": 8,
         "skip": 18,
         "compilable": 44119,
         "host_free_pass": 34502,
@@ -60,8 +60,8 @@
         "total": 48232,
         "pass": 35531,
         "fail": 9655,
-        "compile_error": 3021,
-        "compile_timeout": 7,
+        "compile_error": 3020,
+        "compile_timeout": 8,
         "skip": 18,
         "compilable": 45186,
         "host_free_pass": 35531,
@@ -72,8 +72,8 @@
         "total": 48735,
         "pass": 35766,
         "fail": 9671,
-        "compile_error": 3177,
-        "compile_timeout": 7,
+        "compile_error": 3176,
+        "compile_timeout": 8,
         "skip": 114,
         "compilable": 45437,
         "host_free_pass": 35766,
@@ -86,8 +86,8 @@
     "total": 48232,
     "pass": 35531,
     "fail": 9655,
-    "compile_error": 3021,
-    "compile_timeout": 7,
+    "compile_error": 3020,
+    "compile_timeout": 8,
     "skip": 18,
     "compilable": 45186,
     "host_free_pass": 35531,
@@ -97,8 +97,8 @@
     "total": 48735,
     "pass": 35766,
     "fail": 9671,
-    "compile_error": 3177,
-    "compile_timeout": 7,
+    "compile_error": 3176,
+    "compile_timeout": 8,
     "skip": 114,
     "compilable": 45437,
     "host_free_pass": 35766,
@@ -108,8 +108,8 @@
     "total": 45721,
     "pass": 33252,
     "fail": 9514,
-    "compile_error": 2930,
-    "compile_timeout": 7,
+    "compile_error": 2929,
+    "compile_timeout": 8,
     "skip": 18,
     "compilable": 42766,
     "host_free_pass": 33252,
@@ -142,8 +142,8 @@
       "total": 47146,
       "pass": 34502,
       "fail": 9617,
-      "compile_error": 3002,
-      "compile_timeout": 7,
+      "compile_error": 3001,
+      "compile_timeout": 8,
       "skip": 18,
       "compilable": 44119,
       "host_free_pass": 34502,
@@ -805,8 +805,8 @@
       "path": "built-ins/TypedArray",
       "pass": 922,
       "fail": 512,
-      "compile_error": 12,
-      "compile_timeout": 0,
+      "compile_error": 11,
+      "compile_timeout": 1,
       "skip": 0,
       "total": 1446,
       "host_free_pass": 922
@@ -1205,7 +1205,7 @@
     "negative_test_fail": 4,
     "null_deref": 25,
     "oob": 7,
-    "other": 3231,
+    "other": 3230,
     "promise_error": 57,
     "range_error": 14,
     "runtime_error": 165,
@@ -1293,17 +1293,17 @@
         },
         "sample_files": [
           "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
+          "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/with/disambiguation-wrong-type.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: null Expected a RangeError but got a TypeError",
-          "type_error:TypeError: Cannot read properties of undefined (reading 'until')",
           "type_error:TypeError: Cannot read properties of undefined (reading 'round')",
+          "type_error:TypeError: Cannot read properties of undefined (reading 'until')",
           "host_import_leak:standalone target emitted host imports: env::__temporal_plain_date_add_field, env::__temporal_plain_date_from_string_field (##)",
-          "other:ReferenceError: Temporal is not defined"
+          "type_error:TypeError: called value is not a function"
         ]
       },
       {
@@ -1553,8 +1553,8 @@
         },
         "sample_files": [
           "test/built-ins/RegExp/prototype/Symbol.match/coerce-global.js",
-          "test/built-ins/RegExp/prototype/Symbol.matchAll/species-constructor-is-undefined.js",
           "test/built-ins/RegExp/prototype/Symbol.matchAll/species-constructor-species-is-null-or-undefined.js",
+          "test/built-ins/RegExp/prototype/Symbol.matchAll/species-constructor-is-undefined.js",
           "test/built-ins/RegExp/prototype/Symbol.replace/coerce-lastindex-err.js",
           "test/built-ins/RegExp/prototype/Symbol.match/builtin-infer-unicode.js"
         ],
@@ -1978,8 +1978,8 @@
         "statuses": {
           "pass": 0,
           "fail": 1604,
-          "compile_error": 210,
-          "compile_timeout": 7,
+          "compile_error": 209,
+          "compile_timeout": 8,
           "skip": 0,
           "total": 1821,
           "host_free_pass": 0
@@ -1990,15 +1990,15 @@
           "illegal_cast": 176,
           "type_error": 253,
           "host_import_leak": 180,
-          "other": 35,
+          "other": 34,
           "wasm_compile": 4,
           "oob": 5
         },
         "by_edition": {
           "ES2024": 65,
           "ES2015": 214,
-          "ES2023": 95,
           "ES2022": 289,
+          "ES2023": 95,
           "ES2020": 306,
           "Unclassified (untagged)": 567,
           "ES2026": 116,
@@ -2014,14 +2014,14 @@
           "test/built-ins/TypedArrayConstructors/internals/DefineOwnProperty/detached-buffer.js",
           "test/built-ins/TypedArrayConstructors/from/mapfn-arguments.js",
           "test/built-ins/TypedArrayConstructors/internals/Set/key-is-in-bounds-receiver-is-not-typed-array.js",
-          "test/built-ins/TypedArray/prototype/with/negative-index-resize-to-out-of-bounds.js"
+          "test/built-ins/TypedArray/prototype/at/index-non-numeric-argument-tointeger-invalid.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with BigInt64Array and makeArray.)",
           "null_deref:dereferencing a null pointer [in __closure_139() ← testWithAllTypedArrayConstructors ← __fn_tramp_testWithAllTypedArrayConstructors_cached ← __call_fn_method_4]",
           "assertion_fail:Test262Error: Expected SameValue(«#», «#») to be true (Testing with Float64Array and makeArray.)",
           "assertion_fail:Test262Error: value assigned to receiver[#] Expected SameValue(«[object Object]», «[object Object]») to be true",
-          "assertion_fail:Test262Error: Expected a RangeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)"
+          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all (Testing with Float64Array and makeArray.)"
         ]
       },
       {
@@ -2413,15 +2413,15 @@
           "test/built-ins/Symbol/species/subclassing.js",
           "test/built-ins/Symbol/desc-to-string.js",
           "test/built-ins/Symbol/prototype/Symbol.toPrimitive/removed-symbol-wrapper-ordinary-toprimitive.js",
-          "test/built-ins/Symbol/not-callable.js",
-          "test/built-ins/Symbol/for/to-string-err.js"
+          "test/built-ins/Symbol/for/to-string-err.js",
+          "test/built-ins/Symbol/not-callable.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected SameValue(«undefined», «function () { [native code] }») to be true",
           "assertion_fail:Test262Error: Expected SameValue(«\"\"», «\"toStringvalueOf\"») to be true",
           "assertion_fail:Test262Error: hint: default",
-          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
-          "null_deref:dereferencing a null pointer [in __closure_66() ← __closure_60 ← __call_fn_method_3 ← __apply_closure]"
+          "null_deref:dereferencing a null pointer [in __closure_66() ← __closure_60 ← __call_fn_method_3 ← __apply_closure]",
+          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all"
         ]
       },
       {
@@ -2958,7 +2958,7 @@
           "test/built-ins/WeakRef/throws-when-target-cannot-be-held-weakly.js",
           "test/built-ins/Atomics/wait/cannot-suspend-throws.js",
           "test/built-ins/FinalizationRegistry/prototype/register/return-undefined-register-symbol.js",
-          "test/built-ins/FinalizationRegistry/target-not-callable-throws.js"
+          "test/built-ins/FinalizationRegistry/prototype/unregister/custom-this.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)",
