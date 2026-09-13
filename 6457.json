@@ -1,10 +1,11 @@
 {
   "id": "6457",
   "assignee": "ttraenkler/dev-5383-s11",
-  "requested_by": "ttraenkler/dev-5383-s11",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-5383-standalone-temporal-s11",
   "claimed_at": "2026-09-13T06:49:39Z",
-  "updated_at": "2026-09-13T06:49:39Z",
-  "write_id": "13528-yd3t6yv0"
+  "updated_at": "2026-09-13T08:24:54Z",
+  "write_id": "2622-xl5i0b3e",
+  "released_at": "2026-09-13T08:24:54Z"
 }
