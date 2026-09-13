@@ -501,6 +501,16 @@ criterion 4 is **not**, and the issue stays `in-progress` for that reason. The
    because the #661 lowering covers only PlainDate/PlainTime/Duration).
 4. S5: samples measured, 0 pass→fail, counts with artifacts; the standalone
    Temporal bucket moves from 170 pass.
+   **MET for the sampled families (re-measured S10, 2026-09-13, after #6447).**
+   Linked, the three sampled families score **139 pass / 215 fail / 6
+   compile_error out of 360** (PlainDate 62, Duration 38, ZonedDateTime 39),
+   against **122** on the S9-linked side — **0 pass→fail**, 17 `fail→pass`, and
+   every `compile_error` on both sides is a compile TIMEOUT. The
+   `Cannot read properties of undefined (reading 'sort')` bucket went **24 → 0**
+   across the three families. The full-corpus "moves from 170 pass" number is
+   still unmeasured; only the 360-row sample is. Per-family counts, flip lists
+   and the new top buckets are in "S10 findings" below. The S9 text that
+   follows is kept for the record:
    **MET for the sampled families (re-measured S9, 2026-09-13, after #6442).**
    Linked, the three sampled families score **122 pass / 232 fail / 6
    compile_error out of 360** (PlainDate 55, Duration 35, ZonedDateTime 32),
@@ -3912,3 +3922,201 @@ provider-key A/B are `.tmp/s9/{reduce,oracle,ab,keys}.*`.
   with `Cannot convert object to primitive value` and says nothing about the
   compiler. Return an integer verdict and, when a string genuinely has to be
   inspected, export a `charCodeAt`-style accessor (`.tmp/s9/dumpstr.mjs`).
+
+## S10 findings (2026-09-13) — the property-bag wall is gone; the linked lane goes 122 → 139, and the boundary turns out not to be the suspect
+
+**#6447 is the slice** (census, mechanism and the reduction are in that issue).
+The one-line version: under `--target standalone`, `Array.prototype.concat` and
+`.sort` on a receiver whose static type is `any` answered `undefined`, because
+the closed-method dispatcher has brand arms for the callback family (#3098/#4394),
+`push`/`pop` (#2927) and the collections (#3309) but never had one for the PURE
+PRODUCER methods — and `__extern_method_call`, the bottom arm they fell to,
+returns `undefined` for every non-`$Object` brand by construction (its own
+comment says so). The polyfill's `PrepareCalendarFields` is
+`const a = n.concat(r, i); … a.sort();` with `n` an untyped parameter, so every
+property-bag entry point died on `a.sort()`.
+
+### The census, and what it changed about where to look
+
+The S9 brief pointed at the link boundary (#5406) for three of the four biggest
+buckets. **Measured, the boundary is not at fault for any of them.** Through the
+shipped linked path (`.tmp/s10/reduce.mjs`, provider `dc43b7a43e0bd370`,
+`cacheHit=true`, `hostBridge: "off"`, empty import object):
+
+| probe, base tree | answer |
+| --- | --- |
+| `date.calendarId` read through an `any` PARAMETER | correct string |
+| `date.year` read through an `any` parameter | 2020 |
+| `date.era` through an `any` parameter | `undefined` (correct) |
+| `zdt.equals(zdt)`, and the same through parameters | `true` |
+
+So `__js2wasm_link_member_get` and the method-call terminal both answer. What
+does NOT answer is anything that reaches the polyfill's field-name machinery —
+and that is module-LOCAL codegen inside the provider, reachable with no link at
+all. The single-module probe (`.tmp/s10/single6.mjs`, receiver `["b","a"]`
+through a function parameter) is the whole finding:
+
+| member on an `any` receiver, standalone | base | S10 |
+| --- | --- | --- |
+| `concat`, `sort` | **WRONG** | **ok** |
+| `slice`, `reverse`, `includes`, `splice`, `flat` | WRONG | WRONG (residual, #6447) |
+| `map`, `filter`, `join`, `indexOf`, `push`, `[...n]`, `Array.from` | ok | ok |
+
+### Attribution table (bucket → root cause → terminal)
+
+| bucket (S9 linked sample) | rows | root cause | terminal / site |
+| --- | --- | --- | --- |
+| `reading 'sort'` | 24 | **A** — `any`-receiver `concat` answers `undefined` | `__call_m_concat_2` → `__extern_method_call`, no `$__vec_base` arm |
+| `canonicalizeCalendarEra … undefined` | 21 | **A** for the `from(bag)` rows (14 of 21 are `from/argument-*`): the result is not a `PlainDate`, so the harness's `date.calendarId` reads `undefined` | same |
+| `reading 'equals'` | 6 | **A** | same |
+| `Cannot convert undefined or null to object` | 18 | **B** — `Object.getOwnPropertyDescriptor(<provider>.prototype, k)` across the link | NOT A; see residuals |
+
+Classified by the THROWN text through the real provider (`.tmp/s10/reduce2.mjs`),
+every property-bag entry point was the same defect reached five ways —
+`PlainDate.compare(bag, ·)`, `PlainDate.from(bag)`, `ZonedDateTime.equals(bag)`,
+`plainDate.with(bag)` all raised `reading 'sort'`, while `from(string)`,
+`Duration.from(bag)` and `from(plainDate)` did not. After the fix all seven
+return without throwing.
+
+### The three-family sample, LINKED, re-measured
+
+120 rows each, `--target standalone`, provider linked, families run
+**sequentially** at load ≈1.3, fresh `JS2WASM_TEMPORAL_CACHE` (`.tmp/s10famcache`),
+quickjs eval provider + adapter present. Linking confirmed both ways: every run
+log carries `Temporal provider (standalone)
+js2wasm:npm:@js-temporal/polyfill:c97cf3351a9120b1 (3313960 B) … cacheHit=true`,
+and `__temporal_*` leaks are **0** in all three TSVs.
+
+| family | rows | S9 linked pass | **S10 linked pass** | fail | compile_error | pass→fail |
+| --- | --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 55 | **62** | 57 | 1 | **0** |
+| `built-ins/Temporal/Duration/**` | 120 | 35 | **38** | 79 | 3 | **0** |
+| `built-ins/Temporal/ZonedDateTime/prototype/**` | 120 | 32 | **39** | 79 | 2 | **0** |
+| **total** | **360** | **122** | **139** | **215** | **6** | **0** |
+
+17 rows flipped `fail→pass` (PlainDate 7, Duration 3, ZonedDateTime 7). There is
+**no pass→fail and no pass→compile_error row** in any family, and the CE counts
+are identical on both sides (all carry `compilation timeout`). The
+`reading 'sort'` bucket is **24 → 0** (PlainDate 8→0, Duration 4→0,
+ZonedDateTime 12→0).
+
+### Top error buckets, LINKED, S10
+
+PlainDate (57 fail):
+
+| count | text |
+| --- | --- |
+| 21 | `Test262Error: calendar must be string in canonicalizeCalendarEra Expected SameValue(«"undefined"», «"string"»)` |
+| 7 | `TypeError: year is required` |
+| 4 | `TypeError: map callbackfn is not a function` |
+| 3 | `TypeError: Object method called on null or undefined` |
+| 2 | `Test262Error: prototype Expected SameValue(«null», «[object Function]») to be true` |
+
+Duration (79 fail):
+
+| count | text |
+| --- | --- |
+| 9 | `TypeError: Cannot access property on null or undefined at 164:22` |
+| 5 | `TypeError: called value is not a function` |
+| 4 | `TypeError: expected a string, not null` |
+| 4 | `Test262Error: years result: Expected SameValue(«undefined», «0») to be true` |
+| 2 | `TypeError: invalid duration-like` |
+
+ZonedDateTime/prototype (79 fail):
+
+| count | text |
+| --- | --- |
+| 18 | `TypeError: Cannot convert undefined or null to object` |
+| 7 | `TypeError: required property 'timeZone' missing or undefined` |
+| 6 | `TypeError: Cannot read properties of undefined (reading 'equals')` |
+| 5 | `TypeError: called value is not a function` |
+| 3 | `Test262Error: Expected a RangeError but got a undefined` |
+
+### Two standalone samples that must NOT move, and did not
+
+`--target standalone`, first 120 rows of each, base by file-copy revert of
+`src/codegen/closed-method-dispatch.ts` + parking `dyn-array-producers.ts`, on
+the same tree. Both are tied to what this slice touched (dynamic Array method
+dispatch, and the `$ObjVec`/`Object.keys` carrier the arm produces):
+
+| sample | base | S10 | pass→fail | flips |
+| --- | --- | --- | --- | --- |
+| `built-ins/Array/prototype/**` | 79 pass / 40 fail / 1 CE | 79 / 40 / 1 | **0** | **0** |
+| `built-ins/Object/**` | 106 pass / 14 fail | 106 / 14 | **0** | **0** |
+
+### Order preservation
+
+17 module shapes × {gc, standalone}, base captured by file copy before the first
+edit (`.tmp/s10/ab-{base,new}.out`): **all 17 `gc` artifacts sha256-identical.**
+On standalone exactly three moved — `dynConcat`, `dynSort`, `dynSortCmp`, the
+three shapes that actually make a dynamic producer call. Everything else is
+byte-identical, including the two controls that matter most: `dynSlice` /
+`dynMap` / `dynPush` (dynamic calls to members this slice does NOT serve) and
+`arraysTypedConcat` / `arraysTypedSort` (the typed path, which keeps its
+Timsort). The arm is gated on `ctx.standalone` and on a `$__vec_base`
+registration, so the gc lane cannot reach it and a standalone module with no
+dynamic `concat`/`sort` never reserves the dispatcher.
+
+### What the new buckets say about the next slices
+
+- **`canonicalizeCalendarEra` (21 PlainDate rows) is now the largest single
+  bucket and it did NOT move.** Its successor inside the same family is
+  `TypeError: year is required` (0 → 7): those `from(bag)` rows now get past
+  the field-name machinery and fail later, in field EXTRACTION. That is the
+  #5408 residual, not this one.
+- **`Cannot convert undefined or null to object` (18 ZDT rows) is unchanged and
+  is a clean, self-contained next slice.** It is the whole
+  `ZonedDateTime/prototype/*/{branding,prop-desc}.js` family, and it reduces to
+  one line: `Object.getOwnPropertyDescriptor(Temporal.ZonedDateTime.prototype,
+  "day")` across a link throws instead of answering an accessor descriptor. It
+  needs a `__js2wasm_link_*` descriptor terminal — the #5406 class, one level up
+  from the member-get terminal that already works.
+- **`x instanceof <provider class>` through an `any` PARAMETER answers `false`**
+  where the same test on a directly-bound local answers `true`
+  (`.tmp/s10/reduce.mjs`). Measured but not attributed to a bucket; worth a
+  census of its own before anyone writes code.
+- **Residual inside #6447 itself:** `slice`, `reverse`, `includes`, `splice` and
+  `flat` on an `any` receiver are still wrong, by the same mechanism. They are
+  PINNED by an executable assertion in
+  `tests/issue-6447-standalone-dynamic-array-producers.test.ts` so the residual
+  fails loudly when someone fixes it rather than rotting as a note.
+
+### Artifacts
+
+`.tmp/s10fam/{pd,du,zdt}-link.tsv` (+ `.log`) and
+`.tmp/s10fam/{arr,obj}-{base,new}.tsv` in the S10 worktree
+`/home/user/js2/.claude/worktrees/agent-ad1acad18940e0c59`, produced by
+`.tmp/s10/family.mts` (a copy of S9's, label `s10`) and compared against
+`.tmp/s10ref/*.tsv` (copies of the S9 worktree's TSVs) with `.tmp/s10/table.mjs`.
+Provider `cacheHit=true`, `js2wasm:npm:@js-temporal/polyfill:c97cf3351a9120b1`,
+3,313,960 B (S9: `dc43b7a43e0bd370`, 3,312,078 B — the artifact re-keys because
+the compiler changed, which is the mechanism that makes a stale standalone
+artifact impossible). The census, the reductions and the byte A/B are
+`.tmp/s10/{single3..6,reduce,reduce2,reduce3,ab}.*`.
+
+### Traps, carried forward and added to
+
+- The pre-warm stamp trap (S7) and the quickjs-provider trap (S8) are unchanged.
+- **New, and it cost this slice a full family run: a SYMLINKED `.test262-cache`
+  entry silently outlives its target.** S9's cache was obtained by `cp -a` from
+  the S8 worktree, which preserved a symlink into the S7 worktree; when S7 was
+  reaped the link dangled. `ls .test262-cache` still lists
+  `quickjs-artifact-<hash>`, so the cache reads as PRESENT, and the failure
+  arrives 120 rows later as the uniform `Error: JS2WASM_EVAL_ENGINE=quickjs but
+  the quickjs provider is not built` that S8 already warned looks
+  Temporal-shaped. Copy with `cp -rL` (real files), not `cp -a`, and check
+  `ls -la .test262-cache/quickjs-artifact-*/libquickjs.wasm` — not just the
+  directory name — before believing a run. Rebuilding from source is cheap
+  (`node --import tsx scripts/build-quickjs-eval-provider.mjs`, ~55 s here, needs
+  clang-18 + network).
+- **New: the worktree harness replaces the tracked `test262` symlink with a
+  DIRECTORY of per-entry symlinks, repeatedly.** It did so at worktree setup and
+  again after a vitest run. Reads keep working, which is why it goes unnoticed;
+  `git status` then shows `D test262`. Never `git add -A`, and run
+  `rm -rf test262 && git checkout -- test262` before staging.
+- **New: a mid-run `pkill -f test262-worker.mjs` from another lane is
+  indistinguishable from a real regression.** It hit this slice's
+  `built-ins/Array/prototype` sample at 05:05; the rows were quarantined as
+  `*-SUSPECT.tsv` and the sample re-run from scratch. If a sample shows a burst
+  of `fail`/`compile_error` with no matching source change, check whether
+  another lane was cleaning up before believing it.
