@@ -1,0 +1,405 @@
+{
+  "schema": "promise-resolution-public-summary-v1",
+  "controller": {
+    "session": 76198,
+    "exitCode": 1
+  },
+  "comparisonSha256": "880909fc1e0f89f2cdb5ff98913c597f6649ef5c0228b8d5e8d6f4f46361cbb3",
+  "preservationOK": true,
+  "semanticOK": false,
+  "denominator": {
+    "pairs": 24,
+    "rows": 48,
+    "instances": 96,
+    "exportObservations": 184
+  },
+  "negativeControls": [
+    {
+      "name": "drop-row",
+      "rejected": true
+    },
+    {
+      "name": "wrong-root",
+      "rejected": true
+    },
+    {
+      "name": "changed-provenance",
+      "rejected": true
+    },
+    {
+      "name": "changed-instantiation-byte",
+      "rejected": true
+    },
+    {
+      "name": "wrong-value-cannot-pass-semantic-acceptance",
+      "rejected": true
+    },
+    {
+      "name": "changed-outcome-not-equal",
+      "rejected": true
+    }
+  ],
+  "baseline": {
+    "executed": 24,
+    "requiredRows": 24,
+    "instances": 48,
+    "observations": 92,
+    "gaps": [
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 0,
+        "export": "getGets",
+        "ordinal": 3,
+        "actual": 2,
+        "expected": 1
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 0,
+        "export": "getCalls",
+        "ordinal": 4,
+        "actual": 0,
+        "expected": 1
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 0,
+        "export": "getWrongCalls",
+        "ordinal": 5,
+        "actual": 1,
+        "expected": 0
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 0,
+        "export": "getValue",
+        "ordinal": 6,
+        "actual": 99,
+        "expected": 42
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 0,
+        "export": "getTrace",
+        "ordinal": 7,
+        "actual": 13184,
+        "expected": 1324
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 1,
+        "export": "getGets",
+        "ordinal": 3,
+        "actual": 2,
+        "expected": 1
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 1,
+        "export": "getCalls",
+        "ordinal": 4,
+        "actual": 0,
+        "expected": 1
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 1,
+        "export": "getWrongCalls",
+        "ordinal": 5,
+        "actual": 1,
+        "expected": 0
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 1,
+        "export": "getValue",
+        "ordinal": 6,
+        "actual": 99,
+        "expected": 42
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 1,
+        "export": "getTrace",
+        "ordinal": 7,
+        "actual": 13184,
+        "expected": 1324
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 0,
+        "export": "getGets",
+        "ordinal": 3,
+        "actual": 2,
+        "expected": 1
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 0,
+        "export": "getCalls",
+        "ordinal": 4,
+        "actual": 0,
+        "expected": 1
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 0,
+        "export": "getWrongCalls",
+        "ordinal": 5,
+        "actual": 1,
+        "expected": 0
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 0,
+        "export": "getValue",
+        "ordinal": 6,
+        "actual": 99,
+        "expected": 42
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 0,
+        "export": "getTrace",
+        "ordinal": 7,
+        "actual": 13184,
+        "expected": 1324
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 1,
+        "export": "getGets",
+        "ordinal": 3,
+        "actual": 2,
+        "expected": 1
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 1,
+        "export": "getCalls",
+        "ordinal": 4,
+        "actual": 0,
+        "expected": 1
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 1,
+        "export": "getWrongCalls",
+        "ordinal": 5,
+        "actual": 1,
+        "expected": 0
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 1,
+        "export": "getValue",
+        "ordinal": 6,
+        "actual": 99,
+        "expected": 42
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 1,
+        "export": "getTrace",
+        "ordinal": 7,
+        "actual": 13184,
+        "expected": 1324
+      }
+    ],
+    "ok": false
+  },
+  "candidate": {
+    "executed": 24,
+    "requiredRows": 24,
+    "instances": 48,
+    "observations": 92,
+    "gaps": [
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 0,
+        "export": "getGets",
+        "ordinal": 3,
+        "actual": 2,
+        "expected": 1
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 0,
+        "export": "getCalls",
+        "ordinal": 4,
+        "actual": 0,
+        "expected": 1
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 0,
+        "export": "getWrongCalls",
+        "ordinal": 5,
+        "actual": 1,
+        "expected": 0
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 0,
+        "export": "getValue",
+        "ordinal": 6,
+        "actual": 99,
+        "expected": 42
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 0,
+        "export": "getTrace",
+        "ordinal": 7,
+        "actual": 13184,
+        "expected": 1324
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 1,
+        "export": "getGets",
+        "ordinal": 3,
+        "actual": 2,
+        "expected": 1
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 1,
+        "export": "getCalls",
+        "ordinal": 4,
+        "actual": 0,
+        "expected": 1
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 1,
+        "export": "getWrongCalls",
+        "ordinal": 5,
+        "actual": 1,
+        "expected": 0
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 1,
+        "export": "getValue",
+        "ordinal": 6,
+        "actual": 99,
+        "expected": 42
+      },
+      {
+        "id": "callable-getter-capture-trace-legacy",
+        "repetition": 1,
+        "export": "getTrace",
+        "ordinal": 7,
+        "actual": 13184,
+        "expected": 1324
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 0,
+        "export": "getGets",
+        "ordinal": 3,
+        "actual": 2,
+        "expected": 1
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 0,
+        "export": "getCalls",
+        "ordinal": 4,
+        "actual": 0,
+        "expected": 1
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 0,
+        "export": "getWrongCalls",
+        "ordinal": 5,
+        "actual": 1,
+        "expected": 0
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 0,
+        "export": "getValue",
+        "ordinal": 6,
+        "actual": 99,
+        "expected": 42
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 0,
+        "export": "getTrace",
+        "ordinal": 7,
+        "actual": 13184,
+        "expected": 1324
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 1,
+        "export": "getGets",
+        "ordinal": 3,
+        "actual": 2,
+        "expected": 1
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 1,
+        "export": "getCalls",
+        "ordinal": 4,
+        "actual": 0,
+        "expected": 1
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 1,
+        "export": "getWrongCalls",
+        "ordinal": 5,
+        "actual": 1,
+        "expected": 0
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 1,
+        "export": "getValue",
+        "ordinal": 6,
+        "actual": 99,
+        "expected": 42
+      },
+      {
+        "id": "callable-getter-capture-trace-ir",
+        "repetition": 1,
+        "export": "getTrace",
+        "ordinal": 7,
+        "actual": 13184,
+        "expected": 1324
+      }
+    ],
+    "ok": false
+  },
+  "rawDifferences": [],
+  "terminals": [
+    {
+      "code": 0,
+      "signal": null,
+      "error": null,
+      "pid": 96719,
+      "root": "/private/tmp/js2-3518-explicit-rec-integration-20260908",
+      "label": "baseline",
+      "output": "/private/tmp/js2-3518-vector-grow-store-20260908/.tmp/promise-resolution-public-parent-r1/baseline.json",
+      "reportSha256": "0021d12520b0ae0b1e0c8da639a4a655dc1047cd1bcbd79bd27d5b0e89329744",
+      "launchSha256": "f7af88ff4a0ab51b806a479fa02f0ae3a51946a18979a1b1563bf396c51632ac"
+    },
+    {
+      "code": 0,
+      "signal": null,
+      "error": null,
+      "pid": 96812,
+      "root": "/private/tmp/js2-3518-promise-resolution-20260908",
+      "label": "candidate",
+      "output": "/private/tmp/js2-3518-vector-grow-store-20260908/.tmp/promise-resolution-public-parent-r1/candidate.json",
+      "reportSha256": "7adb84d303355b82f51dc0a39cfd9ba6910a43ba2a02b9ab5d41fb2f1c8cf582",
+      "launchSha256": "32547fdd8e40f95b2d8407e350dc55fb6d73d723dd9e3178dceb3e78ab0ca4ee"
+    }
+  ]
+}
