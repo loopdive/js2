@@ -4681,3 +4681,236 @@ families, with **0 pass→fail**, all three must-not-move samples flat and 0
 `__temporal_*` leaks. Base and branch were both measured on this tree by
 file-copy revert, so the delta is a self-consistent before/after. No full-corpus
 number is claimed; a corpus run remains the tech lead's to schedule.
+
+## S14 findings (2026-09-13) — the harness itself was the input; ONE `new <value>()` poisoned every provider value, and the linked lane goes 177 → 199
+
+**#6474 is the slice.**
+
+### 1. The attribution was wrong for the SIXTH slice running, and this time the census procedure itself was at fault
+
+S14 was handed "a second, independent defect on the parameter path:
+`canonicalizeCalendarEra` sees `undefined` because the harness reads
+`date.calendarId` through its own function PARAMETER". Against the real linked
+provider, **every** spelling of that shape answers `"string"` — value through a
+plain parameter, value through an object-literal METHOD parameter, object
+through a parameter read inside, the full two-hop `assertPlainDate` →
+`canonicalizeCalendarEra`, an 8-parameter method (3 defaulted) called with 5 / 6
+/ 8 arguments, and the `for (const [input, ...rest] of tests)` +
+`m(recv, ...rest, trailing)` loop the failing tests actually use.
+
+The defect only appears when the **real `test262/harness/temporalHelpers.js` is
+in the module**. That is the addition to S13's lesson:
+
+> **When the failing program includes a harness, the harness is part of the
+> input.** Five slices of probes that omitted it were measuring a different
+> program.
+
+S13 wrote "reduce in ONE standalone module first". That is still right, but it
+is not sufficient: the one-module control has to be the one-module control **of
+the program that actually fails**, harness and all. Every probe set from S10 to
+S13 reduced a hand-written stand-in for the harness, and every one of them
+passed.
+
+### 2. Root cause
+
+`$__ta_ctor` is two immutable i32 fields (`kind`, `brand`) — exactly the shape
+#2158/#2009 gives a **field-less class ROOT** (`$__tag` + `$__shape_brand`).
+WasmGC canonicalizes structurally-identical struct types, so a bare
+`ref.test $__ta_ctor` cannot answer a NOMINAL question. Two arms asked it that
+way:
+
+- `tryEmitTaStaticOfFrom` (`expressions/call-receiver-method.ts`) —
+  `%TypedArray%.of` / `.from` on an `any` receiver. It claimed
+  `Temporal.PlainDate.from("2020-12-24")` and built a typed array out of the
+  argument list.
+- the `$__ta_ctor` arm of `tryCompileNativeConstructFromValue`
+  (`expressions/new-super.ts`) — the `[[Construct]]` twin, which is why
+  `new Temporal.Duration(1).years` broke alongside it.
+
+The discriminator already existed and its own comment records this exact
+collision, measured on this exact provider: `taCtorIdentityTestInstrs`
+(#5383 S2f R11) adds the `brand` FIELD-VALUE check. Three call sites used it;
+these two did not. **Twelve** bare `ref.test $__ta_ctor` sites remain
+(`dataview-native.ts` ×5, `ta-ctor-meta.ts` ×2, `expressions/calls.ts`,
+`property-access-dispatch.ts`); none was on a path this slice could measure
+moving, so they are written down in #6474 rather than changed blind.
+
+### 3. Why ONE never-called function is the whole input
+
+```js
+function mk(K) { return new K(); }          // NEVER CALLED
+typeof Temporal.PlainDate.from("2020-12-24").calendarId   // "undefined"
+```
+
+The spelling is what arms the module pre-scan's dyn-view flag, which is what
+makes the consumer register `$__ta_ctor` at all. `temporalHelpers.js` contains
+it — `new construct(...constructArgs)` in `checkSubclassConstructorNotObject` —
+so **every Temporal test that `includes:` the harness inherited the failure**,
+called or not.
+
+Scale, counted over the S13 three-family TSVs by whether the test file contains
+`temporalHelpers.js`:
+
+| family | rows that include it | of those FAIL | of those PASS |
+| --- | --- | --- | --- |
+| PlainDate | 35 | **34** | 1 |
+| Duration | 26 | **24** | 2 |
+| ZonedDateTime/prototype | 13 | **13** | 0 |
+| **total** | **74** | **71** | **3** |
+
+71 of the sample's 169 failures; 3 of its 177 passes.
+
+### The three-family sample, LINKED, re-measured
+
+120 rows each, `--target standalone`, provider linked, families **sequential**,
+FRESH `JS2WASM_TEMPORAL_CACHE` per label (`.tmp/s14famcache-{base,new}`,
+`cacheHit=false` on both prewarms), quickjs artifact **and** adapter present.
+The base column is **this worktree's own base run**, taken by file-copy revert
+of the two edited source files on this tree.
+
+| family | rows | base pass | **S14 pass** | fail | compile_error | pass→fail |
+| --- | --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 64 | **78** | 41 | 1 | **0** |
+| `built-ins/Temporal/Duration/**` | 120 | 43 | **49** | 66 | 5 | 2 † |
+| `built-ins/Temporal/ZonedDateTime/prototype/**` | 120 | 70 | **72** | 46 | 2 | **0** |
+| **total** | **360** | **177** | **199** | **153** | **8** | **2 †** |
+
+`fail→pass`: **24** (PlainDate 14, Duration 8, ZonedDateTime 2).
+`__temporal_*` leaks: **0** in all six TSVs.
+
+† **Both pass→fail rows were VACUOUS passes on base, and that is measured, not
+argued.** `Duration/from/argument-propertybag-optional-properties.js` and
+`Duration/from/argument-string-fractional-precision.js` compare two
+`Duration.from(…)` results field by field. On the base tree, with the real
+harness in the module:
+
+| probe, base tree, real harness | answer |
+| --- | --- |
+| `Duration.from({hours:1}).hours` | `undefined` |
+| `Duration.from(<all 10 props>).hours` | `undefined` |
+| `typeof a.hours + "/" + typeof b.hours + "/" + (a.hours === b.hours)` | `undefined/undefined/true` |
+
+The assertion passed because both sides were `undefined`. On the fixed tree the
+same three read `1`, `1`, `number/number/true` — the values are real and the
+equality still holds. The rows now fail **further downstream**, on the known
+`instanceof`-across-the-link residual: `Temporal.Duration.from({hours:1})
+instanceof Temporal.Duration` is `false`, so the harness's own
+`assert(actual instanceof Temporal.Duration)` throws (`"x: instanceof"`), and
+`assertDurationsEqual`'s re-`from` of a Duration object reports
+`invalid duration-like`. That residual is the next slice's target.
+
+The one `fail→ce` row
+(`Duration/compare/relativeto-propertybag-infinity-throws-rangeerror.js`) is a
+compile-budget artifact: re-run **solo at 60 s on BOTH trees** it is `fail` on
+both (base 14.5 s, S14 13.9 s). The two pass→fail rows were re-run the same way
+and are real status changes, not budget (base pass 17.7 s / 14.0 s; S14 fail
+17.9 s / 14.6 s).
+
+### Top error buckets, LINKED, S14
+
+PlainDate (41 fail): 6 `year is required` · 3 `Object method called on null or
+undefined` · 3 `dereferencing a null pointer in __closure_N()` · 2 `illegal cast
+in __class_construct_dispatch()`. **The 20-row `calendar must be string in
+canonicalizeCalendarEra` bucket is GONE.**
+
+Duration (66 fail): 16 `dereferencing a null pointer in sn()` (two call paths) ·
+5 compilation timeout · 3 `prototype Expected SameValue(«null», «[object
+Function]»)` · 3 `Cannot access property on null or undefined`. **The 10-row
+`years result … undefined` bucket is gone.**
+
+ZonedDateTime/prototype (46 fail): 7 `required property 'timeZone' missing` ·
+6 `dereferencing a null pointer in sn()` · 3 `Expected a RangeError but got a
+undefined` · 2 compilation timeout · 2 `prototype Expected SameValue(…)`.
+The `timeZone` bucket did not move; with the harness present it now answers
+correctly in isolation (`ZonedDateTime.from(…).timeZoneId` → `"UTC"`), so those
+7 rows are a different cause and are the next census target alongside
+`instanceof`.
+
+### Symptom reads, with the REAL harness in the module
+
+Every read below is against the real linked provider. The point of the table is
+that the harness column now EQUALS the no-harness column:
+
+| read | base + harness | S14 + harness | S14 no harness |
+| --- | --- | --- | --- |
+| `PlainDate.from(…).calendarId` typeof | `undefined` | **`string`** | `string` |
+| `Duration.from({years:1}).years` | `undefined` | **`1`** | `1` |
+| `new Duration(1).years` | `undefined` | **`1`** | `1` |
+| `ZonedDateTime.from(…).timeZoneId` | `undefined` | **`UTC`** | `UTC` |
+| `ZonedDateTime.from(…).equals` typeof | `undefined` | **`function`** | `function` |
+| `PlainTime.from("12:30").hour` | `undefined` | **`12`** | `12` |
+| `Instant.from(…).epochNanoseconds` | `undefined` | **a value** | a value |
+| `Duration.from("P1Y").years` | `undefined` | TRAP `sn()` | TRAP `sn()` |
+
+The last row is the pre-existing `sn()` bucket: it reproduces with no harness at
+all, so it is not this slice's and was not made worse.
+
+### Must-not-move samples, and none moved
+
+`--target standalone`, base by file-copy revert on the same tree. Tied to what
+this slice touches — the two arms are the TypedArray static `of`/`from` claim
+and the dynamic-`new` TA claim, so the samples are the TypedArray surface those
+arms exist for. Row counts are the whole directory where it is smaller than 120.
+
+| sample | rows | base | S14 | pass→fail | flips |
+| --- | --- | --- | --- | --- | --- |
+| `built-ins/TypedArray/from/**` | 21 | 8 pass / 12 fail / 1 CE | 8 / 12 / 1 | **0** | **0** |
+| `built-ins/TypedArray/of/**` | 8 | 7 pass / 1 fail | 7 / 1 | **0** | **0** |
+| `built-ins/TypedArrayConstructors/**` (first 120) | 120 | 116 pass / 4 fail | 116 / 4 | **0** | **0** |
+
+### Order preservation
+
+Base captured by file copy at the FIRST edit
+(`.tmp/s14/base-{call-receiver-method,new-super}.ts`):
+
+- 40 modules (`website/playground/examples/**` + `tests/fixtures/**`) ×
+  {gc, standalone}: **80/80 sha256-identical**.
+- a targeted 9-shape corpus supplies the positive control: **all 9 `gc`
+  artifacts identical**, and on standalone exactly the four shapes that carry
+  the two re-guarded arms move — `taStaticFromAnyRecv`, `taStaticOfAnyRecv`,
+  `taDynNewAnyCallee`, `dynNewNoTa`. Every control is byte-identical:
+  `taNoCtorValue`, `taStaticDirect`, `classesOnly`, `plainArith`,
+  `objectsOnly`.
+- The linked provider artifact is byte-identical across the two labels (same
+  namespace `js2wasm:npm:@js-temporal/polyfill:61b30b6f2d1d6da9`, same 3 314 089
+  bytes), so the whole delta is consumer-side.
+
+### Traps, carried forward and added to
+
+- All prior traps still bite.
+- **NEW, and it cost a full base run: the family runner needs the Temporal
+  PRE-WARM STAMP, not just a cache directory.** With `JS2WASM_TEMPORAL_CACHE`
+  set but no stamp written, `runTest262File` does not link the provider at all:
+  PlainDate scores **3 pass / 69 fail / 48 CE** with `Temporal is not defined`
+  and `standalone target emitted host imports:
+  env::__temporal_plain_date_from_string_field`. That is indistinguishable at a
+  glance from a catastrophic regression and is NOT what a missing quickjs
+  adapter looks like. Run `prewarm` (which calls `writeTemporalPrewarmStamp`)
+  first, and check the log line `[test262] Temporal provider (standalone) …`
+  before believing any family number.
+- **NEW: do not swap source files while a background measurement is running.**
+  Two runs were discarded for this. The driver script owns one label end to end;
+  nothing under `src/` changes until it prints `LABEL <x> COMPLETE`.
+- **NEW: a pass→fail is not automatically a regression, and a pass is not
+  automatically a pass.** Two of this slice's three flips were VACUOUS base
+  passes (`undefined === undefined`). The check that settles it is cheap —
+  evaluate the test's own comparison operands on the base tree — and it is the
+  difference between "this slice regressed two rows" and "this slice removed two
+  false passes and exposed the next defect".
+
+### Artifacts
+
+`.tmp/s14fam/{pd,du,zdt,mnm-tafrom,mnm-taof,mnm-tactor}-{base,new}.tsv` (+ logs),
+`.tmp/s14fam/solo-{base,new}.tsv`, `.tmp/s14/byteab{,2}-{base,new}.tsv`, the
+probe sets `.tmp/s14/{r1..r4,t2..t4,b1..b6,c1..c9,h1..h5,w1,w2}.mjs` and the
+drivers `.tmp/s14/{one,pair2,probe,harness,harness2,harness3,split-th,bisect-th,bisect2,bisect3,family,rerun14,byteab,byteab2,table14,bytediff,run-all}.{mjs,mts,sh}`
+in this worktree (`/home/user/js2/.claude/worktrees/agent-a61a68efa14de71e0`).
+
+### Acceptance criterion 4 — S14 update
+
+MET-for-the-sample at **199/360** (was 177), measured on the same three
+families, with **2 pass→fail that were measured to be vacuous base passes**, all
+three must-not-move samples flat, the `gc` lane byte-identical on both corpora,
+and 0 `__temporal_*` leaks. Base and branch were both measured on this tree by
+file-copy revert, so the delta is a self-consistent before/after. No full-corpus
+number is claimed; a corpus run remains the tech lead's to schedule.

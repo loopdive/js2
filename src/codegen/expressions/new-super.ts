@@ -27,7 +27,7 @@ import {
 } from "./non-constructable.js"; // (#4017)
 import { emitSymbolOperandCoercionThrow } from "../tonumber-symbol-throw.js"; // (#3481)
 import * as newConstructors from "./new-non-constructable-value.js"; // (#4246)
-import { getOrRegisterTaCtorType } from "../registry/types.js"; // (#4626) runtime $__ta_ctor gate in the ordinary-[[Construct]] arm
+import { getOrRegisterTaCtorType, taCtorIdentityTestInstrs } from "../registry/types.js"; // (#4626) runtime $__ta_ctor gate in the ordinary-[[Construct]] arm; (#5383 S14) its brand-checked identity twin
 import { tryNewBuiltinStaticAlias } from "./new-builtin-static-alias.js"; // (#4491 wave-5 T6)
 import { reportError } from "../context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
@@ -4032,8 +4032,12 @@ function tryCompileNativeConstructFromValue(
       // identity into one i32 condition.  The native construct driver remains
       // the fallback for all other values.
       const taMatch = allocLocal(fctx, `__nc_tamatch_${fctx.locals.length}`, { kind: "i32" });
-      fctx.body.push({ op: "local.get", index: descLocal });
-      fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+      // (#5383 S14) IDENTITY, not a bare `ref.test` — see the same substitution
+      // in `call-receiver-method.ts`. `$__ta_ctor` is structurally the shape a
+      // field-less class ROOT gets, so in a module that links the standalone
+      // Temporal provider every provider class OBJECT passes the bare test and
+      // `new <ProviderClass>(…)` builds a typed array instead of an instance.
+      fctx.body.push(...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: descLocal }]));
       fctx.body.push({ op: "local.set", index: taMatch });
       fctx.body.push(
         ...buildInt8ArrayCarrierMatch(ctx, descLocal, [
@@ -4043,8 +4047,8 @@ function tryCompileNativeConstructFromValue(
       );
       fctx.body.push({ op: "local.get", index: taMatch });
     } else {
-      fctx.body.push({ op: "local.get", index: descLocal });
-      fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+      // (#5383 S14) IDENTITY, not a bare `ref.test` — see above.
+      fctx.body.push(...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: descLocal }]));
     }
     fctx.body.push({
       op: "if",

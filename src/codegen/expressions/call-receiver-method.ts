@@ -89,7 +89,7 @@ import {
   STRING_METHODS,
   typedArrayVecStorage,
 } from "../index.js";
-import { isTaViewTypeIdx } from "../registry/types.js";
+import { isTaViewTypeIdx, taCtorIdentityTestInstrs } from "../registry/types.js"; // (#5383 S14) brand-checked TA-ctor identity
 import { ensureIteratorNextCallableHandle } from "../iter-hof-native.js";
 import { isLazyIterForm, LAZY_ITER_METHODS } from "../iter-lazy-native.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
@@ -440,8 +440,24 @@ function tryEmitTaStaticOfFrom(
   for (const aLocal of argLocals) elseArm.push({ op: "local.get", index: aLocal });
   elseArm.push({ op: "call", funcIdx: dispatchIdx });
   const isTaCtorLocal = allocLocal(fctx, `__tastat_is_ctor_${fctx.locals.length}`, { kind: "i32" });
-  fctx.body.push({ op: "local.get", index: recvAnyLocal });
-  fctx.body.push({ op: "ref.test", typeIdx: ctx.taCtorTypeIdx });
+  // (#5383 S14) The IDENTITY test, not a bare `ref.test`. WasmGC canonicalizes
+  // structurally-identical struct types, and `$__ta_ctor` is two immutable i32
+  // fields — the SAME shape #2158/#2009 gives a field-less class ROOT. In a
+  // module that links the standalone Temporal provider, every provider class
+  // OBJECT therefore passes `ref.test $__ta_ctor`, and this arm builds a typed
+  // array out of it: `Temporal.PlainDate.from("2020-12-24")` answered an object
+  // whose only own key was `length`, `Object.prototype.toString` said
+  // `[object Array]`, and `new Temporal.PlainDate(1976,11,18).length` read back
+  // `1976` — the first constructor argument, out of a struct this module had no
+  // right to decode. Every later read of that value was `undefined`.
+  //
+  // `taCtorIdentityTestInstrs` (#5383 S2f R11) is the discriminator already
+  // written for this exact collision, measured on this exact provider: it adds
+  // the `brand` FIELD-VALUE check, which no other type's field 1 holds by
+  // accident. Answer-preserving for a genuine `$__ta_ctor` (both mint sites
+  // write `TA_CTOR_BRAND`); it can only ever REMOVE a false positive, so the
+  // `testWithTypedArrayConstructors` shape this arm exists for is untouched.
+  fctx.body.push(...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: recvAnyLocal }]));
   fctx.body.push({ op: "local.set", index: isTaCtorLocal });
   fctx.body.push(
     ...buildInt8ArrayCarrierMatch(ctx, recvAnyLocal, [
