@@ -501,6 +501,18 @@ criterion 4 is **not**, and the issue stays `in-progress` for that reason. The
    because the #661 lowering covers only PlainDate/PlainTime/Duration).
 4. S5: samples measured, 0 pass→fail, counts with artifacts; the standalone
    Temporal bucket moves from 170 pass.
+   **MET for the sampled families (re-measured S11, 2026-09-13, after #6457).**
+   Linked, the three sampled families score **170 pass / 184 fail / 6
+   compile_error out of 360** (PlainDate 62, Duration 43, ZonedDateTime 65),
+   against **139** on the S10-linked side — **0 pass→fail**, 31 `fail→pass`, and
+   every `compile_error` on both sides is a compile TIMEOUT (the five that the
+   sampled run scored CE answer `fail` when re-run SOLO at 60 s, so the CE
+   counts are equal to base in every family). The
+   `TypeError: Cannot convert undefined or null to object` bucket went **18 → 0**
+   in ZonedDateTime. The full-corpus "moves from 170 pass" number is still
+   unmeasured; only the 360-row sample is. Per-family counts, flip lists and
+   the new top buckets are in "S11 findings" below. The S10 text that follows is
+   kept for the record:
    **MET for the sampled families (re-measured S10, 2026-09-13, after #6447).**
    Linked, the three sampled families score **139 pass / 215 fail / 6
    compile_error out of 360** (PlainDate 62, Duration 38, ZonedDateTime 39),
@@ -4120,3 +4132,152 @@ artifact impossible). The census, the reductions and the byte A/B are
   `*-SUSPECT.tsv` and the sample re-run from scratch. If a sample shows a burst
   of `fail`/`compile_error` with no matching source change, check whether
   another lane was cleaning up before believing it.
+
+## S11 findings (2026-09-13) — the class PROTOTYPE read, and the third wrong boundary attribution in a row
+
+**#6457 is the slice** (census, mechanism and the reduction are in that issue).
+The one-line version: under `--target standalone`, `K.prototype` where `K` is a
+compiled class OBJECT held in an `any` binding answered `undefined`, because
+`__extern_get` reaches a class object through `__class_proto_lookup`'s
+class-object arm — which answers the STATIC SIDECAR `$Object` (static methods
+and accessors) — and `prototype` is not on it. Nothing else in the dynamic
+ladder knew a class value has a prototype singleton at all. Across a link every
+`Temporal.X` is a dynamic receiver by construction, so
+`Object.getOwnPropertyDescriptor(Temporal.ZonedDateTime.prototype, "day")`
+handed `gOPD` an `undefined` and threw.
+
+### The census, and the attribution that was wrong AGAIN
+
+S10's hand-off called the 18-row `Cannot convert undefined or null to object`
+bucket "the #5406 class, needs a descriptor terminal". It is not a boundary
+defect at all. The reduction (`.tmp/s11/c2.mjs`) is ONE standalone module, no
+provider, no link, no `Temporal`:
+
+| probe, `--target standalone` | static receiver `C` | dynamic receiver `K` |
+| --- | --- | --- |
+| `typeof recv.prototype` | `object` | **`undefined`** |
+| `gOPD(recv.prototype, "day")` | descriptor | **throws** |
+| `new recv(1) instanceof recv` | `true` | **`false`** |
+| `typeof recv` / `typeof new recv(1)` | function / object | function / object (ok) |
+
+That is now **three consecutive slices** where the hand-off blamed the link
+boundary and the defect was module-local codegen inside the provider (S9→S10 on
+`reading 'sort'`, S10→S11 here). The boundary terminals answer; the ladders
+behind them are what miss. Census first, in ONE module, before writing a
+terminal.
+
+### Attribution table (bucket → root cause → terminal)
+
+| bucket (S10 linked sample) | rows | root cause | where |
+| --- | --- | --- | --- |
+| `Cannot convert undefined or null to object` | 18 | **A** — dynamic `K.prototype` answers `undefined` | MODULE-LOCAL: `__extern_get`'s class-object arm, no `prototype` route |
+| `prototype Expected SameValue(«null», «[object Function]»)` | 2+3 | **A** | same |
+| `Cannot access property on null or undefined at 164:22` | 9 | **C** — SPREAD arguments into a linked constructor lose their values (`new Temporal.Duration(...args)` is not a number where `new Temporal.Duration(1,1,1)` is) | LINKED only; `temporalHelpers.js` L164 is `assertDuration`'s `duration.months` and every row in the bucket constructs with `...args` |
+| `calendar must be string in canonicalizeCalendarEra` | 21 | **NOT a member-read shape** — every harness-shape reduction (object-literal method forwarding `date.calendarId` into a second method) answers a correct string; `PlainDate.from(bag)` returns an object whose `year`/`month`/`day` are `NaN`. Field EXTRACTION, the #5408 residual | — |
+| `required property 'timeZone' missing` | 7 | **NOT reproduced**: `zdt.equals(<bag with timeZone>)` answers `true` and `ZonedDateTime.from(bag).timeZoneId` answers a string in reduction | — |
+| `year is required` | 7 | same family as the 21 | — |
+
+Also measured and not attributed: `typeof <provider-owned instance>` answers
+`"function"` where it should answer `"object"` (the single-module control
+answers `"object"`) — the `__js2wasm_link_callable_kind` terminal classifies
+every provider value as callable. And `Temporal.Duration.from("P1Y")` TRAPS
+(`dereferencing a null pointer`) where `from(bag)` and `from(duration)` answer.
+
+### The three-family sample, LINKED, re-measured
+
+120 rows each, `--target standalone`, provider linked, families run
+**sequentially**, fresh `JS2WASM_TEMPORAL_CACHE` (`.tmp/s11famcache-new`),
+quickjs eval provider + adapter present as real files. Linking confirmed both
+ways: every run log carries `Temporal provider (standalone)
+js2wasm:npm:@js-temporal/polyfill:2c0506a30fe8f23d (3314480 B) … cacheHit=true`,
+and `__temporal_*` leaks are **0** in all three TSVs.
+
+| family | rows | S10 linked pass | **S11 linked pass** | fail | compile_error | pass→fail |
+| --- | --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 62 | **62** | 57 | 1 | **0** |
+| `built-ins/Temporal/Duration/**` | 120 | 38 | **43** | 74 | 3 | **0** |
+| `built-ins/Temporal/ZonedDateTime/prototype/**` | 120 | 39 | **65** | 53 | 2 | **0** |
+| **total** | **360** | **139** | **170** | **184** | **6** | **0** |
+
+31 rows flipped `fail→pass` (ZonedDateTime 26, Duration 5, PlainDate 0). The
+ZonedDateTime flips are the entire
+`prototype/*/{branding,prop-desc,length,name,not-a-constructor}` surface; the
+Duration five are `prototype/abs/*`, the same surface.
+
+**The CE column needs its solo re-run to read correctly.** The sampled run
+scored five rows `compile_error` that base scored `fail`; re-run SOLO at a 60 s
+compile budget (`.tmp/s11/rerun.mts`) **all five answer `fail`**, at 13.0–17.5 s
+against the sample's 15 s budget. They are load-induced compile timeouts from
+the concurrent lanes this session ran, not the change. With them restored the CE
+counts equal base in every family.
+
+### Top error buckets, LINKED, S11
+
+PlainDate (57 fail): 19 `calendar must be string in canonicalizeCalendarEra` ·
+7 `year is required` · 4 `map callbackfn is not a function` · 3 `Object method
+called on null or undefined` · 2 `prototype Expected SameValue(«null», «[object
+Function]»)`.
+
+Duration (74 fail): 9 `Cannot access property on null or undefined at 164:22` ·
+5 `called value is not a function` · 4 `expected a string, not null` · 4 `years
+result: Expected SameValue(«undefined», «0»)` · 3 `prototype Expected
+SameValue(«null», «[object Function]»)`.
+
+ZonedDateTime/prototype (53 fail): 7 `required property 'timeZone' missing` ·
+6 `Cannot read properties of undefined (reading a class field)` · 6 `reading
+'equals'` · 3 `Expected a RangeError but got a undefined` · 3 `invalid receiver:
+method called with the wrong type of this-object`.
+
+### Two standalone samples that must NOT move, and did not
+
+`--target standalone`, first 120 rows of each, base by file-copy revert of
+`src/codegen/{index,property-access}.ts` on the same tree. Both are tied to what
+this slice touched (descriptors — `gOPD` is the arm's consumer — and class
+identity):
+
+| sample | base | S11 | pass→fail | flips |
+| --- | --- | --- | --- | --- |
+| `built-ins/Object/**` | 106 pass / 14 fail | 106 / 14 | **0** | **0** |
+| `language/expressions/class/**` | 70 pass / 38 fail / 12 CE | 70 / 38 / 12 | **0** | **0** |
+
+### Order preservation
+
+21 module shapes × {gc, standalone}, base captured by file copy before the first
+edit (`.tmp/s11/ab-{base,new}.out`): **all 21 `gc` artifacts sha256-identical,
+and on standalone exactly ONE moved** — `dynProtoGopd`, the
+`gOPD(K.prototype, …)` shape this slice exists for. Every control is
+byte-identical, including `classesNoDynProto` (a class module with no dynamic
+prototype read) and `dynOtherName` (a dynamic read of a different name). The
+fill is gated on `ctx.standalone` and on a non-empty dynamic-read demand set, so
+the gc lane cannot reach it and an ordinary standalone module never pays.
+
+### Traps, carried forward and added to
+
+- The pre-warm stamp trap (S7), the quickjs-provider trap (S8), the symlinked
+  cache trap and the `test262` gitlink trap (S10) are unchanged and all still
+  bite: this worktree arrived with `test262` as an EMPTY directory and no
+  `node_modules`.
+- **NEW, and it cost this slice a full round of linked measurements: the
+  standalone Temporal provider cache is NOT keyed on the compiler.**
+  `temporalProviderCacheKey` fingerprints the polyfill source, the `Intl` shim
+  and the compile OPTIONS — nothing about the compiler build. After a codegen
+  change `buildTemporalProvider` reports `cacheHit=true` and serves the artifact
+  built by the PREVIOUS tree, so every linked probe answers the old way and the
+  delta reads as exactly zero while the single-module probes have already
+  flipped. (S10's note that "the artifact re-keys because the compiler changed"
+  is not what the key does; those two runs differed because the shim text
+  differed.) Point the cache dir at a FRESH directory after every codegen edit,
+  and read the `cacheHit=` / namespace-hash line before believing a number.
+- **NEW: do not run other lanes during a family sample.** Five rows crossed the
+  15 s compile budget purely from concurrent load and scored `compile_error`,
+  which reads exactly like a real regression. Run the sample alone, or re-run
+  every CE solo at 60 s before reporting it.
+
+### Artifacts
+
+`.tmp/s11fam/{pd,du,zdt}-new.tsv` (+ `.log`), `.tmp/s11fam/{obj,cls}-{base,new}.tsv`
+and `.tmp/s11/{c1..c5,ab-base,ab-new,rerun-ce}.out` in this worktree
+(`/home/user/js2/.claude/worktrees/agent-ab3088a1741753e94`), produced by
+`.tmp/s11/family.mts` (a copy of S10's, label `s11`) and compared against
+`.tmp/s11fam/{pd,du,zdt}-s10.tsv` (copies of the S10 worktree's TSVs) with
+`.tmp/s11/table.mjs`.

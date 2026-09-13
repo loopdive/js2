@@ -29,7 +29,7 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { resolveArrayInfo } from "../array-methods.js";
 import { ensureAnyHelpers, ensureAnyToExternHelper } from "../any-helpers.js";
 import { compileArrowAsClosure, getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "../closures.js";
-import { emitToNumber, emitToString } from "../coercion-engine.js";
+import { emitNumberToStringSentinelAware, emitToNumber, emitToString } from "../coercion-engine.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import { eagerCaptureCellForCall } from "../statements/eager-capture-box.js";
@@ -1424,10 +1424,14 @@ export function compileIdentifierCall(
       }
 
       if (argType?.kind === "f64") {
-        // number → string
+        // number → string. (#6423) An absent number-shaped property read is a
+        // `{kind:"f64", undefSentinel:true}` carrying `UNDEF_F64_BITS`; that
+        // stringifies as "undefined", not as the sentinel's "NaN". The helper
+        // leaves the same externref `number_toString` does, so the
+        // `emitStringBuiltinNumberResult` tail is unchanged.
         const toStrIdx = ctx.funcMap.get("number_toString");
         if (toStrIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx: toStrIdx });
+          emitNumberToStringSentinelAware(ctx, fctx, argType, toStrIdx);
           return emitStringBuiltinNumberResult(ctx, fctx);
         }
       }
