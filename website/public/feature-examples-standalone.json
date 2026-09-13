@@ -276,7 +276,7 @@
     {
       "name": "arguments object (full)",
       "testCategories": ["language/arguments-object"],
-      "passCount": 195,
+      "passCount": 190,
       "totalCount": 263,
       "editionSpread": [
         {
@@ -286,7 +286,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 38,
+          "pass": 33,
           "total": 40
         },
         {
@@ -314,7 +314,7 @@
     {
       "name": "eval()",
       "testCategories": ["language/eval-code", "built-ins/eval"],
-      "passCount": 350,
+      "passCount": 338,
       "totalCount": 357,
       "editionSpread": [
         {
@@ -339,7 +339,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 144,
+          "pass": 132,
           "total": 147
         }
       ]
@@ -423,7 +423,7 @@
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 1096,
+      "passCount": 1101,
       "totalCount": 1177,
       "editionSpread": [
         {
@@ -468,7 +468,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 56,
+          "pass": 61,
           "total": 77
         }
       ]
@@ -574,7 +574,7 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 4329,
+      "passCount": 4301,
       "totalCount": 4581,
       "editionSpread": [
         {
@@ -584,7 +584,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 644,
+          "pass": 612,
           "total": 752
         },
         {
@@ -599,7 +599,7 @@
         },
         {
           "edition": "ES2018",
-          "pass": 263,
+          "pass": 269,
           "total": 317
         },
         {
@@ -619,7 +619,7 @@
         },
         {
           "edition": "ES2022",
-          "pass": 81,
+          "pass": 79,
           "total": 89
         },
         {
@@ -897,7 +897,7 @@
     {
       "name": "Regular expressions",
       "testCategories": ["built-ins/RegExp", "built-ins/RegExpStringIteratorPrototype"],
-      "passCount": 1675,
+      "passCount": 1682,
       "totalCount": 1896,
       "editionSpread": [
         {
@@ -907,7 +907,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 148,
+          "pass": 155,
           "total": 278
         },
         {
@@ -1001,7 +1001,7 @@
     {
       "name": "Arrow functions",
       "testCategories": ["language/expressions/arrow-function", "language/expressions/async-arrow-function"],
-      "passCount": 417,
+      "passCount": 422,
       "totalCount": 440
     },
     {
@@ -1025,7 +1025,7 @@
     {
       "name": "Default parameters",
       "testCategories": ["language/statements/function/default-parameter"],
-      "passCount": 1475,
+      "passCount": 1467,
       "totalCount": 1552
     },
     {
@@ -1049,7 +1049,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 2122,
+      "passCount": 2134,
       "totalCount": 2486
     },
     {
@@ -1080,7 +1080,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1423,
+      "passCount": 1466,
       "totalCount": 1955
     },
     {
@@ -1092,7 +1092,7 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 935,
+      "passCount": 943,
       "totalCount": 1106
     },
     {
@@ -1151,7 +1151,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 822,
+      "passCount": 827,
       "totalCount": 1072
     },
     {
@@ -1203,7 +1203,7 @@
     {
       "name": "Object spread / rest",
       "testCategories": ["language/expressions/object/spread"],
-      "passCount": 285,
+      "passCount": 299,
       "totalCount": 401
     },
     {
@@ -1216,7 +1216,7 @@
         "language/expressions/async-generator",
         "language/statements/async-generator"
       ],
-      "passCount": 2468,
+      "passCount": 2894,
       "totalCount": 3812
     },
     {
@@ -1240,7 +1240,7 @@
     {
       "name": "BigInt",
       "testCategories": ["built-ins/BigInt"],
-      "passCount": 540,
+      "passCount": 546,
       "totalCount": 1048
     },
     {
@@ -1258,7 +1258,7 @@
     {
       "name": "Class fields (public, private, static)",
       "testCategories": ["language/statements/class/fields"],
-      "passCount": 3710,
+      "passCount": 3728,
       "totalCount": 4979
     },
     {
@@ -1360,13 +1360,13 @@
         "built-ins/Set/prototype/isSupersetOf",
         "built-ins/Set/prototype/isDisjointFrom"
       ],
-      "passCount": 151,
+      "passCount": 148,
       "totalCount": 186
     },
     {
       "name": "Iterator helpers (map, filter, take)",
       "testCategories": ["built-ins/Iterator"],
-      "passCount": 101,
+      "passCount": 102,
       "totalCount": 393
     },
     {
@@ -1408,7 +1408,7 @@
     {
       "name": "Uint8Array to/from Base64",
       "testCategories": [],
-      "passCount": 9,
+      "passCount": 11,
       "totalCount": 68
     },
     {
