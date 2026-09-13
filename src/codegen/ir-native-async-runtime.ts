@@ -93,6 +93,8 @@ export function ensureIrNativePromiseAllProvider(ctx: CodegenContext): number {
   const previous = ctx.currentFunc;
   ctx.currentFunc = fctx;
   try {
+    // The compatibility emitter binds resources/locals, then immediately
+    // publishes the canonical detached vector body into this exact context.
     emitStandalonePromiseCombinatorRuntime(ctx, fctx, "all", 0, combinator.vecTypeIdx, combinator.arrTypeIdx);
     fctx.body.push({ op: "return" });
   } finally {

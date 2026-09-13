@@ -347,7 +347,10 @@ export function exportedExnTagIndex(
   ctx: CodegenContext,
   mod: { imports: readonly { desc: { kind: string } }[] },
 ): number {
-  if (ctx.sharedExnTag) return ctx.exnTagIdx;
+  // (#5383 S2m) `exnTagImported` is the standalone twin of `sharedExnTag` — in
+  // both cases the tag lives in the IMPORT space, so `exnTagIdx` is already
+  // absolute and adding the import-tag count would name a different tag.
+  if (ctx.sharedExnTag || ctx.exnTagImported) return ctx.exnTagIdx;
   return mod.imports.filter((imp) => imp.desc.kind === "tag").length + ctx.exnTagIdx;
 }
 

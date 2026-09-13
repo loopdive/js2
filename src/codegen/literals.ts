@@ -44,6 +44,7 @@ import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./conte
 import { isForeignEvalNode } from "./expressions/eval-source.js";
 import { emitUndefined, patchStructNewForAddedField } from "./expressions/late-imports.js";
 import { canonicalUndefinedExternInstrs } from "./any-helpers.js"; // (#5158) absent tuple slot === undefined
+import { ensureCanonicalUndefinedExtern } from "./undefined-extern-import.js"; // (#6419) …and make that producer exist on the host lane
 import { resolveStructName } from "./expressions/misc.js";
 import { arrayIteratorOverrideGlobalIdx, emitArrayProtoIteratorDrive } from "./expressions/proto-override.js";
 import { sourceOverridesBuiltinPrototypeMember } from "./builtin-proto-member-override.js";
@@ -4773,6 +4774,9 @@ export function compileTupleLiteral(
         // singleton flag and otherwise emits `ref.null.extern`, which the
         // standalone value model reads back as JS **null** — `let [_, x] = []`
         // then answered `x === null`, not `undefined`.
+        // (#6419) Host lane: register the producer import before the read —
+        // see the twin arm below.
+        ensureCanonicalUndefinedExtern(ctx, fctx);
         fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
       } else if (expectedType.kind === "ref_null" || expectedType.kind === "ref") {
         fctx.body.push({ op: "ref.null", typeIdx: expectedType.typeIdx });
@@ -4817,6 +4821,13 @@ export function compileTupleLiteral(
         // (#5158) See the note on the spread-expansion padding above: the
         // canonical producer is what makes an absent element read back as
         // `undefined` instead of `null` in the host-free value model.
+        // (#6419) …and on the HOST lane the producer is an import, which
+        // `canonicalUndefinedExternInstrs` will only LOOK UP, degrading to
+        // `ref.null.extern` (JS `null`) when nothing registered it yet. A null
+        // pad is not `undefined`, so the element default never fires
+        // (`let [a = ({z:1} as any)] = []` bound `null`; `let [y = y] = []`
+        // silently skipped its §13.3.1 ReferenceError). Register it first.
+        ensureCanonicalUndefinedExtern(ctx, fctx);
         fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
       } else if (expectedType.kind === "ref_null" || expectedType.kind === "ref") {
         const typeIdx = (expectedType as { typeIdx: number }).typeIdx;

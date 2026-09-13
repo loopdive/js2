@@ -18,13 +18,15 @@ const ehPath = "src/wasm/physical/exception-control.ts";
 type Reader = (path: string) => string;
 
 const forwardMainFixture = "tests/fixtures/issue-3518-async-frame-forward-main.json";
-const forwardMainFixtureHash = "3f01c4d7c04f39f8be68e00bc34025228e759287292bcb7739f5292c266ddbb7";
+const forwardMainFixtureHash = "634a00c7f8f13d1146a214572a638c5fd51d9a8a7b5284c5bdb7e834408aade7";
 const forwardMainSpanIds = [
   "host-planner-import",
+  "resume-undefined-carrier-import",
   "frame-import-abi",
   "frame-import-lookup",
   "frame-import-result",
   "host-combinator-gate",
+  "resume-undefined-carrier-type",
   "host-spill-plan",
   "frame-reaction",
 ] as const;
@@ -44,9 +46,9 @@ interface ForwardMainFixture {
   spans: ForwardMainSpan[];
 }
 
-// These seven narrow fragments were read from 06f4cfa4 Git content, independently
-// of the merged candidate. Their inverse fragments come from a42660c8. The JSON
-// records both complete commit/blob/source hashes and each original line range.
+// The original seven fragments retain their independent 06f4cfa4 provenance.
+// Two additional fragments are authenticated against delivered main ee2ee090.
+// Every inverse fragment still comes from a42660c8; the JSON records each source.
 // No runtime Git fallback or candidate-derived expected receipt is permitted.
 function readForwardMainFixture(reader: Reader): ForwardMainFixture {
   const text = reader(forwardMainFixture);
@@ -482,7 +484,7 @@ describe("0194 historical bodies reconstructed from mandatory current owners", (
 });
 
 describe("pinned incoming main changes before historical reconstruction", () => {
-  it("requires all seven independently pinned forward spans before checking the original receipts", () => {
+  it("requires all nine independently pinned forward spans before checking the original receipts", () => {
     const fixture = readForwardMainFixture(read);
     expect(fixture.spans.map((item) => item.id)).toEqual(forwardMainSpanIds);
     const projected = inverseProjectMain(read(donor), read);
@@ -526,8 +528,33 @@ describe("pinned incoming main changes before historical reconstruction", () => 
       );
     });
   }
+  for (const [name, before, after] of [
+    ["module source", 'from "./index.js";', 'from "./other-carrier.js";'],
+    ["import kind", "import {", "import type {"],
+  ]) {
+    it(`rejects changed incoming resume-carrier ${name}`, () => {
+      const imported = readForwardMainFixture(read).spans.find(
+        (item) => item.id === "resume-undefined-carrier-import",
+      )!;
+      const original = `${imported.after.join("\n")}\n`;
+      const changedImport = replace(original, before!, after!);
+      expect(changedImport).not.toBe(original);
+      const changed = replace(read(donor), original, changedImport);
+      expect(() => verifyHistorical((path) => (path === donor ? changed : read(path)))).toThrow(
+        "exact forward main span resume-undefined-carrier-import",
+      );
+    });
+  }
   const corruptions: Record<(typeof forwardMainSpanIds)[number], (text: string) => string> = {
     "host-planner-import": (text) => replace(text, "  isHostAsyncLane,", "  isHostAsyncLane as alteredHostLane,"),
+    "resume-undefined-carrier-import": (text) =>
+      replace(
+        text,
+        "varBindingNeedsExternrefForUndefined }",
+        "varBindingNeedsExternrefForUndefined as alteredCarrier }",
+      ),
+    "resume-undefined-carrier-type": (text) =>
+      replace(text, 'return { kind: "externref" };', 'return { kind: "i32" };'),
     "frame-import-abi": (text) => replace(text, "then2FrameIdx?: number;", "then2FrameIdx?: string;"),
     "frame-import-lookup": (text) => replace(text, 'get("Promise_then2_frame")', 'get("Promise_then2")'),
     "frame-import-result": (text) => replace(text, "? { then2FrameIdx }", "? { then2FrameIdx: then2Idx }"),

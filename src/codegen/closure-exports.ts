@@ -708,6 +708,9 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   // arity + 2 is the unused `__struct` slot, kept so the local layout and
   // funcLocal stay stable after #1712 removed the representative cast.
   const funcLocal = arity + 3;
+  // arity + 4 is `__fallback_args`; (#6416) the result save slot for the
+  // arguments-protocol reset epilogue is appended after it.
+  const resultSaveLocal = arity + 5;
 
   let baseWrapperIdx: number | undefined;
   const seenFuncTypeIdx = new Set<number>();
@@ -1023,6 +1026,23 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   // when nothing matches and the dispatch falls through as before.
   body.push(...buildFuncrefExtraction(ctx, dispatchEntries, anyLocal, funcLocal));
   body.push(...funcrefDispatch);
+  // (#6416) Release the `arguments` protocol globals before returning to the
+  // host — the result is teed through a local so the stores do not disturb it.
+  // The per-arm setup above fills `__argc`/`__extras_argv` for the callee, but
+  // only a callee that actually materialises `arguments` consumes them
+  // (`emitArgumentsVecBody`). An over-applied arm (`arity > closureArity`) into
+  // a callee that ignores `arguments` therefore left a non-null extras vec
+  // parked in the global, and the NEXT `arguments` materialisation anywhere
+  // added those stale extras to its own argc (`totalLen = argc + extrasLen`).
+  // Reset unconditionally: a leak from any arm is cleared for free.
+  body.push(
+    { op: "local.set", index: resultSaveLocal },
+    { op: "ref.null", typeIdx: extrasVecTypeIdx },
+    { op: "global.set", index: extrasArgvGlobalIdx },
+    { op: "i32.const", value: -1 },
+    { op: "global.set", index: argcGlobalIdx },
+    { op: "local.get", index: resultSaveLocal },
+  );
 
   publishClosureHostBridge(
     ctx,
@@ -1034,6 +1054,10 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
         { name: "__struct", type: { kind: "ref_null", typeIdx: bwIdx } },
         { name: "__funcref", type: { kind: "funcref" } },
         { name: "__fallback_args", type: { kind: "externref" } },
+        // (#6416) result save slot for the arguments-protocol reset epilogue.
+        // Appended AFTER the existing locals — `anyLocal`/`funcLocal` index
+        // into this list positionally and must not be renumbered.
+        { name: "__result", type: { kind: "externref" } },
       ],
       body,
       exported: true,
@@ -1710,6 +1734,15 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
   body.push({ op: "local.set", index: resultSaveLocal });
   body.push({ op: "local.get", index: prevThisLocal });
   body.push({ op: "global.set", index: currentThisGlobalIdx });
+  // (#6416) …and release the `arguments` protocol globals on the same return
+  // path. This must come AFTER the
+  // `__current_this` restore above (it must not disturb `prevThisLocal`) and
+  // it reuses the same result save slot, so the result is re-loaded once at
+  // the end rather than twice.
+  body.push({ op: "ref.null", typeIdx: extrasVecTypeIdx });
+  body.push({ op: "global.set", index: extrasArgvGlobalIdx });
+  body.push({ op: "i32.const", value: -1 });
+  body.push({ op: "global.set", index: argcGlobalIdx });
   body.push({ op: "local.get", index: resultSaveLocal });
 
   const funcIdx = publishClosureHostBridge(

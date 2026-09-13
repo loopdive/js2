@@ -242,6 +242,8 @@ export function createCodegenContext(
     // bytes. Only the package linker sets the option.
     sharedExnTag:
       options?.sharedExceptionTag === true && targetProfile.target !== "wasi" && targetProfile.target !== "standalone",
+    // (#5383 S2m) Decided lazily by `ensureExnTag`, never by an option.
+    exnTagImported: false,
     // (#5247) Provider builds only — their exports are wasm→wasm call targets.
     exportsConsumedByWasm: options?.exportsConsumedByWasm === true,
     hasUnionImports: false,

@@ -12,10 +12,15 @@
  * one-shot guard and reaction scheduling.
  */
 
-import type { Instr, LocalDef, ValType } from "../ir/types.js";
-import { buildStandardTryTable } from "../ir/try-table.js";
+import type { ValType } from "../ir/types.js";
+import {
+  buildNativePromiseDelayCallbackLocals,
+  buildNativePromiseDelayCallbackBody,
+  buildNativePromiseDelayProviderLocals,
+  buildNativePromiseDelayProviderBody,
+} from "../runtime/wasmgc/promise/delay-bodies.js";
 import { IR_NATIVE_PROMISE_DELAY_FN } from "../ir/promise-delay-lowering.js";
-import { PROMISE_STATE_PENDING, ensureAsyncDriveRuntime } from "./async-scheduler.js";
+import { ensureAsyncDriveRuntime } from "./async-scheduler.js";
 import { getOrCreateFuncRefWrapperTypes } from "./closures.js";
 import { closureArityField, closureBagField, closureBagInitInstr } from "./closures/funcref-wrapper-types.js";
 import type { CodegenContext } from "./context/types.js";
@@ -131,21 +136,12 @@ export function ensureIrNativePromiseDelayProvider(ctx: CodegenContext): number 
   });
 
   const timerCallbackFuncIdx = mintDefinedFunc(ctx);
-  const timerCallbackBody: Instr[] = [
-    { op: "local.get", index: 0 },
-    { op: "ref.cast", typeIdx: callbackCaptureTypeIdx },
-    { op: "struct.get", typeIdx: callbackCaptureTypeIdx, fieldIdx: 3 },
-    { op: "local.get", index: 0 },
-    { op: "ref.cast", typeIdx: callbackCaptureTypeIdx },
-    { op: "struct.get", typeIdx: callbackCaptureTypeIdx, fieldIdx: 4 },
-    { op: "call", funcIdx: boxNumberFuncIdx },
-    { op: "call", funcIdx: resolveValueFuncIdx },
-    { op: "drop" },
-  ];
+  const capture = { captureTypeIdx: callbackCaptureTypeIdx, promiseFieldIdx: 3, valueFieldIdx: 4 } as const;
+  const timerCallbackBody = buildNativePromiseDelayCallbackBody({ capture, boxNumberFuncIdx, resolveValueFuncIdx });
   pushDefinedFunc(ctx, timerCallbackFuncIdx, {
     name: "__ir_promise_delay_timer_callback",
     typeIdx: callbackWrapper.liftedFuncTypeIdx,
-    locals: [],
+    locals: buildNativePromiseDelayCallbackLocals(),
     body: timerCallbackBody,
     exported: false,
   });
@@ -154,63 +150,21 @@ export function ensureIrNativePromiseDelayProvider(ctx: CodegenContext): number 
   const externref: ValType = { kind: "externref" };
   const providerTypeIdx = addFuncType(ctx, [f64, f64], [externref], "$__ir_promise_delay_native_type");
   const providerFuncIdx = mintDefinedFunc(ctx);
-  const promiseLocal = 2;
-  const reasonLocal = 3;
-  const providerLocals: LocalDef[] = [
-    { name: "$promise", type: { kind: "ref", typeIdx: runtime.promiseTypeIdx } },
-    { name: "$reason", type: externref },
-  ];
-  const timerRegistration: Instr[] = [
-    { op: "ref.func", funcIdx: timerCallbackFuncIdx },
-    { op: "i32.const", value: 0 },
-    closureBagInitInstr(),
-    { op: "local.get", index: promiseLocal },
-    { op: "local.get", index: 1 },
-    { op: "struct.new", typeIdx: callbackCaptureTypeIdx },
-    { op: "extern.convert_any" },
-    { op: "local.get", index: 0 },
-    { op: "call", funcIdx: boxNumberFuncIdx },
-    { op: "call", funcIdx: timerFuncIdx },
-    { op: "drop" },
-  ];
-  const providerBody: Instr[] = [
-    { op: "i32.const", value: PROMISE_STATE_PENDING },
-    { op: "ref.null.extern" },
-    { op: "ref.null.extern" },
-    closureBagInitInstr(),
-    { op: "struct.new", typeIdx: runtime.promiseTypeIdx },
-    { op: "local.set", index: promiseLocal },
-    buildStandardTryTable({ kind: "empty" }, timerRegistration, [
-      {
-        kind: "catch",
-        tagIdx: exnTagIdx,
-        payloadType: externref,
-        body: [
-          { op: "local.set", index: reasonLocal },
-          { op: "local.get", index: promiseLocal },
-          { op: "local.get", index: reasonLocal },
-          { op: "call", funcIdx: runtime.rejectFuncIdx },
-          { op: "drop" },
-        ],
-      },
-      // A JavaScript timer provider can throw a foreign host exception rather
-      // than the module's tagged `throw` payload. The Promise constructor must
-      // still return a rejected Promise instead of leaking that exception
-      // synchronously. No host exception-value import is introduced here: the
-      // rejection reason is the native null/undefined boundary sentinel.
-      {
-        kind: "catch_all",
-        body: [
-          { op: "local.get", index: promiseLocal },
-          { op: "ref.null.extern" },
-          { op: "call", funcIdx: runtime.rejectFuncIdx },
-          { op: "drop" },
-        ],
-      },
-    ]),
-    { op: "local.get", index: promiseLocal },
-    { op: "extern.convert_any" },
-  ];
+  const providerLocals = buildNativePromiseDelayProviderLocals(runtime.promiseTypeIdx);
+  const bagInit = closureBagInitInstr();
+  if (bagInit.op !== "ref.null.extern")
+    throw new Error("native Promise delay requires the closure bag null initializer");
+  const providerBody = buildNativePromiseDelayProviderBody({
+    promiseTypeIdx: runtime.promiseTypeIdx,
+    capture,
+    timerCallbackFuncIdx,
+    timerFuncIdx,
+    boxNumberFuncIdx,
+    rejectFuncIdx: runtime.rejectFuncIdx,
+    exnTagIdx,
+    callbackArity: 0,
+    bagInit,
+  });
   ctx.funcMap.set(IR_NATIVE_PROMISE_DELAY_FN, providerFuncIdx);
   pushDefinedFunc(ctx, providerFuncIdx, {
     name: IR_NATIVE_PROMISE_DELAY_FN,

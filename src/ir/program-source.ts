@@ -32,6 +32,7 @@ import { unwrapPromiseTypeNode } from "./async-static.js";
 import { postStartupCallableUnits } from "./program-startup-proof.js";
 import { makeIrIdentityImportedFunctionResolver } from "./imported-functions.js";
 import { makeIrPromiseDelayResolver } from "./promise-delay.js";
+import { prepareNativeAsyncSourceFamilies, type NativeAsyncSourceFamilies } from "./program-native-async-source.js";
 import {
   collectIrPromiseDelayOwners,
   buildIrPromiseDelayLoweringPlans,
@@ -53,6 +54,8 @@ export interface IrProgramSourceInput {
    * permission to emit. Omission preserves historical source lowering.
    */
   readonly promiseDelayProjection?: "disabled" | "standalone-native";
+  /** Explicit full-family logical lowering; never inferred from target or fast/default settings. */
+  readonly asyncFamilyProjection?: "disabled" | "standalone-native";
 }
 
 /** Frontend-only carrier; declarations never cross into PreparedIrProgram. */
@@ -172,6 +175,23 @@ function selectNativePromiseDelaySourceProjection(
       "Promise-delay source projection requires an explicit standalone-native request with wasmgc:standalone policy",
     );
   return nativeDelay;
+}
+
+/** Validate full-family selection independently from delay selection and runtime availability. */
+function selectNativeAsyncFamilyProjection(input: IrProgramSourceInput): boolean {
+  const projection = input.asyncFamilyProjection;
+  if (projection === undefined || projection === "disabled") return false;
+  if (
+    projection !== "standalone-native" ||
+    input.promiseDelayProjection !== "standalone-native" ||
+    input.policy.backend !== "wasmgc" ||
+    input.policy.target !== "standalone"
+  )
+    throw new PreparedIrProgramInvariantError(
+      "invalid-prepared-data",
+      "native async family source projection requires explicit native delay and wasmgc:standalone policy",
+    );
+  return true;
 }
 
 /** Mutable diagnostic cursor shared by source planning and its validation helpers. */
@@ -397,11 +417,70 @@ function validateNativePromiseDelaySourceLowering(
   inspect(allocations.snapshot());
 }
 
+/** Keep callable carriers separate from semantic fulfillment signatures. */
+function prepareSourceFunctionSignatures(
+  checker: ts.TypeChecker,
+  inventory: IrUnitInventory,
+  identity: ReturnType<typeof buildIrPlanningIdentityContext>,
+  types: ReturnType<typeof buildIrUnitTypeMap>,
+  certifiedDelays: NativePromiseDelaySourcePlans["certifiedDelays"],
+  nativeFamily: NativeAsyncSourceFamilies | undefined,
+  signatures: Map<IrUnitId, { params: readonly IrType[]; returnType: IrType | null }>,
+  bodyResults: Map<IrUnitId, IrType | null>,
+  diagnostic: SourceDiagnosticOwner,
+): void {
+  for (const unit of inventory.terminalUnits) {
+    diagnostic.active = unit.id;
+    if (unit.kind === "module-init") continue;
+    const declaration = identity.declarationByUnitId.get(unit.id);
+    if (!declaration || !ts.isFunctionDeclaration(declaration) || !declaration.body)
+      unsupported(`whole-program source producer has no body producer for ${unit.kind}`);
+    const propagated = types.get(unit.id);
+    const family = nativeFamily?.functions.get(unit.id);
+    const params =
+      family?.params ??
+      declaration.parameters.map((param, index) =>
+        param.type
+          ? typeNodeToIr(param.type, unit.displayName)
+          : propagated?.params[index]
+            ? lowerTypeToIrType(propagated.params[index]!)
+            : checkerScalar(checker, param),
+      );
+    if (params.some((type) => !type)) unsupported(`function ${unit.displayName} has an unresolved parameter contract`);
+    const isAsync = declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
+    const returnNode = isAsync ? unwrapPromiseTypeNode(declaration.type) : declaration.type;
+    const result: IrType | null = certifiedDelays.has(unit.id)
+      ? { kind: "extern", className: "Promise" }
+      : family
+        ? family.result
+        : returnNode?.kind === ts.SyntaxKind.VoidKeyword
+          ? null
+          : !isAsync &&
+              returnNode &&
+              ts.isTypeReferenceNode(returnNode) &&
+              ts.isIdentifier(returnNode.typeName) &&
+              returnNode.typeName.text === "Promise"
+            ? { kind: "val", val: { kind: "externref" } }
+            : returnNode
+              ? typeNodeToIr(returnNode, unit.displayName)
+              : propagated
+                ? lowerTypeToIrType(propagated.returnType)
+                : null;
+    bodyResults.set(unit.id, result);
+    const callableResults = preparedIrProgramCallableResults({
+      funcKind: isAsync ? "async" : "regular",
+      resultTypes: result ? [result] : [],
+    });
+    signatures.set(unit.id, { params: params as IrType[], returnType: callableResults[0] ?? null });
+  }
+}
+
 /** Build each original source body once, before any backend context or allocator exists. */
 export function prepareIrProgramSources(
   input: IrProgramSourceInput,
 ): IrProgramSourcePreparation | PreparedIrProgramFailure {
   const nativeDelay = selectNativePromiseDelaySourceProjection(input);
+  const nativeAsyncFamily = selectNativeAsyncFamilyProjection(input);
   const inventory = buildIrUnitInventory(input.sourceFiles, {
     ...input.inventoryOptions,
     entrySource: input.entrySource,
@@ -472,46 +551,20 @@ export function prepareIrProgramSources(
       if (exportedBindings.has(irUnitCallableBindingId(unit.id))) exportedUnits.add(unit.id);
     if (nativeDelay)
       prepareNativePromiseDelaySourcePlans(input.checker, sourceFiles, inventory, identity, delayPlans, diagnostic);
-    for (const unit of inventory.terminalUnits) {
-      diagnostic.active = unit.id;
-      if (unit.kind === "module-init") continue;
-      const declaration = identity.declarationByUnitId.get(unit.id);
-      if (!declaration || !ts.isFunctionDeclaration(declaration) || !declaration.body)
-        unsupported(`whole-program source producer has no body producer for ${unit.kind}`);
-      const propagated = types.get(unit.id);
-      const params = declaration.parameters.map((param, index) =>
-        param.type
-          ? typeNodeToIr(param.type, unit.displayName)
-          : propagated?.params[index]
-            ? lowerTypeToIrType(propagated.params[index]!)
-            : checkerScalar(input.checker, param),
-      );
-      if (params.some((type) => !type))
-        unsupported(`function ${unit.displayName} has an unresolved parameter contract`);
-      const isAsync = declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
-      const returnNode = isAsync ? unwrapPromiseTypeNode(declaration.type) : declaration.type;
-      const result: IrType | null = certifiedDelays.has(unit.id)
-        ? { kind: "extern", className: "Promise" }
-        : returnNode?.kind === ts.SyntaxKind.VoidKeyword
-          ? null
-          : !isAsync &&
-              returnNode &&
-              ts.isTypeReferenceNode(returnNode) &&
-              ts.isIdentifier(returnNode.typeName) &&
-              returnNode.typeName.text === "Promise"
-            ? { kind: "val", val: { kind: "externref" } }
-            : returnNode
-              ? typeNodeToIr(returnNode, unit.displayName)
-              : propagated
-                ? lowerTypeToIrType(propagated.returnType)
-                : null;
-      bodyResults.set(unit.id, result);
-      const callableResults = preparedIrProgramCallableResults({
-        funcKind: isAsync ? "async" : "regular",
-        resultTypes: result ? [result] : [],
-      });
-      signatures.set(unit.id, { params: params as IrType[], returnType: callableResults[0] ?? null });
-    }
+    const nativeFamily = nativeAsyncFamily
+      ? prepareNativeAsyncSourceFamilies({ checker: input.checker, identity, callGraph, certifiedDelays, diagnostic })
+      : undefined;
+    prepareSourceFunctionSignatures(
+      input.checker,
+      inventory,
+      identity,
+      types,
+      certifiedDelays,
+      nativeFamily,
+      signatures,
+      bodyResults,
+      diagnostic,
+    );
     for (const source of sourceFiles) {
       for (const statement of source.statements) {
         if (!ts.isVariableStatement(statement)) continue;
@@ -582,6 +635,8 @@ export function prepareIrProgramSources(
     for (const unit of inventory.terminalUnits) {
       diagnostic.active = unit.id;
       if (functions.some((fn) => fn.unitId === unit.id)) continue;
+      const family = nativeFamily?.functions.get(unit.id);
+      if (family) nativeFamily!.assertCurrent(unit.id);
       const resolveBinding = (node: ts.Identifier, writeValue?: ts.Expression): ModuleBindingGlobal | undefined => {
         let symbol = input.checker.getSymbolAtLocation(node);
         if (!symbol) return undefined;
@@ -608,6 +663,7 @@ export function prepareIrProgramSources(
           };
           return resultType ? { resultType, operandType } : null;
         },
+        ...family?.resolver,
       };
       const source = identity.sourceFileBySourceId.get(unit.sourceId)!;
       const moduleInit = unit.kind === "module-init";
@@ -627,6 +683,7 @@ export function prepareIrProgramSources(
         directCalls,
         resolver,
         ...(nativeDelay ? { promiseDelays: promiseDelaysBySource.get(source) } : {}),
+        ...(family ? { logicalVectorTypes: family.logicalVectorTypes } : {}),
         ...(moduleInit
           ? {
               moduleInitUnit: true,
@@ -666,6 +723,7 @@ export function prepareIrProgramSources(
         } else derivedUnits.push({ ...provenance, sourceId: unit.sourceId, terminalOwnerId: unit.id });
       }
     }
+    nativeFamily?.assertCurrent();
     if (nativeDelay)
       validateNativePromiseDelaySourceLowering(
         identity,
