@@ -869,24 +869,13 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
     expect(closureFree.exports["$cf$"]).toBeUndefined();
     expect(closureFree.exports["__\0js2_closure_host_bridge"]).toBeUndefined();
     expect(closureFree.exports["__\0js2_closure_host_bridge_marker"]).toBeUndefined();
-  });
 
-  // (#6419 → #6441) Reaching this at all is new: the row above used to bail on
-  // its first assertion, so the marshal claim had never run. It is a THIRD,
-  // separate defect — with a compiler closure family present, the module's own
-  // user-declared `__is_closure` (which answers 1 unconditionally) is what
-  // `looksMarshalable` consults, so a returned `Empty` instance comes back as
-  // a callable FUNCTION instead of an object. `it.fails` pins the known-bad
-  // behaviour honestly: when #6441 lands this marker goes red, which is the
-  // signal to delete it and fold these two assertions back into the row above.
-  it.fails("MARSHALS a forged-name module's class instance as an object (#6441, known-bad)", async () => {
-    const { exports } = await instantiate(`
-      export function __is_closure(_value: any): number { return 1; }
-      export function __call_fn_0(_value: any): number { return 709; }
-      export function $cf(): number { return 704; }
-      class Empty { ping(): number { return 1; } }
-      export function makeEmpty(): Empty { return new Empty(); }
-    `);
+    // (#6419 → #6441, fixed) With a compiler closure family present, the
+    // module's own user-declared `__is_closure` answers `1` unconditionally
+    // for *its own* callers, but the boundary consults the compiler's
+    // authenticated classifier (via `_hostBridgeExportView`), which answers
+    // `0` for the escaping `Empty` instance — so `wrapExports` must marshal it
+    // to an object, not wrap it as a callable function.
     const wrapped = wrapExports(exports as WebAssembly.Exports);
     const instance = wrapped.makeEmpty();
     expect(instance).toEqual({});
