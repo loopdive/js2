@@ -225,6 +225,7 @@ export function createCodegenContext(
     genericResolved: new Map(),
     funcRestParams: new Map(),
     funcUsesArguments: new Set(),
+    funcReadsOwnThis: new Set(),
     objectLiteralMethodFuncIdx: new Map(),
     extrasArgvGlobalIdx: -1,
     extrasArgvVecTypeIdx: -1,
