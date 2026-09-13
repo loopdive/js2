@@ -6791,6 +6791,20 @@ and unfiltered TS7 (session 54286 exit 0). Full caller revalidation passed
 322/322 across eight suites (session 46568 exit 0). Checkpoint validation is
 complete; this is not a migration-completion claim.
 
+### Isolated vector construction nullability repair (2026-09-09)
+
+Claim 3518:vector-data-nonnull owns a one-instruction WasmGC emitter fix at
+published base 5404151bfc. A nullable/defaultable backing-array scratch reload
+now receives ref.as_non_null before the carrier's non-null data field is
+constructed. Layout, allocation order and unsupported-capacity refusal remain
+unchanged. Full TS7 exits 0; the final combined regression run passes 31/31
+across three suites, including all seven new controls. High approved the proof
+split: five AST-to-IR component rows with explicit type overrides and a
+physical-fixture resolver, one IR-builder externref spare-capacity row, and
+one refusal control. This is not whole-source admission or consumer execution.
+See agent-context/3518-vector-data-nonnull-2026-09-09.md for exact receipts and
+the separate historical-baseline/common-fix application requirement.
+
 ## Native argument-vector checkpoint — 2026-09-08
 
 Parent integrated the independently reviewed six-file argument-vector slice
@@ -7936,6 +7950,45 @@ PR held until5787 is verified on main; numerical precision debt, historical
 compiler-pair execution, whole-program execution and frontend retirement
 remain uncertified.
 
+## Implementation plan: refresh vector backing refinement — 2026-09-13
+
+Continue existing PR5792, “fix(ir): refine vector backing scratch before
+construction”, from published c5c87e4a onto signed predecessor c77eb965.
+Preserve the published one-instruction addition of ref.as_non_null immediately
+before struct.new, and retain the current canonical wasm-constants and
+lower-contracts imports. Keep both complete issue histories and the original
+published test and handoff unchanged. No new migration scope is introduced.
+
+Verify the full composed emitter against the independently projected published
+hunk, then run all three original component files (7 + 10 + 14 intended cases)
+with actual source pins. Include the lowerer import-cycle control because the
+predecessor relocated its imports. Run TS7, size/function/oracle, nonempty
+coercion, preservation-v1 and conformance synchronization gates; preserve any
+initial failures. Use the independent pinned corpus and normal signed hooks.
+
+These component checks do not establish general source admission or complete
+prepared-program consumption. Keep the existing PR held until predecessor
+5789 is verified delivered to main through the protected queue. Preserve
+historical receipts as historical evidence and record fresh results separately.
+
+The actual composed component run passes56/56 assertions across four complete
+files, zero skipped: the original vector population31/31 plus the lowerer
+import-cycle population25/25. All pinned source/test/policy/fixture inputs
+remain unchanged. The full emitter hash is85b4a5765a5e690476828251006c97e3f0445817501ece6a6586038178f0da41,
+matching the independently projected commuting hunk; the original published
+nullability test and handoff remain byte-identical. Source gates and normal
+hooks remain pending; these component results do not certify whole-program
+consumption or frontend retirement.
+
+The seven source gates now pass: TS7, LOC/function budgets, measured coercion,
+oracle, preservation-v1 with required core types and nodes, and conformance
+synchronization (zero changed files). The unchanged coercion checker through
+a space-free alias positively scanned124 files/511 sites; no import edge or
+codegen file changed against exact predecessor c77eb965. All tested input pins
+remain unchanged. The independent b363f29d corpus matches all53,933 canonical
+test/harness blobs, exact modes and inventory, with no linked/shared objects.
+Normal signed hooks remain required; no gate or historical fixture was relaxed.
+
 ## Queue admission reconciliation: current main — 2026-09-13
 
 Existing PR5760 reported DIRTY against main7adc0a6e after publishing signed
@@ -8081,3 +8134,17 @@ The actual merge of freshly fetched `e1a865f6f7f203df6d85ae81f39fe6073795abe8` i
 Current delivered-main validation passes 1,112/1,112 assertions across 20 complete files, zero failures/pending/skips. This comprises the 18-file cohort962, separate cold import1, and fresh-process reservations149. Execution inputs stayed unchanged. All1,387 incoming policy entries match the parent exactly; two declaration entries are added, all58 local activation records retained, and allowed edges unchanged. Source gates and signed hooks remain required; this is not a retirement claim.
 
 Delivered-main source gates passed: TS7, LOC/functions, measured coercion census (no changed codegen paths), oracle, preservation-v1 with required core types/nodes, conformance sync check, and boundary inventory. Inventory is valid while architecture remains incomplete. All current execution pins remain unchanged before normal signed hooks.
+
+## Vector refinement delivered-parent refresh — 2026-09-13
+
+Existing PR5792 is refreshed from preserved signed eac9f741 onto verified
+main94c472b4, which delivered PR5789 through all102 merge-group shards and
+the final regression gate. Production and tests merge cleanly; both complete
+appended issue histories are retained. The original one-instruction
+ref.as_non_null refinement and190-line regression test remain byte-identical
+to the preserved prepared join. Current validation passes56/56 across the
+four complete vector/nullability/lowering-cycle suites, with unchanged inputs.
+TS7, LOC/functions, measured coercion, oracle, preservation-v1 dead exports
+including core types/nodes, and conformance sync check pass. Normal signed
+hooks and exact-head protected queue checks remain required. This does not
+certify full IR retirement.
