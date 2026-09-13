@@ -69,9 +69,17 @@ const callsForward = JSON.parse(callsForwardText) as {
   path: string;
   spans: { id: string; before: string; after: string }[];
 };
+// Independently committed main changes are inverted before the older callability
+// receipt; neither the original donor nor its full-source hash is replaced.
+const mainCallsForwardHash = "eb54f5e6f96b79b4d90577710f4bf2146821ab3f63bf70c3e0ff8e4c9f806d5c";
+const mainCallsForwardText = read("tests/fixtures/issue-3518-main-calls-forward.json");
+const mainCallsForward = JSON.parse(mainCallsForwardText) as typeof callsForward;
+function beforeMainCalls(source: string): string {
+  return inversePreparedSourceForward(source, mainCallsForwardText, mainCallsForwardHash);
+}
 const liveCalls = read(fixture.minimumObserver.path);
 function beforePreparedCalls(source: string): string {
-  return inversePreparedSourceForward(source, callsForwardText, callsForwardHash);
+  return inversePreparedSourceForward(beforeMainCalls(source), callsForwardText, callsForwardHash);
 }
 function requireMinimumObserverReceipt(source: string): void {
   if (hash(beforePreparedCalls(source)) !== fixture.minimumObserver.sourceSha256)
@@ -1060,4 +1068,73 @@ describe("prepared callability forward receipts preserve closure observers", () 
     expect(beforePreparedCalls(mutant)).toContain("\nvoid 0;\n");
     expect(() => requireMinimumObserverReceipt(mutant)).toThrow(/full minimum-observer source receipt mismatch/);
   });
+});
+
+describe("delivered main call transformations preserve the original closure observer", () => {
+  it("authenticates five committed spans before applying the unchanged older donor receipt", () => {
+    requireMinimumObserverReceipt(liveCalls);
+    expect(hash(mainCallsForwardText)).toBe(mainCallsForwardHash);
+    expect(mainCallsForward.path).toBe(fixture.minimumObserver.path);
+    expect(mainCallsForward.spans.map((span) => span.id)).toEqual([
+      "from-char-code-spread-import",
+      "undefined-receiver-import",
+      "from-char-code-spread-dispatch",
+      "call-undefined-receiver",
+      "apply-undefined-receiver",
+    ]);
+    expect(hash(beforeMainCalls(liveCalls))).toBe("6d3d2da37671d44d32b2f85f9dc790768d1159cc05c3b8bfdf4f84c02a70c8ae");
+    expect(hash(beforePreparedCalls(liveCalls))).toBe(fixture.minimumObserver.sourceSha256);
+  });
+
+  for (const span of mainCallsForward.spans) {
+    it(`rejects changed, removed and duplicated main span ${span.id} after a genuine positive`, () => {
+      requireMinimumObserverReceipt(liveCalls);
+      const changes: Record<string, [string, string]> = {
+        "from-char-code-spread-import": ["compileFromCharCodeFamilySpread", "compileFromCharCodeFamilySpreadChanged"],
+        "undefined-receiver-import": [
+          "resolveUndefinedReceiverTrampoline",
+          "resolveUndefinedReceiverTrampolineChanged",
+        ],
+        "from-char-code-spread-dispatch": ["spread !== null", "spread === null"],
+        "call-undefined-receiver": ["namedThisCall === undefined", "namedThisCall !== undefined"],
+        "apply-undefined-receiver": ["applyThis ?? finalFuncIdx", "finalFuncIdx ?? applyThis"],
+      };
+      const [before, after] = changes[span.id]!;
+      const altered = replaceOnce(span.after, before, after);
+      for (const replacement of [altered, span.before, span.after + span.after]) {
+        const mutant = replaceOnce(liveCalls, span.after, replacement);
+        expect(mutant).not.toBe(liveCalls);
+        expect(() => requireMinimumObserverReceipt(mutant)).toThrow();
+      }
+    });
+  }
+
+  it("rejects reordering the committed spread and undefined-receiver imports", () => {
+    requireMinimumObserverReceipt(liveCalls);
+    const first = mainCallsForward.spans[0]!.after;
+    const second = mainCallsForward.spans[1]!.after;
+    const start = liveCalls.indexOf(first);
+    const next = liveCalls.indexOf(second);
+    expect(next).toBeGreaterThan(start + first.length);
+    const mutant =
+      liveCalls.slice(0, start) +
+      second +
+      liveCalls.slice(start + first.length, next) +
+      first +
+      liveCalls.slice(next + second.length);
+    expect(() => requireMinimumObserverReceipt(mutant)).toThrow(/prepared forward span order mismatch/);
+  });
+
+  for (const mutation of ["missing", "provenance", "span"] as const) {
+    it(`rejects ${mutation} main evidence using the fixed fixture digest`, () => {
+      requireMinimumObserverReceipt(liveCalls);
+      const evidence = JSON.parse(mainCallsForwardText);
+      if (mutation === "provenance") evidence.sourceProvenance.deliveredMain.revision = "0".repeat(40);
+      if (mutation === "span") evidence.spans[0].after += "void 0;\n";
+      const mutant = mutation === "missing" ? "" : JSON.stringify(evidence);
+      expect(() => inversePreparedSourceForward(liveCalls, mutant, mainCallsForwardHash)).toThrow(
+        /fixture digest mismatch/,
+      );
+    });
+  }
 });
