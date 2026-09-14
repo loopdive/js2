@@ -12413,6 +12413,16 @@
       "path": "src/frontend/typescript.ts",
       "state": "clean",
       "layer": "frontend-ts"
+    },
+    {
+      "path": "src/ir/program/native-promise-inventory.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-promise-inventory.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
     }
   ]
 }
