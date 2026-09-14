@@ -193,11 +193,14 @@ export function collectUnsafeJavaScriptOperations(
           builtin(receiver, "Object") &&
           node.arguments[0] &&
           array(node.arguments[0]) &&
-          node.arguments[1] &&
-          // The measured missing inherited slot comes from a literal prototype.
-          // A Proxy/TypedArray prototype uses different property operations;
-          // the array literal alone is not evidence of this lowering defect.
-          ts.isObjectLiteralExpression(origin(node.arguments[1]))
+          // Unknown prototypes must remain refused: calls, property reads and
+          // invalidated aliases can all hide the same missing inherited slot.
+          !(
+            node.arguments[1] &&
+            ts.isPropertyAccessExpression(node.arguments[1]) &&
+            node.arguments[1].name.text === "prototype" &&
+            builtin(node.arguments[1].expression, "Array")
+          )
         )
           add(
             node,

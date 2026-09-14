@@ -64,6 +64,9 @@ CI repair validation is recorded in the preceding TypeScript audit directory.
 
 ## Bounded PR5748 guard repair (2026-09-15)
 
+**Superseded safety assessment:** the first repair below (`9bde5d2`) is not
+safe to land alone. See the conservative follow-up at the end of this record.
+
 Base: fetched `upstream refs/pull/5748/head`, verified as
 `9b36161f94ab1108b1ed0e1917a828ee3d3dad58`. Isolated branch
 `codex/5748-guard-repair-20260914`, worktree
@@ -123,3 +126,55 @@ original tests unchanged, 18 additional guard controls, five original-harness
 pass cases, and eight immutable-manifest host refusal checks (four programs,
 optimization 0/2). Typecheck, function budget, LOC budget, oracle ratchet and
 diff checks pass. No new budget allowance or baseline expansion was needed.
+
+## Conservative follow-up after adversarial validation (2026-09-15)
+
+The first repair `9bde5d289efaa941d661c9b541e12fc03f6115ee` admitted seven
+previously refused wrong-answer specimens. Host observations at optimization
+0 and 2: five array origins (function return, object field, reassigned alias,
+Object.create chain, conditional) printed `NaN` instead of `7`; two descriptor
+side-effect variants using an invalidated alias printed empty instead of `b`.
+Both representative defects reproduced in fresh processes. Original guard
+functions loaded from `9b36161f94ab1108b1ed0e1917a828ee3d3dad58` refused these
+same sources; this was a guard comparison on the first repair's compiler,
+not a separate full-original-compiler execution. Existing raw evidence is
+retained in `.tmp/adversarial-probes.log`, `.tmp/adversarial-array-return-solo.log`
+and `.tmp/adversarial-enum-alias-solo.log`. Their observation-only Vitest
+callback success counts are not correctness counts.
+
+The follow-up restores the original array guard condition, including refusal
+of unknown prototypes and its original authenticated `Array.prototype`
+exception. There is no new Proxy/TypedArray exemption: the original test262
+sources use a handler-producing call or reassigned callback-supplied target,
+and this bounded guard cannot establish their safety. All four array-related
+original-harness rows remain `compile_error` with the array diagnostic.
+
+Enumeration's descriptor-shadow exception now requires literal primitive
+values, both in descriptors and the prototype literal. Calls, property reads,
+coercions and mutation expressions cannot establish the proof. An alias whose
+initializer points to the prototype or receiver but whose own origin is
+invalidated makes the proof fail, even when later uses resolve as unknown.
+This also refuses the rebound-receiver deletion specimen that happened to
+match before; an observed match does not authenticate an escape.
+
+`tests/issue-5393-guard-adversarial.test.ts` promotes all 14 original specimens
+to assertions and adds five boundary controls (19 specimens x optimization
+0/2 = 38 tests). Refusals require compilation failure, zero binary bytes and
+the expected error diagnostic; accepted controls require exact Node and Wasm
+output. No guards are mocked or filtered. The original audit controls and raw
+September 8 records are unchanged.
+
+Scoped validation: 154/154 assertions across five test files, including all
+three existing guard suites, eight immutable audit refusals, the five original
+harness rows and 38 adversarial/boundary assertions. The honest conformance
+split is **one restored enumeration pass, four array refusals**; the separate
+sixth generator blocker remains untouched and belongs to Hypatia's completion
+repair. Log: `.tmp/conservative-followup-tests.log`. Typecheck, formatting,
+Biome lint, LOC/function budgets and diff checks pass. Parent integration and
+publishing remain the parent's responsibility; neither repair alone grants
+permission to remove the PR hold.
+
+Model provenance for this follow-up was read from this task's recorded
+`turn_context` at `2026-09-14T22:24:09.185Z`: `model=gpt-6-astra`, `effort=low`,
+also confirmed by `collaboration_mode.settings`. Use `Model: Codex GPT-6 Astra Low`.
+The previous commit and its inaccurate/incomplete trailer are not rewritten.

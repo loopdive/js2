@@ -27,6 +27,16 @@ function statementContainer(node: ts.Node): ts.Node | undefined {
 const propertyName = (node: ts.Node | undefined): string | undefined =>
   node && (ts.isIdentifier(node) || ts.isStringLiteral(node) || ts.isNumericLiteral(node)) ? node.text : undefined;
 
+// No calls, reads, coercions or mutation while establishing the shadow proof.
+function inertValue(node: ts.Expression): boolean {
+  const value = unwrap(node);
+  return (
+    ts.isStringLiteral(value) ||
+    ts.isNumericLiteral(value) ||
+    [ts.SyntaxKind.NullKeyword, ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword].includes(value.kind)
+  );
+}
+
 // Descriptor-created own keys enumerate correctly in the host carrier. They
 // must cover EVERY literal prototype key: a partial descriptor map still
 // loses the remaining inherited keys. Later writes are not this proof.
@@ -49,7 +59,7 @@ function shadowsPrototype(
       !property.initializer.properties.every((field) => {
         if (!ts.isPropertyAssignment(field)) return false;
         const name = propertyName(field.name);
-        if (name === "value") return true;
+        if (name === "value") return inertValue(field.initializer);
         if (name === "configurable") return field.initializer.kind === ts.SyntaxKind.FalseKeyword;
         return (
           (name === "enumerable" || name === "writable") &&
@@ -66,6 +76,15 @@ function shadowsPrototype(
       const value = origin(node);
       const parent = node.parent;
       const binding = ts.isVariableDeclaration(parent) && (parent.initializer === node || parent.name === node);
+      // A reassigned alias loses its origin, not its ability to mutate the
+      // original object. Reject that binding instead of ignoring later uses.
+      if (
+        (value === prototype || value === creation) &&
+        ts.isVariableDeclaration(parent) &&
+        parent.initializer === node &&
+        (!ts.isIdentifier(parent.name) || origin(parent.name) !== value)
+      )
+        escapedPrototype = true;
       if (value === prototype && !(parent === creation && creation.arguments[0] === node) && !binding)
         escapedPrototype = true;
       // A receiver escape can expose or replace its prototype indirectly,
@@ -80,7 +99,13 @@ function shadowsPrototype(
   if (escapedPrototype) return false;
   return prototype.properties.every((property) => {
     const key = propertyName(property.name);
-    return ts.isPropertyAssignment(property) && key !== undefined && key !== "__proto__" && ownKeys.has(key);
+    return (
+      ts.isPropertyAssignment(property) &&
+      inertValue(property.initializer) &&
+      key !== undefined &&
+      key !== "__proto__" &&
+      ownKeys.has(key)
+    );
   });
 }
 

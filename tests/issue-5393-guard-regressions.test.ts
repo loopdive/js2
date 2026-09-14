@@ -6,9 +6,11 @@ import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { runTest262File } from "./test262-runner.js";
 
-// Five repaired pass -> compile_error rows from PR5748's merge-group
+// Five pass -> compile_error rows from PR5748's merge-group
 // 4bfa9a9eb15d894c1d25ef2a2e3759c9f92038d0. Execute the untouched sources
 // with their original harness and strict reruns, never the synthetic wrapper.
+// Only the descriptor-shadow row has a bounded safe proof. The four array
+// rows remain refused; literal-only narrowing admitted silent wrong answers.
 // The sixth (dynamic-import/yield-star) remains blocked; see issue 5398.
 const cases = [
   "built-ins/Array/prototype/indexOf/calls-only-has-on-prototype-after-length-zeroed.js",
@@ -18,7 +20,7 @@ const cases = [
   "language/statements/for-in/order-enumerable-shadowed.js",
 ];
 
-describe("#5393: preserve the five repaired host guard controls", () => {
+describe("#5393: track the five original host guard controls without unsafe exemptions", () => {
   it.each(cases)(
     "executes %s with the original harness",
     async (path) => {
@@ -26,7 +28,11 @@ describe("#5393: preserve the five repaired host guard controls", () => {
       const sourceHash = createHash("sha256").update(readFileSync(file)).digest("hex");
       const result = await runTest262File(file, "guard-regression", 15_000);
       console.info(JSON.stringify({ sourceHash, ...result }));
-      expect(result.status, JSON.stringify(result)).toBe("pass");
+      if (path.startsWith("language/")) expect(result.status, JSON.stringify(result)).toBe("pass");
+      else {
+        expect(result.status, JSON.stringify(result)).toBe("compile_error");
+        expect(JSON.stringify(result)).toContain("JS2WASM_UNSUPPORTED_ARRAY_PROTOTYPE");
+      }
     },
     120_000,
   );
