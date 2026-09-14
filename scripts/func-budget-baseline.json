@@ -1,5 +1,5 @@
 {
-  "generated": "2026-09-13",
+  "generated": "2026-09-14",
   "threshold": 300,
   "functions": {
     "src/codegen-linear/index.ts::compileBinaryExpression": 420,
@@ -109,9 +109,6 @@
     "src/codegen/native-strings-rewrite.ts::emitStrSplitHelper": 326,
     "src/codegen/native-strings-search.ts::emitStrSearchHelpers": 348,
     "src/codegen/native-strings.ts::ensureAnyToStringHelper": 432,
-    "src/codegen/number-format-native.ts::emitToExponential": 331,
-    "src/codegen/number-ryu.ts::emitRyuDigits": 685,
-    "src/codegen/number-ryu.ts::emitRyuToBuf": 545,
     "src/codegen/object-ops.ts::compileObjectDefineProperties": 724,
     "src/codegen/object-ops.ts::compileObjectDefineProperty": 1310,
     "src/codegen/object-ops.ts::compileObjectKeysOrValues": 387,
