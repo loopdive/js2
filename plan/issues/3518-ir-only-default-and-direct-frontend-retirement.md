@@ -9074,3 +9074,22 @@ the original reference, then verifies all eight historical donors. The strict
 old verifier still explicitly rejects the current unprojected body. All other
 30 cases, helper contracts and original hashes remain unchanged. Formatting
 passes; retry the normal full commit hook, retaining its failed first run.
+
+
+## Removed string-call allocation repair (2026-09-14)
+
+The existing E2 four-line consumer fixture stopped before acceptance with
+`program allocations: site 3 has missing or stale encoding evidence`; the
+original `consumer-smoke-2.json` remains in the E2 worktree. This is an existing
+inlining allocation-discipline defect, reproduced independently on main
+`64f670a424a4b4881e496cb34578e08cec948135` without E2 source changes.
+
+Two string-returning calls received sites 3 and 4 and `wtf16` annotations.
+Inlining removed those calls and forked the callee allocations, but left both
+call sites live. Retire only the removed call after successful splicing; every
+bailout retains its provenance. The final allocation verifier is unchanged.
+The standalone regression fails on the original site 3; its bailout control
+passes. With the repair, all 75 tests across five allocation, encoding, inlining,
+and preparation-replay suites pass, including distinct repeated-call forks and
+a deliberately reintroduced stale-metadata refusal. This dependency does not
+adopt E2 or alter its fixtures, optimization settings, or historical failures.
