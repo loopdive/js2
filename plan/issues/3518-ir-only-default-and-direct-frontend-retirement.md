@@ -8469,3 +8469,50 @@ budget-baseline and report updates merged cleanly; no compiler source or selecte
 test inputs changed. Exact-base source gates are repeated before publication.
 
 All seven exact-base source gates pass against `35858c851f6dba219a5ab2f9a31cedb511cb38d0` with unchanged compiler and selected-test inputs. Protected queue verification and main delivery remain pending.
+
+### Formatter queue blocker: named IR type population (2026-09-14)
+
+Published head `1106a652f385b82e349257277480a756d6b65a7c` passed 579/579 normal
+commit-hook tests and normal push hooks (including 18/18 numeric parity), but
+required CI quality job `103823859853` failed at kind-neutrality reconciliation:
+`IrSupportRefType` introduces a named `IrType` payload, whereas the checker
+previously accounted only for instruction/terminator interfaces and three
+symbolic-reference objects. The original CI log and local reproduction are
+preserved; required queue admission remains blocked, and this is not delivery.
+
+Scoped repair plan: account explicitly for the reviewed named payload category,
+requiring its exact canonical declaration and discriminant, syntax-aware direct
+IrType membership, and disjointness from IrInstr/IrTerminator. Unknown named
+interfaces must still fail. Preserve all 85 instruction verdicts, evidence,
+counts, ratchets and baseline bytes. Add positive and negative controls for
+missing/renamed/moved/duplicated payloads, discriminant or membership changes,
+unknown payloads/instructions and promotion into an instruction union. Do not
+change source representation to evade the checker or classify the payload as a
+fourth symbolic reference. The native subagent owns the checker and focused
+regression files; root owns integration, issue evidence, adjacent gate checks
+and protected publication. No downstream refresh is started.
+
+Adjacent local checks pass: JsTag seam, IR layering/dialect, pushRaw, codegen
+fallbacks and speculative rollback. Two initial process errors were local
+invocation limits (tsx CLI Unix-socket path length and URL-encoded space in the
+rollback checker root); the original logs are retained. Direct Node+tsx loading
+and the existing space-free worktree alias run the unchanged checks successfully.
+These invocation corrections do not change source, policy or gate assertions.
+
+The first focused kind-checker pair completed 56/58. One new promotion control
+constructed invalid syntax for the single-line IrTerminator union; its mutation
+is corrected to exercise valid instruction promotion. The other failed at the
+existing positive quote-presence assertion in issue-5298: the exact quote
+`Code-point extraction intent` is now in canonical `src/ir/core/dialect/js.ts`,
+while the test still read the relocated facade. Scope expands only to correcting
+that test's QUOTE_FILE path; the quote and all assertions remain unchanged.
+The original failed report and pre-repair file bytes are retained.
+
+The repaired focused pair passes 58/58 with no skips. The direct kind-neutrality
+checker passes; independent comparison confirms the entire 85-kind instruction
+table, counts, ratchets, evidence and historical population record match the
+existing baseline exactly. Its SHA-256 remains
+`e4f871382a5478ab4a931816c441b52729145c2928c95c2b45119fd04dcf5800`.
+The separately checked named payload is now reconciled alongside the three
+reference objects: 85 instructions + 3 references + 1 payload = 89 discriminants.
+No compiler source or verdict baseline was changed for this repair.
