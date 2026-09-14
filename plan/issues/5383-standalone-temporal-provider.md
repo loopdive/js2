@@ -5326,6 +5326,25 @@ reduction disagreed with all three NAMED mechanisms while confirming the AREA.
 "The boundary" was right; "`link_member_get`" was not, because the miss is on the
 side that has no peer at all.
 
+**That distinction is worth more than the tally, and it corrects how S11–S16
+were written up here.** "The hand-off attribution was wrong for the Nth slice
+running" reads as though hand-offs are unreliable. They are not — a wrong AREA
+and a wrong MECHANISM inside the right area are different failures with
+different costs: a wrong area spends the whole slice in the wrong module, a
+wrong mechanism costs one probe set. **Right area, wrong mechanism is the shape
+of a GOOD hand-off**, and it is what S16 handed over. Agreed with the S16 lane,
+which proposed the correction to its own write-up.
+
+The corollary is about method rather than tone. S16 attributed these 11 rows on
+two signals that are weak alone — the test SHAPE (every row a
+`*-propertybag-calendar-*` case that builds its argument in the CONSUMER) and
+the bucket NOT MOVING under a fix that was definitely not its cause — and
+stopped at "not mine". The same pair is also what made the reduction cheap
+here: the shape says what to build (a consumer bag handed to a provider `get`),
+the not-moving says the mechanism is upstream of everything the previous slice
+touched. So it is a cheap REDUCTION method, not merely a cheap attribution one,
+and reduction is the expensive half of these slices.
+
 #### 2. Root cause
 
 `standalone-link-boundary.ts` (S2d) is consumer→provider ONLY: the provider
