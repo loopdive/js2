@@ -239,6 +239,31 @@ terminal is not worth its global.
    `### S17 findings` in #5383.
 5. Every `gc` artifact in the byte A/B corpus is sha256-identical. ✅ measured
 
+## BLOCKER inherited from the stack — #6474–#6477 collide with `main`
+
+`npm run -s check:issue-ids:against-main` FAILS on this branch after the
+catch-up merge, and **none of the four collisions is this slice's**:
+
+| id | this branch (S14–S16) | already on `origin/main` |
+| --- | --- | --- |
+| 6474 | `standalone-dynamic-new-poisons-provider-values` | `linked-harness-prelude-module-goal` |
+| 6475 | `standalone-nullable-vec-element-callback-param` | `linked-provider-realm-error-constructors` |
+| 6476 | `standalone-nullable-native-string-element-binding` | `linked-harness-async-done-marker` |
+| 6477 | `standalone-void-0-undefined-comparison` | `linked-harness-descriptor-reads` |
+
+This is exactly the #2531 merge-queue wedge: those four ids were hand-picked
+rather than reserved (`claim-issue.mjs --allocate` was, and still is, exiting 6
+because the open-PR scan cannot reach `gh`), and `main` has since landed the
+`linked-harness` family on them. **#6478 is clean** — the gate names only the
+four above.
+
+The fix belongs in the S16 PR, not here: renaming those files from this stacked
+branch would rewrite the predecessor's own change-set and conflict with it. The
+order is (1) S16 renumbers to fresh ids, (2) this branch re-merges it, (3) the
+gate goes green. Recorded rather than worked around, because a red
+`check:issue-ids:against-main` blocks BOTH PRs and is invisible until a catch-up
+merge pulls `main` in.
+
 ## Note on the issue id
 
 `node scripts/claim-issue.mjs --allocate` exited **6** (`open-PR id scan FAILED
