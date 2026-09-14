@@ -4684,7 +4684,7 @@ number is claimed; a corpus run remains the tech lead's to schedule.
 
 ## S14 findings (2026-09-13) — the harness itself was the input; ONE `new <value>()` poisoned every provider value, and the linked lane goes 177 → 199
 
-**#6474 is the slice.**
+**#6479 is the slice.**
 
 ### 1. The attribution was wrong for the SIXTH slice running, and this time the census procedure itself was at fault
 
@@ -4733,7 +4733,7 @@ collision, measured on this exact provider: `taCtorIdentityTestInstrs`
 these two did not. **Twelve** bare `ref.test $__ta_ctor` sites remain
 (`dataview-native.ts` ×5, `ta-ctor-meta.ts` ×2, `expressions/calls.ts`,
 `property-access-dispatch.ts`); none was on a path this slice could measure
-moving, so they are written down in #6474 rather than changed blind.
+moving, so they are written down in #6479 rather than changed blind.
 
 ### 3. Why ONE never-called function is the whole input
 
