@@ -1,7 +1,7 @@
 {
   "generated": "2026-09-14",
   "threshold": 1500,
-  "totalCeiling": 878558,
+  "totalCeiling": 881661,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -56,8 +56,6 @@
     "src/codegen/multi-prepared-program.ts": 2553,
     "src/codegen/native-regex.ts": 4389,
     "src/codegen/native-strings.ts": 2616,
-    "src/codegen/number-format-native.ts": 1555,
-    "src/codegen/number-ryu.ts": 1632,
     "src/codegen/numeric-property-analysis.ts": 1601,
     "src/codegen/object-ops.ts": 5196,
     "src/codegen/object-runtime-descriptors.ts": 3593,
