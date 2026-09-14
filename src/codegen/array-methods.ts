@@ -90,7 +90,7 @@ import { ensureNativeArrayHof } from "./hof-native.js";
 import { flatMapSpeciesResult } from "./array-flatmap.js";
 // (§15.4.4.20 / §23.1.3.7) live per-index HasProperty + fresh Get for `filter`.
 import { filterSelectStage, overlayFilterAccess } from "./array-filter-spec-access.js";
-import { nullableElemParamOverrideFor } from "./array-hof-nullable-elem-param.js"; // (#6475)
+import { nullableElemParamOverrideFor } from "./array-hof-nullable-elem-param.js"; // (#6480)
 import { allocJoinFoldLocals, emitStringJoinFold, hostStringRepr, nativeStringRepr } from "./builtin-scaffold.js";
 import { ensureTimsortHelper } from "./timsort.js";
 import { emitStableMergeSort } from "./merge-sort.js"; // (#3902) shared stable O(n log n) sort skeleton
@@ -6615,7 +6615,7 @@ function setupArrayCallback(
   bridgeName?: string,
   thisArgIndex?: number,
   /**
-   * (#6475) The receiver's REAL element type. Installed as
+   * (#6480) The receiver's REAL element type. Installed as
    * `ctx.arrayHofNullableElemParamOverride` for the duration of the callback
    * compile so a `ref_null` element is not asserted non-null at the callback
    * boundary — see `array-hof-nullable-elem-param.ts`. Omitted by `map`, which
@@ -6623,7 +6623,7 @@ function setupArrayCallback(
    */
   elemType?: ValType,
   /**
-   * (#6475) Runtime parameter index that receives the element. 0 for the
+   * (#6480) Runtime parameter index that receives the element. 0 for the
    * predicate family `(element, index, array)`; **1** for
    * `reduce`/`reduceRight`, whose parameter 0 is the accumulator.
    */
@@ -6637,7 +6637,7 @@ function setupArrayCallback(
           return funcIdx === undefined ? undefined : emitFuncRefAsClosure(ctx, fctx, cbArg.text, funcIdx);
         })()
       : undefined;
-  // (#6475) Window the receiver's real element type over the callback compile.
+  // (#6480) Window the receiver's real element type over the callback compile.
   // `nullableElemParamOverrideFor` yields a value only for a `ref_null` element
   // type, and the consumer only honours it against the exact non-null twin, so
   // every other receiver compiles byte-for-byte as before.

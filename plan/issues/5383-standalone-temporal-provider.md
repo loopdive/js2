@@ -4684,7 +4684,7 @@ number is claimed; a corpus run remains the tech lead's to schedule.
 
 ## S14 findings (2026-09-13) — the harness itself was the input; ONE `new <value>()` poisoned every provider value, and the linked lane goes 177 → 199
 
-**#6474 is the slice.**
+**#6479 is the slice.**
 
 ### 1. The attribution was wrong for the SIXTH slice running, and this time the census procedure itself was at fault
 
@@ -4733,7 +4733,7 @@ collision, measured on this exact provider: `taCtorIdentityTestInstrs`
 these two did not. **Twelve** bare `ref.test $__ta_ctor` sites remain
 (`dataview-native.ts` ×5, `ta-ctor-meta.ts` ×2, `expressions/calls.ts`,
 `property-access-dispatch.ts`); none was on a path this slice could measure
-moving, so they are written down in #6474 rather than changed blind.
+moving, so they are written down in #6479 rather than changed blind.
 
 ### 3. Why ONE never-called function is the whole input
 
@@ -4917,8 +4917,8 @@ number is claimed; a corpus run remains the tech lead's to schedule.
 
 ### S15 findings (2026-09-13) — `sn()` did not need a Temporal fix; it needed the array-HOF callback to stop asserting a nullable element non-null. 199 → 201, and the whole 22-row `sn()` bucket moved one step
 
-**#6475 is the slice.** Full write-up, tables and residuals in the issue file
-`plan/issues/6475-standalone-nullable-vec-element-callback-param.md`.
+**#6480 is the slice.** Full write-up, tables and residuals in the issue file
+`plan/issues/6480-standalone-nullable-vec-element-callback-param.md`.
 
 #### 1. Root cause, and why six slices of Temporal work never reached it
 
@@ -4995,7 +4995,7 @@ and each lowering that forgets it has to be taught separately.
 Still open behind it: `instanceof` across the provider link with a dynamic RHS
 (S11 residual, gates 2 Duration rows), ZonedDateTime's 7-row
 `required property 'timeZone' missing`, PlainDate's 6-row `year is required`
-and its 3-row `__closure_N()` null pointer — **measured NOT to be the #6475
+and its 3-row `__closure_N()` null pointer — **measured NOT to be the #6480
 family**, since PlainDate did not move at all.
 
 #### 5. Traps, carried forward
