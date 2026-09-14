@@ -1869,13 +1869,27 @@ function _hostStrictEqual(a: any, b: any): boolean {
         : undefined;
   if (hostCtor) {
     const other = hostCtor === a ? b : a;
-    if (typeof other === "function") {
-      const closure = _wasmClosureWrapperTargets.get(other);
-      // sta.js installs the distinctive static `Test262Error.thrower` helper on
-      // the declaration. Closure function names are not stored in the sidecar,
-      // so this own static member is the stable harness identity marker.
-      if (closure && _wasmStructProps.get(closure)?.thrower !== undefined) return true;
-    }
+    // sta.js installs the distinctive static `Test262Error.thrower` helper on
+    // the declaration. Closure function names are not stored in the sidecar,
+    // so this own static member is the stable harness identity marker.
+    //
+    // (#3451) The `other` side may arrive in EITHER representation. A callable
+    // host mirror is what a single module produces; a LINKED consumer that
+    // passes its `Test262Error` to a provider's `assert.throws` unwraps the
+    // mirror to the raw closure struct on the way in (`_denseOwnWasmArgs` →
+    // `_unwrapForHost`), so inside the provider `other` is a plain object and
+    // the mirror-only lookup below found nothing — `assert.throws(Test262Error,
+    // …)` then reported "Expected a undefined but got a HostTest262Error" for
+    // every such row. Accept the struct directly; the `thrower` marker is what
+    // does the discriminating either way, so no previously-unequal pair
+    // becomes equal that was not already equal through its mirror.
+    const closure =
+      typeof other === "function"
+        ? _wasmClosureWrapperTargets.get(other)
+        : other != null && typeof other === "object"
+          ? other
+          : undefined;
+    if (closure && _wasmStructProps.get(closure)?.thrower !== undefined) return true;
   }
   return false;
 }
@@ -2804,7 +2818,32 @@ function _instanceofResult(
 
   // (#4394) `err instanceof Test262Error` against the MODULE's own carrier —
   // the prototype walk below can never reach a compiled closure.
-  if (test262Host.isModuleTest262ErrorInstance(v, rawTarget)) return 1;
+  // (#3451) Query with the CANONICAL carrier, matching the canonicalisation at
+  // the recording site (`__new_Test262Error_ctor`). In a single module
+  // `_unwrapForHost` is the identity here; in a linked graph `rawTarget` is the
+  // provider's host mirror while the carrier was recorded as the raw closure
+  // struct, and querying under the mirror missed every time.
+  {
+    const carrier = rawTarget == null ? rawTarget : _unwrapForHost(rawTarget);
+    if (test262Host.isModuleTest262ErrorInstance(v, carrier)) return 1;
+    // (#3451) The carrier registry only knows constructions that went through
+    // `__new_Test262Error_ctor`, which codegen emits for a module that DECLARES
+    // `function Test262Error`. A LINKED consumer declares no such function — it
+    // holds the provider's binding — so its `new Test262Error(msg)` takes the
+    // generic `extern_class` arm, which mints a `HostTest262Error` and records
+    // nothing. Fall back to the SAME `thrower` static marker `_hostStrictEqual`
+    // uses to recognise the harness's own constructor: sta.js installs
+    // `Test262Error.thrower` on the declaration, so a closure struct carrying
+    // it is the harness `Test262Error` and no other compiled value is.
+    if (
+      test262Host.isHostTest262Error(v) &&
+      carrier != null &&
+      typeof carrier === "object" &&
+      _wasmStructProps.get(carrier)?.thrower !== undefined
+    ) {
+      return 1;
+    }
+  }
 
   try {
     return v instanceof (target as { new (...a: unknown[]): unknown }) ? 1 : 0;
@@ -15904,7 +15943,20 @@ assert._isSameValue = isSameValue;
       // object. `Symbol.prototype.description` already unwraps such wrappers.
       // (#4394) `new Test262Error(msg)` in a module that DECLARES its own
       // `function Test262Error` — see runtime/test262-harness-host.ts.
-      if (name === "__new_Test262Error_ctor") return test262Host.makeTest262ErrorWithModuleCtor;
+      // (#3451) CANONICALISE the carrier before recording it. In a single
+      // module `ctor` is already the raw closure struct, so this is the
+      // identity. In a LINKED graph (#2527) the harness lives in a provider
+      // module and the body's `Test262Error` is the provider's HOST MIRROR of
+      // that closure — so the carrier gets recorded under the mirror while
+      // `instanceof`'s `rawTarget` (line ~2807) and every argument the consumer
+      // hands a provider callable (`_denseOwnWasmArgs` → `_unwrapForHost`) are
+      // the RAW struct. Registering under one and querying under the other is
+      // why `e instanceof Test262Error` read false for an error that plainly
+      // is one. `_unwrapForHost` is the existing mirror→struct canonicaliser.
+      if (name === "__new_Test262Error_ctor") {
+        return (msg: unknown, ctor: unknown) =>
+          test262Host.makeTest262ErrorWithModuleCtor(msg, ctor == null ? ctor : _unwrapForHost(ctor));
+      }
       if (name === "__new_Symbol") {
         const symbolCache = _resolveSymbolCache(instanceState);
         const symbolDescRegistry =

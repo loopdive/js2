@@ -15,6 +15,27 @@ language_feature: module-linking
 goal: test262-conformance
 depends_on: [1046, 2527]
 related: [33, 34, 3433, 3450, 3461, 3491, 3625]
+# (2026-09-14, slice 3 / P2) Three substrate fixes land in the two god-files that
+# own the boundaries they are about; there is no subsystem module to move them to
+# without inventing one for three call sites.
+#   - src/runtime.ts +52: the mirror-vs-raw-struct canonicalisation at
+#     `__new_Test262Error_ctor`, the `instanceof` carrier query, and the
+#     `_hostStrictEqual` harness-identity arm. ~40 of the 52 lines are the
+#     comments recording WHICH representation each site sees and why the
+#     registered-under-one/queried-under-the-other split produced a false
+#     `instanceof` — the fix is unreadable without them.
+#   - src/compiler.ts +21: hoisting `TOLERATED_SYNTAX_CODES` to module scope so
+#     the multi-file syntax gate applies the SAME allowlist as the single-file
+#     one. Net logic is one predicate term; the rest is the doc comment saying
+#     why a gate without the list is wrong rather than merely stricter.
+loc-budget-allow:
+  - src/runtime.ts
+  - src/compiler.ts
+# `resolveImport` +13: `__new_Test262Error_ctor` changes from a bare function
+# reference to a two-line arrow that canonicalises the carrier, plus its
+# comment. Splitting the 7.7k-line resolver is #3399's job, not this PR's.
+func-budget-allow:
+  - src/runtime.ts::resolveImport
 ---
 
 # #3451 — reusable linked Test262 harness Wasm for both lanes
@@ -339,3 +360,241 @@ runtime wrappers. Two candidate routes, both compiler work:
 Either is an XL compiler task; neither is a runner-only change. The strict-
 rerun elision (#6463) and the checker fix (#5814) were the runner-side levers
 and are landed; #6462 duplicated this issue and is closed as such.
+
+## Implementation Plan — slice 3 (written 2026-09-14, Fable lane; implementation: Opus)
+
+### Decision revision
+
+Slice 3 ("shared-realm substrate") is implemented on the **host-bridge
+linked-provider substrate** (#2527 canonical rec-group, #5225 cross-module
+struct decoders / mirrors, #5226 shared `env.__exn`, #5364 per-row registry
+reset) — the path `compileWithTemporalGlobal` already runs in the sharded lane.
+The July decision preferred one statically linked module; that route is not
+available today and is not cheaper:
+
+- `src/link/` (#34) rejects every GC typedef (`parseTypeSection` throws for
+  anything but `0x60`, `src/link/reader.ts:379`), relocates by opcode scanning,
+  merges no data/start sections and **isolates** modules by design (multi-memory,
+  separate tables, no shared globals) — the opposite of a shared realm.
+- `compileToObject` bypasses the Prepared-IR pipeline and refuses `standalone`
+  (`src/compiler/output.ts:306`).
+- Class/closure struct identity is per module and name-keyed
+  (`ctx.structMap`, `src/codegen/context/types.ts:1546`); a merged module would
+  still need the consumer to know the harness's shapes. That is exactly what the
+  #5225 decoder registry already provides across two instances.
+
+Static link stays the fallback if P2 below cannot reach parity; nothing in
+P1/P3/P4 is lost in that case.
+
+### Ground truth (measured 2026-09-13, `scripts/test262-linked-harness-smoke.mts`)
+
+- Linked body compile 30–96 ms vs 600–1,400 ms honest; provider build
+  0.7–2.9 s per include-set (64 sets per lane, #3451 slice 1).
+- Provider-linked wiring is sound: 12/12 verdict agreement on
+  `built-ins/Array/prototype/map`.
+- **Harness lowering is body-specialised.** `isNegativeZero` compiles to 37
+  lines with an `f64` temp under one body and 22 lines with an `i32` temp under
+  another (`.tmp`-style diff of two honest assemblies). A once-compiled harness
+  is therefore the *generic* lowering of every harness function. Parity is
+  measured per test, never assumed; a difference caused by generic-vs-specialised
+  lowering is a compiler finding to file, not a linker bug to paper over.
+
+### P1 — harness provider builder (`src/test262-harness-provider.ts`, new)
+
+Mirror `src/temporal-provider.ts` one-to-one:
+
+- `harnessProviderCacheKey({ harnessPrefix, compileOptions })` =
+  `fingerprint([prefix, providerOptionFingerprint(opts), RUNTIME_RECGROUP_ABI_VERSION, PROVIDER_COMPILER_ABI_VERSION, PROVIDER_LINKER_ABI_VERSION])`.
+- `buildHarnessProvider({ harnessPrefix, cacheDir, compileOptions })` →
+  `{ artifact, namespace, getters: Map<name, field>, names, buildMs, cacheHit }`.
+  Synthetic package `test262-harness` under `<cacheDir>/harness-project-v1-<key>/`
+  (materialise + verify + atomic rename exactly like `materializeTemporalProject`);
+  `index.js` = prefix + `export const __h_<name> = <name>;` for every top-level
+  `var`/`function`/`class` name (`$` → `S_`); entry imports ALL aliases so every
+  boundary is published; assert `exportBoundaries[alias].kind === "getter"`.
+  Memory cache + `packageCacheDir` disk cache as Temporal.
+- `harnessBindingPrelude(provider, body, strict)` → `{ stubSource, prelude, bindings }`:
+  referenced names by the #3461 token regex (`buildBindingShim` in
+  `tests/test262-original-harness.ts`), `import { <getters> } from "./__js2wasm_harness_stub"`,
+  `var <name> = <getter>();` per name, `"use strict";\n` first when `strict`.
+- `compileHarnessLinkedBody(provider, body, options)` = `compileMulti` with
+  `canonicalRuntimeTypes: true, sharedExceptionTag: true, link: [namespace],
+  linkedPackageBindings, inferModuleStrictArguments: false, allowJs: true,
+  fileName: "test.js"`, then `result.linkedModules = [artifact]`.
+- Export all of it from `scripts/compiler-bundle-entry.ts` next to the Temporal
+  exports; rewrite `scripts/test262-linked-harness-smoke.mts` onto these APIs.
+
+### P2 — substrate parity fixes (`src/runtime.ts`, `src/linked-provider-runtime.ts`)
+
+Each has a minimal repro; add each as a vitest case in
+`tests/issue-3451-linked-harness-substrate.test.ts` that compiles the harness
+provider (`assert.js + sta.js + propertyHelper.js`) and a body, instantiates
+via `instantiateTest262Module`, and asserts the body's own `assert` calls pass.
+
+1. **Constructor identity round trip.** Body:
+   `assert.throws(Test262Error, function() { throw new Test262Error("x"); });`
+   today fails "Expected a undefined but got a HostTest262Error". The getter
+   hands the body a mirror of the provider's `Test262Error`; passed back as an
+   argument it must re-enter the provider as the ORIGINAL struct. Add a
+   mirror→struct ownership map in `createLinkedProviderMirrorOwnership` and
+   unwrap at the inbound argument marshalling of provider callables
+   (`_wrapCallableForHost` / `_maybeWrapCallableUnknownArity` arg path). Also
+   covers `x instanceof Test262Error` and `assert.throws(TypeError, …)` (native
+   error constructors must keep working — regression case).
+2. **Reflection on consumer structs.** Body:
+   `function f() {} verifyProperty(f, "name", { value: "f", writable: false, enumerable: false, configurable: true });`
+   and `var o = {a: 1}; verifyProperty(o, "a", { value: 1 });` fail "should be an
+   own property". `propertyHelper.js` inside the provider reaches
+   `Object.getOwnPropertyDescriptor` / `hasOwnProperty` / `Object.keys` /
+   `delete` on a mirror of a consumer struct. Route those host paths through
+   `_decoderExportsFor(obj)` (#5225) so the CONSUMER's `__struct_field_names` /
+   `__sget_` / descriptor helpers answer, including function `name` / `length`
+   on consumer closures. Check `Object.defineProperty` on consumer structs the
+   same way (`verifyNotWritable` writes then reads back).
+3. **Boxed-value shape.** `for-of/dstr/array-elem-init-assignment.js` reports
+   `Expected SameValue(«[object Object]», «12»)`: a body number reaches the
+   provider as an object. Reduce to a minimal body, find the mirror path that
+   boxes it (suspect: `_wrapForHost` on an `f64` box struct), fix.
+
+After each fix rerun the smoke script on `language/statements/for-of/dstr` and
+`built-ins/Array/prototype/map` (12 each); no agreement may regress.
+
+### P3 — runner shadow lane (`scripts/test262-worker.mjs`, `tests/test262-shared.ts`)
+
+- `TEST262_ORACLE_MODE=linked`: in `doCompile`, when `originalHarness` and not
+  `raw`, take `assembleLinkedHarness(source, meta)` (already split at the right
+  boundary, #3451 slice 1), get the provider for `harnessPrefix` (ONE memoised
+  builder per fork, like `getWorkerTemporalProvider`; refuse cold builds inside
+  the 30 s fork budget the same way — add `scripts/prewarm-test262-harness-providers.mjs`
+  that builds all 64 include-set providers for a lane and writes the stamp;
+  wire it where `prewarm-temporal-provider.mjs` is called), compile the body
+  with `compileHarnessLinkedBody`, instantiate through the existing
+  `instantiateTest262Module(..., { linkedModules: [artifact], linkedRuntime: runtimeBundle })`.
+- The strict rerun (#6463 gating unchanged) links the SAME artifact with the
+  strict prelude.
+- **Per-row honest fallback**: a link-shape compile error (body redeclares a
+  harness name, or the getter prelude fails to type) falls back to the honest
+  assembly for that row and increments a `linked_fallback` counter; the row is
+  stamped `oracle_lane: "linked-harness-fallback"`. Never silently.
+- Row stamp `oracle_lane: "linked-harness"`; `diff-test262` must refuse to
+  compare a linked run against the honest baseline (same rule as
+  `fast-nativeharness`). The lane NEVER promotes a baseline.
+
+### P4 — parity measurement and acceptance
+
+Run both lanes (`COMPILER_POOL_SIZE=1`, `TEST262_PATH_FILTER`) on:
+`language/statements/for-of`, `built-ins/Array/prototype/map`,
+`built-ins/Object/defineProperty`, `language/expressions/class`,
+`built-ins/Promise/prototype/then` (async), `language/statements/with` (sloppy),
+and one `raw` sample. Diff per test (`scripts/diff-test262.ts` style), not by
+count.
+
+Acceptance for this PR:
+- [ ] P2 repros pass as vitest cases; smoke agreement 12/12 on both sample dirs.
+- [ ] Shadow lane runs the sample above with **zero** verdict differences
+      against the honest lane on the same commit, fallback count reported.
+- [ ] Median `compile_ms` on the `for-of` + `map` slice ≤ 300 ms at pool 1
+      (honest after #6463: 914 ms).
+- [ ] `TEST262_ORACLE_MODE=linked` is opt-in; unset ⇒ byte-identical honest
+      behaviour (assert in a test: same binary for one row).
+- [ ] Every remaining difference is filed as its own issue with the minimal
+      body, classified "generic-lowering" or "substrate".
+
+Authority flip (slice 6) is a separate PR after a full two-lane parity run.
+
+### Order-preservation constraints
+
+- Initialisation order per row: provider instance (harness prefix, fresh per
+  row via `instantiateLinkedProviders`) → body module start. Never reuse a
+  provider INSTANCE across rows; reuse only the artifact bytes.
+- `resetLinkedProjectRegistry()` before every row (already in
+  `instantiateTest262Module`).
+- Do not touch `scripts/*-baseline.json`, do not enqueue, no `--no-verify`.
+
+## Slice 3 measurements (2026-09-14)
+
+Implemented P1-P4. All numbers below are from THIS worktree at the slice-3
+commits, 4-core container, `COMPILER_POOL_SIZE=1`, both lanes run at the same
+commit through the real worker (`tests/test262-local-shard1.test.ts`, chunk 1/16
+of the filtered set), honest first then `TEST262_ORACLE_MODE=linked`.
+
+### Speed — the ceiling is real and it holds through the runner
+
+| sample | rows | median `compile_ms` honest | median `compile_ms` linked | factor |
+| --- | --- | --- | --- | --- |
+| `Array/prototype/map` + `statements/for-of` | 60 | 360 | **68** | 5.3× |
+| `Object/defineProperty` + `expressions/class` + `Promise/prototype/then` + `statements/with` | 344 | 404 | **73** | 5.5× |
+
+The plan's bar was **median ≤ 300 ms**; measured 68-73 ms. Wall clock for the
+second sample fell 232.9 s → 145.7 s (−37%) even while the linked lane also paid
+43 cold provider builds inside the run.
+
+Provider cost, for the amortisation argument: 0.9-1.6 s each, 80-194 KB, and the
+pre-warm of three distinct include-sets took 4.0 s total. 64 sets per lane.
+
+### Parity — 109 verdict differences in 404 common rows
+
+| sample | rows | differences | fallback rows |
+| --- | --- | --- | --- |
+| map + for-of | 60 | 14 | 7 |
+| defineProperty + class + then + with | 344 | 95 | 43 |
+
+Not zero, so the plan's parity acceptance box is **NOT** green. Every difference
+is classified and filed; none is unexplained:
+
+| class | rows | filed as |
+| --- | --- | --- |
+| async completion marker not observed | 49 | #6476 |
+| "different error constructor with the same name" (native errors) | ~32 | #6475 |
+| descriptor VALUE read wrong (honest passes) | ~14 | #6477 |
+| script-vs-module: top-level `var`, `arguments` | ~4 | #6474 |
+
+The single largest lever is #6475: the provider rebuilds its own `env`, so it
+resolves the AMBIENT error constructors while the consumer gets the runner's
+per-test realm ones. That also plausibly explains part of #6477.
+
+### What P2 fixed, and a correction to the plan
+
+Three defects, one root cause — an identity registered under the provider's host
+MIRROR and queried under the raw closure struct, or the reverse. Details in the
+P2 commit; the 12-case substrate probe went 8/12 → 12/12 and the smoke reached
+12/12 on `Array/prototype/map`, `for-of/dstr` and `Object/defineProperty`.
+
+**The plan's class 2 was misattributed.** `verifyProperty` failures are NOT a
+module-boundary defect: `Object.prototype.hasOwnProperty.call` / `in` /
+`Object.hasOwn` on a compiled object answer wrong in the HONEST single-module
+lane too, under `allowJs`, while `Object.keys` answers right. Both lanes fail
+those bodies alike, so they are already at parity and the "thousands of
+built-ins tests" framing does not apply to the shadow lane. #6477 covers the
+part that IS a difference (descriptor values the honest lane gets right).
+
+**The plan's class 3 does not reproduce.** Both reductions of the boxed-value
+symptom pass in both lanes; the row it came from
+(`for-of/dstr/array-elem-init-assignment.js`) fails in both for an unrelated
+reason.
+
+**A fourth defect, not in the plan and worse than any of them:** the linked lane
+silently RAN source the honest lane rejects (`var a = ;;;` compiled and
+executed). `compileMulti` suppresses syntactic diagnostics under `allowJs`;
+without `strictJsSyntax` every `negative: SyntaxError` row would have flipped
+pass→fail, in the lane whose only purpose is parity. Fixed, together with
+hoisting `TOLERATED_SYNTAX_CODES` so the multi-file gate applies the same
+tolerances as the single-file one (otherwise the flag over-corrects and rejects
+valid JavaScript).
+
+### Acceptance boxes
+
+- [x] P2 repros pass as vitest cases; smoke 12/12 on both named sample dirs.
+- [ ] Shadow lane with **zero** verdict differences — **NO**: 109/404, all four
+      classes filed (#6474-#6477). Fallback count reported per row and stamped
+      `oracle_lane: "linked-harness-fallback"`; 50/404 rows fell back.
+- [x] Median `compile_ms` ≤ 300 at pool 1 — measured **68-73**.
+- [x] `TEST262_ORACLE_MODE=linked` is opt-in; unset ⇒ honest behaviour, asserted
+      in `tests/issue-3451-linked-harness-lane.test.ts` (same binary for a row,
+      plus the gating expressions and the `diff-test262` refusal).
+- [x] Every remaining difference is filed with its class and mechanism.
+
+`diff-test262` refuses a linked run against any other lane **unconditionally** —
+`ORACLE_REBASE=1` does not excuse it, because seeding a linked baseline IS the
+authority flip (slice 6), and an escape hatch here is exactly how a shadow lane
+silently becomes the published number.

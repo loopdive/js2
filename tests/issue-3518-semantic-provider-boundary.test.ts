@@ -199,9 +199,21 @@ const declarationGroups = {
   "backend-wasmgc": [...priorGroups["backend-wasmgc"], declarationAdditions[1]!],
 };
 const aggregateAdditions = ["src/backend/wasmgc/program/native-string-values.ts"];
-const groups = {
+const mainGroups = {
   ...declarationGroups,
   "backend-wasmgc": [...declarationGroups["backend-wasmgc"], ...aggregateAdditions],
+};
+const formatterGroups = {
+  "frontend-ts": ["src/frontend/builtins/contracts.ts"],
+  "ir-core": ["src/ir/core/type-references.ts"],
+  "ir-program": ["src/ir/program/runtime-support.ts", "src/ir/program/formatter-support.ts"],
+};
+const formatterAdditions = Object.values(formatterGroups).flat();
+const groups = {
+  ...mainGroups,
+  "frontend-ts": formatterGroups["frontend-ts"],
+  "ir-core": [...mainGroups["ir-core"], ...formatterGroups["ir-core"]],
+  "ir-program": [...mainGroups["ir-program"], ...formatterGroups["ir-program"]],
 };
 const required = Object.values(groups).flat();
 const callableAdditions = ["src/ir/core/async-callables.ts", "src/ir/runtime/native-async-callables.ts"];
@@ -256,14 +268,19 @@ function assertOriginalComposition(history: unknown[]) {
   );
 }
 function assertNewActivations(history: unknown[]) {
+  expect(history.slice(0, 3)).toEqual(
+    Object.entries(formatterGroups).map(([layer, entries]) => ({ layer, entries, minModules: entries.length })),
+  );
+  // Keep the full delivered main history and all its original digest checks.
+  history = history.slice(3);
   assertOriginalComposition(history);
   history = history.slice(2);
   // The combined declaration and both published 9ccad45c additions precede
   // the exact complete activation history independently read from eac9f741.
   expect(history[0]).toEqual({
     layer: "backend-wasmgc",
-    entries: groups["backend-wasmgc"],
-    minModules: groups["backend-wasmgc"].length,
+    entries: mainGroups["backend-wasmgc"],
+    minModules: mainGroups["backend-wasmgc"].length,
   });
   expect(history[1]).toEqual({
     layer: "backend-wasmgc",
@@ -272,8 +289,8 @@ function assertNewActivations(history: unknown[]) {
   });
   expect(history[2]).toEqual({
     layer: "ir-program",
-    entries: groups["ir-program"],
-    minModules: groups["ir-program"].length,
+    entries: mainGroups["ir-program"],
+    minModules: mainGroups["ir-program"].length,
   });
   expect(digest(history.slice(1, 3))).toBe("025f946401a0b57c22705361d4b69f314cad7e0c2aa856dcf0834fe74858ea3a");
   history = history.slice(3);
@@ -506,8 +523,8 @@ function fixture() {
 
 describe("semantic verification and provider ownership boundary", () => {
   it("pins the original 70 modules plus seven Promise/vector and five string/error owners without relaxing historical policy", () => {
-    expect(required).toHaveLength(102);
-    expect(new Set(required).size).toBe(102);
+    expect(required).toHaveLength(106);
+    expect(new Set(required).size).toBe(106);
     expect(callableAdditions).toHaveLength(2);
     expect(vectorAdditions).toHaveLength(2);
     expect(typeLayoutAdditions).toHaveLength(1);
@@ -537,6 +554,7 @@ describe("semantic verification and provider ownership boundary", () => {
             ...closureAdditions,
             ...declarationAdditions,
             ...aggregateAdditions,
+            ...formatterAdditions,
           ].includes(path),
       ),
     ).toHaveLength(56);
@@ -562,17 +580,18 @@ describe("semantic verification and provider ownership boundary", () => {
       ...closureAdditions,
       ...declarationAdditions,
       ...aggregateAdditions,
+      ...formatterAdditions,
     ])
       expect(required).toContain(path);
     const p = policy();
     assertNewActivations(p.activationHistory);
-    expect(p.activationHistory).toHaveLength(63);
-    expect(digest(p.activationHistory.slice(39))).toBe(
+    expect(p.activationHistory).toHaveLength(66);
+    expect(digest(p.activationHistory.slice(42))).toBe(
       "3437a59aacf39df9dffcafa8099ac9f47c0f43a7a0ecc423df4c1fe3e638f002",
     );
     expect(digest(p.allowedEdges)).toBe("efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7");
     // Exact full activation history at b4c116639a, not a selected subset.
-    expect(digest(p.activationHistory.slice(45))).toBe(
+    expect(digest(p.activationHistory.slice(48))).toBe(
       "a6d07b900b0837832707ce083202ab6ffa40f0bbe6bfce25f3062270882b26da",
     );
     for (const [id, entries] of Object.entries(groups)) {
@@ -589,17 +608,18 @@ describe("semantic verification and provider ownership boundary", () => {
   it("loads the complete actual canonical type-and-value closure", () => {
     const r = fixture().run();
     expect(r.status, JSON.stringify(r.report.errors)).toBe(0);
-    expect(r.report.counts.total).toBe(102);
+    expect(r.report.counts.total).toBe(106);
     expect(r.report.errors).toEqual([]);
     for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
       expect(r.report[field]).toEqual([]);
-    // Shared async declarations add three type-only imports and four runtime
-    // imports to the measured closure; the September 14 failed census is retained.
+    // Formatter support adds four canonical modules and 26 imports to the
+    // delivered-main closure: 11 type-only and 15 runtime. The original
+    // September 14 missing-module and history-offset failures are retained.
     // Historical parent and published activation records remain unchanged.
     expect({ edges: r.report.resolvedEdgeCount, ...r.report.counts.resolvedEdgesByType }).toEqual({
-      edges: 399,
-      typeOnly: 251,
-      runtime: 148,
+      edges: 425,
+      typeOnly: 262,
+      runtime: 163,
     });
   });
 
@@ -638,17 +658,34 @@ describe("semantic verification and provider ownership boundary", () => {
     expect(() => assertModelOnlyDeclarations(text + "\n" + mutation)).toThrow();
   });
 
+  it.each(
+    [0, 1, 2].flatMap((index) =>
+      (["delete", "reorder", "layer", "entries", "minimum"] as const).map((mutation) => ({ index, mutation })),
+    ),
+  )("rejects $mutation corruption of formatter activation record $index", ({ index, mutation }) => {
+    const history = policy().activationHistory;
+    assertNewActivations(history);
+    const before = digest(history);
+    if (mutation === "delete") history.splice(index, 1);
+    if (mutation === "reorder") [history[index], history[index + 1]] = [history[index + 1], history[index]];
+    if (mutation === "layer") history[index].layer = "ir-analysis";
+    if (mutation === "entries") history[index].entries.pop();
+    if (mutation === "minimum") history[index].minModules--;
+    expect(digest(history), "mutation must alter the formatter activation record").not.toBe(before);
+    expect(() => assertNewActivations(history)).toThrow();
+  });
+
   it.each(["delete", "reorder", "layer", "entries", "minimum"] as const)(
     "rejects %s corruption of the new activation records",
     (mutation) => {
       const history = policy().activationHistory;
       assertNewActivations(history);
       const before = digest(history);
-      if (mutation === "delete") history.splice(2, 1);
-      if (mutation === "reorder") [history[2], history[3]] = [history[3], history[2]];
-      if (mutation === "layer") history[2].layer = "ir-core";
-      if (mutation === "entries") history[2].entries.pop();
-      if (mutation === "minimum") history[2].minModules--;
+      if (mutation === "delete") history.splice(5, 1);
+      if (mutation === "reorder") [history[5], history[6]] = [history[6], history[5]];
+      if (mutation === "layer") history[5].layer = "ir-core";
+      if (mutation === "entries") history[5].entries.pop();
+      if (mutation === "minimum") history[5].minModules--;
       expect(digest(history), "mutation must alter the accepted activation records").not.toBe(before);
       expect(() => assertNewActivations(history)).toThrow();
     },
@@ -657,9 +694,9 @@ describe("semantic verification and provider ownership boundary", () => {
   it.each(
     (
       [
-        ["published backend", 3],
-        ["published demand", 4],
-        ["refreshed parent", 5],
+        ["published backend", 6],
+        ["published demand", 7],
+        ["refreshed parent", 8],
       ] as const
     ).flatMap(([owner, index]) =>
       (["delete", "reorder", "layer", "entries", "minimum"] as const).map((mutation) => ({
@@ -688,8 +725,8 @@ describe("semantic verification and provider ownership boundary", () => {
   )("rejects $mutation corruption of original prerequisite activation records at $offset", ({ offset, mutation }) => {
     const history = policy().activationHistory;
     assertNewActivations(history);
-    const index = originalCompositionOffsets[offset]!;
-    const next = originalCompositionOffsets[offset + 1]!;
+    const index = 3 + originalCompositionOffsets[offset]!;
+    const next = 3 + originalCompositionOffsets[offset + 1]!;
     const before = digest(history);
     if (mutation === "delete") history.splice(index, 1);
     if (mutation === "reorder") [history[index], history[next]] = [history[next], history[index]];
@@ -733,6 +770,7 @@ describe("semantic verification and provider ownership boundary", () => {
     ...closureAdditions,
     ...declarationAdditions,
     ...aggregateAdditions,
+    ...formatterAdditions,
   ])("rejects deleting %s and its classification", (path) => {
     const f = fixture();
     rmSync(resolve(f.root, path));
@@ -764,10 +802,26 @@ describe("semantic verification and provider ownership boundary", () => {
     ...closureAdditions,
     ...declarationAdditions,
     ...aggregateAdditions,
+    ...formatterGroups["ir-core"],
+    ...formatterGroups["ir-program"],
   ])("rejects an aliased frontend type dependency from %s", (path) => {
     const f = fixture();
     f.put("src/forbidden.ts", "export interface Hidden { value: number }");
     f.p.files.push({ path: "src/forbidden.ts", layer: "frontend-ts", state: "unmigrated" });
+    f.append(path, 'export type { Hidden } from "@forbidden";');
+    const r = f.run();
+    expect(r.status).toBe(1);
+    expect(r.report.forbiddenEdges).toContainEqual(
+      expect.objectContaining({ from: path, to: "src/forbidden.ts", typeOnly: true }),
+    );
+  });
+
+  it("rejects a backend implementation dependency from the frontend formatter contract", () => {
+    const f = fixture();
+    expect(f.run().status).toBe(0);
+    const path = formatterGroups["frontend-ts"][0]!;
+    f.put("src/forbidden.ts", "export interface Hidden { value: number }");
+    f.p.files.push({ path: "src/forbidden.ts", layer: "backend-wasmgc", state: "unmigrated" });
     f.append(path, 'export type { Hidden } from "@forbidden";');
     const r = f.run();
     expect(r.status).toBe(1);
@@ -800,6 +854,7 @@ describe("semantic verification and provider ownership boundary", () => {
       ...closureAdditions,
       ...declarationAdditions,
       ...aggregateAdditions,
+      ...formatterAdditions,
     ])(`reports ${field} from %s instead of treating it as closed`, (path) => {
       const f = fixture();
       f.append(path, source);
