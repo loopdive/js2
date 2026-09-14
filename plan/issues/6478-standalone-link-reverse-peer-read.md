@@ -239,16 +239,16 @@ terminal is not worth its global.
    `### S17 findings` in #5383.
 5. Every `gc` artifact in the byte A/B corpus is sha256-identical. ✅ measured
 
-## RESOLVED 2026-09-14 — the stack was renumbered
+## The id collision this slice found, and how it was resolved
 
-S14–S16 were renumbered by the coordinator on their own branches and merged
-forward: #6474 → #6479, #6475 → #6480, #6476 → #6481, #6477 → #6482. The
-section below is kept as the record of the collision.
+**RESOLVED 2026-09-14.** S14–S16 renumbered on their own branches and the fix
+was merged forward: **#6474 → #6479, #6475 → #6480, #6476 → #6481,
+#6477 → #6482**. #6478 was never in the collision and did not move. The account
+below is kept because the failure mode is reusable, not because it is open.
 
-## BLOCKER inherited from the stack — #6474–#6477 collide with `main`
-
-`npm run -s check:issue-ids:against-main` FAILS on this branch after the
-catch-up merge, and **none of the four collisions is this slice's**:
+`npm run -s check:issue-ids:against-main` went RED on this branch the moment the
+catch-up merge pulled `main` in, and **none of the four collisions was this
+slice's**:
 
 | id | this branch (S14–S16) | already on `origin/main` |
 | --- | --- | --- |
@@ -263,18 +263,37 @@ because the open-PR scan cannot reach `gh`), and `main` has since landed the
 `linked-harness` family on them. **#6478 is clean** — the gate names only the
 four above.
 
-The fix belongs in the S16 PR, not here: renaming those files from this stacked
-branch would rewrite the predecessor's own change-set and conflict with it. The
-order is (1) S16 renumbers to fresh ids, (2) this branch re-merges it, (3) the
-gate goes green. Recorded rather than worked around, because a red
-`check:issue-ids:against-main` blocks BOTH PRs and is invisible until a catch-up
-merge pulls `main` in.
+The fix belonged in the S16 PR, not here: renaming those files from this stacked
+branch would have rewritten the predecessor's own change-set and conflicted with
+it. The order actually run was (1) S16 renumbered, (2) this branch re-merged,
+(3) the gate went green — which is what happened.
 
-## Note on the issue id
+**Three things in that sequence are worth carrying forward.**
+
+1. A red `check:issue-ids:against-main` blocks BOTH PRs of a stack and is
+   invisible until a catch-up merge pulls `main` in. It is not a reason to
+   defer the merge; it is a reason to do it early.
+2. **The gate compares FILENAMES, not prose.** S16's renumber passed the gate
+   with seven cross-slice `#<old-id>` references still in issue text, source
+   comments and a test — each pointing a reader at an unrelated issue that
+   `main` now owns under that number. The sweep (`grep -rn '#<old>'` repo-wide)
+   has to run AFTER the gate goes green, not before.
+3. This branch had to merge S16 **twice**: a concurrent lane merged an earlier
+   S16 tip into it (pre-sweep), so `git merge-base --is-ancestor <s16-head> HEAD`
+   answered 1 while every file looked renumbered. Checking the ancestor rather
+   than the filenames is what caught it.
+
+## Note on the issue id — #6478 is UNRESERVED
 
 `node scripts/claim-issue.mjs --allocate` exited **6** (`open-PR id scan FAILED
-… gh offline/unauthenticated`), so nothing could be reserved. `--dry-run`
-previewed **#6474**, which is already used by an unreserved file on this branch
-(6474–6477 were all taken the same way). This slice therefore takes the next id
-after 6477 — **6478** — per the S17 brief, and the reservation must be made
-against upstream's book once `gh` is reachable again.
+… gh offline/unauthenticated`) every time it was run this session, so nothing
+could be reserved. `--dry-run` previewed **#6474**, which was already in use by
+an unreserved file on this branch — 6474–6477 were all taken that way, and all
+four then collided with `main`. This slice therefore took the next id after
+6477, **#6478**, per the S17 brief.
+
+**That means #6478 carries exactly the same exposure the other four did**: it is
+free on `main` and on the open-PR scan as of 2026-09-14, and nothing holds it.
+The required `check:issue-ids:against-main` gate is the only backstop until
+`--allocate` can reach the assignment book again; if it goes red on this id,
+renumber here rather than anywhere else.
