@@ -10,11 +10,105 @@ import { createVectorBaseType } from "../../../runtime/wasmgc/values/vector-grow
 import {
   createArgumentVectorArrayType,
   createArgumentVectorType,
+  createArgumentVectorShape,
   buildArgumentVectorNewBody,
   buildArgumentVectorPushLocals,
   buildArgumentVectorPushBody,
   type ArgumentVectorLayout,
 } from "../../../runtime/wasmgc/values/argument-vector-bodies.js";
+import type {
+  NativeResourceRecipe,
+  NativeStringValueDeclaration,
+} from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
+import {
+  freezeNativeResourceRecipe,
+  preflightNativeResourceRecipe,
+  executeNativeResourceRecipe,
+  requireNativeDeclaredReservation,
+  nativeScalarTypeDeclaration,
+  type NativeDeclaredReservation,
+} from "./native-resource-declarations.js";
+
+export interface NativeArgumentVectorDeclarationDependencies {
+  readonly vectorBaseKey: string;
+  readonly earlyArgumentArrayKey?: string;
+}
+export interface NativeArgumentVectorDeclarationPlan extends NativeResourceRecipe {
+  readonly key: string;
+  readonly dependencies: NativeArgumentVectorDeclarationDependencies;
+  readonly arrayKey: string;
+  readonly carrierKey: string;
+  readonly newVectorKey: string;
+  readonly pushKey: string;
+}
+export function declareNativeArgumentVectorResources(
+  requirements: { readonly key: string },
+  dependencies: NativeArgumentVectorDeclarationDependencies,
+): NativeArgumentVectorDeclarationPlan {
+  if (
+    !requirements.key ||
+    !dependencies.vectorBaseKey ||
+    (Object.hasOwn(dependencies, "earlyArgumentArrayKey") && !dependencies.earlyArgumentArrayKey)
+  )
+    fail("invalid declaration dependencies");
+  const key = (role: string) => `${requirements.key}:${role}`;
+  const arrayKey = dependencies.earlyArgumentArrayKey ?? key("array"),
+    carrierKey = key("carrier"),
+    newVectorKey = key("new"),
+    pushKey = key("push");
+  const declarations: NativeStringValueDeclaration[] = [];
+  if (!dependencies.earlyArgumentArrayKey)
+    declarations.push({
+      key: arrayKey,
+      role: ["argument-vector", "array"],
+      space: "type",
+      shape: nativeScalarTypeDeclaration(createArgumentVectorArrayType()),
+    });
+  declarations.push(
+    {
+      key: carrierKey,
+      role: ["argument-vector", "carrier"],
+      space: "type",
+      shape: createArgumentVectorShape(
+        { kind: "ref", typeKey: arrayKey },
+        { kind: "resource", typeKey: dependencies.vectorBaseKey },
+      ),
+    },
+    {
+      key: newVectorKey,
+      role: ["argument-vector", "new"],
+      space: "function",
+      name: "__objvec_new",
+      signature: { params: [], results: [{ kind: "externref" }] },
+    },
+    {
+      key: pushKey,
+      role: ["argument-vector", "push"],
+      space: "function",
+      name: "__objvec_push",
+      signature: { params: [{ kind: "externref" }, { kind: "externref" }], results: [] },
+    },
+  );
+  const plan = {
+    key: requirements.key,
+    dependencies,
+    arrayKey,
+    carrierKey,
+    newVectorKey,
+    pushKey,
+    declarations,
+    reservationSteps: declarations.map((row) => ({
+      phase: "resources" as const,
+      kind: "reserve" as const,
+      resourceKey: row.key,
+    })),
+  };
+  preflightNativeResourceRecipe(plan, [
+    dependencies.vectorBaseKey,
+    ...(dependencies.earlyArgumentArrayKey ? [dependencies.earlyArgumentArrayKey] : []),
+  ]);
+  return freezeNativeResourceRecipe(plan);
+}
 
 export interface NativeArgumentVectorDependencies {
   readonly vectorBase: TypeReservation;
@@ -32,7 +126,17 @@ export interface NativeArgumentVectorReservations {
 }
 
 // Provenance only. The transaction remains the sole allocator/completion authority.
-const owners = new WeakMap<NativeArgumentVectorReservations, { tx: PhysicalModuleReservations; filled: boolean }>();
+const owners = new WeakMap<
+  NativeArgumentVectorReservations,
+  {
+    tx: PhysicalModuleReservations;
+    filled: boolean;
+    plan: NativeArgumentVectorDeclarationPlan;
+    requirements: { readonly key: string };
+    dependencies: NativeArgumentVectorDependencies;
+    records: ReadonlyMap<string, NativeDeclaredReservation>;
+  }
+>();
 
 function fail(detail: string): never {
   throw new Error(`native argument vectors: ${detail}`);
@@ -60,6 +164,7 @@ export function reserveNativeArgumentVectorResources(
   tx: PhysicalModuleReservations,
   requirements: { readonly key: string },
   dependencies: NativeArgumentVectorDependencies,
+  expectedPlan?: NativeArgumentVectorDeclarationPlan,
 ): NativeArgumentVectorReservations {
   if (tx.state !== "reserving" || !requirements.key) fail("invalid reservation phase/key");
   tx.assertTypeReservation(dependencies.vectorBase);
@@ -72,21 +177,21 @@ export function reserveNativeArgumentVectorResources(
       "noncanonical early argument backing",
     );
   }
-  const key = (role: string) => `${requirements.key}:${role}`;
-  const array = dependencies.earlyArgumentArray ?? tx.reserveType(key("array"), createArgumentVectorArrayType());
-  const carrier = tx.reserveType(
-    key("carrier"),
-    createArgumentVectorType(dependencies.vectorBase.typeIndex, array.typeIndex),
-  );
-  // Preserve the donor's new-before-push function signature/registration order.
-  const newVector = tx.reserveFunction(key("new"), "__objvec_new", {
-    params: [],
-    results: [{ kind: "externref" }],
+  const derived = declareNativeArgumentVectorResources(requirements, {
+    vectorBaseKey: dependencies.vectorBase.key,
+    ...(dependencies.earlyArgumentArray ? { earlyArgumentArrayKey: dependencies.earlyArgumentArray.key } : {}),
   });
-  const push = tx.reserveFunction(key("push"), "__objvec_push", {
-    params: [{ kind: "externref" }, { kind: "externref" }],
-    results: [],
-  });
+  if (expectedPlan) same(derived, expectedPlan, "substituted argument-vector declaration plan");
+  const plan = expectedPlan ?? derived;
+  const prerequisites = [
+    dependencies.vectorBase,
+    ...(dependencies.earlyArgumentArray ? [dependencies.earlyArgumentArray] : []),
+  ];
+  const records = executeNativeResourceRecipe(tx, plan, new Map(prerequisites.map((token) => [token.key, token])));
+  const array = dependencies.earlyArgumentArray ?? requireNativeDeclaredReservation(records, plan.arrayKey, "type");
+  const carrier = requireNativeDeclaredReservation(records, plan.carrierKey, "type");
+  const newVector = requireNativeDeclaredReservation(records, plan.newVectorKey, "function");
+  const push = requireNativeDeclaredReservation(records, plan.pushKey, "function");
   const pack = Object.freeze({
     vectorBase: dependencies.vectorBase,
     array,
@@ -95,8 +200,44 @@ export function reserveNativeArgumentVectorResources(
     newVector,
     push,
   });
-  owners.set(pack, { tx, filled: false });
+  owners.set(pack, { tx, filled: false, plan, requirements, dependencies, records });
   return pack;
+}
+
+export function nativeArgumentVectorReservationInventory(
+  tx: PhysicalModuleReservations,
+  pack: NativeArgumentVectorReservations,
+  expectedPlan: NativeArgumentVectorDeclarationPlan,
+): readonly NativeDeclaredReservation[] {
+  const owner = owners.get(pack);
+  if (!owner || owner.tx !== tx || owner.plan !== expectedPlan)
+    fail("foreign or substituted argument-vector declaration plan");
+  if (
+    owner.dependencies.vectorBase !== pack.vectorBase ||
+    (owner.dependencies.earlyArgumentArray && owner.dependencies.earlyArgumentArray !== pack.array)
+  )
+    fail("stale argument-vector dependency");
+  same(
+    declareNativeArgumentVectorResources(owner.requirements, {
+      vectorBaseKey: pack.vectorBase.key,
+      ...(owner.dependencies.earlyArgumentArray ? { earlyArgumentArrayKey: pack.array.key } : {}),
+    }),
+    expectedPlan,
+    "stale argument-vector requirements",
+  );
+  for (const type of [pack.vectorBase, pack.array, pack.carrier]) {
+    if (tx.state === "reserving") tx.assertTypeReservation(type);
+    else tx.physicalIndex(type);
+  }
+  validateLayouts(pack);
+  return Object.freeze(
+    expectedPlan.declarations.map((row) => {
+      const token = owner.records.get(row.key);
+      if (!token) fail("missing argument-vector reservation");
+      if (tx.state !== "reserving") tx.physicalIndex(token);
+      return token;
+    }),
+  );
 }
 
 /** Fill both actual implementations; never freeze, seal, allocate, or publish here. */
