@@ -7048,3 +7048,66 @@ at batch budget the cap decides the cell, not the compiler. Solo-corrected at
 either tree and no pass→fail row at all**. A batch-budget delta on this family
 is not a measurement.
 
+#### 5. Controls — what did NOT move, and the byte story
+
+**Must-not-move samples, per file, base vs branch: 331 rows, 0 flips.**
+
+| sample | rows | flips |
+| --- | --- | --- |
+| `Object/keys` + `language/expressions/object` + `Reflect/{get,has}` | 101 | 0 |
+| `Object/{entries,values,getOwnPropertyNames}` + `statements/for-in` | 121 | 0 |
+| `language/expressions/new/**` + `Function/prototype/apply/**` + `Reflect/construct/**` | 109 | 0 |
+
+The third group is the one this slice owes: it touches construct arity, so
+`new`, `apply` and `Reflect.construct` are where an arity change would surface.
+
+**Corpus byte A/B — 42 modules × {gc, standalone} = 84 artifacts, 0 move.**
+That is a NULL control, and saying only "0 moved" would overstate it: no module
+in that corpus has a `new <runtime ctor value>(…)` site above arity 8, so the
+corpus can only show the change is not a broad perturbation. It cannot show the
+change does anything. The evidence that it does is a separate, deliberate byte
+control (`.tmp/s24/bytes6489.mts`), one linked pair, three consumers:
+
+| artifact | base | branch | |
+| --- | --- | --- | --- |
+| provider (`Wide`/`Narrow` classes) | `5989617a8d3a63a1` 155,718 B | **identical** | the PRODUCING side never moves |
+| consumer with an above-8 dynamic `new` | `1f9219d64ce45c52` 132,000 B | `12ba8ca9b7256c5b` 134,060 B | **+2,060 B** — the only thing that moves |
+| consumer with an arity-**8** dynamic `new` | `21b7a98164941aa7` 133,803 B | **identical** | the gate on `arity > MAX_NATIVE_CONSTRUCT_ARITY` holds |
+| consumer with no dynamic `new` | `3d67dc7d87ef1933` 48,980 B | **identical** | |
+
+The real provider says the same thing at scale: the compiled
+`@js-temporal/polyfill` artifact is **3,307,526 B with the same cache key
+`a11c84e5…` under BOTH labels**. The fix is entirely on the consumer side, in
+exactly the modules that construct above arity 8.
+
+**Equivalence gate**: 22 failing / 1,720 passing / 22 known-failures — the
+baseline exactly.
+
+**`__temporal_*` host-import leaks**: 0.
+
+#### 6. The reduction that does NOT reproduce — worth knowing before the next slice
+
+Across the link, only the MEMBER-ACCESS spelling `new NS.wide(…)` is this
+defect. Binding the class to a local first — `const C = NS.wide; new C(…)` —
+answers null on BOTH trees, and it answers null at arity **eight** as well
+(`.tmp/s24/probe6489.mts`). Being arity-independent, it is a different,
+pre-existing mechanism, and it DOES evaluate its arguments, so it is not even
+the same failure shape. A `new (<call>)(…)` callee whose class is foreign is
+null on both trees too.
+
+The first linked reduction written for this slice used the bound-identifier
+spelling and failed identically before and after the fix — which would have read
+as "the fix does not work" rather than "the reduction is the wrong spelling".
+All four residuals are pinned in
+`tests/issue-6489-dynamic-new-arity.test.ts` so the distinction is not
+rediscovered. `new Temporal.Duration(…)` — the real corpus spelling — is the
+member form.
+
+#### 7. Next bucket
+
+With the sample's `expected a string, not null` retired, the largest remaining
+groups in the 360 rows are `Calling as constructor Expected a TypeError` (4) and
+`TypeError: Proxy get trap is not callable` (4), then a spread of 2-row groups
+including two `RuntimeError: illegal cast in __class_construct_dispatch()`. No
+single dominant cause remains in this sample.
+

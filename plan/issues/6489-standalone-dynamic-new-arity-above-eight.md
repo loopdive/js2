@@ -97,3 +97,42 @@ on goes **9 → 0**. Seven rows pass; two
 (`ZonedDateTime/prototype/add/math-order-of-operations-add-{constrain,none}`)
 now construct and fail later and differently, at
 `TypeError: Cannot read properties of undefined (reading 'equals')`.
+
+## Controls
+
+- **Must-not-move**, per file, base vs branch: **331 rows, 0 flips** —
+  `Object/keys` + `language/expressions/object` + `Reflect/{get,has}` (101);
+  `Object/{entries,values,getOwnPropertyNames}` + `statements/for-in` (121);
+  `language/expressions/new/**` + `Function/prototype/apply/**` +
+  `Reflect/construct/**` (109, the arity-sensitive group).
+- **Corpus byte A/B**: 42 modules × {gc, standalone} = 84 artifacts, **0 move**.
+  A null control — no module in that corpus constructs above arity 8.
+- **Byte control** (`.tmp/s24/bytes6489.mts`), which is the evidence the corpus
+  cannot give: the provider is byte-identical (`5989617a8d3a63a1`, 155,718 B),
+  the consumer with an above-8 dynamic `new` moves (132,000 → 134,060 B), and
+  the consumers with an arity-8 `new` and with no dynamic `new` are
+  byte-identical. The real `@js-temporal/polyfill` provider artifact is
+  3,307,526 B under both labels.
+- **Equivalence gate**: 22 failing / 1,720 passing — baseline.
+
+## Witness test
+
+`tests/issue-6489-dynamic-new-arity.test.ts`. Measured on both trees by
+file-copy revert: on base the linked `it` FAILS and both single-module `it`s
+pass; on the branch all three pass. The single-module cases are labelled
+CONTROLS, not witnesses, because a module owns its own classes and so the
+tag-dispatch fallback always had a candidate — which is why no single-module
+probe ever found this.
+
+Four residuals are pinned in that file: the bound-identifier spelling
+(`const C = NS.wide; new C(…)`) at arity 10 AND at arity 8, the fact that it
+evaluates its arguments, and a foreign `new (<call>)(…)`. All are null on both
+trees and none is this defect.
+
+## Claim
+
+`node scripts/claim-issue.mjs 6489 --check` →
+`#6489 is UNASSIGNED (read origin/issue-assignments)`. The lane that opened this
+issue was killed by a container restart before it wrote a claim, and this
+session cannot write one — all pushes return 403. `check:issue-ids:against-main`
+passes, so the id is free on `main`.
