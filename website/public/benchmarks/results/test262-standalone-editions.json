@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10302,
-    "fail": 1109,
+    "pass": 10303,
+    "fail": 1108,
     "ce": 293,
     "skip": 0,
     "total": 11704,
@@ -111,8 +111,8 @@
       },
       {
         "name": "arrow-function",
-        "pass": 422,
-        "fail": 12,
+        "pass": 423,
+        "fail": 11,
         "ce": 6,
         "skip": 0,
         "total": 440,
@@ -291,12 +291,12 @@
       },
       {
         "name": "new.target",
-        "pass": 22,
-        "fail": 11,
+        "pass": 23,
+        "fail": 10,
         "ce": 2,
         "skip": 0,
         "total": 35,
-        "pct": 63
+        "pct": 66
       },
       {
         "name": "DataView",

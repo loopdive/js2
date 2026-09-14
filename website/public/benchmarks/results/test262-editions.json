@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 9958,
-    "fail": 1688,
+    "pass": 9959,
+    "fail": 1687,
     "ce": 58,
     "skip": 0,
     "total": 11704,
@@ -111,12 +111,12 @@
       },
       {
         "name": "arrow-function",
-        "pass": 398,
-        "fail": 42,
+        "pass": 399,
+        "fail": 41,
         "ce": 0,
         "skip": 0,
         "total": 440,
-        "pct": 90
+        "pct": 91
       },
       {
         "name": "Proxy",
@@ -291,12 +291,12 @@
       },
       {
         "name": "new.target",
-        "pass": 21,
-        "fail": 14,
+        "pass": 22,
+        "fail": 13,
         "ce": 0,
         "skip": 0,
         "total": 35,
-        "pct": 60
+        "pct": 63
       },
       {
         "name": "DataView",
@@ -1063,8 +1063,8 @@
   {
     "edition": "ES2018",
     "pass": 3657,
-    "fail": 1142,
-    "ce": 24,
+    "fail": 1143,
+    "ce": 23,
     "skip": 0,
     "total": 4823,
     "pct": 76,
@@ -1072,8 +1072,8 @@
       {
         "name": "async-iteration",
         "pass": 2716,
-        "fail": 1071,
-        "ce": 23,
+        "fail": 1072,
+        "ce": 22,
         "skip": 0,
         "total": 3810,
         "pct": 71
