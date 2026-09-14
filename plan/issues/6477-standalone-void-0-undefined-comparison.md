@@ -2,7 +2,7 @@
 id: 6477
 title: "standalone: `void 0 === x` / `void 0 !== x` answers WRONG for an undefined `x` — the nullish-comparison arm recognises only the identifier `undefined`, so every minified `undefined` test is miscompiled"
 slug: 6477-standalone-void-0-undefined-comparison
-status: in-progress
+status: done
 sprint: current
 priority: high
 horizon: s
@@ -12,6 +12,7 @@ parent: 5383
 goal: standalone-gap
 assignee: ttraenkler/dev-5383-s16
 created: 2026-09-13
+completed: 2026-09-14
 loc-budget-allow:
   # 2026-09-13 (#6477, S16) — the predicate itself lives in the NEW module
   #   src/codegen/void-undefined-operand.ts. What grows in the god-file is the

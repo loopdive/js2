@@ -2,7 +2,7 @@
 id: 6476
 title: "standalone: `const c = m[7]` binds a NULL native string to a non-null slot, so every later read of the binding asserts non-null (truthiness, `||`, `??`, concat all trap)"
 slug: 6476-standalone-nullable-native-string-element-binding
-status: in-progress
+status: done
 sprint: current
 priority: high
 horizon: m
@@ -12,6 +12,7 @@ parent: 5383
 goal: standalone-gap
 assignee: ttraenkler/dev-5383-s16
 created: 2026-09-13
+completed: 2026-09-14
 loc-budget-allow:
   # 2026-09-13 (#6476, S16) — the mechanism lives entirely in the NEW module
   #   src/codegen/nullable-native-string-elem-binding.ts. What grows here is the

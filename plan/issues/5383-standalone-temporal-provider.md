@@ -5032,3 +5032,219 @@ flat at 54/66 with 0 flips, the `gc` lane byte-identical on both corpora, and 0
 `__temporal_*` leaks. Base and branch were both measured on this tree by
 file-copy revert. No full-corpus number is claimed; a corpus run remains the
 tech lead's to schedule.
+
+### S16 findings (2026-09-13/14) — the `sn()` bucket is fully retired; two general standalone correctness bugs, 201 → 202, and the row count is the least interesting number here
+
+**Two slices: #6476 (the nullable native-string BINDING) and #6477 (`void 0` in
+a nullish comparison).** Full write-ups in
+`plan/issues/6476-standalone-nullable-native-string-element-binding.md` and
+`plan/issues/6477-standalone-void-0-undefined-comparison.md`.
+
+#### 1. The hand-off attribution was wrong for the SEVENTH slice running, and this time it named the wrong LAYER
+
+S15 handed over "implicit truthiness of a null native string traps; the explicit
+`Boolean(…)` call does not", with `t[4] ? "T" : "F"` and `t[4] || "x"` as the
+evidence. Both probes actually **bind first** (`const a = t[4]; a ? …`), and
+the difference is the binding, not the operator:
+
+| source, base tree, standalone | answer |
+| --- | --- |
+| `m[1] ? "T" : "F"` (INLINE) | `"F"` ✓ |
+| `const a = m[1]; a ? "T" : "F"` | **TRAP** |
+| `"" + m[1]` (INLINE) | `"undefined"` ✓ |
+| `const a = m[1]; "" + a` | **TRAP** |
+| `const a: string \| undefined = m[1]; a ? …` | `"F"` ✓ |
+| `(a) => a ? "T" : "F"` applied to `m[1]` | `"F"` ✓ |
+
+Every inline read was already right, and so were a parameter and an annotated
+binding. `emitToBoolean` already had the correct arm (#3548's `__str_truthy`);
+it simply never saw a `ref_null`. **The named mechanism (ToBoolean) was not
+broken at all.** The pattern across S11–S16 now has a name: a symptom read
+through ONE call site attributes to that call site. The question that works is
+"what is the first thing that differs between the form that works and the form
+that does not", and here that is one `const`.
+
+#### 2. Root causes, both general standalone bugs rather than Temporal ones
+
+**#6476** — `walkStmtForLetConst` (the authoritative let/const slot-typer) ends
+its cascade at `resolveWasmType`, which answers the NON-null `ref $anyStr` for
+an element the checker types `string`. The store does not fail (a `ref` local
+gets a defaultable nullable slot), so the null is written and kept; every later
+READ is misinformed and dereferences it. Fixed by a post-filter applied at both
+declaration cascades, narrowed to the exact non-null-twin pair for a
+native-string element — `resolveWasmType` returns a non-null `ref` for class
+and object structs too, and re-typing every `const x = objArray[i]` in both
+lanes is a blast radius this defect does not justify.
+
+**#6477** — the null-and-undefined comparison shortcut recognised the undefined
+literal as the IDENTIFIER `undefined` only, so a `void 0` operand fell into the
+generic reference equality, which on standalone compares carriers structurally
+and answers `void 0 !== undefined` as TRUE. **Every minifier emits `void 0`**,
+so this is the only form a bundled dependency uses. `sn` guards each fractional
+capture group with `if (void 0 !== c) { … (c + "000000000").slice(0, 9) … }`:
+the guard admitted a NULL group and the concatenation dereferenced it.
+
+Applied on the native-semantics lane only, and that is **measured**: with a JS
+host the fallback this arm replaces hands both operands to the host `===`,
+which already answers all seven probed shapes correctly BEFORE the fix
+(`.tmp/s16/gcprobe.mjs`, run on both trees). Widening it there would move bytes
+for an answer that is already right.
+
+#### 3. The bucket, through all three states — this is the real result
+
+| bucket, in `sn` | base (S15 head) | +#6476 | +#6476 +#6477 |
+| --- | --- | --- | --- |
+| `null pointer in __str_flatten` | **18** (13 Du, 5 ZDT) | 0 | 0 |
+| `null pointer in __str_concat` | 0 | **11** (8 Du, 3 ZDT) | **0** |
+| spurious `only the smallest unit can be fractional` | **4** (3 Du, 1 ZDT) | 4 | **0** |
+
+The 22-row `sn()` family that has gated every string-argument Duration entry
+point since S10 is now **entirely retired**. #6476 alone moved it one step and
+scored nothing; the pair retires it.
+
+#### 4. The three-family sample, LINKED, re-measured
+
+120 rows each, `--target standalone`, provider linked, families **sequential**,
+FRESH `JS2WASM_TEMPORAL_CACHE` per label (`cacheHit=false` on every prewarm),
+quickjs artifact **and** adapter present. Base is this worktree's own base run,
+taken by file-copy revert of the three edited source files on this tree. The
+provider binary differs between labels (3,324,826 vs 3,325,244 bytes), which is
+independent proof the compiler change reached the linked artifact.
+
+| family | rows | base pass | #6476 only | **S16 pass** | fail | ce | pass→fail |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 78 | 78 | **78** | 41 | 1 | **0** |
+| `built-ins/Temporal/Duration/**` | 120 | 51 | 51 | **52** | 65 | 3 | **0** |
+| `built-ins/Temporal/ZonedDateTime/prototype/**` | 120 | 72 | 72 | **72** | 46 | 2 | **0** |
+| **total** | **360** | **201** | **201** | **202** | **152** | **6** | **0** |
+
+`fail→pass`: **1** (Duration). `__temporal_*` leaks: **0** in all nine TSVs.
+
+**+1 row is an honest but misleading headline, and the honest reading is in the
+bucket table above.** 18 rows stopped trapping; 17 of them now fail further
+downstream, at `Missing internal slot slot-<unit>` (1 → 10 across the sample)
+and `called value is not a function` (10 → 17). Those two are the next causes,
+and they are reached only because the parse now completes.
+
+#### 5. Top error buckets, LINKED, S16 (all three families pooled, 152 fail)
+
+8 `called value is not a function` · 7 `required property 'timeZone' missing` ·
+7 `Missing internal slot slot-years` · 7 `prototype Expected SameValue(«null»,
+«[object Function]»)` · 5 compilation timeout · 5 `Object method called on null
+or undefined` · 5 `Expected a RangeError but got a undefined` · 5
+`__closure_N()` null pointer · 4 `year is required` · 4 `Proxy get trap is not
+callable`.
+
+**The `timeZone missing` (7) and `year is required` (4) buckets are ONE cause,
+reduced to shape.** Every row in both is a `*-propertybag-calendar-*` test that
+builds a plain object literal in the CONSUMER module and passes it across the
+link:
+
+```js
+const arg = { year: 1976, monthCode: "M11", day: 18, calendar };
+Temporal.PlainDate.compare(arg, new Temporal.PlainDate(1976, 11, 18));
+```
+
+`year` IS present, and the polyfill's `Get(bag, "year")` answers `undefined` —
+so this is the link-boundary dynamic-read family (#6460 / #6464), not a
+Temporal defect and not the nullability family. Neither bucket moved in S16
+(7→7, and 15→15 counting all three families), which is consistent with that
+attribution.
+
+#### 6. Residuals of THIS family, each already reduced
+
+The nullability lie survives at three further boundaries, all measured on the
+S16 tree (`.tmp/s16/{red2,red3}.mjs`):
+
+| residual | probe | answers | should be |
+| --- | --- | --- | --- |
+| checker-keyed `+` | `const a = m[1]; "" + a` | **TRAP** | `"undefined"` |
+| checker-keyed `Boolean()` | `const a = m[1]; Boolean(a)` | **TRAP** | `false` |
+| checker-keyed `typeof` | `const a = m[1]; typeof a` | `"string"` | `"undefined"` |
+| `&&` / `??` RESULT carrier | `const a = m[1]; String(a && "y")` | **TRAP** | `"undefined"` |
+| REASSIGNMENT, not declaration | `let a = "z"; a = m[1]; a ? …` | **TRAP** | `"F"` |
+| non-inert `void` | `void f() === undefined` | `false` (effect preserved) | `true` |
+
+The first three share one shape: the operator dispatches on the CHECKER's
+static `string`, not on the operand's emitted ValType, so the null is asserted
+non-null on the way in. The inline forms of all three are correct, which is
+what makes them reducible. The reassignment case needs the slot widened by a
+whole-function scan rather than at the declaration.
+
+#### 7. Two samples that must NOT move, and neither did
+
+| sample | rows | base | S16 | flips |
+| --- | --- | --- | --- | --- |
+| `RegExp/prototype/exec` + `expressions/{conditional,logical-or,coalesce}` | 94 | 91 pass / 2 fail / 1 ce | identical | **0** |
+| `String/prototype/{split,match}` + `Array/prototype/{join,indexOf}` | 113 | 95 pass / 18 fail | identical | **0** |
+
+The second sample exists because the targeted byte A/B falsified the narrow
+reading of #6476: a PLAIN string array's element type is nullable in standalone
+too, so `const s = a[0]` re-types there as well. A sample chosen only from the
+RegExp surface would not have covered that.
+
+#### 8. Order preservation
+
+Byte A/B on a 42-file fixed corpus (`website/playground/examples` +
+`tests/fixtures`) × {gc, standalone}: **no artifact moves on either lane, for
+either slice.** A targeted 23-shape A/B: the `gc` lane is byte-identical
+throughout; on standalone exactly the intended shapes move (6 for #6476, 5 for
+#6477) and every control — an inline element read, a `var`, an annotated
+binding, a number/object element, a matched group, the identifier `undefined`
+form, `void f()` — is identical.
+
+Equivalence gate at baseline (22 failing / 1720 passing) on both slices.
+
+#### 9. Traps, carried forward and added to
+
+All S11–S15 traps still bite. The provider suite's `onTaskUpdate` RPC timeout
+reproduced again (exit 1 with `81 passed | 3 todo`). Three additions:
+
+- **The `test262` submodule is NOT checked out in a fresh agent worktree**, and
+  `HARNESS_ROOT` is `<PROJECT_ROOT>/test262/harness` — so every linked family
+  run resolves against the worktree's OWN copy and silently has nothing to run.
+  `git submodule update --init test262` is instant here (the objects are
+  already in `.git/modules/test262`), and the gitlink stays clean afterwards.
+- **The provider cache key does not change when the compiler does** (it hashes
+  the polyfill source + compile options), so a per-label cache directory is not
+  a nicety, it is the whole measurement. The *evidence* that the label actually
+  differed is the provider BYTE COUNT in the prewarm stamp, not `cacheHit`.
+- **A "control" that moves is a mislabelled teeth row, not a regression.** The
+  #6477 witness's `void "x" === a` row failed the base run as a control; it is
+  an inert literal, so the fix covers it by design. Reading the diff rather
+  than re-expecting the observed value is what caught it.
+
+#### 10. One gate was red before the catch-up merge, on the base tree too, and main fixed it
+
+`node scripts/check-compiler-boundaries.mjs --mode inventory --base origin/main`
+exited 1 for most of this slice with `invalid-inventory / activation-demoted:
+backend-wasmgc`, naming `src/codegen/prepared-async-frame-adapter.ts` and
+`src/backend/wasmgc/async/prepared-async-frame-adapter.ts` as `external-unbound`
+— neither file existed in the tree. Measured identical on the S15 base by
+file-copy revert, so S16 neither introduced nor changed it; merging `origin/main`
+(39 commits, which land that module) makes it **green**. Recorded because the
+red would otherwise have looked like this slice's, and because it is a concrete
+case of a gate that only a catch-up merge can clear. Both new modules are
+classified in `scripts/compiler-boundaries.json` and are bound in the report.
+
+### Artifacts
+
+`.tmp/s16fam/{pd,du,zdt}-{base,new,new4}.tsv` (+ logs and prewarm logs),
+`.tmp/s16fam/{mnm,mnm2}-{base,new}.tsv`,
+`.tmp/s16/byteab{,2}-{base,new,base2,new2,new3}.tsv`, the reductions
+`.tmp/s16/{red,red2,red3,red4}.mjs`, the residual census
+`.tmp/s16/{q8,runq}.mjs`, the gc-lane probe `.tmp/s16/gcprobe.mjs`, the revert
+copies `.tmp/s16base/*` and the drivers
+`.tmp/s16/{run-fam.sh,family.mts,prewarm.mts,mnm.mts,mnm2.mts,byteab.mts,byteab2.mts,table.mjs}`
+in this worktree (`/home/user/js2/.claude/worktrees/agent-a13e1501115f31e8e`).
+
+### Acceptance criterion 4 — S16 update
+
+MET-for-the-sample at **202/360** (was 201), same three families, **0
+pass→fail**, both must-not-move samples flat with 0 flips, the `gc` lane
+byte-identical on both corpora AND on the targeted shapes, the equivalence gate
+at baseline, and 0 `__temporal_*` leaks. Base and branch were both measured on
+this tree by file-copy revert, with an intermediate #6476-only label, so the
+attribution between the two slices is measured rather than argued. No
+full-corpus number is claimed; a corpus run remains the tech lead's to
+schedule.
