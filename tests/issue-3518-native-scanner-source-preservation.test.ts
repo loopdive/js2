@@ -6,9 +6,14 @@ import { createHash } from "node:crypto";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { realpathSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import {
   projectScanner,
   projectDecoder,
+  projectCopyTreeUtf8,
+  projectFlattenAdapterStaging,
+  scannerProjectionTargets,
+  scannerProjectionTarget,
   requireTerminal,
   requirePopulation,
   requireTransformCount,
@@ -78,9 +83,9 @@ describe("positive-first semantic projection and recorder admission", () => {
       expect(changed).not.toBe(source);
       expect(() => projectScanner(changed, url, url, sha)).toThrow("projection input hash differs");
     });
-  for (const count of [0, 1, 3])
+  for (const count of [0, 1, 2, 3, 5])
     it(`rejects projection transformation count ${count}`, () => {
-      requireTransformCount(2, "projection");
+      requireTransformCount(4, "projection");
       expect(() => requireTransformCount(count, "projection")).toThrow("missing/duplicate/unexpected transformation");
     });
   it("rejects any transform in the untouched candidate", () => {
@@ -161,9 +166,7 @@ describe("second exact root-bound decoder projection", () => {
   for (const kind of ["missing", "duplicate", "foreign"] as const)
     it("rejects per-target " + kind + " even with a plausible aggregate", () => {
       const root = "/candidate";
-      const keys = ["string-number-bodies.ts", "string-utf8-decode-bodies.ts"].map(
-        (name) => pathToFileURL(join(root, "src/runtime/wasmgc/values", name)).href,
-      );
+      const keys = Object.keys(scannerProjectionTargets(root));
       const counts = Object.fromEntries(keys.map((key) => [key, 1]));
       requireTargetLoads(counts, root, "projection");
       if (kind === "missing") delete counts[keys[1]!];
@@ -174,6 +177,185 @@ describe("second exact root-bound decoder projection", () => {
       }
       expect(() => requireTargetLoads(counts, root, "projection")).toThrow("missing/duplicate/foreign target load");
     });
+});
+
+describe("two exact UTF8-rope repair inverses", () => {
+  const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+  const specs = [
+    {
+      path: "src/runtime/wasmgc/values/string-flatten-bodies.ts",
+      project: projectCopyTreeUtf8,
+      original: "f40b6b18f92c8bbba588efc72bd075a1e93c2cfe3fbe4939f3019fe6825a5bdf",
+    },
+    {
+      path: "src/codegen/native-strings-core.ts",
+      project: projectFlattenAdapterStaging,
+      original: "00668dc5edcba527d6c8d2bc5638a909f55a5894115d4c30aa1f7b03a50cc9d2",
+    },
+  ];
+  function genuine(spec: (typeof specs)[number]) {
+    const url = pathToFileURL(join(checkoutRoot, spec.path)).href;
+    const source = readFileSync(new URL(url), "utf8");
+    const result = spec.project(source, url, url, sha);
+    expect(sha(result.text)).toBe(spec.original);
+    expect(result.evidence.inputHash).toBe(sha(source));
+    expect(result.evidence.deltas.length).toBeGreaterThan(0);
+    return { url, source, result };
+  }
+  for (const spec of specs) {
+    it("restores complete original " + spec.path, () => {
+      genuine(spec);
+    });
+    for (const variant of ["?duplicate=1", "#duplicate", "foreign-root"] as const)
+      it("rejects " + spec.path + " " + variant, () => {
+        const { url, source } = genuine(spec);
+        const changed = variant === "foreign-root" ? url.replace("/src/", "/foreign/src/") : url + variant;
+        expect(() => spec.project(source, changed, url, sha)).toThrow("projection target/root");
+      });
+    for (const mutation of ["missing", "duplicate", "misplaced", "unrelated", "header"] as const)
+      it("rejects " + spec.path + " " + mutation, () => {
+        const { url, source, result } = genuine(spec);
+        const span = result.evidence.deltas[0]!.text;
+        const changed =
+          mutation === "missing"
+            ? source.replace(span, "")
+            : mutation === "duplicate"
+              ? source.replace(span, span + span)
+              : mutation === "misplaced"
+                ? source.replace(span, "") + span
+                : mutation === "header"
+                  ? source.replace("export function ", "export async function ")
+                  : source.replace("Copyright (c) 2026", "Copyright (c) 2025");
+        expect(changed).not.toBe(source);
+        expect(() => spec.project(changed, url, url, sha)).toThrow("projection input hash differs");
+      });
+  }
+  for (const [name, from, to] of [
+    ["decoder handle", "funcIdx: utf8Decoder.handle", "funcIdx: worklistTypeIndex"],
+    ["decoder type", 'op: "ref.cast", typeIdx: layout.utf8StrTypeIdx', 'op: "ref.cast", typeIdx: consStrTypeIdx'],
+    ["local", 'op: "local.set", index: CUR', 'op: "local.set", index: FLAT'],
+    [
+      "pop path",
+      'op: "array.get", typeIdx: wlArrTypeIdx },\n            { op: "local.set", index: CUR',
+      'op: "array.get", typeIdx: wlArrTypeIdx },\n            { op: "local.set", index: FLAT',
+    ],
+    ["return", "    body,\n  };", "    body: [],\n  };"],
+  ])
+    it("rejects copy-tree " + name + " after real inverse", () => {
+      const spec = specs[0]!,
+        { source, url } = genuine(spec);
+      // Every countermodel must actually change its independently selected operand.
+      const changed = source.replace(from!, to!);
+      expect(changed).not.toBe(source);
+      expect(() => spec.project(changed, url, url, sha)).toThrow("projection input hash differs");
+    });
+  for (const move of ["after-cons-cast", "root-only"] as const)
+    it("rejects normalization " + move, () => {
+      const spec = specs[0]!,
+        { source, url, result } = genuine(spec);
+      const span = result.evidence.deltas[2]!.text;
+      const without = source.replace(span, "");
+      const anchor =
+        move === "root-only"
+          ? "  const body: Instr[] = [\n"
+          : '                    { op: "ref.cast", typeIdx: consStrTypeIdx },\n';
+      expect(without).toContain(anchor);
+      const changed = without.replace(anchor, anchor + span);
+      expect(() => spec.project(changed, url, url, sha)).toThrow("projection input hash differs");
+    });
+  for (const [name, from, to] of [
+    [
+      "replace reserved object",
+      "copyTreeFunction.locals = copyTreeDefinition.locals;",
+      "copyTreeFunction = { ...copyTreeFunction, locals: copyTreeDefinition.locals };",
+    ],
+    ["missing body fill", "  copyTreeFunction.body = copyTreeDefinition.body;\n", ""],
+    [
+      "extra push",
+      "    pushDefinedFunc(ctx, funcIdx, copyTreeFunction);",
+      "    pushDefinedFunc(ctx, funcIdx, copyTreeFunction);\n    pushDefinedFunc(ctx, funcIdx, copyTreeFunction);",
+    ],
+    [
+      "stale decoder",
+      'utf8Decoder = { kind: "present", handle: funcIdx };',
+      'utf8Decoder = { kind: "present", handle: ctx.nativeStrHelpers.get("__str_copy_tree")! };',
+    ],
+    [
+      "registration order",
+      '    ctx.nativeStrHelpers.set("__str_utf8_to_flat", funcIdx);',
+      '    ctx.funcMap.set("__str_utf8_to_flat", funcIdx);',
+    ],
+    ["unrelated late import", 'ctx.funcMap.set("__str_flatten", funcIdx);', 'ctx.funcMap.set("__str_flatten", 0);'],
+  ])
+    it("rejects adapter " + name, () => {
+      const spec = specs[1]!,
+        { source, url } = genuine(spec);
+      const changed = source.replace(from!, to!);
+      expect(changed).not.toBe(source);
+      expect(() => spec.project(changed, url, url, sha)).toThrow("projection input hash differs");
+    });
+});
+
+describe("four exact loader coordinates, with historical legacy-only baseline", () => {
+  const targets = scannerProjectionTargets(checkoutRoot);
+  it("requires all four candidate roots and exactly the historical adapter at baseline", () => {
+    expect(Object.keys(targets)).toHaveLength(4);
+    requireTargetLoads(Object.fromEntries(Object.keys(targets).map((url) => [url, 1])), checkoutRoot, "candidate");
+    const adapter = pathToFileURL(join(checkoutRoot, "src/codegen/native-strings-core.ts")).href;
+    requireTargetLoads({ [adapter]: 1 }, checkoutRoot, "baseline");
+    expect(() => requireTargetLoads({}, checkoutRoot, "baseline")).toThrow("missing/duplicate/foreign target load");
+    expect(() => requireTargetLoads({ [adapter]: 2 }, checkoutRoot, "baseline")).toThrow(
+      "missing/duplicate/foreign target load",
+    );
+    for (const [url, kind] of Object.entries(targets)) expect(scannerProjectionTarget(url, targets)).toBe(kind);
+  });
+  for (const [url, kind] of Object.entries(targets))
+    for (const suffix of ["?duplicate=1", "#duplicate"])
+      it("actually denies " + kind + suffix + " before loading, without a probe sentinel", () => {
+        const script = String.raw`
+        import assert from "node:assert/strict";
+        import { registerHooks } from "node:module";
+        const [root, harness, rejected] = process.argv.slice(1);
+        const { scannerProjectionTargets, scannerProjectionTarget } = await import(harness);
+        const targets = scannerProjectionTargets(root), denied = [], loaded = [];
+        registerHooks({
+          resolve(specifier, context, next) {
+            const result = next(specifier, context);
+            try { scannerProjectionTarget(result.url, targets); }
+            catch (error) { denied.push({ url: result.url, message: error.message }); throw error; }
+            return result;
+          },
+          load(url, context, next) { loaded.push(url); return next(url, context); }
+        });
+        const positive = await import("data:text/javascript,export default 42");
+        assert.equal(positive.default, 42);
+        let caught;
+        try { await import(rejected); } catch (error) { caught = error; }
+        assert(caught);
+        assert.equal(caught.message, "wrong projection target/root " + rejected);
+        assert.deepEqual(denied, [{ url: rejected, message: caught.message }]);
+        assert(!loaded.includes(rejected));
+        console.log(JSON.stringify({ positive: 42, denied, loaded }));
+      `;
+        const child = spawnSync(
+          process.execPath,
+          [
+            "--input-type=module",
+            "-e",
+            script,
+            checkoutRoot,
+            new URL("../scripts/verify-native-scanner-source-preservation.mjs", import.meta.url).href,
+            url + suffix,
+          ],
+          { encoding: "utf8", env: { ...process.env, NODE_OPTIONS: "--max-old-space-size=2048" } },
+        );
+        expect(child.error).toBeUndefined();
+        expect(child.status, child.stderr).toBe(0);
+        const report = JSON.parse(child.stdout.trim());
+        expect(report.positive).toBe(42);
+        expect(report.denied).toEqual([{ url: url + suffix, message: "wrong projection target/root " + url + suffix }]);
+        expect(report.loaded).not.toContain(url + suffix);
+      });
 });
 
 describe("native scanner effective runtime authentication", () => {

@@ -199,11 +199,57 @@ const declarationGroups = {
   "backend-wasmgc": [...priorGroups["backend-wasmgc"], declarationAdditions[1]!],
 };
 const aggregateAdditions = ["src/backend/wasmgc/program/native-string-values.ts"];
-const groups = {
+const mainGroups = {
   ...declarationGroups,
   "backend-wasmgc": [...declarationGroups["backend-wasmgc"], ...aggregateAdditions],
 };
+const formatterGroups = {
+  "frontend-ts": ["src/frontend/builtins/contracts.ts"],
+  "ir-core": ["src/ir/core/type-references.ts"],
+  "ir-program": ["src/ir/program/runtime-support.ts", "src/ir/program/formatter-support.ts"],
+};
+const formatterAdditions = Object.values(formatterGroups).flat();
+const groups = {
+  ...mainGroups,
+  "frontend-ts": formatterGroups["frontend-ts"],
+  "ir-core": [...mainGroups["ir-core"], ...formatterGroups["ir-core"]],
+  "ir-program": [...mainGroups["ir-program"], ...formatterGroups["ir-program"]],
+};
 const required = Object.values(groups).flat();
+// Keep the historical 102-owner receipt archival; main now requires four
+// canonical formatter contracts, each present once in the current fixture.
+const liveFixtureGroups = groups;
+const liveRequired = Object.values(liveFixtureGroups).flat();
+// Ordered additions independently reviewed at published policy 1eaa57abc,
+// and checked against local composition 19a0a9bd8c2c.
+// This is the full current layer contract, not the bounded live fixture.
+const currentLayerGroups = {
+  ...groups,
+  "ir-program": [...groups["ir-program"], "src/ir/program/native-number-format-requirements.ts"],
+  "native-runtime": [
+    ...groups["native-runtime"],
+    "src/runtime/wasmgc/values/number-ryu-tables.ts",
+    "src/runtime/wasmgc/values/number-ryu-bodies.ts",
+    "src/runtime/wasmgc/values/number-ryu-digits.ts",
+    "src/runtime/wasmgc/values/number-ryu-to-buffer.ts",
+    "src/runtime/wasmgc/values/number-ryu-signatures.ts",
+    "src/runtime/wasmgc/values/number-format-bodies.ts",
+    "src/runtime/wasmgc/values/number-format-radix-bodies.ts",
+    "src/runtime/wasmgc/values/string-concat-bodies.ts",
+    "src/runtime/wasmgc/values/stdout-bodies.ts",
+    "src/runtime/wasmgc/promise/delay-combinator-layouts.ts",
+  ],
+  "backend-wasmgc": [
+    ...groups["backend-wasmgc"],
+    "src/backend/wasmgc/program/native-number-format.ts",
+    "src/backend/wasmgc/resources/native-number-ryu.ts",
+    "src/backend/wasmgc/resources/native-number-format.ts",
+    "src/backend/wasmgc/resources/native-delay-combinator.ts",
+  ],
+};
+// Archival graph receipt: 102 modules, 391 edges (248 type-only / 143 runtime).
+// This is not a fresh historical execution; expanded current sources are measured below.
+
 const callableAdditions = ["src/ir/core/async-callables.ts", "src/ir/runtime/native-async-callables.ts"];
 const vectorAdditions = ["src/ir/core/vector-runtime.ts", "src/ir/runtime/vector-callables.ts"];
 const typeLayoutAdditions = ["src/wasm/physical/type-layout.ts"];
@@ -256,14 +302,19 @@ function assertOriginalComposition(history: unknown[]) {
   );
 }
 function assertNewActivations(history: unknown[]) {
+  expect(history.slice(0, 3)).toEqual(
+    Object.entries(formatterGroups).map(([layer, entries]) => ({ layer, entries, minModules: entries.length })),
+  );
+  // Keep the full delivered main history and all its original digest checks.
+  history = history.slice(3);
   assertOriginalComposition(history);
   history = history.slice(2);
   // The combined declaration and both published 9ccad45c additions precede
   // the exact complete activation history independently read from eac9f741.
   expect(history[0]).toEqual({
     layer: "backend-wasmgc",
-    entries: groups["backend-wasmgc"],
-    minModules: groups["backend-wasmgc"].length,
+    entries: mainGroups["backend-wasmgc"],
+    minModules: mainGroups["backend-wasmgc"].length,
   });
   expect(history[1]).toEqual({
     layer: "backend-wasmgc",
@@ -272,8 +323,8 @@ function assertNewActivations(history: unknown[]) {
   });
   expect(history[2]).toEqual({
     layer: "ir-program",
-    entries: groups["ir-program"],
-    minModules: groups["ir-program"].length,
+    entries: mainGroups["ir-program"],
+    minModules: mainGroups["ir-program"].length,
   });
   expect(digest(history.slice(1, 3))).toBe("025f946401a0b57c22705361d4b69f314cad7e0c2aa856dcf0834fe74858ea3a");
   history = history.slice(3);
@@ -433,6 +484,30 @@ function assertNewActivations(history: unknown[]) {
     ),
   );
 }
+// Authenticate the additive prefix before examining the unchanged old history.
+function assertCurrentActivations(history: unknown[]) {
+  expect(history).toHaveLength(75);
+  // Exact d132 records remain an ordered subsequence; all main records remain
+  // a contiguous suffix. Original hashes and record order stay independent.
+  const offsets = [
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 19, 20, 22, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
+    38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66,
+    67, 68, 69, 70, 71, 72, 73, 74,
+  ];
+  const published = offsets.map((index) => history[index]);
+  expect(published).toHaveLength(68);
+  expect(digest(published)).toBe("645fd9f35c7495ac3effdad394a4fb807f15b77fd5d97f93d30ae3b6ad988b1c");
+  expect(digest(published.slice(0, 12))).toBe("527f561bf9497c469352d9671615d33740b5ed95d17815c5cadb206d45711e07");
+  const historical = published.slice(12);
+  expect(historical).toHaveLength(56);
+  expect(digest(historical.slice(32))).toBe("3437a59aacf39df9dffcafa8099ac9f47c0f43a7a0ecc423df4c1fe3e638f002");
+  expect(digest(historical.slice(38))).toBe("a6d07b900b0837832707ce083202ab6ffa40f0bbe6bfce25f3062270882b26da");
+  const main = history.slice(9);
+  expect(main).toHaveLength(66);
+  assertNewActivations(main);
+  return main;
+}
+
 const scratch: string[] = [];
 afterEach(async () => {
   for (const root of scratch.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -451,13 +526,15 @@ function fixture() {
   const p = policy();
   p.requireGitProvenance = false;
   p.layers = p.layers.map((layer: { id: string; roots: string[] }) => {
-    const entries = groups[layer.id as keyof typeof groups];
+    const entries = liveFixtureGroups[layer.id as keyof typeof liveFixtureGroups];
     return entries
       ? { ...layer, status: "active", required: true, entries, minModules: entries.length }
       : { id: layer.id, roots: layer.roots, status: "debt" };
   });
-  p.files = Object.entries(groups).flatMap(([layer, paths]) => paths.map((path) => ({ path, layer, state: "clean" })));
-  p.activationHistory = Object.entries(groups).map(([layer, entries]) => ({
+  p.files = Object.entries(liveFixtureGroups).flatMap(([layer, paths]) =>
+    paths.map((path) => ({ path, layer, state: "clean" })),
+  );
+  p.activationHistory = Object.entries(liveFixtureGroups).map(([layer, entries]) => ({
     layer,
     entries,
     minModules: entries.length,
@@ -467,7 +544,7 @@ function fixture() {
   p.nonModules = [];
   p.externalPackages = [];
   p.externalAssets = [];
-  for (const path of required) put(path, readFileSync(resolve(repository, path), "utf8"));
+  for (const path of liveRequired) put(path, readFileSync(resolve(repository, path), "utf8"));
   put(
     "tsconfig.json",
     JSON.stringify({
@@ -506,8 +583,8 @@ function fixture() {
 
 describe("semantic verification and provider ownership boundary", () => {
   it("pins the original 70 modules plus seven Promise/vector and five string/error owners without relaxing historical policy", () => {
-    expect(required).toHaveLength(102);
-    expect(new Set(required).size).toBe(102);
+    expect(required).toHaveLength(106);
+    expect(new Set(required).size).toBe(106);
     expect(callableAdditions).toHaveLength(2);
     expect(vectorAdditions).toHaveLength(2);
     expect(typeLayoutAdditions).toHaveLength(1);
@@ -537,6 +614,7 @@ describe("semantic verification and provider ownership boundary", () => {
             ...closureAdditions,
             ...declarationAdditions,
             ...aggregateAdditions,
+            ...formatterAdditions,
           ].includes(path),
       ),
     ).toHaveLength(56);
@@ -562,23 +640,16 @@ describe("semantic verification and provider ownership boundary", () => {
       ...closureAdditions,
       ...declarationAdditions,
       ...aggregateAdditions,
+      ...formatterAdditions,
     ])
       expect(required).toContain(path);
     const p = policy();
-    assertNewActivations(p.activationHistory);
-    expect(p.activationHistory).toHaveLength(63);
-    expect(digest(p.activationHistory.slice(39))).toBe(
-      "3437a59aacf39df9dffcafa8099ac9f47c0f43a7a0ecc423df4c1fe3e638f002",
-    );
+    assertCurrentActivations(p.activationHistory);
     expect(digest(p.allowedEdges)).toBe("efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7");
-    // Exact full activation history at b4c116639a, not a selected subset.
-    expect(digest(p.activationHistory.slice(45))).toBe(
-      "a6d07b900b0837832707ce083202ab6ffa40f0bbe6bfce25f3062270882b26da",
-    );
-    for (const [id, entries] of Object.entries(groups)) {
+    for (const [id, entries] of Object.entries(currentLayerGroups)) {
       const layer = p.layers.find((row: { id: string }) => row.id === id);
       expect(layer).toMatchObject({ status: "active", required: true, minModules: entries.length });
-      expect([...layer.entries].sort()).toEqual([...entries].sort());
+      expect(layer.entries).toEqual(entries);
       for (const path of entries)
         expect(p.files.filter((row: { path: string }) => row.path === path)).toEqual([
           { path, state: "clean", layer: id },
@@ -589,19 +660,40 @@ describe("semantic verification and provider ownership boundary", () => {
   it("loads the complete actual canonical type-and-value closure", () => {
     const r = fixture().run();
     expect(r.status, JSON.stringify(r.report.errors)).toBe(0);
-    expect(r.report.counts.total).toBe(102);
+    expect(required).toHaveLength(106);
+    expect(liveRequired).toHaveLength(106);
+    expect(new Set(liveRequired).size).toBe(106);
+    expect(r.report.counts.total).toBe(106);
     expect(r.report.errors).toEqual([]);
     for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
       expect(r.report[field]).toEqual([]);
-    // Shared async declarations add three type-only imports and four runtime
-    // imports to the measured closure; the September 14 failed census is retained.
+    // Formatter support adds four canonical modules and 26 imports to the
+    // delivered-main closure: 11 type-only and 15 runtime. The original
+    // September 14 missing-module and history-offset failures are retained.
     // Historical parent and published activation records remain unchanged.
     expect({ edges: r.report.resolvedEdgeCount, ...r.report.counts.resolvedEdgesByType }).toEqual({
-      edges: 399,
-      typeOnly: 251,
-      runtime: 148,
+      edges: 425,
+      typeOnly: 262,
+      runtime: 163,
     });
   });
+
+  it.each(["delete", "reorder", "layer", "entries", "minimum", "extra"] as const)(
+    "rejects %s corruption of the independently pinned twelve-record prefix",
+    (mutation) => {
+      const history = policy().activationHistory;
+      assertCurrentActivations(history);
+      const before = digest(history);
+      if (mutation === "delete") history.splice(0, 1);
+      if (mutation === "reorder") [history[0], history[1]] = [history[1], history[0]];
+      if (mutation === "layer") history[0].layer = "ir-core";
+      if (mutation === "entries") history[0].entries.pop();
+      if (mutation === "minimum") history[0].minModules--;
+      if (mutation === "extra") history.splice(0, 0, structuredClone(history[0]));
+      expect(digest(history)).not.toBe(before);
+      expect(() => assertCurrentActivations(history)).toThrow();
+    },
+  );
 
   function assertModelOnlyDeclarations(text: string) {
     const source = ts.createSourceFile("declarations.ts", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -638,17 +730,34 @@ describe("semantic verification and provider ownership boundary", () => {
     expect(() => assertModelOnlyDeclarations(text + "\n" + mutation)).toThrow();
   });
 
+  it.each(
+    [0, 1, 2].flatMap((index) =>
+      (["delete", "reorder", "layer", "entries", "minimum"] as const).map((mutation) => ({ index, mutation })),
+    ),
+  )("rejects $mutation corruption of formatter activation record $index", ({ index, mutation }) => {
+    const history = assertCurrentActivations(policy().activationHistory);
+    assertNewActivations(history);
+    const before = digest(history);
+    if (mutation === "delete") history.splice(index, 1);
+    if (mutation === "reorder") [history[index], history[index + 1]] = [history[index + 1], history[index]];
+    if (mutation === "layer") history[index].layer = "ir-analysis";
+    if (mutation === "entries") history[index].entries.pop();
+    if (mutation === "minimum") history[index].minModules--;
+    expect(digest(history), "mutation must alter the formatter activation record").not.toBe(before);
+    expect(() => assertNewActivations(history)).toThrow();
+  });
+
   it.each(["delete", "reorder", "layer", "entries", "minimum"] as const)(
     "rejects %s corruption of the new activation records",
     (mutation) => {
-      const history = policy().activationHistory;
+      const history = assertCurrentActivations(policy().activationHistory);
       assertNewActivations(history);
       const before = digest(history);
-      if (mutation === "delete") history.splice(2, 1);
-      if (mutation === "reorder") [history[2], history[3]] = [history[3], history[2]];
-      if (mutation === "layer") history[2].layer = "ir-core";
-      if (mutation === "entries") history[2].entries.pop();
-      if (mutation === "minimum") history[2].minModules--;
+      if (mutation === "delete") history.splice(5, 1);
+      if (mutation === "reorder") [history[5], history[6]] = [history[6], history[5]];
+      if (mutation === "layer") history[5].layer = "ir-core";
+      if (mutation === "entries") history[5].entries.pop();
+      if (mutation === "minimum") history[5].minModules--;
       expect(digest(history), "mutation must alter the accepted activation records").not.toBe(before);
       expect(() => assertNewActivations(history)).toThrow();
     },
@@ -657,9 +766,9 @@ describe("semantic verification and provider ownership boundary", () => {
   it.each(
     (
       [
-        ["published backend", 3],
-        ["published demand", 4],
-        ["refreshed parent", 5],
+        ["published backend", 6],
+        ["published demand", 7],
+        ["refreshed parent", 8],
       ] as const
     ).flatMap(([owner, index]) =>
       (["delete", "reorder", "layer", "entries", "minimum"] as const).map((mutation) => ({
@@ -669,7 +778,7 @@ describe("semantic verification and provider ownership boundary", () => {
       })),
     ),
   )("rejects $mutation corruption of the $owner activation record", ({ index, mutation }) => {
-    const history = policy().activationHistory;
+    const history = assertCurrentActivations(policy().activationHistory);
     assertNewActivations(history);
     const before = digest(history);
     if (mutation === "delete") history.splice(index, 1);
@@ -686,10 +795,10 @@ describe("semantic verification and provider ownership boundary", () => {
       (["delete", "reorder", "layer", "entries", "minimum"] as const).map((mutation) => ({ offset, mutation })),
     ),
   )("rejects $mutation corruption of original prerequisite activation records at $offset", ({ offset, mutation }) => {
-    const history = policy().activationHistory;
+    const history = assertCurrentActivations(policy().activationHistory);
     assertNewActivations(history);
-    const index = originalCompositionOffsets[offset]!;
-    const next = originalCompositionOffsets[offset + 1]!;
+    const index = 3 + originalCompositionOffsets[offset]!;
+    const next = 3 + originalCompositionOffsets[offset + 1]!;
     const before = digest(history);
     if (mutation === "delete") history.splice(index, 1);
     if (mutation === "reorder") [history[index], history[next]] = [history[next], history[index]];
@@ -733,6 +842,7 @@ describe("semantic verification and provider ownership boundary", () => {
     ...closureAdditions,
     ...declarationAdditions,
     ...aggregateAdditions,
+    ...formatterAdditions,
   ])("rejects deleting %s and its classification", (path) => {
     const f = fixture();
     rmSync(resolve(f.root, path));
@@ -764,10 +874,26 @@ describe("semantic verification and provider ownership boundary", () => {
     ...closureAdditions,
     ...declarationAdditions,
     ...aggregateAdditions,
+    ...formatterGroups["ir-core"],
+    ...formatterGroups["ir-program"],
   ])("rejects an aliased frontend type dependency from %s", (path) => {
     const f = fixture();
     f.put("src/forbidden.ts", "export interface Hidden { value: number }");
     f.p.files.push({ path: "src/forbidden.ts", layer: "frontend-ts", state: "unmigrated" });
+    f.append(path, 'export type { Hidden } from "@forbidden";');
+    const r = f.run();
+    expect(r.status).toBe(1);
+    expect(r.report.forbiddenEdges).toContainEqual(
+      expect.objectContaining({ from: path, to: "src/forbidden.ts", typeOnly: true }),
+    );
+  });
+
+  it("rejects a backend implementation dependency from the frontend formatter contract", () => {
+    const f = fixture();
+    expect(f.run().status).toBe(0);
+    const path = formatterGroups["frontend-ts"][0]!;
+    f.put("src/forbidden.ts", "export interface Hidden { value: number }");
+    f.p.files.push({ path: "src/forbidden.ts", layer: "backend-wasmgc", state: "unmigrated" });
     f.append(path, 'export type { Hidden } from "@forbidden";');
     const r = f.run();
     expect(r.status).toBe(1);
@@ -800,6 +926,7 @@ describe("semantic verification and provider ownership boundary", () => {
       ...closureAdditions,
       ...declarationAdditions,
       ...aggregateAdditions,
+      ...formatterAdditions,
     ])(`reports ${field} from %s instead of treating it as closed`, (path) => {
       const f = fixture();
       f.append(path, source);

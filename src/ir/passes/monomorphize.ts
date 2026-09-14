@@ -506,6 +506,8 @@ function tupleKey(types: readonly IrType[]): string {
 }
 
 function irTypeKey(t: IrType): string {
+  if (t.kind === "support-ref")
+    return `support-ref|${t.ref.binding.bindingId.length}:${t.ref.binding.bindingId}|nullable:${t.nullable ? 1 : 0}`;
   if (t.kind === "val") return `v:${valTypeKey(t.val)}`;
   if (t.kind === "string") return "s";
   if (t.kind === "vec") return `vec:${irTypeKey(t.elementType)}${t.nullable ? "?" : ""}`;

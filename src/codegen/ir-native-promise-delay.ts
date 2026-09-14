@@ -13,6 +13,7 @@
  */
 
 import type { ValType } from "../ir/types.js";
+import { createNativeDelayCaptureShape } from "../runtime/wasmgc/promise/delay-combinator-layouts.js";
 import {
   buildNativePromiseDelayCallbackLocals,
   buildNativePromiseDelayCallbackBody,
@@ -22,7 +23,7 @@ import {
 import { IR_NATIVE_PROMISE_DELAY_FN } from "../ir/promise-delay-lowering.js";
 import { ensureAsyncDriveRuntime } from "./async-scheduler.js";
 import { getOrCreateFuncRefWrapperTypes } from "./closures.js";
-import { closureArityField, closureBagField, closureBagInitInstr } from "./closures/funcref-wrapper-types.js";
+import { closureBagInitInstr } from "./closures/funcref-wrapper-types.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { ensureExnTag } from "./registry/imports.js";
@@ -122,17 +123,15 @@ export function ensureIrNativePromiseDelayProvider(ctx: CodegenContext): number 
   }
 
   const callbackCaptureTypeIdx = ctx.mod.types.length;
+  const captureShape = createNativeDelayCaptureShape(
+    { kind: "ref" as const, typeIdx: callbackWrapper.structTypeIdx },
+    { kind: "ref" as const, typeIdx: runtime.promiseTypeIdx },
+  );
   ctx.mod.types.push({
     kind: "struct",
-    name: "$__ir_promise_delay_timer_cap",
-    fields: [
-      { name: "func", type: { kind: "funcref" }, mutable: false },
-      closureArityField(),
-      closureBagField(),
-      { name: "promise", type: { kind: "ref", typeIdx: runtime.promiseTypeIdx }, mutable: false },
-      { name: "value", type: { kind: "f64" }, mutable: false },
-    ],
-    superTypeIdx: callbackWrapper.structTypeIdx,
+    name: captureShape.name,
+    fields: [...captureShape.fields],
+    superTypeIdx: captureShape.parent.typeIdx,
   });
 
   const timerCallbackFuncIdx = mintDefinedFunc(ctx);

@@ -56,6 +56,7 @@ import {
   declareNativeValueResources,
   reserveNativeValueResources,
   fillNativeValueResources,
+  requireCompletedNativeValues,
   type NativeValueReservations,
 } from "../resources/native-values.js";
 
@@ -385,8 +386,12 @@ export function requireCompletedNativeStringValues(
   if (!owner.filled) fail("incomplete native string value resources");
   requireCompletedNativeStringLiterals(tx, pack.strings);
   if (pack.number) {
+    if (!owner.input.valueRequirements) fail("number resources lost their issued value requirements");
     requireCompletedNativeStringFlatten(tx, pack.number.flatten, pack.strings);
     requireCompletedNativeStringNumber(tx, pack.number.scanner, owner.input.valueRequirements!, pack.strings);
+    requireCompletedNativeValues(tx, pack.number.values, owner.input.valueRequirements, {
+      strings: { kind: "native-string", stringPack: pack.strings, scanner: pack.number.scanner },
+    });
   }
   for (const row of owner.rows) tx.physicalIndex(row.reservation);
   return pack;

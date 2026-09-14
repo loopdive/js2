@@ -186,23 +186,174 @@ export function projectDecoder(source, url, expectedUrl, sha) {
   if (sha(text) !== pin.outputHash) throw Error("decoder projection output hash differs");
   return { text, evidence: { url, ...pin } };
 }
+export function projectCopyTreeUtf8(source, url, expectedUrl, sha) {
+  // Fixed reviewed semantic-delta inverse; the output is the original full-file receipt.
+  const pin = {
+    inputHash: "012223f8fe1feeee7c175f9e09e0c5461234bf47ba3998aa5f9dbfa51cc5c639",
+    outputHash: "f40b6b18f92c8bbba588efc72bd075a1e93c2cfe3fbe4939f3019fe6825a5bdf",
+    deltas: [
+      {
+        start: 4672,
+        text: '  utf8Decoder: StringFlattenResources["utf8Decoder"],\n',
+        replacement: "",
+      },
+      {
+        start: 4769,
+        text: '  const utf8Indices = utf8Decoder.kind === "present" ? [layout.utf8StrTypeIdx, layout.utf8StrDataTypeIdx] : [];\n  for (const index of utf8Indices)\n    if (!Number.isSafeInteger(index) || index < 0)\n      throw new Error("native string copy tree: decoder requires UTF8 layout");\n',
+        replacement: "",
+      },
+      {
+        start: 9282,
+        text: '                    // Normalize UTF8 at every descent, including popped right children.\n                    ...(utf8Decoder.kind === "present"\n                      ? ([\n                          { op: "local.get", index: CUR },\n                          { op: "ref.as_non_null" },\n                          { op: "ref.test", typeIdx: layout.utf8StrTypeIdx },\n                          {\n                            op: "if",\n                            blockType: { kind: "empty" },\n                            then: [\n                              { op: "local.get", index: CUR },\n                              { op: "ref.as_non_null" },\n                              { op: "ref.cast", typeIdx: layout.utf8StrTypeIdx },\n                              { op: "call", funcIdx: utf8Decoder.handle },\n                              { op: "local.set", index: CUR },\n                            ],\n                          },\n                        ] satisfies Instr[])\n                      : []),\n',
+        replacement: "",
+      },
+    ],
+    region: {
+      name: "buildStringCopyTreeDefinition",
+      start: 4566,
+      header:
+        'export function buildStringCopyTreeDefinition(\n  layout: NativeStringLayout,\n  worklistTypeIndex: number,\n  utf8Decoder: StringFlattenResources["utf8Decoder"],\n): { locals: LocalDef[]; body: Instr[] } {\n',
+    },
+  };
+  if (url !== expectedUrl || !expectedUrl.endsWith("/src/runtime/wasmgc/values/string-flatten-bodies.ts"))
+    throw Error("wrong copy-tree projection target/root");
+  if (sha(source) !== pin.inputHash) throw Error("copy-tree projection input hash differs");
+  if (
+    source.indexOf(pin.region.header) !== pin.region.start ||
+    source.lastIndexOf(pin.region.header) !== pin.region.start
+  )
+    throw Error("changed copy-tree region/header");
+  for (const d of pin.deltas)
+    if (source.indexOf(d.text) !== d.start || source.lastIndexOf(d.text) !== d.start)
+      throw Error("missing/duplicate/misplaced copy-tree delta");
+  let text = source;
+  for (const d of [...pin.deltas].sort((a, b) => b.start - a.start))
+    text = text.slice(0, d.start) + d.replacement + text.slice(d.start + d.text.length);
+  if (sha(text) !== pin.outputHash) throw Error("copy-tree projection output hash differs");
+  return { text, evidence: { url, ...pin } };
+}
+
+export function projectFlattenAdapterStaging(source, url, expectedUrl, sha) {
+  // Fixed reviewed semantic-delta inverse; the output is the original full-file receipt.
+  const pin = {
+    inputHash: "45407b5fd4be2c0d1a6912b23db8b34510f6accdee0ced9a4bcee92d376a40d1",
+    outputHash: "00668dc5edcba527d6c8d2bc5638a909f55a5894115d4c30aa1f7b03a50cc9d2",
+    deltas: [
+      {
+        start: 1096,
+        text: 'import type { WasmFunction } from "../wasm/model/module-records.js";\n',
+        replacement: "",
+      },
+      {
+        start: 1239,
+        text: "  type StringFlattenResources,\n",
+        replacement: "",
+      },
+      {
+        start: 2438,
+        text: '  let copyTreeFunction: WasmFunction;\n  let copyTreeWorklistType: number;\n  let utf8Decoder: StringFlattenResources["utf8Decoder"] = { kind: "absent" };\n',
+        replacement: "",
+      },
+      {
+        start: 4533,
+        text: '    // Reserve the actual function object in its historical slot. It is pending,\n    // not executable, until the optional decoder has been registered below.\n    copyTreeWorklistType = wlArrTypeIdx;\n    copyTreeFunction = {\n      name: "__str_copy_tree",\n      typeIdx,\n      locals: [],\n      body: [],\n      exported: false,\n    };\n    pushDefinedFunc(ctx, funcIdx, copyTreeFunction);',
+        replacement:
+          '    const definition = buildStringCopyTreeDefinition(ctx, wlArrTypeIdx);\n\n    pushDefinedFunc(ctx, funcIdx, {\n      name: "__str_copy_tree",\n      typeIdx,\n      locals: definition.locals,\n      body: definition.body,\n      exported: false,\n    });',
+      },
+      {
+        start: 6133,
+        text: '    utf8Decoder = { kind: "present", handle: funcIdx };\n',
+        replacement: "",
+      },
+      {
+        start: 6194,
+        text: "  // Fill the same pushed object once, using only the decoder minted above.\n  // A decoder construction failure propagates before any completion is claimed.\n  const copyTreeDefinition = buildStringCopyTreeDefinition(ctx, copyTreeWorklistType, utf8Decoder);\n  copyTreeFunction.locals = copyTreeDefinition.locals;\n  copyTreeFunction.body = copyTreeDefinition.body;\n\n",
+        replacement: "",
+      },
+      {
+        start: 7566,
+        text: '    const copyTreeIdx = ctx.nativeStrHelpers.get("__str_copy_tree")!;\n',
+        replacement:
+          '    const copyTreeIdx = ctx.nativeStrHelpers.get("__str_copy_tree")!;\n    // #1588 PR-B part 2: present iff --utf8-storage is on.\n    const utf8ToFlatIdx = ctx.nativeStrHelpers.get("__str_utf8_to_flat");\n',
+      },
+      {
+        start: 8041,
+        text: "      utf8Decoder,\n",
+        replacement:
+          '      utf8Decoder:\n        ctx.utf8Storage && ctx.utf8StrTypeIdx >= 0 && utf8ToFlatIdx !== undefined\n          ? { kind: "present", handle: utf8ToFlatIdx }\n          : { kind: "absent" },\n',
+      },
+    ],
+    region: {
+      name: "emitStrFlattenHelpers",
+      start: 2250,
+      header: "export function emitStrFlattenHelpers(shared: NativeStrShared): void {\n",
+    },
+  };
+  if (url !== expectedUrl || !expectedUrl.endsWith("/src/codegen/native-strings-core.ts"))
+    throw Error("wrong flatten adapter projection target/root");
+  if (sha(source) !== pin.inputHash) throw Error("flatten adapter projection input hash differs");
+  if (
+    source.indexOf(pin.region.header) !== pin.region.start ||
+    source.lastIndexOf(pin.region.header) !== pin.region.start
+  )
+    throw Error("changed flatten adapter region/header");
+  for (const d of pin.deltas)
+    if (source.indexOf(d.text) !== d.start || source.lastIndexOf(d.text) !== d.start)
+      throw Error("missing/duplicate/misplaced flatten adapter delta");
+  let text = source;
+  for (const d of [...pin.deltas].sort((a, b) => b.start - a.start))
+    text = text.slice(0, d.start) + d.replacement + text.slice(d.start + d.text.length);
+  if (sha(text) !== pin.outputHash) throw Error("flatten adapter projection output hash differs");
+  return { text, evidence: { url, ...pin } };
+}
+
+export function scannerProjectionTargets(root) {
+  return Object.fromEntries(
+    [
+      ["src/runtime/wasmgc/values/string-number-bodies.ts", "scanner"],
+      ["src/runtime/wasmgc/values/string-utf8-decode-bodies.ts", "decoder"],
+      ["src/runtime/wasmgc/values/string-flatten-bodies.ts", "copyTree"],
+      ["src/codegen/native-strings-core.ts", "adapter"],
+    ].map(([path, kind]) => [pathToFileURL(join(root, path)).href, kind]),
+  );
+}
+// Exact URL membership is the sole authorization. Suffix comparison below can
+// only deny alternate roots/routes/query instances, never authorize a load.
+export function scannerProjectionTarget(url, targets) {
+  if (Object.hasOwn(targets, url)) return targets[url];
+  const parsed = new URL(url);
+  for (const expected of Object.keys(targets)) {
+    const path = new URL(expected).pathname;
+    const relative = path.slice(path.lastIndexOf("/src/"));
+    if (parsed.pathname.endsWith(relative)) throw Error("wrong projection target/root " + url);
+  }
+  return null;
+}
+export function requireScannerBaselineSource(rows) {
+  // Independently checked against every blob in the fixed a6cc source tree.
+  assert.equal(rows.length, 1337, "baseline source population differs");
+  assert.equal(
+    sha(JSON.stringify(rows)),
+    "5dbae41d235c490b58f107fcc70ef54dc353544be3bccd63d92b5be706429df5",
+    "baseline source census differs",
+  );
+}
 const loaderSource = String.raw`
 import { createHash } from "node:crypto";
 let state, transformations=0, loads=0, perTarget={}, evidence=[];
 const sha=s=>createHash("sha256").update(s).digest("hex");
 export function initialize(data){state=data;state.port.on("message",message=>{if(message==="receipt")state.port.postMessage({transformations,loads,perTarget,evidence});});state.port.unref();}
 export async function load(url,context,next){
-  const decoder=url.includes("/src/runtime/wasmgc/values/string-utf8-decode-bodies.");
-  const expected=decoder?state.decoderUrl:state.expectedUrl;
-  if((decoder||url.includes("/src/runtime/wasmgc/values/string-number-bodies."))&&url!==expected)throw Error("wrong projection target/root");
+  const kind=SELECT_TARGET(url,state.targets);
   const result=await next(url,context);
-  if(url!==state.expectedUrl&&url!==state.decoderUrl)return result;
+  if(kind===null)return result;
   loads++;
   perTarget[url]=(perTarget[url]??0)+1;
   if(perTarget[url]!==1)throw Error("duplicate canonical load/transformation");
   const source=typeof result.source==="string"?result.source:Buffer.from(result.source).toString("utf8");
   if(state.arm!=="projection")return result;
-  const projected=decoder?PROJECT_DECODER(source,url,state.decoderUrl,sha):PROJECT_SCANNER(source,url,state.expectedUrl,sha);
+  const projectors={scanner:PROJECT_SCANNER,decoder:PROJECT_DECODER,copyTree:PROJECT_COPY_TREE,adapter:PROJECT_ADAPTER};
+  const projected=projectors[kind](source,url,url,sha);
   transformations++;evidence.push(projected.evidence);
   return {...result,source:projected.text};
 }
@@ -217,7 +368,7 @@ import { execFileSync } from "node:child_process";
 import { register } from "node:module";
 import { MessageChannel } from "node:worker_threads";
 const [rootArgument, arm, loaderArgument, harnessUrl, identityArgument] = process.argv.slice(1), root = realpathSync(rootArgument);
-const {scannerRuntimeIdentity} = await import(harnessUrl);
+const {scannerRuntimeIdentity,scannerProjectionTargets,requireScannerBaselineSource,requireTargetLoads,requireTransformCount} = await import(harnessUrl);
 const expectedIdentity=JSON.parse(Buffer.from(identityArgument,"base64").toString("utf8"));
 const runtimeBefore=scannerRuntimeIdentity(root,process.env,expectedIdentity);
 const sha = value => createHash("sha256").update(value).digest("hex");
@@ -236,13 +387,13 @@ if(arm==="baseline"){
 }
 function snapshot(){const rows=[];function walk(dir){for(const entry of readdirSync(join(root,dir),{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name))){const path=dir+"/"+entry.name;if(entry.isDirectory())walk(path);else{assert(entry.isFile(),"unexpected source symlink "+path);rows.push([path,sha(readFileSync(join(root,path)))]);}}}walk("src");assert(rows.length>1000);return rows;}
 const sourceBefore=snapshot(),urls=[];
+if(arm==="baseline")requireScannerBaselineSource(sourceBefore);
 // Register the raw-source hook FIRST. The identical tsx loader in every arm
 // then calls through it before performing its normal TypeScript transform.
 const loaderText=Buffer.from(loaderArgument,"base64").toString("utf8");
 const {port1,port2}=new MessageChannel();port1.unref();
-const expectedUrl=pathToFileURL(join(root,"src/runtime/wasmgc/values/string-number-bodies.ts")).href;
-const decoderUrl=pathToFileURL(join(root,"src/runtime/wasmgc/values/string-utf8-decode-bodies.ts")).href;
-register("data:text/javascript;base64,"+Buffer.from(loaderText).toString("base64"),{parentURL:import.meta.url,data:{root,arm,expectedUrl,decoderUrl,port:port2},transferList:[port2]});
+const targets=scannerProjectionTargets(root);
+register("data:text/javascript;base64,"+Buffer.from(loaderText).toString("base64"),{parentURL:import.meta.url,data:{root,arm,targets,port:port2},transferList:[port2]});
 const {register:registerTsx}=await import(pathToFileURL(runtimeBefore.paths.tsxEntry).href);
 registerTsx({tsconfig:join(root,"tsconfig.json")});
 const runtimeLoader={...runtimeBefore,content:{...runtimeBefore.content,loaderHash:sha(loaderText)}};
@@ -352,9 +503,10 @@ for(const fixture of [...fixtures,...malformed]){
 assert.deepEqual(snapshot(),sourceBefore,"compiler source changed during arm");
 scannerRuntimeIdentity(root,process.env,runtimeBefore);
 port1.ref();const projection=await awaitStep(new Promise(resolve=>{port1.once("message",resolve);port1.postMessage("receipt");}),{phase:"loader-receipt"});port1.close();
-assert.equal(projection.transformations,arm==="projection"?2:0,"missing/duplicate transformation");
-assert.equal(projection.loads,arm==="baseline"?0:2,"missing/duplicate scanner load");
-console.log("SCANNER_RECEIPT="+JSON.stringify({schema:"native-scanner-public-source-pair-v4",arm,root,head,urls,runtimeLoader,projection,sourceFiles:sourceBefore,fixturePins:pins,fixtures:fixtures.map(f=>({...f,expected:encode(f.expected)})),semanticFixtures:malformed.map(f=>({id:f.id,source:f.source,options:f.options})),rows,physicalAcceptanceCertified:false}));
+requireTransformCount(projection.transformations,arm);
+requireTargetLoads(projection.perTarget,root,arm);
+assert.equal(projection.loads,arm==="baseline"?1:4,"missing/duplicate scanner load");
+console.log("SCANNER_RECEIPT="+JSON.stringify({schema:"native-scanner-public-source-pair-v5",arm,root,head,urls,runtimeLoader,projection,sourceFiles:sourceBefore,fixturePins:pins,fixtures:fixtures.map(f=>({...f,expected:encode(f.expected)})),semanticFixtures:malformed.map(f=>({id:f.id,source:f.source,options:f.options})),rows,physicalAcceptanceCertified:false}));
 `;
 const expectedIds = [
   ...Array.from({ length: 17 }, (_, i) => "3570:" + i),
@@ -371,25 +523,26 @@ export function requirePopulation(ids) {
   if (JSON.stringify(ids) !== JSON.stringify(expectedIds)) throw Error("missing/duplicate/reordered source row");
 }
 export function requireTransformCount(count, arm) {
-  if (count !== (arm === "projection" ? 2 : 0)) throw Error("missing/duplicate/unexpected transformation");
+  if (!["baseline", "candidate", "projection"].includes(arm) || count !== (arm === "projection" ? 4 : 0))
+    throw Error("missing/duplicate/unexpected transformation");
 }
 export function requireTargetLoads(actual, root, arm) {
-  const expected =
-    arm === "baseline"
-      ? {}
-      : Object.fromEntries(
-          ["string-number-bodies.ts", "string-utf8-decode-bodies.ts"].map((name) => [
-            pathToFileURL(join(root, "src/runtime/wasmgc/values", name)).href,
-            1,
-          ]),
-        );
+  assert(["baseline", "candidate", "projection"].includes(arm), "unknown scanner arm");
+  const expected = Object.fromEntries(
+    Object.entries(scannerProjectionTargets(root))
+      .filter(([, kind]) => arm !== "baseline" || kind === "adapter")
+      .map(([url]) => [url, 1]),
+  );
   if (JSON.stringify(Object.entries(actual).sort()) !== JSON.stringify(Object.entries(expected).sort()))
     throw Error("missing/duplicate/foreign target load");
 }
 async function runArm(root, arm, directory) {
   const loader = loaderSource
     .replace("PROJECT_SCANNER", `(${projectScanner.toString()})`)
-    .replace("PROJECT_DECODER", `(${projectDecoder.toString()})`);
+    .replace("PROJECT_DECODER", `(${projectDecoder.toString()})`)
+    .replace("PROJECT_COPY_TREE", `(${projectCopyTreeUtf8.toString()})`)
+    .replace("PROJECT_ADAPTER", `(${projectFlattenAdapterStaging.toString()})`)
+    .replace("SELECT_TARGET", `(${scannerProjectionTarget.toString()})`);
   const env = scannerChildEnvironment(root);
   const runtimeBefore = scannerRuntimeIdentity(root, env);
   const child = spawn(
@@ -437,7 +590,7 @@ async function runArm(root, arm, directory) {
   scannerRuntimeIdentity(root, env, runtimeBefore);
   const receipt = JSON.parse(receipts[0].slice("SCANNER_RECEIPT=".length));
   writeFileSync(join(directory, arm + ".json"), JSON.stringify(receipt, null, 2));
-  assert.equal(receipt.schema, "native-scanner-public-source-pair-v4");
+  assert.equal(receipt.schema, "native-scanner-public-source-pair-v5");
   assert.equal(receipt.root, root);
   assert.equal(receipt.arm, arm);
   assert.deepEqual(
@@ -450,23 +603,23 @@ async function runArm(root, arm, directory) {
   assert.equal(receipt.semanticFixtures.length, 2);
   requireTransformCount(receipt.projection.transformations, arm);
   requireTargetLoads(receipt.projection.perTarget, root, arm);
-  assert.equal(receipt.projection.loads, arm === "baseline" ? 0 : 2);
+  assert.equal(receipt.projection.loads, arm === "baseline" ? 1 : 4);
+  if (arm === "baseline") requireScannerBaselineSource(receipt.sourceFiles);
   if (arm === "projection") {
-    const path = join(root, "src/runtime/wasmgc/values/string-number-bodies.ts"),
-      url = pathToFileURL(path).href;
-    const projected = projectScanner(readFileSync(path, "utf8"), url, url, (s) =>
-      createHash("sha256").update(s).digest("hex"),
-    );
-    const decoderPath = join(root, "src/runtime/wasmgc/values/string-utf8-decode-bodies.ts"),
-      decoderUrl = pathToFileURL(decoderPath).href;
-    const decoded = projectDecoder(readFileSync(decoderPath, "utf8"), decoderUrl, decoderUrl, (s) =>
-      createHash("sha256").update(s).digest("hex"),
+    const projectors = {
+      scanner: projectScanner,
+      decoder: projectDecoder,
+      copyTree: projectCopyTreeUtf8,
+      adapter: projectFlattenAdapterStaging,
+    };
+    const expectedEvidence = Object.entries(scannerProjectionTargets(root)).map(
+      ([url, kind]) => projectors[kind](readFileSync(new URL(url), "utf8"), url, url, sha).evidence,
     );
     assert.deepEqual(
       [...receipt.projection.evidence].sort((a, b) => a.url.localeCompare(b.url)),
-      [projected.evidence, decoded.evidence].sort((a, b) => a.url.localeCompare(b.url)),
+      expectedEvidence.sort((a, b) => a.url.localeCompare(b.url)),
     );
-    assert.equal(receipt.projection.evidence.length, 2);
+    assert.equal(receipt.projection.evidence.length, 4);
   } else assert.deepEqual(receipt.projection.evidence, []);
   return receipt;
 }
