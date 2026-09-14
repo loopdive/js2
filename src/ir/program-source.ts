@@ -32,6 +32,7 @@ import { unwrapPromiseTypeNode } from "./async-static.js";
 import { postStartupCallableUnits } from "./program-startup-proof.js";
 import { makeIrIdentityImportedFunctionResolver } from "./imported-functions.js";
 import { makeIrPromiseDelayResolver } from "./promise-delay.js";
+import { prepareNativeStringOutputResolver } from "../frontend/builtins/prepare-string-output.js";
 import { prepareNativeAsyncSourceFamilies, type NativeAsyncSourceFamilies } from "./program-native-async-source.js";
 import {
   collectIrPromiseDelayOwners,
@@ -58,6 +59,8 @@ export interface IrProgramSourceInput {
   readonly asyncFamilyProjection?: "disabled" | "standalone-native";
   /** Explicit frontend string-number lowering; not provider availability or permission to emit. */
   readonly nativeStringValueProjection?: "standalone-native";
+  /** Independent string-only console intents; no async family or runtime availability is implied. */
+  readonly nativeStringOutputProjection?: "standalone-native";
 }
 
 /** Frontend-only carrier; declarations never cross into PreparedIrProgram. */
@@ -263,6 +266,25 @@ function selectNativeStringValueProjection(
       "native string-value source projection requires an explicit standalone-native request with wasmgc:standalone policy",
     );
   return true;
+}
+
+function selectNativeStringOutputProjection(
+  input: Pick<IrProgramSourceInput, "nativeStringOutputProjection" | "policy">,
+): boolean {
+  const nativeStringOutput = input.nativeStringOutputProjection !== undefined;
+  if (
+    nativeStringOutput &&
+    (input.nativeStringOutputProjection !== "standalone-native" ||
+      input.policy.backend !== "wasmgc" ||
+      input.policy.target !== "standalone" ||
+      input.policy.stringConst?.storage !== "native" ||
+      input.policy.stringConcat?.concat !== "native")
+  )
+    throw new PreparedIrProgramInvariantError(
+      "invalid-prepared-data",
+      "native string output projection requires explicit standalone WasmGC native string policies",
+    );
+  return nativeStringOutput;
 }
 
 /** Mutable diagnostic cursor shared by source planning and its validation helpers. */
@@ -558,6 +580,7 @@ export function prepareIrProgramSources(
   const nativeDelay = selectNativePromiseDelaySourceProjection(input);
   const nativeAsyncFamily = selectNativeAsyncFamilyProjection(input);
   const nativeStringValues = selectNativeStringValueProjection(input);
+  const nativeStringOutput = selectNativeStringOutputProjection(input);
   const inventory = buildIrUnitInventory(input.sourceFiles, {
     ...input.inventoryOptions,
     entrySource: input.entrySource,
@@ -763,7 +786,10 @@ export function prepareIrProgramSources(
         oracle: input.oracle,
         allocRegistry: allocations,
         directCalls,
-        resolver,
+        resolver:
+          nativeStringOutput && !family
+            ? { ...resolver, ...prepareNativeStringOutputResolver(input.checker, declaration) }
+            : resolver,
         ...(nativeStringValues ? { stringNumericCoercion: "number-boundary" as const } : {}),
         numericThrow: "number-boundary",
         ...(nativeDelay ? { promiseDelays: promiseDelaysBySource.get(source) } : {}),

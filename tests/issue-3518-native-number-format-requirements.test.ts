@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { prepareWholeIrProgram } from "../src/ir/program-preparation.js";
 import { decodePreparedIrProgram, encodePreparedIrProgram } from "../src/ir/program-codec.js";
 import { assertPreparedIrProgram } from "../src/ir/program-validation.js";
@@ -29,6 +29,8 @@ import { prepareIrRuntimeManifest } from "../src/ir/intrinsic-support.js";
 import { planPhysicalSetup, type PhysicalNativeNumberFormatInput } from "../src/ir/program-physical-plan.js";
 import { forEachInstrDeep } from "../src/ir/core/nodes.js";
 import { planNativeStringValuePhysical } from "../src/backend/wasmgc/program/native-string-values.js";
+import { deriveNativeStringOutputRequirements } from "../src/ir/program/native-string-output-requirements.js";
+import { deriveNativeValueResourcePlan } from "../src/ir/program/native-value-resources.js";
 import { collectNativeStringValueDemands } from "../src/ir/program/native-string-value-demands.js";
 import { irNativeAsyncCallableDeclaration } from "../src/ir/runtime/native-async-callables.js";
 import {
@@ -58,86 +60,148 @@ function actual() {
 }
 
 describe("complete prepared formatter demand joins", () => {
-  it("authenticates the whole support manifest without waiving the actual family string gap", () => {
-    const program = actual();
-    const projection = program.runtime[0]!;
-    const options = {
-      backend: "wasmgc",
-      target: "standalone",
-      utf8Storage: false,
-      sharedExceptionTag: false,
-      sourceMap: false,
-      moduleName: "formatter-manifest-control",
-      numberFormat: { integerBeforeScratch: false },
-    } as const;
-    const requirements = deriveNativeNumberFormatRequirements({
-      program,
-      projection,
-      integerBeforeScratch: false,
-    })!;
-    const support = prepareIrRuntimeManifest({
-      functions: [requirements.batch.implementation.body],
-      sourceFile: "<stdlib:__sh_num_toString_radix>",
-      policy: projection.prepared.manifest.policy,
-      includeEmpty: true,
+  afterEach(async () => {
+    // Let the worker report each synchronous compiler case before starting another.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  });
+
+  describe("whole support manifest authentication", () => {
+    function prepareFixture() {
+      const program = actual();
+      const projection = program.runtime[0]!;
+      const options = {
+        backend: "wasmgc",
+        target: "standalone",
+        utf8Storage: false,
+        sharedExceptionTag: false,
+        sourceMap: false,
+        moduleName: "formatter-manifest-control",
+        numberFormat: { integerBeforeScratch: false },
+      } as const;
+      const requirements = deriveNativeNumberFormatRequirements({
+        program,
+        projection,
+        integerBeforeScratch: false,
+      })!;
+      const support = prepareIrRuntimeManifest({
+        functions: [requirements.batch.implementation.body],
+        sourceFile: "<stdlib:__sh_num_toString_radix>",
+        policy: projection.prepared.manifest.policy,
+        includeEmpty: true,
+      });
+      const input = { requirements, support };
+      const demands = collectNativeStringValueDemands(program, projection);
+      const selected = planNativeStringValuePhysical(demands, { representation: "native-string", utf8Storage: false });
+      expect(selected.kind).toBe("planned");
+      if (selected.kind !== "planned" || !selected.plan.output)
+        throw new Error("full-family string output resources were not planned");
+      const outputRequirements = deriveNativeStringOutputRequirements(demands, selected.plan.output.options);
+      if ("kind" in outputRequirements) throw new Error(JSON.stringify(outputRequirements));
+      const nativeInput = {
+        demands,
+        plan: selected.plan,
+        outputRequirements,
+        ...(selected.plan.mode === "number-boundary"
+          ? { valueRequirements: deriveNativeValueResourcePlan(program, projection, "native-string") }
+          : {}),
+      };
+      return { program, projection, options, requirements, support, input, nativeInput };
+    }
+    let fixture: ReturnType<typeof prepareFixture>;
+    beforeAll(() => {
+      fixture = prepareFixture();
     });
-    const input = { requirements, support };
-    const demands = collectNativeStringValueDemands(program, projection);
-    const selected = planNativeStringValuePhysical(demands, { representation: "native-string", utf8Storage: false });
-    expect(selected.kind).toBe("unsupported");
-    if (selected.kind !== "unsupported")
-      throw new Error("update the full-family integration proof after real string admission");
-    expect(selected.detail).toMatch(/has no native string value resource join/);
-    const positive = planPhysicalSetup(program, options, projection, undefined, input);
-    // This is the unchanged real source refusal, not a successful formatter ABI plan.
-    expect(positive).toEqual(selected);
-    expect(acceptPreparedIrProgram(program, options)).toEqual(selected);
-    const prior = planPhysicalSetup(program, options, projection);
-    if (prior.kind !== "unsupported") throw new Error("expected the existing async materialization refusal");
-    expect(prior.detail).toContain("needs scheduler/promise runtime materialization");
-    const changedFunctions = structuredClone(support.functions);
-    expect(
-      planPhysicalSetup(program, options, projection, undefined, {
-        requirements,
-        support: { ...support, functions: changedFunctions },
-      }).kind,
-    ).toBe("unsupported");
-    let changedAttachments = 0;
-    for (const fn of changedFunctions)
-      for (const block of fn.blocks)
-        for (const root of block.instrs)
-          forEachInstrDeep(root, (instruction) => {
-            if (changedAttachments === 0 && instruction.kind === "intrinsic" && instruction.provider) {
-              Object.assign(instruction, { provider: { ...instruction.provider, unexpected: true } });
-              changedAttachments++;
-            }
-          });
-    expect(changedAttachments).toBe(1);
-    expect(support.providers.size).toBeGreaterThan(0);
-    const [providerId, provider] = [...support.providers][0]!;
-    const replaced = new Map(support.providers);
-    replaced.set(providerId, { ...provider, unexpected: true } as typeof provider);
-    const extra = new Map<string, unknown>(support.providers);
-    extra.set("unexpected-provider", provider);
-    const { providers: omitted, ...withoutProviders } = support;
-    expect(omitted).toBe(support.providers);
-    for (const changed of [
-      { ...support, functions: changedFunctions },
-      { ...support, functions: [{ ...support.functions[0]!, name: "foreign-body" }] },
-      { ...support, providers: new Map() },
-      { ...support, providers: replaced },
-      { ...support, providers: extra },
-      { ...support, manifest: { ...support.manifest, policy: { ...support.manifest.policy, target: "host" } } },
-      { ...support, unexpected: true },
-      withoutProviders,
-    ]) {
-      expect(() =>
-        planPhysicalSetup(program, options, projection, undefined, {
+
+    it("preserves the actual family async gap after joining output resources", () => {
+      const { program, projection, options, input, nativeInput } = fixture;
+      const positive = planPhysicalSetup(program, options, projection, nativeInput, input);
+      // Output is materializable; the unchanged full family still requires async support.
+      if (positive.kind !== "unsupported") throw new Error("expected the existing async materialization refusal");
+      expect(positive.detail).toMatch(/async|promise|scheduler/);
+      expect(positive.detail).not.toContain("string.concat has no native string value resource join");
+      expect(acceptPreparedIrProgram(program, options)).toEqual(positive);
+    });
+
+    it("retains the prior refusal without native resource inputs", () => {
+      const { program, projection, options } = fixture;
+      const prior = planPhysicalSetup(program, options, projection);
+      if (prior.kind !== "unsupported") throw new Error("expected the existing async materialization refusal");
+      expect(prior.detail).toContain("async frames do not support wasmgc:standalone");
+      expect(prior.detail).toContain(
+        "intrinsic callable async.console.log-string needs runtime function materialization",
+      );
+    });
+
+    it("accepts an unchanged cloned support body before rejecting mutations", () => {
+      const { program, projection, options, requirements, support, nativeInput } = fixture;
+      const changedFunctions = structuredClone(support.functions);
+      expect(
+        planPhysicalSetup(program, options, projection, nativeInput, {
           requirements,
-          support: changed,
+          support: { ...support, functions: changedFunctions },
+        }).kind,
+      ).toBe("unsupported");
+    });
+
+    it.each([
+      "provider attachment",
+      "foreign body",
+      "missing provider entries",
+      "changed provider metadata",
+      "extra provider entry",
+      "foreign target policy",
+      "extra manifest field",
+      "omitted provider map",
+    ])("rejects %s", (control) => {
+      const { program, projection, options, requirements, support, nativeInput } = fixture;
+      const changedFunctions = structuredClone(support.functions);
+      let changedAttachments = 0;
+      for (const fn of changedFunctions)
+        for (const block of fn.blocks)
+          for (const root of block.instrs)
+            forEachInstrDeep(root, (instruction) => {
+              if (changedAttachments === 0 && instruction.kind === "intrinsic" && instruction.provider) {
+                Object.assign(instruction, { provider: { ...instruction.provider, unexpected: true } });
+                changedAttachments++;
+              }
+            });
+      expect(changedAttachments).toBe(1);
+      expect(support.providers.size).toBeGreaterThan(0);
+      const [providerId, provider] = [...support.providers][0]!;
+      const replaced = new Map(support.providers);
+      replaced.set(providerId, { ...provider, unexpected: true } as typeof provider);
+      const extra = new Map<string, unknown>(support.providers);
+      extra.set("unexpected-provider", provider);
+      const { providers: omitted, ...withoutProviders } = support;
+      expect(omitted).toBe(support.providers);
+      const controls = [
+        { ...support, functions: changedFunctions },
+        { ...support, functions: [{ ...support.functions[0]!, name: "foreign-body" }] },
+        { ...support, providers: new Map() },
+        { ...support, providers: replaced },
+        { ...support, providers: extra },
+        { ...support, manifest: { ...support.manifest, policy: { ...support.manifest.policy, target: "host" } } },
+        { ...support, unexpected: true },
+        withoutProviders,
+      ];
+      const index = [
+        "provider attachment",
+        "foreign body",
+        "missing provider entries",
+        "changed provider metadata",
+        "extra provider entry",
+        "foreign target policy",
+        "extra manifest field",
+        "omitted provider map",
+      ].indexOf(control);
+      expect(index).toBeGreaterThanOrEqual(0);
+      expect(() =>
+        planPhysicalSetup(program, options, projection, nativeInput, {
+          requirements,
+          support: controls[index],
         } as PhysicalNativeNumberFormatInput),
       ).toThrow(/support manifest differs from canonical preparation/);
-    }
+    });
   });
 
   for (const decoded of [false, true])
