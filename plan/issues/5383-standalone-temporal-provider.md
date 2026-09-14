@@ -5551,3 +5551,209 @@ must-not-move samples flat with 0 flips, the `gc` lane byte-identical on the
 corpus, the equivalence gate at baseline, and 0 `__temporal_*` leaks. Base and
 branch were both measured on this tree by file-copy revert. No full-corpus number
 is claimed; a corpus run remains the tech lead's to schedule.
+
+### S18 findings (2026-09-14) — the `called value is not a function` attribution was wrong again, and the real Temporal cause is a literal-vs-computed member-name split
+
+Full write-up in `plan/issues/6483-standalone-link-reverse-method-call.md`.
+
+#### 1. The hand-off attribution did not reproduce, and it took three probe sets to say why
+
+S17 handed over: "the reverse GET now hands the consumer closure back correctly,
+and the CALL still throws, from the `wantIsCallableGuard` in `emitDynamicCall`
+(`expressions/calls.ts` ~L4851) — `__is_callable` is a module-local ladder that
+cannot recognise a foreign closure." **That is not where the throw comes from.**
+
+The first probe set (`.tmp/s18/c5.mjs`) refuted it outright: a consumer closure
+obtained through the reverse GET and then called dynamically inside the provider
+answers **7**, in every shape — plain argument, bag field, array element,
+get-then-pass. If the guard refused foreign closures, none of those could work.
+
+The message has **four** emitters in `src/codegen`. Tagging each one
+(`A` `emitDynamicCall`, `B` `new-super`, `C` `resolved-callee-guard`,
+`D` `fnctor-missing-method-dispatch`) and re-running says **C**, every time, for
+every probe and for the real provider. `resolved-callee-guard.ts` is the terminal
+miss of `__extern_method_call` — the resolve-then-apply native — and not a
+callability test on a value at all.
+
+A second tag (`C-PROV` / `C-CONS`, keyed on `ctx.exportsConsumedByWasm`) split
+the bucket into two independent defects:
+
+| tag | the module that threw | what it was doing |
+| --- | --- | --- |
+| **C-PROV** | the PROVIDER | `o.m()` on a CONSUMER-owned carrier |
+| **C-CONS** | the CONSUMER | `Temporal.Duration.from(…)` on a PROVIDER-owned receiver |
+
+**Why the earlier attribution looked right.** S17's census provider contains
+`o.m()`, so the failing rows all *mention* a call — but the throw was raised one
+frame out, by the consumer's own method call INTO the provider. And the answers
+move with provider module CONTENT (the #6432 action-at-a-distance hazard):
+adding one provider-own closure to an otherwise identical provider flipped
+`f = o.m; f()` from a throw to `7` (`.tmp/s18/c6{a,b,c}.mjs`). Any single-probe
+reading of this family is unreliable; only the emitter tag was stable.
+
+#### 2. C-PROV — root cause, and the fix this slice ships
+
+`__extern_method_call`'s non-`$Object` receiver arm consults
+`boundaryObjectCallIdx ?? peerMethodCallIdx` — the JS-host boundary call and the
+CONSUMER's forward `__js2wasm_link_method_call` terminal (S2h). **A provider has
+neither**, so the arm is empty and control falls through to the terminal miss,
+which correctly throws for a method it could not resolve. The provider had no way
+to resolve it, because the only module that can is the consumer.
+
+S17 built a reverse `methodCall` hop and REMOVED it, reasoning that "with the
+guard throwing first it never fired in any probed shape". The guard that threw
+first was this one, and the hop was never placed in the arm that reaches it. The
+hop was the fix; it was removed for the wrong reason.
+
+#6483 adds it: `__js2wasm_link_reverse_method_call` plus the consumer-side
+`__js2wasm_link_local_method_call`, a fifth funcref slot on
+`__js2wasm_link_install_peer`.
+
+| probe, host-free linked pair | base | S18 |
+| --- | --- | --- |
+| provider `o.m()` on a consumer bag | TypeError | **7** |
+| the same method reading `this` | TypeError | **42** |
+| absent method (control) | TypeError | TypeError |
+| provider calling its own method (control) | 5 | 5 |
+
+Base and branch both measured on this tree by file-copy revert
+(`.tmp/s18/witness-base.out` vs `witness-new3.out`).
+
+#### 3. Two things this slice built, measured, and then reverted
+
+Both looked correct and both introduced a silent wrong value where the base tree
+threw. Neither would have been caught without running the base.
+
+- **The forward null-vs-owned fix.** The forward terminal's `ref.null.extern` is
+  THREE states: not-my-receiver, resolved-but-apply-declined, and the method
+  legitimately returned `null`. `NS.retnull()` proves the third is real — it
+  throws `called value is not a function` while `NS.retundef()` is correct
+  (`.tmp/s18/c7`). A consumer-side arm re-asked `memberGet` + `callableKind` on
+  the null path and adopted the null when the member was callable. Measured
+  (`.tmp/s18/c3-new.out`): six probes went from a TypeError to `"null"`, because
+  the apply-declined state passes that test too. **Reverted.** Fixing it properly
+  needs a provider-side "I really did run it" channel, i.e. a forward ABI
+  addition.
+- **Null-adoption in the reverse arm.** The same mistake, mirrored. The first cut
+  copied `reverseGetArmInstrs`' `callOwned` shape; `o.add(3, 4)` became `null`
+  and `this.v` became `undefined` where both had thrown
+  (`.tmp/s18/witness-new.out`). The shipped arm returns **only** a non-null
+  answer, which makes it strictly throw-reducing and never answer-changing.
+
+A third defect was found the same way and FIXED rather than reverted:
+`localMethodCall` composed `__extern_get` + `__apply_closure` by hand and did not
+bind the receiver for an object-LITERAL method — `{ v: 42, readSelf() { return
+this.v; } }` answered `NaN` through the hop and `42` in a single module
+(`.tmp/s18/c10-new.out`). A class instance bound correctly either way, so the gap
+was invisible in half the shapes. It now installs and restores `__current_this`
+around the apply, through `try`/`catch_all` + `rethrow`.
+
+#### 4. C-CONS — the real Temporal bucket, localised but NOT fixed here
+
+**This slice does not move the `called value is not a function` bucket.** The
+real-provider reduction is identical before and after, character for character
+(`.tmp/s18/r1-base.out` vs `r1-new.out`, 16 probes). Said plainly rather than
+buried: criterion 4's "the bucket must move" is **not met**.
+
+What the slice delivers instead is where the bucket actually lives. With the
+forward terminal instrumented to return a marker string on each of its resolve
+exits (`.tmp/s18/r4-inst.out`):
+
+| probe, real linked provider | answer |
+| --- | --- |
+| `Temporal.Duration.from("P0Y")` | **TypeError** |
+| `Temporal.Duration[k]("P0Y")`, `k = "from"` | **works** |
+| `const f = Temporal.Duration.from; f("P0Y")` | works |
+| `typeof Temporal.Duration.from` | `"function"` |
+| `Temporal.Duration.from({[u]: 0}).years` / `.toJSON()` | `0` / `"PT0S"` |
+| `f.call(undefined, "P0Y")` | `MC-EXIT-UNDEFGET` |
+
+The literal-name call throws while the computed-key call on the same receiver,
+the same member and the same argument answers correctly — and **no marker string
+appears on the literal path, so the forward terminal is never consulted there at
+all.** A member call written with a literal name takes a per-name dispatch path
+(the `__call_m_<name>` family the S2h comment names) that has no link-boundary
+arm; only the computed form reaches the generic `__extern_method_call` where the
+peer arm lives. That is the next slice, and it is in a third file again.
+
+`f.call` / `f.apply` on a provider-owned closure is a separate residual with its
+own evidence: the provider resolves `call` on its own closure as `undefined`, so
+`Function.prototype.call` is not reachable across the boundary.
+
+#### 5. Regression sample — two families, 120 rows each, per FILE
+
+`--target standalone`, provider linked, sequential, FRESH `JS2WASM_TEMPORAL_CACHE`
+per label (`cacheHit=false` on both prewarms), quickjs artifact and adapter
+present. Both labels on this tree by file-copy revert. The provider binary differs
+between labels — 3,277,717 B (base) vs 3,277,842 B (new) — independent proof the
+change reached the linked artifact.
+
+| family | rows compared | base pass | S18 pass | flips | pass→fail |
+| --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 93 | **93** | 1 (CE↔fail) | **0** |
+| `built-ins/Temporal/Duration/**` | 91 (intersection) | 44 | 44 | **0** | **0** |
+
+`__temporal_*` leaks: **0** in all four TSVs.
+
+This is a REGRESSION GUARD, not an improvement measurement: the change provably
+cannot move these rows (§4), so a pass delta was never the question. It is
+reported as flat because it is flat.
+
+The one PlainDate flip is `compare/argument-plaindatetime.js`, `compile_error` on
+base and `fail` on the branch — the SAME file S17 recorded as a compile-budget
+load artifact. Re-run **solo at 60 s on both trees** it agrees exactly: `fail` on
+both, with the identical message (`TypeError: Object method called on null or
+undefined | at L24`). Counting the solo verdicts, PlainDate is 93/93 with **zero**
+flips.
+
+**The Duration base label is 91 rows, not 120, and that is a shortfall rather
+than a finding.** The base run stalled on a row that ran far past the family's
+15 s per-row budget and was stopped; the comparison is therefore over the 91-row
+intersection, which is where the "0 flips" applies. The branch label completed all
+120. Stated rather than presented as a full family.
+
+#### 6. Traps, carried forward and added to
+
+All S11–S17 traps still bite. New this slice:
+
+- **An error MESSAGE is not a call site.** `called value is not a function` has
+  four emitters, and the one everybody reaches for (`emitDynamicCall`'s
+  IsCallable guard) is not the one that fires for this family. Tagging each
+  emitter took one edit and one run and overturned an attribution that had
+  survived a whole slice. Do that FIRST, before reasoning about which guard
+  "should" be responsible.
+- **Tag the MODULE as well as the site in a linked pair.** `C` alone still
+  pointed at one file; `C-PROV` vs `C-CONS` is what split one bucket into two
+  unrelated defects, one of which was not a provider problem at all.
+- **Measure the base of your own witness before you write its assertions.** The
+  #6483 witness was first written asserting "every one of these threw on base",
+  taken from the hand-off narrative. Run against base, three of the seven had
+  never thrown, and one of the two the slice "fixed" was actually a regression
+  (a throw turned into `undefined`). One `cp` and one run; it changed what
+  shipped.
+- **Apply to your own code the standard you applied to someone else's.** The
+  forward null-adoption was rejected for collapsing a three-state answer; the
+  reverse arm shipped with the identical collapse until the same test was turned
+  on it.
+
+### Artifacts (S18)
+
+`.tmp/s18fam/{pd,du}-{base,new}.tsv` (+ logs and prewarm stamps), the censuses
+`.tmp/s18/c{5,6a,6b,6c,7,8,9,10}.mjs` with their `-base`/`-new` outs, the
+real-provider reductions `.tmp/s18/r{1,2,3,4}.mjs` with their instrumented outs,
+the witness probe `.tmp/s18/witness-probe.mts` with
+`witness-{base,new,new2,new3}.out`, the solo re-runs, the revert copies
+`.tmp/s18base/*` and the drivers
+`.tmp/s18/{run-fam.sh,family.mts,prewarm.mts,pair2.mjs,probe.mjs,solo.mts,table.mjs}`
+in this worktree (`/home/user/js2/.claude/worktrees/agent-ac05c86996312c107`).
+
+### Acceptance criterion 4 — S18 update
+
+**NOT met for this slice, and deliberately not claimed.** The
+`called value is not a function` bucket does not move (§4 — identical
+real-provider reduction before and after). What S18 delivers instead is the
+corrected attribution (the bucket is `resolved-callee-guard.ts`; it is two
+independent defects; the Temporal half is a literal-vs-computed member-name split
+whose dispatch path has no link-boundary arm) plus the C-PROV half fixed and
+witnessed. The regression sample is flat with 0 `pass→fail` and 0 `__temporal_*`
+leaks over 211 compared rows. No full-corpus number is claimed.

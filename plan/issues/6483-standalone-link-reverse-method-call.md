@@ -77,15 +77,45 @@ module's `__current_this` global. A closure shipped across and applied on the
 other side binds nothing. Resolution and application both have to run in the
 module that owns the receiver, which is what this terminal does.
 
-### Why the `null` answer needs a second channel
+### Why the arm does NOT adopt a `null` answer — the opposite of the `get` hop
 
-Identical to S17's `__extern_get` finding, in the other direction: the hop's
-`ref.null.extern` means "the consumer does not own this receiver" AND "the
-method ran and returned `null`". Collapsing them would make a consumer method
-returning `null` throw. The already-installed `has` terminal answers the
-difference, so this needed no new ABI slot — only a second global
-(`__js2wasm_link_reverse_call_owned`) for the arm to read, exactly as
-`reverseGetArmInstrs` reads `__js2wasm_link_reverse_owned`.
+S17's `__extern_get` hop adopts a null as the VALUE when the peer says it owns
+the receiver and the key is present, because for a READ those two facts settle
+it. For a CALL they do not. The hop answers `ref.null.extern` for **three**
+different reasons:
+
+| the hop answered null because… | correct continuation |
+| --- | --- |
+| the consumer does not own the receiver | this module's own miss path |
+| it resolved the method and `__apply_closure` declined | this module's own miss path (a real TypeError) |
+| the method ran and returned `null` | return the null |
+
+Nothing available to the arm separates the last two. A first cut used the
+already-installed `has` terminal as an owned-oracle, exactly mirroring
+`reverseGetArmInstrs`; measured, it turned `o.add(3, 4)` into `null` and
+`this.v` into `undefined` where both had thrown (`.tmp/s18/witness-new.out`) —
+a silent wrong value replacing a correct TypeError.
+
+The shipped arm therefore returns **only** a non-null answer. That makes it
+strictly throw-reducing and never answer-changing, at the cost of leaving "a
+consumer method that legitimately returns `null`" unfixed (see the residuals).
+
+### Why `localMethodCall` installs `__current_this`
+
+Composing `__extern_get` + `__apply_closure` by hand dispatches the call but does
+not bind the receiver for an object-LITERAL method: `{ v: 42, readSelf() { return
+this.v; } }` answered `NaN` through the hop and `42` in a single module
+(`.tmp/s18/c10-new.out`). A class instance bound correctly either way, so the gap
+was invisible in half the shapes and would have shipped as a regression.
+
+Delegating to this module's own `__extern_method_call` instead does not work —
+a consumer's own object literal is a CLOSED struct, so that native takes its
+non-`$Object` arm, asks the provider, and recurses into the same miss
+(`.tmp/s18/c10-new2.out`: all three literal probes throw). So the terminal
+installs and restores `__current_this` around the apply itself, through
+`try`/`catch_all` + `rethrow` — a leaked receiver would be a wrong answer for the
+rest of the instance's life, and a throw out of a provider-initiated call is
+ordinary (S2m).
 
 ## Fix
 
@@ -95,9 +125,11 @@ difference, so this needed no new ABI slot — only a second global
   `__js2wasm_link_peer_method_call` funcref global, under the existing
   re-entrancy flag and its `try`/`catch_all` + `rethrow` restore.
 - `__js2wasm_link_local_method_call` — the consumer-side terminal it calls:
-  `__extern_get` then `__apply_closure`, normalising unresolved/`undefined` to
-  `ref.null.extern` = "not mine".
-- `reverseMethodCallArmInstrs` — the provider-side miss arm, `callOwned`-aware.
+  `__extern_get`, then `__apply_closure` inside a `__current_this`
+  install/restore, normalising unresolved/`undefined` to `ref.null.extern` =
+  "not mine".
+- `reverseMethodCallArmInstrs` — the provider-side miss arm; returns only a
+  non-null answer, and otherwise falls through to the pre-#6483 path unchanged.
 - `__js2wasm_link_install_peer` grows from four funcref parameters to five.
 
 `src/codegen/object-runtime.ts`: the reverse arm takes the same slot as the
@@ -109,9 +141,12 @@ it.
 
 ## Test
 
-`tests/issue-6483-link-reverse-method-call.test.ts` — linked-pair witness:
-a provider method calling `o.m()` on a consumer-built object literal answers
-`7`, and a genuinely absent method still throws TypeError.
+`tests/issue-6483-link-reverse-method-call.test.ts` — linked-pair witness. Two
+teeth (both `-1` on base, `.tmp/s18/witness-base.out`): a provider method calling
+`o.m()` on a consumer-built object literal answers `7`, and one that reads `this`
+answers `42`. Five controls are asserted rather than omitted, because each is a
+residual this slice deliberately did not fix and a change in any of them is a
+real event.
 
 ## Deliberately NOT fixed here — measured, with probes
 
@@ -125,6 +160,10 @@ a provider method calling `o.m()` on a consumer-built object literal answers
    into a silent wrong value. `.tmp/s18/c3-new.out` shows the damage —
    six probes went from a TypeError to `"null"`. Doing this properly needs a
    provider-side "I really did run it" channel, i.e. a forward ABI addition.
+   The REVERSE direction has the identical hole for the identical reason and is
+   left open deliberately — the witness asserts `methodReturningNull` still
+   throws, so closing it later is a visible, deliberate change rather than a
+   silent one.
 2. **`f.call(recv, …)` / `f.apply(…)` on a provider-owned closure**
    (`.tmp/s18/r4-inst.out`): the instrumented terminal reports
    `MC-EXIT-UNDEFGET` — the provider resolves `call` on its own closure as
