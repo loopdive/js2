@@ -721,6 +721,29 @@ function linkLateAssignedConstructResultAncestor(
  *  - it is NOT a known compiled class, registered extern class, or function
  *    constructor.
  */
+/**
+ * (#6485) Standalone-lane companion to `resolvesToDynamicAnyCtorValue` for a
+ * CALL-expression callee: `new (ce("%Temporal.Duration%"))(y, mo, w, d, …)`, the
+ * intrinsic-registry spelling `@js-temporal/polyfill` emits at three sites —
+ * including the string branch of `Duration.from`.
+ *
+ * `resolvesToDynamicAnyCtorValue` understands identifier and member callees
+ * only, so a call callee matched no dynamic-new arm at all and the site fell
+ * through to the `__new___unknown` host import. That import does not exist in
+ * any lane, and in standalone it cannot exist, so the emitted body was a bare
+ * `ref.null.extern`: the `new` evaluated to **null** and, because the legacy
+ * arm returns before the argument loop, **its arguments were never evaluated**.
+ *
+ * Deliberately narrower than the member lane: a call callee only, and only when
+ * the call's static result is genuinely dynamic. Anything with a concrete
+ * static result type still resolves through the static `new` paths above.
+ */
+function resolvesToDynamicCallCtorValue(ctx: CodegenContext, calleeExpr: ts.Expression): boolean {
+  if (!ts.isCallExpression(calleeExpr)) return false;
+  const fact = ctx.oracle.typeFactOf(calleeExpr);
+  return fact.kind === "any" || fact.kind === "unknown" || (fact.kind === "builtin" && fact.name === "Function");
+}
+
 function resolvesToDynamicAnyCtorValue(ctx: CodegenContext, calleeExpr: ts.Expression): boolean {
   // (#4616) Inline member-access ctor values: `new (Object.getPrototypeOf(arr)
   // .constructor)(n)` (jest-util deepCyclicCopyArray's keepPrototype lane) keeps
@@ -4126,6 +4149,12 @@ function emitDynamicNewFallback(
   expr: ts.NewExpression,
   calleeExpr: ts.Expression,
   ctorName: string,
+  /**
+   * (#6485) Keep the pre-existing `ref.null.extern` no-match outcome instead of
+   * the standalone TypedArray-construct base. Set only by the call-callee arm —
+   * see the base selection below for why the size matters.
+   */
+  plainNullNoMatchBase = false,
 ): boolean {
   // (#1058) A construct-signature-only binding exposes its declared RESULT
   // type at the NewExpression. When that result is a structural interface,
@@ -4746,6 +4775,20 @@ function emitDynamicNewFallback(
     fctx.body.push({ op: "call", funcIdx: hostFuncIdx });
     fctx.body = savedBody2;
     noMatchBase = base;
+  } else if (plainNullNoMatchBase) {
+    // (#6485) The call-callee arm keeps the PRE-EXISTING no-match outcome
+    // verbatim. Two reasons, and the second is the load-bearing one:
+    //  - a value fetched from an intrinsic registry is never a `$__ta_ctor`, so
+    //    the TA arm below could only ever decline for this shape; and
+    //  - it is not free. Inlining the TA construct + IsConstructor guard at
+    //    each site is the bulk of this arm's code size, and the Temporal
+    //    provider links into every consumer compile — measured 2026-09-14, the
+    //    provider grew 3.28 MB → 3.44 MB with the TA base and 3.28 MB → 3.30 MB
+    //    without it, and the fat version pushed two consumer compiles that sat
+    //    at 14.7–15.0 s over the runner's 15 s cap (`fail` → `compile_error`).
+    // Emitting null here means a non-constructor callee behaves exactly as it
+    // did before this change — no new throw, no new outcome to regress.
+    noMatchBase = [{ op: "ref.null.extern" }];
   } else if (noJsHost(ctx) && !useRuntimeArgv) {
     // (#2872) Standalone/WASI unknown-ctor base: the runtime value may be a
     // first-class `$__ta_ctor` (the TypedArray-harness `function (TA) { new
@@ -7581,7 +7624,16 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       // exactly this case). Standalone keeps the pre-existing member handling.
       const dynMemberCallee =
         !ts.isIdentifier(dynCallee) && !noJsHost(ctx) && resolvesToDynamicAnyCtorValue(ctx, dynCallee);
-      if ((ts.isIdentifier(dynCallee) && !ctx.classSet.has(dynCallee.text)) || dynMemberCallee) {
+      // (#6485) …and, in the HOST-FREE lane only, a CALL-expression callee —
+      // `new (ce("%Temporal.Duration%"))(…)`. It matched no arm before and fell
+      // through to `__new___unknown` → `ref.null.extern` (a silent null, with
+      // the arguments never evaluated). The tag dispatch below is callee-shape
+      // agnostic: it compiles `calleeExpr` once into an anyref descriptor and
+      // `ref.test`s it, so a call callee needs no new machinery. Gated to
+      // `noJsHost` so the JS-host lane's byte output is untouched — there the
+      // legacy `__new_` path still reaches a real host global.
+      const dynCallCallee = noJsHost(ctx) && resolvesToDynamicCallCtorValue(ctx, dynCallee);
+      if ((ts.isIdentifier(dynCallee) && !ctx.classSet.has(dynCallee.text)) || dynMemberCallee || dynCallCallee) {
         // (#3054 D) Dynamic `new <ctorVal>(buffer[, off[, len]])` where `ctorVal`
         // is a first-class `$__ta_ctor` value (a TA constructor held in a var /
         // array element — test262 `CreateRabForTest`, `for (ctor of ctors) new
@@ -7606,7 +7658,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
             if (dtav) return dtav;
           }
         }
-        if (emitDynamicNewFallback(ctx, fctx, expr, dynCallee, ctorName)) {
+        if (emitDynamicNewFallback(ctx, fctx, expr, dynCallee, ctorName, dynCallCallee)) {
           return { kind: "externref" };
         }
         // (#2872) Standalone/WASI class-free module: emitDynamicNewFallback
