@@ -9093,3 +9093,153 @@ passes. With the repair, all 75 tests across five allocation, encoding, inlining
 and preparation-replay suites pass, including distinct repeated-call forks and
 a deliberately reintroduced stale-metadata refusal. This dependency does not
 adopt E2 or alter its fixtures, optimization settings, or historical failures.
+
+## 2026-09-14 — resume native string-output delivery after PR 5716
+
+The user explicitly resumed implementation without waiting for cross-session
+coordination. Existing worktrees, claims and prepared drafts remain untouched.
+The isolated integration branch starts at freshly fetched main
+`64f670a424a4b4881e496cb34578e08cec948135`. PR 5716 is delivered at
+`65ffb60e26a5eb009a4b0a93e5af8ecec32e1380`; a fresh PR inventory found no
+remaining open IR migration PRs to shepherd. The standalone TypeScript compiler
+PR is a separate deliverable.
+
+### Implementation plan
+
+Continue the existing E2 contract in
+`plan/agent-context/3518-e2-string-output-high-contract-2026-09-09.md`.
+The unchanged async playground source prepares 7 inventory records, 5 terminal
+owners and 16 physical functions, but acceptance refuses main at `string.concat`
+before emission. No later native async gap has yet been measured.
+
+1. Implement authenticated pure output requirements over the complete existing
+   string-demand census, including canonical batch and console providers.
+2. Compose the landed E1 builders into one authenticated output resource recipe,
+   with complete declaration, allocation, fill, publication and mutation controls.
+3. Integrate independent output and number requirements through shared strings
+   and a single flatten resource; preserve no-output bytes and resource order.
+4. Join canonical output callables to the same sealed ProgramAbiMap and actual
+   lowering resolver. Retain unrelated async refusals until their resources exist.
+5. Verify the original source, decoded replay, resource execution and negative
+   controls; record the actual next refusal separately from whole-family success.
+6. Publish a ready PR after normal signed hooks and required checks. Delegate
+   protected queue shepherding; count only verified main ancestry/content as delivery.
+
+Requirements and output resources have separate native subagent owners in isolated
+worktrees. The root owns aggregate/planner/consumer/options/ABI integration and this
+issue record. No new GitHub issue, weakened gate or expanded migration scope.
+
+The aggregate integration additionally moves the unchanged concat identity constants
+and arity factory into `src/ir/core/string-callables.ts`, and the unchanged runtime
+ABI anchor/identity helpers into `src/ir/program/runtime-abi-identity.ts`. Compatibility
+reexports preserve existing callers. These pure closures prevent the new output
+requirements and backend ABI join from depending on mixed frontend/runtime modules;
+no boundary exception is introduced. The output ABI join belongs to the backend
+program layer because it explicitly realizes logical string contracts as native
+AnyString signatures.
+
+The first consumer run recorded 0/17 passes with unchanged input hashes. Its
+16 synchronous controls incorrectly requested full async-family projection, which
+correctly requires a certified delay owner; the original family separately exposed
+a missing-provider-attachment assumption in the new requirements checker. Preserve
+that evidence at `.tmp/native-output/consumer-first-terminal.json`. To implement the
+existing generic-output increment without fabricated delay callers, add an explicit
+`nativeStringOutputProjection` source option and a frontend-only string-console
+resolver. It authenticates the actual ambient receiver/member/signature and a
+string argument. Async-family projection and existing string-number options retain
+their meaning. This is an independent producer entry into the same output IR and
+backend resources, not another emitter. Requirements ownership handles the exact
+attachment diagnosis before any refusal is relaxed.
+
+Resource validation completed 156/156 with zero pending rows and unchanged inputs
+in the isolated resource worktree; these are resource-level executions, not full
+async-family success. Integrated smoke still fails before acceptance: successful
+string-returning inlining leaves the removed call allocation and prior encoding
+metadata live. A separate dependency fix is dispatched with provenance and
+rejected-inline controls. The verifier remains unchanged. Full output source,
+fresh-process replay, no-output preservation and protected-queue delivery remain
+pending; no E2 delivery is claimed.
+
+
+Integrated output validation after allocation prerequisite `eca2873af` retained
+24 executed rows: 8 passed and 16 failed, zero input drift. Every matrix row
+executed both fresh Wasm instances and verified all four exact output lines,
+then failed only its final observation assertion: the existing consumer emits
+`accepted`, `emission-started`, `emitted`, while the new test omitted the middle
+phase. Correct the test to the existing three-phase contract; retain the failed
+run as `.tmp/native-output/consumer-after-inline*`. The eight passing rows include
+fresh-process replay, both source-export collisions, four unsupported console
+shapes, and the original full async family moving to its async-materialization
+refusal. This is not a passing 24-row suite or full-family execution claim.
+
+The corrected integrated run executed 43 rows: all 24 source-output consumer
+rows passed, plus 18/19 formatter requirements rows; zero input drift. The one
+failure is an existing formatter test's no-native-input refusal text assertion,
+not an emission or output mismatch. Its admitted-native-input assertion already
+verified the actual async gap; investigate the separate prior-plan diagnostic
+before changing that assertion. Eight manifest mutation controls occur after the
+failing assertion and are not yet evidence in this run. Retain
+`.tmp/native-output/consumer-formatter-corrected*`.
+
+
+The selected formatter diagnostic run executed 1 row (18 intentionally unselected)
+and preserved the full prior-plan failure: 32 gaps without native inputs, beginning
+`async frames do not support wasmgc:standalone`, and including the unmaterialized
+string-console callable. Update that control to those measured diagnostics;
+retain `.tmp/native-output/formatter-prior-diagnostic*`. It is distinct from the
+properly supplied native plan and retains all eight manifest mutation controls.
+
+Final requirements validation passed 36/36, clean exit 0, zero pending or unhandled
+errors, all 1,443 inputs unchanged. The prior run's 36 passing assertions with
+worker-reporting timeout/exit 1 remain separate evidence. Test-only event-loop
+yields resolved reporting starvation without timeout or assertion changes.
+Independent source typecheck passed on the same requirements production bytes.
+Root integrated source a28a5354 and test b2acc212 after its own diagnostic run
+ended. The actual unchanged async source is five owners/22 semantic calls before
+preparation and 16 owners/33 semantic calls afterward (16 block calls plus 17
+async-plan calls), in both measured GVN modes. This census does not assert full
+async runtime execution.
+
+
+Final integrated validation completed 263/263 across source-output consumer,
+formatter requirements, output requirements, output resources and batch-five ABI
+join suites: clean exit 0, zero pending, zero input drift. This includes all eight
+malformed formatter-manifest controls after correcting the measured prior-plan
+refusal. The output ABI join retains both canonical batch-five references while
+sharing one validated required owner; unrelated required roots still fail.
+
+The additive current-base preservation comparison passed all 13 rows × two
+source/decoded variants × two arms = 52 emissions and 104 fresh instances.
+Baseline is clean `eca2873af`; candidate is the reviewed source census
+`58c369d26604360f68fd453f76b6b1ac4b59742e964098a7b7efb2a6478c50f7`.
+Exact encoded programs, Wasm bytes, WAT, module/declaration order, source-unit and
+startup receipts, and observed values match. Cases cover numeric/alias/startup
+execution, native string-to-number conversions (42, negative zero and lone
+surrogate/NaN), UTF8 storage choices and unused formatter options. They prove
+no-output preservation, not demanded-formatter or full async-family execution.
+Runner `tests/issue-3518-native-output-preservation.mjs` preserves the historical
+three-arm CLI unchanged; externally reviewed runner/helper/runtime/source pins
+and raw artifacts remain in `.tmp/native-output/preservation-final`.
+Repository gates, signed publication and protected main delivery remain pending.
+
+
+The architecture gate found the new frontend resolver reaching migration debt
+through `src/ts-api.ts`. Extract the identical static TypeScript namespace into
+`src/frontend/typescript.ts`; retain the existing shim's exact binding and all
+runtime-selection logic. Activate only that real frontend leaf, without adding
+allowed edges. The corrected inventory passes with no errors and remains
+explicitly architecture-incomplete. Corrected source typecheck and all 24 affected
+consumer tests pass. A second 13-row preservation comparison also passes all
+52 emissions/104 fresh instances on final census
+`5282dc6fdbfd67f1aa905878dd2443eee201d3fe40c598ac59cc85dd67182e41`.
+Earlier runs, pins and failures remain intact; final artifacts are in
+`.tmp/native-output/preservation-clean-frontend`.
+
+Prerequisite PR 5936 delivered as `19cf9e0392888629180b05abd30402cdca8620aa`
+at 2026-09-14T20:18:07Z, with required merge-group checks passing and a tree
+identical to its tested head. Fresh origin/main was verified as
+`194034f0d3b2185c271d62e2ac3a6f5fb3a630e1` and adopted by fast-forward.
+Compared with the assessed prerequisite head, that update changes only benchmark
+reports and the LOC baseline; source, tests and boundary policy are identical.
+This output increment still awaits its own signed commit, CI and protected main
+delivery. The full async-family and overall IR migration remain incomplete.

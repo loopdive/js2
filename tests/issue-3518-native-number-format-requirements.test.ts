@@ -29,6 +29,8 @@ import { prepareIrRuntimeManifest } from "../src/ir/intrinsic-support.js";
 import { planPhysicalSetup, type PhysicalNativeNumberFormatInput } from "../src/ir/program-physical-plan.js";
 import { forEachInstrDeep } from "../src/ir/core/nodes.js";
 import { planNativeStringValuePhysical } from "../src/backend/wasmgc/program/native-string-values.js";
+import { deriveNativeStringOutputRequirements } from "../src/ir/program/native-string-output-requirements.js";
+import { deriveNativeValueResourcePlan } from "../src/ir/program/native-value-resources.js";
 import { collectNativeStringValueDemands } from "../src/ir/program/native-string-value-demands.js";
 import { irNativeAsyncCallableDeclaration } from "../src/ir/runtime/native-async-callables.js";
 import {
@@ -58,7 +60,7 @@ function actual() {
 }
 
 describe("complete prepared formatter demand joins", () => {
-  it("authenticates the whole support manifest without waiving the actual family string gap", () => {
+  it("authenticates the whole support manifest without waiving the actual family async gap", () => {
     const program = actual();
     const projection = program.runtime[0]!;
     const options = {
@@ -84,20 +86,34 @@ describe("complete prepared formatter demand joins", () => {
     const input = { requirements, support };
     const demands = collectNativeStringValueDemands(program, projection);
     const selected = planNativeStringValuePhysical(demands, { representation: "native-string", utf8Storage: false });
-    expect(selected.kind).toBe("unsupported");
-    if (selected.kind !== "unsupported")
-      throw new Error("update the full-family integration proof after real string admission");
-    expect(selected.detail).toMatch(/has no native string value resource join/);
-    const positive = planPhysicalSetup(program, options, projection, undefined, input);
-    // This is the unchanged real source refusal, not a successful formatter ABI plan.
-    expect(positive).toEqual(selected);
-    expect(acceptPreparedIrProgram(program, options)).toEqual(selected);
+    expect(selected.kind).toBe("planned");
+    if (selected.kind !== "planned" || !selected.plan.output)
+      throw new Error("full-family string output resources were not planned");
+    const outputRequirements = deriveNativeStringOutputRequirements(demands, selected.plan.output.options);
+    if ("kind" in outputRequirements) throw new Error(JSON.stringify(outputRequirements));
+    const nativeInput = {
+      demands,
+      plan: selected.plan,
+      outputRequirements,
+      ...(selected.plan.mode === "number-boundary"
+        ? { valueRequirements: deriveNativeValueResourcePlan(program, projection, "native-string") }
+        : {}),
+    };
+    const positive = planPhysicalSetup(program, options, projection, nativeInput, input);
+    // Output is materializable; the unchanged full family still requires async support.
+    if (positive.kind !== "unsupported") throw new Error("expected the existing async materialization refusal");
+    expect(positive.detail).toMatch(/async|promise|scheduler/);
+    expect(positive.detail).not.toContain("string.concat has no native string value resource join");
+    expect(acceptPreparedIrProgram(program, options)).toEqual(positive);
     const prior = planPhysicalSetup(program, options, projection);
     if (prior.kind !== "unsupported") throw new Error("expected the existing async materialization refusal");
-    expect(prior.detail).toContain("needs scheduler/promise runtime materialization");
+    expect(prior.detail).toContain("async frames do not support wasmgc:standalone");
+    expect(prior.detail).toContain(
+      "intrinsic callable async.console.log-string needs runtime function materialization",
+    );
     const changedFunctions = structuredClone(support.functions);
     expect(
-      planPhysicalSetup(program, options, projection, undefined, {
+      planPhysicalSetup(program, options, projection, nativeInput, {
         requirements,
         support: { ...support, functions: changedFunctions },
       }).kind,
@@ -132,7 +148,7 @@ describe("complete prepared formatter demand joins", () => {
       withoutProviders,
     ]) {
       expect(() =>
-        planPhysicalSetup(program, options, projection, undefined, {
+        planPhysicalSetup(program, options, projection, nativeInput, {
           requirements,
           support: changed,
         } as PhysicalNativeNumberFormatInput),
