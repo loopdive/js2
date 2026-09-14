@@ -5,7 +5,8 @@ import { describe, expect, it } from "vitest";
 import { createEmptyModule, type Instr, type ValType } from "../src/ir/types.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
-import { prepareIrProgramSources, captureTypedIrProgramInput } from "../src/ir/program-source.js";
+import { prepareIrProgramSources } from "../src/ir/program-source.js";
+import { captureNativeFamilyRuntimeSupport } from "./helpers/native-family-runtime-support.js";
 import { prepareTypedIrProgram } from "../src/ir/program-prepare-ir.js";
 import { encodePreparedIrProgram, decodePreparedIrProgram } from "../src/ir/program-codec.js";
 import { forEachInstrDeep, type IrFunction } from "../src/ir/core/nodes.js";
@@ -63,7 +64,7 @@ function prepare(gvnMode: "off" | "on", replay: boolean) {
   });
   if (source.kind !== "prepared") throw new Error(source.detail);
   expect(census(source.ir.functions)).toEqual({ owners: 5, calls: 22 });
-  const packet = captureTypedIrProgramInput(source);
+  const packet = captureNativeFamilyRuntimeSupport(source, policy);
   const input = replay ? decodeTypedPacket(encodeTypedPacket(packet)) : packet;
   expect(input.allocations).toEqual(packet.allocations);
   const program = requireProgram(

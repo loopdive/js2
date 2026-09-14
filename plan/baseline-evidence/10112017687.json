@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "compiler_sha": "129e3efd4530ae1be56dbf5fdea54ddbbd87443e",
+  "corpus_sha": "b363f29d3c43c626dc852744ad64a0b48a003693",
+  "oracle_version": 13,
+  "producer": {
+    "repository": "loopdive/js2",
+    "run_id": 34368952422,
+    "artifact_id": 10112017687,
+    "artifact_sha256": "64b24dff0073e087e2c8d3f2d8ce6ccef5131bd916eb3162076397d32c94a324",
+    "workflow": ".github/workflows/test262-sharded.yml"
+  },
+  "settings": {
+    "include_proposals": true,
+    "semantic_providers": "auto",
+    "eval_engine": "quickjs",
+    "compiler_pool_size": 4,
+    "ir_first": false,
+    "layout_emit": false,
+    "native_first": false
+  },
+  "lanes": {
+    "host": {
+      "lane": "host",
+      "file": "test262-current.jsonl",
+      "sha256": "8ed0d9445ac08c9bea18f17bfa6ec87c05bb2e1951598afd9bd9255fa826d656",
+      "total": 48735,
+      "registered": 48735,
+      "verdicts": 48735,
+      "excluded": 0,
+      "counts": { "pass": 38384, "fail": 9707, "compile_error": 514, "compile_timeout": 16, "skip": 114 }
+    },
+    "standalone": {
+      "lane": "standalone",
+      "file": "test262-standalone-current.jsonl",
+      "sha256": "06dd6e906e5a1eb0e5751b63b802f85d18fb854880b5e1ad4a07c52bccd89e94",
+      "total": 48735,
+      "registered": 48735,
+      "verdicts": 48735,
+      "excluded": 0,
+      "counts": { "pass": 35214, "fail": 9595, "compile_error": 3803, "compile_timeout": 9, "skip": 114 }
+    }
+  },
+  "evidence": {
+    "completeness": "https://github.com/loopdive/js2/actions/runs/34368952422/job/102532626616",
+    "completeness_log_lines": [871, 890],
+    "producer_workflow": "https://github.com/loopdive/js2/blob/129e3efd4530ae1be56dbf5fdea54ddbbd87443e/.github/workflows/test262-sharded.yml#L1370",
+    "settings_source": "Original merge_group job: pool=4, proposals=1, IR-first/layout flags empty, standalone eval=quickjs. Every original row stamps oracle=13, honest lane and semantic_providers=auto; native-first uses a separate job and artifact, not this pair.",
+    "counts_source": "Full original artifact JSONLs including proposals and every failure/timeout. Registration totals independently confirmed by original merged-job completeness output: host 52 shards and standalone 50 shards, each 48735 registered/verdicts and zero exclusions.",
+    "warning": "Promoted baseline JSONL is not byte-identical to this original artifact. Do not substitute it or normalize original error records. The original run metadata summary excludes proposals and is not the full-population denominator."
+  }
+}

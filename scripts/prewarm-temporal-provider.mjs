@@ -18,15 +18,58 @@
  * signal that costs a merge-queue cycle to diagnose. One failed step naming its
  * own cause is cheaper.
  *
+ * (#5383 S3) That hard failure is a statement about THIS script, not about the
+ * standalone lane's policy. No standalone baseline is measured with a provider
+ * yet, so a failed standalone build must not fail CI — the workflow runs that
+ * step `continue-on-error`, no stamp is written, and `test262TemporalLaneEnabled`
+ * then keeps every standalone Temporal row unlinked. Keeping the exit code
+ * honest here is what lets the workflow make that choice explicitly instead of
+ * this script guessing.
+ *
+ * (#5383 S3) It now builds a provider PER TARGET. `--target host` (the default,
+ * i.e. `--target gc` with the JS host adapter) is byte-identical to the
+ * pre-#5383 behaviour, down to the stamp file name. `--target standalone`
+ * builds the host-free provider and stamps it under its own name, so the two
+ * lanes never read each other's certificate. Repeat the flag (or pass `both`)
+ * to build more than one; each target is stamped as soon as it succeeds, so a
+ * later target failing never invalidates an earlier one's artifact.
+ *
  * Usage:
  *   JS2WASM_TEMPORAL_CACHE=<dir> node scripts/prewarm-temporal-provider.mjs
  *   node scripts/prewarm-temporal-provider.mjs --cache-dir <dir>
+ *   node scripts/prewarm-temporal-provider.mjs --target standalone
+ *   node scripts/prewarm-temporal-provider.mjs --target both
  *
  * Requires `scripts/compiler-bundle.mjs` built from `scripts/compiler-bundle-entry.ts`
  * (`pnpm run build:compiler-bundle`) — the entry that publishes the provider.
  */
 
-import { loadTemporalPolyfillSource, temporalCacheDir, writeTemporalPrewarmStamp } from "./test262-temporal.mjs";
+import {
+  loadTemporalPolyfillSource,
+  temporalCacheDir,
+  temporalProviderCompileOptions,
+  writeTemporalPrewarmStamp,
+} from "./test262-temporal.mjs";
+
+/**
+ * Which providers to build. `host` is spelled out rather than left implicit so
+ * a `--target both` run reports two named lines instead of one anonymous pair.
+ */
+function parseTargets(argv) {
+  const targets = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] !== "--target") continue;
+    const value = argv[i + 1];
+    if (value === "both") targets.push(undefined, "standalone");
+    else if (value === "host" || value === "gc") targets.push(undefined);
+    else if (value === "standalone") targets.push("standalone");
+    else {
+      console.error(`prewarm-temporal-provider: --target must be host|standalone|both (got ${value ?? "nothing"})`);
+      process.exit(2);
+    }
+  }
+  return targets.length > 0 ? [...new Set(targets)] : [undefined];
+}
 
 function parseCacheDir(argv) {
   const index = argv.indexOf("--cache-dir");
@@ -42,7 +85,9 @@ function parseCacheDir(argv) {
 }
 
 async function main() {
-  const cacheDir = parseCacheDir(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  const cacheDir = parseCacheDir(argv);
+  const targets = parseTargets(argv);
   const bundle = await import("./compiler-bundle.mjs");
   if (typeof bundle.buildTemporalProvider !== "function" || typeof bundle.temporalProviderCacheKey !== "function") {
     // The bundle predates #5353 or was built straight from `src/index.ts` by a
@@ -56,20 +101,31 @@ async function main() {
   }
 
   const polyfillSource = await loadTemporalPolyfillSource();
-  const key = bundle.temporalProviderCacheKey({ polyfillSource });
-  const started = Date.now();
-  const provider = await bundle.buildTemporalProvider({ polyfillSource, cacheDir });
-  const stamp = writeTemporalPrewarmStamp(cacheDir, {
-    key,
-    namespace: provider.namespace,
-    bytes: provider.artifact.binary.length,
-    buildMs: provider.buildMs,
-    cacheHit: provider.cacheHit,
-  });
-  console.log(
-    `prewarm-temporal-provider: OK — ${provider.namespace} (${stamp.bytes} B) ` +
-      `in ${Date.now() - started}ms cacheHit=${provider.cacheHit} key=${key.slice(0, 16)} dir=${cacheDir}`,
-  );
+  for (const target of targets) {
+    const label = target ?? "host";
+    const compileOptions = temporalProviderCompileOptions(target);
+    // The key MUST be computed with the same options the build uses, or the
+    // stamp certifies an artifact nobody will ask for and the consuming lane
+    // refuses with a key mismatch it cannot act on.
+    const key = bundle.temporalProviderCacheKey({ polyfillSource, compileOptions });
+    const started = Date.now();
+    const provider = await bundle.buildTemporalProvider({ polyfillSource, cacheDir, compileOptions });
+    const stamp = writeTemporalPrewarmStamp(
+      cacheDir,
+      {
+        key,
+        namespace: provider.namespace,
+        bytes: provider.artifact.binary.length,
+        buildMs: provider.buildMs,
+        cacheHit: provider.cacheHit,
+      },
+      target,
+    );
+    console.log(
+      `prewarm-temporal-provider: OK — ${label} ${provider.namespace} (${stamp.bytes} B) ` +
+        `in ${Date.now() - started}ms cacheHit=${provider.cacheHit} key=${key.slice(0, 16)} dir=${cacheDir}`,
+    );
+  }
 }
 
 main().catch((error) => {

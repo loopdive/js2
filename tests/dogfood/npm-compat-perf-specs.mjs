@@ -331,7 +331,7 @@ export function getNpmCompatPerfSpec(packageName) {
 
 export function buildNpmCompatPerfDriver(spec, packageSpecifier, lane = "all") {
   const staticInput = JSON.stringify(spec.staticInput);
-  const includeJsHost = lane === "all" || lane === "js-host";
+  const includeJsHost = lane === "all" || lane === "js-host" || lane === "js-host-native";
   const includeStatic = lane === "all" || lane === "standalone-static";
   const includeDynamic = lane === "all" || lane === "standalone-dynamic";
   return `import ${spec.importClause ?? "* as __pkgNs"} from ${JSON.stringify(packageSpecifier)};

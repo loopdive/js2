@@ -1,3 +1,4 @@
+import { parseTest262SemanticProviders } from "./test262-lane.mjs";
 /**
  * Compiler fork worker — runs as a child process (not worker thread).
  * Uses process.send/process.on('message') for IPC.
@@ -62,10 +63,12 @@ process.on("message", async (msg) => {
       // so the synthetic `export function test()` wrapper does not unmap sloppy
       // `arguments`. Undefined ⇒ default true (module input is strict).
       const inferModuleStrictArguments = msg.inferModuleStrictArguments;
+      const semanticProviders = parseTest262SemanticProviders(msg.semanticProviders ?? process.env.TEST262_SEMANTIC_PROVIDERS);
       const result = incrementalCompiler
         ? await compileFn(msg.source, {
             sourceMapUrl: msg.sourceMapUrl || "test.wasm.map",
             inferModuleStrictArguments,
+            semanticProviders,
           })
         : await compile(msg.source, {
             fileName: "test.ts",
@@ -74,6 +77,7 @@ process.on("message", async (msg) => {
             emitWat: false,
             skipSemanticDiagnostics: true,
             inferModuleStrictArguments,
+            semanticProviders,
             // (#3049 C1) See createFreshCompiler — host lane defers top-level
             // init; wasm-exec-worker calls __module_init() after setExports.
             deferTopLevelInit: true,
