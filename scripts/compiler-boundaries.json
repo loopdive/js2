@@ -12493,6 +12493,14 @@
       "path": "src/frontend/typescript.ts",
       "state": "clean",
       "layer": "frontend-ts"
+    },
+    {
+      "path": "src/codegen/vec-own-index-export.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate raw own-presence emission and allocator-owned export publication from CodegenContext and the legacy host bridge."
     }
   ]
 }

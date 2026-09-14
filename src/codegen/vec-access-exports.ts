@@ -25,6 +25,7 @@ import { flushLateImportShifts } from "./shared.js";
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#3315, #4491 T11)
 import { emitVecDefineWritebackExports } from "./vec-define-writeback.js";
 import { guardVecElementRead } from "./vec-oob-read.js";
+import { emitVecOwnIndexExport, finalizeVecOwnIndexExport } from "./vec-own-index-export.js";
 
 export const VEC_HOST_BRIDGE_ROLE = "vec-host-bridge";
 
@@ -126,15 +127,12 @@ export function vecHostBridgeMaterializerOrdinal(kind: VecHostBridgeMaterializer
 }
 
 /**
- * (#3520 W1-E) The third sub-family of the vec host bridge: the `#3116`
- * array-exotic write-back pair emitted by `vec-define-writeback.ts`.
+ * (#3520 W1-E) Third subfamily: array-exotic write-back in `vec-define-writeback.ts` (#3116).
  *
  * They belong here rather than in a role of their own because they share the
  * bridge's anchor (the entry source), its emission gate family, and its
- * `externref`-in / `i32`-out host shape. Closing the table at 9/10 is what
- * makes their identity immovable: the ordinal is a compile-time constant, so —
- * unlike the positional `retained-module-function` fallback they used to land
- * on — nothing a program contains can renumber them.
+ * `externref`-in / `i32`-out host shape. Fixed ordinals 9/10 preserve their
+ * identity independently of program contents; later subfamilies append ordinals.
  *
  * The pair deliberately does NOT get rows in `VEC_HOST_BRIDGE_DEFINITIONS`.
  * That table also drives the reserved physical `$v<ordinal>` export namespace
@@ -341,6 +339,7 @@ function publishVecHostBridgeExports(ctx: CodegenContext): void {
  * by the captured allocator-owned function object at this boundary.
  */
 export function finalizeVecHostBridgeExports(ctx: CodegenContext): void {
+  finalizeVecOwnIndexExport(ctx);
   const allocations = vecHostBridgeAllocations.get(ctx);
   if (!allocations) return;
   const published = vecHostBridgePublishedExports.get(ctx);
@@ -527,6 +526,7 @@ export function emitVecAccessExports(ctx: CodegenContext): void {
   ensureVecHostBridgeAllocations(ctx);
   _emitVecAccessExportsInner(ctx);
   publishVecHostBridgeExports(ctx);
+  emitVecOwnIndexExport(ctx);
 }
 
 /** Mutation-capable vec carriers, keyed by physical backing-array shape. */
