@@ -36,11 +36,14 @@ import {
   planNativeStringValuePhysical,
   reserveNativeStringValueResources,
   nativeStringValueReservationInventory,
+  publishNativeStringValueOutput,
   fillNativeStringValueResources,
   requireCompletedNativeStringValues,
   emitPreparedNativeStringLiteral,
+  emitPreparedNativeStringConcat,
   type NativeStringValueReservationInput,
 } from "../backend/wasmgc/program/native-string-values.js";
+import { deriveNativeStringOutputRequirements } from "./program/native-string-output-requirements.js";
 import { collectNativeStringValueDemands } from "./program/native-string-value-demands.js";
 import { deriveNativeValueResourcePlan, assertNativeValueResourcePlanFor } from "./program/native-value-resources.js";
 import { freezePreparedIrValue, preparedIrDataMismatch } from "./program/data.js";
@@ -183,6 +186,9 @@ function canonicalOptions(options: PreparedIrBackendOptions): PreparedIrBackendO
     target: options.target,
     sharedExceptionTag: options.sharedExceptionTag,
     utf8Storage: options.utf8Storage,
+    ...(options.backend === "wasmgc" && options.target === "standalone"
+      ? { stringConcatEmptyIdentity: options.stringConcatEmptyIdentity ?? true }
+      : {}),
     sourceMap: options.sourceMap,
     moduleName: options.moduleName,
     ...(options.numberFormat === undefined
@@ -246,6 +252,13 @@ export function acceptPreparedIrProgram(
   options: PreparedIrBackendOptions,
 ): PreparedIrBackendAcceptance {
   assertPreparedIrProgram(program);
+  if (
+    options.stringConcatEmptyIdentity !== undefined &&
+    (typeof options.stringConcatEmptyIdentity !== "boolean" ||
+      options.backend !== "wasmgc" ||
+      options.target !== "standalone")
+  )
+    programInvariant("invalid-prepared-data", "string output options require standalone WasmGC and a resolved boolean");
   if (
     options.numberFormat !== undefined &&
     (options.backend !== "wasmgc" ||
@@ -322,10 +335,16 @@ export function acceptPreparedIrProgram(
     const native = planNativeStringValuePhysical(demands, {
       representation: "native-string",
       utf8Storage: options.utf8Storage === true,
+      stringConcatEmptyIdentity: options.stringConcatEmptyIdentity ?? true,
     });
     if (native.kind !== "none" && native.kind !== "planned") return native;
     if (native.kind === "planned") {
+      const outputRequirements = native.plan.output
+        ? deriveNativeStringOutputRequirements(demands, native.plan.output.options)
+        : undefined;
+      if (outputRequirements && "kind" in outputRequirements) return outputRequirements;
       nativeStrings = Object.freeze({
+        ...(outputRequirements ? { outputRequirements } : {}),
         demands,
         plan: native.plan,
         ...(native.plan.mode === "number-boundary"
@@ -832,6 +851,12 @@ function fillPrimaryBody(
     const ownerResolver: IrLowerResolver = nativePack
       ? {
           ...scopedResolver,
+          ...(nativePack.output
+            ? ({
+                emitStringConcat: (alloc, mode, provider) =>
+                  emitPreparedNativeStringConcat(reservations, nativePack, fn.unitId, alloc, mode, provider),
+              } satisfies Pick<IrLowerResolver, "emitStringConcat">)
+            : {}),
           emitStringConst: (value, alloc, storage, materializer) =>
             emitPreparedNativeStringLiteral(reservations, nativePack, fn.unitId, value, alloc, storage, materializer),
         }
@@ -1216,6 +1241,7 @@ function materializePhysicalProgram(
     reservations.defineExport(`publication:export:${exported.externalName}`, exported.externalName, reserved);
   }
 
+  if (nativePack?.output) publishNativeStringValueOutput(reservations, nativePack);
   reservations.seal();
   if (nativePack) requireCompletedNativeStringValues(reservations, nativePack);
   else if (strings) requireCompletedNativeStringLiterals(reservations, strings);

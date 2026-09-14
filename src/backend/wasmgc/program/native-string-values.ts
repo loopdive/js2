@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { AllocSiteId } from "../../../ir/core/nodes.js";
-import type { IrStringEncoding } from "../../../ir/core/string-types.js";
+import type { IrStringEncoding, IrStringConcatMode } from "../../../ir/core/string-types.js";
 import type { IrFuncRef, IrGlobalRef } from "../../../ir/core/value-references.js";
 import type { IrUnitId } from "../../../shared/contracts/ir-identity.js";
 import type { PreparedIrProgramFailure } from "../../../ir/program/prepared-contracts.js";
@@ -60,13 +60,30 @@ import {
   type NativeValueReservations,
 } from "../resources/native-values.js";
 
+import {
+  deriveNativeStringOutputRequirements,
+  assertNativeStringOutputRequirementsCurrent,
+  type NativeStringOutputRequirements,
+} from "../../../ir/program/native-string-output-requirements.js";
+import { planNativeStringOutputResources, type NativeStringOutputPhysicalPlan } from "./native-string-output.js";
+import {
+  reserveNativeStringOutputResources,
+  nativeStringOutputReservationInventory,
+  fillNativeStringOutputResources,
+  requireCompletedNativeStringOutput,
+  publishNativeStringOutput,
+  type NativeStringOutputReservations,
+} from "../resources/native-string-output.js";
+
 export interface NativeStringValueOptions {
   readonly representation: "native-string";
+  readonly stringConcatEmptyIdentity?: boolean;
   readonly utf8Storage: boolean;
 }
 export interface NativeStringValuePhysicalPlan {
   readonly key: string;
   readonly mode: "literals" | "number-boundary";
+  readonly output?: NativeStringOutputPhysicalPlan;
   readonly literalRequirements: NativeStringLiteralRequirements;
   readonly literalUses: readonly { readonly demandIndex: number; readonly cacheKey: string }[];
   readonly declarations: readonly NativeStringValueDeclaration[];
@@ -80,6 +97,7 @@ export interface NativeStringValueReservationInput {
   readonly demands: NativeStringValueDemands;
   readonly plan: NativeStringValuePhysicalPlan;
   readonly valueRequirements?: NativeValueResourcePlan;
+  readonly outputRequirements?: NativeStringOutputRequirements;
 }
 export type NativeStringValueResourceRow =
   | { readonly key: string; readonly space: "type"; readonly reservation: TypeReservation }
@@ -87,6 +105,8 @@ export type NativeStringValueResourceRow =
   | { readonly key: string; readonly space: "function"; readonly reservation: FunctionReservation };
 export interface NativeStringValueReservations {
   readonly strings: NativeStringLiteralReservations;
+  readonly flatten?: NativeStringFlattenReservations;
+  readonly output?: NativeStringOutputReservations;
   readonly number?: {
     readonly flatten: NativeStringFlattenReservations;
     readonly scanner: NativeStringNumberReservations;
@@ -157,11 +177,10 @@ export function planNativeStringValuePhysical(
   );
   const executable = (occurrence: number) =>
     demands.buffers[demands.occurrences[occurrence]!.bufferIndex]!.view === "projection";
-  for (const [index, occurrence] of demands.occurrences.entries()) {
-    const kind = occurrence.instruction.kind;
-    if (executable(index) && ((kind.startsWith("string.") && kind !== "string.const") || kind === "forof.string"))
-      return located(demands, index, `${kind} has no native string value resource join`);
-  }
+  const outputRequirements = deriveNativeStringOutputRequirements(demands, {
+    emptyIdentity: options.stringConcatEmptyIdentity ?? true,
+  });
+  if ("kind" in outputRequirements) return outputRequirements;
   const numeric = demands.intrinsics.some(
     (row) => executable(row.occurrence) && row.instruction.id === "js.number.unbox",
   );
@@ -216,30 +235,35 @@ export function planNativeStringValuePhysical(
     literals.push({ value: i.value, encoding });
     uses.push({ demandIndex: index, cacheKey: selection.key });
   }
-  if (!numeric && !uses.length) return { kind: "none" };
+  if (!numeric && !uses.length && !outputRequirements.binaryConcat) return { kind: "none" };
   const entry = demands.program.inventory.sources.find((row) => row.kind === "entry");
   if (!entry) fail("missing canonical entry source");
   const key = "native-string-values:v1:" + JSON.stringify(entry.id);
-  if (numeric) literals.push({ value: "", encoding: "wtf16" });
+  const output = outputRequirements.binaryConcat
+    ? planNativeStringOutputResources(outputRequirements, {
+        key: key + ":output",
+        stringKey: key,
+        flattenKey: key + ":flatten",
+      })
+    : undefined;
+  if (numeric || output) literals.push({ value: "", encoding: "wtf16" });
+  if (outputRequirements.batchArities.length) literals.push({ value: "undefined" });
   const literalRequirements = { key, utf8Storage: options.utf8Storage, literals };
   // Acceptance describes the same recipes the producers later execute. No
   // physical indices, scratch ledger, or post-reservation ABI additions.
   const recipes = [
     declareNativeStringLiteralTypes(key, options.utf8Storage),
     declareNativeStringLiteralResources(literalRequirements),
-    ...(numeric
-      ? [
-          declareNativeStringFlattenResources(key + ":flatten", key, options.utf8Storage),
-          declareNativeStringNumberResources(entry.id),
-          declareNativeValueResources(entry.id),
-        ]
-      : []),
+    ...(numeric || output ? [declareNativeStringFlattenResources(key + ":flatten", key, options.utf8Storage)] : []),
+    ...(numeric ? [declareNativeStringNumberResources(entry.id), declareNativeValueResources(entry.id)] : []),
+    ...(output ? [output] : []),
   ];
   return {
     kind: "planned",
     plan: freezePreparedIrValue({
       key,
       mode: numeric ? "number-boundary" : "literals",
+      ...(output ? { output } : {}),
       literalRequirements,
       literalUses: uses,
       declarations: recipes.flatMap((recipe) => recipe.declarations),
@@ -260,9 +284,16 @@ function checkInput(input: NativeStringValueReservationInput) {
   const outcome = planNativeStringValuePhysical(input.demands, {
     representation: "native-string",
     utf8Storage: input.plan.literalRequirements.utf8Storage,
+    stringConcatEmptyIdentity: input.plan.output?.options.emptyIdentity,
   });
   if (outcome.kind !== "planned") fail("input no longer has a materializable string plan");
   same(input.plan, outcome.plan, "demand/plan mismatch");
+  if (input.plan.output) {
+    if (!input.outputRequirements || input.outputRequirements.demands !== input.demands)
+      fail("missing exact output requirements");
+    assertNativeStringOutputRequirementsCurrent(input.outputRequirements);
+    same(input.outputRequirements.options, input.plan.output.options, "output options changed");
+  } else if (input.outputRequirements !== undefined) fail("unexpected output requirements");
   if (input.plan.mode === "number-boundary") {
     if (!input.valueRequirements) fail("missing issued native value requirements");
     assertNativeValueResourcePlanFor(
@@ -279,6 +310,7 @@ function ownerFor(tx: PhysicalModuleReservations, pack: NativeStringValueReserva
   same(owner.input.demands, owner.snapshot, "changed retained string demands");
   checkInput(owner.input);
   nativeStringLiteralReservationInventory(tx, pack.strings);
+  if (pack.output) nativeStringOutputReservationInventory(tx, pack.output, owner.input.plan.output!);
   if (pack.number)
     requireNativeStringNumberReservations(tx, pack.number.scanner, owner.input.valueRequirements!, pack.strings);
   for (const row of owner.rows) {
@@ -296,16 +328,29 @@ export function reserveNativeStringValueResources(
 ): NativeStringValueReservations {
   checkInput(input);
   const strings = reserveNativeStringLiteralResources(tx, input.plan.literalRequirements, types);
+  const flatten =
+    input.plan.mode === "number-boundary" || input.plan.output
+      ? reserveNativeStringFlattenResources(tx, input.plan.key + ":flatten", strings)
+      : undefined;
   let number: NativeStringValueReservations["number"];
   if (input.plan.mode === "number-boundary") {
-    const flatten = reserveNativeStringFlattenResources(tx, input.plan.key + ":flatten", strings);
+    if (!flatten) fail("number resources require flatten");
     const scanner = reserveNativeStringNumberResources(tx, input.valueRequirements!, flatten);
     const values = reserveNativeValueResources(tx, input.valueRequirements!, {
       strings: { kind: "native-string", stringPack: strings, scanner },
     });
     number = Object.freeze({ flatten, scanner, values });
   }
-  const pack = Object.freeze({ strings, ...(number ? { number } : {}) });
+  const output =
+    input.plan.output && input.outputRequirements && flatten
+      ? reserveNativeStringOutputResources(tx, input.outputRequirements, input.plan.output, { strings, flatten })
+      : undefined;
+  const pack = Object.freeze({
+    strings,
+    ...(flatten ? { flatten } : {}),
+    ...(number ? { number } : {}),
+    ...(output ? { output } : {}),
+  });
   const census = nativeStringLiteralReservationInventory(tx, strings);
   const rows: NativeStringValueResourceRow[] = [];
   const type = (reservation: TypeReservation) =>
@@ -317,11 +362,13 @@ export function reserveNativeStringValueResources(
   census.typePack.types.forEach(type);
   census.globals.forEach((row) => global(row.global));
   census.functions.forEach((row) => fn(row.function));
+  if (flatten) {
+    type(flatten.worklist);
+    fn(flatten.copyTree);
+    if (flatten.utf8Decoder) fn(flatten.utf8Decoder);
+    fn(flatten.flatten);
+  }
   if (number) {
-    type(number.flatten.worklist);
-    fn(number.flatten.copyTree);
-    if (number.flatten.utf8Decoder) fn(number.flatten.utf8Decoder);
-    fn(number.flatten.flatten);
     fn(number.scanner.toNumber);
     type(number.scanner.powerArray);
     global(number.scanner.powerGlobal);
@@ -332,6 +379,13 @@ export function reserveNativeStringValueResources(
     fn(number.values.functions.boxNumber);
     fn(number.values.functions.unboxNumber);
     fn(number.values.functions.isNumber);
+  }
+  if (output) {
+    for (const row of nativeStringOutputReservationInventory(tx, output, input.plan.output!)) {
+      if (row.kind === "type") type(row);
+      else if (row.kind === "global") global(row);
+      else fn(row);
+    }
   }
   // Producers own the captured tokens; recipe order must not be reconstructed
   // by grouping all globals before all materializers (which loses interleaving).
@@ -349,7 +403,7 @@ export function reserveNativeStringValueResources(
     fail("reservation steps do not cover the captured population exactly once");
   owners.set(pack, {
     tx,
-    input: Object.freeze({ ...input, plan: freezePreparedIrValue(input.plan) as NativeStringValuePhysicalPlan }),
+    input: Object.freeze({ ...input }),
     snapshot: freezePreparedIrValue(input.demands),
     rows: Object.freeze(orderedRows),
     filled: false,
@@ -369,14 +423,22 @@ export function fillNativeStringValueResources(
   const owner = ownerFor(tx, pack);
   if (owner.filled) fail("duplicate native string value fill");
   fillNativeStringLiteralResources(tx, pack.strings);
+  if (pack.flatten) fillNativeStringFlattenResources(tx, pack.flatten);
   if (pack.number) {
-    fillNativeStringFlattenResources(tx, pack.number.flatten);
     fillNativeStringNumberResources(tx, pack.number.scanner);
     fillNativeValueResources(tx, pack.number.values, {
       strings: { kind: "native-string", stringPack: pack.strings, scanner: pack.number.scanner },
     });
   }
+  if (pack.output) fillNativeStringOutputResources(tx, pack.output);
   owner.filled = true;
+}
+export function publishNativeStringValueOutput(
+  tx: PhysicalModuleReservations,
+  pack: NativeStringValueReservations,
+): void {
+  requireCompletedNativeStringValues(tx, pack);
+  if (pack.output) publishNativeStringOutput(tx, pack.output);
 }
 export function requireCompletedNativeStringValues(
   tx: PhysicalModuleReservations,
@@ -385,9 +447,10 @@ export function requireCompletedNativeStringValues(
   const owner = ownerFor(tx, pack);
   if (!owner.filled) fail("incomplete native string value resources");
   requireCompletedNativeStringLiterals(tx, pack.strings);
+  if (pack.flatten) requireCompletedNativeStringFlatten(tx, pack.flatten, pack.strings);
+  if (pack.output) requireCompletedNativeStringOutput(tx, pack.output);
   if (pack.number) {
     if (!owner.input.valueRequirements) fail("number resources lost their issued value requirements");
-    requireCompletedNativeStringFlatten(tx, pack.number.flatten, pack.strings);
     requireCompletedNativeStringNumber(tx, pack.number.scanner, owner.input.valueRequirements!, pack.strings);
     requireCompletedNativeValues(tx, pack.number.values, owner.input.valueRequirements, {
       strings: { kind: "native-string", stringPack: pack.strings, scanner: pack.number.scanner },
@@ -416,4 +479,35 @@ export function emitPreparedNativeStringLiteral(
   return binding.kind === "global"
     ? [{ op: "global.get", index: tx.physicalIndex(binding.global) }]
     : [{ op: "call", funcIdx: binding.function.handle }];
+}
+
+/** The scoped emitter may only realize an authenticated concat occurrence of its owner. */
+export function emitPreparedNativeStringConcat(
+  tx: PhysicalModuleReservations,
+  pack: NativeStringValueReservations,
+  ownerUnitId: IrUnitId,
+  alloc?: AllocSiteId,
+  mode: IrStringConcatMode = "immutable",
+  provider?: IrFuncRef,
+): readonly Instr[] {
+  requireCompletedNativeStringValues(tx, pack);
+  const owner = ownerFor(tx, pack);
+  const requirements = owner.input.outputRequirements;
+  if (!pack.output || !requirements || mode !== "immutable") fail("concat has no admitted output resource");
+  const admitted = requirements.uses.some((use) => {
+    if (use.kind !== "binary-concat") return false;
+    const occurrence = requirements.demands.occurrences[use.occurrence]!;
+    const buffer = requirements.demands.buffers[occurrence.bufferIndex]!;
+    const instruction = occurrence.instruction;
+    return (
+      buffer.view === "projection" &&
+      buffer.ownerUnitId === ownerUnitId &&
+      instruction.kind === "string.concat" &&
+      instruction.alloc === alloc &&
+      (instruction.concatMode ?? "immutable") === mode &&
+      instruction.provider === provider
+    );
+  });
+  if (!admitted) fail("concat occurrence is outside the closed owner projection");
+  return [{ op: "call", funcIdx: pack.output.concat.handle }];
 }

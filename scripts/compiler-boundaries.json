@@ -66,10 +66,18 @@
     {
       "id": "frontend-ts",
       "status": "active",
-      "roots": ["src/frontend/builtins/contracts.ts"],
+      "roots": [
+        "src/frontend/builtins/contracts.ts",
+        "src/frontend/builtins/prepare-string-output.ts",
+        "src/frontend/typescript.ts"
+      ],
       "required": true,
-      "entries": ["src/frontend/builtins/contracts.ts"],
-      "minModules": 1
+      "entries": [
+        "src/frontend/builtins/contracts.ts",
+        "src/frontend/builtins/prepare-string-output.ts",
+        "src/frontend/typescript.ts"
+      ],
+      "minModules": 3
     },
     {
       "id": "ir-core",
@@ -96,9 +104,10 @@
         "src/ir/core/vector-runtime.ts",
         "src/ir/core/type-references.ts",
         "src/ir/core/type-binding-keys.ts",
-        "src/ir/core/type-key.ts"
+        "src/ir/core/type-key.ts",
+        "src/ir/core/string-callables.ts"
       ],
-      "minModules": 20
+      "minModules": 21
     },
     {
       "id": "ir-analysis",
@@ -179,9 +188,11 @@
         "src/ir/program/abi-signatures.ts",
         "src/ir/program/host-async-dynamic.ts",
         "src/ir/program/host-import-plan.ts",
-        "src/ir/program/host-number-boundary-setup.ts"
+        "src/ir/program/host-number-boundary-setup.ts",
+        "src/ir/program/runtime-abi-identity.ts",
+        "src/ir/program/native-string-output-requirements.ts"
       ],
-      "minModules": 25
+      "minModules": 27
     },
     {
       "id": "runtime-contracts",
@@ -218,9 +229,12 @@
         "src/backend/wasmgc/resources/native-number-format.ts",
         "src/backend/wasmgc/resources/native-delay-combinator.ts",
         "src/backend/wasmgc/async/prepared-async-frame-adapter.ts",
-        "src/backend/wasmgc/resources/prepared-async-frame.ts"
+        "src/backend/wasmgc/resources/prepared-async-frame.ts",
+        "src/backend/wasmgc/program/native-string-output-abi.ts",
+        "src/backend/wasmgc/program/native-string-output.ts",
+        "src/backend/wasmgc/resources/native-string-output.ts"
       ],
-      "minModules": 17
+      "minModules": 20
     },
     {
       "id": "native-runtime",
@@ -12367,6 +12381,46 @@
       "path": "src/ir/program/host-number-boundary-setup.ts",
       "state": "clean",
       "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/core/string-callables.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/program/runtime-abi-identity.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/native-string-output-requirements.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/backend/wasmgc/program/native-string-output-abi.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/program/native-string-output.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-string-output.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/frontend/builtins/prepare-string-output.ts",
+      "state": "clean",
+      "layer": "frontend-ts"
+    },
+    {
+      "path": "src/frontend/typescript.ts",
+      "state": "clean",
+      "layer": "frontend-ts"
     }
   ]
 }
