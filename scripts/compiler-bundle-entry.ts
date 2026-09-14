@@ -19,3 +19,20 @@ export {
   TEMPORAL_PRELUDE_LINES,
 } from "../src/temporal-provider.ts";
 export type { TemporalProvider } from "../src/temporal-provider.ts";
+
+// (#3451 slice 3) The compile-once Test262 HARNESS provider. Same reason as
+// the Temporal exports above: `scripts/test262-worker.mjs` runs against this
+// bundle with no TypeScript loader, so the linked-harness shadow lane can only
+// reach these through the bundle. The worker feature-DETECTS them, so an older
+// bundle degrades to the honest lane rather than failing to load.
+export {
+  buildHarnessProvider,
+  compileHarnessLinkedBody,
+  harnessBindingPrelude,
+  harnessProviderCacheKey,
+  harnessTopLevelNames,
+  referencedHarnessNames,
+  HARNESS_PACKAGE_NAME,
+  HARNESS_STUB_KEY,
+} from "../src/test262-harness-provider.ts";
+export type { HarnessProvider } from "../src/test262-harness-provider.ts";
