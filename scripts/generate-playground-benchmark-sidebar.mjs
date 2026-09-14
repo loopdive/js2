@@ -39,15 +39,35 @@
  * the child's own warmup/measurement loop ever touches it.
  */
 
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { parseArgs } from "node:util";
 import * as ts from "typescript";
-import { buildImports, compileMulti, instantiateWasm, optimizeBinaryAsync } from "./compiler-bundle.mjs";
+import { buildCompiledImports, compileMulti, instantiateWasm, optimizeBinaryAsync } from "./compiler-bundle.mjs";
+
+// Alternate semantic providers must never overwrite the published default lane.
+// Example: --semantic-providers=native-first --output=.tmp/native-first-perf.json
+const { values: options } = parseArgs({
+  options: {
+    "semantic-providers": { type: "string", default: "auto" },
+    output: { type: "string" },
+    "kernels-only": { type: "boolean", default: false },
+  },
+});
+const semanticProviders = options["semantic-providers"];
+if (!["auto", "native-first"].includes(semanticProviders)) {
+  throw new Error("--semantic-providers expects auto or native-first");
+}
+if (options["kernels-only"] && !options.output) throw new Error("--kernels-only requires --output");
+const publishDefault = semanticProviders === "auto" && !options.output;
 
 const ROOT = resolve(import.meta.dirname, "..");
+const compilerCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
 const HELPERS_PATH = resolve(ROOT, "website", "playground", "examples", "benchmarks", "helpers.ts");
-const RESULTS_PATH = resolve(ROOT, "benchmarks", "results", "playground-benchmark-sidebar.json");
+const RESULTS_PATH = options.output
+  ? resolve(options.output)
+  : resolve(ROOT, "benchmarks", "results", `playground-benchmark-sidebar${publishDefault ? "" : "-native-first"}.json`);
 const PLAYGROUND_PUBLIC_PATH = resolve(
   ROOT,
   "website",
@@ -58,7 +78,7 @@ const PLAYGROUND_PUBLIC_PATH = resolve(
   "playground-benchmark-sidebar.json",
 );
 const PUBLIC_PATH = resolve(ROOT, "website", "public", "benchmarks", "results", "playground-benchmark-sidebar.json");
-const ARTIFACT_DIR = resolve(ROOT, ".tmp", "warm-bench");
+const ARTIFACT_DIR = resolve(ROOT, ".tmp", `warm-bench-${semanticProviders}-${process.pid}`);
 const CHILD_SCRIPT = resolve(import.meta.dirname, "no-jit-bench-child.mjs");
 const COMPILER_BUNDLE_PATH = resolve(import.meta.dirname, "compiler-bundle.mjs");
 const WASM_EXPERIMENTAL_FLAGS = ["--experimental-wasm-stringref", "--experimental-wasm-custom-descriptors"];
@@ -212,15 +232,29 @@ function smokeTestInProcess(fn) {
 
 async function prepareArtifacts(entry) {
   const absEntryPath = resolve(ROOT, "website", "playground", entry.path);
-  const source = readFileSync(absEntryPath, "utf8");
+  const fullSource = readFileSync(absEntryPath, "utf8");
+  // The sidebar files also export a DOM-rendering `main`. This explicit mode
+  // compares the unchanged numerical/string kernels in both profiles without
+  // requiring that unrelated UI program to compile under native-first.
+  const source = options["kernels-only"]
+    ? ts
+        .createSourceFile(entry.path, fullSource, ts.ScriptTarget.Latest, true)
+        .statements.filter(
+          (statement) =>
+            !ts.isImportDeclaration(statement) &&
+            !(ts.isFunctionDeclaration(statement) && statement.name?.text === "main"),
+        )
+        .map((statement) => statement.getFullText())
+        .join("\n")
+    : fullSource;
 
   const result = await compileMulti(
     {
       [entry.path]: source,
-      "examples/benchmarks/helpers.ts": HELPERS_SOURCE,
+      ...(options["kernels-only"] ? {} : { "examples/benchmarks/helpers.ts": HELPERS_SOURCE }),
     },
     entry.path,
-    {},
+    { semanticProviders },
   );
   if (!result.success) {
     throw new Error(`Compilation failed for ${entry.path}:\n${result.errors.map((e) => e.message).join("\n")}`);
@@ -228,15 +262,18 @@ async function prepareArtifacts(entry) {
   const wasmBinary = await optimizeBenchmarkWasm(result.binary, entry.path);
 
   // Quick in-process smoke test — not a measurement, just a sanity gate.
-  const imports = buildImports(result.imports, {}, result.stringPool);
+  const imports = buildCompiledImports(result);
   const { instance } = await instantiateWasm(wasmBinary, imports.env, imports.string_constants);
   imports.setInstance?.(instance);
   const wasmFn = instance.exports[entry.exportName];
   if (typeof wasmFn !== "function") throw new Error(`Missing wasm export ${entry.exportName}`);
-  smokeTestInProcess(wasmFn);
+  const wasmValue = smokeTestInProcess(wasmFn);
 
   const jsFactorySource = buildJsFactorySource(source, entry.exportName);
-  smokeTestInProcess(new Function(jsFactorySource)()[entry.exportName]);
+  const jsValue = smokeTestInProcess(new Function(jsFactorySource)()[entry.exportName]);
+  if (!Object.is(wasmValue, jsValue)) {
+    throw new Error(`Value mismatch for ${entry.path}: Wasm=${wasmValue}, JS=${jsValue}`);
+  }
 
   // The artifact handed to the child process forces its own tier-up (see
   // buildWarmJsFactorySource) — that requires --allow-natives-syntax, which
@@ -256,6 +293,7 @@ async function prepareArtifacts(entry) {
     JSON.stringify({
       imports: result.imports,
       stringPool: result.stringPool,
+      adapterManifest: result.adapterManifest,
       runtimeHelpersPath: COMPILER_BUNDLE_PATH,
     }),
   );
@@ -292,6 +330,12 @@ async function measureBenchmark(entry) {
 
   return {
     path: entry.path,
+    semanticProviders,
+    workload: options["kernels-only"] ? "kernel-only" : "full-sidebar",
+    compilerCommit,
+    measuredAt: new Date().toISOString(),
+    nodeVersion: process.version,
+    v8Version: process.versions.v8,
     wasmOptimized: true,
     wasmOptimizeLevel: 4,
     mode: "warm",
@@ -330,14 +374,18 @@ async function main() {
 
   mkdirSync(dirname(RESULTS_PATH), { recursive: true });
   writeFileSync(RESULTS_PATH, JSON.stringify(snapshot, null, 2) + "\n");
-  mkdirSync(dirname(PLAYGROUND_PUBLIC_PATH), { recursive: true });
-  copyFileSync(RESULTS_PATH, PLAYGROUND_PUBLIC_PATH);
-  mkdirSync(dirname(PUBLIC_PATH), { recursive: true });
-  copyFileSync(RESULTS_PATH, PUBLIC_PATH);
+  if (publishDefault) {
+    mkdirSync(dirname(PLAYGROUND_PUBLIC_PATH), { recursive: true });
+    copyFileSync(RESULTS_PATH, PLAYGROUND_PUBLIC_PATH);
+    mkdirSync(dirname(PUBLIC_PATH), { recursive: true });
+    copyFileSync(RESULTS_PATH, PUBLIC_PATH);
+  }
 
   console.log(`Updated ${RESULTS_PATH}`);
-  console.log(`Updated ${PLAYGROUND_PUBLIC_PATH}`);
-  console.log(`Updated ${PUBLIC_PATH}`);
+  if (publishDefault) {
+    console.log(`Updated ${PLAYGROUND_PUBLIC_PATH}`);
+    console.log(`Updated ${PUBLIC_PATH}`);
+  }
 
   try {
     rmSync(ARTIFACT_DIR, { recursive: true, force: true });

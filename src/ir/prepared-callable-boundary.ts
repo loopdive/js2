@@ -281,6 +281,7 @@ function collectCallableTypes(type: IrType, out: Set<IrType>): void {
       for (const member of type.members) collectCallableTypes(member, out);
       return;
     case "val":
+    case "support-ref":
     case "string":
     case "class":
     case "extern":

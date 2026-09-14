@@ -221,9 +221,11 @@ export function createCodegenContext(
     hostDynamicClassMethodNames: new Set(),
     hostDynamicClassAccessorReads: new Set(),
     runtimeKeyClassMethodNames: new Set(),
+    standaloneRuntimeKeyClassProtos: new Set(),
     genericResolved: new Map(),
     funcRestParams: new Map(),
     funcUsesArguments: new Set(),
+    funcReadsOwnThis: new Set(),
     objectLiteralMethodFuncIdx: new Map(),
     extrasArgvGlobalIdx: -1,
     extrasArgvVecTypeIdx: -1,
@@ -241,6 +243,8 @@ export function createCodegenContext(
     // bytes. Only the package linker sets the option.
     sharedExnTag:
       options?.sharedExceptionTag === true && targetProfile.target !== "wasi" && targetProfile.target !== "standalone",
+    // (#5383 S2m) Decided lazily by `ensureExnTag`, never by an option.
+    exnTagImported: false,
     // (#5247) Provider builds only — their exports are wasm→wasm call targets.
     exportsConsumedByWasm: options?.exportsConsumedByWasm === true,
     hasUnionImports: false,
@@ -291,6 +295,7 @@ export function createCodegenContext(
     nativeStrLiteralGlobals: new Map(),
     usesStandaloneConsoleSink: false,
     stdoutAccGlobalIdx: -1,
+    usesSourceThrowStatement: false,
     symbolTypeIdx: -1,
     utf8StrDataTypeIdx: -1,
     utf8StrTypeIdx: -1,

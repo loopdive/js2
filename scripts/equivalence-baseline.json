@@ -14,8 +14,6 @@
     "tests/equivalence/null-dereference-guards.test.ts :: null dereference guards (#396) method call on null class instance returns default instead of trapping",
     "tests/equivalence/null-dereference-guards.test.ts :: null dereference guards (#396) property access on null struct returns NaN instead of trapping",
     "tests/equivalence/null-dereference-guards.test.ts :: null dereference guards (#396) uninitialized class variable property access returns default",
-    "tests/equivalence/optional-direct-closure-call.test.ts :: optional direct closure call (call_ref funcref fix) fn?.() on a closure that captures a variable",
-    "tests/equivalence/optional-direct-closure-call.test.ts :: optional direct closure call (call_ref funcref fix) fn?.() on a locally-defined closure",
     "tests/equivalence/reflect-api.test.ts :: Reflect API compile-time rewrites Reflect.construct creates a new instance",
     "tests/equivalence/tdz-reference-error.test.ts :: Temporal Dead Zone (TDZ) detection (#428) TDZ in block scope",
     "tests/equivalence/tdz-reference-error.test.ts :: Temporal Dead Zone (TDZ) detection (#428) assignment to let before declaration",

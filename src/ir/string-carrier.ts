@@ -65,6 +65,7 @@ export function attachIrStringCarrier(fn: IrFunction, carrierRef: IrTypeRef): Ir
   };
 
   function mapType(type: IrType): IrType {
+    if (type.kind === "support-ref") return type;
     const cached = typeMemo.get(type);
     if (cached) return cached;
     let mapped: IrType;

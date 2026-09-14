@@ -5,6 +5,8 @@
  *
  * Extracted from codegen/index.ts (#1013).
  */
+import { expressionHasWidenedPropertyType } from "./strict-eq-stale-type.js";
+import { functionReturnsWidenedProperty } from "./declarations/widened-property-return.js";
 import { ts, forEachChild } from "../ts-api.js";
 import {
   isBigIntType,
@@ -81,6 +83,7 @@ import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./conte
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
 import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.js"; // (#3024/#4638) module-global externref routing in lockstep with the literal's own host-path gate
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
+import { readsAmbientThisGlobal } from "./helpers/body-references-own-this.js";
 import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.js";
 import { markIdentityPreservingStructuralParam } from "./identity-preserving-structural-param.js";
 import { genericCallbackResultDeclaration } from "./generic-callback-result.js";
@@ -125,6 +128,7 @@ import {
 } from "./native-dynamic-boundary-tag.js";
 import { prepareStandaloneNativePromiseNumberBoundary } from "./native-promise-number-boundary.js";
 import { prepareAsyncCallableAbi } from "./async-ir-planning.js";
+import { widenAsyncThenableResults } from "./async-thenable-return.js";
 import {
   ensureNativeStringBoundaryBridge,
   ensureNativeStringExternBridge,
@@ -1829,15 +1833,15 @@ function registerBodylessFunctionDeclaration(
     }
     const rUnwrapped = isAsync ? unwrapPromiseType(retType, ctx.checker) : retType;
     const isImplicitAnyReturn = (rUnwrapped.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-    const withScopedReturn = functionReturnsThroughWithScope(ctx, stmt);
-    const inferredNumericRet = withScopedReturn
+    const dynamicReturn = functionReturnsThroughWithScope(ctx, stmt) || functionReturnsWidenedProperty(ctx, stmt);
+    const inferredNumericRet = dynamicReturn
       ? null
       : inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params);
     if (inferredNumericRet) {
       results = [inferredNumericRet];
-    } else if (withScopedReturn) {
-      // The checker's return type came from the SHADOWED outer binding; the real
-      // value is whatever the `with` receiver holds. Carry it as `any`.
+    } else if (dynamicReturn) {
+      // A routed or alias-mutated value can differ from the checker's
+      // inferred return type. Preserve its runtime tag.
       results = [{ kind: "externref" }];
     } else {
       results = isVoidType(rUnwrapped)
@@ -1854,6 +1858,7 @@ function registerBodylessFunctionDeclaration(
   }
 
   [params, results] = prepareAsyncCallableAbi(ctx, stmt, expandLinearU8ParamTypes(ctx, stmt, params), results);
+  results = widenAsyncThenableResults(ctx, stmt, results);
 
   const optionalParams: OptionalParamInfo[] = [];
   for (let i = 0; i < stmt.parameters.length; i++) {
@@ -1874,6 +1879,8 @@ function registerBodylessFunctionDeclaration(
   if (needsImplicitArgumentsObject(stmt)) {
     ctx.funcUsesArguments.add(name);
   }
+  // (#6436) A plain call to this name must install `undefined` as the receiver.
+  if (readsAmbientThisGlobal(stmt)) ctx.funcReadsOwnThis.add(name);
 
   const typeIdx = addFuncType(ctx, params, results, `${name}_type`);
   const funcIdx = mintDefinedFunc(ctx);
@@ -2956,19 +2963,18 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // return type if every param is numeric and the body is a pure
         // numeric kernel (catches e.g. recursive `function fib(n) {...}`).
         const isImplicitAnyReturn = (rUnwrapped.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-        const withScopedReturn = functionReturnsThroughWithScope(ctx, stmt);
+        const dynamicReturn = functionReturnsThroughWithScope(ctx, stmt) || functionReturnsWidenedProperty(ctx, stmt);
         const preInitVarReturn = functionReturnsPreInitVarValue(ctx, stmt);
-        const inferredNumericRet = withScopedReturn
+        const inferredNumericRet = dynamicReturn
           ? null
           : inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params);
         if (nativeTaViewReturn !== null) {
           results = [nativeTaViewReturn];
         } else if (inferredNumericRet) {
           results = [inferredNumericRet];
-        } else if (withScopedReturn || preInitVarReturn) {
-          // See `functionReturnsThroughWithScope`: the checker resolved the
-          // returned name against the SHADOWED outer binding, so the inferred
-          // type describes the wrong value. Carry it as `any`.
+        } else if (dynamicReturn || preInitVarReturn) {
+          // Routed, pre-init and alias-mutated values can disagree with the
+          // checker's inferred return type. Preserve the runtime value.
           results = [{ kind: "externref" }];
         } else {
           results = isVoidType(rUnwrapped)
@@ -2993,6 +2999,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       }
 
       [params, results] = prepareAsyncCallableAbi(ctx, stmt, expandLinearU8ParamTypes(ctx, stmt, params), results);
+      results = widenAsyncThenableResults(ctx, stmt, results);
 
       const optionalParams: OptionalParamInfo[] = [];
       for (let i = 0; i < stmt.parameters.length; i++) {
@@ -3021,6 +3028,8 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       if (needsImplicitArgumentsObject(stmt)) {
         ctx.funcUsesArguments.add(name);
       }
+      // (#6436) A plain call to this name must install `undefined` as the receiver.
+      if (readsAmbientThisGlobal(stmt)) ctx.funcReadsOwnThis.add(name);
 
       const typeIdx = addFuncType(ctx, params, results, `${name}_type`);
       const funcIdx = mintDefinedFunc(ctx);
@@ -3477,6 +3486,9 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
    * let/const pass so both scopes register the same type.
    */
   function moduleGlobalWasmType(decl: ts.VariableDeclaration, varType: ts.Type): ValType {
+    if (decl.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer)) {
+      return { kind: "externref" };
+    }
     if (proxyOrTransferredResultNeedsExternref(ctx, decl)) return { kind: "externref" };
     // A host builtin static read (`Date.now`, `Object.hasOwn`, …) is a genuine
     // JS function, not a Wasm closure struct.  Conditional/short-circuit

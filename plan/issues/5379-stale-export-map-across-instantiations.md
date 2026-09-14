@@ -1,7 +1,9 @@
 ---
 id: 5379
 title: "A value built by instantiation N of a linked provider is dispatched through instantiation N−1's export map — host mirrors keep the FIRST instantiation's exports, so every test262 strict rerun (and every later row in a fork) reads the wrong module (bounds #5377's +7; `Instant.epochNanoseconds` passes fresh, fails in-process)"
-status: ready
+status: done
+completed: 2026-09-07
+assignee: ttraenkler/dev-5379
 sprint: current
 priority: high
 horizon: m
@@ -9,6 +11,41 @@ goal: core-semantics
 reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-07
+# 2026-09-07 — this PR STACKS on PR #5699 (#5377), so it carries that PR's
+# commits and therefore its growth. The #5377 grants are RESTATED here verbatim
+# in scope because a growth allowance must live in a file the PR modifies,
+# and #5377's issue file is not modified by this one (the stranded-grant class
+# named in CLAUDE.md § "Hooks and ratchet gates").
+#
+# `src/runtime.ts` — INHERITED from #5377, not grown by #5379: this issue adds
+# no line to it (its own change is +29/-7 in
+# `src/runtime/cross-module-struct-owners.ts`, below the gate's per-file floor).
+# MEASURED on this branch 2026-09-07 by `LOC_GATE_BASE=$(git rev-parse
+# origin/main) node scripts/check-loc-budget.mjs` (base 7ab54a11b0):
+# src/runtime.ts 19440 → 19600 (+160), src/codegen/class-bodies.ts
+# 4328 → 4393 (+65). #5377's issue file quotes +255 for runtime.ts against a
+# DIFFERENT base (798b8a06e0); both are restated so neither is mistaken for the
+# other. #5377's own rationale for the growth — #5373's +95
+# (three coercion sites, `_isTaggedUserClassInstance` / `_classChainMethod` /
+# `_classChainToString`) plus #5377's ~160 (the two instance→class-object
+# registries, `_classObjectForInstance`, `_classObjectOwnedBy`, `_classChainRead`,
+# three call sites, the `__set_subclass_proto` fourth argument and rationale).
+#
+# `src/codegen/class-bodies.ts` — INHERITED from #5377 (+65): the
+# `__set_subclass_proto` fourth argument carried in a LOCAL emitted into the
+# LIVE body, and the constructor-entry class-object materialization.
+loc-budget-allow:
+  - src/runtime.ts
+  - src/codegen/class-bodies.ts
+# INHERITED from #5377, restated for the same stranded-grant reason.
+# `resolveImport` physically contains the member-read imports and
+# `__set_subclass_proto`; `<anonymous>#95` is the `__extern_method_call` closure
+# inside it; `compileClassBodiesInner` builds every class constructor's
+# `FunctionContext`.
+func-budget-allow:
+  - src/runtime.ts::resolveImport
+  - src/runtime.ts::<anonymous>#95
+  - src/codegen/class-bodies.ts::compileClassBodiesInner
 ---
 
 # #5379 — host mirrors dispatch through a stale instantiation's exports
@@ -115,6 +152,131 @@ lane is unaffected (no linked project ⇒ no second instantiation of a provider)
    same process; the #5377 ownership-gate `_MISS` count on the 481-row sample is
    0.
 3. 481-row + 123-row samples measured, 0 pass→fail, counts with artifacts.
+
+## Findings (dev-5379, 2026-09-07) — the channel was already closed; the holder is real but demoted, not dropped
+
+**The premise no longer holds on this base, and the reason is a date.**
+`.tmp/dbgM5.log` — the trace the issue is filed from — was captured
+**2026-09-06 23:46**. #5364's merge commit `640f6939d0` landed on `main` at
+**2026-09-07 01:29**, and #5377's ownership-gate commit `4654f50e5f` (02:17 on
+its own branch) does **not** contain it (`git merge-base --is-ancestor
+640f6939d0 4654f50e5f` → 1). So both the observed cross-instantiation arrival
+**and** the 5-row regression that forced the `_classObjectOwnedBy` gate were
+measured on a base **without** `resetLinkedProjectRegistry` /
+`resetTemporalRealmGlobals`. The #5377 branch then merged #5364 in
+(`6c0c38dda8`) and never re-measured whether the gate was still load-bearing.
+
+**Step 1 — the holder, quoted.** The only candidate on the plan's list that
+genuinely survives an instantiation boundary is candidate 3, and it is not a
+mirror cache:
+
+```ts
+// src/runtime/cross-module-struct-owners.ts
+export function createCrossModuleStructOwners(canBeWeakKey: (value: unknown) => boolean) {
+  const modules = new Set<Record<string, Function>>();
+  const owners  = new WeakMap<object, Record<string, Function>>();   // <- the holder
+  const states  = new WeakMap<Record<string, Function>, { getExports: () => Record<string, Function> }>();
+```
+
+`owners` is written at `decoderFor`'s three `owners.set(obj, …)` sites and was
+read back **before** any liveness check:
+
+```ts
+const cached = owners.get(obj as object);
+if (cached !== undefined) return cached === local || cached === NONE ? undefined : cached;
+```
+
+`reset()` (#5364) clears `modules` and leaves `owners`/`states` alone, on this
+stated premise:
+
+> `owners` and `states` are deliberately NOT cleared: both are WeakMaps keyed on
+> the per-instance objects of the project being dropped, so they become
+> unreachable with it.
+
+That premise is **false**. `classStaticParent`'s `classParentsByName`
+(`src/runtime/class-static-parent.ts` L10) is a process-global **strong** `Map`
+of class objects keyed by class **NAME**, so project 1's objects outlive
+project 1 by construction; a host mirror handed to an embedder keeps its struct
+alive the same way. And `stateFor` is the exact object #5364 §4 named as the
+second channel — `_crossModuleCallbackState` (`src/runtime.ts` L6246) replaces
+an import closure's `callbackState` with `_crossModuleStructs.stateFor(owner)`,
+i.e. **a `callbackState.getExports()` that answers a module's exports.** When
+`owner` came out of the stale cache, that is literally "stale exports arrive
+directly as a `callbackState.getExports()` from an import closure".
+
+**Step 2 — shipped (b), not (a); (a) does not converge and cannot.** (a) asks
+mirrors to resolve exports "from the RECEIVER at call time". There is nothing to
+resolve from: a raw WasmGC struct carries no decoder — that is the premise
+`cross-module-struct-owners.ts`'s own header states, and it is why the registry
+exists at all. So (a) reduces to the same lookup, and the fix has to be at the
+lookup. Shipped shape: **a retired module never outranks a live one.** On a
+cache hit whose module is no longer in `modules`, `decoderFor` re-probes the
+live project and prefers whatever it answers; the retired entry is **kept as the
+fallback** rather than dropped, because a retired module's Wasm instance is
+alive as long as the struct is and is still the correct decoder for what it
+minted — dropping it would turn a working read of a surviving cross-project
+value into the `ref.test`-miss default (0). Only the ORDER changes. The `NONE`
+negative-cache arm short-circuits before the liveness check, so the #3903
+`__extern_get` hot path (~10k/`run()`) is byte-identical.
+
+**Step 3 — the assertion, measured.** `_classObjectOwnedBy` answers "foreign"
+**0** times on the 481-row sample:
+
+| lane | rows | gate evaluations | `_MISS` | distinct registering export sets |
+| --- | --- | --- | --- | --- |
+| `Instant/**` + `ZonedDateTime/prototype/**` | 481 | 427,547 | **0** | 776 |
+| 4 linked Temporal probes | 4 | 1,927 | **0** | 5 |
+
+Instrumented with three independent detectors, all reading 0: the gate itself; a
+broad stale check on every class-object resolution path
+(`_owningClassObject`, its cached arm, `_classObjectForInstance`'s direct and
+proto arms); and a drift check that records the FIRST exports each class object
+is seen with and flags any later arrival with a different one — the last one
+does not depend on `_classCtorCallbackStates` being populated, so it closes the
+init-window blind spot. Artifacts `.tmp/base-instzdt.json`, `.tmp/tp5379e.log`.
+The gate is therefore **dead code on this base and is kept anyway**, per the
+plan: it costs one `WeakMap.get` on a path that already did one, and it is the
+only thing standing between a future regression of the reset seam and the 5-row
+`Convert JSBI instances to native numbers using toNumber` failure #5377 measured.
+
+**`Instant.epochNanoseconds` is correct in-process.** `.tmp/probe-base.json`:
+`pass` in a fresh process AND `pass` after ten other `Instant/**` rows have run
+in the same one (`PROBE_ROWS=10`, `.tmp/probe-inproc.mts`). The issue's headline
+symptom does not reproduce.
+
+## Samples — base vs fix, byte-identical
+
+Both lanes, one compiler revision, one `JS2WASM_TEMPORAL_CACHE` created fresh
+for it (`.tmp/tcache`), provider linked (`JS2WASM_TEST262_TEMPORAL=1`), one row
+per line through `runTest262File` (`.tmp/bucket-run.mts`).
+
+| sample | rows | base | fix | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| `Instant/**` + `ZonedDateTime/prototype/**` | 481 | 294 pass / 187 fail | 294 pass / 187 fail | **0** | 0 |
+| #5249 calendar family | 123 | 27 pass / 96 fail | 27 pass / 96 fail | **0** | 0 |
+
+`diff` of the sorted TSVs is empty on both — status AND failure-reason string.
+Artifacts: `.tmp/base-instzdt.tsv` / `.tmp/fix-instzdt.tsv`,
+`.tmp/base-123.tsv` / `.tmp/fix-123.tsv`, `.tmp/diff-instzdt.txt`,
+`.tmp/diff-123.txt`.
+
+## Reported, not fixed
+
+- **Two linked projects live SIMULTANEOUSLY are still unsupported** — #5364
+  deliverable (B), unchanged. Without a reset between them, `decoderFor`
+  iterates `modules` in **insertion order**, so a struct minted by project 2 and
+  first classified while project 1 is still registered caches project 1, and
+  `decodes()` cannot tell "minted it" from "can name it" (two instances of one
+  binary share canonical WasmGC types — that is the whole aliasing problem).
+  **Bound:** unreachable from either test262 driver, because the ONE instantiate
+  seam resets before every linked row and the strict rerun goes through it too;
+  reachable only by an embedder holding two linked graphs at once. The fix is
+  the `rootImports`-keyed project scope, which was reverted once for breaking
+  the #5225 consumer→provider literal route and needs its own repro.
+- **This issue's own fix is not observable in any measured lane.** The 481-row
+  and 123-row samples are byte-identical base vs fix; the change is pinned by
+  the registry unit tests, which ARE base-failing, and by the reasoning above.
+  A change with no conformance delta is reported as such rather than credited.
 
 ## Notes
 

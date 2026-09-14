@@ -4,6 +4,7 @@
  * Runs before collectDeclarations so struct/vec types register with the right
  * fields. Extracted verbatim from codegen/declarations.ts (#3268).
  */
+import { markIndexedPropertyStale } from "../strict-eq-stale-type.js";
 import { collectShapes } from "../../shape-inference.js";
 import { forEachChild, getTypeAtLocationBounded, ts } from "../../ts-api.js";
 import { resolveWasmType } from "../index.js";
@@ -12,6 +13,7 @@ import { getArrTypeIdxFromVec, getOrRegisterVecType, registerStructType } from "
 import { valTypesMatch } from "../shared.js";
 import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import type { FieldDef, ValType } from "../../ir/types.js";
+import { recordSidecarPropertyOwner } from "../sidecar-owner-scope.js";
 import type { CodegenContext } from "../context/types.js";
 import { createDeclaredNestedWriteClassifier } from "./declared-nested-write.js";
 import { collectEvalAccessorObjectNames, collectEvalMutableNames } from "./eval-reachable-object-shape.js"; // (#4206/#4249)
@@ -185,7 +187,25 @@ export function collectObjectLiteralAssignedPropertyNames(ctx: CodegenContext, s
           writes.push(rhsType);
           ctx.objectLiteralIndexedAssignedPropertyTypes.set(indexedProperty, writes);
         }
-      } else if (mayCarryObject && ts.isPropertyAccessExpression(node.left)) {
+      }
+      if (ts.isPropertyAccessExpression(node.left)) {
+        // A union receiver can alias an object whose own property type is
+        // narrower than the union. Preserve writes on each constituent's
+        // declaration, rather than trusting that narrower checker type.
+        if (ctx.oracle.unionPartsOf(node.left.expression)) {
+          for (const declaration of ctx.oracle.declarationsOf(node.left.name)) {
+            const writes = ctx.objectLiteralIndexedAssignedPropertyTypes.get(declaration) ?? [];
+            writes.push(rhsType);
+            ctx.objectLiteralIndexedAssignedPropertyTypes.set(declaration, writes);
+            const seed = ctx.oracle.typeFactOf(declaration).kind;
+            const written = ctx.oracle.typeFactOf(rhs).kind;
+            if (["number", "string", "boolean", "bigint", "symbol"].includes(seed) && seed !== written) {
+              markIndexedPropertyStale(ctx, declaration);
+            }
+          }
+        }
+      }
+      if (mayCarryObject && ts.isPropertyAccessExpression(node.left)) {
         const name = node.left.name.text;
         ctx.objectLiteralAssignedPropertyNames.add(name);
         const writes = ctx.objectLiteralAssignedPropertyTypes.get(name) ?? [];
@@ -2124,7 +2144,10 @@ function markStandaloneOutOfShapeDataDefineTargets(
     if (!ts.isObjectLiteralExpression(descArg)) {
       ctx.dynamicDescriptorWidenVars.add(varName);
       const key = staticDefineKey(keyArg);
-      if (key !== undefined) ctx.sidecarDefinedPropertyKeys.add(`${varName}:${key}`);
+      if (key !== undefined) {
+        ctx.sidecarDefinedPropertyKeys.add(`${varName}:${key}`);
+        recordSidecarPropertyOwner(ctx, `${varName}:${key}`);
+      }
       return true;
     }
     if (descriptorHasAccessorKey(descArg)) return false; // accessors: other marker
@@ -2534,6 +2557,7 @@ export function collectPropsFromStatements(
           if (ctx.standalone && !ts.isObjectLiteralExpression(descArg)) {
             ctx.dynamicDescriptorWidenVars.add(varName);
             ctx.sidecarDefinedPropertyKeys.add(`${varName}:${propName}`);
+            recordSidecarPropertyOwner(ctx, `${varName}:${propName}`);
           }
           recordDefinePropertyWiden(ctx, checker, varKey, propName, descArg, extraProps, seenProps);
         }

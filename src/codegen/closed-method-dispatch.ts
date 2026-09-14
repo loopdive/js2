@@ -1,3 +1,5 @@
+import { buildPromisePeelValue } from "../runtime/wasmgc/promise/thenable-bodies.js";
+import { finalizePromiseThenableLookup } from "./promise-thenable-lookup.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * #2151 — standalone any-receiver method dispatch over CLOSED object-literal
@@ -36,18 +38,24 @@
  * protocol, and the bulk of test262 any-method patterns). Methods invoked with
  * arguments fall through to the existing path (the dispatcher is not used).
  */
-import type { Instr, ValType, WasmFunction } from "../ir/types.js";
+import type { FuncHandle, Instr, ValType, WasmFunction } from "../ir/types.js";
 import {
   canonicalUndefinedExternInstrs,
   ensureExternSameValueZeroHelper,
   ensureExternStrictEqHelper,
   undefinedExternInstrs,
 } from "./any-helpers.js";
-import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3125) IsCallable arms
+import { collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js"; // (#3125) IsCallable arms
 import type { CodegenContext, OptionalParamInfo } from "./context/types.js";
 import { classMemberFuncKey } from "./class-member-keys.js";
+import {
+  DYN_ARRAY_PRODUCER_METHODS,
+  ensureNativeArrayProducer,
+  isDynArrayProducerForm,
+} from "./dyn-array-producers.js"; // (#6447)
 import { ensureNativeArrayHof, NATIVE_HOF_METHODS } from "./hof-native.js";
-import { COLLECTION_KIND, ensureMapHelpers, MAP_LAYOUT } from "./map-runtime.js"; // (#3309) $Map brand arm
+import { COLLECTION_KIND } from "./collection-kind.js"; // (#6419) import-free leaf — map-runtime.js is in an import cycle
+import { ensureMapHelpers, MAP_LAYOUT } from "./map-runtime.js"; // (#3309) $Map brand arm
 import { ensureSetHelpers } from "./set-runtime.js"; // (#3309) __set_add for the `add` arm
 import { ensureNativeIterHof, isIterHofForm, NATIVE_ITER_HOF_METHODS } from "./iter-hof-native.js"; // (#2903)
 import { ensureNativeLazyIter, isLazyIterForm, LAZY_ITER_ARG2_METHODS, LAZY_ITER_METHODS } from "./iter-lazy-native.js"; // (#2903 R3)
@@ -63,9 +71,12 @@ import { CLOSURE_ARITY_FIELD_IDX, getFuncRefWrapperRootTypeIdx } from "./closure
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { wrapClosureCallFastArm } from "./closure-call-fast.js"; // (#4185) closure-receiver fast `.call` arm
 import { buildFnctorArrayHofTargetTest } from "./fnctor-array-prototype.js";
-import { resolveVecHostBridgeHelper } from "./vec-access-exports.js";
+import { reserveVecMethodHelper, resolveVecHostBridgeHelper } from "./vec-access-exports.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
 import { defaultValueInstrs } from "./type-coercion.js";
+// (#5383 S2g) The externref-argument marshalling this file used to own inline;
+// `standalone-class-construct.ts` is the second caller.
+import { buildCoerceIdxs, type CoerceIdxs, externArgCoercionInstrs, resultBoxingInstrs } from "./extern-arg-marshal.js";
 import { closedDispatchGuardsOwnSlot } from "./expressions/own-property-method-shadow.js";
 
 /**
@@ -385,6 +396,20 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
     ensureNativeArrayHof(ctx, methodName);
   }
 
+  // (#6447) For the pure Array PRODUCER methods (`concat`/`sort`) emit the
+  // array-like-substrate helper `__arrprod_<name>` NOW (append-only defined
+  // funcs; the fill only READS funcMap — #1719) and register the `$__vec_base`
+  // supertype the fill's brand test needs. Without the arm a genuinely-`any`
+  // array receiver falls to the open-`$Object` bottom arm, and
+  // `__extern_method_call` answers `undefined` for a non-`$Object` brand by
+  // construction — which is how `n.concat(r, i)` came back undefined inside the
+  // compiled Temporal provider and took every property-bag entry point with it.
+  // Same shape and same gate as the #2927 mutator arm above. Standalone only.
+  if (ctx.standalone && DYN_ARRAY_PRODUCER_METHODS.has(methodName) && isDynArrayProducerForm(methodName, arity)) {
+    getOrRegisterVecBaseType(ctx);
+    ensureNativeArrayProducer(ctx, methodName);
+  }
+
   // (#2903) For the EAGER Iterator-helper methods (find/every/some/forEach/
   // reduce/toArray), emit the native stepped loop `__iter_hof_<name>` NOW
   // (append-only defined funcs; the fill only READS funcMap — #1719). The fill
@@ -638,16 +663,6 @@ function collectFieldEntries(ctx: CodegenContext, methodName: string): FieldEntr
   return entries;
 }
 
-/** Coerce helper funcIdxs, read once per fill pass (registered at reserve). */
-type CoerceIdxs = {
-  boxNumIdx?: number;
-  /** (#5241) `__box_boolean` — a boolean-returning method's `i32` result. */
-  boxBoolIdx?: number;
-  unboxNumIdx?: number;
-  unboxBoolIdx?: number;
-  undefinedIdx?: number;
-};
-
 /**
  * Build one closed-struct call arm: cast recv→`this`, push each declared arg
  * (sourced via `pushArg(a)` — fixed dispatcher params OR `__extern_get_idx`),
@@ -662,7 +677,6 @@ function buildEntryArm(
   pushArg: (a: number) => Instr[],
   providedArity: number | null = null,
 ): Instr[] {
-  const { boxNumIdx, boxBoolIdx, unboxNumIdx, unboxBoolIdx } = ci;
   const arm: Instr[] = [
     { op: "local.get", index: anyLocalIdx },
     { op: "ref.cast", typeIdx: entry.typeIdx }, // `this`
@@ -698,48 +712,19 @@ function buildEntryArm(
       continue;
     }
     arm.push(...pushArg(a)); // the arg, as externref, onto the stack
-    if (want.kind === "f64") {
-      if (unboxNumIdx !== undefined) arm.push({ op: "call", funcIdx: unboxNumIdx });
-      else arm.push({ op: "drop" }, { op: "f64.const", value: 0 });
-    } else if (want.kind === "i32") {
-      if ((want as { boolean?: true }).boolean && unboxBoolIdx !== undefined) {
-        arm.push({ op: "call", funcIdx: unboxBoolIdx });
-      } else if (unboxNumIdx !== undefined) {
-        arm.push({ op: "call", funcIdx: unboxNumIdx });
-        arm.push({ op: "i32.trunc_sat_f64_s" });
-      } else {
-        arm.push({ op: "drop" }, { op: "i32.const", value: 0 });
-      }
-    } else if (want.kind === "ref" || want.kind === "ref_null") {
-      arm.push({ op: "any.convert_extern" });
-      arm.push({ op: "ref.cast", typeIdx: (want as { typeIdx: number }).typeIdx });
-    }
-    // externref param: already externref — no coercion.
+    // (#5380) A PRESENT-but-undefined argument to a DEFAULTED f64 formal must
+    // still run the default; only that formal takes the sentinel-preserving
+    // unboxer, so every other numeric argument keeps its previous bytes.
+    arm.push(
+      ...externArgCoercionInstrs(
+        ci,
+        want,
+        entry.optionalParams.some((candidate) => candidate.index === a),
+      ),
+    );
   }
   arm.push({ op: "call", funcIdx: entry.funcIdx });
-  // Box-coerce the result back to externref.
-  if (entry.resultType.kind === "ref" || entry.resultType.kind === "ref_null") {
-    arm.push({ op: "extern.convert_any" });
-  } else if (entry.resultType.kind === "f64") {
-    if (boxNumIdx !== undefined) arm.push({ op: "call", funcIdx: boxNumIdx });
-    else arm.push({ op: "drop" }, { op: "ref.null.extern" });
-  } else if (entry.resultType.kind === "i32") {
-    // (#5241) A BOOLEAN return also lowers to `i32`, and the ValType carries
-    // the `boolean` marker the ARGUMENT coercion above already honours. Boxing
-    // it as a number answered `1`/`0` where the same call on a TYPED receiver
-    // answered `true`/`false` — measured on a plain class,
-    // `String(inst.bigger(0))` → `"1"` through this dispatcher, `"true"`
-    // direct. Pre-existing; it became reachable for more names once #5241
-    // stopped the extern-class hijack from consuming those calls first.
-    if ((entry.resultType as { boolean?: true }).boolean && boxBoolIdx !== undefined) {
-      arm.push({ op: "call", funcIdx: boxBoolIdx });
-    } else {
-      arm.push({ op: "f64.convert_i32_s" });
-      if (boxNumIdx !== undefined) arm.push({ op: "call", funcIdx: boxNumIdx });
-      else arm.push({ op: "drop" }, { op: "ref.null.extern" });
-    }
-  }
-  // externref result: no coercion.
+  arm.push(...resultBoxingInstrs(ci, entry.resultType));
   return arm;
 }
 
@@ -752,13 +737,7 @@ function buildEntryArm(
  */
 export function fillClosedMethodDispatch(ctx: CodegenContext): void {
   const mod = ctx.mod;
-  const ci: CoerceIdxs = {
-    boxNumIdx: ctx.funcMap.get("__box_number"),
-    boxBoolIdx: ctx.funcMap.get("__box_boolean"),
-    unboxNumIdx: ctx.funcMap.get("__unbox_number"),
-    unboxBoolIdx: ctx.funcMap.get("__unbox_boolean"),
-    undefinedIdx: ctx.funcMap.get("__get_undefined"),
-  };
+  const ci: CoerceIdxs = buildCoerceIdxs(ctx);
   const methodCallIdx = ctx.funcMap.get("__extern_method_call");
   const objVecNewIdx = ctx.funcMap.get(ctx.standalone || ctx.wasi ? "__objvec_new" : "__js_array_new");
   const objVecPushIdx = ctx.funcMap.get(ctx.standalone || ctx.wasi ? "__objvec_push" : "__js_array_push");
@@ -1389,13 +1368,37 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     // never fires standalone). Route to the carrier-generic `__vec_push` /
     // `__vec_pop` helpers (reserved at reserve-time; body filled in the finalize
     // vec-export pass).
-    const vecPushIdx = resolveVecHostBridgeHelper(ctx, "push");
-    const vecPopIdx = resolveVecHostBridgeHelper(ctx, "pop");
     const wantVecMutArm =
       (ctx.standalone || ctx.wasi) &&
       VEC_MUTATE_METHODS.has(methodName) &&
       isVecMutateForm(methodName, arity) &&
       ctx.vecBaseTypeIdx >= 0;
+    // (#5383 S2n) RESOLVE-OR-RESERVE, not resolve. The bridge allocation is
+    // made by `emitVecAccessExports`, and the two generate entry points call
+    // that at OPPOSITE SIDES of this fill: `generateModule` before it,
+    // `generateMultiModule` after it. So a plain resolve answers a handle in a
+    // single-module compile and `undefined` in a multi-module one — the arm was
+    // silently dropped for every multi-module standalone/wasi program, which is
+    // the #2927 data-loss bug re-opened (measured: `this.pop()` inside a
+    // `class X extends Array` method returned `undefined` and mutated nothing,
+    // so JSBI's `__trim` never trimmed, `JSBI.subtract(x, x)` answered 2^29
+    // instead of 0, and `Temporal.Duration.from({hours:1}).total("minutes")`
+    // answered NaN through the compiled polyfill).
+    //
+    // Reserving here makes the arm ORDER-INDEPENDENT rather than reordering the
+    // finalize passes. It is byte-neutral for the lane that already worked: in
+    // a single-module compile the resolve succeeds and the reserve never runs,
+    // and the whole block is gated on standalone/wasi, so the gc lane is
+    // untouched. `reserveVecMethodHelper` also sets `usesVecValue`, which is
+    // what makes the finalize vec-export pass fill the placeholder bodies the
+    // arm calls into.
+    const resolveOrReserveVecHelper = (kind: "push" | "pop"): FuncHandle | undefined => {
+      const resolved = resolveVecHostBridgeHelper(ctx, kind);
+      if (resolved !== undefined || !wantVecMutArm) return resolved;
+      return reserveVecMethodHelper(ctx, kind);
+    };
+    const vecPushIdx = resolveOrReserveVecHelper("push");
+    const vecPopIdx = resolveOrReserveVecHelper("pop");
     if (wantVecMutArm) {
       let mutArmBody: Instr[] | undefined;
       if (methodName === "push" && vecPushIdx !== undefined && ci.boxNumIdx !== undefined) {
@@ -1444,6 +1447,45 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
             op: "if",
             blockType: { kind: "val", type: { kind: "externref" } },
             then: mutArmBody,
+            else: current,
+          },
+        ];
+      }
+    }
+
+    // (#6447) `$__vec_base` brand arm for the pure Array PRODUCER methods
+    // (`concat` any arity, `sort` arity 0/1). The twin of the #2927 mutator arm
+    // directly above, for the same reason and with the same guard: a
+    // genuinely-`any` array receiver is a `$__vec_base`-subtyped struct that
+    // matches no `entries` arm, and the open-`$Object` bottom arm's
+    // `__extern_method_call` returns `undefined` for every non-`$Object` brand
+    // (its own comment says so). The helper was minted at reserve time; this
+    // only READS funcMap (#1719).
+    //
+    // `$ObjVec` subtypes `$__vec_base`, so one `ref.test` admits BOTH the
+    // concrete `__vec_<k>` carriers and the dynamic boxed-any carrier that
+    // `concat`/`map`/`Object.keys` themselves produce — which is what makes
+    // `n.concat(r, i).sort()` work end-to-end rather than only its first half.
+    if (
+      ctx.standalone &&
+      DYN_ARRAY_PRODUCER_METHODS.has(methodName) &&
+      isDynArrayProducerForm(methodName, arity) &&
+      ctx.vecBaseTypeIdx >= 0 &&
+      objVecNewIdx !== undefined
+    ) {
+      const producerIdx = ctx.funcMap.get(`__arrprod_${methodName}`);
+      if (producerIdx !== undefined) {
+        current = [
+          { op: "local.get", index: anyLocalIdx },
+          { op: "ref.test", typeIdx: ctx.vecBaseTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: [
+              { op: "local.get", index: 0 },
+              ...buildFixedArgVec(arity, anyLocalIdx + 1, objVecNewIdx, objVecPushIdx),
+              { op: "call", funcIdx: producerIdx },
+            ],
             else: current,
           },
         ];
@@ -1943,205 +1985,48 @@ export function fillPromiseThenableHelpers(ctx: CodegenContext): void {
   const predFn = definedFuncAt(ctx, predIdx);
   if (!predFn) return;
 
-  // ── `__promise_peel_value(value) -> externref` ─────────────────────────
-  // Unwrap an `$AnyValue`-boxed resolution so the predicate / thenable-job
-  // dispatch `ref.test` the RAW payload: tag 6 → refval (the GC object),
-  // tag 5 → externval (string OR tag-5-carried object — the classifier arms
-  // below reject non-objects anyway), every other tag / non-box → unchanged.
-  // Left as the identity placeholder when `$AnyValue` was never registered.
   const peelIdx = ctx.funcMap.get("__promise_peel_value");
   const peelFn = peelIdx !== undefined ? definedFuncAt(ctx, peelIdx) : undefined;
-  const anyValueTypeIdx = ctx.anyValueTypeIdx;
-  if (peelFn && anyValueTypeIdx >= 0) {
-    // $AnyValue field layout (ensureAnyValueType): 0 tag · 3 refval · 4 externval.
-    const AV_TAG = 0;
-    const AV_REF = 3;
-    const AV_EXT = 4;
-    const peelAnyLocal = 1;
-    peelFn.locals = [{ name: "__any", type: { kind: "anyref" } }];
-    peelFn.body = [
-      { op: "local.get", index: 0 },
-      { op: "ref.is_null" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: 0 }, { op: "return" }],
-      },
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "local.set", index: peelAnyLocal },
-      { op: "local.get", index: peelAnyLocal },
-      { op: "ref.test", typeIdx: anyValueTypeIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          // tag 6 (object) → extern.convert_any(refval)
-          { op: "local.get", index: peelAnyLocal },
-          { op: "ref.cast", typeIdx: anyValueTypeIdx },
-          { op: "struct.get", typeIdx: anyValueTypeIdx, fieldIdx: AV_TAG },
-          { op: "i32.const", value: 6 },
-          { op: "i32.eq" },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: peelAnyLocal },
-              { op: "ref.cast", typeIdx: anyValueTypeIdx },
-              { op: "struct.get", typeIdx: anyValueTypeIdx, fieldIdx: AV_REF },
-              { op: "extern.convert_any" },
-              { op: "return" },
-            ],
-          },
-          // tag 5 (string/extern payload) → externval
-          { op: "local.get", index: peelAnyLocal },
-          { op: "ref.cast", typeIdx: anyValueTypeIdx },
-          { op: "struct.get", typeIdx: anyValueTypeIdx, fieldIdx: AV_TAG },
-          { op: "i32.const", value: 5 },
-          { op: "i32.eq" },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: peelAnyLocal },
-              { op: "ref.cast", typeIdx: anyValueTypeIdx },
-              { op: "struct.get", typeIdx: anyValueTypeIdx, fieldIdx: AV_EXT },
-              { op: "return" },
-            ],
-          },
-        ],
-      },
-      { op: "local.get", index: 0 },
-    ];
-  }
-
-  // ── `__promise_has_callable_then(value) -> i32` ────────────────────────
-  const peeledLocalIdx = 1; // param 0 = value externref
-  const anyLocalIdx = 2;
-  const thenAnyLocalIdx = 3;
-  const body: Instr[] = [
-    // peeled = __promise_peel_value(value) — classify the RAW payload.
-    { op: "local.get", index: 0 },
-    ...((peelIdx !== undefined ? [{ op: "call", funcIdx: peelIdx }] : []) satisfies Instr[]),
-    { op: "local.set", index: peeledLocalIdx },
-    // null externref (JS null / absent) → not a thenable.
-    { op: "local.get", index: peeledLocalIdx },
-    { op: "ref.is_null" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [{ op: "i32.const", value: 0 }, { op: "return" }],
-    },
-    { op: "local.get", index: peeledLocalIdx },
-    { op: "any.convert_extern" },
-    { op: "local.set", index: anyLocalIdx },
-  ];
-
-  // Shared tail: test the externref left on the stack against the closure
-  // base wrappers; 1 on a hit, else 0.
-  const closureTest = (loadThen: Instr[]): Instr[] => [
-    ...loadThen,
-    { op: "any.convert_extern" },
-    { op: "local.set", index: thenAnyLocalIdx },
-    ...buildClosureRefTestArms(ctx, thenAnyLocalIdx, [{ op: "i32.const", value: 1 }, { op: "return" }]),
-    { op: "i32.const", value: 0 },
-    { op: "return" },
-  ];
-
-  // Closed-struct METHOD arms — a compiled `then` method is always callable.
-  const seenMethodType = new Set<number>();
-  for (const entry of collectMethodEntries(ctx, "then", null)) {
-    if (seenMethodType.has(entry.typeIdx)) continue;
-    seenMethodType.add(entry.typeIdx);
-    body.push({ op: "local.get", index: anyLocalIdx });
-    body.push({ op: "ref.test", typeIdx: entry.typeIdx });
-    body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+  if (peelFn && ctx.anyValueTypeIdx >= 0) {
+    const peel = buildPromisePeelValue({
+      typeIdx: ctx.anyValueTypeIdx,
+      tagFieldIdx: 0,
+      refFieldIdx: 3,
+      externFieldIdx: 4,
     });
+    peelFn.locals = peel.locals;
+    peelFn.body = peel.body;
   }
-
-  // Closed-struct ACCESSOR arms (#1888 S5c) — MUST run BEFORE the field arms:
-  // `Object.defineProperty(o, 'then', {get})` on a closed-struct target stores
-  // the getter closure in a per-(struct,prop) module GLOBAL
-  // (`ctx.structAccessorClosure`), invisible to `__extern_get` — while the
-  // struct may ALSO carry a pre-shaped (runtime-null) `then` FIELD that would
-  // wrongly classify it non-thenable if tested first. Spec Get REQUIRES running
-  // the getter here — a poisoned getter must throw OUT of this predicate
-  // (resolve-poisoned-then), and a returned closure classifies the value as a
-  // thenable. A runtime-null getter global (define-site never executed) falls
-  // through to the field/$Object arms below.
+  // Collect at the original finalization point, after all wrapper registrations.
+  const methodTypeIdxs = collectMethodEntries(ctx, "then", null).map((entry) => entry.typeIdx);
   const callAccessorGetIdx = ctx.funcMap.get("__call_accessor_get");
+  const accessors: { typeIdx: number; getGlobal: number }[] = [];
   if (callAccessorGetIdx !== undefined) {
     for (const [key, entry] of ctx.structAccessorClosure) {
       if (!key.endsWith("_then") || entry.getGlobal === undefined) continue;
-      const structName = key.slice(0, -"_then".length);
-      const structTypeIdx = ctx.structMap.get(structName);
-      if (structTypeIdx === undefined) continue;
-      body.push({ op: "local.get", index: anyLocalIdx });
-      body.push({ op: "ref.test", typeIdx: structTypeIdx });
-      body.push({
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "global.get", index: entry.getGlobal },
-          { op: "ref.is_null" },
-          { op: "i32.eqz" },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: closureTest([
-              // then = getter.call(value) — §7.3.2 GetV via the S5b driver.
-              { op: "local.get", index: peeledLocalIdx },
-              { op: "global.get", index: entry.getGlobal },
-              { op: "call", funcIdx: callAccessorGetIdx },
-            ]),
-          },
-        ],
-      });
+      const typeIdx = ctx.structMap.get(key.slice(0, -"_then".length));
+      if (typeIdx !== undefined) accessors.push({ typeIdx, getGlobal: entry.getGlobal });
     }
   }
-
-  // Closed-struct FIELD arms — `{ then: <value> }`: callable iff the stored
-  // value is a closure.
-  for (const fe of collectFieldEntries(ctx, "then")) {
-    body.push({ op: "local.get", index: anyLocalIdx });
-    body.push({ op: "ref.test", typeIdx: fe.typeIdx });
-    body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: closureTest([
-        { op: "local.get", index: anyLocalIdx },
-        { op: "ref.cast", typeIdx: fe.typeIdx },
-        { op: "struct.get", typeIdx: fe.typeIdx, fieldIdx: fe.fieldIdx },
-      ]),
-    });
-  }
-
-  // Open `$Object` arm — spec Get (runs accessors; a poisoned getter throws
-  // OUT of this predicate) + closure test.
+  const fields = collectFieldEntries(ctx, "then");
   const externGetIdx = ctx.funcMap.get("__extern_get");
   const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
-  if (externGetIdx !== undefined && objectTypeIdx !== undefined) {
-    body.push({ op: "local.get", index: anyLocalIdx });
-    body.push({ op: "ref.test", typeIdx: objectTypeIdx });
-    body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: closureTest([
-        { op: "local.get", index: peeledLocalIdx },
-        ...stringConstantExternrefInstrs(ctx, "then"),
-        { op: "call", funcIdx: externGetIdx },
-      ]),
-    });
-  }
-
-  body.push({ op: "i32.const", value: 0 });
-  predFn.locals = [
-    { name: "__peeled", type: { kind: "externref" } },
-    { name: "__any", type: { kind: "anyref" } },
-    { name: "__thenAny", type: { kind: "anyref" } },
-  ];
-  predFn.body = body;
+  const inventory = {
+    finalized: true as const,
+    peelFuncIdx: peelIdx,
+    methodTypeIdxs,
+    accessors,
+    callAccessorGetIdx,
+    fields,
+    closureWrapperTypeIdxs: collectClosureBaseWrapperTypeIdxs(ctx),
+    openObject:
+      externGetIdx !== undefined && objectTypeIdx !== undefined
+        ? {
+            typeIdx: objectTypeIdx,
+            externGetFuncIdx: externGetIdx,
+            thenStringInstrs: stringConstantExternrefInstrs(ctx, "then"),
+          }
+        : null,
+  };
+  finalizePromiseThenableLookup(ctx, predFn, inventory);
 }

@@ -85,20 +85,32 @@ describe("#2637 B2 — Promise-subclass run-on-host ctor (ctx-ctor asserts #1-#4
     process.off("unhandledRejection", swallowRejection);
   });
 
+  // (#6419) `Promise.try` is a HOST intrinsic on this lane — the compiler
+  // lowers the call, the host supplies the method. It landed in V8 13.x /
+  // Node 23; `package.json` still declares `engines: node >=20`, so on Node 22
+  // the row fails with `Promise.try is not a function` and has nothing to do
+  // with the ctor-registration behaviour under test. CI runs Node 24/25, which
+  // is why this file is green there and red locally. Skip the row where the
+  // host cannot provide it rather than assert a host capability.
+  const hostHasPromiseTry = typeof (Promise as unknown as { try?: unknown }).try === "function";
+
   // Empty-iterable combinators construct the capability exactly once, so
   // callCount === 1 (matching test262 `[]` ctx-ctor rows).
-  for (const [label, call] of [
-    ["Promise.all", "(Promise.all as any).call(SubPromise, [] as any)"],
-    ["Promise.race", "(Promise.race as any).call(SubPromise, [] as any)"],
-    ["Promise.any", "(Promise.any as any).call(SubPromise, [] as any)"],
-    ["Promise.allSettled", "(Promise.allSettled as any).call(SubPromise, [] as any)"],
-    ["Promise.try", "(Promise as any).try.call(SubPromise, function () {})"],
-  ] as Array<[string, string]>) {
-    it(`${label}.call(SubPromise, …) runs the user body on the capability promise (asserts #1-#4)`, async () => {
-      const ex = await instantiate(srcFor(call));
-      // 15 = all four asserts hold (ctor identity + instanceof + callCount===1 + executor is fn).
-      expect((ex.test as () => number)()).toBe(15);
-    });
+  for (const [label, call, needsHostPromiseTry] of [
+    ["Promise.all", "(Promise.all as any).call(SubPromise, [] as any)", false],
+    ["Promise.race", "(Promise.race as any).call(SubPromise, [] as any)", false],
+    ["Promise.any", "(Promise.any as any).call(SubPromise, [] as any)", false],
+    ["Promise.allSettled", "(Promise.allSettled as any).call(SubPromise, [] as any)", false],
+    ["Promise.try", "(Promise as any).try.call(SubPromise, function () {})", true],
+  ] as Array<[string, string, boolean]>) {
+    it.skipIf(needsHostPromiseTry && !hostHasPromiseTry)(
+      `${label}.call(SubPromise, …) runs the user body on the capability promise (asserts #1-#4)`,
+      async () => {
+        const ex = await instantiate(srcFor(call));
+        // 15 = all four asserts hold (ctor identity + instanceof + callCount===1 + executor is fn).
+        expect((ex.test as () => number)()).toBe(15);
+      },
+    );
   }
 
   it("regression: a default-ctor subclass (withResolvers/ctx-ctor) keeps identity, no body to run", async () => {

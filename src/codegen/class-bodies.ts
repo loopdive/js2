@@ -14,6 +14,7 @@ import {
 import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
 import { resolveIrDynamicCarrierType } from "./any-helpers.js";
 import { isUndefinedDefaultOnlyParam, isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
+import { widenAsyncThenableResults } from "./async-thenable-return.js"; // (#5371)
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../ir/types.js";
 // (#3522) nested implicit-ctor family
 import { irPreparedNestedOrdinaryClass, type IrNestedClassFieldCallAdmission, type IrUnitId } from "../ir/identity.js";
@@ -76,6 +77,7 @@ import { compileStringLiteral } from "./string-ops.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { emitLazyClassObjectGet } from "./expressions/extern.js"; // (#5377)
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
+import { emitStandaloneSubclassMethodInstall } from "./standalone-subclass-method-install.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
 import { emitWasiErrorConstructor, getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
@@ -604,6 +606,13 @@ function emitSetSubclassProto(
   subName: string,
   parentName: string,
 ): void {
+  // (#5383 S2b) Standalone/WASI has no `__set_subclass_proto` host import, so
+  // this function is a documented no-op there — and a method on an
+  // externref-backed subclass is consequently unreachable through any dynamic
+  // receiver. Install the methods on the instance instead; the helper emits
+  // nothing for every other shape. Runs BEFORE the host path below so the two
+  // lanes stay independent (the helper is standalone/WASI-gated).
+  emitStandaloneSubclassMethodInstall(ctx, fctx, selfLocal, subName);
   const setProtoIdx = ensureLateImport(
     ctx,
     "__set_subclass_proto",
@@ -1681,7 +1690,9 @@ export function collectClassDeclaration(
         }
         if (!isVoidType(retType)) {
           // (#3673) `next(): i32` pins the result type syntactically.
-          methodResults = [nativeTypeFromTypeNode(ctx.checker, member.type) ?? resolveWasmType(ctx, retType)];
+          methodResults = widenAsyncThenableResults(ctx, member, [
+            nativeTypeFromTypeNode(ctx.checker, member.type) ?? resolveWasmType(ctx, retType),
+          ]);
         }
       }
 
@@ -3248,7 +3259,18 @@ function compileClassBodiesInner(
         // Pre-ensure `__extern_is_undefined` before compiling the initializer so
         // any late-import shift happens while `fctx.body` is authoritative. See
         // constructor site above for the full rationale.
-        if (paramType.kind === "externref") {
+        //
+        // (#5380) An `f64` formal with a default needs the SAME import, for the
+        // host class bridges rather than for this prologue. Those bridges have an
+        // `(externref, …externref) -> externref` ABI, so a host caller that omits
+        // the argument (`x.toString()` through the dynamic path) hands the bridge
+        // a real JS `undefined`, which unboxes to a plain NaN — indistinguishable
+        // from a passed `NaN`, so the prologue's sentinel check below never fires
+        // and the default never runs. The bridges convert that `undefined` into
+        // the omitted-argument sentinel instead, which needs this predicate; and
+        // an import can only be added HERE, while a body swap can still absorb
+        // the funcidx shift, not in the finalize pass that emits the bridge.
+        if (paramType.kind === "externref" || (paramType.kind === "f64" && !ctx.standalone && !ctx.wasi)) {
           ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
           flushLateImportShifts(ctx, fctx);
         }

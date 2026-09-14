@@ -14,7 +14,7 @@ import { ensureTaDynProtoMethodHelper, hasTaDynProtoMethodHelper } from "./ta-dy
 import { reserveClosedMethodDispatch } from "./closed-method-dispatch.js";
 import { getClosureFuncSelfTypeIdx } from "./closures.js";
 import { redundantFlattenCall } from "./lazy-str-flatten.js"; // (#4157)
-import { compileAndEmitToString, emitToString } from "./coercion-engine.js";
+import { compileAndEmitToString, emitNumberToStringSentinelAware, emitToString } from "./coercion-engine.js";
 import { registerStringHelperEmitters } from "./string-emitter-registry.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
@@ -331,6 +331,11 @@ function compileNativeConcatOperand(ctx: CodegenContext, fctx: FunctionContext, 
   if ((opType.kind === "f64" || opType.kind === "i32" || opType.kind === "i64") && toStrIdx !== undefined) {
     if (opType.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" });
     else if (opType.kind === "i64") fctx.body.push({ op: "f64.convert_i64_s" });
+    // (#6423) NOT routed through `emitNumberToStringSentinelAware`. This is a
+    // native-strings arm, and the sentinel-aware ToString is js-host-only by
+    // design — see that helper's doc comment for why (this lane has its own
+    // branded-f64 producers, chiefly `for-of` over a numeric vec, and no
+    // standalone measurement backs changing it here).
     fctx.body.push({ op: "call", funcIdx: toStrIdx });
     emitNativeStringRefFromExternref(ctx, fctx);
     return true;
@@ -859,6 +864,8 @@ export function compileNativeTemplateExpression(
       // but "did this externref come from the native formatter?", and here it
       // always did. The dynamic-externref / struct arms below KEEP the bridge:
       // those really do carry host strings.
+      // (#6423) NOT sentinel-aware, deliberately — native-strings arm; see
+      // `emitNumberToStringSentinelAware`'s doc comment.
       fctx.body.push({ op: "call", funcIdx: toStrIdx });
       emitNativeStringRefFromExternref(ctx, fctx);
     } else if (spanType && spanType.kind === "i32" && toStrIdx !== undefined) {
@@ -1056,7 +1063,8 @@ function compileStringRaw(
     } else if (subType && subType.kind === "i32" && isBooleanType(subTsType)) {
       emitBoolToString(ctx, fctx);
     } else if (subType && subType.kind === "f64" && toStrIdx !== undefined) {
-      fctx.body.push({ op: "call", funcIdx: toStrIdx });
+      // (#6423) sentinel-aware: `String.raw\`${o.absent}\`` prints "undefined".
+      emitNumberToStringSentinelAware(ctx, fctx, subType, toStrIdx);
     } else if (subType && subType.kind === "i32" && toStrIdx !== undefined) {
       fctx.body.push({ op: "f64.convert_i32_s" });
       fctx.body.push({ op: "call", funcIdx: toStrIdx });
@@ -2177,7 +2185,9 @@ export function compileStringBinaryOp(
       if (leftType.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" });
       else if (leftType.kind === "i64") fctx.body.push({ op: "f64.convert_i64_s" });
       const toStr = ctx.funcMap.get("number_toString");
-      if (toStr !== undefined) fctx.body.push({ op: "call", funcIdx: toStr });
+      // (#6423) sentinel-aware: an absent number-shaped property read
+      // stringifies as "undefined", not as the sentinel's "NaN".
+      if (toStr !== undefined) emitNumberToStringSentinelAware(ctx, fctx, leftType, toStr);
     }
   } else if (op === ts.SyntaxKind.PlusToken && leftType && leftType.kind === "externref") {
     // null/undefined externref in string concat → coerce to "null"/"undefined" string
@@ -2251,7 +2261,8 @@ export function compileStringBinaryOp(
       if (rightType.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" });
       else if (rightType.kind === "i64") fctx.body.push({ op: "f64.convert_i64_s" });
       const toStr = ctx.funcMap.get("number_toString");
-      if (toStr !== undefined) fctx.body.push({ op: "call", funcIdx: toStr });
+      // (#6423) sentinel-aware — see the symmetric left-operand branch above.
+      if (toStr !== undefined) emitNumberToStringSentinelAware(ctx, fctx, rightType, toStr);
     }
   } else if (op === ts.SyntaxKind.PlusToken && rightType && rightType.kind === "externref") {
     // null/undefined externref in string concat → coerce to "null"/"undefined" string

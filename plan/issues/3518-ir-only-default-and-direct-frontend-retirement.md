@@ -3,7 +3,7 @@ id: 3518
 title: "IR-only default and direct front-end retirement"
 status: in-progress
 created: 2026-07-21
-updated: 2026-09-06
+updated: 2026-09-14
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -17,12 +17,13 @@ horizon: xl
 complexity: XL
 es_edition: n/a
 lane: ir-retirement
-model: gpt-5.6-sol
+model: gpt-6-astra
 related: [1373b, 2855, 2950, 3090, 3142, 3143, 3341, 3517, 3529, 3520, 3521, 3522, 3523, 3525, 3526, 3527, 3528, 3678, 3681, 4382, 4576, 4577]
 origin: "2026-07-21 explicit user directive: enable IR-only by default and retire the old direct codegen path"
 oracle-ratchet-allow:
   - src/codegen/multi-prepared-array-leaf.ts
 loc-budget-allow:
+  - src/codegen/map-runtime.ts
   - src/codegen/index.ts
   - src/codegen/ir-prepared-free-functions.ts
   - src/codegen/multi-prepared-scalar-leaf.ts
@@ -30,8 +31,9 @@ loc-budget-allow:
   - src/ir/builder.ts
   - src/ir/from-ast.ts
   - src/ir/integration.ts
-  - src/ir/lower.ts
-  - src/ir/nodes.ts
+  - src/ir/lower-generic.ts
+  - src/ir/core/nodes.ts
+  - src/ir/runtime/manifest.ts
   - src/ir/prepared-component-dependencies.ts
   - src/ir/select.ts
   - src/ir/verify.ts
@@ -43,8 +45,8 @@ func-budget-allow:
   - src/ir/from-ast.ts::lowerFunctionAstToIr
   - src/ir/integration.ts::compileIrPathFunctions
   - src/ir/integration.ts::makeResolver
-  - src/ir/lower.ts::emitInstrTree
-  - src/ir/lower.ts::lowerIrFunctionBody
+  - src/ir/lower-generic.ts::emitInstrTree
+  - src/ir/lower-generic.ts::lowerIrFunctionBody
   - src/ir/passes/inline-small.ts::renameInstrOperands
   - src/ir/prepared-component-dependencies.ts::collectFunctionEvidence
   - src/ir/select-identity.ts::planIrCompilationByIdentity
@@ -58,7 +60,451 @@ func-budget-allow:
 > both WasmGC and linear consume the same prepared IR program, unsupported
 > source fails explicitly, and the direct front-end is deleted.
 
-## Current execution plan — whole-program cutover (2026-09-05)
+## Active sequencing amendment — standalone separation (2026-09-07)
+
+The user now prioritizes the standalone WasmGC implementation and requires
+frontend, pure IR, backend, Wasm physical/model support and generated runtime
+concerns to have real folder and dependency boundaries. New host and linear
+backend implementation is deferred; existing behavior and unfinished drafts
+remain preserved. This priority does not remove the epic's full acceptance
+criteria or declare the hybrid compiler retired.
+
+Astra High specifies and independently reviews the implementation plan;
+Astra Low native subagents implement isolated slices. Earlier cloud evidence
+and standalone task drafts remain preserved; new implementation is coordinated
+through native subagents under the user's 2026-09-07 direction. The coordinator
+retains integration and publication. These assignments supersede older ownership
+directions below without discarding their implementation contracts.
+
+The [approved first dispatch](../agent-context/3518-first-boundary-dispatch-2026-09-07.md)
+and [standalone layering plan](../agent-context/ir-standalone-wasmgc-layering-plan-2026-09-07.md)
+were published in PR 5730, merged as
+`9b0358ec7d373034de6ff524eae286a50aaf2a4e`. D0 introduces an exact source
+inventory and a dependency checker, including type-only paths and independent
+base-policy comparison. F0 extracts the shared identity/source-origin
+foundation while retaining compatible old imports and one canonical brand
+declaration. Implementations may proceed in parallel; publication requires
+their composition and validation.
+
+`check:compiler-boundaries` is the full-separation check and must still fail
+while migration debt remains. CI's explicitly named inventory mode enforces
+nonempty activated boundaries and preserves its report; a passing inventory
+does not certify IR-only production execution. The existing cutover and
+dead-export checks remain unchanged. Further backend/runtime moves require
+reviewed dependency removal, not relabeling or test-only callers.
+
+### Approved extraction evidence amendment — 2026-09-08
+
+The user approved separating moved-caller preservation from retirement proof:
+**“Yes—separate preservation from retirement proof.”** The new rooted auditor
+found two actual nonliteral imports, in the optional Binaryen loader and the
+platform dynamic-import callback. Both remain unresolved in strict evidence.
+Their supported inputs and runtime behavior are not restricted to manufacture
+a closed graph.
+
+The [two-verdict contract](../agent-context/3518-open-import-preservation-contract-2026-09-08.md)
+permits the N1 extraction check to use six resolved real-caller witnesses with
+exact, reviewed provenance for those two open sites. It preserves the strict
+failure result, all unknown rows, missing-consumer failures and the ordinary
+dead-export ratchet. Additional unknowns still fail preservation. A passing
+preservation check is not retirement/deletion authorization; every acceptance
+criterion below remains open until independently proved.
+
+The [N1 validation checkpoint](../agent-context/3518-native-foundation-validation-2026-09-08.md)
+records actual code, focused execution and byte/order evidence. The next
+[canonical ABI seam](../agent-context/3518-program-abi-seam-dispatch-2026-09-08.md)
+removes a real frontend dependency from the existing program authority without
+replacing the producer or modifying the preserved P/C drafts. These are
+intermediate checkpoints, not a new public compiler mode or completed cutover.
+
+Foundation PR 5733 landed at `fa9e1ea0c7986b53f290e88822b262ab10ca62f4`;
+the published F0 head is verified in upstream/main ancestry. The isolated ABI
+draft has 59/59 tests and typecheck passing, with parent composition and artifact
+parity still pending. The [lowering-cycle proposal](../agent-context/3518-lowering-cycle-plan-2026-09-08.md)
+was dispatched as the bounded checkpoint below. Neither is direct-codegen retirement.
+
+### Lowering-cycle implementation checkpoint — 2026-09-08
+
+The Astra High [lowering-cycle plan](../agent-context/3518-lowering-cycle-plan-2026-09-08.md)
+is implemented by the existing Astra Low native agent, with parent-owned
+integration and controls. The new authoritative claim is
+`3518:lowering-cycle-separation`, owner
+`ttraenkler/codex-astra-lowering-cycle-20260908`, write ID `33574-pj5u0k6s`.
+The old linear handoff PR 5618 was verified merged at
+`e204b64fc810e1cb359f0530dfd7c1c4ec461258`, with its exact head in main's
+ancestry. The earlier recorded Luna stand-down and parent integration scope
+were reconciled. Historical claims and all P/C/ABI drafts remain untouched.
+
+Generic lowering now lives in `src/ir/lower-generic.ts`; concrete Wasm assembly,
+constant instructions and resolver/result contracts live in three explicitly
+named backend modules. `src/ir/lower.ts` is an explicit compatibility facade.
+All eight original runtime exports retain object identity. Generic lowering
+still requires its emitter/converter and no longer imports the concrete
+emitter, convenience wrapper or facade. The measured bounded value graph has
+17 modules/19 edges, including all 12 direct dependencies; negative controls
+inject reverse, unknown, unresolved and unparsed edges. This does not certify
+resolver callbacks, pure IR types or the whole compiler's closure.
+
+The 4595-line original splits into 4193 generic, 313 contract, 90 wrapper,
+31 constant and 22 facade lines: 4649 combined, a 54-line scaffolding increase.
+Three additional import-splitting lines in consumers give net source growth
+of 57 lines. All 22 named function-declaration bodies were compared unchanged;
+the nested `emitInstrTree` arrow was checked separately. The function-budget
+spans remain 2297 and 3380 respectively. Exact braced-body SHA256s are:
+
+- `emitInstrTree`: `75c0cceb6224dda24e892bcc5433532f10985c863b09fd4ae4245037811a2424`.
+- `lowerIrFunctionBody`: `ed92c0a576009ab30571152c9b01dfc6caf19a2e2ca3dfb436edef32b4436739`.
+
+Only the existing issue's one file allowance and two function allowance keys
+move to the new canonical path; old allowance keys are retired. Neither budget
+baseline nor checker is changed. The initial-relocation test verifies exact
+bodies/spans, unchanged baseline contents and the one-for-one allowance map,
+and fails if the comparison base is unavailable. It explicitly skips this
+initial-only receipt after a canonical lowering implementation already exists
+at the comparison base; the ongoing raw-emission controls remain active.
+
+The real pushRaw gate now requires all five resulting files, including in its
+whole-tree and JSON modes. For the first split it compares generic lowering
+against the old file using actual text diffs, including untracked destinations;
+the facade and other new files receive no duplicate legacy-site credit. Later
+changes compare canonical paths against themselves. All 60 current raw sites
+remain (10 tagged, 50 untagged), with zero added sites. The old fallback ceiling
+of 82 untagged sites is unchanged, not reseeded upward or silently reduced by
+the move. Missing destinations, new untagged sites, count-neutral replacements,
+duplicate facade sites and incomplete coverage metadata are negative controls.
+
+One test-only write-map amendment repairs an existing bytecode call fixture:
+`tests/ir-bytecode-proof.test.ts` used a target with no required binding.
+The parent reproduced its exact `binding.kind` failure on clean foundation
+`d71fab8b9565ad3a2bb567ed82f22e8750e804a4` (one selected failure, 22 explicitly
+skipped), before integrating `irUnitFuncRef(irIdentities.next("add"))`.
+Its resolver and exact `LOAD 0 / LOAD 1 / CALL 1 / RET` expectation remain.
+The original existing cohort is now 45/45, while new lowering/relocation plus
+retained pushRaw controls are 57/57; no tests are hidden from those counts.
+After syncing the artifact-only main update `120cd638cf2a971934eaaccf47aaf65f06491f3d`,
+the final combined gate/boundary/self-host cohort passed 101/101: those 57
+controls, all 42 existing D0 controls and both existing self-host producer tests.
+Typecheck and both source-size gates pass. The six N1 production witnesses
+remain 6/6 full and 6/6 with the legacy handlers cut, while both nonliteral
+imports and the strict closure/retirement failures remain visible.
+
+Exact local paired evidence uses Node v22.23.2 + tsx, unoptimized standalone
+WasmGC: clean N1 head `36ea5ce9f54190c1f2c7af0466cf768afb453394` versus that
+source plus this split composed on `b46055f4fefc817368095afbfe1a9b85d72b3082`.
+Incoming main commits changed only artifacts and the existing LOC dashboard.
+The public IR branch/loop fixture has identical full bytes, WAT, imports,
+exports, string pool and results `[7,-2,-7,0,0,10]`: 22707 bytes, SHA256
+`80e45e15ecaa4a83a9319595b0e04236a6865814ae0baf806e86b69982c9706f`.
+The real `emitSelfHostedFunc` producer/registration/lowering fixture preserves
+the complete function/type/global/ordinal order and results `[42,0]`: 114
+bytes, SHA256 `67b02ec78d47fe382c9c2815d1cd42d1ebe472dcafc0d1fc77c5c8f7490cc388`.
+Both modules validate and instantiate with zero imports. This is not an
+optimization-enabled or full-conformance result.
+
+The composed D0 inventory covers 1248 modules, retains six clean modules and
+all older debt, and observes 9770 resolved edges (2502 type-only/7268 runtime),
+four unknown edges and zero inventory errors. All four new lowering files
+remain explicitly unmigrated/mixed; removing this cycle does not promote them
+to certified pure modules. Complete architecture remains false.
+
+### Generic-lowering main compatibility handoff — 2026-09-10
+
+Local no-commit integration of PR 5738 head
+`c257b46620fb4996bf5233763b80298c1fd03dc6` with main
+`1429cfdf2167f31532d70c5304430a9300c2a982` reconciles only the LOC allowance
+conflict: retain `lower-generic.ts`, `core/nodes.ts` and `runtime/manifest.ts`
+under `src/ir/`, preserving the other allowances without budget increases.
+The first focused run passed 139/140 tests: its old exact graph count expected
+17 modules/19 edges, while main's canonical core/analysis paths yield 21/24.
+The reviewed delta adds five reachable canonical modules and removes the
+compatibility `ir/identity-values.ts` path from reachability, with eight added
+and three removed edges; changed reachable source blobs are exact main blobs.
+The compatibility test now pins all 21 module identities and all 24 ordered
+edges, retaining the original 12 direct-edge assertion, shared identity witness,
+all forbidden/unknown-input rejection controls and fresh-process execution.
+No production source, checker or baseline is changed by this follow-up.
+
+The original failed log, before/after graph and blob proof remain preserved in
+`/private/tmp/js2-5738-conflict-repair.q0RndK/{focused-tests.log,assessment.json}`;
+the failed log SHA256 is
+`a4e0a986526d440e7b22633b2104b2b35dfca3ca682410f3a67579d8583b6650`.
+The identical seven-file cohort rerun passed **140/140**, zero skips, exit 0
+(Node 25.9.0, Vitest 3.2.4, one fork, 2048 MB fork heap, 42.85 seconds), with
+`LOC_GATE_BASE` pinned to the exact main above and ordinary integration
+dependencies. Its separate log is `focused-tests-exact-graph.log` in the same
+directory. Formatting and main-relative whitespace checks pass.
+This bounded compatibility repair does not clear the historical host-regression
+hold, certify complete architecture or replace cumulative validation.
+
+### N1 landed CI incident and publication hold — 2026-09-08
+
+PR 5735 landed as `b9a67c10b4b06cabcc020e0dea1dfa105267661e`; its published
+head and exact source/gate/test content were verified on upstream main.
+This is **not a clean CI landing**. Its [actual merge-group regression job](https://github.com/loopdive/js2/actions/runs/34167945399/job/101885705677)
+failed at 23:10:38 UTC September 7 with 20 host pass-to-fail transitions: 18
+Temporal and two BigInt typed-array tests. A hold label was applied at
+23:10:56, but the merge bot landed it at 23:12:42.
+
+Read-only inspection found that ruleset 16700772 uses `HEADGREEN`: only the
+final cumulative head must be green. The subsequent metadata-only PR 5734
+compared `b9a67c10...` to its cumulative head `b46055f4...`, selected no shards,
+and received a [successful no-op regression job](https://github.com/loopdive/js2/actions/runs/34169177677/job/101886099044)
+at 23:11:37. Its comparison excluded N1's changes. The parking helper adds a
+label but does not dequeue. The evidence supports cumulative-head/path-filter
+interaction, not an administrative bypass. Repository settings and CI have
+not been changed; permission for a separate CI-safety PR has been requested.
+
+The failing gate used cached foundation `fa9e1ea0...`, one artifact-only commit
+behind its exact base `8b679f89...`. Direct comparison of that foundation's
+run 34165082130 and N1 run 34167945399 artifacts reproduces exactly 20 host
+transitions and zero standalone status transitions, with 48735 unique paths
+per side per lane. No paired Wasm hashes are present in those JSONL records;
+the gate's "with wasm-hash change" count is not positive evidence of different
+binaries. The two downloaded CI Temporal providers are independently identical:
+1701142 bytes, SHA256
+`332629e79db0b0c3b7e773cb6bb34b4711a17d39ef8bf8cb5936184983eb7ff2`.
+
+Bounded local follow-up used the actual bundled CI worker and honest original
+harness, with fresh workers per row and the normal primary/strict sequence.
+On both clean d71 foundation and published N1, both BigInt failures and three
+representative Temporal failures pass, along with one non-BigInt typed-array
+and one Temporal positive control: 14/14 variants per side, identical complete
+binaries, imports and pools. Temporal uses each side's downloaded CI provider
+and a verified warm cache hit. This samples five of the twenty failing paths;
+it does not reproduce long-lived CI shard history, erase the CI failures or
+establish their cause. The other fifteen paths have not been locally rerun.
+
+The lowering checkpoint may be published non-draft for review, but must retain
+an explicit hold until inherited host-failure attribution and safe queue
+validation are resolved. Do not weaken a gate, waive these rows, claim IR
+retirement, or treat the ABI compatibility question as approved.
+
+### Source-free typed preparation — active checkpoint, 2026-09-08
+
+The [typed-preparation implementation plan](../agent-context/3518-typed-preparation-checkpoint-plan-2026-09-08.md)
+specifies the next connected step: detach source-produced IR and the complete
+allocation snapshot, run preparation with explicit controls and owned state,
+then preserve the existing source wrapper's diagnostics and observation lifecycle.
+It incorporates Astra High's five-control, lossless-capture and exact A/B API
+amendments. This is not a public-route switch or a clean-layer certification.
+
+The coordinator verified claim `3518:typed-program-preparation-boundary` at
+`ed53d4e1e9f4c9701212ed1d91957a5eebceefa0`; the new record is the only ledger change.
+All 16 open PRs were scanned for the 18 owned source paths, including the complete
+135-file large-PR page set; none overlaps. P/C drafts still match their recorded
+fingerprints and remain untouched. Existing historical claims are preserved.
+
+Two native Astra Low workers receive disjoint source and middle-end maps in fresh
+worktrees from `6ff05f6b5a197f8d0423036f7d171888ff99bd40`. Astra High reviews the
+integrated result; the coordinator owns shared docs, normal-hook publication and
+PR shepherding. Heavy checks stay serialized at 2 GiB with one fork and no local
+Test262 campaign. Every implementation checkpoint goes to a non-draft upstream PR.
+The merge hold, two unresolved imports, full retirement criteria, pending ABI
+getter decision and prohibition on new host/linear work remain unchanged.
+
+Non-draft held PR #5745 carries the plan and B middle-end implementation
+checkpoint: explicit controls, transaction-owned GVN counters with historical
+reporting preserved, and IR-only async preparation. New focused tests pass 77/77;
+typecheck passes. Four failures in 284 existing controls reproduce with identical
+messages on the unchanged prerequisite (11/15 in the two failing files); they
+remain documented, not waived. A's detached-input preparation and fresh-process
+acceptance are a separate pending checkpoint. This does not complete retirement.
+
+The B code checkpoint is `f10ce7aeef`. Its CI found three missing exact-inventory
+records; the follow-up records them as unmigrated debt, preserving every prior
+policy entry and gate. Inventory mode passes with all 1,259 modules counted;
+complete mode still fails. A's admission repairs now pass 66/66 focused and
+26/26 legacy controls with conditional High approval. The user has now resolved
+the input contract: robust compiler handling of JavaScript source, with IR as
+internal compiler-produced data rather than intentionally fabricated live
+objects. All source robustness, invariant, losslessness and semantics checks
+remain required. The coordinator copied the 15 frozen A files and independently
+verified 12/12 public compilation artifact pairs. Composed validation now passes
+169/169 tests and typecheck. The separate historical whole-program comparison
+retains 28 pairs: all 16 prepared serializations and 10 executable artifact pairs
+match; two raw error-stack differences are checkout prefixes only. Record
+allocation still fails backend emission and vector preparation still refuses
+on both versions; executed-allocation proof remains open. No failures are
+waived. High approved held publication of the bounded implementation, not full
+checkpoint/backend acceptance. Temporary comparison-checker hardening is still
+pending and its earlier exit 0 is not treated as a blanket equality verdict.
+The linked plan records exact source censuses, the relayed decision, integrated
+inventory/caller evidence and the frozen handoff. Complete architecture still
+fails, and the two strict nonliteral imports remain unresolved.
+Published B inventory checkpoint `247f5d0110` has 29 passing and 14 skipped CI
+checks, no failures or unresolved reviews. The existing merge hold remains.
+
+### Complete semantic nodes checkpoint — structural checkpoint, 2026-09-08
+
+Published non-draft held PR 5744 now includes caller-proof follow-up
+`6ff05f6b5a197f8d0423036f7d171888ff99bd40` over structural checkpoint
+`8429806b2abb6a9f04160471170a0659c94bd335`. Fresh CI completed with 29 successful
+and 14 skipped checks, no unresolved review threads, and a mergeable head.
+Neither checkpoint authorizes retirement or clears the existing merge hold.
+
+The [Astra High full-node implementation contract and measured receipts](../agent-context/3518-core-nodes-checkpoint-plan-2026-09-08.md)
+retains PR 5742 ancestry at `acfd3e37b8765c4c4788c1fa94718d62c60e473c`.
+The non-draft held PR targets main to run the existing main-only PR CI; its
+cumulative diff includes that parent until the parent lands.
+It moves the complete semantic instruction/function closure, with prepared
+function/module compatibility types remaining beside the existing authenticated
+async runtime authority. This is not another helper-only slice and is not
+prepared-program completion or direct-codegen retirement.
+
+Two Astra Low native subagents own disjoint nodes/async/dialect and pure
+vocabulary/identity source slices. The parent integrates the source, boundary,
+kind, dialect and caller controls and publishes a single non-draft held PR.
+Claims `3518:core-nodes-separation` and `3518:core-vocabulary-separation` were
+verified on upstream's ledger, now `1aada624aa73f843511e7b4c41f84c0b9332490b`;
+all 815 previously held claims are preserved. No old P/C draft was changed:
+the 12-file P fingerprint remains
+`ecb33cddf6a6d0049b5c6d4b8440a2d95415ae60bf7a108172c396dc62816494`,
+and the five-file C fingerprint remains
+`73665f99262a0bae9dac0b48e21c1cbd0c1ec247b39885fc087e826c2047e73f`
+(SHA-256 of sorted JSON `{path,blob}` rows).
+
+Integrated source/seam/dialect/boundary/kind controls pass 168/168 and typecheck
+exits 0. Existing consumers pass 51/67; all 16 counted-string proof failures
+reproduce identically on the untouched parent (same 29 test names, outcomes and
+first error lines). No test is waived. All six paired standalone public compiler
+programs, including allocation and a loop, match the parent byte-for-byte and
+in WAT, descriptors, order, pools and outcomes; each validates, has zero imports
+and returns the expected value twice.
+
+The normal commit hook also caught an obsolete old-file declaration expectation
+in the parent core-type seam. Its replacement requires the unique canonical
+declarations and exact compatibility type forwarders; all 25 tests pass.
+
+The actual dependency inventory passes with 1,256 modules, 18 clean, five
+adapters, 1,233 unmigrated, 9,794 resolved edges, four unknowns and zero errors.
+Seven verified canonical destinations are activated under unchanged dependency
+permissions. Complete mode still fails. Exactly 174 kind-record path prefixes
+relocate (116 nodes, 55 dialect, two intrinsic vocabulary, one string encoding);
+reversing those and applying deterministic Prettier formatting recovers the
+entire PR 5742 baseline blob `6b2be2d5b198b8df35b97e6fa14275c73d29c19b`.
+No verdict, quote hash, counter or ratchet changed. LOC/function gates pass:
+the existing nodes LOC allowance transfers to the canonical path, with no new
+function allowance or budget baseline change.
+
+N1's six and the prior ten core caller obligations still pass both full and
+dispatch-cut paths; the dead-export ratchet remains exactly 25/25 and strict
+closure still fails on the same two dynamic imports. All 134 existing caller and
+open-extension controls pass unchanged. The new twelve-obligation
+node execution gate is now implemented and independently approved for bounded
+caller preservation. Astra High approved actual function-object
+observations during public compilation instead of extending the incomplete
+static class interpreter. Its dispatch-cut result must remain explicitly unknown
+and its closure/retirement flags false. The composed gate observes all twelve
+targets across six successful public compiler programs and passes preservation;
+its older report is exactly unchanged after removing the one additive report
+field. New calibration/admission tests pass 56/56, old caller controls pass
+134/134, and typecheck exits 0. The reviewed follow-ups expand the new controls
+to 82/82 passing: loader overrides, an owned-child deadline, implicit constructor
+behavior and child-admission failures. The final package check passes, while the
+final strict command still exits 1 on the same two imports. The explicit package
+requirement and controls will be pushed to the same held PR. Astra High verified
+the final hashes, receipts and unchanged older report, with no findings remaining;
+no complete migration or retirement acceptance is claimed.
+
+Structural head `8429806b2abb6a9f04160471170a0659c94bd335` completed 29 successful
+and 13 skipped CI checks and is conflict-free. This does not clear the inherited
+merge hold or substitute for the follow-up's CI.
+
+PR 5743 independently finished green at `c2d900d4fa9811f3359c308369bfb2b4184e90a9`
+with 29 successful and 13 skipped checks, no unresolved review threads and no
+auto-merge request. It remains on hold: green PR-head checks do not resolve the
+inherited N1 host-CI/merge-queue incident. No CI/ruleset edits, hold removal or
+merge authorization are implied here.
+
+### Core type construction checkpoint — 2026-09-08
+
+The [Astra High core checkpoint contract](../agent-context/3518-core-types-checkpoint-plan-2026-09-08.md)
+implements the next-core proposal published in PR 5741. Five canonical core
+modules extract type construction/equality, shape contracts, symbolic references,
+capability provenance and tag refinements. Old exports retain object/brand
+identity. Instructions, functions, async/provider contracts and the full
+`src/ir/core/nodes.ts` destination remain unfinished; `irValSigned` and
+`isDynamic` remain unmoved with unproved production-caller obligations.
+
+This independent checkpoint starts at upstream/main
+`25b9a41c3828dfb403797003dc6b66c72a2547ba`. It does not silently incorporate
+the held lowering PR 5738, ABI PR 5739 or startup PR 5741. Their source maps
+are disjoint, but shared policy/issue changes require deliberate composition.
+PR 5741's PR-head checks are now green and it is conflict-free; this does not
+clear the inherited N1 host regression or authorize queue admission.
+
+The added caller contract requires ten fixed canonical targets with class-free
+full and dispatch-cut paths. N1 retains its independent six-target check, both
+open-import receipts, unchanged dead-export baseline and strict closure failure.
+Unused class methods, including nested classes and class expressions, cannot
+become preservation evidence. The kind-neutrality record changes only the two
+reviewed shape-citation file prefixes; all counters and verdicts stay fixed.
+
+Publication remains non-draft on `loopdive/js2` with `hold`. The previous
+N1 merge-group failure and cumulative queue-check safety decision remain open.
+The separate ABI getter compatibility decision is also unanswered. No CI
+workflow/ruleset changes, direct-main push, force push, public cutover or
+retirement approval is part of this checkpoint. Focused validation receipts
+are recorded below before publication.
+
+Validation of the frozen source and composed gates:
+
+- Astra Low: 77/77 focused tests (25 seam, 7 fnctor ABI, 6 class identity,
+  4 class-type identity, 16 tag-domain, 19 dynamic-type); typecheck exit 0.
+- Parent: 134/134 caller controls (29 additive core, all 39 original rooted
+  audit and 66 approved-open-site controls), then 120/120 composed checks
+  (25 seam, 15 boundary, 33 kind evidence, 5 existing stable-evidence,
+  42 existing compiler-boundary controls). These cover 306 distinct tests
+  across worker and parent, not 331 independent tests: the 25 seam cases repeat.
+- Independent AST comparison: all 37 moved and 120 retained declarations are
+  text-identical, with moved documentation preserved. All ten source blobs
+  match the frozen worker. The normal commit hook rejected the test-only local
+  name `constructor`; integration renamed it to `constructorIdentity` without
+  changing its assertions or production source. Source delta is +61 LOC; largest moved function
+  is 71 lines. No LOC/function allowance or budget-baseline edit was needed.
+- Actual package preservation check: ten of ten full AND dispatch-cut core
+  witnesses, excluding class-body visitation; N1 six of six in both graphs.
+  Historical dead-export ratchet remains 25/25, with zero additions/removals.
+  Two nonliteral imports remain unknown. Strict command exits 1;
+  preservation exits 0; retirement/deletion remains uncertified.
+- The actual dependency inventory has 1,249 modules: 11 clean, 1,234 unmigrated,
+  four compatibility adapters. It resolves 9,765 edges (2,499 type-only,
+  7,266 runtime), records four unknown edges and zero checker errors.
+  Inventory exits 0; full completion exits 1 with architectureComplete=false.
+  The canonical closure alone contains eight modules, twelve resolved edges,
+  and only the tag-refinement equality import is a runtime edge.
+- Kind evidence retains 85 instructions/terminators, three excluded references
+  (88 anchored kind declarations), 55 neutral / 27 JS / three unresolved
+  verdicts. Reversing exactly two citation prefixes recovers the original
+  whole baseline blob; no count/verdict/evidence quote changes are accepted.
+
+Standalone preservation uses the real public `compile` API, unoptimized WasmGC,
+`experimentalIR:true`, `trackIrOutcomes:true`, Node v22.23.2. The clean comparison
+checkout is `36ea5ce9f54190c1f2c7af0466cf768afb453394`, independently verified
+source-identical to both original main `25b9a41c3828dfb403797003dc6b66c72a2547ba`
+and the incorporated metadata-only refresh
+`16498efb481cb022ee5c4dcc9bb137b6d4c91a50`. The candidate uses the ten frozen
+source files. Five original scalar/vector/record/class/closure programs produce
+identical complete binary bytes, WAT, imports, export order, string pools,
+IR outcomes and repeated runtime values on both sides. All validate and have
+zero Wasm imports. This is preservation evidence, not IR-only coverage proof.
+
+Matched binary receipts (bytes; SHA-256):
+
+- scalar: 22,604; `b1e14e671d61c47b1123965592c9ad09469849b320cd3bc4b892dd382989c7ee`
+- vector: 50,209; `7111975b8af803999fc2b52af8c7be06d4463d26b15b37c151fbdf65a52ede33`
+- record: 22,852; `a0191bb20c6065d57c2af104a1f060b73fde18727918da6b86f800e3699d1c1c`
+- class: 22,903; `88562dac074b1f3df4689cea57cab1774a4dea21b06bfe97784e79941d304206`
+- closure: 32,977; `468b0fc913eb7192725f91225476eafe2ee148279c06932ece3e61bd76240ed9`
+
+Reproduction receipts remain in the integration worktree
+`/private/tmp/js2-3518-core-types-checkpoint-20260908/.tmp/`: `core-extraction.mjs`
+and JSON, `core-caller-tests.json`, `core-composed-tests.json`,
+`core-reachability.json`, `core-strict.json`, `core-inventory.json`,
+`core-complete.json`, `core-paired.mjs` and paired base/candidate JSON. None
+replaces the committed executable controls. No local Test262 campaign ran.
+
+## Historical execution plan — whole-program cutover (2026-09-05)
 
 The user approved replacing continued hybrid feature-by-feature expansion with
 a coordinated whole-program cutover, and requested parallel implementation.
@@ -4042,3 +4488,4589 @@ unsupported, corrupt and fully validated evidence. It does not close the epic.
 A new typed refusal protects correctness while a migration checkpoint is
 incomplete. It is **not** a license to replace working direct coverage with
 errors and declare the user's full migration complete.
+
+### Suspended Claude recovery and next producer prerequisite (2026-09-07)
+
+The [Astra High recovery plan and disjoint Low assignments](../agent-context/ir-migration-recovery-2026-09-07.md)
+re-ground this migration against canonical main `9feb7bf8fc` and verified
+assignment ledger `df46c34148`. It preserves the old dirty work, distinguishes
+landed Claude/A/C code from held B/D checkpoints, and specifies the missing
+serialized async resource ownership/ABI prerequisite before actual C/B
+integration. It also sequences native and linear resource materialization,
+public metadata/cutover, original-population evidence and eventual deletion.
+This is specification only: no source implementation, gate relaxation,
+claim release or migration-complete declaration is included.
+
+### Connected program-data contract checkpoint (2026-09-08)
+
+The [Astra High implementation plan](../agent-context/3518-program-data-contract-checkpoint-plan-2026-09-08.md)
+is published through PR5745 at `f95d8a0bf318e857d981863b1018a9d776483a46`.
+Two existing native Astra Low agents implement disjoint program-data and
+runtime-data slices under verified `3518:program-data-contracts` and
+`3518:runtime-data-contracts` claims. The coordinator owns prerequisite
+composition, real consumer rewiring, shared boundary policy, serialized tests
+and held non-draft PR publication. No public route or retirement criterion is
+changed by these assignments.
+
+The coordinator's isolated integration checkout starts from that plan commit
+and reuses fifteen source/test files byte-for-byte from the published held
+ABI PR5739 (`c3afa4389469e55d434c0715698dc59c6caa9120`), startup PR5741
+(`7b37b23c72af84a1e336cebce2954942408ecea6`) and capability-schema PR5743
+(`c2d900d4fa9811f3359c308369bfb2b4184e90a9`), plus the startup import redirect
+in `program.ts`. Existing drafts are not overwritten. Older policy files are
+not copied wholesale; existing active roots and allowed edges remain intact.
+
+Final architecture clarification supersedes the plan's restrictive ABI
+declaration-only wording: the complete existing canonical ABI implementation
+may be reused unchanged as a source prerequisite. The getter's missing rooted
+caller evidence remains an unresolved acceptance obligation, with the fixed
+thirty-target denominator and preliminary 29/30 public full/cut witnesses.
+Neither reuse nor downstream type references establish the missing witness.
+There is no getter modification, fabricated caller or gate waiver.
+
+Initial composed inventory validation accounted for 1,267 modules, including
+23 clean modules, with no inventory errors and `architectureComplete: false`.
+The first six-suite prerequisite run passed 132/133 tests. Its one failure
+correctly detected that combined policy metadata omitted the explicit
+`src/ir/program/index.ts` completion obligation. The obligation was restored;
+the unchanged startup-boundary suite then passed 12/12. The complete corrected
+six-suite rerun passed 133/133, with no skipped tests. This proves the scoped
+prerequisite combination, not the new worker implementations or retirement.
+The composed prerequisite typecheck also exited successfully.
+
+Typed preparation's implementation dependency graph remains unfinished,
+including verifier-to-AST provenance and mixed semantic/provider validation.
+Executed native allocation, complete physical reservation, public cutover,
+original-population conformance and final direct-codegen retirement remain
+required. Host/linear implementation stays deferred, not removed from the
+overall migration obligations. All holds remain in place.
+
+### Program and runtime data integration receipts (2026-09-08)
+
+PR5747's next checkpoint composes the two reviewed native Astra Low slices:
+41 program-data declarations and 135 runtime-data declarations, with nine real
+consumer files importing their canonical owners. Runtime implementation stays
+in its existing owners; contract extraction does not claim source-free
+preparation implementation or direct-codegen retirement.
+
+The complete source inventory now accounts for 1,284 modules: 40 clean,
+1,239 unmigrated and five compatibility adapters. Inventory validation exits
+zero with no errors; `architectureComplete` remains false. Seventeen added
+canonical modules account for the increase from the prerequisite population.
+The independently fixed 40-module closure contains exactly 109 resolved edges
+(99 type-only, ten runtime), with no unknown, unresolved or forbidden edges.
+The sole allowed-edge amendment permits analysis contracts to use the existing
+pure Wasm model data foundation; physical allocation, emission, backend,
+frontend and runtime implementation dependencies remain forbidden. The plan
+records the three original transitive errors and the architectural rationale.
+
+The composed program seam and boundary run passed 131/131 tests (38 compiled
+identity/seam tests and 93 boundary controls). The compiled probe uses the real
+project's complete configured roots, preserving ambient declarations, in an
+awaited 2-GiB child process. Earlier failures exposed an omitted ambient root
+population and two incorrect expected TypeScript diagnostic codes; these were
+corrected without filtering diagnostics or changing the production types.
+Independent review additionally required the exact unique 17-owner control
+population to be asserted outside the parameterized tests; that correction is
+included. Existing runtime seam controls passed 75/75 in the composed checkout.
+
+Eight executed replay cases cover callable aliases and ordered variable startup,
+GVN enabled/disabled and normal/reversed source order. They compare canonical
+transport, typed preparation versus the existing wrapper, codec replay, complete
+Wasm bytes/text, imports, emitted units and actual returned values. The separate
+86/86 typed-preparation/codec/allocation replay receipt retains unsupported and
+fresh-process negative controls; neither count is a whole-corpus result.
+
+Next implementation remains the preparation implementation's dependency split,
+then native physical reservation/materialization and public IR cutover under the
+original population and retirement gates. The ABI denominator remains 30,
+with the missing public-root `planningSealed` witness unresolved. Strict compiler
+closure and direct-codegen retirement remain unproven. Do not treat green
+checkpoint checks or skipped Test262 jobs as proof of regression resolution.
+
+After the final denominator correction and formatting, the full boundary suite,
+new execution replay suite and fresh-process source-free suite passed 104/104
+(93 + 8 + 3), with no skipped tests. The independent reviewer granted source
+sign-off with no remaining blockers. Emitted JavaScript ASTs for all nine
+consumer integrations remain identical to prerequisite `e90f2a14`; full-repo
+lint exits zero. These are bounded preservation receipts, not retirement proof.
+
+### Next executable ownership split (2026-09-08)
+
+The [Astra High executable ownership plan](../agent-context/3518-preparation-ownership-implementation-plan-2026-09-08.md)
+is grounded on published integration `3a119a88b28bb347f4faaaa2146bd991acf61228`.
+The existing native Astra Low agents now own isolated runtime implementation
+slices: complete allocation capture/restore/registry, and complete program data
+freezing/error/input admission. Their exact source sets are disjoint. The parent
+owns four real consumer integrations, boundary activation and preservation tests.
+
+Remote `issue-assignments` records independently confirm
+`3518:allocation-ownership-runtime` for
+`ttraenkler/codex-astra-allocation-ownership-20260908` (write `34529-rzivb817`)
+and `3518:program-ownership-runtime` for
+`ttraenkler/codex-astra-program-ownership-20260908` (write `34718-qohac24f`).
+Both worktrees start at the published integration; all old dirty worktrees and
+claims are preserved. Worker implementations are pending, not validated here.
+The plan fixes lifecycle ordering, historical statement and boundary denominators,
+real source-produced admission/replay controls and remaining migration work.
+
+PR5747 CI on `3a119a88b2` passed all eight equivalence shards, their aggregate,
+issue tests, linear tests and sanitizer/parity jobs. Quality failed because the
+adoption-table generator still searched old `select.ts` for the moved fallback
+union. The follow-up redirects that tooling consumer to the canonical failure
+contract and updates three generated documentation references. The unchanged
+table still contains 58 kind rows and 35 buckets. Five focused controls pass,
+covering the real report and absent/empty/added/removed canonical reasons even
+when the old location contains a valid union. The exact freshness command now
+passes locally; new-head CI must still verify the correction.
+
+### Executable ownership integration in progress (2026-09-08)
+
+The isolated next-checkpoint integration starts at `f757e0201af643f396e26997a306913f4d384a66`.
+Allocation slice A is integrated from its three frozen blobs: old facade
+`7a1ec715e42dcd80d54bce0686acf931cd5ef248`, canonical registry
+`de20b852157f7db39bcf7fc4cf6f5f1936ad2673`, and seam tests
+`01e68b057730d5df2f9cff5781e7165ce39ffa23`. Its 24 new tests and 29 existing
+allocation replay tests passed 53/53. The historical program-data receipt now
+reads all five allocation statements from the canonical implementation in their
+original order; its hashes/counts are unchanged. Twenty selected preservation
+tests passed, with the other eighteen tests not run in that focused invocation.
+
+A preserves five declarations and all 19 class members (15 methods, one getter,
+three fields). Static production caller anchors exist for capture/restoration
+and mutation paths, but `captureSnapshot`, `fromSnapshot`, `liveSites` and `size`
+have no verified external production caller in the bounded scan. Unit-test calls
+do not close those obligations. Independent source review remains pending.
+
+The parent drafted a separate admission-only fresh-process mode and retained the
+full preparation mode. Its actual source fixture produces two source records,
+three terminal units/bodies, two globals and one live object allocation. An
+initial explicitly annotated vector fixture was refused during source projection;
+that is not a passing admission case. The replacement uses a real inferred record
+allocation, not fabricated IR. Admission-only execution remains unrun until B's
+canonical program ownership implementation is integrated. B, four consumer
+redirects, full boundary activation, combined tests and PR publication remain
+pending; none is implied by A's focused receipt.
+
+Both frozen slices are now composed. B's six files were independently hash-checked
+against its manifest before copying. It preserves 22 moved statements, 14
+functions, three classes/22 members, four moved initialization statements and
+all 37 retained old-program statements. The single `invalidPreparedData` helper
+needs a canonical export for the unchanged legacy candidate caller; it is not
+reexported from old `program.ts`. A received independent source-review approval;
+B and the parent proof additions are under independent review.
+
+The combined B seam, eight execution replays and fresh-process suite passed
+31/31 (18 + 8 + 5). Both new admission-only positive/forbidden-load controls
+passed on the nonempty source-produced record fixture. Input and option transport,
+registry sharing/detachment and next allocation identity were checked without
+loading full preparation or codec; their existing separate controls still pass.
+All four production consumer rewires retain identical emitted non-import ASTs.
+
+Complete inventory validation accounts for 1,288 modules: 44 clean, 1,239
+unmigrated and five adapters, with zero inventory errors and architecture still
+incomplete. The clean closure is exactly 119 edges: 102 type-only and 17 runtime;
+98 imports, 20 reexports and one import-type. No additional allowed edge changed.
+The historical 40-module/109-edge fixture remains intact and passed all 93
+historical controls. The twelve added runtime-boundary controls passed in a
+separate focused run, alongside policy preservation and twenty reconstructed
+statement-receipt checks (33 passed; 110 other cases not run in that invocation).
+The unchanged historical denominator remains 560 statements / 374 functions;
+canonical runtime text is reconstructed in its original positions. Five new
+mutation controls and a complete compiled-seam/boundary run are now pending.
+
+The prior published PR5747 at `f757e0201a` has completed CI successfully (27
+successful checks, fourteen skipped checks and a separate legacy context), with
+fresh MERGEABLE/CLEAN state and no auto-merge. Its hold remains. Skipped Test262
+execution is not original-population evidence or resolution of the inherited
+regression. This next implementation checkpoint is not yet published.
+
+### Ownership checkpoint verification follow-up (2026-09-08)
+
+Both frozen implementation slices received independent source approval. The
+complete boundary/compiled-seam run passed 147/148: all 105 boundary cases and
+the actual old/new type compilation passed, but a new reordered-freeze negative
+control made no change because its literal omitted an intervening blank line.
+The corrected control and eight additional canonical receipt mutations now pass;
+the selected rerun passed 10/10 including explicit historical analysis 1/program
+9 population assertions. No historical receipt hash or denominator was reseeded.
+
+The fresh-process guard normalizes file URLs before matching forbidden paths;
+bare, query-suffixed and fragment-suffixed old-facade controls all fail closed.
+Admission checks object-graph detachment (including symbol-keyed descriptors)
+and rejects a shallow-copy control while preserving registry sharing. Combined
+typed preparation, codec, standalone replay and fresh-process tests passed 72/72
+(30 + 27 + 8 + 7). Existing prepared-program tests passed 19/19, and the full
+TypeScript 7 no-emit check passed. Independent parent-proof review is pending.
+
+Upstream main advanced to `ad9ea951a51c9bc7c9e6c2827c3bd38c62c2bd67` via
+PR5746's conditional-alias property-write fix. Its changes include an additional
+mixed-module inventory entry; integration and post-sync inventory validation are
+pending. These tests predate that sync. They do not establish the inherited
+regression's resolution or authorize removal of any existing merge hold.
+
+Final guard review required exact query/fragment URLs in the rejection and
+census. That stronger assertion exposed tsx stripping the query before the
+guard observed it; several diagnostic reruns passed 6/7, not 7/7. The final
+controls run the identical registered loader in plain Node for those two suffix
+cases, separately from successful real-source admission and its in-process bare
+forbidden-facade control. All seven tests now pass with exact URL assertions.
+This is a loader-normalization control, not a claim that tsx preserves queries.
+
+The ownership implementation is committed as `a918265e40e35e0adb9b22d652a1a17e7b471345`.
+Main `ad9ea951a51c9bc7c9e6c2827c3bd38c62c2bd67` merged cleanly in
+`1e54e659761c697af3c182e7591c361d462094a3`, retaining its new mixed-module
+inventory classification. Post-sync inventory is valid with 1,289 tracked
+modules: 44 clean, 1,240 unmigrated and five adapters; architecture is incomplete.
+Post-sync boundary, fresh-process and standalone replay suites passed 120/120
+(105 + 7 + 8). Independent High review signed off the complete bounded checkpoint,
+including the final guard controls. No retirement/ABI acceptance or hold removal
+is implied. Native Low agents also returned source-derived next-split maps:
+async semantic verification and attachment authority must separate without
+duplicating their WeakMap; intrinsic signature verification must separate from
+provider target checks; prepared async-state traversal remains an explicit
+middle-end obligation. These are inputs to the next High spec, not tested closure.
+
+### Verification/provider split baseline (2026-09-08)
+
+Published PR5749 is now based on main `2f5b7a7904c19382828b8c1e4f4d248758081493`
+through merge `3e0bea4e6c82b9cde9f85c0d80f454e2e7324903`. The upstream update
+contains baseline/report changes only. Normal push hooks passed, including
+TypeScript, lint, formatting, numeric-local parity 18/18 and issue integrity.
+
+Before the next implementation split, the existing async-plan and runtime-manifest
+suites pass 20/20 (12 + 8) on that source revision. The async suite includes real
+two-suspension execution and the existing playground async-family IR coverage
+control. This is a bounded pre-change baseline, not original-population conformance
+or public-retirement evidence. The High implementation specification remains pending.
+
+The [High semantic/provider ownership specification](../agent-context/3518-semantic-provider-ownership-plan-2026-09-08.md)
+is now complete and source-reviewed by the coordinator. Semantic lane A owns
+eleven production files plus its focused test; provider lane B owns twelve
+production files plus its focused test. Their writesets are disjoint, including
+explicit ownership of the old async facades by B. The shared catalog stays one
+object with its existing runtime compatibility type; provider-only features
+remain represented. The parent owns four consumer rewires and preservation
+integration. The next checkpoint adds twelve mandatory canonical modules without
+changing allowed edges; full mixed verifier and native/public cutover obligations
+remain explicit. Existing 224/118 retained and 135 moved-declaration ledgers must
+be reconstructed rather than reseeded. Slice locks and isolated writer dispatch
+are being prepared; no new implementation is claimed here.
+
+The specification is published at `b4c116639a7e146e83611a988a8da28d77de9368`
+in non-draft PR5749. Two isolated native Astra Low writers have been authorized
+from that exact commit. Remote assignment records independently confirm
+`3518:semantic-verification-ownership` for
+`ttraenkler/codex-astra-semantic-verification-20260908` (write `67416-31jdr4mp`)
+and `3518:provider-verification-ownership` for
+`ttraenkler/codex-astra-provider-verification-20260908` (write `67413-z3mk47rx`).
+Parent integration uses a third isolated worktree/branch; all earlier worktrees
+remain untouched. Implementation and composed validation are pending. Writers
+must freeze their export interfaces and source manifests before parent composition;
+heavy tests remain serialized and no completed migration is implied.
+
+Coordinator integration now redirects the four specified production consumers;
+their complete non-import source text matches `b4c116639a` byte-for-byte. The
+draft policy adds exactly twelve canonical paths (core 15, analysis 5, runtime
+10; clean total 56) while preserving all allowed edges and complete historical
+activation records. The new semantic/provider boundary suite has 56 cases; only
+its fixed-population/policy test has run (1 passed, 55 unrun). The added controls
+require every new owner to report unknown dynamic imports and unresolved type
+exports, and reject runtime provider imports from all three new semantic analysis
+owners. Formatting and diff whitespace checks pass. Full graph and
+mutation checks await composed implementations; the initial edge-floor check
+must receive an exact composed census before checkpoint approval.
+
+A has reported frozen canonical export interfaces and is drafting its tests;
+these interfaces have been forwarded to B. The coordinator has now adopted all
+eleven A production files from its frozen manifest, independently re-reading and
+matching every SHA256 (11/11). B's production freeze remains pending; no combined
+typecheck/replay success is claimed for this next checkpoint.
+
+Provisional High source review found no concrete production blocker: all 224
+historical declarations were accounted for (221 exact, three approved intrinsic
+specialization/composition differences), along with 37 retained intrinsic-support
+declarations. The reviewer checked export classifications, catalog identity,
+private members, initializer order and the single async attachment WeakMap.
+This is source review only, not frozen-checkpoint approval or execution evidence.
+Historical forty-/forty-four-module fixture reconstruction remains required;
+the new core contract must not silently enlarge those original denominators.
+
+A-only runtime smoke checks in the composed parent tree confirm identity of the
+single 38-row intrinsic catalog across the old and canonical exports, exact ID
+coverage and feature identity for all 38 rows, retention of the provider-only
+`math.reduce-trig` feature, and forwarding identity for all five effect runtime
+exports and twelve callable runtime exports. This does not exercise compiler
+execution or the pending B implementation. No heavy process was started.
+
+Both production lanes are now composed. All thirteen B file blobs (twelve
+production plus its focused test) matched the frozen handoff. The first composed
+TypeScript 7 check found a missing `IrType` import in A's core intrinsic catalog;
+the coordinator added that type-only import and notified A to refresh its frozen
+manifest. The complete TypeScript 7 check then passed. No runtime body changed.
+
+The provider suite passes 47/47 and the new canonical boundary suite passes
+56/56, serialized under the 2 GiB limit. The complete 56-module fixture measures
+193 resolved edges: 137 type-only and 56 runtime, with no unknown, unresolved,
+forbidden or transitive violations. Its prior provisional edge-floor assertion
+has been replaced by these exact counts, and the strengthened closure test passes.
+A's focused test handoff, historical fixture/ledger reconstruction, compiler
+replay and final review remain pending. No whole-compiler closure, native/public
+cutover, retirement acceptance or new PR publication is claimed by these results.
+
+A's refreshed full manifest now matches the composed production, including the
+type-only import correction. Its focused suite passes 34/34, including the actual
+TypeScript identity/negative controls. Existing source-produced program replay
+passes 8/8 across GVN off/on and both source orders; fresh-process typed
+preparation and forbidden-load controls pass 7/7. These checks preserve callable
+aliases, live global startup and allocation ownership; they do not stand in for
+the remaining math/boundary/native-async physical acceptance cases. The native
+Low provider agent is implementing High's historical reconstruction specification
+in its isolated worktree, limited to test helpers and three historical test files.
+High is independently reviewing the composed new tests and consumer rewires.
+
+Broader existing coverage measures 55/56: async-plan 12/12, manifest 8/8,
+source Math integration 3/3, number boundary 17/17 and boolean boundary 15/16.
+The boolean host-lane exact-import assertion at line 476 reports an extra
+`__host_eq` import. Running that identical test on unchanged checkpoint
+`b4c116639a7e146e83611a988a8da28d77de9368` reproduces the same failure and
+six-entry import vector (one failed, fifteen unselected). This demonstrates
+the assertion failure predates the composed extraction; it is not a green
+host-behavior result because the assertion prevents later value checks. The
+original assertion is unchanged. No unrelated host implementation fix or
+merge/retirement approval is implied.
+
+High review identified a preservation-test gap: B's named declaration lookup
+can reconstruct historical order even if the current canonical file was
+reordered. The provider agent is assigned exact current-owner order assertions
+and a mutation control that reorders live declarations and must fail, in addition
+to the historical receipt reconstruction. The existing passing tests do not
+prove that missing order obligation. Production remains unchanged. Historical
+writer dispatch required a claim-helper metadata correction: its isolated helper
+copy may change only the stale High model trailer to the actual Low effort,
+retaining normal hooks and the compliant push command.
+
+The new boundary suite now has eighty cases. Its additional twenty-four controls
+are not yet run: twelve actual historical-facade runtime imports, and twelve
+compiler/backend/physical/program dependency cases covering named imports,
+star exports, type queries and value exports across the three canonical layers.
+The prior 56/56 result applies only to the earlier cases. Formatting and diff
+whitespace checks pass; policy edges and exact 56-module/193-edge census are
+unchanged. Heavy validation awaits release of the agent's claim-only hook slot.
+
+The historical-receipt claim is independently verified on the remote assignment
+branch: `3518-historical-runtime-receipts.json`, assignee
+`ttraenkler/codex-astra-historical-runtime-receipts-20260908`, branch
+`codex/3518-provider-verification-20260908`, write `78729-iqotx3ma`.
+The claim process has finished and parent validation resumed.
+
+The boundary suite now contains 85 cases. Exact new activation-prefix checks and
+five corruption controls preserve the old suffix hash. Group deletion/demotion
+now requires the specific `activation-demoted` error and exact layer ID in both
+inventory and complete modes, rather than accepting unrelated missing-import
+errors. All 33 selected new/strengthened controls pass (52 unchanged cases not
+rerun in this selection), including the twenty-four facade/syntax additions.
+Provider canonical-order and distinct-manifest rollback controls remain with B.
+
+Existing standalone native async-family coverage passes 14/14 on the composed
+candidate and 14/14 on unchanged `b4c116639a`, using the same suite and serialized
+2 GiB configuration. This includes real timer suspension, non-i31 fulfillment,
+aggregate scheduling, undefined completion and direct-emitter poison controls.
+These are public compiler observations, not whole-program async materialization.
+A is assigned three isolated source-acceptance files to retain paired root-bound
+prepared/provider/binary/refusal receipts and fresh canonical-owner admission.
+The existing whole-program scheduler/promise-materialization refusal and the
+distinction between pre-attachment concat rewriting and mutation of an already
+authenticated body remain explicit; neither may be converted into a passing
+physical acceptance claim by comparing equal refusals.
+
+Upstream was fetched at `04c8e72156cf576cf584a3ed3a5a66ec5a2b91b0`.
+Its change since the checkpoint's main ancestor is limited to six npm-compat
+benchmark/report artifacts; compiler source is unchanged. The working branch
+has not yet merged that tip because the composed checkpoint is still uncommitted.
+High is tracing the actual native async emitter and physical resource requirements
+behind `program-physical-plan.ts`'s async rejection, to specify the next real
+materialization implementation without merely removing its guard or treating
+the existing public compiler's success as whole-program acceptance.
+
+Read-only inspection of B's draft historical helper against composed source
+matches five original receipt hashes: intrinsic contracts 20 declarations,
+async providers 26, runtime manifest 85, intrinsics 24 and async plan 48.
+The remaining intrinsic-support hash mismatch was traced to row 4's JSDoc:
+the original `b4c116639a` verifier does retain its documentation, contrary to
+the earlier reconstruction specification. Its reconstructed function text is
+byte-identical (2,496 characters); the omitted documentation is the only mismatch
+across all 41 tuples. B is instructed to retain that validated documentation and
+the original hash. No draft helper has yet been adopted into this checkpoint.
+
+### Published semantic/provider checkpoint and follow-up (2026-09-08)
+
+The user requested publication before the remaining validation work finishes.
+Non-draft [PR5751](https://github.com/loopdive/js2/pull/5751) now contains source
+commit `545923d1c9` and main-sync commit
+`87435a9ef1f31821b0467561e167868fedbf3e0b`. It remains held, with no auto-merge.
+Normal commit and push hooks passed, including TypeScript, lint, formatting,
+ratchets, numeric-local parity 18/18 and issue integrity. The manifest LOC
+allowance records the unchanged 85-declaration implementation's relocation to
+`src/ir/runtime/manifest.ts`, not a relaxed gate or new runtime algorithm.
+The completed new boundary suite passes 85/85.
+
+The six-file historical follow-up is now composed and matches every frozen Git
+blob. Its full focused validation and High review are running. It retains the
+original hashes and fixes canonical-order/rollback controls; no outcome is yet
+claimed for this newly composed follow-up. A's paired source-acceptance work is
+still isolated and pending. The [next native async physical cutover plan](../agent-context/3518-native-async-physical-cutover-plan-2026-09-08.md)
+records the actual resource reservation, ABI, lowering and completion obligations;
+it does not authorize deleting the existing materialization refusal prematurely.
+
+Historical follow-up validation: the four shorter suites pass 213/213
+(reconstruction 54, runtime contracts 75, capability schema 27, provider ownership
+57). The initial mutation test selected the first helper function instead of
+`verifyIrIntrinsicInstruction`; it now selects that exact function and checks
+the four-statement/two-provider-branch shape before mutating it.
+
+The historical boundary suite's 105 assertions pass, but two complete runs ended
+with a Vitest `onTaskUpdate` RPC timeout after roughly seventy seconds of
+synchronous checker children. Those are not clean runs. The parent added an
+event-loop yield in fixture cleanup so runner messages can be handled between
+tests, without raising limits or weakening checks. A complete rerun is pending.
+
+The complete rerun now passes 105/105 with a clean terminal exit and no runner
+error. Combined with the four shorter suites, the historical follow-up passes
+318/318. The event-loop yield preserves every assertion and population. High
+review remains in progress; paired source-acceptance implementation is still
+pending in A's isolated worktree.
+
+Final High review found a normalization gap for function modifiers. The helper
+now requires an ordinary non-generator `definition` and exactly a named-export,
+non-async, non-generator semantic verifier. Four live-source mutation controls
+reject generator/async/export changes rather than erasing them during historical
+reassembly. Targeted reconstruction and runtime suites pass 133/133 (58 + 75)
+after this repair. Original hashes and production code remain unchanged.
+
+### Physical completion implementation handoff (2026-09-08)
+
+The historical follow-up is published in PR5751 at
+`09b7ae5857472a0e8d4c9a197d9b7ac7a6d8b390`; its final High review has no
+remaining findings. The scoped runs cover 322 distinct historical tests
+(58 reconstruction, 57 provider ownership, 105 historical boundary, 75 runtime
+contracts, 27 capability schema), not a single new full-suite run. A fresh PR
+read at that head found no unresolved review threads, no reported failed checks,
+and the quality job still running; the PR remains held and is not merge-ready.
+
+The [physical module completion contract](../agent-context/3518-physical-module-completion-contract-2026-09-08.md)
+refines the next production prerequisite. It preserves the existing allocator's
+stable handles and ordinal-to-position authority and adds explicit reservation,
+fill and seal states over the actual module objects. A nonempty placeholder is
+not proof of completion, and a valid empty void body is not proof of omission.
+The existing ABI map remains authoritative; the new ledger must not create a
+parallel ABI identity system. Native scheduler, Promise, frame and platform
+resources remain required before whole-program async can be admitted.
+
+Work is assigned to the existing native Astra Low subagents, with Astra High
+specification and review. The provider worker owns the physical kernel, fifteen
+physical record declarations and narrow legacy forwarding surfaces; the parent
+owns its integration into the real program consumer. The semantic worker first
+repairs three peer-reviewed source-evidence gaps: independent public execution
+validation, producer-bound source-free admission, and nonempty authenticated
+post-pass ownership joins. Its three-file draft is not yet adopted or measured.
+All thirty paired rows and complete located refusals remain required. Equal
+refusals establish preservation only, never physical acceptance or retirement.
+
+No direct-codegen retirement, public IR-only default, ABI30 getter witness, or
+native async materialization completion is claimed by these checkpoints.
+
+### Physical consumer implementation in progress (2026-09-08)
+
+The physical checkpoint is isolated on
+`codex/3518-physical-module-completion-20260908` from `e3de0f3ff7`, so its
+production changes do not alter PR5751's preservation candidate. Nine new
+source-driven integration controls were run against the unchanged implementation:
+eight stop at the intended missing stable-ordinal registration (zero entries
+for two alias functions or four startup functions); the listener-failure
+single-use control passes. Later instantiation/value assertions in those eight
+tests were not reached and are not claimed as measured.
+
+The program consumer draft now uses the physical reservation API, preserves
+separate instruction handles and final ABI/export/start indices, removes its
+fabricated `CodegenContext`, fills actual reserved objects and seals before
+publishing emission. Its integration is not yet validated because the worker's
+kernel is still under implementation and has not been adopted. The kernel claim
+is independently verified on the remote assignment branch, write
+`19409-8ue0poec`, assignee
+`ttraenkler/codex-astra-physical-module-completion-20260908`.
+
+Draft review identified that plain JSON snapshots would conflate `-0` with zero
+and non-finite instruction constants with null. The worker is assigned exact
+numeric/presence-preserving snapshots and mutation controls before freeze.
+Neither the existing native async refusal nor physical capability selection
+has been changed. Native scheduler/Promise/frame materialization remains open.
+
+High review tightened the source controls to require the exact selected unit
+sequence, fixture-declared two/three-unit populations and explicit startup
+presence, plus listener-error object identity. The consumer also checks actual
+module ownership order against its reserved projection. These revisions remain
+unmeasured until composition with the frozen physical kernel.
+
+Boundary activation now requires all original 56 canonical modules plus the
+three new physical owners. The prior allowed-edge policy and complete prior
+activation history were independently compared to `e3de0f3ff7` and are unchanged;
+the two new layer activations are additive. Deletion, frontend-alias and
+unresolved-edge controls include the new owners. The old 193-edge fixture
+assertions have deliberately not been replaced by guessed counts: run the
+composed checker and pin its actual type/runtime edge census before publication.
+
+The frozen nine-file kernel is now adopted with all nine Git blobs verified
+against the worker manifest. The composed kernel and real-source consumer pass
+83/83 controls (74 kernel, nine consumer), and TypeScript 7 completes with exit
+zero. An initial transfer inserted a truncation marker and duplicate text in
+the registry file; that agent-created insertion was repaired and the original
+frozen blob verified before the clean run. No failed-load test run is counted.
+
+The expanded boundary suite measured 96/97: only the intentionally stale
+edge-census assertion failed. A focused run measured 202 edges, comprising 144
+type-only and 58 runtime edges, across 59 required modules. Those measured
+counts now replace the old literals; the complete rerun passes 97/97 with a
+clean terminal exit. Allowed edges and prior activation history stay unchanged.
+
+High review blocks physical publication on five uncovered kernel defects:
+sparse publication array holes, distinct NaN payloads, flattened recursive
+type indices, omitted canonicalRuntimeRecGroup snapshots, and body-only
+ref.func declaration completeness. The existing Low implementation worker is
+repairing these with source-grounded controls; the parent owns serialized
+execution. The 83 passing controls do not resolve these counterexamples.
+No additional consumer-wiring defect was found. Native async acceptance and
+direct-codegen retirement remain unproven.
+
+Historical physical-consumer source parity is now measured in separate explicit
+baseline/candidate processes. The baseline is PR5751 source at e3de0f3ff7
+(head 9c60a92f4d changes tests/docs only, with no source diff or untracked source);
+the candidate is this physical worktree. Complete before/after source snapshots
+cover 1,303 and 1,306 files respectively and remain unchanged during each run.
+The initial eight alias/startup cases produce 32 original/replay execution
+records and sixteen exact cross-root pairs. Three additive source cases cover
+exported global 42 and local/shared throw-null tags. The supplemented eleven
+cases yield 44 emission/execution records and 22 exact cross-root pairs, with
+identical bytes, WAT, resource order, wire data and checked results. Descriptor
+receipts preserve optional presence, array holes, bytes and floating-point bits.
+These are the initial frozen kernel's measurements, not proof of its five
+pending repairs. Nonzero function-import offsets and full native async physical
+materialization remain separate obligations; a tag import is not a function
+import. The lexical-TDZ source refusal is not replaced by the var startup case.
+
+The next real runtime body move is specified in
+[the native Promise settlement plan](../agent-context/3518-native-promise-settlement-plan-2026-09-08.md).
+It retains the full resolve/adoption, object/closure inventory and frame/runtime
+resource obligations; moving six reusable body builders does not retire them.
+
+The five review repairs are adopted from the exact two-file frozen handoff:
+kernel `e930d15be902059c960fd6a9c675fb9a11a11110`, controls
+`d652f915bae2015a743ccfaa3fa479fc30dc5427`. The original 74 controls are retained;
+43 additive controls cover sparse arrays, numeric bits, recursive indices,
+canonical runtime group ownership and all existing declaration routes. The
+repaired kernel plus consumer passes 126/126 (117 + nine). Before these repairs,
+the existing native async and symbolic-reference suites passed 28/28. Those
+28 and the historical byte comparison must not be attributed to the repaired
+source until rerun. Final High review and the emitter's explicit-rec forward
+reference behavior remain unresolved; no publication or retirement is claimed.
+
+Final High review resolves four original findings. Flattened type allocation
+is repaired, but the shared emitter still interprets some explicit-rec physical
+references as outer-record positions and can form an invalid nested group.
+Because the new kernel admits those layouts, publication requires a fail-closed
+compatibility guard. The worker is adding that guard and controls without
+editing the shared emitter or weakening the existing 117 cases. Reference-free
+explicit groups and references solely to an earlier flat prefix remain
+supported. Reference-bearing explicit groups that cross this limitation remain
+unsupported, not silently re-encoded. Correcting shared-emitter grouping stays
+required when those groups are consumed by the full native IR path; this
+temporary guard does not reduce the migration's final scope.
+
+The final guard is adopted exactly: kernel
+`5a7d3c470e7b8ad7ee5978c02909c8a81a1560ee`, controls
+`03098a1f122ab8325957a66b658df3e837a6362d`. Final composed execution passes
+185/185 (148 kernel, nine real consumer, fourteen native async, fourteen
+symbolic-reference). TypeScript 7 passes. The eleven-case final candidate
+comparison again yields 22 exact baseline/candidate pairs, including both
+original and replayed programs; bytes, WAT, resource order and actual results
+match. Final candidate source census hash is
+`5670027d6b5815133f5058ef785a55f7522d82d1058676de532cbe933ab210b0`.
+The baseline source census hash is
+`121296da14cad893a94f9a97501880631beae38416ca6e5b09374579753b07c2`.
+Neither result covers nonzero function-import offsets or certifies full native
+physical materialization. The final boundary rerun passes 97/97. High source
+review approves the exact final guard blobs and finds no remaining blocker
+from the five original findings. Publication is a bounded physical reservation
+checkpoint, not acceptance of the still-unsupported native resources.
+
+The semantic source-evidence revision 2 was adopted byte-for-byte from the
+worker's frozen three-file manifest and measured: 57/59 focused tests pass,
+and TypeScript 7 passes. Both failures originate in the recorder's rejection
+of Node 22's native lazy `Error.stack` accessor; the last forbidden-query
+child exits nonzero before writing its report for the same reason. The agent
+is repairing that distinction without permitting arbitrary diagnostic getters.
+The retained positive child report independently records twelve loaded roots,
+38 intrinsic definitions, 32 capabilities, two source-derived async states and
+one instruction, with true manifest/plan/provider joins. It explicitly leaves
+compiler-closure and retirement certification false. These are admission
+observations, not whole-program physical execution or a passing 59-test suite.
+
+The next physical integration work is isolated at
+`/private/tmp/js2-3518-physical-module-completion-20260908`, based on `e3de0f3ff7`.
+Its source changes must not contaminate this checkpoint's paired preservation
+measurement. The original source candidate remains unchanged.
+
+Revision 3 of the three source-evidence files is adopted with exact frozen
+Git blobs verified. The focused suite now passes 82/82 with a clean terminal
+exit. It adds exact native Error accessor handling without invoking custom
+getters, plain-Node query/fragment rejection witnesses through the same guard,
+transformed-to-returned semantic-plan equality, and independent prepared
+byte/call/twice-executed-value checks. Prior 57/59 results remain recorded above;
+they are superseded by this measured repair, not erased.
+
+The full thirty-row-per-arm historical comparison stopped in its first baseline
+child with Node exit 13 (unsettled top-level await), before producing a complete
+report. It is not implied by the 82 focused controls. Its terminal receipt is
+retained in `.tmp/semantic-provider-source-pair-revision3-20260908`; the source
+worker is diagnosing the recorder without reducing the matrix. Physical source changes remain in
+the separate worktree. A fresh PR5751 read at e3de0f3ff7 found MERGEABLE/CLEAN,
+no unresolved review threads and completed successful quality checks; the PR
+is still non-draft with auto-merge disabled. This is not retirement approval.
+
+Final High review approves the bounded source-evidence checkpoint, with no
+remaining concrete instrument-control finding. Independent receipt inspection
+confirms twelve roots, 38 definitions, 32 capabilities, two states and one
+instruction; all five forbidden URLs have exact denied census rows, including
+three genuine plain-Node suffix rejections through the same guard. The current
+1,303-file source census matches producer and child snapshots. This explicitly
+does not certify the full historical matrix, whole-program native async,
+post-attachment mutation, or direct-codegen retirement.
+
+### Historical source comparison completed (2026-09-08)
+
+Recorder revision 4 passes 87/87 focused controls. The non-i31 boundary now
+uses the existing issue-4574 synchronous registered-timer callback contract:
+without the observer export, wrapping a pending native Promise cannot observe
+later settlement. The recorder neither changes runtime behavior nor adds
+polling. It binds absolute child output paths and records unresolved awaits
+explicitly when the event loop becomes idle; partial journals never substitute
+for complete reports.
+
+The full historical run now completes all four children with exit zero, no
+signal or spawn error, and fifteen complete rows each: thirty rows per arm
+across GVN off/on. Both comparisons have zero raw differences and
+`preservationOK: true`; `acceptanceOK: false` remains explicit. Baseline source
+is unchanged b4c116639a7e146e83611a988a8da28d77de9368; candidate source remains
+the semantic/provider extraction, not the separate physical implementation.
+Reports, independent expected receipts, progress journals and terminal hashes
+are retained under `.tmp/semantic-provider-source-pair-revision4-20260908`.
+
+Independent native rows in both roots and both GVN settings execute 70, boxed
+3,000,000,000 and canonical undefined twice, with observer absence and the
+established auto-fire behavior recorded. The original whole-preparation,
+Math/TDZ physical-execution, boolean-host assertion and transformed async
+authentication gaps remain in the reports. Equal failures are preservation,
+not acceptance. Revision 3's exit13 remains documented above as failed evidence.
+
+### Native settlement measured and next implementation dispatched (2026-09-08)
+
+The five-file native Promise-settlement worker draft is frozen at
+`/private/tmp/js2-3518-native-promise-settlement-20260908`, based on
+`e3de0f3ff7d7828c66b3fea7946f08e593bf77d8`. Parent verified every recorded
+SHA256 and measured 100/100 focused tests (89 ownership plus 11 source controls),
+45/45 existing regression tests across five suites, and TS7 typecheck exit zero.
+Implementation publication and independent review remain pending; this entry
+does not imply those worker files are included in this documentation checkpoint.
+
+An independently clean exact-e3de worktree and the frozen candidate completed
+the historical eight-row comparison with zero differences and zero pending
+rows. Both child processes exited zero, with no signal or spawn error. Reports
+are retained in the worker's `.tmp/native-promise-settlement-historical-r1`:
+baseline SHA256 `a50049048ed5de0a97bc39fbe977556eb8479cd42b3ed4d3e9404fd789ab829e`,
+candidate SHA256 `718c85a33339e1338fa5755ea3b9ea1b0cb50d4687c61fda907e8f82f38bbca4`.
+The instrument's acceptance flag applies only to these eight public source rows:
+four standalone rows and four separately labelled legacy WASI preservation rows.
+It is not whole-program async acceptance, compiler closure, or retirement proof.
+
+The High-authored frame-body plan is recorded in
+`plan/agent-context/3518-native-async-frame-body-plan-2026-09-08.md` and assigned
+to the existing Astra Low worker in isolated
+`/private/tmp/js2-3518-native-async-frame-bodies-20260908`, based on physical
+checkpoint `0194b64c246d2b5beab2db00af33a73498e2eb6e`. Its six production and
+two test paths are disjoint from settlement and source admission. Claim and
+implementation status must be verified separately, not inferred from dispatch.
+
+The independent source-admission prerequisite is recorded in
+`plan/agent-context/3518-certified-delay-source-admission-plan-2026-09-08.md`.
+Fresh whole-program probes refuse the unchanged certified delay at unknown
+Promise construction, and the complete async family at the `number[]` parameter
+of `fetchAllSequential(ids: number[]): Promise<number>`. Existing public-route
+success does not remove either gap. Preserve
+the exact closure inventory while wiring certification; logical vector/await
+typing and all runtime/physical/public-cutover requirements remain in scope.
+
+### Native settlement implementation integrated (2026-09-08)
+
+The settlement checkpoint moves six executable builders and seven constants
+into `src/runtime/wasmgc/promise/settlement-bodies.ts`. Four existing scheduler
+registrations call the canonical builders. Context-bearing hook and unhandled
+rejection adapters retain their signatures and allocation order. Identity
+fulfillment still targets resolve/adoption, not direct fulfillment. Original
+13-declaration receipt and all 88 retained donor declarations remain checked.
+
+High review found no production regression, but identified three test-control
+gaps: reconstructed headers could hide signature/modifier changes; forwarding
+checks missed type-only clauses and aliases; source receipts did not independently
+pin compile recipes/counts. Revision 2 repairs these without changing the three
+production blobs or reseeding original receipts. The composed branch passes
+148/148 focused controls (129 ownership and 19 source). Revision 1 and its reports
+remain preserved rather than relabelled.
+
+Final composed regression measurement passes 45/45 across the existing delay,
+native async-family, hook, adoption and rejection-tracking suites. TS7 typecheck
+also exits zero. These are measured on the integrated physical/settlement source,
+not inferred from the earlier standalone worker results.
+
+Boundary activation now requires 60 canonical modules, adding exactly settlement
+to the prior 59. All 23 previous activation records and allowed edges remain
+unchanged. The complete selected closure measures 203 resolved edges (145
+type-only, 58 runtime), and all 101 boundary controls pass. This selected closure
+is not the full compiler graph or a retirement certificate.
+
+The full inventory check exits zero with `inventoryValid: true` but
+`architectureComplete: false`: 1,305 modules (60 clean, five compatibility
+adapters, 1,240 unmigrated), zero classification errors and zero unresolved
+imports. Four unknown dynamic-import edges remain: two in the Porffor loader,
+one in optimize, and one in the platform-capability adapter. Inventory validity
+must not be reported as static graph closure.
+
+The revision-2 historical pair compares an independently clean exact-e3de root
+with the composed settlement branch based on published `1731cf377a`. All eight
+pairs match with no pending rows; both children exit zero with no signal/error.
+Serialized-report SHA256s are
+`aa2915cb82b0322e223f99c3eb1eb60d2adeb4cf68dea4ec2f6c9406dcb7b721`
+(baseline) and `bee9a2f9e1429193b97dbc18581f1b7f71e415f6f4e69755087cbf31a991aa3a`
+(candidate), retained under `.tmp/native-promise-settlement-historical-r2` in
+the settlement integration worktree. Four standalone rows and four legacy WASI
+rows remain separately labelled. Acceptance is limited to these public-route
+fixtures, not whole-program source admission, physical async acceptance, ABI30,
+public cutover or retirement.
+
+The exact source-admission API and seven-file implementation contract are now
+in `plan/agent-context/3518-certified-delay-source-api-contract-2026-09-08.md`.
+The explicit default-off frontend request does not imply provider availability;
+the next missing runtime declaration must remain a located refusal. Full-family
+logical vector/await typing remains mandatory and independent.
+
+The frame worker's scoped claim was independently verified upstream with owner
+`ttraenkler/codex-astra-native-async-frame-bodies-20260908`, write ID
+`67945-bzg89dfn`, claim commit `178447ad6adedc33d882ab35f412f7c5b495caa6`.
+Its hook process completed and released the serialized test slot; static
+implementation proceeds separately. No frame implementation is implied here.
+
+### Full-family signature attribution corrected (2026-09-08)
+
+The unchanged playground source declares both sequential and parallel functions
+as `(ids: number[]): Promise<number>`. The earlier array-returning-signature
+description was incorrect. A direct invocation of the current `typeNodeToIr`
+on the exact parsed annotations rejects both `number[]` parameters with
+`type-resolution-unsupported`, while both unwrapped `number` returns lower to
+f64. This is a signature-lowering probe, not successful whole-program preparation.
+Parallel additionally requires its original `Promise<number>[]` local and
+the `number[]` result of `await Promise.all(pending)`; neither is removed from
+the full-family scope.
+
+Source-admission implementation is now claimed separately by
+`ttraenkler/codex-astra-certified-delay-source-admission-20260908`, verified
+upstream write `79476-841vjtpq`, claim commit
+`57e7f2be986125df69c4d16bdbf282937a0272ea`. The claim hook completed and released
+the shared validation slot. The seven-file source-admission implementation is
+still pending and is not included in this documentation correction.
+
+### Complete native-family next dispatch (2026-09-08)
+
+The source-grounded High plan is
+`plan/agent-context/3518-complete-native-family-source-plan-2026-09-08.md`;
+the exact shared interface is
+`plan/agent-context/3518-native-family-logical-vector-interface-2026-09-08.md`.
+These describe the next dispatch, after current delay-admission and frame drafts
+freeze. They do not expand those workers' current write scopes.
+
+The connected source goal retains all five original functions: certified delay,
+fetchUser, sequential, parallel, and main. It includes array parameters,
+effectful Promise-vector push, awaited Promise.all number-vector results, and
+main's real clock/logging/string operations. Pure logical vector lowering must
+not fabricate physical indices, resolver flags, providers or continuation bodies.
+
+The frozen frontend interface is per-function `logicalVectorTypes`, keyed by
+exact original parameter/variable declarations and vector-valued expressions.
+Producer identity validation and lowerer assignability/type validation are both
+required; missing entries must not fall back to physical registration. The
+separate default-off `asyncFamilyProjection` requires explicit native delay
+selection and compatible standalone/WasmGC source/runtime projections. Neither
+selection is inferred from legacy fast/default settings.
+
+Immediate acceptance remains eight separately reported preparation runs
+(original/export-only source, original/decoded input, GVN off/on), complete
+support inventory, and five original await sites. These are not eight executions.
+Final native execution still requires all eight existing behavioral scenarios,
+the unchanged 14-case public-family suite, real runtime declarations/providers,
+vector layouts/growth, frame transport and full public cutover/retirement proof.
+
+Preliminary reviews of the current, still-unfrozen drafts identified two
+requirements for their handoff: source admission must distinguish actual
+structural references from ordinary string/debug-label text equal to a unit ID;
+frame preservation tests must run self-contained in ordinary CI and keep the
+external-baseline comparison explicit, with no child timeout killing. These
+are repair requests, not approvals or measured failures of frozen candidates.
+
+### Native async frame ownership checkpoint (2026-09-08)
+
+The six production files from the approved frame-body plan are composed on
+settlement checkpoint `535ee6b6ba19239394ee50f8235e6c528212688b` in
+`codex/3518-frame-engine-integration-20260908`. The real prepared async caller
+still reaches the original context adapter, which now calls canonical runtime
+builders for step bodies, ordered state chains and exception dispatch. Native
+await bodies live under `src/runtime/wasmgc/async`; standardized exception-control
+algorithms live under `src/wasm/physical`. Old public exports forward the same
+function objects. No context, AST, allocator or emission callback moved into
+these canonical builders.
+
+The extraction preserves detached instruction-array identity, immediate state
+tracking, chain tracking before finalizers, late-import remapping, reservation
+and publication order, catch-route cloning, and original restoration/failure
+behavior. All three await declarations and six exception-control declarations
+retain their historical implementation; 44 other frame functions and the whole
+`ir-async-frame.ts` remain unchanged. The pre-existing EH algorithm is preserved,
+not repaired by this checkpoint.
+
+Validation history is retained rather than relabeled:
+
+- Revision 1: 46/50 new checks passed, terminal session 90694 exited 1. Three
+  tests incorrectly searched for an empty saved body; one expected the empty
+  parallel aggregate to settle before its required microtask drain. Failed
+  evidence remains in the worker's `.tmp/frame-body-preservation-KqyGEb`.
+- Six unchanged production files: 65/65 existing checks passed, session 33588
+  exited 0 (14 native family, 38 try/catch, seven finally, six multi-await).
+  Production blobs were verified before and after. Worker typecheck session
+  90572 exited 0.
+- Revision 2: 50/50 new checks passed, session 79128 exited 0. Explicit
+  historical comparison session 17907 exited 0: five artifacts and 12 executions
+  per root, including eight full-family scenarios, against immutable baseline
+  `0194b64c246d2b5beab2db00af33a73498e2eb6e`. The same 21 source-preservation
+  tests were rerun, not 21 additional controls. Worker evidence remains in
+  `.tmp/frame-body-preservation-Fk3s9C`.
+- The composed revision-2 checkpoint passed 50/50, session 3436 exited 0;
+  evidence is `.tmp/frame-body-preservation-QH8HUz` in the integration worktree.
+- Revision 3 additionally requires exact thrown-error identity and re-reads,
+  checks and records main's stdout after repeated timer delivery. High reviewed
+  these two test-only changes and approved bounded composition. Final composed
+  revision 3 passed 50/50 plus typecheck, session 55719 exited 0. Its explicit
+  historical pair matched five artifacts and 12 executions per root, including
+  post-redelivery stdout; both child terminals exited 0 without signals.
+  Evidence is `.tmp/frame-body-preservation-83o9aW` in the integration worktree.
+  SHA256 of `JSON.stringify(parsedReport)` is baseline
+  `496685275ae494f90e6b3ae2129e69763b492ab6f95bc3ceb1e38a731a2bea84`
+  and candidate
+  `d2a797bc7487571cb6bbd8eba40944fe2ccd24ead4a85d948e29cb6290a6948c`.
+  These are parsed-report hashes, not hashes of pretty-printed file bytes.
+- The boundary registry now requires 63 canonical modules with 207 resolved
+  edges (148 type-only, 59 runtime), adding three mandatory owners and twelve
+  negative controls. All 24 prior activation records and all allowed edges are
+  unchanged. The first 113-assertion run exited 1 due to a Vitest worker RPC
+  timeout; it is not a passing suite. An awaited event-loop yield after unchanged
+  cleanup addresses synchronous detector starvation without changing assertions
+  or timeouts. The clean rerun, session 96705, exited 0 with 113/113 controls.
+- Full inventory session 49315 exited 0 with
+  `inventory-valid-architecture-incomplete`: 1,308 modules (1,305 tracked,
+  three new at measurement), 63 clean, five compatibility adapters and 1,240
+  unmigrated; zero errors and zero unresolved edges. Four unknown dynamic imports
+  remain: Porffor loader lines 75/76, optimize line 384 and platform-capability
+  adapter line 151. This explicitly does not prove whole-compiler static closure.
+
+The source-admission revision is separate, not included here: its seven frozen
+files passed 86/86 controls in worker session 4669, with High approving the
+constructor/global ownership and retained certification-population repairs.
+Its integration, regressions and typecheck remain outstanding.
+
+Neither these preservation receipts nor source admission establish complete
+prepared async physical acceptance. Full-family logical vectors and real runtime
+declarations/providers, transported frame materialization, public IR-only
+cutover, static closure, direct-codegen retirement and the ABI30 witness remain
+required. All existing PR holds remain; no merge or auto-merge is authorized by
+this checkpoint record.
+
+### Certified native delay source admission integration (2026-09-08)
+
+The seven reviewed revision-2 source-admission files are composed on frame PR
+#5755, commit `9505d0860529cf6bedf887d68c2670130d8422b3`, in
+`codex/3518-delay-admission-integration-20260908`. Exact worker SHA256s were
+verified after transfer. The new shared `planning-sites.ts` remains classified
+as unmigrated frontend work: AST ownership validation is not a pure IR contract.
+No canonical clean-module population or allowed-edge rule is relaxed.
+
+The source request is explicitly default-off:
+`promiseDelayProjection: "standalone-native"` requires standalone WasmGC source
+and runtime projections. Exact original AST/checker identities select certified
+delay bodies and retain both original executor/timer support records. The shared
+four validator declarations retain their historical text after export-only
+normalization; the legacy overlay imports the same implementation. Source
+selection is consumed before typed capture and does not add transport authority.
+
+Post-lowering checks preserve the pre-lowering certification population, map
+objects, exact key/plan identities and returned support records. Schema-specific
+references to elided support are rejected, including constructor ownership and
+global binding owners. Ordinary string/debug data equal to a support ID remains
+valid. Initially empty certification remains valid; deleted certification does
+not masquerade as an initially empty population.
+
+High approved revision 2 after its two findings were repaired. Parent worker-root
+session 4669 passed 86/86 controls (41 admission, 45 identity/relocation).
+Composed session 45233 passed 144/144 across seven suites: the 86 new controls,
+30 typed-preparation, 12 native delay, four plan-identity, four closure
+compile-once and eight data-contract replay controls. Its following typecheck
+failed on a nullable derived-owner assignment. The integration normalizes that
+diagnostic cursor with `unit.terminalOwnerId ?? undefined`; every reference and
+population check remains unchanged. All seven reviewed files are exact apart
+from that one line. An initial mistargeted correction was removed; session
+53343 still failed typecheck and ran no tests. Corrected session 40713 passed
+typecheck and reran all 86 focused controls successfully. These reruns do not
+increase the distinct-test denominator. The exercised whole-program boundary
+still refuses the authentic
+missing `__ir_promise_delay_native` declaration at `unknown-function-ref` /
+`resolve`, with original source ownership. No placeholder declaration/provider
+or physical acceptance claim is introduced to bypass it.
+
+Final public-family regression session 35884 passed the unchanged 14/14 cases
+with exit 0. Final scoped Prettier and Biome lint checks pass. The parent frame
+PR #5755 remains mergeable with successful checks and its hold retained; upstream
+main is still `04c8e72156cf576cf584a3ed3a5a66ec5a2b91b0` and is an ancestor of
+this stack.
+
+Full inventory session 23708 exited 0 with
+`inventory-valid-architecture-incomplete`: 1,309 modules (1,308 tracked and one
+new at measurement), 63 clean, five compatibility adapters and 1,241 unmigrated.
+There are zero inventory errors and zero unresolved edges. The same four unknown
+dynamic imports remain at Porffor loader 75/76, optimize 384 and platform
+capability adapter 151; this checkpoint does not claim static closure.
+
+Next implementation is split by the published complete-family plan and frozen
+`logicalVectorTypes` interface: the existing Low B agent owns allocation-free
+vector and prepared main-operation lowering; Low A will own source-bound family
+certification and logical type facts after this source checkpoint is validated.
+Keep all five original functions, five await sites, eight separately reported
+preparation runs and all eight final execution scenarios. Remaining native
+runtime declarations/materializers, public cutover, closure, retirement and
+ABI30 obligations are unchanged.
+
+The logical-vector worker's disjoint claim is independently verified upstream:
+`3518:logical-vector-lowering`, owner
+`ttraenkler/codex-astra-logical-vector-lowering-20260908`, write
+`14408-9k4zqvng`, commit `dcec29e63710f2fcd9242716286672797a460469`.
+Its normal claim finished with exit 0 and released the shared hook slot. The
+worker now implements only the two lowerer files and two focused tests from the
+published plan; the coordinator retains integration, validation and publication.
+
+Publication attempt 6025 stopped at the normal function-budget hook: source
+preparation grew to 482 lines, crossing the 300-line limit. No commit was created
+and no allowance or baseline override was added. A scoped helper extraction is
+in progress; all prior test receipts apply to the pre-extraction revision until
+the refactor is frozen and revalidated. Parent pre-freeze review caught and sent
+back a diagnostic-cursor shadowing error before accepting the refactor.
+
+The next grounded High plan is
+`plan/agent-context/3518-native-family-callables-and-providers-plan-2026-09-08.md`.
+It covers all six native-family logical bindings, ordinary and attached-state
+demands, real delay/combinator implementation movement, timer-service ownership
+and ordered physical binding. Complete vector/main source production is its
+prerequisite. Native formatting/string materialization and frame/vector delivery
+are explicit dependent work, not claims of completion from declaration rows.
+Physical refusal remains until those resources and carriers are actually wired.
+
+The revision-3 helper refactor is now frozen and integrated at source blob
+`543aa6d670311d985bd58aeb8e741134a7b1f5bd`; all six other source/test files
+remain exact. Source selection, native planning and post-lowering validation
+are separate 15/45/152-line helpers; the main source producer is 298 lines.
+The unchanged function-budget gate passed in session 80810. High independently
+verified the exact parent/worker blob, original helper-call ordering, map/array
+identity, owner-cursor propagation and corrected catch-local naming.
+
+Parent executed the worker's static reconstruction checker successfully. Inlining
+the three helper bodies, restoring the original map bindings and alpha-renaming
+the diagnostic cursor reconstructs the original main function exactly, with only
+the approved nullable-owner correction. The reconstruction SHA256 is
+`f77a77eefc4e6029ef6df386245cf384633f0c3c77c5f48b025e0d3c86c19dec`.
+All four historical relocation receipts and all 86 authored controls remain
+unchanged. Runtime validation of this exact revision remains separately recorded.
+
+Final composed revision-3 session 60182 exited 0: typecheck followed by 158/158
+tests across eight suites (41 admission, 45 identity, 30 typed preparation,
+eight data-contract replay, 14 public native family, 12 native delay, four
+closure compile-once and four planning identity). No suite was omitted or
+rebaselined to admit the refactor. Publication uses the normal hooks again.
+
+### Logical vector/main checkpoint integration — 2026-09-08
+
+Source admission is published as non-draft PR #5756 at
+`e3a01efa44f68da1b93c16b1a728d0ba099183f9`, stacked on #5755. Remote SHA
+and clean integration checkout were verified after normal hooks. The fresh
+PR read reports mergeable/CLEAN with successful checks, hold retained and
+auto-merge null; no unresolved review threads (complete first page).
+
+The next isolated integration is
+`/private/tmp/js2-3518-logical-vector-integration-20260908`, branch
+`codex/3518-logical-vector-integration-20260908`, based on that exact checkpoint.
+All four initial worker blobs match: from-ast
+`35be9d83b656d81a4310509b3e6191d03618c294`, array-element-lowering
+`2acf0fc4ae77dd5974f039b5914706ff8a31e275`, vector test
+`062c104dd33f98ce81dde64b12923bc9ad9fa5e2`, main test
+`5faaeb03147407e0c941a8f64be15f3b3d56ab20`.
+
+Initial integration session 1100 passed typecheck, then its Vitest fork exhausted
+the configured 512 MiB heap before a test verdict. NODE_OPTIONS alone does not
+override the repository's fork execArgv. No test success was inferred. Rerun
+92007 used the intended explicit 2 GiB fork setting and exited 1: 24/24 vector
+and 13/14 main controls passed, 37/38 total. The missing-concat-target test
+incorrectly expected refusal: the unchanged lowerer legitimately emits ordinary
+logical string.concat when the optional prepared concat target is absent.
+The next revision must positively verify that fallback's real operations and
+evaluation order, not add a new refusal to satisfy the incorrect expectation.
+The full-family source producer still owes complete source-certified targets.
+
+Function-budget session 80623 exited 1: lowerMethodCall grew 932 to 991 lines,
+new lowerExprUnchecked is 370 lines and lowerVarDecl is 317. The worker is
+extracting bounded helpers without a new allowance or baseline change; old
+revision files and failed evidence remain preserved. Measurements above do not
+prove the forthcoming refactor until its exact hashes are revalidated.
+
+Low A's disjoint full-family source claim is independently verified on upstream:
+`3518:native-family-source`, owner
+`ttraenkler/codex-astra-native-family-source-20260908`, write `33104-inpo4zu6`,
+commit `455c7dbcc13e5dcee7ba6fb17b8860586199472b`. Claim session 12560 exited
+0 and released the heavy slot; the agent implements only its six source/test
+files. Parent composes B before A validation. High separately specifies exact
+delay/combinator builder resources for the following executable movement.
+
+Full-family runtime materialization, source-free replay, actual native execution,
+public IR-only cutover, static closure, retirement and ABI30 remain unproven.
+
+Broader initial-revision regression session 55096 exited 1: 60 passed, two
+failed and two existing skips across 64 cases. The 30 i32-array and nine push
+cases passed; empty-array inference had nine passes and two skips. The unchanged
+14-case native family had 12 passes and two stdout failures. The new early
+prepared-console branch omitted the newline construction performed by the
+existing lowerHostFreeConsoleCall. Source inspection confirms the real fix is
+to concatenate the newline to the validated logical string before the single
+append call. Provider behavior and historical expected output must not change.
+The worker's next revision includes this behavioral repair and explicit
+four-console-call newline dataflow controls, separately from helper extraction.
+
+The next exact High dispatch contract is retained at
+`plan/agent-context/3518-native-delay-combinator-body-interface-2026-09-08.md`,
+grounded on published `e3a01efa44`. It specifies four delay builders, all eight
+historical combinator donors plus their explicit shared dispatch suffix, and
+the detached vector-body builder. Existing compatibility adapters retain
+registration, cache publication, real callers and exact currentFunc restoration.
+Canonical subscription requires a real resolve-value handle; only the old
+adapter retains its historical fallback. The plan keeps real byte/resource/
+execution comparisons and separate complete-provider/physical obligations.
+Implementation dispatch waits for the current vector writer's validated freeze.
+
+Initial composed boundary inventory session 71811 exited 0 with
+`inventory-valid-architecture-incomplete`, architectureComplete false and no
+inventory errors. All 1,309 modules were tracked at measurement: 63 clean,
+five compatibility adapters and 1,241 unmigrated. No new module was classified
+clean and no boundary policy was relaxed. This initial-revision measurement
+must not be presented as proof of full static closure or the revised worker
+patch's acceptance.
+
+The unchanged public native-family positive control was rerun on the exact
+published source-admission base `e3a01efa44` in session 39850: 14/14 passed,
+exit 0, using the same explicit 2 GiB single-fork configuration. Compared with
+the composed candidate's 12/14 in session 55096, this attributes both stdout
+newline failures to the new vector/main patch, not the published stack or
+the test environment. This remains historical-path evidence, not whole-program
+IR-only physical execution acceptance.
+
+Parent took a provisional isolated source snapshot while the worker finished
+its test controls: from-ast blob `8c77424de1f0aa3c66fe6f774bb90147bf8180ab`.
+Session 88446 exited 0 after typecheck and 38/38 tests: the unchanged 14-case
+native family plus the 24 logical-vector controls. Both prior stdout regressions
+are repaired in this exact source. Function-budget session 84167 exited 0
+without adding any allowance or changing the baseline. The existing historical
+lowerFunctionAstToIr allowance is still reported by the unchanged gate.
+The full revision is not yet accepted: amended main-operation controls and
+independent final-revision review remain required. No implementation PR is
+published from this provisional snapshot.
+
+Parent read and executed the complete worker static reconstruction script
+`.tmp/logical-vector-refactor-static-rev2.mjs`: all three modified original
+bodies reconstruct with token/comment order preserved, except the authorized
+newline fix. It also verifies 313 unchanged top-level statements. Measured
+sizes are lowerVarDecl 300, lowerExprUnchecked 298, lowerMethodCall 850;
+the five new helpers are 19/17/66/103/70 lines. This is static preservation
+evidence, not runtime acceptance.
+
+An interim main-test snapshot `8fa40169511d36b3e1f4a19e46c8648f53ed120b`
+adds explicit four-call newline dataflow/order checks. Session 99838 exited 1:
+13/14 passed including those new assertions; the unchanged mistaken absent-
+concat refusal expectation still fails. The worker has not yet replaced that
+control with the required positive generic-concat assertions. No test was
+silently omitted and no passing 14-case result is claimed for this snapshot.
+
+The worker froze the three source/vector files and handed main-test ownership
+to the parent. Its last worker-only main snapshot `b2655cadae4ece86efdc2db23230fdfb6c355c5b`
+remains preserved and was not overwritten or adopted. Parent completed the
+positive fallback control at main-test blob
+`4c9dacc0153109a6641ebee701057d312e1752ec`: 14 ordered calls, two awaits,
+zero result types, two five-leaf concat trees and four newline joins account
+for all 12 actual concat nodes without a physical lookup. The test denominator
+remains 14. Session 54497 passed 14/14, exit 0.
+
+High independently approved the exact repaired source and this test design;
+its required test condition is satisfied by session 54497. Final composed
+session 47299 exited 0 after typecheck and all six suites: 100 passed and
+two existing skips out of 102 (24 vector, 14 main, 14 native family, 30 i32
+array, nine push, nine passing/two skipped empty-array inference). Scoped
+Prettier and Biome lint both passed in session 53544. All earlier failures
+remain above; no expected native output or production gate was weakened.
+
+Final unchanged semantic/provider boundary regression session 86951 exited 0:
+113/113 passed, including mandatory canonical-root deletion and forbidden
+dependency controls. No boundary policy or test denominator changed. Final
+source/test blobs are `8c77424de1f0aa3c66fe6f774bb90147bf8180ab`,
+`2acf0fc4ae77dd5974f039b5914706ff8a31e275`,
+`062c104dd33f98ce81dde64b12923bc9ad9fa5e2` and
+`4c9dacc0153109a6641ebee701057d312e1752ec` in the order recorded above.
+Publication proceeds through normal commit and push hooks, stacked on #5756.
+
+### Full-family source integration preparation — 2026-09-08
+
+The vector/main checkpoint is now published as non-draft PR #5757 at
+`1cb0f5c7f36be14d7be7eb4592973aea84a8c4e5`. Normal commit/push hooks
+completed, including the additional 18 numeric-local controls. The fresh PR
+read is mergeable/CLEAN with all reported checks successful, hold retained,
+auto-merge null and no unresolved review threads. All four source/test blobs
+remain unchanged after hooks. Upstream main remains `04c8e72156cf576cf584a3ed3a5a66ec5a2b91b0`.
+
+This new isolated integration branch starts at the published vector checkpoint.
+Low A continues the six-file full-family source producer; High reviews its
+source identity, logical type and closure contracts before final acceptance.
+Low B has a disjoint next assignment for real delay/combinator runtime-body
+movement, using the exact interface plan already published in #5757. Its new
+claim has not yet been independently observed; no ownership success is inferred
+from dispatch alone.
+
+The complete High recursive-type physical-emission plan is retained at
+`plan/agent-context/3518-explicit-recursive-type-emission-plan-2026-09-08.md`.
+It specifies shared flattened type coordinates across reservations, binary,
+WAT and runtime-group extraction, with explicit group identities preserved.
+The temporary guard must be removed only with the real composed emitter fix;
+the plan itself supplies no execution or retirement acceptance.
+
+### Full-family source first composed measurement — 2026-09-08
+
+The six-file source revision 1 was independently hash-checked against
+`/private/tmp/js2-3518-native-family-source-20260908/.tmp/native-family-source-revision1-frozen-20260908.json`
+and composed onto published `1cb0f5c7f36be14d7be7eb4592973aea84a8c4e5`.
+Both the historical TypeScript 5 check (session 23134) and the repository's
+canonical TypeScript 7 check (26117) exited 0. The two new frontend modules
+are explicitly unmigrated in the boundary inventory: session 68170 exited 0,
+1,311 modules, 63 clean, five compatibility adapters, 1,243 unmigrated,
+zero inventory errors, architecture incomplete.
+
+The first composed test run (28200) exited 1: 50/51 tests passed, comprising
+24/24 source contracts and 26/27 identity controls. The remaining control
+incorrectly calls `.set` on an immutable identity-map view, so it fails in
+setup rather than proving the intended owner-span rejection. Repair is
+required; this is not counted as a successful negative control.
+
+All eight original/export-only × GVN off/on × original/decoded preparation
+rows were read from their retained `.tmp/native-family-preparation-*/receipt.json`
+artifacts. Each genuinely reaches the next canonical runtime-declaration
+refusal: `unknown-function-ref`, stage `resolve`, symbol
+`__ir_promise_delay_native`, original delay location line 11, span 520–674.
+This proves full five-function/five-await logical source admission in these
+rows, not native physical materialization or execution.
+
+High's frozen-source review requires four additional repairs before publication:
+reject valued returns for zero-result main; retain resolver/method and mutable
+Promise.all target identities; retain the operand/callee identities underlying
+source certification even when the outer call object survives; and strengthen
+the fresh-process forbidden-import guard to the existing complete population
+with a real rejection control. Low A owns these repairs and the broken
+owner-span test in its original isolated worktree. Revision 1 remains retained
+in this integration until a new frozen manifest is independently verified.
+
+Unchanged historical regression session 46709 exited 0: 130/130 across
+certified-delay admission (41), certified-delay identity (45), typed-program
+preparation (30), and the original standalone native async-family suite (14).
+These retain historical behavior and do not erase the new revision's 50/51
+failure or High findings.
+
+The disjoint runtime-body claim is now independently verified on upstream
+`issue-assignments`: record `3518-native-delay-combinator-bodies.json`, blob
+`a2810ef444e00be0d40bf82418a4ba8509e3733b`, write ID `57815-2v4g2ji4`,
+assignee/requester `ttraenkler/codex-astra-native-delay-combinator-bodies-20260908`,
+claimed at `2026-09-08T14:00:35Z`. Low B is actively editing the three legacy
+adapters in its separate body-movement worktree; that draft is not yet frozen
+or composed into this source checkpoint.
+
+Unchanged semantic/provider boundary controls also passed: session 61332,
+exit 0, 113/113. The boundary policy classifies the two new frontend modules
+without promoting them to clean or weakening any mandatory canonical-root
+deletion/forbidden-dependency control. These results apply to composed source
+revision 1 only; the pending repair revision needs its own validation.
+
+### Full-family source repair and undefined discard — 2026-09-08
+
+Worker revision 2 was independently read and matched in all six files against
+`.tmp/native-family-source-revision2-frozen-20260908.json` in the source worker.
+Its changed blobs are native source `d19f26a04ac67aa324738f8231ed3d25ad5fca9c`,
+contract tests `e6706bfc92f8a51623c72d7606794e11f08412f8` and identity tests
+`585bb7b6441dfd8bf4219b160f676410cf50ace0`. It pins full plan descriptors,
+resolver methods, Promise.all targets and original syntax children/operands;
+rejects incompatible returns; proves immutable owner-span mutation prevention;
+and adds eleven genuine forbidden-import rejection processes with exact
+terminal/error/census attribution. Existing source-free exclusions are retained.
+
+The first repair run (4838) exited 1: 84/85 passed, 36/36 source contracts and
+48/49 identity controls. The new explicit `return undefined` positive exposed
+an actual lowerer omission: `lowerDiscardedExpression` could not resolve that
+identifier. Canonical TypeScript 7 passed in session 68744. The original eight
+family rows still reached the exact delay-declaration refusal.
+
+High specified a minimal existing-checker fix, implemented by the parent only
+in `from-ast.ts`. After all existing effectful branches, a discarded identifier
+read is erased only when it is `undefined`, has no lexical scope binding, and
+the actual checker proves exact global symbol identity and Undefined type.
+Missing checker and shadowed names retain the previous lowering path. No new
+resolver protocol, runtime value, fabricated provider or source-selection
+heuristic was added. Current source blob is
+`9055e676d75fbc00565464dfdd1b7c2be8195287`.
+
+Session 70397 exited 0: 125/125, comprising 36 source contracts, 52 identity
+controls and all 37 unchanged #4459 discarded-effect regressions. The latter
+retain actual IR/legacy execution, comma evaluation and taken-branch ordering.
+Three additional direct-lowerer shadow controls were authored while that run
+used its previously collected test module; they are explicitly not included
+in its denominator. The final identity blob
+`43d09b399dce161dc0dce22df055f999cbbfe880` contains 55 controls and awaits
+its own final run (25348), together with typecheck and the original 14 native
+family behavior controls. Parent owns this integration; the old worker's
+frozen revisions remain untouched.
+
+Parallel implementation now also covers the explicit recursive-type emission
+plan. The upstream claim `3518:explicit-rec-emission` was independently read:
+assignee/requester `ttraenkler/codex-3518-explicit-rec-emission-20260908`,
+write ID `65804-08drhqei`, claimed `2026-09-08T14:12:55Z`. Its normal claim
+hook completed in session 18001, and its isolated writer may perform static
+implementation while the parent owns heavy validation. No emitter change
+is included in this source checkpoint.
+
+Final session 25348 exited 0 after canonical TypeScript 7 and all 105 tests:
+55 identity controls, 36 source contracts and 14 unchanged native-family
+behavior tests. All three new direct-lowerer shadow controls ran and passed.
+Scoped Prettier and Biome lint passed in session 81868 (seven source/test
+files, plus the boundary JSON in the formatting check). High independently
+approved the exact final source/test hashes and closed all four review
+findings; its final-test condition is now satisfied. Normal publication
+hooks remain required. No tests, budget policies, CI rules or historical
+expected runtime outputs were weakened.
+
+### Published full-family source checkpoint and next integration — 2026-09-08
+
+Non-draft PR #5758 publishes the full-family source checkpoint at
+`37e169c4903c29ab46fe99de0910634723a19dac`, stacked on #5757. Normal commit
+session 32379 and push session 4237 both exited 0. All seven source/test blobs
+were unchanged after commit hooks. Push additionally passed typecheck, lint,
+formatting, oracle/coercion ratchets, 18/18 numeric-local regressions and issue
+integrity. The remote branch was independently read at the exact commit.
+No merge or auto-merge was requested; the checkpoint retains hold.
+
+The next isolated integration starts at that published source commit:
+`/private/tmp/js2-3518-delay-combinator-integration-20260908`, branch
+`codex/3518-delay-combinator-integration-20260908`. Worktree creation session
+58006 exited 0; HEAD and clean status were verified, with existing dependencies
+linked rather than installed. Low B's eight-file delay/combinator manifest
+was read completely at
+`/private/tmp/js2-3518-native-delay-combinator-bodies-20260908/.tmp/native-delay-combinator-frozen-20260908.json`.
+Its 76 authored tests, 13 donor receipts, 11 source artifacts and 19 executions
+per root remain unmeasured by the parent; no correctness or physical
+acceptance is inferred from its static receipt. High is reviewing the frozen
+slice before composition. Low A has a separate canonical-declaration/manifest
+assignment; its next claim hook may proceed now that the parent push finished.
+
+### Delay/combinator first composed measurement — 2026-09-08
+
+All eight files were independently checked against the frozen Git blobs and
+composed onto `37e169c4903c29ab46fe99de0910634723a19dac`. Canonical
+TypeScript 7 passed in session 28403. The initial patch transfer exceeded
+tool output limits; it was reapplied in bounded files/hunks and all eight
+final blobs were then verified, not assumed from partial tool success.
+
+Session 94422 exited 1: 75/76, comprising 32/33 ownership controls and 43/43
+preservation controls. The failed ownership fixture constructs a bare context
+without the real timer dependency, so it never reaches its callback-order
+assertions. Low B is repairing only the fixture, not weakening the provider's
+missing-dependency guard or fabricating a handle.
+
+The paired public-source run completed both child processes with exit 0,
+no signal. Candidate root is this integration; baseline is the independently
+verified clean source at `1cb0f5c7f36be14d7be7eb4592973aea84a8c4e5` in
+`/private/tmp/js2-3518-logical-vector-integration-20260908`. Eleven artifacts
+and nineteen executions per root have identical complete rows: bytes, WAT,
+compiler results, resource ordering, actual values and instantiated binaries.
+Both preserve 70, 3e9, sequential/reverse-parallel completion, empty timing,
+both rejection cases, and main's undefined result/stdout under repeated timer
+delivery. Delay concurrency and registration rejection, race, allSettled,
+any, invalid-before-empty, grown vectors, thenables and poisoned thenables
+also executed with their expected values.
+
+Receipts remain under `.tmp/delay-combinator-preservation-EK9dYV/`.
+SHA256 of JSON.stringify(parsed report): candidate
+`3aafe0b6b74d9be705e3a4e4ac6ff234d2f6e5a9e4941cb3f1f5f7ac128958f4`,
+baseline `dee09c362cba469ded3e0134cfc2a59e291b75c244c8aa4c893aa5be839ced27`.
+Their complete fixture and row populations were independently compared after
+reading the actual rows. This remains preservation evidence, not standalone
+prepared-path physical acceptance or retirement.
+
+High found no production defect but two additional receipt defects: child-only
+AST serialization misses unary operators/declaration kinds, and the claimed
+20 combinator plus four delay retained declarations lack a donor-derived
+ledger enforced by tests. Low B must supplement, not reseed, the existing
+13 donor hashes with semantic-field and fixed original-declaration controls.
+The five candidate whole-file glue hashes do not substitute for either proof.
+No publication occurs until these repairs and the fixture pass validation.
+
+Boundary activation session 28649 exited 0: 121/121 controls. Both new runtime
+owners are mandatory; eight additional deletion/forbidden-type/unknown-import/
+unresolved-import controls were added to the previous 113. The selected clean
+closure is exactly 65 modules and 211 edges (150 type-only, 61 runtime).
+All 26 previous activation records and the complete allowed-edge policy were
+independently compared with HEAD and are unchanged; one new activation record
+is prepended. No historical digest was reseeded.
+
+Full inventory session 1674 exited 0 with zero inventory errors: 1,313 modules,
+65 clean, five compatibility adapters, 1,243 unmigrated. The same four unknown
+dynamic imports remain (two Porffor loader sites, optimize, platform adapter),
+so architectureComplete remains false. This strengthens local runtime ownership
+without claiming complete compiler closure.
+
+Historical regression session 44597 exited 0: seven suites, 77/77 tests.
+This includes 4573 native delay (12), 4574 native async family (14),
+2867 all/race (25), 3137 allSettled (10), 3125 assimilation (8),
+3125 widened poisoned-then controls (4), and 2918 late function-index shifts
+(4). Both parent and fork heap budgets were explicitly 2 GiB, single fork.
+The earlier observation was lost; a live process inspection confirmed no
+remaining Vitest process before this measured run. No test was killed.
+These unchanged historical suites pass on the five frozen production files;
+the separate ownership-fixture and supplemental receipt repairs remain pending.
+
+### Recursive-type emitter parallel validation — 2026-09-08
+
+Hilbert's eight-file static manifest in
+`/private/tmp/js2-3518-explicit-rec-emission-20260908/.tmp/explicit-rec-emission-frozen-manifest.json`
+was fully read and all eight SHA-256 hashes independently verified. Canonical
+TS7 session 61467 exited 0. Eight-suite session 94227 exited 1: 253/258.
+All 25 layout and 148 reservation controls passed; actual recursive access
+returned 42, subtype casts and cross-module canonical value exchange passed.
+Two new tests expected `local index` while the actual guard reports
+`local (local.get) index out of range`; Hilbert owns only those assertion repairs.
+High independently reviews the frozen production changes.
+
+The other three failures reproduce on unchanged base 1cb0f5c7 in session
+30017 (20/23, exit 1): issue-2043's old local-error regex, and two foundation
+tests pinning obsolete import/name populations. These are not attributed to
+the recursive-type patch. No historical expectation has been reseeded.
+The emitter patch is not yet composed or published; boundary activation,
+paired preservation, High review and repaired focused tests remain required.
+
+### Delay/combinator rev2 composition — 2026-09-08
+
+The worker's full rev2 manifest was read, and only its three test/helper files
+were composed. Git blobs independently match: ownership
+`442ee5d2a78bd1489d038629bec8a5f98fac06f0`, preservation
+`848e6b843f5ee3b6a7f3841be9614b1b32274af9`, helper
+`b11067d35989b8a8fae5a77fd44e8e44bd97785f`.
+Parent independently recalculated both hashes for every retained declaration
+from original commit e3a01efa: all 24 original and semantic hashes match.
+The repaired real-timer ownership suite passes 33/33 within ongoing session
+87873; its expanded preservation suite and explicit historical pair must
+reach terminal completion before claiming the authored 159-test total.
+Receipts are under `.tmp/delay-combinator-preservation-xBNfCl/`.
+High has been sent the rev2 manifest to review both earlier receipt blockers.
+
+Session 87873 subsequently exited 0: 159/159, comprising 33 ownership and
+126 preservation controls. The explicit historical pair passed again with
+11 artifacts and 19 executions per root. This is preservation-only evidence;
+full prepared native physical acceptance remains uncertified. High review,
+normal commit hooks and non-draft PR publication are the next checkpoint steps.
+
+Final publication preparation: session 98446 completed TS7 and scoped Prettier
+checks without errors. Parent read both rev2 paired terminal receipts (candidate
+87331, baseline 87387: exit 0, no signal) and independently compared the complete
+11 fixture/row populations again. Upstream main remains 04c8e721; PR 5758 remains
+non-draft, MERGEABLE/CLEAN with reported checks successful and auto-merge null.
+The recursive emitter's precise diagnostic assertion repair independently passed
+29/29 focused tests; its production review and composition remain separate work.
+
+### Recursive-type integration handoff — 2026-09-08
+
+Delay/combinator checkpoint committed as de2f1072ebb32771272d24a58407814f9d2a5d38
+and pushed to upstream with all normal hooks. First commit attempt was refused
+only for a missing Model trailer; the retry included the required Default
+attribution and passed hooks. No bypass was used. High cleared B rev2 and the
+recursive-type production patch without a remaining concrete blocker.
+
+This isolated worktree, `/private/tmp/js2-3518-explicit-rec-integration-20260908`,
+branch `codex/3518-explicit-rec-integration-20260908`, starts at de2f1072 and now
+contains all eight reviewed recursive-type files. Seven hashes match the
+original frozen manifest; the repaired explicit-rec test hash is
+7a136f2558f6162a55c1964f076cc0e520399438377f3499af0e7b273929dfe6,
+with its focused 29/29 result measured after repair. All eight composed hashes
+were independently verified. Root dependencies are symlinked, not installed.
+Initial Git status/diff checks hit sandboxed LFS temporary-file permissions;
+these are access failures, not evidence of LFS corruption.
+
+Next: activate the new physical type-layout owner and additive boundary controls,
+validate composed types/tests and historical paired preservation, then publish
+this separate non-draft checkpoint. Do not alter the historical paired outputs
+or remove their failing controls merely to obtain green. Three old failures
+remain independently reproduced on baseline as documented above.
+
+Published delay/combinator checkpoint: https://github.com/loopdive/js2/pull/5759,
+non-draft creation on base #5758 with hold label. Remote branch independently
+matches de2f1072ebb32771272d24a58407814f9d2a5d38. This integration builds on
+that published checkpoint; it must receive its own PR after validation.
+
+### Composed recursive-type validation — 2026-09-08
+
+Mandatory physical type-layout activation passed session 9063: 125/125 controls,
+66 clean closure modules and 214 resolved edges (152 type-only, 62 runtime).
+Four new deletion/forbidden-type/unknown/unresolved import controls cover the
+new owner. All 27 previous activation records and all allowed edges were
+independently compared against HEAD and remain unchanged; one record was added.
+
+Session 68973 passed canonical TS7 followed by eight suites, 258/258. Parent
+also repaired three independently baseline-reproduced stale assertions: the
+issue-2043 regex now names the actual local.get guard, and the foundation test
+requires the exact two canonical type-only imports plus four allocator names
+moved in an earlier checkpoint. Runtime behavior, historical output receipts
+and production code were not changed to make these tests pass. High was sent
+the parent boundary and test delta for review.
+
+PR 5759 watch session 51627 exited 0, including the real-Wasmtime smoke check.
+Fresh remote read confirms MERGEABLE/CLEAN, all reported checks successful,
+non-draft, head de2f1072 and no auto-merge. Complete IR migration remains open.
+
+Initial rec paired-preservation session 43200 exited 1 (125/126): candidate
+completed, but parent incorrectly supplied de2f1072 as baseline. The unchanged
+recorder explicitly pins baseline source to 1cb0f5c7 and rejected that mismatch
+before running it. This is not a compiler regression or a passing pair. Evidence
+remains under `.tmp/delay-combinator-preservation-xTJKNb/`; rerun uses the original
+clean 1cb0f5c7 worktree without changing/reseeding the historical guard.
+
+Corrected paired session 55354 exited 0: 126/126, 11 artifacts and 19 executions
+per compiler, complete bytes/WAT/resources/outcomes equal. Evidence remains at
+`.tmp/delay-combinator-preservation-cceiUu/`. High approved the parent test and
+boundary delta without weakening or production-change concerns. This validates
+preservation through the composed emitter, not complete prepared async execution.
+
+Full inventory session 75347 exited 0: 1,314 modules (66 clean, five adapters,
+1,243 unmigrated), no errors, and the same four unknown dynamic-import sites.
+The first compact-report wrapper incorrectly read the outer result instead of
+its report field; it failed locally and was corrected, not counted as evidence.
+Strict architecture completion remains false.
+
+The existing semantic-provider historical instrument is additionally running
+against clean b4c116639a ownership-integration source, to retain synchronous
+prepared source/bytes/WAT/resources/value comparisons across both GVN modes.
+Outputs remain under `.tmp/explicit-rec-semantic-pair-20260908/`; no outcome
+is claimed until its exact running handle reaches terminal completion.
+
+Semantic historical pair session 56110 exited 1: raw preservation is false,
+with four differing rows per GVN mode (alias/startup, original/reversed order).
+Parent recursively inspected every differing field: only original/replayed
+physical modules' funcOrdinalToPosition entries and startup call handles differ
+(0/2 versus stable 2097152/2097154). Complete bytes, WAT, outcomes, canonical
+prepared data and all other row fields match. Do not normalize this raw result
+into a historical pass. The same instrument now runs with published de2f1072
+as its candidate in `.tmp/explicit-rec-parent-semantic-pair-20260908/` so the
+new emitter's delta can be compared directly to the actual PR base and the
+stable-handle attribution verified, rather than assumed.
+
+Parent-control session 52106 exited 1 with the same raw older-baseline differences.
+Independent deep comparisons then proved all 15 complete candidate rows per GVN
+mode (30 total) exactly equal between published de2f1072 and this emitter patch,
+without normalizing any field. Both full comparison reports are also identical,
+including all eight stable-handle differences. Thus this checkpoint preserves
+the published source/physical outputs, while the b4 historical report remains
+honestly different. Only eight of those 30 rows execute prepared physical code;
+the other rows retain their documented preparation/provider refusals or public
+controls. Neither report is full native-async physical acceptance.
+
+All scoped formatting checks pass. High approved the production and parent
+integration delta. The next action is normal-hook commit and a non-draft PR on
+base #5759, with hold retained and no new merge authority.
+
+### Native-callable integration start — 2026-09-08
+
+Recursive emitter checkpoint committed as 2b9cb408c18446361fcf9837045067d1fd97c642
+and pushed to loopdive/js2 with normal hooks, all eight worker hashes unchanged.
+This worktree `/private/tmp/js2-3518-native-callables-integration-20260908`, branch
+`codex/3518-native-callables-integration-20260908`, starts at that checkpoint.
+Only A's ten production files are composed so far; all ten SHA-256 hashes match
+the fully read revision1 frozen manifest from native-family-callables worktree.
+No tests/typecheck have run on this composition yet. Existing dependencies are
+symlinked; no install was performed.
+
+High cleared A production but requested a test-only revision: pin each of six
+bindings to its exact feature/provider/implementation, demand them separately,
+pin all eight delay/all dependencies, and add feature-swap and missing-settlement
+controls. A is repairing only the three focused test files. Do not compose an
+unfrozen partial test revision. Parent still owns constant forwarding, authenticated
+clock projection in ordinary/derived bodies, additive clean-boundary activation,
+full-source eight-scenario validation, and physical materialization. The original
+goal and ABI30/retirement obligations remain open.
+
+Recursive emitter checkpoint is now published as non-draft
+https://github.com/loopdive/js2/pull/5760, base #5759, head 2b9cb408c1.
+The remote branch was independently verified at the full recorded commit.
+
+### Native-callable composed evidence — 2026-09-08
+
+TS7 session 96067 passed on the ten frozen production files. Rev2 tests were
+composed after fully reading their manifest and verifying all three blobs.
+First session 17059 was 81/82: only an empty void logical source fixture failed
+before its ABI assertions. Worker rev3 changed only that fixture to an explicit
+bare return (replay blob 95ddd43ac88a25f06b8fca6787b0097dde16353c).
+
+Parent forwarded all six compatibility constants from core/async-callables and
+added a static exact-forwarding control. Actual full-family session 47412 passed
+82/91, including all 55 source-identity tests; eight family scenarios and fresh
+source-free replay exposed Promise.all's argument validator incorrectly refusing
+the actual non-null externref vector against its nullable parameter. The saved
+packet independently confirms that precise type in fetchAllParallel. Parent
+fixed only one-way false-to-true vector argument compatibility, retaining exact
+element types and strict result types, with reverse/number/Promise-carrier
+negatives. Session 85743 then passed 25 declaration controls; all eight source
+scenarios advanced to the explicit native-string-policy refusal rather than
+the obsolete unknown-declaration refusal. The old expectations are not yet
+updated; neither run is claimed fully green.
+
+With explicit native-string/concat policy, the unchanged full-family packet
+now reaches a separate real gap: assertPreparedIrProgram throws for undeclared
+intrinsic __ir_vec_elem_set_externref in fetchAllParallel's derived state zero.
+The complete callable-declaration check remains intact. High is specifying the
+closed vector-helper contracts together with authenticated ordinary/derived
+clock projection; do not skip the missing declaration or claim native acceptance.
+
+Focused session 54317 passed 83/83 after the fixture/forwarding/nullability fixes
+(25 declarations, 46 providers, 12 replay). Rev2 provider-oracle repair was
+approved by High. The two new modules are now classified as mandatory clean
+owners; compact inventory 37239 has no errors and independently measures 68
+selected modules, 228 edges (158 type-only, 70 runtime). Boundary controls are
+running after adding all eight owner-specific negative cases. No PR has yet
+been created for these uncommitted callable changes.
+
+Boundary session 65096 subsequently exited 0: 133/133, including all eight
+negative controls for the two new owners. Parent independently compared all
+28 previous activation records and the allowed-edge policy against HEAD; all
+remain exact. Two new activation records are prepended. High confirmed the
+non-null-to-nullable argument fix is correct and identified the vector-set call
+already in the retained source packet (the async transform carries it forward).
+The missing canonical vector declaration is not solely a transform artifact.
+
+### Clock/vector continuation — 2026-09-08
+
+The recovered Astra High specification is recorded in
+`plan/agent-context/3518-clock-vector-admission-plan-2026-09-08.md`.
+Implementation is split between Astra Low native subagents in isolated trees:
+`codex/3518-vector-callable-admission-20260908` owns the single measured
+externref vector-store callable contract; `codex/3518-clock-projection-20260908`
+owns ordinary/derived clock projection and independent positional validation.
+Parent owns their shared demand join, source-family tests, boundary updates,
+integration and non-draft PR publication. Existing frozen worker trees remain
+untouched. Neither slice admits physical native async execution.
+
+Prior validation handle 18810 is missing; a process-table check confirmed no
+live matching TypeScript/Vitest process before replacement validation 6170.
+The replacement passed TS7, then exited 1 with 63/66 tests: runtime-manifest
+8/8 and historical reconstruction 55/58. The three failures reject current
+manifest declaration order and changed intrinsic-support receipts. High is
+specifying an explicit historical reconstruction adaptation, retaining original
+hashes and adding checked deltas; they are not waived or counted green.
+
+The original eight policy-omitting full-family cases now explicitly test the
+measured native-storage-policy refusal. Eight additional native-policy cases
+require actual complete preparation and record separate source, post-async and
+post-optimization call populations, including empty owners and unrecognized
+references. These are acceptance tests, not a replacement refusal gate; their
+new execution is pending and the vector/clock implementation remains open.
+
+Native-family session 12153 exited 1 with 36/44 passing: all eight new explicit
+native-policy cases reject the missing externref-vector declaration. All prior
+36 controls pass, including located missing-policy source-free replay and all
+eleven real forbidden imports. Parent read all eight recorded stage censuses:
+source 5 owners/22 call references; post-async 16/33; post-optimization 16/33;
+independent final validation recollection 16/33. Each population has exactly
+one unresolved reference, the vector-store helper (source owner
+fetchAllParallel, derived owner fetchAllParallel__ir_async_state_0). All empty
+owners remain recorded. Initial census labeling omitted the fourth validation
+scan; corrected to retain explicitly named validation stages, not discard it.
+Receipts remain under `.tmp/native-family-native-policy-*` in the integration
+tree. TS7 session 97422 exited 0 after the new tests. A further fresh-process
+native-policy acceptance case is now added and awaits its measured run.
+Upstream main was rechecked with ls-remote and remains
+04c8e72156cf576cf584a3ed3a5a66ec5a2b91b0; no root checkout changes or merges.
+
+Session 51223 then exited 1 with 36/45: the added fresh-process native-policy
+case reproduces exactly the same missing-vector declaration (child exit 1,
+no signal), while all prior controls still pass. Its terminal and forbidden-load
+census are retained in the source-free temporary receipt directory. No native
+preparation or physical execution success is claimed. The checkpoint remains
+unpublished pending its implementation fixes and historical-receipt repair.
+
+The High-reviewed historical reconstruction specification is saved in
+`plan/agent-context/3518-callable-historical-reconstruction-plan-2026-09-08.md`.
+A third Astra Low native subagent owns only its shared test helper and four
+receipt/ownership suites in isolated branch
+`codex/3518-callable-historical-reconstruction-20260908`. It must authenticate
+each approved addition before inverting it and applying unchanged historical
+hashes; future vector/clock deltas are not pre-authorized by a generic filter.
+All three new worker trees are seeded from 2b9cb408 plus the current reviewed
+callable changes, preserving prior frozen trees. Parent retains integration and
+PR publication. Heavy tests remain serialized: the vector worker now holds the
+exclusive next TS7/focused-test slot; clock and receipt workers must wait for an
+explicit grant. No parent heavy process remains live after session 51223.
+
+Continuation revalidation found vector implementation had not started: its
+slice was UNASSIGNED, and the worker interpreted the implementation no-commit
+instruction as blocking normal claim acquisition. Parent clarified that normal
+reservation commits/hooks are authorized, without hook bypass or force-steal.
+The unused heavy slot was transferred to the ready clock worker; vector and
+receipt claim hooks queue behind it. Clock implementation is present in its
+isolated tree but is not yet frozen or integrated. Parent preliminary review
+requested explicit `clock projection` diagnostic attribution for selected-clock
+corruption tests, because generic rejection could be caused by reproduction or
+attachment identity checks instead. No completed clock test result is claimed.
+
+Clock TS7 handle 20287 subsequently exited 0. Its first suite run 88288 exited
+1 during setup (37 skipped, zero tests executed): the synthetic async state
+fixture omitted a typed entry block. The subsequent fixture attempt also
+stopped during setup; worker corrected a cross-state SSA fixture reference by
+moving its clock after await, retaining the derived-body clock regression.
+No setup failure is counted as either passing tests or a demonstrated
+production defect. Further clock reruns are paused until claim hooks finish.
+
+Vector reservation 54899 exited 0 and the worker verified its upstream record:
+write 22123-8oqnd4vn, claim commit
+01fb870b2d117cdc815470ca8625c2f5387103a6. Static implementation has now started
+in the assigned isolated tree. The historical worker holds the next claim-only
+slot, then clock receives the validation slot again. No tests were killed.
+
+Parent independently confirmed vector ownership with check70455 (exit3 means
+the intended worker holds the claim, not a failed read). Historical check38881
+likewise confirms the intended owner since 15:44:53Z. No additional claim is
+needed. A parent fallback claim attempt20108 failed before creating a commit
+because an added signing request expected unavailable GPG; no retry or signing
+configuration change was made. The temporary helper was removed. Clock now has
+the heavy-test slot again while both claimed workers implement independently.
+
+Parent prepared the two new vector boundary activations and eight negative
+controls, without claiming validation before the modules are integrated. All
+30 previous activation records compare exactly after the two new records;
+allowedEdges remains byte-for-byte equivalent. Closure edge counts still await
+measurement on composed production code. Historical digest values are unchanged.
+
+Clock slice frozen and composed: worker TS7 36183 exited0, suite88182 exited0
+with 37/37 passing. Parent fully read the incremental manifest, verified both
+seed hashes against its current files, copied only the three owned files, and
+verified all resulting SHA256s exactly: intrinsic-support
+81efcacea391a614899489c24dc184ccf886337880b89b4520d3a2a6b155e3fb;
+program-runtime-validation
+bb4006f9bcdf641f665b6b1ee10ea6fd8ced30e168d09faf8439358d574f2b0c;
+clock test ea7c9df0ca480f3dd5782a5f2e0b011b81e6f3db5b89b525d229be5e785312ea.
+Manifest SHA256 c48c0e5b6cb62bcb1c5a49227053e1aa3ccd3cd588f98e90c8736ebadc52ba62.
+The suite uses independently prepared fixture groups; corruption cases assert
+the clock-specific witness diagnostic, while replay is separately exercised.
+Parent composed TS7/four-suite validation90450 is pending. High production
+review is also pending. No vector declaration or physical guard is bypassed.
+
+The next connected physical vector implementation specification is saved in
+`plan/agent-context/3518-native-vector-physical-materialization-plan-2026-09-08.md`.
+It includes canonical grow/store bodies, shared layouts, reservation-backed
+provider binding and consumer integration. Dispatch waits for this logical
+checkpoint's freeze; an isolated body extraction is not its acceptance target.
+
+Parent validation90450 exited0: TS7 passed, then all 120/120 focused tests
+(37 clock, 12 callable replay, 46 provider, 25 declaration). This proves the
+composed clock/callable slice, not full-family preparation or physical execution.
+No parent heavy process remains live. Vector admission and exact historical
+receipt reconstruction remain the next integration obligations.
+
+High completed production-only approval of the exact composed clock hashes:
+no concrete blocker found in explicit-demand/provider authentication,
+copy-on-write block/state projection, positive-zero/site preservation, allocation
+rejection or independent positional checks. Reproduction and attachment-current
+checks remain intact. This is not a physical-native acceptance or retirement
+approval. Vector draft is now under separate production review before composition.
+
+Vector admission is now composed, including the separate occurrence-demand
+population and parent-owned clock/vector join. High production review approved
+all eight vector production files and the composed join without concrete
+blockers. Parent validation88927 exited0: TS7 and 106/106 tests (61 vector,
+45 full-family source-contract). The original/export-only source, each with
+GVN on/off and raw/decoded input, now prepares in all eight native-policy
+cases. The fresh source-free child also prepares; missing-policy and forbidden
+import controls remain enforced. Saved successful receipts remain under
+`.tmp/native-family-native-policy-*/receipt.json`. This proves preparation,
+not physical execution, public cutover, or retirement.
+
+Recovery inventory46161 exited0 with 70 selected modules and 239 edges:
+163 type-only and 76 runtime. Current closure-count assertions were updated
+to that measured population; historical hashes were not changed. Boundary
+suite77191 is running; no pass is claimed yet. The four-file pre-clock/vector
+historical inverse is frozen in the isolated historical worker tree, with
+tests still unrun and separate clock/vector inverse layers still required.
+
+Boundary77191 subsequently exited0: 141/141 tests passed in 76.85 seconds,
+including actual closure and deletion/type/runtime/unresolved-edge controls.
+The historical worker now owns the exclusive heavy-validation slot for its
+three pre-clock/vector suites. High reviews the frozen inverse concurrently;
+no historical pass or complete compiler-closure/retirement claim is made.
+
+With logical production frozen and reviewed, the two Low native subagents
+received the connected physical vector specification: Maxwell owns the pure
+grow/store body, shared descriptors and legacy adapter; Hilbert owns the
+reservation-backed resource planner/materializer. Both must use fresh isolated
+trees, preserve their earlier diffs, and claim before source edits. Claim hooks
+wait for the historical test slot to release. Parent retains physical-plan and
+consumer integration. This dispatch overlaps setup with historical validation;
+it does not waive that validation or authorize publishing an unchecked checkpoint.
+
+Historical pre-clock/vector validation11005 exited0: 3/3 suites, 470/470
+tests in 47.63 seconds, using the documented 2GiB single-fork command. Parent
+read the saved validation receipt and independently matched all four current
+Git blobs to frozen rev1. No repair or TS7 run was needed/performed. This pass
+does not cover the composed clock/vector extensions; their checked inverse
+and composed validation remain required. Maxwell received the released
+claim-only slot for physical vector body ownership.
+
+High historical review found a positive-first control defect: mutation setup
+was inside some expected-rejection closures, allowing setup failure to satisfy
+the negative. Worker is correcting that before adding the exact checked
+clock/vector inverse. The complete High extension contract is saved in section5
+of the historical reconstruction plan. No historical hashes are rebaselined.
+
+Upstream main reverified unchanged at
+04c8e72156cf576cf584a3ed3a5a66ec5a2b91b0. Maxwell reports claim1146 exit0,
+write30305-t7ft6tyi/commit2d54499bd399a269b9a872109047ee6700b2d59a and
+remote ownership verification; its source implementation is active. Hilbert
+received the released claim-only slot for the independent physical resources.
+High is now specifying the subsequent connected Promise/frame resources while
+these vector slices proceed. Full-family physical execution remains open.
+
+Parent consumer slice now has its own isolated tree:
+`/private/tmp/js2-3518-native-vector-consumer-20260908`, branch
+`codex/3518-native-vector-consumer-20260908`, base2b9cb408c18446361fcf9837045067d1fd97c642.
+Claim22518 exited0 and verified upstream ownership; temporary operational
+helper removed, no main push. Two production files now retain logical vector
+signatures until reservation and wire shared types, the required helper slot,
+ABI binding, fill and cache-only resolvers into the consumer. Exact unit-order
+receipt excludes only the reserved helper and startup objects. The async guard
+and unrelated physical gaps remain. These changes are untested until Hilbert's
+resource implementation and Maxwell's body implementation compose; they are
+not mixed into the current logical checkpoint. Hilbert is checking the API join.
+
+Parent physical tree now includes Maxwell's three frozen grow/store production
+files, copied only after matching the recorded SHA256s and unchanged target
+base. The full new builder and legacy adapter diff were reviewed; the replaced
+hole-sentinel wrapper calls the same allocator and produces the same two
+instructions. Final copied SHA256s match production-r1 exactly. Focused tests,
+public byte pairing and execution are still pending; no static comparison is
+counted as an execution pass. Hilbert's API review found no shape mismatch in
+the consumer join; resource implementation remains in progress.
+
+The physical consumer tree now also carries all16 frozen logical-admission
+production files. Each existing target matched the exact base before copying;
+parent verified final byte equality for16/16 against this logical checkpoint.
+The logical checkpoint itself was not changed by that composition. Maxwell has
+the exclusive focused grow/store test and sequential TS7 slot; execution results
+are not yet available. The composed historical inverse remains in progress.
+
+Physical consumer composition now includes Hilbert's two frozen resource files:
+program planner SHA256 b7f82b5c7afe14aa0e38acaf9b5e0b922f9a9b8d3ae2c9081c25b81da870a045;
+backend materializer SHA2564da46ab8bc0340894e426ff35f061d193d3fcb3406d1f73b59da05584287341e.
+Parent read both complete sources, verified hashes before/after copying, and
+linked existing dependencies without installation. The combined tree contains
+16logical +3body +2resource +2consumer production files; TS7 remains unrun.
+Maxwell's first body suite reports14/22 passing, with eight failures at the
+donor text receipt; no full execution or preservation pass is claimed. Its
+isolated TS7 runs next, then parent combined typecheck receives the slot.
+
+The complete High native Promise/frame resource specification is saved in
+`plan/agent-context/3518-native-promise-frame-materialization-plan-2026-09-08.md`.
+It requires real resolve-value/thenable dependencies, shared queue/vector
+identity, frame materialization, timer publication and native strings; it does
+not permit temporary classifier fallback bodies as completed implementations.
+
+Combined physical TS79890 exited1 with two resolver-shape errors only:
+`IrVecLowering` also requires length/data field indices. Parent added0/1 from
+the already-authenticated two-field descriptor in its own lowering adapter;
+no worker resource/body changes. Recheck40245 exited0. This is the first TS7
+pass over all23 composed production files. Existing typed-preparation and
+program-codec-replay suites are now running as54407; no test pass is claimed
+before termination. Formatting was unchanged and scoped diff checks passed.
+
+Regression54407 subsequently exited0:2/2 suites,57/57 tests in28.76seconds.
+These are existing typed-program preparation and program-codec replay tests,
+not new vector physical execution coverage. Hilbert receives the next focused
+resource-test slot after freezing/copying its tests into the composed parent;
+the unseeded isolated worker tree is not an authoritative combined test target.
+
+Resource suite15231 exited0 in the composed physical parent:28/28 tests,
+including four complete-source planning/replay/GVN cases and four actual
+reserved-helper execution cases (local/shared exception tag, with/without
+function-import offset), plus descriptor/provenance/lifecycle negatives.
+No test or production repairs; copied test SHA256 remains
+1211e2b1b24c1beb03cd90bfca20cda3f9e29e128887ce0053fbf17761596385.
+This proves isolated physical vector helper execution, not whole-family
+consumer execution. Maxwell receives the released slot for repaired body and
+donor preservation suites. High physical review and boundary closure remain
+open; parent identified new resource imports through mixed program facades as
+a boundary concern requiring repair without weakening validation.
+
+Parent changed only the backend resource utility import from `ir/program.js`
+to its exact re-export owner `ir/program/data.js`; no algorithm or validation
+was removed. This post-r1 delta still needs composed validation.
+
+Parent read grow/store validation-r3 and frozen-r2 records:22/22 body tests and
+20/20 donor tests pass (42/42, zero skipped); isolated TS770823 exited0 on the
+same unchanged production snapshot. The eight earlier failures were repaired
+only by restoring one extraction-boundary newline in the test reconstruction;
+original construction/locals hashes remain unchanged. Public compiler byte
+pairing is still required and now granted to Maxwell against exact2b9 baseline.
+
+Physical resource r2 is now integrated with the checked parent wrapper. The
+canonical calculation consumes seven narrow data fields, while the parent
+retains full program/projection authentication and the private acceptance
+authority. Exact provider ID/feature checks and three independent negative
+controls were added. R1's28/28 does not validate this revision; new checks await
+the historical worker's test slot. The physical boundary policy now activates
+the three new modules. Parent independently verified all32 prior activation
+records and allowedEdges unchanged. Closure edge counts and the expanded
+negative suite are not yet measured; historical hashes remain unchanged.
+
+The four frozen composed-rev3 historical test files are now integrated into
+this logical checkpoint. Each target matched base2b9 before copying and each
+source matched the rev3 manifest; final Git blobs match a20d372c5135f47a348b9e46bd643bba5f679713,
+6282bf27e03d540f87ddb61fc30b8d80bc7ae30e,6b0986c882129c9f75a784fcd84308eba4af00f8,
+693227c2413412d030ae47f1db0be09674c5c738 respectively. The worker's required
+three-suite run is confirmed live (process39150 with Vitest39158/39168), not
+timed out or restarted. No composed historical pass is claimed yet; High
+review and logical checkpoint TS7 remain before publication.
+
+High source review approved the exact four copied rev3 hashes. Final sign-off
+still requires the existing suite's terminal result and parent TS7; no repeat
+review, parallel suite, cancellation or restart is needed.
+
+Composed historical run10243 subsequently exited1:629 reported passes and two
+failed controls out of631, plus a Vitest worker `onTaskUpdate` timeout. It is
+not a clean full-three-suite verdict. The missed controls are callable import
+movement and changed clock inverse span0. Worker is repairing those exact
+acceptance holes without dropping controls or changing historical hashes, and
+will yield via `setImmediate` between synchronous tests so RPC updates drain.
+The failed run is preserved. Parent logical TS797404 is now running; further
+suite runs remain serialized. Source review approval did not override this
+contradictory execution evidence.
+
+Logical TS797404 and physical-r2 TS717919 both exited0. Physical inventory77057
+exited0 with73 activated modules,259 edges (174 type-only/85 runtime), no errors.
+Current edge assertions were updated from those measurements; historical hashes
+were not changed. Physical resource/boundary suite16994 is now running. The
+historical worker repairs the two missed mutation controls statically, then
+receives the next slot for focused reproductions before a full rerun.
+
+Physical run16994 exited1:31/31 resource tests and152/153 boundary tests passed.
+The remaining boundary control assigned `ir-program` to the already-ir-program
+first record, so it was a no-op. Parent changed it to `ir-core` and added an
+accepted positive plus explicit changed-digest check outside the rejection
+closure. Focused rerun passed5/5 selected controls (148 unselected); the full
+corrected boundary suite remains to rerun. No production repair. Historical
+worker receives the released slot for focused repaired controls, then full
+three-suite validation if those controls pass.
+
+Historical revision4 terminal20877 supersedes the failed revision3 verdict:
+763/763 tests passed across3/3 suites, exit0, no unhandled errors,429.01s.
+The full rerun was already live when focused-first sequencing was requested;
+no separate focused run was performed. The run overlapped parent checks and
+must not be described as exclusively serialized. Both original failing
+controls passed without removing controls or reseeding historical hashes.
+The repair checks complete import-block placement and the complete leading
+clock-projection documentation; afterEach yields for Vitest RPC updates.
+Parent integrated the two changed files and verified SHA256 values
+114a21cb1bc05bfe64045a12f8fa5474a729284f442afc4c155234bc3e08aafc
+and5f79142356e98679cb4087e001c0fe6bc9c5a8af0cd75b37d80360284eb28ec3.
+Repair-delta High review and post-integration TS7 remain before publication.
+This preservation evidence does not establish full native physical execution,
+public IR-only cutover, strict graph closure, or direct-codegen retirement.
+
+Post-integration TS7 session16199 exited0. High repair-delta review approved
+the exact revision4 blobs, with no remaining concrete repair blocker. Parent
+also compared all16 changed production files against the tested worker tree:
+16/16 byte-identical, zero mismatches. PR shepherd's fresh19-PR pass found no
+conflicts, unresolved review threads, or reported failing/pending checks.
+Stacked PRs5752 and5754–5760 lack required checks because CI targets main;
+their mergeability is not evidence of complete CI coverage. Existing holds
+remain, and neither this checkpoint nor those checks establish retirement.
+
+## Physical vector checkpoint after PR #5763
+
+The physical vector checkpoint is based on6ed68535323e0756c3a0b15dde18fd480ad7fc9f.
+It composes same-ledger vector layouts, the canonical grow/store body, checked
+resource planning and consumer binding while retaining the async physical
+refusal. All12 transferred implementation/test files matched their reviewed
+source tree exactly. No existing worktree was reset or replaced.
+
+Fresh composed-tree session10660 exited0: TS7 and226/226 tests across4/4 files
+passed (153 boundary,31 resources,22 body,20 donor). Public compiler comparison
+revision2 controller82714 and both children exited0:14/14 pairs,28 rows,
+56 expected calls, zero raw differences and five rejecting negative controls.
+The comparison covers both hole-fill arms, dense carriers and packed branding;
+it is extraction preservation, not execution of the full prepared async family.
+
+Detailed limits and provenance are in
+`plan/agent-context/3518-native-vector-checkpoint-handoff-2026-09-08.md`.
+Promise resolution and same-ledger Promise resources are the next active
+implementation slices. Full frame/timer/string execution, public IR-only
+cutover, strict closure and the ABI30 witness remain outstanding.
+
+## Promise resolution extraction after PR #5764
+
+The next checkpoint extracts resolution, thenable jobs, settle closures and
+finalized classifier body construction into two canonical native runtime
+modules. Legacy adapters retain allocation/cache/finalization ordering and
+compatibility paths. Completed native callers must provide the real captured
+then invocation binding and authenticated complete resource inventories.
+
+High review found and the worker repaired two test defects: reliance on Git
+history during shallow-checkout collection, and opcode-only closure checks.
+The repaired self-contained fixture authenticates six original declarations;
+24 independent coordinate combinations yield48 complete resolve/reject
+comparisons with48 wrong-field and48 wrong-target controls. Worker TS7 and
+49/49 tests passed. High approved the exact repaired files. None of these
+checks establishes public source execution or whole-family native execution.
+
+Parent integrated all four production files and both repaired test files by
+verified SHA256. Composed TS7 passed. The active closure now contains75 modules
+and263 edges (176 type-only,87 runtime), with no reported closure errors.
+Prior activation records, allowed dependency rules and historical hashes are
+unchanged. The first composed suite passed209/210; the only failure was a
+stale unique-module assertion expecting73 instead of75. It was corrected and
+full rerun5973 remains live. Do not report that rerun as passed yet.
+
+Detailed evidence and outstanding limits are recorded in
+`plan/agent-context/3518-promise-resolution-checkpoint-handoff-2026-09-08.md`.
+The vector-comparison instrument and reproducibility handoff are also retained
+under plan/agent-context. Public Promise comparisons are being prepared;
+Promise resource materialization is a separate concurrent implementation.
+
+Composed rerun5973 subsequently exited0:210/210 tests across2/2 files passed
+in96.37s. This supersedes its pending status, not the execution limitations.
+
+## Confirmed ordinary-thenable capture defect
+
+Public comparison controller76198 exited1 although both compiler children
+exited0. All24 baseline/candidate pairs were raw-equal: the extraction
+preserves existing behavior. All48 compilation rows,96 instances and184
+export observations were attempted. Semantic acceptance is false.
+
+The additional ordinary-object getter-capture recipe fails identically in
+both IR modes and both fresh instances on both arms: getter count2 instead
+of1; original callback calls0 instead of1; replacement calls1 instead of0;
+delivered value99 instead of42; trace13184 instead of1324. The queued job
+therefore does not preserve the original captured then method for this case.
+Keep the failing row and original receipts. This is an existing correctness
+defect, not an extraction regression, and cannot count as native completion.
+
+High is specifying the bounded canonical resolution/job repair before Low
+implementation. Acceptance must retain once-only getter access, original
+callback capture, poisoned-getter rejection, recursive adoption and the full
+comparison denominator. Do not replace the expected values or normalize the
+failure away. The original report lives in the instrument worktree under
+`.tmp/promise-resolution-public-parent-r1/comparison.json`.
+
+## Native Promise resource checkpoint (2026-09-08)
+
+The isolated checkpoint on #5765 now derives authenticated selected-program
+requirements and reserves native Promise resources in the existing physical
+ledger. It activates two resource modules without relaxing historical
+boundary rules. Session19123 passed192/192 controls (169 boundary,23 resource),
+and composed TS7 session42272 exited0. The77-module closure has286 edges:
+187 type-only and99 runtime, with no reported closure violations.
+
+High review found no source or boundary-policy blocker but requested a
+positive-paired unsealed-program rejection test. That test is added and awaits
+its scoped run; it protects the checked wrapper's leading authentication.
+Full filling and execution remain unproven: actual value, object, string,
+TypeError and closure dependencies are still required. The consumer's async
+refusal remains, as do strict closure and retirement gates.
+
+The getter-capture fix is now High-specified and delegated to native Astra Low
+in a separate worktree on #5765. The implementation contract and checkpoint
+handoff are in `plan/agent-context/3518-promise-getter-capture-implementation-plan-2026-09-08.md`
+and `plan/agent-context/3518-native-promise-resource-checkpoint-handoff-2026-09-08.md`.
+
+The requested unsealed-program control subsequently passed with all24/24
+resource tests in13.76s; session2053 also passed composed TS7 and exited0.
+
+## Capture-once Promise integration (2026-09-08)
+
+The ordinary then getter defect is repaired in canonical runtime bodies and
+their legacy callers: resolution returns callability plus the first captured
+function, stores that function in the existing callback field, and the queued
+job invokes it with the original receiver. Compiled-method dispatch retains
+its existing null-capture path. The native resource pack reserves and fills
+the matching two-result lookup without replacing the legacy classifier.
+
+Pauli's isolated explicit-mode suite passed63/63 (49 historical preservation
+controls plus7 runtime cases in each of direct and experimental-IR modes).
+Parent composed TS7 and87/87 tests passed twice:38918 before budget helpers,
+96871 after them. The second run took22.78s. No size allowance was added.
+High approved production changes, resource adaptation and private helpers.
+
+The requested two additional historical signature/fill cases are integrated
+with exact worker hash03091b33df320d43edd63b64fbebc293b5b2fb81a93388ef6b19c35244a8b271.
+Their positive-first4 signature and5 actual-fill mutants still need a terminal
+composed result. Boundary regression and the independent public comparison
+also remain pending. Original donor hashes and failing baseline receipts are
+preserved; this is not full native resource execution or retirement.
+
+Final proof and boundary run31410 passed TS7 and259/259 tests in117.47s.
+High approved the added independent body oracle and all scoped changes.
+Public repair comparison94830 exited0: all24 candidate cases passed their
+semantic expectations, all14 comparator controls passed, and the baseline
+reproduced its exact20 known gaps. Both arms completed48 compiles,96 instances
+and184 observations. Raw outputs differ; baseline/candidate equality is not
+the criterion for correcting the defect. Exact frozen-source scope, hashes
+and limitations are retained in the adjacent agent-context result/handoff.
+
+## Native string literal and TypeError resources — 2026-09-08 checkpoint
+
+On getter checkpoint00976e841109235a79991145ee5f0c30933bf3b1, extracted real
+string layouts/literal bodies and the six-field TypeError constructor into
+canonical runtime modules, with same-ledger backend reserve/fill operations.
+Legacy callers retain their registration order, caches and name fallbacks.
+Five modules enter the clean boundary inventory; historical activation
+records and allowed edges remain unchanged. Measured closure:82 modules,
+298 edges (194 type-only,104 runtime), zero unresolved/forbidden edges.
+
+Composed TS7 and213/213 tests passed in session99746 (24 resource/preservation
+and189 boundary cases). High approved all eight production files and the
+final test-only repair:29 authored cases preserve the24-test prefix and add
+actual live/donor constructor comparisons plus two live-guard mutants.
+Those five additions await execution; earlier results do not cover them.
+Exact donor spans and full-source hashes were independently checked against
+5118637e. Collection uses a committed authenticated fixture, not historical
+Git availability. Details: agent-context/3518-native-string-error-integration-2026-09-08.md.
+
+Next integrate checked primitive values, then the actual string scanner and
+its flatten/exponent/power dependencies; follow with closure/argument-vector
+and object/callable inventory joins. A correctly named scanner signature is
+not implementation proof. Full Promise execution, fresh-process replay,
+IR-only cutover, strict closure, ABI30 witness and direct retirement remain
+open. This checkpoint does not satisfy those acceptance requirements.
+
+Final scoped approval and execution: High approved the five live-constructor
+controls; parent67641 exited0 with29/29 tests passing in10.08s. All eight
+production hashes and the authenticated fixture remain unchanged.
+
+## Native primitive-value checkpoint — 2026-09-08
+
+On #5770, canonical primitive layouts and number bodies now back legacy
+callers and same-ledger native resource fills. The checked value-plan entry
+authenticates the whole program and selected projection. Integrated TS7
+passed;70/70 focused tests passed (60 resource/preservation and10 admission
+controls). Repaired comment receipts preserve the original tests and hashes;
+the preceding59/60 failure remains recorded rather than discarded.
+
+Four new boundary owners produce a measured86-module,313-edge graph
+(203 type-only,110 runtime), without unknown/unresolved/forbidden edges.
+Historical activation records and allowed edges are unchanged. Expanded205
+boundary controls are still running; final review and publication pending.
+See agent-context/3518-native-value-integration-2026-09-08.md for receipts.
+
+This does not complete native strings: the genuine scanner, flattening and
+exponent/power resources remain next, followed by closure metadata/ObjVec
+and complete object/callable dispatch. Existing Promise pack ownership of
+settle captures/trampolines must not be duplicated. Full-family execution,
+fresh-process replay, cutover, strict closure and retirement remain open.
+
+Expanded boundary suite86860 subsequently exited0:205/205 passed in132.76s.
+The full High native-value implementation plan is included in agent-context.
+
+## Native scanner dependency authentication — 2026-09-08
+
+On #5774, parent added encoding-specific literal lookup through existing
+interning identities and completed-string attestation through the existing
+physical ledger. This lets flattening require the genuine UTF16 empty global
+even when an equal UTF8 literal was demanded first. Old text-only lookup is
+unchanged. Forged/foreign owners, incomplete fills and changed completed
+global/function contents are rejected by the new completion accessor.
+
+TS7 and34/34 focused tests passed in96731 (5 new completion controls and29
+unchanged literal/error cases). Independent review and publication pending.
+The full frozen scanner implementation plan is included in agent-context.
+Hilbert owns flatten/copy/optionalUTF8decode; Maxwell owns StringToNumber and
+grammar/power resources. Parent owns string authentication and the subsequent
+owned-scanner dependency in native values. Euclid owns disjoint ObjVec work.
+
+Reservation-phase producer authentication is separate from completed-fill
+attestation: reserve-all-before-freeze cannot require completed dependencies.
+Neither accessor establishes whole-program execution. Actual scanner,
+flattening, resource-chain execution, replay and retirement remain open.
+
+### Scanner materialization integration — 2026-09-09
+
+The pending scanner checkpoint now lives on its own branch,
+codex/3518-native-scanner-materialization-20260909, based on #5775; it must
+not overwrite the already-published producer-authentication checkpoint.
+Canonical flatten/decoder/scanner resources and genuine owned native-value
+joins are integrated. The generic instruction walker now has canonical
+ownership while legacy callers retain the shared algorithm.
+
+StringToNumber malformed exponents previously returned1 for `1e` and `1e+`.
+The shared scanner now rejects missing exponent digits; parseFloat's prefix
+grammar remains unchanged. High approved exact semantic-delta accounting,
+original13-function/34-constant donor reconstruction and the expanded156
+UTF/view recipes. Candidate and immutable baseline public source controls
+each passed43/43; this is not yet paired byte-preservation proof.
+
+Current blocker: composed R3 run97437 passed139/185 and failed46/185, all
+rooted in the shared UTF8 decoder trapping on a nonzero-offset whitespace
+view. The declared `Utf8String.off` field is not consumed by the decoder.
+Keep those genuine offset probes; repair the shared production algorithm
+after contract review, explicitly account for the semantic delta in both
+donor and public projection proofs, then rerun the whole recipe population.
+Do not remove coverage or claim that a static check proves execution.
+
+Public three-arm proof has22 passing guard controls; the full66-scenario
+run is not yet executed. Bounded compiler ownership has237 passing controls.
+Full-family execution, replay acceptance, public IR-only cutover and strict
+direct-codegen retirement remain required. Detailed failure and revision
+provenance lives in agent-context/3518-native-scanner-integration-2026-09-08.md.
+
+The reviewed shared-decoder repair is now integrated: byte cursor starts at
+`off` and ends at `off + byteLen`, without changing allocation or decoding
+branches. Targeted5/5 and full scanner/value-chain/walker159/159 pass,
+including all156 original expanded recipes. This fixes the46 failures above;
+it does not erase their provenance. Decoder-specific mixed-width controls,
+the second exact preservation delta, public three-arm pairing and final
+composed typecheck remain before publication.
+
+Subsequent proof execution closes the runtime items above:71/71 flatten and
+public-preservation tests pass, including66 programs in each of three child
+runs,132 calls per run and zero baseline-versus-projection differences.
+The untouched candidate produces NaN for malformed exponents while original
+baseline results remain recorded separately. Direct decoder27/27 controls
+also pass, including18 windows and7 semantic mutants. Post-repair bounded
+compiler ownership237/237 passes. Final review and composed typecheck remain
+publication prerequisites; full migration acceptance is still open.
+
+Final scanner checkpoint validation is complete:286/286 combined focused
+unit controls,237/237 bounded ownership controls and final composed TS7
+pass. High's four harness findings were repaired and approved. Ordinary
+unit tests need no external checkout variables; the dedicated verifier
+retains mandatory66-row/three-arm execution with authenticated native
+loader identity, and completed with zero preservation differences.
+The two intentional semantic corrections remain explicit: malformed
+exponents yield NaN, and valid UTF8 views honor their byte offset/end.
+
+Publication does not establish public cutover. The current production
+compiler still calls direct generateModule/generateMultiModule, and the
+prepared-program emitter has not yet wired these string/value producers.
+See agent-context/3518-native-string-consumer-census-2026-09-09.md for the
+next required production integration boundary and ownership coordination.
+
+### Native string type reservation for real consumer integration
+
+The independent type-split draft now preserves a types-first import window,
+authenticates single-use literal ownership and exposes a complete private-chunk
+inventory. Revised TS7 and 54/54 focused tests pass; final review has no blockers
+and 188/188 existing flatten/scanner/value caller regressions pass. Exact provenance and
+limitations are recorded in
+agent-context/3518-native-string-types-split-2026-09-09.md. This is a prerequisite
+for actual prepared-consumer wiring, not evidence that the public direct path
+has been replaced. Paused P/C async drafts remain untouched.
+
+### Native string/value demand census checkpoint (2026-09-09)
+
+The provider-free collector now preserves the exact ordered owner, buffer,
+instruction, intrinsic and literal populations across program/projection and
+async views. It preserves borrowed allocation metadata and presence semantics;
+it is not an acceptance authority. High review approved the source and focused
+tests after local validation, exact occurrence controls and a non-number
+intrinsic control were added. The final focused suite passes 40/40 and TS7
+passes. See agent-context/3518-native-string-value-demands-2026-09-09.md for
+hashes and the retained initial fixture failure.
+
+The collector is registered as a mandatory clean ir-program module without
+changing allowed edges or historical activation records. This is preparatory
+work: shared symbolic producer declarations, actual prepared-consumer wiring,
+original/decoded execution, public cutover and direct retirement remain open.
+
+Final composed validation passes 281/281 (241 boundary controls, 40 collector
+tests), with an exact bounded census of 95 modules and 345 imports. This does
+not establish strict whole-compiler closure or direct-codegen retirement.
+
+### Explicit native string-number source admission — 2026-09-09
+
+High approved the three production changes and the revision-3 source tests
+in the isolated source-admission branch, based on
+`31e4e232eb16804afc1577055d33d1c6530c0e22`. This is an explicit, default-off
+frontend selection: `nativeStringValueProjection: "standalone-native"`
+requires the source policy and every requested runtime projection to be
+standalone WasmGC before lowering. It forwards `stringNumericCoercion:
+"number-boundary"` into ordinary and lifted AST contexts. Only statically
+string-typed unary plus/minus selects externref coercion followed by
+provider-free `js.number.unbox`; omission retains the historical route.
+Existing Number-wrapper certification, signatures, async plans and codecs
+are unchanged. P explicitly released only this additive source boundary;
+its paused work remains preserved.
+
+The focused source suite passed **36/36** (session `36081`, exit 0), followed
+sequentially by TS7 with no diagnostics (session `54752`, exit 0), under
+2 GiB limits and one Vitest fork. The original r1 30/30 and TS7 receipts
+remain retained. Initial review-test r2 passed 34/36: both failures were the
+test reporter eagerly serializing a successful frontend carrier containing
+circular AST-backed global bindings. R3 only avoids that success-path
+serialization; all failure diagnostics, 36 cases and approved production
+hashes remain unchanged.
+
+The added controls establish one actual side-effecting string-returning
+source call under each unary operator, complete checker-certified Number
+wrapper preservation, shadowed Number binding preservation, and successful
+whole-program preparation for a valid explicit numeric request. The real
+`parse(s: string): number { return +s; }` source also reaches `prepared` with
+an explicitly selected native-unbox policy and a `native.js.number.unbox`
+runtime attachment. Only the `prepared` observation occurred: backend
+acceptance, physical allocation/emission and execution were not attempted.
+
+Static inventory review found all three modified production paths already
+registered as unmigrated debt, with unchanged dependency syntax and no new
+source modules. No boundary policy, baseline, allowance or status reduction
+is introduced. Normal publication hooks and a non-draft held PR remain
+pending the serialized slot; this section does not claim publication or
+completion of the epic. Exact hashes, commands, failure history and remaining
+obligations are in the
+[source-admission handoff](../agent-context/3518-native-string-source-admission-handoff-2026-09-09.md).
+
+
+
+### Native string/value demand census checkpoint (2026-09-09)
+
+The provider-free collector now preserves the exact ordered owner, buffer,
+instruction, intrinsic and literal populations across program/projection and
+async views. It preserves borrowed allocation metadata and presence semantics;
+it is not an acceptance authority. High review approved the source and focused
+tests after local validation, exact occurrence controls and a non-number
+intrinsic control were added. The final focused suite passes 40/40 and TS7
+passes. See agent-context/3518-native-string-value-demands-2026-09-09.md for
+hashes and the retained initial fixture failure.
+
+The collector is registered as a mandatory clean ir-program module without
+changing allowed edges or historical activation records. This is preparatory
+work: shared symbolic producer declarations, actual prepared-consumer wiring,
+original/decoded execution, public cutover and direct retirement remain open.
+
+Final composed validation passes 281/281 (241 boundary controls, 40 collector
+tests), with an exact bounded census of 95 modules and 345 imports. This does
+not establish strict whole-compiler closure or direct-codegen retirement.
+
+### Native string type reservation for real consumer integration
+
+The independent type-split draft now preserves a types-first import window,
+authenticates single-use literal ownership and exposes a complete private-chunk
+inventory. Revised TS7 and 54/54 focused tests pass; final review has no blockers
+and 188/188 existing flatten/scanner/value caller regressions pass. Exact provenance and
+limitations are recorded in
+agent-context/3518-native-string-types-split-2026-09-09.md. This is a prerequisite
+for actual prepared-consumer wiring, not evidence that the public direct path
+has been replaced. Paused P/C async drafts remain untouched.
+
+### Shared native resource declarations (2026-09-09)
+
+String, flatten, scanner and primitive-value producers now share symbolic
+declarations with their reservation implementations. This lets checked consumer
+acceptance know the complete resource ABI before allocation without a second
+allocator or duplicated signature table. Canonical allocation order, type
+metadata and existing ownership authority remain load-bearing.
+
+High review's sparse-preflight and signature-observation findings are repaired;
+the owned declaration suite passes 20/20. Parent scanner integration resolves
+the previously failing dependency census and passes 140/140 combined scanner
+and declaration tests. New mandatory boundary records and model-only type
+controls are in place; full boundary/clean typecheck/caller validation is pending.
+See agent-context/3518-native-resource-declarations-checkpoint-2026-09-09.md
+for exact provenance, initial failures and the limits of this checkpoint.
+
+This does not establish actual prepared-consumer execution or public default
+cutover. Those joins and all other #3518 acceptance requirements remain open.
+
+The clean producer checkpoint now also passes 250/250 full boundary controls
+and unfiltered TS7 (session 54286 exit 0). Full caller revalidation passed
+322/322 across eight suites (session 46568 exit 0). Checkpoint validation is
+complete; this is not a migration-completion claim.
+
+### Real native-string prepared-consumer integration (2026-09-09)
+
+The composed consumer now accepts native string/value demands, seals their
+typed ABI before allocation, uses canonical resource declarations and owned
+reservations, and binds final indices after the single physical freeze.
+Original and decoded prepared programs execute through the real consumer;
+68/68 execution cases passed (handle 69379, exit 0). These include numeric
+edge cases, large/private-chunk literals, encoding checks on actual module
+objects, startup modes, aliases, and dependency initialization order.
+
+The first combined run failed 69/129: one ABI countermodel was unchanged and
+all 68 execution fixtures omitted explicit native string storage. Both are
+test-only repairs; no production policy or validator was relaxed. Follow-up
+ABI controls, no-demand old/new parity, full composed typecheck/boundaries and
+normal publication hooks remain pending. Exact hashes, preserved failures,
+dependency merge receipts and review scope are recorded in
+agent-context/3518-native-string-value-consumer-integration-2026-09-09.md.
+
+Public compilation still uses direct generateModule/generateMultiModule.
+Native-string execution does not satisfy the remaining native families,
+async/ABI30, cross-backend, fail-closed default, strict closure, or retirement
+requirements; every outstanding epic acceptance criterion stays open.
+
+Follow-up validation completed: ABI 61/61, boundary 258/258, materialization/
+codec/module regressions 51/51, and full TS7 exit zero. The three-arm comparison
+(76083, exit zero) reproduces the original vector CompileError, then proves
+complete repaired-baseline/candidate artifact and value parity for five source
+executions, one exact source refusal and one canonical-producer IR execution.
+The vector repair is published separately as #5792; ordinary vector source
+admission is still unsupported. All three arm receipts, runtime/input hashes,
+original/decoded versions and retained binaries/WAT are documented in the
+consumer integration handoff. No original-baseline vector success is claimed.
+
+The next complete native async-consumer implementation plan is recorded in
+agent-context/3518-native-async-consumer-implementation-spec-2026-09-09.md,
+including frame/state lowering, delay/combinator publication, real object and
+closure invocation dependencies, complete number formatting and string output.
+The ordinary-vector source proposal and explicit P/C scope releases are also
+preserved in the handoffs. These plans are not execution or retirement proof.
+
+### Isolated vector construction nullability repair (2026-09-09)
+
+Claim 3518:vector-data-nonnull owns a one-instruction WasmGC emitter fix at
+published base 5404151bfc. A nullable/defaultable backing-array scratch reload
+now receives ref.as_non_null before the carrier's non-null data field is
+constructed. Layout, allocation order and unsupported-capacity refusal remain
+unchanged. Full TS7 exits 0; the final combined regression run passes 31/31
+across three suites, including all seven new controls. High approved the proof
+split: five AST-to-IR component rows with explicit type overrides and a
+physical-fixture resolver, one IR-builder externref spare-capacity row, and
+one refusal control. This is not whole-source admission or consumer execution.
+See agent-context/3518-vector-data-nonnull-2026-09-09.md for exact receipts and
+the separate historical-baseline/common-fix application requirement.
+
+
+
+## Native argument-vector checkpoint — 2026-09-08
+
+Parent integrated the independently reviewed six-file argument-vector slice
+on published string-authentication base bfe31c8bd96d748e867562e3e9b78343b72d1877
+(#5775). Canonical array/carrier descriptors and new/push builders retain
+legacy callers; the backend reserves and fills through the existing physical
+ledger. Dependencies are authenticated before allocation, including an early
+argument-array token when supplied. Foreign/copied matching-index tokens do
+not gain ownership from structural equality.
+
+The ledger's new reservation-phase assertTypeReservation has six new controls;
+the earlier ledger-only validation passed TS7 and154/154 tests. Independent
+High review approved the repaired canonical source and exact complete-donor
+reconstruction controls. Parent composed TS7 session33890 exited0. Full
+boundary suite76281 exited0:213/213 tests,139.31s. The two added modules give
+88 modules and319 edges (206 type-only,113 runtime), with historical
+activation records and allowed edges preserved.
+
+Runtime validation is still pending: the worker's malformed test launcher
+started no tests and remains alive; no stop or replacement was authorized.
+Consequently this checkpoint is not yet declared ready for publication.
+See agent-context/3518-native-argument-vector-integration-2026-09-08.md for
+exact hashes and test provenance. Closure-root/metadata static implementation
+is dispatched independently; it must not duplicate Promise capture ownership.
+Full object/callable dispatch, real whole-family execution, replay, public
+IR-only cutover and strict direct-codegen retirement remain open.
+
+Subsequent independent parent-checkout runtime validation55631 exited0:
+38/38 passed (32 argument-vector and6 reservation-auth),0.859s. This did not
+terminate or restart the original worker launcher. Initial36/38 exposed two
+test-instrument expectations, repaired with High approval: boolean identity
+comparison avoids opaque Wasm inspection; a positive-first field-mutability
+negative matches the ledger's content contract and proves rejection before
+either function fills. No production semantics or identity gates were relaxed.
+The focused runtime,213 boundary tests and composed TS7 now pass; publication
+checks remain next. Full migration acceptance above remains open.
+
+### Native closure resource checkpoint — 2026-09-09
+
+The closure checkpoint is stacked on argument-vector PR #5776. Canonical
+closure layouts retain real legacy callers; the transaction-owned native
+closure pack reserves wrapper roots, signatures and builtin metadata in
+legacy order. The repaired minimum-arity observer preserves lazy snapshot
+timing rather than rescanning later metadata copies.
+
+High review approved production and the R3 complete-live-factory inverse.
+Validation: focused R3 62/62; composed runtime controls 76 passed and8 skipped;
+boundary policy 221/221; final composed TS7 exited0. Original donor hashes,
+complete factory population and20 positive-first mutation controls stay
+pinned. See agent-context/3518-native-closure-integration-2026-09-08.md for
+revision hashes and failure/repair provenance.
+
+Next: join native Promise consumers to the owned closure producer pack;
+do not duplicate Promise capture ownership. Full object/callable dispatch,
+whole-family execution, replay, public IR-only cutover and strict static
+closure/direct-codegen retirement remain open. This checkpoint does not
+claim those acceptance conditions.
+
+### Native Promise / closure producer join — 2026-09-09
+
+High approved the implementation specification in
+agent-context/3518-native-promise-closure-join-high-plan-2026-09-09.md.
+Euclid owns exactly native-promises.ts and its existing resource test,
+based on closure PR #5778. Replace independent raw root/metadata tokens
+with the issued closure pack and metadata request ID. Authenticate before
+allocations and again before fills, preserving genuine cache aliases,
+lazy-arity semantics and existing Promise capture/runtime ownership.
+Parent owns boundary updates, integration checks and non-draft publication.
+
+This is a producer-provenance join, not complete Promise execution. Full
+carrier inventory, callable dispatch, fill dependencies, native-family
+execution, public cutover and the ABI30 planningSealed witness remain open.
+
+The bounded join is implemented and independently approved after two R2
+repairs: inherited metadata field descriptors are copied as in the donor;
+rejection proofs preserve lossless data, object identities and future
+reservation ordinals. Composed Promise/closure95/95 tests and221/221
+boundary controls pass. The single new runtime import links the existing
+Promise and closure owners; no boundary permissions were relaxed. Final
+post-repair typecheck and normal publication checks remain next. See
+agent-context/3518-native-promise-closure-join-integration-2026-09-09.md.
+
+### Native async prerequisite composition (2026-09-09)
+
+The native-string consumer checkpoint #5793 is being composed with the published
+argument-vector, closure and Promise/closure join stack (#5776, #5778, #5779).
+All production changes merged without conflicts. High approved the explicit
+1,351-file classification union, unchanged remaining policy/allowed edges,
+and both complete activation histories preserved in order. Mandatory boundary
+coverage is 102 modules and 391 edges (248 type-only, 143 runtime).
+
+Full boundary run 70325 passed 284/284 with no skips; unfiltered TS7 run 58123
+exited zero. Resource and actual consumer regression run 9776 passed 201/201
+across five files in 329.49 seconds (terminal exit zero).
+The shared resource-declaration implementation contract is frozen in
+agent-context/3518-native-async-resource-declarations-spec-2026-09-09.md;
+the frame API and object-access donor map are also preserved for the next lanes.
+This composition does not remove the async acceptance refusal or establish
+native async execution, public default cutover or retirement.
+
+### Formatter semantic support transport checkpoint (2026-09-09)
+
+The formatter prerequisite now builds the unchanged radix source into real,
+index-free IR using the source program's allocation registry. A separate typed
+support batch survives preparation, ABI registration, validation and codec
+replay without being inserted into ordinary source populations. The original
+legacy self-hosted builder calls the same extracted frontend kernel.
+
+After composition and formatting, parent run 69266 passed 167/167 across nine
+source/transport/resource suites. Full boundary run 5497 passed 64/64; inventory
+run 43404 reported zero errors and architectureComplete:false. Source-free
+replay and its deliberately forbidden frontend-import control both passed.
+The reviewed materializer-use-site hole is fixed with complete validator and
+codec rejection tests using an actual canonical kernel reference.
+
+The four clean module activations retain all earlier active history and allowed
+edges. Exactly 17 already-unmigrated frontend files now carry mixed-needs-split
+layer labels with their frontend destination; three other existing frontend
+debt classifications remain unchanged. This is explicit migration debt, not
+whole-frontend closure. See agent-context/3518-formatter-d1-high-contract-2026-09-09.md
+and agent-context/3518-runtime-support-transport-progress-2026-09-09.md.
+
+Final preservation gate passed its 12 executed callers, 10 core-type references
+and six moved-function witnesses under the approved preservation-only contract;
+the two known dynamic imports still prevent strict closure. Post-format TS7
+passed, and the older self-hosted builtin suites passed 19/19. Normal publication
+checks remain in progress.
+Physical radix kernels, full formatter materialization, native async execution,
+public default cutover, ABI30 and direct-codegen retirement remain open.
+
+### Native async producer declarations (2026-09-09)
+
+The existing closure, argument-vector and Promise reservation callers now consume
+pure symbolic declaration plans before allocating. Issued inventories preserve
+ownership, request/cache ordering, adopted arrays and inherited metadata type
+identity. Promise still owns 25 declarations across 26 ordered operations.
+The declaration checkpoint passes 194/194 focused tests (77955, exit zero) and
+unfiltered TS7 (43844, exit zero). High approved the twelve frozen source/test
+files; earlier failing runs remain in the implementation handoff.
+
+Borrowed tag association is checked while reserving; actual tag provenance is
+authenticated only after freeze using the existing ledger. This limitation is
+explicit, not a claim of preallocation tag authentication. The full async
+consumer, staged cross-producer closure scheduling, complete runtime fills,
+public cutover and retirement remain unfinished.
+
+### Formatter requirements and physical option checkpoint (2026-09-09)
+
+The D2 requirements collector retains all eight formatter call occurrences from
+the actual async example (two continuation owners, two calls each, both prepared
+views). Separate support traversal retains 31 buffers and four inline-WTF16
+literals with their original allocation, canonical allocation and metadata
+identity. No ordinary source population or existing demand scanner is changed.
+The consumer retains an explicitly supplied immutable integer-before-scratch
+option without adding an environment read or a no-demand default.
+
+Run 76460 passed 80/80 requirements and boundary tests with no skips, including
+fixed call/literal coordinates and rejection of stale allocations and detached
+support evidence. Post-change TS7 succeeded in 18552. Inventory is valid but its
+graph remains incomplete. Earlier consumer blast-radius run 65740 passed 79/79;
+resource prerequisite composition run 30810 passed 194/194.
+
+This is descriptive preallocation evidence, not a new acceptance capability.
+Complete formatter resources, scratch-root binding, prepared radix emission and
+single-ledger integration remain in progress under the frozen D2 High contract.
+The async refusal stays in place; public cutover and retirement remain open.
+See agent-context/3518-number-format-consumer-progress-2026-09-09.md for receipts
+and agent-context/3518-formatter-d2-high-contract-2026-09-09.md for implementation.
+
+The subsequent physical scratch join is drafted in the formatter backend
+aggregate and physical planner. It assigns the canonical string-data resource
+to the existing prepared scratch required root and rejects conflicting owners.
+Boundary validation passed 72/72; requirements/scratch tests passed 14/14 and
+TS7 passed after moving the structural-key check out of the clean aggregate.
+The real inventory reports zero errors but graphComplete:false. Exact scratch
+signature conversion subsequently passed TS7 and 14/14 focused tests (97644).
+The existing native-string consumer execution suite passed 68/68 (9217),
+covering original/decoded programs, optimization/storage modes and startup
+ordering. This protects existing paths; it does not prove actual formatter
+support-body execution or full async admission.
+
+### Native Ryū D2 checkpoint (2026-09-09)
+
+The complete Ryū tables and three executable builders now have canonical owners,
+shared by the real legacy callers and issued physical resources. Independent
+partial-table caches and the original six-resource reservation order are retained.
+High approved R2: 39/39 focused tests (9786, exit zero) and TS7 (39393, exit zero).
+The exact donor inverse includes comments, local order and positive-first mutation
+controls; earlier 23/39 and 38/39 runs remain recorded in the implementation handoff.
+
+This is canonical extraction and finite/nonzero resource execution, not full
+prepared formatter or async consumer acceptance. Nonfinite/zero formatter cases,
+both integer options, decoded support execution and parent boundary activation
+remain integration obligations. Public cutover and retirement remain open.
+See agent-context/3518-native-number-ryu-2026-09-09.md.
+
+### Native formatter D2 validated worker checkpoint (2026-09-09)
+
+Canonical formatter bodies now serve the retained legacy adapters and a complete
+issued resource owner. The exact thirteen-function closure includes the genuine
+D1 radix-body slot and nested Ryū resources; parent lowering fills that body,
+not a placeholder. Both integer options and partial legacy caches preserve the
+authenticated donor module and registration observations.
+
+Final worker run 15960 passed 35/35 ownership/resource tests in 22.67 seconds,
+including original/decoded source-produced support, the exact issue1537 corpus,
+both integer options, two instances and guarded fresh-process binary execution.
+TS7 50495 passed unfiltered. Earlier 27/35, 32/35 and 12/13 attempts remain in
+agent-context/3518-native-number-format-2026-09-09.md with their causes and
+terminal receipts. Canonical intrinsic preparation is required before lowering
+the support body's semantic math.floor operations, as in the legacy wrapper.
+
+Final post-validation High approval was relayed; normal publication is authorized
+and in progress under a separately granted serialized hook slot.
+These resource proofs do not close the full async consumer, public cutover,
+boundary activation or direct-codegen retirement obligations.
+
+### Native string-output executable extraction E1 — static draft (2026-09-09)
+
+The separately claimed Lane E prerequisite is implemented against published
+721cd33a828c89cfc04c851b011f910b76a4d2c5: complete binary concat, fixed-arity
+concat, stdout append, prepare and character readout bodies/locals now have
+pure runtime owners with live compatibility adapters. Registration, literal
+production and publication remain in their original order. Owned concat,
+growth, console coercion and all consumer/resource admission code are unchanged.
+
+Read-only inverse reconstruction matches all three complete historical donor
+files, with original hash receipts retained. Two new suites author 84 cases,
+including 24 real-Wasm recipes under both empty-identity choices; these tests,
+typecheck, formatting and normal publication hooks have NOT run in this draft.
+High review and serialized validation are required before publication.
+
+See agent-context/3518-native-string-output-extraction-handoff-2026-09-09.md
+for exact scope, interfaces, frozen source hashes and unrun commands. Native
+output resource admission and full-family consumer execution remain the next
+checkpoint; this extraction does not satisfy those acceptance conditions.
+
+### E1 validation exposes inherited UTF8 rope traversal failure (2026-09-09)
+
+The unchanged E1 R1 source/test freeze was measured: 56/84 focused cases pass,
+28 mixed-UTF8-rope cases fail; all 24 complete-donor preservation controls pass,
+and TS7 exits zero. Failures are retained, not waived or relabeled as successful
+native output acceptance.
+
+Independent original-donor versus canonical-resource execution gives 32 calls:
+UTF16 ropes and UTF8 roots succeed, while UTF8-left/right rope leaves trap on
+both arms (16 successes, 16 failures). Original and extracted copy-tree/flatten
+bodies and locals are exactly equal. Full binaries retain the separate prior
+UTF8 decoder offset correction as an explicit difference.
+
+Actual public source independently reproduces the defect: a runtime-selected
+65-code-unit concat followed by charCodeAt, compiled on exact 721cd33a versus
+frozen E1, with IR and UTF8-storage switches independently off/on. Eight
+compilations, 16 instances and 64 calls give 48 successes and 16 failures. All
+four baseline/candidate pairs have exact bytes/WAT/import/export/outcome parity.
+Only IR-on/storage-on produces real UTF8 leaves and traps; storage-on alone
+on the legacy source route still materializes UTF16 globals and is not UTF8
+coverage. The public trap is the copy-tree ConsString cast inlined into flatten.
+
+Required repair owner is the shared string-flatten runtime and its two actual
+legacy/resource callers, outside E1's five production paths. Copy-tree needs
+an actual decoder dependency for UTF8 leaves while preserving declaration and
+registration order. No such repair, case removal or production scope expansion
+has occurred. See the executed-evidence section of
+agent-context/3518-native-string-output-extraction-handoff-2026-09-09.md for
+exact sessions, donor lineage, artifacts, remaining limitations and owner join.
+
+### E1 extraction plus authorized UTF8-rope repair — publication preparation (2026-09-09)
+
+The later High contract explicitly authorized the shared copy-tree repair and
+its two real callers. Copy-tree receives the actual enabled/disabled decoder
+selection, classifies UTF8 leaves before the original descent, and retains all
+seven locals. Legacy registration captures and fills the same pending function
+object in the original order; issued resource fill passes the genuine decoder.
+The original seven E1 files and complete UTF8 decoder bytes remain unchanged.
+Two exact checked inverses reconstruct the original copy-tree and legacy adapter
+without reseeding historical scanner/decoder or whole-donor receipts.
+
+Session 97215 retained 293/301: E1 84/84, repair 75/75, flatten 61/61 and proof
+73/81. All eight remaining failures were child argv path errors. Their test-only
+correction then passed all 81/81 in session 29311; no guard was weakened.
+TS7 session 78279 exited zero with this unchanged production.
+
+Actual public compilation compared exact 721cd33a against the frozen eight-path
+production delta. All four compiler children exited zero: eight compilations,
+16 real instances and 64 calls. Candidate passes 32/32. Baseline retains its
+eight IR-on/UTF8-on illegal casts and passes the other 24/32. Both disabled-UTF8
+pairs preserve exact bytes/WAT/import/export ordering/outcomes; both enabled
+pairs retain explicit differences rather than pretending repair is parity.
+
+The public controller exited one only after compilation, because its validator
+invented a required `warnings` array; the real public CompileResult has `errors`,
+not a warnings field. Original script and failure report remain. A separate
+comparison-only correction reread the exact receipts without another compiler
+run and exited zero, with six independently rejecting corruption controls.
+The final report SHA256 is
+`55f87e2bac3473d7f66c33017451f6e87500cbb1998f52c450c5e16618e71913`;
+full artifact, provenance and terminal paths are in the E1 publication handoff.
+
+The heavy slot is released. Normal commit/push gates and parent-owned inventory
+registration for the two new body modules remain pending. The full scanner
+three-arm compiler run and existing caller regression suites have not been
+rerun here after this repair. This prepares a non-draft held checkpoint; it
+does not claim native output resource admission, complete async execution,
+public IR-only default, ABI30 acceptance or retirement.
+
+Subsequent bounded metadata handoff: parent added exactly two `files` records
+for the new concat/stdout body owners, both clean/native-runtime, and delegated
+their inclusion as the seventeenth checkpoint file. The complete policy is
+otherwise structurally unchanged: no allowed edges, required roots, minima,
+history or negative-control expansion. Actual inventory validation remains
+unrun pending the serialized slot; classification is not activation evidence.
+
+Actual publication inventory subsequently passed in session 79242, exit zero:
+1,353 modules, zero errors, inventory valid and architecture incomplete against
+the immutable 721cd33a base. The two new owners were counted as untracked prior
+to staging. This is classification validation, not expanded root coverage or
+complete-graph/retirement evidence; normal publication hooks remain next.
+
+### Native string-output E2 implementation dispatch (2026-09-09)
+
+The actual remaining string resource refusal is immutable binary `string.concat`.
+Completing this lane also requires canonical arity-5 concat and stdout append,
+prepare and character readout. Existing source certification is retained; all
+primary async owners remain in the real program. No shortened source or fabricated
+scanner/unbox demand supplies the output dependencies.
+
+The frozen Astra High implementation contract is
+`agent-context/3518-e2-string-output-high-contract-2026-09-09.md`, SHA256
+f33688ecd6c5bea50e7f41be537776343ce13007afa9ba4a9a4fc2dc35b502d8.
+Parent read the full contract and corrected the physical phase order before
+dispatch: ABI planning seal before allocation; reserve/reconcile, freeze, bind
+and finishBinding, fill, publish, then module seal. Resource completion works
+in filling/sealed phases and authenticates actual filled content, not merely
+a flag or a whole-module completion claim.
+
+Canonical claim session 32902 acquired and verified
+`3518:native-string-output-resources` for
+`ttraenkler/codex-native-string-output-resources`, branch
+`codex/3518-native-string-output-resources-20260909`. Maxwell owns the three new
+requirements/resource/physical-plan modules, the explicitly handed-off existing
+native-string-values aggregate, and the two new tests enumerated in the contract.
+Parent keeps physical ABI/consumer integration, options, boundary activation and
+whole-family acceptance. Implementation starts from published E1; final source
+validation must include the current formatter integration before publication.
+
+Use one shared string/flatten owner, exact canonical internal literals and E1
+bodies, and explicit default-true empty-identity options without ambient reads.
+Preserve old no-output recipes and bytes. Resource proof does not complete native
+async invocation/frames/Promise fill, canonical main undefined, public cutover,
+ABI30 planningSealed evidence or strict direct-codegen retirement.
+
+### Same-owner staged closure reservation checkpoint (2026-09-09)
+
+The bounded closure resource producer now supports one issued owner and pack
+across a settle-metadata prefix, actual Promise reservation, and signature-only
+suffix. Complete preflight and all metadata precede the first pause; the legacy
+atomic API and complete frozen shape remain. Promise reserve/reserving inventory
+accept the authenticated prefix, while fill still requires completion.
+
+High statically approved production and final proof repairs. Focused rerun4029
+exited0 with 172/172 across four suites. Earlier33713 exited1 with 170/172;
+the surviving physical-only preflight mutant was still blocked by the canonical
+walk, and one expected missing-request diagnostic needed the new prefix guard.
+Both are retained distinctly in the handoff. TS740649 exited0 before those two
+test-only repairs. Final TS711727 exited0 after those repairs and scoped
+production formatting; normal publication remains pending.
+
+Original/decoded actual-source Promise interleaving, fresh/cached suffixes,
+three lazy-observer timings, full donor receipts, live mutants and allocator
+ordering controls establish this reservation prerequisite only. Complete Promise
+fill, full native async execution, public cutover and retirement remain open.
+See agent-context/3518-staged-closure-reservations-implementation-2026-09-09.md.
+
+### Delay/timer implementation contract frozen (2026-09-09)
+
+The reviewed Astra High contract is
+`agent-context/3518-lane-b-delay-timer-implementation-contract-2026-09-09.md`,
+SHA256 ad198d26d678e93a365ca2515561f29cd64b3e1b845cd7a79caa3cc268a58848.
+It uses published same-owner staged closures rather than obsolete atomic-only
+assumptions. Canonical legacy-used layout factories and timer export planning
+have disjoint proposed writer scopes; active legacy-file ownership must be
+checked before dispatch. Copying this contract grants no overlap release.
+
+Parent retains selected import authority, complete ordered export occupancy,
+physical scheduling and consumer integration. Resource fill/publication still
+requires genuine C1/C2 invocation/classification and directCall0 ownership,
+plus actual rejection-tracking ownership when selected. Signature-compatible
+stand-ins, missing-hook fallbacks and hand-written dispatchers cannot satisfy
+those dependencies. Tables and elements remain typed publication obligations,
+not fabricated function ABI slots. Whole-family execution remains required.
+
+Predispatch audit read upstream assignment head
+`a6bd497f7c91ee841a63698df831a962b055e69e` twice unchanged. B1's three
+legacy adapters overlap active `3518:native-delay-combinator-bodies`, owner
+`ttraenkler/codex-astra-native-delay-combinator-bodies-20260908`, write ID
+`57815-2v4g2ji4`. B2's closure-exports.ts overlaps active
+`3520:c31-closure-host-bridge`, owner `ttraenkler/codex-r1-c31`, with C38
+publication history also requiring reconciliation. No explicit release for
+these new factoring scopes was found; neither writer was dispatched. The
+separate preserved P/C file inventories do not grant release of these owners.
+Timer-contract and new-path ownership also require verification before claims.
+
+### E2 named-signature correction (2026-09-09)
+
+Parent and Astra High verified the actual ledger always performs an unnamed
+intern lookup inside function reservation. Preserving each of the three stdout
+signature names therefore requires an earlier explicit named intern step:
+two calls, one allocation on a cold miss, none on a preseeded hit. Existing
+matching types retain their first-allocation names. Binary/batch functions keep
+implicit-only interning. No duplicate ABI type entry or ledger/schema change.
+The corrected contract SHA256 is
+`d65b993cfc014277e4c4f6c0903b919a6cbdc962002257b6333e7618759665e4`;
+this narrowly supersedes the earlier no-explicit-plus-implicit sentence, not
+the full requirements or physical phase order. Maxwell received the correction
+and must pin actual calls, optional arguments, names, indices and cache behavior.
+### Native async producer declarations (2026-09-09)
+
+The existing closure, argument-vector and Promise reservation callers now consume
+pure symbolic declaration plans before allocating. Issued inventories preserve
+ownership, request/cache ordering, adopted arrays and inherited metadata type
+identity. Promise still owns 25 declarations across 26 ordered operations.
+The declaration checkpoint passes 194/194 focused tests (77955, exit zero) and
+unfiltered TS7 (43844, exit zero). High approved the twelve frozen source/test
+files; earlier failing runs remain in the implementation handoff.
+
+Borrowed tag association is checked while reserving; actual tag provenance is
+authenticated only after freeze using the existing ledger. This limitation is
+explicit, not a claim of preallocation tag authentication. The full async
+consumer, staged cross-producer closure scheduling, complete runtime fills,
+public cutover and retirement remain unfinished.
+### Existing string-admission PR dependency refresh — 2026-09-13
+
+Queue draining remains limited to existing published migration checkpoints.
+PR 5787, “feat(ir): admit native string numeric source lowering”, is being
+refreshed from published bda70f02b1ac9043975b312d7300218a3e2ebfd1 onto its
+actual scanner target 1ce5d0575c890d640bc3ef9958c32d662bea9e98 in isolated
+branch codex/5787-queue-drain-20260913. The merge conflicts only in this
+appended history; both complete sections are retained. All three original
+source files and the original 36-case test remain byte-identical. Incoming
+prerequisite implementations and their original failures/receipts remain
+preserved; a merge into a stack is not main delivery.
+
+Fresh composed validation and normal signed hooks are pending. The later
+refresh onto the prepared main-delivery lineage remains separate; no new
+physical consumer implementation or acceptance credit is introduced here.
+This checkpoint stays held until dependencies reach main and actual
+composition, checks and protected queue delivery are verified.
+
+The scanner-parent refresh validation found one pre-existing preservation
+composition gap: 1,063/1,064 tests passed across 21 complete files, with zero
+skips. The vector donor receipt still treated the Error and native-string
+layout registrations as inline bodies, although both published parents
+already use the shared canonical builders. The first row failed; the second
+row was identified independently by source inspection. The initial failure
+report remains preserved. All 43 original closure source-caller tests then
+passed, including the eight Test262 cases with the verified pinned corpus.
+
+The scoped test-only repair authenticates the independently published layout
+import, exact canonical population/signatures and eight owned factory calls.
+It reconstructs the original declarations from the actual live return payloads,
+reversing only the declared layout binding and two nested indentation levels.
+Both original hashes and the independent original string/Error fixture must
+still match. Every original 20 vector donor control remains intact.
+
+Review found and closed two inverse collisions: a free ctx reference could
+masquerade as the projected layout binding, and a differently quoted duplicate
+canonical import could evade raw-text route matching. Both now have positive-
+first negative controls. Final targeted validation passed 67/67: 38 donor
+controls and 29 unchanged live string/Error descriptor and execution controls.
+The earlier 65-case repair run is retained as superseded; no measured source
+hash was captured for that intermediate version. Final source pins accompany
+the 67-case report. The remaining original core tests and 43 source callers
+remain unchanged; no production file changed for this repair.
+
+The scanner's earlier three-arm comparison remains historical evidence, not
+a fresh run against this composition. Composed source TS7 passed before and
+after the initial repair; final gates and normal signed hooks are required
+before publication. The further prepared-main-lineage merge is still pending.
+
+### Implementation Plan — forward the native delay EH repair through the held extraction — 2026-09-12
+
+**Plan recorded before source edits; the exact seven-file repair is now
+implemented, reviewed and validated locally.** Root supplied isolated
+worktree `.claude/worktrees/codex-3518-delay-eh-forward-20260912`, branch
+`codex/3518-delay-eh-forward-20260912`, at exact clean
+`de2f1072ebb32771272d24a58407814f9d2a5d38` (held PR 5759).
+Root retains the integration-consolidation claim. The original
+`3518:native-delay-combinator-bodies` owner, its PR/worktree, the cumulative
+held PR 5798, other agents' source and the earlier export-marshalling draft
+remain untouched. This is a forward integration repair, not a takeover or a
+repeat claim that the original extraction changed no behavior relative to
+today's main. No publication or commit is authorized by this plan.
+
+The landed reference is
+`d4108568d43f14c361ecc3a58c82633027eaae39:src/codegen/ir-native-promise-delay.ts`.
+Its provider already calls `buildStandardTryTable` with an externref-bearing
+tagged handler followed by a foreign-exception `catch_all` handler. The held
+extraction's `src/runtime/wasmgc/promise/delay-bodies.ts:57` still returns the
+old legacy `try` envelope around those same operations. The binary encoder
+has separate literal encodings for `try_table` and `try`
+(`src/emit/binary.ts:1765` and `:1799`); this repair must change the actual
+instruction body, not just its name or recorded hash.
+
+**Existing authority and dependency boundary.** No helper extraction is
+needed. `src/wasm/physical/exception-control.ts:107` already owns the canonical
+`buildStandardTryTable`; its only import is type-only from the Wasm model.
+`src/ir/try-table.ts` is already a compatibility re-export of the same function
+objects. The existing ownership test in
+`tests/issue-3518-async-frame-body-ownership.test.ts:129` checks that identity.
+The helper constructs observable nested blocks and `try_table` catches and
+retargets branches by mutating its supplied instruction arrays. The delay
+builder supplies newly constructed registration/handler arrays on each call;
+it must continue doing so, with no cross-call or cross-handler aliasing.
+
+The signed base has 23 production importing consumers of the two EH helpers:
+the native async frame engine, the WasmGC IR backend, and 21 codegen modules
+(function-body, runtime-eval-callable, async-closure-promise, disposable-runtime,
+array-filter-length-set, async-scheduler, promise-executor,
+generators-native-consumer, class-bodies, index, named-this-call,
+statements/nested-declarations, literals, statements/loops, closures,
+statements/exceptions, generators-native, array-from-native, expressions,
+expressions/calls, expressions/new-super). Their exact paths and source pins
+are recorded in `.tmp/delay-eh-forward-planning/source-plan-evidence.json`
+(SHA-256 `ee07dd243b133c46a19d5dfecd21cdcb4ce9263eecd800add76d881f5bd0f4af`).
+They remain read-only. In particular, do not use `buildTargetTaggedTry`:
+its host branch preserves legacy output, while its standalone/WASI branch
+currently passes only tagged catches to the standard helper and omits its
+optional `catchAll`. That would lose the delay provider's required foreign
+exception sentinel route.
+
+The native delay adapter's existing guard at
+`src/codegen/ir-native-promise-delay.ts:99` admits only standalone with native
+strings and excludes WASI. It already supplies the resolved tag, function and
+type handles. No new target policy, import, ABI field, allocator, context
+callback, frontend access or runtime-to-IR dependency is required.
+`scripts/compiler-boundaries.json` already admits `native-runtime` to
+`wasm-physical`; both endpoints are already clean. Do not change that policy,
+its activation history or module population. One added runtime edge predicts
+212 total edges (150 type-only, 62 runtime), still 65 modules; these are
+predictions to verify, not new measured results.
+
+**Implemented connected write set: seven existing files.**
+
+1. `src/runtime/wasmgc/promise/delay-bodies.ts`: add the direct downward import
+   from `../../../wasm/physical/exception-control.js`. Replace only the legacy
+   envelope with `buildStandardTryTable({ kind: "empty" }, timerRegistration,
+   handlers)`. Handler zero is `catch` for the existing `resources.exnTagIdx`
+   with externref payload; handler one is `catch_all`. Keep the original five
+   tagged operations, four foreign operations and attached sentinel comment.
+   Keep the six allocation-prefix operations, eleven registration operations,
+   two return operations, callback, locals, resource interfaces, capture fields,
+   dependency handles and fresh instruction identities unchanged.
+2. `tests/issue-3518-native-delay-combinator-body-ownership.test.ts`: extend only
+   the delay leaf's exact import expectation, keeping combinator expectations
+   and every forbidden-edge control. Replace its legacy-envelope assertion
+   with independently stated nested block/`try_table` shape, ordered catches
+   at depths zero/one, the tagged payload block and exact existing operation
+   arrays. Assert no legacy `try`, unchanged prefix/suffix and nonaliasing
+   across handlers and repeated builder calls. Do not define the expected
+   body by calling the production helper again.
+3. `tests/helpers/native-delay-combinator-source-receipts.mjs`: preserve all
+   13 `ORIGINAL_EVIDENCE` and 13 `ORIGINAL_SEMANTIC_EVIDENCE` entries, both
+   original five-file glue ledgers and all 24 retained-declaration records.
+   Add a separately named, fail-closed EH-forward verifier. It must first
+   authenticate the single direct helper import and the exact canonical call
+   envelope/handler metadata against independently captured landed-main
+   evidence. Only then may it reverse that one envelope and remove that one
+   import for the existing historical verifier. Live prefix, registration,
+   handler bodies, comment and suffix pass through into the old comparison;
+   no candidate-derived historical digest, missing-root fallback or generic
+   normalizer is allowed. Record the intentional legacy-to-standard delta
+   separately from the unchanged historical body proof. If this cannot be
+   expressed narrowly without weakening the old verifier, return the concrete
+   limitation for review instead of reseeding evidence.
+4. `tests/issue-3518-native-delay-combinator-source-preservation.test.ts`: route
+   current-root historical assertions through that explicit forward verifier,
+   with named negative controls for a missing/duplicate helper call, wrong
+   callee, lost/reordered handler, wrong tag/payload, changed rejection target
+   and changed foreign null sentinel. Keep the old retained-declaration and
+   live-body mutation controls meaningful. The previous explicit historical
+   binary/WAT pair is preserved as evidence of the old extraction; do not
+   change its strict equality comparison to pretend the new EH bytes equal
+   the old donor. Any later legacy pair run must report that intentional
+   non-equivalence separately. No source fixture or execution is removed.
+5. `tests/issue-3518-semantic-provider-boundary.test.ts`: amend only the two
+   affected edge-count expectations once the actual graph confirms the one
+   new downward edge. Keep the 65-module denominator, allowed-edge digest,
+   activation-history pins and all refusal controls unchanged.
+6. `tests/issue-4573-standalone-native-promise-delay.test.ts`: retain the twelve
+   existing source/options/behavior controls, including the foreign JavaScript
+   exception producing `{ state: 2, reason: null }`. Add a focused synchronous
+   compile/validate regression using the exact 2,061-character native-family
+   source and options captured by the unchanged settlement recorder (source
+   SHA-256 `fb644cafb5d7125d1906519dd330642a53e05cbf8a9f5a4af6eef4bbf7a74b9e`,
+   file name `settlement-native-family.ts`, standalone, experimental IR,
+   skip semantic diagnostics, fallback/outcome tracking, host bridge always,
+   WAT enabled). Derive it by the existing recorded source transformation;
+   do not maintain a divergent fixture copy. Require actual nonempty native
+   delay ownership and standard-EH output plus successful synchronous
+   `WebAssembly.Module` construction before any runtime execution. Add a paired real tagged
+   registration-throw control using the actual compiled instance's exported
+   exception tag and a distinct externref payload. The timer import throws
+   `WebAssembly.Exception` with that exact tag; the delay call must return
+   without a synchronous leak, state must be rejected and the payload object
+   identity must be preserved. Require the actual tag export and the unchanged
+   single timer import; do not manufacture an unrelated tag, add a production
+   export/import, substitute a JS Promise or silently skip a missing export.
+7. This Issue 3518 implementation/evidence section only.
+
+No changes are proposed to the shared EH helper/facade, codegen delay adapter,
+combinator/settlement/frame bodies, encoder, source fixtures, boundary policy,
+C consumer/codec/emission, A finalizer, B engine or shared baselines. No size
+exception is proposed. Final measured sizes and exact named test population
+will accompany the source draft before validation is scheduled.
+
+**Behavior and evidence checks, in dependency order.**
+
+- Preserve a pre-edit source map and all root baseline artifacts. Root's full
+  unchanged twelve-case delay attempt on Node 25.9 aborted in V8
+  `!job->compile_imports_.empty()` before producing test rows. Its narrower
+  first existing synchronous compile/validate control then passed 1/1, with
+  eleven unselected. Therefore the legacy source envelope is not evidence that
+  every scalar delay module is invalid, and the engine abort is not a measured
+  twelve-test compiler verdict. Root's unchanged eight-fixture settlement
+  recorder likewise aborted on the first delay fixture before a row existed.
+  Root's subsequent explicitly labeled `--no-wasm-async-compilation`
+  diagnostic completed all eight original rows: seven executed, while
+  `native-family` threw during `artifact-validation` with
+  `WebAssembly.Module(): Compiling function #314:"__ir_promise_delay_native"
+  failed: module uses a mix of legacy and new exception handling instructions
+  @+110573`. The compiler reported success with no errors for that artifact.
+  The raw report is `.tmp/delay-eh-forward/baseline-settlement-sync.json`,
+  SHA-256 `ef9c4780c215629db34db0a9e4b0617bbe704af1f82427bf4935d5db1dbc11e8`.
+  This is a measured context-sensitive baseline refusal, distinct from the
+  original asynchronous V8 crashes and the passing scalar 1/1 control.
+- The mixed-EH source-produced failure is now reproduced in the unchanged
+  settlement recorder. Reuse that exact artifact/source and/or the existing
+  `website/playground/examples/js/async.ts` native-family fixture through the
+  unchanged Issue 4574 compile options. Preserve complete binary/WAT, actual
+  compiler result, terminal owner observations and synchronous validation
+  result before any instantiate. Identify the actual function containing the
+  incompatible forms; do not infer them solely from source names or count an
+  engine crash as a validator refusal. No simpler replacement fixture is an
+  application pass. The expected repair is validation and execution of this
+  same original family, not only the scalar delay that already passed.
+- After the repair, verify emitted standard-EH structure, both real rejection
+  routes, normal concurrent settlement and exactly-once behavior on the same
+  original fixtures. Compare the live provider envelope with the landed-main
+  form while preserving all non-envelope body evidence. Run the focused
+  ownership, historical-preservation and boundary controls; collect actual
+  row counts rather than adding new controls to historical totals.
+- Then run the relevant unchanged delay/native-family controls and canonical
+  source TS7 in the sole granted heavy slot, each behind a fresh finite load
+  gate, one 4-GiB fork and no file parallelism. Record the actual worker VM
+  flags and every diagnostic runtime variant. The previously recorded 33,
+  126, 121, 12 and 14 populations describe historical suites, not results of
+  this repair. The initial planning-only assignment authorized no heavy run;
+  root subsequently scheduled the frozen draft and completed the checks
+  recorded below.
+- Preserve failed artifacts and exact input hashes. Any new failure, missing
+  actual exported tag, unexpected graph change or required scope beyond the
+  seven files above is reported before a dependent expansion. Signing and
+  publication remain separate decisions after source and evidence review.
+
+#### Forward-repair local implementation and final evidence — 2026-09-12
+
+The seven-file repair is implemented and independently reviewed locally.
+The sole production leaf remains `e60283bf8303025e4faa430707a9f5651c78db98202feba9aa6ccd285056e29c`
+(111 lines); every other source file and the canonical EH helper are unchanged.
+The original thirteen donor hashes, supplemental semantic hashes, five-file
+glue ledgers and 24 retained declarations remain unchanged and enforced.
+The separate forward verifier authenticates the full ordinary import and
+landed call before projecting only the authorized envelope. B accepted the
+attribute/assertion/modifier/phase guards and three positive-first negatives.
+
+The diagnostic pair used the same eight fixtures, options and runtime flags,
+with only that production leaf changed: baseline executed 7/8 and rejected
+the native-family module for mixed EH at function 314, offset 110573;
+candidate executed 8/8 with 22 executions, including four family scenarios twice.
+Raw pair: `.tmp/delay-eh-forward/{baseline,candidate}-settlement-sync.json`.
+The normal-runtime candidate also executed 8/8 fixtures and 22 executions,
+exit 0: `.tmp/delay-eh-forward/candidate-settlement.json` (`c7918ca4`).
+Earlier asynchronous V8 aborts remain preserved and unclassified; they produced
+no test rows and are separate from the diagnostic validation refusal.
+
+Frozen cohort 68636 exited 0: **325/325**, zero failed or pending. Actual rows:
+ownership 33, preservation 143, boundary 121, delay 14, unchanged family 14.
+The new real module-tag case preserves payload identity; the original foreign
+exception case still rejects with the null sentinel. All twelve old delay
+test bodies and the strict historical comparison remain intact.
+Report: `.tmp/delay-eh-forward/cohort-325.json`, SHA-256
+`b3bd048e1d74547579f34bfb3e747a34b75ff35b77e39a961eda3be8362f7afb`.
+All seven frozen input hashes matched before this issue-only evidence update.
+
+Source TS7, LOC, function-size and oracle gates passed. Boundary inventory is
+valid: 1,313 modules, 65 clean, 1,243 migration entries, five compatibility
+adapters and zero errors; `architectureComplete` remains false. The dead-export
+command exited 0 with preservation witnesses 6/6, but strict closure remains
+open on two existing unknown imports. Retirement is not certified.
+The 325/325 report is the pre-style-correction capture. A later normal commit
+attempt stopped before tests on a `useConst` lint error; its log is preserved
+as `.tmp/delay-eh-forward/commit-attempt-1.log`. Only the new tagged test now
+uses a constant mutable holder (`ebecacf8` to `cbac043a`); source, helper and
+expectations are unchanged. Scoped format/lint passed. Subsequent full normal
+hooks passed **576/576 across 12 files** (29+21+41+45+24+33+143+36+55+14+121+14),
+including the corrected 14-case delay file; budgets, lint and oracle passed.
+The raw record is `.tmp/delay-eh-forward/commit-attempt-2.log`. This is a
+separate hook cohort, preserving the original pre-style 325/325 capture.
+Commit creation then failed after hooks, exit 128: the inherited SSH agent
+socket was missing. No commit was created in that attempt. Root verified the
+existing desktop agent and will retry signing with full normal hooks again.
+Root owns the signed local checkpoint; existing PR/claim holds remain untouched.
+
+
+
+### Capability contract extraction checkpoint (2026-09-08)
+
+The [Astra High capability-schema plan](../agent-context/3518-capability-schema-checkpoint-plan-2026-09-08.md)
+specifies an independent checkpoint from canonical main
+`16498efb481cb022ee5c4dcc9bb137b6d4c91a50`. It extracts the complete closed
+capability-record data schema (25 types/interfaces, 14 constants) into
+`src/runtime/contracts/host-capability-schema.ts`, without changing provider
+selection, host/linear behavior, catalog construction or authentication.
+The old module imports/re-exports the same bindings and retains every
+function, private set/map and canonical record object. This removes an
+implementation dependency needed by the subsequent manifest contract split;
+it is not new host-backend work.
+
+Reconciled claim `3518:capability-schema-separation` is held by
+`ttraenkler/codex-astra-capability-schema-20260908`, branch
+`codex/3518-capability-schema-worker-20260908`, verified in ledger
+`d31c011bfbdca1f743d8102f82c9404ce743e15b` (815 held records). Historical
+claims and P/C's twelve/five dirty files remain preserved. Astra Low source
+and evidence workers have disjoint worktrees; the parent owns shared policy,
+integration and non-draft PR publication. No main push or force push.
+
+The boundary policy activates only the canonical schema leaf with zero new
+allowed edges. The old catalog implementation and the planned full runtime
+contracts index remain explicit debt. Core may not import this upward
+contract: full semantic-function/prepared-function separation still needs
+the reader, writer, generic-pass and codec obligations in the linked plan.
+
+PR #5742 (core type construction/equality) was independently observed at
+`acfd3e37b8765c4c4788c1fa94718d62c60e473c` with 29 successful and 13 skipped
+PR-head checks, mergeable/CLEAN, no unresolved review threads and `hold`
+retained. That is not merge-group or full-conformance proof. This checkpoint
+does not stack its source. PRs #5738/#5739/#5741/#5742 retain the inherited
+N1 host-regression/merge-queue-safety hold; the separate ABI caller decision
+also remains open. No CI/ruleset change, hold removal, enqueue or retirement
+claim is authorized by this checkpoint.
+
+Validated handoff: 39/39 moved declarations and 48/48 retained declarations
+(all 28 functions) are text/documentation-identical; source net +100 LOC,
+no budget exemption. All 76 new controls pass, plus all 42 existing D0
+controls. The full distinct focused population is **216/217 passing**: the
+one existing host-async concat fixture fails on untouched main too. Exact
+base/candidate byte, WAT, import-order, pool and outcome comparison matches
+at 10,122 bytes, SHA `9cc61132c3cea9c609e93fc3ec5fa85af99e7d17bca888eb457373d3c9fa3450`,
+28 function imports and concat5 index 22. Its old 10,021-byte/27-import/index-21
+expectations are not changed or waived. No claim that the fixture passes or
+that its prior mismatch is fixed.
+
+Three original public standalone scalar/vector/closure programs execute
+twice each with zero Wasm imports and full baseline/candidate equality
+(bytes/WAT/descriptors/pools/IR outcomes/results). Two complete async manifests
+retain seven providers each and 0/7 standalone/host capability records;
+all 32 catalog objects remain canonical. Typecheck passed. Inventory:
+1,245 tracked modules, seven clean, two compatibility adapters, 1,236 debt,
+9,751 resolved edges, four unknowns, zero inventory errors. Complete mode
+fails honestly; N1 preservation retains all six witnesses and its original
+25-entry legacy baseline, while strict closure still fails on the same two
+dynamic imports. No retirement credit. The linked plan records exact frozen
+hashes, test commands/receipts, next prepared-function obligations and
+Astra High's held-publication review.
+
+### Queue-drain main refresh (2026-09-09)
+
+Capability-schema PR #5743 actually landed on `loopdive/js2/main` at
+`129e3efd4530ae1be56dbf5fdea54ddbbd87443e` (parents `4efa01e569b01fb5993b98eb461a8b82e28141d3`
+and reviewed `c2d900d4fa9811f3359c308369bfb2b4184e90a9`). Its real merge-group
+regression job `102532626515`, run `34368952422`, compared 48,735 host rows
+against 48,735 using verified donor `9b52a113071f94499407b6584124aee9ff3b426b`:
+zero raw non-timeout regressions and zero hard errors. The no-op step was
+skipped. Standalone merge-report success has the existing count-only limitation;
+it is not a full per-file standalone non-regression claim.
+
+PR #5751 was refreshed from `84b04810c99061918fe015980c5875cb293b98ac` onto
+that landed main. Five conflicts were reconciled: preserve the canonical
+host-capability implementation and old-path facade; retain the stronger schema
+reconstruction tests and four-module contract minimum; retain all prior policy
+layers, allowed edges and activation history; add main's four new inventory
+rows without duplicating the schema entry; preserve both complete issue-history
+sections. Independent High review verified all 73 main-only staged file blobs
+match the incoming main tree. Canonical catalog text differs from main's former
+location only in three relative import/re-export paths.
+
+Validation session `23400` exited zero. Source TS7 passed (its configuration
+excludes test sources); actual inventory passed with no errors and architecture
+still incomplete. The full ten-file refresh passed 280/280, zero pending and
+zero failed, in 99.24 seconds: schema boundary49/seam27, allocation replay29,
+program replay8, semantic/provider boundary85, typed async26, GVN diagnostics15,
+callable contracts4, typed preparation30 and fresh-process source-free7.
+Receipts are retained in `.tmp/queue-drain-5751-main-refresh-{ts7,inventory,tests}.log`
+and `.tmp/queue-drain-5751-main-refresh-tests.json` in the integration checkout.
+
+The historical 2,891-regression dispatch executed an ancestor shared by main
+and this PR, not this refreshed delta. It is retained as unresolved historical
+evidence, not waived or attributed to instrumentation. Landing now requires a
+fresh exact-candidate merge-group comparison with verified baseline provenance;
+any demonstrated new candidate regression blocks it. Full native async execution,
+ABI30/public caller proof and strict retirement remain separate unfinished work.
+No older PR closes until its actual content is verified on main.
+
+### Cumulative historical validation at 1fc56e20 (2026-09-09)
+
+The published cumulative PR5798 remains held. Its four composed batches passed
+2650 tests across47 files, with no failed/pending tests. Historical no-demand
+three-arm validation passed, including the original vector defect reproduction:
+five source executions, one exact source refusal and one producer-IR execution
+are distinct categories. Promise repair validation passed48 rows/96 instances/
+184 observations and14 negative controls, reproducing the baseline getter
+defect and observing no candidate semantic gaps. Neither result certifies full
+native async execution or direct-codegen retirement.
+
+The explicit delay historical pair against1cb0f5c7 did NOT pass. Candidate and
+baseline children both exited0 with11 executed artifacts each, but all11 rows
+differ in binary, WAT, result metadata and instantiated-byte records. Non-binary
+observed value fields match. The outer Vitest worker then exhausted its default
+512MiB heap while handling the large comparison. This is not merely a resource
+failure: the retained artifacts establish a real exact-parity mismatch.
+Evidence: `.tmp/delay-combinator-preservation-uGms5w` and
+`.tmp/queue-drain-delay-pair-1fc56e20.log` in the cumulative integration tree.
+
+Next action: attribute complete artifact differences to their source changes
+before considering any narrower acceptance claim. Preserve both original arms,
+all test populations and the failed receipt; do not waive a mismatch or rewrite
+a historical expected result to make the cumulative root pass. Scanner/frame
+pairs and the separate landed BigInt regressions tracked in5807 remain open.
+
+The scanner three-arm run subsequently passed at the same1fc56e20 source pin:
+66 executed rows and132 observations in each of baseline/candidate/projection,
+with zero comparison differences. Exactly four authenticated transformations
+ran in the projection and zero in the other arms. Baseline-versus-projection
+byte parity and actual-candidate semantic correctness are separate claims.
+Receipts: `.tmp/native-scanner-source-pair-a1Lq22`. This does not resolve the
+delay mismatch or5807. Frame baseline0194 is clean; its paired run remains
+unexecuted while cumulative artifact attribution is reviewed.
+
+### Frame/delay three-arm plan requested after historical failures
+
+Superseding the preceding frame UNRUN note: frame session93831 finished EXIT1,
+20/21 tests passed; four of five artifact rows differ. Delay's original outer
+OOM and all saved differences remain preserved. Bounded attribution accounts
+for reference shifts and identifies Promise capture, scanner guard and vector
+non-null changes, but does not turn exact-parity failures into acceptance.
+
+The user authorized preparation of an exact reviewable comparison plan, not
+implementation or execution. See
+[the three-arm review plan](../agent-context/3518-frame-delay-three-arm-review-plan-2026-09-09.md).
+It pins original roots, candidate, instruments and fixture arrays; preserves
+all original failures; retains 5/12 frame and 11/19 delay artifact/execution
+counts per arm; and requires complete repaired-baseline/candidate equality.
+No normalization, omitted fields, replacement fixtures or automatic baseline
+expansion is allowed. Literal repair patches and the additive driver require
+an independently reviewed execution manifest before any run. PR5798 remains
+held, and issue5807's Linux regression evidence is not waived.
+
+The user subsequently approved bounded implementation, but not the comparison
+run or merge. Literal four-file repair patches now exist for both historical
+roots, including P7; fresh isolated copies reproduce their complete postimage
+censuses. The additive driver and its synthetic/syntax-only tests are recorded
+in [the implementation checkpoint](../agent-context/3518-three-arm-repair-artifacts/IMPLEMENTATION.md).
+No historical arm has run. Independent admission review, remaining mutation
+controls and the complete execution-manifest review remain required before
+requesting run approval. Original failures, fixtures and PR5798's hold remain.
+
+2026-09-10 preflight checkpoint: all 103 synthetic/extraction/CLI controls pass.
+The complete six-arm review-only manifest is captured, and read-only admission
+against the actual source roots and dependency tree passes without launching a
+compiler. This does not prove historical equality or authorize execution.
+Independent static/data review found no actionable blockers. Late-path negative
+controls remain before run approval;
+see the implementation checkpoint for the exact manifest digest and limitations.
+
+The shared dependency census later changed, invalidating current admission;
+the failed preflight is preserved. An isolated complete dependency copy (cache
+included) and fresh exact-pin O worktrees now support a replacement review-only
+manifest. Parent validation passes 30 additional controls, including 27 negative
+rejections against frozen observed reads. This is admission coverage, not
+compiler parity. Execution and merge approval remain separate; see the updated
+implementation checkpoint and measured evidence for limitations and digest.
+
+After explicit user execution approval, the six-arm comparison completed EXIT0:
+48 artifacts / 93 executions, all children EXIT0. Full repaired-baseline/candidate
+fixtures and rows are exactly equal for both frame and delay, while both original
+comparisons remain unequal and preserved. Frame late-import is exact across all
+three arms. See `comparison-terminal-evidence.json` beside the implementation
+checkpoint for terminal summaries and the complete local artifact hash inventory.
+This closes the bounded historical frame/delay gate, not issue3518: closure,
+physical acceptance, retirement and issue5807 Linux regressions remain open.
+Execution approval did not authorize merging; PR5798 remains held.
+### Physical reservation queue refresh (2026-09-10)
+
+PR5752 is refreshed against main `1429cfdf2167f31532d70c5304430a9300c2a982`
+in an isolated checkout. Its only textual merge conflict was competing appended
+issue history; both complete sections are retained. All thirteen PR-owned
+production/helper/test files match head
+`1731cf377a9ae3a55af7b9d9447c3b5b2fa144fd` byte-for-byte. Other source changes
+come from already-landed main, not a new implementation. The physical kernel,
+whole-program completion and semantic-provider boundary suites pass254/254
+tests across three files on Node25.9.0/macOS ARM64. This refresh does not repeat
+the historical source pairs or establish fresh merge-group conformance.
+
+The semantic-provider parent is already on main, so main is the appropriate
+landing base after publication. The BigInt conformance discrepancy remains
+tracked in issue5807 on the cumulative PR5798; keep this checkpoint held until
+that landing evidence is reconciled. Local tests and conflict repair do not
+waive that hold or certify complete native async/IR retirement. Older references
+above are historical records, not current dispatch or merge authorization.
+
+
+## 2026-09-12: resume existing PR queue, refresh frame extraction against main
+
+User direction: pause new migration scope and deliver the existing non-draft
+PR chain 5755 → 5756 → 5757 → 5758 → 5759 → 5760 dependency-first through the
+protected merge queue. Routine scoped fixes and normal validation, commits,
+pushes and queue submission are authorized. Delivery requires verified main
+ancestry and content; an open PR or green local suite is not completion.
+
+The supplied old temporary worktree and Markdown handoff are absent on this
+host. Published comment 5646241014 contains only an `@`-prefixed local path,
+not the handoff body. Preserve the earlier committed refresh record and
+original failures/receipts; reconstruct from the existing published PR head.
+
+PR5755 starts at published a42660c8974d75a06586cd7ce890e1c61d73c0f2 and cleanly
+merges main 06f4cfa4aca3cfa20f1e5c03738956407ec2fedb in the isolated
+`codex/5755-queue-drain-20260912` worktree. Eight of the nine original frame
+source/test files remain byte-identical. The async-frame wrapper incorporates
+main's Promise.all suspension and conditional-await spill/reaction fixes;
+the extracted engine and the landed native-delay exception repair remain
+unchanged. Boundary policy adds 16 unmigrated records and updates the existing
+lowering facade description; it removes no records or allowed-edge rules.
+
+Before compiler tests or hooks, an independent test262 repository was checked
+out at the exact shared gitlink b363f29d3c43c626dc852744ad64a0b48a003693.
+All 53,889 test files and 44 harness files match their raw Git blob hashes,
+file sets and modes (86,743,051 bytes); no untracked or ignored extras occur.
+The object store has no alternates or shared hardlinks. Original corpus links,
+25 untracked records and seven ignored records remain preserved. Verification
+manifest SHA256: fcaaff56a78c134e3875a00b743d5e6435939c38f304eeec1ffb35bc3c611ffb.
+The first checker refused an unmeasured same-name object comparison after Git
+repacked the clone; that failure remains archived. The corrected checker
+compares all three clone object-file inodes against all 411 source files.
+
+The original historical source positive was run before any test repair:
+1 failed, 20 filtered. Its reconstructed population remains 51 statements,
+47 functions and 92 bodies, but main's legitimate edits change its hash from
+`d842bc14445082f874a698a6778286ad511e51e7f7cc446dbe164eedfa0ce9d3` to
+`40bece50928038d795a05a31219cf4cfba82f528891311902b3fd6f2814bea87`.
+Preserve the original receipt; authenticate main's forward changes separately
+before inverse projection, with mutation controls. This is a scoped merge
+validation repair, not permission to reseed historical expectations.
+
+Validation and queue delivery remain in progress. Keep the hold until the
+refreshed head is validated; retarget the existing PR to main before pushing.
+At PR5756 use published e3a01efa44f68da1b93c16b1a728d0ba099183f9, never stale
+fea8c3f413. At PR5759 carry signed repair
+561853c00d76c72eb44dbee14340dc15e9841e41 into the extracted delay implementation,
+retaining both tagged and foreign catches and all original donor ledgers.
+
+
+The forward source-preservation repair is now validated: 41/41 tests pass,
+including all 20 original source controls, 20 additional forward-provenance
+controls and the unchanged public-source oracle. The seven admitted spans
+are verified against pinned a42660c8/06f4cfa4 Git blobs and recorded line
+ranges; the full ordinary async-cps import includes its module source and
+import kind. Reverting, corrupting or duplicating a forward span is refused.
+The inverse projection matches the complete original a426 wrapper SHA256
+before the unchanged 0194 donor receipts are checked. No original historical
+or bridge receipt was reseeded; the public comparator is byte-identical.
+Fixture raw SHA256:
+3f01c4d7c04f39f8be68e00bc34025228e759287292bcb7739f5292c266ddbb7.
+
+The final scoped population is 219/219 across five files (178 existing
+ownership/boundary/main regressions plus 41 preservation tests), no failures
+or skips. Full normal commit/push hooks remain mandatory. The default
+pre-commit selector currently sees 26 inherited root test changes relative
+to its old merge base and therefore self-skips its >20-file lane; the 219
+scoped tests were run directly and are not a claim that those 26 files ran.
+Actual signed commit, push-hook and CI/queue outcomes will be recorded in the
+existing PR follow-up. Preserve the retained original positive failure and
+all corpus verification artifacts.
+
+
+## 2026-09-12: certified native-delay admission queue refresh
+
+Refresh existing PR5756, “feat(ir): admit certified native delay through source
+preparation”, from published e3a01efa44f68da1b93c16b1a728d0ba099183f9 onto
+signed and published frame parent b6f1dba796d71e045a80d18b219ccc6d42adbca0.
+The isolated branch is `codex/5756-queue-drain-20260912`. Do not push stale
+fea8c3f413. No child push or queue action is authorized by this local validation
+record before confirmed parent delivery to main; the user's existing ordered
+delivery authorization remains in force.
+
+Only appended issue history conflicted. Both complete sections are retained,
+with their original bytes recorded separately in the merge receipt. All five
+published production files and two authored test files remain byte-identical
+to e3a01efa. The policy retains every parent record and rule and adds only the
+unmigrated frontend planning-sites record. No implementation or failure fixture
+was changed during this refresh.
+
+The independent test262 checkout pins b363f29d3c43c626dc852744ad64a0b48a003693.
+All 53,889 test and 44 harness files match raw Git blob hashes, exact file and
+directory sets and modes; no extras, alternates or shared object hardlinks.
+The existing corpora remain preserved. Manifest SHA256:
+fcaaff56a78c134e3875a00b743d5e6435939c38f304eeec1ffb35bc3c611ffb.
+
+Fresh serialized Node25.9.0/macOS ARM64 validation passed **158/158**, with no
+failures or skips: admission (41), identity/relocation (45), typed preparation (30),
+data-contract replay (8), public native family (14), native delay (12), closure
+compile-once (4) and plan identity (4). The source typecheck, explicit-parent-base
+LOC/function gates, coercion, oracle and preservation-v1 dead-export checks
+passed. Conformance synchronization updated zero files. Strict graph closure
+remains OPEN for the existing two nonliteral dynamic imports; the preservation
+witness pass is not retirement certification.
+
+The behavior remains deliberately limited. Explicit certified native-delay
+source selection preserves three original units, one terminal, one IR body,
+zero derived units and the native delay call. Whole-program preparation still
+refuses the real missing `__ir_promise_delay_native` declaration with
+invariant / unknown-function-ref / resolve on the original owner. Omitted or
+disabled projection retains unsupported / unknown-class-construction / build.
+The complete five-function playground retains its located
+unsupported / type-resolution-unsupported / build at fetchAllSequential.
+No placeholder declaration, fabricated support body or later-chain repair was
+introduced to make those controls pass. All four historical relocation
+receipts remain unchanged.
+
+The default pre-commit selector sees 30 root test changes from its older
+merge base 535ee6b6ba19239394ee50f8235e6c528212688b; its existing >20-file self-skip must be reported as such.
+The 158 scoped tests were run directly and are not a claim that this inherited
+population ran. Normal signed commit and push hooks remain mandatory; their
+actual outcomes and parent delivery will be recorded on the existing PR.
+Detailed local receipts are in `.tmp/5756-queue-drain/` in the owned worktree.
+
+Delivery order remains 5755→5756→5757→5758→5759→5760. At PR5759 retain the signed
+standard-EH delay repair 561853c00d76c72eb44dbee14340dc15e9841e41 with both tagged
+and foreign catches. New migration scope remains paused.
+
+
+## 2026-09-12: logical vector and native-main lowering queue refresh
+
+Refresh existing PR5757, “feat(ir): lower certified vectors and prepared native
+main operations”, from published 1cb0f5c7f36be14d7be7eb4592973aea84a8c4e5 onto
+signed local admission parent 1f611285c35c6d1c42f4eff577441c79ee7ec706 in
+`codex/5757-queue-drain-20260912`. Publication remains behind confirmed parent
+delivery to main; the existing PR remains the only publication target.
+
+The only conflict was appended issue history. Both complete sections remain
+preserved. The two production files and two authored tests match the published
+head byte-for-byte; the refreshed parent policy, frame engine/wrapper, standard
+native-delay EH and all five source-admission implementation files remain
+unchanged. This refresh introduces no lowerer edit or new migration scope.
+
+Preserve the console newline correction and ordinary logical-concat positive
+when the optional target is absent. Source-bound vector facts must still be
+complete and owned by the exact actual expressions. Preserve receiver/length/
+effectful-argument/growth/result ordering, actual nullability and out-of-bounds
+carriers, and refusals for missing, foreign or physical-layout-bearing facts.
+Symbolic prepared-main targets still avoid physical capability lookup. These
+controls do not certify the complete async family, providers or physical
+whole-program acceptance.
+
+An independent pinned test262 repository at
+b363f29d3c43c626dc852744ad64a0b48a003693 passed all 53,933 raw blob comparisons
+(53,889 tests and 44 harness files), exact file/directory sets and modes,
+with no extras, alternates or shared object hardlinks. Existing corpora remain
+preserved. Manifest SHA256:
+fcaaff56a78c134e3875a00b743d5e6435939c38f304eeec1ffb35bc3c611ffb.
+
+Fresh serialized Node25.9.0/macOS ARM64 validation measured **213 passed,
+zero failed, two existing conditional skips / 215 total** across seven files.
+The lowerer/regression group is 100 passed and two skipped; the unchanged
+semantic/provider boundary group is 113/113. The skips are the original native
+Porffor C ASan/UBSan allocation-growth/alias case and untouched public-source
+comparison, selected by their unchanged prerequisite condition. No environment
+flag or added skip forced them; native Porffor C execution is not claimed.
+
+Source typechecking, explicit-parent-base LOC/function gates, coercion, oracle
+and preservation-v1 dead-export checks passed. Conformance synchronization
+changed zero files. Strict graph closure remains OPEN at the two existing
+nonliteral imports; preservation witness success is not IR retirement.
+
+The default pre-commit selector sees 32 inherited root test changes against
+535ee6b6ba19239394ee50f8235e6c528212688b and self-skips its existing >20 lane. The
+215-case cohort was run directly; do not claim this inherited population ran.
+Normal signed commit and push hooks remain mandatory; their actual outcomes
+and parent delivery belong in the existing PR follow-up. Local evidence is
+under `.tmp/5757-queue-drain/`. Keep ordered delivery 5755→5756→5757→5758→5759→5760
+and carry the signed standard-EH delay repair into PR5759 with both catch forms.
+
+
+## 2026-09-12: full-family source preparation queue refresh
+
+Refresh existing PR5758, “feat(ir): prepare the complete native async source
+family”, from published 37e169c4903c29ab46fe99de0910634723a19dac onto signed local
+vector/main parent 6cf4e423b4481a9fa003b1cd58a84cfa9100116c in
+`codex/5758-queue-drain-20260912`. Keep the existing PR as the sole publication
+target, behind confirmed parent delivery to main.
+
+Only appended Issue3518 history conflicted; both complete sections remain.
+All five published production files and two authored tests match the published
+head byte-for-byte. The boundary registry preserves every refreshed parent
+entry and adds only program-logical-types.ts and program-native-async-source.ts
+as frontend-ts / unmigrated. No additional implementation scope was added.
+The original playground async.ts fixture remains SHA256
+6bc4fc96cc65881c9919a39b840afaf1001dfd3d0e05ef0cc141441a051f7915.
+
+Preserve explicit native-family selection, exact checker/source ownership and
+retained-plan revalidation. Preparation yields seven original units, five
+terminal bodies, five awaits, two vector allocations and zero derived bodies;
+both original delay arrows remain inventory records. The original/export-only,
+GVN on/off, original/decoded cases retain invariant / unknown-function-ref /
+resolve for the real missing __ir_promise_delay_native provider, located at the
+original delay owner. Fresh-process replay must retain that refusal. Omitted
+or disabled family selection remains unsupported / type-resolution-unsupported
+/ build. These are refusal controls, not physical whole-program execution.
+The discarded-expression correction must erase only checker-proven ambient
+undefined after effectful cases; shadowed, unchecked and valued returns retain
+their original rejection behavior. Keep all actual forbidden-import controls.
+
+Fresh serialized Node25.9.0/macOS ARM64 validation passed **371/371** across
+eight files, with no failures or skips: family source contract 36, family source
+identity 55, unchanged native family 14, discarded effects 37, delay admission
+41, delay identity 45, typed preparation 30 and semantic/provider boundary 113.
+Source TS7, explicit-parent LOC/function budgets, coercion, oracle and
+preservation-v1 dead-export checks passed. Conformance synchronization changed
+zero files. Strict closure remains OPEN at the two existing nonliteral imports;
+preservation witnesses do not establish IR retirement.
+
+The isolated test262 checkout at b363f29d3c43c626dc852744ad64a0b48a003693 has its
+own Git objects and verified exact bytes, modes and file/directory inventories:
+53,889 tests plus 44 harness files, no extras. Existing corpora were preserved.
+Manifest SHA256:
+fcaaff56a78c134e3875a00b743d5e6435939c38f304eeec1ffb35bc3c611ffb.
+
+The default pre-commit selector sees 34 root test changes from its older base
+535ee6b6ba19239394ee50f8235e6c528212688b, so its existing >20 lane self-skips.
+The 371 controls above ran directly; do not claim this inherited population ran.
+Normal signed commit/push hooks remain required, with actual outcomes recorded
+on the existing PR when published. Local receipts are in
+`.tmp/5758-queue-drain/`. Keep ordered delivery 5755→5756→5757→5758→5759→5760 and
+retain the signed standard-EH delay repair at PR5759, including both catch forms.
+
+
+## 2026-09-12: native delay/combinator extraction queue refresh
+
+Refresh existing PR5759, “refactor(ir): extract native delay and combinator
+runtime bodies”, preserving published de2f1072ebb32771272d24a58407814f9d2a5d38
+and its signed scoped EH repair 561853c00d76c72eb44dbee14340dc15e9841e41. Merge
+signed source-family parent ceda2670821124e09c5a674e01e3632ac52b46b8 in
+`codex/5759-queue-drain-20260912`. Publish only to the existing PR, after parent
+delivery through the protected queue; no new migration scope is included.
+
+The two conflicts were appended issue history and ir-native-promise-delay.ts.
+Both complete history sections remain. The adapter resolves to the exact
+extracted checkpoint adapter, without a duplicate inline body or stray EH
+import. The signed runtime leaf retains canonical buildStandardTryTable,
+tagged externref payload rejection and foreign-exception null sentinel
+rejection. Allocation, timer registration, Promise lifecycle and return order
+remain unchanged. Runtime leaf SHA256:
+e60283bf8303025e4faa430707a9f5651c78db98202feba9aa6ccd285056e29c.
+
+All ten source/test files changed by the repaired checkpoint remain byte-for-
+byte identical to 561853. Refreshed parent frame wrapper/engine, frame forward
+fixture/test and source-family preparation remain unchanged. The exact policy
+composition retains every parent rule, adds delay-bodies.ts and
+combinator-bodies.ts to native-runtime, raises its minimum from four to six,
+and prepends the corresponding activation record. No allowed edge is widened.
+The boundary inventory remains 65 modules and 212 edges (150 type-only +62
+runtime); this is not a physical IR retirement claim.
+
+The original thirteen source hashes, thirteen supplemental semantic hashes,
+both five-file glue ledgers and all twenty-four declaration records remain
+unchanged. Preserve all seventeen forward-EH controls, including whole ordinary
+import authentication, attributes/assert/defer refusals, handler order,
+payload/tag/target checks and the foreign null sentinel. The old verifier still
+rejects the repaired body before its strictly authenticated inverse projection.
+
+Fresh serialized Node25.9.0/macOS ARM64 validation passed **610/610** across
+thirteen files, with zero failures or skips: frame ownership 29, frame source
+preservation 41, delay admission 41, delay identity 45, vectors 24, extracted
+body ownership 33, extracted source preservation 143, family source contract
+36, family source identity 55, prepared main 14, semantic/provider boundary
+121, native delay 14 and native family 14. The two added native-delay cases
+validate a real mixed-EH artifact and actual exported-tag payload identity.
+
+Public current-root preservation passed five frame artifacts / twelve
+executions and eleven delay/combinator artifacts / nineteen executions,
+including eight native-family scenarios. Both verdicts explicitly record
+historicalPair NOT_RUN, physicalAcceptanceCertified false and retirementCertified
+false. Do not relabel this fresh current-root evidence as historical byte/WAT
+identity against the pre-EH baseline.
+
+Source TS7, explicit-parent LOC/function budgets, coercion, oracle and
+preservation-v1 dead-export checks passed; conformance sync changed zero files.
+Strict closure remains OPEN at the two existing nonliteral imports. The
+independent b363f29d3c43c626dc852744ad64a0b48a003693 corpus verified all 53,933
+raw files, exact modes/directories and no extras/shared objects. Corpus manifest
+SHA256 fcaaff56a78c134e3875a00b743d5e6435939c38f304eeec1ffb35bc3c611ffb.
+Existing corpora and fixtures remain preserved.
+
+The default pre-commit selector sees 37 inherited root test changes against
+535ee6b6ba19239394ee50f8235e6c528212688b and its existing >20 lane self-skips.
+The 610 tests above ran directly. Normal signed commit/push hooks remain
+mandatory, with actual outcomes recorded at publication. Detailed local
+receipts are under `.tmp/5759-queue-drain/`; public verdicts are under
+`.tmp/frame-body-preservation-HWMbr5/` and
+`.tmp/delay-combinator-preservation-ZE3n0z/`. Keep dependency-first delivery
+5755→5756→5757→5758→5759→5760; only verified delivery to main counts.
+
+
+## 2026-09-12: expanded recursive-type/callable checkpoint queue refresh
+
+Refresh existing PR5760, “fix(wasm): emit explicit recursive groups in physical
+type space”, from published 2e227aaa298d3a7406071dbe34bf6d8c41431407 onto signed
+parent 1a18aba4354dfcc40e0ae6cb39974f061706f0ba in
+`codex/5760-queue-drain-20260912`. The published head includes merged PR5763,
+so its complete callable/clock/vector and reconstruction changes remain part
+of this delivery. No later unpublished physical-materialization work is added.
+Keep the existing PR and dependency-first protected-queue publication.
+
+The parent merge retained both complete appended histories. All twenty-one
+published production files remain unchanged. The boundary assertion includes
+one inherited standard-EH runtime dependency: 240 edges, 163 type-only and 77
+runtime, across seventy selected modules. No allowed edge or guard changed.
+All non-file policy fields match the published checkpoint; twenty-one inherited
+inventory rows match the refreshed parent exactly. The signed delay runtime,
+its adapter, historical source/declaration ledgers and both catch forms remain
+unchanged, as do the refreshed frame engine/wrapper and its forward receipt.
+
+Initial validation is preserved: 1,659/1,660 collected assertions passed, one
+obsolete delay-admission expectation failed, and module-reservations failed
+collection before its 148 original tests ran. Isolated execution reproduced
+the COLLECTION_KIND.MAP import failure in collections-brand.ts; a first local
+deferred-lookup attempt exposed the same eager dependency in subclass setup.
+That intermediate attempt and both failure reports remain recorded. It was
+replaced by the shared fix below, not combined with an import-order workaround.
+
+The scoped initialization repair moves the unchanged COLLECTION_KIND object
+and CollectionKind type into existing import-free builtin-brands.ts, preserves
+the map-runtime value/type re-export and directs both eager consumers to the
+leaf. Numeric tags, runtime bodies, private table and public ReadonlyMap remain
+unchanged. The additional regression retains the original cold import order;
+its dynamic-only checks verify re-export object identity, all four public Map
+entries, exact 0/1/2/3 tags and M_KIND field 4.
+
+The existing delay transport case now reflects the published provider contract.
+Raw, decoded and whole-source preparation must first succeed under explicit
+native string storage while retaining the original inventory, one body and
+canonical native delay provider. The original policy must still refuse with
+exact original owner/location and unsupported / body-shape-rejected / build:
+“async.native.delay requires explicit native string storage”. Re-encoding must
+remain byte-identical. The fixture and forty-one-case population are unchanged.
+
+Focused verification passed 190/190: 149 module-reservations cases and forty-one
+delay admission cases. The final serialized Node25.9.0/macOS ARM64 cohort
+passed **1,809/1,809 across twenty-six files**, with no failures or skips. It covers every published changed root test plus the parent
+frame, extraction, source identity and native runtime regressions. Earlier
+258/125/126 figures belong to the older recursive-emitter checkpoint and are
+not evidence for this expanded head. All initial failed artifacts are retained.
+
+Preparation-positive evidence remains distinct from physical execution:
+eight native-policy combinations and the source-free child preserve seven
+original units/five terminals, 5→16→16 owner and 22→33→33 call populations.
+Missing native policy still refuses; callable replay still requires the located
+“physical setup cannot be materialized” refusal for __ir_promise_delay_native.
+Historical reconstruction retains original ledgers/hashes and positive-first
+mutation controls. Public frame and delay/combinator comparisons are current-
+root evidence; no new historical byte/WAT equality or IR retirement is claimed.
+
+Source TS7, explicit-parent LOC/function budgets, coercion, oracle and
+preservation-v1 dead-export checks passed. Conformance synchronization changed
+zero files. Strict closure remains OPEN at the two existing nonliteral imports.
+The independent b363f29d3c43c626dc852744ad64a0b48a003693 corpus verified all
+53,933 raw blobs, exact modes/directories, no extras and independent objects.
+Manifest SHA256:
+fcaaff56a78c134e3875a00b743d5e6435939c38f304eeec1ffb35bc3c611ffb.
+Existing corpora, fixtures and dirty-root tracked files remain preserved.
+
+The default pre-commit selector sees fifty inherited root test changes against
+535ee6b6ba19239394ee50f8235e6c528212688b, so its existing >20 lane self-skips.
+The focused and final cohorts above ran directly; do not claim this inherited
+population ran through that lane. Normal signed commit/push hooks remain
+mandatory; actual outcomes and parent delivery are recorded at publication.
+Local evidence is in `.tmp/5760-queue-drain/`. Only verified delivery to main
+counts; keep new migration scope paused while draining 5755→5756→5757→5758→5759→5760.
+
+### Preserve delivered async spill typing in the family queue refresh — 2026-09-13
+
+Existing PR 5758, “feat(ir): prepare the complete native async source family”,
+was cleanly merged with delivered main ee2ee09062e587e882e6be6e47d5bdde5472ecbe
+in its owned queue-drain worktree. This brings the legitimate async spill
+typing repair from PR 5869 into the inherited compiler. The initial complete
+frame preservation file passed 39/41 with two receipt mismatches; the public
+source comparison passed. Its original failure report remains retained.
+
+The scoped repair changes only the frame source-preservation test and its
+forward provenance fixture. Two independently read and authenticated incoming
+spans now precede the unchanged historical reconstruction. The original seven
+span records, original a426 donor hash and 0194 receipts remain unchanged;
+the runtime bodies and the complete public comparator remain unchanged.
+Six added controls reject removal, semantic corruption, module retargeting
+and a type-only import. All nine unique/disjoint spans recover the original
+a426 bytes exactly, with no unadmitted source delta.
+
+Fresh serialized validation passed 422/422 across ten complete files, with
+zero skips: the existing eight-file 371-case family/preparation/boundary group,
+47 frame preservation cases and four incoming spill regression cases. This
+is current-root evidence, not a fresh historical compiler comparison. Normal
+gates and signed hooks remain required before publication; main delivery of
+PR 5757 remains the prerequisite. Public cutover and direct retirement are
+still open. Exact independent provenance and initial/final reports remain in
+.tmp/5758-queue-drain, with the published handoff updated at delivery.
+
+## September 13 refreshed source-family parent
+
+Merge the published source-family head
+`00dae7e4c6428a8d78ad86bb731ac78d0318800d` into this existing extraction PR.
+The only conflict was appended issue history; both complete records remain.
+All ten pinned extraction/repair source and test files are byte-identical,
+including the standard-EH delay body with tagged and foreign catches. The
+parent's two authenticated async-spill forward spans and six mutation controls
+are carried exactly. Every previous policy record and activation stays exact;
+seven incoming unmigrated classifications are added without widening edges.
+
+Fresh serialized validation passed **620/620 across fourteen full files**,
+zero failures or skips. This is the original thirteen-file cohort with frame
+preservation expanded from 41 to 47 and four incoming spill controls. The
+143 delay/combinator preservation controls and 121 boundary controls all ran.
+TS7 and all five source gates passed against the exact parent above;
+conformance synchronization changed zero files. Original historical fixtures,
+source hashes, failures and prior receipts remain intact. Current-root evidence
+does not certify a historical compiler pair, physical async acceptance or
+retirement. New receipts use `.tmp/5759-queue-drain/refreshed-parent-*`.
+
+Normal signed hooks remain required. Publish this existing PR only after
+PR5758 is verified delivered to main, then retain dependency-first delivery
+through PR5760 and the existing later stack. No new migration scope is added.
+
+## September 13 signed-parent reconciliation
+
+Merge refreshed delay/combinator parent
+`fd387c97e508e5902b0638f5bcfd0a3087932616` into the existing expanded
+recursive-type checkpoint. Only appended issue history conflicted; both
+complete records are retained. All 42 owned source/test files are byte-identical,
+including the positive-first delay-admission repair, cold-import collection
+repair and standard-EH runtime body with tagged and foreign catches. All prior
+policy records and activations remain exact, with seven incoming unmigrated
+classifications and the authenticated frame/spill controls carried forward.
+
+Fresh current-root validation passed **1,819/1,819 assertions in 27 complete
+files**, zero failures or skips. This retains the previous 26-file population,
+adds six authenticated frame mutation cases and four spill cases. Counts are
+assertion occurrences; repeated parameterized names are not asserted unique.
+TS7, LOC/function budgets, oracle and preservation-v1 dead-export checks passed
+against the exact signed parent. Conformance synchronization changed zero files.
+The coercion gate was run through a space-free alias with
+`--preserve-symlinks-main --verbose`: 124 files containing 511 sites were
+actually scanned, and the scoped four-codegen-file comparison passed.
+
+Evidence correction: older ordinary coercion invocations on the spaced
+checkout path can silently return an empty scan and are not treated as scan
+evidence. Supplemental unchanged-gate runs also measured and passed PR5758
+and PR5759 (124 files/511 sites) and PR5787 (124 files/510 sites). No gate,
+baseline or historical receipt was weakened. Keep original outputs and failures;
+the new receipts are under each owned worktree's `.tmp/` queue-drain directory.
+
+Historical reconstruction ledgers, ownership/call censuses, located physical
+refusals and public current-root controls remain intact. Historical-pair
+execution, physical async acceptance and IR retirement remain uncertified.
+Normal signed hooks and dependency-first delivery still apply: publish only
+after PR5759 is verified on main, then continue the existing later stack.
+
+## Implementation plan: join the existing scanner and prepared-main PRs — 2026-09-13
+
+Continue existing PR5787, “feat(ir): admit native string numeric source lowering”,
+from signed scanner refresh `709d3fd73b19b31bab3894fd83ab621825997338`. Merge
+validated prepared checkpoint `1139297588b9105d5d39b3df278e7320308cdf7e`; its
+27-file cohort passed 1,819 assertions with all source gates. This is dependency
+integration for the existing published work, not new migration scope.
+
+Keep both source histories. The registry type import retains Instr alongside
+the scanner's canonical string/vector factory imports. Disjoint registry
+allocation, late-global adjustment, closure marshalling/thenable inventory and
+object peer/tuple changes remain at their original ownership points. Preserve
+the standard-EH delay repair, positive-first native policy controls and cold
+collection import repair. All 54 scanner activation rows are retained, with the
+32 prepared rows already their exact suffix; union classifications once and
+retain the prepared explanation for the unmigrated lower facade.
+
+Run the actual merged registry donor, argument-vector, reservation and boundary
+controls first, preserving every initial failure. The old scanner boundary
+counts remain provisional until the merged graph is measured. If the strict
+registry declaration or full object-runtime receipt rejects legitimate parent
+changes, add only independently pinned forward spans from the reviewed parent.
+Authenticate exact text, ownership, position and import/ABI boundaries before
+inversion; reject changed, removed, duplicate, reordered and retargeted spans.
+Never reseed the original declaration tables, full-source hashes or historical
+fixtures from the candidate. Record the implementation and paired negatives
+before broader validation.
+
+Then run the original 25 scanner/source-caller files plus the relevant prepared
+controls, with exact source pins and occurrence-level test counts. Run TS7,
+budgets, oracle, measured no-space coercion scan, preservation-v1 and normal
+signed hooks. Publish the existing PR only after its required predecessors
+are verified on main. Preserve all existing failures and keep physical async
+acceptance, historical-pair execution and retirement limitations explicit.
+
+The initial composed four-file run completed 476 assertions: 469 passed, seven
+failed, zero skipped. Reservation controls passed all 149. One registry census
+refused the added taCtorIdentityTestInstrs declaration; five argument-vector
+positive-first controls refused the full object-runtime hash; one current graph
+count expected 357 and observed 358. Original reports and exact test-source pins
+are retained as `prepared-join-initial-*`. These are three observed integration
+obligations, not seven distinct compiler defects.
+
+The actual 99-module graph was captured from the existing positive fixture.
+Its only changed modeled source is the independently pinned standard-EH delay
+body, which adds the runtime import of exception-control.js. All graph errors
+remain empty, with 229 type-only and 129 runtime edges. Only the current count
+expectations change to 358/229/129; historical graph digests remain unchanged.
+The exact actual graph and source/edge delta are retained before further repair.
+
+## Prepared/scanner receipt repair evidence — 2026-09-13
+
+The registry inverse now authenticates two independently derived prepared
+spans before applying the unchanged scanner/string-layout reconstruction.
+Its fixed fixture SHA256 is
+`b2cf353c1779a8469be0c68eba497321cd1110c0e524c12f6dd357925025c2f9`.
+The Instr import is checked for exact type-only route and local binding; the
+complete taCtorIdentityTestInstrs declaration retains its neighboring owners.
+The reusable inverse authenticates fixture and span digests, unique population,
+exact single occurrences, ordering and non-overlap before replacing any text.
+Original declaration tables, source hashes and all 38 donor cases remain exact.
+
+The direct registry/Error run passed 80/80 assertions, zero skipped: original
+38 donor cases, unchanged 29 Error cases and 13 added positive/negative controls.
+The added refusals first execute the positive and reject import route/binding,
+declaration/brand/field/order and fixture changes. Independent review retained
+exact input pins and verified all 67 original row occurrences survive. This is
+current-source receipt evidence, not historical compiler execution.
+
+The object inverse must also preserve the independently committed main change
+`4fd5a582bbe7de375f2d0781cfd3cd06aa7fcda1`, whose complete 30-line
+peer-callable addition resides in fillApplyClosure. Its before/after source
+blobs match the older e24 checkpoint and actual signed parent 113929. The
+independent v3 provenance contains eleven ordered, disjoint spans, including
+this later main addition; the earlier ten-span artifact remains preserved.
+No candidate-derived hash may replace the original full-source receipt.
+
+The separate production-join review replayed all 18 pinned scanner hunks onto
+actual parent 113929 and recovered all four joined files exactly. This
+source review does not waive any initial failed test. Broader composed
+execution and the object negative controls remain pending at this record.
+
+The composed 49-file run completed **2,636 assertions: 2,615 passed, 21 failed,
+zero skipped**, with all 1,426 execution input pins unchanged. Forty-seven
+complete files passed, including the 358-edge boundary and registry repair.
+The 20 native-value failures stop at the same historical union-module positive
+receipt; the one closure failure is the complete calls.ts observer-source
+receipt. All four separate closure control files still match their originals.
+The independently committed callability change adds four spans (28 lines)
+outside the original minimum-arity observer. Both newly exposed receipt
+obligations are being repaired from fixed committed source provenance, with
+original tests and failures preserved. No runtime/compiler source change is
+authorized by these failures alone. Full raw results and exact execution pins
+are retained in `prepared-join-broad-*`.
+
+The object inverse passed **52/52 assertions, zero skipped**: all 32 original
+cases plus 20 new cases. The eleven independently authenticated spans invert
+to the exact committed scanner source and then to the unchanged original
+full-source receipt. Paired controls cover all spans, missing/duplicate/order
+changes, ABI/callability/tuple edits, extra imports, fixture provenance and
+retained executable code. The fixture remains SHA256
+`96d5cdc49a12420667d2ea47311a15ed142ce78d22991aba06ab76b061a7f874`.
+
+All source gates passed on the composed source: TS7, LOC/function budgets,
+oracle, and preservation-v1 with mandatory core types/nodes. The unchanged
+coercion gate through the space-free alias measured 124 files/511 sites,
+passing against exact parent 113929 across 16 changed codegen files.
+Conformance synchronization changed zero files. The original broad failure
+report remains retained; the two remaining receipt repairs require their
+own direct execution before this integration is committed.
+
+## Completed composed scanner/prepared validation — 2026-09-13
+
+The closure repair passed 74/74 assertions and the native-value repair passed
+75/75, both with zero skips. They retain all 62 and 60 original cases and
+add 12 and 15 positive-first controls respectively. The calls fixture
+authenticates all four additions from original implementation 4fd5a582 before
+the unchanged full observer-source hash. The import fixture authenticates
+the sidecar-global shift and documented callable placeholder registration
+before the unchanged primitive/number full-source and comment receipts.
+Original four closure control hashes and the minimum-observer body remain exact.
+
+Combined evidence now covers **2,715/2,715 assertions across all 50 complete
+files, zero skipped**. This is the disjoint per-file union of the 47 successful
+broad-run files and the three focused repaired-file runs, not a claim that the
+initial 49-file run passed. Original test-name occurrence populations remain
+present, final test-source hashes match the selected executions, and all 1,376
+source/policy pins used by the passing source gates remain unchanged.
+`prepared-join-final-validation-20260913.json` identifies the exact report and
+source hash for every file. Both initial failed reports remain preserved.
+
+Before normal commit hooks, the independent pinned corpus again passed all
+53,933 raw blobs/modes/inventory, canonical manifest fcaaff56. No source gate,
+original receipt, fixture, runtime behavior or negative control was weakened.
+Physical async acceptance, historical compiler-pair execution and frontend
+retirement remain uncertified. Publication still waits for predecessor
+delivery through the existing protected queue.
+
+## Implementation plan: refresh shared native declarations — 2026-09-13
+
+Continue existing PR5789 from its exact published5404151 checkpoint, merging
+validated immediate parent4bbdc154. Preserve all eight published production
+files and the declaration test/number-resource changes; the production join
+requires no additional implementation. Preserve all source algorithms, ABI
+reservation order, ownership identities, dense own-slot preflight and precise
+late-failure behavior. Keep the published checkpoint handoff unchanged.
+
+Resolve cumulative boundary policy/test history by retaining the current54
+records, both published declaration records and two explicitly combined
+snapshots; keep both prior histories verbatim. Add the two declaration roots
+to the existing99 (backend minimum10, native minimum22). Preserve all
+existing allowed edges and mandatory per-root negatives, add the published
+model-only declaration checks, and measure actual resolved-edge counts from
+the composed positive report before updating current expectations.
+
+Run initial declaration, Error and strict vector-donor controls before any
+receipt adaptation, preserving the original failures. The independently
+published string-layout shape factories/bridge/wrappers may require an exact
+forward adapter before the old ten-statement inverse; derive its authority
+only from committed parent/published blobs, retain original hashes and all
+51 donor cases, and add positive-first field/argument/ownership/provenance
+negatives. No candidate hash may become a replacement historical receipt.
+
+Then execute the full reviewed17-file producer/caller/boundary population
+with exact input pins, source TS7, budgets, oracle, measured nonempty coercion
+scan and preservation-v1. Use normal signed hooks and the verified independent
+corpus. Publish only after the existing predecessors reach main through the
+protected queue. Preserve numeric-precision debt, whole-program-not-assessed
+and frontend-retirement limitations; new migration scope remains paused.
+
+The actual initial declaration/Error/vector run completed100 assertions:
+80 passed,20 failed,zero skipped. All20 failures are strict vector-donor
+positive checks rejecting the published20-statement canonical layout source
+against the old10-statement premise. Declaration20/20 and Error29/29 pass.
+The raw failures and execution pins remain in initial-declaration-controls.
+The independently reviewed source comparison verifies all eight published
+production files remain exact after the merge; no production repair is made.
+
+The next13 complete producer/caller files passed684/684 assertions,zero skips,
+with unchanged execution pins. This is separate from the initial failed
+receipt run and excludes the pending boundary and vector-donor adaptations.
+All original51 donor cases remain required; changes to four descriptor-owner
+mutation targets and the unbound-ctx refusal stage must be explicit, preserve
+corruption intent, and retain the old fixtures/hashes rather than silently
+claiming identical test bodies.
+
+The composed boundary/layout run passed336/337 assertions. All67 repaired
+vector-donor cases passed, including all51 prior case intents and16 new
+controls. Four descriptor mutations now target the actual generic shape
+owners; the live unbound-ctx mutation asserts its exact earlier authenticated
+span refusal, and a new direct positive-first check retains the original
+historical AST collision guard. The13 prepared-registry case bodies and all
+original donor/forward fixture hashes remain unchanged.
+
+The sole composed failure was the deliberately provisional old graph count.
+A diagnostic invocation of that same positive fixture captured the complete
+actual report:101 modules,374 resolved imports (240 type-only,134 runtime),
+with zero graph errors. The temporary report-writing observation was removed
+and the original test bytes restored before changing only the current count
+expectation. The diagnostic's unselected cases receive no execution credit.
+The full270-case boundary suite is rerunning on the measured expectation.
+All58 activation records retain the exact54-parent suffix and the two exact
+published declaration records; allowed edges are unchanged.
+
+The final complete boundary run passed270/270. The disjoint per-file union
+of17 complete files now passes1,070/1,070 assertions,zero skipped. Exact
+execution/source/report hashes are in final-validation-20260913.json; the
+initial80/100 and provisional336/337 failures remain preserved. All eight
+published production files remain byte-identical to5404151. The authenticated
+seven-span layout adapter preserves the old full-source/AST receipts; no
+candidate-derived replacement hash or runtime behavior change was admitted.
+
+TS7, LOC/function budgets, oracle and preservation-v1 with required core types
+and nodes passed. The unchanged coercion checker through a space-free alias
+measured124 files/511 sites against exactparent4bbdc154; a spaced-path empty
+scan receives no credit. Conformance synchronization changed0 files. Normal
+signed hooks and exact-head queue checks remain required. Keep the existing
+PR held until5787 is verified on main; numerical precision debt, historical
+compiler-pair execution, whole-program execution and frontend retirement
+remain uncertified.
+
+## Implementation plan: refresh vector backing refinement — 2026-09-13
+
+Continue existing PR5792, “fix(ir): refine vector backing scratch before
+construction”, from published c5c87e4a onto signed predecessor c77eb965.
+Preserve the published one-instruction addition of ref.as_non_null immediately
+before struct.new, and retain the current canonical wasm-constants and
+lower-contracts imports. Keep both complete issue histories and the original
+published test and handoff unchanged. No new migration scope is introduced.
+
+Verify the full composed emitter against the independently projected published
+hunk, then run all three original component files (7 + 10 + 14 intended cases)
+with actual source pins. Include the lowerer import-cycle control because the
+predecessor relocated its imports. Run TS7, size/function/oracle, nonempty
+coercion, preservation-v1 and conformance synchronization gates; preserve any
+initial failures. Use the independent pinned corpus and normal signed hooks.
+
+These component checks do not establish general source admission or complete
+prepared-program consumption. Keep the existing PR held until predecessor
+5789 is verified delivered to main through the protected queue. Preserve
+historical receipts as historical evidence and record fresh results separately.
+
+The actual composed component run passes56/56 assertions across four complete
+files, zero skipped: the original vector population31/31 plus the lowerer
+import-cycle population25/25. All pinned source/test/policy/fixture inputs
+remain unchanged. The full emitter hash is85b4a5765a5e690476828251006c97e3f0445817501ece6a6586038178f0da41,
+matching the independently projected commuting hunk; the original published
+nullability test and handoff remain byte-identical. Source gates and normal
+hooks remain pending; these component results do not certify whole-program
+consumption or frontend retirement.
+
+The seven source gates now pass: TS7, LOC/function budgets, measured coercion,
+oracle, preservation-v1 with required core types and nodes, and conformance
+synchronization (zero changed files). The unchanged coercion checker through
+a space-free alias positively scanned124 files/511 sites; no import edge or
+codegen file changed against exact predecessor c77eb965. All tested input pins
+remain unchanged. The independent b363f29d corpus matches all53,933 canonical
+test/harness blobs, exact modes and inventory, with no linked/shared objects.
+Normal signed hooks remain required; no gate or historical fixture was relaxed.
+
+## Implementation plan: refresh prepared native string consumer — 2026-09-13
+
+Continue existing PR5793, “feat(ir): execute native string values through
+prepared consumer”, from published9ccad45c onto signed predecessor eac9f741.
+Preserve the published production delta and the predecessor's one-instruction
+vector backing refinement and canonical lowering imports. Keep both complete
+issue histories, original fixtures and published execution limitations. New
+migration scope remains paused; no later unpublished provider work is adopted.
+
+Preserve already-integrated producer and demand changes byte for byte. Resolve
+only cumulative boundary policy/test history: retain exact predecessor records,
+published activation records, original allowed edges and all positive-first
+per-root negatives. Measure the actual composed import closure before changing
+current census expectations; retain initial failures and historical receipts.
+
+Execute complete reviewed child component/consumer tests and relevant parent
+vector/import-cycle controls with exact source/test/fixture pins. Keep component
+and whole-consumer denominators separate. Run TS7, budgets, oracle, measured
+coercion, preservation-v1 and conformance sync. Use the independent pinned
+corpus and normal signed hooks. Publish only after predecessor5792 is verified
+delivered through the protected queue. Historical compiler-pair execution,
+complete physical async support and frontend retirement remain uncertified.
+
+### Scoped comparison-runner import provenance repair
+
+The unchanged published three-arm runner refuses the composed candidate before
+execution: its exact repaired-emitter equality does not include the already-
+landed pure import split. Independent commit c257b466, parent120cd638, supplies
+the exact before/after emitter proof (a23bbcb0→49a1de06). Keep that relocation
+and the vector refinement; do not restore an upward lowerer import.
+
+Implement a pure test-helper verifier for only that authenticated import
+forwarding, update only the runner's candidate-emitter guard to use it, and
+add positive-first focused regressions for missing, duplicate, retargeted or
+unrelated edits and bad provenance. The inverse must reproduce the exact
+repaired emitter. Preserve original→repaired as exactly one ref.as_non_null,
+external whole-source/helper/config pins, runtime identity, explicit2GB child
+configuration and all seven comparison rows. Root owns runtime execution and
+fresh isolated original2ccdcffd and repaired baselines; the historical contract
+permits the repaired baseline's externally pinned one-instruction working-tree
+difference. Do not claim archived CLI results as new execution evidence.
+
+The first actual boundary diagnostic selected only the complete-closure case:
+it failed on the provisional prior edge count, with289 cases unselected and
+no execution credit. Its full report measures102 modules and391 imports
+(248 type-only,143 runtime), zero graph errors. The temporary report-writing
+observation was removed and original test bytes restored before updating only
+the current count assertion. All61 activation records, both original histories
+and allowed edges remain unchanged. The complete18-file cohort is pending;
+no diagnostic pass or full-suite success is inferred.
+
+### Prepared consumer validation — 2026-09-13
+
+The complete18-file cohort passes838/838 assertions, zero failures or pending
+cases, with all execution inputs unchanged. The import-forward verifier's
+separate focused run passes8/8. Policy composition preserves all1,377 parent
+records, adds one consumer record, retains61 activation records and both
+histories, and leaves allowed edges unchanged. The read-only policy audit
+initially assumed a map instead of the actual list schema; corrected exact
+record comparison passes. The earlier boundary diagnostic failure is retained.
+
+The actual three-arm CLI passes with authenticated original/repaired inputs
+of1,370 files each and candidate1,406. It reproduces the original nullable
+vector CompileError and compares repaired/candidate across five real source
+executions, one exact source refusal, and one canonical-producer IR vector
+execution. This is seven comparison rows, not seven successful source apps.
+The128 original receipts are archived byte-exactly in the owned worktree.
+No expected failure, runtime identity, historical donor or census guard was
+relaxed. Source gates and normal signed hooks remain required before this
+prepared merge; refresh to delivered main follows before publication.
+
+## Queue admission reconciliation: current main — 2026-09-13
+
+Existing PR5760 reported DIRTY against main7adc0a6e after publishing signed
+11392975. The actual local merge of that exact main completed cleanly with
+no conflicts. Restore the hold while validating and committing the merge;
+no queue entry existed. The queue-arm workflow was independently a no-op due
+to its CONTRIBUTOR trust gate, so do not count its green job as admission.
+
+The incoming changes are already-delivered generator protocol initialization
+and benchmark/baseline artifacts. All54 validated IR source/test/policy pins
+remain unchanged. Preserve all incoming main bytes. Execute the complete new
+generator prototype regression file plus reservation, delay admission and
+boundary controls on the composed tree; rerun source gates and normal hooks.
+Keep earlier1,819/1,819 validation as evidence on11392975, not a rerun claim
+on this merged head. Retain its direct results and all initial failures.
+Queue only the exact republished head after current checks and hold release.
+
+The actual current-main reconciliation passes345/345 assertions across four
+complete files, zero skipped: generator prototype14, reservations149, delay
+admission41 and boundary141. All execution pins remain unchanged. TS7, LOC and
+function budgets, oracle, preservation-v1 with required core types and nodes,
+and the unchanged coercion checker (124 files/511 sites through a space-free
+alias) pass against exact main7adc0a6e. Conformance synchronization changes
+zero files. All54 earlier validated IR pins remain unchanged. Preserve the
+original1,819/1,819 as earlier-head evidence, with this345/345 current merge
+validation separately identified. Normal signed hooks and renewed exact-head
+publication/queue checks remain required.
+
+## Forward the validated main reconciliation into string admission
+
+Refresh existing PR5787 from signed4bbdc154 onto signed immediate parent
+c06c5575. Preserve both issue histories and all prior scanner, object, closure,
+value and layout forward receipts. The parent carries the already-delivered
+generator protocol repair and current baseline artifacts; no new scanner or
+IR behavior is introduced. Keep the published PR held until5760 reaches main.
+
+Verify the exact changed source population and all earlier owned inputs.
+Run complete current generator, scanner-admission and boundary files plus the
+canonical source gates and normal signed hooks. Preserve earlier2,715/2,715
+as evidence at4bbdc154, not a full rerun claim on this merged source. The current
+check population will be reported separately; no original fixture or gate is
+changed to accommodate main. All physical/historical/retirement limits remain.
+
+The current reconciled-parent check passes307/307 assertions across three
+complete files, zero skipped: generator14, scanner admission36 and boundary257.
+All current execution pins remain unchanged. Of the earlier1,431 selected
+inputs, only the already-delivered generators-native.ts changes; all other
+1,430 stay exact. The only incoming source/test paths are that generator and
+its main-owned prototype test. All scanner/runtime/receipt/policy bytes remain
+unchanged. TS7, LOC/function budgets, oracle, preservation-v1 and measured
+coercion124/511 pass against exact parentc06c5575; conformance sync changes
+zero files. Earlier2,715/2,715 remains explicitly earlier-head evidence.
+
+
+### September 13: resume existing resource-declaration PR5789 after verified delivery
+
+PR5787, “feat(ir): admit native string numeric source lowering”, is verified delivered as `e29390e349faf7992c9193665cb44240142f903c`: complete tree equals published `e9c2d8c3b70be1096918b79c51eee730a843697e`; all 102 shards, final regression gate, differential and merge-group CI passed. Broader IR retirement remains incomplete.
+
+Resume existing PR5789, “refactor(ir): share native resource declarations before allocation”, preserving local signed `c77eb9658132ee63cc4ca80128a987c15c4b1d63` and its unfinished merge of `5b59430597315b08b2d7a1365324b56551230308`. Both issue histories are retained. Finish that earlier merge before integrating the delivered parent; never discard the existing prepared work. Current remote remains `5404151bfc1b49d6cffed4a87a8985c51bd3dd93`, held. The earlier merge changes only generators-native.ts and its prototype regression test in src/tests. Validation and normal signed hooks are required before publication; earlier evidence retains its named revisions.
+
+The preserved-parent validation passed 304/304 across three complete files (generator14, declarations20, boundary270), with unchanged execution inputs. Fresh corpus verification matched all53,933 raw pinned blobs. These results cover the preserved5b594 parent composition, not the forthcoming delivered-main refresh.
+
+## Reconcile the refreshed main base e06f7674 — 2026-09-13
+
+The same-PR close/reopen refreshed stale GitHub metadata: exact headc06c5575
+stayed unchanged and the PR reopened held, while the reported base changed
+from7adc0a6e to actualmaine06f7674. Preserve the refused base-equality
+postcondition and both responses; reopening itself succeeded. The fixed7adc
+comparison proved no conflict only for that reported pair, not for the newly
+revealed main. The actual e06 merge has conflicts in compiler-boundaries,
+map-runtime and standalone-subclass-ctors. Do not repeat the metadata refresh
+or claim a source-free merge against this newer base.
+
+Incoming main contains the already-delivered closure-area repair and baseline
+refresh. Reconcile COLLECTION_KIND to one canonical object in main's new
+collection-kind.ts, preserving map-runtime and prior builtin-brands identity,
+tags, public ReadonlyMap and cold-import behavior. Equal-valued duplicate
+objects are insufficient. Review auto-merged collections-brand and preserve
+all other main fixes, especially undefined/constructability and prepared ABI
+transaction behavior. Keep original tests and receipt hashes; identified
+closed-method-dispatch changes are outside the authenticated named Promise
+helper declaration and do not justify reseeding its fixture.
+
+Preserve the IR policy's exact activation histories, allowed edges and layers
+while integrating main's legitimate inventory entries. A owns the four
+collection source files; B owns only policy; root owns integration, issue
+history and serial runtime checks. Run complete incoming regressions plus
+current collection/ABI/IR overlap controls, then source gates and normal signed
+hooks. Preserve all actual failures and qualify all earlier test evidence by
+its revision. Keep PR5760 held until the exact refreshed head is validated and
+published; use protected queue admission and verify delivery to main.
+
+## Ownership reconciliation — 2026-09-13
+
+The shared issue-assignments ref was refreshed to 2c2c1d20e2d4b95d15bb54653568359ecaa5aeee. The collection-kind and standalone parent-table change came from ttraenkler/issue-6419 (PR5876, already merged); its follow-up reservation identifies ttraenkler/sendev-6419. The older local Claude Desktop session cb1cd4f9-cdfd-4248-b476-1c7f5bbe9354 / ir-migration-coordination-35a148-90 is package C, not evidence of current ES2015 ownership.
+
+Current open-PR census: 28 PRs. Relevant external boundary changes are independent added entries: PR5911 issue-6440 adds runtime/promise-try-polyfill.ts; PR5909 issue-5383-standalone-temporal-s12 (dev-5383-s12) adds codegen/static-spread-arity.ts; PR5889 issue-6421 (reservation by sendev-5370) adds array-of-spread.ts and from-char-code-spread.ts; PR5839 codex/5350-super-property-rescue-20260912 adds class-prototype-write-keeps.ts. None changes the collection-kind/undefined-extern-import entries or IR activation history owned by this reconciliation. Existing Deno/TypeScript/audit and downstream IR PRs are preserved. No peer branch or worktree was edited.
+
+The shared-file ownership question no longer requires user identification. Resume only the existing isolated PR5760 integration, preserve the single main collection object and both sets of regressions, and union independently owned inventory entries on freshly fetched main. Keep downstream refreshes paused until verified PR5760 delivery. This is a file/branch evidence reconciliation, not a claim that another session acknowledged a message.
+
+### PR5760 collection compatibility export allowance — 2026-09-13
+
+The exact e06 reconciliation adds one public re-export line to map-runtime.ts (3,099 versus the 3,098-line baseline). It preserves the established COLLECTION_KIND/CollectionKind entry point while sourcing the same import-free collection-kind object used by main. This PR-specific allowance covers that single compatibility declaration; no function body grows. The original failed LOC result is retained in e06-frozen-loc-20260913.log. All 453 complete-file regression assertions and typechecking passed before this metadata-only grant.
+
+### PR5760 exact current-main merge — 2026-09-13
+
+Signed resolution 8121918f96dae2598e0fea0e4226e295bc50e721 preserves the tested e06 join; its source/test/policy pins remained unchanged after normal hooks. The subsequent actual merge uses 9578edf5ef01ca428b0ff34df63f7188ead8c1ad, freshly fetched from origin/main. All source and regression files merge cleanly; only scripts/compiler-boundaries.json conflicts. Resolve its independent main inventory additions alongside unchanged IR histories, then validate this resulting current tree. The old 453 assertions are prior-join evidence, not a rerun of this newer merge. Downstream refreshes remain paused.
+
+#### Validation of the 9578 current-main join
+
+44 complete files collected 826 cases: 822 passed, zero failures or pending/skipped rows, and four existing TODOs (three Temporal/class-member cases and one link-boundary error-constructor case). Both original Test262 regex rows and the real Temporal provider smoke child passed. All tracked source/test/helper/fixture pins remained unchanged. TS7, LOC/function budgets, measured coercion, oracle, inventory mode against exact main, and preservation-v1 passed; inventory remains graph-incomplete and retirement is not certified. Conformance synchronization changed no files, and the independent corpus matched all 53,933 canonical raw blobs. Normal signed hooks and exact publication/queue verification follow.
+
+#### Artifact-only base advance after validation
+
+Fresh main advanced from 9578edf5 to a9dbfe402a880a1ca38a48a336f576ec5792c255 through PR5920, changing exactly six npm-compat JSON artifacts and no source, tests, policy or build inputs. Merge those artifacts before publication. The complete validated source/test/helper/fixture/policy pins are checked unchanged across this merge and its normal hooks; no new test execution is claimed for the unchanged population.
+
+## Resume string admission after verified PR5760 delivery — 2026-09-13
+
+PR5760 is delivered on main as 2c6a0f1daa3d43cdf68b0d2d07fe7e3fa58b97f0, with its entire tree equal to validated published head df7fd983. All 102 merge-group conformance shards, aggregation and final regression gate passed; raw coverage contains 48,735 unique results per lane. Existing failures remain. The merge-group advisory issue job was cancelled and receives no pass credit.
+
+Resume existing held PR5787 from preserved signed head 5b594305. Its remote head remains bda70f02 and it is outside the queue. The exact delivered-main merge combines source and boundary inventory cleanly; only appended issue history conflicts, resolved by preserving both complete sides. Root owns integration and all Git mutations; a native subagent reviews the complete validation scope read-only. Preserve earlier fixture hashes, all prepared work and current main fixes. Validate the combined source before normal signed hooks, retargeting the existing PR to main and publishing. No new migration scope or completion claim is introduced.
+
+### Delivered-main receipt validation
+
+The original three-file receipt check is preserved: 128/201 passed, 73 failures, zero skips, unchanged execution inputs. The failures are full-source reconstruction refusals: 25 object argument-vector, 35 native-value and 13 closure observer. Preserve the old donor and previous forward fixtures; authorize only exact new forward spans derived from independently committed main, inverted before the unchanged original receipt. No production fallback or candidate-derived donor hash is permitted.
+
+The closure observer now inverts five exact committed changes from c06c5575 to delivered 2c6a0f1d before the old four-span inverse. The committed source blobs authenticate spread expansion and undefined-receiver handling. All 84 complete-file tests pass, including ten additional positive-first mutation/evidence/order controls; original full-source hash remains unchanged. The three carried Promise files separately pass 90/90, with zero skips and unchanged pins. Object and value receipt repairs remain in progress; neither these results nor prior 2,715/307 evidence certifies the complete current join.
+
+
+### September 13: PR5787 delivered-main preservation repairs validated
+
+On the uncommitted merge of delivered main `2c6a0f1daa3d43cdf68b0d2d07fe7e3fa58b97f0` into signed prepared head `5b59430597315b08b2d7a1365324b56551230308`, the full scanner and physical-boundary cohort passed 664/664 assertions in 13 files, zero pending, with unchanged source pins. The complete argument-vector and native-value receipt files passed 154/154 assertions, zero pending, after authenticated inversions of independently committed main changes. The earlier 73 receipt failures remain recorded; no original donor fixture or digest was replaced. Closure preservation separately passed 84/84 and received independent read-only review. These checks establish source preservation, not frontend retirement or new runtime coverage. Reports are in `.tmp/5787-queue-drain/delivered-main-{scanner-physical,argument-value-forward,closure-forward}-20260913-terminal.json`. Existing behavior-intersection testing is running; no new publication or delivery is claimed.
+
+The complete delivered-main behavior-intersection cohort subsequently finished: 226 passed, zero failed, four existing TODO cases, 230 total across 16 files. The real Temporal provider test retained its 1,800,000 ms timeout and executed. All recorded source inputs stayed unchanged. TODOs remain the static provider method, chained Duration member read, and two builtin-error constructor-name cases; none receives pass credit. Raw evidence: `.tmp/5787-queue-drain/delivered-main-behavior-20260913.json`.
+
+The fresh-process closure behavior file passed 14/14. Current-merge TS7, LOC/function budgets, measured coercion gate, oracle, preservation-v1 (including core types/nodes), conformance synchronization check, and boundary inventory passed. Inventory remains architecture-incomplete and does not prove retirement. Fresh remote main advanced to `0cb1e829d521c9a804f56991e9ab54593bde1f70` via baseline refresh only; no `src` or `tests` changes. Commit this validated merge before integrating that refresh.
+
+
+### September 13: resource declarations composed with delivered main
+
+The actual merge of freshly fetched `e1a865f6f7f203df6d85ae81f39fe6073795abe8` into signed `04b2d2be1062a7ffd35b9f0d38128ea6948e0138` merged all production and policy files cleanly. Both appended issue histories are retained above. Validate the reviewed 20 complete files and canonical source gates before publication; retain the local seven-span layout receipt and the three delivered source-forward fixtures without replacing their historical donors.
+
+Current delivered-main validation passes 1,112/1,112 assertions across 20 complete files, zero failures/pending/skips. This comprises the 18-file cohort962, separate cold import1, and fresh-process reservations149. Execution inputs stayed unchanged. All1,387 incoming policy entries match the parent exactly; two declaration entries are added, all58 local activation records retained, and allowed edges unchanged. Source gates and signed hooks remain required; this is not a retirement claim.
+
+Delivered-main source gates passed: TS7, LOC/functions, measured coercion census (no changed codegen paths), oracle, preservation-v1 with required core types/nodes, conformance sync check, and boundary inventory. Inventory is valid while architecture remains incomplete. All current execution pins remain unchanged before normal signed hooks.
+
+## Vector refinement delivered-parent refresh — 2026-09-13
+
+Existing PR5792 is refreshed from preserved signed eac9f741 onto verified
+main94c472b4, which delivered PR5789 through all102 merge-group shards and
+the final regression gate. Production and tests merge cleanly; both complete
+appended issue histories are retained. The original one-instruction
+ref.as_non_null refinement and190-line regression test remain byte-identical
+to the preserved prepared join. Current validation passes56/56 across the
+four complete vector/nullability/lowering-cycle suites, with unchanged inputs.
+TS7, LOC/functions, measured coercion, oracle, preservation-v1 dead exports
+including core types/nodes, and conformance sync check pass. Normal signed
+hooks and exact-head protected queue checks remain required. This does not
+certify full IR retirement.
+
+### Consumer refresh onto delivered main — 2026-09-13
+
+Fresh mainccfa93df merges cleanly into signed prepared checkpointad57b0bb
+for production, tests and policy. The only conflict was appended issue
+history; both sides are retained. All1,389 main policy records remain exact,
+one consumer record is added,61 activation records and allowed edges are
+unchanged. The complete18-file current-tree run passes847/847, zero failures
+or pending cases, with unchanged inputs; earlier838/838 remains separate.
+The authenticated three-arm CLI again reproduces the original vector defect
+and preserves repaired/candidate parity for five source executions, one exact
+source refusal and one producer-IR vector execution. Original/repaired inputs
+remain1,370 files each; current candidate census is1,418. All128 new receipts
+are archived byte-exactly. No historical expectation or gate was weakened.
+Source gates and normal signed hooks precede exact-head publication and queue
+admission. This checkpoint is not full IR retirement.
+
+
+## 2026-09-13 — PR #5794 refresh after native string consumer delivery
+
+The existing native async prerequisite composition at `cf6ac354d8d305864baf2646e5fe632860ec7c3c` is refreshed onto verified main `95f7b21061fd4618cac76258f0dd51f062b18160`, which contains delivered consumer PR #5793 (`d842ff991952de26aa791c4feacc6717b5a1e962`). Production merges without conflicts; the remaining source delta is the original authenticated Promise/closure dependency join and its original regression tests. Both complete issue-history conflict sides are retained.
+
+Boundary composition retains all 1,390 main classifications and all 1,351 original paths. Main’s complete 61-record activation history remains an exact suffix; two original records retain their original entry order, producing 63 records. The complete original 56-record history remains an exact ordered subsequence. Original parent-history digests and 15 original-prefix corruption controls are retained alongside main’s existing controls; no allowed edge or historical digest is relaxed. The independent corpus verifies 53,933 raw blobs (53,889 tests and 44 harness files) against pinned `b363f29d3c43c626dc852744ad64a0b48a003693`, with no shared object files or extra paths.
+
+The complete six-file Promise, closure, argument-vector, reservation-authentication, string-consumer and semantic-boundary suite is running. Results, source gates, normal hooks, protected queue checks and delivery must be recorded before this refresh is accepted. This composition does not remove the async acceptance refusal or certify direct frontend retirement.
+
+Validation update: the complete six-file run finished 547/566, no skipped tests, with all source/test/helper/fixture/policy input hashes unchanged. All 261 production/resource tests passed. The boundary suite passed 286/305: one census failure measured 392 edges (248 type-only + 144 runtime) versus the old 391; the single added mixed import from the Promise producer to its authenticated closure producer accounts for the runtime edge. The expectation is updated to that measured population. Eighteen child-process errors occurred near the existing 30-second timeout; their original failures are preserved. The complete boundary suite will be rerun with the same timeout and controls outside the sandbox before attributing those errors or accepting the refresh.
+
+The complete boundary rerun passes 305/305 with the same 30-second child timeout and all controls, outside the sandbox; input hashes remain unchanged during the run. The only input difference from the original six-file run is the measured boundary census correction. Combined with the original five production/resource files (261/261), all 566 tests in the six-file population now have passing evidence. The initial 547/566 run remains preserved; the successful rerun does not retrospectively convert its child-process errors into passes. Required source gates are running before normal commit hooks and publication.
+
+Pre-commit source validation passes all seven checks against `95f7b21061fd4618cac76258f0dd51f062b18160`: full TS7, LOC and function budgets, coercion inventory, oracle ratchet, moved-reference preservation/dead exports, and conformance-number synchronization. Source/test input hashes remain unchanged. These are refresh validation receipts, not proof of completed async materialization or IR-only retirement.
+
+
+## 2026-09-14 — PR #5796 refresh after authenticated Promise closure delivery
+
+Existing declaration/reservation checkpoint `5d7b6e831ac0140e866cf39834a3aa876fb99749` is composed with verified main `e0db9ec0cf20494022fbd8365a231c25f5b5779c`, containing delivered prerequisite PR #5794 (`70a844b54593f04783d8d1bc2cd86f53d9c89e0e`). All production files merge without conflicts. Both complete issue-history sides are retained, along with the original donor hashes, inverse controls, resource-order and exact-plan authentication requirements. Validation is pending; no completed async fill, consumer execution, or retirement is claimed.
+
+
+Refresh validation setup: the independent corpus matches all 53,933 raw blobs at pinned `b363f29d3c43c626dc852744ad64a0b48a003693` (53,889 tests and 44 harness files), with exact paths/modes, separate Git objects and no extra files. All seven published production hashes match the original R2 handoff; both complete issue-history conflict sides are retained. Receipts are in `.tmp/5796-queue-drain/corpus-initial-20260914.json` and `composition-preservation-20260914.json`.
+
+The original eight-file composition run remains in progress, with no terminal verdict yet. A non-interrupting sample of its live boundary-check child showed filesystem `lstat` waiting; the worker advances through fresh child processes using the unchanged 30-second limit. This observation does not establish a compiler failure, a passing boundary census, or permission to waive the run. Original commands and input hashes are preserved in `composition-original-20260914-command.json`; no test was killed or restarted.
+
+
+Environment diagnostic: the shared system temporary directory reports link count 65,535 and 6.6 MB directory metadata. A read-only 100-`lstat` comparison measured 1.015985 seconds for that directory versus 0.000462 seconds for the task's isolated temporary directory (`temp-metadata-probe-20260914.json`). This supports, but does not prove, metadata contention as the boundary-child delay. Existing fixtures are untouched. Any necessary rerun will use a task-owned temporary directory with the same source inputs, assertions and timeouts, after the original run terminates. Preliminary oracle and conformance synchronization checks both exit 0; final exact-base source gates remain required.
+
+
+All seven exact-base source gates pass against `e0db9ec0cf20494022fbd8365a231c25f5b5779c`, with source/test inputs unchanged: TS7, LOC/function budgets, coercion inventory, oracle ratchet, moved-reference preservation/dead exports and conformance synchronization. A byte-identical isolated copy of a live negative fixture (103 files) completes in 0.417 seconds and reports its deliberately missing module. This further supports the environmental diagnosis. Based on that new evidence, the same complete eight-file suite is running with a task-owned `TMPDIR` while the original run is preserved independently; the earlier intention to wait for the original terminal result before a comparison is superseded. Both runs pin identical source, test, helper, fixture and policy inputs. No assertion or timeout was changed, no original run was killed, and neither pending run is counted as a pass.
+
+
+The original composition run terminated at 586/633, with all 328 production/resource tests passing and 47 boundary subprocess errors; no input hash changed. The isolated-directory comparison terminated at 632/633, with no subprocess errors and one measured census mismatch: 399 imports (251 type-only, 148 runtime), versus the previous 392 (248/144). Both original reports are retained. An AST-based comparison against the exact main base accounts for all seven added imports: three type-only imports of declaration types, three runtime imports of the shared declaration executor, and the Promise producer's runtime closure-layout import. There are no removed imports. Only the census expectation/comment is corrected; allowed edges, historical records, source inputs, negative controls and timeouts remain unchanged. The complete 305-test boundary suite must pass after this correction before publication.
+
+
+The complete corrected boundary suite passes 305/305 with all input hashes unchanged during the run. Combined with the unchanged seven production/resource suites (328/328), all 633 tests in the eight-file population have passing evidence. The original 586/633 and isolated 632/633 failures remain archived; the only test repair is the independently explained import census. Normal signed hooks and publication remain pending. Fresh main advanced to `e27dbf482b1c01cb61c6dc34e8f6fccb51ae4cdd`, including the early-error fix merged by PR #5924; that additional source change must be incorporated and validated before protected queue admission.
+
+
+Signed merge `4256ebd2d5e65c4f13956266f9570327a5521d09` preserves the validated composition. Normal hooks pass; the changed-root lane self-skips at 90 inherited root test files, so it is not execution evidence. Post-hook source/test pins are unchanged. Fresh main `e27dbf482b1c01cb61c6dc34e8f6fccb51ae4cdd` then merges cleanly. Only `src/compiler/early-errors/node-checks.ts` and `predicates.ts` differ among previously pinned source inputs. All seven production suites plus the new early-error regression suite pass 351/351 with unchanged inputs. Together with the unaffected 305/305 boundary suite, the current nine-file population has 656 passing tests. Current-base source gates and normal hooks remain required before publication.
+
+
+All seven current-base source gates pass against `e27dbf482b1c01cb61c6dc34e8f6fccb51ae4cdd` with unchanged validation inputs. This is exact-base local evidence; protected head checks, merge-group checks and main delivery remain unverified.
+
+### Formatter transport parent refresh for PR5797 (2026-09-14)
+
+Delivery remains dependency-first: PR5796, “refactor(ir): declare native async
+resources before reservation,” is verified on main at
+`1b74aae34481651901b954e5868d42096e6ec7ab`. This isolated refresh starts from
+published formatter head `efe352fee8afc3feb6a28c34d00fc658dc1fb205` and merges
+main `abf9eeb53261b0c6883d7248ea6025e886418211`. The existing runtime-support
+claim and original branch remain intact. No downstream refresh is started.
+
+Implementation plan: preserve both issue histories and all main boundary
+classifications, adding only the published formatter classifications and three
+activation records. Preserve the existing edge policy. Main replaced lower.ts
+with a facade, so retain that facade byte-for-byte and port the two published
+support-reference arms (seven lines) into their canonical lower-generic.ts
+functions. This necessary conflict-resolution scope preserves the delivered
+lowering separation and fixes. The subagent owns only these two lowering files;
+the integration owner owns policy, history, validation and publication.
+
+Validate original formatter/source-free/codec/support-reference and native-family
+regressions together with current boundary and affected lowering tests. Use an
+independently verified pinned test262 corpus and a task-owned temporary directory;
+preserve original failures and fixtures. Complete normal signed hooks, refresh
+the exact base/head, and use the existing protected PR queue. Formatter physical
+materialization, full async execution and direct-frontend retirement remain open;
+this uncommitted refresh is not delivered evidence.
+
+Initial current-root validation completed 544/581 with unchanged inputs: all
+37 failures belong to the semantic-provider boundary fixture, whose historical
+offsets and copied module set predate formatter support. The original JSON and
+raw log remain in the owned refresh artifacts. All other selected suites passed.
+The scoped test repair preserves every historical digest and existing negative
+control, adds the four real canonical formatter dependencies, and covers their
+deletion and forbidden/unknown/unresolved imports. Independent AST measurement
+finds 106 modules and 425 edges (262 type-only, 163 runtime), compared with main's
+102 modules and 399 edges; no allowed-edge policy or detector is relaxed.
+
+The corrected semantic-provider boundary suite passes 336/336 with unchanged
+inputs, including 31 added formatter controls. The original other 15 suites
+passed 276/276; together this is 612 passing selected checks, not a newly run
+historical comparison. Independent review confirms 34 of 35 published source
+files remain byte-identical; the only exception is the seven-line support-ref
+port from the replaced lower.ts monolith to main's lower-generic.ts. Main's
+facade remains byte-identical and all 17 formatter classification changes match
+the published policy. The verified independent corpus contains 53,889 test and
+44 harness files (86,743,051 bytes), exactly matching the pinned Git blobs; no
+source corpus or unrelated worktree was modified.
+
+All seven source gates passed against `abf9eeb53261b0c6883d7248ea6025e886418211`.
+Signed merge `d35790611108116cf72c3c1a690697e5784ae068` completed the full normal
+hook chain with no bypass and no validation-input drift. The hook itself skipped
+99 inherited changed root tests (>20); only the executed 612 selected checks
+above count as evidence. A fresh fetch then confirmed main at
+`35858c851f6dba219a5ab2f9a31cedb511cb38d0`, and the existing remote PR remains
+exactly `efe352fee8afc3feb6a28c34d00fc658dc1fb205`. Main's newer harness-smoke,
+budget-baseline and report updates merged cleanly; no compiler source or selected
+test inputs changed. Exact-base source gates are repeated before publication.
+
+All seven exact-base source gates pass against `35858c851f6dba219a5ab2f9a31cedb511cb38d0` with unchanged compiler and selected-test inputs. Protected queue verification and main delivery remain pending.
+
+### Formatter queue blocker: named IR type population (2026-09-14)
+
+Published head `1106a652f385b82e349257277480a756d6b65a7c` passed 579/579 normal
+commit-hook tests and normal push hooks (including 18/18 numeric parity), but
+required CI quality job `103823859853` failed at kind-neutrality reconciliation:
+`IrSupportRefType` introduces a named `IrType` payload, whereas the checker
+previously accounted only for instruction/terminator interfaces and three
+symbolic-reference objects. The original CI log and local reproduction are
+preserved; required queue admission remains blocked, and this is not delivery.
+
+Scoped repair plan: account explicitly for the reviewed named payload category,
+requiring its exact canonical declaration and discriminant, syntax-aware direct
+IrType membership, and disjointness from IrInstr/IrTerminator. Unknown named
+interfaces must still fail. Preserve all 85 instruction verdicts, evidence,
+counts, ratchets and baseline bytes. Add positive and negative controls for
+missing/renamed/moved/duplicated payloads, discriminant or membership changes,
+unknown payloads/instructions and promotion into an instruction union. Do not
+change source representation to evade the checker or classify the payload as a
+fourth symbolic reference. The native subagent owns the checker and focused
+regression files; root owns integration, issue evidence, adjacent gate checks
+and protected publication. No downstream refresh is started.
+
+Adjacent local checks pass: JsTag seam, IR layering/dialect, pushRaw, codegen
+fallbacks and speculative rollback. Two initial process errors were local
+invocation limits (tsx CLI Unix-socket path length and URL-encoded space in the
+rollback checker root); the original logs are retained. Direct Node+tsx loading
+and the existing space-free worktree alias run the unchanged checks successfully.
+These invocation corrections do not change source, policy or gate assertions.
+
+The first focused kind-checker pair completed 56/58. One new promotion control
+constructed invalid syntax for the single-line IrTerminator union; its mutation
+is corrected to exercise valid instruction promotion. The other failed at the
+existing positive quote-presence assertion in issue-5298: the exact quote
+`Code-point extraction intent` is now in canonical `src/ir/core/dialect/js.ts`,
+while the test still read the relocated facade. Scope expands only to correcting
+that test's QUOTE_FILE path; the quote and all assertions remain unchanged.
+The original failed report and pre-repair file bytes are retained.
+
+The repaired focused pair passes 58/58 with no skips. The direct kind-neutrality
+checker passes; independent comparison confirms the entire 85-kind instruction
+table, counts, ratchets, evidence and historical population record match the
+existing baseline exactly. Its SHA-256 remains
+`e4f871382a5478ab4a931816c441b52729145c2928c95c2b45119fd04dcf5800`.
+The separately checked named payload is now reconciled alongside the three
+reference objects: 85 instructions + 3 references + 1 payload = 89 discriminants.
+No compiler source or verdict baseline was changed for this repair.
+
+### PR5802 string-output extraction queue delivery — implementation plan (2026-09-14)
+
+Resume the existing held PR at published 03d0615e34da8629971659d8c5937b8483f57643
+in isolated codex/5802-queue-drain-20260914. Fresh main is
+987ed50ca832a56701246d926688878754881f97. The original extraction claim remains
+with ttraenkler/codex-native-string-output-extraction; the separately claimed
+output-resource work is not adopted or modified. No downstream refresh starts
+until this PR is delivered.
+
+Main merged without source/test conflicts. Preserve both issue histories and
+main's complete compiler-boundary policy, adding only the two original
+clean/native-runtime file classifications. Preserve exact extraction donors,
+UTF8-disabled behavior, actual decoder dependency and traversal repair, all
+original failures, fixture pins and negative controls. Verify the independent
+pinned corpus before normal hooks. Run current-root extraction/resource/caller
+regressions and required gates; run the committed historical scanner comparison
+against its exact pinned donor without relaxing any comparison. Historical
+publication counts are not current-root or new historical-comparison evidence.
+
+Retarget this existing PR to main before publishing its verified signed head;
+release hold only after evidence justifies admission through the protected
+queue. Verify actual queue parents and merged content using fresh refs, then
+required CI, both conformance lanes and main ancestry/content. This checkpoint
+does not establish complete async execution or IR-only frontend retirement.
+
+Current-main validation: 724/724 tests pass across eleven complete suites, with
+zero skips and zero input drift (current-main-focused.json and its command/
+terminal receipts). This covers output bodies, donor reconstruction, UTF8 rope
+repair, flatten resources, scanner proof controls, empty/batched/standalone
+string callers, WASI stdout and both compiler-boundary suites. Independent
+review confirms all fourteen published source/test/proof files remain exact.
+The independent test262 checkout verifies 53,933 raw blobs (53,889 tests and
+44 harness files), 86,743,051 bytes, exact directory/file sets, clean status,
+no shared object files and the pinned b363f29d3c43c626dc852744ad64a0b48a003693
+revision. Corpus manifest SHA-256:
+`fcaaff56a78c134e3875a00b743d5e6435939c38f304eeec1ffb35bc3c611ffb`.
+The historical scanner comparison and source gates remain separate pending
+evidence; no delivery or full migration completion is claimed here.
+
+The previously unrun full committed scanner comparison now passes on this
+current main composition: baseline a6cc59a2cdfad5141d75faadf1530a9de63bebd7,
+actual candidate and authenticated preservation projection each execute
+66/66 rows and 132/132 calls (64 original scenarios plus two malformed-number
+probes). All per-row expectations pass; comparison differences are empty.
+Byte/WAT/resource-order/value parity applies to baseline versus preservation
+projection; actual candidate has separately verified semantic expectations.
+All three raw receipts, terminal records and compiler outputs are preserved
+in .tmp/5802-queue-drain/scanner-three-arm-current-main. This fresh comparison
+does not erase the earlier UTF8 donor's eight historical illegal-cast failures.
+
+All seven precommit source gates pass against immutable main 987ed50c: TS7,
+LOC, function budgets, coercion, oracle, dead exports and conformance-number
+sync. Compiler inventory and kind/dialect/JsTag/layering/pushRaw gates pass.
+The first fallback launch failed before checking because the tsx CLI's Unix
+socket path exceeded the platform limit under the isolated temporary directory;
+its log is retained. Running the identical TypeScript checker with
+`node --import tsx scripts/check-ir-fallbacks.ts` passes with no unintended,
+post-claim or module-level increases. No checker, timeout, fixture or gate was
+weakened. Fresh remote main and PR head remain 987ed50c and 03d0615e.
+
+### PR5798 cumulative formatter checkpoint queue refresh plan (2026-09-14)
+
+PR5802 delivered as8f4495ba21ea6f3d7747f01b9e2a29adaf8b5ca6 after all102
+shards, final regression, CI and differential passed; actual full merge tree
+and fresh main ancestry verified. Resume existing PR5798 at published
+d132c0a4e49a1c157ddd0052e125f59ab4f6c386 in isolated
+codex/5798-queue-drain-20260914. Original D2 and separately frozen E2 claims
+remain with their recorded owners. No new migration scope or E2 adoption.
+
+The published head contains24 first-parent commits beyond the older1eaa57
+PR-body checkpoint, including prior cumulative merges, controlled historical
+comparisons, Linux replay and preserved rejected interventions. Preserve all
+of that prepared work and original failures. Multiple merge bases make a
+single three-dot diff insufficient to identify remaining changes. Verify the
+actual merged source against both exact parents.
+
+Main merged without source conflicts. Resolve metadata and three test conflicts
+by preserving both histories, activated policy closures and all test intentions.
+Root owns issue/policy/semantic-boundary reconciliation; separate native agents
+own only value-resource and delay-source-preservation test conflicts. No agent
+runs parallel heavy validation. Archive every original conflict/stage first.
+
+Verify independent pinned corpus, then current-root resource/formatter/consumer/
+legacy-wrapper and boundary suites, preserved historical proof controls and all
+required gates. Retarget the existing PR only after current head/base evidence
+is established; normal signed hooks/push and exact-head protected queue only.
+Count only fresh verified main ancestry/content and full required checks as
+delivery. Keep the recorded229/230 E2 failure and23/23 targeted repair separate
+from this checkpoint; full output/async execution and IR-only retirement remain
+unproven.
+
+The five conflict resolutions retain both complete histories and test intentions.
+Policy union is1413 classifications and75 activation records: nine published
+records followed by main's intact66; all68 original published records remain
+an exact ordered subsequence. Main entry order and all original digest proofs
+are preserved. No allowed edge or activation floor was weakened. Both complete
+boundary suites pass467/467 with no skips/input drift. The current fixture has
+106unique owners and425imports (262type-only/163runtime), independently checked.
+
+The initial merge emitted a missing remote-object diagnostic while constructing
+its virtual merge base; all13376 indexed blobs were subsequently read-verified
+as available. Virtual stage1 policy contains conflict markers from crisscross
+history, so policy reconciliation used exact endpoint records and preserved
+both historical subsequences. Original merge output and every conflict/stage
+are archived. Independent corpus verification again matches53933 pinned blobs,
+exact directory/file sets and no shared objects. Current production suite
+validation is the next separate measurement, not implied by boundary results.
+
+Current production validation passes853/853 across26complete suites, no skips
+or input drift. Additional nine Node preservation-tool suites initially pass
+302/305: admission's top-level setup and two driver positive controls read
+current instrument files against deliberately pinned historical instrument
+hashes. Full failed log is retained. Scope of the blocker fix is test inputs
+only: provide exact immutable original instrument bytes with verified provenance,
+keep all production admission/hash/patch contracts unchanged, and retain the
+modified-current-instrument refusals and every original negative control.
+A native agent owns only the two affected tests and required historical fixture
+files; root owns validation and publication.
+
+Existing48-artifact/93-execution three-arm results remain historical. The runner
+is pinned to63079597 and has no current-candidate refresh option; original raw
+receipt paths are absent locally. No new historical comparison is claimed, no
+admission rules widened, and the rejected constructor intervention stays rejected.
+
+The scoped historical-input repair is complete: the same nine Node suites now
+pass342/342, zero skips/input drift. The initial302/305 failure remains archived;
+the count increase includes admission cases previously blocked at module setup
+and two new positive-first rejection controls, not37 new tests. Five immutable
+fixtures match original committed full-file bytes and unchanged hash pins;
+production admission and runner contracts remain unchanged. The public retirement
+instrument suite separately passes16/16; this does not establish retirement.
+All seven source gates and seven adjacent gates pass. Inventory is1413 modules,
+zero errors, explicitly inventory-valid-architecture-incomplete. Formatting and
+diff checks pass. Evidence is under .tmp/5798-queue-drain in the integration
+worktree. These are current8f4495ba-based checks; historical48/93 results, the
+original Linux failure and the unexecuted intervention remain separate.
+
+Delivery refresh continues on main d78c139d (baseline artifacts only). All seven
+source gates pass again and all1487 production input pins remain identical.
+The normal baseline-merge commit hook exposed an additional layout-instrument
+failure: delay-combinator-layout-ownership passes30/31; direct historical donor
+verification omits the delivered standard-EH forward projection. Original full
+hook output is preserved in latest-main-commit.log. No hash is rebaselined and
+no production fix or hook bypass is proposed. The separate async-declaration
+and scanner-chain suites pass40/40 with no skips/input drift. The baseline
+merge remains uncommitted pending the scoped test repair and normal hook retry.
+
+The layout proof repair passes31/31, zero skips/input drift. It authenticates
+the existing forward-EH projection, pins one tagged and one foreign catch and
+the original reference, then verifies all eight historical donors. The strict
+old verifier still explicitly rejects the current unprojected body. All other
+30 cases, helper contracts and original hashes remain unchanged. Formatting
+passes; retry the normal full commit hook, retaining its failed first run.

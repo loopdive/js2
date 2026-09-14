@@ -2,11 +2,17 @@
 /**
  * Variable declaration statement lowering.
  */
+import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
 import { ts, forEachChild } from "../../ts-api.js";
 import { isNullablePrimitiveType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
+import {
+  flushRedirectedPatternBindings,
+  redirectBoxedPatternBindings,
+  reinstallPreHoistedLetConstBinding,
+} from "./eager-capture-box.js";
 import { redeclarationWidenedLocalSlotType } from "../declarations/redeclared-var-widening.js";
 import type { CodegenContext, FunctionContext, NullGuardFact, NullishExclusion } from "../context/types.js";
 import { emitCoercedLocalSet, noJsHost } from "../expressions/helpers.js";
@@ -875,6 +881,9 @@ export function usageInferredLocalType(ctx: CodegenContext, decl: ts.VariableDec
 }
 
 function localTypeForDeclaration(ctx: CodegenContext, type: ts.Type, decl?: ts.VariableDeclaration): ValType {
+  if (decl?.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer)) {
+    return { kind: "externref" };
+  }
   // (#3673) Explicit native type annotation — `let x: i32` where
   // `type i32 = number`; the annotation node is the only surviving evidence.
   // It is a user assertion and outranks every inference below it.
@@ -1309,7 +1318,11 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     }
 
     if (ts.isArrayBindingPattern(decl.name)) {
+      // (#5356) A capture-boxed binding lives in a cell; the element stores
+      // target a plain local, so redirect them and flush through the cell.
+      const redirected = redirectBoxedPatternBindings(fctx, decl.name);
       compileArrayDestructuring(ctx, fctx, decl);
+      flushRedirectedPatternBindings(fctx, redirected);
       continue;
     }
 
@@ -2103,11 +2116,8 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         capturedByPlainFn = true;
       }
       if (capturedByPlainFn && !cpsCaptured && preHoisted !== undefined && preHoisted.valueSlot >= fctx.params.length) {
-        fctx.localMap.set(name, preHoisted.valueSlot);
-        if (preHoisted.flagSlot !== undefined) {
-          if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
-          fctx.tdzFlagLocals.set(name, preHoisted.flagSlot);
-        }
+        // (#5356) …or its cell, so the declaration writes what the callee reads.
+        reinstallPreHoistedLetConstBinding(fctx, name, preHoisted);
       }
     }
 
@@ -2138,6 +2148,22 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     const freshLocalForLetConst = !isVar && !isHoistedLetConst;
     let localIdx =
       reusedVarSlotIndex(fctx, decl, isVar, isHoistedLetConst, existingIdx) ?? allocLocal(fctx, name, wasmType);
+    // A native generator binding may refine a pre-hoisted `externref` slot to
+    // its concrete state type. Nested declarations are planned before this
+    // initializer, however, and retain that pre-hoisted slot as their lexical
+    // capture source. Keep it synchronized after initialization: it remains
+    // the generic/captured view of the same JavaScript binding, while the
+    // replacement local preserves direct native-state specialization. Leaving
+    // it at its hoisted undefined value made a later `yield* g` observe
+    // `undefined` even after `var g = producer()` had completed.
+    const nativeGeneratorCaptureMirrorSlot =
+      nativeGenBindingType &&
+      isVar &&
+      existingIdx !== undefined &&
+      getLocalType(fctx, existingIdx)?.kind === "externref" &&
+      !fctx.boxedCaptures?.has(name)
+        ? existingIdx
+        : undefined;
     if (
       nativeGenBindingType &&
       isVar &&
@@ -2560,6 +2586,14 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         });
       } else {
         emitCoercedLocalSet(ctx, fctx, localIdx, stackType);
+      }
+      if (nativeGeneratorCaptureMirrorSlot !== undefined && !fctx.boxedCaptures?.has(name)) {
+        const nativeGeneratorLocalType = getLocalType(fctx, localIdx);
+        if (nativeGeneratorLocalType?.kind === "ref" || nativeGeneratorLocalType?.kind === "ref_null") {
+          fctx.body.push({ op: "local.get", index: localIdx });
+          fctx.body.push({ op: "extern.convert_any" });
+          fctx.body.push({ op: "local.set", index: nativeGeneratorCaptureMirrorSlot });
+        }
       }
     } else if (wasmType.kind === "externref") {
       // (#2705) A bare `var x;` redeclaration whose slot was already hoisted to

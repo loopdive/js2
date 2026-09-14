@@ -9,6 +9,7 @@ import { popBody, pushBody } from "../context/bodies.js";
 import { resolveArrayInfo } from "../array-methods.js";
 import { definedFuncHandleOf, mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S3b) stable-regime minting
 import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.js";
+import { buildSpreadArgList } from "../spread-arg-list.js"; // (#5361)
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { ensureLateImport, flushLateImportShifts } from "../expressions/late-imports.js";
 import { addFuncType, ensureWasiWriteAnyStringHelper } from "../index.js";
@@ -26,6 +27,7 @@ import { emitThrowRangeError, emitThrowTypeError } from "./helpers.js";
 import { isStaticNaN, tryStaticToNumber } from "./misc.js";
 import { sourceOverridesMethodOnReceiver } from "./member-override-scan.js";
 import { objectCoercionPreservesDate } from "../object-ctor-primitive-receiver.js";
+import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
 
 // ── Builtins ─────────────────────────────────────────────────────────
 
@@ -83,8 +85,11 @@ function compileConsoleCall(
 
   for (const arg of expr.arguments) {
     const argType = ctx.checker.getTypeAtLocation(arg);
+    // An alias write can invalidate the checker type; match the collector
+    // and preserve the runtime value through the externref console import.
+    const stale = expressionHasWidenedPropertyType(ctx, arg);
 
-    if (isStringType(argType)) {
+    if (!stale && isStringType(argType)) {
       compileExpression(ctx, fctx, arg);
       // Fast mode: flatten + marshal native string to externref before passing to host
       if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
@@ -103,7 +108,7 @@ function compileConsoleCall(
       if (funcIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx });
       }
-    } else if (isBooleanType(argType)) {
+    } else if (!stale && isBooleanType(argType)) {
       // (#2788) Coerce the argument to the console import's param ValType (i32).
       // The static-type-selected variant fixes the import signature; passing the
       // expected ValType makes compileExpression reconcile any mismatch (e.g. a
@@ -113,7 +118,7 @@ function compileConsoleCall(
       if (funcIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx });
       }
-    } else if (isNumberType(argType)) {
+    } else if (!stale && isNumberType(argType)) {
       // (#2788) Coerce to f64 — fixes `console.log(a[i])` where the bounds-checked
       // element read (#2760) widened a `number[]` element to an `externref`
       // (OOB→undefined) but the `console_${method}_number` import expects f64.
@@ -3779,13 +3784,13 @@ function compileMathCall(
  * Lower `Math.min(...)` / `Math.max(...)` when at least one argument is a
  * SpreadElement (`Math.max(...arr)`, `Math.min(0, ...arr, 9)`). Folds the
  * arguments left to right into an f64 accumulator seeded with the identity
- * (+Infinity for min, -Infinity for max), iterating each spread's backing vec
- * with a native loop. NaN is tracked in a flag and propagated to the result
+ * (+Infinity for min, -Infinity for max), expanding each spread source at its
+ * runtime length. NaN is tracked in a flag and propagated to the result
  * (§21.3.2.24/25: the result is NaN if any value is NaN).
  *
- * Returns null if a spread argument's element type cannot be resolved to a
- * numeric native vec (e.g. externref element); the caller then keeps the
- * legacy behaviour rather than emitting invalid Wasm. (#2054)
+ * Returns null when the target has no substrate to expand a spread at all;
+ * the caller then keeps the legacy behaviour rather than emitting invalid
+ * Wasm. (#2054, spread expansion shared with splice/push since #5361)
  */
 function compileMathMinMaxSpread(
   ctx: CodegenContext,
@@ -3795,17 +3800,21 @@ function compileMathMinMaxSpread(
 ): ValType | null {
   const wasmOp = method === "min" ? "f64.min" : "f64.max";
 
-  // Pre-resolve each spread's vec info; bail (null) before emitting anything
-  // if any spread element type is not a numeric native vec.
-  const spreadInfos = new Map<ts.SpreadElement, { vecTypeIdx: number; arrTypeIdx: number; elemType: ValType }>();
-  for (const arg of expr.arguments) {
-    if (!ts.isSpreadElement(arg)) continue;
-    const innerTsType = ctx.checker.getTypeAtLocation(arg.expression);
-    const info = resolveArrayInfo(ctx, innerTsType);
-    if (!info) return null;
-    if (info.elemType.kind !== "f64" && info.elemType.kind !== "i32") return null;
-    spreadInfos.set(arg, info);
-  }
+  // (#5361) Evaluate the whole argument list — positional values and spread
+  // sources alike — through the shared spread-expanding builder. It emits
+  // nothing before it can decline, so a `null` return here still leaves the
+  // legacy path a clean slate.
+  //
+  // This replaced a pre-resolution of each spread's vec info from the CHECKER
+  // type, which declined (`null` → the legacy path, where the array coerces to
+  // a number and the answer is wrong) for every source the checker could not
+  // map onto a registered numeric vec. An inline `Math.max(...[1, 5, 3])` in
+  // an untyped module is exactly that case: `resolveArrayInfo` answers null,
+  // the literal folds to `Number([]) === 0`, and `Math.max` returns 0. The
+  // builder reads the source by its actual REPRESENTATION instead (tuple
+  // struct / native vec / host iterable), so all three fold correctly.
+  const built = buildSpreadArgList(ctx, fctx, expr.arguments, 0, { kind: "f64" }, `minmax_${method}`);
+  if (!built) return null;
 
   const accLocal = allocLocal(fctx, `__minmax_acc_${fctx.locals.length}`, { kind: "f64" });
   const nanLocal = allocLocal(fctx, `__minmax_nan_${fctx.locals.length}`, { kind: "i32" });
@@ -3816,109 +3825,8 @@ function compileMathMinMaxSpread(
   fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "local.set", index: nanLocal });
 
-  // Fold one f64 value (already on the stack) into acc, NaN-guarded.
-  const emitFoldStackValue = () => {
-    const vTmp = allocTempLocal(fctx, { kind: "f64" });
-    fctx.body.push({ op: "local.tee", index: vTmp });
-    // isNaN(v): v !== v
-    fctx.body.push({ op: "local.get", index: vTmp });
-    fctx.body.push({ op: "f64.ne" });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "i32.const", value: 1 },
-        { op: "local.set", index: nanLocal },
-      ],
-      else: [
-        { op: "local.get", index: accLocal },
-        { op: "local.get", index: vTmp },
-        { op: wasmOp },
-        { op: "local.set", index: accLocal },
-      ],
-    });
-    releaseTempLocal(fctx, vTmp);
-  };
-
-  for (const arg of expr.arguments) {
-    if (!ts.isSpreadElement(arg)) {
-      // Positional numeric argument: compile to f64 and fold.
-      compileExpression(ctx, fctx, arg, { kind: "f64" });
-      emitFoldStackValue();
-      continue;
-    }
-
-    const info = spreadInfos.get(arg)!;
-    const vecLocal = allocLocal(fctx, `__minmax_vec_${fctx.locals.length}`, {
-      kind: "ref_null",
-      typeIdx: info.vecTypeIdx,
-    });
-    const dataLocal = allocLocal(fctx, `__minmax_data_${fctx.locals.length}`, {
-      kind: "ref_null",
-      typeIdx: info.arrTypeIdx,
-    });
-    const lenLocal = allocLocal(fctx, `__minmax_len_${fctx.locals.length}`, { kind: "i32" });
-    const idxLocal = allocLocal(fctx, `__minmax_idx_${fctx.locals.length}`, { kind: "i32" });
-
-    // vec = arr; if (vec == null) skip (empty contributes nothing).
-    compileExpression(ctx, fctx, arg.expression);
-    fctx.body.push({ op: "local.set", index: vecLocal });
-
-    const loopBody: Instr[] = [
-      // len = vec.length
-      { op: "local.get", index: vecLocal },
-      { op: "ref.as_non_null" },
-      { op: "struct.get", typeIdx: info.vecTypeIdx, fieldIdx: 0 },
-      { op: "local.set", index: lenLocal },
-      // data = vec.data
-      { op: "local.get", index: vecLocal },
-      { op: "ref.as_non_null" },
-      { op: "struct.get", typeIdx: info.vecTypeIdx, fieldIdx: 1 },
-      { op: "local.set", index: dataLocal },
-      // idx = 0
-      { op: "i32.const", value: 0 },
-      { op: "local.set", index: idxLocal },
-      {
-        op: "block",
-        blockType: { kind: "empty" },
-        body: [
-          {
-            op: "loop",
-            blockType: { kind: "empty" },
-            body: [
-              // if (idx >= len) break
-              { op: "local.get", index: idxLocal },
-              { op: "local.get", index: lenLocal },
-              { op: "i32.ge_s" },
-              { op: "br_if", depth: 1 },
-              // push data[idx] as f64, fold
-              { op: "local.get", index: dataLocal },
-              { op: "local.get", index: idxLocal },
-              { op: "array.get", typeIdx: info.arrTypeIdx },
-              ...(info.elemType.kind === "i32" ? ([{ op: "f64.convert_i32_s" }] satisfies Instr[]) : []),
-              ...buildFoldInstrs(fctx, accLocal, nanLocal, wasmOp),
-              // idx++
-              { op: "local.get", index: idxLocal },
-              { op: "i32.const", value: 1 },
-              { op: "i32.add" },
-              { op: "local.set", index: idxLocal },
-              { op: "br", depth: 0 },
-            ],
-          },
-        ],
-      },
-    ];
-
-    // Guard the whole loop on non-null vec (null array → contributes nothing).
-    fctx.body.push({ op: "local.get", index: vecLocal });
-    fctx.body.push({ op: "ref.is_null" });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [],
-      else: loopBody,
-    });
-  }
+  // Fold every element (positional or spread-expanded) into the accumulator.
+  built.emitStores({ pre: [], post: buildFoldInstrs(fctx, accLocal, nanLocal, wasmOp) });
 
   // result = sawNaN ? NaN : acc
   fctx.body.push({ op: "f64.const", value: NaN });

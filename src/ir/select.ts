@@ -117,92 +117,9 @@ import type {
 import type { IrFnctorAdmission, IrFnctorSelectionAdmissionResolver, LatticeType, TypeMap } from "./propagate.js";
 import type { RecursiveTypeEvidence } from "./type-evidence.js";
 import type { IntrinsicId } from "./intrinsics.js";
-
-/**
- * #1169q telemetry — record why a top-level FunctionDeclaration didn't make
- * it into the IR claim set. The intent is to drive the legacy retirement:
- * once the count of unintended fallbacks (excluding deferred features) is
- * zero against the test262 corpus, the legacy expression / statement
- * emitters can be retired.
- */
-export type IrFallbackReason =
-  | "unnamed"
-  | "type-parameters"
-  | "non-export-modifier"
-  | "async-generator"
-  // (#1373) `async function` (without an asterisk) — distinguished from
-  // `async-generator` (`async function*`) and from generic
-  // `non-export-modifier` / `deferred-feature` so the IR-claim gate can
-  // conditionally accept async functions when the standalone
-  // `$Promise` + microtask-queue infra (#1326) is fully wired. Phase A
-  // (this slice) just buckets them; Phase C wires the lowering.
-  | "async-function"
-  | "return-type-not-resolvable"
-  | "param-type-not-resolvable"
-  | "param-shape-rejected" // optional/rest/initializer/non-identifier/duplicate
-  // #1372 — binding-pattern param shape too complex for slice 8a destructuring
-  // (rest, defaults, nested patterns, computed keys). Distinguished from
-  // `param-shape-rejected` so the param-shape bucket continues to track only
-  // optional/rest/initializer/duplicate cases.
-  | "destructuring-param-complex"
-  | "body-shape-rejected"
-  // #3529 P1 — checker/syntax-known producer gaps. These are selector-owned
-  // Unsupported outcomes: the legacy body is intentionally retained before
-  // AST -> IR construction starts, rather than relying on a builder throw.
-  | "string-method-unsupported"
-  | "array-method-unsupported"
-  | "primitive-method-unsupported"
-  | "function-invocation-method-unsupported"
-  | "logical-value-unsupported"
-  | "operand-coercion-unsupported"
-  | "template-substitution-unsupported"
-  | "error-constructor-unsupported"
-  | "typed-array-constructor-unsupported"
-  | "date-constructor-unsupported"
-  | "regexp-constructor-unsupported"
-  | "call-resolution-unsupported"
-  | "call-arity-unsupported"
-  | "constructor-resolution-unsupported"
-  | "constructor-arity-unsupported"
-  | "class-projection-unsupported"
-  | "class-member-unsupported"
-  | "external-call" // calls a non-local identifier (parseInt, etc.)
-  | "call-graph-closure" // local caller/callee not claimed
-  | "recursive-type-evidence" // recursive SCC failed conservative ABI certification
-  | "type-resolution-failure" // overrideMap couldn't be built (set externally)
-  // #1370 Phase A — class method / constructor of a shape the IR selector
-  // doesn't yet handle. Examples: methods on a class with an `extends`
-  // clause (Phase E — inheritance), get/set accessors, abstract methods,
-  // computed property names. Distinguished from `body-shape-rejected` so a
-  // future slice can tell "method-specific gate failure" apart from generic
-  // body-shape rejections that apply to top-level FunctionDeclarations too.
-  | "class-method"
-  | "string-builder-candidate" // (#3740/#3744) kill-switch-forced legacy — see ./string-builder-shape.ts
-  // (#4457) The unit references an ambient HOST surface (`document`, `console`,
-  // `window`, …) in a target whose capability policy has no ambient JS host:
-  // standalone / wasi / strictNoHostImports, i.e. `hostExternCapability` →
-  // "defer". The label names the MECHANISM (the IR's host-extern surface is
-  // capability-deferred for this target), which is why it is not
-  // `body-shape-rejected`: no amount of IR *shape* coverage claims these, and
-  // bucketing them as *unintended* overstated what shape work could fix by 6
-  // of 11 units on the #3518 standalone reference corpus.
-  //
-  // The bucket held two kinds of member. One has since been retired:
-  //   - PERMANENT here: DOM (`document.*`). Legacy's own `--target standalone`
-  //     body for those units still leaks `env.Document_createElement`,
-  //     `env.Node_appendChild` & co. past the #2961 import-leak gate, so there
-  //     is genuinely nothing host-free to lower to.
-  //   - RETIRED (#4462): `console.*`. Standalone always had a host-free sink
-  //     (`__stdout_append` / `ensureStandaloneStdoutSink`, #3469) that legacy
-  //     uses; the IR's console arm knew only the host-import form. It now has
-  //     its own capability row (`consoleSurfaceCapability`) and a host-free
-  //     lowering, so a `console.*` unit is claimed rather than bucketed here.
-  //     A console call STILL lands here when this target has no sink at all, or
-  //     when the call shape is outside the lowered slice (multi-arg, expression
-  //     position, a method the IR does not lower) — a pre-claim rejection, which
-  //     is the point: the alternative is a post-claim demote.
-  | "host-surface-unavailable"
-  | "deferred-feature"; // excluded here (eval, non-selected with shapes, import(), Proxy)
+import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
+export type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
+// excluded here (eval, non-selected with shapes, import(), Proxy)
 
 export interface IrFallback {
   readonly name: string;

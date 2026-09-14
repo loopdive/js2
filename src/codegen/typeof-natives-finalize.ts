@@ -15,6 +15,7 @@ import { buildBuiltinCallableTestArm, hasBrandedBuiltinCarrier } from "./builtin
 import { installCompiledClosureToStringArm } from "./coercion-engine.js";
 import { unshiftCarrierToPrimitiveArms, unshiftDateToStringArm } from "./carrier-to-primitive.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { standaloneLinkBoundaryPeerIndex } from "./standalone-link-boundary.js"; // (#5383 S2f R12)
 
 /**
  * #1896 — teach the standalone/WASI native `__typeof_function` and
@@ -64,7 +65,12 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
   const baseTypeIdxs = collectClosureBaseWrapperTypeIdxs(ctx);
   const runtimeEvalCallbackTypeIdx = ctx.runtimeEvalInterpretedCallbackTypeIdx;
   const proxyTypeIdx = ctx.objectRuntimeTypes?.proxyTypeIdx;
-  const boundaryCallableKindIdx = ctx.funcMap.get("__boundary_object_callable_kind");
+  // (#5383 S2f R12) …and its standalone wasm→wasm twin, so `typeof` on a
+  // value a linked PROVIDER owns is answered by the module that can classify
+  // it. Without this a provider-minted class value answered `"object"`, so a
+  // consumer could never see `typeof Temporal.PlainDate === "function"`.
+  const boundaryCallableKindIdx =
+    ctx.funcMap.get("__boundary_object_callable_kind") ?? standaloneLinkBoundaryPeerIndex(ctx, "callableKind");
   // (#4120) A reified builtin CONSTRUCTOR carrier (`Set`, `TypeError`, `Array`,
   // …) is a `$Object` branded `OBJ_FLAG_CALLABLE`, not a closure wrapper — and a
   // module can reify one without ever compiling a closure, so it must keep this
@@ -84,6 +90,9 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
   // `isConstructor` harness throw "invoked with a non-function value". The arm
   // lives with the TYPE here, so every consumer of these three natives agrees.
   const revokerTypeIdx = ctx.proxyRevocableSite === true ? ctx.structMap.get("__proxy_revoker") : undefined;
+  // A class VALUE needs the typeof finalizer even if the module has no ordinary
+  // closure carrier: it is identified by its lazily materialised singleton.
+  const classObjectGlobalIdxs = [...ctx.classObjectGlobals.values()].sort((a, b) => a - b);
   if (
     baseTypeIdxs.length === 0 &&
     runtimeEvalCallbackTypeIdx === undefined &&
@@ -92,17 +101,75 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
     boundaryCallableKindIdx === undefined &&
     taCtorTypeIdx === undefined &&
     symbolTypeIdx === undefined &&
-    revokerTypeIdx === undefined
+    revokerTypeIdx === undefined &&
+    classObjectGlobalIdxs.length === 0
   )
     return;
 
   const fnByName = (name: string): WasmFunction | undefined =>
     ctx.mod.functions.find((f) => (f as { name?: string }).name === name) as WasmFunction | undefined;
 
+  // (#5383 S2f R13) A class VALUE (`const C = PlainDate`) is a `$ClassName`
+  // STRUCT of the same type and the same `__tag` as an instance (#3976,
+  // `class-object-of.ts`), so nothing about its TYPE can tell the two apart —
+  // only its IDENTITY can: it is the one lazily-materialised class-object
+  // singleton global. Without an arm here the runtime natives answered
+  // `"object"` for every class value reached through a parameter, a property
+  // read or a link boundary, while the compile-time fold answered `"function"`
+  // for the bare identifier — the #2984 path-dependence, and the reason a
+  // consumer of a linked provider could not see `typeof NS.PlainDate ===
+  // "function"`.
+  //
+  // Identity (`ref.eq` against the singleton) is exact in both directions: an
+  // INSTANCE is a different object, so it can never match, and a class value
+  // always is that object. A global that has not been materialised yet holds
+  // null, and `ref.eq` against a non-null value is false — so the arm degrades
+  // to today's answer rather than to a wrong one.
+  const EQ_HEAP_TYPE = -19;
+  const classObjectIdentityArms = (anyLocalIdx: number, onMatch: Instr[]): Instr[] => {
+    if (classObjectGlobalIdxs.length === 0) return [];
+    const inner: Instr[] = [];
+    for (const globalIdx of classObjectGlobalIdxs) {
+      // The singleton global is lazy: before its first materialisation it holds
+      // a null externref, which is not eq-castable — hence the per-global test
+      // rather than a bare cast, which would TRAP on an unmaterialised class.
+      inner.push(
+        { op: "global.get", index: globalIdx },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: anyLocalIdx },
+            { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+            { op: "global.get", index: globalIdx },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+            { op: "ref.eq" },
+            { op: "if", blockType: { kind: "empty" }, then: [...onMatch] },
+          ],
+        },
+      );
+    }
+    // One outer eq-castability guard for the receiver, so the per-class arms can
+    // cast without a test each.
+    return [
+      { op: "local.get", index: anyLocalIdx },
+      { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+      { op: "if", blockType: { kind: "empty" }, then: inner },
+    ];
+  };
+
+  type CallableArmMode = { includeClassObjects: boolean; boundaryMask: number };
+  const typeofFunctionMode: CallableArmMode = { includeClassObjects: true, boundaryMask: 3 };
+  const isCallableMode: CallableArmMode = { includeClassObjects: false, boundaryMask: 1 };
+
   // Chained `ref.test` arms over the anyref-converted param in local 0/1. Each
-  // i32-predicate arm returns `matchValue` on hit. Builds from the ONE shared
-  // closure-base-wrapper list (`closure-classifier.ts`).
-  const closureI32Arms = (anyLocalIdx: number, matchValue: number): Instr[] => {
+  // i32-predicate arm returns `matchValue` on hit. The class singleton arm is a
+  // `typeof` fact, not an IsCallable fact: the two modes share every genuine
+  // callable carrier but deliberately split there.
+  const callableI32Arms = (anyLocalIdx: number, matchValue: number, mode: CallableArmMode): Instr[] => {
     const onMatch: Instr[] = [{ op: "i32.const", value: matchValue }, { op: "return" }];
     const arms = buildClosureRefTestArms(ctx, anyLocalIdx, onMatch);
     if (runtimeEvalCallbackTypeIdx !== undefined) {
@@ -125,6 +192,9 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
     // natives" invariant. Deliberately NOT added to the closure-root classifier,
     // for exactly the reason stated for the runtime-eval marker above.
     arms.push(...buildBuiltinCallableTestArm(ctx, anyLocalIdx, onMatch));
+    // (#5383 S2f R13) Class-object singletons are functions for `typeof`, but
+    // lack [[Call]]. Keep that identity arm out of the real call predicate.
+    if (mode.includeClassObjects) arms.push(...classObjectIdentityArms(anyLocalIdx, onMatch));
     if (proxyTypeIdx !== undefined) {
       const proxyAnswer: Instr[] = [
         { op: "local.get", index: anyLocalIdx },
@@ -150,9 +220,13 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
       arms.push(
         { op: "local.get", index: 0 },
         { op: "call", funcIdx: boundaryCallableKindIdx },
-        { op: "i32.const", value: 1 },
+        { op: "i32.const", value: mode.boundaryMask },
         { op: "i32.and" },
-        ...(matchValue === 0 ? ([{ op: "i32.eqz" }] satisfies Instr[]) : []),
+        // `& 1` was already a boolean. `typeof` must accept a foreign class's
+        // construct-only bit too, so normalise the wider `& 3` answer here.
+        ...(matchValue === 0
+          ? ([{ op: "i32.eqz" }] satisfies Instr[])
+          : ([{ op: "i32.eqz" }, { op: "i32.eqz" }] satisfies Instr[])),
         { op: "return" },
       );
     }
@@ -181,7 +255,31 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.set", index: 1 },
-      ...closureI32Arms(1, 1),
+      ...callableI32Arms(1, 1, typeofFunctionMode),
+      { op: "i32.const", value: 0 },
+    ];
+  }
+
+  // --- __is_callable: true only for values that can enter the host-free call
+  // bridge. A class constructor intentionally reaches the terminal 0 even
+  // though `__typeof_function` above reports it as a function.
+  const ic = fnByName("__is_callable");
+  if (ic) {
+    if (ic.locals.length === 0) {
+      ic.locals.push({ name: "$any_temp", type: { kind: "anyref" } });
+    }
+    ic.body = [
+      { op: "local.get", index: 0 },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+      },
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "local.set", index: 1 },
+      ...callableI32Arms(1, 1, isCallableMode),
       { op: "i32.const", value: 0 },
     ];
   }
@@ -197,7 +295,7 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
     const lastIdx = b.length - 1;
     const last = b[lastIdx] as { op?: string; value?: number } | undefined;
     if (last && last.op === "i32.const" && last.value === 1) {
-      const exclusionArms: Instr[] = closureI32Arms(1, 0);
+      const exclusionArms: Instr[] = callableI32Arms(1, 0, typeofFunctionMode);
       // (#3505 harness) typeof Symbol() is "symbol", never "object" — exclude
       // the $Symbol carrier exactly like closures.
       if (symbolTypeIdx !== undefined) {
@@ -273,6 +371,12 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
       valueArms.push(
         ...buildBuiltinCallableTestArm(ctx, 1, [...stringConstantExternrefInstrs(ctx, "function"), { op: "return" }]),
       );
+      // (#5383 S2f R13) The MATERIALIZED `const t = typeof C` must agree with
+      // the inline compare above — that agreement is the whole point of the
+      // "one predicate, all three natives" invariant in this file's docstring.
+      valueArms.push(
+        ...classObjectIdentityArms(1, [...stringConstantExternrefInstrs(ctx, "function"), { op: "return" }]),
+      );
       if (proxyTypeIdx !== undefined) {
         valueArms.push(
           { op: "local.get", index: 1 },
@@ -308,7 +412,9 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
         valueArms.push(
           { op: "local.get", index: 0 },
           { op: "call", funcIdx: boundaryCallableKindIdx },
-          { op: "i32.const", value: 1 },
+          // A foreign class carries only [[Construct]] (bit 1) but still has
+          // `typeof === "function"`; both bits are therefore tag evidence.
+          { op: "i32.const", value: 3 },
           { op: "i32.and" },
           {
             op: "if",

@@ -12,6 +12,12 @@
 // module runs under wasmtime, needs its own exports plus `_start`, and the
 // bridge's only consumers are harness-side (#2962, #3469).
 //
+// (#5384) The `__exn_render_*` pair is the exception to that framing: it needs
+// no host import at all, so in standalone/WASI it is the ONLY way any host —
+// JS, wasmtime or another Wasm module — can read a payload it caught through
+// `__exn_tag`. It is kept for a module whose source throws; see
+// `stripHostBridgeExports`.
+//
 // Because exports are GC roots, wasm-opt can strip none of what they pin — a
 // standalone module that used one array and threw once shipped ~21 kB of
 // float-formatting tables it never called (#4034 measured the cascade).
@@ -105,6 +111,19 @@ export function isHostBridgeExportName(name: string): boolean {
  * Deliberately NOT stripped, because they are not JS-inspection surface:
  * `memory`, `_start` (the WASI entry point), `__exn_tag` (the exception tag a
  * pure-Wasm host still needs to catch), and every user export.
+ *
+ * (#5384) `__exn_render_prepare` / `__exn_render_char` are the COMPANION of
+ * `__exn_tag` for a module that throws, not value interop: #2962 built them
+ * precisely so a payload renders with ZERO host imports, which makes them as
+ * reachable from wasmtime as from a JS host. Catching the tag without them
+ * yields a GC ref no host of any kind can read — every host-free standalone
+ * throw rendered as `"uncaught Wasm-GC exception (non-stringifiable payload)"`,
+ * and #5383's standalone Temporal provider could not be diagnosed at all.
+ * They are kept iff the source has a `throw` statement
+ * (`ctx.usesSourceThrowStatement`); gating on `ctx.exnTagIdx >= 0` instead
+ * would republish them for every module, because the export-boundary bridge
+ * arms the tag before any user code is read — see the field doc in
+ * `context/types.ts` for the 6,076 → 49,032 B measurement that rules that out.
  */
 export function stripHostBridgeExports(ctx: CodegenContext): number {
   // The internal policy sink runs before index-space freeze. Validate the
@@ -139,6 +158,11 @@ export function stripHostBridgeExports(ctx: CodegenContext): number {
     // is rejected by pre-freeze finalization, not used for removal
     // authorization; a same-spelled user export survives standalone/WASI.
     if (isCoreCtorClosureHostBridgePublicName(ex.name)) return true;
+    // (#5384) The host-free exception readout survives for a module that has a
+    // source `throw` — see the doc above. Deliberately checked here rather than
+    // by removing the prefix, so `isHostBridgeExportName` keeps naming the full
+    // family for every other caller.
+    if (ctx.usesSourceThrowStatement && ex.name.startsWith("__exn_render_")) return true;
     return !isHostBridgeExportName(ex.name);
   });
   return before - mod.exports.length;

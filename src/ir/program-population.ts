@@ -1,11 +1,14 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { createDerivedIrUnitId } from "./identity-values.js";
-import type { IrUnitId } from "./identity.js";
-import { forEachInstrDeep, type IrFuncRef, type IrFunction } from "./nodes.js";
+import type { IrUnitId } from "../shared/contracts/ir-identity.js";
+import { forEachInstrDeep } from "./nodes.js";
+import type { PreparedIrFunction as IrFunction } from "./runtime/contracts/prepared.js";
+import type { IrFuncRef } from "./core/value-references.js";
 import { verifyIrAsyncPlan } from "./async-plan.js";
-import type { ProgramAbiDerivedUnitRecord } from "./program-abi.js";
-import { PreparedIrProgramInvariantError, type PreparedIrProgramProducerInput } from "./program.js";
+import type { ProgramAbiDerivedUnitRecord } from "./program/abi.js";
+import { PreparedIrProgramInvariantError } from "./program.js";
+import type { PreparedIrProgramProducerInput } from "./program/prepared-contracts.js";
 
 type Population = Pick<PreparedIrProgramProducerInput, "inventory" | "ir" | "derivedUnits">;
 

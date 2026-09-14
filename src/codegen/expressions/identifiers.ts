@@ -2,6 +2,7 @@
 /**
  * Identifier resolution, TDZ analysis, and instanceof handling.
  */
+import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
 import { ts, forEachChild } from "../../ts-api.js";
 import {
   getNullablePrimitiveInfo,
@@ -1325,7 +1326,8 @@ function compileIdentifierCore(
       !fctx.undefWidenedLocals?.has(name) &&
       !fctx.forInIdentifierVars?.has(name) &&
       !fctx.mixedAssignmentCarrierVars?.has(name) &&
-      !mappedExternrefParam
+      !mappedExternrefParam &&
+      !expressionHasWidenedPropertyType(ctx, id)
     ) {
       const narrowedType = ctx.checker.getTypeAtLocation(id);
       const narrowed = narrowTypeToUnbox(ctx, fctx, narrowedType);

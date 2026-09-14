@@ -6,6 +6,11 @@
  * Extracted from codegen/index.ts (#1013).
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
+import {
+  buildStdoutAppendDefinition,
+  buildStdoutPrepareDefinition,
+  buildStdoutCharDefinition,
+} from "../runtime/wasmgc/values/stdout-bodies.js";
 import { ensureAnyValueType } from "./any-helpers.js";
 import { getArgumentsVecTypeIdx } from "./arguments-carrier-brand.js";
 import { ensureDateAnyToStringHelper } from "./date-any-to-string.js"; // (#4491 T4-B)
@@ -2487,33 +2492,13 @@ export function ensureStandaloneStdoutSink(ctx: CodegenContext): void {
   //   acc = __str_concat(acc, s);   // rope append, O(1) for long strings
   const typeIdx = addFuncType(ctx, [{ kind: "ref_null", typeIdx: anyStrTypeIdx }], [], "$stdout_append_type");
   const funcIdx = mintDefinedFunc(ctx);
-  const body: Instr[] = [
-    // if s is null → nothing to append
-    { op: "local.get", index: 0 },
-    { op: "ref.is_null" },
-    { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
-    // if acc is null → acc = s (first line), done
-    { op: "global.get", index: accGlobalIdx },
-    { op: "ref.is_null" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [{ op: "local.get", index: 0 }, { op: "global.set", index: accGlobalIdx }, { op: "return" }],
-    },
-    // acc = __str_concat(acc, s) — both non-null here
-    { op: "global.get", index: accGlobalIdx },
-    { op: "ref.as_non_null" },
-    { op: "local.get", index: 0 },
-    { op: "ref.as_non_null" },
-    { op: "call", funcIdx: concatIdx },
-    { op: "global.set", index: accGlobalIdx },
-  ];
+  const definition = buildStdoutAppendDefinition({ accGlobalIdx, concatIdx });
   ctx.funcMap.set("__stdout_append", funcIdx);
   pushDefinedFunc(ctx, funcIdx, {
     name: "__stdout_append",
     typeIdx,
-    locals: [],
-    body,
+    locals: definition.locals,
+    body: definition.body,
     exported: false,
   } as WasmFunction);
 }
@@ -2601,27 +2586,13 @@ export function emitStdoutSinkExports(ctx: CodegenContext): void {
   {
     const typeIdx = addFuncType(ctx, [], [{ kind: "i32" }], "$stdout_prepare_type");
     const funcIdx = mintDefinedFunc(ctx);
-    const body: Instr[] = [
-      { op: "global.get", index: accGlobalIdx },
-      { op: "ref.is_null" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
-      },
-      { op: "global.get", index: accGlobalIdx },
-      { op: "ref.as_non_null" },
-      { op: "call", funcIdx: flattenIdx },
-      { op: "global.set", index: flatGlobalIdx },
-      { op: "global.get", index: flatGlobalIdx },
-      { op: "struct.get", typeIdx: flatTypeIdx, fieldIdx: 0 }, // len
-    ];
+    const definition = buildStdoutPrepareDefinition({ accGlobalIdx, flatGlobalIdx, flatTypeIdx, flattenIdx });
     ctx.funcMap.set("__stdout_prepare", funcIdx);
     pushDefinedFunc(ctx, funcIdx, {
       name: "__stdout_prepare",
       typeIdx,
-      locals: [],
-      body,
+      locals: definition.locals,
+      body: definition.body,
       exported: true,
     } as WasmFunction);
     mod.exports.push({ name: "__stdout_prepare", desc: { kind: "func", index: funcIdx } });
@@ -2631,46 +2602,13 @@ export function emitStdoutSinkExports(ctx: CodegenContext): void {
   {
     const typeIdx = addFuncType(ctx, [{ kind: "i32" }], [{ kind: "i32" }], "$stdout_char_type");
     const funcIdx = mintDefinedFunc(ctx);
-    const L_I = 0;
-    const L_BUF = 1;
-    const body: Instr[] = [
-      { op: "global.get", index: flatGlobalIdx },
-      { op: "local.tee", index: L_BUF },
-      { op: "ref.is_null" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
-      },
-      // i < 0 || i >= len → 0
-      { op: "local.get", index: L_I },
-      { op: "i32.const", value: 0 },
-      { op: "i32.lt_s" },
-      { op: "local.get", index: L_I },
-      { op: "local.get", index: L_BUF },
-      { op: "struct.get", typeIdx: flatTypeIdx, fieldIdx: 0 }, // len
-      { op: "i32.ge_s" },
-      { op: "i32.or" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
-      },
-      // data[off + i]
-      { op: "local.get", index: L_BUF },
-      { op: "struct.get", typeIdx: flatTypeIdx, fieldIdx: 2 }, // data
-      { op: "local.get", index: L_BUF },
-      { op: "struct.get", typeIdx: flatTypeIdx, fieldIdx: 1 }, // off
-      { op: "local.get", index: L_I },
-      { op: "i32.add" },
-      { op: "array.get_u", typeIdx: dataTypeIdx },
-    ];
+    const definition = buildStdoutCharDefinition({ flatGlobalIdx, flatTypeIdx, dataTypeIdx });
     ctx.funcMap.set("__stdout_char", funcIdx);
     pushDefinedFunc(ctx, funcIdx, {
       name: "__stdout_char",
       typeIdx,
-      locals: [{ name: "buf", type: { kind: "ref_null", typeIdx: flatTypeIdx } }],
-      body,
+      locals: definition.locals,
+      body: definition.body,
       exported: true,
     } as WasmFunction);
     mod.exports.push({ name: "__stdout_char", desc: { kind: "func", index: funcIdx } });

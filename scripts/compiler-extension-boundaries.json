@@ -1,0 +1,43 @@
+{
+  "schema": "compiler-extension-boundaries-v1",
+  "records": [
+    {
+      "id": "optional-binaryen-provider-v1",
+      "source": "src/optimize.ts",
+      "owner": "getBinaryenModule",
+      "anchor": "globalThis-alias-nullish-binaryen-specifier-v1",
+      "loadPolicy": "runtime-configurable",
+      "defaultSpecifier": "binaryen",
+      "reviewedSourceRevision": "57aa0d73025526812d06a3863d63552929618288",
+      "contentHash": "13ee034af6c141c44f67ef36744481d1c6e2b1b9",
+      "digestAlgorithm": "git-blob-sha1",
+      "importer": "src/optimize.ts",
+      "resolutionBase": "original-importer",
+      "targetClass": "unconstrained",
+      "mayEnterRepository": true,
+      "runtimeImplementationInspected": false,
+      "sideEffects": "unbounded",
+      "strictFailureExemption": false,
+      "permittedEvidenceUse": "source-reference-preservation-only"
+    },
+    {
+      "id": "platform-dynamic-import-v1",
+      "source": "src/runtime/platform-capability-adapter.ts",
+      "owner": "resolvePlatformCapabilityImport",
+      "anchor": "intent-dynamic_import-returned-specifier-arrow-v1",
+      "loadPolicy": "runtime-callback-argument",
+      "defaultSpecifier": null,
+      "reviewedSourceRevision": "57aa0d73025526812d06a3863d63552929618288",
+      "contentHash": "ea5e10a98f23e1cdacb50f190feb9a7011453162",
+      "digestAlgorithm": "git-blob-sha1",
+      "importer": "src/runtime/platform-capability-adapter.ts",
+      "resolutionBase": "original-importer",
+      "targetClass": "unconstrained",
+      "mayEnterRepository": true,
+      "runtimeImplementationInspected": false,
+      "sideEffects": "unbounded",
+      "strictFailureExemption": false,
+      "permittedEvidenceUse": "source-reference-preservation-only"
+    }
+  ]
+}

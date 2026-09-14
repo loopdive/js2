@@ -44,12 +44,28 @@
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { checkCanonicalIrDialect } from "./lib/check-canonical-ir-dialect.mjs";
 
 // `--src <dir>` repoints every path at a synthetic tree, which is what
 // `tests/issue-4552-ir-dialect-gate-scope.test.ts` uses to prove the gate
 // FAILS on an out-of-IR import without planting one in the real `src/`.
 const srcArg = process.argv.indexOf("--src");
 const SRC_DIR = srcArg === -1 ? "src" : process.argv[srcArg + 1];
+// Production always requires the canonical destinations. Historical --src
+// fixtures retain their original contract; new fixtures request --canonical.
+// This is explicit contract selection, never a file-existence fallback.
+if (srcArg === -1 || process.argv.includes("--canonical")) {
+  const result = checkCanonicalIrDialect(SRC_DIR);
+  if (result.failures.length) {
+    console.error(`IR dialect gate: FAILED\n\n${result.failures.join("\n")}\n`);
+    process.exit(1);
+  }
+  console.log(
+    `IR dialect gate: OK — ${result.declarations} canonical dialect declarations; ` +
+      `no other file under ${SRC_DIR}/ imports the dialect (except the exact legacy type forwarder).`,
+  );
+  process.exit(0);
+}
 const IR_DIR = path.join(SRC_DIR, "ir");
 const DIALECT_DIR = path.join(IR_DIR, "dialect");
 const UNION_HOST = path.join(IR_DIR, "nodes.ts");

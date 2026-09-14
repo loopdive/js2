@@ -30,7 +30,9 @@
 //
 // Arms are resolved to their DECLARING interface, which may live in
 // `src/ir/nodes.ts` or in `src/ir/dialect/*.ts`. The three deliberately
-// excluded symbolic references may also live in `src/ir/value-references.ts`.
+// excluded symbolic references live in `src/ir/core/types.ts` (IrTypeRef) and
+// `src/ir/core/value-references.ts` (IrFuncRef / IrGlobalRef). Both old facades
+// remain in the scan so a duplicate or new kind cannot hide behind relocation.
 // Where a declaration lives is the thing being decided, so it cannot also be
 // the thing that defines the population.
 //
@@ -52,19 +54,24 @@
 //   place. (#4551's prose calls these "declaration kinds"; they are references.
 //   The count is the same, the reading is not.)
 //
-//   Every other `readonly kind:` in the scanned files belongs to an INLINE union
+//   In the original population, every other `readonly kind:` belonged to an INLINE union
 //   member of a payload type — `IrConst`, `IrType`, `IrCallableBinding`,
 //   `IrIntrinsicProvider`, `IrStringLengthProvider`, … — not to a top-level
 //   `export interface`, so it is never a candidate in the first place.
 //
-// THE RECONCILIATION IS ASSERTED, NOT ASSUMED. Every run checks
+// ORIGINAL RECONCILIATION (historical counts, before later additions):
 //
 //     in-scope (82) + out-of-scope references (3) == kind-bearing top-level
 //     `export interface`s == the anchored `^  readonly kind:` grep count (85)
 //
-// and fails if a kind-bearing interface turns up that is neither an instruction
-// nor one of the three named references. That is the check that makes the two
-// denominators unable to drift apart again unnoticed.
+// Named value payloads are a separately reviewed category, never instruction
+// verdict exemptions. IrSupportRefType is the one current named IrType leaf:
+// its canonical declaration and direct union membership are checked by syntax,
+// and membership in either instruction union is forbidden. All unreviewed
+// interfaces still fail reconciliation. Current measured population is 85
+// instructions + 3 references + 1 named payload = 89 discriminants.
+// The historical instruction-only baseline and its verdicts remain unchanged;
+// payload reconciliation is enforced separately and is reported in human output.
 //
 // ---------------------------------------------------------------------------
 // 2. WHAT A VERDICT MEANS
@@ -169,16 +176,22 @@
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 
-const NODES = "src/ir/nodes.ts";
+const NODES = "src/ir/core/nodes.ts";
+const LEGACY_NODES = "src/ir/nodes.ts";
 const VALUE_REFERENCES = "src/ir/value-references.ts";
-const DIALECT_DIR = path.join("src", "ir", "dialect");
+const CORE_TYPES = "src/ir/core/types.ts";
+const CORE_VALUE_REFERENCES = "src/ir/core/value-references.ts";
+const DIALECT_DIR = path.join("src", "ir", "core", "dialect");
+const LEGACY_DIALECT_DIR = path.join("src", "ir", "dialect");
+const INTRINSIC_VOCABULARY = "src/ir/core/intrinsic-vocabulary.ts";
 const IR_DIR = path.join("src", "ir");
 const BASELINE = "scripts/ir-kind-neutrality-baseline.json";
 
 /**
  * Kind-bearing top-level interfaces that are deliberately NOT instructions.
- * A fourth one appearing is a real event: it means someone added a discriminated
+ * Another one appearing is a real event: it means someone added a discriminated
  * top-level type that this gate cannot see, and the population rule needs a
  * decision rather than a silent default.
  */
@@ -186,6 +199,18 @@ const OUT_OF_SCOPE = {
   IrFuncRef: "func",
   IrGlobalRef: "global",
   IrTypeRef: "type",
+};
+
+// A reviewed payload classification needs structural membership proof below;
+// adding a name here alone cannot exempt an instruction or a disconnected type.
+const NAMED_PAYLOADS = {
+  IrSupportRefType: { kind: "support-ref", file: CORE_TYPES, union: "IrType" },
+};
+
+const CANONICAL_REFERENCES = {
+  IrFuncRef: CORE_VALUE_REFERENCES,
+  IrGlobalRef: CORE_VALUE_REFERENCES,
+  IrTypeRef: CORE_TYPES,
 };
 
 // ---------------------------------------------------------------------------
@@ -223,8 +248,8 @@ const VERDICTS = {
       "former, the vocabulary (not the instruction) is what moves; if the latter, `intrinsic` is " +
       "neutral outright and `math.pow` needs an ECMAScript-specific sibling.",
     evidence: [
-      { file: "src/ir/intrinsics.ts", quote: "exact-arity f64 Math surface certified by" },
-      { file: "src/ir/intrinsics.ts", quote: '"math.pow"' },
+      { file: INTRINSIC_VOCABULARY, quote: "exact-arity f64 Math surface certified by" },
+      { file: INTRINSIC_VOCABULARY, quote: '"math.pow"' },
     ],
   },
   "global.get": {
@@ -374,7 +399,7 @@ const VERDICTS = {
       { file: NODES, quote: "field 0 is the UTF-16 code-unit length" },
       { file: "src/ir/backend/linear-integration.ts", quote: "__str_length_utf16" },
       {
-        file: "src/ir/string-runtime.ts",
+        file: "src/ir/core/string-types.ts",
         quote: 'export type IrStringEncoding = "ascii" | "utf8-guaranteed" | "wtf16";',
       },
     ],
@@ -419,7 +444,7 @@ const VERDICTS = {
     verdict: "neutral",
     why: "Constructs a record from a declared field layout. No prototype, no descriptors, no insertion order semantics.",
     evidence: [
-      { file: NODES, quote: "export interface IrObjectShape {" },
+      { file: CORE_TYPES, quote: "export interface IrObjectShape {" },
       { file: NODES, quote: "readonly shape: IrObjectShape;" },
     ],
   },
@@ -505,7 +530,7 @@ const VERDICTS = {
     verdict: "neutral",
     why: "Allocates a nominal class instance through the class-owned constructor wrapper. No `new.target`, no constructor-returns-object override.",
     evidence: [
-      { file: NODES, quote: "export interface IrClassShape {" },
+      { file: CORE_TYPES, quote: "export interface IrClassShape {" },
       { file: NODES, quote: "Construct a class instance through the class-owned AST-free" },
     ],
   },
@@ -961,21 +986,42 @@ function die() {
 // ── population ────────────────────────────────────────────────────────────
 const dialectFiles = (() => {
   try {
-    return walk(DIALECT_DIR);
+    return [...walk(DIALECT_DIR), ...walk(LEGACY_DIALECT_DIR)];
   } catch {
+    fail("Both canonical and compatibility dialect source directories are required.");
     return [];
   }
 })();
-const sourceFiles = [NODES, VALUE_REFERENCES, ...dialectFiles];
+// Canonical sources are mandatory, not optional fallbacks to the facades.
+const sourceFiles = [
+  NODES,
+  LEGACY_NODES,
+  VALUE_REFERENCES,
+  CORE_TYPES,
+  CORE_VALUE_REFERENCES,
+  path.join(DIALECT_DIR, "js.ts"),
+  path.join(LEGACY_DIALECT_DIR, "js.ts"),
+  ...dialectFiles.filter(
+    (file) => ![path.join(DIALECT_DIR, "js.ts"), path.join(LEGACY_DIALECT_DIR, "js.ts")].includes(file),
+  ),
+];
 
 const declared = new Map(); // interface name -> {kind, file, line}
 for (const file of sourceFiles) {
-  for (const [name, info] of kindBearingInterfaces(file)) {
+  let interfaces;
+  try {
+    interfaces = kindBearingInterfaces(file);
+  } catch {
+    fail(`${file}: required kind-population source is missing or unreadable.`);
+    continue;
+  }
+  for (const [name, info] of interfaces) {
     if (declared.has(name))
       fail(`duplicate kind-bearing interface \`${name}\` in ${file} and ${declared.get(name).file}`);
     declared.set(name, info);
   }
 }
+if (failures.length > 0) die();
 
 const instrArms = unionArms(NODES, "IrInstr");
 const termArms = unionArms(NODES, "IrTerminator");
@@ -1010,24 +1056,77 @@ for (const [union, arms] of [
   }
 }
 
+// Validate named payloads independently of the instruction verdict table.
+for (const [name, expected] of Object.entries(NAMED_PAYLOADS)) {
+  const info = declared.get(name);
+  if (!info || info.file !== expected.file || info.kind !== expected.kind) {
+    fail(`named payload ${name} requires canonical ${expected.file} declaration with kind "${expected.kind}"`);
+    continue;
+  }
+  if (instrArms.includes(name) || termArms.includes(name))
+    fail(`named payload ${name} must not be an IrInstr or IrTerminator arm`);
+  const source = ts.createSourceFile(expected.file, read(expected.file), ts.ScriptTarget.Latest, true);
+  const exported = (node) => node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword);
+  const interfaces = source.statements.filter(
+    (node) => ts.isInterfaceDeclaration(node) && exported(node) && node.name.text === name,
+  );
+  const discriminants =
+    interfaces.length === 1
+      ? interfaces[0].members.filter(
+          (node) => ts.isPropertySignature(node) && ts.isIdentifier(node.name) && node.name.text === "kind",
+        )
+      : [];
+  const discriminant = discriminants[0];
+  if (
+    discriminants.length !== 1 ||
+    discriminant.questionToken ||
+    !discriminant.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ReadonlyKeyword) ||
+    !discriminant.type ||
+    !ts.isLiteralTypeNode(discriminant.type) ||
+    !ts.isStringLiteral(discriminant.type.literal) ||
+    discriminant.type.literal.text !== expected.kind
+  )
+    fail(`named payload ${name} requires its exact readonly kind discriminant in canonical syntax`);
+  const unions = source.statements.filter(
+    (node) => ts.isTypeAliasDeclaration(node) && exported(node) && node.name.text === expected.union,
+  );
+  const members = unions.length === 1 && ts.isUnionTypeNode(unions[0].type) ? unions[0].type.types : [];
+  const direct = members.filter(
+    (node) =>
+      ts.isTypeReferenceNode(node) &&
+      ts.isIdentifier(node.typeName) &&
+      node.typeName.text === name &&
+      !node.typeArguments?.length,
+  );
+  if (source.parseDiagnostics.length || interfaces.length !== 1 || direct.length !== 1)
+    fail(`named payload ${name} requires exactly one direct ${expected.union} union arm in valid canonical source`);
+}
+
 // ── reconciliation: every kind-bearing interface is accounted for ─────────
 const populationInterfaces = new Set([...population.values()].map((p) => p.interface));
 const excluded = [...declared.entries()].filter(([name]) => !populationInterfaces.has(name));
 for (const [name, info] of excluded) {
-  if (OUT_OF_SCOPE[name] !== info.kind) {
+  if (OUT_OF_SCOPE[name] !== info.kind && NAMED_PAYLOADS[name]?.kind !== info.kind) {
     fail(
       `${info.file}:${info.line}: \`${name}\` declares kind "${info.kind}" but is neither an \`IrInstr\`/` +
-        "`IrTerminator` arm nor one of the three symbolic-reference types the population rule excludes " +
-        `(${Object.keys(OUT_OF_SCOPE).join(", ")}). Decide whether it is in scope and say so in this ` +
-        "script's header — do not let a fourth category default silently.",
+        "`IrTerminator` arm nor a reviewed symbolic-reference or named payload type " +
+        `(${[...Object.keys(OUT_OF_SCOPE), ...Object.keys(NAMED_PAYLOADS)].join(", ")}). Decide whether it is in scope and say so in this ` +
+        "script's header — do not let an unreviewed category default silently.",
     );
   }
 }
 for (const name of Object.keys(OUT_OF_SCOPE)) {
-  if (!declared.has(name)) {
+  const info = declared.get(name);
+  const canonicalFile = CANONICAL_REFERENCES[name];
+  if (!info) {
     fail(
-      `${NODES}/${VALUE_REFERENCES}: the population rule excludes \`${name}\`, which no longer exists. Update the rule in ` +
+      `${canonicalFile}: the population rule excludes \`${name}\`, which no longer exists. Update the rule in ` +
         "this script's header so the reconciliation keeps describing reality.",
+    );
+  } else if (info.file !== canonicalFile) {
+    fail(
+      `\`${name}\` must be declared in ${canonicalFile}, not ${info.file}. ` +
+        "A compatibility declaration cannot replace the canonical symbolic reference.",
     );
   }
 }
@@ -1046,7 +1145,10 @@ if (grepCount !== population.size + excluded.length) {
 if (failures.length > 0) die();
 
 // ── R1 / R3: verdicts ─────────────────────────────────────────────────────
-const inDialect = (file) => path.normalize(file).startsWith(path.normalize(DIALECT_DIR) + path.sep);
+const inDialect = (file) =>
+  [DIALECT_DIR, LEGACY_DIALECT_DIR].some((directory) =>
+    path.normalize(file).startsWith(path.normalize(directory) + path.sep),
+  );
 
 const table = {}; // persisted: stable keys only (#5298)
 const report = {}; // console-only: current file:line for the same kinds
@@ -1274,8 +1376,8 @@ if (asJson) {
 
 console.log(
   `IR kind-neutrality gate: OK — ${counts.total} instruction kinds ` +
-    `(${instrArms.length} IrInstr arms + ${termArms.length} terminators; ${excluded.length} symbolic-reference ` +
-    `kinds excluded, ${grepCount} \`readonly kind:\` fields reconciled).`,
+    `(${instrArms.length} IrInstr arms + ${termArms.length} terminators; ${Object.keys(OUT_OF_SCOPE).length} symbolic-reference ` +
+    `kinds and ${Object.keys(NAMED_PAYLOADS).length} named payload kind excluded, ${grepCount} \`readonly kind:\` fields reconciled).`,
 );
 console.log(
   `  verdicts: ${counts.neutral} neutral · ${counts.js} js · ${counts.unresolved} unresolved` +

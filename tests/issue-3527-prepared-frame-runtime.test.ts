@@ -4,15 +4,18 @@ import { describe, expect, it } from "vitest";
 import { emitBinary } from "../src/emit/binary.js";
 import { createEmptyModule, type Import, type StructTypeDef, type WasmFunction } from "../src/ir/types.js";
 import type { IrBindingId, IrUnitId } from "../src/ir/identity.js";
-import { emitPreparedFrame, preflightPreparedFrame } from "../src/codegen/prepared-async-frame-engine.js";
+import { emitPreparedFrame, preflightPreparedFrame } from "../src/runtime/wasmgc/async/prepared-async-frame-engine.js";
 import type {
   PreparedFrameHandle,
   PreparedFramePlan,
   PreparedFrameResources,
-} from "../src/codegen/prepared-async-frame-types.js";
+} from "../src/runtime/wasmgc/async/prepared-async-frame-types.js";
 
-import { emitPreparedIrAsyncFrame } from "../src/codegen/prepared-async-frame-adapter.js";
-import type { PreparedIrAsyncFrameResources, PreparedFrameOutput } from "../src/codegen/prepared-async-frame-types.js";
+import { emitPreparedIrAsyncFrame } from "../src/backend/wasmgc/async/prepared-async-frame-adapter.js";
+import type {
+  PreparedIrAsyncFrameResources,
+  PreparedFrameOutput,
+} from "../src/runtime/wasmgc/async/prepared-async-frame-types.js";
 import {
   asAsyncStateId,
   canonicalPromiseAbi,

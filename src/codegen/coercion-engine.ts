@@ -36,7 +36,7 @@ import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { TypeFact } from "../checker/oracle.js";
 import { ts } from "../ts-api.js";
 import { ensureAnyFromExternHelper, ensureExternStrictEqHelper } from "./any-helpers.js";
-import { boxToAny } from "./value-tags.js";
+import { boxToAny, emitIsUndefF64 } from "./value-tags.js";
 import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { noJsHost } from "./expressions/helpers.js";
@@ -218,6 +218,93 @@ export function installCompiledClosureToStringArm(ctx: CodegenContext): void {
  * the throw must short-circuit operand evaluation; the engine assumes a
  * non-symbol operand on the stack.
  */
+/**
+ * (#6423) ToString for a number already on the stack, aware of the f64
+ * absence sentinel.
+ *
+ * `__extern_get` narrows a dynamic property read whose slot is number-shaped
+ * to `{ kind: "f64", undefSentinel: true }` and materialises an ABSENT slot as
+ * `UNDEF_F64_BITS` (property-access-dispatch.ts, #5251). That brand is what
+ * makes `typeof o.p`, `o.p === undefined` and `"p" in o` answer correctly. The
+ * ToString arms, however, called `number_toString` on the raw f64, and the
+ * host import stringifies the sentinel bit pattern as `"NaN"` — so
+ * `String(o.maxAge)` on an object with no `maxAge` printed `"NaN"` where the
+ * spec (§7.1.17 via ToString(undefined)) says `"undefined"`.
+ *
+ * Gated on the BRAND, never on NaN-ness: `UNDEF_F64_BITS` is a *signaling* NaN
+ * payload that JS arithmetic cannot produce, while a genuine `NaN` value is the
+ * quiet `0x7FF8000000000000`. Testing the exact i64 pattern (`emitIsUndefF64`)
+ * is what keeps `String(NaN) === "NaN"` and `String(0) === "0"` intact; an
+ * `f64.ne` self-compare would map every NaN to `"undefined"`, which is a worse
+ * bug than the one being fixed.
+ *
+ * Leaves exactly one **externref** on the stack — the same shape
+ * `number_toString` leaves — so each caller's tail
+ * (`emitStringBuiltinNumberResult`, a host `concat`) is untouched.
+ *
+ * Unbranded operands emit the plain call, byte-for-byte as before.
+ *
+ * **JS-HOST LANE ONLY, deliberately.** In `standalone` / `native-strings-host`
+ * the brand-aware arm is skipped and the plain call is emitted, so codegen in
+ * those lanes is byte-identical to the parent *by construction*. Two reasons,
+ * and the second is the load-bearing one:
+ *
+ *  1. Those lanes do not have the defect. Their ToString goes through
+ *     `$__any_to_string` rather than the narrowed f64, and the standalone probe
+ *     answers all seven cases (127) on the parent *and* with this change —
+ *     measured both ways, so there is nothing here to fix.
+ *  2. They have OTHER branded-f64 producers that the js-host lane does not —
+ *     `for-of` over a numeric vec yields `{kind:"f64", undefSentinel:true}`
+ *     (statements/loops.ts), as do native generator IteratorResult reads. A
+ *     first cut of this change routed `compileNativeConcatOperand` and the
+ *     native template span through the helper as well; that change is NOT
+ *     covered by any measurement available here (the 17-suite dogfood A/B is
+ *     entirely js-host, `target: "gc"`), and the standalone host-free
+ *     pass-count floor (#2097) went red in the merge group while it was in.
+ *     Attribution was ambiguous — a lot of standalone-touching source had
+ *     landed since the high-water mark without the shard matrix running — and
+ *     restricting the helper is what makes the question answerable: with this
+ *     gate the standalone binary cannot differ from the parent's, so a repeat
+ *     breach is provably not this change. Extending the fix to those lanes
+ *     wants its own issue, with a standalone measurement behind it.
+ *
+ * `HOLE_F64_BITS` is deliberately NOT tested here: every value-producing read
+ * of a slot that may hold it already maps HOLE → UNDEF at the read boundary
+ * (`vec-f64-hole-presence.ts`), so the hole never reaches a ToString arm.
+ *
+ * No `ensureLateImport` inside — `funcMap` is read-only mid-body (the same rule
+ * `canonicalUndefinedExternInstrs` follows). `addStringConstantGlobal` only
+ * adds an imported GLOBAL, whose index shift `fixupModuleGlobalIndices` repairs
+ * across `ctx.currentFunc.body`; the instructions are built after that call so
+ * no index is captured across it.
+ */
+export function emitNumberToStringSentinelAware(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  valType: ValType | null,
+  toStrIdx: number,
+): void {
+  if (!valType || valType.kind !== "f64" || valType.undefSentinel !== true || coercionMode(ctx) !== "js-host") {
+    fctx.body.push({ op: "call", funcIdx: toStrIdx });
+    return;
+  }
+  addStringConstantGlobal(ctx, "undefined");
+  const undefinedInstrs = stringConstantExternrefInstrs(ctx, "undefined");
+  const scratch = allocTempLocal(fctx, { kind: "f64" });
+  fctx.body.push({ op: "local.tee", index: scratch });
+  emitIsUndefF64(fctx.body);
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "externref" } },
+    then: undefinedInstrs,
+    else: [
+      { op: "local.get", index: scratch },
+      { op: "call", funcIdx: toStrIdx },
+    ],
+  });
+  releaseTempLocal(fctx, scratch);
+}
+
 export function emitToString(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -265,7 +352,10 @@ export function emitToString(
     }
     if (valType.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" });
     else if (valType.kind === "i64") fctx.body.push({ op: "f64.convert_i64_s" });
-    if (toStrIdx !== undefined) fctx.body.push({ op: "call", funcIdx: toStrIdx });
+    // (#6423) An UNDEF-SENTINEL-branded f64 stringifies as "undefined", not
+    // as the sentinel's "NaN". Unbranded operands (including i32/i64, which
+    // carry no brand) emit the same single call as before.
+    if (toStrIdx !== undefined) emitNumberToStringSentinelAware(ctx, fctx, valType, toStrIdx);
     if (native) {
       // number_toString returns an externref wrapping a native string; convert
       // it back to a native `ref $AnyString`.
@@ -555,6 +645,7 @@ export function getStringToNumberProvider(ctx: CodegenContext): number | undefin
  *   f64          → |x| > 0       (NaN, +0, -0 all falsy)
  *   externref    → __is_truthy   (0/NaN/null/undefined/"" → falsy); ref.is_null fallback
  *   any-boxed ref→ __any_unbox_bool (proper JS truthiness on the boxed value)
+ *   anyref/eqref → extern.convert_any → __is_truthy (#5383; untyped GC ref)
  *   native str ref→ flatten → len > 0 (empty string falsy)
  *   other ref    → non-null (ref.is_null; i32.eqz)
  *   i64          → nonzero
@@ -623,6 +714,34 @@ export function emitToBoolean(ctx: CodegenContext, valType: ValType | null, sink
       }
     }
     // Opaque struct ref — non-null is truthy.
+    sink.push({ op: "ref.is_null" }, { op: "i32.eqz" });
+    return sink;
+  }
+  if (kind === "anyref" || kind === "eqref") {
+    // (#5383) An UNTYPED GC reference — the shape `__map_get` / `WeakMap.get`
+    // hand back in standalone (`{ kind: "anyref" }`, weak-collections-runtime.ts
+    // / map-runtime.ts). Before this row the cascade fell through to the i32
+    // no-op tail and left an `anyref` where the consuming `if`/`select` needs
+    // i32, i.e. INVALID Wasm — that is the `@js-temporal/polyfill`
+    // `OneObjectCache_setObject` failure ("if[0] expected type i32, found ...
+    // anyref"). No validating module can have reached this tail, so adding the
+    // row cannot perturb existing bytes in either lane.
+    //
+    // `extern.convert_any` is total (no trap, no null special case) and
+    // `__is_truthy` is the SAME ToBoolean provider the `externref` row above
+    // uses, so the answer agrees with the boxed-value lane by construction:
+    // standalone's native body classifies the `$AnyValue` tag-0/1 null/
+    // undefined singletons, i31, boxed number/bool/bigint and `$AnyString`
+    // (empty string falsy); the host lane keeps its import.
+    addUnionImports(ctx);
+    const anyTruthyIdx = ensureLateImport(ctx, "__is_truthy", [{ kind: "externref" }], [{ kind: "i32" }]);
+    if (anyTruthyIdx !== undefined) {
+      // Re-read the canonical index: registering a late helper shifts function
+      // indices (same hazard the externref row documents).
+      sink.push({ op: "extern.convert_any" }, { op: "call", funcIdx: ctx.funcMap.get("__is_truthy") ?? anyTruthyIdx });
+      return sink;
+    }
+    // Fallback: non-null → true.
     sink.push({ op: "ref.is_null" }, { op: "i32.eqz" });
     return sink;
   }

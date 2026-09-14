@@ -11,9 +11,7 @@ export type IrStringRuntimeIntrinsic =
   | "char-code-at"
   | "iterator-char-at";
 
-/** Audited producer evidence consumed by linear string backends. */
-export type IrStringEncoding = "ascii" | "utf8-guaranteed" | "wtf16";
-export type IrStringConcatMode = "immutable" | "owned-append";
+export type { IrStringEncoding, IrStringConcatMode } from "./core/string-types.js";
 
 export type IrStringRuntimeOperand = "string" | "number-index" | "number-count";
 export type IrStringRuntimeResult = "string" | "number" | "boolean";

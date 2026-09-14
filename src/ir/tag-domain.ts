@@ -73,23 +73,9 @@
  * interface's existence as evidence that a second producer would work today.
  */
 
-/**
- * An opaque identifier for one partition of a {@link TagDomain}.
- *
- * Deliberately BRANDED. `IrType`'s dynamic leaf carries a `TagId`, not a
- * `JsTag`, so the IR core cannot name an ECMAScript partition by accident:
- * a bare `number` (and therefore a numeric-enum member such as `JsTag.String`)
- * is not assignable here. The only sanctioned ways to obtain one are a
- * domain's own exported constants (e.g. `JS_TAG_IDS.String`) or
- * {@link asTagId} inside a domain implementation.
- *
- * The underlying representation is a plain number, and each domain is free to
- * choose the numbering. The JS domain deliberately reuses the `JsTag` values,
- * which are ABI — they must match the runtime tags written by the
- * `__any_box_*` helpers in `codegen/any-helpers.ts`.
- */
-declare const TAG_ID_BRAND: unique symbol;
-export type TagId = number & { readonly [TAG_ID_BRAND]: "ir.TagId" };
+import type { TagId } from "./core/tag-refinement.js";
+export type { TagId } from "./core/tag-refinement.js";
+export { tagRefinementEquals } from "./core/tag-refinement.js";
 
 /**
  * The shape of a partition's unboxed payload in a backend's value
@@ -228,11 +214,6 @@ export function joinTagRefinement(domain: TagDomain, a: TagId | undefined, b: Ta
   if (a === undefined || b === undefined) return undefined;
   if (a === b) return a;
   return domain.joinTags(a, b);
-}
-
-/** Structural equality of two optional tag refinements. */
-export function tagRefinementEquals(a: TagId | undefined, b: TagId | undefined): boolean {
-  return (a ?? null) === (b ?? null);
 }
 
 /** Render an optional refinement for diagnostics (`"?"` = partition unknown). */

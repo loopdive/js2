@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#4176) The builtin-brand TABLE, extracted from native-proto.ts into a
- * dependency-free module. Two consumers need it without the rest of the
- * native-proto machinery:
+ * module depending only on the import-free collection-kind leaf. Two consumers
+ * need it without the rest of the native-proto machinery:
  *
  *  - `array-holes.ts` — the `scanForArrayHoles` PRE-SCAN runs before any
  *    codegen and must stay import-light; pulling native-proto.ts from it
@@ -15,6 +15,18 @@
  * unaffected. The table itself is unchanged — see native-proto.ts for the
  * per-slot history and the append-only contract.
  */
+
+/**
+ * (#3171) Which keyed collection a `$Map` struct instance backs. All four
+ * collections share the `$Map` hash table (Set/WeakSet store key === value), so
+ * struct identity alone cannot distinguish `[[MapData]]` / `[[SetData]]` /
+ * `[[WeakMapData]]` / `[[WeakSetData]]` for the spec receiver brand checks
+ * (`Map.prototype.get.call(new Set())` must throw a TypeError). The immutable
+ * `kind` field (MAP_LAYOUT.M_KIND), stamped at construction by `__map_new`,
+ * carries the brand. These four tags are separate from the NativeProto brand
+ * band below; re-exporting the shared leaf preserves their object identity.
+ */
+export { COLLECTION_KIND, type CollectionKind } from "./collection-kind.js";
 
 /** Brand ids sit far below zero so they can never collide with a class tag. */
 export const BUILTIN_BRAND_BASE = -0x4000_0000; // far from any plausible classTag count

@@ -361,7 +361,24 @@ function containsValueReturn(body: ts.Block): boolean {
  * either (it required `node.left` to BE the identifier), so this keeps the
  * widening to genuine write positions and nothing else.
  */
-export function identifierIsWrittenTo(file: ts.SourceFile, name: string): boolean {
+/**
+ * (#5383 S2) `sameBinding` makes the scan SCOPE-AWARE for callers that can
+ * resolve bindings. The name-only scan is a file-wide SPELLING test, which is
+ * adequate for hand-written code and useless for minified code: a bundle names
+ * hundreds of unrelated locals `_`, `t`, `g`, so any one of them being assigned
+ * declined the fold for all of them. Measured on `@js-temporal/polyfill`:
+ * `var _ = Math.floor; … _(i)` inside jsbi's `BigInt(number)` header never
+ * resolved as a builtin alias, and on `--target standalone` the resulting
+ * foreign-callable fallback has no host to fall back to, so it threw. Callers
+ * that pass the predicate count a write only when the written identifier
+ * resolves to the SAME binding; callers that omit it keep the exact previous
+ * behaviour.
+ */
+export function identifierIsWrittenTo(
+  file: ts.SourceFile,
+  name: string,
+  sameBinding?: (id: ts.Identifier) => boolean,
+): boolean {
   const contains = (root: ts.Node, candidate: ts.Node): boolean =>
     candidate.pos >= root.pos && candidate.end <= root.end;
   /** False for the spelling-only positions described above. */
@@ -416,7 +433,7 @@ export function identifierIsWrittenTo(file: ts.SourceFile, name: string): boolea
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
-    if (ts.isIdentifier(node) && node.text === name && isReference(node)) {
+    if (ts.isIdentifier(node) && node.text === name && isReference(node) && (sameBinding?.(node) ?? true)) {
       for (let parent: ts.Node | undefined = node.parent; parent; parent = parent.parent) {
         if (
           ts.isBinaryExpression(parent) &&

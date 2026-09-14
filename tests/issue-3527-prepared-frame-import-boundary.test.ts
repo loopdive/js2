@@ -39,19 +39,19 @@ function assertBoundary(row: ReturnType<typeof census>) {
 
 describe("prepared frame loaded-module boundary", () => {
   it("loads the actual physical engine without AST/checker/direct dispatch", () => {
-    const row = census(["./src/codegen/prepared-async-frame-engine.ts"]);
+    const row = census(["./src/runtime/wasmgc/async/prepared-async-frame-engine.ts"]);
     expect(row.loaded.some((url) => url.endsWith("/prepared-async-frame-engine.ts"))).toBe(true);
-    expect(row.loaded.some((url) => url.endsWith("/prepared-native-async-await.ts"))).toBe(true);
+    expect(row.loaded.some((url) => url.endsWith("/native-await.ts"))).toBe(true);
     expect(() => assertBoundary(row)).not.toThrow();
   });
   it("loads the actual IR adapter with a nonempty engine dependency census", () => {
-    const row = census(["./src/codegen/prepared-async-frame-adapter.ts"]);
+    const row = census(["./src/backend/wasmgc/async/prepared-async-frame-adapter.ts"]);
     expect(row.loaded.some((url) => url.endsWith("/prepared-async-frame-adapter.ts"))).toBe(true);
     expect(row.loaded.some((url) => url.endsWith("/prepared-async-frame-engine.ts"))).toBe(true);
     expect(() => assertBoundary(row)).not.toThrow();
   });
   it("detects restoring the legacy engine import in an isolated process", () => {
-    const row = census(["./src/codegen/prepared-async-frame-engine.ts", "./src/codegen/async-frame.ts"]);
+    const row = census(["./src/runtime/wasmgc/async/prepared-async-frame-engine.ts", "./src/codegen/async-frame.ts"]);
     expect(() => assertBoundary(row)).toThrow("forbidden runtime modules");
   });
   it("detects a forbidden import injected through a temporary module", () => {

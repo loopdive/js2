@@ -35,9 +35,54 @@ import ts from "typescript";
 import { readFileSync, writeFileSync, readdirSync, statSync, mkdirSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "node:url";
+import { isBuiltin } from "node:module";
+import { createHash } from "node:crypto";
+import { assessCoreNodeExecution, conjoinCoreNodeExecution } from "./lib/core-node-execution-gate.mjs";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+let movedReferenceContract = "strict";
+let requireCoreTypes = false;
+let requireCoreNodes = false;
+for (let i = 2; i < process.argv.length; i++) {
+  const arg = process.argv[i];
+  if (["--root", "--json", "--why"].includes(arg)) {
+    if (!process.argv[i + 1] || process.argv[i + 1].startsWith("--")) throw new Error(`${arg} requires a value`);
+    i++;
+  } else if (arg === "--require-core-types") {
+    if (requireCoreTypes) throw new Error("duplicate --require-core-types");
+    requireCoreTypes = true;
+  } else if (arg === "--require-core-nodes") {
+    if (requireCoreNodes) throw new Error("duplicate --require-core-nodes");
+    requireCoreNodes = true;
+  } else if (arg.startsWith("--moved-reference-contract=")) {
+    if (movedReferenceContract !== "strict" || arg !== "--moved-reference-contract=preservation-v1") {
+      throw new Error(`unsupported/duplicate moved-reference contract: ${arg}`);
+    }
+    movedReferenceContract = "preservation-v1";
+  } else if (!["--check", "--update", "--md"].includes(arg)) throw new Error(`unknown argument: ${arg}`);
+}
+if (movedReferenceContract !== "strict" && !process.argv.includes("--check")) {
+  throw new Error("the preservation contract requires --check");
+}
+if (requireCoreNodes && !process.argv.includes("--check")) {
+  throw new Error("the node execution requirement requires --check");
+}
+
+const rootIdx = process.argv.indexOf("--root");
+if (rootIdx >= 0 && (!process.argv[rootIdx + 1] || process.argv[rootIdx + 1].startsWith("--"))) {
+  throw new Error("--root requires a source tree path");
+}
+const ROOT =
+  rootIdx >= 0
+    ? path.resolve(process.argv[rootIdx + 1])
+    : path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = path.join(ROOT, "src");
+if (process.argv.includes("--check") && process.argv.includes("--update")) {
+  throw new Error("--check and --update are mutually exclusive");
+}
+
+// Run the isolated observation child before materializing either static graph.
+// Default invocation is explicitly unassessed, never an existence-based pass.
+const coreNodes = await assessCoreNodeExecution({ root: ROOT, required: requireCoreNodes });
 
 // The legacy front-end body-dispatch pair — the cut set.
 const CUT = new Set(["src/codegen/statements.ts#compileStatement", "src/codegen/expressions.ts#compileExpression"]);
@@ -78,7 +123,8 @@ function resolveModule(fromFile, spec) {
 }
 
 for (const file of files) {
-  const text = readFileSync(file, "utf-8");
+  const bytes = readFileSync(file);
+  const text = bytes.toString("utf-8");
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
   const fns = new Map();
   const imports = new Map();
@@ -133,7 +179,7 @@ for (const file of files) {
     }
   }
 
-  fileInfo.set(rel(file), { sf, fns, imports, nsImports, reexports, text });
+  fileInfo.set(rel(file), { sf, fns, imports, nsImports, reexports, text, bytes });
 }
 
 // ---------------------------------------------------------------------------
@@ -270,9 +316,761 @@ const survivorRoots = allNodes.filter((n) => !n.startsWith("src/codegen/"));
 const rSurvive = reach(survivorRoots, CUT);
 const rFull = reach([...survivorRoots, ...CUT], new Set());
 
+// #3518: this contract is independent of the historical broad-root ratchet.
+// A move out of codegen must not turn a declaration into its own root.
+// These are static reference paths, not execution or IR-only backend proof.
+const PRODUCTION_ROOTS = ["src/index.ts#compile"];
+const MOVED_FUNCTIONS = [
+  ...["buildGrowLocals", "buildGrowBody", "buildEnqueueBody", "buildDrainLocals", "buildDrainBody"].map((name) => ({
+    original: `src/codegen/prepared-native-async-runtime.ts#${name}`,
+    canonical: `src/runtime/wasmgc/async/microtask-queue-bodies.ts#${name}`,
+  })),
+  {
+    original: "src/emit/resolve-layout.ts#inLiveShiftRange",
+    canonical: "src/wasm/physical/function-handles.ts#inLiveShiftRange",
+  },
+];
+
+// Additive checkpoint contract. Activation is explicit in check:dead-exports,
+// never inferred from which destination files happen to survive. N1's six
+// targets and fixture contract are unchanged. These ten require class-free
+// production references in BOTH graphs; no declarations are their own roots.
+const CORE_TYPE_FUNCTIONS = [
+  ...[
+    "irVal",
+    "irVec",
+    "irFnctor",
+    "asVal",
+    "irDynamic",
+    "irTypeEquals",
+    "classShapeEquals",
+    "closureSignatureEquals",
+    "objectShapeEquals",
+  ].map((name) => ({
+    original: `src/ir/nodes.ts#${name}`,
+    canonical: `src/ir/core/types.ts#${name}`,
+  })),
+  {
+    original: "src/ir/tag-domain.ts#tagRefinementEquals",
+    canonical: "src/ir/core/tag-refinement.ts#tagRefinementEquals",
+  },
+];
+
+// These two AST contracts identify reviewed OPEN sites. They never contribute
+// targets, graph edges or roots, and never exempt a strict failure.
+const BOUNDARY_SHAPES = [
+  {
+    id: "optional-binaryen-provider-v1",
+    source: "src/optimize.ts",
+    owner: "getBinaryenModule",
+    anchor: "globalThis-alias-nullish-binaryen-specifier-v1",
+    loadPolicy: "runtime-configurable",
+    defaultSpecifier: "binaryen",
+  },
+  {
+    id: "platform-dynamic-import-v1",
+    source: "src/runtime/platform-capability-adapter.ts",
+    owner: "resolvePlatformCapabilityImport",
+    anchor: "intent-dynamic_import-returned-specifier-arrow-v1",
+    loadPolicy: "runtime-callback-argument",
+    defaultSpecifier: null,
+  },
+];
+
+function extensionReceipts({ checker, sourceFiles, moduleLoads, diagnostics, full, cut }) {
+  const failures = [];
+  const receipts = [];
+  let manifest;
+  try {
+    manifest = JSON.parse(readFileSync(path.join(ROOT, "scripts/compiler-extension-boundaries.json"), "utf8"));
+  } catch {
+    return { receipts, failures: ["missing/malformed compiler-extension-boundaries.json"] };
+  }
+  if (
+    !manifest ||
+    Object.keys(manifest).sort().join(",") !== "records,schema" ||
+    manifest.schema !== "compiler-extension-boundaries-v1" ||
+    !Array.isArray(manifest.records) ||
+    manifest.records.length !== 2
+  ) {
+    return { receipts, failures: ["extension manifest requires exactly two versioned records"] };
+  }
+  const unwrap = (node) => {
+    while (
+      node &&
+      (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isTypeAssertionExpression(node))
+    )
+      node = node.expression;
+    return node;
+  };
+  const declaration = (node, predicate) => checker.getSymbolAtLocation(node)?.declarations?.find(predicate);
+  const inside = (node, ancestor) => {
+    for (let current = node; current; current = current.parent) if (current === ancestor) return true;
+    return false;
+  };
+  const matchAnchor = (load, owner, shape) => {
+    if (
+      !ts.isCallExpression(load) ||
+      load.expression.kind !== ts.SyntaxKind.ImportKeyword ||
+      load.arguments.length !== 1
+    )
+      return false;
+    const argument = unwrap(load.arguments[0]);
+    if (!argument || !ts.isIdentifier(argument) || argument.text !== "specifier") return false;
+    if (shape.id === "optional-binaryen-provider-v1") {
+      const binding = declaration(argument, ts.isVariableDeclaration);
+      if (!binding || !inside(binding, owner)) return false;
+      const initializer = unwrap(binding.initializer);
+      if (
+        !initializer ||
+        !ts.isBinaryExpression(initializer) ||
+        initializer.operatorToken.kind !== ts.SyntaxKind.QuestionQuestionToken ||
+        !ts.isStringLiteral(initializer.right) ||
+        initializer.right.text !== "binaryen"
+      )
+        return false;
+      const override = unwrap(initializer.left);
+      if (
+        !override ||
+        !ts.isPropertyAccessExpression(override) ||
+        override.name.text !== "__js2wasmBinaryenModuleSpecifier" ||
+        !ts.isIdentifier(override.expression) ||
+        override.expression.text !== "globalObject"
+      )
+        return false;
+      const globalBinding = declaration(override.expression, ts.isVariableDeclaration);
+      const value = globalBinding && unwrap(globalBinding.initializer);
+      return !!(
+        globalBinding &&
+        inside(globalBinding, owner) &&
+        value &&
+        ts.isIdentifier(value) &&
+        value.text === "globalThis" &&
+        checker.getSymbolAtLocation(value) === checker.resolveName("globalThis", undefined, ts.SymbolFlags.Value, false)
+      );
+    }
+    const parameter = declaration(argument, ts.isParameter);
+    const arrow = parameter?.parent;
+    if (!arrow || !ts.isArrowFunction(arrow) || arrow.parameters.length !== 1 || unwrap(arrow.body) !== load)
+      return false;
+    const returned = arrow.parent;
+    if (!ts.isReturnStatement(returned) || returned.expression !== arrow) return false;
+    const arm = returned.parent;
+    if (!ts.isCaseClause(arm) || !ts.isStringLiteral(arm.expression) || arm.expression.text !== "dynamic_import")
+      return false;
+    const selection = arm.parent.parent;
+    if (
+      !ts.isSwitchStatement(selection) ||
+      !ts.isPropertyAccessExpression(selection.expression) ||
+      selection.expression.name.text !== "type" ||
+      !ts.isIdentifier(selection.expression.expression) ||
+      selection.expression.expression.text !== "intent"
+    )
+      return false;
+    const intent = declaration(selection.expression.expression, ts.isParameter);
+    return !!intent && intent.parent === owner;
+  };
+  for (const shape of BOUNDARY_SHAPES) {
+    const matching = manifest.records.filter((record) => record?.id === shape.id);
+    if (matching.length !== 1) {
+      failures.push(`${shape.id}: missing/duplicate receipt`);
+      continue;
+    }
+    const record = matching[0];
+    const expected = {
+      ...shape,
+      reviewedSourceRevision: record.reviewedSourceRevision,
+      contentHash: record.contentHash,
+      digestAlgorithm: "git-blob-sha1",
+      importer: shape.source,
+      resolutionBase: "original-importer",
+      targetClass: "unconstrained",
+      mayEnterRepository: true,
+      runtimeImplementationInspected: false,
+      sideEffects: "unbounded",
+      strictFailureExemption: false,
+      permittedEvidenceUse: "source-reference-preservation-only",
+    };
+    if (
+      Object.keys(record).sort().join(",") !== Object.keys(expected).sort().join(",") ||
+      Object.entries(expected).some(([key, value]) => record[key] !== value) ||
+      !/^[a-f0-9]{40}$/.test(record.reviewedSourceRevision ?? "") ||
+      !/^[a-f0-9]{40}$/.test(record.contentHash ?? "")
+    ) {
+      failures.push(`${shape.id}: invalid/unsupported provenance fields`);
+      continue;
+    }
+    const sf = sourceFiles.find((file) => file && rel(file.fileName) === shape.source);
+    const scanned = fileInfo.get(shape.source);
+    if (!sf || !scanned || sf.text !== scanned.text) {
+      failures.push(`${shape.id}: missing/inconsistent scanned source ${shape.source}`);
+      continue;
+    }
+    const hash = createHash("sha1").update(`blob ${scanned.bytes.length}\0`).update(scanned.bytes).digest("hex");
+    if (hash !== record.contentHash) {
+      failures.push(`${shape.id}: stale source digest (actual ${hash})`);
+      continue;
+    }
+    const owner = sf.statements.filter(
+      (node) => ts.isFunctionDeclaration(node) && node.name?.text === shape.owner && node.body,
+    );
+    const candidates = [];
+    if (owner.length === 1) {
+      const visit = (node) => {
+        if (matchAnchor(node, owner[0], shape)) candidates.push(node);
+        ts.forEachChild(node, visit);
+      };
+      visit(owner[0]);
+    }
+    if (candidates.length !== 1) {
+      failures.push(`${shape.id}: expected one bound AST site, found ${candidates.length}`);
+      continue;
+    }
+    const siteId = `${shape.source}@${candidates[0].getStart()}`;
+    const loads = moduleLoads.filter((load) => load.siteId === siteId);
+    const issues = diagnostics.filter((diagnostic) => diagnostic.siteId === siteId);
+    if (
+      loads.length !== 1 ||
+      loads[0].from !== `${shape.source}#${shape.owner}` ||
+      loads[0].kind !== "dynamic import" ||
+      loads[0].status !== "unknown" ||
+      loads[0].specifier !== null ||
+      loads[0].target !== null ||
+      issues.length !== 1 ||
+      issues[0].owner !== loads[0].from ||
+      issues[0].code !== "nonliteral-module-target" ||
+      issues[0].kind !== "dynamic import"
+    ) {
+      failures.push(`${shape.id}: missing/ambiguous unknown-site diagnostic`);
+      continue;
+    }
+    receipts.push({
+      ...record,
+      siteId,
+      diagnosticId: issues[0].id,
+      fullReachable: full.has(loads[0].from),
+      cutReachable: cut.has(loads[0].from),
+    });
+  }
+  if (new Set(receipts.map((receipt) => receipt.siteId)).size !== receipts.length)
+    failures.push("receipts must bind distinct sites");
+  return { receipts, failures };
+}
+
+function movedRuntimeReport() {
+  // Bind identifiers to declarations: spelling alone cannot distinguish a
+  // renamed/shadowed local from a production reference. No diagnostics-based
+  // forgiveness, test roots, or compatibility-export roots are admitted.
+  const productionFiles = files.filter((file) => !/(?:^|\/)(?:tests|__tests__)\/|\.(?:test|spec)\.ts$/.test(rel(file)));
+  const program = ts.createProgram(productionFiles, {
+    target: ts.ScriptTarget.ESNext,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    noEmit: true,
+    noLib: true,
+    types: [],
+  });
+  const checker = program.getTypeChecker();
+  const graph = new Map();
+  const coreGraph = new Map();
+  const classOwners = new Set();
+  const deferredCoreCallables = new Set();
+  const owners = new Map();
+  const callables = new Set();
+  const diagnostics = [];
+  const diagnosticIds = new Set();
+  const externalReferences = new Map();
+  const moduleLoads = [];
+  const sourceFiles = productionFiles.map((file) => program.getSourceFile(file));
+  const error = (id, code, message, { siteId = null, kind = null, subject = null } = {}) => {
+    const diagnosticId = `${id}:${code}:${siteId ?? subject ?? ""}`;
+    if (!diagnosticIds.has(diagnosticId)) {
+      diagnostics.push({ id: diagnosticId, owner: id, code, kind, message, siteId });
+      diagnosticIds.add(diagnosticId);
+    }
+  };
+  const edge = (from, to, site = null, coreEligible = true) => {
+    graph.get(from).add(to);
+    // Keep the existing graph unchanged. The core contract must not gain a
+    // witness from visiting an unused class method, including nested classes
+    // and class expressions under a function/variable owner.
+    if (!coreEligible || classOwners.has(from)) return;
+    for (let node = site; node && !ts.isSourceFile(node); node = node.parent) {
+      if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) return;
+    }
+    coreGraph.get(from).add(to);
+  };
+  const register = (id, node, callable = false) => {
+    if (graph.has(id)) {
+      // Overload signatures have no body; the implementation owns the node.
+      if (!node.body) return;
+    } else {
+      graph.set(id, new Set());
+      coreGraph.set(id, new Set());
+    }
+    if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) classOwners.add(id);
+    owners.set(node, id);
+    if (callable) callables.add(id);
+  };
+  for (const sf of sourceFiles) {
+    if (!sf) throw new Error("moved-runtime gate: unresolved production source file");
+    const file = rel(sf.fileName);
+    const moduleId = `${file}#<module>`;
+    register(moduleId, sf);
+    for (const diagnostic of sf.parseDiagnostics) {
+      error(moduleId, "source-parse-failure", ts.flattenDiagnosticMessageText(diagnostic.messageText, " "), {
+        subject: `${diagnostic.code}@${diagnostic.start}`,
+      });
+    }
+    for (const stmt of sf.statements) {
+      if (
+        ts.isImportDeclaration(stmt) &&
+        !stmt.importClause?.isTypeOnly &&
+        ts.isStringLiteral(stmt.moduleSpecifier) &&
+        stmt.moduleSpecifier.text.startsWith(".")
+      ) {
+        const target = resolveModule(sf.fileName, stmt.moduleSpecifier.text);
+        if (!target || !productionFiles.includes(target))
+          error(moduleId, "unresolved-production-module", `unresolved production module ${stmt.moduleSpecifier.text}`, {
+            subject: stmt.moduleSpecifier.text,
+          });
+      }
+      if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) register(`${file}#${stmt.name.text}`, stmt, true);
+      else if ((ts.isClassDeclaration(stmt) || ts.isEnumDeclaration(stmt)) && stmt.name)
+        register(`${file}#${stmt.name.text}`, stmt);
+      else if (ts.isVariableStatement(stmt)) {
+        for (const decl of stmt.declarationList.declarations) {
+          if (!ts.isIdentifier(decl.name)) continue;
+          // Parentheses and type-only wrappers do not execute a deferred
+          // function body. Retain N1's historical classification, but never
+          // let module initialization root these callables for the core proof.
+          let initializer = decl.initializer;
+          while (
+            initializer &&
+            (ts.isParenthesizedExpression(initializer) ||
+              ts.isAsExpression(initializer) ||
+              ts.isTypeAssertionExpression(initializer) ||
+              ts.isSatisfiesExpression(initializer) ||
+              ts.isNonNullExpression(initializer))
+          )
+            initializer = initializer.expression;
+          if (initializer && (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer)))
+            deferredCoreCallables.add(`${file}#${decl.name.text}`);
+          register(
+            `${file}#${decl.name.text}`,
+            decl,
+            !!decl.initializer && (ts.isArrowFunction(decl.initializer) || ts.isFunctionExpression(decl.initializer)),
+          );
+        }
+      }
+    }
+  }
+  const ownerOf = (node) => {
+    // Source files are initialization owners, not catch-all resolution for
+    // missing functions, type declarations, or unsupported import aliases.
+    for (let n = node; n && !ts.isSourceFile(n); n = n.parent) {
+      if (owners.has(n)) return owners.get(n);
+    }
+    return null;
+  };
+  const declarationTarget = (node) =>
+    ownerOf(node) ??
+    (ts.isSourceFile(node) && graph.has(`${rel(node.fileName)}#<module>`) ? `${rel(node.fileName)}#<module>` : null);
+  const resolvedAlias = (node) => {
+    const symbol = checker.getSymbolAtLocation(node);
+    return symbol && (symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol);
+  };
+  const hasKnownDeclaration = (symbol) =>
+    symbol?.declarations?.some(
+      (decl) => declarationTarget(decl) || program.isSourceFileFromExternalLibrary(decl.getSourceFile()),
+    );
+  const moduleLoad = (id, node, argument, kind) => {
+    const location = node.getSourceFile().getLineAndCharacterOfPosition(node.getStart());
+    const siteId = `${rel(node.getSourceFile().fileName)}@${node.getStart()}`;
+    const record = {
+      siteId,
+      from: id,
+      kind,
+      line: location.line + 1,
+      specifier: null,
+      status: "unknown",
+      target: null,
+    };
+    moduleLoads.push(record);
+    if (!argument || !(ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument))) {
+      error(id, "nonliteral-module-target", `unknown nonliteral ${kind} module target at line ${record.line}`, {
+        siteId,
+        kind,
+      });
+      return;
+    }
+    record.specifier = argument.text;
+    if (isBuiltin(argument.text)) {
+      record.status = "resolved-external";
+      record.target = argument.text;
+      return;
+    }
+    const resolved = ts.resolveModuleName(
+      argument.text,
+      node.getSourceFile().fileName,
+      program.getCompilerOptions(),
+      ts.sys,
+      undefined,
+      undefined,
+      kind === "dynamic import" ? ts.ModuleKind.ESNext : ts.ModuleKind.CommonJS,
+    ).resolvedModule;
+    if (!resolved) {
+      error(id, "unresolved-module-target", `unresolved ${kind} module ${argument.text} at line ${record.line}`, {
+        siteId,
+        kind,
+      });
+      return;
+    }
+    const target = `${rel(resolved.resolvedFileName)}#<module>`;
+    record.target = target;
+    if (graph.has(target)) {
+      record.status = "resolved-production";
+      edge(id, target, node);
+    } else if (resolved.isExternalLibraryImport) {
+      record.status = "resolved-external";
+    } else {
+      error(
+        id,
+        "module-outside-production-graph",
+        `unknown ${kind} module outside production graph ${argument.text} (${target}) at line ${record.line}`,
+        { siteId, kind },
+      );
+    }
+  };
+  const relativeImport = (symbol) => {
+    for (const decl of symbol?.declarations ?? []) {
+      for (let n = decl; n && !ts.isSourceFile(n); n = n.parent) {
+        if (
+          ts.isImportEqualsDeclaration(n) &&
+          ts.isExternalModuleReference(n.moduleReference) &&
+          n.moduleReference.expression &&
+          ts.isStringLiteral(n.moduleReference.expression) &&
+          n.moduleReference.expression.text.startsWith(".")
+        )
+          return n.moduleReference.expression.text;
+        if (
+          (ts.isImportDeclaration(n) || ts.isExportDeclaration(n)) &&
+          n.moduleSpecifier &&
+          ts.isStringLiteral(n.moduleSpecifier) &&
+          n.moduleSpecifier.text.startsWith(".")
+        )
+          return n.moduleSpecifier.text;
+      }
+    }
+    return null;
+  };
+  const reference = (id, node) => {
+    let symbol =
+      ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node
+        ? checker.getShorthandAssignmentValueSymbol(node.parent)
+        : checker.getSymbolAtLocation(node);
+    const imported = relativeImport(symbol);
+    if (symbol && symbol.flags & ts.SymbolFlags.Alias) symbol = checker.getAliasedSymbol(symbol);
+    const declarations = symbol?.declarations ?? [];
+    let resolved = false;
+    for (const decl of declarations) {
+      const target = declarationTarget(decl);
+      if (target) {
+        resolved = true;
+        if (target !== id) edge(id, target, node);
+      } else if (program.isSourceFileFromExternalLibrary(decl.getSourceFile())) {
+        // A resolved external declaration (e.g. ts-api's TypeScript export)
+        // is a package boundary, never a source-function root or a fallback
+        // for a missing local export. Keep explicit provenance in the report.
+        resolved = true;
+        if (!externalReferences.has(id)) externalReferences.set(id, new Set());
+        externalReferences.get(id).add(`${rel(decl.getSourceFile().fileName)}#${node.text}`);
+      }
+    }
+    if (imported && !resolved)
+      error(id, "unresolved-relative-reference", `unresolved relative reference ${node.text} from ${imported}`, {
+        subject: `${imported}#${node.text}`,
+      });
+    if (imported && resolved) {
+      const module = resolveModule(node.getSourceFile().fileName, imported);
+      if (module && graph.has(`${rel(module)}#<module>`)) edge(id, `${rel(module)}#<module>`, node);
+    }
+  };
+  const visit = (id, node) => {
+    if (ts.isImportEqualsDeclaration(node)) {
+      if (node.isTypeOnly) return;
+      if (ts.isExternalModuleReference(node.moduleReference)) {
+        moduleLoad(id, node, node.moduleReference.expression, "import-equals");
+        if (!hasKnownDeclaration(resolvedAlias(node.name)))
+          error(id, "unresolved-import-equals-alias", `unresolved import-equals alias ${node.name.text}`, {
+            subject: node.name.text,
+          });
+      } else {
+        error(
+          id,
+          "unsupported-import-equals-alias",
+          `unknown import-equals alias ${node.name.text}: unsupported entity-name module reference`,
+          { subject: node.name.text },
+        );
+      }
+      return;
+    }
+    if (ts.isExportAssignment(node) && node.isExportEquals) {
+      if (!hasKnownDeclaration(resolvedAlias(node.expression))) {
+        error(
+          id,
+          "unresolved-export-equals-reference",
+          `unknown/unresolved export-equals reference ${node.expression.getText()}`,
+          { subject: node.getStart() },
+        );
+      }
+      // Exporting a callable creates a binding, not a production consumer.
+      // Consumers resolve the alias through reference(), above.
+      return;
+    }
+    if (ts.isCallExpression(node)) {
+      if (node.expression.kind === ts.SyntaxKind.ImportKeyword)
+        moduleLoad(id, node, node.arguments[0], "dynamic import");
+      else if (ts.isIdentifier(node.expression) && node.expression.text === "require") {
+        // Includes locally supplied require bindings: an unproven target must
+        // not disappear merely because a factory provided the loader.
+        moduleLoad(id, node, node.arguments[0], "require");
+      }
+    }
+    if (
+      ts.isTypeNode(node) ||
+      ts.isInterfaceDeclaration(node) ||
+      ts.isTypeAliasDeclaration(node) ||
+      ts.isImportDeclaration(node) ||
+      ts.isExportDeclaration(node)
+    )
+      return;
+    if (ts.isIdentifier(node)) {
+      // Declaration names and plain property keys are not value references.
+      const p = node.parent;
+      if (p.name === node && !ts.isShorthandPropertyAssignment(p) && !ts.isPropertyAccessExpression(p)) return;
+      if (ts.isPropertyAccessExpression(p) && p.name === node) {
+        // Namespace members are real imported references; arbitrary method
+        // dispatch is outside this top-level static reference graph.
+        if (!ts.isIdentifier(p.expression)) return;
+        const ns = checker.getSymbolAtLocation(p.expression);
+        if (!ns?.declarations?.some((decl) => ts.isNamespaceImport(decl) || ts.isImportEqualsDeclaration(decl))) return;
+        reference(id, node);
+        if (!checker.getSymbolAtLocation(node) && relativeImport(ns)) {
+          error(id, "unresolved-namespace-edge", `unresolved namespace edge ${p.getText()}`, { subject: p.getStart() });
+        }
+        return;
+      }
+      // A namespace binding itself is not a callable edge; ns.member above
+      // resolves the specific member rather than keeping an entire module live.
+      const symbol = checker.getSymbolAtLocation(node);
+      if (!symbol?.declarations?.some(ts.isNamespaceImport)) reference(id, node);
+    }
+    ts.forEachChild(node, (child) => visit(id, child));
+  };
+  for (const [node, id] of owners) {
+    if (ts.isSourceFile(node)) {
+      for (const stmt of node.statements) {
+        if (
+          ts.isImportDeclaration(stmt) &&
+          !stmt.importClause &&
+          ts.isStringLiteral(stmt.moduleSpecifier) &&
+          stmt.moduleSpecifier.text.startsWith(".")
+        ) {
+          const target = resolveModule(node.fileName, stmt.moduleSpecifier.text);
+          if (target && graph.has(`${rel(target)}#<module>`)) edge(id, `${rel(target)}#<module>`);
+        }
+        if (ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) continue;
+        if (ts.isVariableStatement(stmt)) {
+          for (const decl of stmt.declarationList.declarations) {
+            const target = owners.get(decl);
+            if (target && !callables.has(target)) edge(id, target, null, !deferredCoreCallables.has(target));
+            else if (!target) visit(id, decl);
+          }
+        } else visit(id, stmt);
+      }
+    } else {
+      edge(id, `${rel(node.getSourceFile().fileName)}#<module>`);
+      visit(id, node);
+    }
+  }
+  const pathsFromRoots = (cut, referenceGraph = graph) => {
+    const parent = new Map();
+    const queue = [];
+    for (const root of PRODUCTION_ROOTS) {
+      if (callables.has(root) && !cut.has(root)) {
+        parent.set(root, null);
+        queue.push(root);
+      }
+    }
+    for (let i = 0; i < queue.length; i++) {
+      for (const target of referenceGraph.get(queue[i]) ?? []) {
+        if (!graph.has(target))
+          error(queue[i], "unresolved-graph-edge", `unresolved graph edge ${target}`, { subject: target });
+        else if (!cut.has(target) && !parent.has(target)) {
+          parent.set(target, queue[i]);
+          queue.push(target);
+        }
+      }
+    }
+    return parent;
+  };
+  const full = pathsFromRoots(new Set());
+  const cut = pathsFromRoots(CUT);
+  const pathTo = (parents, target) => {
+    if (!parents.has(target)) return null;
+    const result = [];
+    for (let id = target; id !== null; id = parents.get(id)) result.push(id);
+    return result.reverse();
+  };
+  const structuralFailures = PRODUCTION_ROOTS.filter((id) => !callables.has(id)).map(
+    (id) => `missing production root ${id}`,
+  );
+  for (const root of PRODUCTION_ROOTS) {
+    const [file, name] = root.split("#");
+    const sf = program.getSourceFile(path.join(ROOT, file));
+    const module = sf && checker.getSymbolAtLocation(sf);
+    const exported = module && checker.getExportsOfModule(module).find((symbol) => symbol.name === name);
+    if (!exported) {
+      structuralFailures.push(`missing public production export ${root}`);
+    } else {
+      const binding = exported.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(exported) : exported;
+      if (!binding.declarations?.some((declaration) => declarationTarget(declaration) === root)) {
+        structuralFailures.push(`public production export does not resolve to root ${root}`);
+      }
+    }
+  }
+  const functions = MOVED_FUNCTIONS.map(({ original, canonical }) => {
+    const canonicalFile = canonical.split("#")[0];
+    const relocated = graph.has(`${canonicalFile}#<module>`);
+    const target = relocated ? canonical : original;
+    if (!callables.has(target)) structuralFailures.push(`missing moved function ${target}`);
+    if (relocated && callables.has(original)) structuralFailures.push(`duplicate moved implementation ${original}`);
+    const fullProductionPath = pathTo(full, target);
+    const legacyDispatchCutPath = pathTo(cut, target);
+    if (!fullProductionPath) structuralFailures.push(`no production reference path to ${target}`);
+    return {
+      original,
+      canonical,
+      target,
+      fullProductionPath,
+      legacyDispatchCutPath,
+      classification: !fullProductionPath ? "unreferenced" : legacyDispatchCutPath ? "survivor" : "legacy-only",
+    };
+  });
+  if (full.size === 0 || functions.length !== 6) structuralFailures.push("empty/incomplete moved-runtime report");
+  const coreTypes = {
+    required: requireCoreTypes,
+    assessed: requireCoreTypes,
+    expectedSymbols: 10,
+    scope: "class-free static production references; not execution or retirement proof",
+    functions: [],
+    fullWitnessCount: null,
+    cutWitnessCount: null,
+    failures: [],
+    ok: null,
+  };
+  if (requireCoreTypes) {
+    const coreFull = pathsFromRoots(classOwners, coreGraph);
+    const coreCut = pathsFromRoots(new Set([...CUT, ...classOwners]), coreGraph);
+    coreTypes.functions = CORE_TYPE_FUNCTIONS.map(({ original, canonical }) => {
+      if (!callables.has(canonical)) coreTypes.failures.push(`missing canonical core function ${canonical}`);
+      if (callables.has(original)) coreTypes.failures.push(`duplicate core implementation ${original}`);
+      const fullProductionPath = pathTo(coreFull, canonical);
+      const legacyDispatchCutPath = pathTo(coreCut, canonical);
+      if (!fullProductionPath) coreTypes.failures.push(`no class-free production reference path to ${canonical}`);
+      if (!legacyDispatchCutPath) coreTypes.failures.push(`no class-free dispatch-cut reference path to ${canonical}`);
+      return { original, canonical, target: canonical, fullProductionPath, legacyDispatchCutPath };
+    });
+    coreTypes.fullWitnessCount = coreTypes.functions.filter((fn) => fn.fullProductionPath).length;
+    coreTypes.cutWitnessCount = coreTypes.functions.filter((fn) => fn.legacyDispatchCutPath).length;
+    if (CORE_TYPE_FUNCTIONS.length !== 10 || coreTypes.fullWitnessCount !== 10 || coreTypes.cutWitnessCount !== 10)
+      coreTypes.failures.push("core types require 10/10 full and dispatch-cut class-free witnesses");
+    coreTypes.ok = coreTypes.failures.length === 0;
+  }
+  const coreTypesOK = !requireCoreTypes || coreTypes.ok;
+  const reachableDiagnostics = diagnostics.filter(({ owner }) => full.has(owner));
+  // Human output keeps its historical grouping. Admission uses the structured
+  // diagnostic IDs below; formatting/deduplication cannot change a verdict.
+  const diagnosticMessages = (rows) => {
+    const byOwner = new Map();
+    for (const diagnostic of rows) {
+      if (!byOwner.has(diagnostic.owner)) byOwner.set(diagnostic.owner, new Set());
+      byOwner.get(diagnostic.owner).add(diagnostic.message);
+    }
+    return [...byOwner].flatMap(([owner, messages]) => [...messages].map((message) => `${owner}: ${message}`));
+  };
+  const failures = [...structuralFailures, ...coreTypes.failures, ...diagnosticMessages(reachableDiagnostics)];
+  const provenance = extensionReceipts({ checker, sourceFiles, moduleLoads, diagnostics, full, cut });
+  const recordedDiagnostics = new Set(provenance.receipts.map((receipt) => receipt.diagnosticId));
+  const unrecordedDiagnostics = reachableDiagnostics.filter((diagnostic) => !recordedDiagnostics.has(diagnostic.id));
+  const preservationFailures = [
+    ...coreTypes.failures,
+    ...provenance.failures,
+    ...structuralFailures,
+    ...diagnosticMessages(unrecordedDiagnostics),
+  ];
+  const fullWitnessCount = functions.filter((fn) => fn.fullProductionPath).length;
+  const cutWitnessCount = functions.filter((fn) => fn.legacyDispatchCutPath).length;
+  if (fullWitnessCount !== 6 || full.size === 0)
+    preservationFailures.push("preservation requires 6/6 full source witnesses");
+  if (cutWitnessCount !== 6 || cut.size === 0)
+    preservationFailures.push("preservation requires 6/6 dispatch-cut source witnesses");
+  const strictOK = coreTypesOK && structuralFailures.length === 0 && reachableDiagnostics.length === 0;
+  const preservationSourceIntegrityOK =
+    coreTypesOK &&
+    provenance.failures.length === 0 &&
+    structuralFailures.length === 0 &&
+    unrecordedDiagnostics.length === 0 &&
+    fullWitnessCount === 6 &&
+    cutWitnessCount === 6 &&
+    full.size > 0 &&
+    cut.size > 0;
+  return {
+    roots: PRODUCTION_ROOTS,
+    coreTypes,
+    evidence: "static production references; not execution or standalone/IR-only completion",
+    fullProduction: { reachableNodes: full.size, witnessCount: fullWitnessCount },
+    legacyDispatchCut: {
+      cut: [...CUT],
+      reachableNodes: cut.size,
+      witnessCount: cutWitnessCount,
+      moduleLoads: moduleLoads.filter(({ from }) => cut.has(from)),
+      diagnostics: diagnostics.filter(({ owner }) => cut.has(owner)),
+    },
+    externalReferences: [...externalReferences]
+      .filter(([from]) => full.has(from))
+      .flatMap(([from, targets]) => [...targets].map((to) => ({ from, to }))),
+    moduleLoads: moduleLoads.filter(({ from }) => full.has(from)),
+    diagnostics: reachableDiagnostics,
+    structuralFailures,
+    graphState: strictOK ? "MODELED-SOURCE-RESOLVED" : "OPEN",
+    closureCertified: false,
+    retirementCertified: false,
+    externalResolutionIsRuntimeClosure: false,
+    preservation: {
+      contract: "preservation-v1",
+      scope: "source-reference-preservation-only",
+      expectedSymbols: 6,
+      fullWitnessCount,
+      cutWitnessCount,
+      receipts: provenance.receipts,
+      unrecordedDiagnostics,
+      sourceIntegrityOK: preservationSourceIntegrityOK,
+      failures: preservationFailures,
+      // The old ratchet is joined below, before any report/verdict is emitted.
+      ok: false,
+    },
+    functions,
+    failures,
+    ok: strictOK,
+  };
+}
+const movedRuntime = conjoinCoreNodeExecution(movedRuntimeReport(), coreNodes);
+
 // --why <substr>: print a shortest survivor-path to each matching node.
 const whyIdx = process.argv.indexOf("--why");
-if (whyIdx > -1) {
+if (whyIdx > -1 && !process.argv.includes("--check")) {
   const needle = process.argv[whyIdx + 1];
   // BFS with parents from survivor roots (cut applied)
   const parent = new Map();
@@ -431,8 +1229,6 @@ perFile.sort((a, b) => b.legacyLoc - a.legacyLoc);
 
 const jsonIdx = process.argv.indexOf("--json");
 const jsonPath = jsonIdx > -1 ? process.argv[jsonIdx + 1] : path.join(ROOT, ".tmp", "legacy-reachability.json");
-mkdirSync(path.dirname(jsonPath), { recursive: true });
-writeFileSync(jsonPath, JSON.stringify({ cut: [...CUT], perFile }, null, 1));
 
 // ---------------------------------------------------------------------------
 // --check / --update — dead-export ratchet (#3090 Phase 2)
@@ -450,21 +1246,63 @@ const BASELINE_PATH = path.join(ROOT, "scripts", "dead-export-baseline.json");
 const currentDead = perFile
   .flatMap((f) => f.fns.filter((fn) => fn.cls === "unreferenced").map((fn) => f.file + "#" + fn.name))
   .sort();
+let baseline;
+try {
+  const entries = JSON.parse(readFileSync(BASELINE_PATH, "utf-8"));
+  if (
+    !Array.isArray(entries) ||
+    entries.some((entry) => typeof entry !== "string") ||
+    new Set(entries).size !== entries.length
+  ) {
+    throw new Error("invalid dead-export baseline");
+  }
+  baseline = new Set(entries);
+} catch {
+  movedRuntime.preservation.failures.push("missing/unreadable dead-export baseline");
+}
+const added = baseline ? currentDead.filter((id) => !baseline.has(id)) : null;
+const removed = baseline ? [...baseline].filter((id) => !currentDead.includes(id)) : null;
+const oldRatchet = {
+  baselineCount: baseline?.size ?? null,
+  currentCount: currentDead.length,
+  added,
+  removed,
+  ok: !!baseline && added.length === 0,
+  unchanged: !!baseline && added.length === 0 && removed.length === 0,
+};
+if (baseline && !oldRatchet.unchanged)
+  movedRuntime.preservation.failures.push("preservation requires an unchanged old dead-export ratchet");
+movedRuntime.preservation.oldRatchet = oldRatchet;
+movedRuntime.preservation.ok = movedRuntime.preservation.sourceIntegrityOK && oldRatchet.unchanged;
+mkdirSync(path.dirname(jsonPath), { recursive: true });
+writeFileSync(jsonPath, JSON.stringify({ cut: [...CUT], perFile, movedRuntime }, null, 1));
 if (process.argv.includes("--update")) {
   writeFileSync(BASELINE_PATH, JSON.stringify(currentDead, null, 1) + "\n");
   console.log(`dead-export baseline updated: ${currentDead.length} entries`);
   process.exit(0);
 }
 if (process.argv.includes("--check")) {
-  let baseline;
-  try {
-    baseline = new Set(JSON.parse(readFileSync(BASELINE_PATH, "utf-8")));
-  } catch {
+  console.log(
+    coreNodes.required
+      ? `core-node execution gate: ${coreNodes.ok ? "PASS" : "FAIL"} (${coreNodes.fullWitnessCount ?? "unknown"}/12 observed callers; dispatch-cut UNKNOWN)`
+      : "core-node execution group: not required / not assessed (use --require-core-nodes)",
+  );
+  const coreTypes = movedRuntime.coreTypes;
+  console.log(
+    coreTypes.required
+      ? `core-type gate: ${coreTypes.ok ? "PASS" : "FAIL"} (${coreTypes.fullWitnessCount}/10 full, ${coreTypes.cutWitnessCount}/10 dispatch-cut class-free references)`
+      : "core-type group: not required / not assessed (use --require-core-types)",
+  );
+  if (!movedRuntime.ok) {
+    console.error("moved-runtime gate: FAIL (production-rooted evidence incomplete)");
+    for (const failure of movedRuntime.failures) console.error(`  ${failure}`);
+  } else {
+    console.log(`moved-runtime gate: OK (6/6 production paths from ${PRODUCTION_ROOTS.join(", ")})`);
+  }
+  if (!baseline) {
     console.error(`dead-export gate: missing/unreadable ${rel(BASELINE_PATH)} — run with --update to seed it.`);
     process.exit(1);
   }
-  const added = currentDead.filter((id) => !baseline.has(id));
-  const removed = [...baseline].filter((id) => !currentDead.includes(id));
   if (removed.length)
     console.log(
       `dead-export gate: ${removed.length} baseline entries gone (progress — refresh with --update when convenient).`,
@@ -477,6 +1315,17 @@ if (process.argv.includes("--check")) {
     );
     process.exit(1);
   }
+  if (movedReferenceContract === "preservation-v1") {
+    const preservation = movedRuntime.preservation;
+    console.log(
+      `preservation-only ${preservation.ok ? "PASS" : "FAIL"}: ${preservation.fullWitnessCount}/6 full source witnesses, ${preservation.cutWitnessCount}/6 cut witnesses`,
+    );
+    console.log(`graph ${movedRuntime.graphState}; strict modeled closure ${movedRuntime.ok ? "PASS" : "FAIL"}`);
+    console.log("retirement/deletion NOT CERTIFIED");
+    for (const failure of preservation.failures) console.error(`  preservation: ${failure}`);
+    process.exit(preservation.ok ? 0 : 1);
+  }
+  if (!movedRuntime.ok) process.exit(1);
   console.log(`dead-export gate: OK (${currentDead.length} known entries, 0 new)`);
   process.exit(0);
 }
