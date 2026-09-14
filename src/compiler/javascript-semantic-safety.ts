@@ -193,6 +193,8 @@ export function collectUnsafeJavaScriptOperations(
           builtin(receiver, "Object") &&
           node.arguments[0] &&
           array(node.arguments[0]) &&
+          // Unknown prototypes must remain refused: calls, property reads and
+          // invalidated aliases can all hide the same missing inherited slot.
           !(
             node.arguments[1] &&
             ts.isPropertyAccessExpression(node.arguments[1]) &&

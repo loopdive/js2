@@ -20,6 +20,42 @@ function findings(source: string, standalone = false) {
 }
 
 describe("#5401: enumeration and deletion carrier safety", () => {
+  it.each(["true", "false"])("executes permanent descriptor shadows (enumerable=%s)", async (enumerable) => {
+    const source = `var p={a:1};var o=Object.create(p,{a:{value:3,enumerable:${enumerable}},b:{value:2,enumerable:true}});
+      var keys=[];for(var k in o)keys.push(k);console.log(keys.join(","));`;
+    expect(findings(source).map((finding) => finding.message)).toEqual([]);
+    const result = await compile(source, { allowJs: true, fileName: "descriptor-shadow.js", deferTopLevelInit: true });
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    const writes: unknown[][] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((...args) => {
+      writes.push(args);
+    });
+    try {
+      const imports = result.importObject!;
+      const { instance } = await WebAssembly.instantiate(result.binary, imports);
+      (imports as any).__setInstance?.(instance);
+      (instance.exports.__module_init as () => void)();
+    } finally {
+      spy.mockRestore();
+    }
+    expect(writes).toEqual([[enumerable === "true" ? "a,b" : "b"]]);
+  });
+
+  it.each([
+    "var p={a:1};var o=Object.create(p,{b:{value:2,enumerable:true}});",
+    "var p={a:1};var o=Object.create(p,{a:{value:2,configurable:true}});delete o.a;",
+    "var p={a:1};var o=Object.create(p,{a:{get(){return 2}}});",
+    "var p={a:1};var o=Object.create(p,{a:{value:2}});p.b=3;",
+    "var p={a:1};var o=Object.create(p,{a:{value:2}});var alias=p;alias.b=3;",
+    "var p={a:1};function mutate(x){x.b=3}var o=Object.create(p,{a:{value:2}});mutate(p);",
+    "var p={a:1};var o=Object.create(p,{a:{value:2}});Object.getPrototypeOf(o).b=3;",
+    "var p={a:1};var o=Object.create(p,{a:{value:2}});Object.setPrototypeOf(o,{b:3});",
+    "var p={a:1};var o=Object.create(p);o.a=2;",
+  ])("retains incomplete or invalidated descriptor-shadow refusals: %s", (prefix) => {
+    const reports = findings(`${prefix}var keys=[];for(var k in o)keys.push(k);console.log(keys.join(","));`);
+    expect(reports.map((report) => report.id)).toContain("JS2WASM_UNSOUND_ENUMERATION");
+  });
+
   it.each([
     ["const o={x:1};delete o.x;o.x=2;console.log(o.x);", 2],
     ["const o={x:1};function unused(){delete o.x;}console.log(o.x);", 1],
