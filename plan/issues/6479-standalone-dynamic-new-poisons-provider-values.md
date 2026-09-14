@@ -1,5 +1,5 @@
 ---
-id: 6474
+id: 6479
 title: "standalone: a provider CLASS OBJECT passes a bare `ref.test $__ta_ctor`, so the `%TypedArray%.of/from` and dynamic-`new` arms build a typed array out of it — ONE `new <runtime value>()` anywhere in a linked consumer, even in a function that is never called, then makes EVERY provider value unreadable; `test262/harness/temporalHelpers.js` contains that spelling, which is why it accounts for 71 of the 169 failing rows in the #5383 three-family sample"
 status: done
 completed: 2026-09-13
