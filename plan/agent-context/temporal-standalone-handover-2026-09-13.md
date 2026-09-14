@@ -42,6 +42,7 @@ started). Acceptance criterion 4 of #5383 is therefore still open.
 | S21 | per-name method ladders (`__call_m_*`, `__call_toString`/`valueOf`) tested class by STRUCTURAL `ref.test`, so field-less WeakMap-state classes all matched — the #4618 `__tag` guard now applies to them via `class-arm-tag-guard.ts` (#6486) | 244 → 249 (94/65/90; 0 pass→fail; `Duration.from("P1Y").toJSON()` → `P1Y`) | branch `…-s21`, stacked on S20b, unpushed |
 | S22 | `Object.getPrototypeOf(<runtime-only callable>)` answered null in standalone; now `__is_callable ? Function.prototype : __getPrototypeOf` (#6487) — the 7 rows were `*/builtin.js`, NOT the gOPD descriptor residual | 249 → 256 (96/68/92; 0 pass→fail) | branch `…-s22`, stacked on S21, unpushed |
 | S23 | fourth `called value is not a function` cause: `n.toPrecision(a)` on a number PRIMITIVE through an `any` receiver — `__extern_method_call` had no primitive-receiver arm (#6488, `number-primitive-method-call.ts`); the candidate list in the brief was wrong, the instrument-the-sites method was right | 258 → 271 (97/77/97; 0 pass→fail; bucket 10 → 0) | branch `…-s23`, stacked on S22, unpushed |
+| S24 | dynamic `new NS.wide(…)` above arity 8 (`MAX_NATIVE_CONSTRUCT_ARITY`) emitted null without evaluating args (#6489) — upstream of the `expected a string, not null` bucket (9 → 0). Lane restarted once (container restart; WIP commit + partial TSVs salvaged). `const C = NS.wide; new C(…)` → null is a DIFFERENT, arity-independent residual, pinned | 271 → 300 (101/97/102; 0 pass→fail; 29 fail→pass) | branch `…-s24b`, stacked on S23, unpushed |
 
 Fix commits also on main: the speculative-rollback gate fix on S2m (9501ffca13),
 the `test262` gitlink restoration (#5892), the revert of #5871/#5882 (#5914).
@@ -86,7 +87,14 @@ fails, `--check` + the gate before committing.
   FIXED by S22 — it was `Object.getPrototypeOf(Temporal.X.compare)` in
   `*/builtin.js`, not a descriptor read). Post-S22 (solo-corrected): `called
   value is not a function` 10 → **0** (S23, #6488) · post-S23 top: `expected a
-  string, not null` **9** (S24 dispatched, branch `…-s24`, stacked on S23) · `expected a string, not null` 8 · `Object method called on null or
+  string, not null` 9 → **0** (S24, #6489). Post-S24: no dominant cause left in
+  the 360-row sample — `Calling as constructor Expected a TypeError` 4 · `Proxy
+  get trap is not callable` 4 · `illegal cast in __class_construct_dispatch()` 2
+  · `Cannot read properties of undefined (reading 'equals')` 2 · the `const C =
+  NS.wide; new C(…)` null residual. S25 dispatched on the constructor-path
+  cluster (branch `…-s25`, stacked on S24b). After that: widen the sample (full
+  `built-ins/Temporal/**` solo at 60 s) before picking further slices, and #5407
+  (link cost → the 15 s cap is now the dominant noise source) · `expected a string, not null` 8 · `Object method called on null or
   undefined` 6 · `Expected a RangeError but got undefined` 6 · `__closure_N()`
   null pointer 5 · `Calling as constructor` 4 · `Proxy get trap` 4. Of the 6
   `Object method called on null or undefined`, FOUR are `calendar-temporal-object`
