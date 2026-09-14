@@ -6377,3 +6377,263 @@ argument 0 — for both `C[k2](…)` and the literal-key `C["s2"](…)`, and for
 second class. Exactly one row moved, `o.m2("A","B")` through an `any`-typed
 parameter, which is this slice's ladder. #6484 is a separate static
 computed-member CALL lowering and keeps its own slice.
+
+### S22 findings (2026-09-14) — the bucket was not a descriptor read; it was `Object.getPrototypeOf` of a FUNCTION, and the answer was `null`
+
+Full write-up in
+[#6487](6487-standalone-dynamic-callable-getprototypeof.md). Branch
+`issue-5383-standalone-temporal-s22`, based on S21's FINAL tip `ebfe5aa8de`.
+Every number below was measured on this tree, both labels, by file-copy revert
+of the two changed files (`.tmp/s22base/`); nothing is inherited from S21's run
+except the S21 row itself, which this slice's base run REPRODUCES exactly
+(249/360 — see §5).
+
+#### 1. The hand-off named the wrong assertion, and therefore the wrong mechanism
+
+The brief described the 7 rows as `prop-desc`/`verifyProperty` rows:
+"`Object.getOwnPropertyDescriptor(Temporal.X, "prototype")` … the S11-era
+`gOPD(K, "prototype")` residual", with `"prototype" in K` and the `constructor`
+back-link as the two suspects. **None of that is in these files.** All seven are
+`built-ins/Temporal/*/builtin.js`, and their failing line is the THIRD
+assertion:
+
+```js
+assert.sameValue(Object.getPrototypeOf(Temporal.PlainDate.compare),
+  Function.prototype, "prototype");
+```
+
+The message in the bucket name is that assertion's third argument. The two the
+brief predicted are the FOURTH assertion (`hasOwnProperty("prototype")`, which
+**passes**) and nothing at all. Measured on base
+(`.tmp/s22/link.mjs`, real provider, linked, fresh cache):
+`isExtensible` → `true`, `Object.prototype.toString.call` → `[object Function]`,
+`hasOwnProperty("prototype")` → `false`. Three of the four assertions were
+already right; only `getPrototypeOf` answered `null`.
+
+The one-minute discriminator was reading the error's VALUES rather than its
+text: «null» vs «[object Function]». A `hasOwnProperty` assertion can only
+report «true»/«false», so it could not have been the failing one.
+
+#### 2. Root cause — the callable arm is compile-time-only
+
+`object-get-prototype-of.ts` answers `Function` when `ctx.oracle.signatureOf`
+proves the argument callable. Across a link every namespace member is `any`, so
+there is no signature, and the query fell to the native `__getPrototypeOf` —
+whose `$proto` walk decodes `$Object` receivers only. A closure carrier is not
+one; the walk hit its terminal and returned `ref.null.extern`.
+
+Fix: one runtime arm on the fallback path, standalone/WASI only —
+`__is_callable(v) ? Function.prototype : __getPrototypeOf(v)`, with
+`Function.prototype` compiled as the EXPRESSION so its identity is the same
+object the static arm and the test's right-hand side both read.
+
+**`__is_callable`, not `__typeof_function`** — the difference is the whole
+safety argument. The boundary's `callable_kind` sets bit 1 ([[Construct]]) for a
+provider-owned INSTANCE as well, which is exactly why `typeof <provider
+instance>` still answers `"function"` (the standing residual). `typeof`'s
+predicate masks `& 3` and would have handed every Temporal instance
+`%Function.prototype%`; `__is_callable` masks `& 1`. Verified rather than
+assumed: `link.mjs` row 19 (`gPO(PlainDate.from(…)) === null`) reads `true` on
+both trees.
+
+#### 3. Reduction — one standalone module, no polyfill, no link
+
+`.tmp/s22/{c1,c2,c3}.mjs` via `.tmp/s22/single.mjs`.
+
+| probe | base | S22 |
+| --- | --- | --- |
+| `gPO(f)` through an `any` param, `f` a function decl | **`null`** | **`Function.prototype`** |
+| `gPO(C.prototype.m)` through an `any` param | `false` | **`true`** |
+| `gPO(registry["%m%"])` (dynamic lookup) | `false` (`null`) | **`true`** |
+| `gPO(<arrow>)`, `gPO(<fn expr>)`, `gPO(C.s)`, `gPO(lit.m)`, `gPO(Math.max)` — static arms | already `true` | identical |
+| `gPO({})`, `gPO([])`, `gPO(new C())` — STATIC receivers | `true` | identical |
+| array / string / number / Map / instance through an `any` param — 10 controls | `null` | identical (`c3-{base,new}.out`) |
+| `gPO(<top-level fn DECL>) === Function.prototype` | `false` | `false` (residual, §7) |
+| `gPO(<class value>) === Function.prototype` | `false` | `false` (by design) |
+
+#### 4. The real polyfill, linked, consumer-side, fresh cache (`cacheHit=false`)
+
+`.tmp/s22/link.mjs`, 20 probes, both labels built on this tree. This is the
+CONSUMER side — where the test262 rows actually run — not the provider-internal
+diagnostic S19–S21 used.
+
+| probe | base | S22 |
+| --- | --- | --- |
+| `gPO(Temporal.PlainDate.compare) === Function.prototype` | **false** | **true** |
+| same for `PlainDate.from`, `Duration.compare`, `Duration.from`, `Duration.prototype.abs`, `ZonedDateTime.prototype.add`, `…equals` | **false** ×6 | **true** ×6 |
+| `gPO(Temporal.PlainDate.compare) === null` | **true** | **false** |
+| `isExtensible` / `O.p.toString.call` / `hasOwnProperty("prototype")` — the row's other three assertions | `true` / `[object Function]` / `false` | identical |
+| `gPO(Temporal.PlainDate.prototype) === Object.prototype` | `true` | identical |
+| `gPO(Temporal.PlainDate) === Function.prototype` (class value) | `false` | identical (residual) |
+| `gPO(PlainDate.from("1976-11-18")) === PlainDate.prototype` / `=== null` | `false` / `true` | identical — the instance is NOT claimed |
+| `typeof Temporal.PlainDate.compare` / `typeof <instance>` | `function` / `function` | identical (the `typeof` residual is untouched) |
+| `gPO({})`, `gPO([])` in the consumer | `true` | identical |
+
+Consumer artifact **311,806 → 312,638 bytes (+832)**; the provider artifact is
+byte-identical at 3,302,429 (the polyfill's own `getPrototypeOf` calls are all
+statically provable, so it never reaches the new arm). The consumer delta is the
+positive control that the change arrives where the rows are.
+
+#### 5. Regression sample — three families, 120 rows each
+
+`--target standalone`, provider linked, sequential, FRESH `JS2WASM_TEMPORAL_CACHE`
+per label (`cacheHit=false` on both prewarms), quickjs artifact + adapter present
+as real files, both labels on this tree.
+
+| family | rows | base pass | S22 pass | fail→pass | **pass→fail** | leaks |
+| --- | --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 94 | **96** | 2 | **0** | 0 |
+| `built-ins/Temporal/Duration/**` | 120 | 65 | **68** | 3 | **0** | 0 |
+| `built-ins/Temporal/ZonedDateTime/prototype/**` | 120 | 90 | **92** | 2 | **0** | 0 |
+| total | 360 | **249** | **256** | **7** | **0** | **0** |
+
+The seven gains are exactly the seven `builtin.js` rows. The
+`prototype Expected SameValue` text appears **7 times on base and 0 times on
+S22** across all 360 rows — the bucket is retired, not displaced.
+
+The base column reads 249, which REPRODUCES S21's reported row on an
+independently prewarmed cache. That is the only cross-slice number here and it
+was re-measured, not copied.
+
+**Twenty-one rows flipped between `compile_error` and a status, in both
+directions** — more than S21's nine, and the new label's in-sample CE count was
+higher (PlainDate 11 vs 6). Re-run **solo at 60 s on both trees** all 21 agree
+**row for row, with identical error messages** (`.tmp/s22fam/solo-{base,new}.{a,b}.tsv`,
+0 disagreements): 12 pass on both, 9 fail on both. The table above counts the
+solo verdict on BOTH labels, which is why base reads 94/65/90 rather than the
+in-sample 92/62/89. Every row's solo compile time is 13.5–19.7 s against a 15 s
+sampled budget — i.e. this family sits ON the cap, and which side of it a row
+lands on is noise. Two runs are not a benchmark, but across the 21 the two
+labels' solo times differ by −1.4 s to +3.0 s with no consistent sign.
+
+#### 6. Must-not-move samples — 692 rows, per FILE, 0 flips
+
+Both labels on this tree, diffed per file (`.tmp/s22/mnmdiff.out`):
+
+| sample | rows | flips |
+| --- | --- | --- |
+| `built-ins/Object/getOwnPropertyDescriptor/**` | 150 | **0** |
+| `built-ins/Object/defineProperty/**` | 150 | **0** |
+| `language/statements/class/**` | 150 | **0** |
+| `Object/keys` + `expressions/object` + `Reflect/{get,has}` | 121 | **0** |
+| `Object/{entries,values,getOwnPropertyNames}` + `statements/for-in` | 121 | **0** |
+
+The first three were added for this slice because it touches the prototype half
+of the MOP; the descriptor samples are the ones that would show a
+`%Function.prototype%` singleton leaking into a descriptor answer.
+
+#### 7. Order preservation
+
+Corpus byte A/B — 42 modules × {gc, standalone}, 84 artifacts: **0 move on
+either lane.** Expected, and a WEAK probe for the same reason S21's was: the
+corpus has no module that asks `Object.getPrototypeOf` about a value whose
+callability is only known at runtime, so it cannot show the change arriving
+anywhere. The +832-byte consumer delta in §4 is the positive control. The arm is
+gated on `ctx.standalone || ctx.wasi` AND on reaching the fallback (every static
+arm declined), so the gc lane cannot reach it and a module whose `gPO` arguments
+are all provable never pays. Equivalence gate at baseline: **22 failing / 1720
+passing**.
+
+#### 8. Gates
+
+`typecheck`, `lint`, prettier, `check-loc-budget`, `check-func-budget`,
+`check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`,
+`check:speculative-rollback`, `check:issue-ids:against-main`,
+`update-issues --check` — all green. **No new budget grant was needed**: neither
+changed file crosses a ceiling on either base. The inherited reds handed over by
+S21 reproduce unchanged and are not from this slice:
+`check:compiler-boundaries` → `inventory-valid-architecture-incomplete`, and
+under `LOC_GATE_BASE=origin/main` `src/runtime.ts` 19,822 > 19,601 plus
+`buildImports` 308 > 300.
+
+The id **#6487** was verified `UNASSIGNED` on `origin/issue-assignments`
+(`claim-issue: OK — #6487 is unassigned (read origin/issue-assignments)`). The
+allocate WRITE could not be taken: `--allocate` exits **6**
+(`open-PR id scan FAILED … gh offline`), nothing reserved — and its `--dry-run`
+preview offered **#6478**, which THIS BRANCH ALREADY USES
+(`tests/issue-6478-standalone-link-reverse-peer-read.test.ts`, landed in S17).
+With `gh` offline the scan cannot see the stack's own unmerged ids, so the
+dry-run preview is not a safe id on a stacked branch; the brief's
+"6474–6486 are TAKEN" is what kept this slice off a collision. GitHub pushes
+return 403 for every lane today, so there is no branch or PR yet.
+
+#### 9. Traps, carried forward and added to
+
+All S11–S21 traps still bite. New:
+
+- **Read the assertion's VALUES, not its message.** The bucket is named after
+  `assert.sameValue`'s third argument, which here is the string `"prototype"` —
+  and two different assertions in the same file mention "prototype". «null» vs
+  «[object Function]» identifies which one in one glance; the message alone sent
+  the hand-off (and the first ten minutes of this slice) at a descriptor read
+  that does not exist in these files.
+- **A predicate that is nearly right is the dangerous kind.** `__typeof_function`
+  and `__is_callable` differ by one bit and agree on every genuine closure. That
+  one bit is the ONLY thing standing between this fix and handing
+  `%Function.prototype%` to every provider-owned Temporal instance — silently,
+  because those rows already fail for other reasons and would not have
+  reported it. The residual that made this a hazard (`typeof <instance>` ===
+  `"function"`) was already written down; what was missing was checking whether
+  the predicate about to be reused was the one that carries it.
+- **Capture the revert copies AND the new copies.** `.tmp/s22base/` was taken at
+  the first edit as the rules say — and then the first A/B flip overwrote the
+  NEW files, which existed only in the editor's history. Re-applying cost ten
+  minutes. A file-copy A/B needs BOTH ends on disk before the first flip.
+- **A family that sits ON the compile budget invents flips at ~6 % of rows.**
+  Twenty-one of 360 here (S21 saw nine). Every one was noise, in both
+  directions, and the in-sample numbers alone would have read as "+7 with two
+  regressions and five new compile errors". The solo re-run at 60 s on BOTH
+  trees is the measurement; the sampled run is a screen.
+
+### Artifacts (S22)
+
+`.tmp/s22/`, `.tmp/s22base/`, `.tmp/s22fam/`, `.tmp/s22mnm/` in
+`/home/user/js2/.claude/worktrees/agent-a9d4f1d7c86f72460`: the probes `c1`–`c3`
+with their `-base`/`-new` outs, `link.mjs` with its two label runs, the corpus
+hashes `corpus-{base,new}.jsonl`, the per-chunk family TSVs
+`{pd,du,zdt}-{base,new}.p{0,60}.tsv`, `solo-{base,new}.{a,b}.tsv`, the 22
+must-not-move TSVs per label, the revert copies in `.tmp/s22base/` and the new
+copies in `.tmp/s22/*.new.ts`, and the drivers `{single,link}.mjs`,
+`{famdiff,famdiff2,mnmdiff}.py`, `{fam,mnm2,solo2,mk}.sh`,
+`{family,solo,prewarm,corpus}.mts`.
+
+### Acceptance criterion 4 — S22 update
+
+**MET.** The `prototype Expected SameValue(«null», «[object Function]»)` bucket
+moves from 7 rows to **0**: consumer-side, `Object.getPrototypeOf(
+Temporal.PlainDate.compare)` goes from `null` to `Function.prototype`, and all
+seven `builtin.js` rows flip fail→pass. Over the 360-row three-family sample
+that is **249 → 256**, with **0 legitimate `pass→fail`**, **0 `__temporal_*`
+leaks**, **692** must-not-move rows flat per file across five samples, both
+corpus lanes byte-identical and the equivalence gate at baseline.
+
+### Next top bucket after S22
+
+Re-counted over the 360 rows on the new label, with the solo verdicts
+substituted (so the CE-capped rows are counted where they actually land):
+
+| bucket | rows |
+| --- | --- |
+| `TypeError: called value is not a function` | **9** |
+| `TypeError: expected a string, not null` | 8 |
+| `TypeError: Object method called on null or undefined` | 6 |
+| `Test262Error: Expected a RangeError but got a undefined` | 6 |
+| `RuntimeError: dereferencing a null pointer in __closure_N()` | 5 |
+| `Test262Error: Calling as constructor … Expected a TypeError` | 4 |
+| `Test262Error: property bag where milliseconds balance into seconds` | 4 |
+| `TypeError: Proxy get trap is not callable` | 4 |
+
+Two things worth saying plainly. **`called value is not a function` is the top
+bucket again at 9** — S18/S20/S21 each retired one of its causes, so what is
+left is a fourth, not a relapse; it needs its own census before anyone assumes
+which. And the three `calendar-temporal-object` rows (`PlainDate/compare`,
+`Duration/compare`, `ZonedDateTime/prototype/equals`) are the cheapest next
+target: one file name, three families, all three answering
+`Object method called on null or undefined`, and all three invisible in a
+sampled run because the 15 s cap scores them `compile_error`.
+
+Structurally, #6486's two named residuals (the `__call_@@toPrimitive` ladder's
+unnamed entries and same-shaped OBJECT LITERALS) remain the cheapest codegen
+slice, and this slice adds two of its own: `gPO(<top-level function
+declaration>)` answers a different object from `Function.prototype`, and
+`gPO(<class value>)` answers neither.

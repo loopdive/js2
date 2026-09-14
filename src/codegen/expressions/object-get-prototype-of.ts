@@ -20,6 +20,7 @@ import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { integrityVarKey } from "../widened-var-key.js";
 import { objectLiteralHasColonProto } from "../literals.js"; // (#5270 step 2)
 import { sourceShadowsGlobalName } from "../source-function-members.js"; // (#5194 review F1)
+import { allocLocal } from "../context/locals.js"; // (#6487)
 
 const NATIVE_COLLECTION_NAMES = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
 
@@ -429,6 +430,90 @@ export function tryCompileEs5GetPrototypeOfValue(
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
   }
   return null;
+}
+
+/**
+ * (#6487) `Object.getPrototypeOf(<value that is callable only at RUNTIME>)` →
+ * `%Function.prototype%` (§10.3.1: every built-in function object's
+ * [[Prototype]] is %Function.prototype%).
+ *
+ * The arm above answers `Function` whenever the CHECKER can prove the argument
+ * callable (`signatureOf`, a function expression, an arrow). A value that
+ * arrives through an `any` binding — every member of a linked standalone
+ * provider's namespace, by construction — carries no signature, so it fell to
+ * the generic `__getPrototypeOf`, whose `$proto` walk only knows `$Object`
+ * receivers. A closure carrier is not one, so the walk answered `null`:
+ * `Object.getPrototypeOf(Temporal.PlainDate.compare)` was `null` where the spec
+ * (and the other three assertions of test262's `builtin.js` rows, which already
+ * pass) say `Function.prototype`.
+ *
+ * The predicate is `__is_callable`, NOT `__typeof_function`, and the difference
+ * is load-bearing across the link: the boundary's `callable_kind` terminal sets
+ * bit 1 ([[Construct]]) for a provider-owned INSTANCE as well, which is why
+ * `typeof <provider instance>` currently answers `"function"` (a documented
+ * #5383 residual). `__is_callable` masks bit 0 only, so an instance keeps its
+ * existing answer instead of acquiring a wrong one. A class object is likewise
+ * excluded by design (`isCallableMode.includeClassObjects === false`) — its
+ * [[Prototype]] is a separate, unfixed residual, not this arm's business.
+ *
+ * The answer is produced by compiling the expression `Function.prototype`, the
+ * same route the static arm takes, so the two agree by construction and
+ * `ref.eq` identity against the test's own right-hand side holds.
+ *
+ * Standalone/WASI only; the JS-host lane's `__getPrototypeOf` import already
+ * answers correctly and stays byte-identical. The argument is already compiled
+ * and coerced to externref on the stack when this runs; returns true when it
+ * consumed it.
+ */
+export function tryEmitDynamicCallableGetPrototypeOf(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  anchor: ts.Node,
+): boolean {
+  if (!ctx.standalone && !ctx.wasi) return false;
+  if (ensureLateImport(ctx, "__is_callable", [{ kind: "externref" }], [{ kind: "i32" }]) === undefined) return false;
+  if (ensureLateImport(ctx, "__getPrototypeOf", [{ kind: "externref" }], [{ kind: "externref" }]) === undefined) {
+    return false;
+  }
+  flushLateImportShifts(ctx, fctx);
+
+  const valueLocal = allocLocal(fctx, `__gpo_dyn_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: valueLocal });
+
+  // %Function.prototype% is a lazily-materialised singleton; reading it here
+  // (rather than inside the then-arm) keeps every funcIdx this arm emits in one
+  // straight-line body, so a late import added while compiling it shifts
+  // naturally. It has no observable side effects, so the eager read is free.
+  const fnProtoType = emitEs5IntrinsicPrototype(ctx, fctx, anchor, "Function");
+  if (fnProtoType !== null && typeof fnProtoType === "object" && fnProtoType.kind !== "externref") {
+    coerceType(ctx, fctx, fnProtoType, { kind: "externref" });
+  }
+  const protoLocal = allocLocal(fctx, `__gpo_fnproto_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: protoLocal });
+
+  // Re-read both indices AFTER the singleton emit: compiling `Function.prototype`
+  // may itself add a late import, which shifts everything above it.
+  const isCallableIdx = ctx.funcMap.get("__is_callable");
+  const getPrototypeIdx = ctx.funcMap.get("__getPrototypeOf");
+  if (isCallableIdx === undefined || getPrototypeIdx === undefined) {
+    // Degrade to the pre-#6487 answer rather than to a broken call.
+    fctx.body.push({ op: "local.get", index: valueLocal });
+    return false;
+  }
+  fctx.body.push(
+    { op: "local.get", index: valueLocal },
+    { op: "call", funcIdx: isCallableIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [{ op: "local.get", index: protoLocal }],
+      else: [
+        { op: "local.get", index: valueLocal },
+        { op: "call", funcIdx: getPrototypeIdx },
+      ],
+    },
+  );
+  return true;
 }
 
 function objectGetPrototypeOfSource(

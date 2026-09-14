@@ -235,6 +235,10 @@ function emitBuiltinGetPrototypeOfFallback(
   if (argType.kind !== "externref") {
     coerceType(ctx, fctx, argType, { kind: "externref" });
   }
+  // (#6487) A value that is CALLABLE only at runtime answers %Function.prototype%.
+  if (objectGetPrototypeOf.tryEmitDynamicCallableGetPrototypeOf(ctx, fctx, arg)) {
+    return { kind: "externref" };
+  }
   const getPrototypeIdx = ensureLateImport(ctx, "__getPrototypeOf", [{ kind: "externref" }], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
   if (getPrototypeIdx !== undefined) {
