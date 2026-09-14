@@ -42,6 +42,8 @@ const canonicalPaths = [
   "src/ir/core/value-references.ts",
   "src/ir/core/capability-provenance.ts",
   "src/ir/core/tag-refinement.ts",
+  "src/ir/core/binding-key-primitives.ts",
+  "src/ir/core/object-layout.ts",
   "src/shared/contracts/ir-identity.ts",
   "src/shared/contracts/source-origin.ts",
   "src/wasm/model/instructions.ts",
@@ -153,7 +155,9 @@ describe("canonical IR core types", () => {
   it("keeps one class symbol, tag equality implementation and private recursion guard", () => {
     expect(nodes.IR_CLASS_SHAPE_CELL).toBe(core.IR_CLASS_SHAPE_CELL);
     expect(domain.tagRefinementEquals).toBe(refinement.tagRefinementEquals);
-    expect(Object.keys(core).sort()).toEqual([...runtimeNames, "IR_CLASS_SHAPE_CELL"].sort());
+    // irSupportRef was introduced in core, not relocated from the old nodes facade.
+    expect(typeof core.irSupportRef).toBe("function");
+    expect(Object.keys(core).sort()).toEqual([...runtimeNames, "irSupportRef", "IR_CLASS_SHAPE_CELL"].sort());
     const variables = ["src/ir/nodes.ts", "src/ir/core/nodes.ts", "src/ir/core/types.ts"].flatMap((path) =>
       parse(path)
         .statements.filter(ts.isVariableStatement)
@@ -199,12 +203,31 @@ describe("canonical IR core types", () => {
     }
   });
 
-  it("resolves all eight canonical modules and twelve edges with only one runtime dependency", () => {
+  it("retains original canonical modules with the exact main and composition dependency additions", () => {
     const graph = canonicalClosure();
     expect(graph.modules).toEqual([...canonicalPaths].sort());
-    expect(graph.edges).toHaveLength(12);
+    expect(graph.edges.map((edge) => `${edge.from} -> ${edge.to}`).sort()).toEqual([
+      "src/ir/core/binding-key-primitives.ts -> src/shared/contracts/ir-identity.ts",
+      "src/ir/core/capability-provenance.ts -> src/shared/contracts/ir-identity.ts",
+      "src/ir/core/fnctor-shapes.ts -> src/ir/core/types.ts",
+      "src/ir/core/fnctor-shapes.ts -> src/ir/core/value-references.ts",
+      "src/ir/core/fnctor-shapes.ts -> src/shared/contracts/ir-identity.ts",
+      "src/ir/core/object-layout.ts -> src/ir/core/types.ts",
+      "src/ir/core/types.ts -> src/ir/core/binding-key-primitives.ts",
+      "src/ir/core/types.ts -> src/ir/core/fnctor-shapes.ts",
+      "src/ir/core/types.ts -> src/ir/core/object-layout.ts",
+      "src/ir/core/types.ts -> src/ir/core/tag-refinement.ts",
+      "src/ir/core/types.ts -> src/ir/core/value-references.ts",
+      "src/ir/core/types.ts -> src/shared/contracts/ir-identity.ts",
+      "src/ir/core/types.ts -> src/wasm/model/instructions.ts",
+      "src/ir/core/value-references.ts -> src/ir/core/capability-provenance.ts",
+      "src/ir/core/value-references.ts -> src/shared/contracts/ir-identity.ts",
+      "src/shared/contracts/ir-identity.ts -> src/shared/contracts/source-origin.ts",
+    ]);
     expect(graph.edges.filter((edge) => edge.value)).toEqual([
       { from: "src/ir/core/types.ts", to: "src/ir/core/tag-refinement.ts", value: true },
+      { from: "src/ir/core/types.ts", to: "src/ir/core/binding-key-primitives.ts", value: true },
+      { from: "src/ir/core/types.ts", to: "src/ir/core/object-layout.ts", value: true },
     ]);
   });
 
@@ -217,6 +240,7 @@ describe("canonical IR core types", () => {
     ["export {", "unparsed module"],
   ])("refuses injected dependency %s", (injection, message) => {
     const path = "src/ir/core/types.ts";
+    expect(canonicalClosure().modules).toEqual([...canonicalPaths].sort());
     expect(() => canonicalClosure(new Map([[path, read(path) + "\n" + injection]]))).toThrow(message);
   });
 
@@ -228,7 +252,7 @@ describe("canonical IR core types", () => {
       import { relative } from 'node:path';
       import { fileURLToPath } from 'node:url';
       const root = realpathSync(process.cwd()), visited = new Set();
-      const allowed = new Set(['src/ir/core/types.ts', 'src/ir/core/tag-refinement.ts']);
+      const allowed = new Set(['src/ir/core/types.ts', 'src/ir/core/tag-refinement.ts', 'src/ir/core/binding-key-primitives.ts', 'src/ir/core/object-layout.ts']);
       registerHooks({ resolve(specifier, context, next) {
         const result = next(specifier, context);
         if (!result.url.startsWith('file:')) throw Error('forbidden dependency: ' + result.url);
@@ -255,7 +279,12 @@ describe("canonical IR core types", () => {
     expect(child.error).toBeUndefined();
     expect(child.signal).toBeNull();
     expect(child.status, child.stderr + child.stdout).toBe(0);
-    expect(JSON.parse(child.stdout)).toEqual(["src/ir/core/tag-refinement.ts", "src/ir/core/types.ts"]);
+    expect(JSON.parse(child.stdout)).toEqual([
+      "src/ir/core/binding-key-primitives.ts",
+      "src/ir/core/object-layout.ts",
+      "src/ir/core/tag-refinement.ts",
+      "src/ir/core/types.ts",
+    ]);
   });
 
   it("preserves opaque brands and nominal old/new type compatibility under the TypeScript checker", () => {

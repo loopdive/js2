@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { ts } from "../ts-api.js";
-import type { SignaturePositionPath } from "./oracle.js";
+import { ts } from "../frontend/typescript.js";
+import type { SignaturePositionPath } from "../frontend/type-fact-contracts.js";
 
 /** Checker-private resolution. No checker type crosses the TypeOracle boundary. */
 export function resolveCheckerSignaturePosition(

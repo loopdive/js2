@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { ts } from "../../ts-api.js";
+import { ts } from "../../frontend/typescript.js";
 
 /** Open object methods retain their MethodDeclaration node in closure lowering. */
 export function isGeneratorClosureDeclaration(node: ts.Node): node is ts.FunctionExpression | ts.MethodDeclaration {

@@ -88,7 +88,7 @@ import {
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { orderedObjectFields } from "./object-layout.js";
 import { objectFieldsHashKey } from "./object-method-key.js";
-import { canonicalProgramAbiObjectShapeKey } from "../codegen/program-abi-type-planning.js";
+import { canonicalProgramAbiObjectShapeKey } from "./core/support-key.js";
 import { ensureMapHelpers } from "../codegen/map-runtime.js"; // (#4461) native $Map module-binding storage
 import {
   ensureIrNativeMapAdapters,

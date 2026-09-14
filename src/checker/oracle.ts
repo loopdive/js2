@@ -26,46 +26,14 @@
  * `{ kind: "unresolvable" }` / `undefined` — never a guess.
  */
 import { ts } from "../ts-api.js";
+import type { ShapeFact, SignatureFact, SignaturePositionPath, TypeFact } from "../frontend/type-fact-contracts.js";
+export type { ShapeFact, SignatureFact, SignaturePositionPath, TypeFact } from "../frontend/type-fact-contracts.js";
 import { symbolShadowsBuiltinGlobal } from "./builtin-shadow.js"; // (#5096) intrinsic-shadow claim gate
 import { higherOrderSignatureTypeFact } from "./higher-order-signature-fact.js";
 import { resolveCheckerSignaturePosition } from "./signature-position.js";
 
 /** JS runtime tag classification (aligned with the #2104 JsTag module). */
 export type JsTag = "number" | "string" | "boolean" | "bigint" | "symbol" | "undefined" | "object" | "function";
-
-export interface SignatureFact {
-  params: TypeFact[];
-  returns: TypeFact;
-  declaredArity: number;
-}
-
-export interface ShapeFact {
-  props: { name: string; fact: TypeFact; optional?: boolean }[];
-}
-
-/**
- * Registry-free type facts. Strictly ABOVE ValType: nothing here indexes a
- * Wasm module type table.
- */
-export type TypeFact =
-  | { kind: "number" }
-  | { kind: "boolean" }
-  | { kind: "string" }
-  | { kind: "bigint" }
-  | { kind: "symbol" }
-  | { kind: "undefined" }
-  | { kind: "null" }
-  | { kind: "void" }
-  | { kind: "array"; element: TypeFact }
-  | { kind: "tuple"; elements: TypeFact[] }
-  | { kind: "function"; signature?: SignatureFact }
-  | { kind: "class"; name: string }
-  | { kind: "builtin"; name: string }
-  | { kind: "object"; shape?: ShapeFact }
-  | { kind: "union"; parts: TypeFact[]; nullable: boolean; undefinable: boolean }
-  | { kind: "any" }
-  | { kind: "unknown" }
-  | { kind: "unresolvable" };
 
 /**
  * Opaque type-identity token replacing `ts.Type`-as-Map-key uses
@@ -75,9 +43,6 @@ export type TypeFact =
  * this; defined now so the surface is frozen.)
  */
 export type OracleTypeKey = symbol & { readonly __brand: "OracleTypeKey" };
-
-/** Zero-based parameter index or return slot, descending through callable types. */
-export type SignaturePositionPath = readonly (number | "return")[];
 
 export interface SignaturePositionFact {
   readonly fact: TypeFact;

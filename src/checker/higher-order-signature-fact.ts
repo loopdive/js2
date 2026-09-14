@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { ts } from "../ts-api.js";
-import type { TypeFact } from "./oracle.js";
+import { ts } from "../frontend/typescript.js";
+import type { TypeFact } from "../frontend/type-fact-contracts.js";
 
 /**
  * Enrich signature positions only; ordinary type classification stays shallow.

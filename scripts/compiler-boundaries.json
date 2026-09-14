@@ -25,7 +25,8 @@
         "src/shared/contracts/identity-values.ts",
         "src/shared/contracts/ir-counted-string-identity.ts",
         "src/shared/contracts/ir-preparation-failure.ts",
-        "src/shared/contracts/ir-unit-inventory.ts"
+        "src/shared/contracts/ir-unit-inventory.ts",
+        "src/shared/contracts/program-abi-error.ts"
       ],
       "minModules": 6
     },
@@ -37,7 +38,8 @@
       "entries": [
         "src/wasm/model/instructions.ts",
         "src/wasm/model/module-records.ts",
-        "src/wasm/model/instruction-walk.ts"
+        "src/wasm/model/instruction-walk.ts",
+        "src/wasm/model/abi-value-key.ts"
       ],
       "minModules": 3
     },
@@ -70,13 +72,15 @@
       "roots": [
         "src/frontend/builtins/contracts.ts",
         "src/frontend/builtins/prepare-string-output.ts",
-        "src/frontend/typescript.ts"
+        "src/frontend/typescript.ts",
+        "src/frontend/type-fact-contracts.ts"
       ],
       "required": true,
       "entries": [
         "src/frontend/builtins/contracts.ts",
         "src/frontend/builtins/prepare-string-output.ts",
-        "src/frontend/typescript.ts"
+        "src/frontend/typescript.ts",
+        "src/frontend/type-fact-contracts.ts"
       ],
       "minModules": 3
     },
@@ -106,7 +110,9 @@
         "src/ir/core/type-references.ts",
         "src/ir/core/type-binding-keys.ts",
         "src/ir/core/type-key.ts",
-        "src/ir/core/string-callables.ts"
+        "src/ir/core/string-callables.ts",
+        "src/ir/core/object-layout.ts",
+        "src/ir/core/support-key.ts"
       ],
       "minModules": 21
     },
@@ -12620,6 +12626,11 @@
       "layer": "ir-core"
     },
     {
+      "path": "src/ir/core/object-layout.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
       "path": "src/ir/program/runtime-abi-identity.ts",
       "state": "clean",
       "layer": "ir-program"
@@ -12653,6 +12664,26 @@
       "path": "src/frontend/typescript.ts",
       "state": "clean",
       "layer": "frontend-ts"
+    },
+    {
+      "path": "src/frontend/type-fact-contracts.ts",
+      "state": "clean",
+      "layer": "frontend-ts"
+    },
+    {
+      "path": "src/shared/contracts/program-abi-error.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/ir/core/support-key.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/wasm/model/abi-value-key.ts",
+      "state": "clean",
+      "layer": "wasm-model"
     }
   ]
 }
