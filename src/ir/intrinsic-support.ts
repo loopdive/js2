@@ -1,43 +1,60 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef, sameIrCallableBinding } from "./callable-bindings.js";
-import { createIrAsyncPlan, createPreparedIrAsyncRuntime, type IrAsyncPlan } from "./async-plan.js";
+import type { PreparedIrRuntimeManifest } from "./runtime/contracts/prepared.js";
+export type { PreparedIrRuntimeManifest } from "./runtime/contracts/prepared.js";
+
+import {
+  irImportFuncRef,
+  irIntrinsicFuncRef,
+  irRuntimeFuncRef,
+  sameIrCallableBinding,
+} from "./core/callable-bindings.js";
+import { createIrAsyncPlan } from "./analysis/async-plan.js";
+import { createPreparedIrAsyncRuntime } from "./runtime/async-attachment.js";
+import type { IrAsyncPlan } from "./core/async-plan.js";
 import {
   asPreparedAsyncHostAdapter,
   isPreparedAsyncHostCapabilityId,
   type PreparedAsyncHostCapabilityId,
-} from "./async-runtime-providers.js";
+} from "./runtime/async-providers.js";
 import {
   resolveRuntimeHostCapabilityFuncFamilyRecord,
   resolveRuntimeHostCapabilityFuncRecord,
   resolveRuntimeHostCapabilityGlobalRecord,
-  RUNTIME_HOST_CAPABILITY_RECORDS,
   type RuntimeHostCapabilityFieldScheme,
   type RuntimeHostCapabilityRecord,
   type RuntimeHostCapabilityValueType,
-} from "./runtime-host-capabilities.js";
-import { IR_ASYNC_CLOCK_SNAPSHOT_FN } from "./async-semantic-runtime.js";
-import { irRuntimeCallableDeclaration } from "./runtime-callable-declarations.js";
-import type { IrStringConcatMode } from "./string-runtime.js";
+} from "./runtime/host-capabilities.js";
+import { IR_ASYNC_CLOCK_SNAPSHOT_FN } from "./core/async-callables.js";
+import { irRuntimeCallableDeclaration } from "./runtime/callable-declarations.js";
 import {
-  intrinsicEffectEvidence,
-  INTRINSIC_DEFINITIONS,
-  type IntrinsicSignature,
-  type IntrinsicSourceLocation,
-} from "./intrinsics.js";
+  assertNativeAsyncCallableDemands,
+  assertNativeAsyncRuntimeCallables,
+  nativeAsyncCallablePolicyMismatch,
+  nativeAsyncProviderMismatch,
+  type IrNativeAsyncCallableDemand,
+} from "./runtime/native-async-callables.js";
+import {
+  assertVectorCallableDemands,
+  vectorCallablePolicyMismatch,
+  type IrVectorCallableDemand,
+} from "./runtime/vector-callables.js";
+import type { IrStringConcatMode } from "./core/string-types.js";
+import { intrinsicEffectEvidence } from "./analysis/intrinsics.js";
+import { INTRINSIC_DEFINITIONS } from "./core/intrinsics.js";
+import type { IntrinsicSignature, IntrinsicSourceLocation } from "./core/intrinsic-contracts.js";
 import {
   forEachInstrDeep,
-  irTypeEquals,
   mapNestedBuffers,
-  type IrFuncRef,
-  type IrFunction,
   type IrInstr,
   type IrInstrIntrinsic,
-  type IrIntrinsicBackendComposite,
   type IrIntrinsicProvider,
-  type IrType,
   type IrValueId,
-} from "./nodes.js";
+} from "./core/nodes.js";
+import { irTypeEquals, type IrType } from "./core/types.js";
+import type { IrFuncRef } from "./core/value-references.js";
+import type { PreparedIrFunction as IrFunction } from "./runtime/contracts/prepared.js";
+export { verifyIrIntrinsicInstruction } from "./runtime/intrinsic-verification.js";
 import {
   GENERATOR_NUMBER_BOX_RUNTIME_FEATURES,
   STRING_COMPARE_RUNTIME_FEATURES,
@@ -50,84 +67,18 @@ import {
   HOST_CALLBACK_WRAP_RUNTIME_FEATURES,
   FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURES,
   RuntimeManifestBuilder,
+  RuntimeManifestInvariantError,
   projectRuntimeBackendRequirements,
-  RUNTIME_PROVIDERS,
-  type FrozenRuntimeManifest,
   type RuntimeFeature,
   type RuntimeManifestPolicy,
   type RuntimeProviderDefinition,
   type RuntimeProviderPlan,
   type StringConstRuntimeFeature,
-} from "./runtime-manifest.js";
-
-export interface PreparedIrRuntimeManifest {
-  readonly functions: readonly IrFunction[];
-  readonly manifest: FrozenRuntimeManifest;
-  /** Lookup-only handle retained after freeze for verifier/lowering adapters. */
-  readonly providers: ReadonlyMap<IrInstrIntrinsic["id"], RuntimeProviderPlan>;
-}
-
-const BACKEND_COMPOSITE_BY_INTRINSIC: Readonly<Partial<Record<IrInstrIntrinsic["id"], IrIntrinsicBackendComposite>>> =
-  Object.freeze({
-    "js.to_uint32": "to-uint32",
-    "math.clz32": "math.clz32",
-    "math.imul": "math.imul",
-    "math.max": "math.max",
-    "math.min": "math.min",
-  });
-
-/**
- * (#3526 F1-S1) Closed set of PHYSICAL callable targets each intrinsic admits,
- * derived from the provider catalogue and the central capability records — not
- * from an emitted import spelling. The semantic identity of the instruction is
- * always the versioned `IntrinsicId`; these keys authenticate the exact
- * physical target a frozen provider is allowed to attach, so a crosswire, a
- * wrong capability, or a wrong runtime symbol rejects before materialization.
- */
-function callableBindingKey(binding: IrFuncRef["binding"]): string {
-  switch (binding.kind) {
-    case "import":
-      return `import:${binding.module}:${binding.field}`;
-    case "runtime":
-      return `runtime:${binding.symbol}`;
-    case "intrinsic":
-      return `intrinsic:${binding.symbol}`;
-    default:
-      return `other:${binding.kind}`;
-  }
-}
-
-const ADMITTED_CALLABLE_TARGETS: ReadonlyMap<IrInstrIntrinsic["id"], ReadonlySet<string>> = (() => {
-  const table = new Map<IrInstrIntrinsic["id"], Set<string>>();
-  for (const provider of RUNTIME_PROVIDERS) {
-    const implementation = provider.implementation;
-    if (implementation.kind !== "host-callable" && implementation.kind !== "runtime-callable") continue;
-    for (const [id, definition] of Object.entries(INTRINSIC_DEFINITIONS)) {
-      if (definition.feature !== provider.feature) continue;
-      const key =
-        implementation.kind === "host-callable"
-          ? callableBindingKey(
-              irImportFuncRef(
-                // (#3526 F2-S2) `resolveRuntimeHostCapabilityFuncRecord` is the
-                // fail-closed kind guard: a global capability has no callable
-                // spelling, so admitting one here would mint a nonsense target.
-                ...((record) => [record.module, record.field] as const)(
-                  resolveRuntimeHostCapabilityFuncRecord(RUNTIME_HOST_CAPABILITY_RECORDS, implementation.capability),
-                ),
-              ).binding,
-            )
-          : callableBindingKey(irRuntimeFuncRef(implementation.symbol).binding);
-      const admitted = table.get(id as IrInstrIntrinsic["id"]) ?? new Set<string>();
-      admitted.add(key);
-      table.set(id as IrInstrIntrinsic["id"], admitted);
-    }
-  }
-  return table;
-})();
+} from "./runtime/manifest.js";
 
 /** Project the semantic standalone clock intent without adding a helper call. */
 function projectStandaloneAsyncStateInstr(instr: IrInstr): IrInstr {
-  const nested = mapNestedBuffers(instr, (buffer) => buffer.map(projectStandaloneAsyncStateInstr));
+  const nested = mapNestedBuffers(instr, (buffer) => mapArray(buffer, projectStandaloneAsyncStateInstr));
   if (
     nested.kind !== "call" ||
     nested.target.binding.kind !== "intrinsic" ||
@@ -143,69 +94,16 @@ function projectStandaloneAsyncStateInstr(instr: IrInstr): IrInstr {
   ) {
     throw new Error("standalone async clock snapshot has a malformed semantic call");
   }
+  if (Object.hasOwn(nested, "alloc")) {
+    throw new Error("standalone async clock snapshot cannot carry allocation metadata");
+  }
   return {
     kind: "const",
     value: { kind: "f64", value: 0 },
     result: nested.result,
     resultType: nested.resultType,
-    ...(nested.site ? { site: nested.site } : {}),
+    ...(Object.hasOwn(nested, "site") ? { site: nested.site } : {}),
   };
-}
-
-/** Verify the closed semantic signature and any post-freeze provider binding. */
-export function verifyIrIntrinsicInstruction(
-  instr: IrInstrIntrinsic,
-  typeOf: ReadonlyMap<IrValueId, IrType>,
-): readonly string[] {
-  const errors: string[] = [];
-  const definition = INTRINSIC_DEFINITIONS[instr.id];
-  if (instr.version !== definition.signature.version) {
-    errors.push(`${instr.id} uses signature v${instr.version}; expected v${definition.signature.version}`);
-  }
-  if (instr.args.length !== definition.signature.params.length) {
-    errors.push(`${instr.id} expects ${definition.signature.params.length} argument(s), got ${instr.args.length}`);
-  }
-  for (let index = 0; index < instr.args.length && index < definition.signature.params.length; index++) {
-    const actual = typeOf.get(instr.args[index]!);
-    const expected = definition.signature.params[index]!;
-    if (actual && !irTypeEquals(actual, expected)) {
-      errors.push(`${instr.id} argument ${index} does not match its v${instr.version} signature`);
-    }
-  }
-  if (!instr.resultType || !irTypeEquals(instr.resultType, definition.signature.result)) {
-    errors.push(`${instr.id} result does not match its v${instr.version} signature`);
-  }
-  if (instr.provider?.kind === "callable") {
-    const binding = instr.provider.target.binding;
-    if (binding.kind === "intrinsic") {
-      if (binding.symbol !== instr.id) {
-        errors.push(`${instr.id} callable provider must retain the semantic intrinsic binding`);
-      }
-    } else {
-      // (#3526 F1-S1) A physical import/runtime target is admitted only when
-      // the closed provider catalogue names it for THIS intrinsic. Keeping the
-      // physical identity (rather than a capability-only one) is deliberate:
-      // the union import is shared with raw consumers and its ABI/order must
-      // not drift.
-      const admitted = ADMITTED_CALLABLE_TARGETS.get(instr.id);
-      if (!admitted || !admitted.has(callableBindingKey(binding))) {
-        errors.push(
-          `${instr.id} callable provider target ${callableBindingKey(binding)} is not an admitted physical provider`,
-        );
-      }
-    }
-  }
-  if (instr.provider?.kind === "backend-composite") {
-    const expected = BACKEND_COMPOSITE_BY_INTRINSIC[instr.id];
-    if (instr.provider.operation !== expected) {
-      errors.push(
-        expected === undefined
-          ? `${instr.id} does not admit a backend composite provider`
-          : `${instr.id} backend composite provider must use ${expected}, got ${instr.provider.operation}`,
-      );
-    }
-  }
-  return errors;
 }
 
 function mapArray<T>(values: readonly T[], map: (value: T) => T): readonly T[] {
@@ -741,9 +639,11 @@ function attachProviders(
   fn: IrFunction,
   providers: ReadonlyMap<IrInstrIntrinsic["id"], RuntimeProviderPlan>,
   capabilityRecords: readonly RuntimeHostCapabilityRecord[],
+  projectClocks = false,
 ): IrFunction {
   const blocks = mapArray(fn.blocks, (block) => {
-    const instrs = attachProvidersToBuffer(block.instrs, providers, capabilityRecords);
+    const attached = attachProvidersToBuffer(block.instrs, providers, capabilityRecords);
+    const instrs = projectClocks ? mapArray(attached, projectStandaloneAsyncStateInstr) : attached;
     return instrs === block.instrs ? block : { ...block, instrs };
   });
   return blocks === fn.blocks ? fn : { ...fn, blocks };
@@ -868,6 +768,10 @@ export interface PrepareIrRuntimeManifestInput extends IrRuntimeManifestDemands 
   readonly sourceLocationsByUnit?: ReadonlyMap<IrFunction["unitId"], IntrinsicSourceLocation>;
   /** A whole program publishes an explicit frozen manifest even with no runtime demand. */
   readonly includeEmpty?: true;
+  /** Explicit complete whole-program scan. Omission retains historical automatic demand behavior. */
+  readonly builtinDemands?: readonly IrNativeAsyncCallableDemand[];
+  /** Separate complete vector-callable occurrence census; omission preserves legacy selection. */
+  readonly vectorDemands?: readonly IrVectorCallableDemand[];
 }
 
 /** Preserve the exact semantic owner when a per-function producer rejects. */
@@ -886,6 +790,8 @@ export function prepareIrRuntimeManifest(
 ): PreparedIrRuntimeManifest;
 export function prepareIrRuntimeManifest(input: PrepareIrRuntimeManifestInput): PreparedIrRuntimeManifest | undefined;
 export function prepareIrRuntimeManifest(input: PrepareIrRuntimeManifestInput): PreparedIrRuntimeManifest | undefined {
+  if (input.builtinDemands) assertNativeAsyncCallableDemands(input.functions, input.builtinDemands);
+  if (input.vectorDemands) assertVectorCallableDemands(input.functions, input.vectorDemands);
   const uses: Array<{
     readonly unitId: IrFunction["unitId"];
     readonly location: IntrinsicSourceLocation;
@@ -917,7 +823,7 @@ export function prepareIrRuntimeManifest(input: PrepareIrRuntimeManifestInput): 
           forEachInstrDeep(root, (instr) => {
             if (instr.kind === "call" || instr.kind === "closure.new") {
               const declaration = irRuntimeCallableDeclaration(instr.kind === "call" ? instr.target : instr.liftedFunc);
-              if (declaration) runtimeCallFeatures.add(declaration.feature);
+              if (declaration?.feature === "error.reference.construct") runtimeCallFeatures.add(declaration.feature);
             }
             if (instr.kind !== "intrinsic") return;
             const argumentTypes = instr.args.map((arg) => {
@@ -945,6 +851,20 @@ export function prepareIrRuntimeManifest(input: PrepareIrRuntimeManifestInput): 
       throw new IrRuntimeFunctionPreparationError(fn.unitId, error);
     }
   }
+  for (const demand of input.builtinDemands ?? [])
+    for (const use of demand.uses) {
+      const mismatch = nativeAsyncCallablePolicyMismatch(use.feature, input.policy);
+      if (mismatch)
+        throw new RuntimeManifestInvariantError("provider-target-unavailable", mismatch, use.feature, use.feature);
+      runtimeCallFeatures.add(use.feature);
+    }
+  for (const demand of input.vectorDemands ?? [])
+    for (const use of demand.uses) {
+      const mismatch = vectorCallablePolicyMismatch(use.feature, input.policy);
+      if (mismatch)
+        throw new RuntimeManifestInvariantError("provider-target-unavailable", mismatch, use.feature, use.feature);
+      runtimeCallFeatures.add(use.feature);
+    }
   if (
     !input.includeEmpty &&
     uses.length === 0 &&
@@ -1010,6 +930,23 @@ export function prepareIrRuntimeManifest(input: PrepareIrRuntimeManifestInput): 
     }
   }
   const manifest = builder.freeze();
+  // The explicit whole-program demand vector is the compatibility boundary.
+  // Authenticate the selected frozen row by contents, not catalogue object identity.
+  const projectClocks =
+    input.builtinDemands?.some((demand) => demand.uses.some((use) => use.feature === "async.native.clock-zero")) ??
+    false;
+  if (projectClocks) {
+    const clockProviders = manifest.providers.filter(
+      (provider) =>
+        provider.feature === "async.native.clock-zero" ||
+        provider.id === "native.async.clock-zero" ||
+        provider.implementation.kind === "standalone-clock-zero",
+    );
+    const mismatch = nativeAsyncCallablePolicyMismatch("async.native.clock-zero", manifest.policy);
+    if (mismatch) throw new Error(mismatch);
+    if (clockProviders.length !== 1 || nativeAsyncProviderMismatch(clockProviders[0]!) !== undefined)
+      throw new Error("standalone async clock snapshot requires the unique canonical frozen clock provider");
+  }
   const providers = new Map<IrInstrIntrinsic["id"], RuntimeProviderPlan>();
   for (const use of manifest.intrinsicUses) {
     providers.set(use.id, builder.resolveProvider(INTRINSIC_DEFINITIONS[use.id].feature));
@@ -1051,7 +988,7 @@ export function prepareIrRuntimeManifest(input: PrepareIrRuntimeManifestInput): 
     const states = Object.freeze(
       plan.states.map((state) => {
         const attached = attachProvidersToBuffer(state.body, providers, manifest.hostCapabilityRecords);
-        const body = nativeProjection ? attached.map(projectStandaloneAsyncStateInstr) : attached;
+        const body = nativeProjection ? mapArray(attached, projectStandaloneAsyncStateInstr) : attached;
         return body === state.body ? state : Object.freeze({ ...state, body });
       }),
     );
@@ -1092,7 +1029,11 @@ export function prepareIrRuntimeManifest(input: PrepareIrRuntimeManifestInput): 
     functions: Object.freeze(
       input.functions.map((fn) => {
         try {
-          return attachAsyncRuntime(attachProviders(fn, providers, manifest.hostCapabilityRecords));
+          const attached = attachAsyncRuntime(
+            attachProviders(fn, providers, manifest.hostCapabilityRecords, projectClocks),
+          );
+          if (input.builtinDemands) assertNativeAsyncRuntimeCallables(attached);
+          return attached;
         } catch (error) {
           if (!input.sourceLocationsByUnit) throw error;
           throw new IrRuntimeFunctionPreparationError(fn.unitId, error);

@@ -49,6 +49,13 @@ export interface TestResult {
   runtimeNegativeNoThrow?: boolean;
   /** (#2939/#2940) vacuity correction: a `fail` whose harness callback never ran. */
   vacuous?: boolean;
+  /**
+   * (#3451) The LINKED shadow oracle could not compile this body against the
+   * harness provider and used the honest whole assembly for this row instead.
+   * Reported per row so a partly-degraded run cannot be read as a linked
+   * measurement.
+   */
+  linkedFallback?: boolean;
 }
 
 interface PendingJob {
@@ -188,6 +195,7 @@ export class CompilerPool {
     target?: "gc" | "linear" | "wasi" | "standalone",
     // (#2119) false ⇒ keep mapped arguments for script tests; see runTest.
     inferModuleStrictArguments?: boolean,
+    semanticProviders?: "auto" | "native-first",
   ): Promise<PoolResult> {
     return this.enqueue(
       {
@@ -196,6 +204,7 @@ export class CompilerPool {
         wasmPath,
         metaPath,
         target,
+        semanticProviders,
         inferModuleStrictArguments,
         execute: false,
       },
@@ -223,6 +232,7 @@ export class CompilerPool {
       metaPath?: string;
       label?: string;
       target?: "gc" | "linear" | "wasi" | "standalone";
+      semanticProviders?: "auto" | "native-first";
       // (#2119) false ⇒ do not infer module-strictness (→ keep mapped
       // arguments) despite the synthetic `export function test()` wrapper.
       inferModuleStrictArguments?: boolean;
@@ -237,6 +247,17 @@ export class CompilerPool {
       // still refuses unless the host lane is in play and a pre-warm stamp
       // certifies the provider is a cache read rather than a 50 s cold build.
       temporal?: boolean;
+      // (#3451 slice 3) Linked-harness shadow oracle (host lane): `source` stays
+      // the honest body UNIT (so the worker can reconstruct the whole assembly
+      // for a per-row fallback), while the prefix, the raw body and the
+      // strictness flag travel separately. The body and the flag are separate
+      // from `source` on purpose: the getter prelude must put `"use strict"`
+      // ahead of its own `import`, and a directive after an import is not a
+      // prologue — reusing `source` would run every strict rerun sloppy.
+      linkedHarness?: boolean;
+      linkedHarnessPrefix?: string;
+      linkedHarnessBody?: string;
+      linkedHarnessStrict?: boolean;
     } = {},
     timeoutMs = 30_000,
   ): Promise<TestResult> {
@@ -254,12 +275,19 @@ export class CompilerPool {
         wasmPath: opts.wasmPath,
         metaPath: opts.metaPath,
         target: opts.target,
+        semanticProviders: opts.semanticProviders,
         inferModuleStrictArguments: opts.inferModuleStrictArguments,
         // (#3461) forwarded only in fast native-harness mode; undefined ⇒ the
         // worker takes its unchanged honest path.
         nativeHarness: opts.nativeHarness || false,
         harnessPrefix: opts.harnessPrefix,
         temporal: opts.temporal || false,
+        // (#3451) forwarded only in linked mode; undefined ⇒ the worker takes
+        // its unchanged honest path.
+        linkedHarness: opts.linkedHarness || false,
+        linkedHarnessPrefix: opts.linkedHarnessPrefix,
+        linkedHarnessBody: opts.linkedHarnessBody,
+        linkedHarnessStrict: opts.linkedHarnessStrict || false,
       },
       timeoutMs,
       opts.label,

@@ -436,6 +436,10 @@ export interface DeferredCallablePropertyDispatchPlan {
 
 /** Metadata for a generator lowered to an in-module WasmGC state machine (#680). */
 export interface NativeGeneratorInfo {
+  /** Generic yield-star uses an externref payload and preserves raw IteratorResults. */
+  nativeDelegates?: boolean;
+  /** Generic protocol callbacks must reject reentrant next/return/throw. */
+  executingFieldIdx?: number;
   /** Source-level generator function name. */
   functionName: string;
   /**
@@ -766,6 +770,10 @@ export interface FunctionContext {
    * / `liftedCaptureBoxSlot` in closures/capture-source-slot.ts.
    */
   liftedCaptureBoxes?: Map<string, number>;
+  /** (#5356) Cells `emitEagerCaptureBoxes` minted at function top, keyed by the RAW
+   * pre-hoisted slot each was seeded from — scope-hiding-proof, unlike the name-keyed
+   * maps above. Resolved through `statements/eager-capture-box.ts`. */
+  eagerCaptureBoxes?: Map<number, { cellSlot: number; refCellTypeIdx: number; valType: ValType }>;
   /**
    * Source-visible bindings owned by a function whose lexical descendants may
    * perform direct eval. These functions alone promote bindings to the shared
@@ -2687,6 +2695,16 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * relaxation never moves. See runtime-key-class-methods.ts.
    */
   runtimeKeyClassMethodNames: Set<string>;
+  /**
+   * (#5383 S2h) The STANDALONE twin of {@link runtimeKeyClassMethodNames}: the
+   * classes whose prototype `$Object` a runtime-key read may have to consult.
+   *
+   * Recorded, not emitted — the read site only knows that SOME class instance
+   * may reach it, and the prototype singletons are force-built once, at
+   * finalize, from this set. An empty set is what keeps every standalone module
+   * with no runtime-key read byte-identical. See standalone-class-dyn-member.ts.
+   */
+  standaloneRuntimeKeyClassProtos: Set<string>;
   /** Resolved concrete types for generic functions (from call-site analysis) */
   genericResolved: Map<string, { params: ValType[]; results: ValType[] }>;
   /** Rest parameter info per function (functions with ...rest syntax) */
@@ -2697,6 +2715,22 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * runtime args beyond the formal param count (#1053).
    */
   funcUsesArguments: Set<string>;
+  /**
+   * (#6436) Named function declarations whose own `this` reads the ambient
+   * `__current_this` module global, minus the ones that take an explicit
+   * `this` parameter.
+   *
+   * A PLAIN `f(x)` call installs no receiver, so inside a window where some
+   * dispatcher has parked one in `__current_this` (a host-facing closure
+   * method call, an array-HOF `thisArg`) the callee read the DISPATCHER's
+   * receiver instead of the `undefined` §10.2.1.2 specifies. Callers consult
+   * this set to route such a call through a per-target trampoline that
+   * installs `undefined` for the duration.
+   *
+   * Populated at COLLECT time (alongside `funcUsesArguments`), because call
+   * sites compile before hoisted bodies do.
+   */
+  funcReadsOwnThis: Set<string>;
   /**
    * Object-literal method declaration → the function handle containing that
    * literal's body. Struct-shape deduplication can fork a method body while
@@ -2796,6 +2830,14 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * either way (imported tags occupy the low indices).
    */
   sharedExnTag: boolean;
+  /**
+   * (#5383 S2m) True when this standalone module's exception tag is IMPORTED
+   * from a linked PROVIDER's `__exn_tag` export rather than module-defined, so
+   * a provider-side `throw` is caught by the consumer's own `try`/`catch`.
+   * Host-free twin of {@link sharedExnTag}; like it, `exnTagIdx` is then
+   * already an ABSOLUTE tag index.
+   */
+  exnTagImported: boolean;
   /** (#5247) True for a linked provider: its exports are called by another WASM
    *  module, so the export-boundary throw unwrapping is suppressed. */
   exportsConsumedByWasm: boolean;
@@ -4034,6 +4076,11 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   standalone: boolean;
   /** Linked zero-argument getter for the canonical standalone realm-global object. */
   standaloneGlobalThisImport?: { module: string; name: string; call?: string };
+  /** (#5383 S2p) True while the outlined `__native_globalThis_ensure` seed body
+   *  is under construction, so a re-entrant realm-global read inside the seed
+   *  itself takes the legacy inline splice instead of calling a function whose
+   *  cached global is not set yet (which would recurse at runtime). */
+  nativeGlobalThisSeedBuilding?: boolean;
   /** Resolved JS-host direct-eval lowering. */
   directEvalMode: "legacy" | "reified-host";
   /** Private externref-array carrier used only by reified JS-host direct eval. */

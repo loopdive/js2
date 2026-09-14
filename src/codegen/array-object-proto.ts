@@ -1,3 +1,4 @@
+import { emitNativeGeneratorProtocolMethodBody } from "./generators-native-protocol.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#2193 / #43 harvest) Native `$NativeProto` glue for `Array.prototype` and
@@ -39,6 +40,7 @@ import { emitArrayBufferProtoMemberBody, emitDataViewProtoMemberBody, emitTaCtor
 import { emitDateProtoMemberBody } from "./expressions/builtins.js"; // (#3219) reflective Date getter bodies
 import { emitDateReflectiveSetterBody } from "./date-reflective-setters.js"; // (#3174) reflective Date setter/toISOString bodies
 import { allocLocal } from "./context/locals.js";
+import { emitOutlinedNativeGlobalThisRead } from "./native-globalthis-outline.js"; // (#5383 S2p)
 import { emitBoxedProtoValueOfBody } from "./boxed-proto-valueof.js"; // (#4582)
 import { emitThisReceiverGuardConvert } from "./property-access.js";
 import { compileArraySliceFromVecLocal } from "./array-methods.js";
@@ -63,7 +65,8 @@ import {
   nativeStringLiteralInstrs,
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
-import { COLLECTION_KIND, MAP_LAYOUT, ensureMapHelpers } from "./map-runtime.js"; // (#3171) size getter
+import { COLLECTION_KIND } from "./collection-kind.js"; // (#6419) import-free leaf — map-runtime.js is in an import cycle
+import { MAP_LAYOUT, ensureMapHelpers } from "./map-runtime.js"; // (#3171) size getter
 import { emitReceiverBrandCheck } from "./receiver-brand.js"; // (#3171) shared brand preamble
 import { pushMarkBuiltinCarrierCallable } from "./builtin-callable-brand.js"; // %TypedArray% carrier is a function
 import { emitTransferredCharAtProtoMemberBody, unboxProtoArgToI32 as unboxArgToI32 } from "./char-at-transfer.js";
@@ -2452,6 +2455,7 @@ function makeGlue(
     // (#2875 slice 1) String.prototype.{charAt,at} likewise. Other Array/String
     // members + all Object members still degrade to a catchable TypeError.
     emitMemberBody: (c, fctx, member) =>
+      (name === "Generator" ? emitNativeGeneratorProtocolMethodBody(c, fctx, member) : null) ??
       // (#5269 D-2) The `Error.prototype.stack` accessor pair. First in the
       // ladder because its member names are synthetic — no other arm can claim
       // them — and the setter needs the brand to identify its home object.
@@ -2810,7 +2814,10 @@ export function ensureGeneratorPrototypeNativeProtoGlue(ctx: CodegenContext): nu
     // `name: "Generator"` drives the refusal message ("Generator.prototype.<m>
     // …"); the member CSV is the three §27.5.1 methods. next/return/throw are
     // each arity 1 (spec length 1) via makeGlue's default.
-    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Generator", ["next", "return", "throw"]));
+    registerNativeProtoBuiltin(ctx, {
+      ...makeGlue(ctx, brand, "Generator", ["next", "return", "throw", "@@1"]),
+      memberLength: (member) => (member === "@@1" ? 0 : 1),
+    });
   }
   return brand;
 }
@@ -3441,6 +3448,52 @@ export function emitGeneratorPrototypeSingleton(ctx: CodegenContext, fctx: Funct
       fctx.body.push({ op: "drop" }); // helper returns the target; discard
     }
     if (ok) {
+      // %GeneratorPrototype% inherits the generic iterator self method.
+      // Keep it off GP's own-property table and preserve the callable receiver.
+      const iterator = ensureStandaloneNativeMethodClosure(ctx, brand, "@@1", "method");
+      const setProtoIdx = ctx.funcMap.get("__object_setPrototypeOf");
+      if (!iterator || setProtoIdx === undefined) return null;
+      const iteratorGlobalName = "__native_generator_iterator_prototype_obj";
+      let iteratorGlobal = ctx.builtinObjectGlobals.get(iteratorGlobalName);
+      if (iteratorGlobal === undefined) {
+        iteratorGlobal = ctx.numImportGlobals + ctx.mod.globals.length;
+        ctx.mod.globals.push({
+          name: iteratorGlobalName,
+          type: { kind: "externref" },
+          mutable: true,
+          init: [{ op: "ref.null.extern" }],
+        });
+        ctx.builtinObjectGlobals.set(iteratorGlobalName, iteratorGlobal);
+      }
+      const parent = allocLocal(fctx, "__gen_iterator_proto", { kind: "externref" });
+      fctx.body.push(
+        { op: "global.get", index: iteratorGlobal },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "call", funcIdx: newObjectIdx },
+            { op: "local.tee", index: parent },
+            { op: "i32.const", value: 1 },
+            { op: "call", funcIdx: boxSymbolIdx },
+            ...pushBuiltinFnSingletonValueInstrs(ctx, iterator),
+            { op: "extern.convert_any" },
+            { op: "f64.const", value: 5 },
+            { op: "call", funcIdx: defineIdx },
+            { op: "drop" },
+            { op: "local.get", index: parent },
+            { op: "global.set", index: iteratorGlobal },
+          ],
+          else: [],
+        },
+        { op: "local.get", index: objLocal },
+        { op: "global.get", index: iteratorGlobal },
+        { op: "call", funcIdx: setProtoIdx },
+        { op: "drop" },
+      );
+    }
+    if (ok) {
       // Symbol.toStringTag = "Generator", with {writable:false,
       // enumerable:false, configurable:true} (§27.5.1.5).
       fctx.body.push({ op: "local.get", index: objLocal });
@@ -3645,6 +3698,32 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
     fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(linkedGlobal.name) ?? getterIdx });
     return { kind: "externref" };
   }
+  const globalIdx = ensureNativeGlobalThisGlobal(ctx);
+  const buildSeed = (seedFctx: FunctionContext): Instr[] | null => buildNativeGlobalThisSeed(ctx, seedFctx, globalIdx);
+
+  // (#5383 S2p) Prefer the ONE outlined seed helper — see
+  // native-globalthis-outline.ts for why splicing it per site cost 3.3x on the
+  // multi-source lane and why the runtime behaviour is unchanged.
+  const outlined = emitOutlinedNativeGlobalThisRead(ctx, fctx, globalIdx, buildSeed);
+  if (outlined !== null) return outlined;
+
+  // Re-entrant (a realm-global read raised while the seed itself is being
+  // built) or the seed could not be constructed: keep the historical inline
+  // splice, byte-for-byte. NOT dead code: a realm-global read raised from
+  // inside the seed's own construction must stay inline, because calling a
+  // not-yet-initialized ensure helper from within its own initializer would
+  // recurse at runtime.
+  const initBody = buildNativeGlobalThisSeed(ctx, fctx, globalIdx);
+  if (initBody === null) return null;
+  fctx.body.push({ op: "global.get", index: globalIdx });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });
+  fctx.body.push({ op: "global.get", index: globalIdx });
+  return { kind: "externref" };
+}
+
+/** The cached module global holding the native standalone realm object. */
+function ensureNativeGlobalThisGlobal(ctx: CodegenContext): number {
   const globalName = "__native_globalThis";
   let globalIdx = ctx.builtinObjectGlobals.get(globalName);
   if (globalIdx === undefined) {
@@ -3657,7 +3736,16 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
     });
     ctx.builtinObjectGlobals.set(globalName, globalIdx);
   }
+  return globalIdx;
+}
 
+/**
+ * The realm object's lazy-init instruction sequence — allocate the object,
+ * seed it, and store it in `globalIdx`. Locals are allocated in `fctx`, which
+ * is the outlined helper's own context on the fast path and the caller's on
+ * the re-entrant fallback.
+ */
+function buildNativeGlobalThisSeed(ctx: CodegenContext, fctx: FunctionContext, globalIdx: number): Instr[] | null {
   // Lazy init: allocate the one realm object and install the three immutable
   // ES5 global value properties plus the ES5 global function properties on
   // that real carrier. The old gOPD special case assumed top-level script
@@ -3833,12 +3921,7 @@ export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionCo
   ];
   ctx.liveBodies.delete(evalSeeds);
   ctx.liveBodies.delete(namespaceSeeds);
-  fctx.body.push({ op: "global.get", index: globalIdx });
-  fctx.body.push({ op: "ref.is_null" });
-  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });
-
-  fctx.body.push({ op: "global.get", index: globalIdx });
-  return { kind: "externref" };
+  return initBody;
 }
 
 /**

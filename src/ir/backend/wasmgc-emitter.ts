@@ -13,7 +13,8 @@
 // arithmetic / control flow) and the vec group. The remaining primitives
 // are added here as their groups get wired.
 
-import { emitConstInstr, type IrLowerResolver } from "../lower.js";
+import { emitConstInstr } from "./wasm-constants.js";
+import type { IrLowerResolver } from "./lower-contracts.js";
 import {
   asVal,
   type AllocSiteId,
@@ -177,6 +178,7 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
     out.push({ op: "local.set", index: dataScratchLocal });
     out.push({ op: "i32.const", value: count });
     out.push({ op: "local.get", index: dataScratchLocal });
+    out.push({ op: "ref.as_non_null" });
     out.push({ op: "struct.new", typeIdx: layout.vecStructTypeIdx });
   }
 

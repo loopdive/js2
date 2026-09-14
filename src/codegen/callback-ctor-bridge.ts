@@ -16,6 +16,7 @@
 // callable is a constructor", which is just as wrong in the other direction.
 
 import ts from "typescript";
+import type { ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 
@@ -31,6 +32,33 @@ export function callableHasConstructBehavior(node: ts.ArrowFunction | ts.Functio
   if (!ts.isFunctionExpression(node)) return false;
   if (node.asteriskToken !== undefined) return false;
   return !(node.modifiers ?? []).some((m) => m.kind === ts.SyntaxKind.AsyncKeyword);
+}
+
+/**
+ * (#5375) Result type of a callback the host will INVOKE as an accessor or
+ * method (`needsThis`, i.e. the `__make_getter_callback` bridge).
+ *
+ * The host consumes the return value, and a JS caller can only ever receive an
+ * externref: a `(ref $T)` result is handed over as the same opaque WasmGC
+ * object, and the getter bridge (`_invokeGetterCallbackBridge`) then re-wraps
+ * it for the host anyway. Declaring the struct type therefore buys nothing —
+ * and costs a lot when the value the body returns is NOT already that struct:
+ * the `externref → ref` coercion rebuilds a host object property by property
+ * (`buildRecordFromExternref`), which invokes the host object's getters. A
+ * getter that returns its own object (prettier's `ROOT_INDENT`, whose
+ * `get root() { return ROOT_INDENT; }` is typed `RootIndent` through JSDoc)
+ * then rebuilds the object it is a property of, reads `root` again, and
+ * recurses through the host until the stack is exhausted.
+ *
+ * So a host-facing callback returns its reference result as an externref: a
+ * struct crosses as `extern.convert_any` (identity preserved, the bridge sees
+ * the same object), a host object crosses untouched. Numbers, booleans and
+ * `null` (void) keep their representation.
+ */
+export function hostFacingCallbackReturnType(returnType: ValType | null, needsThis: boolean): ValType | null {
+  if (!needsThis || returnType === null) return returnType;
+  if (returnType.kind === "ref" || returnType.kind === "ref_null") return { kind: "externref" };
+  return returnType;
 }
 
 /**

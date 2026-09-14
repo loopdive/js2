@@ -16,6 +16,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { analyzeMultiSource } from "../src/checker/index.js";
+import { buildImportManifest } from "../src/compiler/import-manifest.js";
+import { emitBinary } from "../src/emit/binary.js";
+import { buildImports } from "../src/runtime.js";
 import { createIrClassId, createIrSourceId } from "../src/ir/identity.js";
 import { IR_CLASS_SHAPE_CELL, irVal, type IrClassShape, type IrInstr, type IrType } from "../src/ir/nodes.js";
 import {
@@ -519,7 +522,9 @@ describe("#3518 C — backend consumer (accept / one-argument emit)", () => {
       "acceptPreparedIrProgram",
       "acceptedPhysicalSetupPlan",
       "emitAcceptedIrProgram",
+      "emittedProgramBindingIndex",
       "emittedStartupAdapterIndex",
+      "emittedSupportFunctionReceipts",
       "isAuthenticAcceptedIrProgram",
     ]);
     const phases: string[] = [];
@@ -676,7 +681,7 @@ describe("#3518 C — A-produced programs from source", () => {
     }
   });
 
-  it("original mixed application: exact pinned sources, codec-identical, physical gaps reported at acceptance", () => {
+  it("original mixed application: exact pinned sources, codec-identical, async values and phases match native", async () => {
     expect(createHash("sha256").update(JSON.stringify(ORIGINAL_MIXED)).digest("hex")).toBe(ORIGINAL_MIXED_DIGEST);
     const withLinear = prepare(ORIGINAL_MIXED);
     expect(withLinear.kind).toBe("unsupported");
@@ -687,20 +692,80 @@ describe("#3518 C — A-produced programs from source", () => {
     const decoded = preparedProgram(ORIGINAL_MIXED, [{ target: "host", backend: "wasmgc" }]);
     expect(decoded.inventory.terminalUnits).toHaveLength(7);
     const wasmgc = acceptPreparedIrProgram(decoded, replayOptions("wasmgc"));
-    expect(wasmgc.kind).toBe("unsupported");
-    if (wasmgc.kind === "unsupported") {
-      expect(wasmgc.detail).toMatch(/physical setup cannot be materialized/);
-      expect(wasmgc.detail).toMatch(/async body run/);
-      expect(wasmgc.sourceFile).toBe("entry.ts");
+    expect(wasmgc.kind, JSON.stringify(wasmgc.kind === "accepted" ? {} : wasmgc)).toBe("accepted");
+    if (wasmgc.kind !== "accepted") throw new Error(wasmgc.detail);
+    const emitted = emitAcceptedIrProgram(wasmgc);
+    expect(emitted.emittedUnitIds).toEqual(wasmgc.runtime.prepared.functions.map((fn) => fn.unitId));
+    expect(emitted.emittedUnitIds).toHaveLength(14);
+    const terminalIds = new Set(decoded.inventory.terminalUnits.map((unit) => unit.id));
+    expect(emitted.emittedUnitIds.filter((id) => terminalIds.has(id))).toHaveLength(7);
+    // Seven source terminal owners, seven prepared runtime bodies, and additional
+    // physical continuation helpers are separate populations.
+    expect(emitted.module.functions.length).toBeGreaterThan(emitted.emittedUnitIds.length);
+    const imports = buildImports(buildImportManifest(emitted.module));
+    const binary = emitBinary(emitted.module);
+    expect(binary.byteLength).toBeGreaterThan(8);
+    const { instance } = await WebAssembly.instantiate(binary, imports as unknown as WebAssembly.Imports);
+    imports.setInstance?.(instance);
+    const initial = instance.exports.initial;
+    const readPhase = instance.exports.readPhase;
+    const run = instance.exports.run;
+    expect(initial).toBeTypeOf("function");
+    expect(readPhase).toBeTypeOf("function");
+    expect(run).toBeTypeOf("function");
+    if (typeof initial !== "function" || typeof readPhase !== "function" || typeof run !== "function")
+      throw new Error("mixed application source exports missing");
+
+    // Independent native execution of the pinned source's state transitions and loop.
+    // No compiled output, expected-value repair, or fixture substitution feeds this oracle.
+    let nativePhase = 0;
+    let left = 1;
+    left = left + 1;
+    let right = 10;
+    right = right + 2;
+    const nativeInitial = () => left * 100 + right;
+    const compute = (seed: number) => {
+      let total = 0;
+      for (let i = 0; i < 4; i++) {
+        if (i % 2 === 0) total = total + Math.imul(seed, i + 1);
+        else total = total - i;
+      }
+      return total;
+    };
+    const nativeRun = async (seed: number) => {
+      nativePhase = 1;
+      const first = await (seed + 1);
+      nativePhase = 2;
+      const second = await compute(first);
+      nativePhase = 3;
+      return second + nativeInitial();
+    };
+    expect(initial()).toBe(nativeInitial());
+    expect(initial()).toBe(212);
+    expect(readPhase()).toBe(0);
+    for (const seed of [0, 7, -3]) {
+      const expected = nativeRun(seed);
+      const actual = run(seed);
+      expect(actual).toBeInstanceOf(Promise);
+      const actualPhases = [readPhase()];
+      const expectedPhases = [nativePhase];
+      await Promise.resolve();
+      actualPhases.push(readPhase());
+      expectedPhases.push(nativePhase);
+      await Promise.resolve();
+      actualPhases.push(readPhase());
+      expectedPhases.push(nativePhase);
+      const expectedValue = await expected;
+      expect(await actual).toBe(expectedValue);
+      expect(expectedValue).toBe(4 * seed + 212);
+      actualPhases.push(readPhase());
+      expectedPhases.push(nativePhase);
+      expect(expectedPhases).toEqual([1, 2, 3, 3]);
+      expect(actualPhases).toEqual(expectedPhases);
     }
     const linear = acceptPreparedIrProgram(decoded, replayOptions("linear"));
     expect(linear.kind).toBe("unsupported");
     if (linear.kind === "unsupported") expect(linear.detail).toMatch(/no linear:host runtime projection/);
-    console.info(
-      `[#3518 C] original mixed application: wasmgc:host ${wasmgc.kind}${
-        wasmgc.kind === "unsupported" ? ` (${wasmgc.detail.slice(0, 220)}…)` : ""
-      }; linear:host ${linear.kind}`,
-    );
   });
 });
 

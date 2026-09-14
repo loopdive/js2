@@ -47,7 +47,8 @@
 // SAME IR `vec.len`/`vec.get` node → two completely different op sequences,
 // selected by which emitter `lower.ts` was handed. That is the proof.
 
-import { emitConstInstr, type IrLowerResolver } from "../lower.js";
+import { emitConstInstr } from "./wasm-constants.js";
+import type { IrLowerResolver } from "./lower-contracts.js";
 import type {
   AllocSiteId,
   IrBinop,

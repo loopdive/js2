@@ -3,28 +3,36 @@
 /** Source-free runtime preparation and validated replay attachment. Physical helpers remain backend-owned. */
 import {
   assertPreparedIrAsyncRuntimeCurrent,
-  irAsyncPlanNeedsNumberBridge,
   preparedIrAsyncFrameCapabilityFailure,
-} from "./async-plan.js";
-import type { IrUnitId } from "./identity.js";
+} from "./runtime/async-attachment.js";
+import { irAsyncPlanNeedsNumberBridge } from "./analysis/async-plan.js";
+import type { IrUnitId } from "../shared/contracts/ir-identity.js";
 import {
   IrRuntimeFunctionPreparationError,
   prepareIrRuntimeManifest,
   type IrRuntimeManifestDemands,
-  type PreparedIrRuntimeManifest,
 } from "./intrinsic-support.js";
-import { INTRINSIC_DEFINITIONS, type IntrinsicSourceLocation } from "./intrinsics.js";
-import { forEachInstrDeep, type IrFunction } from "./nodes.js";
-import { classifyIrFailure, IrInvariantError, type IrPreparationFailure } from "./outcomes.js";
-import {
-  PreparedIrProgramInvariantError,
-  preparedIrProgramOwner,
-  preparedIrReadonlyMap,
-  type PreparedIrProgramFailure,
-  type PreparedIrProgramProducerInput,
-} from "./program.js";
+import type { PreparedIrRuntimeManifest } from "./runtime/contracts/prepared.js";
+import { INTRINSIC_DEFINITIONS } from "./core/intrinsics.js";
+import type { IntrinsicSourceLocation } from "./core/intrinsic-contracts.js";
+import { forEachInstrDeep } from "./nodes.js";
+import type { PreparedIrFunction as IrFunction } from "./runtime/contracts/prepared.js";
+import { classifyIrFailure, IrInvariantError } from "./outcomes.js";
+import type { IrPreparationFailure } from "../shared/contracts/ir-preparation-failure.js";
+import { PreparedIrProgramInvariantError, preparedIrProgramOwner, preparedIrReadonlyMap } from "./program.js";
+import type { PreparedIrProgramFailure, PreparedIrProgramProducerInput } from "./program/prepared-contracts.js";
 import { assertPreparedIrProgramPopulation } from "./program-population.js";
-import { irRuntimeCallableDeclaration } from "./runtime-callable-declarations.js";
+import { irRuntimeCallableDeclaration } from "./runtime/callable-declarations.js";
+import {
+  collectNativeAsyncCallableDemands,
+  IrNativeAsyncCallableError,
+  type IrNativeAsyncCallableDemand,
+} from "./runtime/native-async-callables.js";
+import {
+  collectVectorCallableDemands,
+  IrVectorCallableError,
+  type IrVectorCallableDemand,
+} from "./runtime/vector-callables.js";
 import {
   FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURES,
   GENERATOR_NUMBER_BOX_RUNTIME_FEATURES,
@@ -37,8 +45,8 @@ import {
   STRING_EQ_RUNTIME_FEATURES,
   STRING_LEN_RUNTIME_FEATURES,
   RuntimeManifestInvariantError,
-  type RuntimeFeature,
-} from "./runtime-manifest.js";
+} from "./runtime/manifest.js";
+import type { RuntimeFeature } from "./runtime/contracts/manifest.js";
 
 type ProducerInput = PreparedIrProgramProducerInput;
 
@@ -141,7 +149,16 @@ export function prepareWholeProgramRuntimeManifest(
   if (populationFailure) return populationFailure;
   const sourceLocationsByUnit = new Map<IrUnitId, IntrinsicSourceLocation>();
   const requestOwners = new Map<RuntimeFeature, IrUnitId>();
+  const builtinDemands: IrNativeAsyncCallableDemand[] = [];
+  const vectorDemands: IrVectorCallableDemand[] = [];
   for (const fn of input.ir.functions) {
+    try {
+      builtinDemands.push(collectNativeAsyncCallableDemands([fn])[0]!);
+      vectorDemands.push(collectVectorCallableDemands([fn])[0]!);
+    } catch (error) {
+      if (!(error instanceof IrNativeAsyncCallableError) && !(error instanceof IrVectorCallableError)) throw error;
+      return invariant(input, fn.unitId, error.message);
+    }
     const owner = preparedIrProgramOwner(input, fn.unitId)!;
     const demand = input.demands.get(fn.unitId);
     if (fn.funcKind === "async" && !fn.asyncPlan) {
@@ -191,6 +208,8 @@ export function prepareWholeProgramRuntimeManifest(
       sourceLocationsByUnit,
       policy: input.policy,
       includeEmpty: true,
+      builtinDemands: Object.freeze(builtinDemands),
+      vectorDemands: Object.freeze(vectorDemands),
       ...mergeDemands([...input.demands.values()]),
     });
     for (const fn of runtime.functions) {

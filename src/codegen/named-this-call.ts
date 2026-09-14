@@ -42,6 +42,8 @@ interface CachedTrampoline {
 }
 
 const trampolineCache = new WeakMap<CodegenContext, WeakMap<WasmFunction, CachedTrampoline>>();
+/** (#6436) Separate cache so the `.call` trampoline's bytes and ordinals never move. */
+const plainTrampolineCache = new WeakMap<CodegenContext, WeakMap<WasmFunction, CachedTrampoline>>();
 
 function unwrap(expr: ts.Expression): ts.Expression {
   let current = expr;
@@ -134,6 +136,23 @@ function receiverIsAdmitted(
   // lowering agree (both end at the global object), so admitting it would be
   // pure cost and a gratuitous byte diff.
   return explicitNullAdmitted && factIsStaticallyNull(fact);
+}
+
+/**
+ * (#6436) Provably `undefined` (or `void`) — and NOT `null`.
+ *
+ * `.call(undefined, …)` is the one legacy nullish arm the plain-call receiver
+ * install answers correctly: an `undefined` thisArgument is exactly an absent
+ * one (§10.2.1.2 / §10.4.3 both end at `undefined` for a strict callee, at the
+ * global object for a sloppy one). A provably-`null` receiver is NOT the same
+ * thing — a strict callee must observe `null` — so it stays on the #4203
+ * marker path and its bytes do not move.
+ */
+function factIsStaticallyUndefined(fact: TypeFact): boolean {
+  if (fact.kind === "union") {
+    return fact.parts.length > 0 && fact.parts.every((part) => factIsStaticallyUndefined(part));
+  }
+  return fact.kind === "undefined" || fact.kind === "void";
 }
 
 function staticPropertyName(node: ts.PropertyName | ts.BindingName | undefined): string | undefined {
@@ -249,15 +268,117 @@ function declarationOwnsHandle(
   );
 }
 
-function callTarget(targetFuncIdx: FuncHandle, paramCount: number): Instr[] {
+function callTarget(targetFuncIdx: FuncHandle, paramCount: number, firstParamLocal = 1): Instr[] {
   const body: Instr[] = [];
-  for (let i = 0; i < paramCount; i++) body.push({ op: "local.get", index: i + 1 });
+  for (let i = 0; i < paramCount; i++) body.push({ op: "local.get", index: i + firstParamLocal });
   body.push({ op: "call", funcIdx: targetFuncIdx });
   return body;
 }
 
 function safeName(name: string): string {
   return name.replace(/[^A-Za-z0-9_$]/g, "_");
+}
+
+/**
+ * The save / install / exact-call / restore frame shared by the `.call`
+ * trampoline (#3796) and the plain-call trampoline (#6436). Extracted so both
+ * emit the SAME bytes for the same inputs; the `.call` shape's own bytes are
+ * pinned by #4203/#4025 tests and must not move.
+ */
+interface ReceiverInstallFrame {
+  readonly currentThisGlobalIdx: number;
+  readonly prevThisLocal: number;
+  readonly resultType: ValType | undefined;
+  readonly resultLocal: number;
+  readonly unwindExnLocal: number;
+  readonly standardizedEh: boolean;
+  readonly exactCall: () => Instr[];
+}
+
+/**
+ * Save the ambient receiver, install `receiver`, run the exact call, restore
+ * on both the normal and the unwinding exit.
+ */
+function installAndCallFrame(ctx: CodegenContext, frame: ReceiverInstallFrame, receiver: readonly Instr[]): Instr[] {
+  const { currentThisGlobalIdx, prevThisLocal, resultType, resultLocal, unwindExnLocal, standardizedEh } = frame;
+  const blockType =
+    resultType === undefined ? ({ kind: "empty" } as const) : ({ kind: "val", type: resultType } as const);
+  // (#4620) A CONCRETE-ref `try_table` block type is a shape no lane can use
+  // on today's engine. Isolated in a HAND-BUILT module (no compiler
+  // involved), on Node v22.22.2 / V8 12.4.254.21: a `try_table` whose block
+  // type is `(ref null <typeidx>)` traps `RuntimeError: unreachable` on
+  // ENTRY, with nothing thrown, while the same module with an `i32` or
+  // `externref` block type runs fine. Abstract single-byte ref types
+  // (`externref`, `funcref`) are unaffected; only the two-byte
+  // `0x63 <typeidx>` form is.
+  //
+  // Here that killed every `.call` on a named function that reads `this` and
+  // returns a ref — a string or an object, i.e. the whole
+  // `10.4.3-1-{1,2,4,5}-s` primitive-`this` family — before the protected
+  // call ever ran (a side-effect probe showed the callee never executed;
+  // patching the two try_tables in the emitted binary to plain `block`s made
+  // the same module return the right value).
+  //
+  // The ordinary `try`/`catch` lowering never hits it because it emits an
+  // EMPTY try_table block type and `return`s out of the protected body. This
+  // does the same thing with a local: the call's result is parked in
+  // `__result` inside the try body, so the try_table carries no value across
+  // its own boundary, and the value is read after the scaffold. Scalar
+  // results keep the pre-existing (working) value-typed shape so their bytes
+  // do not move.
+  const parkResultInLocal = standardizedEh && (resultType?.kind === "ref" || resultType?.kind === "ref_null");
+  const tryBlockType = parkResultInLocal ? ({ kind: "empty" } as const) : blockType;
+  const protectedCall: Instr = standardizedEh
+    ? buildStandardTryTable(
+        tryBlockType,
+        parkResultInLocal ? [...frame.exactCall(), { op: "local.set", index: resultLocal }] : frame.exactCall(),
+        [
+          {
+            kind: "catch",
+            tagIdx: ensureExnTag(ctx),
+            payloadType: { kind: "externref" },
+            body: [
+              { op: "local.set", index: unwindExnLocal },
+              { op: "local.get", index: prevThisLocal },
+              { op: "global.set", index: currentThisGlobalIdx },
+              { op: "local.get", index: unwindExnLocal },
+              { op: "throw", tagIdx: ensureExnTag(ctx) },
+            ],
+          },
+        ],
+      )
+    : {
+        op: "try",
+        blockType,
+        body: frame.exactCall(),
+        catches: [],
+        catchAll: [
+          { op: "local.get", index: prevThisLocal },
+          { op: "global.set", index: currentThisGlobalIdx },
+          { op: "rethrow", depth: 0 },
+        ],
+      };
+  return [
+    { op: "global.get", index: currentThisGlobalIdx },
+    { op: "local.set", index: prevThisLocal },
+    ...receiver,
+    { op: "global.set", index: currentThisGlobalIdx },
+    protectedCall,
+    // The parked-result shape already stored it inside the try body.
+    ...(resultLocal < 0 || parkResultInLocal ? [] : ([{ op: "local.set", index: resultLocal }] satisfies Instr[])),
+    { op: "local.get", index: prevThisLocal },
+    { op: "global.set", index: currentThisGlobalIdx },
+    ...(resultLocal < 0 ? [] : ([{ op: "local.get", index: resultLocal }] satisfies Instr[])),
+  ];
+}
+
+/** The `__previous_this` / `__result` / `__unwind_exception` local set both trampolines declare. */
+function installFrameLocals(resultType: ValType | undefined, standardizedEh: boolean): WasmFunction["locals"] {
+  return [
+    { name: "__previous_this", type: { kind: "externref" } },
+    ...(resultType === undefined ? [] : [{ name: "__result", type: resultType }]),
+    ...(standardizedEh ? [{ name: "__unwind_exception", type: { kind: "externref" } as const }] : []),
+  ];
 }
 
 function ensureNamedThisCallTrampoline(
@@ -298,79 +419,16 @@ function ensureNamedThisCallTrampoline(
   const unwindExnLocal = resultType === undefined ? prevThisLocal + 1 : resultLocal + 1;
   const exactCall = (): Instr[] => callTarget(targetFuncIdx, params.length);
 
-  // Save the ambient receiver, install `receiver`, run the exact call, restore
-  // on both the normal and the unwinding exit.
-  const installAndCall = (receiver: readonly Instr[]): Instr[] => {
-    const blockType =
-      resultType === undefined ? ({ kind: "empty" } as const) : ({ kind: "val", type: resultType } as const);
-    // (#4620) A CONCRETE-ref `try_table` block type is a shape no lane can use
-    // on today's engine. Isolated in a HAND-BUILT module (no compiler
-    // involved), on Node v22.22.2 / V8 12.4.254.21: a `try_table` whose block
-    // type is `(ref null <typeidx>)` traps `RuntimeError: unreachable` on
-    // ENTRY, with nothing thrown, while the same module with an `i32` or
-    // `externref` block type runs fine. Abstract single-byte ref types
-    // (`externref`, `funcref`) are unaffected; only the two-byte
-    // `0x63 <typeidx>` form is.
-    //
-    // Here that killed every `.call` on a named function that reads `this` and
-    // returns a ref — a string or an object, i.e. the whole
-    // `10.4.3-1-{1,2,4,5}-s` primitive-`this` family — before the protected
-    // call ever ran (a side-effect probe showed the callee never executed;
-    // patching the two try_tables in the emitted binary to plain `block`s made
-    // the same module return the right value).
-    //
-    // The ordinary `try`/`catch` lowering never hits it because it emits an
-    // EMPTY try_table block type and `return`s out of the protected body. This
-    // does the same thing with a local: the call's result is parked in
-    // `__result` inside the try body, so the try_table carries no value across
-    // its own boundary, and the value is read after the scaffold. Scalar
-    // results keep the pre-existing (working) value-typed shape so their bytes
-    // do not move.
-    const parkResultInLocal = standardizedEh && (resultType?.kind === "ref" || resultType?.kind === "ref_null");
-    const tryBlockType = parkResultInLocal ? ({ kind: "empty" } as const) : blockType;
-    const protectedCall: Instr = standardizedEh
-      ? buildStandardTryTable(
-          tryBlockType,
-          parkResultInLocal ? [...exactCall(), { op: "local.set", index: resultLocal }] : exactCall(),
-          [
-            {
-              kind: "catch",
-              tagIdx: ensureExnTag(ctx),
-              payloadType: { kind: "externref" },
-              body: [
-                { op: "local.set", index: unwindExnLocal },
-                { op: "local.get", index: prevThisLocal },
-                { op: "global.set", index: currentThisGlobalIdx },
-                { op: "local.get", index: unwindExnLocal },
-                { op: "throw", tagIdx: ensureExnTag(ctx) },
-              ],
-            },
-          ],
-        )
-      : {
-          op: "try",
-          blockType,
-          body: exactCall(),
-          catches: [],
-          catchAll: [
-            { op: "local.get", index: prevThisLocal },
-            { op: "global.set", index: currentThisGlobalIdx },
-            { op: "rethrow", depth: 0 },
-          ],
-        };
-    return [
-      { op: "global.get", index: currentThisGlobalIdx },
-      { op: "local.set", index: prevThisLocal },
-      ...receiver,
-      { op: "global.set", index: currentThisGlobalIdx },
-      protectedCall,
-      // The parked-result shape already stored it inside the try body.
-      ...(resultLocal < 0 || parkResultInLocal ? [] : ([{ op: "local.set", index: resultLocal }] satisfies Instr[])),
-      { op: "local.get", index: prevThisLocal },
-      { op: "global.set", index: currentThisGlobalIdx },
-      ...(resultLocal < 0 ? [] : ([{ op: "local.get", index: resultLocal }] satisfies Instr[])),
-    ];
+  const frame: ReceiverInstallFrame = {
+    currentThisGlobalIdx,
+    prevThisLocal,
+    resultType,
+    resultLocal,
+    unwindExnLocal,
+    standardizedEh,
+    exactCall,
   };
+  const installAndCall = (receiver: readonly Instr[]): Instr[] => installAndCallFrame(ctx, frame, receiver);
 
   const liveCall: Instr[] = installAndCall([{ op: "local.get", index: 0 }]);
 
@@ -397,17 +455,134 @@ function ensureNamedThisCallTrampoline(
   const trampolineFunc: WasmFunction = {
     name: helperName,
     typeIdx,
-    locals: [
-      { name: "__previous_this", type: { kind: "externref" } },
-      ...(resultType === undefined ? [] : [{ name: "__result", type: resultType }]),
-      ...(standardizedEh ? [{ name: "__unwind_exception", type: { kind: "externref" } as const }] : []),
-    ],
+    locals: installFrameLocals(resultType, standardizedEh),
     body,
     exported: false,
   };
   pushDefinedFunc(ctx, trampolineFuncIdx, trampolineFunc);
   byTarget.set(targetFunc, { funcIdx: trampolineFuncIdx, func: trampolineFunc });
   return trampolineFuncIdx;
+}
+
+/**
+ * (#6436) The PLAIN-call counterpart: one trampoline per target that installs
+ * `undefined` as the receiver for the duration of the exact call.
+ *
+ * Same frame as the `.call` trampoline above, minus the `ref.is_null` split —
+ * a plain call's receiver is not a runtime value to test, it is statically
+ * absent. The install is a plain `ref.null.extern`, NOT the #4203
+ * explicit-null marker: `f()` is an ABSENT receiver, so a strict callee must
+ * see `undefined` and a sloppy one the global object, which is exactly what
+ * the callee's null-guarded read (`emitUnboundThis`) already answers when the
+ * global is null.
+ *
+ * Its own cache, so the `.call` trampoline's bytes and ordinals do not move.
+ */
+function ensureNamedPlainCallTrampoline(
+  ctx: CodegenContext,
+  targetName: string,
+  targetFuncIdx: FuncHandle,
+  targetFunc: WasmFunction,
+  params: readonly ValType[],
+  results: readonly ValType[],
+): FuncHandle {
+  let byTarget = plainTrampolineCache.get(ctx);
+  if (!byTarget) {
+    byTarget = new WeakMap();
+    plainTrampolineCache.set(ctx, byTarget);
+  }
+  const cached = byTarget.get(targetFunc);
+  // Speculative compilation can roll module state back while the CodegenContext
+  // remains alive — accept a hit only while it still owns its published func.
+  if (cached && definedFuncAt(ctx, cached.funcIdx) === cached.func) return cached.funcIdx;
+
+  if (definedFuncAt(ctx, targetFuncIdx) !== targetFunc) {
+    throw new Error(`plain-call trampoline target changed before reserving ${targetName}`);
+  }
+  const targetOrdinal = ctx.mod.functions.indexOf(targetFunc);
+  const helperName = `__named_plain_call_${safeName(targetName)}_${targetOrdinal}`;
+  const currentThisGlobalIdx = ensureCurrentThisGlobal(ctx);
+  const typeIdx = addFuncType(ctx, [...params], [...results], `$${helperName}_type`);
+  const trampolineFuncIdx = mintDefinedFunc(ctx);
+  const prevThisLocal = params.length;
+  const resultType = results[0];
+  const resultLocal = resultType === undefined ? -1 : prevThisLocal + 1;
+  const standardizedEh = ctx.wasi || ctx.standalone;
+  const unwindExnLocal = resultType === undefined ? prevThisLocal + 1 : resultLocal + 1;
+  const frame: ReceiverInstallFrame = {
+    currentThisGlobalIdx,
+    prevThisLocal,
+    resultType,
+    resultLocal,
+    unwindExnLocal,
+    standardizedEh,
+    exactCall: () => callTarget(targetFuncIdx, params.length, 0),
+  };
+  const trampolineFunc: WasmFunction = {
+    name: helperName,
+    typeIdx,
+    locals: installFrameLocals(resultType, standardizedEh),
+    body: installAndCallFrame(ctx, frame, [{ op: "ref.null.extern" }]),
+    exported: false,
+  };
+  pushDefinedFunc(ctx, trampolineFuncIdx, trampolineFunc);
+  byTarget.set(targetFunc, { funcIdx: trampolineFuncIdx, func: trampolineFunc });
+  return trampolineFuncIdx;
+}
+
+/**
+ * (#6436) For a PLAIN `f(...)` call on a statically-known named target whose
+ * body reads its own `this`, return the receiver-clearing trampoline to call
+ * instead of the raw target — or undefined to leave the direct `call` alone.
+ *
+ * `targetFuncIdx` must already be the FINAL (post-argument-compilation) handle:
+ * compiling arguments can shift defined-function indices, and every caller
+ * re-reads `ctx.funcMap` before emitting the `call`.
+ *
+ * Deliberately NOT applied to async/generator targets: their bodies do not run
+ * inside the call, so clearing the receiver around the synchronous half would
+ * install nothing useful and could move state the resumption protocol owns.
+ */
+export function resolvePlainCallThisTrampoline(
+  ctx: CodegenContext,
+  funcName: string,
+  targetFuncIdx: FuncHandle,
+): FuncHandle | undefined {
+  if (!ctx.funcReadsOwnThis.has(funcName)) return undefined;
+  if (ctx.liveFuncBindingGlobals?.has(funcName) === true) return undefined;
+  if (ctx.asyncFunctions.has(funcName) || ctx.generatorFunctions.has(funcName)) return undefined;
+  const targetFunc = definedFuncAt(ctx, targetFuncIdx);
+  // A name-keyed registry entry is only trustworthy while the handle still
+  // holds the function that name minted — a shadowed re-hoist moves names, not
+  // indices, so verify the identity rather than the map.
+  if (!targetFunc || targetFunc.name !== funcName) return undefined;
+  if (targetFunc.name.startsWith("__named_plain_call_")) return undefined;
+  const signature = ctx.mod.types[targetFunc.typeIdx];
+  if (signature?.kind !== "func" || signature.results.length > 1) return undefined;
+  return ensureNamedPlainCallTrampoline(ctx, funcName, targetFuncIdx, targetFunc, signature.params, signature.results);
+}
+
+/**
+ * (#6436) `f.call(undefined, …)` / `f.apply(undefined, [...])` — the legacy
+ * arms that evaluate the receiver and DROP it.
+ *
+ * The #3796 trampoline deliberately refuses a statically-`undefined` receiver
+ * (so #4203's provably-`null` bytes stay put), which left those two shapes
+ * reading whatever receiver a dispatcher had parked in `__current_this`. An
+ * `undefined` thisArgument is exactly an ABSENT one — §10.2.1.2 and §10.4.3
+ * both end at `undefined` for a strict callee and at the global object for a
+ * sloppy one — so the plain-call trampoline answers it verbatim. A provably
+ * `null` receiver is NOT the same thing and stays on the marker path.
+ */
+export function resolveUndefinedReceiverTrampoline(
+  ctx: CodegenContext,
+  funcName: string,
+  targetFuncIdx: FuncHandle,
+  receiver: ts.Expression | undefined,
+): FuncHandle | undefined {
+  if (receiver === undefined) return undefined;
+  if (!factIsStaticallyUndefined(ctx.oracle.typeFactOf(unwrap(receiver)))) return undefined;
+  return resolvePlainCallThisTrampoline(ctx, funcName, targetFuncIdx);
 }
 
 /**
@@ -423,14 +598,34 @@ export function resolveNamedThisCallTarget(
   userArguments: readonly ts.Expression[],
 ): NamedThisCallTarget | undefined {
   const declaration = resolveDeclaration(ctx, callee);
-  const restIndex = declaration?.parameters.findIndex((parameter) => parameter.dotDotDotToken !== undefined) ?? -1;
-  // Rest arguments are packed into the declaration's single vec parameter by
-  // the ordinary `.call` lowering before it invokes this trampoline. Their
-  // source count therefore does not need to equal the Wasm parameter count;
-  // only every non-rest prefix parameter must be present.
-  const arityAdmitted =
-    declaration !== undefined &&
-    (restIndex >= 0 ? userArguments.length >= restIndex : userArguments.length === declaration.parameters.length);
+  // (#5341) ARITY NO LONGER GATES ADMISSION. It used to demand an exact match
+  // (`userArguments.length === declaration.parameters.length`, or `>= restIndex`
+  // for a rest declaration), and everything else fell through to the ordinary
+  // `.call` lowering — which evaluates `thisArg` and DROPS it. That is a silent
+  // wrong answer, not a refusal: axios' `transformData.call({ data: '' }, fns)`
+  // passes one argument into two formals, so `const config = this || defaults`
+  // read the ambient receiver and `context.data` answered `undefined` —
+  // `'undefinedfoo'` instead of `'foo'` (five more of the same shape in
+  // `transformResponse`).
+  //
+  // Admitting every arity is sound because the operand stack the caller builds
+  // is ALWAYS `paramTypes.length` wide, whatever the source argument count:
+  //   - under-application pads — optional-param sentinels first, then
+  //     `pushDefaultValue` for the remaining formals;
+  //   - over-application either marshals the overflow through the extras-argv
+  //     global (`emitSetExtrasArgv`, which pushes no operand) or compiles and
+  //     drops it;
+  //   - a rest declaration packs its trailing arguments into the single vec
+  //     parameter before the call.
+  // The trampoline's signature is exactly `[externref this, ...targetParams]`,
+  // so that stack fits it unchanged. The only thing admission changes is that
+  // the receiver is INSTALLED instead of discarded.
+  //
+  // Not fixed here, and still a residual: `arguments.length` inside an
+  // under-applied `.call` target reports the FORMAL count, not the supplied
+  // one. That is the argc-global protocol, independent of the receiver, and it
+  // reads the same before and after this change.
+
   // (#4203) Strictness of the TARGET, not of the call site: §10.4.3 keys the
   // receiver's treatment on the callee's own code. Only a strict target can
   // observe explicit-null differently from absent, so only a strict target
@@ -443,7 +638,6 @@ export function resolveNamedThisCallTarget(
     !declaration?.body ||
     ctx.liveFuncBindingGlobals?.has(callee.text) === true ||
     !declarationOwnsHandle(ctx, declaration, targetFuncIdx) ||
-    !arityAdmitted ||
     userArguments.some((argument) => ts.isSpreadElement(argument)) ||
     (declaration.parameters[0] &&
       ts.isIdentifier(declaration.parameters[0].name) &&

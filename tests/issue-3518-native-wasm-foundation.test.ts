@@ -320,9 +320,15 @@ describe("native Wasm foundation", () => {
     expect(resources).toEqual(before);
   });
 
-  it("keeps the model and physical primitives import-free and the native leaf type-only", () => {
+  it("keeps the model import-free and physical handles and the native leaf canonical type-only", () => {
     expect(dependencies(source("src/wasm/model/instructions.ts"))).toEqual([]);
-    expect(dependencies(source("src/wasm/physical/function-handles.ts"))).toEqual([]);
+    const handles = source("src/wasm/physical/function-handles.ts");
+    expect(dependencies(handles)).toEqual(['"../model/instructions.js"', '"../model/module-records.js"']);
+    const handleImports = ts
+      .createSourceFile("handles.ts", handles, ts.ScriptTarget.Latest, true)
+      .statements.filter(ts.isImportDeclaration);
+    expect(handleImports).toHaveLength(2);
+    for (const entry of handleImports) expect(entry.importClause?.isTypeOnly).toBe(true);
     const leaf = source("src/runtime/wasmgc/async/microtask-queue-bodies.ts");
     expect(dependencies(leaf)).toEqual(['"../../../wasm/model/instructions.js"']);
     const file = ts.createSourceFile("leaf.ts", leaf, ts.ScriptTarget.Latest, true);
@@ -358,6 +364,9 @@ describe("native Wasm foundation", () => {
     expect(importedNames("src/codegen/async-scheduler.ts", "./prepared-native-async-runtime.js")).toEqual([]);
     expect(importedNames("src/codegen/func-space.ts", "../wasm/physical/function-handles.js")).toEqual([
       "STABLE_FUNC_BASE",
+      "mintDefinedFunc",
+      "commitDefinedFuncOrdinal",
+      "appendDefinedFunc",
     ]);
   });
 

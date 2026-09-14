@@ -1,19 +1,19 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
+import { requireExactSourceFunctionOwner, requireExactPlanSiteOwner } from "../ir/planning-sites.js";
 import type { IrHostVoidCallbackLoweringPlan } from "../ir/ast-lowering-plans.js";
 import type { IrUnitId } from "../ir/identity.js";
 import { classifyIrFailure, type IrPreparationFailure } from "../ir/outcomes.js";
 import {
   IrPlanningIdentityInvariantError,
-  requireIrPlanningOwnerUnitId,
   requireIrPlanningSourceId,
   type IrPlanningIdentityContext,
   type IrPlanningIdentityInvariantCode,
 } from "../ir/planning-identity.js";
 import {
   IR_NATIVE_PROMISE_DELAY_FN,
-  type IrPromiseDelayLoweringPlan,
+  validatePromiseDelayPlansByIdentity,
   type IrPromiseDelayLoweringPlans,
 } from "../ir/promise-delay-lowering.js";
 import { HOST_CALLBACK_WRAP_CAPABILITY_RECORD } from "../ir/runtime-host-capabilities.js";
@@ -38,91 +38,6 @@ import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 
 function planningInvariant(code: IrPlanningIdentityInvariantCode, message: string): never {
   throw new IrPlanningIdentityInvariantError(code, message);
-}
-
-function requireExactSourceFunctionOwner(
-  sourceFile: ts.SourceFile,
-  identityContext: IrPlanningIdentityContext,
-  ownerUnitId: IrUnitId,
-  ownerName?: string,
-): ts.FunctionDeclaration {
-  const sourceId = requireIrPlanningSourceId(identityContext, sourceFile);
-  const unit = identityContext.unitByUnitId.get(ownerUnitId);
-  if (!unit) {
-    planningInvariant(
-      "missing-planning-owner",
-      `IR overlay owner ${ownerUnitId} is absent from the authoritative planning inventory`,
-    );
-  }
-  if (unit.sourceId !== sourceId) {
-    planningInvariant(
-      "source-record-mismatch",
-      `IR overlay owner ${ownerUnitId} belongs to source ${unit.sourceId}, not ${sourceId}`,
-    );
-  }
-  const terminal = identityContext.terminalByUnitId.get(ownerUnitId);
-  if (!terminal || terminal !== unit || !terminal.terminal || terminal.terminalOwnerId !== ownerUnitId) {
-    planningInvariant("terminal-record-mismatch", `IR overlay owner ${ownerUnitId} is not an exact terminal unit`);
-  }
-  const declaration = identityContext.declarationByUnitId.get(ownerUnitId);
-  if (
-    !declaration ||
-    !ts.isFunctionDeclaration(declaration) ||
-    declaration.parent !== sourceFile ||
-    !sourceFile.statements.includes(declaration) ||
-    !declaration.body ||
-    identityContext.unitIdByDeclaration.get(declaration) !== ownerUnitId
-  ) {
-    planningInvariant(
-      "unit-record-mismatch",
-      `IR overlay owner ${ownerUnitId} is not an exact executable function in ${sourceFile.fileName}`,
-    );
-  }
-  if (ownerName !== undefined && terminal.legacyMatchName !== ownerName) {
-    planningInvariant(
-      "unit-record-mismatch",
-      `IR overlay owner label ${JSON.stringify(ownerName)} does not match ${ownerUnitId}`,
-    );
-  }
-  return declaration;
-}
-
-function exactNodeIsReachableFrom(root: ts.Node, target: ts.Node): boolean {
-  let reachable = false;
-  const visit = (node: ts.Node): void => {
-    if (reachable) return;
-    if (node === target) {
-      reachable = true;
-      return;
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(root);
-  return reachable;
-}
-
-function requireExactPlanSiteOwner(
-  sourceFile: ts.SourceFile,
-  identityContext: IrPlanningIdentityContext,
-  ownerUnitId: IrUnitId,
-  ownerName: string,
-  site: ts.Node,
-  planKind: string,
-): void {
-  const owner = requireExactSourceFunctionOwner(sourceFile, identityContext, ownerUnitId, ownerName);
-  const actualOwner = requireIrPlanningOwnerUnitId(identityContext, site);
-  if (actualOwner !== ownerUnitId) {
-    planningInvariant(
-      "terminal-record-mismatch",
-      `${planKind} site belongs to ${actualOwner}, not retained owner ${ownerUnitId}`,
-    );
-  }
-  if (!exactNodeIsReachableFrom(owner.body!, site)) {
-    planningInvariant(
-      "unit-record-mismatch",
-      `${planKind} site is no longer reachable from the exact current body of ${ownerUnitId}`,
-    );
-  }
 }
 
 function validateRetainedFunctionUnitIds(
@@ -640,49 +555,6 @@ function hasUncontestedExactEnvFunctionImport(
     !ctx.mod.functions.some((fn) => fn.name === name) &&
     ctx.mod.imports.filter((imported) => imported.desc.kind === "func" && imported.name === name).length === 1
   );
-}
-
-function validatePromiseDelayPlansByIdentity(
-  sourceFile: ts.SourceFile,
-  identityContext: IrPlanningIdentityContext,
-  plans: IrPromiseDelayLoweringPlans,
-): readonly IrPromiseDelayLoweringPlan[] {
-  const uniquePlans = new Set<IrPromiseDelayLoweringPlan>();
-  const collect = <TNode extends ts.Node>(
-    entries: ReadonlyMap<TNode, IrPromiseDelayLoweringPlan>,
-    expectedNode: (plan: IrPromiseDelayLoweringPlan) => ts.Node,
-    kind: string,
-  ): void => {
-    for (const [node, plan] of entries) {
-      if (node !== expectedNode(plan)) {
-        planningInvariant("unit-record-mismatch", `${kind} map does not retain its exact certified AST node`);
-      }
-      uniquePlans.add(plan);
-    }
-  };
-  collect(plans.constructions, (plan) => plan.construction, "Promise construction");
-  collect(plans.timers, (plan) => plan.timerCall, "Promise timer");
-  collect(plans.resolves, (plan) => plan.resolveCall, "Promise resolve");
-
-  for (const plan of uniquePlans) {
-    if (
-      plans.constructions.get(plan.construction) !== plan ||
-      plans.timers.get(plan.timerCall) !== plan ||
-      plans.resolves.get(plan.resolveCall) !== plan
-    ) {
-      planningInvariant("unit-record-mismatch", "Promise delay plan is incomplete across its exact AST-site maps");
-    }
-    for (const [site, kind] of [
-      [plan.construction, "Promise construction"],
-      [plan.executor, "Promise executor"],
-      [plan.timerCall, "Promise timer"],
-      [plan.timerCallback, "Promise timer callback"],
-      [plan.resolveCall, "Promise resolve"],
-    ] as const) {
-      requireExactPlanSiteOwner(sourceFile, identityContext, plan.ownerUnitId, plan.ownerName, site, `${kind} plan`);
-    }
-  }
-  return [...uniquePlans];
 }
 
 /** Exact Promise preparation keyed by structural terminal owner. */

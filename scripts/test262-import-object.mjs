@@ -169,6 +169,8 @@ function announceMissingLinkedProjectReset() {
   );
 }
 
+let inProcessLinkedRuntime;
+
 /**
  * Instantiate a compiled test262 module with the namespaces it needs.
  *
@@ -217,9 +219,20 @@ export async function instantiateTest262Module(binary, importObj, options = {}) 
   // struct field with the reader's `ref.test`-miss default (0). The in-process
   // lanes pass nothing and get the `src/` graph they already compile against.
   const linkedModules = options.linkedModules ?? [];
+  // Retain only the runtime module identity, never a project's exports. An
+  // unlinked row following a linked row must retire the same decoder registry.
+  // Do not introduce a source import in bundle-only, never-linked workers.
+  const linkedRuntime =
+    options.linkedRuntime ??
+    (linkedModules.length > 0
+      ? (inProcessLinkedRuntime ??= await import("../src/linked-provider-runtime.js"))
+      : inProcessLinkedRuntime);
+  if (linkedRuntime) {
+    if (typeof linkedRuntime.resetLinkedProjectRegistry === "function") linkedRuntime.resetLinkedProjectRegistry();
+    else announceMissingLinkedProjectReset();
+  }
   if (linkedModules.length > 0) {
-    const { instantiateLinkedProviders, wireCompiledInstance, resetLinkedProjectRegistry } =
-      options.linkedRuntime ?? (await import("../src/linked-provider-runtime.js"));
+    const { instantiateLinkedProviders, wireCompiledInstance } = linkedRuntime;
     // (#5364) Retire the PREVIOUS row's linked project before this one
     // registers. Both test262 drivers run many rows in one process — the
     // sharded worker recycles a fork only on FATAL — and since #5353 every
@@ -231,8 +244,7 @@ export async function instantiateTest262Module(binary, importObj, options = {}) 
     // here rather than at each driver keeps the #4162 rule (one place turns a
     // binary into an instance) and guarantees the reset lands in the same
     // runtime copy as the registration above.
-    if (typeof resetLinkedProjectRegistry === "function") resetLinkedProjectRegistry();
-    else announceMissingLinkedProjectReset();
+    // Registry retirement above also covers a following unlinked invocation.
     // (#5364) The registry is only HALF of what a finished project leaves
     // behind. The compiled Temporal polyfill also claims two realm globals for
     // its internal-slot store, first-writer-wins, so every row after the first

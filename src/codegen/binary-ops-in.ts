@@ -17,6 +17,7 @@ import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import { recordRuntimeKeyClassMethodRead } from "./runtime-key-class-methods.js"; // (#5358)
+import { recordStandaloneRuntimeKeyClassMemberRead } from "./standalone-class-dyn-member.js"; // (#5383 S2h)
 import { isNumericIndexExpression } from "./property-access.js"; // (#5358)
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import {
@@ -828,7 +829,12 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     if (rightWasm.kind === "externref" || rightWasm.kind === "anyref") {
       // (#5358) The host answers a class instance's prototype methods through
       // the same `__member_kind_<key>` bridge the read uses — publish them.
-      if (!isNumericIndexExpression(ctx, expr.left, fctx)) recordRuntimeKeyClassMethodRead(ctx, undefined);
+      if (!isNumericIndexExpression(ctx, expr.left, fctx)) {
+        recordRuntimeKeyClassMethodRead(ctx, undefined);
+        // (#5383 S2h) `k in c` has the same prototype gap as the read, and
+        // `__extern_has` delegates through the same `__class_proto_lookup`.
+        recordStandaloneRuntimeKeyClassMemberRead(ctx, undefined);
+      }
       const hasIdx = ensureLateImport(
         ctx,
         "__extern_has",

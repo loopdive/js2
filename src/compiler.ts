@@ -1416,6 +1416,61 @@ function finalizePipelineModule(
  * wasm-opt is requested (#1757 / GH #986), so normal compilation and
  * standalone bundles do not need to embed Binaryen.
  */
+/**
+ * Syntactic diagnostics that must NOT reject a compile.
+ *
+ * (#3451) Module-scope so the MULTI-file gate can apply the same allowlist the
+ * single-file gate does. Every entry is a TypeScript diagnostic for source that
+ * is valid JavaScript (sloppy-mode octals, `yield` as an identifier, decorators,
+ * `1109 Expression expected` on test262's error-recovery patterns), so a gate
+ * that omits the list is not "stricter" — it is wrong, and it was measurably so
+ * for the linked test262 lane, which needs BOTH a real syntax gate and exactly
+ * the honest lane's tolerances.
+ */
+// Don't stop on type errors – the compiler can still generate code for many cases
+// Only stop on syntax errors (parsing failures), except tolerated ones
+const TOLERATED_SYNTAX_CODES = new Set([
+  1156, // "'let' declarations can only be declared inside a block"
+  1313, // "The body of an 'if' statement cannot be the empty statement"
+  1344, // "A label is not allowed here"
+  1182, // "A destructuring declaration must have an initializer"
+  1228, // "A type predicate is only allowed in return type position"
+  1163, // "A 'yield' expression is only allowed in a generator body" — syntactic diagnostic (#267)
+  1206, // "Decorators are not valid here" — decorator syntax tolerated, decorators ignored (#376)
+  1207, // "Decorators cannot be applied to multiple get/set accessors" (#376)
+  1436, // "Decorators must precede the name and all keywords of property declarations" (#376)
+  1486, // "Decorator used before 'export' here" (#376)
+  1497, // "Expression must be enclosed in parentheses to be used as a decorator" (#376)
+  1498, // "Invalid syntax in decorator" (#376)
+  8038, // "Decorators may not appear after 'export' or 'export default'" (#376)
+  1184, // "Modifiers cannot appear here" — valid JS patterns in test262 (#537)
+  1109, // "Expression expected" — valid JS patterns in test262 (#537)
+  1135, // "Argument expression expected" — valid JS patterns in test262 (#537)
+  1262, // "Identifier expected. 'X' is a reserved word at the top-level of a module" — await as identifier (#537)
+  1435, // "Unknown keyword or identifier. Did you mean 'X'?" — yield in nested generator contexts (#521)
+  1503, // "This regular expression flag is only available when targeting 'es2024'" (#654)
+  1232, // "An import declaration can only be used at the top level of a namespace or module" (#654)
+  1102, // "'delete' cannot be called on an identifier in strict mode" — valid sloppy-mode JS (#535)
+  1100, // "Invalid use of 'X' in strict mode" — sloppy-mode JS allows eval/arguments (#331)
+  1121, // "Octal literals are not allowed in strict mode" — valid sloppy-mode JS
+  1489, // "Decimals with leading zeros are not allowed" — valid sloppy-mode JS octal literals
+  // #2708 — legacy string-literal escapes (Annex B §12.9.4) are valid in sloppy
+  // mode. Don't let the TS scanner errors block compilation; node-checks.ts
+  // re-raises them as a hard early error in strict mode (mirrors 1121/1489).
+  1487, // "Octal escape sequences are not allowed." — sloppy-mode legacy octal in string
+  1488, // "Escape sequence '\\8'/'\\9' is not allowed." — sloppy-mode NonOctalDecimalEscape
+  // #2631/#1768 — "Signature declarations can only be used in TypeScript files."
+  // Fires under checkJs at the import site when a `.js` file imports a value
+  // whose synthetic `.d.ts` typing is a callable/overloaded declaration (e.g.
+  // `import { readSync, writeSync } from "node:fs"` resolving to the node-emu
+  // typings). Benign for codegen — the import resolves and lowers regardless.
+  // Scoped to this exact code so it does NOT relax the gate for genuine
+  // strict-mode SyntaxErrors (e.g. duplicate params), which the eval shim
+  // (src/runtime-eval.ts) relies on `compileSourceSync(...).success === false`
+  // to surface as a thrown SyntaxError (the 17 strict-eval test262 cases).
+  8017,
+]);
+
 export async function compileSource(
   source: string,
   options: CompileOptions = {},
@@ -1701,49 +1756,6 @@ export function compileSourceSync(
     }
   }
 
-  // Don't stop on type errors – the compiler can still generate code for many cases
-  // Only stop on syntax errors (parsing failures), except tolerated ones
-  const TOLERATED_SYNTAX_CODES = new Set([
-    1156, // "'let' declarations can only be declared inside a block"
-    1313, // "The body of an 'if' statement cannot be the empty statement"
-    1344, // "A label is not allowed here"
-    1182, // "A destructuring declaration must have an initializer"
-    1228, // "A type predicate is only allowed in return type position"
-    1163, // "A 'yield' expression is only allowed in a generator body" — syntactic diagnostic (#267)
-    1206, // "Decorators are not valid here" — decorator syntax tolerated, decorators ignored (#376)
-    1207, // "Decorators cannot be applied to multiple get/set accessors" (#376)
-    1436, // "Decorators must precede the name and all keywords of property declarations" (#376)
-    1486, // "Decorator used before 'export' here" (#376)
-    1497, // "Expression must be enclosed in parentheses to be used as a decorator" (#376)
-    1498, // "Invalid syntax in decorator" (#376)
-    8038, // "Decorators may not appear after 'export' or 'export default'" (#376)
-    1184, // "Modifiers cannot appear here" — valid JS patterns in test262 (#537)
-    1109, // "Expression expected" — valid JS patterns in test262 (#537)
-    1135, // "Argument expression expected" — valid JS patterns in test262 (#537)
-    1262, // "Identifier expected. 'X' is a reserved word at the top-level of a module" — await as identifier (#537)
-    1435, // "Unknown keyword or identifier. Did you mean 'X'?" — yield in nested generator contexts (#521)
-    1503, // "This regular expression flag is only available when targeting 'es2024'" (#654)
-    1232, // "An import declaration can only be used at the top level of a namespace or module" (#654)
-    1102, // "'delete' cannot be called on an identifier in strict mode" — valid sloppy-mode JS (#535)
-    1100, // "Invalid use of 'X' in strict mode" — sloppy-mode JS allows eval/arguments (#331)
-    1121, // "Octal literals are not allowed in strict mode" — valid sloppy-mode JS
-    1489, // "Decimals with leading zeros are not allowed" — valid sloppy-mode JS octal literals
-    // #2708 — legacy string-literal escapes (Annex B §12.9.4) are valid in sloppy
-    // mode. Don't let the TS scanner errors block compilation; node-checks.ts
-    // re-raises them as a hard early error in strict mode (mirrors 1121/1489).
-    1487, // "Octal escape sequences are not allowed." — sloppy-mode legacy octal in string
-    1488, // "Escape sequence '\\8'/'\\9' is not allowed." — sloppy-mode NonOctalDecimalEscape
-    // #2631/#1768 — "Signature declarations can only be used in TypeScript files."
-    // Fires under checkJs at the import site when a `.js` file imports a value
-    // whose synthetic `.d.ts` typing is a callable/overloaded declaration (e.g.
-    // `import { readSync, writeSync } from "node:fs"` resolving to the node-emu
-    // typings). Benign for codegen — the import resolves and lowers regardless.
-    // Scoped to this exact code so it does NOT relax the gate for genuine
-    // strict-mode SyntaxErrors (e.g. duplicate params), which the eval shim
-    // (src/runtime-eval.ts) relies on `compileSourceSync(...).success === false`
-    // to surface as a thrown SyntaxError (the 17 strict-eval test262 cases).
-    8017,
-  ]);
   const hasSyntaxErrors = ast.syntacticDiagnostics.some(
     (d) => d.category === 1 && d.file === ast.sourceFile && !TOLERATED_SYNTAX_CODES.has(d.code),
   );
@@ -1901,7 +1913,16 @@ export async function compileMultiSource(
   const hasSyntaxErrors =
     (!options.allowJs || options.strictJsSyntax === true) &&
     multiAst.syntacticDiagnostics.some(
-      (d) => d.category === 1 && isEntryDiag(d) && multiAst.sourceFiles.some((sf) => d.file === sf),
+      (d) =>
+        d.category === 1 &&
+        isEntryDiag(d) &&
+        multiAst.sourceFiles.some((sf) => d.file === sf) &&
+        // (#3451) Apply the SAME tolerance list the single-file gate applies.
+        // Without it `strictJsSyntax` is not "the single-file gate for a
+        // graph" but a stricter one, and every entry in that list names source
+        // that is valid JavaScript — so the linked test262 lane rejected rows
+        // the authoritative single-module lane compiles and runs.
+        !TOLERATED_SYNTAX_CODES.has(d.code),
     );
   const hasHardTypeErrors =
     !options.allowJs &&

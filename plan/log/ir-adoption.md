@@ -19,7 +19,7 @@ bucket work #2856–#2859.
 > `scripts/gen-ir-adoption.mjs`. The quality CI job runs `--check` and fails
 > when this file is stale. Per-kind rows are curated; the selector-bucket
 > table is cross-checked against the `IrFallbackReason` union in
-> `src/ir/select.ts`, so a new rejection reason there forces an update here.
+> `src/shared/contracts/ir-preparation-failure.ts`, so a new rejection reason there forces an update here.
 
 ## Status legend
 
@@ -115,7 +115,7 @@ bucket work #2856–#2859.
 | `EnumDeclaration`                               | direct-only | DECISION (#3583, 2026-08-15): adoptable, NOT deferred — but blocked on module-binding representation, not on anything enum-specific. Measured: `enum E { A = 1 }; … E.A` rejects at `expr-ident-not-in-scope`, and a plain module-level `const E = { A: 1 }` rejects at `expr-module-storage-unrepresentable` — the same gate, so an enum is just one more unrepresentable module binding. Re-owned from "(future)" to #2949, which owns that representation.                                                                                                                                            | #2949    |
 | `InterfaceDeclaration` / `TypeAliasDeclaration` | deferred    | Type-erased; no Wasm output.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | —        |
 
-## Selector buckets (one row = one reason from `src/ir/select.ts`)
+## Selector buckets (one row = one reason from `src/shared/contracts/ir-preparation-failure.ts`)
 
 These are the reasons a `FunctionDeclaration` ends up in `mixed` rather
 than `ir-owned`. Driving each unintended bucket to zero promotes the
@@ -235,7 +235,7 @@ This file is generated. To move a row:
    cannot regress).
 3. Drop the tracking issue reference if the issue closed.
 4. If you discovered a new rejection bucket, add it to the `IrFallbackReason`
-   union in `src/ir/select.ts` **and** to `BUCKETS` here — the generator
+   union in `src/shared/contracts/ir-preparation-failure.ts` **and** to `BUCKETS` here — the generator
    cross-checks the two and fails otherwise.
 
 The aim of #2855 is that every "unintended" bucket reaches zero. The
