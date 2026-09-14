@@ -1,9 +1,10 @@
 ---
 id: 6478
 title: "CLI startup: enable Node's compile cache and memoise the wasm-opt path probe (−0.7 s of a 3.1 s run)"
-status: ready
+status: done
 created: 2026-09-14
 updated: 2026-09-14
+completed: 2026-09-14
 priority: medium
 horizon: s
 feasibility: easy
@@ -85,6 +86,22 @@ Two facts that bound the design:
       memoised path (compare in the CLI test).
 - [ ] Node 20 path: `enableCompileCache` absent ⇒ CLI runs unchanged (guarded
       call; add a unit test that stubs the import to `undefined`).
+
+## Measured after (2026-09-14, `dist/cli.js` built from this change, same 5-line input, ×3)
+
+| run | before | after |
+| --- | --- | --- |
+| `-O0` | 2.2 s | **1.93 s** (compile cache enabled by the CLI itself; `JS2WASM_NO_COMPILE_CACHE=1` opts out) |
+| `-O3` | 3.1 s | 3.1 s — a one-shot CLI probes once either way; the memo pays off for pooled callers (one `--version` spawn per process instead of per compile, −0.29 s each) |
+
+Deviation from the plan: the memo is keyed by `process.env.PATH`, not
+unconditional. Three existing tests in `tests/wasm-opt-optimize.test.ts` swap a
+fake `wasm-opt` onto `PATH` inside one process and an unconditional memo served
+them the first resolution. Resolution depends on nothing but `PATH`, so keying
+on it keeps the memo exact. The compile-cache call lives in
+`src/cli-compile-cache.ts` (namespace import of `node:module`, because a named
+import of the absent Node 20 export is a load-time SyntaxError) and is verified
+to precede the bundle import in the emitted `dist/cli.js`.
 
 ## Not in scope (measured, documented for the record)
 
