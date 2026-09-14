@@ -6637,3 +6637,322 @@ unnamed entries and same-shaped OBJECT LITERALS) remain the cheapest codegen
 slice, and this slice adds two of its own: `gPO(<top-level function
 declaration>)` answers a different object from `Function.prototype`, and
 `gPO(<class value>)` answers neither.
+
+### S23 findings (2026-09-14) — the fourth cause is ONE missing member on ONE receiver brand: `Number.prototype.toPrecision` on a number PRIMITIVE
+
+Full write-up in
+[#6488](6488-standalone-number-primitive-dynamic-method-call.md). Branch
+`issue-5383-standalone-temporal-s23`, based on S22's FINAL tip `cd4a115386`.
+Every number below was measured on this tree, both labels, by file-copy revert
+of the three changed files (`.tmp/s23base/`; the new copies in
+`.tmp/s23/*.new.ts`).
+
+#### 1. Census — all nine rows, one emitter site, one property name
+
+The brief asked which of `resolved-callee-guard.ts`'s sites fires. Instrumenting
+every emitter of `called value is not a function` with a distinct marker
+(the guard's four splice points, plus `calls.ts`'s `wantIsCallableGuard`,
+`new-super.ts` and `fnctor-missing-method-dispatch.ts`) answered it in one run:
+
+```
+all 9 rows → TypeError: called value is not a function [RCG-null-PROTO-TERMINAL]
+```
+
+— `buildProtoNamedMethodMissArm`'s terminal miss, ABSENT (null) arm, inside
+`__extern_method_call`. No other site fires for any row.
+
+A second instrumentation pass replaced that site's constant message with the
+NAME local (param 1), which is the whole census:
+
+```
+all 9 rows → TypeError: toPrecision
+```
+
+One property, one receiver brand. The nine rows split across
+`Duration/compare` (5), `Duration/from` (1), `ZonedDateTime/prototype/add` (2)
+and `…/day` (1), and the shared input is large-magnitude arithmetic: the
+polyfill's exact-arithmetic helper does
+
+```js
+var o = n.toPrecision(a);
+return { div: r * Number.parseInt(o.slice(0, a - t), 10), … };
+```
+
+on a number PRIMITIVE reached through an `any` parameter.
+
+**Which clauses of the hand-off were wrong.** The brief offered three plausible
+fourth causes from S19's #6484 — the foldable-key `C[k]("A","B")` arg shift, the
+`o[k](a)` → `ref.null.extern` return, and the class-derived method VALUE — plus
+the `typeof <provider instance>` residual. **None of them is this bucket.** All
+four are about resolving a CALLEE through a dynamic key or a class value; this
+is a receiver-brand routing gap with a literal member name, and the census
+settles it before any of those hypotheses costs a probe. The brief's framing
+"instrument the sites as S18 did" was exactly right; its candidate list was not.
+
+#### 2. Root cause
+
+`__extern_method_call` dispatches `ref.test $Object` → resolve-and-apply, ELSE
+the vec / closure-prop arms, ELSE the terminal miss, whose consult is the
+#4160/#4176 proto-index store — the table of members a MODULE installed on a
+builtin prototype. A bare number primitive (`$box_number` / i31) is none of the
+first three, and `Number.prototype`'s BUILTIN members are not in the store, so
+the consult answered null and #4221's absent-callee guard turned that into the
+TypeError.
+
+The answer machinery was never missing. On the same base:
+
+| probe (`.tmp/s23/c1.mjs`, one module, no polyfill, no link) | base |
+| --- | --- |
+| `(1234.5678).toPrecision(3)` — static receiver | `"1.23e+3"` |
+| `f(x,p){return x.toPrecision(p)}; f(1234.5678,3)` | **TypeError** |
+| `Number.prototype["toPrecision"]` through an `any` binding | `"function"` |
+| that value `.call(1234.5678, 3)` | **`"1.23e+3"`, PRIMITIVE `this`** |
+
+So both halves of the route already work; only the routing for one receiver
+brand was absent.
+
+#### 3. Fix — `src/codegen/number-primitive-method-call.ts`
+
+A `block` + `br_if 0` arm unshifted onto `__extern_method_call`, in the
+`native-proto-method-call.ts` / `ta-dyn-method-call.ts` shape:
+`__typeof_number(recv)` → decline if the proto-index store answers (a module's
+own `Number.prototype` write, §10.5) → `__extern_get(%Number.prototype%, name)`
+→ decline if null → `__apply_closure(m, recv, args)` with the primitive as
+`this`.
+
+Two ordering facts, both measured rather than reasoned:
+
+- The singleton must be built **after** `__protoidx_companion` exists (so not
+  during the source scan) and **before** `unshiftExternGetProtoMethodArm` (so the
+  brand is in that pass's minted/seeded set). It therefore lives in its own
+  `prepareNumberPrimitiveMethodCallArm` pass between the two. **The first cut got
+  the second half wrong and measured as a complete no-op**: the arm was emitted,
+  the receiver test passed (verified by splicing a probe throw into the arm), and
+  resolution answered null on every call.
+- The arm must also take #4619's `ensureWrapperProtoDynamicMember` mint.
+  `__extern_get`'s `$NativeProto` ladder is assembled from MINTED members, and a
+  module that only CALLS `x.toPrecision(p)` never names
+  `Number.prototype.toPrecision`.
+
+#### 4. The one way a prepended arm can be WRONG, and it fired
+
+A member the MODULE installs on `Number.prototype` must outrank the builtin
+(§10.5). Without the store consult, `.tmp/s23/c5.mjs` measured
+`Number.prototype.toPrecision = f; x.toPrecision(2)` going from `"user2"` on
+base to the builtin's `"5.0"` — a wrong answer where the base was right. That is
+the only regression this slice produced, it was produced by the obvious version
+of the arm, and it is caught only by a probe that asserts the OVERRIDE, not the
+builtin. It has its own module in `tests/issue-6488-*.test.ts`.
+
+#### 5. Reduction — one standalone module (`.tmp/s23/c8.mjs`, both labels)
+
+| probe | base | S23 |
+| --- | --- | --- |
+| `f(1234.5678, 3)` | threw | **`"1.23e+3"`** |
+| `f0(1234.5678)` — no argument (§21.1.3.5 step 2) | threw | **`"1234.5678"`** |
+| `f(NaN, 3)` — non-finite before the range check (step 4) | threw | **`"NaN"`** |
+| `f(-1234.5678, 5)` | threw | **`"-1234.6"`** |
+| `f(0.0000001234, 3)` — `e < -6` | threw | **`"1.23e-7"`** |
+| `f(7, 2)` — i31 receiver | threw | **`"7.0"`** |
+| `f(new Number(1234.5678), 3)` — WRAPPER | threw | **`"1.23e+3"`** |
+| `f(1, 0)` — out of range (step 5) | **TypeError** | **RangeError** |
+| `(1234.5678).toPrecision(3)` static · `"abc"`/`true` receiver · `(5).nosuch()` | — | identical |
+
+The wrapper row is not this arm (`__typeof_number` is false for a `$Object`); it
+is the #4619 mint reaching `__extern_get`'s ladder, which the wrapper's existing
+`$Object` route already consults.
+
+`toFixed` / `toExponential` were tried in the member list and measured: they
+resolve to `refusalBodyFallback`'s stand-in and answer
+`"Number.prototype.toFixed is not yet implemented in --target standalone"` — a
+different TypeError, not a working call. Only `toPrecision` has a reflective
+native body (#5269 J-1), so the list is exactly one name and the other two are
+left on their base behaviour.
+
+#### 6. The real polyfill, linked, fresh cache (`cacheHit=false` on both prewarms)
+
+`.tmp/s23/link23.mjs`, 12 probes, both labels built on this tree.
+
+| probe | base | S23 |
+| --- | --- | --- |
+| `Duration.compare({days: 104249991374, …}, new Duration())` | TypeError | **`1`** |
+| `Duration.compare({milliseconds: 4.5e18, microseconds: 4.5e21}, same)` | TypeError | **`0`** |
+| `Duration.compare(d1, d2, {relativeTo: "1970-01-01T00:00-00:45:00[-00:45]"})` | TypeError | **`0`** |
+| `new ZonedDateTime(86400000000001n, "-00:02").day` | TypeError | **`1`** |
+| `new ZonedDateTime(1580511600000000000n, "-08:00").add({months: 1})` | TypeError | **answers** |
+| `PlainDate.from(…).toString()` · `Duration.from("P1Y").toJSON()` · `typeof PlainDate.compare` · `gPO(PlainDate.compare) === Function.prototype` | — | identical |
+
+Provider artifact **3,302,429 → 3,307,526 bytes (+5,097)**; consumer
+**259,458 → 273,050 (+13,592)**. Both are positive controls that the change
+arrives on both sides of the link — the provider is where the polyfill's own
+`n.toPrecision(k)` lives.
+
+#### 7. Regression sample — three families, 120 rows each
+
+`--target standalone`, provider linked, sequential, FRESH
+`JS2WASM_TEMPORAL_CACHE` per label (`cacheHit=false` on both prewarms), quickjs
+artifact + adapter present as real files, both labels on this tree.
+
+| family | rows | base pass | S23 pass | fail→pass | **pass→fail** | leaks |
+| --- | --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 97 | 97 | 0 | **0** | 0 |
+| `built-ins/Temporal/Duration/**` | 120 | 68 | **77** | 9 | **0** | 0 |
+| `built-ins/Temporal/ZonedDateTime/prototype/**` | 120 | 93 | **97** | 4 | **0** | 0 |
+| total | 360 | **258** | **271** | **13** | **0** | **0** |
+
+The `called value is not a function` text appears **10 times on base and 0 times
+on S23** across all 360 rows — retired, not displaced. (Ten, not nine: the tenth
+row, `Duration/from/argument-existing-object.js`, was scored `compile_error`
+under the 15 s cap in the post-S22 census and only its solo re-run shows the
+text. It flips fail→pass here too.)
+
+**Thirty rows needed a solo re-run** and every one was taken at 60 s on BOTH
+trees: the 16 CE↔status flips, plus the 14 rows that scored `compile_error` on
+BOTH labels — those cannot flip by construction, but leaving them capped
+understates both columns and makes the base incomparable with S22's row. All 30
+agree **row for row, with identical error messages** (0 status disagreements,
+0 message disagreements), so the table above has **no `compile_error` cell at
+all**. Per-row solo compile times are 13.2–24.6 s (base) and 13.4–26.5 s (S23)
+against the 15 s sampled budget — this family still sits ON the cap.
+
+The base column reads **258**, where S22 reported **256** for the same tree. The
+difference is method, not drift: S22 solo-corrected 21 rows, this slice 30, and
+the 9 extra are all in the both-CE set (2 of them pass solo). The delta is
+unaffected — both columns were measured here, the same way, on the same tree.
+
+#### 8. Must-not-move samples — 474 rows, per FILE, 0 flips
+
+Both labels on this tree, diffed per file (`.tmp/s23/mnmdiff.out`):
+
+| sample | rows | flips |
+| --- | --- | --- |
+| `Object/keys` + `expressions/object` + `Reflect/{get,has}` | 101 | **0** |
+| `Object/{entries,values,getOwnPropertyNames}` + `statements/for-in` | 102 | **0** |
+| `language/expressions/call/**` (first 150) | 92 | **0** |
+| `language/expressions/new/**` (first 100) | 59 | **0** |
+| `built-ins/Number/prototype/**` | 120 | **0** |
+
+The call/new samples are there because this touches call dispatch; the
+`Number/prototype` sample was added for this slice because it touches
+`Number.prototype`'s member ladder. (The first two roots yield fewer files than
+their limits — 92 and 59 — because those trees are smaller than the cap.)
+
+#### 9. Order preservation
+
+Corpus byte A/B — 42 modules × {gc, standalone}, 84 artifacts: **0 move on
+either lane.** Expected and WEAK for the same reason S21's and S22's were: no
+corpus module calls a Number format method through a dynamic receiver, so the
+demand scan never fires, and the gc lane cannot reach the arm at all
+(`ctx.standalone`). The §6 byte deltas are the positive control. Equivalence
+gate at baseline: **22 failing / 1720 passing**.
+
+#### 10. Gates
+
+`typecheck`, `lint`, prettier, `check-loc-budget`, `check-func-budget`,
+`check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`,
+`check:speculative-rollback`, `check:issue-ids:against-main`, `check:issues` —
+all green. **No new budget grant was needed.** The new module is classified in
+`scripts/compiler-boundaries.json` (`unmigrated` / `mixed-needs-split` /
+`backend-wasmgc`, matching its neighbours); the gate reports
+`inventoryValid: true` and fails only on the inherited
+`inventory-valid-architecture-incomplete`. Under `LOC_GATE_BASE=origin/main` the
+two inherited reds reproduce unchanged and are not from this slice:
+`src/runtime.ts` 19,822 > 19,601 and `buildImports` 308 > 300.
+
+The id **#6488** was verified `UNASSIGNED` on `origin/issue-assignments`
+(`claim-issue: OK — #6488 is unassigned (read origin/issue-assignments)`). The
+allocate WRITE could not be taken — `--allocate` exits **6**
+(`open-PR id scan FAILED … gh offline`), nothing reserved — and its `--dry-run`
+preview again offered **#6478**, which this branch has used since S17. That is
+the same trap S22 recorded, one slice later, unchanged: **with `gh` offline the
+dry-run preview is not a safe id on a stacked branch.** GitHub pushes return 403
+for every lane, so there is no branch or PR yet; `.tmp/pr-body.md` is ready.
+
+#### 11. Traps, carried forward and added to
+
+All S11–S22 traps still bite. New:
+
+- **Instrument the emitter, then instrument the NAME.** Two five-minute
+  instrumentation passes — one distinguishing the seven emitters of the message,
+  one replacing the message with `__extern_method_call`'s name parameter —
+  reduced a nine-row bucket to a single property name before any hypothesis was
+  tested. The hand-off's three candidate causes were all plausible and all
+  wrong; none survived contact with the marker.
+- **A finalize-time arm has TWO ordering constraints, and one of them is
+  invisible.** "Build it late enough that the runtime exists" is the obvious one.
+  "Build it early enough that the pass which assembles the lookup table can see
+  your brand" is not, and getting it wrong produces a fix that emits, passes its
+  own receiver test, and answers null — i.e. measures as a perfect no-op with no
+  error anywhere. The probe that found it was a throw spliced into the arm; a
+  byte diff would have shown the arm present and told you nothing.
+- **When a prepended arm answers a builtin, ask what the MODULE may have put
+  there.** The proto-index store exists precisely because a module can install
+  its own `Number.prototype.toPrecision`, and the terminal miss this arm runs
+  ahead of consults it. Prepending without that consult is a silent
+  wrong-answer, and the probe that catches it has to assert the user's value —
+  a probe asserting "the call works" passes either way.
+- **A module-local control is only valid in the module you measured it in.**
+  `(1234.5678).toPrecision(3)` answers correctly in a module without a
+  `class C { toPrecision(p) }`, and TRAPS in a module with one — identically on
+  both trees. The first draft of this slice's test asserted the correct value
+  and failed on the branch for a reason that had nothing to do with the branch.
+  Measure the control in the exact module the test compiles.
+
+### Artifacts (S23)
+
+`.tmp/s23/`, `.tmp/s23base/`, `.tmp/s23fam/`, `.tmp/s23mnm/` in
+`/home/user/js2/.claude/worktrees/agent-a06a4b559afff05cd`: probes `c1`–`c8`
+with their `-base`/`-new` outs, `link23.mjs` / `link24.mjs` with both label runs,
+the corpus hashes `corpus-{base,new}.jsonl`, the per-chunk family TSVs
+`{pd,du,zdt}-{base,new}.p{0,60}.tsv`, `solo-{base,new}.{a,b}.tsv`,
+`soloce-{base,new}.{a,b}.tsv`, `nine-{base,instr,instr2,new}.tsv`, the 22
+must-not-move TSVs per label, the revert copies in `.tmp/s23base/` and the new
+copies in `.tmp/s23/*.new.ts`, and the drivers `{single,link23,link24}.mjs`,
+`{flips,famdiff3,mnmdiff}.py`, `{fam,nine,solo3,soloce,mnm2}.sh`,
+`{family,solo,prewarm,corpus}.mts`.
+
+### Acceptance criterion 4 — S23 update
+
+**MET.** The `TypeError: called value is not a function` bucket moves from
+**10 rows to 0** — the whole of it, not a share. Over the 360-row three-family
+sample that is **258 → 271**, with **0 legitimate `pass→fail`**, **0
+`__temporal_*` leaks**, **474** must-not-move rows flat per file across five
+samples, both corpus lanes byte-identical, and the equivalence gate at baseline.
+
+### Next top bucket after S23
+
+Re-counted over the 360 rows on the new label, with the solo verdicts
+substituted (so no row is scored `compile_error`):
+
+| bucket | rows |
+| --- | --- |
+| `TypeError: expected a string, not null` | **9** |
+| `TypeError: Object method called on null or undefined` | 6 |
+| `Test262Error: Calling as constructor … Expected a TypeError` | 4 |
+| `TypeError: Proxy get trap is not callable` | 4 |
+| `TypeError: Cannot access property on null or undefined at 164:22` | 4 |
+| `RuntimeError: dereferencing a null pointer in __closure_N()` | 4 |
+| `TypeError: Cannot read properties of undefined (reading 'apply'/'abs')` | 4 |
+| `Test262Error: Built-in objects must be extensible.` | 2 |
+
+(89 non-pass rows in total; a further 13 are bare `Test262Error:` assertion
+texts with no shared message, which is a grab-bag rather than a bucket.)
+
+`called value is not a function` is **gone from the list for the first time in
+six slices**. The top bucket is now `expected a string, not null` at 9.
+
+The `calendar-temporal-object` family the S22 hand-off flagged as the cheap trio
+is **four rows, not three** — `PlainDate/compare`, `PlainDate/from`,
+`Duration/compare` and `ZonedDateTime/prototype/equals` — and all four answer the
+SAME error, `TypeError: Object method called on null or undefined`. That is four
+of the six rows in the second bucket, so one cause plausibly retires two thirds
+of it. All four were scored `compile_error` under the 15 s cap in the sampled
+run and only show their real verdict solo, which is why the count has been wrong
+twice; the solo re-runs here agree on both labels, so it is a real target.
+
+Two residuals this slice adds, both reduced and neither fixed: `x.toFixed(d)` /
+`x.toExponential(d)` through an `any` receiver still throw, because their
+REFLECTIVE bodies refuse (`number-proto-format.ts` answers `toPrecision` only) —
+wiring §21.1.3.2/§21.1.3.3 there would make the member list a three-name
+constant and cost nothing else. And `x.toString(radix)` through an `any`
+receiver still throws while `x.toString()` does not.
