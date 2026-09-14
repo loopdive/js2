@@ -1,5 +1,6 @@
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { materializeFnctorTwinCaptures } from "../fnctor-twin-captures.js";
+import { resolveStaticSpreadArgs } from "../static-spread-arity.js"; // (#6460)
 import { emitLayoutSelectingStructNew, maybeEmitLayoutHint } from "../fnctor-layout-emit.js"; // (#3927) per-type layouts
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
@@ -3921,7 +3922,18 @@ function tryCompileNativeConstructFromValue(
 
   // A non-flattenable spread has a RUNTIME argument count, so no fixed-arity
   // driver fits; decline rather than construct with the wrong argument list.
-  const args = flattenCallArgs(rawArgs) ?? rawArgs;
+  //
+  // (#6460) …but "non-flattenable" was reading `flattenCallArgs`, which only
+  // understands an INLINE array literal. `const args = [1, 1, 1]` followed by
+  // `new Temporal.Duration(...args)` — the shape every
+  // `built-ins/Temporal/Duration/*-undefined.js` row uses — has a perfectly
+  // static arity, and declining it here is what made that `new` answer `null`
+  // (the corpus then reports `Cannot access property on null or undefined`
+  // from the harness's `duration.years`). Resolve the static arity first;
+  // genuinely runtime-length spreads still decline.
+  const args =
+    flattenCallArgs(rawArgs) ??
+    (ctx.standalone || ctx.wasi ? (resolveStaticSpreadArgs(ctx, rawArgs) ?? rawArgs) : rawArgs);
   if (args.some((a) => ts.isSpreadElement(a))) return undefined;
   if (args.length > MAX_NATIVE_CONSTRUCT_ARITY) return undefined;
 
@@ -4167,9 +4179,16 @@ function emitDynamicNewFallback(
   const hasSpread = rawArgs.some((a) => ts.isSpreadElement(a));
   let useRuntimeArgv = false;
   if (hasSpread) {
-    const flat = flattenCallArgs(rawArgs);
+    // (#6460) `flattenCallArgs` only understands an INLINE array literal. In
+    // the standalone lane a named `const args = [1, 1, 1]` source is the
+    // corpus's dominant spelling (`Temporal/Duration/*-undefined.js`), and the
+    // runtime-argv arm below cannot serve a callee the module does not own —
+    // the construct drivers are minted per ARITY. Resolve the static arity
+    // first; only the genuinely runtime-length spreads fall through.
+    const flat =
+      flattenCallArgs(rawArgs) ?? (ctx.standalone || ctx.wasi ? (resolveStaticSpreadArgs(ctx, rawArgs) ?? null) : null);
     if (flat !== null) {
-      args = flat; // all spreads were array literals — flatten at compile time
+      args = flat; // all spreads had a statically-known element list
     } else {
       useRuntimeArgv = true; // a non-literal spread is present — runtime argv
     }
