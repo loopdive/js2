@@ -13,6 +13,7 @@
 // Native string declarations are borrowed from the canonical backend recipe;
 // no resource allocation, codegen context or frontend code enters this plan.
 
+import { nativeStringOutputAbiBindings } from "../backend/wasmgc/program/native-string-output-abi.js";
 import { planHostNumberBoundary, type HostNumberBoundarySetup } from "./program/host-number-boundary-setup.js";
 import { planHostAsyncDynamicUnits, preparedHostAsyncDynamicCarrier } from "./program/host-async-dynamic.js";
 import { irGlobalBindingKey, irTypeBindingKey, irSupportGlobalRef, irSourceTypeRef } from "./abi-bindings.js";
@@ -602,6 +603,7 @@ function nativeStringSetup(
   const current = planNativeStringValuePhysical(input.demands, {
     representation: "native-string",
     utf8Storage: options.utf8Storage,
+    stringConcatEmptyIdentity: options.stringConcatEmptyIdentity ?? true,
   });
   if (current.kind !== "planned") nativeInvalid("native input has no supported current physical recipe");
   nativeSame(input.plan, current.plan, "native declarations or selection changed");
@@ -686,6 +688,17 @@ function nativeStringSetup(
   );
   const unbox = nativeUnboxBinding(context, input, baseOrder + unboxIndex);
   if (unbox) add(unbox);
+  if (input.plan.output) {
+    if (!input.outputRequirements) nativeInvalid("missing output requirements for ABI join");
+    const offset = input.plan.declarations.findIndex((row) => row.key === input.plan.output!.declarations[0]?.key);
+    if (offset < 0) nativeInvalid("output recipe is detached from aggregate declarations");
+    for (const binding of nativeStringOutputAbiBindings(
+      input.outputRequirements,
+      input.plan.output,
+      baseOrder + offset,
+    ))
+      add(binding);
+  }
   const seen = new Set<string>();
   for (const [index, declaration] of input.plan.declarations.entries()) {
     if (seen.has(declaration.key)) nativeInvalid("duplicate resource declaration key");
@@ -1098,6 +1111,7 @@ export function planPhysicalSetup(
     const sourcePlan = planNativeStringValuePhysical(collectNativeStringValueDemands(program, projection), {
       representation: "native-string",
       utf8Storage: options.utf8Storage,
+      stringConcatEmptyIdentity: options.stringConcatEmptyIdentity ?? true,
     });
     if (sourcePlan.kind !== "none") {
       if (sourcePlan.kind !== "planned") return sourcePlan;
@@ -1219,7 +1233,7 @@ export function planPhysicalSetup(
   }
   appendPhysicalImports(hostNumberBoundary?.imports ?? [], importedFunctions);
   appendAsyncPhysicalResources(asyncFrames, importedFunctions, exports);
-  const exportNames = new Set<string>();
+  const exportNames = new Set<string>(native?.plan.output?.stdout ? ["__stdout_prepare", "__stdout_char"] : []);
   for (const exported of exports) {
     if (exportNames.has(exported.externalName)) gaps.add(`export ${exported.externalName} is declared twice`);
     exportNames.add(exported.externalName);
