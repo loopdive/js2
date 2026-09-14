@@ -179,6 +179,7 @@ import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-sessi
 import { sourceFunctionHandleForDeclaration } from "./program-abi-source-callable-planning.js";
 import { stripHostBridgeExports } from "./host-bridge-exports.js";
 import { publishStandaloneLinkBoundaryExports } from "./standalone-link-boundary.js"; // (#5383 S2d)
+import { finalizeStandaloneLinkReversePeer } from "./standalone-link-reverse-peer.js"; // (#5383 S17)
 import { fillLinkBoundaryToStringTagTerminal } from "./link-boundary-tostring.js"; // (#5406)
 import { eliminateDeadLayoutAndPlanProgramAbi } from "./program-abi-finalization.js";
 import { emitDataStructHostBridgeManifest } from "./data-struct-host-bridge.js";
@@ -7097,6 +7098,12 @@ function finalizeStandaloneTimerCallbackExports(ctx: CodegenContext): void {
   // finalize. A provider that declines keeps the reserved "not mine" body.
   fillLinkBoundaryToStringTagTerminal(ctx);
   publishStandaloneLinkBoundaryExports(ctx);
+  // (#5383 S17 / #6478) The reverse channel's two finalize duties, in the same
+  // post-strip window and for the same reason: the provider publishes its
+  // installer under the ABI name, and the consumer prepends the install call to
+  // `__module_init`. Both resolve through `funcMap`, because every late import
+  // since registration shifted the indices.
+  finalizeStandaloneLinkReversePeer(ctx);
 }
 
 /**

@@ -5248,3 +5248,225 @@ this tree by file-copy revert, with an intermediate #6476-only label, so the
 attribution between the two slices is measured rather than argued. No
 full-corpus number is claimed; a corpus run remains the tech lead's to
 schedule.
+
+### S17 findings (2026-09-14) — the boundary attribution was RIGHT for the first time in eight slices; the link turns out to be ONE-DIRECTIONAL, and the linked lane goes 202 → 232
+
+Full write-up in `plan/issues/6478-standalone-link-reverse-peer-read.md`.
+
+#### 1. The hand-off attribution reproduced, and the reduction took one probe set
+
+S16 handed over "the provider's `Get(bag, "year")` on a consumer-built bag
+answers `undefined`", with three candidate mechanisms: `link_member_get` on a
+foreign `$Object`, string-key identity across modules, and module-local
+hidden-class tables. **None of the three.** The first host-free linked-pair probe
+set (`.tmp/s17/c1.mjs`, `c2.mjs`) split the answer on the CARRIER:
+
+| consumer-built carrier, read by the PROVIDER | linked, base | single module |
+| --- | --- | --- |
+| object literal `{ year: 1976 }` → `o[k]` / `o.year` | **`undefined`** | `1976` |
+| class instance → `o[k]` | **`undefined`** | `1976` |
+| `Object.keys(bag)` | **`""`** | `year,monthCode,day` |
+| `k in bag` | **`false`** | `true` |
+| `{}` then a COMPUTED write · `Object.create(null)` bag | `1976` | `1976` |
+| array `length`/index, string `length` | ok | ok |
+
+A generic `$Object` is a canonical runtime type, so the provider decodes it; an
+object literal and a class instance are CLOSED structs the CONSUMER declared and
+appear in no other module's ladder. The key was never the variable — literal,
+dot, `const`-bound and sorted-array-element keys all behave identically.
+
+After seven wrong attributions, the one that reproduced is also the one where the
+reduction disagreed with all three NAMED mechanisms while confirming the AREA.
+"The boundary" was right; "`link_member_get`" was not, because the miss is on the
+side that has no peer at all.
+
+#### 2. Root cause
+
+`standalone-link-boundary.ts` (S2d) is consumer→provider ONLY: the provider
+exports its generic terminals, the consumer imports them on a miss. A provider
+has no peer, so its own miss arms have nothing to call. That shape cannot be
+mirrored — wasm imports may not be cyclic, and the provider is compiled and
+CACHED before any consumer exists.
+
+**Fix (#6478): install the channel at runtime instead of linking it.** The
+provider exports one setter and holds nullable typed-funcref globals; the
+consumer calls the setter from the top of `__module_init` with `ref.func` of its
+own normalising terminals; the provider's miss arms `call_ref` through the
+globals. A funcref across a wasm→wasm link IS the callee, so nothing is copied,
+and a provider whose consumer never installs is unchanged.
+
+Two design points that are load-bearing rather than decorative:
+
+- **The re-entrancy guard is on the reverse hop, not on "am I serving a consumer
+  request".** The obvious guard refuses exactly the reads this exists to serve:
+  the provider is normally already inside a consumer-initiated call when it reads
+  the bag (`PlainDate.from(bag)` runs provider code for its whole duration). It
+  is restored through `try`/`catch_all` + `rethrow`, because a provider throw
+  propagating out of a reverse call is ordinary (S2m) and a leaked flag is a
+  wrong ANSWER for the rest of the instance's life.
+- **`__extern_get` needed its OWN arm shape, and the first cut of this slice was
+  WRONG without it.** The forward arm reads `null` as "not the peer's"; a bag
+  field whose VALUE is `null` arrives as the same `ref.null.extern`. The first
+  measured run turned `{ calendar: null }` into an ABSENT key, the polyfill's
+  `!== undefined` guard admitted it, and three
+  `*-propertybag-calendar-wrong-type` rows stopped throwing. The hop now asks a
+  second, consumer-side question on exactly that path
+  (`__extern_get(o,k) is null && __extern_has(o,k)`, computed where the raw
+  answer is still visible) and the arm returns the null only then. **No gate
+  caught that; the three-family run did.**
+
+#### 3. The three-family sample, LINKED, re-measured
+
+120 rows each, `--target standalone`, provider linked, families **sequential**,
+FRESH `JS2WASM_TEMPORAL_CACHE` per label (`cacheHit=false` on both prewarms),
+quickjs artifact **and** adapter present. Base is this worktree's own base run,
+taken by file-copy revert of the two edited source files ON THIS TREE; it
+reproduces S16's published numbers exactly (78 / 52 / 72), which is what makes
+the delta attributable. The provider binary differs between labels —
+3,277,227 B (base) vs 3,277,717 B (S17) — independent proof the compiler change
+reached the linked artifact.
+
+| family | rows | base pass | **S17 pass** | fail | ce | pass→fail |
+| --- | --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 78 | **92** | 25 | 3 | 2 |
+| `built-ins/Temporal/Duration/**` | 120 | 52 | **56** | 61 | 3 | 0 |
+| `built-ins/Temporal/ZonedDateTime/prototype/**` | 120 | 72 | **84** | 34 | 2 | 1 |
+| **total** | **360** | **202** | **232** | **120** | **8** | **3** |
+
+`fail→pass`: **33**. `__temporal_*` leaks: **0** in all six TSVs.
+
+**Two CE flips are load artifacts, and the solo re-run says so.** Both labels ran
+with the must-not-move and byte-A/B jobs alongside them (symmetric, by design),
+and two files crossed the 15 s compile budget in one label only. Re-run SOLO at
+60 s on BOTH trees they agree exactly: `PlainDate/basic.js` **passes** on both,
+`PlainDate/compare/argument-plaindatetime.js` **fails** on both with the
+identical message. Counting those verdicts the S17 total is **233**.
+
+#### 4. The three `pass→fail`, and why they are not this slice's
+
+All three are the same test, `*-propertybag-calendar-wrong-type.js`, which loops
+over ten wrong-typed `calendar` values and fails at the first that does not throw
+a TypeError. They now fail at the LAST entry, `new Temporal.Duration()` — a
+PROVIDER-owned instance.
+
+The base-tree control (`.tmp/s17/t2.mjs`, run on both trees) settles it:
+
+| probe, real linked provider | base | S17 |
+| --- | --- | --- |
+| bound bag, `calendar: null` / `true` / `1` / `{}` / `Symbol()` | THREW TypeError | THREW TypeError |
+| bound bag, `calendar: "iso8601"` (**must not throw**) | **THREW TypeError** | NO-THROW ✓ |
+| bound bag, `calendar: new Duration()` | THREW TypeError | THREW **RangeError** |
+| **INLINE** bag, `calendar: new Duration()` | THREW **RangeError** | THREW **RangeError** |
+| **`Object.create(null)`** bag, same | THREW **RangeError** | THREW **RangeError** |
+| `typeof <provider Duration instance>` | `"function"` | `"function"` |
+
+On base every BOUND-bag row throws TypeError including the control that must not
+— the bag was simply unreadable, so an unrelated TypeError always came out and
+the test passed by accident. The two paths that never used this channel already
+answered RangeError on base, so the wrong error KIND for a provider-owned
+instance is **pre-existing**: it is the S11 `typeof` residual (`"function"`)
+reaching a different polyfill branch. S17 replaces an accidental pass with an
+exposure of that defect.
+
+#### 5. Top error buckets, LINKED, S17 (all three families pooled, 120 fail)
+
+15 `called value is not a function` (two call sites, 8 + 7) · 7 `prototype
+Expected SameValue(«null», «[object Function]»)` · 7 `Missing internal slot
+slot-years` · 5 `Object method called on null or undefined` · 5 `__closure_N()`
+null pointer · 5 `Expected a RangeError but got a undefined` · 4 `Calling as
+constructor Expected a TypeError` · 4 `Proxy get trap is not callable`.
+
+**The two buckets S16 attributed to this cause are GONE**: `required property
+'timeZone' missing` **7 → 0** and `year is required` **15 → 0** (S16 counted 4
+in one family; pooled over all three it was 15). Total fails 151 → 120, and no
+bucket grew.
+
+#### 6. Residuals of THIS family, each reduced
+
+| residual | probe | answers | should be |
+| --- | --- | --- | --- |
+| provider WRITES a consumer bag | `.tmp/s17/c2.mjs` | old value | new value |
+| provider calls a consumer method (15 rows) | `.tmp/s17/c3.mjs` | `called value is not a function` | `7` |
+| `typeof <provider instance>` | `.tmp/s17/t2.mjs` | `"function"` | `"object"` |
+| `PlainDate#add(bag)` / `#until(…, options)` | `.tmp/s17/t1.mjs` | `""` on BOTH trees | a value |
+
+**The `called value is not a function` bucket — now the LARGEST at 15 pooled
+rows — is one step from fixable.**
+After this slice `typeof o.m` inside the provider answers `"function"` — the
+reverse GET hands the consumer's closure back correctly — and the CALL still
+throws, from the `wantIsCallableGuard` in `emitDynamicCall`
+(`expressions/calls.ts` ~L4851): `__is_callable` is a module-local ladder that
+cannot recognise a foreign closure and refuses before `__apply_closure` is
+reached. A consumer closure passed as a plain ARGUMENT and called already works,
+which is what makes the guard — not the apply — the attributed terminal. The
+forward direction answered the same question with the `callableKind` terminal;
+the reverse needs its twin spliced ahead of `__is_callable`'s terminal `0`.
+
+**A reverse `methodCall` hop was built and then REMOVED.** With the guard
+throwing first it never fired in any probed shape, and an unexercised arm in a
+provider's hot terminal is not worth its global.
+
+#### 7. Two samples that must NOT move, and neither did
+
+| sample | rows | base | S17 | flips |
+| --- | --- | --- | --- | --- |
+| `Object/keys` + `expressions/object` + `Reflect/{get,has}` | 81 | 77 pass / 4 fail | identical | **0** |
+| `Object/{entries,values,getOwnPropertyNames}` + `statements/for-in` | 101 | 81 pass / 20 fail | identical | **0** |
+
+Per-file status diff, not just counts.
+
+#### 8. Order preservation
+
+- **Corpus byte A/B** (42 modules × {gc, standalone} = 84 artifacts):
+  **84/84 sha256-identical.** No single-module artifact moves on either lane.
+- **Targeted byte A/B** — the LINKED PAIR, because the corpus contains none: on
+  `gc` a linked npm package produces no separate wasm provider at all (the host
+  mirror owns it), so those rows are absent on both labels; on standalone the
+  provider and all five consumers move. That is the mechanism, and it is
+  **per-linked-module rather than per-shape**: the `noCarrier` and `nullProtoBag`
+  controls move too. Stated rather than hidden — any object literal in a consumer
+  can cross, so only an escape analysis would narrow it, and it would buy bytes,
+  not answers.
+- Equivalence gate at baseline: 22 failing / 1720 passing.
+
+#### 9. Traps, carried forward and added to
+
+All S11–S16 traps still bite; three were paid again here.
+
+- **The `test262` submodule and the quickjs artifacts are BOTH per-worktree.**
+  The submodule trap is S16's; the new half is that `.test262-cache/` must also
+  carry `quickjs-artifact-*/libquickjs.wasm` **and** the matching
+  `quickjs-eval-adapter-<hash>.wasm`. Without them the first 39 rows of the base
+  family run scored 0 pass / 38 fail with `the quickjs provider is not built` — a
+  result that looks like a catastrophic regression and is a missing file. Copying
+  the sibling worktree's `.test262-cache/` is instant.
+- **Run the two labels under the SAME background load.** Compile-budget timeouts
+  are wall-clock, so a label measured alone and a label measured beside other
+  jobs are not comparable. Both labels here ran with the same companions, and
+  every CE flip was re-run solo at 60 s on both trees.
+- **A fix that opens a previously-dead path can introduce a WRONG answer in the
+  same commit.** The null-vs-absent collapse became reachable only because the
+  bag became readable; the census, the witness and every gate were green while
+  three test262 rows silently stopped throwing. The three-family run caught it —
+  an argument for running it BEFORE writing the issue file, not after.
+
+### Artifacts
+
+`.tmp/s17fam/{pd,du,zdt}-{base,new}.tsv` (+ logs and prewarm stamps),
+`.tmp/s17fam/{mnm,mnm2}-{base,new}.tsv`, `.tmp/s17/byteab{,2}-{base,new}.tsv`,
+the censuses `.tmp/s17/c{1,2,3,4}.mjs` with their `-base`/`-new` outs, the
+real-provider reductions `.tmp/s17/{t1,t2}.mjs` with both labels' outs, the solo
+re-runs `.tmp/s17/solo-{base,new}.out`, the revert copies `.tmp/s17base/*` and
+the drivers
+`.tmp/s17/{run-fam.sh,family.mts,prewarm.mts,mnm.mts,mnm2.mts,byteab.mts,byteab2.mts,pair2.mjs,probe.mjs,solo.mts}`
+in this worktree (`/home/user/js2/.claude/worktrees/agent-a3013ae2096b93c10`).
+
+### Acceptance criterion 4 — S17 update
+
+MET-for-the-sample at **232/360** (solo-corrected **233**; was 202), same three
+families, **33 `fail→pass`**, **3 `pass→fail`** whose cause is measured to be
+pre-existing and independent of this channel (base-tree control above), both
+must-not-move samples flat with 0 flips, the `gc` lane byte-identical on the
+corpus, the equivalence gate at baseline, and 0 `__temporal_*` leaks. Base and
+branch were both measured on this tree by file-copy revert. No full-corpus number
+is claimed; a corpus run remains the tech lead's to schedule.

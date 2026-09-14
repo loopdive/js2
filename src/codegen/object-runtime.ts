@@ -253,6 +253,11 @@ import {
   standaloneLinkBoundaryPeerIndices,
 } from "./standalone-link-boundary.js"; // (#5383 S2d/S2f) wasm→wasm peer terminals
 import {
+  emitStandaloneLinkReverseLocalTerminals,
+  reserveStandaloneLinkReversePeer,
+  reverseGetArmInstrs,
+} from "./standalone-link-reverse-peer.js"; // (#5383 S17 / #6478) the REVERSE hop
+import {
   buildOwnToPrimitiveOverridePresent,
   buildWrapperSlotShortCircuit,
   type ToPrimitiveSlotDeps,
@@ -1039,6 +1044,19 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // method, because the trampoline's `this` lives in the owner's globals.
     methodCall: peerMethodCallIdx,
   } = standaloneLinkBoundaryPeerIndices(ctx);
+  // (#5383 S17 / #6478) The same question asked from the other side: a PROVIDER
+  // handed a carrier its consumer owns. Registered in this window, next to the
+  // forward peer, because the two miss arms below bake both funcIdx values and
+  // because the installer's import must precede the #1984 freeze. `{}` for
+  // every module that is not a wasm-consumed provider, so no other lane moves.
+  const reversePeerHops = reserveStandaloneLinkReversePeer(ctx);
+  const { keys: reversePeerKeysIdx, has: reversePeerHasIdx } = reversePeerHops;
+  // (#5383 S17) `__extern_has`'s boundary arm, in the tri-state the host lane's
+  // import already speaks (0 = not mine · 2 = mine and present). The reverse hop
+  // answers the same tri-state on purpose, so the arm — and its local-index
+  // arithmetic — is unchanged; only which index it calls differs, and the two
+  // are mutually exclusive (a JS-host module never has a wasm peer).
+  const hasBoundaryOrReverseIdx = boundaryObjectHasIdx ?? reversePeerHasIdx;
   const boundaryObjectGetOwnPropertyDescriptorIdx = boundaryObjectInterop
     ? ctx.funcMap.get("__boundary_object_get_own_property_descriptor")
     : undefined;
@@ -2411,6 +2429,11 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           // the same one this arm was written against. The closed-struct field
           // ladder is unshifted onto the FRONT of this body at finalize, so a
           // receiver this module can decode never gets here.
+          // (#5383 S17) The PROVIDER side takes its own arm shape instead —
+          // `reverseGetArmInstrs`, which is null-answer-aware. It cannot share
+          // this one: here `null` means "not the peer's", while a consumer bag
+          // field whose VALUE is `null` arrives as the same `ref.null.extern`,
+          // and collapsing the two answers `undefined` for a present null.
           ...((boundaryObjectGetIdx ?? peerMemberGetIdx) !== undefined
             ? ([
                 { op: "local.get", index: 0 },
@@ -2425,7 +2448,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                   then: [{ op: "local.get", index: 6 }, { op: "return" }],
                 },
               ] satisfies Instr[])
-            : []),
+            : reverseGetArmInstrs(reversePeerHops, 6)),
           // (#4194) The receiver is not a `$Object`. Consult the instance
           // expando bag FIRST — an own property shadows the prototype chain
           // (§7.3.2), and this position (rather than inside the miss arm below)
@@ -4571,7 +4594,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     const nullProtoRootLocal =
       objectProtoIndexHasMiss === undefined
         ? undefined
-        : 4 + (boundaryObjectHasIdx !== undefined ? 1 : 0) + (fnctorProtoStartIdx === undefined ? 0 : 1);
+        : 4 + (hasBoundaryOrReverseIdx !== undefined ? 1 : 0) + (fnctorProtoStartIdx === undefined ? 0 : 1);
     const body: Instr[] = [
       // (#4491) §10.4.3 String-exotic own properties (`length` + the canonical
       // indices) are DERIVED from the wrapper's [[PrimitiveValue]], so the
@@ -4606,11 +4629,11 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         op: "if",
         blockType: { kind: "empty" },
         then: [
-          ...(boundaryObjectHasIdx !== undefined
+          ...(hasBoundaryOrReverseIdx !== undefined
             ? ([
                 { op: "local.get", index: 0 },
                 { op: "local.get", index: 1 },
-                { op: "call", funcIdx: boundaryObjectHasIdx },
+                { op: "call", funcIdx: hasBoundaryOrReverseIdx },
                 { op: "local.tee", index: 4 },
                 {
                   op: "if",
@@ -4647,7 +4670,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
             : ([
                 { op: "local.get", index: 0 },
                 { op: "call", funcIdx: fnctorProtoStartIdx },
-                { op: "local.tee", index: 4 + (boundaryObjectHasIdx !== undefined ? 1 : 0) },
+                { op: "local.tee", index: 4 + (hasBoundaryOrReverseIdx !== undefined ? 1 : 0) },
                 { op: "ref.is_null" },
                 { op: "i32.eqz" },
                 {
@@ -4656,7 +4679,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                   then: [
                     {
                       op: "local.get",
-                      index: 4 + (boundaryObjectHasIdx !== undefined ? 1 : 0),
+                      index: 4 + (hasBoundaryOrReverseIdx !== undefined ? 1 : 0),
                     },
                     { op: "any.convert_extern" },
                     { op: "ref.cast", typeIdx: objectTypeIdx },
@@ -4796,7 +4819,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       [
         { name: "o", type: objRefNull },
         { name: "any", type: { kind: "anyref" } },
-        ...(boundaryObjectHasIdx !== undefined ? [{ name: "boundaryHas", type: { kind: "i32" } as ValType }] : []),
+        ...(hasBoundaryOrReverseIdx !== undefined ? [{ name: "boundaryHas", type: { kind: "i32" } as ValType }] : []),
         ...(fnctorProtoStartIdx === undefined ? [] : [{ name: "fnctorProto", type: { kind: "externref" } as ValType }]),
         ...(nullProtoRootLocal === undefined
           ? []
@@ -6275,8 +6298,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // which is exactly what the provider's normalising wrapper guarantees. The
     // two are mutually exclusive by construction (one needs a JS host, the
     // other needs there not to be one), so neither lane grows an arm.
-    boundaryObjectKeysIdx: boundaryObjectKeysIdx ?? peerObjectKeysIdx,
-    boundaryObjectForInKeysIdx: boundaryObjectForInKeysIdx ?? peerObjectKeysIdx,
+    // (#5383 S17) …and the provider takes it with the REVERSE hop, which obeys
+    // the identical "non-null means a real answer" contract. The three are
+    // mutually exclusive by construction — a module is a JS-host module, or a
+    // standalone consumer, or a standalone provider — so no lane grows an arm.
+    boundaryObjectKeysIdx: boundaryObjectKeysIdx ?? peerObjectKeysIdx ?? reversePeerKeysIdx,
+    boundaryObjectForInKeysIdx: boundaryObjectForInKeysIdx ?? peerObjectKeysIdx ?? reversePeerKeysIdx,
     FLAG_ENUMERABLE,
     FLAG_TOMBSTONE,
   });
@@ -6786,6 +6813,13 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // end of the object runtime, because both wrappers call terminals the block
   // above has only just finished registering.
   emitStandaloneLinkBoundaryTerminals(ctx, registerNative);
+
+  // (#5383 S17 / #6478) The consumer's half of the reverse channel: the two
+  // normalising terminals it hands its provider as `ref.func` at init. Same
+  // position and same reason — both wrap terminals the block above has only
+  // just finished registering — and still ahead of the #1984 freeze, which the
+  // setter import needs.
+  emitStandaloneLinkReverseLocalTerminals(ctx);
 
   // (#2175 V2-S3b-1) Build any `$NativeProto` companion seeders that were parked
   // because their proto materialized before `__defineProperty_value` existed
