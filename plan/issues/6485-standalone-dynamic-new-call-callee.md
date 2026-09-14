@@ -1,7 +1,8 @@
 ---
 id: 6485
 title: "standalone: `new (registryLookup(key))(…)` evaluates to null and never evaluates its arguments — a CALL-expression callee matches no dynamic-`new` arm"
-status: in-progress
+status: done
+completed: 2026-09-14
 sprint: current
 priority: high
 horizon: m
@@ -125,10 +126,36 @@ a value from an intrinsic registry is never a `$__ta_ctor`, and inlining the TA
 construct plus its `IsConstructor` guard at every one of these sites is not free
 in a 3.3 MB provider that links into every consumer compile.
 
-## Acceptance
+## Acceptance — met, measured
 
-- The reduction above moves, in one standalone module with no polyfill.
-- `tests/issue-6485-standalone-dynamic-new-call-callee.test.ts` — a
-  single-module witness whose base was measured failing.
-- 0 legitimate `pass→fail` across the three-family Temporal sample; 0
-  `__temporal_*` leaks; must-not-move samples flat.
+- The reduction above moves in one standalone module with no polyfill (§ the
+  probe table).
+- `tests/issue-6485-standalone-dynamic-new-call-callee.test.ts` — eight probes;
+  the whole file was run against base by file-copy revert (4 failed, 4 passed).
+- Three-family Temporal sample, 120 rows each, provider linked, fresh cache per
+  label: **233 → 245 pass**, **12 `fail → pass`**, **0 legitimate `pass→fail`**,
+  **0 `__temporal_*` leaks**. Six of the gains are the
+  `called value is not a function` / `Duration.from` bucket.
+- Must-not-move samples: 286 rows, per file, **0 flips**. Corpus byte A/B
+  (42 modules × {gc, standalone}): **0 artifacts move**. Equivalence gate at
+  baseline (22 failing / 1720 passing).
+
+Full tables, the four solo-verified compile-budget flips, and the provider byte
+measurements are in the **S20 findings** section of
+[#5383](5383-standalone-temporal-provider.md).
+
+## Residual handed forward — the next slice
+
+`Duration.from("P1Y").toJSON()` still throws *invalid receiver*, and this change
+does not touch it. The receiver is correct (a probe method installed on
+`Duration.prototype` reports `this === r`, slots present, brand check passing);
+the method that gets **found** is wrong. A method call by name on a
+statically-unknown receiver resolves through a per-name ladder with **no runtime
+class test** and picks the LAST-declared class that declares the name — so on
+three classes each declaring `toJSON`, all three receivers get the third one's,
+and `uniqB()` on an `A` instance returns `"UB"`. Pre-existing: it reproduces on
+base through an `any`-typed parameter holding a statically constructed instance,
+with no dynamic `new` anywhere. It is also why `toString()` on a Temporal object
+reports *toString() radix argument must be between 2 and 36* —
+`Number.prototype.toString`. Pinned by the last two `it`s in this issue's test
+file.

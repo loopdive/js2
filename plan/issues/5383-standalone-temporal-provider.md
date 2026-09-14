@@ -5896,3 +5896,236 @@ corrected attribution — the bucket is not at the link, not in the dispatchers,
 and not in `Duration.from`; it ends at `ce("%Temporal.Duration%")` inside the
 provider — plus three single-module reductions and a named next target. No
 source file changed, so no conformance number is claimed in either direction.
+
+### S20 findings (2026-09-14) — the brand check was the symptom; no instance was ever created, and the arguments were never evaluated
+
+Full write-up in
+[#6485](6485-standalone-dynamic-new-call-callee.md). **A container restart
+killed the first S20 lane mid-slice**; what survived was an uncommitted 54-line
+change to `src/codegen/expressions/new-super.ts` plus its probe outputs in
+`.tmp/s20/`. Those were salvaged, re-verified from scratch on a fresh branch
+(`issue-5383-standalone-temporal-s20b`, based on S19's tip), and everything
+below was re-measured here — no number is inherited from the dead lane's run.
+
+#### 1. The hand-off's mechanism was wrong; its symptom was real
+
+S20's brief read S19's ending state — `new (ce("%Temporal.Duration%"))(1)`
+producing an object that fails its own class's brand check — as an instance
+IDENTITY defect, and named the candidates: prototype identity, a WeakMap keyed
+on the struct vs a boxed carrier, `fnctor-constructor-identity.ts`.
+
+**No instance existed to have an identity.** `compileNewExpression` reaches the
+dynamic-`new` dispatch for a bare IDENTIFIER callee, and (JS-host lane only,
+#4616) for a MEMBER-ACCESS callee. A **CALL-expression** callee matched neither,
+fell through to the `__new___unknown` host import — which exists in no lane and
+cannot exist in standalone — and emitted a bare `ref.null.extern`.
+
+Two consequences, and the second is the one no reading of the downstream symptom
+would have predicted: the `new` evaluates to **null**, and because the legacy arm
+returns **before** the argument loop, **the argument expressions are never
+evaluated at all**. The polyfill then calls a prototype method on that null and
+its internal-slot lookup reports the wrong-receiver message, several layers away.
+
+The clause of the hand-off that WAS right, and is a different defect: see §4.
+
+#### 2. Reduction — 16 probes, one standalone module, no polyfill, no link
+
+`.tmp/s20/c6.mjs` via `.tmp/s20/single.mjs`, one compiled module per probe. The
+prelude is the registry shape the polyfill actually has — a bare `{}`, so `ce`
+returns `any`.
+
+| probe | base | S20 |
+| --- | --- | --- |
+| `new (ce("%C%"))(1).tag` | `undefined` | **`T1`** |
+| `new (ce("%D%"))(1, 2).tag` | `undefined` | **`D12`** |
+| arg order, `new (ce("%D%"))(mark("a"), mark("b"))` | `/undefined` — **no effects ran** | **`ab/Dab`** |
+| literal / named-const spread | `undefined` | **`D12`** |
+| zero args · nested · 3-iteration loop | `undefined` | **`Tundefined` · `TT1` · `T0T1T2`** |
+| method-call callee `new (({g: ce}).g("%C%"))(1)` | `undefined` | **`T1`** |
+| callee side effect, once | `""` | **`k`** |
+| 10 args (Duration's real arity) | `undefined` | **`D12`** |
+| null / number / plain-fn / missing-key callee (controls) | `undefined` | `undefined` |
+
+The four controls are unchanged **by design**: `plainNullNoMatchBase` pins this
+arm's no-match outcome to the pre-existing `ref.null.extern`, so a
+non-constructor callee has no new outcome to regress against.
+
+#### 3. Provider-internal, the real polyfill, one module
+
+Diagnostic injected into the frozen `Temporal` namespace literal
+(`.tmp/s20/diag2-{base,new}.out`), fresh cache, `cacheHit=false`:
+
+| probe, provider-internal | base | S20 |
+| --- | --- | --- |
+| `Duration.from("P0Y") === null` | **`true`** | **`false`** |
+| `Duration.from("P1Y").years` | throws (null) | **`1`** |
+| `Duration.from("P1Y2M")` → months / years / sign | throws | **`2` / `1` / `1`** |
+| `Duration.from("P1Y").blank` | throws | **`false`** |
+| `Duration.from(Duration.from("P1Y")).years` | throws | **`1`** |
+| `new (ce("%Temporal.Duration%"))(1).years` | `undefined` | **`1`** |
+| `PlainDate.from("1976-11-18")` → y-m-d | correct | correct (control) |
+
+#### 4. What is still broken, and it is NOT this
+
+`Duration.from("P1Y").toJSON()` still throws *invalid receiver*. The receiver is
+NOT the problem — a probe method installed on `Duration.prototype` and called on
+that very object reports `this === r`, `slots: yes`, `brand: true`
+(`.tmp/s20/diag4-new.out`). The method being **found** is wrong.
+
+`.tmp/s20/c9.mjs` isolates it in ten lines: three classes each declaring
+`toJSON`, and a method call by name on a statically-unknown receiver resolves to
+the **LAST-declared** class that declares the name, every time. `uniqB()` called
+on an `A` instance returns `"UB"` — a method the object does not have. It is a
+per-name ladder with **no runtime class test**.
+
+**This is pre-existing and untouched by S20**: the same probe through an
+`any`-typed parameter holding a *statically* constructed instance gives the
+identical wrong answer on base (`.tmp/s20/c9-base.out`, rows 11–14). It is why
+`toString()` on a Temporal object reports *toString() radix argument must be
+between 2 and 36* — `Number.prototype.toString`. It is the next slice, and the
+first one where the fix is in the hottest dispatch path in the compiler.
+
+Two smaller residuals recorded on the way, both identical on base:
+`Object.getPrototypeOf(x) === C.prototype` is **false** for a dynamic-`new`
+instance while `instanceof` and `.constructor` are both correct; and
+`new WeakMap().set(x, 9)` with such an `x` emits **invalid Wasm**
+(`call[1] expected type (ref null 6), found call of type anyref`).
+
+#### 5. Regression sample — three families, 120 rows each
+
+`--target standalone`, provider linked, sequential, FRESH `JS2WASM_TEMPORAL_CACHE`
+per label (`cacheHit=false` on both prewarms), quickjs artifact + adapter
+present. Both labels on this tree by file-copy revert of `new-super.ts`. The
+provider binary differs between labels — **3,277,842 B (base) vs 3,291,080 B
+(S20)** — independent proof the change reached the linked artifact.
+
+| family | rows | base pass | S20 pass | fail→pass | **pass→fail** | leaks |
+| --- | --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 93 | 93 | 0 | **0** | 0 |
+| `built-ins/Temporal/Duration/**` | 120 | 56 | **64** | 8 | **0** | 0 |
+| `built-ins/Temporal/ZonedDateTime/prototype/**` | 120 | 84 | **88** | 4 | **0** | 0 |
+| total | 360 | 233 | **245** | **12** | **0** | **0** |
+
+**Six of the eight Duration gains are the `called value is not a function`
+bucket** — `from/argument-string.js`, `from/lower-limit.js`,
+`from/string-with-skipped-units.js`, `from/argument-string-fractional-precision.js`,
+`from/argument-string-fractional-units-rounding-mode.js`,
+`from/argument-string-negative-fractional-units.js`. The other two, and three of
+the four ZonedDateTime gains, are `Missing internal slot slot-years`. This is the
+bucket S17–S19 chased through four wrong attributions; it moves.
+
+**Four rows flipped between `compile_error` and a status, in both directions.**
+Every one is a compile-budget artifact of the 15 s per-row cap, not a status
+change. Re-run **solo at 60 s on both trees** they agree exactly, row for row
+(`.tmp/s20fam/solo-{base,new}.tsv`):
+
+| row | in-sample base | in-sample S20 | solo base | solo S20 |
+| --- | --- | --- | --- | --- |
+| `Duration/milliseconds-undefined.js` | pass | compile_error (15.1 s) | **pass** (18.4 s) | **pass** (18.5 s) |
+| `Duration/months-undefined.js` | pass | compile_error (15.6 s) | **pass** (14.7 s) | **pass** (14.9 s) |
+| `ZonedDateTime/prototype/add/overflow.js` | pass | compile_error (15.2 s) | **pass** (14.9 s) | **pass** (14.3 s) |
+| `Duration/compare/order-of-operations.js` | compile_error | fail | **fail** (16.7 s) | **fail** (15.8 s), identical message |
+
+The table above already counts the solo verdicts. Said plainly rather than
+buried: **this change does make consumer compiles measurably slower** — three
+rows that sat just under the cap now sit just over it under parallel load. The
+margin is sub-second on rows already at 14–15 s, and it is why
+`plainNullNoMatchBase` exists (§7).
+
+#### 6. Must-not-move samples — 286 rows, per FILE, 0 flips
+
+`Object/keys` + `expressions/object` + `Reflect/{get,has}` (140 rows) and
+`Object/{entries,values,getOwnPropertyNames}` + `statements/for-in` (146 rows),
+diffed per file: **0 flips**, both labels on this tree.
+
+Corpus byte A/B — 42 modules × {gc, standalone}: **0 artifacts move on either
+lane**, including `gc`. That is the expected result and also a weak probe: the
+corpus contains no `new (<call>)(…)` in a host-free module, so the positive
+control for "the change reaches an artifact" is the provider byte delta in §5,
+not the corpus. Equivalence gate at baseline: **22 failing / 1720 passing**.
+
+#### 7. The `plainNullNoMatchBase` parameter, measured rather than argued
+
+The identifier arm's standalone no-match base inlines a TypedArray construct
+plus an `IsConstructor` guard (#2872). A value out of an intrinsic registry can
+never be a `$__ta_ctor`, so for this shape that arm could only ever decline —
+and it is not free. Three prewarm builds of the real provider, fresh cache,
+`cacheHit=false` on each:
+
+| provider build | bytes | vs base |
+| --- | --- | --- |
+| base (no call-callee arm) | 3,277,842 | — |
+| S20, pinned `ref.null.extern` no-match base | 3,291,080 | +13,238 (+0.40 %) |
+| S20, TypedArray no-match base | 3,435,885 | +158,043 (+4.8 %) |
+
+~145 KB in an artifact that links into **every** consumer compile, to serve a
+shape that cannot reach it. The parameter is the difference between the two.
+
+#### 8. Gates
+
+`typecheck`, `check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`, `check:speculative-rollback`,
+`check:issue-ids:against-main`, `biome` (changed files), `update-issues --check`
+— all green. Two **inherited** reds, both verified present with the branch's own
+change reverted:
+
+- `check:compiler-boundaries` → `inventory-valid-architecture-incomplete`
+  (`src/ir/program/errors.ts`), as handed over.
+- `LOC_GATE_BASE=origin/main` LOC/func gates fail on **`src/runtime.ts`**
+  (19,822 vs a 19,601 ceiling; `buildImports` 308 > 300). S20's own commits
+  touch two files and neither is `runtime.ts` — the growth arrived with the
+  S12–S17 merge commits and current `origin/main` (14 commits ahead) no longer
+  carries it. It resolves when the stack merges `origin/main`; that merge was
+  deliberately NOT done here because it would have invalidated every base
+  measurement above.
+
+The issue id **#6485** was verified `UNASSIGNED` on `origin/issue-assignments`
+(`claim-issue: OK — #6485 is unassigned (read origin/issue-assignments)`) and is
+free on `origin/main` and in every local worktree. The claim WRITE could not be
+taken: `claim-issue.mjs` exits **5** after every retry — heavy contention on the
+ref, nothing written. GitHub pushes return 403 for all lanes today, so no branch
+or PR exists yet either.
+
+#### 9. Traps, carried forward and added to
+
+All S11–S19 traps still bite. New:
+
+- **A brand-check failure is not evidence that an instance exists.** Four
+  candidate mechanisms in the hand-off all presumed one did. The ten-line
+  reduction — a class in a plain object registry, fetched by key, `new`-ed —
+  answered `undefined` on the FIRST run and none of the four were reachable.
+  Reduce before choosing between mechanisms, not after.
+- **Check whether the ARGUMENTS ran.** The null was visible; the dropped
+  argument evaluation was not, and it is the half a refactor will silently
+  reintroduce. One `effects += x` in the probe made it visible.
+- **A unique method name is a different test from a colliding one.** The
+  prototype probe that proved the receiver was correct used a name only one
+  class declared, which is exactly why it passed — and for one run that looked
+  like "receiver fine, mystery elsewhere". Naming the probe `toJSON` would have
+  found §4 immediately.
+- **Verify the number in the comment you are shipping.** The salvaged patch
+  justified `plainNullNoMatchBase` with a byte figure from a run that no longer
+  existed. Re-measuring it cost one 72 s provider build and turned an inherited
+  claim into §7.
+- **A commit survives a container restart; a working tree does not.** The dead
+  lane had a correct, complete fix and zero commits. Recovering it cost an hour
+  of re-derivation that a 30-second WIP commit would have made free.
+
+### Artifacts (S20)
+
+`.tmp/s20/` and `.tmp/s20base/` in
+`/home/user/js2/.claude/worktrees/agent-ab770147db3a03c0f`: the censuses
+`c6`–`c9` with their `-base`/`-new` outs, the provider-internal diagnostics
+`diag2`–`diag4` with `-base`/`-new` outs, `test-{base,new}.out` (the witness file
+run on both trees), `corpus-{base,new}.jsonl`, the revert copies
+`new-super.{base,new}.ts` and the drivers
+`{single.mjs,family.mts,prewarm.mts,fam.sh,solo.mts,solo.sh,mnm.sh,flips.mjs,corpus.mts,waitfor.sh}`;
+the samples in `.tmp/s20fam/` and `.tmp/s20mnm/`.
+
+### Acceptance criterion 4 — S20 update
+
+**MET.** The `called value is not a function` / `Duration.from` bucket moves: six
+of those rows go `fail → pass`, plus six more on `Missing internal slot`, for
+**233 → 245** over the 360-row three-family sample, with **0 legitimate
+`pass→fail`**, **0 `__temporal_*` leaks**, 286 must-not-move rows flat per file,
+both corpus lanes byte-identical and the equivalence gate at baseline.

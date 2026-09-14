@@ -4782,10 +4782,13 @@ function emitDynamicNewFallback(
     //    the TA arm below could only ever decline for this shape; and
     //  - it is not free. Inlining the TA construct + IsConstructor guard at
     //    each site is the bulk of this arm's code size, and the Temporal
-    //    provider links into every consumer compile — measured 2026-09-14, the
-    //    provider grew 3.28 MB → 3.44 MB with the TA base and 3.28 MB → 3.30 MB
-    //    without it, and the fat version pushed two consumer compiles that sat
-    //    at 14.7–15.0 s over the runner's 15 s cap (`fail` → `compile_error`).
+    //    provider links into EVERY consumer compile. Three prewarm builds of
+    //    the real provider on 2026-09-14, fresh `JS2WASM_TEMPORAL_CACHE` and
+    //    `cacheHit=false` on each: 3,277,842 B without this arm at all,
+    //    3,291,080 B with it and the pinned null base (+0.40 %), and
+    //    3,435,885 B with it and the TA base (+4.8 %). The TA base costs
+    //    ~145 KB in the artifact every consumer links, to serve a shape that
+    //    cannot reach it.
     // Emitting null here means a non-constructor callee behaves exactly as it
     // did before this change — no new throw, no new outcome to regress.
     noMatchBase = [{ op: "ref.null.extern" }];
