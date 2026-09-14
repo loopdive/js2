@@ -24,7 +24,7 @@ import type {
 import type { IrModuleBindingRefusal } from "../../ir/module-bindings.js";
 import type { IrObservedOutcome } from "../../ir/outcomes.js";
 import type { IrR2Withdrawal } from "../../ir/r2-withdrawal.js";
-import type { NullableElemParamOverride } from "../array-hof-nullable-elem-param.js"; // (#6475)
+import type { NullableElemParamOverride } from "../array-hof-nullable-elem-param.js"; // (#6480)
 import type { StandaloneRegExpEngineConfig } from "../regexp-standalone.js";
 import type { ObjectRuntimeTypes } from "../object-runtime.js";
 import type { FallbackCounts } from "../fallback-telemetry.js";
@@ -2627,7 +2627,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   arrayMapCallbackFirstParamOverride?: ValType;
   /**
-   * (#6475 / #5383 S15) Transient carrier for the receiver's REAL element type
+   * (#6480 / #5383 S15) Transient carrier for the receiver's REAL element type
    * — and WHICH callback parameter receives it — while an array-HOF callback
    * closure is compiled (`setupArrayCallback` window:
    * `every`/`some`/`filter`/`forEach`/`find*`/`reduce`/`reduceRight`, i.e. the

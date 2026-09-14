@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #6477 (#5383 S16) — `void 0` is the `undefined` literal for the §7.2.14 /
+// #6482 (#5383 S16) — `void 0` is the `undefined` literal for the §7.2.14 /
 // §7.2.16 comparison shortcut.
 //
 // WHY THIS REDUCTION EXISTS. `compileBinaryExpression`'s null-and-undefined arm
@@ -67,7 +67,7 @@ export function at(i) { return __s.charCodeAt(i); }`;
   return out;
 }
 
-describe("#6477 `void 0` in a nullish comparison", () => {
+describe("#6482 `void 0` in a nullish comparison", () => {
   it("answers as JS does on the standalone lane", { timeout: 600_000 }, async () => {
     const observed: Record<string, string> = {
       strictEqUndefinedBinding: await evalStandalone(`let a = undefined; return String(void 0 === a);`),
@@ -100,7 +100,7 @@ describe("#6477 `void 0` in a nullish comparison", () => {
   });
 });
 
-describe("#6477 controls — unchanged on both trees", () => {
+describe("#6482 controls — unchanged on both trees", () => {
   it("keeps the evaluated lowering for a non-inert `void`, and every other shape", { timeout: 600_000 }, async () => {
     const observed: Record<string, string> = {
       // A `void` over a CALL must still evaluate the call. The sign of the

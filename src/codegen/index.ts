@@ -498,7 +498,7 @@ import {
 } from "./stack-balance.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { ensureRegexMatchVecType } from "./native-regex.js";
-import { nullableNativeStringElemBindingType } from "./nullable-native-string-elem-binding.js"; // (#6476)
+import { nullableNativeStringElemBindingType } from "./nullable-native-string-elem-binding.js"; // (#6481)
 import { STANDALONE_REGEXP_REFLECTION_PROPS } from "./regexp-standalone.js";
 import { ensureVecElemSet, ensureVecNewSized } from "./vec-elem-set.js";
 
@@ -14919,7 +14919,7 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
                   inferLetConstInitializerWasmType(ctx, fctx, decl) ??
                   usageInferredLocalType(ctx, decl) ??
                   resolveWasmType(ctx, varType));
-        // (#6476) LAST step of the cascade, and a post-filter rather than
+        // (#6481) LAST step of the cascade, and a post-filter rather than
         // another arm: it only ever rewrites `ref $anyStr` → `ref_null $anyStr`
         // for a binding whose initializer reads a NULL-carrying native-string
         // vec element, so it cannot preempt an arm above it. See

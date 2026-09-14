@@ -1,7 +1,7 @@
 ---
-id: 6476
+id: 6481
 title: "standalone: `const c = m[7]` binds a NULL native string to a non-null slot, so every later read of the binding asserts non-null (truthiness, `||`, `??`, concat all trap)"
-slug: 6476-standalone-nullable-native-string-element-binding
+slug: 6481-standalone-nullable-native-string-element-binding
 status: done
 sprint: current
 priority: high
@@ -14,7 +14,7 @@ assignee: ttraenkler/dev-5383-s16
 created: 2026-09-13
 completed: 2026-09-14
 loc-budget-allow:
-  # 2026-09-13 (#6476, S16) — the mechanism lives entirely in the NEW module
+  # 2026-09-13 (#6481, S16) — the mechanism lives entirely in the NEW module
   #   src/codegen/nullable-native-string-elem-binding.ts. What grows here is the
   #   SECOND of its two call sites and cannot move out of the god-file:
   #   statements/variables.ts  +5  `compileVariableStatement`'s `wasmType`
@@ -28,7 +28,7 @@ loc-budget-allow:
   #     shape no byte A/B over the flat reduction would show.
   - src/codegen/statements/variables.ts
 func-budget-allow:
-  # 2026-09-13 (#6476, S16) — same five lines, counted against the enclosing
+  # 2026-09-13 (#6481, S16) — same five lines, counted against the enclosing
   #   function. The filter has to be applied where `wasmType` is finally
   #   settled, which is inside `compileVariableStatement`; hoisting it out would
   #   mean recomputing the whole cascade in a second place, i.e. the two-sources
@@ -39,7 +39,7 @@ func-budget-allow:
 > **Issue id reserved?** NO. `scripts/claim-issue.mjs --allocate` exits **6**
 > (`open-PR id scan DEGRADED — gh offline/unauthenticated`) for the whole of
 > this session, and GitHub pushes are refused with HTTP 403 for every lane. The
-> id **6476** is the next one after #6475 (S15, itself unreserved for the same
+> id **6481** is the next one after #6475 (S15, itself unreserved for the same
 > reason). It is therefore **unreserved** and has not been checked against
 > in-flight PRs.
 

@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #6474 (#5383 S14) — the `%TypedArray%.of/from` and dynamic-`new` arms must use
+// #6479 (#5383 S14) — the `%TypedArray%.of/from` and dynamic-`new` arms must use
 // the BRAND-CHECKED `$__ta_ctor` identity test, not a bare `ref.test`.
 //
 // WHY THIS REDUCTION EXISTS. `$__ta_ctor` is two immutable i32 fields, which is
@@ -65,7 +65,7 @@ type Artifact = {
 };
 
 async function buildProvider(): Promise<Artifact> {
-  const root = mkdtempSync(join(tmpdir(), "issue-6474-"));
+  const root = mkdtempSync(join(tmpdir(), "issue-6479-"));
   const packageRoot = join(root, "node_modules", "ns6474");
   mkdirSync(packageRoot, { recursive: true });
   writeFileSync(
@@ -120,7 +120,7 @@ export function at(i) { return __s.charCodeAt(i); }`;
   return out;
 }
 
-describe("#6474 provider class objects are not TypedArray constructors", () => {
+describe("#6479 provider class objects are not TypedArray constructors", () => {
   it(
     "keeps `<providerClass>.from(…)` / `.of(…)` on the provider when the consumer holds a TA ctor value",
     { timeout: 600_000 },

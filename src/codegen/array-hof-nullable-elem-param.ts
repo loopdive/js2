@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * #6475 (#5383 S15) — the array-HOF callback boundary for a **nullable** vec
+ * #6480 (#5383 S15) — the array-HOF callback boundary for a **nullable** vec
  * element.
  *
  * A vec whose element type is `ref_null T` can hold a null slot that the rest

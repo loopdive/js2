@@ -4684,7 +4684,7 @@ number is claimed; a corpus run remains the tech lead's to schedule.
 
 ## S14 findings (2026-09-13) — the harness itself was the input; ONE `new <value>()` poisoned every provider value, and the linked lane goes 177 → 199
 
-**#6474 is the slice.**
+**#6479 is the slice.**
 
 ### 1. The attribution was wrong for the SIXTH slice running, and this time the census procedure itself was at fault
 
@@ -4733,7 +4733,7 @@ collision, measured on this exact provider: `taCtorIdentityTestInstrs`
 these two did not. **Twelve** bare `ref.test $__ta_ctor` sites remain
 (`dataview-native.ts` ×5, `ta-ctor-meta.ts` ×2, `expressions/calls.ts`,
 `property-access-dispatch.ts`); none was on a path this slice could measure
-moving, so they are written down in #6474 rather than changed blind.
+moving, so they are written down in #6479 rather than changed blind.
 
 ### 3. Why ONE never-called function is the whole input
 
@@ -4917,8 +4917,8 @@ number is claimed; a corpus run remains the tech lead's to schedule.
 
 ### S15 findings (2026-09-13) — `sn()` did not need a Temporal fix; it needed the array-HOF callback to stop asserting a nullable element non-null. 199 → 201, and the whole 22-row `sn()` bucket moved one step
 
-**#6475 is the slice.** Full write-up, tables and residuals in the issue file
-`plan/issues/6475-standalone-nullable-vec-element-callback-param.md`.
+**#6480 is the slice.** Full write-up, tables and residuals in the issue file
+`plan/issues/6480-standalone-nullable-vec-element-callback-param.md`.
 
 #### 1. Root cause, and why six slices of Temporal work never reached it
 
@@ -4995,7 +4995,7 @@ and each lowering that forgets it has to be taught separately.
 Still open behind it: `instanceof` across the provider link with a dynamic RHS
 (S11 residual, gates 2 Duration rows), ZonedDateTime's 7-row
 `required property 'timeZone' missing`, PlainDate's 6-row `year is required`
-and its 3-row `__closure_N()` null pointer — **measured NOT to be the #6475
+and its 3-row `__closure_N()` null pointer — **measured NOT to be the #6480
 family**, since PlainDate did not move at all.
 
 #### 5. Traps, carried forward
@@ -5035,10 +5035,10 @@ tech lead's to schedule.
 
 ### S16 findings (2026-09-13/14) — the `sn()` bucket is fully retired; two general standalone correctness bugs, 201 → 202, and the row count is the least interesting number here
 
-**Two slices: #6476 (the nullable native-string BINDING) and #6477 (`void 0` in
+**Two slices: #6481 (the nullable native-string BINDING) and #6482 (`void 0` in
 a nullish comparison).** Full write-ups in
-`plan/issues/6476-standalone-nullable-native-string-element-binding.md` and
-`plan/issues/6477-standalone-void-0-undefined-comparison.md`.
+`plan/issues/6481-standalone-nullable-native-string-element-binding.md` and
+`plan/issues/6482-standalone-void-0-undefined-comparison.md`.
 
 #### 1. The hand-off attribution was wrong for the SEVENTH slice running, and this time it named the wrong LAYER
 
@@ -5066,7 +5066,7 @@ that does not", and here that is one `const`.
 
 #### 2. Root causes, both general standalone bugs rather than Temporal ones
 
-**#6476** — `walkStmtForLetConst` (the authoritative let/const slot-typer) ends
+**#6481** — `walkStmtForLetConst` (the authoritative let/const slot-typer) ends
 its cascade at `resolveWasmType`, which answers the NON-null `ref $anyStr` for
 an element the checker types `string`. The store does not fail (a `ref` local
 gets a defaultable nullable slot), so the null is written and kept; every later
@@ -5076,7 +5076,7 @@ native-string element — `resolveWasmType` returns a non-null `ref` for class
 and object structs too, and re-typing every `const x = objArray[i]` in both
 lanes is a blast radius this defect does not justify.
 
-**#6477** — the null-and-undefined comparison shortcut recognised the undefined
+**#6482** — the null-and-undefined comparison shortcut recognised the undefined
 literal as the IDENTIFIER `undefined` only, so a `void 0` operand fell into the
 generic reference equality, which on standalone compares carriers structurally
 and answers `void 0 !== undefined` as TRUE. **Every minifier emits `void 0`**,
@@ -5092,14 +5092,14 @@ for an answer that is already right.
 
 #### 3. The bucket, through all three states — this is the real result
 
-| bucket, in `sn` | base (S15 head) | +#6476 | +#6476 +#6477 |
+| bucket, in `sn` | base (S15 head) | +#6481 | +#6481 +#6482 |
 | --- | --- | --- | --- |
 | `null pointer in __str_flatten` | **18** (13 Du, 5 ZDT) | 0 | 0 |
 | `null pointer in __str_concat` | 0 | **11** (8 Du, 3 ZDT) | **0** |
 | spurious `only the smallest unit can be fractional` | **4** (3 Du, 1 ZDT) | 4 | **0** |
 
 The 22-row `sn()` family that has gated every string-argument Duration entry
-point since S10 is now **entirely retired**. #6476 alone moved it one step and
+point since S10 is now **entirely retired**. #6481 alone moved it one step and
 scored nothing; the pair retires it.
 
 #### 4. The three-family sample, LINKED, re-measured
@@ -5111,7 +5111,7 @@ taken by file-copy revert of the three edited source files on this tree. The
 provider binary differs between labels (3,324,826 vs 3,325,244 bytes), which is
 independent proof the compiler change reached the linked artifact.
 
-| family | rows | base pass | #6476 only | **S16 pass** | fail | ce | pass→fail |
+| family | rows | base pass | #6481 only | **S16 pass** | fail | ce | pass→fail |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `built-ins/Temporal/PlainDate/**` | 120 | 78 | 78 | **78** | 41 | 1 | **0** |
 | `built-ins/Temporal/Duration/**` | 120 | 51 | 51 | **52** | 65 | 3 | **0** |
@@ -5179,7 +5179,7 @@ whole-function scan rather than at the declaration.
 | `String/prototype/{split,match}` + `Array/prototype/{join,indexOf}` | 113 | 95 pass / 18 fail | identical | **0** |
 
 The second sample exists because the targeted byte A/B falsified the narrow
-reading of #6476: a PLAIN string array's element type is nullable in standalone
+reading of #6481: a PLAIN string array's element type is nullable in standalone
 too, so `const s = a[0]` re-types there as well. A sample chosen only from the
 RegExp surface would not have covered that.
 
@@ -5188,8 +5188,8 @@ RegExp surface would not have covered that.
 Byte A/B on a 42-file fixed corpus (`website/playground/examples` +
 `tests/fixtures`) × {gc, standalone}: **no artifact moves on either lane, for
 either slice.** A targeted 23-shape A/B: the `gc` lane is byte-identical
-throughout; on standalone exactly the intended shapes move (6 for #6476, 5 for
-#6477) and every control — an inline element read, a `var`, an annotated
+throughout; on standalone exactly the intended shapes move (6 for #6481, 5 for
+#6482) and every control — an inline element read, a `var`, an annotated
 binding, a number/object element, a matched group, the identifier `undefined`
 form, `void f()` — is identical.
 
@@ -5210,7 +5210,7 @@ reproduced again (exit 1 with `81 passed | 3 todo`). Three additions:
   a nicety, it is the whole measurement. The *evidence* that the label actually
   differed is the provider BYTE COUNT in the prewarm stamp, not `cacheHit`.
 - **A "control" that moves is a mislabelled teeth row, not a regression.** The
-  #6477 witness's `void "x" === a` row failed the base run as a control; it is
+  #6482 witness's `void "x" === a` row failed the base run as a control; it is
   an inert literal, so the fix covers it by design. Reading the diff rather
   than re-expecting the observed value is what caught it.
 
@@ -5244,7 +5244,7 @@ MET-for-the-sample at **202/360** (was 201), same three families, **0
 pass→fail**, both must-not-move samples flat with 0 flips, the `gc` lane
 byte-identical on both corpora AND on the targeted shapes, the equivalence gate
 at baseline, and 0 `__temporal_*` leaks. Base and branch were both measured on
-this tree by file-copy revert, with an intermediate #6476-only label, so the
+this tree by file-copy revert, with an intermediate #6481-only label, so the
 attribution between the two slices is measured rather than argued. No
 full-corpus number is claimed; a corpus run remains the tech lead's to
 schedule.
