@@ -4195,6 +4195,22 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * recorded indices together with every emitted `global.get`.
    */
   nativeProtoGlobals?: Map<number, number>;
+  /**
+   * (#5383 S23 / #6488) Some source file in the realm CALLS a
+   * `Number.prototype` numeric-format method by name, so
+   * `unshiftExternMethodCallNumberPrimitiveArm` may pay for the
+   * `%Number.prototype%` singleton. Set by the early AST scan
+   * (`noteNumberPrimitiveMethodDemand`); read at finalize. Absent ⇒ the arm is
+   * not emitted and the module is byte-identical.
+   */
+  numberPrimitiveMethodCallDemand?: boolean;
+  /**
+   * (#5383 S23 / #6488) The stashed `%Number.prototype%` singleton read, built
+   * by `prepareNumberPrimitiveMethodCallArm` BEFORE `__extern_get`'s per-brand
+   * member ladder is assembled, and consumed by the `__extern_method_call` arm
+   * unshifted after it.
+   */
+  numberPrimitiveMethodProtoInstrs?: Instr[];
   /** (#2175 S0) Builtin-brand id table — a reserved high-negative i32 band
    *  disjoint from `classTagMap`'s range, so a `$NativeProto.$brand` (or the
    *  `$ClassMeta.$parentTag` externref-backed-subclass slot from #2101) is a

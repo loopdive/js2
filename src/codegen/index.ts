@@ -401,6 +401,11 @@ import { unshiftRegExpAccessorSetGuard } from "./regexp-accessor-set-guard.js"; 
 import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
 import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-read.js"; // (#4248) inherited method value
 import { unshiftExternMethodCallProtoArm } from "./native-proto-method-call.js"; // (#4619) proto-receiver method CALL
+import {
+  noteNumberPrimitiveMethodDemand,
+  prepareNumberPrimitiveMethodCallArm,
+  unshiftExternMethodCallNumberPrimitiveArm,
+} from "./number-primitive-method-call.js"; // (#5383 S23 / #6488) number-PRIMITIVE receiver method CALL
 import { unshiftExternMethodCallTaDynViewArm } from "./ta-dyn-method-call.js"; // (#5194 r3-1) dyn-view receiver method CALL
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillProtoFunctionValue } from "./proto-function-value.js"; // (#4637 A1) function value in a [[Prototype]] slot
@@ -5203,6 +5208,8 @@ export function generateModule(
   const sourceFileInternal = ast.sourceFile as ts.SourceFile & { externalModuleIndicator?: ts.Node };
   ctx.sourceIsModule = sourceFileInternal.externalModuleIndicator !== undefined;
   recordSourceGlobalEnvironment(ctx, ast.sourceFile);
+  // (#5383 S23 / #6488) Demand for the number-PRIMITIVE method-call arm.
+  noteNumberPrimitiveMethodDemand(ctx, ast.sourceFile);
   // (#2138) Populated only under JS2WASM_IR_FIRST=1 — the top-level functions
   // whose legacy body emission was skipped (IR owns the slot). Declared out
   // here so the return statement below (outside the try) can surface it.
@@ -6512,6 +6519,9 @@ export function generateModule(
     // prototype-lookup cache hit arm ahead of the ladder arms unshifted above.
     // (#4223) BEFORE the cache arm (which must stay last): answer
     // `<wrapper>.constructor` from the builtin ctor carrier.
+    // (#5383 S23 / #6488) Materialize `%Number.prototype%` BEFORE the proto
+    // member ladder below is assembled from the minted/seeded brands.
+    prepareNumberPrimitiveMethodCallArm(ctx);
     unshiftExternGetWrapperCtorArm(ctx);
     // (#4248) §21.1.5 — an inherited builtin-proto METHOD read off a wrapper
     // instance (or off the prototype through a binding) must yield the same
@@ -6520,6 +6530,10 @@ export function generateModule(
     // (#4619) The CALL twin, which delegates to `__extern_get` — so it must
     // run after the read arm above. See native-proto-method-call.ts.
     unshiftExternMethodCallProtoArm(ctx);
+    // (#5383 S23 / #6488) The number-PRIMITIVE twin — same delegation to
+    // `__extern_get`, so it must also run after the read arm above. See
+    // number-primitive-method-call.ts.
+    unshiftExternMethodCallNumberPrimitiveArm(ctx);
     // (#5194 r3-1) The `$__ta_dyn_view` twin: a `%TypedArray%.prototype` method
     // called on a dynamically-constructed view reached through an `any`
     // receiver. Narrow by construction — it claims only names whose native
@@ -10782,6 +10796,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
           ctx.arrayIteratorMaybeOverridden = true;
         }
         recordSourceGlobalEnvironment(ctx, sf);
+        // (#5383 S23 / #6488) Demand for the number-PRIMITIVE method-call arm.
+        noteNumberPrimitiveMethodDemand(ctx, sf);
       }
       // (#5139) Second pass: the brand must be final before any slot is rooted.
       for (const sf of multiAst.sourceFiles) reserveArrayProtoIteratorOverrideGlobals(ctx, sf);
@@ -11200,6 +11216,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // prototype-lookup cache hit arm ahead of the ladder arms unshifted above.
     // (#4223) BEFORE the cache arm (which must stay last): answer
     // `<wrapper>.constructor` from the builtin ctor carrier.
+    profilePhase("prepare-number-primitive-method-call", () => prepareNumberPrimitiveMethodCallArm(ctx));
     profilePhase("unshift-extern-get-wrapper-ctor", () => unshiftExternGetWrapperCtorArm(ctx));
     // (#4248) §21.1.5 — an inherited builtin-proto METHOD read off a wrapper
     // instance (or off the prototype through a binding) must yield the same
@@ -11208,6 +11225,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // (#4619) The CALL twin, which delegates to `__extern_get` — so it must
     // run after the read arm above. See native-proto-method-call.ts.
     profilePhase("unshift-extern-method-call-proto", () => unshiftExternMethodCallProtoArm(ctx));
+    profilePhase("unshift-extern-method-call-number-primitive", () => unshiftExternMethodCallNumberPrimitiveArm(ctx));
     profilePhase("unshift-extern-method-call-ta-dyn-view", () => unshiftExternMethodCallTaDynViewArm(ctx));
     profilePhase("unshift-extern-get-proto-cache", () => unshiftExternGetProtoCacheArm(ctx));
 
