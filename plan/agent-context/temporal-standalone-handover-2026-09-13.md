@@ -41,6 +41,7 @@ started). Acceptance criterion 4 of #5383 is therefore still open.
 | S20 | host-free dynamic `new (<call>)(…)`: no arm matched, fell to a nonexistent host import and emitted `ref.null` without evaluating the arguments (#6485) — the "brand check" clause was wrong, no instance was ever created. Lane restarted once (container restart, WIP salvaged from disk) | 233 → 245 (Duration 56 → 64, ZDT 84 → 88; 12 fail→pass, 0 pass→fail) | branch `…-s20b`, stacked on S19, unpushed |
 | S21 | per-name method ladders (`__call_m_*`, `__call_toString`/`valueOf`) tested class by STRUCTURAL `ref.test`, so field-less WeakMap-state classes all matched — the #4618 `__tag` guard now applies to them via `class-arm-tag-guard.ts` (#6486) | 244 → 249 (94/65/90; 0 pass→fail; `Duration.from("P1Y").toJSON()` → `P1Y`) | branch `…-s21`, stacked on S20b, unpushed |
 | S22 | `Object.getPrototypeOf(<runtime-only callable>)` answered null in standalone; now `__is_callable ? Function.prototype : __getPrototypeOf` (#6487) — the 7 rows were `*/builtin.js`, NOT the gOPD descriptor residual | 249 → 256 (96/68/92; 0 pass→fail) | branch `…-s22`, stacked on S21, unpushed |
+| S23 | fourth `called value is not a function` cause: `n.toPrecision(a)` on a number PRIMITIVE through an `any` receiver — `__extern_method_call` had no primitive-receiver arm (#6488, `number-primitive-method-call.ts`); the candidate list in the brief was wrong, the instrument-the-sites method was right | 258 → 271 (97/77/97; 0 pass→fail; bucket 10 → 0) | branch `…-s23`, stacked on S22, unpushed |
 
 Fix commits also on main: the speculative-rollback gate fix on S2m (9501ffca13),
 the `test262` gitlink restoration (#5892), the revert of #5871/#5882 (#5914).
@@ -84,13 +85,14 @@ fails, `--check` + the gate before committing.
   **7** (a prototype-descriptor read — the S11-era `gOPD(K,"prototype")` residual;
   FIXED by S22 — it was `Object.getPrototypeOf(Temporal.X.compare)` in
   `*/builtin.js`, not a descriptor read). Post-S22 (solo-corrected): `called
-  value is not a function` **9** (a FOURTH cause — S18/S20/S21 each retired a
-  different one; needs its own census; S23 dispatched, branch `…-s23`, stacked
-  on S22) · `expected a string, not null` 8 · `Object method called on null or
+  value is not a function` 10 → **0** (S23, #6488) · post-S23 top: `expected a
+  string, not null` **9** (S24 dispatched, branch `…-s24`, stacked on S23) · `expected a string, not null` 8 · `Object method called on null or
   undefined` 6 · `Expected a RangeError but got undefined` 6 · `__closure_N()`
-  null pointer 5 · `Calling as constructor` 4 · `Proxy get trap` 4. Cheap trio:
-  the three `calendar-temporal-object` rows (PlainDate/compare, Duration/compare,
-  ZDT/equals) — one error, scored CE under the 15 s cap in sampled runs · `Missing internal slot slot-years` 7 ·
+  null pointer 5 · `Calling as constructor` 4 · `Proxy get trap` 4. Of the 6
+  `Object method called on null or undefined`, FOUR are `calendar-temporal-object`
+  rows (PlainDate/compare, PlainDate/from, Duration/compare, ZDT/prototype/equals)
+  — one error, invisible in sampled runs under the 15 s cap. Residuals: `toFixed`/
+  `toExponential` via `any` receiver, `x.toString(16)` · `Missing internal slot slot-years` 7 ·
   `Object method called on null or undefined` 5 · `__closure_N()` null pointer 5 ·
   `Expected a RangeError but got undefined` 5 · `Calling as constructor` 4 ·
   `Proxy get trap is not callable` 4.
