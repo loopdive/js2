@@ -446,6 +446,16 @@ export async function compileHarnessLinkedBody(
   const result = await compileMulti(files, entryKey, {
     ...options,
     allowJs: options?.allowJs ?? true,
+    // (#3451) WITHOUT this the linked lane silently RUNS source the honest lane
+    // rejects. `compileMulti` suppresses syntactic diagnostics under `allowJs`
+    // by design — npm packages produce false positives — and `strictJsSyntax`
+    // (#3506) is the opt-in for a graph whose complete literal JavaScript the
+    // caller owns, which is exactly a test262 body plus a generated stub.
+    // Measured before the flag: `var a = ;;;` compiled and ran, and
+    // `for-of/dstr/array-elem-init-in.js` ran where the honest lane reported
+    // `',' expected` — so every `negative: SyntaxError` row would have flipped
+    // from pass to fail, silently, in a lane whose whole purpose is parity.
+    strictJsSyntax: options?.strictJsSyntax ?? true,
     canonicalRuntimeTypes: true,
     // (#5226) Match the provider's imported `env.__exn` tag so a harness throw
     // keeps its identity in the body's `catch` and vice versa.

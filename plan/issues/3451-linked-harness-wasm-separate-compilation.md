@@ -15,6 +15,27 @@ language_feature: module-linking
 goal: test262-conformance
 depends_on: [1046, 2527]
 related: [33, 34, 3433, 3450, 3461, 3491, 3625]
+# (2026-09-14, slice 3 / P2) Three substrate fixes land in the two god-files that
+# own the boundaries they are about; there is no subsystem module to move them to
+# without inventing one for three call sites.
+#   - src/runtime.ts +52: the mirror-vs-raw-struct canonicalisation at
+#     `__new_Test262Error_ctor`, the `instanceof` carrier query, and the
+#     `_hostStrictEqual` harness-identity arm. ~40 of the 52 lines are the
+#     comments recording WHICH representation each site sees and why the
+#     registered-under-one/queried-under-the-other split produced a false
+#     `instanceof` — the fix is unreadable without them.
+#   - src/compiler.ts +21: hoisting `TOLERATED_SYNTAX_CODES` to module scope so
+#     the multi-file syntax gate applies the SAME allowlist as the single-file
+#     one. Net logic is one predicate term; the rest is the doc comment saying
+#     why a gate without the list is wrong rather than merely stricter.
+loc-budget-allow:
+  - src/runtime.ts
+  - src/compiler.ts
+# `resolveImport` +13: `__new_Test262Error_ctor` changes from a bare function
+# reference to a two-line arrow that canonicalises the carrier, plus its
+# comment. Splitting the 7.7k-line resolver is #3399's job, not this PR's.
+func-budget-allow:
+  - src/runtime.ts::resolveImport
 ---
 
 # #3451 — reusable linked Test262 harness Wasm for both lanes
