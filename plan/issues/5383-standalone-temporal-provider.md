@@ -5151,6 +5151,16 @@ Temporal defect and not the nullability family. Neither bucket moved in S16
 (7→7, and 15→15 counting all three families), which is consistent with that
 attribution.
 
+**CONFIRMED by S17 (#6478), which is worth stating because it is the first time
+in this stack that a hand-off attribution held.** S17 found the link boundary to
+be one-directional — a consumer-owned object literal or class instance is
+undecodable inside a linked provider — installed a reverse channel, and reports
+both buckets going to **zero**, with the three families at 202 → 232. The
+attribution above was made from the test SHAPE (`*-propertybag-calendar-*`
+builds its argument in the consumer) plus the fact that the buckets did not move
+under a fix that was definitely not theirs. Neither half is strong alone; the
+pair is, and that is the cheap form of attribution worth reusing.
+
 #### 6. Residuals of THIS family, each already reduced
 
 The nullability lie survives at three further boundaries, all measured on the
