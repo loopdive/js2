@@ -6980,6 +6980,123 @@ the frame API and object-access donor map are also preserved for the next lanes.
 This composition does not remove the async acceptance refusal or establish
 native async execution, public default cutover or retirement.
 
+### Formatter semantic support transport checkpoint (2026-09-09)
+
+The formatter prerequisite now builds the unchanged radix source into real,
+index-free IR using the source program's allocation registry. A separate typed
+support batch survives preparation, ABI registration, validation and codec
+replay without being inserted into ordinary source populations. The original
+legacy self-hosted builder calls the same extracted frontend kernel.
+
+After composition and formatting, parent run 69266 passed 167/167 across nine
+source/transport/resource suites. Full boundary run 5497 passed 64/64; inventory
+run 43404 reported zero errors and architectureComplete:false. Source-free
+replay and its deliberately forbidden frontend-import control both passed.
+The reviewed materializer-use-site hole is fixed with complete validator and
+codec rejection tests using an actual canonical kernel reference.
+
+The four clean module activations retain all earlier active history and allowed
+edges. Exactly 17 already-unmigrated frontend files now carry mixed-needs-split
+layer labels with their frontend destination; three other existing frontend
+debt classifications remain unchanged. This is explicit migration debt, not
+whole-frontend closure. See agent-context/3518-formatter-d1-high-contract-2026-09-09.md
+and agent-context/3518-runtime-support-transport-progress-2026-09-09.md.
+
+Final preservation gate passed its 12 executed callers, 10 core-type references
+and six moved-function witnesses under the approved preservation-only contract;
+the two known dynamic imports still prevent strict closure. Post-format TS7
+passed, and the older self-hosted builtin suites passed 19/19. Normal publication
+checks remain in progress.
+Physical radix kernels, full formatter materialization, native async execution,
+public default cutover, ABI30 and direct-codegen retirement remain open.
+
+### Native async producer declarations (2026-09-09)
+
+The existing closure, argument-vector and Promise reservation callers now consume
+pure symbolic declaration plans before allocating. Issued inventories preserve
+ownership, request/cache ordering, adopted arrays and inherited metadata type
+identity. Promise still owns 25 declarations across 26 ordered operations.
+The declaration checkpoint passes 194/194 focused tests (77955, exit zero) and
+unfiltered TS7 (43844, exit zero). High approved the twelve frozen source/test
+files; earlier failing runs remain in the implementation handoff.
+
+Borrowed tag association is checked while reserving; actual tag provenance is
+authenticated only after freeze using the existing ledger. This limitation is
+explicit, not a claim of preallocation tag authentication. The full async
+consumer, staged cross-producer closure scheduling, complete runtime fills,
+public cutover and retirement remain unfinished.
+
+### Formatter requirements and physical option checkpoint (2026-09-09)
+
+The D2 requirements collector retains all eight formatter call occurrences from
+the actual async example (two continuation owners, two calls each, both prepared
+views). Separate support traversal retains 31 buffers and four inline-WTF16
+literals with their original allocation, canonical allocation and metadata
+identity. No ordinary source population or existing demand scanner is changed.
+The consumer retains an explicitly supplied immutable integer-before-scratch
+option without adding an environment read or a no-demand default.
+
+Run 76460 passed 80/80 requirements and boundary tests with no skips, including
+fixed call/literal coordinates and rejection of stale allocations and detached
+support evidence. Post-change TS7 succeeded in 18552. Inventory is valid but its
+graph remains incomplete. Earlier consumer blast-radius run 65740 passed 79/79;
+resource prerequisite composition run 30810 passed 194/194.
+
+This is descriptive preallocation evidence, not a new acceptance capability.
+Complete formatter resources, scratch-root binding, prepared radix emission and
+single-ledger integration remain in progress under the frozen D2 High contract.
+The async refusal stays in place; public cutover and retirement remain open.
+See agent-context/3518-number-format-consumer-progress-2026-09-09.md for receipts
+and agent-context/3518-formatter-d2-high-contract-2026-09-09.md for implementation.
+
+The subsequent physical scratch join is drafted in the formatter backend
+aggregate and physical planner. It assigns the canonical string-data resource
+to the existing prepared scratch required root and rejects conflicting owners.
+Boundary validation passed 72/72; requirements/scratch tests passed 14/14 and
+TS7 passed after moving the structural-key check out of the clean aggregate.
+The real inventory reports zero errors but graphComplete:false. Exact scratch
+signature conversion subsequently passed TS7 and 14/14 focused tests (97644).
+The existing native-string consumer execution suite passed 68/68 (9217),
+covering original/decoded programs, optimization/storage modes and startup
+ordering. This protects existing paths; it does not prove actual formatter
+support-body execution or full async admission.
+
+### Native Ryū D2 checkpoint (2026-09-09)
+
+The complete Ryū tables and three executable builders now have canonical owners,
+shared by the real legacy callers and issued physical resources. Independent
+partial-table caches and the original six-resource reservation order are retained.
+High approved R2: 39/39 focused tests (9786, exit zero) and TS7 (39393, exit zero).
+The exact donor inverse includes comments, local order and positive-first mutation
+controls; earlier 23/39 and 38/39 runs remain recorded in the implementation handoff.
+
+This is canonical extraction and finite/nonzero resource execution, not full
+prepared formatter or async consumer acceptance. Nonfinite/zero formatter cases,
+both integer options, decoded support execution and parent boundary activation
+remain integration obligations. Public cutover and retirement remain open.
+See agent-context/3518-native-number-ryu-2026-09-09.md.
+
+### Native formatter D2 validated worker checkpoint (2026-09-09)
+
+Canonical formatter bodies now serve the retained legacy adapters and a complete
+issued resource owner. The exact thirteen-function closure includes the genuine
+D1 radix-body slot and nested Ryū resources; parent lowering fills that body,
+not a placeholder. Both integer options and partial legacy caches preserve the
+authenticated donor module and registration observations.
+
+Final worker run 15960 passed 35/35 ownership/resource tests in 22.67 seconds,
+including original/decoded source-produced support, the exact issue1537 corpus,
+both integer options, two instances and guarded fresh-process binary execution.
+TS7 50495 passed unfiltered. Earlier 27/35, 32/35 and 12/13 attempts remain in
+agent-context/3518-native-number-format-2026-09-09.md with their causes and
+terminal receipts. Canonical intrinsic preparation is required before lowering
+the support body's semantic math.floor operations, as in the legacy wrapper.
+
+Final post-validation High approval was relayed; normal publication is authorized
+and in progress under a separately granted serialized hook slot.
+These resource proofs do not close the full async consumer, public cutover,
+boundary activation or direct-codegen retirement obligations.
+
 ### Native string-output executable extraction E1 — static draft (2026-09-09)
 
 The separately claimed Lane E prerequisite is implemented against published
@@ -7081,6 +7198,104 @@ Actual publication inventory subsequently passed in session 79242, exit zero:
 the immutable 721cd33a base. The two new owners were counted as untracked prior
 to staging. This is classification validation, not expanded root coverage or
 complete-graph/retirement evidence; normal publication hooks remain next.
+
+### Native string-output E2 implementation dispatch (2026-09-09)
+
+The actual remaining string resource refusal is immutable binary `string.concat`.
+Completing this lane also requires canonical arity-5 concat and stdout append,
+prepare and character readout. Existing source certification is retained; all
+primary async owners remain in the real program. No shortened source or fabricated
+scanner/unbox demand supplies the output dependencies.
+
+The frozen Astra High implementation contract is
+`agent-context/3518-e2-string-output-high-contract-2026-09-09.md`, SHA256
+f33688ecd6c5bea50e7f41be537776343ce13007afa9ba4a9a4fc2dc35b502d8.
+Parent read the full contract and corrected the physical phase order before
+dispatch: ABI planning seal before allocation; reserve/reconcile, freeze, bind
+and finishBinding, fill, publish, then module seal. Resource completion works
+in filling/sealed phases and authenticates actual filled content, not merely
+a flag or a whole-module completion claim.
+
+Canonical claim session 32902 acquired and verified
+`3518:native-string-output-resources` for
+`ttraenkler/codex-native-string-output-resources`, branch
+`codex/3518-native-string-output-resources-20260909`. Maxwell owns the three new
+requirements/resource/physical-plan modules, the explicitly handed-off existing
+native-string-values aggregate, and the two new tests enumerated in the contract.
+Parent keeps physical ABI/consumer integration, options, boundary activation and
+whole-family acceptance. Implementation starts from published E1; final source
+validation must include the current formatter integration before publication.
+
+Use one shared string/flatten owner, exact canonical internal literals and E1
+bodies, and explicit default-true empty-identity options without ambient reads.
+Preserve old no-output recipes and bytes. Resource proof does not complete native
+async invocation/frames/Promise fill, canonical main undefined, public cutover,
+ABI30 planningSealed evidence or strict direct-codegen retirement.
+
+### Same-owner staged closure reservation checkpoint (2026-09-09)
+
+The bounded closure resource producer now supports one issued owner and pack
+across a settle-metadata prefix, actual Promise reservation, and signature-only
+suffix. Complete preflight and all metadata precede the first pause; the legacy
+atomic API and complete frozen shape remain. Promise reserve/reserving inventory
+accept the authenticated prefix, while fill still requires completion.
+
+High statically approved production and final proof repairs. Focused rerun4029
+exited0 with 172/172 across four suites. Earlier33713 exited1 with 170/172;
+the surviving physical-only preflight mutant was still blocked by the canonical
+walk, and one expected missing-request diagnostic needed the new prefix guard.
+Both are retained distinctly in the handoff. TS740649 exited0 before those two
+test-only repairs. Final TS711727 exited0 after those repairs and scoped
+production formatting; normal publication remains pending.
+
+Original/decoded actual-source Promise interleaving, fresh/cached suffixes,
+three lazy-observer timings, full donor receipts, live mutants and allocator
+ordering controls establish this reservation prerequisite only. Complete Promise
+fill, full native async execution, public cutover and retirement remain open.
+See agent-context/3518-staged-closure-reservations-implementation-2026-09-09.md.
+
+### Delay/timer implementation contract frozen (2026-09-09)
+
+The reviewed Astra High contract is
+`agent-context/3518-lane-b-delay-timer-implementation-contract-2026-09-09.md`,
+SHA256 ad198d26d678e93a365ca2515561f29cd64b3e1b845cd7a79caa3cc268a58848.
+It uses published same-owner staged closures rather than obsolete atomic-only
+assumptions. Canonical legacy-used layout factories and timer export planning
+have disjoint proposed writer scopes; active legacy-file ownership must be
+checked before dispatch. Copying this contract grants no overlap release.
+
+Parent retains selected import authority, complete ordered export occupancy,
+physical scheduling and consumer integration. Resource fill/publication still
+requires genuine C1/C2 invocation/classification and directCall0 ownership,
+plus actual rejection-tracking ownership when selected. Signature-compatible
+stand-ins, missing-hook fallbacks and hand-written dispatchers cannot satisfy
+those dependencies. Tables and elements remain typed publication obligations,
+not fabricated function ABI slots. Whole-family execution remains required.
+
+Predispatch audit read upstream assignment head
+`a6bd497f7c91ee841a63698df831a962b055e69e` twice unchanged. B1's three
+legacy adapters overlap active `3518:native-delay-combinator-bodies`, owner
+`ttraenkler/codex-astra-native-delay-combinator-bodies-20260908`, write ID
+`57815-2v4g2ji4`. B2's closure-exports.ts overlaps active
+`3520:c31-closure-host-bridge`, owner `ttraenkler/codex-r1-c31`, with C38
+publication history also requiring reconciliation. No explicit release for
+these new factoring scopes was found; neither writer was dispatched. The
+separate preserved P/C file inventories do not grant release of these owners.
+Timer-contract and new-path ownership also require verification before claims.
+
+### E2 named-signature correction (2026-09-09)
+
+Parent and Astra High verified the actual ledger always performs an unnamed
+intern lookup inside function reservation. Preserving each of the three stdout
+signature names therefore requires an earlier explicit named intern step:
+two calls, one allocation on a cold miss, none on a preseeded hit. Existing
+matching types retain their first-allocation names. Binary/batch functions keep
+implicit-only interning. No duplicate ABI type entry or ledger/schema change.
+The corrected contract SHA256 is
+`d65b993cfc014277e4c4f6c0903b919a6cbdc962002257b6333e7618759665e4`;
+this narrowly supersedes the earlier no-explicit-plus-implicit sentence, not
+the full requirements or physical phase order. Maxwell received the correction
+and must pin actual calls, optional arguments, names, indices and cache behavior.
 ### Native async producer declarations (2026-09-09)
 
 The existing closure, argument-vector and Promise reservation callers now consume
@@ -7479,6 +7694,94 @@ any demonstrated new candidate regression blocks it. Full native async execution
 ABI30/public caller proof and strict retirement remain separate unfinished work.
 No older PR closes until its actual content is verified on main.
 
+### Cumulative historical validation at 1fc56e20 (2026-09-09)
+
+The published cumulative PR5798 remains held. Its four composed batches passed
+2650 tests across47 files, with no failed/pending tests. Historical no-demand
+three-arm validation passed, including the original vector defect reproduction:
+five source executions, one exact source refusal and one producer-IR execution
+are distinct categories. Promise repair validation passed48 rows/96 instances/
+184 observations and14 negative controls, reproducing the baseline getter
+defect and observing no candidate semantic gaps. Neither result certifies full
+native async execution or direct-codegen retirement.
+
+The explicit delay historical pair against1cb0f5c7 did NOT pass. Candidate and
+baseline children both exited0 with11 executed artifacts each, but all11 rows
+differ in binary, WAT, result metadata and instantiated-byte records. Non-binary
+observed value fields match. The outer Vitest worker then exhausted its default
+512MiB heap while handling the large comparison. This is not merely a resource
+failure: the retained artifacts establish a real exact-parity mismatch.
+Evidence: `.tmp/delay-combinator-preservation-uGms5w` and
+`.tmp/queue-drain-delay-pair-1fc56e20.log` in the cumulative integration tree.
+
+Next action: attribute complete artifact differences to their source changes
+before considering any narrower acceptance claim. Preserve both original arms,
+all test populations and the failed receipt; do not waive a mismatch or rewrite
+a historical expected result to make the cumulative root pass. Scanner/frame
+pairs and the separate landed BigInt regressions tracked in5807 remain open.
+
+The scanner three-arm run subsequently passed at the same1fc56e20 source pin:
+66 executed rows and132 observations in each of baseline/candidate/projection,
+with zero comparison differences. Exactly four authenticated transformations
+ran in the projection and zero in the other arms. Baseline-versus-projection
+byte parity and actual-candidate semantic correctness are separate claims.
+Receipts: `.tmp/native-scanner-source-pair-a1Lq22`. This does not resolve the
+delay mismatch or5807. Frame baseline0194 is clean; its paired run remains
+unexecuted while cumulative artifact attribution is reviewed.
+
+### Frame/delay three-arm plan requested after historical failures
+
+Superseding the preceding frame UNRUN note: frame session93831 finished EXIT1,
+20/21 tests passed; four of five artifact rows differ. Delay's original outer
+OOM and all saved differences remain preserved. Bounded attribution accounts
+for reference shifts and identifies Promise capture, scanner guard and vector
+non-null changes, but does not turn exact-parity failures into acceptance.
+
+The user authorized preparation of an exact reviewable comparison plan, not
+implementation or execution. See
+[the three-arm review plan](../agent-context/3518-frame-delay-three-arm-review-plan-2026-09-09.md).
+It pins original roots, candidate, instruments and fixture arrays; preserves
+all original failures; retains 5/12 frame and 11/19 delay artifact/execution
+counts per arm; and requires complete repaired-baseline/candidate equality.
+No normalization, omitted fields, replacement fixtures or automatic baseline
+expansion is allowed. Literal repair patches and the additive driver require
+an independently reviewed execution manifest before any run. PR5798 remains
+held, and issue5807's Linux regression evidence is not waived.
+
+The user subsequently approved bounded implementation, but not the comparison
+run or merge. Literal four-file repair patches now exist for both historical
+roots, including P7; fresh isolated copies reproduce their complete postimage
+censuses. The additive driver and its synthetic/syntax-only tests are recorded
+in [the implementation checkpoint](../agent-context/3518-three-arm-repair-artifacts/IMPLEMENTATION.md).
+No historical arm has run. Independent admission review, remaining mutation
+controls and the complete execution-manifest review remain required before
+requesting run approval. Original failures, fixtures and PR5798's hold remain.
+
+2026-09-10 preflight checkpoint: all 103 synthetic/extraction/CLI controls pass.
+The complete six-arm review-only manifest is captured, and read-only admission
+against the actual source roots and dependency tree passes without launching a
+compiler. This does not prove historical equality or authorize execution.
+Independent static/data review found no actionable blockers. Late-path negative
+controls remain before run approval;
+see the implementation checkpoint for the exact manifest digest and limitations.
+
+The shared dependency census later changed, invalidating current admission;
+the failed preflight is preserved. An isolated complete dependency copy (cache
+included) and fresh exact-pin O worktrees now support a replacement review-only
+manifest. Parent validation passes 30 additional controls, including 27 negative
+rejections against frozen observed reads. This is admission coverage, not
+compiler parity. Execution and merge approval remain separate; see the updated
+implementation checkpoint and measured evidence for limitations and digest.
+
+After explicit user execution approval, the six-arm comparison completed EXIT0:
+48 artifacts / 93 executions, all children EXIT0. Full repaired-baseline/candidate
+fixtures and rows are exactly equal for both frame and delay, while both original
+comparisons remain unequal and preserved. Frame late-import is exact across all
+three arms. See `comparison-terminal-evidence.json` beside the implementation
+checkpoint for terminal summaries and the complete local artifact hash inventory.
+This closes the bounded historical frame/delay gate, not issue3518: closure,
+physical acceptance, retirement and issue5807 Linux regressions remain open.
+Execution approval did not authorize merging; PR5798 remains held.
 ### Physical reservation queue refresh (2026-09-10)
 
 PR5752 is refreshed against main `1429cfdf2167f31532d70c5304430a9300c2a982`
@@ -8677,3 +8980,97 @@ its log is retained. Running the identical TypeScript checker with
 `node --import tsx scripts/check-ir-fallbacks.ts` passes with no unintended,
 post-claim or module-level increases. No checker, timeout, fixture or gate was
 weakened. Fresh remote main and PR head remain 987ed50c and 03d0615e.
+
+### PR5798 cumulative formatter checkpoint queue refresh plan (2026-09-14)
+
+PR5802 delivered as8f4495ba21ea6f3d7747f01b9e2a29adaf8b5ca6 after all102
+shards, final regression, CI and differential passed; actual full merge tree
+and fresh main ancestry verified. Resume existing PR5798 at published
+d132c0a4e49a1c157ddd0052e125f59ab4f6c386 in isolated
+codex/5798-queue-drain-20260914. Original D2 and separately frozen E2 claims
+remain with their recorded owners. No new migration scope or E2 adoption.
+
+The published head contains24 first-parent commits beyond the older1eaa57
+PR-body checkpoint, including prior cumulative merges, controlled historical
+comparisons, Linux replay and preserved rejected interventions. Preserve all
+of that prepared work and original failures. Multiple merge bases make a
+single three-dot diff insufficient to identify remaining changes. Verify the
+actual merged source against both exact parents.
+
+Main merged without source conflicts. Resolve metadata and three test conflicts
+by preserving both histories, activated policy closures and all test intentions.
+Root owns issue/policy/semantic-boundary reconciliation; separate native agents
+own only value-resource and delay-source-preservation test conflicts. No agent
+runs parallel heavy validation. Archive every original conflict/stage first.
+
+Verify independent pinned corpus, then current-root resource/formatter/consumer/
+legacy-wrapper and boundary suites, preserved historical proof controls and all
+required gates. Retarget the existing PR only after current head/base evidence
+is established; normal signed hooks/push and exact-head protected queue only.
+Count only fresh verified main ancestry/content and full required checks as
+delivery. Keep the recorded229/230 E2 failure and23/23 targeted repair separate
+from this checkpoint; full output/async execution and IR-only retirement remain
+unproven.
+
+The five conflict resolutions retain both complete histories and test intentions.
+Policy union is1413 classifications and75 activation records: nine published
+records followed by main's intact66; all68 original published records remain
+an exact ordered subsequence. Main entry order and all original digest proofs
+are preserved. No allowed edge or activation floor was weakened. Both complete
+boundary suites pass467/467 with no skips/input drift. The current fixture has
+106unique owners and425imports (262type-only/163runtime), independently checked.
+
+The initial merge emitted a missing remote-object diagnostic while constructing
+its virtual merge base; all13376 indexed blobs were subsequently read-verified
+as available. Virtual stage1 policy contains conflict markers from crisscross
+history, so policy reconciliation used exact endpoint records and preserved
+both historical subsequences. Original merge output and every conflict/stage
+are archived. Independent corpus verification again matches53933 pinned blobs,
+exact directory/file sets and no shared objects. Current production suite
+validation is the next separate measurement, not implied by boundary results.
+
+Current production validation passes853/853 across26complete suites, no skips
+or input drift. Additional nine Node preservation-tool suites initially pass
+302/305: admission's top-level setup and two driver positive controls read
+current instrument files against deliberately pinned historical instrument
+hashes. Full failed log is retained. Scope of the blocker fix is test inputs
+only: provide exact immutable original instrument bytes with verified provenance,
+keep all production admission/hash/patch contracts unchanged, and retain the
+modified-current-instrument refusals and every original negative control.
+A native agent owns only the two affected tests and required historical fixture
+files; root owns validation and publication.
+
+Existing48-artifact/93-execution three-arm results remain historical. The runner
+is pinned to63079597 and has no current-candidate refresh option; original raw
+receipt paths are absent locally. No new historical comparison is claimed, no
+admission rules widened, and the rejected constructor intervention stays rejected.
+
+The scoped historical-input repair is complete: the same nine Node suites now
+pass342/342, zero skips/input drift. The initial302/305 failure remains archived;
+the count increase includes admission cases previously blocked at module setup
+and two new positive-first rejection controls, not37 new tests. Five immutable
+fixtures match original committed full-file bytes and unchanged hash pins;
+production admission and runner contracts remain unchanged. The public retirement
+instrument suite separately passes16/16; this does not establish retirement.
+All seven source gates and seven adjacent gates pass. Inventory is1413 modules,
+zero errors, explicitly inventory-valid-architecture-incomplete. Formatting and
+diff checks pass. Evidence is under .tmp/5798-queue-drain in the integration
+worktree. These are current8f4495ba-based checks; historical48/93 results, the
+original Linux failure and the unexecuted intervention remain separate.
+
+Delivery refresh continues on main d78c139d (baseline artifacts only). All seven
+source gates pass again and all1487 production input pins remain identical.
+The normal baseline-merge commit hook exposed an additional layout-instrument
+failure: delay-combinator-layout-ownership passes30/31; direct historical donor
+verification omits the delivered standard-EH forward projection. Original full
+hook output is preserved in latest-main-commit.log. No hash is rebaselined and
+no production fix or hook bypass is proposed. The separate async-declaration
+and scanner-chain suites pass40/40 with no skips/input drift. The baseline
+merge remains uncommitted pending the scoped test repair and normal hook retry.
+
+The layout proof repair passes31/31, zero skips/input drift. It authenticates
+the existing forward-EH projection, pins one tagged and one foreign catch and
+the original reference, then verifies all eight historical donors. The strict
+old verifier still explicitly rejects the current unprojected body. All other
+30 cases, helper contracts and original hashes remain unchanged. Formatting
+passes; retry the normal full commit hook, retaining its failed first run.

@@ -1,0 +1,576 @@
+{
+  "schema": "review-only-three-arm-repair-plan-v1",
+  "status": "PLAN_ONLY_NOT_READY_TO_RUN",
+  "candidate": {
+    "commit": "63079597adbfa485a1201de9eecabd9482aac8ce",
+    "sourceGitTree": "360f3b82efb0a1aee71233122f9c8dd92e9331ef",
+    "sourceCount": 1379,
+    "sourceCensusSha256": "787d3bdc1ecaa8deb77939c0269ef8c6c380297681a4570595655f73491b6950",
+    "censusProvenance": "Parent supplied; Git source tree independently resolved."
+  },
+  "sources": {
+    "promise": "00976e841109235a79991145ee5f0c30933bf3b1",
+    "scanner": "cf0026db2e926bf45c57204f6324fbae5fb168f7",
+    "vector": "c5c87e4abdd58539e22c89d96c4259c344461d40",
+    "vectorCarrier": "1e70f703325e95d410d318cd352f8652b7b05f3d"
+  },
+  "sourceReferences": [
+    {
+      "repair": "promise",
+      "commit": "00976e841109235a79991145ee5f0c30933bf3b1",
+      "file": "src/codegen/promise-thenable-lookup.ts",
+      "gitBlob": "64b7c8dd9049d93a3ef49fa9d60a35c3304a5ad3",
+      "sha256": "38ce4c3af48660c97153bf7a2973ff4c4d46007f4728cb1782f5e0ed72c11990",
+      "bytes": 2601
+    },
+    {
+      "repair": "promise",
+      "commit": "00976e841109235a79991145ee5f0c30933bf3b1",
+      "file": "src/runtime/wasmgc/promise/resolution-bodies.ts",
+      "gitBlob": "e7bc9f70655c20acfbbc14f2b878461e76d7139f",
+      "sha256": "d47babc9a6171649d1ae7ba9e6462f82866f1f5d2fc8eadb96a4b697c33e7026",
+      "bytes": 25415
+    },
+    {
+      "repair": "promise",
+      "commit": "00976e841109235a79991145ee5f0c30933bf3b1",
+      "file": "src/runtime/wasmgc/promise/thenable-bodies.ts",
+      "gitBlob": "a373b632f3dab0442ea0dd597de2269b4100732b",
+      "sha256": "1e8d56a26292e2d908e5bdfcb5a23bfd9e95c5b3fa4cab10f874c396f59fa168",
+      "bytes": 10337
+    },
+    {
+      "repair": "scanner",
+      "commit": "cf0026db2e926bf45c57204f6324fbae5fb168f7",
+      "file": "src/runtime/wasmgc/values/string-number-bodies.ts",
+      "gitBlob": "2d6f64ea704e01a9a1872fb048129ce4fcf7ae4f",
+      "sha256": "ce232ad6182bf57b9e690f48bbd2605fde3f46b9600a85804834364895b98f52",
+      "bytes": 16422
+    },
+    {
+      "repair": "vector",
+      "commit": "c5c87e4abdd58539e22c89d96c4259c344461d40",
+      "file": "src/ir/backend/wasmgc-emitter.ts",
+      "gitBlob": "e2affc4733c5a1a67d977f5ffcd021c1c50f0b6f",
+      "sha256": "caba0379bf1a1515b5d8966d51a90064a572bd4c380370a57a2606eba4245e1b",
+      "bytes": 20116
+    },
+    {
+      "repair": "vectorCarrier",
+      "commit": "1e70f703325e95d410d318cd352f8652b7b05f3d",
+      "file": "src/ir/backend/wasmgc-emitter.ts",
+      "gitBlob": "e2affc4733c5a1a67d977f5ffcd021c1c50f0b6f",
+      "sha256": "caba0379bf1a1515b5d8966d51a90064a572bd4c380370a57a2606eba4245e1b",
+      "bytes": 20116
+    }
+  ],
+  "bases": [
+    {
+      "label": "frame",
+      "commit": "0194b64c246d2b5beab2db00af33a73498e2eb6e",
+      "root": "/private/tmp/js2-3518-frame-baseline-0194-20260908",
+      "sourceCount": 1306,
+      "sourceCensusSha256": "5670027d6b5815133f5058ef785a55f7522d82d1058676de532cbe933ab210b0",
+      "artifacts": 5,
+      "executions": 12,
+      "censusProvenance": "Parent supplied; selected file preimages independently verified here. Full census not rerun.",
+      "sourceGitTree": "cb9c235f25136af82b909ca6cc0eea9d654fb9a9",
+      "filePins": [
+        {
+          "file": "src/codegen/async-scheduler.ts",
+          "gitBlob": "220df65e3a4fa8814aa2269e69a413622c376d1b",
+          "sha256": "7220f0474d3d3c7009876d4d463f2b8c8182d49793f5957570fb0a27da1dfd4f",
+          "bytes": 215633,
+          "existingRootFileMatches": true
+        },
+        {
+          "file": "src/codegen/closed-method-dispatch.ts",
+          "gitBlob": "feb6de718276cea09a3189148205e85d4a27b669",
+          "sha256": "66b08ebb72d73ccf8cd3dc77fb841407073036be0a46d09802ad16b24cbea809",
+          "bytes": 104757,
+          "existingRootFileMatches": true
+        },
+        {
+          "file": "src/codegen/parse-number-native.ts",
+          "gitBlob": "a9d23c444ef0dabfa5e7ca713bda20e6ba18c594",
+          "sha256": "8111e30ecf474d9da7a9728741b38a4a2166ddf24f68ed1cbe2974d33c99b12d",
+          "bytes": 69067,
+          "existingRootFileMatches": true
+        },
+        {
+          "file": "src/ir/backend/wasmgc-emitter.ts",
+          "gitBlob": "d62446f4e1942b870fac851ffa71b8ee7a6cb438",
+          "sha256": "a23bbcb037bf8bb0fd2b22bc4c85a86d43e87ce90b77c8a2f1b0588ccbac1167",
+          "bytes": 20075,
+          "existingRootFileMatches": true
+        }
+      ],
+      "originalFunctions": [
+        {
+          "file": "src/codegen/async-scheduler.ts",
+          "label": "ensurePromiseThenableSubstrate",
+          "startLine": 920,
+          "lineCount": 185,
+          "sha256": "4271ec112b7b09bc9cad424b02f077bbb999094342f956fff4e8790a55b16c1e",
+          "text": "function ensurePromiseThenableSubstrate(\n  ctx: CodegenContext,\n  state: AsyncSchedulerState,\n): PromiseThenableSubstrate | null {\n  if (ctx.standalone !== true && ctx.wasi !== true) return null;\n  const cache = ctx as unknown as { __promiseThenableSubstrate?: PromiseThenableSubstrate | null };\n  if (cache.__promiseThenableSubstrate !== undefined) return cache.__promiseThenableSubstrate;\n\n  // Step-6 TypeError machinery: in-module constructor (no host in wasi/\n  // standalone) + pooled message + the exception tag for the job's try/catch.\n  emitWasiErrorConstructor(ctx, \"TypeError\", 1);\n  addStringConstantGlobal(ctx, SELF_RESOLUTION_MSG);\n  const newTypeErrorFuncIdx = ctx.funcMap.get(\"__new_TypeError\");\n  const exnTag = ensureExnTag(ctx);\n\n  // The dispatcher the job calls. Reserving it NOW (compile phase) registers\n  // all its fallback-arm deps (object runtime, \"then\" string constant,\n  // `__apply_closure`) so the finalize fills only READ funcMap (#1719).\n  const varargThenFuncIdx = reserveClosedMethodDispatchVararg(ctx, \"then\");\n  const objVecNewIdx = ctx.funcMap.get(\"__objvec_new\");\n  const objVecPushIdx = ctx.funcMap.get(\"__objvec_push\");\n\n  // resolve/reject closure VALUES for the job — the executor's settle caps.\n  const execClosures = ensurePromiseExecutorClosures(ctx);\n\n  if (\n    newTypeErrorFuncIdx === undefined ||\n    objVecNewIdx === undefined ||\n    objVecPushIdx === undefined ||\n    execClosures === null\n  ) {\n    cache.__promiseThenableSubstrate = null;\n    return null;\n  }\n\n  // __promise_has_callable_then(value: externref) -> i32 — reserved; filled at\n  // finalize. The `i32.const 0` placeholder is VALID and semantically safe: if\n  // the fill is ever skipped, every value classifies non-thenable and the\n  // resolve path degrades to the pre-#3125 direct-fulfil behaviour.\n  const hasThenTypeIdx = addFuncType(ctx, [{ kind: \"externref\" }], [{ kind: \"i32\" }], \"$__promise_has_then_type\");\n  const hasCallableThenFuncIdx = mintDefinedFunc(ctx);\n  pushDefinedFunc(ctx, hasCallableThenFuncIdx, {\n    name: \"__promise_has_callable_then\",\n    typeIdx: hasThenTypeIdx,\n    locals: [],\n    body: [{ op: \"i32.const\", value: 0 }],\n    exported: false,\n  });\n  ctx.funcMap.set(\"__promise_has_callable_then\", hasCallableThenFuncIdx);\n\n  // __promise_peel_value(value: externref) -> externref — reserved; filled at\n  // finalize (needs `$AnyValue`, whose typeIdx may not exist yet). IDENTITY\n  // placeholder: raw (unboxed) values are classified/dispatched unchanged.\n  const peelTypeIdx = addFuncType(ctx, [{ kind: \"externref\" }], [{ kind: \"externref\" }], \"$__promise_peel_type\");\n  const peelValueFuncIdx = mintDefinedFunc(ctx);\n  pushDefinedFunc(ctx, peelValueFuncIdx, {\n    name: \"__promise_peel_value\",\n    typeIdx: peelTypeIdx,\n    locals: [],\n    body: [{ op: \"local.get\", index: 0 }],\n    exported: false,\n  });\n  ctx.funcMap.set(\"__promise_peel_value\", peelValueFuncIdx);\n  ctx.promiseThenableReserved = true;\n\n  // __promise_thenable_job(capsRaw: externref, thenable: externref) -> externref\n  // Uniform microtask signature. caps = $__then_caps{callback: null, chained:\n  // promise}; the thenable rides the value slot.\n  const capsTypeIdx = getOrRegisterThenCapsType(ctx);\n  const promiseLocal = 2;\n  const reasonLocal = 3;\n  const vecLocal = 4;\n  const capturedThenLocal = 5;\n  // (#5197 R3-5) `__apply_closure(fn, recv, argvec)` — the open closure-call\n  // bridge. Reserved here so the funcIdx is stable before this body bakes it.\n  const applyClosureIdx = reserveApplyClosure(ctx);\n  const jobLocals: LocalDef[] = [\n    { name: \"$promise\", type: { kind: \"ref_null\", typeIdx: state.promiseTypeIdx } },\n    { name: \"$reason\", type: { kind: \"externref\" } },\n    { name: \"$argvec\", type: { kind: \"externref\" } },\n    { name: \"$capturedThen\", type: { kind: \"externref\" } },\n  ];\n  const emitSettleCap = (clFuncIdx: number): Instr[] => [\n    ...buildPromiseSettleClosureInstrs(execClosures, clFuncIdx, [\n      { op: \"local.get\", index: promiseLocal },\n      { op: \"ref.as_non_null\" },\n    ]),\n    { op: \"extern.convert_any\" },\n  ];\n  const jobTryBody: Instr[] = [\n    // argvec = [resolveFn, rejectFn]\n    { op: \"call\", funcIdx: objVecNewIdx },\n    { op: \"local.set\", index: vecLocal },\n    { op: \"local.get\", index: vecLocal },\n    ...emitSettleCap(execClosures.resolveClFuncIdx),\n    { op: \"call\", funcIdx: objVecPushIdx },\n    { op: \"local.get\", index: vecLocal },\n    ...emitSettleCap(execClosures.rejectClFuncIdx),\n    { op: \"call\", funcIdx: objVecPushIdx },\n    // __call_m_then_vararg(peel(thenable), argvec) — `then.call(thenable,\n    // res, rej)`. The peel unwraps an `$AnyValue`-boxed resolution so the\n    // dispatcher's `ref.test` arms (closed structs / `$Object`) see the RAW\n    // object as the receiver.\n    // (#5197 R3-5) When Resolve captured the `then` FUNCTION (an own `then` on\n    // a native promise), call THAT value — the spec captures `then` at Resolve\n    // time (step 9) and calls it as a job (step 14), so a reassignment between\n    // the two must not change which function runs. Otherwise re-dispatch\n    // through the vararg `then` method dispatcher exactly as before.\n    ...(applyClosureIdx === undefined\n      ? [\n          { op: \"local.get\", index: 1 } as Instr,\n          { op: \"call\", funcIdx: peelValueFuncIdx } as Instr,\n          { op: \"local.get\", index: vecLocal } as Instr,\n          { op: \"call\", funcIdx: varargThenFuncIdx } as Instr,\n        ]\n      : ([\n          { op: \"local.get\", index: 0 },\n          { op: \"any.convert_extern\" },\n          { op: \"ref.cast\", typeIdx: capsTypeIdx },\n          { op: \"struct.get\", typeIdx: capsTypeIdx, fieldIdx: 0 },\n          { op: \"local.tee\", index: capturedThenLocal },\n          { op: \"ref.is_null\" },\n          {\n            op: \"if\",\n            blockType: { kind: \"val\", type: { kind: \"externref\" } },\n            then: [\n              { op: \"local.get\", index: 1 },\n              { op: \"call\", funcIdx: peelValueFuncIdx },\n              { op: \"local.get\", index: vecLocal },\n              { op: \"call\", funcIdx: varargThenFuncIdx },\n            ],\n            else: [\n              { op: \"local.get\", index: capturedThenLocal },\n              { op: \"local.get\", index: 1 },\n              { op: \"call\", funcIdx: peelValueFuncIdx },\n              { op: \"local.get\", index: vecLocal },\n              { op: \"call\", funcIdx: applyClosureIdx },\n            ],\n          },\n        ] satisfies Instr[])),\n    { op: \"drop\" },\n  ];\n  const thenableJobFuncIdx = mintDefinedFunc(ctx);\n  pushDefinedFunc(ctx, thenableJobFuncIdx, {\n    name: \"__promise_thenable_job\",\n    typeIdx: state.microtaskFuncTypeIdx,\n    locals: jobLocals,\n    body: [\n      { op: \"local.get\", index: 0 },\n      { op: \"any.convert_extern\" },\n      { op: \"ref.cast\", typeIdx: capsTypeIdx },\n      { op: \"struct.get\", typeIdx: capsTypeIdx, fieldIdx: 1 },\n      { op: \"local.set\", index: promiseLocal },\n      buildTargetTaggedTry(ctx, { kind: \"empty\" }, jobTryBody, [\n        {\n          tagIdx: exnTag,\n          body: [\n            // A throw from Get/then-call before settle rejects the promise\n            // (§27.2.2.2 step 2 / §27.2.1.3.2 step 15). Post-settle throws\n            // are no-ops via the one-shot settle guard.\n            { op: \"local.set\", index: reasonLocal },\n            { op: \"local.get\", index: promiseLocal },\n            { op: \"ref.as_non_null\" },\n            { op: \"local.get\", index: reasonLocal },\n            { op: \"call\", funcIdx: state.promiseRejectFuncIdx },\n            { op: \"drop\" },\n          ],\n        },\n      ]),\n      { op: \"ref.null.extern\" },\n    ],\n    exported: false,\n  });\n  ctx.funcMap.set(\"__promise_thenable_job\", thenableJobFuncIdx);\n\n  const result: PromiseThenableSubstrate = {\n    hasCallableThenFuncIdx,\n    thenableJobFuncIdx,\n    peelValueFuncIdx,\n    newTypeErrorFuncIdx,\n    selfResolutionMsg: SELF_RESOLUTION_MSG,\n  };\n  cache.__promiseThenableSubstrate = result;\n  return result;\n}\n"
+        },
+        {
+          "file": "src/codegen/async-scheduler.ts",
+          "label": "buildPromiseResolveValueLocals",
+          "startLine": 1250,
+          "lineCount": 15,
+          "sha256": "0c8a3e0abcd841d4634adfeb2b34a6a5c8c4f75f25deff49b24b0d9224c18823",
+          "text": "function buildPromiseResolveValueLocals(promiseTypeIdx: number): LocalDef[] {\n  // Params 0/1: (promise, value). Locals start at 2.\n  return [\n    { name: \"$inner\", type: { kind: \"ref\", typeIdx: promiseTypeIdx } },\n    { name: \"$caps\", type: { kind: \"externref\" } },\n    // (#3125) thenable-assimilation scratch: Get(\"then\") callability verdict +\n    // the caught poisoned-getter reason + the `$AnyValue`-peeled resolution.\n    { name: \"$hasThen\", type: { kind: \"i32\" } },\n    { name: \"$reason\", type: { kind: \"externref\" } },\n    { name: \"$poisoned\", type: { kind: \"i32\" } },\n    { name: \"$peeled\", type: { kind: \"externref\" } },\n    // (#5197 R3-5) The own `then` read off a native `$Promise` resolution.\n    { name: \"$bagThen\", type: { kind: \"externref\" } },\n  ];\n}\n"
+        },
+        {
+          "file": "src/codegen/async-scheduler.ts",
+          "label": "buildPromiseResolveValueBody",
+          "startLine": 1287,
+          "lineCount": 299,
+          "sha256": "2cb1f29affd3e1f41d6cfb09e4262e7a729871e586b4e4732813d7ee6a7ebe9c",
+          "text": "function buildPromiseResolveValueBody(\n  ctx: CodegenContext,\n  state: AsyncSchedulerState,\n  promiseTypeIdx: number,\n  callbackTypeIdx: number,\n  capsTypeIdx: number,\n  thenable: PromiseThenableSubstrate | null,\n): Instr[] {\n  // The substrate ensured the exn tag (ensureExnTag) before this body builds.\n  const exnTagIdx = ctx.exnTagIdx;\n  const promiseLocal = 0;\n  const valueLocal = 1;\n  const innerLocal = 2;\n  const capsLocal = 3;\n  const hasThenLocal = 4;\n  const reasonLocal = 5;\n  const poisonedLocal = 6;\n\n  // (#3125) The non-$Promise arm: thenable check + job enqueue, or direct\n  // fulfil. Falls back to the pre-#3125 direct fulfil when the substrate is\n  // unavailable (defensive — host/gc never emits this helper).\n  const nonPromiseArm: Instr[] =\n    thenable === null\n      ? [\n          // not a promise: fulfil directly\n          { op: \"local.get\", index: promiseLocal },\n          { op: \"local.get\", index: valueLocal },\n          { op: \"call\", funcIdx: state.promiseFulfillFuncIdx },\n        ]\n      : [\n          // hasThen = __promise_has_callable_then(value) — the Get(\"then\") runs\n          // accessors, so a poisoned getter THROWS here (§27.2.1.3.2 step 9):\n          // catch → reject(promise, thrown).\n          buildTargetTaggedTry(\n            ctx,\n            { kind: \"empty\" },\n            [\n              { op: \"local.get\", index: valueLocal },\n              { op: \"call\", funcIdx: thenable.hasCallableThenFuncIdx },\n              { op: \"local.set\", index: hasThenLocal },\n            ],\n            [\n              {\n                tagIdx: exnTagIdx,\n                body: [\n                  { op: \"local.set\", index: reasonLocal },\n                  { op: \"i32.const\", value: 1 },\n                  { op: \"local.set\", index: poisonedLocal },\n                ],\n              },\n            ],\n          ),\n          { op: \"local.get\", index: poisonedLocal },\n          {\n            op: \"if\",\n            blockType: { kind: \"val\", type: { kind: \"externref\" } },\n            then: [\n              // Get(\"then\") threw: RejectPromise(promise, thrown).\n              { op: \"local.get\", index: promiseLocal },\n              { op: \"local.get\", index: reasonLocal },\n              { op: \"call\", funcIdx: state.promiseRejectFuncIdx },\n            ],\n            else: [\n              { op: \"local.get\", index: hasThenLocal },\n              {\n                op: \"if\",\n                blockType: { kind: \"val\", type: { kind: \"externref\" } },\n                then: [\n                  // Callable then: enqueue PromiseResolveThenableJob(promise,\n                  // value, then). caps = $__then_caps{callback: null, chained:\n                  // promise}; the thenable rides the job's value slot (step 14\n                  // — the then CALL happens as a job, never inline).\n                  { op: \"ref.func\", funcIdx: thenable.thenableJobFuncIdx },\n                  { op: \"ref.null.extern\" },\n                  { op: \"local.get\", index: promiseLocal },\n                  { op: \"struct.new\", typeIdx: capsTypeIdx },\n                  { op: \"extern.convert_any\" },\n                  { op: \"local.get\", index: valueLocal },\n                  { op: \"call\", funcIdx: state.enqueueFuncIdx },\n                  { op: \"local.get\", index: valueLocal },\n                ],\n                else: [\n                  // Not a thenable: fulfil directly (steps 11 / 16).\n                  { op: \"local.get\", index: promiseLocal },\n                  { op: \"local.get\", index: valueLocal },\n                  { op: \"call\", funcIdx: state.promiseFulfillFuncIdx },\n                ],\n              },\n            ],\n          },\n        ];\n\n  // (#3125) Step 6 — SameValue(resolution, promise): a promise resolved with\n  // ITSELF rejects with a TypeError (resolve-settled-*-self). Emitted inside\n  // the $Promise arm (both refs are concrete (ref $Promise), so a plain\n  // `ref.eq` is the SameValue). Without the substrate the adopt path is kept\n  // unchanged (pre-#3125: self-adoption deadlocks — defensive only).\n  const selfCheck: Instr[] =\n    thenable === null\n      ? []\n      : [\n          { op: \"local.get\", index: innerLocal },\n          { op: \"local.get\", index: promiseLocal },\n          { op: \"ref.eq\" },\n          {\n            op: \"if\",\n            blockType: { kind: \"empty\" },\n            then: [\n              { op: \"local.get\", index: promiseLocal },\n              ...stringConstantExternrefInstrs(ctx, thenable.selfResolutionMsg),\n              { op: \"call\", funcIdx: thenable.newTypeErrorFuncIdx },\n              { op: \"call\", funcIdx: state.promiseRejectFuncIdx },\n              { op: \"drop\" },\n              { op: \"local.get\", index: valueLocal },\n              { op: \"return\" },\n            ],\n          },\n        ];\n\n  // (#3125) Classify the PEELED resolution: an `any`-typed value arrives as an\n  // externref-wrapped `$AnyValue` box, which would MISS the `ref.test $Promise`\n  // and every thenable arm. The peel is dispatch-only — fulfil/reject still\n  // deliver the ORIGINAL `value`, preserving identity across the promise.\n  // (Placeholder peel = identity, so pre-fill behaviour is unchanged.)\n  const peeledLocal = 7;\n  const peelPrelude: Instr[] =\n    thenable === null\n      ? [\n          { op: \"local.get\", index: valueLocal },\n          { op: \"local.set\", index: peeledLocal },\n        ]\n      : [\n          { op: \"local.get\", index: valueLocal },\n          { op: \"call\", funcIdx: thenable.peelValueFuncIdx },\n          { op: \"local.set\", index: peeledLocal },\n        ];\n\n  // (#5197 R3-5) §27.2.1.3.2 steps 8-13 run `Get(resolution, \"then\")` for EVERY\n  // object, including a native promise. The `$Promise` arm below adopts the\n  // native state directly, so `nativePromise.then = f` was never observed. The\n  // decision rides on the VALUE (does this exact object carry an own `then` in\n  // its carrier bag?), not on the syntax that produced it, so it is taken\n  // identically however the promise reaches Resolve — a variable, a property,\n  // an array element, a call result.\n  //\n  // Absent the carrier-bag natives (a module with no promise expandos at all)\n  // this arm is not emitted and the body is byte-identical to before.\n  const bagThenLocal = 8;\n  const bagHasIdx = ctx.funcMap.get(CARRIER_BAG_HAS);\n  const externGetIdx = ctx.funcMap.get(\"__extern_get\");\n  // (#5197 round-3 review F2) IsCallable(thenAction) is the CLASSIFIER's\n  // question, not a single root-wrapper `ref.test`: a bound function\n  // (`$__bound_fn`), the runtime-eval carrier and the boundary callable are\n  // callable and live outside the funcref-wrapper root. `__typeof_function`\n  // is filled at finalize from the shared closure classifier\n  // (closure-classifier.ts / typeof-natives-finalize.ts), so it also sees\n  // callable carriers minted AFTER this body is built. The root test is kept\n  // only as the fallback when the predicate cannot be registered.\n  if (thenable !== null && !ctx.indexSpaceFrozen) {\n    ensureLateImport(ctx, \"__typeof_function\", [{ kind: \"externref\" }], [{ kind: \"i32\" }]);\n  }\n  const typeofFunctionIdx = thenable === null ? undefined : ctx.funcMap.get(\"__typeof_function\");\n  const callableRootTypeIdx = getFuncRefWrapperRootTypeIdx(ctx);\n  const isCallableThen: Instr[] =\n    typeofFunctionIdx !== undefined\n      ? [\n          { op: \"local.get\", index: bagThenLocal },\n          { op: \"call\", funcIdx: typeofFunctionIdx },\n        ]\n      : callableRootTypeIdx === undefined\n        ? []\n        : [\n            { op: \"local.get\", index: bagThenLocal },\n            { op: \"any.convert_extern\" },\n            { op: \"ref.test\", typeIdx: callableRootTypeIdx },\n          ];\n  const ownThenArm: Instr[] =\n    thenable === null || bagHasIdx === undefined || externGetIdx === undefined || isCallableThen.length === 0\n      ? []\n      : [\n          { op: \"local.get\", index: peeledLocal },\n          ...stringConstantExternrefInstrs(ctx, \"then\"),\n          { op: \"call\", funcIdx: bagHasIdx },\n          {\n            op: \"if\",\n            blockType: { kind: \"empty\" },\n            then: [\n              { op: \"local.get\", index: peeledLocal },\n              ...stringConstantExternrefInstrs(ctx, \"then\"),\n              { op: \"call\", funcIdx: externGetIdx },\n              { op: \"local.set\", index: bagThenLocal },\n              ...isCallableThen,\n              {\n                op: \"if\",\n                blockType: { kind: \"empty\" },\n                then: [\n                  // Callable own `then`: enqueue PromiseResolveThenableJob with\n                  // the function CAPTURED NOW (step 9), so a later reassignment\n                  // of `then` cannot change which function the job calls.\n                  { op: \"ref.func\", funcIdx: thenable.thenableJobFuncIdx },\n                  { op: \"local.get\", index: bagThenLocal },\n                  { op: \"local.get\", index: promiseLocal },\n                  { op: \"struct.new\", typeIdx: capsTypeIdx },\n                  { op: \"extern.convert_any\" },\n                  { op: \"local.get\", index: valueLocal },\n                  { op: \"call\", funcIdx: state.enqueueFuncIdx },\n                  { op: \"local.get\", index: valueLocal },\n                  { op: \"return\" },\n                ],\n                else: [\n                  // Own but NOT callable (step 11): fulfil with the promise\n                  // object itself, do not adopt its state.\n                  { op: \"local.get\", index: promiseLocal },\n                  { op: \"local.get\", index: valueLocal },\n                  { op: \"call\", funcIdx: state.promiseFulfillFuncIdx },\n                  { op: \"return\" },\n                ],\n              },\n            ],\n          },\n        ];\n\n  return [\n    ...peelPrelude,\n    { op: \"local.get\", index: peeledLocal },\n    { op: \"any.convert_extern\" },\n    { op: \"ref.test\", typeIdx: promiseTypeIdx },\n    {\n      op: \"if\",\n      blockType: { kind: \"val\", type: { kind: \"externref\" } },\n      then: [\n        // inner = (ref $Promise) peeled\n        { op: \"local.get\", index: peeledLocal },\n        { op: \"any.convert_extern\" },\n        { op: \"ref.cast\", typeIdx: promiseTypeIdx },\n        { op: \"local.set\", index: innerLocal },\n        ...selfCheck,\n        ...ownThenArm,\n        // caps = $__then_caps{ callback: null, chained: promise }\n        { op: \"ref.null.extern\" },\n        { op: \"local.get\", index: promiseLocal },\n        { op: \"struct.new\", typeIdx: capsTypeIdx },\n        { op: \"extern.convert_any\" },\n        { op: \"local.set\", index: capsLocal },\n        // dispatch on inner.state\n        { op: \"local.get\", index: innerLocal },\n        { op: \"struct.get\", typeIdx: promiseTypeIdx, fieldIdx: 0 },\n        { op: \"i32.const\", value: PROMISE_STATE_FULFILLED },\n        { op: \"i32.eq\" },\n        {\n          op: \"if\",\n          blockType: { kind: \"empty\" },\n          then: [\n            // already fulfilled: schedule fulfill reaction with inner.value\n            { op: \"ref.func\", funcIdx: state.identityFulfillWrapperFuncIdx },\n            { op: \"local.get\", index: capsLocal },\n            { op: \"local.get\", index: innerLocal },\n            { op: \"struct.get\", typeIdx: promiseTypeIdx, fieldIdx: 1 },\n            { op: \"call\", funcIdx: state.enqueueFuncIdx },\n          ],\n          else: [\n            { op: \"local.get\", index: innerLocal },\n            { op: \"struct.get\", typeIdx: promiseTypeIdx, fieldIdx: 0 },\n            { op: \"i32.const\", value: PROMISE_STATE_REJECTED },\n            { op: \"i32.eq\" },\n            {\n              op: \"if\",\n              blockType: { kind: \"empty\" },\n              then: [\n                // already rejected: schedule reject reaction with inner.value\n                { op: \"ref.func\", funcIdx: state.identityRejectWrapperFuncIdx },\n                { op: \"local.get\", index: capsLocal },\n                { op: \"local.get\", index: innerLocal },\n                { op: \"struct.get\", typeIdx: promiseTypeIdx, fieldIdx: 1 },\n                { op: \"call\", funcIdx: state.enqueueFuncIdx },\n              ],\n              else: [\n                // pending: prepend a reaction node onto inner.callbacks\n                { op: \"local.get\", index: innerLocal },\n                { op: \"ref.func\", funcIdx: state.identityFulfillWrapperFuncIdx },\n                { op: \"local.get\", index: capsLocal },\n                { op: \"ref.func\", funcIdx: state.identityRejectWrapperFuncIdx },\n                { op: \"local.get\", index: capsLocal },\n                { op: \"local.get\", index: innerLocal },\n                { op: \"struct.get\", typeIdx: promiseTypeIdx, fieldIdx: 2 },\n                { op: \"struct.new\", typeIdx: callbackTypeIdx },\n                { op: \"extern.convert_any\" },\n                { op: \"struct.set\", typeIdx: promiseTypeIdx, fieldIdx: 2 },\n              ],\n            },\n          ],\n        },\n        // result (unused by the microtask drain, but the type must be externref)\n        { op: \"local.get\", index: valueLocal },\n      ],\n      else: nonPromiseArm,\n    },\n  ];\n}\n"
+        },
+        {
+          "file": "src/codegen/async-scheduler.ts",
+          "label": "PromiseThenableSubstrate",
+          "startLine": 898,
+          "lineCount": 19,
+          "sha256": "08d65223a788833bfde1f931dbfb0e93505ca0ab980c64cce8ece283bf9b66ff",
+          "text": "interface PromiseThenableSubstrate {\n  hasCallableThenFuncIdx: number;\n  thenableJobFuncIdx: number;\n  /**\n   * `__promise_peel_value(value) -> externref` — unwraps a `$AnyValue`-boxed\n   * resolution (tag 6 → raw GC object; tag 5 → the extern payload) so the\n   * `$Promise`/thenable classification sees the RAW object. An `any`-typed\n   * resolution (`const o: any = …; Promise.resolve(o)`) arrives as an\n   * externref-wrapped `$AnyValue` box, which would MISS every `ref.test`\n   * arm (the poisoned-then getter never ran without this). Placeholder is\n   * IDENTITY (filled at finalize alongside the predicate); non-box values\n   * pass through unchanged, and the ORIGINAL (boxed) value is still what\n   * fulfils/rejects — the peel is classification/dispatch-only, so value\n   * identity across the promise is preserved.\n   */\n  peelValueFuncIdx: number;\n  newTypeErrorFuncIdx: number;\n  selfResolutionMsg: string;\n}\n"
+        },
+        {
+          "file": "src/codegen/closed-method-dispatch.ts",
+          "label": "fillPromiseThenableHelpers",
+          "startLine": 2001,
+          "lineCount": 209,
+          "sha256": "8d8d3bef8375b3e156e3b5e218db9d3c546090dc19321373acfd1bb832e66a7e",
+          "text": "export function fillPromiseThenableHelpers(ctx: CodegenContext): void {\n  if (!ctx.promiseThenableReserved) return;\n  const predIdx = ctx.funcMap.get(\"__promise_has_callable_then\");\n  if (predIdx === undefined) return;\n  const predFn = definedFuncAt(ctx, predIdx);\n  if (!predFn) return;\n\n  // ── `__promise_peel_value(value) -> externref` ─────────────────────────\n  // Unwrap an `$AnyValue`-boxed resolution so the predicate / thenable-job\n  // dispatch `ref.test` the RAW payload: tag 6 → refval (the GC object),\n  // tag 5 → externval (string OR tag-5-carried object — the classifier arms\n  // below reject non-objects anyway), every other tag / non-box → unchanged.\n  // Left as the identity placeholder when `$AnyValue` was never registered.\n  const peelIdx = ctx.funcMap.get(\"__promise_peel_value\");\n  const peelFn = peelIdx !== undefined ? definedFuncAt(ctx, peelIdx) : undefined;\n  const anyValueTypeIdx = ctx.anyValueTypeIdx;\n  if (peelFn && anyValueTypeIdx >= 0) {\n    // $AnyValue field layout (ensureAnyValueType): 0 tag · 3 refval · 4 externval.\n    const AV_TAG = 0;\n    const AV_REF = 3;\n    const AV_EXT = 4;\n    const peelAnyLocal = 1;\n    peelFn.locals = [{ name: \"__any\", type: { kind: \"anyref\" } }];\n    peelFn.body = [\n      { op: \"local.get\", index: 0 },\n      { op: \"ref.is_null\" },\n      {\n        op: \"if\",\n        blockType: { kind: \"empty\" },\n        then: [{ op: \"local.get\", index: 0 }, { op: \"return\" }],\n      },\n      { op: \"local.get\", index: 0 },\n      { op: \"any.convert_extern\" },\n      { op: \"local.set\", index: peelAnyLocal },\n      { op: \"local.get\", index: peelAnyLocal },\n      { op: \"ref.test\", typeIdx: anyValueTypeIdx },\n      {\n        op: \"if\",\n        blockType: { kind: \"empty\" },\n        then: [\n          // tag 6 (object) → extern.convert_any(refval)\n          { op: \"local.get\", index: peelAnyLocal },\n          { op: \"ref.cast\", typeIdx: anyValueTypeIdx },\n          { op: \"struct.get\", typeIdx: anyValueTypeIdx, fieldIdx: AV_TAG },\n          { op: \"i32.const\", value: 6 },\n          { op: \"i32.eq\" },\n          {\n            op: \"if\",\n            blockType: { kind: \"empty\" },\n            then: [\n              { op: \"local.get\", index: peelAnyLocal },\n              { op: \"ref.cast\", typeIdx: anyValueTypeIdx },\n              { op: \"struct.get\", typeIdx: anyValueTypeIdx, fieldIdx: AV_REF },\n              { op: \"extern.convert_any\" },\n              { op: \"return\" },\n            ],\n          },\n          // tag 5 (string/extern payload) → externval\n          { op: \"local.get\", index: peelAnyLocal },\n          { op: \"ref.cast\", typeIdx: anyValueTypeIdx },\n          { op: \"struct.get\", typeIdx: anyValueTypeIdx, fieldIdx: AV_TAG },\n          { op: \"i32.const\", value: 5 },\n          { op: \"i32.eq\" },\n          {\n            op: \"if\",\n            blockType: { kind: \"empty\" },\n            then: [\n              { op: \"local.get\", index: peelAnyLocal },\n              { op: \"ref.cast\", typeIdx: anyValueTypeIdx },\n              { op: \"struct.get\", typeIdx: anyValueTypeIdx, fieldIdx: AV_EXT },\n              { op: \"return\" },\n            ],\n          },\n        ],\n      },\n      { op: \"local.get\", index: 0 },\n    ];\n  }\n\n  // ── `__promise_has_callable_then(value) -> i32` ────────────────────────\n  const peeledLocalIdx = 1; // param 0 = value externref\n  const anyLocalIdx = 2;\n  const thenAnyLocalIdx = 3;\n  const body: Instr[] = [\n    // peeled = __promise_peel_value(value) — classify the RAW payload.\n    { op: \"local.get\", index: 0 },\n    ...((peelIdx !== undefined ? [{ op: \"call\", funcIdx: peelIdx }] : []) satisfies Instr[]),\n    { op: \"local.set\", index: peeledLocalIdx },\n    // null externref (JS null / absent) → not a thenable.\n    { op: \"local.get\", index: peeledLocalIdx },\n    { op: \"ref.is_null\" },\n    {\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: [{ op: \"i32.const\", value: 0 }, { op: \"return\" }],\n    },\n    { op: \"local.get\", index: peeledLocalIdx },\n    { op: \"any.convert_extern\" },\n    { op: \"local.set\", index: anyLocalIdx },\n  ];\n\n  // Shared tail: test the externref left on the stack against the closure\n  // base wrappers; 1 on a hit, else 0.\n  const closureTest = (loadThen: Instr[]): Instr[] => [\n    ...loadThen,\n    { op: \"any.convert_extern\" },\n    { op: \"local.set\", index: thenAnyLocalIdx },\n    ...buildClosureRefTestArms(ctx, thenAnyLocalIdx, [{ op: \"i32.const\", value: 1 }, { op: \"return\" }]),\n    { op: \"i32.const\", value: 0 },\n    { op: \"return\" },\n  ];\n\n  // Closed-struct METHOD arms — a compiled `then` method is always callable.\n  const seenMethodType = new Set<number>();\n  for (const entry of collectMethodEntries(ctx, \"then\", null)) {\n    if (seenMethodType.has(entry.typeIdx)) continue;\n    seenMethodType.add(entry.typeIdx);\n    body.push({ op: \"local.get\", index: anyLocalIdx });\n    body.push({ op: \"ref.test\", typeIdx: entry.typeIdx });\n    body.push({\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: [{ op: \"i32.const\", value: 1 }, { op: \"return\" }],\n    });\n  }\n\n  // Closed-struct ACCESSOR arms (#1888 S5c) — MUST run BEFORE the field arms:\n  // `Object.defineProperty(o, 'then', {get})` on a closed-struct target stores\n  // the getter closure in a per-(struct,prop) module GLOBAL\n  // (`ctx.structAccessorClosure`), invisible to `__extern_get` — while the\n  // struct may ALSO carry a pre-shaped (runtime-null) `then` FIELD that would\n  // wrongly classify it non-thenable if tested first. Spec Get REQUIRES running\n  // the getter here — a poisoned getter must throw OUT of this predicate\n  // (resolve-poisoned-then), and a returned closure classifies the value as a\n  // thenable. A runtime-null getter global (define-site never executed) falls\n  // through to the field/$Object arms below.\n  const callAccessorGetIdx = ctx.funcMap.get(\"__call_accessor_get\");\n  if (callAccessorGetIdx !== undefined) {\n    for (const [key, entry] of ctx.structAccessorClosure) {\n      if (!key.endsWith(\"_then\") || entry.getGlobal === undefined) continue;\n      const structName = key.slice(0, -\"_then\".length);\n      const structTypeIdx = ctx.structMap.get(structName);\n      if (structTypeIdx === undefined) continue;\n      body.push({ op: \"local.get\", index: anyLocalIdx });\n      body.push({ op: \"ref.test\", typeIdx: structTypeIdx });\n      body.push({\n        op: \"if\",\n        blockType: { kind: \"empty\" },\n        then: [\n          { op: \"global.get\", index: entry.getGlobal },\n          { op: \"ref.is_null\" },\n          { op: \"i32.eqz\" },\n          {\n            op: \"if\",\n            blockType: { kind: \"empty\" },\n            then: closureTest([\n              // then = getter.call(value) — §7.3.2 GetV via the S5b driver.\n              { op: \"local.get\", index: peeledLocalIdx },\n              { op: \"global.get\", index: entry.getGlobal },\n              { op: \"call\", funcIdx: callAccessorGetIdx },\n            ]),\n          },\n        ],\n      });\n    }\n  }\n\n  // Closed-struct FIELD arms — `{ then: <value> }`: callable iff the stored\n  // value is a closure.\n  for (const fe of collectFieldEntries(ctx, \"then\")) {\n    body.push({ op: \"local.get\", index: anyLocalIdx });\n    body.push({ op: \"ref.test\", typeIdx: fe.typeIdx });\n    body.push({\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: closureTest([\n        { op: \"local.get\", index: anyLocalIdx },\n        { op: \"ref.cast\", typeIdx: fe.typeIdx },\n        { op: \"struct.get\", typeIdx: fe.typeIdx, fieldIdx: fe.fieldIdx },\n      ]),\n    });\n  }\n\n  // Open `$Object` arm — spec Get (runs accessors; a poisoned getter throws\n  // OUT of this predicate) + closure test.\n  const externGetIdx = ctx.funcMap.get(\"__extern_get\");\n  const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;\n  if (externGetIdx !== undefined && objectTypeIdx !== undefined) {\n    body.push({ op: \"local.get\", index: anyLocalIdx });\n    body.push({ op: \"ref.test\", typeIdx: objectTypeIdx });\n    body.push({\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: closureTest([\n        { op: \"local.get\", index: peeledLocalIdx },\n        ...stringConstantExternrefInstrs(ctx, \"then\"),\n        { op: \"call\", funcIdx: externGetIdx },\n      ]),\n    });\n  }\n\n  body.push({ op: \"i32.const\", value: 0 });\n  predFn.locals = [\n    { name: \"__peeled\", type: { kind: \"externref\" } },\n    { name: \"__any\", type: { kind: \"anyref\" } },\n    { name: \"__thenAny\", type: { kind: \"anyref\" } },\n  ];\n  predFn.body = body;\n}\n"
+        }
+      ],
+      "exactInsertions": [
+        {
+          "id": "S1",
+          "file": "src/codegen/parse-number-native.ts",
+          "before": {
+            "label": "S1",
+            "startLine": 928,
+            "lineCount": 2,
+            "sha256": "874500902711191d153449729866bb31dc77eff305792c2aa20fd503fee64d34",
+            "text": "    ...emitExponent(L_I, L_END, L_DATA, L_C, L_EXP, L_EXPSIGN, strDataTypeIdx, getC),\n    // full-match requirement: if i != end → NaN (trailing junk)\n"
+          },
+          "replacement": "    ...emitExponent(L_I, L_END, L_DATA, L_C, L_EXP, L_EXPSIGN, strDataTypeIdx, getC),\n    // StringToNumber requires exponent digits, unlike parseFloat's prefix grammar.\n    // Read the last consumed character: L_C may instead hold unconsumed lookahead.\n    // The mantissa's no-digit rejection guarantees L_I - 1 is a valid index.\n    { op: \"local.get\", index: L_DATA },\n    { op: \"local.get\", index: L_I },\n    { op: \"i32.const\", value: 1 },\n    { op: \"i32.sub\" },\n    { op: \"array.get_u\", typeIdx: strDataTypeIdx },\n    { op: \"local.set\", index: L_C },\n    { op: \"local.get\", index: L_C },\n    { op: \"i32.const\", value: C_LC_E },\n    { op: \"i32.eq\" },\n    { op: \"local.get\", index: L_C },\n    { op: \"i32.const\", value: C_UC_E },\n    { op: \"i32.eq\" },\n    { op: \"i32.or\" },\n    { op: \"local.get\", index: L_C },\n    { op: \"i32.const\", value: C_PLUS },\n    { op: \"i32.eq\" },\n    { op: \"i32.or\" },\n    { op: \"local.get\", index: L_C },\n    { op: \"i32.const\", value: C_MINUS },\n    { op: \"i32.eq\" },\n    { op: \"i32.or\" },\n    {\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: [{ op: \"f64.const\", value: NaN }, { op: \"return\" }],\n    },\n    // full-match requirement: if i != end → NaN (trailing junk)\n",
+          "replacementSha256": "9fa940808ae5dc7b819e8f9e32a30681f5a3f3822c7a15a533dc54fabc15eac5",
+          "proposedPostimageSha256": "7e3e0cc9ef44f0e9bc132103bf9b5cd65254163d85045d667d5904c3d27850f9",
+          "postimageProvenance": "Computed from one unique exact text replacement in memory; not applied or compiled."
+        },
+        {
+          "id": "V1",
+          "file": "src/ir/backend/wasmgc-emitter.ts",
+          "before": {
+            "label": "V1",
+            "startLine": 177,
+            "lineCount": 4,
+            "sha256": "5e6246316bcd282024c7ef3c06e84f0e4e12dafe225134df1fdd91afd8180cd2",
+            "text": "    out.push({ op: \"local.set\", index: dataScratchLocal });\n    out.push({ op: \"i32.const\", value: count });\n    out.push({ op: \"local.get\", index: dataScratchLocal });\n    out.push({ op: \"struct.new\", typeIdx: layout.vecStructTypeIdx });\n"
+          },
+          "replacement": "    out.push({ op: \"local.set\", index: dataScratchLocal });\n    out.push({ op: \"i32.const\", value: count });\n    out.push({ op: \"local.get\", index: dataScratchLocal });\n    out.push({ op: \"ref.as_non_null\" });\n    out.push({ op: \"struct.new\", typeIdx: layout.vecStructTypeIdx });\n",
+          "replacementSha256": "82e54ade42b5b45c3e5cd2f3246242a0858f701974e374b90b9de5682c593404",
+          "proposedPostimageSha256": "caba0379bf1a1515b5d8966d51a90064a572bd4c380370a57a2606eba4245e1b",
+          "postimageProvenance": "Computed from one unique exact text replacement in memory; not applied or compiled."
+        }
+      ],
+      "promiseSchedulerRecipe": [
+        {
+          "id": "P1-binding",
+          "file": "src/codegen/async-scheduler.ts",
+          "before": {
+            "label": "P1-binding",
+            "startLine": 899,
+            "lineCount": 2,
+            "sha256": "48297d1051c8b779d644a2b3561cb6a9bd3bf44ade5a763a248405850316463b",
+            "text": "  hasCallableThenFuncIdx: number;\n  thenableJobFuncIdx: number;\n"
+          },
+          "replacement": "  hasCallableThenFuncIdx: number;\n  lookupThenFuncIdx: number;\n  thenableJobFuncIdx: number;\n",
+          "replacementSha256": "d61face79602b5cbf3eed24f1a19079e1c40cb3b82b8261907b86f2007a22b34",
+          "status": "Reviewable exact semantic hunk; NOT an independently usable patch without P7 lookup fill."
+        },
+        {
+          "id": "P2-reservation",
+          "file": "src/codegen/async-scheduler.ts",
+          "before": {
+            "label": "P2-reservation",
+            "startLine": 982,
+            "lineCount": 2,
+            "sha256": "762d06dacb3bb784ca258e5677bad08a2befa48ebe19877243ac703f22a47c42",
+            "text": "  ctx.funcMap.set(\"__promise_peel_value\", peelValueFuncIdx);\n  ctx.promiseThenableReserved = true;\n"
+          },
+          "replacement": "  ctx.funcMap.set(\"__promise_peel_value\", peelValueFuncIdx);\n  const lookupTypeIdx = addFuncType(\n    ctx,\n    [{ kind: \"externref\" }],\n    [{ kind: \"i32\" }, { kind: \"externref\" }],\n    \"$__promise_lookup_then_type\",\n  );\n  const lookupThenFuncIdx = mintDefinedFunc(ctx);\n  pushDefinedFunc(ctx, lookupThenFuncIdx, {\n    name: \"__promise_lookup_then\",\n    typeIdx: lookupTypeIdx,\n    locals: [],\n    body: [{ op: \"unreachable\" }],\n    exported: false,\n  });\n  ctx.funcMap.set(\"__promise_lookup_then\", lookupThenFuncIdx);\n  ctx.promiseThenableReserved = true;\n",
+          "replacementSha256": "02ed6e0002aebb6611b7e36976b4835a8c38d6a37d1d319686a6ee1128bfe9aa",
+          "status": "Reviewable exact semantic hunk; NOT an independently usable patch without P7 lookup fill."
+        },
+        {
+          "id": "P3-return-binding",
+          "file": "src/codegen/async-scheduler.ts",
+          "before": {
+            "label": "P3-return-binding",
+            "startLine": 1095,
+            "lineCount": 2,
+            "sha256": "387ac997c627f016d7f7848618f04fcbae41b8b0bba6e06ecb10b2fc317eddca",
+            "text": "  const result: PromiseThenableSubstrate = {\n    hasCallableThenFuncIdx,\n"
+          },
+          "replacement": "  const result: PromiseThenableSubstrate = {\n    hasCallableThenFuncIdx,\n    lookupThenFuncIdx,\n",
+          "replacementSha256": "3f41b5a935fd8c9fe7a1e2b1e515432fd0e04f710520aa706c359945425e97ab",
+          "status": "Reviewable exact semantic hunk; NOT an independently usable patch without P7 lookup fill."
+        },
+        {
+          "id": "P4-local",
+          "file": "src/codegen/async-scheduler.ts",
+          "before": {
+            "label": "P4-local",
+            "startLine": 1303,
+            "lineCount": 1,
+            "sha256": "f8610e07cf2a94a168382f1c15c030664650a19dc8ce7b630a18b1b22ce3246c",
+            "text": "  const poisonedLocal = 6;\n"
+          },
+          "replacement": "  const poisonedLocal = 6;\n  // Reuse the existing own-then scratch local; each invocation has its own frame.\n  const capturedThenLocal = 8;\n",
+          "replacementSha256": "a343e13a1286c1922378771ddda52afad2da19c86c44d2ae3f5376fee70dbc33",
+          "status": "Reviewable exact semantic hunk; NOT an independently usable patch without P7 lookup fill."
+        },
+        {
+          "id": "P5-lookup",
+          "file": "src/codegen/async-scheduler.ts",
+          "before": {
+            "label": "P5-lookup",
+            "startLine": 1325,
+            "lineCount": 2,
+            "sha256": "0680ca8f195ce2cc0aba8c7478c87c983b0e879835b2e21a2d822790e6871721",
+            "text": "              { op: \"call\", funcIdx: thenable.hasCallableThenFuncIdx },\n              { op: \"local.set\", index: hasThenLocal },\n"
+          },
+          "replacement": "              { op: \"call\", funcIdx: thenable.lookupThenFuncIdx },\n              { op: \"local.set\", index: capturedThenLocal },\n              { op: \"local.set\", index: hasThenLocal },\n",
+          "replacementSha256": "894600662a2dd06343f0f1af352d0e84c808f7850daa8926dd64ce91e302777c",
+          "status": "Reviewable exact semantic hunk; NOT an independently usable patch without P7 lookup fill."
+        },
+        {
+          "id": "P6-capture",
+          "file": "src/codegen/async-scheduler.ts",
+          "before": {
+            "label": "P6-capture",
+            "startLine": 1359,
+            "lineCount": 3,
+            "sha256": "e2ccd047023b694739d00c6611940b8a39c39bb4249fcbf4258288705bdf2100",
+            "text": "                  { op: \"ref.func\", funcIdx: thenable.thenableJobFuncIdx },\n                  { op: \"ref.null.extern\" },\n                  { op: \"local.get\", index: promiseLocal },\n"
+          },
+          "replacement": "                  { op: \"ref.func\", funcIdx: thenable.thenableJobFuncIdx },\n                  { op: \"local.get\", index: capturedThenLocal },\n                  { op: \"local.get\", index: promiseLocal },\n",
+          "replacementSha256": "248dfd53ccd17dcde4fdc67f99b62ca68312672cc8b913f170c6b667d09c94d1",
+          "status": "Reviewable exact semantic hunk; NOT an independently usable patch without P7 lookup fill."
+        }
+      ],
+      "promiseClassifierRecipe": {
+        "id": "P7-dual-result-fill",
+        "file": "src/codegen/closed-method-dispatch.ts",
+        "originalBlock": {
+          "label": "classifier construction/fill",
+          "startLine": 2080,
+          "lineCount": 129,
+          "sha256": "9c4b3ce91b5cc0ce361e891d07eb67af5dcb246a4a36510c849e2432d8f3756b",
+          "text": "  // ── `__promise_has_callable_then(value) -> i32` ────────────────────────\n  const peeledLocalIdx = 1; // param 0 = value externref\n  const anyLocalIdx = 2;\n  const thenAnyLocalIdx = 3;\n  const body: Instr[] = [\n    // peeled = __promise_peel_value(value) — classify the RAW payload.\n    { op: \"local.get\", index: 0 },\n    ...((peelIdx !== undefined ? [{ op: \"call\", funcIdx: peelIdx }] : []) satisfies Instr[]),\n    { op: \"local.set\", index: peeledLocalIdx },\n    // null externref (JS null / absent) → not a thenable.\n    { op: \"local.get\", index: peeledLocalIdx },\n    { op: \"ref.is_null\" },\n    {\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: [{ op: \"i32.const\", value: 0 }, { op: \"return\" }],\n    },\n    { op: \"local.get\", index: peeledLocalIdx },\n    { op: \"any.convert_extern\" },\n    { op: \"local.set\", index: anyLocalIdx },\n  ];\n\n  // Shared tail: test the externref left on the stack against the closure\n  // base wrappers; 1 on a hit, else 0.\n  const closureTest = (loadThen: Instr[]): Instr[] => [\n    ...loadThen,\n    { op: \"any.convert_extern\" },\n    { op: \"local.set\", index: thenAnyLocalIdx },\n    ...buildClosureRefTestArms(ctx, thenAnyLocalIdx, [{ op: \"i32.const\", value: 1 }, { op: \"return\" }]),\n    { op: \"i32.const\", value: 0 },\n    { op: \"return\" },\n  ];\n\n  // Closed-struct METHOD arms — a compiled `then` method is always callable.\n  const seenMethodType = new Set<number>();\n  for (const entry of collectMethodEntries(ctx, \"then\", null)) {\n    if (seenMethodType.has(entry.typeIdx)) continue;\n    seenMethodType.add(entry.typeIdx);\n    body.push({ op: \"local.get\", index: anyLocalIdx });\n    body.push({ op: \"ref.test\", typeIdx: entry.typeIdx });\n    body.push({\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: [{ op: \"i32.const\", value: 1 }, { op: \"return\" }],\n    });\n  }\n\n  // Closed-struct ACCESSOR arms (#1888 S5c) — MUST run BEFORE the field arms:\n  // `Object.defineProperty(o, 'then', {get})` on a closed-struct target stores\n  // the getter closure in a per-(struct,prop) module GLOBAL\n  // (`ctx.structAccessorClosure`), invisible to `__extern_get` — while the\n  // struct may ALSO carry a pre-shaped (runtime-null) `then` FIELD that would\n  // wrongly classify it non-thenable if tested first. Spec Get REQUIRES running\n  // the getter here — a poisoned getter must throw OUT of this predicate\n  // (resolve-poisoned-then), and a returned closure classifies the value as a\n  // thenable. A runtime-null getter global (define-site never executed) falls\n  // through to the field/$Object arms below.\n  const callAccessorGetIdx = ctx.funcMap.get(\"__call_accessor_get\");\n  if (callAccessorGetIdx !== undefined) {\n    for (const [key, entry] of ctx.structAccessorClosure) {\n      if (!key.endsWith(\"_then\") || entry.getGlobal === undefined) continue;\n      const structName = key.slice(0, -\"_then\".length);\n      const structTypeIdx = ctx.structMap.get(structName);\n      if (structTypeIdx === undefined) continue;\n      body.push({ op: \"local.get\", index: anyLocalIdx });\n      body.push({ op: \"ref.test\", typeIdx: structTypeIdx });\n      body.push({\n        op: \"if\",\n        blockType: { kind: \"empty\" },\n        then: [\n          { op: \"global.get\", index: entry.getGlobal },\n          { op: \"ref.is_null\" },\n          { op: \"i32.eqz\" },\n          {\n            op: \"if\",\n            blockType: { kind: \"empty\" },\n            then: closureTest([\n              // then = getter.call(value) — §7.3.2 GetV via the S5b driver.\n              { op: \"local.get\", index: peeledLocalIdx },\n              { op: \"global.get\", index: entry.getGlobal },\n              { op: \"call\", funcIdx: callAccessorGetIdx },\n            ]),\n          },\n        ],\n      });\n    }\n  }\n\n  // Closed-struct FIELD arms — `{ then: <value> }`: callable iff the stored\n  // value is a closure.\n  for (const fe of collectFieldEntries(ctx, \"then\")) {\n    body.push({ op: \"local.get\", index: anyLocalIdx });\n    body.push({ op: \"ref.test\", typeIdx: fe.typeIdx });\n    body.push({\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: closureTest([\n        { op: \"local.get\", index: anyLocalIdx },\n        { op: \"ref.cast\", typeIdx: fe.typeIdx },\n        { op: \"struct.get\", typeIdx: fe.typeIdx, fieldIdx: fe.fieldIdx },\n      ]),\n    });\n  }\n\n  // Open `$Object` arm — spec Get (runs accessors; a poisoned getter throws\n  // OUT of this predicate) + closure test.\n  const externGetIdx = ctx.funcMap.get(\"__extern_get\");\n  const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;\n  if (externGetIdx !== undefined && objectTypeIdx !== undefined) {\n    body.push({ op: \"local.get\", index: anyLocalIdx });\n    body.push({ op: \"ref.test\", typeIdx: objectTypeIdx });\n    body.push({\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: closureTest([\n        { op: \"local.get\", index: peeledLocalIdx },\n        ...stringConstantExternrefInstrs(ctx, \"then\"),\n        { op: \"call\", funcIdx: externGetIdx },\n      ]),\n    });\n  }\n\n  body.push({ op: \"i32.const\", value: 0 });\n  predFn.locals = [\n    { name: \"__peeled\", type: { kind: \"externref\" } },\n    { name: \"__any\", type: { kind: \"anyref\" } },\n    { name: \"__thenAny\", type: { kind: \"anyref\" } },\n  ];\n  predFn.body = body;"
+        },
+        "proposedReplacement": null,
+        "proposedPostimageSha256": null,
+        "status": "UNRESOLVED exact transplanted replacement; requires separately approved implementation/review. No fabricated postimage.",
+        "requirements": [
+          "Leave original early guards and __promise_peel_value fill unchanged.",
+          "Build both old i32 classifier and new (i32,externref) lookup from the same ordered method/accessor/field/open-object collectors; preserve accessor-before-field ordering and method deduplication.",
+          "Keep classifier capture=false: original locals and emitted instruction sequence. Lookup capture=true adds externref local4 __capturedThen; all returns emit (verdict,capture).",
+          "For closure-valued accessor/field/open-object arms, local.tee capturedThen before any.convert_extern; verdict1 returns local4, noncallable verdict0 returns null. Compiled-method verdict1 returns null for existing vararg dispatch. Null/default returns (0,null).",
+          "Find reserved __promise_lookup_then with definedFuncAt; fill its locals/body without minting functions/types/imports during finalization.",
+          "Prefer one nested dual-mode body builder in the original function; no new runtime resource framework or wholesale extraction. Exact syntax and replacement hash are not fixed by this plan."
+        ]
+      }
+    },
+    {
+      "label": "delay",
+      "commit": "1cb0f5c7f36be14d7be7eb4592973aea84a8c4e5",
+      "root": "/private/tmp/js2-3518-logical-vector-integration-20260908",
+      "sourceCount": 1311,
+      "sourceCensusSha256": "d37ac41c596e80e223a7576003cec7c9a9ec0968c8b497da8c35876cdc77562a",
+      "artifacts": 11,
+      "executions": 19,
+      "censusProvenance": "Parent supplied; selected file preimages independently verified here. Full census not rerun.",
+      "sourceGitTree": "1515525b0e81396f9d357e4e8756b46fc05dcdc0",
+      "filePins": [
+        {
+          "file": "src/codegen/async-scheduler.ts",
+          "gitBlob": "541d6abf642eab21b16662cb92dd3b7e8a3d450e",
+          "sha256": "4eaf5a44ab9db276c1eea41d9a82fb5691676108c1ffc11452eb44e60b153fc8",
+          "bytes": 211313,
+          "existingRootFileMatches": true
+        },
+        {
+          "file": "src/codegen/closed-method-dispatch.ts",
+          "gitBlob": "feb6de718276cea09a3189148205e85d4a27b669",
+          "sha256": "66b08ebb72d73ccf8cd3dc77fb841407073036be0a46d09802ad16b24cbea809",
+          "bytes": 104757,
+          "existingRootFileMatches": true
+        },
+        {
+          "file": "src/codegen/parse-number-native.ts",
+          "gitBlob": "a9d23c444ef0dabfa5e7ca713bda20e6ba18c594",
+          "sha256": "8111e30ecf474d9da7a9728741b38a4a2166ddf24f68ed1cbe2974d33c99b12d",
+          "bytes": 69067,
+          "existingRootFileMatches": true
+        },
+        {
+          "file": "src/ir/backend/wasmgc-emitter.ts",
+          "gitBlob": "d62446f4e1942b870fac851ffa71b8ee7a6cb438",
+          "sha256": "a23bbcb037bf8bb0fd2b22bc4c85a86d43e87ce90b77c8a2f1b0588ccbac1167",
+          "bytes": 20075,
+          "existingRootFileMatches": true
+        }
+      ],
+      "originalFunctions": [
+        {
+          "file": "src/codegen/async-scheduler.ts",
+          "label": "ensurePromiseThenableSubstrate",
+          "startLine": 971,
+          "lineCount": 185,
+          "sha256": "4271ec112b7b09bc9cad424b02f077bbb999094342f956fff4e8790a55b16c1e",
+          "text": "function ensurePromiseThenableSubstrate(\n  ctx: CodegenContext,\n  state: AsyncSchedulerState,\n): PromiseThenableSubstrate | null {\n  if (ctx.standalone !== true && ctx.wasi !== true) return null;\n  const cache = ctx as unknown as { __promiseThenableSubstrate?: PromiseThenableSubstrate | null };\n  if (cache.__promiseThenableSubstrate !== undefined) return cache.__promiseThenableSubstrate;\n\n  // Step-6 TypeError machinery: in-module constructor (no host in wasi/\n  // standalone) + pooled message + the exception tag for the job's try/catch.\n  emitWasiErrorConstructor(ctx, \"TypeError\", 1);\n  addStringConstantGlobal(ctx, SELF_RESOLUTION_MSG);\n  const newTypeErrorFuncIdx = ctx.funcMap.get(\"__new_TypeError\");\n  const exnTag = ensureExnTag(ctx);\n\n  // The dispatcher the job calls. Reserving it NOW (compile phase) registers\n  // all its fallback-arm deps (object runtime, \"then\" string constant,\n  // `__apply_closure`) so the finalize fills only READ funcMap (#1719).\n  const varargThenFuncIdx = reserveClosedMethodDispatchVararg(ctx, \"then\");\n  const objVecNewIdx = ctx.funcMap.get(\"__objvec_new\");\n  const objVecPushIdx = ctx.funcMap.get(\"__objvec_push\");\n\n  // resolve/reject closure VALUES for the job — the executor's settle caps.\n  const execClosures = ensurePromiseExecutorClosures(ctx);\n\n  if (\n    newTypeErrorFuncIdx === undefined ||\n    objVecNewIdx === undefined ||\n    objVecPushIdx === undefined ||\n    execClosures === null\n  ) {\n    cache.__promiseThenableSubstrate = null;\n    return null;\n  }\n\n  // __promise_has_callable_then(value: externref) -> i32 — reserved; filled at\n  // finalize. The `i32.const 0` placeholder is VALID and semantically safe: if\n  // the fill is ever skipped, every value classifies non-thenable and the\n  // resolve path degrades to the pre-#3125 direct-fulfil behaviour.\n  const hasThenTypeIdx = addFuncType(ctx, [{ kind: \"externref\" }], [{ kind: \"i32\" }], \"$__promise_has_then_type\");\n  const hasCallableThenFuncIdx = mintDefinedFunc(ctx);\n  pushDefinedFunc(ctx, hasCallableThenFuncIdx, {\n    name: \"__promise_has_callable_then\",\n    typeIdx: hasThenTypeIdx,\n    locals: [],\n    body: [{ op: \"i32.const\", value: 0 }],\n    exported: false,\n  });\n  ctx.funcMap.set(\"__promise_has_callable_then\", hasCallableThenFuncIdx);\n\n  // __promise_peel_value(value: externref) -> externref — reserved; filled at\n  // finalize (needs `$AnyValue`, whose typeIdx may not exist yet). IDENTITY\n  // placeholder: raw (unboxed) values are classified/dispatched unchanged.\n  const peelTypeIdx = addFuncType(ctx, [{ kind: \"externref\" }], [{ kind: \"externref\" }], \"$__promise_peel_type\");\n  const peelValueFuncIdx = mintDefinedFunc(ctx);\n  pushDefinedFunc(ctx, peelValueFuncIdx, {\n    name: \"__promise_peel_value\",\n    typeIdx: peelTypeIdx,\n    locals: [],\n    body: [{ op: \"local.get\", index: 0 }],\n    exported: false,\n  });\n  ctx.funcMap.set(\"__promise_peel_value\", peelValueFuncIdx);\n  ctx.promiseThenableReserved = true;\n\n  // __promise_thenable_job(capsRaw: externref, thenable: externref) -> externref\n  // Uniform microtask signature. caps = $__then_caps{callback: null, chained:\n  // promise}; the thenable rides the value slot.\n  const capsTypeIdx = getOrRegisterThenCapsType(ctx);\n  const promiseLocal = 2;\n  const reasonLocal = 3;\n  const vecLocal = 4;\n  const capturedThenLocal = 5;\n  // (#5197 R3-5) `__apply_closure(fn, recv, argvec)` — the open closure-call\n  // bridge. Reserved here so the funcIdx is stable before this body bakes it.\n  const applyClosureIdx = reserveApplyClosure(ctx);\n  const jobLocals: LocalDef[] = [\n    { name: \"$promise\", type: { kind: \"ref_null\", typeIdx: state.promiseTypeIdx } },\n    { name: \"$reason\", type: { kind: \"externref\" } },\n    { name: \"$argvec\", type: { kind: \"externref\" } },\n    { name: \"$capturedThen\", type: { kind: \"externref\" } },\n  ];\n  const emitSettleCap = (clFuncIdx: number): Instr[] => [\n    ...buildPromiseSettleClosureInstrs(execClosures, clFuncIdx, [\n      { op: \"local.get\", index: promiseLocal },\n      { op: \"ref.as_non_null\" },\n    ]),\n    { op: \"extern.convert_any\" },\n  ];\n  const jobTryBody: Instr[] = [\n    // argvec = [resolveFn, rejectFn]\n    { op: \"call\", funcIdx: objVecNewIdx },\n    { op: \"local.set\", index: vecLocal },\n    { op: \"local.get\", index: vecLocal },\n    ...emitSettleCap(execClosures.resolveClFuncIdx),\n    { op: \"call\", funcIdx: objVecPushIdx },\n    { op: \"local.get\", index: vecLocal },\n    ...emitSettleCap(execClosures.rejectClFuncIdx),\n    { op: \"call\", funcIdx: objVecPushIdx },\n    // __call_m_then_vararg(peel(thenable), argvec) — `then.call(thenable,\n    // res, rej)`. The peel unwraps an `$AnyValue`-boxed resolution so the\n    // dispatcher's `ref.test` arms (closed structs / `$Object`) see the RAW\n    // object as the receiver.\n    // (#5197 R3-5) When Resolve captured the `then` FUNCTION (an own `then` on\n    // a native promise), call THAT value — the spec captures `then` at Resolve\n    // time (step 9) and calls it as a job (step 14), so a reassignment between\n    // the two must not change which function runs. Otherwise re-dispatch\n    // through the vararg `then` method dispatcher exactly as before.\n    ...(applyClosureIdx === undefined\n      ? [\n          { op: \"local.get\", index: 1 } as Instr,\n          { op: \"call\", funcIdx: peelValueFuncIdx } as Instr,\n          { op: \"local.get\", index: vecLocal } as Instr,\n          { op: \"call\", funcIdx: varargThenFuncIdx } as Instr,\n        ]\n      : ([\n          { op: \"local.get\", index: 0 },\n          { op: \"any.convert_extern\" },\n          { op: \"ref.cast\", typeIdx: capsTypeIdx },\n          { op: \"struct.get\", typeIdx: capsTypeIdx, fieldIdx: 0 },\n          { op: \"local.tee\", index: capturedThenLocal },\n          { op: \"ref.is_null\" },\n          {\n            op: \"if\",\n            blockType: { kind: \"val\", type: { kind: \"externref\" } },\n            then: [\n              { op: \"local.get\", index: 1 },\n              { op: \"call\", funcIdx: peelValueFuncIdx },\n              { op: \"local.get\", index: vecLocal },\n              { op: \"call\", funcIdx: varargThenFuncIdx },\n            ],\n            else: [\n              { op: \"local.get\", index: capturedThenLocal },\n              { op: \"local.get\", index: 1 },\n              { op: \"call\", funcIdx: peelValueFuncIdx },\n              { op: \"local.get\", index: vecLocal },\n              { op: \"call\", funcIdx: applyClosureIdx },\n            ],\n          },\n        ] satisfies Instr[])),\n    { op: \"drop\" },\n  ];\n  const thenableJobFuncIdx = mintDefinedFunc(ctx);\n  pushDefinedFunc(ctx, thenableJobFuncIdx, {\n    name: \"__promise_thenable_job\",\n    typeIdx: state.microtaskFuncTypeIdx,\n    locals: jobLocals,\n    body: [\n      { op: \"local.get\", index: 0 },\n      { op: \"any.convert_extern\" },\n      { op: \"ref.cast\", typeIdx: capsTypeIdx },\n      { op: \"struct.get\", typeIdx: capsTypeIdx, fieldIdx: 1 },\n      { op: \"local.set\", index: promiseLocal },\n      buildTargetTaggedTry(ctx, { kind: \"empty\" }, jobTryBody, [\n        {\n          tagIdx: exnTag,\n          body: [\n            // A throw from Get/then-call before settle rejects the promise\n            // (§27.2.2.2 step 2 / §27.2.1.3.2 step 15). Post-settle throws\n            // are no-ops via the one-shot settle guard.\n            { op: \"local.set\", index: reasonLocal },\n            { op: \"local.get\", index: promiseLocal },\n            { op: \"ref.as_non_null\" },\n            { op: \"local.get\", index: reasonLocal },\n            { op: \"call\", funcIdx: state.promiseRejectFuncIdx },\n            { op: \"drop\" },\n          ],\n        },\n      ]),\n      { op: \"ref.null.extern\" },\n    ],\n    exported: false,\n  });\n  ctx.funcMap.set(\"__promise_thenable_job\", thenableJobFuncIdx);\n\n  const result: PromiseThenableSubstrate = {\n    hasCallableThenFuncIdx,\n    thenableJobFuncIdx,\n    peelValueFuncIdx,\n    newTypeErrorFuncIdx,\n    selfResolutionMsg: SELF_RESOLUTION_MSG,\n  };\n  cache.__promiseThenableSubstrate = result;\n  return result;\n}\n"
+        },
+        {
+          "file": "src/codegen/async-scheduler.ts",
+          "label": "buildPromiseResolveValueLocals",
+          "startLine": 1157,
+          "lineCount": 15,
+          "sha256": "0c8a3e0abcd841d4634adfeb2b34a6a5c8c4f75f25deff49b24b0d9224c18823",
+          "text": "function buildPromiseResolveValueLocals(promiseTypeIdx: number): LocalDef[] {\n  // Params 0/1: (promise, value). Locals start at 2.\n  return [\n    { name: \"$inner\", type: { kind: \"ref\", typeIdx: promiseTypeIdx } },\n    { name: \"$caps\", type: { kind: \"externref\" } },\n    // (#3125) thenable-assimilation scratch: Get(\"then\") callability verdict +\n    // the caught poisoned-getter reason + the `$AnyValue`-peeled resolution.\n    { name: \"$hasThen\", type: { kind: \"i32\" } },\n    { name: \"$reason\", type: { kind: \"externref\" } },\n    { name: \"$poisoned\", type: { kind: \"i32\" } },\n    { name: \"$peeled\", type: { kind: \"externref\" } },\n    // (#5197 R3-5) The own `then` read off a native `$Promise` resolution.\n    { name: \"$bagThen\", type: { kind: \"externref\" } },\n  ];\n}\n"
+        },
+        {
+          "file": "src/codegen/async-scheduler.ts",
+          "label": "buildPromiseResolveValueBody",
+          "startLine": 1194,
+          "lineCount": 299,
+          "sha256": "2cb1f29affd3e1f41d6cfb09e4262e7a729871e586b4e4732813d7ee6a7ebe9c",
+          "text": "function buildPromiseResolveValueBody(\n  ctx: CodegenContext,\n  state: AsyncSchedulerState,\n  promiseTypeIdx: number,\n  callbackTypeIdx: number,\n  capsTypeIdx: number,\n  thenable: PromiseThenableSubstrate | null,\n): Instr[] {\n  // The substrate ensured the exn tag (ensureExnTag) before this body builds.\n  const exnTagIdx = ctx.exnTagIdx;\n  const promiseLocal = 0;\n  const valueLocal = 1;\n  const innerLocal = 2;\n  const capsLocal = 3;\n  const hasThenLocal = 4;\n  const reasonLocal = 5;\n  const poisonedLocal = 6;\n\n  // (#3125) The non-$Promise arm: thenable check + job enqueue, or direct\n  // fulfil. Falls back to the pre-#3125 direct fulfil when the substrate is\n  // unavailable (defensive — host/gc never emits this helper).\n  const nonPromiseArm: Instr[] =\n    thenable === null\n      ? [\n          // not a promise: fulfil directly\n          { op: \"local.get\", index: promiseLocal },\n          { op: \"local.get\", index: valueLocal },\n          { op: \"call\", funcIdx: state.promiseFulfillFuncIdx },\n        ]\n      : [\n          // hasThen = __promise_has_callable_then(value) — the Get(\"then\") runs\n          // accessors, so a poisoned getter THROWS here (§27.2.1.3.2 step 9):\n          // catch → reject(promise, thrown).\n          buildTargetTaggedTry(\n            ctx,\n            { kind: \"empty\" },\n            [\n              { op: \"local.get\", index: valueLocal },\n              { op: \"call\", funcIdx: thenable.hasCallableThenFuncIdx },\n              { op: \"local.set\", index: hasThenLocal },\n            ],\n            [\n              {\n                tagIdx: exnTagIdx,\n                body: [\n                  { op: \"local.set\", index: reasonLocal },\n                  { op: \"i32.const\", value: 1 },\n                  { op: \"local.set\", index: poisonedLocal },\n                ],\n              },\n            ],\n          ),\n          { op: \"local.get\", index: poisonedLocal },\n          {\n            op: \"if\",\n            blockType: { kind: \"val\", type: { kind: \"externref\" } },\n            then: [\n              // Get(\"then\") threw: RejectPromise(promise, thrown).\n              { op: \"local.get\", index: promiseLocal },\n              { op: \"local.get\", index: reasonLocal },\n              { op: \"call\", funcIdx: state.promiseRejectFuncIdx },\n            ],\n            else: [\n              { op: \"local.get\", index: hasThenLocal },\n              {\n                op: \"if\",\n                blockType: { kind: \"val\", type: { kind: \"externref\" } },\n                then: [\n                  // Callable then: enqueue PromiseResolveThenableJob(promise,\n                  // value, then). caps = $__then_caps{callback: null, chained:\n                  // promise}; the thenable rides the job's value slot (step 14\n                  // — the then CALL happens as a job, never inline).\n                  { op: \"ref.func\", funcIdx: thenable.thenableJobFuncIdx },\n                  { op: \"ref.null.extern\" },\n                  { op: \"local.get\", index: promiseLocal },\n                  { op: \"struct.new\", typeIdx: capsTypeIdx },\n                  { op: \"extern.convert_any\" },\n                  { op: \"local.get\", index: valueLocal },\n                  { op: \"call\", funcIdx: state.enqueueFuncIdx },\n                  { op: \"local.get\", index: valueLocal },\n                ],\n                else: [\n                  // Not a thenable: fulfil directly (steps 11 / 16).\n                  { op: \"local.get\", index: promiseLocal },\n                  { op: \"local.get\", index: valueLocal },\n                  { op: \"call\", funcIdx: state.promiseFulfillFuncIdx },\n                ],\n              },\n            ],\n          },\n        ];\n\n  // (#3125) Step 6 — SameValue(resolution, promise): a promise resolved with\n  // ITSELF rejects with a TypeError (resolve-settled-*-self). Emitted inside\n  // the $Promise arm (both refs are concrete (ref $Promise), so a plain\n  // `ref.eq` is the SameValue). Without the substrate the adopt path is kept\n  // unchanged (pre-#3125: self-adoption deadlocks — defensive only).\n  const selfCheck: Instr[] =\n    thenable === null\n      ? []\n      : [\n          { op: \"local.get\", index: innerLocal },\n          { op: \"local.get\", index: promiseLocal },\n          { op: \"ref.eq\" },\n          {\n            op: \"if\",\n            blockType: { kind: \"empty\" },\n            then: [\n              { op: \"local.get\", index: promiseLocal },\n              ...stringConstantExternrefInstrs(ctx, thenable.selfResolutionMsg),\n              { op: \"call\", funcIdx: thenable.newTypeErrorFuncIdx },\n              { op: \"call\", funcIdx: state.promiseRejectFuncIdx },\n              { op: \"drop\" },\n              { op: \"local.get\", index: valueLocal },\n              { op: \"return\" },\n            ],\n          },\n        ];\n\n  // (#3125) Classify the PEELED resolution: an `any`-typed value arrives as an\n  // externref-wrapped `$AnyValue` box, which would MISS the `ref.test $Promise`\n  // and every thenable arm. The peel is dispatch-only — fulfil/reject still\n  // deliver the ORIGINAL `value`, preserving identity across the promise.\n  // (Placeholder peel = identity, so pre-fill behaviour is unchanged.)\n  const peeledLocal = 7;\n  const peelPrelude: Instr[] =\n    thenable === null\n      ? [\n          { op: \"local.get\", index: valueLocal },\n          { op: \"local.set\", index: peeledLocal },\n        ]\n      : [\n          { op: \"local.get\", index: valueLocal },\n          { op: \"call\", funcIdx: thenable.peelValueFuncIdx },\n          { op: \"local.set\", index: peeledLocal },\n        ];\n\n  // (#5197 R3-5) §27.2.1.3.2 steps 8-13 run `Get(resolution, \"then\")` for EVERY\n  // object, including a native promise. The `$Promise` arm below adopts the\n  // native state directly, so `nativePromise.then = f` was never observed. The\n  // decision rides on the VALUE (does this exact object carry an own `then` in\n  // its carrier bag?), not on the syntax that produced it, so it is taken\n  // identically however the promise reaches Resolve — a variable, a property,\n  // an array element, a call result.\n  //\n  // Absent the carrier-bag natives (a module with no promise expandos at all)\n  // this arm is not emitted and the body is byte-identical to before.\n  const bagThenLocal = 8;\n  const bagHasIdx = ctx.funcMap.get(CARRIER_BAG_HAS);\n  const externGetIdx = ctx.funcMap.get(\"__extern_get\");\n  // (#5197 round-3 review F2) IsCallable(thenAction) is the CLASSIFIER's\n  // question, not a single root-wrapper `ref.test`: a bound function\n  // (`$__bound_fn`), the runtime-eval carrier and the boundary callable are\n  // callable and live outside the funcref-wrapper root. `__typeof_function`\n  // is filled at finalize from the shared closure classifier\n  // (closure-classifier.ts / typeof-natives-finalize.ts), so it also sees\n  // callable carriers minted AFTER this body is built. The root test is kept\n  // only as the fallback when the predicate cannot be registered.\n  if (thenable !== null && !ctx.indexSpaceFrozen) {\n    ensureLateImport(ctx, \"__typeof_function\", [{ kind: \"externref\" }], [{ kind: \"i32\" }]);\n  }\n  const typeofFunctionIdx = thenable === null ? undefined : ctx.funcMap.get(\"__typeof_function\");\n  const callableRootTypeIdx = getFuncRefWrapperRootTypeIdx(ctx);\n  const isCallableThen: Instr[] =\n    typeofFunctionIdx !== undefined\n      ? [\n          { op: \"local.get\", index: bagThenLocal },\n          { op: \"call\", funcIdx: typeofFunctionIdx },\n        ]\n      : callableRootTypeIdx === undefined\n        ? []\n        : [\n            { op: \"local.get\", index: bagThenLocal },\n            { op: \"any.convert_extern\" },\n            { op: \"ref.test\", typeIdx: callableRootTypeIdx },\n          ];\n  const ownThenArm: Instr[] =\n    thenable === null || bagHasIdx === undefined || externGetIdx === undefined || isCallableThen.length === 0\n      ? []\n      : [\n          { op: \"local.get\", index: peeledLocal },\n          ...stringConstantExternrefInstrs(ctx, \"then\"),\n          { op: \"call\", funcIdx: bagHasIdx },\n          {\n            op: \"if\",\n            blockType: { kind: \"empty\" },\n            then: [\n              { op: \"local.get\", index: peeledLocal },\n              ...stringConstantExternrefInstrs(ctx, \"then\"),\n              { op: \"call\", funcIdx: externGetIdx },\n              { op: \"local.set\", index: bagThenLocal },\n              ...isCallableThen,\n              {\n                op: \"if\",\n                blockType: { kind: \"empty\" },\n                then: [\n                  // Callable own `then`: enqueue PromiseResolveThenableJob with\n                  // the function CAPTURED NOW (step 9), so a later reassignment\n                  // of `then` cannot change which function the job calls.\n                  { op: \"ref.func\", funcIdx: thenable.thenableJobFuncIdx },\n                  { op: \"local.get\", index: bagThenLocal },\n                  { op: \"local.get\", index: promiseLocal },\n                  { op: \"struct.new\", typeIdx: capsTypeIdx },\n                  { op: \"extern.convert_any\" },\n                  { op: \"local.get\", index: valueLocal },\n                  { op: \"call\", funcIdx: state.enqueueFuncIdx },\n                  { op: \"local.get\", index: valueLocal },\n                  { op: \"return\" },\n                ],\n                else: [\n                  // Own but NOT callable (step 11): fulfil with the promise\n                  // object itself, do not adopt its state.\n                  { op: \"local.get\", index: promiseLocal },\n                  { op: \"local.get\", index: valueLocal },\n                  { op: \"call\", funcIdx: state.promiseFulfillFuncIdx },\n                  { op: \"return\" },\n                ],\n              },\n            ],\n          },\n        ];\n\n  return [\n    ...peelPrelude,\n    { op: \"local.get\", index: peeledLocal },\n    { op: \"any.convert_extern\" },\n    { op: \"ref.test\", typeIdx: promiseTypeIdx },\n    {\n      op: \"if\",\n      blockType: { kind: \"val\", type: { kind: \"externref\" } },\n      then: [\n        // inner = (ref $Promise) peeled\n        { op: \"local.get\", index: peeledLocal },\n        { op: \"any.convert_extern\" },\n        { op: \"ref.cast\", typeIdx: promiseTypeIdx },\n        { op: \"local.set\", index: innerLocal },\n        ...selfCheck,\n        ...ownThenArm,\n        // caps = $__then_caps{ callback: null, chained: promise }\n        { op: \"ref.null.extern\" },\n        { op: \"local.get\", index: promiseLocal },\n        { op: \"struct.new\", typeIdx: capsTypeIdx },\n        { op: \"extern.convert_any\" },\n        { op: \"local.set\", index: capsLocal },\n        // dispatch on inner.state\n        { op: \"local.get\", index: innerLocal },\n        { op: \"struct.get\", typeIdx: promiseTypeIdx, fieldIdx: 0 },\n        { op: \"i32.const\", value: PROMISE_STATE_FULFILLED },\n        { op: \"i32.eq\" },\n        {\n          op: \"if\",\n          blockType: { kind: \"empty\" },\n          then: [\n            // already fulfilled: schedule fulfill reaction with inner.value\n            { op: \"ref.func\", funcIdx: state.identityFulfillWrapperFuncIdx },\n            { op: \"local.get\", index: capsLocal },\n            { op: \"local.get\", index: innerLocal },\n            { op: \"struct.get\", typeIdx: promiseTypeIdx, fieldIdx: 1 },\n            { op: \"call\", funcIdx: state.enqueueFuncIdx },\n          ],\n          else: [\n            { op: \"local.get\", index: innerLocal },\n            { op: \"struct.get\", typeIdx: promiseTypeIdx, fieldIdx: 0 },\n            { op: \"i32.const\", value: PROMISE_STATE_REJECTED },\n            { op: \"i32.eq\" },\n            {\n              op: \"if\",\n              blockType: { kind: \"empty\" },\n              then: [\n                // already rejected: schedule reject reaction with inner.value\n                { op: \"ref.func\", funcIdx: state.identityRejectWrapperFuncIdx },\n                { op: \"local.get\", index: capsLocal },\n                { op: \"local.get\", index: innerLocal },\n                { op: \"struct.get\", typeIdx: promiseTypeIdx, fieldIdx: 1 },\n                { op: \"call\", funcIdx: state.enqueueFuncIdx },\n              ],\n              else: [\n                // pending: prepend a reaction node onto inner.callbacks\n                { op: \"local.get\", index: innerLocal },\n                { op: \"ref.func\", funcIdx: state.identityFulfillWrapperFuncIdx },\n                { op: \"local.get\", index: capsLocal },\n                { op: \"ref.func\", funcIdx: state.identityRejectWrapperFuncIdx },\n                { op: \"local.get\", index: capsLocal },\n                { op: \"local.get\", index: innerLocal },\n                { op: \"struct.get\", typeIdx: promiseTypeIdx, fieldIdx: 2 },\n                { op: \"struct.new\", typeIdx: callbackTypeIdx },\n                { op: \"extern.convert_any\" },\n                { op: \"struct.set\", typeIdx: promiseTypeIdx, fieldIdx: 2 },\n              ],\n            },\n          ],\n        },\n        // result (unused by the microtask drain, but the type must be externref)\n        { op: \"local.get\", index: valueLocal },\n      ],\n      else: nonPromiseArm,\n    },\n  ];\n}\n"
+        },
+        {
+          "file": "src/codegen/async-scheduler.ts",
+          "label": "PromiseThenableSubstrate",
+          "startLine": 949,
+          "lineCount": 19,
+          "sha256": "08d65223a788833bfde1f931dbfb0e93505ca0ab980c64cce8ece283bf9b66ff",
+          "text": "interface PromiseThenableSubstrate {\n  hasCallableThenFuncIdx: number;\n  thenableJobFuncIdx: number;\n  /**\n   * `__promise_peel_value(value) -> externref` — unwraps a `$AnyValue`-boxed\n   * resolution (tag 6 → raw GC object; tag 5 → the extern payload) so the\n   * `$Promise`/thenable classification sees the RAW object. An `any`-typed\n   * resolution (`const o: any = …; Promise.resolve(o)`) arrives as an\n   * externref-wrapped `$AnyValue` box, which would MISS every `ref.test`\n   * arm (the poisoned-then getter never ran without this). Placeholder is\n   * IDENTITY (filled at finalize alongside the predicate); non-box values\n   * pass through unchanged, and the ORIGINAL (boxed) value is still what\n   * fulfils/rejects — the peel is classification/dispatch-only, so value\n   * identity across the promise is preserved.\n   */\n  peelValueFuncIdx: number;\n  newTypeErrorFuncIdx: number;\n  selfResolutionMsg: string;\n}\n"
+        },
+        {
+          "file": "src/codegen/closed-method-dispatch.ts",
+          "label": "fillPromiseThenableHelpers",
+          "startLine": 2001,
+          "lineCount": 209,
+          "sha256": "8d8d3bef8375b3e156e3b5e218db9d3c546090dc19321373acfd1bb832e66a7e",
+          "text": "export function fillPromiseThenableHelpers(ctx: CodegenContext): void {\n  if (!ctx.promiseThenableReserved) return;\n  const predIdx = ctx.funcMap.get(\"__promise_has_callable_then\");\n  if (predIdx === undefined) return;\n  const predFn = definedFuncAt(ctx, predIdx);\n  if (!predFn) return;\n\n  // ── `__promise_peel_value(value) -> externref` ─────────────────────────\n  // Unwrap an `$AnyValue`-boxed resolution so the predicate / thenable-job\n  // dispatch `ref.test` the RAW payload: tag 6 → refval (the GC object),\n  // tag 5 → externval (string OR tag-5-carried object — the classifier arms\n  // below reject non-objects anyway), every other tag / non-box → unchanged.\n  // Left as the identity placeholder when `$AnyValue` was never registered.\n  const peelIdx = ctx.funcMap.get(\"__promise_peel_value\");\n  const peelFn = peelIdx !== undefined ? definedFuncAt(ctx, peelIdx) : undefined;\n  const anyValueTypeIdx = ctx.anyValueTypeIdx;\n  if (peelFn && anyValueTypeIdx >= 0) {\n    // $AnyValue field layout (ensureAnyValueType): 0 tag · 3 refval · 4 externval.\n    const AV_TAG = 0;\n    const AV_REF = 3;\n    const AV_EXT = 4;\n    const peelAnyLocal = 1;\n    peelFn.locals = [{ name: \"__any\", type: { kind: \"anyref\" } }];\n    peelFn.body = [\n      { op: \"local.get\", index: 0 },\n      { op: \"ref.is_null\" },\n      {\n        op: \"if\",\n        blockType: { kind: \"empty\" },\n        then: [{ op: \"local.get\", index: 0 }, { op: \"return\" }],\n      },\n      { op: \"local.get\", index: 0 },\n      { op: \"any.convert_extern\" },\n      { op: \"local.set\", index: peelAnyLocal },\n      { op: \"local.get\", index: peelAnyLocal },\n      { op: \"ref.test\", typeIdx: anyValueTypeIdx },\n      {\n        op: \"if\",\n        blockType: { kind: \"empty\" },\n        then: [\n          // tag 6 (object) → extern.convert_any(refval)\n          { op: \"local.get\", index: peelAnyLocal },\n          { op: \"ref.cast\", typeIdx: anyValueTypeIdx },\n          { op: \"struct.get\", typeIdx: anyValueTypeIdx, fieldIdx: AV_TAG },\n          { op: \"i32.const\", value: 6 },\n          { op: \"i32.eq\" },\n          {\n            op: \"if\",\n            blockType: { kind: \"empty\" },\n            then: [\n              { op: \"local.get\", index: peelAnyLocal },\n              { op: \"ref.cast\", typeIdx: anyValueTypeIdx },\n              { op: \"struct.get\", typeIdx: anyValueTypeIdx, fieldIdx: AV_REF },\n              { op: \"extern.convert_any\" },\n              { op: \"return\" },\n            ],\n          },\n          // tag 5 (string/extern payload) → externval\n          { op: \"local.get\", index: peelAnyLocal },\n          { op: \"ref.cast\", typeIdx: anyValueTypeIdx },\n          { op: \"struct.get\", typeIdx: anyValueTypeIdx, fieldIdx: AV_TAG },\n          { op: \"i32.const\", value: 5 },\n          { op: \"i32.eq\" },\n          {\n            op: \"if\",\n            blockType: { kind: \"empty\" },\n            then: [\n              { op: \"local.get\", index: peelAnyLocal },\n              { op: \"ref.cast\", typeIdx: anyValueTypeIdx },\n              { op: \"struct.get\", typeIdx: anyValueTypeIdx, fieldIdx: AV_EXT },\n              { op: \"return\" },\n            ],\n          },\n        ],\n      },\n      { op: \"local.get\", index: 0 },\n    ];\n  }\n\n  // ── `__promise_has_callable_then(value) -> i32` ────────────────────────\n  const peeledLocalIdx = 1; // param 0 = value externref\n  const anyLocalIdx = 2;\n  const thenAnyLocalIdx = 3;\n  const body: Instr[] = [\n    // peeled = __promise_peel_value(value) — classify the RAW payload.\n    { op: \"local.get\", index: 0 },\n    ...((peelIdx !== undefined ? [{ op: \"call\", funcIdx: peelIdx }] : []) satisfies Instr[]),\n    { op: \"local.set\", index: peeledLocalIdx },\n    // null externref (JS null / absent) → not a thenable.\n    { op: \"local.get\", index: peeledLocalIdx },\n    { op: \"ref.is_null\" },\n    {\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: [{ op: \"i32.const\", value: 0 }, { op: \"return\" }],\n    },\n    { op: \"local.get\", index: peeledLocalIdx },\n    { op: \"any.convert_extern\" },\n    { op: \"local.set\", index: anyLocalIdx },\n  ];\n\n  // Shared tail: test the externref left on the stack against the closure\n  // base wrappers; 1 on a hit, else 0.\n  const closureTest = (loadThen: Instr[]): Instr[] => [\n    ...loadThen,\n    { op: \"any.convert_extern\" },\n    { op: \"local.set\", index: thenAnyLocalIdx },\n    ...buildClosureRefTestArms(ctx, thenAnyLocalIdx, [{ op: \"i32.const\", value: 1 }, { op: \"return\" }]),\n    { op: \"i32.const\", value: 0 },\n    { op: \"return\" },\n  ];\n\n  // Closed-struct METHOD arms — a compiled `then` method is always callable.\n  const seenMethodType = new Set<number>();\n  for (const entry of collectMethodEntries(ctx, \"then\", null)) {\n    if (seenMethodType.has(entry.typeIdx)) continue;\n    seenMethodType.add(entry.typeIdx);\n    body.push({ op: \"local.get\", index: anyLocalIdx });\n    body.push({ op: \"ref.test\", typeIdx: entry.typeIdx });\n    body.push({\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: [{ op: \"i32.const\", value: 1 }, { op: \"return\" }],\n    });\n  }\n\n  // Closed-struct ACCESSOR arms (#1888 S5c) — MUST run BEFORE the field arms:\n  // `Object.defineProperty(o, 'then', {get})` on a closed-struct target stores\n  // the getter closure in a per-(struct,prop) module GLOBAL\n  // (`ctx.structAccessorClosure`), invisible to `__extern_get` — while the\n  // struct may ALSO carry a pre-shaped (runtime-null) `then` FIELD that would\n  // wrongly classify it non-thenable if tested first. Spec Get REQUIRES running\n  // the getter here — a poisoned getter must throw OUT of this predicate\n  // (resolve-poisoned-then), and a returned closure classifies the value as a\n  // thenable. A runtime-null getter global (define-site never executed) falls\n  // through to the field/$Object arms below.\n  const callAccessorGetIdx = ctx.funcMap.get(\"__call_accessor_get\");\n  if (callAccessorGetIdx !== undefined) {\n    for (const [key, entry] of ctx.structAccessorClosure) {\n      if (!key.endsWith(\"_then\") || entry.getGlobal === undefined) continue;\n      const structName = key.slice(0, -\"_then\".length);\n      const structTypeIdx = ctx.structMap.get(structName);\n      if (structTypeIdx === undefined) continue;\n      body.push({ op: \"local.get\", index: anyLocalIdx });\n      body.push({ op: \"ref.test\", typeIdx: structTypeIdx });\n      body.push({\n        op: \"if\",\n        blockType: { kind: \"empty\" },\n        then: [\n          { op: \"global.get\", index: entry.getGlobal },\n          { op: \"ref.is_null\" },\n          { op: \"i32.eqz\" },\n          {\n            op: \"if\",\n            blockType: { kind: \"empty\" },\n            then: closureTest([\n              // then = getter.call(value) — §7.3.2 GetV via the S5b driver.\n              { op: \"local.get\", index: peeledLocalIdx },\n              { op: \"global.get\", index: entry.getGlobal },\n              { op: \"call\", funcIdx: callAccessorGetIdx },\n            ]),\n          },\n        ],\n      });\n    }\n  }\n\n  // Closed-struct FIELD arms — `{ then: <value> }`: callable iff the stored\n  // value is a closure.\n  for (const fe of collectFieldEntries(ctx, \"then\")) {\n    body.push({ op: \"local.get\", index: anyLocalIdx });\n    body.push({ op: \"ref.test\", typeIdx: fe.typeIdx });\n    body.push({\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: closureTest([\n        { op: \"local.get\", index: anyLocalIdx },\n        { op: \"ref.cast\", typeIdx: fe.typeIdx },\n        { op: \"struct.get\", typeIdx: fe.typeIdx, fieldIdx: fe.fieldIdx },\n      ]),\n    });\n  }\n\n  // Open `$Object` arm — spec Get (runs accessors; a poisoned getter throws\n  // OUT of this predicate) + closure test.\n  const externGetIdx = ctx.funcMap.get(\"__extern_get\");\n  const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;\n  if (externGetIdx !== undefined && objectTypeIdx !== undefined) {\n    body.push({ op: \"local.get\", index: anyLocalIdx });\n    body.push({ op: \"ref.test\", typeIdx: objectTypeIdx });\n    body.push({\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: closureTest([\n        { op: \"local.get\", index: peeledLocalIdx },\n        ...stringConstantExternrefInstrs(ctx, \"then\"),\n        { op: \"call\", funcIdx: externGetIdx },\n      ]),\n    });\n  }\n\n  body.push({ op: \"i32.const\", value: 0 });\n  predFn.locals = [\n    { name: \"__peeled\", type: { kind: \"externref\" } },\n    { name: \"__any\", type: { kind: \"anyref\" } },\n    { name: \"__thenAny\", type: { kind: \"anyref\" } },\n  ];\n  predFn.body = body;\n}\n"
+        }
+      ],
+      "exactInsertions": [
+        {
+          "id": "S1",
+          "file": "src/codegen/parse-number-native.ts",
+          "before": {
+            "label": "S1",
+            "startLine": 928,
+            "lineCount": 2,
+            "sha256": "874500902711191d153449729866bb31dc77eff305792c2aa20fd503fee64d34",
+            "text": "    ...emitExponent(L_I, L_END, L_DATA, L_C, L_EXP, L_EXPSIGN, strDataTypeIdx, getC),\n    // full-match requirement: if i != end → NaN (trailing junk)\n"
+          },
+          "replacement": "    ...emitExponent(L_I, L_END, L_DATA, L_C, L_EXP, L_EXPSIGN, strDataTypeIdx, getC),\n    // StringToNumber requires exponent digits, unlike parseFloat's prefix grammar.\n    // Read the last consumed character: L_C may instead hold unconsumed lookahead.\n    // The mantissa's no-digit rejection guarantees L_I - 1 is a valid index.\n    { op: \"local.get\", index: L_DATA },\n    { op: \"local.get\", index: L_I },\n    { op: \"i32.const\", value: 1 },\n    { op: \"i32.sub\" },\n    { op: \"array.get_u\", typeIdx: strDataTypeIdx },\n    { op: \"local.set\", index: L_C },\n    { op: \"local.get\", index: L_C },\n    { op: \"i32.const\", value: C_LC_E },\n    { op: \"i32.eq\" },\n    { op: \"local.get\", index: L_C },\n    { op: \"i32.const\", value: C_UC_E },\n    { op: \"i32.eq\" },\n    { op: \"i32.or\" },\n    { op: \"local.get\", index: L_C },\n    { op: \"i32.const\", value: C_PLUS },\n    { op: \"i32.eq\" },\n    { op: \"i32.or\" },\n    { op: \"local.get\", index: L_C },\n    { op: \"i32.const\", value: C_MINUS },\n    { op: \"i32.eq\" },\n    { op: \"i32.or\" },\n    {\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: [{ op: \"f64.const\", value: NaN }, { op: \"return\" }],\n    },\n    // full-match requirement: if i != end → NaN (trailing junk)\n",
+          "replacementSha256": "9fa940808ae5dc7b819e8f9e32a30681f5a3f3822c7a15a533dc54fabc15eac5",
+          "proposedPostimageSha256": "7e3e0cc9ef44f0e9bc132103bf9b5cd65254163d85045d667d5904c3d27850f9",
+          "postimageProvenance": "Computed from one unique exact text replacement in memory; not applied or compiled."
+        },
+        {
+          "id": "V1",
+          "file": "src/ir/backend/wasmgc-emitter.ts",
+          "before": {
+            "label": "V1",
+            "startLine": 177,
+            "lineCount": 4,
+            "sha256": "5e6246316bcd282024c7ef3c06e84f0e4e12dafe225134df1fdd91afd8180cd2",
+            "text": "    out.push({ op: \"local.set\", index: dataScratchLocal });\n    out.push({ op: \"i32.const\", value: count });\n    out.push({ op: \"local.get\", index: dataScratchLocal });\n    out.push({ op: \"struct.new\", typeIdx: layout.vecStructTypeIdx });\n"
+          },
+          "replacement": "    out.push({ op: \"local.set\", index: dataScratchLocal });\n    out.push({ op: \"i32.const\", value: count });\n    out.push({ op: \"local.get\", index: dataScratchLocal });\n    out.push({ op: \"ref.as_non_null\" });\n    out.push({ op: \"struct.new\", typeIdx: layout.vecStructTypeIdx });\n",
+          "replacementSha256": "82e54ade42b5b45c3e5cd2f3246242a0858f701974e374b90b9de5682c593404",
+          "proposedPostimageSha256": "caba0379bf1a1515b5d8966d51a90064a572bd4c380370a57a2606eba4245e1b",
+          "postimageProvenance": "Computed from one unique exact text replacement in memory; not applied or compiled."
+        }
+      ],
+      "promiseSchedulerRecipe": [
+        {
+          "id": "P1-binding",
+          "file": "src/codegen/async-scheduler.ts",
+          "before": {
+            "label": "P1-binding",
+            "startLine": 950,
+            "lineCount": 2,
+            "sha256": "48297d1051c8b779d644a2b3561cb6a9bd3bf44ade5a763a248405850316463b",
+            "text": "  hasCallableThenFuncIdx: number;\n  thenableJobFuncIdx: number;\n"
+          },
+          "replacement": "  hasCallableThenFuncIdx: number;\n  lookupThenFuncIdx: number;\n  thenableJobFuncIdx: number;\n",
+          "replacementSha256": "d61face79602b5cbf3eed24f1a19079e1c40cb3b82b8261907b86f2007a22b34",
+          "status": "Reviewable exact semantic hunk; NOT an independently usable patch without P7 lookup fill."
+        },
+        {
+          "id": "P2-reservation",
+          "file": "src/codegen/async-scheduler.ts",
+          "before": {
+            "label": "P2-reservation",
+            "startLine": 1033,
+            "lineCount": 2,
+            "sha256": "762d06dacb3bb784ca258e5677bad08a2befa48ebe19877243ac703f22a47c42",
+            "text": "  ctx.funcMap.set(\"__promise_peel_value\", peelValueFuncIdx);\n  ctx.promiseThenableReserved = true;\n"
+          },
+          "replacement": "  ctx.funcMap.set(\"__promise_peel_value\", peelValueFuncIdx);\n  const lookupTypeIdx = addFuncType(\n    ctx,\n    [{ kind: \"externref\" }],\n    [{ kind: \"i32\" }, { kind: \"externref\" }],\n    \"$__promise_lookup_then_type\",\n  );\n  const lookupThenFuncIdx = mintDefinedFunc(ctx);\n  pushDefinedFunc(ctx, lookupThenFuncIdx, {\n    name: \"__promise_lookup_then\",\n    typeIdx: lookupTypeIdx,\n    locals: [],\n    body: [{ op: \"unreachable\" }],\n    exported: false,\n  });\n  ctx.funcMap.set(\"__promise_lookup_then\", lookupThenFuncIdx);\n  ctx.promiseThenableReserved = true;\n",
+          "replacementSha256": "02ed6e0002aebb6611b7e36976b4835a8c38d6a37d1d319686a6ee1128bfe9aa",
+          "status": "Reviewable exact semantic hunk; NOT an independently usable patch without P7 lookup fill."
+        },
+        {
+          "id": "P3-return-binding",
+          "file": "src/codegen/async-scheduler.ts",
+          "before": {
+            "label": "P3-return-binding",
+            "startLine": 1146,
+            "lineCount": 2,
+            "sha256": "387ac997c627f016d7f7848618f04fcbae41b8b0bba6e06ecb10b2fc317eddca",
+            "text": "  const result: PromiseThenableSubstrate = {\n    hasCallableThenFuncIdx,\n"
+          },
+          "replacement": "  const result: PromiseThenableSubstrate = {\n    hasCallableThenFuncIdx,\n    lookupThenFuncIdx,\n",
+          "replacementSha256": "3f41b5a935fd8c9fe7a1e2b1e515432fd0e04f710520aa706c359945425e97ab",
+          "status": "Reviewable exact semantic hunk; NOT an independently usable patch without P7 lookup fill."
+        },
+        {
+          "id": "P4-local",
+          "file": "src/codegen/async-scheduler.ts",
+          "before": {
+            "label": "P4-local",
+            "startLine": 1210,
+            "lineCount": 1,
+            "sha256": "f8610e07cf2a94a168382f1c15c030664650a19dc8ce7b630a18b1b22ce3246c",
+            "text": "  const poisonedLocal = 6;\n"
+          },
+          "replacement": "  const poisonedLocal = 6;\n  // Reuse the existing own-then scratch local; each invocation has its own frame.\n  const capturedThenLocal = 8;\n",
+          "replacementSha256": "a343e13a1286c1922378771ddda52afad2da19c86c44d2ae3f5376fee70dbc33",
+          "status": "Reviewable exact semantic hunk; NOT an independently usable patch without P7 lookup fill."
+        },
+        {
+          "id": "P5-lookup",
+          "file": "src/codegen/async-scheduler.ts",
+          "before": {
+            "label": "P5-lookup",
+            "startLine": 1232,
+            "lineCount": 2,
+            "sha256": "0680ca8f195ce2cc0aba8c7478c87c983b0e879835b2e21a2d822790e6871721",
+            "text": "              { op: \"call\", funcIdx: thenable.hasCallableThenFuncIdx },\n              { op: \"local.set\", index: hasThenLocal },\n"
+          },
+          "replacement": "              { op: \"call\", funcIdx: thenable.lookupThenFuncIdx },\n              { op: \"local.set\", index: capturedThenLocal },\n              { op: \"local.set\", index: hasThenLocal },\n",
+          "replacementSha256": "894600662a2dd06343f0f1af352d0e84c808f7850daa8926dd64ce91e302777c",
+          "status": "Reviewable exact semantic hunk; NOT an independently usable patch without P7 lookup fill."
+        },
+        {
+          "id": "P6-capture",
+          "file": "src/codegen/async-scheduler.ts",
+          "before": {
+            "label": "P6-capture",
+            "startLine": 1266,
+            "lineCount": 3,
+            "sha256": "e2ccd047023b694739d00c6611940b8a39c39bb4249fcbf4258288705bdf2100",
+            "text": "                  { op: \"ref.func\", funcIdx: thenable.thenableJobFuncIdx },\n                  { op: \"ref.null.extern\" },\n                  { op: \"local.get\", index: promiseLocal },\n"
+          },
+          "replacement": "                  { op: \"ref.func\", funcIdx: thenable.thenableJobFuncIdx },\n                  { op: \"local.get\", index: capturedThenLocal },\n                  { op: \"local.get\", index: promiseLocal },\n",
+          "replacementSha256": "248dfd53ccd17dcde4fdc67f99b62ca68312672cc8b913f170c6b667d09c94d1",
+          "status": "Reviewable exact semantic hunk; NOT an independently usable patch without P7 lookup fill."
+        }
+      ],
+      "promiseClassifierRecipe": {
+        "id": "P7-dual-result-fill",
+        "file": "src/codegen/closed-method-dispatch.ts",
+        "originalBlock": {
+          "label": "classifier construction/fill",
+          "startLine": 2080,
+          "lineCount": 129,
+          "sha256": "9c4b3ce91b5cc0ce361e891d07eb67af5dcb246a4a36510c849e2432d8f3756b",
+          "text": "  // ── `__promise_has_callable_then(value) -> i32` ────────────────────────\n  const peeledLocalIdx = 1; // param 0 = value externref\n  const anyLocalIdx = 2;\n  const thenAnyLocalIdx = 3;\n  const body: Instr[] = [\n    // peeled = __promise_peel_value(value) — classify the RAW payload.\n    { op: \"local.get\", index: 0 },\n    ...((peelIdx !== undefined ? [{ op: \"call\", funcIdx: peelIdx }] : []) satisfies Instr[]),\n    { op: \"local.set\", index: peeledLocalIdx },\n    // null externref (JS null / absent) → not a thenable.\n    { op: \"local.get\", index: peeledLocalIdx },\n    { op: \"ref.is_null\" },\n    {\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: [{ op: \"i32.const\", value: 0 }, { op: \"return\" }],\n    },\n    { op: \"local.get\", index: peeledLocalIdx },\n    { op: \"any.convert_extern\" },\n    { op: \"local.set\", index: anyLocalIdx },\n  ];\n\n  // Shared tail: test the externref left on the stack against the closure\n  // base wrappers; 1 on a hit, else 0.\n  const closureTest = (loadThen: Instr[]): Instr[] => [\n    ...loadThen,\n    { op: \"any.convert_extern\" },\n    { op: \"local.set\", index: thenAnyLocalIdx },\n    ...buildClosureRefTestArms(ctx, thenAnyLocalIdx, [{ op: \"i32.const\", value: 1 }, { op: \"return\" }]),\n    { op: \"i32.const\", value: 0 },\n    { op: \"return\" },\n  ];\n\n  // Closed-struct METHOD arms — a compiled `then` method is always callable.\n  const seenMethodType = new Set<number>();\n  for (const entry of collectMethodEntries(ctx, \"then\", null)) {\n    if (seenMethodType.has(entry.typeIdx)) continue;\n    seenMethodType.add(entry.typeIdx);\n    body.push({ op: \"local.get\", index: anyLocalIdx });\n    body.push({ op: \"ref.test\", typeIdx: entry.typeIdx });\n    body.push({\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: [{ op: \"i32.const\", value: 1 }, { op: \"return\" }],\n    });\n  }\n\n  // Closed-struct ACCESSOR arms (#1888 S5c) — MUST run BEFORE the field arms:\n  // `Object.defineProperty(o, 'then', {get})` on a closed-struct target stores\n  // the getter closure in a per-(struct,prop) module GLOBAL\n  // (`ctx.structAccessorClosure`), invisible to `__extern_get` — while the\n  // struct may ALSO carry a pre-shaped (runtime-null) `then` FIELD that would\n  // wrongly classify it non-thenable if tested first. Spec Get REQUIRES running\n  // the getter here — a poisoned getter must throw OUT of this predicate\n  // (resolve-poisoned-then), and a returned closure classifies the value as a\n  // thenable. A runtime-null getter global (define-site never executed) falls\n  // through to the field/$Object arms below.\n  const callAccessorGetIdx = ctx.funcMap.get(\"__call_accessor_get\");\n  if (callAccessorGetIdx !== undefined) {\n    for (const [key, entry] of ctx.structAccessorClosure) {\n      if (!key.endsWith(\"_then\") || entry.getGlobal === undefined) continue;\n      const structName = key.slice(0, -\"_then\".length);\n      const structTypeIdx = ctx.structMap.get(structName);\n      if (structTypeIdx === undefined) continue;\n      body.push({ op: \"local.get\", index: anyLocalIdx });\n      body.push({ op: \"ref.test\", typeIdx: structTypeIdx });\n      body.push({\n        op: \"if\",\n        blockType: { kind: \"empty\" },\n        then: [\n          { op: \"global.get\", index: entry.getGlobal },\n          { op: \"ref.is_null\" },\n          { op: \"i32.eqz\" },\n          {\n            op: \"if\",\n            blockType: { kind: \"empty\" },\n            then: closureTest([\n              // then = getter.call(value) — §7.3.2 GetV via the S5b driver.\n              { op: \"local.get\", index: peeledLocalIdx },\n              { op: \"global.get\", index: entry.getGlobal },\n              { op: \"call\", funcIdx: callAccessorGetIdx },\n            ]),\n          },\n        ],\n      });\n    }\n  }\n\n  // Closed-struct FIELD arms — `{ then: <value> }`: callable iff the stored\n  // value is a closure.\n  for (const fe of collectFieldEntries(ctx, \"then\")) {\n    body.push({ op: \"local.get\", index: anyLocalIdx });\n    body.push({ op: \"ref.test\", typeIdx: fe.typeIdx });\n    body.push({\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: closureTest([\n        { op: \"local.get\", index: anyLocalIdx },\n        { op: \"ref.cast\", typeIdx: fe.typeIdx },\n        { op: \"struct.get\", typeIdx: fe.typeIdx, fieldIdx: fe.fieldIdx },\n      ]),\n    });\n  }\n\n  // Open `$Object` arm — spec Get (runs accessors; a poisoned getter throws\n  // OUT of this predicate) + closure test.\n  const externGetIdx = ctx.funcMap.get(\"__extern_get\");\n  const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;\n  if (externGetIdx !== undefined && objectTypeIdx !== undefined) {\n    body.push({ op: \"local.get\", index: anyLocalIdx });\n    body.push({ op: \"ref.test\", typeIdx: objectTypeIdx });\n    body.push({\n      op: \"if\",\n      blockType: { kind: \"empty\" },\n      then: closureTest([\n        { op: \"local.get\", index: peeledLocalIdx },\n        ...stringConstantExternrefInstrs(ctx, \"then\"),\n        { op: \"call\", funcIdx: externGetIdx },\n      ]),\n    });\n  }\n\n  body.push({ op: \"i32.const\", value: 0 });\n  predFn.locals = [\n    { name: \"__peeled\", type: { kind: \"externref\" } },\n    { name: \"__any\", type: { kind: \"anyref\" } },\n    { name: \"__thenAny\", type: { kind: \"anyref\" } },\n  ];\n  predFn.body = body;"
+        },
+        "proposedReplacement": null,
+        "proposedPostimageSha256": null,
+        "status": "UNRESOLVED exact transplanted replacement; requires separately approved implementation/review. No fabricated postimage.",
+        "requirements": [
+          "Leave original early guards and __promise_peel_value fill unchanged.",
+          "Build both old i32 classifier and new (i32,externref) lookup from the same ordered method/accessor/field/open-object collectors; preserve accessor-before-field ordering and method deduplication.",
+          "Keep classifier capture=false: original locals and emitted instruction sequence. Lookup capture=true adds externref local4 __capturedThen; all returns emit (verdict,capture).",
+          "For closure-valued accessor/field/open-object arms, local.tee capturedThen before any.convert_extern; verdict1 returns local4, noncallable verdict0 returns null. Compiled-method verdict1 returns null for existing vararg dispatch. Null/default returns (0,null).",
+          "Find reserved __promise_lookup_then with definedFuncAt; fill its locals/body without minting functions/types/imports during finalization.",
+          "Prefer one nested dual-mode body builder in the original function; no new runtime resource framework or wholesale extraction. Exact syntax and replacement hash are not fixed by this plan."
+        ]
+      }
+    }
+  ],
+  "instruments": [
+    {
+      "file": "tests/issue-3518-async-frame-body-source-preservation.test.ts",
+      "gitBlob": "cb2958e36a20d52db7db24f2de83f570e4c53122",
+      "sha256": "985663fc40aded2a6e585e2e8a571b2dd433036b8dee78b2e95d40c0b3faa34b",
+      "bytes": 39724
+    },
+    {
+      "file": "tests/issue-3518-native-delay-combinator-source-preservation.test.ts",
+      "gitBlob": "dd692a111deaa64a63c873191ba3954b32fbe9e3",
+      "sha256": "26cf721ece91a9d468a42555eaeac49f5375ded7a9bafec2775cad5efb07749c",
+      "bytes": 12916
+    },
+    {
+      "file": "tests/helpers/native-delay-combinator-source-receipts.mjs",
+      "gitBlob": "ab35183ae54618cc3865eeab9a7a1b35e624b0de",
+      "sha256": "dcb2101fbfbb4e7a03c38ac0ec097da725d9c9bd254c24541ac07b997a45143f",
+      "bytes": 51512
+    }
+  ],
+  "existingEvidence": [
+    {
+      "file": "/private/tmp/js2-3518-queue-drain-consolidation-20260909/.tmp/attribution-9qxM8J/attribution-v2.json",
+      "sha256": "9593ec6d38588d5c182d36c2f69fc7ac338795418cf57ff3c090041b43bd2f9c"
+    },
+    {
+      "file": "/private/tmp/js2-3518-queue-drain-consolidation-20260909/.tmp/attribution-9qxM8J/followup.json",
+      "sha256": "23c4a0f8958380ed20932040eaaa2bda57fb56a7bed04a79e5305dcc2ee95a69"
+    },
+    {
+      "file": "/private/tmp/js2-3518-queue-drain-consolidation-20260909/.tmp/attribution-wabt-probe-ZwQHhy/probe.json",
+      "sha256": "03ce9ff369b52a73e10cef05dd1602d745d65fedd08e80fd286b0b20560f746a"
+    }
+  ],
+  "allowedSourceFiles": [
+    "src/codegen/async-scheduler.ts",
+    "src/codegen/closed-method-dispatch.ts",
+    "src/codegen/parse-number-native.ts",
+    "src/ir/backend/wasmgc-emitter.ts"
+  ],
+  "plannedAddedSourceFiles": [],
+  "notAuthorized": [
+    "Modify or materialize any baseline/candidate source",
+    "Edit original tests or helper",
+    "Run compiler, tests or three-arm comparison",
+    "Commit, push, public writes or gate waiver"
+  ],
+  "unresolved": [
+    "P7 exact transplanted classifier/lookup implementation, postimage hash and independent review. P1-P6 alone are incomplete.",
+    "Hashes for complete repaired source censuses and adapted instrument do not exist; must not be invented.",
+    "Existing baseline admission requires git diff historical -- src empty; repaired roots are intentionally ineligible until a separately approved manifest-aware arm exists. Do not bypass by labelling repaired roots candidate.",
+    "New candidate run HEAD/instrument pin requires re-admission before a later run if parent advances; shared source tree alone is not exact run provenance.",
+    "No guarantee of exact repaired-baseline/candidate byte equality, especially optimizer inlining; stop on additional residuals rather than expanding repair allowlist."
+  ],
+  "parentPromiseProvenance": {
+    "source": "Parent supplied, not independently re-executed",
+    "resolveRows": 15,
+    "claim": "LCS changed-line review matches 00976e capture lookup/local.set8/caps local.get8; candidate lookup indices independently resolve lookup name. Two classifier calls305 resolve peel_value.",
+    "limit": "Exact source cause of peel inline decision remains inference without optimizer trace."
+  },
+  "gateTruth": "Preserve original exact-row failures, child terminals and complete receipts. Repair-aware equality is not historical byte preservation and does not waive any gate."
+}
