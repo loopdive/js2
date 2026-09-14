@@ -74,15 +74,9 @@
 // mechanism that never fired closes a door that was never opened (#4157,
 // twice in one session).
 
-import type { IrBlock, IrFunction, IrInstr, IrTerminator, IrValueId } from "../nodes.js";
-import { forEachNestedBuffer, mapNestedBuffers } from "../nodes.js";
-import { dominanceOf } from "../analysis/dominance.js";
-import { effectsArePure, effectsOf, type IrEffects } from "../effects.js";
-import { renameInstrOperands } from "./inline-small.js";
-
-export interface GvnOptions {
-  readonly poison?: boolean;
-}
+import type { IrFunction } from "../nodes.js";
+import { createGvnCounters, gvnCore, type GvnCounters, type GvnOptions } from "./gvn-core.js";
+export type { GvnOptions } from "./gvn-core.js";
 
 /**
  * The hygiene-pipeline entry: reads `JS2WASM_IR_GVN` itself so the pipeline
@@ -104,187 +98,23 @@ if (process.env.JS2WASM_IR_GVN_DEBUG === "1") {
   });
 }
 
-/** Key an instruction for value numbering, or `null` when not keyable. */
-function keyOf(instr: IrInstr): string | null {
-  try {
-    return JSON.stringify(instr, (k, v: unknown) => {
-      if (k === "result" || k === "site" || k === "alloc") return undefined;
-      if (typeof v === "bigint") return `bigint:${v.toString()}`;
-      return v;
-    });
-  } catch {
-    return null; // cyclic or otherwise unserializable — decline
-  }
+const recordedCounters = new WeakSet<GvnCounters>();
+
+/** Publish one completed or partially failed transaction exactly once. */
+export function recordLegacyGvnCountersOnce(counters: GvnCounters): void {
+  if (recordedCounters.has(counters)) return;
+  recordedCounters.add(counters);
+  stats.functions += counters.functions;
+  stats.merged += counters.merged;
+  stats.poisoned += counters.poisoned;
 }
 
-function hasNestedBuffers(instr: IrInstr): boolean {
-  let found = false;
-  forEachNestedBuffer(instr, () => {
-    found = true;
-  });
-  return found;
-}
-
-function mapId(rename: ReadonlyMap<IrValueId, IrValueId>, id: IrValueId): IrValueId {
-  return rename.get(id) ?? id;
-}
-
-function renameTerminator(t: IrTerminator, rename: ReadonlyMap<IrValueId, IrValueId>): IrTerminator {
-  if (rename.size === 0) return t;
-  switch (t.kind) {
-    case "return": {
-      const values = t.values.map((v) => mapId(rename, v));
-      return values.every((v, i) => v === t.values[i]) ? t : { ...t, values };
-    }
-    case "br": {
-      const args = t.branch.args.map((a) => mapId(rename, a));
-      return args.every((a, i) => a === t.branch.args[i]) ? t : { ...t, branch: { ...t.branch, args } };
-    }
-    case "br_if": {
-      const c = mapId(rename, t.condition);
-      const tArgs = t.ifTrue.args.map((a) => mapId(rename, a));
-      const fArgs = t.ifFalse.args.map((a) => mapId(rename, a));
-      const same =
-        c === t.condition &&
-        tArgs.every((a, i) => a === t.ifTrue.args[i]) &&
-        fArgs.every((a, i) => a === t.ifFalse.args[i]);
-      return same
-        ? t
-        : {
-            ...t,
-            condition: c,
-            ifTrue: { ...t.ifTrue, args: tArgs },
-            ifFalse: { ...t.ifFalse, args: fArgs },
-          };
-    }
-    case "unreachable":
-      return t;
-  }
-}
-
-/** The poison stand-in for a numeric duplicate, or null when not poisonable. */
-function poisonInstr(instr: IrInstr): IrInstr | null {
-  const rt = instr.resultType;
-  if (instr.result === null || rt === null || rt === undefined) return null;
-  if (typeof rt !== "object" || (rt as { kind?: string }).kind !== "val") return null;
-  const val = (rt as { val?: { kind?: string } }).val;
-  if (val?.kind === "i32") {
-    return { kind: "const", result: instr.result, resultType: rt, value: { kind: "i32", value: 424242 } };
-  }
-  if (val?.kind === "f64") {
-    return { kind: "const", result: instr.result, resultType: rt, value: { kind: "f64", value: 424242 } };
-  }
-  return null;
-}
-
-/**
- * Run GVN over one function. Returns the SAME reference when nothing changed
- * (the hygiene-pipeline convention), a rebuilt function otherwise.
- */
+/** Historical GVN entry, including accounting when the original error escapes. */
 export function gvn(fn: IrFunction, opts: GvnOptions = {}): IrFunction {
-  if (fn.blocks.length === 0) return fn;
-  let dominance;
+  const counters = createGvnCounters();
   try {
-    dominance = dominanceOf(fn);
-  } catch {
-    return fn; // malformed block ids — the verifier owns reporting that
+    return gvnCore(fn, opts, counters);
+  } finally {
+    recordLegacyGvnCountersOnce(counters);
   }
-
-  const fxCache = new Map<IrInstr, IrEffects>();
-  const rename = new Map<IrValueId, IrValueId>();
-  // Scope chain of value-number tables. Entries: key → canonical result id.
-  const scopes: Array<Map<string, IrValueId>> = [];
-  let changed = false;
-
-  const lookup = (key: string): IrValueId | undefined => {
-    for (let i = scopes.length - 1; i >= 0; i--) {
-      const hit = scopes[i].get(key);
-      if (hit !== undefined) return hit;
-    }
-    return undefined;
-  };
-
-  const processBuffer = (instrs: readonly IrInstr[]): readonly IrInstr[] => {
-    const out: IrInstr[] = [];
-    let bufferChanged = false;
-    for (const original of instrs) {
-      // Apply accumulated renames first (deep — nested buffers included).
-      let instr = renameInstrOperands(original, rename);
-      if (instr !== original) bufferChanged = true;
-
-      if (hasNestedBuffers(instr)) {
-        // Structural instr: not a candidate itself; recurse into each buffer
-        // under a fresh scope (see the header for why one uniform rule
-        // covers if-arms, loop bodies and try alike).
-        const mapped = mapNestedBuffers(instr, (buffer) => {
-          scopes.push(new Map());
-          const res = processBuffer(buffer);
-          scopes.pop();
-          return res as IrInstr[];
-        });
-        if (mapped !== instr) {
-          instr = mapped;
-          bufferChanged = true;
-        }
-        out.push(instr);
-        continue;
-      }
-
-      if (instr.result !== null && instr.alloc === undefined && effectsArePure(effectsOf(instr, fxCache))) {
-        const key = keyOf(instr);
-        if (key !== null) {
-          const canonical = lookup(key);
-          if (canonical !== undefined && canonical !== instr.result) {
-            if (opts.poison) {
-              const poisoned = poisonInstr(instr);
-              if (poisoned !== null) {
-                stats.poisoned++;
-                out.push(poisoned);
-                bufferChanged = true;
-                continue;
-              }
-              // Not poisonable — leave untouched (poison mode must only make
-              // the mechanism VISIBLE, never silently half-apply the merge).
-              out.push(instr);
-              continue;
-            }
-            stats.merged++;
-            rename.set(instr.result, canonical);
-            // The duplicate stays in place; its uses are renamed away and
-            // deadCode sweeps it. Do NOT record it as canonical for its key.
-            out.push(instr);
-            bufferChanged = true;
-            continue;
-          }
-          if (canonical === undefined) scopes[scopes.length - 1].set(key, instr.result);
-        }
-      }
-      out.push(instr);
-    }
-    if (bufferChanged) changed = true;
-    return bufferChanged ? out : instrs;
-  };
-
-  // Dominator-tree DFS with one scope per block. Iterative, mirroring the
-  // tree walk in analysis/dominance.ts.
-  const newInstrsByBlock: Array<readonly IrInstr[] | null> = new Array(fn.blocks.length).fill(null);
-  const walk = (blockId: number): void => {
-    scopes.push(new Map());
-    newInstrsByBlock[blockId] = processBuffer(fn.blocks[blockId].instrs);
-    for (const child of dominance.children[blockId]) walk(child);
-    scopes.pop();
-  };
-  walk(0);
-  stats.functions++;
-
-  if (!changed && rename.size === 0) return fn;
-
-  const blocks: IrBlock[] = fn.blocks.map((b, i) => {
-    const instrs = newInstrsByBlock[i] ?? b.instrs;
-    const terminator = renameTerminator(b.terminator, rename);
-    if (instrs === b.instrs && terminator === b.terminator) return b;
-    return { ...b, instrs: instrs as IrInstr[], terminator };
-  });
-  if (blocks.every((b, i) => b === fn.blocks[i])) return fn;
-  return { ...fn, blocks };
 }

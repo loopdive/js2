@@ -3,7 +3,11 @@
 import { ts } from "../../ts-api.js";
 import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
 import { needsImplicitArgumentsObject } from "../helpers/body-uses-arguments.js";
-import { bodyReferencesOwnThis, functionLikeReferencesOwnThis } from "../helpers/body-references-own-this.js";
+import {
+  bodyReferencesOwnThis,
+  functionLikeReferencesOwnThis,
+  readsAmbientThisGlobal,
+} from "../helpers/body-references-own-this.js";
 import { isStrictFunction, isSimpleParameterList } from "../helpers/is-strict-function.js";
 import { normalizeSloppyExplicitThisParameter } from "../helpers/sloppy-this-global.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
@@ -19,6 +23,7 @@ import {
 import { addFunctionOwnLocals } from "../../ir/analysis/binding-info.js"; // (#2103) memoized own-locals oracle
 import { condenseDirectedGraph } from "../analysis/strongly-connected-components.js";
 import { functionReturnsThroughWithScope } from "../declarations.js";
+import { widenAsyncThenableResult } from "../async-thenable-return.js"; // (#5371)
 import {
   collectNestedCaptureReferences,
   functionDeclarationObservesBindingValue,
@@ -30,6 +35,7 @@ import {
 } from "../function-declaration-observation.js";
 import { getOrRegisterArgumentsVecType, reserveArgumentsLengthBrand } from "../arguments-length-brand.js";
 import { recordLiftedCaptureBox, recordLiftedCaptureSlots } from "../closures/capture-source-slot.js";
+import { recordEagerCaptureBox } from "./eager-capture-box.js";
 import { collectOwnerBindingsWrittenAfterDeclaration } from "../closures/declaration-write-analysis.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { recordNestedFunctionBody } from "../context/body-route-audit.js";
@@ -59,6 +65,7 @@ import {
   extractConstantDefault,
   hoistLetConstWithTdz,
   hoistVarDeclarations,
+  nativeGeneratorBindingType,
   ensureStructForType,
   resolveInstallableClassMemberName,
   resolveWasmType,
@@ -293,6 +300,34 @@ function initializerMaterializesHoistedFunction(
   return initializer.properties.some(
     (property) =>
       ts.isShorthandPropertyAssignment(property) && ctx.oracle.valueDeclarationOf(property.name) === functionDecl,
+  );
+}
+
+/**
+ * A direct native-generator factory call is a representation-changing
+ * initializer: the declaration path replaces its pre-hoisted `externref`
+ * carrier with a nominal generator-state local. A nested declaration's
+ * capture plan is made before that replacement, so an immutable capture can
+ * otherwise copy the pre-init `undefined` forever when the function value is
+ * observed before the initializer runs. Carry exactly this binding through the
+ * established ref-cell path instead. Ordinary initializer captures retain
+ * their by-value timing.
+ */
+function initializerRefinesToNativeGeneratorState(
+  ctx: CodegenContext,
+  capturedDecl: ts.VariableDeclaration | undefined,
+  capturingDeclaration: ts.FunctionDeclaration,
+): boolean {
+  // Only a synchronous generator declaration initializes its factory's
+  // prototype/view while its value is being materialized. A plain nested
+  // function retains the ordinary lazy capture timing, so do not change its
+  // capture mode merely because the captured initializer happens to return a
+  // native generator state.
+  return (
+    capturingDeclaration.asteriskToken !== undefined &&
+    !capturingDeclaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) &&
+    capturedDecl?.initializer !== undefined &&
+    nativeGeneratorBindingType(ctx, capturedDecl.initializer) !== null
   );
 }
 
@@ -1457,6 +1492,10 @@ function compileNestedFunctionDeclarationInScope(
   if (asyncDecision !== null) {
     returnType = { kind: "externref" };
   }
+  // (#5371) A never-suspending nested async declaration that returns a thenable
+  // keeps its result on the externref carrier so the call site's adopting
+  // `Promise.resolve` settles with the inner value instead of `Number(promise)`.
+  returnType = widenAsyncThenableResult(ctx, stmt, returnType);
   // Analyze captured variables from the enclosing scope. Use scope-aware
   // collection so nested `var` declarations and parameter bindings inside the
   // function body shadow outer references — otherwise a function with its own
@@ -1671,7 +1710,8 @@ function compileNestedFunctionDeclarationInScope(
       writtenInBody.has(name) ||
       mutatedInSiblingScope.has(name) ||
       writtenAfterDeclaration.has(name) ||
-      initializerMaterializesHoistedFunction(ctx, capturedDecl, stmt);
+      initializerMaterializesHoistedFunction(ctx, capturedDecl, stmt) ||
+      initializerRefinesToNativeGeneratorState(ctx, capturedDecl, stmt);
     // #2623 Slice A: detect a capture whose outer slot is already the canonical
     // ref cell (the outer scope boxed it). For such a name `type` above is the
     // cell ref type, so the generic mutable-capture path would re-box to a
@@ -1735,8 +1775,14 @@ function compileNestedFunctionDeclarationInScope(
       ? registerNativeGenerator(ctx, stmt, funcName, paramTypes)
       : undefined;
   if (nativeGenInfo) {
-    // The generator factory returns the state struct, not a JS Generator object.
-    returnType = { kind: "ref", typeIdx: nativeGenInfo.stateTypeIdx };
+    // A pass-0 opaque factory reservation remains its public ABI even when
+    // pass 2 now admits a nominal native state. Never rewrite published callers.
+    const reservedType = opts.reuseReservedEntry && ctx.mod.types[opts.reuseReservedEntry.typeIdx];
+    const opaqueResult =
+      reservedType?.kind === "func" &&
+      reservedType.results.length === 1 &&
+      reservedType.results[0]?.kind === "externref";
+    returnType = opaqueResult ? { kind: "externref" } : { kind: "ref", typeIdx: nativeGenInfo.stateTypeIdx };
   }
 
   const results: ValType[] = returnType ? [returnType] : [];
@@ -1768,6 +1814,8 @@ function compileNestedFunctionDeclarationInScope(
   if (needsImplicitArgumentsObject(stmt)) {
     ctx.funcUsesArguments.add(funcName);
   }
+  // (#6436) A plain call to this name must install `undefined` as the receiver.
+  if (readsAmbientThisGlobal(stmt)) ctx.funcReadsOwnThis.add(funcName);
 
   // (#5148 checkpoint) Classify referenced sibling registry functions for the
   // lift-time transitive-capture promotion both branches below perform. The
@@ -1934,6 +1982,7 @@ function compileNestedFunctionDeclarationInScope(
       // Wasm-native generator factory (builds + returns the state struct), the
       // same body the top-level path emits. No host imports, no JS buffer.
       compileNativeGeneratorFunction(ctx, liftedFctx, stmt, nativeGenInfo);
+      if (returnType?.kind === "externref") liftedFctx.body.push({ op: "extern.convert_any" });
     } else if (isGenerator && isAsync && isAsyncGenDriveCandidate(ctx, stmt)) {
       // (#2865) NESTED async-generator producer (the dominant test262 shape —
       // the runner wraps every test body inside `export function test()`, so
@@ -2785,19 +2834,15 @@ function emitEagerCaptureBoxes(ctx: CodegenContext, fctx: FunctionContext, funcN
     // Match the call-site predicate exactly: only mutable value captures with a
     // resolved value type are boxed. Immutable captures pass by value.
     if (!cap.mutable || !cap.valType) continue;
-    // (#2692) SKIP `let`/`const` (TDZ-flagged) captures. Eager-boxing them at
-    // function-top races their later block-scoped declaration: the `let`/`const`
-    // decl re-allocates the value slot (block-scope shadow / type reset) and
-    // resets `localMap` to a fresh unboxed f64 local, while `boxedCaptures` stays
-    // set → the var-decl box-write path then emits `ref.is_null` / `struct.set`
-    // on that fresh f64 slot → "ref.is_null expected reference, found f64"
-    // invalid Wasm (the entire for-await-of async-dstr regression cluster — all
-    // `let`-based). `var`/param captures have no such re-declaration, so eager
-    // boxing is safe for them, and the captured-counter dstr template (the #2669
-    // win) uses `var`. TDZ (`let`/`const`) captures fall back to the existing
-    // lazy call-site boxing (the pre-#2692 behaviour). Follow-up can extend the
-    // declaration path to be box-aware for the residual let/const-counter case.
-    if (cap.hasTdzFlag) continue;
+    // (#5356) `let`/`const` (TDZ-flagged) captures are boxed here too. #2692
+    // skipped them fearing the declaration would re-allocate the value slot
+    // under the cell; the declaration path is box-aware now (#3396 / #3534 /
+    // `dropStaleBindingBox`), while the lazy call-site box it fell back to is
+    // minted inside whatever buffer the FIRST call sits in — a call in an
+    // untaken branch left every later read a null cell (prettier's
+    // `printDocToString`). The races that DO exist are consumers treating the
+    // RAW pre-hoisted slot as the binding's storage; they resolve the cell via
+    // `eagerCaptureBoxes` (recorded below — statements/eager-capture-box.ts).
     // Dedup: a sibling nested fn already boxed this name (multi-capture of the
     // same var), OR the outer slot is itself the canonical cell (#2623
     // alreadyBoxed — re-boxing would create a cell-of-cell). `boxedCaptures.has`
@@ -2821,6 +2866,7 @@ function emitEagerCaptureBoxes(ctx: CodegenContext, fctx: FunctionContext, funcN
     if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
     fctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: cap.valType });
     recordLiftedCaptureBox(fctx, cap.name, cap.outerLocalIdx, boxedLocalIdx);
+    recordEagerCaptureBox(fctx, cap.outerLocalIdx, { cellSlot: boxedLocalIdx, refCellTypeIdx, valType: cap.valType });
   }
 }
 
@@ -2875,9 +2921,11 @@ function emitEagerNestedCallCaptureBoxes(
   referencedCalleeNames: ReadonlySet<string>,
 ): void {
   for (const cap of captures) {
-    // Same narrowing as the #2692 eager pass: only plain by-value `var`/param
-    // captures. Mutable → already a box param; alreadyBoxed → outer cell threaded
-    // through; hasTdzFlag → `let`/`const`, eager boxing races the re-declaration.
+    // Only plain by-value `var`/param captures. Mutable → already a box param;
+    // alreadyBoxed → outer cell threaded through; hasTdzFlag → kept lazy here
+    // (#5356 lifted the declaring-scope skip; a `let` a sibling mutates is
+    // promoted to a mutable capture by `mutatedInSiblingScope`, so this
+    // caller-scope pass rarely sees one).
     if (cap.mutable || cap.alreadyBoxed || cap.hasTdzFlag) continue;
     // Find a referenced sibling that mutably captures this same name, and adopt
     // ITS ref-cell value type so our refCellTypeIdx matches the lazy call-site's.

@@ -11,6 +11,7 @@ import {
   runSequentialUpstreamTests,
   signalWorkerCompileComplete,
 } from "./upstream-suite-worker-protocol.mjs";
+import { createUnhandledRejectionSink } from "./upstream-unhandled-rejections.mjs";
 
 const generatedPath = process.argv[2];
 const mode = process.argv[3] ?? "project";
@@ -202,6 +203,19 @@ async function loadWebHostDependencies() {
 }
 
 async function main() {
+  // (#5369) Installed before anything guest-authored runs. Without a listener
+  // Node's default `unhandled-rejections=throw` mode kills this worker on the
+  // first unobserved host rejection, the parent finds no JSON on stdout, and
+  // every test of the file — including the ones that already passed — is
+  // recorded as failed with a null error.
+  //
+  // (#6424) Its `uncaughtException` channel starts UNARMED and is armed only
+  // inside `runSequentialUpstreamTests`. Everything below — compile,
+  // instantiation, `__module_init`, `cleanupUpstreamTestEnvironment`, `emit` —
+  // therefore runs with no listener, so a throw there still kills the worker
+  // immediately and the parent still reports the stderr text in
+  // `compile.errors[0]` rather than waiting out the 180 s deadline.
+  const rejections = createUnhandledRejectionSink({ label: "dogfood wasm worker" });
   const started = performance.now();
   let requestedTarget;
   try {
@@ -527,16 +541,21 @@ async function main() {
       });
       return;
     }
+    // Module initialization is the one stretch of guest code that belongs to
+    // no test, so its rejections are the module's (#5369 acceptance 2).
+    const initRejections = await rejections.drain();
     const exports = wrapExports(instance, { signatures: result.exportSignatures });
     const testTimeoutMs = configuredUpstreamTestTimeoutMs();
     let statuses;
     let errors;
+    let moduleRejections = [];
     if (process.env.DOGFOOD_NAMED_TEST_EXPORTS === "1" && typeof exports.upstreamTestNames === "function") {
       const names = Array.from(await exports.upstreamTestNames(), String);
-      ({ statuses, errors } = await runSequentialUpstreamTests({
+      ({ statuses, errors, moduleRejections } = await runSequentialUpstreamTests({
         ids: names,
         invoke: (name) => exports[name](),
         timeoutMs: testTimeoutMs,
+        rejections,
         thrownText: (error) => errorText(error, instance),
         failureText: () => {
           try {
@@ -552,10 +571,11 @@ async function main() {
       // state machine. This keeps the Wasm/native contract aligned while
       // preserving the original fast path for synchronous callbacks.
       const count = Number(await exports.upstreamTestCount());
-      ({ statuses, errors } = await runSequentialUpstreamTests({
+      ({ statuses, errors, moduleRejections } = await runSequentialUpstreamTests({
         ids: Array.from({ length: count }, (_, index) => index),
         invoke: (index) => exports.runUpstreamTest(index),
         timeoutMs: testTimeoutMs,
+        rejections,
         thrownText: (error) => errorText(error, instance),
         failureText: (index) => {
           try {
@@ -570,6 +590,7 @@ async function main() {
       errors = Array.from(exports.upstreamTestErrors(), String);
     }
     await exports.cleanupUpstreamTestEnvironment?.();
+    const trailingRejections = await rejections.drain();
     emit({
       compile: {
         success: true,
@@ -580,7 +601,16 @@ async function main() {
         errors: [],
         ...provenance,
       },
-      wasm: { count: Number(exports.upstreamTestCount()), statuses, errors },
+      wasm: {
+        count: Number(exports.upstreamTestCount()),
+        statuses,
+        errors,
+        // Rejections owned by no test: module init, teardown, or a file that
+        // registered nothing. Reported as the module's `runtimeError`, NOT as
+        // `fatal` — `fatal` re-zeroes every test of the file, which is the
+        // failure mode this change exists to remove.
+        unhandledRejections: [...initRejections, ...moduleRejections, ...trailingRejections],
+      },
     });
   } catch (error) {
     emit({

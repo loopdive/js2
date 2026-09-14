@@ -228,7 +228,7 @@ describe("test262 per-lane gating — workflow wiring", () => {
 
   it("the merge_group matrix cannot cascade-skip through the provider's skipped probe ancestor", () => {
     const shardJob = job("test262-shard-mg");
-    expect(shardJob).toContain("needs: [changes, runtime-eval-provider]");
+    expect(shardJob).toContain("needs: [changes, runtime-eval-provider, temporal-provider]");
     expect(shardJob).toMatch(/if: \|\n\s+always\(\) &&/);
     expect(shardJob).toContain("needs.changes.result == 'success'");
     expect(shardJob).toContain("needs.runtime-eval-provider.result == 'success'");

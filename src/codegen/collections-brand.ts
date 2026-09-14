@@ -41,8 +41,14 @@ import {
   isSetAlgebraMethod,
 } from "./collections-es2025.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+// (#6419) `COLLECTION_KIND` comes from the import-free LEAF, not from
+// `map-runtime.js`: `KIND_OF` below is a top-level initializer, and this module
+// is reached from inside the `map-runtime → … → expressions/calls →
+// collections-brand → map-runtime` cycle, where `map-runtime`'s own bindings
+// are still in TDZ. Everything else here is read from inside functions and is
+// safe to keep on the cyclic import.
+import { COLLECTION_KIND } from "./collection-kind.js";
 import {
-  COLLECTION_KIND,
   MAP_LAYOUT,
   compileCollectionElementArg,
   emitCollectionIteratorVec,

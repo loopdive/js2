@@ -1,10 +1,10 @@
 ---
 id: 4444
-title: "UMBRELLA: ES6 (ES2015) standalone authoritative 11,704-row close-out → 100%"
+title: "UMBRELLA: ES6 (ES2015) standalone close-out → 100% (discovery scope audit open)"
 status: in-progress
 sprint: current
 created: 2026-08-15
-updated: 2026-09-01
+updated: 2026-09-13
 assignee: codex/es6-test262-closeout
 priority: high
 horizon: xl
@@ -17,6 +17,238 @@ related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445
 ---
 
 # #4444 — UMBRELLA: ES6 (ES2015) standalone edition close-out
+
+## Active continuation (2026-09-13, Codex)
+
+### Cross-session ownership
+
+The user explicitly identified a parallel IR-migration session. The ES2015
+team has sent that session its exact source paths and requested current
+ownership and landing order. Until the shared seams are agreed, hold new
+overlapping compiler/IR edits and merges; preserve existing work and allow
+already-running tests and hooks to finish. Validation of frozen conformance
+source and issue/test documentation can continue.
+
+The app task titled `IR migration` replied that it is inactive after handoff,
+with no current writers or reservations in these conformance paths. Its old
+worktree and staged merge must remain untouched; the landed extraction
+supersedes that old state. The active successor has not yet been identified.
+The user was asked for its task/worktree, and overlapping new implementation
+remains held rather than assuming that the inactive task speaks for it.
+
+Proposed boundary, pending acknowledgment: migration retains program
+preparation, native body extraction, and migration receipts; this team owns
+scoped generator, Promise, and RegExp conformance behavior and regression
+pins. Shared context/declarations/index/literal-allocation edits require
+explicit coordination. In particular, do not start the queued true-realm IR
+implementation independently of that session, duplicate its extraction, or
+weaken its checks. The Promise successor preserves the landed legacy
+combinator adapter exactly and passes the current forward-preservation oracle.
+
+### Measured state and active slices
+
+The latest verified canonical record for the current runner discovery is the
+standalone baseline for
+`6aac84c0b6ef418bbfa6a97cceca25960db7a3f6`: **10,294 pass, 1,116 fail,
+293 compile errors, and one compile timeout**, exactly **11,704**
+current-runner-selected ES2015 rows. This measured cohort has **1,410 non-pass rows**, not
+zero; the separate Intl402 discovery/scope question below is still unresolved.
+
+The fresh download is pinned to baselines-repository commit
+`357f932973bfa09c31b09b0ed750c98e621c29d3`; its Git blob
+`277c7454dbe7c7dcf7bf12ac547b14e31aee826a` matches the downloaded bytes.
+The JSONL SHA-256 is
+`728d1aebe31b432ffa208da78dd6113c735182d92aec5576fa04f6512e627e3f`.
+Metadata from that same pinned commit records generation at
+`2026-09-13T03:29:24.408Z`, target `standalone`, official scope with proposals
+disabled, and oracle version 13. Every selected row is `honest` with semantic
+providers `auto`. The 48,735 physical rows contain exactly 11,704 selected
+rows and 11,704 unique selected paths; there are no missing selected-manifest
+paths.
+
+### Discovery-scope audit: Intl402 is unmeasured
+
+The current edition map has **11,778 ES2015-labelled paths**, not 11,704.
+All **74 additional paths** are real files under `intl402/` in the pinned
+Test262 checkout; they are neither stale entries nor missing files. They are
+absent from the baseline because `tests/test262-runner.ts` does not include
+`intl402` in `TEST_CATEGORIES`. Its separate `classifyTestScope` function
+would classify these non-proposal files as `standard`, `official: true`.
+Examples include `intl402/Collator/proto-from-ctor-realm.js`,
+`intl402/DisplayNames/ctor-custom-prototype.js`, and
+`intl402/TypedArray/prototype/toLocaleString/calls-toLocaleString-number-elements.js`.
+
+No current authoritative ECMA-402 exclusion policy was found in the bounded
+repository review. `plan/goals/full-conformance.md` explicitly leaves Intl
+conditional on scope; historical exclusion from an ES5 landing census is not
+a project-wide scope decision. ECMA-402 may be a separate-standard exclusion,
+but discovery omission alone does not prove that policy. The user has been
+asked whether the 100% target includes these Intl402 tests or ECMA-262 only.
+Until that is resolved, label 11,704 as the **current maintained-runner-selected
+ES2015 cohort**, not all edition-map-labelled or all official Test262 coverage.
+The 74 additional tests are **unmeasured**, not passing or failing. Do not
+silently shrink the denominator or certify the full goal from this cohort
+alone. If Intl402 is included, correct discovery and obtain verdicts for the
+full required selection rather than assigning results from metadata.
+
+### Comparison and active implementation slices
+
+The previous complete `e0023dbbe6c37e15c1f56ed0c8bc8d15d0afbac3` record
+(`07c89a5c2626f3312ff611f008a69ed6d8826e9802da024df39726ddabc1e9ba`)
+had 10,255 pass, 1,104 fail, 344 compile errors, and one compile timeout.
+An exact pass-set comparison finds **39 gained passes and zero lost passes**.
+The gains include the sticky-match original and generator-method tests; these
+are baseline differences, not attribution of every change to a single PR.
+Earlier, that previous record gained 63 and lost 38 versus September 12
+(net +25); retain the distinction between the two comparisons.
+
+The ongoing local census
+`test262-standalone-results-20260913-010438.jsonl` remains live and partial on
+its frozen older source. Do not replace the canonical denominator or infer
+the current integrated pass rate from it. Preserve the running process; it
+must not be killed without the user's permission.
+
+Implementation ownership remains partitioned into three isolated Terra Max
+worktrees, with peer PR shepherding. Compiler-heavy validation and git hooks
+share one team lease alongside the census; no active tests may be killed
+without user permission.
+
+- **Generator method regression:** upstream PR #5874 merged as
+  `85496937328e9b5d7477946b64fcf213920ad554`. Its four changed files match
+  the tested head `5322242ffcdc7d40005925c0955f32060538aaf4` exactly. The
+  previously passing floor measured 37/37 and protocol controls 44/44.
+  This does not close generator issue 5199: `default-proto.js` remains a
+  separate measured regression. The successor's unchanged `default-proto.js`
+  and `prototype-value.js` now pass 2/2. Allocation-time prototype-source
+  promotion fixes the closed-literal prototype boundary: runtime controls
+  now pass 8/8 and selector guards 2/2, including identity and inherited
+  property liveness. An additional immediate-read diagnostic still fails
+  (30/31 bits): the replacement uses externref while the saved immediate
+  getter result has a concrete struct slot and is cast to null. This remains
+  a documented blocker; no successor PR or clean diagnostic is claimed.
+  Shared source changes are held for migration-owner coordination.
+- **Sticky RegExp matching:** upstream PR #5878 merged as
+  `302f341bc24a8eeaa216805b536e42292ed0d994`, an ancestor of the new
+  baseline compiler commit. All five changed files match tested head
+  `9e8203925cc6fa9a352d6a3b2a768297575850b3` exactly. One original failure
+  and ten positive controls passed in each lane, plus 3/3 focused pins. The
+  fresh complete baseline also records the sticky original as passing.
+  Raw lastIndex identity and conditional descriptor state remain unfinished
+  in issue 5198. The raw-slot successor's isolated selector tests pass 6/6;
+  two runtime tests were excluded by the name filter, so this is not runtime
+  integration evidence. A new unsuppressed negative proves a receiver
+  redeclaration can invalidate its native-receiver assumption (one selected
+  failure, expected false but received true). A new direct contextual checker
+  call also needs an oracle-based replacement. Both corrections and allocation
+  integration remain unimplemented under the shared-source ownership hold.
+- **Observable Promise combinators:** issue 5197 checkpoint `6e684e2950`
+  records 13/13 focused pins and the original `all/invoke-resolve.js` plus
+  its positive control passing 2/2 before integration. Integration with
+  captured upstream `7adc0a6e897556cee50a7024d24a47a0fb1c8052` exposed a
+  source-declaration ledger conflict. Observable helpers now live in a
+  dedicated module, preserving the landed legacy adapter byte-for-byte and
+  passing the current source-preservation verifier. Integrated compiler bundle
+  `ee8a61289b2547f6` with rebuilt QuickJS adapter `ade903d7c361865e` passes
+  the focused suite 13/13 and unchanged original/control pair 2/2; canonical
+  TS7 also passes. Ready upstream PR #5883 publishes integrated head
+  `df94fdac9b9a43b579975ee7e57506aecd272809`. Mandatory merge hooks passed
+  all 12 changed-root suites; pre-push checks passed, including numeric-local
+  18/18 and issue integrity. The frozen fix is complete, but issue 5197's
+  remaining protocol work and the full-suite goal remain open.
+- **Non-overlapping early-error work:** issue 3444 now has a source-current
+  implementation plan for `language/global-code/new.target-arrow.js`, which
+  still fails in the fresh baseline. A global arrow does not establish its
+  own NewTarget environment. The claimed `3444:newtarget-arrow` slice starts
+  at verified upstream `3e92241ecc3ee81df38df29cdd228537364bd19b` in an
+  isolated Terra Max worktree. The parent/slice claim check and complete
+  issue-file PR scan were clear. A separate source-path scan of all 25 open
+  PRs, including all 213 files in #5753 and 238 files in #5798, found no edits
+  to its two proposed early-error source files. Only
+  `src/compiler/early-errors/predicates.ts`, `node-checks.ts`, a dedicated
+  test, and issue 3444 are assigned. Do not modify generic function-scope
+  predicates or broaden into the held IR/codegen seams. The author now reports
+  23/23 expanded focused controls and the unchanged maintained original/control
+  pair passing 2/2, following a starting 1/2 pair and an initial 18-case matrix
+  with 8 failures and 10 passes.
+  This is candidate evidence, not a promoted full-suite gain. A broader
+  neighboring test reports a runtime import LinkError. The exact four-test
+  issue-189 suite was rerun on untouched starting head and candidate with the
+  same environment: both return one failure, three passes, and the identical
+  `__get_undefined` LinkError. This narrow baseline-identical failure is not
+  presented as a green suite. TS7 also passes after the final test additions;
+  remaining hooks are pending. Peer review's five requested
+  accessor/static-field controls are included in the expanded 23-case run.
+  No completed PR is claimed for this slice. A separate peer shepherd is
+  assigned for its eventual tested head.
+- **Next substrate work:** issue 4274 now has a refreshed realm implementation
+  plan, exact manifests, and negative provenance controls. It remains queued
+  until a worker is available and ownership is rechecked; no source changes
+  or full-cohort improvement are claimed.
+
+Continue toward the full 100% goal. Passing all currently selected 11,704 rows
+is necessary, but must not become a completion claim while the Intl402 scope
+audit remains unresolved. Keep one upstream PR per completed fix, update each
+issue with measured evidence and remaining work, and do not turn these
+checkpoints into issue-completion claims.
+
+## Resume checkpoint (2026-09-12, Codex)
+
+The authoritative standalone baseline was force-refetched after synchronising
+with `loopdive/js2:main` at `d4108568d43f14c361ecc3a58c82633027eaae39`.
+The JSONL has **48,735 physical rows** and the checked-in edition map selects
+exactly **11,704 unique official ES2015 paths** (edition index 4). It reports:
+
+- **10,230 pass / 11,704 total (87.4%)**;
+- **1,144 fail, 329 compile errors, 1 compile timeout, 0 skips**;
+- oracle version 13, lane `honest`, semantic providers `auto`;
+- compiler baseline SHA `52d1bb7809de26f5c12fca1f887fe7be78f4479c`,
+  which is an ancestor of current main by three non-compiler commits;
+- JSONL SHA-256
+  `45ff56e7570bba0a1bff6590d19d35de2525928adb7e3054789ba35aebb29360`.
+
+This is complete dispatch evidence, not completion evidence: the acceptance bar
+remains a maintained-runner execution on the final integrated head with exactly
+**11,704 pass and zero rows in every other verdict**.
+
+Draft PR #5736 preserves three 2026-09-08 increments but deliberately combines
+two completed-looking fixes with unfinished generator work. It is 202 mainline
+commits behind its two unique commits and must stay draft while mixed and
+unverified on current main. The latest baseline proves all eleven claimed
+completed-row gains are still absent from main: seven `super` rows owned by
+#5350 and four inherited TypedArray-constructor rows owned by #5317 remain
+`fail` with their pre-fix signatures.
+
+### Implementation plan
+
+1. **#5350 — class prototype writes and bounded missing-super bodies.** Extract
+   only commit `357b05f68c8c76b8c4888690941edf9d247243ab` onto a fresh
+   current-main worktree, resolve against current class changes without
+   broadening its semantic whitelist, and rerun the exact 58-row super cohort,
+   41 focused pins, class/capture neighbours, and host/WASI parity controls.
+   Require the seven still-failing rows to pass with zero lost rows. Update the
+   issue handoff and open one ready, non-draft PR only after that proof.
+2. **#5317 — inherited TypedArray constructor Get.** Extract only the three
+   TypedArray source changes and their focused test from the second checkpoint
+   commit. Preserve actual getter results and receiver identity; default
+   constructor selection remains in SpeciesConstructor. Rerun the exact 55-row
+   cohort and 15 focused/neighbor pins, requiring the four current failures to
+   pass with zero losses. Update the issue handoff and open a separate ready,
+   non-draft PR.
+3. **#5199 — generic generator protocol.** Continue separately from current
+   main. The 2026-09-08 bridge checkpoint is WIP: 4/9 bridge fixtures pass and
+   numeric next/return payload preservation is unresolved. Rebuild compiler and
+   QuickJS artifacts, strengthen the extracted-method positive control, then
+   rerun the 27 pins, bridge/prototype fixtures, 44 protocol rows, and the full
+   2,486-row ES2015 generator feature cohort. Keep its PR draft unless every
+   owned acceptance check is current and mergeable.
+4. Run all implementation lanes in separate worktrees with Terra at maximum
+   reasoning. A separate shepherd owns body-template, exact-head, mergeability,
+   CI, regression, ready-state, and queue verification for every resulting PR.
+5. After each fix lands, force-refetch the baseline and set-diff every passing
+   row. Recluster the remaining complete 11,704-row record, update or allocate
+   one repository-local markdown issue per unowned mechanism, and repeat. Do
+   not create GitHub issues; #5091 and #5099 already exist as completed records
+   under `plan/issues/`.
 
 ## Handover (2026-09-06, session claude/es6-test262-standalone-g10c7u, wave 5)
 
@@ -928,6 +1160,44 @@ PR from `ttraenkler/js2` to `loopdive/js2`; only an incomplete or genuinely
 non-mergeable checkpoint may remain draft. A separate shepherd agent verifies
 the required PR body, mergeability, reviews, CI, exact tested head, and
 ready/queue state before landing.
+
+## 2026-09-13 continuous implementation plan
+
+Continuation starts at upstream `e0023dbbe6c37e15c1f56ed0c8bc8d15d0afbac3`.
+PRs #5853 and #5862 are merged. A freshly downloaded canonical standalone
+snapshot (first physical row timestamp 2026-09-13 00:32:03, SHA-256
+`07c89a5c2626f3312ff611f008a69ed6d8826e9802da024df39726ddabc1e9ba`)
+contains 48,735 rows. The official ES2015 intersection is 11,704 rows:
+10,255 pass, 1,104 fail, 344 compile_error, and 1 compile_timeout.
+This is dispatch evidence, not a census attributed to the checkout above.
+
+Implementation ownership and order:
+
+1. #5199: reproduce the three retained generator payload controls on current
+   main; implement the separately documented payload/result representation
+   plan, preserve protocol controls, and measure exact affected Test262 rows.
+2. #5198: reproduce remaining exec lastIndex and deferred Symbol.match rows;
+   extend observable cursor handling with focused positive controls and paired
+   host/standalone validation. Keep its source changes separate from generators.
+3. Coordinator: validate baseline provenance and the complete 11,704-path
+   acceptance instrument, refresh the remaining-failure inventory, and select
+   subsequent clusters from measured rows as workers become available.
+
+Implementation agents use Terra Max in separate worktrees. Each owner updates
+its issue with evidence and opens a separate upstream PR per completed fix.
+A dedicated shepherd checks published PRs. Finished mergeable work is ready;
+unfinished work is draft. PR completion is a checkpoint: continue to the next
+measured residual until the full acceptance condition below is met.
+
+Runner contract correction: `scripts/run-test262-vitest.sh` currently computes
+paths relative to the `test262` root, so its exact filter must retain `test/`.
+The separate `scripts/run-test262-paths.mts` interface expects paths below
+`test262/test`. Do not reuse one filter spelling across those interfaces.
+The first 2026-09-13 census attempt used the historical normalized spelling:
+all 16 suites registered no tests, produced zero rows, and the completeness
+validator correctly exited 2. This is an invalid measurement, not a pass rate.
+The retry retains `test/` for all 11,704 selected paths. Earlier instructions
+below that prescribe stripping it for the Vitest wrapper are superseded.
 
 ## 2026-08-30 current integrated-head census implementation plan
 

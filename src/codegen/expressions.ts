@@ -20,6 +20,8 @@ import {
   staticPromiseResolveSettledExpr,
 } from "./async-cps.js";
 import { asyncGenConsumerNeedsDrive } from "./async-frame.js";
+import { emitAsyncValueSinkUnwrap, emitStandaloneAwaitUnwrap } from "./async-value-sink-unwrap.js";
+import type { AsyncConsumerKind } from "./async-cps.js";
 import type { Instr, ValType } from "../ir/types.js";
 import {
   emitStandalonePromiseReject,
@@ -414,14 +416,14 @@ function asyncAssignedSymbolsInFile(ctx: CodegenContext, sf: ts.SourceFile): Rea
  * we only skip when an explicit non-Promise cast/assertion is present (#1727
  * minimal-diff variant — scope 2).
  */
-function asyncResultConsumedAsValue(ctx: CodegenContext, expr: ts.CallExpression): boolean {
+function asyncConsumerKind(ctx: CodegenContext, expr: ts.CallExpression): AsyncConsumerKind {
   // (#1936) Single source of truth: the three-state census classifier lives in
   // async-cps.ts so the offline census script reuses the same logic. The legacy
-  // boolean is exactly `kind !== "thenable"` — `await` and `value` consumers
-  // both take the raw-T passthrough today; only the `thenable` consumer wraps.
-  // This stays behaviour-identical until #1796 changes the value/thenable
-  // dispatch. The rich rationale for each case is documented above.
-  return classifyAsyncConsumer(ctx.checker, expr) !== "thenable";
+  // boolean was exactly `kind !== "thenable"` — `await` and `value` consumers
+  // both take the raw-T passthrough; only the `thenable` consumer wraps. #6428
+  // needs the kind itself (the `value` sink unwraps a carrier `$Promise`), so
+  // the kind is returned and the single call site does the comparison.
+  return classifyAsyncConsumer(ctx.checker, expr);
 }
 
 /**
@@ -547,47 +549,6 @@ function wrapAsyncReturn(ctx: CodegenContext, fctx: FunctionContext, resultType:
     fctx.body.push({ op: "call", funcIdx: resolveIdx });
   }
   return { kind: "externref" };
-}
-
-/**
- * (#2865 AG0) Emit a one-level native-`$Promise` await unwrap, host-free.
- * Consumes one externref on the stack and leaves one externref:
- *   - if it is a `$Promise` struct → push its `value` field (the resolved
- *     value the awaiter wants);
- *   - otherwise → push the original externref unchanged (a plain value / a
- *     non-Promise thenable is already "the value" under the standalone
- *     synchronous-settlement model).
- *
- * A runtime `ref.test (ref $Promise)` discriminates — the non-null test means a
- * null externref (or any non-`$Promise`) takes the passthrough arm. This fixes
- * the standalone identity-passthrough NaN bug (`await <fulfilled $Promise>`
- * previously returned the promise object itself, which the consumer coerced to
- * f64 → NaN). Genuinely-pending awaits (a promise that only settles on a later
- * microtask) need true frame suspension — deferred to #2865 AG1 (PATH B).
- */
-function emitStandaloneAwaitUnwrap(ctx: CodegenContext, fctx: FunctionContext): void {
-  const promiseTypeIdx = getOrRegisterPromiseType(ctx);
-  const tmp = allocTempLocal(fctx, { kind: "externref" });
-  // stack: externref(operand) → stash, then test the stashed copy.
-  fctx.body.push({ op: "local.set", index: tmp });
-  fctx.body.push({ op: "local.get", index: tmp });
-  fctx.body.push({ op: "any.convert_extern" });
-  fctx.body.push({ op: "ref.test", typeIdx: promiseTypeIdx });
-  const thenBody: Instr[] = [
-    { op: "local.get", index: tmp },
-    { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: promiseTypeIdx },
-    // $Promise field 1 = `value` (externref). See getOrRegisterPromiseType.
-    { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 },
-  ];
-  const elseBody: Instr[] = [{ op: "local.get", index: tmp }];
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "val", type: { kind: "externref" } },
-    then: thenBody,
-    else: elseBody,
-  });
-  releaseTempLocal(fctx, tmp);
 }
 
 /**
@@ -1402,11 +1363,11 @@ function compileExpressionInner(
       // raw `T` already on the stack is exactly what the sink wants. Genuine
       // Promise consumers (`.then`, `const p: Promise<T> = f()`,
       // `Promise.all`, bare `return f()`) have no non-Promise cast, so the
-      // wrap still fires. See `asyncResultConsumedAsValue` above.
-      if (asyncResultConsumedAsValue(ctx, expr)) {
-        // Skip the wrap; the raw value on the stack is what the consumer
-        // (await passthrough or primitive cast sink) expects.
-        return callResult;
+      // wrap still fires. See `asyncConsumerKind` above.
+      const consumerKind = asyncConsumerKind(ctx, expr);
+      if (consumerKind !== "thenable") {
+        // Raw T is what the consumer wants — except a carrier `value` sink, which unwraps a `$Promise` first (#6428).
+        return emitAsyncValueSinkUnwrap(ctx, fctx, consumerKind, callResult);
       }
       // (#2867) A drive-lowered async callee already returns a real `$Promise`
       // (externref) — the #2895 frame driver settled it. Re-wrapping it via

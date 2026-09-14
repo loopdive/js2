@@ -512,6 +512,7 @@ import {
 } from "../native-strings.js";
 import { ensureTextEncodingHelpers } from "../text-encoding-native.js";
 import { emitVariadicStringConcat, hostStringRepr, nativeStringRepr } from "../builtin-scaffold.js";
+import { compileFromCharCodeFamilySpread, needsFromCharCodeSpread } from "./from-char-code-spread.js";
 import { URI_DECODE_MASK, URI_ENCODE_MASK } from "../uri-encoding-native.js";
 import {
   buildInt8ArrayCarrierMatch,
@@ -532,7 +533,11 @@ import {
   sourceParamCountFromExpanded,
   wasmParamIndexForSourceParam,
 } from "../linear-uint8-signatures.js";
-import { resolveNamedThisCallTarget, tryReshapeApplyToNamedThisCall } from "../named-this-call.js";
+import {
+  resolveNamedThisCallTarget,
+  resolveUndefinedReceiverTrampoline,
+  tryReshapeApplyToNamedThisCall,
+} from "../named-this-call.js";
 import {
   emitClosureReceiverInstall,
   finishClosureReceiverCall,
@@ -4556,6 +4561,16 @@ export function tryEmitInlineDynamicCall(
     (ctx.standalone === true || ctx.wasi === true) &&
     (ctx.taCtorTypeIdx >= 0 || ctx.builtinObjectGlobals.has("ctor:Int8Array"));
   const wantApplyFallback = ctx.standalone === true || ctx.wasi === true;
+  // (#6420) The generic host-free dynamic-call path used to fall through to
+  // `__apply_closure` for every carrier it did not understand. That is wrong
+  // for a class VALUE: it intentionally has `typeof === "function"` and
+  // [[Construct]], but no [[Call]]. Register the shared predicate before any
+  // funcIdx is captured; the actual check is emitted after every argument has
+  // evaluated, matching EvaluateCall's observable order.
+  const wantIsCallableGuard = noJsHost(ctx);
+  if (wantIsCallableGuard) {
+    ensureLateImport(ctx, "__is_callable", [{ kind: "externref" }], [{ kind: "i32" }]);
+  }
   if (allCandidates.length === 0 && !wantProxyArm && !wantBoundArm && !wantTaCtorArm && !wantApplyFallback) return null;
 
   // Dedupe by funcTypeIdx — concrete subtypes share funcTypeIdx with their
@@ -4702,6 +4717,7 @@ export function tryEmitInlineDynamicCall(
   let unboxNumberIdx = ctx.funcMap.get(UNBOX_NUMBER);
   let isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
   let unwrapForWasmIdx = ctx.funcMap.get("__unwrap_for_wasm");
+  let isCallableIdx = ctx.funcMap.get("__is_callable");
   if (
     boxNumberIdx === undefined ||
     unboxNumberIdx === undefined ||
@@ -4815,6 +4831,7 @@ export function tryEmitInlineDynamicCall(
   unboxNumberIdx = ctx.funcMap.get(UNBOX_NUMBER);
   isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
   unwrapForWasmIdx = ctx.funcMap.get("__unwrap_for_wasm");
+  isCallableIdx = ctx.funcMap.get("__is_callable");
   if (
     boxNumberIdx === undefined ||
     unboxNumberIdx === undefined ||
@@ -4842,6 +4859,22 @@ export function tryEmitInlineDynamicCall(
     };
   }
   if (applyFallback !== undefined) applyFallback = reserveDynamicApplyFallback(ctx);
+
+  if (wantIsCallableGuard && isCallableIdx !== undefined) {
+    // Arguments are already materialised in locals. Throwing here therefore
+    // preserves §13.3.6's callee → arguments → IsCallable order and prevents a
+    // rejected class from reaching `__apply_closure`'s legacy null fallback.
+    const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "called value is not a function", {
+      flush: fctx,
+    });
+    fctx.body.push(
+      { op: "local.get", index: anyLocal },
+      { op: "extern.convert_any" },
+      { op: "call", funcIdx: isCallableIdx },
+      { op: "i32.eqz" },
+      { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
+    );
+  }
 
   // Build dispatch chain (innermost = default, outermost = first).
   // Default: ref.null.extern (matches existing fallback semantics).
@@ -6119,6 +6152,13 @@ export function compileFromCharCodeFamily(
   opts: { native: boolean; helperIdx: number; isFromCodePoint?: boolean },
 ): ValType | null {
   const { native, helperIdx, isFromCodePoint } = opts;
+  // (#6430) `...src` has no lowering in the per-node fold below (it unwraps to
+  // `src` → NaN → one NUL char); the shared builder expands it. It emits
+  // nothing before it can decline, so `null` leaves the fold a clean slate.
+  if (needsFromCharCodeSpread(expr)) {
+    const spread = compileFromCharCodeFamilySpread(ctx, fctx, expr, opts);
+    if (spread !== null) return spread;
+  }
   const repr = native ? nativeStringRepr(ctx) : hostStringRepr(ctx);
   if (repr === undefined) return null;
 
@@ -8713,7 +8753,12 @@ function compileCallExpression(
               getFuncParamTypes(ctx, funcIdx!)?.length ?? remainingArgs.length,
             );
             const finalFuncIdx = ctx.funcMap.get(funcName) ?? funcIdx!;
-            fctx.body.push({ op: "call", funcIdx: namedThisCall?.trampolineFuncIdx ?? finalFuncIdx });
+            // (#6436) `.call(undefined, …)` dropped its receiver here.
+            const undefinedThis =
+              namedThisCall === undefined
+                ? resolveUndefinedReceiverTrampoline(ctx, funcName, finalFuncIdx, expr.arguments[0])
+                : undefined;
+            fctx.body.push({ op: "call", funcIdx: namedThisCall?.trampolineFuncIdx ?? undefinedThis ?? finalFuncIdx });
 
             // Use actual Wasm return type — TS checker reports `any` for .call()/.apply()
             // which resolves to externref, but the actual function may return f64/i32/ref.
@@ -8794,7 +8839,9 @@ function compileCallExpression(
                 elements.length,
                 getFuncParamTypes(ctx, finalFuncIdx)?.length ?? elements.length,
               );
-              fctx.body.push({ op: "call", funcIdx: finalFuncIdx });
+              // (#6436) Same as the `.call` arm: `.apply(undefined, [...])`.
+              const applyThis = resolveUndefinedReceiverTrampoline(ctx, funcName, finalFuncIdx, expr.arguments[0]);
+              fctx.body.push({ op: "call", funcIdx: applyThis ?? finalFuncIdx });
               // Use actual Wasm return type for .apply()
               if (wasmFuncReturnsVoid(ctx, finalFuncIdx)) return VOID_RESULT;
               return getWasmFuncReturnType(ctx, finalFuncIdx) ?? VOID_RESULT;

@@ -3,7 +3,7 @@
 // #3518 package C — lossless codec for the production `PreparedIrProgram`.
 //
 // The codec owns no schema of its own. Its accepted data domain is exactly the
-// prepared-data model that `freezePreparedIrValue` (src/ir/program.ts, package
+// prepared-data model that `freezePreparedIrValue` (src/ir/program/data.ts, package
 // A) accepts and preserves:
 //
 //   - primitives: string, boolean, finite/non-finite/negative-zero number,
@@ -32,14 +32,9 @@
 // re-authenticated program is returned by `decodePreparedIrProgram`.
 
 import { IR_CLASS_SHAPE_CELL } from "./nodes.js";
-import {
-  freezePreparedIrRuntimeValue,
-  freezePreparedIrValue,
-  preparedIrDataMismatch,
-  PreparedIrProgramInvariantError,
-  type PreparedIrProgram,
-  type PreparedIrProgramRuntimeProjection,
-} from "./program.js";
+import { freezePreparedIrRuntimeValue, freezePreparedIrValue, preparedIrDataMismatch } from "./program/data.js";
+import { PreparedIrProgramInvariantError } from "./program/errors.js";
+import type { PreparedIrProgram, PreparedIrProgramRuntimeProjection } from "./program/prepared-contracts.js";
 import { preparedIrDraftAbiLookup } from "./program-abi-contracts.js";
 import { irProgramRuntimeDemands } from "./program-runtime-demands.js";
 import { assertPreparedIrProgram } from "./program-validation.js";
@@ -443,6 +438,7 @@ export function reauthenticatePreparedIrProgram(persisted: PreparedIrProgram): P
     derivedUnits: persisted.derivedUnits,
     startup: persisted.startup,
     allocations: persisted.allocations,
+    ...(persisted.runtimeSupport === undefined ? {} : { runtimeSupport: persisted.runtimeSupport }),
     runtime: Object.freeze(runtime),
     reconciliation: persisted.reconciliation,
     sealed: persisted.sealed,
@@ -509,6 +505,19 @@ export function assertPreparedIrProgramShape(value: unknown): asserts value is P
     return invalid(`program.reconciliation must be "complete", got ${String(program.reconciliation)}`);
   }
   if (program.sealed !== true) return invalid("program.sealed must be true");
+  if (Object.hasOwn(program, "runtimeSupport")) {
+    const support = requireRecord(program.runtimeSupport, "program.runtimeSupport");
+    if (support.schema !== "ir-runtime-support-v1") return invalid("unsupported runtime support schema");
+    const batches = requireArray(support.batches, "program.runtimeSupport.batches");
+    if (batches.length !== 1) return invalid("runtime support must contain exactly one radix batch");
+    const batch = requireRecord(batches[0], "program.runtimeSupport.batches[0]");
+    if (batch.kind !== "number-format-radix-v1") return invalid("unsupported runtime support batch");
+    const implementation = requireRecord(batch.implementation, "runtime support implementation");
+    const body = requireRecord(implementation.body, "runtime support body");
+    requireArray(body.blocks, "runtime support body.blocks");
+    requireArray(body.params, "runtime support body.params");
+    requireArray(body.resultTypes, "runtime support body.resultTypes");
+  }
 
   const inventory = requireRecord(program.inventory, "program.inventory");
   const sources = requireArray(inventory.sources, "program.inventory.sources");

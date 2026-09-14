@@ -1592,6 +1592,114 @@ The full `118/118` cohort above is separate. The parent integration lane owns
 the already-reviewed #4106 exnref validation fix and must pass that existing
 control and the normal combined hooks on the composed candidate before any
 publication is authorized.
+
+## Isolated Astra lane B forward checkpoint (2026-09-07)
+
+This is forward continuation from exact recoverable package-C checkpoint
+`651034e4fd295e826d73a769200279210b2b35e7`, in
+`/private/tmp/js2-3527-b-forward-20260907`, branch
+`codex/3527-b-forward-20260907`. The lead authorized this independent tree;
+it does not replace the original B branch or reclaim its assignments.
+Live upstream `issue-assignments` at inspection was
+`db9a738faa39f80c3554507ea9a5d927936a534c`: the original
+`3518-prepared-async-frame-engine` and `3518-semantic-runtime-producers`
+claims remain assigned to `ttraenkler/astra-ir-producers-b-20260905`.
+The former names `codex/3518-prepared-async-frame-reconciled-20260907`;
+the fork did not advertise that branch in the inspected refs. This is not
+proof its work was abandoned. No duplicate extraction file was present in
+the authorized checkpoint. Live PR 5692 advertised the same checkpoint.
+
+Own changes are confined to `prepared-async-frame-engine.ts`,
+`prepared-async-frame-types.ts`, the two prepared-frame tests and this handoff.
+The production `ir-async-frame.ts` adapter remains unchanged while its caller
+cannot supply the full preaccepted resource view. C's consumer, physical plan,
+codec, replay and all runtime/provider/scheduler sources remain read-only.
+
+### Measured base and candidate, separate denominators
+
+On Node `v22.23.2`, the untouched base ran **24/26**: linear preparation
+**4/4**, linear suspension runtime **7/7**, settled-owner runtime **13/15**.
+The two failed rows are the prepared owner/caller closure and same-spelling
+foreign-binding controls. They report `selection-preparation-mismatch` at
+resolve: the generic Promise owner lost its source proof/ABI closure after
+issuance. These are baseline failures, not candidate acceptance evidence.
+
+The new physical-engine harness runs **10/10**, using emitted Wasm and actual
+JavaScript Promises. An input-dependent two-await frame returns `24` for `7`
+and `36` for `11`, with callback order `after-call`, first callback,
+`after-flush`, second callback. Two same-named allocator functions with
+different source-owner semantics return `12` and `21` for the same input `3`
+after a late import and function-order remap. A scalar user export matching
+the old resume spelling returns `77`. Each frame has nine fields, including
+one captured parameter, two live spills and the result Promise; emission
+returns exactly four detached function bodies and allocates no module slots.
+Synchronous throws and rejected awaits reject the existing result Promise.
+Missing resources, post-preflight removal, foreign owner, stale authority,
+duplicate states, unsupported handlers, missing spills and wrong result
+carrier fail without replacing the reserved entry body.
+
+Fresh-process engine census runs **6/6**, including real legacy-import and
+injected `ts-api` detector controls and failed instrumentation/module loading.
+This proves the new engine's runtime import boundary, not the unchanged
+production adapter's boundary. A direct baseline adapter import also exposed
+a module-cycle initialization error in `collections-brand.ts`; it is not an
+empty successful census. Neither source-free C replay nor native scheduler
+execution is claimed by these host harness results.
+
+Candidate adjacent preparation/runtime suites run **36/38**, retaining the
+same two baseline failures and adding the **12/12** async-plan suite.
+Async equivalence, existing native frame and host-throw controls run **17/17**
+(`7 + 8 + 2`). Those unchanged production-route tests do not exercise the new
+engine. The new **16/16** denominator remains distinct.
+
+The current full typecheck passed after sealed conversion/callback roles and
+the review fixes. All four outputs, including step bodies, are now built
+before final currentness checks. Each callable resolution must match its
+initial object/index binding, including a transient changed resolution during
+step emission; the dedicated seam fails before returning output. Sparse or
+duplicate parameter positions and invalid spill ranges/types fail before
+operations execute. Formatting, scoped lint, IR layering/dialect/kind,
+LOC/function ratchets and the harness compile-work budget pass.
+
+The dead-export gate reports **eight** new unreachable engine functions while
+production wiring is intentionally absent: `constant`, `emitPreparedFrame`,
+`get`, `physicalIndex`, `preflightPreparedFrame`, `resources`, `sameType`,
+and `set`, all in `prepared-async-frame-engine.ts`. No baseline was changed
+and no dummy production import added. This is an explicit integration gate
+failure, not a fully green production checkpoint.
+
+### Remaining owner materialization and integration
+
+Follow High's resource clarification through explicit caller argument
+injection. `PreparedFrameResources` carries canonical binding/object handles
+for frame, entry, resume, both steps and exception tag; lookup returns the
+current index and identical object. The host view also supplies create,
+resolve, react, callback-wrap, fulfill/reject and caught-exception functions,
+plus callback IDs associated with the exact reserved step objects. Sealed
+conversion roles select identities, enumerated numeric conversions or
+accepted helper objects; canonical undefined requires its explicitly bound
+helper. No names, provider imports, generic coercion delegates or lazy
+`ensure` calls are consulted by the engine.
+
+The native view requires Promise and reaction-node type objects, fulfill,
+reject and enqueue functions, and an explicit mark-handled/not-required
+policy. C/provider ownership must supply the fixed-point scheduler/global
+closure, canonical value boundaries, exact function/type/tag contracts and
+authenticated session/plan/runtime currentness. This checkpoint includes the
+native instruction branch reusing `prepared-native-async-await.ts`, but its
+runtime validation and production materialization remain open.
+
+C must validate requirements before acceptance, bind the complete resource
+view before lowering, pass it explicitly into the prepared adapter, install
+the four returned bodies, and reconcile observations. The adapter must then
+lower actual validated IR through these operations and remove its old live
+engine/provider imports. C's existing located async materialization refusal
+remains unchanged. Post-acceptance missing handles are fatal, never a retry
+through the old engine. Until that composition and its import census run,
+this is an **unconnected physical-engine checkpoint**, not completed lane B
+or full direct-codegen retirement. Any PR retaining this base depends on
+PR 5692 and must identify that stack dependency.
+
 ## Astra High lane B — prepared frame engine without AST reachability (2026-09-07)
 
 Continue `ttraenkler/astra-ir-producers-b-20260905`'s held
@@ -1722,6 +1830,91 @@ source-qualified resume identity, tamper failures and the import removal
 control. Return the exact requirements C must materialize, without changing
 C's implementation or claiming its async acceptance has passed.
 
+## Held B checkpoint conflict refresh — 2026-09-07
+
+The coordinator confirmed the preceding B agent unavailable and assigned the
+clean preserved worktree exclusively for conflict refresh. Normal merge of
+canonical main `1b706a128d234d3933650ff542d4e843858cf421` into
+`b4078f9f3bb927d5a625a57dd216e70d9bc467f2` conflicted only in the 3518/3527
+plans. The resolution preserves canonical main and the complete historical B
+checkpoint above. The detached engine, types and two focused tests are
+byte-identical to the prior B head. All other production sources, CI and
+baselines match the canonical main parent.
+
+Serial single-fork validation on Node v22.23.2:
+
+- Detached engine runtime 10/10 and loaded-module boundary 6/6.
+- Adjacent suites 45/47: linear preparation 4/4, linear runtime 7/7, settled
+  owner runtime 13/15, Promise equivalence 11/11, existing async frame 8/8,
+  host throw/reject 2/2.
+- The two failed rows are the prepared caller Promise ABI and same-spelling
+  foreign-binding controls, both returning invariant instead of emitted.
+  A fresh isolated file snapshot of exact pre-refresh head
+  `b4078f9f3bb927d5a625a57dd216e70d9bc467f2` reran the same settled-owner suite
+  at 13/15 with the identical two assertion failures. These remain baseline
+  failures and were not repaired or counted as passing refresh evidence.
+- The initial neighboring run exhausted the default 512 MB heap and was
+  incomplete. The complete 45/47 run and baseline replay used the documented
+  `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096` setting with one fork.
+- Conformance synchronization check: 0 updates, 5 unchanged targets.
+
+PR 5716 remains held. The previously recorded eight dead exports still denote
+missing authentic production integration; this refresh adds no callers, gate
+changes or baseline exceptions. No separate async integration draft was
+accessed and no new async implementation was attempted.
+
+### B resume-value seam checkpoint
+
+The agreed `PreparedFrameEmission.resumeValue()` operation now pushes the
+actual delivered externref through the engine's bound frame type, local zero
+and SENT field. Both two-await test continuations use that operation rather
+than embedding a captured frame index. A new runtime control transforms each
+awaited fulfillment by ten and checks 54, distinguishing delivered values
+from the original operands (24). Validation: 11/11 engine runtime controls
+and 6/6 loaded-module boundary controls, serial one-fork execution; scoped
+formatting and lint also pass. This remains isolated-engine evidence.
+
+The source-free IR adapter is still pending explicit C resource mappings for
+semantic value IDs to physical types/parameter/spill fields and canonical
+callable bindings to reserved handles/physical signatures. The existing
+operations membership list does not encode those maps. No consumer, native
+provider, public adapter or gate was changed; hold remains necessary.
+
+### B source-free IR adapter checkpoint
+
+The new `prepared-async-frame-adapter.ts` exports
+`emitPreparedIrAsyncFrame(fn, currentRuntime, resources)` and consumes only
+C's explicit process-local `values`, `callTargets`, and `callSignatures` maps.
+Both callable maps use `irCallableBindingKey`; C authenticates their handles
+and physical signatures against actual reservations. The adapter checks the
+current semantic owner/runtime, exact value/parameter/spill mapping, supported
+state shapes and mapping stability through detached emission. No compiler
+context, provider builder, parser, mutable registry or old adapter is imported.
+
+It lowers constants, bound calls, sequential updates, suspend, resolve, goto
+and i32 branches. Call arguments/results use explicitly accepted conversions;
+discarded non-void call results are dropped. f32/i64 and canonical undefined
+constants are handled. Resume reads the engine SENT seam and converts to its
+accepted value carrier. Missing conversions/signatures/undefined providers,
+foreign bindings, unsupported handlers and invalid successor forms fail
+before detached outputs are returned. Updated parameters require a mutable
+carrier and remain a C acceptance dependency.
+
+Focused one-fork validation: 28/28 tests across two files (21 runtime controls
+and 7 loaded-module census controls). This includes real authenticated async
+attachments, emitted Wasm execution with two awaits, same-spelling bindings
+after remapping, signature conversion/discard/constant cases, resource removal
+and mutation controls. The physical reservations/Promise helpers are still
+explicit test harness resources, not C producer/consumer acceptance evidence.
+The runtime census loads the real adapter and engine and excludes the legacy
+module families; restoring old imports still fails. Logs are local under
+`.tmp/b-adapter/`. The preexisting two caller-closure failures retain the
+separate pre-refresh baseline evidence above; they were not repaired here.
+
+C now owns real producer/consumer composition through this interface. B does
+not add a dummy caller to clear dead exports, does not touch producer/schema,
+native providers, public cutover or gates, and does not remove PR 5716's hold.
+
 ### N queue physical extraction checkpoint — 2026-09-07
 
 The N continuation preserves the held semantic-runtime producer claim and
@@ -1758,3 +1951,289 @@ This checkpoint does **not** complete the native Promise resource closure or
 admit native prepared-program emission. Promise settlement/assimilation,
 closure bridges, exception/rejection policy, optional hooks, value boundaries,
 and their resource declarations remain subsequent coordinated work.
+
+## Existing PR5716 delivery integration — 2026-09-14
+
+PR5798 is verified delivered as5fb8bef54d0a461aae9ae89e84a2237876d25767.
+The detached-frame checkpoint remains unincorporated: exact published head
+0b513df989e713eb2eb2b340824e3bd9694291c9 supplies three source files and two
+dedicated tests not present in delivered main. Related shared body extraction
+does not supply its detached allocator-object/currentness contract.
+
+Root created isolated codex/5716-queue-drain-20260914 from the published head.
+Normal main merge conflicts only in this issue history; both complete endpoint
+histories are retained. The older dirty prepared-async-frame-reconciled worktree
+and separate engine/integration claims remain untouched. No hold is released.
+
+Implementation sequence for this existing checkpoint: first validate the merged
+source and actual detached runtime/import controls; preserve any original
+failures. Then map the existing accepted whole-program resources and physical
+reservations into the detached adapter, with exact owner/session/value/callable
+identity. Any missing resource or unsupported native materialization must fail
+before emission. Connect a real producer/consumer path and reconcile all four
+body receipts; never use a dummy caller to clear dead exports. Preserve the
+original eight-dead-export integration failure until authentic reachability is
+proved. Re-run the affected real-runtime and forbidden-import controls and
+required gates before normal signed publication to the existing non-draft PR.
+Full migration is incomplete; only protected-queue main delivery counts.
+
+Initial current-main measurements: typecheck exits0; the two published detached
+runtime/import-boundary suites pass28/28 with zero skips or input drift. These
+remain isolated-engine tests. The full production reachability gate fails with
+10 new unreachable codegen functions (the historical eight engine functions
+plus the two later adapter functions). The moved-runtime evidence gate also
+reports incomplete production-rooted evidence. The complete failed log is
+retained at.tmp/5716-queue-drain/initial-dead-exports.log. No baseline, dummy
+reference, gate exception or unsupported-to-emitted workaround is introduced.
+
+
+### Production integration ownership and resource contract
+
+Root owns `program-physical-plan.ts`, `program-consumer.ts`, and the physical
+reservation/fill join. The existing B agent owns faithful canonical relocation
+of the published engine/types/adapter, the shared pure spill initializer, and
+its existing 28 controls. The reference-runtime agent owns the pure per-owner
+host frame planner and planner tests. The verification agent owns real
+producer → codec → consumer → canonical host-runtime execution tests. All write
+in the isolated PR5716 worktree; no existing peer checkout or claim is replaced.
+
+The accepted plan must declare and seal canonical adapter imports, one frame
+layout and three auxiliary functions per async owner, exact value/spill/call
+and conversion mappings, exception-tag demand, and two collision-checked
+callback exports. The original entry retains its source/derived ABI identity.
+Emission uses the existing module reservation ledger and stable instruction
+handles, with physical indices used only for ABI binding/publication. Four
+bodies are constructed detached and filled only after currentness checks;
+auxiliary receipts remain distinct from the original projection population.
+Native, linear, or unsupported graphs remain located refusals until their
+actual dependencies are implemented; host execution is not full migration.
+
+The isolated checkout now owns an independent pinned Test262 checkout: all
+53,933 blobs (53,889 tests and 44 harness files), exact directory/file sets,
+clean ignored-inclusive status, and independent object files were verified.
+The previous corpus was preserved. Receipt:
+`.tmp/5716-queue-drain/corpus-setup.json`. This is corpus verification, not a
+compiler test result or permission to bypass normal hooks.
+
+
+### First connected execution evidence
+
+The real consumer now plans/seals canonical host imports, reserves the frame
+and three machinery functions, fills all four bodies through the same physical
+ledger, and publishes the two actual callback exports. Planner controls pass
+27/27 on Node 25 with no input drift. The original codec suite passes 27/27
+on Node 25 with no input drift after strengthening its formerly unsupported
+mixed-application assertion into real execution. The unchanged source digest
+`236fa7d971bf9b86aafa778a9a441b2440bae2e2c2c0ae7fdab3f6e517c517fb`
+retains seven source terminals and fourteen prepared bodies. Its three inputs
+produce native-matching values 212/240/200 and phases [1,2,3,3]. Extra generated
+helpers are counted separately. Both original linear refusals remain intact.
+
+The new production-consumer diagnostic separately passed five of seven selected
+cases: concurrent/repeated owners, callback and stable-handle accounting,
+null rejection, local/shared tags, and positive-first pre-emission refusals.
+Two `any` input cases still fail before consumption in Phase 1 type resolution.
+The four earlier Promise-parameter/numeric-throw failures remain unchanged in
+the test source and original logs; they were excluded only from that focused
+diagnostic, not waived for final gates. External pending-input/rejection-object
+identity coverage is still missing. No full async/native migration claim follows.
+
+The original codec refusal failure and the subsequent test-harness 7-versus-14
+receipt mistake are both preserved. Current measurements and exact logs are in
+`.tmp/5716-async-consumer-check/` and
+`.tmp/5716-queue-drain/prepared-frame-planner-r/`. The canonical relocation's
+separate 28/28 run used Node 24 and requires canonical Node 25 revalidation.
+All source changes remain uncommitted, with PR5716 held and no queue action.
+
+### Promise carriers and authenticated helper receipts (2026-09-14)
+
+The host producer now admits resolved ambient `Promise<number>` parameters,
+including genuine aliases, while rejecting shadowed or structural substitutes
+and nonnumeric carriers. Focused controls pass 17/17; both actual unresolved
+Promise/rejection-identity cases pass with local/shared exception tags. These
+are current-source measurements, with exact input pins and the original failed
+assertions retained in
+`.tmp/5716-queue-drain/promise-parameter-corrected-b-20260914/FINAL.json`.
+The two `any` and two numeric-throw probes remain unresolved and unweakened.
+
+Successful emission now retains its reservation ledger and exact source,
+support, and startup function tokens privately. Helper receipts expose only
+frozen key/index metadata, revalidated against completed bodies and the module
+layout. Replay subtracts only those authenticated helper indices and the
+constructed startup index; source receipts must still equal the complete
+prepared projection. Five real producer/codec tests pass, including the exact
+six-helper partition for two async owners, binary serialization preservation,
+and positive-first forged-result, changed-body, and reordered-function refusals.
+TypeScript 7 checking passed after the implementation. The test evidence is in
+`.tmp/5716-async-consumer-check/`; no fresh-process async success is claimed yet.
+
+The remaining replay integration must use shared host adapter implementations
+without loading the compiler or TypeScript. An explicitly partial scalar
+provider may report unsupported object conversions; it must not replace the
+normal runtime's coherent thenable/coercion operations or claim full host-value
+coverage. The original mixed fixture and its value/phase oracle remain fixed.
+Fresh remote main is `0fbfc754b0359bdcd86741068e8a0735eb2afe35` (only artifact
+and baseline updates since the currently merged dependency). The PR remains
+held at published head `0b513df989e713eb2eb2b340824e3bd9694291c9`; latest-main
+refresh, full required checks, normal signed publication and protected queue
+delivery are still outstanding.
+
+### Fresh-process async execution evidence (2026-09-14)
+
+The new async replay suite passes 5/5 on canonical Node 25, with no input drift
+(`.tmp/5716-async-consumer-check/async-oracle-original.log` and adjacent pins).
+The byte-identical original mixed source, digest `236fa7d9…`, now executes in a
+fresh child through decode, acceptance, internal emission, exact canonical
+capability/signature checks and shared production host-import factories.
+All sixteen oracle rows match: the initial value and three async values with
+immediate/microtask/completion phases [1,2,3,3]. The exact physical partition is
+fourteen prepared bodies, three authenticated helper bodies and one startup
+adapter. Both TypeScript and frontend module census counts are zero.
+
+Paired mismatch and intentional forbidden-import controls fail, malformed async
+schema is rejected before a nonexistent program path is read, null rejection
+matches in a child, and the oracle's five-second settlement timeout is tested.
+The scalar provider explicitly refuses object fulfillment before reading the
+capability; normal runtime value operations remain separate exact delegates.
+This proves the stated host fixture, not the remaining native/WASI/linear or
+full object-value domains. The runtime extraction still needs its preservation
+suites, including the original callback constructibility live-read behavior;
+no queue or main-delivery claim follows from this local evidence.
+
+### Remaining any-carrier and numeric-throw prerequisites — read-only proposal, 2026-09-14
+
+This section is a proposed additive plan for **IR-only R7: AST-free async suspension plans and canonical Promise ABI**. It is not implementation or acceptance. Root owns the issue file. The current 11-case consumer source remains unchanged (SHA256 56d8b3d4dd0e8f7ad5bc475922e7d7481a9f201f7be4cc03997f4f9b200c8adf). Its two any-input rows are preserved in `.tmp/5716-async-consumer-check/supported.log`, and its two `throw 17` rows in `original.log`. Both exception-tag modes fail before frame execution. The typed `Promise<number>` pair subsequently passed after the separate Promise-only producer fix; that does not pass these four probes.
+
+#### A. Preserve logical any through the host async boundary
+
+The first refusal is `program-source.ts::prepareSourceFunctionSignatures`: primitive-only `typeNodeToIr` receives `AnyKeyword`. Merely admitting that parameter would next encounter the unwrapped `Promise<any>` result and `preparedAsyncAwaitSite`, whose `checkerScalar` result is currently undefined for any. The propagation lattice returns null for unknown/dynamic; it is not an opaque carrier authority.
+
+Use the existing unrefined `IrType.dynamic` for checker-authenticated any, as specified by `core/types.ts:387–421` and Issue2949, **IR dynamic value representation: JsTag-carrying dynamic kind in IrType (make untyped JS claimable)**. Do not infer f64 from the fixture's eventual value73 or relabel all any values as val(externref). Its semantic parameter, fulfillment, resumed value and derived-helper signatures stay dynamic. The selected host async component supplies a physical externref carrier; the native AnyValue carrier and linear representation remain explicit capability gaps.
+
+Smallest coherent source/normalization change:
+
+1. `program-source.ts` (B's existing source file, new hunk grant needed): map exact declared/bound any and await-result any to unrefined dynamic in the complete async source producer. Keep checker ownership and actual await nodes, including `Promise<any>` fulfillment. Do not reuse the numeric Promise helper as an arbitrary-object/thenable fallback or change `typeNodeToIr` globally. Arbitrary dynamic arithmetic/boxing remains outside this identity/await increment and must still refuse before emission.
+2. `async-from-ast.ts::emitPreparedAsyncAwait` (root-assigned producer hunk): admit the exact dynamic operand against the existing site/builder equality check; emit the logical dynamic await directly. Avoid inserting `coerce.to_externref`: current lower-generic emits a conversion for dynamic, which would be invalid for an already-externref host value.
+3. `async-prepare-ir.ts::prepareSingleAwaitIrFunction` and `async-linear-prepare.ts::isAwaitCarrier` (root-assigned producer hunks): retain dynamic operands in both existing normalized suspension paths. Carry the same logical type through the real derived entry helper, resumes, values/spills and canonical Promise ABI. No new terminal source units or special receipt exclusions.
+4. `program/prepared-async-frame-plan.ts` (R planner) and `program-physical-plan.ts` (root): one agreed host-dynamic physical rule maps unrefined dynamic to externref for the exact selected host component, covering owner and derived-helper signatures plus plan params/resumes/spills/results. Preserve semantic ABI keys and exact joins. Do not default the generic scalar mapper or a native projection to externref. A refined/native/differently mapped carrier requires a located refusal until its actual contract is implemented.
+5. `program-consumer.ts` (root): expose the existing lookup-only `resolveDynamic()` from that accepted physical rule so the real derived helper lowers to its reserved externref signature. No allocation or runtime helper discovery. Root's in-flight reservation validator must authenticate the same logical-to-physical relation. The detached engine and its API need no algorithm change.
+
+No public IR schema addition is indicated: dynamic, semantic ABI signatures and async values already represent this type. This is a coordinated seven-file producer/physical-carrier prerequisite, rather than a one-line annotation allowance. The concrete component rule must not be reused as evidence for a legacy fast/native AnyValue mode merely because both callers say target host.
+
+Validation: preserve and execute the original two any probes in both tag modes. Add real unresolved inputs resolving to object identity, undefined, string and number (no numeric reinterpretation); repeated/concurrent invocations; rejected object identity; actual non-Promise values and a genuine thenable through canonical PromiseResolve. Include one two-await case to exercise the linear normalizer. Producer/codec checks must retain dynamic in all logical positions. Positive-first physical mutations must reject mapping that logical value to f64, stale/foreign owner or runtime, altered helper ABI and a native/linear projection without the required carrier. Keep the existing typed Promise controls. Reconcile the currently intentional any-refusal case in B's new test only when its precise new positive contract is implemented and measured; preserve the original failure artifact.
+
+#### B. Numeric throw needs an explicit semantic box and its own reserved provider
+
+`from-ast.ts::lowerThrowStatement` (15589–15605 at the reviewed pin) explicitly rejects f64/i32 before `emitThrow`. Deleting this guard and using `coerceIrValueToExternref` is incorrect: a numeric operand cannot use extern.convert_any. The existing provider-free f64 operation is `js.number.box`, emitted by `coerceToExpectedExtern` at7516. Its canonical host record is `number.box`, `(f64)->externref`, selected as `host.js.number.box` by the frozen manifest. The original probe policy omits `numberBoundary`, so its box arm is deliberately unsupported. The independent async `promise.number.bridge` provider does not authorize the regular `fail()` helper's semantic box.
+
+There is a second concrete gate: `program-physical-plan.ts:1228–1247` admits callable intrinsic providers only for the existing native `js.number.unbox` case. A host box therefore needs a sealed, authenticated dependency and a precise admission rule even after source lowering and provider selection succeed.
+
+Smallest coherent f64 increment:
+
+1. `from-ast.ts` (not currently B-owned; root must assign the exact option/context/lowerThrow hunks): introduce an explicit complete-program semantic-number-throw projection, analogous to the existing string numeric-coercion projection. When selected, proven f64 numeric throws use the existing js.number.box intrinsic then the unchanged throw/tag path. Do not broaden i32 boolean/symbol brands; their semantic box is a separate contract. Legacy callers that do not select the new projection retain the current numeric-refusal path.
+2. `program-source.ts` (B/root coordination): pass that semantic projection for the complete source producer. It expresses the operation and does not claim a provider. The actual preparation caller resolves `numberBoundary` explicitly; omission/unsupported stays a located refusal. Do not infer support from target alone or from a coincidentally present __box_number import.
+3. Add a narrow pure host-number-boundary setup in the canonical IR/program layer (root or assigned R; proposed `program/host-number-boundary-setup.ts`), joined by root's `program-physical-plan.ts` before the physical ABI is sealed. Read the exact requesting intrinsic/provider, frozen manifest policy, canonical capability record and signature. Declare the canonical env import with no source-unit provenance; deduplicate by the existing structural import identity, including collisions with async-frame declarations, and reject incompatible duplicates. Reuse/extract the canonical import declaration factory rather than maintaining two ABI definitions. This must also work for a regular throwing owner in a program with no async frame; otherwise the implementation is still accidentally borrowing the async bridge.
+4. Root extends only the exact host js.number.box callable-provider acceptance once that reservation is present and authenticated. The existing generic intrinsic lowerer can call the reserved import. Reuse the real host implementation, shared/local exception-tag handling and unchanged frame rejection machinery. No dummy body, native boxer assumption or new late allocator.
+
+The old refusal is a compatibility contract, not a semantic requirement when a real explicit provider is available. Issue4027, **ESLint frontier: ir/from-ast 'concrete return needs a dynamic box' aborts the compile**, currently tests visible numeric demotion for legacy compile calls; retain that behavior for those unchanged callers. Issue3526, **IR-only R6: typed semantic runtime contract and frozen feature manifest**, keeps number-box support policy-specific. A fully selected complete-program path may support numeric throw while both historical tests and disabled-policy refusal remain truthful.
+
+Validation: keep exact throw17 source and expected rejected value17 in both tag modes. Preserve the original omitted-policy failures and add an explicit-policy positive; do not relabel omitted policy as already supported. Verify a regular exported throwing function with no async owner, one canonical import shared with an async owner, actual tagged payload17, and negative provider/signature/owner/declaration mutations. Keep explicit disabled-policy and unsupported-brand controls and unchanged Issue4027 tests. If root adapts the manual consumer fixture to supply the resolved host number-box policy, retain an omitted-policy counterpart and all original sources/failures. This is a real policy correction, not a weaker exception expectation.
+
+#### Ownership, order and limits
+
+Root retains issue edits, physical acceptance/emission and all validation scheduling. B's current implementation ownership is program-source.ts plus its new Promise-only test; R owns the per-owner planner; the verification agent owns the 11-case real consumer test. Other producer/from-ast hunks and any new pure setup file need a precise grant and overlap check before writing. No present claim is inferred from a preserved historical dirty tree.
+
+Implement the any-carrier contract and numeric-provider contract as separately reviewable prerequisites, with source/planner/physical controls before the unchanged real consumer rows, then affected regressions and canonical typecheck/gates. Do not merge their denominators or mark either implemented from this source audit. No tests, source/issue edits, Git or GitHub mutations were performed for this proposal.
+
+
+### Dynamic carrier implementation and producer evidence (2026-09-14)
+
+Prerequisite A is now implemented in the four producer files and a pure,
+scoped host dynamic-carrier planner. Genuine checker-owned any remains logical
+`IrType.dynamic` in source signatures, fulfillment/resume values and derived
+state helpers. The physical planner grants externref only to the selected host
+async owner and exact called `ir-async-state` children whose parent and terminal
+owner agree. Each admitted slot carries its own frozen carrier rule; lowering
+receives that rule only for the slot being filled. Refined or unrelated dynamic
+functions and operations requiring a dynamic runtime remain located refusals.
+No global parser fallback or native/linear representation was introduced.
+
+The focused producer suite passes 24/24 on Node25 with 1,426/1,426 source files
+unchanged during the run. The original 22/24 run, caused by two hand-built test
+fixtures omitting async function kind, and the exact two-call correction remain
+separate artifacts under `any-carrier-producer-b-20260914/` and
+`any-carrier-producer-corrected-b-20260914/`. Runtime execution checks follow;
+producer success alone does not establish preservation of dynamic JS values.
+
+The shared runtime extraction separately passes 37/37 focused preservation rows
+plus 31/31 unchanged wrapper, fast-leaf and original detached-frame rows on
+canonical Node25. These include live callback constructibility, real callback
+exception/caught-object identity and scalar object-settlement admission. Its
+original four test setup failures remain retained. Exact evidence:
+`.tmp/5716-queue-drain/host-async-imports-r/FINAL-EVIDENCE.json`.
+
+### Dynamic execution and explicit numeric boundary wiring (2026-09-14)
+
+Dynamic execution now passes 5/5 real producer/codec/runtime tests, including
+pending and direct object/undefined/string/number values, rejection-object
+identity, genuine thenables, concurrent/repeated calls and one/two awaits with
+both exception-tag modes. The unchanged original consumer suite is 9/11: both
+typed-Promise and any pending/rejection pairs pass; only the two original numeric
+throws remain. These runs have no source/input drift, preserved in
+`.tmp/5716-async-consumer-check/{dynamic-original,original11-dynamic}.log`.
+
+Prerequisite B now has an explicit `numericThrow: "number-boundary"` source
+projection in the complete-program producer. It emits existing `js.number.box`
+for actual f64 throws, while omitted legacy options and unsupported branded
+carriers keep their refusals. Provider policy is still caller-resolved: omitted
+or disabled number boxing is not automatically enabled.
+
+Physical acceptance now derives the actual host-number demands, checks the
+exact canonical selected provider, semantic signature, capability record and
+attached import target, and seals the canonical import before reservation.
+Async frame adapters and synchronous number boxing share one import-declaration
+factory and one physical binding, rather than borrowing authority from each
+other. Emission revalidates this setup, including programs with no async owner.
+TypeScript 7 checking passes after declaring the factory's explicit public
+result type; the initial inferred-type errors remain logged. Runtime/provider
+integration tests and the affected async regression batch are pending.
+
+### Final scoped integration checks (2026-09-14)
+
+The numeric boundary integration now passes 18/18 rows (seven new provider
+controls and all eleven original consumer cases). Only the two numeric-throw
+fixtures explicitly select host number boxing; their original source and
+rejection payload 17 remain unchanged. Omitted/disabled policy is pinned as a
+located pre-emission refusal in the new controls. The original failed assertion
+run is retained. The affected codec, original mixed async child, and dynamic
+execution batch passes 37/37 with no input drift. The reconciled Promise
+parameter suite passes 17/17; the original inferred-any source now has a
+stronger logical-dynamic preparation assertion, while the other refusals remain.
+
+The automatic function-budget comparison included inherited main changes. An
+additional exact comparison against pending MERGE_HEAD
+`5fb8bef54d0a461aae9ae89e84a2237876d25767` exposed one line of growth in
+`lowerFunctionAstToIr`. A shared `numericProjectionOptions` helper now forwards
+both explicit numeric projections consistently into all three lowering
+contexts. No grant or baseline was added. Exact-base function and LOC gates
+pass over 27 changed source files (net +2539 LOC). The original failed gate
+is retained as `final-func-budget-exact-base.log`.
+
+After that refactor, the numeric projection, prepared-frame planner, authentic
+support receipts, numeric boundary integration, and original async consumer
+suites pass **68/68**, zero skipped tests and zero input drift, on canonical
+Node 25.9.0. Commands, input hashes, raw output, and terminal receipts are in
+`.tmp/5716-queue-drain/final-projection-planner-receipts*`. These are local
+integration results, not protected-queue or main-delivery evidence. The merge
+and source changes remain uncommitted at this checkpoint.
+
+The first normal commit attempt was stopped by five Biome errors: four void
+return expressions in the planner and one single-assignment variable in the
+replay helper. Explicit calls/returns retain the throwing refusal behavior; an
+export-state object retains the pre-instantiation undefined getter behavior.
+The corrected files pass Biome, and the affected planner plus original mixed
+async replay suites pass 32/32 with no skips or input drift. The failed hook log
+is retained as `integration-commit.log`. Inventory is valid but the architecture
+graph remains open; reachability certifies preservation (6/6 full and cut), not
+retirement. Exact-base checker/coercion/verdict gates pass, and the post-projection
+TypeScript 7 check exits zero.

@@ -27,10 +27,13 @@
 //    `undefined`, so it moved the failure rather than removing it, while
 //    changing what every standalone program sees. This binding is lexical and
 //    lives in ONE compilation unit — the provider's `index.js`.
-//  - It is NOT an Intl implementation. Every member is a refusal that names the
-//    target. The 66 of 4,603 Temporal rows that touch `Intl.`/`toLocaleString`
-//    are out of scope for #5383 by its own plan and stay red; they now fail
-//    with a RangeError that says why, instead of a null dereference.
+//  - It is NOT a general Intl implementation. Since #6442 (S9) exactly ONE
+//    member has a body: `DateTimeFormat`, and only for the zones that need no
+//    CLDR/tzdata tables (`UTC`, its aliases, `Etc/GMT±N`) — see
+//    `standalone-intl-datetimeformat.ts`. Every other member, and every other
+//    zone/locale/option shape, is still a refusal that names the target, so
+//    `Intl.`/`toLocaleString` rows stay red with a RangeError that says why
+//    rather than a null dereference.
 //
 // The shape is dictated by the eager uses above, not by taste:
 //   * `Intl.DateTimeFormat` must be a CONSTRUCTOR VALUE with a real
@@ -43,16 +46,16 @@
 //     them bodies would turn those graceful degradations into throws
 //     (`Duration.prototype.toLocaleString` falls back to the ISO string).
 //   * Every remaining member throws a `RangeError` naming the target, so a
-//     lazy path (`Temporal.Now.timeZoneId()`, a non-ISO calendar) fails with a
-//     nameable error instead of a trap or a wrong answer.
+//     lazy path (a non-ISO calendar, a tzdata zone) fails with a nameable
+//     error instead of a trap or a wrong answer. `hr` wraps its
+//     `resolvedOptions()` call in `try/catch`, so a refusal reads to the
+//     polyfill as "unknown time zone" — which is the truth.
+
+import { standaloneIntlDateTimeFormatSource } from "./standalone-intl-datetimeformat.js";
 
 /** The message every refusal in the shim throws, with the member spelled out. */
 function refusal(member: string): string {
   return `Intl.${member} is unavailable under --target standalone (no ICU data in pure Wasm)`;
-}
-
-function throwingMethod(name: string, member: string): string {
-  return `  ${name}() { throw new RangeError(${JSON.stringify(refusal(member))}); }`;
 }
 
 /**
@@ -65,15 +68,9 @@ function throwingMethod(name: string, member: string): string {
  * of the bundle's 340 top-level bindings.
  */
 export function standaloneIntlShimSource(): string {
-  const methods = ["format", "formatToParts", "formatRange", "formatRangeToParts", "resolvedOptions"]
-    .map((name) => throwingMethod(name, "DateTimeFormat"))
-    .join("\n");
   return [
-    "// #5383 S2c — standalone Intl refusal shim (js2wasm, provider-local).",
-    "class __js2wasm_IntlDateTimeFormat {",
-    `  constructor() { throw new RangeError(${JSON.stringify(refusal("DateTimeFormat"))}); }`,
-    methods,
-    "}",
+    "// #5383 S2c — standalone Intl shim (js2wasm, provider-local).",
+    standaloneIntlDateTimeFormatSource("__js2wasm_IntlDateTimeFormat", refusal("DateTimeFormat")),
     "const Intl = {",
     "  DateTimeFormat: __js2wasm_IntlDateTimeFormat,",
     "  DurationFormat: undefined,",

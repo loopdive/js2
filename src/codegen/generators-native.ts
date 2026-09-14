@@ -1,3 +1,9 @@
+import { emitCachedFuncClosureAccess } from "./closures/method-trampolines.js";
+import {
+  NATIVE_GENERATOR_DEFAULT_PROTO,
+  NATIVE_GENERATOR_FACTORY_PROTO,
+  NATIVE_GENERATOR_INIT_PROTO,
+} from "./generators-native-protocol.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * Wasm-native generator lowering (#680).
@@ -73,6 +79,7 @@ import { buildTargetTaggedTry } from "../ir/try-table.js";
 // field-I/O / spill-store emit helpers now live in the shared resumable-frame
 // core, consumed unchanged here and by the host-free async path (PATH B).
 import {
+  setStateFieldFromLocal,
   STATE_FIELD,
   SENT_FIELD,
   MODE_FIELD,
@@ -105,6 +112,8 @@ import {
   isFunctionLikeScope,
 } from "./generators-native-ast-scan.js";
 
+import { ensureNativeDelegatedResultHelpers, nativeGeneratorExecutingCheck } from "./generators-delegation-runtime.js";
+
 const MAX_NATIVE_GENERATOR_STATES = 256;
 
 /**
@@ -124,7 +133,7 @@ const MAX_NATIVE_GENERATOR_STATES = 256;
 type StateTerminator =
   | NativeForOfTerminator
   | { kind: "yield"; expr: ts.Expression | undefined; next: number }
-  | { kind: "return"; expr: ts.Expression | undefined }
+  | { kind: "return"; expr: ts.Expression | undefined; unwind?: readonly UnwindEntry[] }
   | { kind: "done" }
   // (#3050) `setPending` — when jumping INTO a state-lowered finally on the
   // NORMAL path, reset the region's pending-completion kind to 0 (none) so the
@@ -195,6 +204,8 @@ type StateTerminator =
       delegationKind: "iterable";
       subject: ts.Expression;
       iterableSiteIndex: number;
+      protocol?: boolean;
+      unwind?: readonly UnwindEntry[];
       next: number;
       bindResultTo?: string;
     };
@@ -441,6 +452,7 @@ function generatorElemValType(ctx: CodegenContext, decl: GeneratorDecl): ValType
           else if (delegated.element.kind === "string") sawString = true;
           else sawOther = true;
         } else if (isStringYieldExpression(ctx, node.expression)) sawString = true;
+        else if ((ctx.standalone || ctx.wasi) && node.expression) sawOther = true;
       } else if (isNumericExpression(ctx, node.expression)) sawNumeric = true;
       else if (isStringYieldExpression(ctx, node.expression)) sawString = true;
       else sawOther = true;
@@ -665,6 +677,26 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       // first so a bare `return expr;` is a completion terminator, not a raw
       // wasm `return` from compileStatement.)
       if (ts.isReturnStatement(stmt)) {
+        if (
+          (ctx.standalone || ctx.wasi) &&
+          stmt.expression &&
+          ts.isYieldExpression(stmt.expression) &&
+          stmt.expression.asteriskToken
+        ) {
+          // A delegated return inside a finally body still needs its own replacement-completion model.
+          if (stateFinallyDepth > 0) return fail();
+          const name = `__gen_delegation_completion_${delegationBindingNames.size}`;
+          delegationBindingNames.add(name);
+          addSpill(name);
+          if (!emitYield(stmt.expression, name, unwind)) return false;
+          finishState(curId, {
+            kind: "return",
+            expr: ts.factory.createIdentifier(name),
+            unwind: [...unwind].reverse(),
+          });
+          curId = startState();
+          return true;
+        }
         // (#2171) The return *value* must match the generator's yield element
         // type (numeric or string); a bare `return;` (no expr) is allowed.
         if (stmt.expression && !yieldValueOk(stmt.expression)) return fail();
@@ -698,6 +730,31 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         continue;
       }
 
+      // The yield-star completion belongs to the assignment, not the next sent value.
+      if (
+        ts.isExpressionStatement(stmt) &&
+        ts.isBinaryExpression(stmt.expression) &&
+        stmt.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isIdentifier(stmt.expression.left) &&
+        ts.isYieldExpression(stmt.expression.right) &&
+        stmt.expression.right.asteriskToken
+      ) {
+        const name = `__gen_delegation_completion_${delegationBindingNames.size}`;
+        delegationBindingNames.add(name);
+        addSpill(name);
+        if (!emitYield(stmt.expression.right, name, unwind)) return false;
+        curStatements.push(
+          ts.factory.createExpressionStatement(
+            ts.factory.createBinaryExpression(
+              stmt.expression.left,
+              ts.factory.createToken(ts.SyntaxKind.EqualsToken),
+              ts.factory.createIdentifier(name),
+            ),
+          ),
+        );
+        continue;
+      }
+
       // 2) `let x = yield expr;`
       const yd = tryYieldDeclaration(stmt);
       if (yd) {
@@ -721,7 +778,21 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       // 3) try statements wrapping yields.
       if (ts.isTryStatement(stmt)) {
         const finallyYieldFree = !stmt.finallyBlock || statementsAreYieldFree(stmt.finallyBlock.statements);
-        if (!stmt.catchClause && stmt.finallyBlock && finallyYieldFree) {
+        if (
+          !stmt.catchClause &&
+          stmt.finallyBlock &&
+          finallyYieldFree &&
+          !(
+            (ctx.standalone || ctx.wasi) &&
+            containsDelegatedYield(
+              stmt.tryBlock,
+              (subject) =>
+                nativeGeneratorDelegationName(subject) === undefined &&
+                !isArrayDelegate(ctx, subject) &&
+                !isStringYieldExpression(ctx, subject),
+            )
+          )
+        ) {
           // Legacy kind-L region: finally-only, yield-free finally — the
           // historical replay lowering, byte-identical to pre-#3050.
           if (
@@ -918,11 +989,9 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     // value of `yield*` consumed, a non-native inner) still bails to the host
     // path / scoped diagnostic.
     if (yieldExpr.asteriskToken) {
-      // Array delegates route return/throw into the region unwind.
-      // Other delegates still need full protocol forwarding (including a
-      // return/throw result with done=false), so keep their admission guarded.
       const structuredUnwind = unwind.some((e) => e.kind !== "replay");
-      if (structuredUnwind && (!yieldExpr.expression || !isArrayDelegate(ctx, yieldExpr.expression))) return fail();
+      const arrayDelegate = !!yieldExpr.expression && isArrayDelegate(ctx, yieldExpr.expression);
+      if (structuredUnwind && !arrayDelegate && !(ctx.standalone || ctx.wasi)) return fail();
       // (#2864 D2) A yield-star terminator SELF-SUSPENDS (its yield arm re-enters
       // the SAME state on the next resume), so it must live in a DEDICATED state:
       //  (a) empty prelude / no resume bindings — otherwise the prelude statements
@@ -942,19 +1011,21 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         finishState(curId, { kind: "jump", next: starId });
         resetCursor(starId);
       }
-      curAbrupt = structuredUnwind
-        ? undefined
-        : {
-            finalizers: unwind.map((e) => [...(e as { statements: readonly ts.Statement[] }).statements]).reverse(),
-          };
-      curUnwind = structuredUnwind ? [...unwind].reverse() : undefined;
+      curAbrupt = {
+        finalizers: unwind
+          .filter((e): e is Extract<UnwindEntry, { kind: "replay" }> => e.kind === "replay")
+          .map((e) => [...e.statements])
+          .reverse(),
+      };
+      curUnwind = undefined;
       const subject = yieldExpr.expression;
       const innerName = subject ? nativeGeneratorDelegationName(subject) : undefined;
       if (subject && innerName === undefined) {
-        // Array delegation uses a cursor over the resolved physical vector.
-        // Each loaded element is coerced to the generator result carrier;
-        // object references must never pass through a numeric fallback.
-        if (isArrayDelegate(ctx, subject)) {
+        if (arrayDelegate) {
+          if (structuredUnwind) {
+            curAbrupt = undefined;
+            curUnwind = [...unwind].reverse();
+          }
           // (#2864 R1) `const x = yield* [..]` — the delegation completion value
           // (§27.5.3.7) of an array is `undefined`; the done-arm delivers the f64
           // undefined sentinel into the binding's spill (a #2106 residual).
@@ -991,7 +1062,12 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         // outer passes it through. A direct string operand is the one concrete
         // ref case supported here: the iterator runtime returns native-string
         // refs, and the emitter casts the externref back to that ref below.
-        if ((!elemIsString || isStringYieldExpression(ctx, subject)) && isGenericIterableDelegate(ctx, subject)) {
+        const protocol = (ctx.standalone || ctx.wasi) && !isStringYieldExpression(ctx, subject);
+        if (
+          (!elemIsString || isStringYieldExpression(ctx, subject)) &&
+          (protocol || isGenericIterableDelegate(ctx, subject))
+        ) {
+          if (!protocol && unwind.some((entry) => entry.kind !== "replay")) return fail();
           // (#2864 R1) `const x = yield* it` — the delegation completion value
           // (§27.5.3.7) is the iterator's done-result `value`; for the common
           // array/`.values()` shape that is `undefined`. The done-arm delivers
@@ -1009,6 +1085,8 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
             delegationKind: "iterable",
             subject,
             iterableSiteIndex,
+            protocol,
+            unwind: protocol ? [...unwind].reverse() : undefined,
             next: nextId,
             bindResultTo: bindSentTo,
           });
@@ -1025,6 +1103,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         return fail();
       }
       if (!subject || innerName === undefined) return fail();
+      if (unwind.some((entry) => entry.kind !== "replay")) return fail();
       // (#2864 R1) Carrier-mismatch gate: the delegation yield-arm re-yields the
       // inner's f64 `value` through the OUTER result struct. For an f64 outer
       // that is exact; for the boxed-any outer the f64→externref mismatch is
@@ -2192,7 +2271,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     // holds the inner's f64 `return` value — always f64 (only f64-elem inners
     // are delegated), independent of the OUTER's carrier.
     if (delegationBindingNames.has(name)) {
-      spillTypes.set(name, { kind: "f64" });
+      spillTypes.set(name, elemIsAny ? { kind: "externref" } : { kind: "f64" });
       continue;
     }
     if (resumeBindingNames.has(name)) {
@@ -3508,6 +3587,15 @@ export function registerNativeGenerator(
     stateFields.push({ name: "pending", type: { kind: "i32" }, mutable: true });
   }
 
+  const nativeDelegates = plan.states.some(
+    (state) =>
+      state.terminator.kind === "yield-star" &&
+      state.terminator.delegationKind === "iterable" &&
+      state.terminator.protocol,
+  );
+  const executingFieldIdx = nativeDelegates ? stateFields.length : undefined;
+  if (nativeDelegates) stateFields.push({ name: "executing", type: { kind: "i32" }, mutable: true });
+
   // (#3032 W6) NOMINAL BRAND for the state struct. Two generators with the
   // same shape (e.g. `function* g1() { yield; }` and `function* g2() {
   // yield 1; }`) mint structurally IDENTICAL state structs, which WasmGC
@@ -3589,6 +3677,8 @@ export function registerNativeGenerator(
     // body ending in a loop / if / try-region (see `NativeGeneratorPlan.doneState`).
     doneState: plan.doneState,
     elemValType,
+    nativeDelegates,
+    executingFieldIdx,
     delegationSlots: delegationSlots.length > 0 ? delegationSlots : undefined,
     vecDelegationSlots: vecDelegationSlots.length > 0 ? vecDelegationSlots : undefined,
     iterableDelegationSlots: iterableDelegationSlots.length > 0 ? iterableDelegationSlots : undefined,
@@ -3708,12 +3798,25 @@ export function emptyResultForType(ctx: CodegenContext, resultTypeIdx: number): 
   ];
 }
 
-export function nativeReturnResultFromLocal(info: NativeGeneratorInfo, valueLocal: number): Instr[] {
-  return [
-    { op: "local.get", index: valueLocal },
-    { op: "i32.const", value: 1 },
-    { op: "struct.new", typeIdx: info.resultTypeIdx },
-  ];
+/**
+ * Build the immediate IteratorResult for `.return()` before a generator has
+ * started or after it has completed.  The legacy scalar abrupt carrier is f64
+ * for both numeric and native-string generators, while a native-string result
+ * struct requires its string reference in field 0.  The resume path already
+ * deliberately uses the element default for that unsupported payload bridge;
+ * mirror it here so merely installing the public `return` method never makes a
+ * string generator's module invalid.  A raw arbitrary return-payload ABI is a
+ * separate follow-up, not a reason to feed an f64 into a ref field.
+ */
+export function nativeReturnResultFromLocal(
+  ctx: CodegenContext,
+  info: NativeGeneratorInfo,
+  valueLocal: number,
+): Instr[] {
+  const value: Instr[] = valTypesMatch(genCarrierFieldType(info.elemValType), info.elemValType)
+    ? [{ op: "local.get", index: valueLocal }]
+    : defaultElemValueInstrs(ctx, info.elemValType);
+  return [...value, { op: "i32.const", value: 1 }, { op: "struct.new", typeIdx: info.resultTypeIdx }];
 }
 
 export function emitExpressionAsF64(
@@ -3765,7 +3868,7 @@ export function emitCarrierValue(
   const carrier: ValType = { kind: "externref" };
   const tmp = allocLocal(fctx, `__gen_carrier_${fctx.locals.length}`, carrier);
   if (!expr) {
-    fctx.body.push({ op: "ref.null.extern" });
+    fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
     fctx.body.push({ op: "local.set", index: tmp });
     return tmp;
   }
@@ -3793,7 +3896,7 @@ export function emitOpenAnyArgValue(
   const carrier: ValType = { kind: "externref" };
   const tmp = allocLocal(fctx, `__gen_any_arg_${fctx.locals.length}`, carrier);
   if (!expr) {
-    fctx.body.push({ op: "ref.null.extern" });
+    fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
     fctx.body.push({ op: "local.set", index: tmp });
     return tmp;
   }
@@ -4097,7 +4200,11 @@ function compileState(
   // (throw only), into a state-lowered finally (both, saved as pending), through
   // legacy replay finalizers — and only completes/re-throws when no handler
   // remains. Legacy states keep the byte-identical `abruptResume` emission.
-  if (state.unwind) {
+  const protocolDelegation =
+    state.terminator.kind === "yield-star" &&
+    state.terminator.delegationKind === "iterable" &&
+    state.terminator.protocol;
+  if (state.unwind && !protocolDelegation) {
     const abruptBody: Instr[] = [];
     const savedAbrupt = fctx.body;
     fctx.body = abruptBody;
@@ -4118,7 +4225,7 @@ function compileState(
     body.push({ op: "i32.const", value: MODE_NEXT });
     body.push({ op: "i32.ne" });
     body.push({ op: "if", blockType: { kind: "empty" }, then: abruptBody, else: [] });
-  } else if (state.abruptResume) {
+  } else if (state.abruptResume && !protocolDelegation) {
     const abruptBody: Instr[] = [];
     const savedAbrupt = fctx.body;
     fctx.body = abruptBody;
@@ -4316,6 +4423,20 @@ function compileState(
         emitYieldValueAsElem(ctx, fctx, term.expr, info),
       );
       body.push(...storeSpills(info, fctx, selfLocal));
+      if (term.unwind?.length) {
+        body.push(
+          ...setStateFieldFromLocal(info, selfLocal, info.abruptFieldIdx, tmp),
+          ...setModeInstrs(info, selfLocal, 1),
+        );
+        emitUnwindWalk(ctx, fctx, info, term.unwind, {
+          selfLocal,
+          resultLocal,
+          srcFieldIdx: info.modeFieldIdx,
+          loopDepth,
+          exitDepth,
+        });
+        break;
+      }
       body.push(...setStateInstrs(info, selfLocal, info.doneState));
       body.push(...setModeInstrs(info, selfLocal, 0));
       body.push({ op: "local.get", index: tmp });
@@ -4526,6 +4647,10 @@ function compileState(
         body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
         body.push({ op: "i32.ge_s" });
         body.push({ op: "if", blockType: { kind: "empty" }, then: doneArm, else: yieldArm });
+        break;
+      }
+      if (term.delegationKind === "iterable" && term.protocol) {
+        emitGenericDelegationState(ctx, fctx, info, term, stateId, selfLocal, resultLocal, loopDepth, exitDepth);
         break;
       }
       if (term.delegationKind === "iterable") {
@@ -4789,6 +4914,16 @@ function compileState(
     // Route body with the caught error value (externref) ON THE STACK.
     const routeInstrs = (): Instr[] => {
       const out: Instr[] = [];
+      const term = state.terminator;
+      if (term.kind === "yield-star" && term.delegationKind === "iterable" && term.protocol) {
+        const slot = info.iterableDelegationSlots?.[term.iterableSiteIndex];
+        if (slot)
+          out.push(
+            { op: "local.get", index: selfLocal },
+            { op: "ref.null.extern" },
+            { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: slot.fieldIdx },
+          );
+      }
       if (route.kind === "catch") {
         // Bind the error to the catch param (local + spill, so it survives a
         // later suspension inside the catch), then enter the catch block. The
@@ -4845,6 +4980,151 @@ function compileState(
     ];
   }
   return body;
+}
+
+/** Protocol calls can throw before suspension, so they need a real finally exception route. */
+function containsDelegatedYield(node: ts.Node, protocol: (subject: ts.Expression) => boolean): boolean {
+  if (ts.isYieldExpression(node) && node.asteriskToken && node.expression) return protocol(node.expression);
+  if (ts.isFunctionLike(node)) return false;
+  return ts.forEachChild(node, (child) => containsDelegatedYield(child, protocol) || undefined) === true;
+}
+
+/** Full generic delegation; status zero carries the ORIGINAL result object. */
+function emitGenericDelegationState(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  info: NativeGeneratorInfo,
+  term: Extract<StateTerminator, { delegationKind: "iterable" }>,
+  stateId: number,
+  selfLocal: number,
+  resultLocal: number,
+  loopDepth: number,
+  exitDepth: number,
+): void {
+  const slot = info.iterableDelegationSlots?.[term.iterableSiteIndex];
+  if (!slot) throw new Error("Missing generic delegation frame slot");
+  const status = allocLocal(fctx, "__delegate_status", { kind: "i32" });
+  const value = allocLocal(fctx, "__delegate_value", { kind: "externref" });
+  const body = fctx.body;
+  const get = (fieldIdx: number): Instr[] => [
+    { op: "local.get", index: selfLocal },
+    { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx },
+  ];
+  const frameStore = (fieldIdx: number, expr: Instr[]): Instr[] => [
+    { op: "local.get", index: selfLocal },
+    ...expr,
+    { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx },
+  ];
+  const unwind = (depth: number): Instr[] => {
+    const previous = fctx.body;
+    fctx.body = [];
+    emitUnwindWalk(ctx, fctx, info, term.unwind ?? [], {
+      selfLocal,
+      resultLocal,
+      srcFieldIdx: info.modeFieldIdx,
+      loopDepth: loopDepth + depth,
+      exitDepth: exitDepth + depth,
+    });
+    const out = fctx.body;
+    fctx.body = previous;
+    return out;
+  };
+  // An abrupt resume at the preceding yield must not evaluate this operand.
+  body.push(
+    ...get(slot.fieldIdx),
+    { op: "ref.is_null" },
+    ...get(info.modeFieldIdx),
+    { op: "i32.const", value: MODE_NEXT },
+    { op: "i32.ne" },
+    { op: "i32.and" },
+    { op: "if", blockType: { kind: "empty" }, then: unwind(1), else: [] },
+  );
+  const materialize: Instr[] = [];
+  fctx.body = materialize;
+  const type = compileExpression(ctx, fctx, term.subject, { kind: "externref" });
+  if (!type) throw new Error("Unable to compile generic delegation operand");
+  if (type.kind !== "externref") coerceType(ctx, fctx, type, { kind: "externref" });
+  materialize.push({ op: "call", funcIdx: ctx.funcMap.get("__gen_delegate_start")! });
+  fctx.body = body;
+  body.push(
+    ...get(slot.fieldIdx),
+    { op: "ref.is_null" },
+    { op: "if", blockType: { kind: "empty" }, then: frameStore(slot.fieldIdx, materialize), else: [] },
+  );
+  body.push(...storeSpills(info, fctx, selfLocal));
+  // A throw has a distinct payload field; next and return share the externref carrier.
+  body.push(
+    ...get(slot.fieldIdx),
+    ...get(info.modeFieldIdx),
+    ...get(info.modeFieldIdx),
+    { op: "i32.const", value: MODE_THROW },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: get(ERROR_FIELD),
+      else: [
+        ...get(info.modeFieldIdx),
+        { op: "i32.const", value: 1 },
+        { op: "i32.eq" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: get(info.abruptFieldIdx),
+          else: get(info.sentFieldIdx),
+        },
+      ],
+    },
+    { op: "call", funcIdx: ctx.funcMap.get("__gen_delegate_step")! },
+    { op: "local.set", index: value },
+    { op: "local.set", index: status },
+  );
+  const suspended: Instr[] = [
+    ...setStateInstrs(info, selfLocal, stateId),
+    ...setModeInstrs(info, selfLocal, MODE_NEXT),
+    { op: "local.get", index: value },
+    { op: "i32.const", value: -1 },
+    { op: "struct.new", typeIdx: info.resultTypeIdx },
+    { op: "local.set", index: resultLocal },
+    { op: "br", depth: exitDepth + 1 },
+  ];
+  body.push(
+    { op: "local.get", index: status },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: suspended, else: [] },
+  );
+  body.push(...frameStore(slot.fieldIdx, [{ op: "ref.null.extern" }]));
+  body.push(
+    { op: "local.get", index: status },
+    { op: "i32.const", value: 2 },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...frameStore(info.abruptFieldIdx, [{ op: "local.get", index: value }]),
+        ...setModeInstrs(info, selfLocal, 1),
+        ...unwind(1),
+      ],
+      else: [],
+    },
+  );
+  if (term.bindResultTo !== undefined) {
+    const local = fctx.localMap.get(term.bindResultTo);
+    const spill = info.spillNames.indexOf(term.bindResultTo);
+    if (local === undefined || spill < 0) throw new Error("Missing delegation completion binding");
+    body.push({ op: "local.get", index: value });
+    const localType = getLocalType(fctx, local)!;
+    if (localType.kind !== "externref") coerceType(ctx, fctx, { kind: "externref" }, localType);
+    body.push(
+      { op: "local.set", index: local },
+      ...frameStore(info.spillFieldOffset + spill, [{ op: "local.get", index: local }]),
+    );
+  }
+  body.push(...setModeInstrs(info, selfLocal, MODE_NEXT), ...setStateInstrs(info, selfLocal, term.next), {
+    op: "br",
+    depth: loopDepth,
+  });
 }
 
 /**
@@ -4978,6 +5258,7 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
     return existing;
   }
 
+  if (info.nativeDelegates) ensureNativeDelegatedResultHelpers(ctx);
   const selfType: ValType = { kind: "ref", typeIdx: info.stateTypeIdx };
   const resultType: ValType = { kind: "ref", typeIdx: info.resultTypeIdx };
   const typeIdx = addFuncType(ctx, [selfType], [resultType], `${fnName}_type`);
@@ -5016,6 +5297,8 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
     labelMap: new Map(),
     savedBodies: [],
   };
+
+  resumeFctx.body.push(...nativeGeneratorExecutingCheck(ctx, info, [{ op: "local.get", index: 0 }]));
 
   // Copy params into locals.
   for (let i = 0; i < info.paramTypes.length; i++) {
@@ -5237,15 +5520,28 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
           { op: "block", blockType: { kind: "val", type: resultType }, body: trampoline },
           { op: "local.set", index: resultLocal },
         ];
+        const executing = (value: number): Instr[] =>
+          info.executingFieldIdx === undefined
+            ? []
+            : [
+                { op: "local.get", index: 0 },
+                { op: "i32.const", value },
+                { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.executingFieldIdx },
+              ];
+        resumeFctx.body.push(...executing(1));
         resumeFctx.body.push(
           buildTargetTaggedTry(ctx, { kind: "empty" }, tryBody, [
             {
               tagIdx: ensureExnTag(ctx),
-              body: [...setStateInstrs(info, 0, info.doneState), { op: "throw", tagIdx: ensureExnTag(ctx) }],
+              body: [
+                ...executing(0),
+                ...setStateInstrs(info, 0, info.doneState),
+                { op: "throw", tagIdx: ensureExnTag(ctx) },
+              ],
             },
           ]),
         );
-        resumeFctx.body.push({ op: "local.get", index: resultLocal });
+        resumeFctx.body.push(...executing(0), { op: "local.get", index: resultLocal });
       } else {
         resumeFctx.body.push(...trampoline);
       }
@@ -5416,7 +5712,44 @@ export function compileNativeGeneratorFunction(
   if (info.pendingFieldIdx !== undefined) {
     fctx.body.push({ op: "i32.const", value: 0 });
   }
+  if (info.executingFieldIdx !== undefined) fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "struct.new", typeIdx: info.stateTypeIdx });
+  // The factory-prototype bridge can only recover a factory identity for the
+  // declaration/expression closures cached in `ctx.funcMap`. A method factory
+  // is instead materialized as a per-object closure (and object-literal
+  // deduplication can give its native state a distinct `__lit<n>` key). Asking
+  // for a cached closure would either miss that key or substitute a different
+  // observable function object. A method still needs the canonical generator
+  // protocol view for `.next()` / `.return()` / `.throw()`, so initialize it
+  // from the intrinsic default instead of inventing a factory identity.
+  if (ctx.standalone || ctx.wasi) {
+    const state = allocLocal(fctx, "__new_generator_state", { kind: "ref", typeIdx: info.stateTypeIdx });
+    fctx.body.push({ op: "local.set", index: state });
+    ensureNativeDelegatedResultHelpers(ctx);
+    fctx.body.push({ op: "local.get", index: state }, { op: "extern.convert_any" });
+    if (ts.isMethodDeclaration(decl)) {
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(NATIVE_GENERATOR_DEFAULT_PROTO)! });
+    } else if (info.paramNames[0] === "__self" && fctx.localMap.has("__self")) {
+      fctx.body.push({ op: "local.get", index: fctx.localMap.get("__self")! }, { op: "extern.convert_any" });
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(NATIVE_GENERATOR_FACTORY_PROTO)! });
+    } else {
+      // A same-named nested declaration gets a distinct state/resume name,
+      // but its factory retains the declaration-owned callable name. Use that
+      // name only when the registry proves this exact source declaration.
+      const factoryName = ctx.funcMapOwnerDecl.get(fctx.name) === decl ? fctx.name : info.functionName;
+      const factory = ctx.funcMap.get(factoryName);
+      if (factory === undefined) throw new Error("Missing native generator factory identity");
+      const type = emitCachedFuncClosureAccess(ctx, fctx, factoryName, factory, false);
+      if (!type) throw new Error("Unable to materialize native generator factory identity");
+      if (type.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(NATIVE_GENERATOR_FACTORY_PROTO)! });
+    }
+    fctx.body.push(
+      { op: "call", funcIdx: ctx.funcMap.get(NATIVE_GENERATOR_INIT_PROTO)! },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: info.stateTypeIdx },
+    );
+  }
 }
 
 // (#3271) The native-generator CONSUMER / call-site subsystem now lives in

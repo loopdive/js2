@@ -74,7 +74,8 @@ import type { CodegenContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
-import { COLLECTION_KIND, ensureMapHelpers } from "./map-runtime.js";
+import { COLLECTION_KIND } from "./collection-kind.js"; // (#6419) import-free leaf — map-runtime.js is in an import cycle
+import { ensureMapHelpers } from "./map-runtime.js";
 import { ensureSetHelpers } from "./set-runtime.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 

@@ -321,6 +321,7 @@ export function prepareDependencyCompleteClosureSupport(
         for (const member of type.members) collectObjectSupport(member);
         return;
       case "val":
+      case "support-ref":
       case "string":
       case "class":
       case "extern":

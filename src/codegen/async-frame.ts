@@ -58,6 +58,7 @@ import {
   planAsyncCfg,
   planAsyncGenCfg,
   planLinearAwaits,
+  isHostAsyncLane,
   tryCatchAsyncSpillInfo,
 } from "./async-cps.js";
 import { ensureNativeGeneratorResultType } from "./generators-native.js";
@@ -95,13 +96,20 @@ import {
   setStateI32FromConst,
   storeSpills,
 } from "./frame-core.js";
-import { ensureI32Condition, resolveWasmType } from "./index.js";
+import { ensureI32Condition, resolveWasmType, varBindingNeedsExternrefForUndefined } from "./index.js";
 import { isUndefWidenedBindingElement } from "../checker/type-mapper.js";
 import { ensureExnTag } from "./registry/imports.js";
 import { addFuncType, getOrRegisterRefCellType, getOrRegisterVecType } from "./registry/types.js";
 import { coerceType, compileExpression, compileStatement, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { resolveSpillLocalValType } from "./statements/variables.js";
-import { buildTargetTaggedTry } from "../ir/try-table.js";
+import {
+  buildStepAdapterLocals,
+  buildStepAdapterBody,
+  buildAsyncFrameStateChain,
+  buildAsyncFrameDispatch,
+  type AsyncFrameHandler,
+  type AsyncFrameStateBody,
+} from "../runtime/wasmgc/async/frame-engine.js";
 
 /**
  * Is the host-free async **drive layer** (#2895 PATH B) active for this module?
@@ -143,6 +151,13 @@ export interface HostAsyncImports {
   settleResolveIdx: number;
   /** `Promise_settle_reject(p, reason) -> externref(undefined)`. */
   settleRejectIdx: number;
+  /**
+   * (#5372) `Promise_then2_frame(p, onFulfilled, onRejected, resultPromise) ->
+   * Promise` — reaction registration whose wrapper rejects `resultPromise`
+   * when the resuming step TRAPS (uncatchable in wasm). Optional: the prepared
+   * IR frames resolve imports by capability and keep plain `Promise_then2`.
+   */
+  then2FrameIdx?: number;
   /** Exact prepared Promise<void> fulfillment provider. */
   undefinedIdx?: number;
 }
@@ -166,6 +181,7 @@ export function resolveHostAsyncImports(ctx: CodegenContext): HostAsyncImports |
   const newPendingIdx = ctx.funcMap.get("Promise_new_pending");
   const settleResolveIdx = ctx.funcMap.get("Promise_settle_resolve");
   const settleRejectIdx = ctx.funcMap.get("Promise_settle_reject");
+  const then2FrameIdx = ctx.funcMap.get("Promise_then2_frame");
   if (
     promiseResolveIdx === undefined ||
     then2Idx === undefined ||
@@ -183,6 +199,7 @@ export function resolveHostAsyncImports(ctx: CodegenContext): HostAsyncImports |
     newPendingIdx,
     settleResolveIdx,
     settleRejectIdx,
+    ...(then2FrameIdx !== undefined ? { then2FrameIdx } : {}),
   };
 }
 
@@ -251,15 +268,12 @@ export function asyncFnNeedsHostDrive(
     if (tc !== null) return tc.spillTypes.every(isSpillSafeType);
     return false;
   }
-  // Parity with asyncFnNeedsCps/asyncFnNeedsDrive: a lone `await Promise.all(...)`
-  // already yields a real Promise the legacy identity path resolves correctly.
-  if (
-    linear.finalizer === null &&
-    linear.segments.length === 1 &&
-    awaitedExprIsPromiseCombinator(linear.segments[0]!.awaitedExpr)
-  ) {
-    return false;
-  }
+  // (#5367) The former "lone `await Promise.all(...)` stays on the legacy
+  // identity path" carve-out is GONE here: with a resume binding that path
+  // delivered the un-awaited Promise object coerced into the STATIC awaited
+  // type (a default-initialised tuple struct / an empty vec) and never
+  // suspended, so pending continuations never ran. Its other rationale (#2028
+  // host-method marshaling) is fixed. `asyncFnNeedsDrive` (wasi) keeps its gate.
   // Type gate: a resume binding spilled across a later await needs a spill-safe
   // type (same rule as the wasi drive layer).
   for (let k = 0; k < linear.segments.length; k++) {
@@ -760,8 +774,22 @@ function resumeBindingValType(
   ctx: CodegenContext,
   rb: { name: string; type: ts.TypeNode | undefined; target?: ts.Identifier; awaitTarget?: ts.AwaitExpression },
 ): ValType {
+  const checker = ctx.checker;
+  // (#6414) A `let x = void 0` binding assigned from an await and read after a
+  // LATER await: the resume body re-compiles that declaration through the
+  // var-decl path, which routes a void-EXPRESSION initializer to externref
+  // (#2806), while the checker types it pure `undefined` → `resolveWasmType` i32.
+  // The i32 field then took `local.get <externref>` from `storeSpills` — an
+  // invalid module. Reuse #2806's predicate so both halves agree by construction;
+  // it is narrow by design, so #1112's f64-sentinel bindings stay numeric.
+  if (rb.target !== undefined) {
+    const bound = checker.getSymbolAtLocation(rb.target)?.valueDeclaration;
+    if (bound !== undefined && ts.isVariableDeclaration(bound) && varBindingNeedsExternrefForUndefined(bound, ctx)) {
+      return { kind: "externref" };
+    }
+  }
   const typeSite = rb.type ?? rb.target ?? rb.awaitTarget;
-  return typeSite ? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(typeSite)) : { kind: "externref" };
+  return typeSite ? resolveWasmType(ctx, checker.getTypeAtLocation(typeSite)) : { kind: "externref" };
 }
 
 /**
@@ -1074,7 +1102,7 @@ function computeTryCatchSpills(
   decl: ts.FunctionLikeDeclaration,
   plan: AsyncCpsPlan,
 ): { spillNames: string[]; spillTypes: ValType[] } | null {
-  const info = tryCatchAsyncSpillInfo(decl, plan);
+  const info = tryCatchAsyncSpillInfo(decl, plan, isHostAsyncLane(ctx));
   if (info === null) return null;
   const declByName = collectVarDeclsByName(decl);
   // `collectVarDeclsByName` also picks up a CATCH clause's own
@@ -1725,8 +1753,18 @@ export function ensureAsyncResumeFunction(
   const stepFulfillFunc: WasmFunction = {
     name: stepFulfillName,
     typeIdx: stepTypeIdx,
-    locals: buildStepAdapterLocals(info),
-    body: buildStepAdapterBody(info, resumeFuncIdx, /*reject*/ false),
+    locals: buildStepAdapterLocals(info.stateTypeIdx),
+    body: buildStepAdapterBody(
+      {
+        stateTypeIdx: info.stateTypeIdx,
+        sentField: SENT_FIELD,
+        errorField: ERROR_FIELD,
+        modeField: MODE_FIELD,
+        throwMode: MODE_THROW,
+        resumeFuncIdx,
+      },
+      /*reject*/ false,
+    ),
     exported: info.host,
   };
   pushDefinedFunc(ctx, stepFulfillFuncIdx, stepFulfillFunc);
@@ -1749,8 +1787,18 @@ export function ensureAsyncResumeFunction(
   const stepRejectFunc: WasmFunction = {
     name: stepRejectName,
     typeIdx: stepTypeIdx,
-    locals: buildStepAdapterLocals(info),
-    body: buildStepAdapterBody(info, resumeFuncIdx, /*reject*/ true),
+    locals: buildStepAdapterLocals(info.stateTypeIdx),
+    body: buildStepAdapterBody(
+      {
+        stateTypeIdx: info.stateTypeIdx,
+        sentField: SENT_FIELD,
+        errorField: ERROR_FIELD,
+        modeField: MODE_FIELD,
+        throwMode: MODE_THROW,
+        resumeFuncIdx,
+      },
+      /*reject*/ true,
+    ),
     exported: info.host,
   };
   pushDefinedFunc(ctx, stepRejectFuncIdx, stepRejectFunc);
@@ -2152,7 +2200,15 @@ export function ensureAsyncResumeFunction(
             out.push({ op: "local.get", index: frameLocal });
             out.push({ op: "extern.convert_any" });
             out.push({ op: "call", funcIdx: hostImports!.makeCbIdx });
-            out.push({ op: "call", funcIdx: hostImports!.then2Idx });
+            // (#5372) Frame-aware reaction: a trap while this frame resumes
+            // rejects `result_promise` instead of escaping the host reaction as
+            // an unhandled rejection (which killed the whole process).
+            if (hostImports!.then2FrameIdx !== undefined) {
+              out.push({ op: "local.get", index: resultPromiseLocal });
+              out.push({ op: "call", funcIdx: hostImports!.then2FrameIdx });
+            } else {
+              out.push({ op: "call", funcIdx: hostImports!.then2Idx });
+            }
             out.push({ op: "drop" });
             out.push({ op: "return" });
             break;
@@ -2437,59 +2493,6 @@ export function ensureAsyncResumeFunction(
     return arr;
   };
 
-  // Nested if-chain dispatch (`if(state==s){body}else{…}`), mirroring the
-  // generator trampoline. Recursion depth == state id (dense, validated), so
-  // each arm's `br`-to-loop depth is `id + 2` inside `buildStateBody`.
-  const buildStateArm = (i: number): Instr[] => {
-    if (i >= cfg.states.length) {
-      // (#3178) Synthetic COMPLETED arm (async gens only): fulfil `{value:
-      // undefined, done: true}` and RUN NO LEADS. The real settleDone state
-      // carries trailing body statements as leads, so completion (uncaught
-      // throw / `.return()` / `.throw()`) must NOT re-dispatch there —
-      // §27.6.3.x: a completed generator executes no further body. Terminal
-      // arm; anything else is a machine bug (unreachable).
-      if (info.asyncGen && info.completedStateId !== undefined) {
-        const completedBody = trackDetached([
-          { op: "local.get", index: resultPromiseLocal },
-          ...(undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" } satisfies Instr]),
-          { op: "i32.const", value: 1 }, // done = true
-          { op: "struct.new", typeIdx: info.asyncGenResultTypeIdx! },
-          { op: "extern.convert_any" },
-          { op: "call", funcIdx: settleFulfillIdx },
-          { op: "drop" },
-          { op: "return" },
-        ]);
-        return [
-          { op: "local.get", index: frameLocal },
-          { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD },
-          { op: "i32.const", value: info.completedStateId },
-          { op: "i32.eq" },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: completedBody,
-            else: [{ op: "unreachable" }],
-          },
-        ];
-      }
-      return [{ op: "unreachable" }];
-    }
-    const st = cfg.states[i]!;
-    const then = trackDetached(buildStateBody(st));
-    return [
-      { op: "local.get", index: frameLocal },
-      { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD },
-      { op: "i32.const", value: st.id },
-      { op: "i32.eq" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then,
-        else: buildStateArm(i + 1),
-      },
-    ];
-  };
-
   const savedFunc = ctx.currentFunc;
   ctx.currentFunc = resumeFctx;
   let chain: Instr[];
@@ -2501,13 +2504,38 @@ export function ensureAsyncResumeFunction(
   // guard is the slice-2 truthiness test (byte-identical); sibling regions get
   // an id-equality guard each. Nested regions (parent !== 0) need parent-chain
   // replay and are rejected by validateAsyncCfg until the 3c follow-up.
-  const catchFinallyInstrs: Instr[] = [];
+  const finalizerBodies: Instr[][] = [];
   try {
     // (#2710) The returned chain nests every state body, but stays detached
     // from all shifter roots until the `dispatch` push below — track it too
     // (the handler-finalizer compiles between here and there can register
     // late imports).
-    chain = trackDetached(buildStateArm(0));
+    const states = cfg.states.map((st) => ({ id: st.id, body: trackDetached(buildStateBody(st)) }));
+    let completed: AsyncFrameStateBody | undefined;
+    // (#3178) Synthetic COMPLETED arm: emit after real states, before finalizers.
+    // No leads may run again after an async generator has completed.
+    if (info.asyncGen && info.completedStateId !== undefined) {
+      const completedBody = trackDetached([
+        { op: "local.get", index: resultPromiseLocal },
+        ...(undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" } satisfies Instr]),
+        { op: "i32.const", value: 1 }, // done = true
+        { op: "struct.new", typeIdx: info.asyncGenResultTypeIdx! },
+        { op: "extern.convert_any" },
+        { op: "call", funcIdx: settleFulfillIdx },
+        { op: "drop" },
+        { op: "return" },
+      ]);
+      completed = { id: info.completedStateId, body: completedBody };
+    }
+    chain = trackDetached(
+      buildAsyncFrameStateChain({
+        frameLocal,
+        stateTypeIdx: info.stateTypeIdx,
+        stateField: STATE_FIELD,
+        states,
+        ...(completed === undefined ? {} : { completed }),
+      }),
+    );
     for (const region of cfg.handlers) {
       const saved = resumeFctx.body;
       ctx.liveBodies.add(saved);
@@ -2519,180 +2547,53 @@ export function ensureAsyncResumeFunction(
         resumeFctx.body = saved;
         ctx.liveBodies.delete(saved);
       }
-      if (cfg.handlers.length === 1) {
-        catchFinallyInstrs.push(
-          { op: "local.get", index: inSrcTryLocal },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: fbody,
-          },
-        );
-      } else {
-        catchFinallyInstrs.push(
-          { op: "local.get", index: inSrcTryLocal },
-          { op: "i32.const", value: region.id },
-          { op: "i32.eq" },
-          { op: "if", blockType: { kind: "empty" }, then: fbody },
-        );
-      }
+      finalizerBodies.push(fbody);
     }
   } finally {
     ctx.currentFunc = savedFunc;
   }
 
-  // (#2867 Gap 2) Throw → reject routing. A genuine throw — a bare `throw e`, or
-  // a rejected await re-thrown by a state prelude's MODE_THROW arm — must settle
-  // the result `$Promise` REJECTED, not escape uncaught (trap / strand pending).
-  // Wrap the whole `block { loop { if-chain } }` dispatch in `try`/`catch $exn`.
-  // Suspend / settle `return`s exit cleanly (a `return` in `try` skips `catch`),
-  // so only a real throw reaches the handler.
-  //
-  // (#2906 3c) The shared reject tail (also the routed dispatcher's default
-  // route): replay any region's await-free finalizer, reject the result
-  // promise, and (async gens) re-point at the synthetic COMPLETED arm.
-  const rejectTail: Instr[] = [
-    // (#2906 Gap 3) run the finally before rejecting, if the throw crossed
-    // the try region (inline no-op array when the body has no finally).
-    ...catchFinallyInstrs,
-    { op: "local.get", index: resultPromiseLocal },
-    { op: "local.get", index: reasonLocal },
-    { op: "call", funcIdx: settleRejectIdx },
-    { op: "drop" },
-    // (#3178) §27.6.3.5 AsyncGeneratorStart step 4.f–g: an uncaught throw
-    // COMPLETES an async generator ([[AsyncGeneratorState]] = "completed")
-    // in addition to rejecting the current result promise. Re-point
-    // frame.STATE at the synthetic leads-free COMPLETED arm so a
-    // subsequent `.next()` fulfills `{value: undefined, done: true}`
-    // instead of re-driving the throwing step and rejecting again (the
-    // 280-test yield*-GetIterator/next error-semantics cohort surfaced
-    // by the F2 async-completion channel, #3417). NOT the settleDone
-    // state — that one carries trailing body statements as leads and
-    // would re-execute them. Plain async FUNCTIONS are untouched (no
-    // re-entry exists; gate keeps their bytes identical).
-    ...(info.asyncGen && info.completedStateId !== undefined
-      ? setStateI32FromConst(info, frameLocal, STATE_FIELD, info.completedStateId)
-      : []),
-  ];
-  if (routedDispatch) {
-    // (#2906 3c) ROUTED dispatcher: `block { loop { try { chain } catch $exn {
-    // route } } }`. The route turns an abrupt completion raised while a
-    // catch-carrying region is active into a STATE TRANSITION: bind the reason
-    // to the catch param (local now, spill for later suspends), consume the
-    // throw (MODE=NEXT — the prelude re-throw arm must not re-fire on stale
-    // MODE inside the catch chain), point STATE at the region's catch entry,
-    // and `br` the loop (depth 2 from inside the route's `if`: if=0, try=1,
-    // loop=2). No active region (or a region without a catchState) falls
-    // through to the shared reject tail, exactly the pre-3c behavior.
-    const routeCore: Instr[] = [];
-    for (const region of cfg.handlers) {
-      if (region.catchState === undefined) continue;
-      const bindInstrs: Instr[] = [];
-      if (region.catchParamName !== undefined) {
-        const paramLocal = resumeFctx.localMap.get(region.catchParamName);
-        if (paramLocal !== undefined) {
-          bindInstrs.push({ op: "local.get", index: reasonLocal }, { op: "local.set", index: paramLocal });
-        }
-        const spillIdx = info.spillNames.indexOf(region.catchParamName);
-        if (spillIdx >= 0) {
-          bindInstrs.push(
-            { op: "local.get", index: frameLocal },
-            { op: "local.get", index: reasonLocal },
-            { op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.spillFieldOffset + spillIdx },
-          );
-        }
-      }
-      routeCore.push(
-        { op: "local.get", index: inSrcTryLocal },
-        { op: "i32.const", value: region.id },
-        { op: "i32.eq" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            ...bindInstrs,
-            ...setStateI32FromConst(info, frameLocal, MODE_FIELD, MODE_NEXT),
-            ...setStateI32FromConst(info, frameLocal, STATE_FIELD, region.catchState),
-            { op: "br", depth: 2 }, // if(0) → try(1) → loop(2): re-dispatch
-          ],
-        },
-      );
-    }
-    routeCore.push(...rejectTail);
-    // `catch $exn`: the thrown reason is on the stack.
-    const route: Instr[] = [{ op: "local.set", index: reasonLocal }, ...routeCore];
-    // (#3587) HOST lane `catch_all` parity: the legacy try/catch lowering also
-    // catches FOREIGN JS exceptions (a host import throwing, e.g. a TypeError
-    // from a property op) via `catch_all` + `__get_caught_exception`. Without
-    // this arm, claiming a try/catch shape on the host backend would let a
-    // synchronous host throw inside the try region ESCAPE the machine (result
-    // promise strands pending) where the legacy path caught it. The arm
-    // retrieves the recorded exception and runs an identical route —
-    // `structuredClone`d, never aliased (one Instr[] must not sit in two
-    // branches; DCE/late-import walkers would double-remap it). Native lane
-    // (`wasi`/`standalone`) has no JS sidecar — no catch_all, byte-identical.
-    let catchAllRoute: Instr[] | undefined;
-    if (info.host && hostGetCaughtIdx !== undefined) {
-      catchAllRoute = [
-        { op: "call", funcIdx: hostGetCaughtIdx },
-        { op: "local.set", index: reasonLocal },
-        ...(structuredClone(routeCore) as Instr[]),
-      ];
-    }
-    resumeFctx.body.push({
-      op: "block",
-      blockType: { kind: "empty" },
-      body: [
-        {
-          op: "loop",
-          blockType: { kind: "empty" },
-          body: [buildTargetTaggedTry(ctx, { kind: "empty" }, chain, [{ tagIdx: exnTag, body: route }], catchAllRoute)],
-        },
-      ],
-    });
-  } else {
-    const dispatch: Instr[] = [
-      {
-        op: "block",
-        blockType: { kind: "empty" },
-        body: [{ op: "loop", blockType: { kind: "empty" }, body: chain }],
-      },
-    ];
-    // (#3587 / #5322) HOST-lane `catch_all` parity for the NON-routed
-    // dispatcher too. An async body with no try/catch of its own still has to
-    // reject its result promise when a FOREIGN JS exception is raised while it
-    // resumes — the canonical shape is a compiled function the HOST invoked
-    // (`o.m(x)` on an `any` receiver goes out through `__extern_method_call`,
-    // and the host calls back in) that throws. Without this arm that exception
-    // is not `$exn`-tagged, escapes the state machine, and the result promise
-    // STRANDS PENDING: the awaiting test never settles and the throw surfaces
-    // as an unhandled rejection that kills the process. #3587 added the arm
-    // only to the routed dispatcher, so exactly the try/catch-free bodies —
-    // the common case — kept escaping. Measured witness: hono
-    // `utils/body.test.ts`, whose 37 results were all lost to one such throw.
-    const plainCatchAll: Instr[] | undefined =
-      info.host && hostGetCaughtIdx !== undefined
-        ? [
-            { op: "call", funcIdx: hostGetCaughtIdx },
-            { op: "local.set", index: reasonLocal },
-            ...(structuredClone(rejectTail) as Instr[]),
-          ]
-        : undefined;
-    resumeFctx.body.push(
-      buildTargetTaggedTry(
-        ctx,
-        { kind: "empty" },
-        dispatch,
-        [
-          {
-            tagIdx: exnTag,
-            body: [{ op: "local.set", index: reasonLocal }, ...rejectTail],
-          },
-        ],
-        plainCatchAll,
-      ),
-    );
-  }
+  // Resolve bindings only after all finalizers have compiled, as in the
+  // original routed assembly. Index zero is a binding, not absence.
+  const handlers: AsyncFrameHandler[] = cfg.handlers.map((region, index) => {
+    const name = region.catchParamName;
+    const local = name === undefined ? undefined : resumeFctx.localMap.get(name);
+    const spillIdx = name === undefined ? -1 : info.spillNames.indexOf(name);
+    return {
+      id: region.id,
+      parent: region.parent,
+      finalizerBody: finalizerBodies[index]!,
+      ...(region.catchState === undefined ? {} : { catchState: region.catchState }),
+      ...(name === undefined
+        ? {}
+        : {
+            catchBinding: {
+              name,
+              ...(local === undefined ? {} : { local }),
+              ...(spillIdx < 0 ? {} : { spillField: info.spillFieldOffset + spillIdx }),
+            },
+          }),
+    };
+  });
+  resumeFctx.body.push(
+    buildAsyncFrameDispatch({
+      target: { wasi: ctx.wasi, standalone: ctx.standalone },
+      stateTypeIdx: info.stateTypeIdx,
+      stateField: STATE_FIELD,
+      modeField: MODE_FIELD,
+      nextMode: MODE_NEXT,
+      frameLocal,
+      resultPromiseLocal,
+      reasonLocal,
+      ...(hasHandlers ? { handlerLocal: inSrcTryLocal } : {}),
+      exnTag,
+      settleRejectIdx,
+      chain,
+      handlers,
+      ...(info.asyncGen && info.completedStateId !== undefined ? { completedStateId: info.completedStateId } : {}),
+      ...(info.host && hostGetCaughtIdx !== undefined ? { hostGetCaughtIdx } : {}),
+    }),
+  );
 
   resumePlaceholder.locals = resumeFctx.locals;
   resumePlaceholder.body = resumeFctx.body;
@@ -2702,59 +2603,6 @@ export function ensureAsyncResumeFunction(
   // tracking was safe even across the assembly point.
   for (const arr of detachedSegArrays) ctx.liveBodies.delete(arr);
   return resumeFuncIdx;
-}
-
-/** Step-adapter locals: param 0/1 = (caps, value); local 2 = the cast frame. */
-function buildStepAdapterLocals(info: AsyncFrameInfo): { name: string; type: ValType }[] {
-  return [{ name: "$frame", type: { kind: "ref", typeIdx: info.stateTypeIdx } }];
-}
-
-/**
- * `__async_step_f<name>_{fulfill,reject}(caps, value) -> externref`: cast caps
- * back to the frame, store the settled value into `SENT_FIELD` (and, for the
- * reject adapter, the reason into `ERROR_FIELD` + `MODE_FIELD=MODE_THROW`), then
- * call the resume function. This is the funcref enqueued on the awaited
- * promise's reaction list and run by the microtask drain.
- */
-function buildStepAdapterBody(info: AsyncFrameInfo, resumeFuncIdx: number, reject: boolean): Instr[] {
-  const capsLocal = 0;
-  const valueLocal = 1;
-  const frameLocal = 2;
-  const body: Instr[] = [
-    { op: "local.get", index: capsLocal },
-    { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: info.stateTypeIdx },
-    { op: "local.set", index: frameLocal },
-    // SENT_FIELD = value (the settled awaited value the continuation reads).
-    { op: "local.get", index: frameLocal },
-    { op: "local.get", index: valueLocal },
-    {
-      op: "struct.set",
-      typeIdx: info.stateTypeIdx,
-      fieldIdx: SENT_FIELD,
-    },
-  ];
-  if (reject) {
-    // ERROR_FIELD = reason; MODE_FIELD = MODE_THROW (2). (Slice-1 surfaces the
-    // reason via SENT for the fast path; the throw-on-rejected-await refinement
-    // reads ERROR/MODE — wired here so the field is populated.)
-    body.push(
-      { op: "local.get", index: frameLocal },
-      { op: "local.get", index: valueLocal },
-      {
-        op: "struct.set",
-        typeIdx: info.stateTypeIdx,
-        fieldIdx: ERROR_FIELD,
-      },
-      ...setStateI32FromConst(info, frameLocal, MODE_FIELD, 2),
-    );
-  }
-  body.push(
-    { op: "local.get", index: frameLocal },
-    { op: "call", funcIdx: resumeFuncIdx },
-    { op: "ref.null.extern" }, // dropped by the drain
-  );
-  return body;
 }
 
 /**

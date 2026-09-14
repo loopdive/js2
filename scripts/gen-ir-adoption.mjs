@@ -4,7 +4,7 @@
 // Generate plan/log/ir-adoption.md from a single curated data source plus a
 // from-source cross-check against the selector's IrFallbackReason union, so
 // the table can no longer silently drift (e.g. a new rejection reason added
-// to src/ir/select.ts without a matching row).
+// to src/shared/contracts/ir-preparation-failure.ts without a matching row).
 //
 // Why curated data rather than pure source extraction: from-ast.ts dispatches
 // node kinds through scattered `ts.isX()` guards, not a central switch, and
@@ -26,7 +26,8 @@ import * as prettier from "prettier";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DOC = join(ROOT, "plan/log/ir-adoption.md");
-const SELECT_TS = join(ROOT, "src/ir/select.ts");
+const REASONS_PATH = "src/shared/contracts/ir-preparation-failure.ts";
+const REASONS_TS = join(ROOT, REASONS_PATH);
 const CODEGEN_TS = join(ROOT, "src/codegen/index.ts");
 
 // --- curated per-kind rows (source of truth) -------------------------------
@@ -293,9 +294,9 @@ const SECTIONS = [
   },
 ];
 
-// --- selector buckets (cross-checked against select.ts) --------------------
+// --- selector buckets (cross-checked against canonical failure contracts) --
 // reason -> [category, "what promotes a row"]. The set of keys MUST equal the
-// IrFallbackReason union in src/ir/select.ts (enforced below).
+// IrFallbackReason union in the canonical failure contracts (enforced below).
 const BUCKETS = {
   "body-shape-rejected": [
     "unintended",
@@ -422,7 +423,7 @@ bucket work #2856–#2859.
 > \`scripts/gen-ir-adoption.mjs\`. The quality CI job runs \`--check\` and fails
 > when this file is stale. Per-kind rows are curated; the selector-bucket
 > table is cross-checked against the \`IrFallbackReason\` union in
-> \`src/ir/select.ts\`, so a new rejection reason there forces an update here.
+> \`src/shared/contracts/ir-preparation-failure.ts\`, so a new rejection reason there forces an update here.
 
 ## Status legend
 
@@ -445,7 +446,7 @@ bucket work #2856–#2859.
 - **deferred** — IR will not adopt this kind; it stays direct-only by
   design (e.g. \`eval\`, \`with\`, \`Proxy\`).`;
 
-const BUCKETS_INTRO = `## Selector buckets (one row = one reason from \`src/ir/select.ts\`)
+const BUCKETS_INTRO = `## Selector buckets (one row = one reason from \`src/shared/contracts/ir-preparation-failure.ts\`)
 
 These are the reasons a \`FunctionDeclaration\` ends up in \`mixed\` rather
 than \`ir-owned\`. Driving each unintended bucket to zero promotes the
@@ -582,7 +583,7 @@ This file is generated. To move a row:
    cannot regress).
 3. Drop the tracking issue reference if the issue closed.
 4. If you discovered a new rejection bucket, add it to the \`IrFallbackReason\`
-   union in \`src/ir/select.ts\` **and** to \`BUCKETS\` here — the generator
+   union in \`src/shared/contracts/ir-preparation-failure.ts\` **and** to \`BUCKETS\` here — the generator
    cross-checks the two and fails otherwise.
 
 The aim of #2855 is that every "unintended" bucket reaches zero. The
@@ -615,13 +616,13 @@ function build() {
 
 // --- from-source cross-check -----------------------------------------------
 function selectReasons() {
-  const raw = readFileSync(SELECT_TS, "utf8");
+  const raw = readFileSync(REASONS_TS, "utf8");
   // Strip block and line comments first — inter-member comments contain `;`
   // and `"…"` that would otherwise truncate or pollute the union capture.
   const src = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
   // Extract the `export type IrFallbackReason = | "a" | "b" ...;` union members.
   const m = src.match(/\btype\s+IrFallbackReason\s*=\s*([\s\S]*?);/);
-  if (!m) throw new Error("could not locate IrFallbackReason union in src/ir/select.ts");
+  if (!m) throw new Error(`could not locate IrFallbackReason union in ${REASONS_PATH}`);
   const reasons = new Set();
   for (const lit of m[1].matchAll(/"([a-z][a-z-]*)"/g)) reasons.add(lit[1]);
   if (reasons.size === 0) throw new Error("IrFallbackReason union parsed to zero members");
@@ -634,9 +635,9 @@ function crossCheck() {
   const missing = [...fromSource].filter((r) => !documented.has(r));
   const extra = [...documented].filter((r) => !fromSource.has(r));
   if (missing.length || extra.length) {
-    const lines = ["selector-bucket cross-check FAILED (src/ir/select.ts ⇄ BUCKETS):"];
-    if (missing.length) lines.push(`  in select.ts but missing from BUCKETS: ${missing.join(", ")}`);
-    if (extra.length) lines.push(`  in BUCKETS but not in select.ts: ${extra.join(", ")}`);
+    const lines = [`selector-bucket cross-check FAILED (${REASONS_PATH} ⇄ BUCKETS):`];
+    if (missing.length) lines.push(`  in ${REASONS_PATH} but missing from BUCKETS: ${missing.join(", ")}`);
+    if (extra.length) lines.push(`  in BUCKETS but not in ${REASONS_PATH}: ${extra.join(", ")}`);
     lines.push("  → reconcile BUCKETS in scripts/gen-ir-adoption.mjs.");
     throw new Error(lines.join("\n"));
   }

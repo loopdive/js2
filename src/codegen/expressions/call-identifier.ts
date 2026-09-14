@@ -31,9 +31,10 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { resolveArrayInfo } from "../array-methods.js";
 import { ensureAnyHelpers, ensureAnyToExternHelper } from "../any-helpers.js";
 import { compileArrowAsClosure, getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "../closures.js";
-import { emitToNumber, emitToString } from "../coercion-engine.js";
+import { emitNumberToStringSentinelAware, emitToNumber, emitToString } from "../coercion-engine.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
+import { eagerCaptureCellForCall } from "../statements/eager-capture-box.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import {
   addImport,
@@ -151,6 +152,7 @@ import {
   buildArgcResetNoLazyExtras,
   saveArgumentLocalAsExtern,
 } from "./argc-extras.js";
+import { resolvePlainCallThisTrampoline } from "../named-this-call.js"; // (#6436)
 
 function tryEmitGenericStructFactoryResult(
   ctx: CodegenContext,
@@ -1455,10 +1457,14 @@ export function compileIdentifierCall(
       }
 
       if (argType?.kind === "f64") {
-        // number → string
+        // number → string. (#6423) An absent number-shaped property read is a
+        // `{kind:"f64", undefSentinel:true}` carrying `UNDEF_F64_BITS`; that
+        // stringifies as "undefined", not as the sentinel's "NaN". The helper
+        // leaves the same externref `number_toString` does, so the
+        // `emitStringBuiltinNumberResult` tail is unchanged.
         const toStrIdx = ctx.funcMap.get("number_toString");
         if (toStrIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx: toStrIdx });
+          emitNumberToStringSentinelAware(ctx, fctx, argType, toStrIdx);
           return emitStringBuiltinNumberResult(ctx, fctx);
         }
       }
@@ -2372,10 +2378,12 @@ export function compileIdentifierCall(
               boxBooleanIdx: number | null;
               unboxNumberIdx: number | null;
               unboxBooleanIdx: number | null;
+              isTruthyIdx: number | null;
             },
             allowProvenNumberUnbox: boolean,
             allowProvenBooleanUnbox: boolean,
             allowGeneralRefExport: boolean,
+            bridgeDirection: "argument" | "result" = "argument",
           ): Instr[] | null => {
             if (scalarAbiTypesMatch(from, to)) return [];
             // A predicate may implement a boolean|string callback result.
@@ -2539,6 +2547,27 @@ export function compileIdentifierCall(
             // Boolean identity or a lossless numeric conversion.
             if (allowProvenBooleanUnbox && isHostExtern(from) && to.kind === "i32" && to.boolean === true) {
               return helpers.unboxBooleanIdx === null ? null : [{ op: "call", funcIdx: helpers.unboxBooleanIdx }];
+            }
+
+            // (#6415) An untyped module's `return f(x)` — where `f` was read as
+            // a first-class VALUE from a host builtin (`const f =
+            // ArrayBuffer.isView`) — leaves the callee returning the boxed host
+            // result as externref, while a typed caller that cast the import to
+            // `=> boolean` expects the boolean-branded i32 this lane lowers
+            // `boolean` to. Without a bridge the live arm fell into the
+            // dead-arm placeholder below, which DROPS the result and answers
+            // `i32.const 0` — so `const f = ArrayBuffer.isView; f(bytes)`
+            // answered false where the direct `ArrayBuffer.isView(bytes)` call
+            // answered true, for every predicate (`Array.isArray`, `Object.is`
+            // measured the same way).
+            //
+            // `__is_truthy` is ToBoolean of the boxed result: exact for a real
+            // boolean, and spec-correct if the callee hands back a non-boolean
+            // that the caller's declared type says to read as one. Deliberately
+            // NOT widened to plain `i32`: that carrier also spells native ints
+            // and symbol ids, whose values are not a truthiness question.
+            if (bridgeDirection === "result" && isHostExtern(from) && to.kind === "i32" && to.boolean === true) {
+              return helpers.isTruthyIdx === null ? null : [{ op: "call", funcIdx: helpers.isTruthyIdx }];
             }
             return null;
           };
@@ -2713,6 +2742,7 @@ export function compileIdentifierCall(
             boxBooleanIdx: 0,
             unboxNumberIdx: 0,
             unboxBooleanIdx: 0,
+            isTruthyIdx: 0,
           };
           // (#5334) On the host lane a trailing `$__vec_externref` formal is
           // marshalled by the runtime-disambiguating bridge (see
@@ -2751,7 +2781,8 @@ export function compileIdentifierCall(
               expectedReturn !== null &&
               info.returnType !== null &&
               !scalarAbiTypesMatch(info.returnType, expectedReturn) &&
-              scalarBridgePlan(info.returnType, expectedReturn, theoreticalHelpers, false, false, false) !== null;
+              scalarBridgePlan(info.returnType, expectedReturn, theoreticalHelpers, false, false, false, "result") !==
+                null;
             if (differs || returnDiffers) {
               needsScalarBridge = true;
               break;
@@ -2767,6 +2798,7 @@ export function compileIdentifierCall(
             allowProvenNumberUnbox: boolean,
             allowProvenBooleanUnbox: boolean,
             allowGeneralRefExport: boolean,
+            bridgeDirection: "argument" | "result" = "argument",
           ): Instr[] | null =>
             scalarBridgePlan(
               from,
@@ -2776,10 +2808,12 @@ export function compileIdentifierCall(
                 boxBooleanIdx: ctx.funcMap.get("__box_boolean") ?? null,
                 unboxNumberIdx: ctx.funcMap.get("__unbox_number") ?? null,
                 unboxBooleanIdx: ctx.funcMap.get("__unbox_boolean") ?? null,
+                isTruthyIdx: ctx.funcMap.get("__is_truthy") ?? null,
               },
               allowProvenNumberUnbox,
               allowProvenBooleanUnbox,
               allowGeneralRefExport,
+              bridgeDirection,
             );
 
           const funcCandidates: FuncCandidate[] = [
@@ -2900,6 +2934,7 @@ export function compileIdentifierCall(
                 false,
                 false,
                 canExportCandidateReferenceResult(info.funcTypeIdx),
+                "result",
               ) === null &&
               !declaredRefSubtypeOf(info.returnType, expectedReturn) &&
               !canProjectImplementationReturn(info.returnType, expectedReturn)
@@ -3715,6 +3750,7 @@ export function compileIdentifierCall(
                     true,
                     false,
                     canExportCandidateReferenceResult(fc.funcTypeIdx),
+                    "result",
                   );
                   if (bridge !== null) {
                     fcCallBody.push(...bridge);
@@ -4224,27 +4260,32 @@ export function compileIdentifierCall(
             // explicitly recorded a lifted capture slot or can prove the old
             // slot is stale. This is not #1177's reverted blanket localMap-first
             // substitution.
-            const capSourceIdx = captureSourceSlot(fctx, cap);
-            fctx.body.push({ op: "local.get", index: capSourceIdx });
-            fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
-            // Also box the outer local so subsequent reads/writes go through the ref cell
-            const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}`, {
-              kind: "ref_null",
-              typeIdx: refCellTypeIdx,
-            });
-            // Duplicate: need the ref cell for the call AND for the outer local
-            fctx.body.push({ op: "local.tee", index: boxedLocalIdx });
-            fctx.body.push({ op: "ref.as_non_null" });
-            // Re-register the original name to point to the boxed local
-            fctx.localMap.set(cap.name, boxedLocalIdx);
-            if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
-            fctx.boxedCaptures.set(cap.name, {
-              refCellTypeIdx,
-              valType: cap.valType,
-              // The call may be skipped; reads, writes and subsequent calls
-              // must seed the cell from this still-live binding on that path.
-              rawLocalIdx: capSourceIdx,
-            });
+            const eagerCell = eagerCaptureCellForCall(fctx, cap, refCellTypeIdx);
+            if (eagerCell !== undefined) {
+              fctx.body.push({ op: "local.get", index: eagerCell });
+            } else {
+              const capSourceIdx = captureSourceSlot(fctx, cap);
+              fctx.body.push({ op: "local.get", index: capSourceIdx });
+              fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
+              // Also box the outer local so subsequent reads/writes go through the ref cell
+              const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}`, {
+                kind: "ref_null",
+                typeIdx: refCellTypeIdx,
+              });
+              // Duplicate: need the ref cell for the call AND for the outer local
+              fctx.body.push({ op: "local.tee", index: boxedLocalIdx });
+              fctx.body.push({ op: "ref.as_non_null" });
+              // Re-register the original name to point to the boxed local
+              fctx.localMap.set(cap.name, boxedLocalIdx);
+              if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
+              fctx.boxedCaptures.set(cap.name, {
+                refCellTypeIdx,
+                valType: cap.valType,
+                // The call may be skipped; reads, writes and subsequent calls
+                // must seed the cell from this still-live binding on that path.
+                rawLocalIdx: capSourceIdx,
+              });
+            }
           }
           // Coerce mutable capture (ref cell) to expected param type if they differ
           const expectedMutCapType = captureParamTypes?.[capIdx];
@@ -4630,7 +4671,10 @@ export function compileIdentifierCall(
 
     // Argument compilation may shift defined-function indices.
     const finalFuncIdx = sourceFunctionHandle ?? ctx.funcMap.get(funcName) ?? funcIdx;
-    fctx.body.push({ op: "call", funcIdx: finalFuncIdx });
+    // (#6436) A plain call installs `undefined` as the receiver. Minted AFTER
+    // `maybeSetArgcForKnownCall`: the trampoline pushes no operand of its own.
+    const plainThis = resolvePlainCallThisTrampoline(ctx, funcName, finalFuncIdx);
+    fctx.body.push({ op: "call", funcIdx: plainThis ?? finalFuncIdx });
     // Foreign eval calls lack checker signatures; the resolved Wasm signature is authoritative.
     if (isForeignEvalNode(expr) && wasmFuncReturnsVoid(ctx, finalFuncIdx)) return VOID_RESULT;
     const sig = isForeignEvalNode(expr) ? undefined : ctx.checker.getResolvedSignature(expr);
