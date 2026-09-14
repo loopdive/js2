@@ -10,6 +10,11 @@ import { integrityVarKey } from "../widened-var-key.js";
 import { classMemberFuncKey } from "../class-member-keys.js"; // (#5195 Step 9 H) static setter key
 import { PROP_FLAG_ACCESSOR, PROP_FLAG_WRITABLE } from "../object-ops.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
+import {
+  prepareStrictSingleArrayWrite,
+  emitStrictSingleArrayWrite,
+  emitEarlyStrictArrayWrite,
+} from "./destructuring-unresolved.js";
 import { emitBoundsCheckedArrayGet, resolveArrayInfo } from "../array-methods.js";
 import { emitArraySetLengthValidation } from "../array-length-define.js"; // (#4222) §10.4.2.4 step 3
 import { emitHoleToUndefined, holeSentinelInstrs } from "../array-holes.js";
@@ -96,7 +101,6 @@ import { tryCompileFnctorPrototypeAssign } from "./fnctor-prototype.js";
 import { reserveAccessorSetDriver } from "../accessor-driver.js";
 import { S5C_STRUCT_ACCESSOR_CLOSURE } from "../struct-accessor-closure.js";
 import {
-  findUnresolvableInArrayPattern,
   findUnresolvableInObjectPattern,
   isUnresolvableIdent,
   NOT_UNRESOLVABLE,
@@ -1979,9 +1983,11 @@ function compileArrayDestructuringAssignment(
   target: ts.ArrayLiteralExpression,
   value: ts.Expression,
 ): InnerResult {
+  const singleUnresolved = prepareStrictSingleArrayWrite(ctx, fctx, target, value);
   // Compile the RHS — should produce a struct ref (either tuple or vec)
   const resultType = compileExpression(ctx, fctx, value);
   if (!resultType) return null;
+  if (singleUnresolved) return emitStrictSingleArrayWrite(ctx, fctx, resultType);
   // (#1719 CPR-2) When the program overrode Array.prototype[@@iterator] and the
   // RHS is a real array, drive the captured override instead of the backing
   // store (§13.15.5.2 ArrayAssignmentPattern → GetIterator). Strictly gated
@@ -1998,23 +2004,7 @@ function compileArrayDestructuringAssignment(
     if (drove) return { kind: "externref" };
   }
 
-  // §6.2.4 PutValue: strict-mode assignment to unresolvable reference throws.
-  // Nested patterns must observe a nullish element before PutValue resolves
-  // their leaf targets. In `[[x]] = []`, the missing outer element therefore
-  // throws the required TypeError before strict-mode's unresolved `x` check
-  // (#4719). Leaf-only patterns retain the existing early ReferenceError path.
-  const hasNestedPattern = target.elements.some(
-    (element) => ts.isArrayLiteralExpression(element) || ts.isObjectLiteralExpression(element),
-  );
-  if (
-    isStrictContext(target, ctx.inferModuleStrictArguments) &&
-    findUnresolvableInArrayPattern(ctx, fctx, target) &&
-    !hasNestedPattern
-  ) {
-    emitStrictPutValueThrow(ctx, fctx);
-    fctx.body.push({ op: "ref.null.extern" });
-    return { kind: "externref" };
-  }
+  if (emitEarlyStrictArrayWrite(ctx, fctx, target)) return { kind: "externref" };
 
   // Externref fallback: use __extern_get(obj, boxed_index) for each element
   if (resultType.kind !== "ref" && resultType.kind !== "ref_null") {

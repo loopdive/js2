@@ -33,7 +33,9 @@ import { isModuleGoal } from "../scripts/test262-module-goal.mjs";
 // (#5353) ONE Temporal gate + ONE cache-dir rule, shared with the sharded lane.
 import {
   temporalCacheDir,
+  temporalProviderCompileOptions,
   test262NeedsTemporalGlobal as sharedTest262NeedsTemporalGlobal,
+  test262TemporalLaneEnabled,
 } from "../scripts/test262-temporal.mjs";
 import { hasSelfModuleImport } from "../scripts/test262-fixture-graph.mjs";
 // (#4162) ONE import-object finaliser, shared with scripts/test262-worker.mjs
@@ -4247,7 +4249,14 @@ function appendOriginalHarnessFailureContext(detail: string, source: string): st
 //     compile regression) must degrade to today's behaviour — the row reports
 //     its own failure — never take the whole lane down. The build is attempted
 //     once; the null is memoised with it.
-let temporalProviderPromise: Promise<TemporalProvider | null> | undefined;
+//  4. PER TARGET (#5383 S3). The host lane links the `--target gc` provider;
+//     standalone links the host-free one, and ONLY when a standalone-keyed
+//     pre-warm stamp says it exists (`test262TemporalLaneEnabled`). Before this
+//     slice the gate here read neither the lane nor the target, so a standalone
+//     row linked the HOST provider — a gc artifact in a standalone consumer.
+//     The map is keyed by target so a process that runs both lanes keeps them
+//     apart; each entry memoises its `null` exactly as the single slot did.
+const temporalProviderPromises = new Map<string, Promise<TemporalProvider | null>>();
 
 /**
  * Does this test need the real `Temporal` global?
@@ -4279,15 +4288,18 @@ export function test262NeedsTemporalGlobal(filePath: string, meta: Test262Meta):
  * lane must state whether the provider was a cache hit or a cold build — the
  * one line below is what makes that recoverable from a run log.
  */
-async function getTest262TemporalProvider(): Promise<TemporalProvider | null> {
-  if (temporalProviderPromise) return temporalProviderPromise;
-  temporalProviderPromise = (async () => {
+async function getTest262TemporalProvider(target?: "standalone"): Promise<TemporalProvider | null> {
+  const memoKey = target ?? "host";
+  const memoised = temporalProviderPromises.get(memoKey);
+  if (memoised) return memoised;
+  const promise = (async () => {
     const { setupTemporalPolyfill, linkPolyfillSource } = await import("./dogfood/setup-temporal-polyfill.mjs");
     const linked = linkPolyfillSource(setupTemporalPolyfill());
     const cacheDir = temporalCacheDir();
-    const provider = await buildTemporalProvider({ polyfillSource: linked.source, cacheDir });
+    const compileOptions = temporalProviderCompileOptions(target);
+    const provider = await buildTemporalProvider({ polyfillSource: linked.source, cacheDir, compileOptions });
     console.error(
-      `[test262] Temporal provider ${provider.namespace} (${provider.artifact.binary.length} B) ` +
+      `[test262] Temporal provider (${memoKey}) ${provider.namespace} (${provider.artifact.binary.length} B) ` +
         `built in ${provider.buildMs}ms cacheHit=${provider.cacheHit} from ${cacheDir}`,
     );
     return provider;
@@ -4297,7 +4309,8 @@ async function getTest262TemporalProvider(): Promise<TemporalProvider | null> {
     console.error(`[test262] Temporal provider unavailable, rows keep the ambient lane: ${String(error)}`);
     return null;
   });
-  return temporalProviderPromise;
+  temporalProviderPromises.set(memoKey, promise);
+  return promise;
 }
 
 async function runOriginalHarnessVariant(
@@ -4629,8 +4642,9 @@ export async function runTest262File(
   // The precompiled Temporal provider borrows host semantics; it cannot certify a native-first row.
   const temporal =
     parseTest262SemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS) === "auto" &&
+    test262TemporalLaneEnabled(target) &&
     test262NeedsTemporalGlobal(filePath, meta)
-      ? await getTest262TemporalProvider()
+      ? await getTest262TemporalProvider(target)
       : null;
   const primary = await runOriginalHarnessVariant(
     assembly.primary,

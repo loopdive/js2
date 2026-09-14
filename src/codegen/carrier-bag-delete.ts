@@ -259,13 +259,54 @@ export function fillCarrierBagDelete(ctx: CodegenContext): void {
         ];
 
   const closureArm = lookupArm(ctx.funcMap.get(IS_CLOSURE_PROP_CARRIER), ctx.funcMap.get(CLOSURE_BAG_LOOKUP));
+  // Native generator states deliberately use the same identity-keyed bag as
+  // closures for ordinary own properties, but they are not callable closure
+  // wrappers.  Their reads and writes are claimed by the generator protocol /
+  // instance-expando arms before this generic fallback.  Deletion needs the
+  // matching exact-state admission here: otherwise `gen.next = undefined;
+  // delete gen.next` leaves the shadowing bag entry live and permanently
+  // suppresses the inherited Generator.prototype method.  Do not widen the
+  // closure predicate: that would also route unrelated dynamic method calls
+  // through Function.prototype machinery.  The generator type registry is
+  // complete at this FINALIZE seam, and `__closure_bag_lookup`'s slotless
+  // registry path is already the canonical storage for these state objects.
+  const nativeGeneratorStateTypeIdxs = [
+    ...new Set([...ctx.nativeGenerators.values()].map((info) => info.stateTypeIdx)),
+  ];
+  const nativeGeneratorArm: Instr[] =
+    nativeGeneratorStateTypeIdxs.length === 0 || ctx.funcMap.get(CLOSURE_BAG_LOOKUP) === undefined
+      ? []
+      : [
+          { op: "local.get", index: BAG },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: nativeGeneratorStateTypeIdxs.flatMap((typeIdx): Instr[] => [
+              { op: "local.get", index: 0 },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: 0 },
+                  { op: "call", funcIdx: ctx.funcMap.get(CLOSURE_BAG_LOOKUP)! },
+                  { op: "local.set", index: BAG },
+                ],
+              },
+            ]),
+          },
+        ];
   const vecArm = lookupArm(ctx.funcMap.get(IS_VEC_PROP_CARRIER), ctx.funcMap.get(VEC_BAG_LOOKUP));
   const errorArm = lookupArm(ctx.funcMap.get(IS_ERROR_PROP_CARRIER), ctx.funcMap.get(ERROR_PROP_BAG_LOOKUP));
-  if (closureArm.length === 0 && vecArm.length === 0 && errorArm.length === 0) return;
+  if (closureArm.length === 0 && nativeGeneratorArm.length === 0 && vecArm.length === 0 && errorArm.length === 0)
+    return;
 
   const notHandled: Instr[] = [{ op: "i32.const", value: -1 }, { op: "return" }];
   fn.body = [
     ...closureArm,
+    ...nativeGeneratorArm,
     ...vecArm,
     ...errorArm,
     { op: "local.get", index: BAG },

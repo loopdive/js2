@@ -9,8 +9,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
-import { dirname, join, resolve, isAbsolute } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { dirname, join, isAbsolute } from "node:path";
+import { pathToFileURL } from "node:url";
 import { test } from "node:test";
 
 const override = process.env.FD_ADMISSION_CONTRACT;
@@ -20,13 +20,17 @@ const contractURL = override
   : new URL("./frame-delay-three-arm-contract.mjs", import.meta.url);
 const contract = await import(contractURL.href); // Contract only; never import the runner.
 const { sha, readManifest, sourceSnapshot, assertAdmission, ORIGINAL_INSTRUMENTS, SPEC } = contract;
-const contractRoot = resolve(dirname(fileURLToPath(contractURL)), "../..");
 const realRead = fs.readFileSync.bind(fs);
 const contractDigest = sha(realRead(contractURL));
-// Original instrument bytes are data, never imported/evaluated. Only these small
-// fixed instrument files are read from the checkout; no source census/dependencies.
+// Complete original instrument fixtures are data, never imported/evaluated.
+// Authenticate the immutable historical bytes; no source census/dependencies.
 const instrumentBytes = new Map(
-  Object.keys(ORIGINAL_INSTRUMENTS).map((path) => [path, realRead(join(contractRoot, path))]),
+  Object.keys(ORIGINAL_INSTRUMENTS).map((path) => [
+    path,
+    realRead(
+      new URL("./fixtures/frame-delay-original-instruments/" + path.split("/").at(-1) + ".txt", import.meta.url),
+    ),
+  ]),
 );
 for (const [path, bytes] of instrumentBytes) assert.equal(sha(bytes), ORIGINAL_INSTRUMENTS[path], path);
 instrumentBytes.set("scripts/lib/frame-delay-three-arm-contract.mjs", realRead(contractURL));

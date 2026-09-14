@@ -7,12 +7,21 @@ import { extractPublicArmSource, addManifestAdmission, parseArguments } from "..
 import { ORIGINAL_INSTRUMENTS, sha } from "./frame-delay-three-arm-contract.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
+// The extractor authenticates the complete source file before extracting its
+// public arm; storing just the arm would bypass that original API contract.
+const originalBytes = (path) => {
+  const bytes = readFileSync(
+    new URL("./fixtures/frame-delay-original-instruments/" + path.split("/").at(-1) + ".txt", import.meta.url),
+  );
+  assert.equal(sha(bytes), ORIGINAL_INSTRUMENTS[path], "immutable historical fixture " + path);
+  return bytes;
+};
 for (const path of [
   "tests/issue-3518-async-frame-body-source-preservation.test.ts",
   "tests/helpers/native-delay-combinator-source-receipts.mjs",
 ]) {
   test(path + " original body preserved and adapted source parses without execution", () => {
-    const bytes = readFileSync(root + path);
+    const bytes = originalBytes(path);
     const body = extractPublicArmSource(bytes, ORIGINAL_INSTRUMENTS[path]);
     const program = addManifestAdmission(body);
     assert.equal(program.source.replace(program.admission, ""), body);
@@ -22,9 +31,19 @@ for (const path of [
     );
     execFileSync(process.execPath, ["--input-type=module", "--check"], { input: program.source });
   });
+  test(path + " current modified instrument is not historical authority", () => {
+    const bytes = originalBytes(path);
+    assert.doesNotThrow(() => extractPublicArmSource(bytes, ORIGINAL_INSTRUMENTS[path]));
+    const current = readFileSync(root + path);
+    assert.notEqual(sha(current), ORIGINAL_INSTRUMENTS[path], "control requires the observed current source change");
+    assert.throws(
+      () => extractPublicArmSource(current, ORIGINAL_INSTRUMENTS[path]),
+      /original recorder source hash mismatch/,
+    );
+  });
   test(path + " changed instrument rejected", () => {
     assert.throws(() =>
-      extractPublicArmSource(Buffer.concat([readFileSync(root + path), Buffer.from("\n")]), ORIGINAL_INSTRUMENTS[path]),
+      extractPublicArmSource(Buffer.concat([originalBytes(path), Buffer.from("\n")]), ORIGINAL_INSTRUMENTS[path]),
     );
   });
 }

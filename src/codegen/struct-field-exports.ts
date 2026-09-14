@@ -1091,6 +1091,12 @@ function emitStructFieldNamesExport(
   //  - non-colliding structs: legacy `ref.test typeIdx → own CSV` arm.
   type LegacyEntry = { typeIdx: number; names: string[] };
   type ShapeEntry = { typeIdx: number; shapeFieldIdx: number };
+  // Every type index some other emitted type declares as its supertype (#6430).
+  const declaredSupertypes = new Set<number>();
+  for (const type of ctx.mod.types) {
+    const superIdx = (type as { superTypeIdx?: number }).superTypeIdx;
+    if (typeof superIdx === "number" && superIdx >= 0) declaredSupertypes.add(superIdx);
+  }
   const legacyEntries: LegacyEntry[] = [];
   const shapeEntries: ShapeEntry[] = [];
   for (const [structName, fields] of ctx.structFields) {
@@ -1113,7 +1119,24 @@ function emitStructFieldNamesExport(
     // (#2009 R3b) Permute to JS insertion order for spec-correct host
     // enumeration; no-op when no literal-derived order was recorded.
     const orderedNames = orderNamesByInsertion(ctx, structName, names);
-    if (orderedNames.length > 0) legacyEntries.push({ typeIdx, names: orderedNames });
+    // (#6430) A FIELD-LESS shape gets an arm too, answering the empty CSV.
+    // Skipping it made `__struct_field_names` answer `ref.null` — which the
+    // host reads as "unknown legacy shape, keep probing" rather than "known
+    // shape with no fields". A `function f(opt = {}) {…}` whose `{}` lowers to
+    // `(struct)` then fell through to the `__sget_<key>` getter shared by
+    // structurally unrelated shapes and read back its f64 miss-default `0`, so
+    // `typeof opt.maxAge` answered `"number"` for an absent field (hono's
+    // `serialize` emitting a spurious `Max-Age=0`).
+    //
+    // NOT for a declared SUPERTYPE, though: `class A {}` / `class B extends A
+    // { x }` gives A a field-less struct that B declares as its super, and
+    // `ref.test $A` matches a B instance. An empty-CSV arm for A placed ahead
+    // of B's in the ladder would strip every field off B. A supertype that
+    // HAS fields already answers for its subclasses — pre-existing, not
+    // widened here — but a field-less one must not start doing so.
+    if (orderedNames.length > 0 || !declaredSupertypes.has(typeIdx)) {
+      legacyEntries.push({ typeIdx, names: orderedNames });
+    }
   }
 
   if (legacyEntries.length === 0 && shapeEntries.length === 0) return;

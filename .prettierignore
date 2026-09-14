@@ -8,6 +8,14 @@ website/public/benchmarks/results/npm-compat-history.json
 # (#2871 follow-up) Per-file edition index — a generated 16k-entry map, written minified
 # on purpose (pretty-printing quadruples the download the report page makes).
 website/public/benchmarks/results/test262-file-editions.json
+# (#6418) The published copies of the test262 reports are bot-written and are
+# not prettier-clean on main, so ANY commit that stages them reformats them —
+# a 400-line diff nobody asked for, on files only the baseline-sync bot owns,
+# which then goes DIRTY on that bot's next push. `benchmarks/results/` above is
+# ignored for exactly this reason; these two copies of it were simply missed.
+public/benchmarks/results/
+website/public/benchmarks/results/test262-report.json
+website/public/benchmarks/results/test262-standalone-report.json
 .test262-cache/
 scripts/compiler-bundle.mjs
 scripts/runtime-bundle.mjs

@@ -11,6 +11,7 @@ import { mintDefinedFunc, pushDefinedFunc } from "../src/codegen/func-space.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { emitWat } from "../src/emit/wat.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
+import { inversePreparedSourceForward } from "./helpers/prepared-source-forward-receipts.js";
 import {
   createVectorBaseType,
   createVectorBackingArrayType,
@@ -27,6 +28,58 @@ import {
 const base = "a6cc59a2cdfad5141d75faadf1530a9de63bebd7";
 const fixtureDigest = "6c1406df64d99bef6f62ce43d3d98f60a517093244979fb226626043c38851ab";
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
+
+// These forward spans come from fixed published source blobs, including the
+// original #6420 implementation. They are inverted before the unchanged donor
+// reconstruction; neither live source nor runtime Git can authorize new text.
+const preparedForwardDigest = "96d5cdc49a12420667d2ea47311a15ed142ce78d22991aba06ab76b061a7f874";
+const preparedForwardText = readFileSync(
+  new URL("./fixtures/issue-3518-prepared-object-runtime-forward.json", import.meta.url),
+  "utf8",
+);
+interface PreparedForwardSpan {
+  id: string;
+  before: string;
+  after: string;
+}
+// The independently committed Symbol input arm is newer than the eleven
+// prepared spans. Authenticate its exact placement before applying that older
+// inverse; the original donor and prepared-forward receipts remain unchanged.
+const mainForwardDigest = "0fd52e36fb7e44c9ffc7f710228be16da332859fa0c22e26644d67be588528e9";
+const mainForwardText = readFileSync(
+  new URL("./fixtures/issue-3518-main-object-runtime-forward.json", import.meta.url),
+  "utf8",
+);
+const mainForward = JSON.parse(mainForwardText) as {
+  path: string;
+  independentRecordSha256: string;
+  sourceProvenance: Record<
+    "implementationParent" | "implementation" | "deliveredMain" | "priorCheckpoint",
+    { revision: string; blob: string; sha256: string; bytes: number }
+  >;
+  change: {
+    addedLines: number;
+    addedText: string;
+    leftAnchor: string;
+    rightAnchor: string;
+    priorCheckpointProjectedSha256: string;
+  };
+  spans: PreparedForwardSpan[];
+};
+function inverseMainObjectForward(source: string): string {
+  return inversePreparedSourceForward(source, mainForwardText, mainForwardDigest);
+}
+const preparedForward = JSON.parse(preparedForwardText) as {
+  path: string;
+  independentRecordSha256: string;
+  spans: PreparedForwardSpan[];
+};
+
+function preparedForwardSpan(id: string): PreparedForwardSpan {
+  const matches = preparedForward.spans.filter((span) => span.id === id);
+  if (matches.length !== 1) throw new Error(`missing or duplicate prepared forward record: ${id}`);
+  return matches[0]!;
+}
 interface Span {
   role: string;
   start: number;
@@ -155,7 +208,9 @@ const approvedEarly = replaceExactlyOnce(
 
 function reconstructLegacySource(source: string, file: "object" | "linear"): string {
   if (file === "object") {
-    const withoutImport = replaceExactlyOnce(source, canonicalObjectImport, "");
+    const beforeMain = inverseMainObjectForward(source);
+    const beforePrepared = inversePreparedSourceForward(beforeMain, preparedForwardText, preparedForwardDigest);
+    const withoutImport = replaceExactlyOnce(beforePrepared, canonicalObjectImport, "");
     const withLayout = replaceExactlyOnce(withoutImport, approvedLayout, donor("layout"));
     return replaceExactlyOnce(withLayout, approvedHelpers, donor("helpers"));
   }
@@ -619,6 +674,352 @@ describe("native argument-vector resources", () => {
       }
       // Construction and genuine positive comparison above cannot be swallowed by toThrow.
       expect(() => expect(mutant).toEqual(original.body)).toThrow();
+    });
+  }
+});
+
+// Each semantic edit is made inside one independently pinned span. The same
+// case also removes and duplicates that complete span, after a genuine positive.
+const preparedSpanMutations: [string, [string, string][]][] = [
+  [
+    "peer-terminal-import",
+    [
+      ['from "./standalone-link-boundary.js"', 'from "./other-link-boundary.js"'],
+      ["import {\n  emitStandaloneLinkBoundaryTerminals,", "import type {\n  emitStandaloneLinkBoundaryTerminals,"],
+      ["  standaloneLinkBoundaryPeerIndices,", "  standaloneLinkBoundaryPeerIndices as otherPeerIndices,"],
+    ],
+  ],
+  [
+    "early-peer-terminal-reservation",
+    [
+      ["memberGet: peerMemberGetIdx", "objectKeys: peerMemberGetIdx"],
+      ["methodCall: peerMethodCallIdx,", ""],
+      ["standaloneLinkBoundaryPeerIndices(ctx)", "standaloneLinkBoundaryPeerIndices({ ...ctx })"],
+    ],
+  ],
+  [
+    "peer-member-get-fallback",
+    [
+      [
+        "...((boundaryObjectGetIdx ?? peerMemberGetIdx) !== undefined",
+        "...((boundaryObjectGetIdx || peerMemberGetIdx) !== undefined",
+      ],
+      ["funcIdx: (boundaryObjectGetIdx ?? peerMemberGetIdx)!", "funcIdx: (boundaryObjectGetIdx ?? peerObjectKeysIdx)!"],
+      ['{ op: "local.tee", index: 6 }', '{ op: "local.tee", index: 5 }'],
+    ],
+  ],
+  [
+    "peer-key-reader-fallbacks",
+    [
+      [
+        "boundaryObjectKeysIdx: boundaryObjectKeysIdx ?? peerObjectKeysIdx",
+        "boundaryObjectKeysIdx: boundaryObjectKeysIdx ?? peerMemberGetIdx",
+      ],
+      [
+        "boundaryObjectForInKeysIdx: boundaryObjectForInKeysIdx ?? peerObjectKeysIdx",
+        "boundaryObjectForInKeysIdx: boundaryObjectForInKeysIdx || peerObjectKeysIdx",
+      ],
+    ],
+  ],
+  [
+    "peer-method-call-local",
+    [
+      ["boundaryObjectCallIdx ?? peerMethodCallIdx", "boundaryObjectCallIdx || peerMethodCallIdx"],
+      ["3 + methodCallLocals.length", "2 + methodCallLocals.length"],
+      ['type: { kind: "externref" }', 'type: { kind: "eqref" }'],
+    ],
+  ],
+  [
+    "peer-method-call-arm",
+    [
+      [
+        '{ op: "local.get", index: 1 },\n                { op: "local.get", index: 2 }',
+        '{ op: "local.get", index: 2 },\n                { op: "local.get", index: 1 }',
+      ],
+      ["funcIdx: boundaryOrPeerCallIdx", "funcIdx: boundaryObjectCallIdx"],
+      ['{ op: "local.tee", index: boundaryCallResultLocal }', '{ op: "local.tee", index: 0 }'],
+    ],
+  ],
+  [
+    "late-peer-terminal-emission",
+    [
+      [
+        "emitStandaloneLinkBoundaryTerminals(ctx, registerNative);",
+        "emitStandaloneLinkBoundaryTerminals(ctx, () => undefined);",
+      ],
+      [
+        "emitStandaloneLinkBoundaryTerminals(ctx, registerNative);",
+        "emitStandaloneLinkBoundaryTerminals({ ...ctx }, registerNative);",
+      ],
+    ],
+  ],
+  [
+    "peer-apply-fallback",
+    [
+      ['standaloneLinkBoundaryPeerIndex(ctx, "apply")', 'standaloneLinkBoundaryPeerIndex(ctx, "memberGet")'],
+      ["ctx.funcMap.get(linkedCallName)) ??", "ctx.funcMap.get(linkedCallName)) ||"],
+    ],
+  ],
+  [
+    "peer-callable-pre-dispatch-main-6420",
+    [
+      ['standaloneLinkBoundaryPeerIndex(ctx, "callableKind")', 'standaloneLinkBoundaryPeerIndex(ctx, "construct")'],
+      ['standaloneLinkBoundaryPeerIndex(ctx, "apply")', 'standaloneLinkBoundaryPeerIndex(ctx, "memberGet")'],
+      [
+        "linkedStandaloneCallableKindIdx !== undefined && linkedStandaloneApplyIdx !== undefined",
+        "linkedStandaloneApplyIdx !== undefined",
+      ],
+      [
+        "linkedStandaloneCallableKindIdx !== undefined && linkedStandaloneApplyIdx !== undefined",
+        "linkedStandaloneCallableKindIdx !== undefined",
+      ],
+      ["body.unshift(", "body.push("],
+      ['{ op: "i32.const", value: 1 }', '{ op: "i32.const", value: 2 }'],
+      ['{ op: "i32.and" }', '{ op: "i32.or" }'],
+      [
+        '{ op: "local.get", index: 1 },\n          { op: "local.get", index: 2 }',
+        '{ op: "local.get", index: 2 },\n          { op: "local.get", index: 1 }',
+      ],
+      ['{ op: "call", funcIdx: linkedStandaloneApplyIdx }', '{ op: "call", funcIdx: linkedStandaloneCallableKindIdx }'],
+      ['          { op: "return" },\n', ""],
+    ],
+  ],
+  [
+    "tuple-candidate-and-layout",
+    [
+      ["new Set(ctx.tupleTypeMap.values())", "new Set(ctx.structMap.values())"],
+      ["!seen.has(typeIdx) && tupleTypeIdxs.has(typeIdx)", "tupleTypeIdxs.has(typeIdx)"],
+      ["fields.every((f, i) => f.name === `_${i}`)", "fields.some((f, i) => f.name === `_${i}`)"],
+      ["lengthFieldIdx: -1", "lengthFieldIdx: 0"],
+      ['lengthFieldType: { kind: "f64" }', 'lengthFieldType: { kind: "i32" }'],
+      ["constLength: fields.length", "constLength: fields.length + 1"],
+      ["fieldIdx: i, fieldType: f.type", "fieldIdx: i + 1, fieldType: f.type"],
+    ],
+  ],
+  [
+    "tuple-constant-length-arm",
+    [
+      ["if (cand.constLength !== undefined)", "if (cand.constLength)"],
+      ['{ op: "ref.test", typeIdx: cand.typeIdx }', '{ op: "ref.test", typeIdx: 0 }'],
+      ['{ op: "f64.const", value: cand.constLength }', '{ op: "i32.const", value: cand.constLength }'],
+      [
+        'then: [{ op: "f64.const", value: cand.constLength }, { op: "return" }]',
+        'then: [{ op: "f64.const", value: cand.constLength }]',
+      ],
+      ["        continue;", "        break;"],
+    ],
+  ],
+];
+
+describe("prepared object-runtime forward source receipts", () => {
+  it("authenticates all eleven ordered spans before the original full-source donor receipt", () => {
+    expect(sha256(preparedForwardText)).toBe(preparedForwardDigest);
+    expect(preparedForward.path).toBe("src/codegen/object-runtime.ts");
+    expect(preparedForward.independentRecordSha256).toBe(
+      "6aca0046b06ee23938660785b00f0eb302b0a06005af2bb6157214fc106de3f8",
+    );
+    expect(preparedForward.spans.map((span) => span.id)).toEqual(preparedSpanMutations.map(([id]) => id));
+    expect(preparedForward.spans).toHaveLength(11);
+    const beforePrepared = inversePreparedSourceForward(
+      inverseMainObjectForward(liveObject),
+      preparedForwardText,
+      preparedForwardDigest,
+    );
+    // Fixed scanner source 1ce5d057, not a receipt derived from the joined tree.
+    expect(sha256(beforePrepared)).toBe("0c09bfbf102535500cee07df72a73dd06d7506ffd750ce1545323b5d6f994edd");
+    requireFullLegacyReceipt(liveObject, "object");
+  });
+
+  for (const [id, changes] of preparedSpanMutations) {
+    it(`rejects semantic edits, removal and duplication of the authenticated ${id} span`, () => {
+      requireFullLegacyReceipt(liveObject, "object");
+      const span = preparedForwardSpan(id);
+      expect(changes.length).toBeGreaterThan(0);
+      const replacements = changes.map(([before, after]) => replaceExactlyOnce(span.after, before, after));
+      replacements.push(span.before, span.after + span.after);
+      for (const replacement of replacements) {
+        const mutant = replaceExactlyOnce(liveObject, span.after, replacement);
+        expect(mutant).not.toBe(liveObject);
+        expect(() => requireFullLegacyReceipt(mutant, "object")).toThrow(/prepared forward span/);
+      }
+    });
+  }
+
+  for (const mutation of ["missing", "provenance", "span"] as const) {
+    it(`rejects a ${mutation} forward-fixture mutation without accepting new hashes`, () => {
+      requireFullLegacyReceipt(liveObject, "object");
+      let mutant: string;
+      if (mutation === "missing") {
+        mutant = "";
+      } else if (mutation === "provenance") {
+        mutant = replaceExactlyOnce(
+          preparedForwardText,
+          "4fd5a582bbe7de375f2d0781cfd3cd06aa7fcda1",
+          "0000000000000000000000000000000000000000",
+        );
+      } else {
+        const changed = JSON.parse(preparedForwardText) as typeof preparedForward;
+        changed.spans[0]!.after += "void 0;\n";
+        mutant = JSON.stringify(changed);
+      }
+      expect(mutant).not.toBe(preparedForwardText);
+      expect(() => inversePreparedSourceForward(liveObject, mutant, preparedForwardDigest)).toThrow(
+        /fixture digest mismatch/,
+      );
+    });
+  }
+
+  it("rejects reordered complete callable and tuple spans despite unchanged individual text", () => {
+    requireFullLegacyReceipt(liveObject, "object");
+    const first = preparedForwardSpan("peer-callable-pre-dispatch-main-6420").after;
+    const second = preparedForwardSpan("tuple-candidate-and-layout").after;
+    const firstStart = liveObject.indexOf(first);
+    const secondStart = liveObject.indexOf(second);
+    expect(firstStart).toBeGreaterThanOrEqual(0);
+    expect(secondStart).toBeGreaterThan(firstStart + first.length);
+    const mutant =
+      liveObject.slice(0, firstStart) +
+      second +
+      liveObject.slice(firstStart + first.length, secondStart) +
+      first +
+      liveObject.slice(secondStart + second.length);
+    expect(mutant).not.toBe(liveObject);
+    expect(() => requireFullLegacyReceipt(mutant, "object")).toThrow(/prepared forward span order mismatch/);
+  });
+
+  for (const extraImport of [
+    'import { standaloneLinkBoundaryPeerIndex } from "./standalone-link-boundary.js";\n',
+    "import * as duplicatePeer from './standalone-link-boundary.js';\n",
+    'import "./standalone-link-boundary.js";\n',
+  ]) {
+    it(`rejects an extra retained peer import: ${extraImport.trim()}`, () => {
+      requireFullLegacyReceipt(liveObject, "object");
+      const mutant = liveObject + extraImport;
+      expect(reconstructLegacySource(mutant, "object")).toContain(extraImport);
+      expect(() => requireFullLegacyReceipt(mutant, "object")).toThrow(/full-source donor receipt mismatch/);
+    });
+  }
+
+  it("rejects an extra executable statement outside all forward spans", () => {
+    requireFullLegacyReceipt(liveObject, "object");
+    const mutant = replaceExactlyOnce(
+      liveObject,
+      "export const INITIAL_CAP = 8;",
+      "export const INITIAL_CAP = 8;\nvoid 0;",
+    );
+    expect(reconstructLegacySource(mutant, "object")).toContain("export const INITIAL_CAP = 8;\nvoid 0;");
+    expect(() => requireFullLegacyReceipt(mutant, "object")).toThrow(/full-source donor receipt mismatch/);
+  });
+});
+
+describe("committed main Symbol input forward source receipt", () => {
+  it("authenticates the published insertion before restoring the exact prior checkpoint and original donor", () => {
+    expect(sha256(mainForwardText)).toBe(mainForwardDigest);
+    expect(mainForward.path).toBe("src/codegen/object-runtime.ts");
+    expect(mainForward.independentRecordSha256).toBe(
+      "8a869edcdb09c68547c16bc09658a31095d781eb5f120a5bcf4c7bc529bb39f1",
+    );
+    expect(mainForward.sourceProvenance.implementationParent.revision).toBe("9dcd771d809f9e0736a4664dfbd9db86cd350bf9");
+    expect(mainForward.sourceProvenance.implementation.revision).toBe("3050552a1646a6af87f8f6c9c06dc83cb04407c5");
+    expect(mainForward.sourceProvenance.deliveredMain.revision).toBe("2c6a0f1daa3d43cdf68b0d2d07fe7e3fa58b97f0");
+    expect(mainForward.sourceProvenance.deliveredMain.blob).toBe(mainForward.sourceProvenance.implementation.blob);
+    expect(mainForward.sourceProvenance.priorCheckpoint.revision).toBe("5b59430597315b08b2d7a1365324b56551230308");
+    expect(mainForward.spans.map((span) => span.id)).toEqual(["symbol-input-primitive-pass-through-6432"]);
+    expect(mainForward.change.addedLines).toBe(34);
+    expect(mainForward.spans[0]!.before).toBe(mainForward.change.leftAnchor + mainForward.change.rightAnchor);
+    expect(mainForward.spans[0]!.after).toBe(
+      mainForward.change.leftAnchor + mainForward.change.addedText + mainForward.change.rightAnchor,
+    );
+    expect(sha256(liveObject)).toBe(mainForward.change.priorCheckpointProjectedSha256);
+    const beforeMain = inverseMainObjectForward(liveObject);
+    expect(sha256(beforeMain)).toBe("5a745c07555e8183682a5014701eb4cd674da5d2ffd8367676a8a22024a50b06");
+    expect(sha256(beforeMain)).toBe(mainForward.sourceProvenance.priorCheckpoint.sha256);
+    requireFullLegacyReceipt(liveObject, "object");
+  });
+
+  const semanticMutations = [
+    ["guard", "...(symbolKeysEnabled", "...(!symbolKeysEnabled"],
+    ["tested input", '{ op: "local.get", index: L_ANY },', '{ op: "local.get", index: 0 },'],
+    ["Symbol type", "typeIdx: symbolTypeIdx", "typeIdx: objectTypeIdx"],
+    ["predicate opcode", 'op: "ref.test"', 'op: "ref.cast"'],
+    ["branch result", 'blockType: { kind: "empty" }', 'blockType: { kind: "f64" }'],
+    [
+      "returned payload",
+      'then: [{ op: "local.get", index: 0 }, { op: "return" }]',
+      'then: [{ op: "local.get", index: L_ANY }, { op: "return" }]',
+    ],
+    [
+      "required return",
+      'then: [{ op: "local.get", index: 0 }, { op: "return" }]',
+      'then: [{ op: "local.get", index: 0 }]',
+    ],
+    [
+      "predicate operand order",
+      '{ op: "local.get", index: L_ANY },\n            { op: "ref.test", typeIdx: symbolTypeIdx },',
+      '{ op: "ref.test", typeIdx: symbolTypeIdx },\n            { op: "local.get", index: L_ANY },',
+    ],
+  ] as const;
+  for (const [name, before, after] of semanticMutations) {
+    it(`rejects an altered Symbol ${name} after a genuine full-receipt positive`, () => {
+      requireFullLegacyReceipt(liveObject, "object");
+      const span = mainForward.spans[0]!;
+      const changedAddition = replaceExactlyOnce(mainForward.change.addedText, before, after);
+      const changedSpan = replaceExactlyOnce(span.after, mainForward.change.addedText, changedAddition);
+      const mutant = replaceExactlyOnce(liveObject, span.after, changedSpan);
+      expect(mutant).not.toBe(liveObject);
+      expect(() => requireFullLegacyReceipt(mutant, "object")).toThrow(/prepared forward span/);
+    });
+  }
+
+  for (const mutation of ["removed", "duplicated", "moved past object guard"] as const) {
+    it(`rejects the ${mutation} Symbol input arm while preserving the original receipt`, () => {
+      requireFullLegacyReceipt(liveObject, "object");
+      const span = mainForward.spans[0]!;
+      const replacement =
+        mutation === "removed"
+          ? span.before
+          : mutation === "duplicated"
+            ? span.after + span.after
+            : mainForward.change.leftAnchor + mainForward.change.rightAnchor + mainForward.change.addedText;
+      const mutant = replaceExactlyOnce(liveObject, span.after, replacement);
+      expect(mutant).not.toBe(liveObject);
+      expect(() => requireFullLegacyReceipt(mutant, "object")).toThrow(/prepared forward span/);
+    });
+  }
+
+  for (const mutation of [
+    "missing",
+    "provenance",
+    "modified span",
+    "removed span",
+    "duplicated span",
+    "reversed before/after evidence",
+  ] as const) {
+    it(`rejects ${mutation} in the main fixture without accepting a replacement digest`, () => {
+      requireFullLegacyReceipt(liveObject, "object");
+      let mutant: string;
+      if (mutation === "missing") {
+        mutant = "";
+      } else if (mutation === "provenance") {
+        mutant = replaceExactlyOnce(
+          mainForwardText,
+          "3050552a1646a6af87f8f6c9c06dc83cb04407c5",
+          "0000000000000000000000000000000000000000",
+        );
+      } else {
+        const changed = JSON.parse(mainForwardText) as typeof mainForward;
+        if (mutation === "modified span") changed.spans[0]!.after += "void 0;\n";
+        if (mutation === "removed span") changed.spans.pop();
+        if (mutation === "duplicated span") changed.spans.push({ ...changed.spans[0]! });
+        if (mutation === "reversed before/after evidence") {
+          [changed.spans[0]!.before, changed.spans[0]!.after] = [changed.spans[0]!.after, changed.spans[0]!.before];
+        }
+        mutant = JSON.stringify(changed);
+      }
+      expect(mutant).not.toBe(mainForwardText);
+      expect(() => inversePreparedSourceForward(liveObject, mutant, mainForwardDigest)).toThrow(
+        /fixture digest mismatch/,
+      );
     });
   }
 });

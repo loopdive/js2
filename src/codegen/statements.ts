@@ -280,6 +280,7 @@ function tryCompileAnnexBExistingDirectFunctionUpdate(
     const hadFunctionName = ctx.functionNameMap.has(funcName);
     const savedFunctionName = ctx.functionNameMap.get(funcName);
     const usedArguments = ctx.funcUsesArguments.has(funcName);
+    const readOwnThis = ctx.funcReadsOwnThis.has(funcName);
     const wasAsync = ctx.asyncFunctions.has(funcName);
     const wasGenerator = ctx.generatorFunctions.has(funcName);
     const wasPreRegistered = ctx.preRegisteredBodyless?.has(funcName) ?? false;
@@ -292,6 +293,7 @@ function tryCompileAnnexBExistingDirectFunctionUpdate(
     ctx.closureMap.delete(funcName);
     ctx.functionNameMap.delete(funcName);
     ctx.funcUsesArguments.delete(funcName);
+    ctx.funcReadsOwnThis.delete(funcName);
     ctx.asyncFunctions.delete(funcName);
     ctx.generatorFunctions.delete(funcName);
     ctx.preRegisteredBodyless?.delete(funcName);
@@ -312,6 +314,8 @@ function tryCompileAnnexBExistingDirectFunctionUpdate(
       restoreMapEntry(ctx.functionNameMap, funcName, hadFunctionName, savedFunctionName);
       if (usedArguments) ctx.funcUsesArguments.add(funcName);
       else ctx.funcUsesArguments.delete(funcName);
+      if (readOwnThis) ctx.funcReadsOwnThis.add(funcName);
+      else ctx.funcReadsOwnThis.delete(funcName);
       if (wasAsync) ctx.asyncFunctions.add(funcName);
       else ctx.asyncFunctions.delete(funcName);
       if (wasGenerator) ctx.generatorFunctions.add(funcName);

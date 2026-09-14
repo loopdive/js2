@@ -2,10 +2,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ITERATOR_BINDING_PREAMBLE, needsIteratorBinding } from "../scripts/test262-iterator-binding.mjs";
+import { ts } from "../src/ts-api.js";
 
 interface HarnessMeta {
   flags?: string[];
   includes?: string[];
+  negative?: unknown;
 }
 
 export interface OriginalHarnessVariant {
@@ -15,6 +17,8 @@ export interface OriginalHarnessVariant {
 }
 
 export interface OriginalHarnessAssembly {
+  /** (#6463) Set when the strict rerun was elided because the body is strict-neutral. */
+  strictRerunSkipped?: "strict-neutral";
   primary: OriginalHarnessVariant;
   strictRerun?: OriginalHarnessVariant;
   async: boolean;
@@ -47,6 +51,8 @@ export interface NativeHarnessVariant {
 }
 
 export interface NativeHarnessAssembly {
+  /** (#6463) Set when the strict rerun was elided because the body is strict-neutral. */
+  strictRerunSkipped?: "strict-neutral";
   primary: NativeHarnessVariant;
   strictRerun?: NativeHarnessVariant;
   async: boolean;
@@ -84,6 +90,8 @@ export interface LinkedHarnessVariant {
  * the required shared-realm substrate, by the linked Test262 runner.
  */
 export interface LinkedHarnessAssembly {
+  /** (#6463) Set when the strict rerun was elided because the body is strict-neutral. */
+  strictRerunSkipped?: "strict-neutral";
   /** Strict-neutral, de-duplicated literal harness source compiled once. */
   harnessPrefix: string;
   /** Ordered, pre-dedupe inputs used to build `harnessPrefix`. */
@@ -343,6 +351,208 @@ function assembleNativeVariant(
   };
 }
 
+// ── (#6463) Strict-rerun elision for strict-neutral bodies ─────────────────
+//
+// Test262 runs every unflagged script twice, sloppy and with a `"use strict"`
+// directive prepended. In this runner the rerun is a second FULL compile of the
+// harness assembly, so it doubles the dominant cost of every passing test
+// (measured 2026-09-10: compile is ~98 % of a test's wall time, the prelude
+// ~75 % of the compile). A test that is flagged neither `onlyStrict` nor
+// `noStrict` is one whose author asserts identical behaviour in both modes, so
+// the rerun's only remaining job is to catch a COMPILER bug in strict-mode
+// lowering. Such a bug needs a strict-sensitive construct in the body to act
+// on. When the body has none, the strict compile is the sloppy compile with a
+// directive in front, and the rerun is skipped.
+//
+// The scan is deliberately conservative — any construct whose semantics,
+// early errors or bindings differ between the modes forces the rerun, and so
+// does anything the scanner cannot parse cleanly:
+//   - `this` (undefined vs globalThis in plain calls; primitive boxing)
+//   - `arguments`, `eval`, `.caller`, `.callee`, `.arguments` (aliasing,
+//     direct-eval scoping, poison pills)
+//   - `with`, `delete <identifier>`
+//   - legacy octal numerics (`010`, `08`) and octal / `\8` `\9` string escapes
+//   - identifiers that are reserved words only in strict code
+//     (`implements` … `yield`, `let`, `static`)
+//   - function declarations in blocks (Annex B web-compat semantics)
+//   - assignment / update to an identifier that is declared nowhere in the
+//     body or the harness prefix (strict throws ReferenceError, sloppy creates
+//     a global)
+//   - any negative test (its verdict depends on which phase fails)
+// `TEST262_STRICT_RERUN=always` restores the unconditional rerun; the skip
+// reason is recorded on the assembly so a row can be audited.
+
+const STRICT_SENSITIVE_IDENTIFIERS = new Set([
+  "eval",
+  "arguments",
+  "implements",
+  "interface",
+  "let",
+  "package",
+  "private",
+  "protected",
+  "public",
+  "static",
+  "yield",
+]);
+const STRICT_SENSITIVE_PROPERTIES = new Set(["caller", "callee", "arguments"]);
+const LEGACY_OCTAL_ESCAPE = /\\[0-9]/;
+const ASSIGNMENT_OPERATORS = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.EqualsToken,
+  ts.SyntaxKind.PlusEqualsToken,
+  ts.SyntaxKind.MinusEqualsToken,
+  ts.SyntaxKind.AsteriskEqualsToken,
+  ts.SyntaxKind.AsteriskAsteriskEqualsToken,
+  ts.SyntaxKind.SlashEqualsToken,
+  ts.SyntaxKind.PercentEqualsToken,
+  ts.SyntaxKind.LessThanLessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanGreaterThanEqualsToken,
+  ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
+  ts.SyntaxKind.AmpersandEqualsToken,
+  ts.SyntaxKind.BarEqualsToken,
+  ts.SyntaxKind.CaretEqualsToken,
+  ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+  ts.SyntaxKind.BarBarEqualsToken,
+  ts.SyntaxKind.QuestionQuestionEqualsToken,
+]);
+
+function parseScript(source: string): ts.SourceFile {
+  return ts.createSourceFile("test262-body.js", source, ts.ScriptTarget.ESNext, true, ts.ScriptKind.JS);
+}
+
+function collectBindingNames(name: ts.BindingName, into: Set<string>): void {
+  if (ts.isIdentifier(name)) {
+    into.add(name.text);
+    return;
+  }
+  for (const element of name.elements) {
+    if (ts.isBindingElement(element)) collectBindingNames(element.name, into);
+  }
+}
+
+/** Every identifier the source declares, scope-insensitively (conservative). */
+function collectDeclaredNames(sf: ts.SourceFile, into: Set<string>): void {
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) || ts.isParameter(node) || ts.isBindingElement(node)) {
+      collectBindingNames(node.name, into);
+    } else if (
+      (ts.isFunctionDeclaration(node) ||
+        ts.isClassDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isClassExpression(node)) &&
+      node.name
+    ) {
+      into.add(node.name.text);
+    } else if (ts.isCatchClause(node) && node.variableDeclaration) {
+      collectBindingNames(node.variableDeclaration.name, into);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+}
+
+const harnessDeclaredNamesCache = new Map<string, ReadonlySet<string>>();
+function harnessDeclaredNames(harnessPrefix: string): ReadonlySet<string> {
+  let names = harnessDeclaredNamesCache.get(harnessPrefix);
+  if (!names) {
+    const set = new Set<string>();
+    collectDeclaredNames(parseScript(harnessPrefix), set);
+    names = set;
+    harnessDeclaredNamesCache.set(harnessPrefix, names);
+  }
+  return names;
+}
+
+function isBlockLevelFunctionDeclaration(node: ts.FunctionDeclaration): boolean {
+  const parent = node.parent;
+  if (!parent || ts.isSourceFile(parent)) return false;
+  if (ts.isBlock(parent)) {
+    const owner = parent.parent;
+    return !(owner && ts.isFunctionLike(owner));
+  }
+  return true; // case clause, labeled statement, if-body, …
+}
+
+/**
+ * Find the first construct in `body` whose semantics differ between sloppy and
+ * strict mode. Returns `null` when the body is strict-neutral.
+ */
+export function findStrictSensitiveConstruct(body: string, harnessPrefix: string): string | null {
+  const sf = parseScript(body);
+  if (sf.parseDiagnostics.length > 0) return "parse-diagnostics";
+  const declared = new Set<string>(harnessDeclaredNames(harnessPrefix));
+  collectDeclaredNames(sf, declared);
+
+  const classify = (node: ts.Node): string | null => {
+    switch (node.kind) {
+      case ts.SyntaxKind.ThisKeyword:
+        return "this";
+      case ts.SyntaxKind.WithStatement:
+        return "with";
+      case ts.SyntaxKind.DeleteExpression:
+        return "delete";
+    }
+    if (ts.isIdentifier(node)) {
+      return STRICT_SENSITIVE_IDENTIFIERS.has(node.text) ? `identifier:${node.text}` : null;
+    }
+    if (ts.isPropertyAccessExpression(node)) {
+      return STRICT_SENSITIVE_PROPERTIES.has(node.name.text) ? `property:${node.name.text}` : null;
+    }
+    if (ts.isNumericLiteral(node)) {
+      return /^0[0-9]/.test(node.getText(sf)) ? "legacy-octal-number" : null;
+    }
+    if (
+      ts.isStringLiteral(node) ||
+      ts.isNoSubstitutionTemplateLiteral(node) ||
+      ts.isTemplateHead(node) ||
+      ts.isTemplateMiddle(node) ||
+      ts.isTemplateTail(node)
+    ) {
+      return LEGACY_OCTAL_ESCAPE.test(node.getText(sf)) ? "octal-escape" : null;
+    }
+    if (ts.isFunctionDeclaration(node)) {
+      return isBlockLevelFunctionDeclaration(node) ? "block-function-declaration" : null;
+    }
+    if (ts.isBinaryExpression(node)) {
+      return ASSIGNMENT_OPERATORS.has(node.operatorToken.kind) &&
+        ts.isIdentifier(node.left) &&
+        !declared.has(node.left.text)
+        ? `undeclared-assignment:${node.left.text}`
+        : null;
+    }
+    if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
+      const op = node.operator;
+      return (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) &&
+        ts.isIdentifier(node.operand) &&
+        !declared.has(node.operand.text)
+        ? `undeclared-update:${node.operand.text}`
+        : null;
+    }
+    return null;
+  };
+  const visit = (node: ts.Node): string | null => classify(node) ?? ts.forEachChild(node, visit) ?? null;
+  return visit(sf);
+}
+
+export type StrictRerunDecision = { rerun: true } | { rerun: false; reason: "flagged" | "strict-neutral" };
+
+/**
+ * Decide whether a script record needs Test262's strict rerun. Flag gating
+ * (`raw` / `module` / `onlyStrict` / `noStrict`) is the upstream rule; the
+ * strict-neutral elision on top is this runner's (#6463).
+ */
+export function resolveStrictRerun(source: string, meta: HarnessMeta, harnessPrefix: string): StrictRerunDecision {
+  const flags = new Set(meta.flags ?? []);
+  if (flags.has("raw") || flags.has("module") || flags.has("onlyStrict") || flags.has("noStrict")) {
+    return { rerun: false, reason: "flagged" };
+  }
+  if (process.env.TEST262_STRICT_RERUN === "always") return { rerun: true };
+  if (meta.negative) return { rerun: true };
+  return findStrictSensitiveConstruct(source, harnessPrefix) === null
+    ? { rerun: false, reason: "strict-neutral" }
+    : { rerun: true };
+}
+
 /**
  * Assemble exactly the source variants executed by test262.fyi's original
  * harness reader. The raw test body is never rewritten.
@@ -352,13 +562,15 @@ export function assembleOriginalHarness(source: string, meta: HarnessMeta): Orig
   const raw = flags.has("raw");
   const async = flags.has("async");
   const onlyStrict = flags.has("onlyStrict");
-  const strictRerun = !raw && !flags.has("module") && !onlyStrict && !flags.has("noStrict");
+  const decision = resolveStrictRerun(source, meta, raw ? "" : assemblePrefixIncludes(meta, async));
+  const strictRerun = decision.rerun;
 
   return {
     primary: assembleVariant(source, meta, onlyStrict, raw, async),
     ...(strictRerun ? { strictRerun: assembleVariant(source, meta, true, raw, async) } : {}),
     async,
     raw,
+    ...(decision.rerun || decision.reason === "flagged" ? {} : { strictRerunSkipped: decision.reason }),
   };
 }
 
@@ -376,13 +588,15 @@ export function assembleNativeHarness(source: string, meta: HarnessMeta): Native
   const raw = flags.has("raw");
   const async = flags.has("async");
   const onlyStrict = flags.has("onlyStrict");
-  const strictRerun = !raw && !flags.has("module") && !onlyStrict && !flags.has("noStrict");
+  const decision = resolveStrictRerun(source, meta, raw ? "" : assemblePrefixIncludes(meta, async));
+  const strictRerun = decision.rerun;
 
   return {
     primary: assembleNativeVariant(source, meta, onlyStrict, raw, async),
     ...(strictRerun ? { strictRerun: assembleNativeVariant(source, meta, true, raw, async) } : {}),
     async,
     raw,
+    ...(decision.rerun || decision.reason === "flagged" ? {} : { strictRerunSkipped: decision.reason }),
   };
 }
 
@@ -409,7 +623,8 @@ export function assembleLinkedHarness(source: string, meta: HarnessMeta): Linked
   const raw = flags.has("raw");
   const async = flags.has("async");
   const onlyStrict = flags.has("onlyStrict");
-  const strictRerun = !raw && !flags.has("module") && !onlyStrict && !flags.has("noStrict");
+  const decision = resolveStrictRerun(source, meta, raw ? "" : assemblePrefixIncludes(meta, async));
+  const strictRerun = decision.rerun;
   const harnessParts = raw ? [] : harnessSourceParts(meta, async);
   const harnessPrefix = raw ? "" : dedupeTopLevelFunctionDeclarations(harnessParts.map((part) => part.source).join(""));
 
@@ -420,5 +635,6 @@ export function assembleLinkedHarness(source: string, meta: HarnessMeta): Linked
     ...(strictRerun ? { strictRerun: assembleLinkedVariant(source, true) } : {}),
     async,
     raw,
+    ...(decision.rerun || decision.reason === "flagged" ? {} : { strictRerunSkipped: decision.reason }),
   };
 }

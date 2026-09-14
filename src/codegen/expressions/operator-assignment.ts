@@ -329,13 +329,15 @@ export function compileLogicalAssignment(
     emitGet();
     ensureI32Condition(fctx, varType, ctx);
 
-    // Then (truthy): keep current value
+    // (#6413) RHS first, then-arm second — seventh instance of the late-import
+    // shift-staleness family (see the #5276 note in `registry/imports.ts`).
+    // `emitGet()` resolves `global.get <slot>` NOW, but compiling the RHS can
+    // `ensureLateImport` and re-index every global reachable from `fctx.body` /
+    // `savedBodies` / `funcStack` — which an arm array detached by
+    // `fctx.body = []` is not. A then-arm built first kept the pre-shift slot
+    // and read its neighbour. `&&=`/`??=` already compile the RHS first.
+    // Emission order moves; execution order does not (`emitGet` is a pure read).
     const savedBody = pushBody(fctx);
-    emitGet();
-    const thenInstrs = fctx.body;
-
-    // Else (falsy): assign RHS
-    fctx.body = [];
     const orRhsResult = compileExpression(ctx, fctx, expr.right, varType);
     if (!orRhsResult) {
       fctx.body = savedBody;
@@ -343,6 +345,11 @@ export function compileLogicalAssignment(
     }
     emitSet();
     const elseInstrs = fctx.body;
+
+    // Then (truthy): keep current value — indices resolved after the shift.
+    fctx.body = [];
+    emitGet();
+    const thenInstrs = fctx.body;
 
     fctx.body = savedBody;
     fctx.body.push({

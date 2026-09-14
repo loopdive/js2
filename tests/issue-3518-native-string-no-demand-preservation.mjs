@@ -9,7 +9,7 @@
 //   "arms": {
 //     "original": {"head":"2ccdcffd9d7939eb4b64e2d0f4910856acd13a9e", "emitterBlob":"GIT_BLOB", "sourceCensusSha256":"SHA256"},
 //     "repaired": {"head":"EXACT_HEAD", "emitterBlob":"REVIEWED_GIT_BLOB", "sourceCensusSha256":"SHA256"},
-//     "candidate": {"head":"EXACT_HEAD", "emitterBlob":"SAME_REVIEWED_GIT_BLOB", "sourceCensusSha256":"SHA256"}
+//     "candidate": {"head":"EXACT_HEAD", "emitterBlob":"FORWARD_VERIFIED_GIT_BLOB", "sourceCensusSha256":"SHA256"}
 //   }
 // }
 // emitterBlob: git hash-object src/ir/backend/wasmgc-emitter.ts (without -w).
@@ -39,6 +39,10 @@ import {
   scannerRuntimeIdentity,
   scannerChildEnvironment,
 } from "../scripts/verify-native-scanner-source-preservation.mjs";
+import {
+  NO_DEMAND_EMITTER_IMPORT_FORWARD,
+  verifyNoDemandEmitterImportForward,
+} from "./helpers/native-string-no-demand-emitter-forward.mjs";
 
 const BASE = "2ccdcffd9d7939eb4b64e2d0f4910856acd13a9e";
 const EMITTER = "src/ir/backend/wasmgc-emitter.ts";
@@ -564,11 +568,20 @@ if (process.argv[2] === "--child") {
     repairedSource,
     "repair must be exactly the reviewed one-instruction refinement",
   );
-  assert.equal(
-    readFileSync(join(candidate, EMITTER), "utf8"),
+  const importForward = NO_DEMAND_EMITTER_IMPORT_FORWARD;
+  assert.equal(importForward.path, EMITTER);
+  const importRefs = git(candidate, ["rev-parse", importForward.commit, `${importForward.commit}^`])
+    .trim()
+    .split("\n");
+  assert.equal(importRefs.length, 2, "exact import authority commit and parent required");
+  verifyNoDemandEmitterImportForward({
+    commit: importRefs[0],
+    parent: importRefs[1],
+    beforeSource: git(candidate, ["show", `${importForward.parent}:${EMITTER}`]),
+    afterSource: git(candidate, ["show", `${importForward.commit}:${EMITTER}`]),
     repairedSource,
-    "candidate must carry identical emitter repair",
-  );
+    candidateSource: readFileSync(join(candidate, EMITTER), "utf8"),
+  });
   const originalSnapshot = snapshot(baseline),
     repairedSnapshot = snapshot(repaired);
   assert.deepEqual(
