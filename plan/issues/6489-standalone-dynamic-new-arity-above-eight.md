@@ -73,3 +73,27 @@ too. Same signature as #6485, one ceiling further out.
 - A driver of arity ≤ 8 is byte-identical.
 - `tests/issue-6489-dynamic-new-arity.test.ts`: single-module + linked-pair
   witnesses, plus the arity-8 no-change control.
+
+## Measured (2026-09-14, branch `issue-5383-standalone-temporal-s24b`)
+
+Base produced on this tree by file-copy revert of the two changed files
+(`.tmp/s24base/`), both labels under the same load, fresh provider cache per
+label (`cacheHit=false` on prewarm, 3,307,526 B both labels), sequential,
+`--target standalone`, provider linked. Every row that was `compile_error` on
+EITHER tree was re-run solo at a 60 s budget on BOTH trees, so the table has no
+`compile_error` cell.
+
+| family (120 rows each) | base | new | Δ | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 97 | 101 | +4 | 0 | 4 |
+| `built-ins/Temporal/Duration/**` | 77 | 97 | +20 | 0 | 20 |
+| `built-ins/Temporal/ZonedDateTime/prototype/**` | 97 | 102 | +5 | 0 | 5 |
+| **total** | **271** | **300** | **+29** | **0** | **29** |
+
+The base total of 271 reproduces S23's measured 271 exactly.
+
+The `TypeError: expected a string, not null` bucket this slice was dispatched
+on goes **9 → 0**. Seven rows pass; two
+(`ZonedDateTime/prototype/add/math-order-of-operations-add-{constrain,none}`)
+now construct and fail later and differently, at
+`TypeError: Cannot read properties of undefined (reading 'equals')`.

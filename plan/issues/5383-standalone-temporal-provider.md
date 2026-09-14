@@ -6956,3 +6956,95 @@ REFLECTIVE bodies refuse (`number-proto-format.ts` answers `toPrecision` only) �
 wiring §21.1.3.2/§21.1.3.3 there would make the member list a three-name
 constant and cost nothing else. And `x.toString(radix)` through an `any`
 receiver still throws while `x.toString()` does not.
+
+### S24 findings (2026-09-14) — the fifth cause is an ARITY CEILING, not a lookup: `new <foreign ctor>(…)` above eight arguments answered null and never evaluated its arguments. 271 → 300
+
+Full write-up in
+[#6489](6489-standalone-dynamic-new-arity-above-eight.md). Branch
+`issue-5383-standalone-temporal-s24b`, based on S23's tip; the code is the
+salvaged S24 commit `8d11a10336`.
+
+**This slice was interrupted.** The container restarted mid-measurement and
+killed the S24 lane. Salvaged from its worktree, unchanged: the WIP fix commit
+(`src/codegen/native-construct.ts`, `src/codegen/expressions/new-super.ts`, both
+byte-verified against its validated copies), the #6489 issue file, its probes,
+and four of six family halves. Re-measured here: `du-base` p60, `zdt-base` p0
+and p60, and every solo correction on both trees. The base column below was
+produced on THIS tree by file-copy revert (`.tmp/s24base/`), and it lands on
+**271** — S23's number, independently reproduced, which is the strongest
+available check that the salvage did not disturb the base.
+
+#### 1. The brief's bucket and the cause are the same thing, one frame apart
+
+The brief asked for the 9-row `TypeError: expected a string, not null` bucket.
+That message is the POLYFILL's own guard, several frames downstream: with ten
+arguments `new Temporal.Duration(…)` evaluated to `null`, and the polyfill
+carried the null into `ToTemporalDuration`, whose string branch called
+`RequireString(null)`. So the bucket is a symptom of the construct, not a
+separate mechanism — and it is **fully retired**:
+
+| `expected a string, not null` | base | new |
+| --- | --- | --- |
+| rows in the three-family sample | **9** | **0** |
+
+Seven of the nine flip to `pass`. The other two
+(`ZonedDateTime/prototype/add/math-order-of-operations-add-{constrain,none}`)
+stop producing a null, construct correctly, and then fail LATER and
+differently — `TypeError: Cannot read properties of undefined (reading
+'equals')`. That is a new, separate residual, not this one persisting.
+
+#### 2. Root cause — the ceiling was the WRONG CONSTANT
+
+`tryCompileNativeConstructFromValue` declined above
+`MAX_NATIVE_CONSTRUCT_ARITY` (8). That constant is not a property of the
+construct driver: it is the range over which `closure-exports.ts` emits the
+`__call_fn_method_<N>` dispatcher family (`/^__call_fn_method_([0-8])$/`), used
+only by the driver's ordinary module-local-closure tail. Every other arm —
+class, link-boundary, proxy, runtime-marker — already packs an argument VECTOR
+and is arity-generic.
+
+Declining is not a graceful fallback. For a callee the compiling module does not
+own — every linked-provider class — `emitDynamicNewFallback` has no candidate
+classes to tag-dispatch on, so the site lands on the pre-existing
+`ref.null.extern` no-match base, and that base is emitted *instead of* the
+argument evaluation. The arguments are dropped too. A module-local class takes
+the per-class tag-dispatch fallback and is correct at any arity, which is why no
+single-module probe ever showed this.
+
+`Temporal.Duration` takes **ten** parameters; `Temporal.PlainDateTime` takes
+nine. The corpus's most ordinary spelling sat one argument past the ceiling.
+
+Same signature as S20's #6485 (`new (<call>)(…)`), one ceiling further out.
+
+#### 3. Fix
+
+`MAX_DYNAMIC_CONSTRUCT_ARITY = 16` becomes the call-site admission ceiling and
+the fill/scan bound; `MAX_NATIVE_CONSTRUCT_ARITY = 8` keeps its real meaning.
+Above 8 the ordinary tail packs an argv and calls `__apply_closure` — the same
+terminal the runtime-marker arm already used. Gated strictly on
+`arity > MAX_NATIVE_CONSTRUCT_ARITY`, so the long-standing
+`methodCallIdx === undefined` case at arities ≤ 8 (a driver reserved only for
+Proxy → admitted-JS construction) keeps its exact previous null tail.
+
+#### 4. Three-family sample — 120 rows each, standalone, provider linked, sequential, fresh cache, solo-corrected
+
+| family | rows | base | new | Δ | pass→fail | fail→pass | `compile_error` cells |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `PlainDate/**` | 120 | 97 | 101 | **+4** | 0 | 4 | 0 |
+| `Duration/**` | 120 | 77 | 97 | **+20** | 0 | 20 | 0 |
+| `ZonedDateTime/prototype/**` | 120 | 97 | 102 | **+5** | 0 | 5 | 0 |
+| **total** | **360** | **271** | **300** | **+29** | **0** | **29** | **0** |
+
+`__temporal_*` host-import leaks: **0**.
+
+**The partial `pd` table the dead lane left behind was noise, and it is worth
+saying why.** Its first-half PlainDate rows read base 48 / new 46 — a two-row
+apparent REGRESSION, which is what made this the first thing to re-check. Every
+one of those flips was `pass → compile_error` with a `compilation timeout
+(15.0–15.5 s)` detail, against a 15 s batch budget; the base column carried its
+own mirror artifacts (`compile_error → fail`). This family sits ON the cap, so
+at batch budget the cap decides the cell, not the compiler. Solo-corrected at
+60 s, PlainDate is 97 → 101 and the sample contains **no `compile_error` cell on
+either tree and no pass→fail row at all**. A batch-budget delta on this family
+is not a measurement.
+
