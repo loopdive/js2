@@ -14,6 +14,16 @@ requested_by: ttraenkler/fable-lead
 created: 2026-09-13
 ---
 
+> **Issue id reserved?** NO, and it has already COLLIDED once — this file was
+> first written as **#6474**, which `main` took for
+> `linked-harness-prelude-module-goal` while the branch was unpushed. See the
+> same note in `plan/issues/6481-standalone-nullable-native-string-element-binding.md`
+> for the full account; all four of this stack's hand-picked ids (6474–6477)
+> were renumbered to 6479–6482, leaving 6478 to the S17 lane. `claim-issue.mjs
+> --allocate` still exits **6** (`open-PR id scan DEGRADED`) and pushes are 403,
+> so **6479 is unreserved and unchecked against in-flight PRs**; the required
+> `check:issue-ids:against-main` gate is the backstop.
+
 # The defect, in two lines of consumer
 
 `--target standalone`, the real `@js-temporal/polyfill` provider linked as a

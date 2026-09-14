@@ -36,11 +36,15 @@ func-budget-allow:
   - src/codegen/binary-ops.ts::compileBinaryExpression
 ---
 
-> **Issue id reserved?** NO. `scripts/claim-issue.mjs --allocate` exits **6**
-> (`open-PR id scan DEGRADED — gh offline/unauthenticated`) for the whole of
-> this session, and GitHub pushes are refused with HTTP 403. The id **6482** is
-> the next one after #6481 (this slice's first issue, itself unreserved for the
-> same reason). It has not been checked against in-flight PRs.
+> **Issue id reserved?** NO, and it has already COLLIDED once — this file was
+> first written as **#6477**, which `main` took for
+> `linked-harness-descriptor-reads` while the branch was unpushed. See the same
+> note in `plan/issues/6481-standalone-nullable-native-string-element-binding.md`
+> for the full account; all four of this stack's hand-picked ids (6474–6477)
+> were renumbered to 6479–6482, leaving 6478 to the S17 lane. `claim-issue.mjs
+> --allocate` still exits **6** (`open-PR id scan DEGRADED`) and pushes are 403,
+> so **6482 is unreserved and unchecked against in-flight PRs**; the required
+> `check:issue-ids:against-main` gate is the backstop.
 
 ## Problem
 

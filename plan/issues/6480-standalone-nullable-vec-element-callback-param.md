@@ -22,12 +22,21 @@ loc-budget-allow:
   - src/codegen/closures.ts
 ---
 
-> **Issue id reserved?** NO. `scripts/claim-issue.mjs --allocate` exits **6**
-> (`open-PR id scan DEGRADED — gh offline/unauthenticated`) for the whole of
-> this session; GitHub pushes are refused with HTTP 403 for every lane. The id
-> **6480** was taken from `--allocate --dry-run --no-pr-scan` (which reported
-> #6474, already consumed unreserved by the S14 slice) plus one. It is
-> therefore **unreserved** and has not been checked against in-flight PRs.
+> **Issue id reserved?** NO, and it has already COLLIDED once. `claim-issue.mjs
+> --allocate` exits **6** (`open-PR id scan DEGRADED — gh
+> offline/unauthenticated`) for this whole session and pushes are 403 for every
+> lane, so the id was hand-picked.
+>
+> This file was first written as **#6475**. While it was unpushed, `main` landed
+> the whole `linked-harness` family on 6474–6477, so all four of this stack's
+> hand-picked ids collided at once (6474 → `linked-harness-prelude-module-goal`,
+> 6475 → `linked-provider-realm-error-constructors`, 6476 →
+> `linked-harness-async-done-marker`, 6477 → `linked-harness-descriptor-reads`).
+> They were renumbered to **6479–6482**, leaving 6478 to the S17 lane.
+>
+> **6480 is therefore still UNRESERVED and unchecked against in-flight PRs** —
+> the same exposure that caused the first collision. The required
+> `check:issue-ids:against-main` gate is the backstop.
 
 ## Problem
 

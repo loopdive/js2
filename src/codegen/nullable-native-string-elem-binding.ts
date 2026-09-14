@@ -37,7 +37,7 @@
  * `+` / `===` / `typeof` / ToBoolean each already answer correctly once they
  * are told the value is nullable.
  *
- * Sibling of `array-hof-nullable-elem-param.ts` (#6475), which is the same lie
+ * Sibling of `array-hof-nullable-elem-param.ts` (#6480), which is the same lie
  * one boundary earlier (the array-HOF callback parameter), and narrowed on the
  * same principle: fire only on the exact non-null-twin pair, so no other
  * binding shape can change a single emitted byte.

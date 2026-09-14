@@ -5214,6 +5214,42 @@ reproduced again (exit 1 with `81 passed | 3 todo`). Three additions:
   an inert literal, so the fix covers it by design. Reading the diff rather
   than re-expecting the observed value is what caught it.
 
+#### 9a. The hand-picked ids COLLIDED with main, and the whole stack was renumbered 6474–6477 → 6479–6482
+
+`claim-issue.mjs --allocate` has exited **6** (`open-PR id scan DEGRADED — gh
+offline/unauthenticated`) for this entire session and pushes are 403, so S14,
+S15 and S16 all hand-picked their ids. While those branches sat unpushed, `main`
+landed the whole `linked-harness` family on **6474, 6475, 6476 and 6477**, and
+`check:issue-ids:against-main` went red on all four at once (reported by the S17
+lane, reproduced here on a fresh catch-up merge). They are now:
+
+| was | is | slice |
+| --- | --- | --- |
+| 6474 | **6479** | S14 — dynamic `new` poisons provider values |
+| 6475 | **6480** | S15 — nullable vec element at the HOF callback |
+| 6476 | **6481** | S16 — nullable native-string element BINDING |
+| 6477 | **6482** | S16 — `void 0` in a nullish comparison |
+
+6478 is left to the S17 lane. Issue files, test filenames and every `#NNNN`
+reference in `src/` and `tests/` were rewritten with them.
+
+**One thing the renumber nearly missed, and it is the reusable lesson.** The
+rename was done per-slice, so the *cross-slice* references survived: five
+`#6475` mentions in S16's own issue file plus one each in
+`src/codegen/nullable-native-string-elem-binding.ts` and its witness still
+pointed at the old id — which on `main` is now an unrelated
+`linked-provider-realm-error-constructors`. `check:issue-ids:against-main` went
+**green** with all seven still stale, because it compares FILENAMES, not prose.
+A renumber has to be swept repo-wide (`grep -rn '#<old>'`) after the gate passes,
+not before it.
+
+**This is the #2531 hazard in its documented form**, and the narrow lesson is
+not "the tool was down": an id hand-picked from a `--dry-run` preview is a
+point-in-time guess, and the window between picking it and pushing is exactly
+how long it stays a guess. With `--allocate` unavailable there is no way to
+close that window — so keep the picked ids contiguous and few, because every
+stacked branch below has to be rewritten with them.
+
 #### 10. One gate was red before the catch-up merge, on the base tree too, and main fixed it
 
 `node scripts/check-compiler-boundaries.mjs --mode inventory --base origin/main`
