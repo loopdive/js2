@@ -55,3 +55,28 @@ Two things to establish first, because they lead to different fixes:
       a rejecting promise.
 - [ ] The 49 rows in the slice-3 sample flip to agreement.
 - [ ] The honest lane is unchanged.
+
+## Implementation Plan (2026-09-14, Fable lane)
+
+Mechanism, from reading the code (confirm with one instrumented row before
+coding, as the issue asks): the marker path is `$DONE → print →
+console.log("Test262:AsyncTestComplete")` and the worker's `findMarker` scans
+the row's **console proxy**. The provider's `env` is built without the row's
+`{ console: consoleProxy }` deps (`buildProviderImportObject` calls
+`buildCompiledImportsRuntime(providerResult)` bare), so the provider's `print`
+writes to the real console and the marker is never captured. This is the same
+defect as #6475 (ambient realm instead of the row's `globalSandbox`), so **the
+fix is #6475's plan** — the `linkedHost` threading gives the provider the
+row's console proxy and sandbox in one change. Do not implement separately;
+verify here:
+
+1. Instrument: run one async row linked with `TEST262_ORACLE_MODE=linked` and a
+   temporary `console.error` in the provider's `print` path; confirm the marker
+   is printed but not captured. Record the observation in this file.
+2. After #6475 lands in the same PR, rerun `built-ins/Promise/prototype/then`
+   (the 49-row class) linked vs honest; record the count.
+3. Add `tests/issue-6476-linked-async-marker.test.ts`: an `async`-flagged body
+   (`asyncHelpers.js` + `doneprintHandle.js` in the prefix) whose promise
+   resolves, and one that rejects; through `instantiateTest262Module` with a
+   capturing console in `linkedHost.deps`, assert the marker reaches the
+   capture in both cases and that the rejecting case carries the error text.
