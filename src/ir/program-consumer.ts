@@ -26,6 +26,11 @@
 // Physical allocation is owned by the Wasm module reservation ledger. This
 // consumer imports no source frontend, checker or legacy CodegenContext.
 
+import {
+  reservePreparedAsyncFrame,
+  fillPreparedAsyncFrame,
+  type PreparedAsyncFrameReservations,
+} from "../backend/wasmgc/resources/prepared-async-frame.js";
 import { sameValTypes } from "../wasm/physical/function-types.js";
 import {
   planNativeStringValuePhysical,
@@ -133,11 +138,18 @@ interface AcceptedNativeNumberFormat {
 const acceptances = new WeakMap<AcceptedPreparedIrProgram, AcceptanceRecord>();
 /** Acceptances whose emission has begun (successfully or not); each may begin once. */
 const emissions = new WeakSet<AcceptedPreparedIrProgram>();
+export interface EmittedSupportFunctionReceipt {
+  readonly key: string;
+  readonly index: number;
+}
 interface EmissionObservation {
+  readonly reservations: PhysicalModuleReservations;
+  readonly functions: readonly FunctionReservation[];
+  readonly support: readonly EmittedSupportFunctionReceipt[];
   readonly startupAdapterIndex?: number;
   readonly bindings: readonly (readonly [IrBindingId, ProgramAbiFinalIndex])[];
 }
-/** Historical observations of successful emissions, not reservation authority. */
+/** Private completed-emission evidence; reservation capabilities never escape. */
 const startupAdapters = new WeakMap<EmittedPreparedIrProgram, EmissionObservation>();
 
 function programInvariant(code: PreparedIrProgramInvariantError["code"], detail: string): never {
@@ -365,6 +377,18 @@ export function emittedStartupAdapterIndex(emitted: EmittedPreparedIrProgram): n
   return startupAdapters.get(emitted)?.startupAdapterIndex;
 }
 
+/** Exact non-source helper bodies, authenticated against the completed module. */
+export function emittedSupportFunctionReceipts(
+  emitted: EmittedPreparedIrProgram,
+): readonly EmittedSupportFunctionReceipt[] {
+  const record = startupAdapters.get(emitted);
+  if (!record) programInvariant("invalid-transaction-capability", "emission was not produced by this consumer");
+  for (const token of record.functions) record.reservations.assertCompletedReservation(token);
+  if (record.functions.length !== emitted.module.functions.length)
+    emissionFailed("completed emission function census changed");
+  return record.support;
+}
+
 /** Final binding index observed at emission; does not authenticate later module mutations. */
 export function emittedProgramBindingIndex(
   emitted: EmittedPreparedIrProgram,
@@ -491,14 +515,31 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
     if (preparedIrDataMismatch(fresh, plan.nativeNumberFormat.resources) !== undefined)
       emissionFailed("formatter resources or scratch join changed");
   }
+  if (plan.asyncFrames || plan.hostNumberBoundary) {
+    const current = planPhysicalSetup(
+      program,
+      accepted.options,
+      runtime,
+      record.nativeStrings,
+      record.nativeNumberFormat,
+    );
+    if (current.kind !== "planned" || preparedIrDataMismatch(current.plan, plan) !== undefined)
+      emissionFailed("async physical plan is no longer current");
+  }
   let abi: ProgramAbiMap | undefined;
-  if (native) {
+  if (native || plan.asyncFrames || plan.hostNumberBoundary) {
     // Native supplemental ABI is accepted planning data, sealed before even
     // the first physical reservation. Reused semantic entries stay unchanged.
     abi = new ProgramAbiMap(program.inventory, program.derivedUnits);
     const entries = new Map(program.abi.entries.map((entry) => [entry.plan.id, entry.plan]));
     for (const entry of program.abi.entries) abi.plan(entry.plan);
-    for (const binding of [...native.bindings, ...(plan.nativeNumberFormat?.bindings ?? [])]) {
+    for (const row of [
+      ...(native?.bindings ?? []).map((binding) => binding.entry),
+      ...(plan.nativeNumberFormat?.bindings ?? []).map((binding) => binding.entry),
+      ...(plan.hostNumberBoundary?.entries ?? []),
+      ...(plan.asyncFrames?.entries ?? []),
+    ]) {
+      const binding = { entry: row };
       const existing = entries.get(binding.entry.id);
       if (existing) {
         if (preparedIrDataMismatch(existing, binding.entry) !== undefined)
@@ -626,17 +667,32 @@ function recordEmissionObservation(
   abi: ProgramAbiMap,
   reservations: PhysicalModuleReservations,
   startAdapter: FunctionReservation | undefined,
+  sourceFunctions: readonly FunctionReservation[],
+  supportFunctions: readonly FunctionReservation[],
 ): void {
   const bindings: (readonly [IrBindingId, ProgramAbiFinalIndex])[] = [];
   for (const entry of abi.entries()) {
     const index = abi.resolveFinalIndex(entry.id);
     if (index) bindings.push(Object.freeze([entry.id, Object.freeze({ ...index })] as const));
   }
+  const functions = [...sourceFunctions, ...supportFunctions, ...(startAdapter ? [startAdapter] : [])];
+  if (
+    new Set(functions.map((token) => token.object)).size !== functions.length ||
+    functions.length !== result.module.functions.length
+  )
+    emissionFailed("completed emission function ownership is not an exact partition");
+  const support = supportFunctions.map((token) => {
+    reservations.assertCompletedReservation(token);
+    return Object.freeze({ key: token.key, index: reservations.physicalIndex(token) });
+  });
   startupAdapters.set(
     result,
     Object.freeze({
       ...(startAdapter ? { startupAdapterIndex: reservations.physicalIndex(startAdapter) } : {}),
       bindings: Object.freeze(bindings),
+      reservations,
+      functions: Object.freeze(functions),
+      support: Object.freeze(support),
     }),
   );
 }
@@ -770,13 +826,16 @@ function fillPrimaryBody(
   const { backend, target } = accepted.options;
   let lowered: ReturnType<typeof lowerIrFunctionBody<Instr[], ValType>>;
   try {
+    const scopedResolver: IrLowerResolver = declared.dynamicCarrier
+      ? { ...resolver, resolveDynamic: () => declared.dynamicCarrier! }
+      : resolver;
     const ownerResolver: IrLowerResolver = nativePack
       ? {
-          ...resolver,
+          ...scopedResolver,
           emitStringConst: (value, alloc, storage, materializer) =>
             emitPreparedNativeStringLiteral(reservations, nativePack, fn.unitId, value, alloc, storage, materializer),
         }
-      : resolver;
+      : scopedResolver;
     const emitter = backend === "wasmgc" ? new WasmGcEmitter(ownerResolver) : new LinearEmitter();
     lowered = lowerIrFunctionBody<Instr[], ValType>(
       fn,
@@ -827,7 +886,81 @@ function fillStartupAdapter(
   else emissionFailed(`startup adapter ${plan.startup.adapter} has executable units but no materialization`);
 }
 
+/** Bind the already sealed ABI to the exact reservations of this transaction. */
+function bindPhysicalAbi(
+  abi: ProgramAbiMap,
+  plan: PhysicalSetupPlan,
+  context: NativeReconciliationContext & {
+    readonly slots: ReadonlyMap<IrUnitId, FunctionReservation>;
+    readonly vectorHelper: ReturnType<typeof reserveNativeVectorHelper>;
+  },
+): void {
+  const { reservations, functionsByKey, globalsByKey, resourcesByBinding, slots, vectorHelper } = context;
+  const native = plan.nativeStrings;
+  const formatter = plan.nativeNumberFormat;
+  for (const imported of plan.importedFunctions) {
+    abi.bindFinalIndex(imported.bindingId, {
+      space: "function",
+      index: reservations.physicalIndex(functionsByKey.get(imported.referenceKey)!),
+    });
+  }
+  for (const declared of plan.functions) {
+    abi.bindFinalIndex(declared.bindingId, {
+      space: "function",
+      index: reservations.physicalIndex(slots.get(declared.unitId)!),
+    });
+  }
+  if (vectorHelper && plan.vectors.helper) {
+    abi.bindFinalIndex(plan.vectors.helper.bindingId, {
+      space: "function",
+      index: reservations.physicalIndex(vectorHelper.function),
+    });
+  }
+  for (const global of [...plan.importedGlobals, ...plan.definedGlobals]) {
+    abi.bindFinalIndex(global.bindingId, {
+      space: "global",
+      index: reservations.physicalIndex(globalsByKey.get(global.referenceKey)!),
+    });
+  }
+  if (native) {
+    const bound = new Set<IrBindingId>();
+    for (const binding of [...native.bindings, ...(formatter?.bindings ?? [])]) {
+      if (bound.has(binding.entry.id)) continue;
+      const resource = resourcesByBinding.get(binding.entry.id);
+      if (!resource || binding.entry.slotPolicy !== "required") emissionFailed("native ABI resource vanished");
+      abi.bindFinalIndex(binding.entry.id, {
+        space: binding.entry.slotSpace,
+        index: reservations.physicalIndex(resource),
+      });
+      bound.add(binding.entry.id);
+    }
+  }
+  const alreadyBound = new Set([
+    ...plan.importedFunctions.map((row) => row.bindingId),
+    ...plan.functions.map((row) => row.bindingId),
+  ]);
+  for (const row of plan.asyncFrames?.entries ?? []) {
+    if (row.slotPolicy !== "required" || alreadyBound.has(row.id)) continue;
+    const token = resourcesByBinding.get(row.id);
+    if (!token) emissionFailed("async ABI resource was not reserved");
+    abi.bindFinalIndex(row.id, { space: row.slotSpace, index: reservations.physicalIndex(token) });
+    alreadyBound.add(row.id);
+  }
+  abi.finishBinding();
+}
+
 /** No observation or reusable capability escapes the physical transaction. */
+function indexSupportFunctions(rows: readonly NativeNumberFormatResourceRow[]): Map<WasmFunction, FunctionReservation> {
+  const functions = new Map<WasmFunction, FunctionReservation>();
+  for (const row of rows) {
+    if (row.space !== "function") continue;
+    const previous = functions.get(row.reservation.object);
+    if (previous && previous !== row.reservation) emissionFailed("support function has competing reservation owners");
+    functions.set(row.reservation.object, row.reservation);
+  }
+  return functions;
+}
+
 function materializePhysicalProgram(
   accepted: AcceptedPreparedIrProgram,
   plan: PhysicalSetupPlan,
@@ -915,18 +1048,14 @@ function materializePhysicalProgram(
     formatter && strings
       ? reserveNativeNumberFormatResources(reservations, formatter.resources.input, strings)
       : undefined;
+  const formatterRows = formatterPack ? nativeNumberFormatReservationInventory(reservations, formatterPack) : [];
   if (formatter) {
     if (!formatterPack || !strings) emissionFailed("formatter resources were not reserved");
     requireNativeNumberFormatReservations(reservations, formatterPack, formatter.resources.input, strings);
     const sharedTypes = new Map(
       nativeRows.flatMap((row) => (row.space === "type" ? [[row.key, row.reservation] as const] : [])),
     );
-    const owned = reconcileNativeEmission(
-      formatter,
-      nativeNumberFormatReservationInventory(reservations, formatterPack),
-      reconciliation,
-      sharedTypes,
-    );
+    const owned = reconcileNativeEmission(formatter, formatterRows, reconciliation, sharedTypes);
     for (const fn of owned) {
       if (nativeFunctions.has(fn)) emissionFailed("formatter and source resource function owners overlap");
       nativeFunctions.add(fn);
@@ -947,8 +1076,28 @@ function materializePhysicalProgram(
     functionsByKey.set(irCallableBindingKey({ kind: "unit", unitId: declared.unitId }), reserved);
     resourcesByBinding.set(declared.bindingId, reserved);
   }
+  const asyncReservations = new Map<IrUnitId, PreparedAsyncFrameReservations>();
+  const asyncHelpers = new Set<WasmFunction>();
+  const supportFunctions = indexSupportFunctions([...nativeRows, ...formatterRows]);
+  for (const frame of plan.asyncFrames?.frames ?? []) {
+    const entry = slots.get(frame.owner);
+    if (!entry || !exceptionTag) emissionFailed("async frame has no reserved entry or exception tag");
+    const pack = reservePreparedAsyncFrame(reservations, frame, entry);
+    asyncReservations.set(frame.owner, pack);
+    resourcesByBinding.set(frame.frame.entry.id, pack.frame);
+    typesByKey.set(irTypeBindingKey(frame.frame.reference.binding), pack.frame);
+    for (const role of ["resume", "fulfillStep", "rejectStep"] as const) {
+      const row = frame.auxiliaries[role];
+      const token = pack[role];
+      resourcesByBinding.set(row.bindingId, token);
+      functionsByKey.set(irCallableBindingKey(row.reference.binding), token);
+      asyncHelpers.add(token.object);
+      supportFunctions.set(token.object, token);
+    }
+  }
   const vectorHelper = reserveNativeVectorHelper(reservations, plan.vectors, vectorTypes, exceptionTag);
   if (vectorHelper) {
+    supportFunctions.set(vectorHelper.function.object, vectorHelper.function);
     if (!plan.vectors.helper) emissionFailed("vector helper has no authenticated binding plan");
     functionsByKey.set(plan.vectors.helper.referenceKey, vectorHelper.function);
     resourcesByBinding.set(plan.vectors.helper.bindingId, vectorHelper.function);
@@ -978,44 +1127,7 @@ function materializePhysicalProgram(
     for (const entry of program.abi.entries) abi.plan(entry.plan);
     abi.sealPlan();
   }
-  for (const imported of plan.importedFunctions) {
-    abi.bindFinalIndex(imported.bindingId, {
-      space: "function",
-      index: reservations.physicalIndex(functionsByKey.get(imported.referenceKey)!),
-    });
-  }
-  for (const declared of plan.functions) {
-    abi.bindFinalIndex(declared.bindingId, {
-      space: "function",
-      index: reservations.physicalIndex(slots.get(declared.unitId)!),
-    });
-  }
-  if (vectorHelper && plan.vectors.helper) {
-    abi.bindFinalIndex(plan.vectors.helper.bindingId, {
-      space: "function",
-      index: reservations.physicalIndex(vectorHelper.function),
-    });
-  }
-  for (const global of [...plan.importedGlobals, ...plan.definedGlobals]) {
-    abi.bindFinalIndex(global.bindingId, {
-      space: "global",
-      index: reservations.physicalIndex(globalsByKey.get(global.referenceKey)!),
-    });
-  }
-  if (native) {
-    const bound = new Set<IrBindingId>();
-    for (const binding of [...native.bindings, ...(formatter?.bindings ?? [])]) {
-      if (bound.has(binding.entry.id)) continue;
-      const resource = resourcesByBinding.get(binding.entry.id);
-      if (!resource || binding.entry.slotPolicy !== "required") emissionFailed("native ABI resource vanished");
-      abi.bindFinalIndex(binding.entry.id, {
-        space: binding.entry.slotSpace,
-        index: reservations.physicalIndex(resource),
-      });
-      bound.add(binding.entry.id);
-    }
-  }
-  abi.finishBinding();
+  bindPhysicalAbi(abi, plan, { ...reconciliation, slots, vectorHelper });
   if (nativePack) fillNativeStringValueResources(reservations, nativePack);
   else if (strings) fillNativeStringLiteralResources(reservations, strings);
   if (formatterPack) fillNativeNumberFormatResources(reservations, formatterPack);
@@ -1068,7 +1180,18 @@ function materializePhysicalProgram(
     const fn = bodies.get(declared.unitId);
     const reserved = slots.get(declared.unitId);
     if (!fn || !reserved) emissionFailed(`physical body ${declared.unitId} vanished between acceptance and emission`);
-    fillPrimaryBody(accepted, declared, fn, reserved, resolver, nativePack, reservations, physicalSignature);
+    const asyncFrame = asyncReservations.get(declared.unitId);
+    if (asyncFrame) {
+      if (!exceptionTag) emissionFailed("async exception tag vanished");
+      fillPreparedAsyncFrame(reservations, asyncFrame, fn, functionsByKey, exceptionTag, () => {
+        if (
+          acceptances.get(accepted) !== record ||
+          record.physical !== plan ||
+          !runtime.prepared.functions.includes(fn)
+        )
+          emissionFailed("async frame belongs to a different acceptance");
+      });
+    } else fillPrimaryBody(accepted, declared, fn, reserved, resolver, nativePack, reservations, physicalSignature);
   }
 
   // 5. Startup adapter and ABI export aliases (by their planned index space).
@@ -1107,7 +1230,8 @@ function materializePhysicalProgram(
         fn !== startAdapter?.object &&
         fn !== vectorHelper?.function.object &&
         fn !== formatterPack?.functions["radix-body"].object &&
-        !nativeFunctions.has(fn)
+        !nativeFunctions.has(fn) &&
+        !asyncHelpers.has(fn)
       ) {
         emissionFailed(`module carries an unowned function ${fn.name}`);
       }
@@ -1122,6 +1246,13 @@ function materializePhysicalProgram(
     emissionFailed("module function ownership order contradicts the reserved program projection");
   }
   const result: EmittedPreparedIrProgram = Object.freeze({ module, emittedUnitIds: Object.freeze(emittedUnitIds) });
-  recordEmissionObservation(result, abi, reservations, startAdapter);
+  recordEmissionObservation(
+    result,
+    abi,
+    reservations,
+    startAdapter,
+    [...slots.values()],
+    [...supportFunctions.values()],
+  );
   return result;
 }

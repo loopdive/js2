@@ -804,6 +804,8 @@ export interface AstToIrOptions {
   readonly exported?: boolean;
   /** Explicit string-typed unary numeric conversion; omission keeps historical lowering. */
   readonly stringNumericCoercion?: "number-boundary";
+  /** Explicit semantic f64 throw boxing; provider admission remains a separate preparation decision. */
+  readonly numericThrow?: "number-boundary";
   /** Authoritative identity for the main artifact and exact feature-plan owner. */
   readonly ownerUnitId: IrUnitId;
   /**
@@ -1046,6 +1048,11 @@ function lowerConstructorBody(
     for (const statement of statements) lowerStmt(statement, cx);
   }
   builder.terminate({ kind: "return", values: [thisValue] });
+}
+
+/** Preserve explicit numeric projections across top-level and lifted contexts. */
+function numericProjectionOptions(options: Pick<AstToIrOptions, "stringNumericCoercion" | "numericThrow">) {
+  return { stringNumericCoercion: options.stringNumericCoercion, numericThrow: options.numericThrow };
 }
 
 export function lowerFunctionAstToIr(
@@ -1333,7 +1340,7 @@ export function lowerFunctionAstToIr(
     funcName: name,
     ownerUnitId: options.ownerUnitId,
     returnType,
-    stringNumericCoercion: options.stringNumericCoercion,
+    ...numericProjectionOptions(options),
     logicalVectorTypes: options.logicalVectorTypes,
     logicalVectorConsumed,
     calleeTypes: options.calleeTypes,
@@ -2346,6 +2353,7 @@ interface NestedCapture {
 interface LowerCtx {
   readonly builder: IrFunctionBuilder;
   readonly stringNumericCoercion?: AstToIrOptions["stringNumericCoercion"];
+  readonly numericThrow?: AstToIrOptions["numericThrow"];
   readonly logicalVectorTypes?: AstToIrOptions["logicalVectorTypes"];
   readonly logicalVectorConsumed?: Set<ts.Node>;
   readonly scope: Map<string, ScopeBinding>;
@@ -15172,7 +15180,7 @@ function liftNestedFunction(
     funcName: liftedName,
     ownerUnitId: cx.ownerUnitId,
     returnType: signature.returnType,
-    stringNumericCoercion: cx.stringNumericCoercion,
+    ...numericProjectionOptions(cx),
     calleeTypes: cx.calleeTypes,
     directCalls: cx.directCalls,
     importedCalls: cx.importedCalls,
@@ -15314,7 +15322,7 @@ function liftClosureBody(
     funcName: liftedName,
     ownerUnitId: cx.ownerUnitId,
     returnType: signature.returnType,
-    stringNumericCoercion: cx.stringNumericCoercion,
+    ...numericProjectionOptions(cx),
     calleeTypes: cx.calleeTypes,
     directCalls: cx.directCalls,
     importedCalls: cx.importedCalls,
@@ -15563,12 +15571,11 @@ function collectBindingNames(name: ts.BindingName, out: Set<string>): void {
  *
  * Coercion strategy mirrors the legacy
  * `compileThrowStatement` in `src/codegen/statements/exceptions.ts`:
- *   - f64 / i32                → `__box_number(value)` host import.
- *                                 Slice 9 defers numeric throws — they
- *                                 require the box helper; numeric
- *                                 throws are rare and the function falls
- *                                 back to legacy via the unsupported-
- *                                 expression error.
+ *   - f64                      → `js.number.box` only under the explicit
+ *                                 numericThrow semantic projection. Its
+ *                                 provider is checked during preparation.
+ *   - f64 without projection / i32
+ *                              → the historical typed legacy refusal.
  *   - externref                → no-op; passed through.
  *   - object / class /
  *     closure / string / ref / ref_null
@@ -15588,6 +15595,16 @@ function lowerThrowStatement(stmt: ts.ThrowStatement, cx: LowerCtx): void {
   const value = lowerExpr(stmt.expression, cx, irVal({ kind: "externref" }));
   const valueType = cx.builder.typeOf(value);
   const valTy = asVal(valueType);
+  if (
+    cx.numericThrow === "number-boundary" &&
+    valueType.kind === "val" &&
+    valTy?.kind === "f64" &&
+    (valueType.signed ?? true)
+  ) {
+    const boxed = cx.builder.emitIntrinsic("js.number.box", [value]);
+    cx.builder.emitThrow(boxed);
+    return;
+  }
   if (valTy?.kind === "f64" || valTy?.kind === "i32") {
     // Slice 9 still defers numerics (they need a box helper). Class instances
     // are lowered again (#4097): #4035 declined them for a render gap that the
