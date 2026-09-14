@@ -73,3 +73,41 @@ The general JavaScript audit integration uses `collectUnsafeGeneratorSemantics(c
 { standalone })` into the shared collector and registers the new frontend module
 in the compiler inventory. The final complete manifest verifies the integrated collector. This detector
 does not change the generator backend or expand any failure baseline.
+
+## PR5748 bounded repair handoff (2026-09-15)
+
+The held PR head `9b36161f94ab1108b1ed0e1917a828ee3d3dad58` rejects
+`language/expressions/dynamic-import/assignment-expression/yield-star.js`.
+That upstream test defines an uncalled generator and tests syntax only; it
+does not observe a delegation completion. With the delegation diagnostic
+filtered in a temporary probe, its original harness and strict rerun pass
+(local Wasm fingerprint `7227dc4f41c8`, Node v22.23.2).
+
+An array-operand exception would be unsound. The executed control
+`function* g(){var x=yield* [1,2];yield x;}var it=g();`
+followed by four `next()` observations produces `1 2 0 true`, where Node
+produces `1 2 undefined true`. String array delegation has the same wrong
+completion. The original numeric generator control still prints `1 0`
+instead of `1 7`. These are raw defects, not diagnostic-only expectations.
+
+No generator guard relaxation is included in the bounded repair. A tentative
+file-local unreferenced-declaration check was removed: the collector visits
+one file at a time, so it cannot establish whole-program non-execution.
+Moreover, the original harness installs `$262` helpers and global aliases
+including an `eval(sourceText)` path. Ignoring those helpers or exempting an
+import operand by syntax would not establish a safe execution boundary.
+Existing negative expectations are unchanged; additional tests retain
+refusals for executed/escaping/exported/dynamically referenced import
+generators and executed array completion.
+
+Amended proposal, requiring a separately authorized write set: provide a
+frontend-owned, whole-program unreachable-function fact to the semantic
+collector (`src/compiler/semantic-safety.ts` and its pipeline caller in
+`src/compiler.ts`, in addition to this guard and focused tests). The fact
+must account for other input files, exports, alias/callback escapes and
+dynamic evaluation, and must decline when reachability is unknown. Only a
+proven unexecuted declaration may bypass this runtime limitation. If the
+existing frontend cannot supply that fact, repairing actual delegation
+completion is a generator-backend semantics change and needs separate
+ownership. Do not weaken the six-case CI regression expectation or remove
+the PR hold on the strength of the other five repairs.

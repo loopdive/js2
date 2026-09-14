@@ -18,6 +18,18 @@ function diagnose(source: string, standalone = false) {
 
 describe("#5398: measured generator and iterator limitations", () => {
   it.each([
+    "function* g(){import(yield* ['a','b']);}g().next();",
+    "export function* g(){import(yield* ['a','b']);}",
+    "function* g(){import(yield* ['a','b']);}var alias=g;",
+    "function* g(){import(yield* ['a','b']);}consume(g);",
+    "function* g(){import(yield* ['a','b']);}eval('g().next()');",
+    "function* g(){import(yield* ['a','b']);}globalThis['g']().next();",
+    "function* g(){var x=yield* [1,2];yield x;}var it=g();it.next();it.next();it.next();",
+  ])("retains reachable, escaping and array completion refusals: %s", (source) => {
+    expect(diagnose(source).map((report) => report.id)).toContain("JS2WASM_UNSUPPORTED_GENERATOR_DELEGATION_RESULT");
+  });
+
+  it.each([
     [
       "function* g(){var x=yield 1;yield x+1;}var it=g();it.next();it.next(2);",
       "JS2WASM_UNSUPPORTED_GENERATOR_SENT_VALUE",

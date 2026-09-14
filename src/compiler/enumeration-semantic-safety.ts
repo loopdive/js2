@@ -24,6 +24,66 @@ function statementContainer(node: ts.Node): ts.Node | undefined {
   return node.parent;
 }
 
+const propertyName = (node: ts.Node | undefined): string | undefined =>
+  node && (ts.isIdentifier(node) || ts.isStringLiteral(node) || ts.isNumericLiteral(node)) ? node.text : undefined;
+
+// Descriptor-created own keys enumerate correctly in the host carrier. They
+// must cover EVERY literal prototype key: a partial descriptor map still
+// loses the remaining inherited keys. Later writes are not this proof.
+function shadowsPrototype(
+  creation: ts.CallExpression,
+  prototype: ts.ObjectLiteralExpression,
+  sourceFile: ts.SourceFile,
+  origin: (node: ts.Expression) => ts.Expression | undefined,
+): boolean {
+  const descriptors = creation.arguments[1] && unwrap(creation.arguments[1]);
+  if (!descriptors || !ts.isObjectLiteralExpression(descriptors)) return false;
+  const ownKeys = new Set<string>();
+  for (const property of descriptors.properties) {
+    if (!ts.isPropertyAssignment(property) || !ts.isObjectLiteralExpression(property.initializer)) return false;
+    const key = propertyName(property.name);
+    if (key === undefined || key === "__proto__") return false;
+    // Own shadows must be permanent data properties. A configurable shadow
+    // can be deleted before enumeration, exposing the broken inherited key.
+    if (
+      !property.initializer.properties.every((field) => {
+        if (!ts.isPropertyAssignment(field)) return false;
+        const name = propertyName(field.name);
+        if (name === "value") return true;
+        if (name === "configurable") return field.initializer.kind === ts.SyntaxKind.FalseKeyword;
+        return (
+          (name === "enumerable" || name === "writable") &&
+          [ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword].includes(field.initializer.kind)
+        );
+      })
+    )
+      return false;
+    ownKeys.add(key);
+  }
+  let escapedPrototype = false;
+  const inspect = (node: ts.Node): void => {
+    if (ts.isIdentifier(node)) {
+      const value = origin(node);
+      const parent = node.parent;
+      const binding = ts.isVariableDeclaration(parent) && (parent.initializer === node || parent.name === node);
+      if (value === prototype && !(parent === creation && creation.arguments[0] === node) && !binding)
+        escapedPrototype = true;
+      // A receiver escape can expose or replace its prototype indirectly,
+      // e.g. Object.getPrototypeOf(o).newKey = 1. Only aliases and the
+      // enumeration itself preserve this bounded shadow proof.
+      if (value === creation && !binding && !(ts.isForInStatement(parent) && parent.expression === node))
+        escapedPrototype = true;
+    }
+    if (!escapedPrototype) ts.forEachChild(node, inspect);
+  };
+  inspect(sourceFile);
+  if (escapedPrototype) return false;
+  return prototype.properties.every((property) => {
+    const key = propertyName(property.name);
+    return ts.isPropertyAssignment(property) && key !== undefined && key !== "__proto__" && ownKeys.has(key);
+  });
+}
+
 /** Measured limitations of fixed carriers; this is not an enumeration whitelist. */
 export function collectUnsafeEnumeration(
   checker: ts.TypeChecker,
@@ -105,8 +165,6 @@ export function collectUnsafeEnumeration(
   };
   const numeric = (node: ts.Expression): boolean =>
     (checker.getTypeAtLocation(node).flags & ts.TypeFlags.NumberLike) !== 0;
-  const propertyName = (node: ts.Node | undefined): string | undefined =>
-    node && (ts.isIdentifier(node) || ts.isStringLiteral(node) || ts.isNumericLiteral(node)) ? node.text : undefined;
   const observesDeletion = (
     receiver: ts.Expression,
     key: string,
@@ -251,7 +309,12 @@ export function collectUnsafeEnumeration(
       const receiver = origin(node.expression);
       const prototype =
         objectCall(receiver, "create") && receiver.arguments[0] ? origin(receiver.arguments[0]) : undefined;
-      if (prototype && ts.isObjectLiteralExpression(prototype) && prototype.properties.length > 0)
+      if (
+        prototype &&
+        ts.isObjectLiteralExpression(prototype) &&
+        prototype.properties.length > 0 &&
+        !shadowsPrototype(receiver as ts.CallExpression, prototype, sourceFile, origin)
+      )
         report(node, "Host for-in enumeration of Object.create receivers cannot preserve own and inherited keys");
     }
     if (standalone && ts.isCallExpression(node) && objectCall(node, "keys") && node.arguments[0]) {
