@@ -9243,3 +9243,16 @@ Compared with the assessed prerequisite head, that update changes only benchmark
 reports and the LOC baseline; source, tests and boundary policy are identical.
 This output increment still awaits its own signed commit, CI and protected main
 delivery. The full async-family and overall IR migration remain incomplete.
+
+
+PR 5937 published this native-output increment as signed head `ed15de69`, but
+its quality job `104143397407` failed: the compound formatter-manifest test
+timed out at the unchanged 35-second limit (18/19 rows passed), followed by
+a worker-update timeout. Preserve that original CI log under
+`.tmp/native-output/ci-quality-104143397407.log`. Split the compound test into
+independent cases sharing canonical preparation, retain all eight malformed
+manifest controls and all positive/prior-refusal assertions, and yield to the
+worker between synchronous cases. No production code, fixtures, assertions,
+timeouts or gates change. The focused suite passes 29/29 with zero skipped
+rows and unchanged inputs (`formatter-ci-split`); CI and main delivery remain
+pending for the corrected head.
