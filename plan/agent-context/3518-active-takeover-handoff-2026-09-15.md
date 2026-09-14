@@ -1,5 +1,57 @@
 # Active IR takeover handoff
 
+## CI repair and integration receipt — supersedes earlier state
+
+The revised sequential test file completed74306 successfully:12/12, no skipped
+cases. Review confirmed original assertions/fixture retention; normal commit
+hooks and push of this test-only repair remain required. The earlier beforeAll
+timeout is retained below as a failed attempt, not a passing run.
+
+Further validation: the first local split63911 failed its10-second beforeAll
+hook (10 passed, one skipped after hook failure). Preserve that result; no
+timeout override followed. The revised explicit sequential pair uses two normal
+tests under the original35-second budget, publishes the actual captured fixture
+only after acquisition assertions pass, and explicitly fails if the fixture is
+missing. Ordinary cleanup remains between cases. Full12-case planning run74306
+is live; inspect before mutation. This replaces the beforeAll design below.
+Post-f585 PR5753 combinedfour-suite run81032 passed109/109, but repeated-
+preparation review still blocks D1; passing tests are not acceptance evidence
+for that missing contract. Planck acknowledged and is implementing its fix.
+
+PR5939 is open at `c96759531d3ac6a980a6a3d191b5d6f34d889ee8`, directly
+on loopdive/js2, with protected merge-when-ready enabled. It has NOT landed.
+CI34909327931 quality104193078143 failed one compound planning test after
+35,905ms against the unchanged35,000ms limit; the other9 planning rows and
+the5 emission rows passed. Source inventory tests were not reached in that
+quality step. Original evidence:
+https://github.com/loopdive/js2/actions/runs/34909327931/job/104193078143
+The source, fixtures, assertions and timeout stay unchanged. The pending test
+repair separates genuine consumer-input acquisition into a scoped fixture and
+keeps its positive/negative observation ordering in a separate test. Full planning
+rerun63911 is live; inspect before mutating. Normal hooks/push remain required.
+
+PR5748 is published at `4335a57cc7718bbb0d75ef7c1ad4506efefab8f7`, hold
+preserved. A0 includes the wrong-instance negative,26/26 tests pass, normal
+hooks/pre-push pass. A1 runtime consumption remains deferred. Volta's staged
+completion/inliner/extractions now produce correct values but wrapper IR
+falls back because propagation mistakes generator completion for call result.
+Parent read the rejected initial proposal and exact-base evidence, then
+explicitly authorized the complete bounded three-file repair with alias,
+mixed-return/fallthrough safeguards and tests. No partial rejected patch was
+applied or parity gate bypassed. Wegener is preparing A1 routing read-only.
+
+PR5753 parent HEAD remains `2a528c8743`; D1 `0b99423312` + follow-up
+`f5857656c3` and U1 `7fef9b7e1b` are staged locally with boundary registration.
+Before f585, original23-file group passed322/322, combined four repair suites
+107/107, typecheck and inventory1477 passed, unchanged layering gate85≤90.
+Those results do NOT certify late-currentness. D1 repeated-preparation proof
+population and U1 reused-provider sealing each have demonstrated review
+blockers assigned to Planck/Tesla, reviewed by Nash. Neither may publish yet.
+The seven timer failures pre-exist D1: exact22-test runs on pre-D1 `2a528c8743`
+and initial D1 `0b99423312` both15/22, identical names/statuses/normalized
+failure details. Logs: `/private/tmp/js2-5753-timer-attribution-logs.C6qeMY`.
+Attribution is not a waiver or golden refresh.
+
 ## Current integration receipt — 2026-09-15, supersedes all older state
 
 Targeted59678 finished successfully:2/2 selected cases,8 intentionally filtered

@@ -126,7 +126,6 @@ describe("native Promise inventory on ordinary consumer planning", () => {
         ).toThrow(/does not belong/);
         expect(collect).not.toHaveBeenCalled();
       }
-      let input: Parameters<typeof preflight.planNativePromiseInventoryPreflight>[3];
       if (required) {
         const selected = projection.prepared.functions.find((fn) => fn.asyncPlan && fn.asyncRuntime);
         expect(selected).toBeDefined();
@@ -145,15 +144,6 @@ describe("native Promise inventory on ordinary consumer planning", () => {
         expect(() =>
           preflight.planNativePromiseInventoryPreflight(missingAttachment, options, replacement, undefined, undefined),
         ).toThrow();
-        expect(acceptPreparedIrProgram(program, options).kind).toBe("unsupported");
-        input = observed.mock.calls.at(-1)?.[1];
-        expect(input).toBeDefined();
-        observed.mockClear();
-        expect(preflight.planNativePromiseInventoryPreflight(program, options, projection, input, undefined).kind).toBe(
-          "unavailable",
-        );
-        expect(observed).toHaveBeenCalled();
-        observed.mockClear();
       }
       // The live coordinator, not merely a consumer further up the stack, owns
       // whole-program authentication even when the descriptive census is valid.
@@ -162,10 +152,57 @@ describe("native Promise inventory on ordinary consumer planning", () => {
         throw marker;
       });
       expect(() =>
+        preflight.planNativePromiseInventoryPreflight(program, options, projection, undefined, undefined),
+      ).toThrow(marker);
+      expect(observed).not.toHaveBeenCalled();
+    });
+
+  // Run this pair together: the second case deliberately fails if acquisition
+  // was filtered out or failed. No fixture, assertion or timeout is relaxed.
+  describe.sequential("authentication with a genuine observed producer", () => {
+    let fixture:
+      | {
+          program: ReturnType<typeof prepare>;
+          input: NonNullable<Parameters<typeof preflight.planNativePromiseInventoryPreflight>[3]>;
+        }
+      | undefined;
+
+    it("acquires the actual consumer's producer input", () => {
+      const program = prepare(false);
+      const observed = vi.spyOn(producers, "observeNativeStringValueProducer");
+      try {
+        // Preserve the actual consumer path and its producer input. Separating
+        // fixture acquisition from the checked transition keeps each operation
+        // inside the unchanged per-test CI time limit.
+        expect(acceptPreparedIrProgram(program, options).kind).toBe("unsupported");
+        const actual = observed.mock.calls.at(-1)?.[1];
+        expect(actual).toBeDefined();
+        fixture = { program, input: actual! };
+      } finally {
+        observed.mockRestore();
+      }
+    });
+
+    it("rejects failed authentication before observing an available producer", () => {
+      if (!fixture) throw new Error("run the genuine producer acquisition case before its transition check");
+      const { program, input } = fixture;
+      const projection = program.runtime[0]!;
+      const observed = vi.spyOn(producers, "observeNativeStringValueProducer");
+      expect(preflight.planNativePromiseInventoryPreflight(program, options, projection, input, undefined).kind).toBe(
+        "unavailable",
+      );
+      expect(observed).toHaveBeenCalled();
+      observed.mockClear();
+      const marker = new Error("direct preflight authentication positive control");
+      vi.spyOn(validation, "assertPreparedIrProgram").mockImplementation(() => {
+        throw marker;
+      });
+      expect(() =>
         preflight.planNativePromiseInventoryPreflight(program, options, projection, input, undefined),
       ).toThrow(marker);
       expect(observed).not.toHaveBeenCalled();
     });
+  });
 
   it("keeps synchronous re-export-only entries accepted without an entry-owned terminal", () => {
     const program = requireProgram(
