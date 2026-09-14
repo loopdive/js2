@@ -5064,6 +5064,22 @@ through ONE call site attributes to that call site. The question that works is
 "what is the first thing that differs between the form that works and the form
 that does not", and here that is one `const`.
 
+> **Correction, from S17 — read this heading as too harsh.** "Wrong for the
+> seventh slice running" lumps together two failures that cost very different
+> amounts. A hand-off that names the wrong **area** costs the slice: you spend it
+> in the wrong module. A hand-off that names the right area and the wrong
+> **mechanism** costs one probe set. Every hand-off in S11–S16, including the one
+> this heading is about, was of the second kind — **right area, wrong mechanism,
+> which is the shape of a GOOD hand-off**, not a failed one. S17's own inherited
+> attribution was wrong in the same way (`link_member_get` on a foreign
+> `$Object`) and it still paid for itself, because the area was right. The
+> reusable instruction is therefore not "distrust the hand-off" but "take the
+> AREA from it and re-derive the mechanism", and the re-derivation is cheap —
+> see S17's note on shape + did-not-move as a reduction method, not merely an
+> attribution one. Stated here rather than only in S17's section because the
+> misleading framing is *this* sentence, and a correction only a later reader
+> reaches has not corrected anything.
+
 #### 2. Root causes, both general standalone bugs rather than Temporal ones
 
 **#6481** — `walkStmtForLetConst` (the authoritative let/const slot-typer) ends
