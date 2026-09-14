@@ -6694,6 +6694,37 @@ prepared-program emitter has not yet wired these string/value producers.
 See agent-context/3518-native-string-consumer-census-2026-09-09.md for the
 next required production integration boundary and ownership coordination.
 
+### Native string type reservation for real consumer integration
+
+The independent type-split draft now preserves a types-first import window,
+authenticates single-use literal ownership and exposes a complete private-chunk
+inventory. Revised TS7 and 54/54 focused tests pass; final review has no blockers
+and 188/188 existing flatten/scanner/value caller regressions pass. Exact provenance and
+limitations are recorded in
+agent-context/3518-native-string-types-split-2026-09-09.md. This is a prerequisite
+for actual prepared-consumer wiring, not evidence that the public direct path
+has been replaced. Paused P/C async drafts remain untouched.
+
+### Native string/value demand census checkpoint (2026-09-09)
+
+The provider-free collector now preserves the exact ordered owner, buffer,
+instruction, intrinsic and literal populations across program/projection and
+async views. It preserves borrowed allocation metadata and presence semantics;
+it is not an acceptance authority. High review approved the source and focused
+tests after local validation, exact occurrence controls and a non-number
+intrinsic control were added. The final focused suite passes 40/40 and TS7
+passes. See agent-context/3518-native-string-value-demands-2026-09-09.md for
+hashes and the retained initial fixture failure.
+
+The collector is registered as a mandatory clean ir-program module without
+changing allowed edges or historical activation records. This is preparatory
+work: shared symbolic producer declarations, actual prepared-consumer wiring,
+original/decoded execution, public cutover and direct retirement remain open.
+
+Final composed validation passes 281/281 (241 boundary controls, 40 collector
+tests), with an exact bounded census of 95 modules and 345 imports. This does
+not establish strict whole-compiler closure or direct-codegen retirement.
+
 ### Explicit native string-number source admission — 2026-09-09
 
 High approved the three production changes and the revision-3 source tests
@@ -6735,6 +6766,8 @@ pending the serialized slot; this section does not claim publication or
 completion of the epic. Exact hashes, commands, failure history and remaining
 obligations are in the
 [source-admission handoff](../agent-context/3518-native-string-source-admission-handoff-2026-09-09.md).
+
+
 
 ### Native string/value demand census checkpoint (2026-09-09)
 
@@ -6790,6 +6823,62 @@ The clean producer checkpoint now also passes 250/250 full boundary controls
 and unfiltered TS7 (session 54286 exit 0). Full caller revalidation passed
 322/322 across eight suites (session 46568 exit 0). Checkpoint validation is
 complete; this is not a migration-completion claim.
+
+### Real native-string prepared-consumer integration (2026-09-09)
+
+The composed consumer now accepts native string/value demands, seals their
+typed ABI before allocation, uses canonical resource declarations and owned
+reservations, and binds final indices after the single physical freeze.
+Original and decoded prepared programs execute through the real consumer;
+68/68 execution cases passed (handle 69379, exit 0). These include numeric
+edge cases, large/private-chunk literals, encoding checks on actual module
+objects, startup modes, aliases, and dependency initialization order.
+
+The first combined run failed 69/129: one ABI countermodel was unchanged and
+all 68 execution fixtures omitted explicit native string storage. Both are
+test-only repairs; no production policy or validator was relaxed. Follow-up
+ABI controls, no-demand old/new parity, full composed typecheck/boundaries and
+normal publication hooks remain pending. Exact hashes, preserved failures,
+dependency merge receipts and review scope are recorded in
+agent-context/3518-native-string-value-consumer-integration-2026-09-09.md.
+
+Public compilation still uses direct generateModule/generateMultiModule.
+Native-string execution does not satisfy the remaining native families,
+async/ABI30, cross-backend, fail-closed default, strict closure, or retirement
+requirements; every outstanding epic acceptance criterion stays open.
+
+Follow-up validation completed: ABI 61/61, boundary 258/258, materialization/
+codec/module regressions 51/51, and full TS7 exit zero. The three-arm comparison
+(76083, exit zero) reproduces the original vector CompileError, then proves
+complete repaired-baseline/candidate artifact and value parity for five source
+executions, one exact source refusal and one canonical-producer IR execution.
+The vector repair is published separately as #5792; ordinary vector source
+admission is still unsupported. All three arm receipts, runtime/input hashes,
+original/decoded versions and retained binaries/WAT are documented in the
+consumer integration handoff. No original-baseline vector success is claimed.
+
+The next complete native async-consumer implementation plan is recorded in
+agent-context/3518-native-async-consumer-implementation-spec-2026-09-09.md,
+including frame/state lowering, delay/combinator publication, real object and
+closure invocation dependencies, complete number formatting and string output.
+The ordinary-vector source proposal and explicit P/C scope releases are also
+preserved in the handoffs. These plans are not execution or retirement proof.
+
+### Isolated vector construction nullability repair (2026-09-09)
+
+Claim 3518:vector-data-nonnull owns a one-instruction WasmGC emitter fix at
+published base 5404151bfc. A nullable/defaultable backing-array scratch reload
+now receives ref.as_non_null before the carrier's non-null data field is
+constructed. Layout, allocation order and unsupported-capacity refusal remain
+unchanged. Full TS7 exits 0; the final combined regression run passes 31/31
+across three suites, including all seven new controls. High approved the proof
+split: five AST-to-IR component rows with explicit type overrides and a
+physical-fixture resolver, one IR-builder externref spare-capacity row, and
+one refusal control. This is not whole-source admission or consumer execution.
+See agent-context/3518-vector-data-nonnull-2026-09-09.md for exact receipts and
+the separate historical-baseline/common-fix application requirement.
+
+
 
 ## Native argument-vector checkpoint — 2026-09-08
 
@@ -6849,6 +6938,63 @@ whole-family execution, replay, public IR-only cutover and strict static
 closure/direct-codegen retirement remain open. This checkpoint does not
 claim those acceptance conditions.
 
+### Native Promise / closure producer join — 2026-09-09
+
+High approved the implementation specification in
+agent-context/3518-native-promise-closure-join-high-plan-2026-09-09.md.
+Euclid owns exactly native-promises.ts and its existing resource test,
+based on closure PR #5778. Replace independent raw root/metadata tokens
+with the issued closure pack and metadata request ID. Authenticate before
+allocations and again before fills, preserving genuine cache aliases,
+lazy-arity semantics and existing Promise capture/runtime ownership.
+Parent owns boundary updates, integration checks and non-draft publication.
+
+This is a producer-provenance join, not complete Promise execution. Full
+carrier inventory, callable dispatch, fill dependencies, native-family
+execution, public cutover and the ABI30 planningSealed witness remain open.
+
+The bounded join is implemented and independently approved after two R2
+repairs: inherited metadata field descriptors are copied as in the donor;
+rejection proofs preserve lossless data, object identities and future
+reservation ordinals. Composed Promise/closure95/95 tests and221/221
+boundary controls pass. The single new runtime import links the existing
+Promise and closure owners; no boundary permissions were relaxed. Final
+post-repair typecheck and normal publication checks remain next. See
+agent-context/3518-native-promise-closure-join-integration-2026-09-09.md.
+
+### Native async prerequisite composition (2026-09-09)
+
+The native-string consumer checkpoint #5793 is being composed with the published
+argument-vector, closure and Promise/closure join stack (#5776, #5778, #5779).
+All production changes merged without conflicts. High approved the explicit
+1,351-file classification union, unchanged remaining policy/allowed edges,
+and both complete activation histories preserved in order. Mandatory boundary
+coverage is 102 modules and 391 edges (248 type-only, 143 runtime).
+
+Full boundary run 70325 passed 284/284 with no skips; unfiltered TS7 run 58123
+exited zero. Resource and actual consumer regression run 9776 passed 201/201
+across five files in 329.49 seconds (terminal exit zero).
+The shared resource-declaration implementation contract is frozen in
+agent-context/3518-native-async-resource-declarations-spec-2026-09-09.md;
+the frame API and object-access donor map are also preserved for the next lanes.
+This composition does not remove the async acceptance refusal or establish
+native async execution, public default cutover or retirement.
+
+### Native async producer declarations (2026-09-09)
+
+The existing closure, argument-vector and Promise reservation callers now consume
+pure symbolic declaration plans before allocating. Issued inventories preserve
+ownership, request/cache ordering, adopted arrays and inherited metadata type
+identity. Promise still owns 25 declarations across 26 ordered operations.
+The declaration checkpoint passes 194/194 focused tests (77955, exit zero) and
+unfiltered TS7 (43844, exit zero). High approved the twelve frozen source/test
+files; earlier failing runs remain in the implementation handoff.
+
+Borrowed tag association is checked while reserving; actual tag provenance is
+authenticated only after freeze using the existing ledger. This limitation is
+explicit, not a claim of preallocation tag authentication. The full async
+consumer, staged cross-producer closure scheduling, complete runtime fills,
+public cutover and retirement remain unfinished.
 ### Existing string-admission PR dependency refresh — 2026-09-13
 
 Queue draining remains limited to existing published migration checkpoints.
@@ -7936,6 +8082,116 @@ PR held until5787 is verified on main; numerical precision debt, historical
 compiler-pair execution, whole-program execution and frontend retirement
 remain uncertified.
 
+## Implementation plan: refresh vector backing refinement — 2026-09-13
+
+Continue existing PR5792, “fix(ir): refine vector backing scratch before
+construction”, from published c5c87e4a onto signed predecessor c77eb965.
+Preserve the published one-instruction addition of ref.as_non_null immediately
+before struct.new, and retain the current canonical wasm-constants and
+lower-contracts imports. Keep both complete issue histories and the original
+published test and handoff unchanged. No new migration scope is introduced.
+
+Verify the full composed emitter against the independently projected published
+hunk, then run all three original component files (7 + 10 + 14 intended cases)
+with actual source pins. Include the lowerer import-cycle control because the
+predecessor relocated its imports. Run TS7, size/function/oracle, nonempty
+coercion, preservation-v1 and conformance synchronization gates; preserve any
+initial failures. Use the independent pinned corpus and normal signed hooks.
+
+These component checks do not establish general source admission or complete
+prepared-program consumption. Keep the existing PR held until predecessor
+5789 is verified delivered to main through the protected queue. Preserve
+historical receipts as historical evidence and record fresh results separately.
+
+The actual composed component run passes56/56 assertions across four complete
+files, zero skipped: the original vector population31/31 plus the lowerer
+import-cycle population25/25. All pinned source/test/policy/fixture inputs
+remain unchanged. The full emitter hash is85b4a5765a5e690476828251006c97e3f0445817501ece6a6586038178f0da41,
+matching the independently projected commuting hunk; the original published
+nullability test and handoff remain byte-identical. Source gates and normal
+hooks remain pending; these component results do not certify whole-program
+consumption or frontend retirement.
+
+The seven source gates now pass: TS7, LOC/function budgets, measured coercion,
+oracle, preservation-v1 with required core types and nodes, and conformance
+synchronization (zero changed files). The unchanged coercion checker through
+a space-free alias positively scanned124 files/511 sites; no import edge or
+codegen file changed against exact predecessor c77eb965. All tested input pins
+remain unchanged. The independent b363f29d corpus matches all53,933 canonical
+test/harness blobs, exact modes and inventory, with no linked/shared objects.
+Normal signed hooks remain required; no gate or historical fixture was relaxed.
+
+## Implementation plan: refresh prepared native string consumer — 2026-09-13
+
+Continue existing PR5793, “feat(ir): execute native string values through
+prepared consumer”, from published9ccad45c onto signed predecessor eac9f741.
+Preserve the published production delta and the predecessor's one-instruction
+vector backing refinement and canonical lowering imports. Keep both complete
+issue histories, original fixtures and published execution limitations. New
+migration scope remains paused; no later unpublished provider work is adopted.
+
+Preserve already-integrated producer and demand changes byte for byte. Resolve
+only cumulative boundary policy/test history: retain exact predecessor records,
+published activation records, original allowed edges and all positive-first
+per-root negatives. Measure the actual composed import closure before changing
+current census expectations; retain initial failures and historical receipts.
+
+Execute complete reviewed child component/consumer tests and relevant parent
+vector/import-cycle controls with exact source/test/fixture pins. Keep component
+and whole-consumer denominators separate. Run TS7, budgets, oracle, measured
+coercion, preservation-v1 and conformance sync. Use the independent pinned
+corpus and normal signed hooks. Publish only after predecessor5792 is verified
+delivered through the protected queue. Historical compiler-pair execution,
+complete physical async support and frontend retirement remain uncertified.
+
+### Scoped comparison-runner import provenance repair
+
+The unchanged published three-arm runner refuses the composed candidate before
+execution: its exact repaired-emitter equality does not include the already-
+landed pure import split. Independent commit c257b466, parent120cd638, supplies
+the exact before/after emitter proof (a23bbcb0→49a1de06). Keep that relocation
+and the vector refinement; do not restore an upward lowerer import.
+
+Implement a pure test-helper verifier for only that authenticated import
+forwarding, update only the runner's candidate-emitter guard to use it, and
+add positive-first focused regressions for missing, duplicate, retargeted or
+unrelated edits and bad provenance. The inverse must reproduce the exact
+repaired emitter. Preserve original→repaired as exactly one ref.as_non_null,
+external whole-source/helper/config pins, runtime identity, explicit2GB child
+configuration and all seven comparison rows. Root owns runtime execution and
+fresh isolated original2ccdcffd and repaired baselines; the historical contract
+permits the repaired baseline's externally pinned one-instruction working-tree
+difference. Do not claim archived CLI results as new execution evidence.
+
+The first actual boundary diagnostic selected only the complete-closure case:
+it failed on the provisional prior edge count, with289 cases unselected and
+no execution credit. Its full report measures102 modules and391 imports
+(248 type-only,143 runtime), zero graph errors. The temporary report-writing
+observation was removed and original test bytes restored before updating only
+the current count assertion. All61 activation records, both original histories
+and allowed edges remain unchanged. The complete18-file cohort is pending;
+no diagnostic pass or full-suite success is inferred.
+
+### Prepared consumer validation — 2026-09-13
+
+The complete18-file cohort passes838/838 assertions, zero failures or pending
+cases, with all execution inputs unchanged. The import-forward verifier's
+separate focused run passes8/8. Policy composition preserves all1,377 parent
+records, adds one consumer record, retains61 activation records and both
+histories, and leaves allowed edges unchanged. The read-only policy audit
+initially assumed a map instead of the actual list schema; corrected exact
+record comparison passes. The earlier boundary diagnostic failure is retained.
+
+The actual three-arm CLI passes with authenticated original/repaired inputs
+of1,370 files each and candidate1,406. It reproduces the original nullable
+vector CompileError and compares repaired/candidate across five real source
+executions, one exact source refusal, and one canonical-producer IR vector
+execution. This is seven comparison rows, not seven successful source apps.
+The128 original receipts are archived byte-exactly in the owned worktree.
+No expected failure, runtime identity, historical donor or census guard was
+relaxed. Source gates and normal signed hooks remain required before this
+prepared merge; refresh to delivered main follows before publication.
+
 ## Queue admission reconciliation: current main — 2026-09-13
 
 Existing PR5760 reported DIRTY against main7adc0a6e after publishing signed
@@ -8081,3 +8337,76 @@ The actual merge of freshly fetched `e1a865f6f7f203df6d85ae81f39fe6073795abe8` i
 Current delivered-main validation passes 1,112/1,112 assertions across 20 complete files, zero failures/pending/skips. This comprises the 18-file cohort962, separate cold import1, and fresh-process reservations149. Execution inputs stayed unchanged. All1,387 incoming policy entries match the parent exactly; two declaration entries are added, all58 local activation records retained, and allowed edges unchanged. Source gates and signed hooks remain required; this is not a retirement claim.
 
 Delivered-main source gates passed: TS7, LOC/functions, measured coercion census (no changed codegen paths), oracle, preservation-v1 with required core types/nodes, conformance sync check, and boundary inventory. Inventory is valid while architecture remains incomplete. All current execution pins remain unchanged before normal signed hooks.
+
+## Vector refinement delivered-parent refresh — 2026-09-13
+
+Existing PR5792 is refreshed from preserved signed eac9f741 onto verified
+main94c472b4, which delivered PR5789 through all102 merge-group shards and
+the final regression gate. Production and tests merge cleanly; both complete
+appended issue histories are retained. The original one-instruction
+ref.as_non_null refinement and190-line regression test remain byte-identical
+to the preserved prepared join. Current validation passes56/56 across the
+four complete vector/nullability/lowering-cycle suites, with unchanged inputs.
+TS7, LOC/functions, measured coercion, oracle, preservation-v1 dead exports
+including core types/nodes, and conformance sync check pass. Normal signed
+hooks and exact-head protected queue checks remain required. This does not
+certify full IR retirement.
+
+### Consumer refresh onto delivered main — 2026-09-13
+
+Fresh mainccfa93df merges cleanly into signed prepared checkpointad57b0bb
+for production, tests and policy. The only conflict was appended issue
+history; both sides are retained. All1,389 main policy records remain exact,
+one consumer record is added,61 activation records and allowed edges are
+unchanged. The complete18-file current-tree run passes847/847, zero failures
+or pending cases, with unchanged inputs; earlier838/838 remains separate.
+The authenticated three-arm CLI again reproduces the original vector defect
+and preserves repaired/candidate parity for five source executions, one exact
+source refusal and one producer-IR vector execution. Original/repaired inputs
+remain1,370 files each; current candidate census is1,418. All128 new receipts
+are archived byte-exactly. No historical expectation or gate was weakened.
+Source gates and normal signed hooks precede exact-head publication and queue
+admission. This checkpoint is not full IR retirement.
+
+
+## 2026-09-13 — PR #5794 refresh after native string consumer delivery
+
+The existing native async prerequisite composition at `cf6ac354d8d305864baf2646e5fe632860ec7c3c` is refreshed onto verified main `95f7b21061fd4618cac76258f0dd51f062b18160`, which contains delivered consumer PR #5793 (`d842ff991952de26aa791c4feacc6717b5a1e962`). Production merges without conflicts; the remaining source delta is the original authenticated Promise/closure dependency join and its original regression tests. Both complete issue-history conflict sides are retained.
+
+Boundary composition retains all 1,390 main classifications and all 1,351 original paths. Main’s complete 61-record activation history remains an exact suffix; two original records retain their original entry order, producing 63 records. The complete original 56-record history remains an exact ordered subsequence. Original parent-history digests and 15 original-prefix corruption controls are retained alongside main’s existing controls; no allowed edge or historical digest is relaxed. The independent corpus verifies 53,933 raw blobs (53,889 tests and 44 harness files) against pinned `b363f29d3c43c626dc852744ad64a0b48a003693`, with no shared object files or extra paths.
+
+The complete six-file Promise, closure, argument-vector, reservation-authentication, string-consumer and semantic-boundary suite is running. Results, source gates, normal hooks, protected queue checks and delivery must be recorded before this refresh is accepted. This composition does not remove the async acceptance refusal or certify direct frontend retirement.
+
+Validation update: the complete six-file run finished 547/566, no skipped tests, with all source/test/helper/fixture/policy input hashes unchanged. All 261 production/resource tests passed. The boundary suite passed 286/305: one census failure measured 392 edges (248 type-only + 144 runtime) versus the old 391; the single added mixed import from the Promise producer to its authenticated closure producer accounts for the runtime edge. The expectation is updated to that measured population. Eighteen child-process errors occurred near the existing 30-second timeout; their original failures are preserved. The complete boundary suite will be rerun with the same timeout and controls outside the sandbox before attributing those errors or accepting the refresh.
+
+The complete boundary rerun passes 305/305 with the same 30-second child timeout and all controls, outside the sandbox; input hashes remain unchanged during the run. The only input difference from the original six-file run is the measured boundary census correction. Combined with the original five production/resource files (261/261), all 566 tests in the six-file population now have passing evidence. The initial 547/566 run remains preserved; the successful rerun does not retrospectively convert its child-process errors into passes. Required source gates are running before normal commit hooks and publication.
+
+Pre-commit source validation passes all seven checks against `95f7b21061fd4618cac76258f0dd51f062b18160`: full TS7, LOC and function budgets, coercion inventory, oracle ratchet, moved-reference preservation/dead exports, and conformance-number synchronization. Source/test input hashes remain unchanged. These are refresh validation receipts, not proof of completed async materialization or IR-only retirement.
+
+
+## 2026-09-14 — PR #5796 refresh after authenticated Promise closure delivery
+
+Existing declaration/reservation checkpoint `5d7b6e831ac0140e866cf39834a3aa876fb99749` is composed with verified main `e0db9ec0cf20494022fbd8365a231c25f5b5779c`, containing delivered prerequisite PR #5794 (`70a844b54593f04783d8d1bc2cd86f53d9c89e0e`). All production files merge without conflicts. Both complete issue-history sides are retained, along with the original donor hashes, inverse controls, resource-order and exact-plan authentication requirements. Validation is pending; no completed async fill, consumer execution, or retirement is claimed.
+
+
+Refresh validation setup: the independent corpus matches all 53,933 raw blobs at pinned `b363f29d3c43c626dc852744ad64a0b48a003693` (53,889 tests and 44 harness files), with exact paths/modes, separate Git objects and no extra files. All seven published production hashes match the original R2 handoff; both complete issue-history conflict sides are retained. Receipts are in `.tmp/5796-queue-drain/corpus-initial-20260914.json` and `composition-preservation-20260914.json`.
+
+The original eight-file composition run remains in progress, with no terminal verdict yet. A non-interrupting sample of its live boundary-check child showed filesystem `lstat` waiting; the worker advances through fresh child processes using the unchanged 30-second limit. This observation does not establish a compiler failure, a passing boundary census, or permission to waive the run. Original commands and input hashes are preserved in `composition-original-20260914-command.json`; no test was killed or restarted.
+
+
+Environment diagnostic: the shared system temporary directory reports link count 65,535 and 6.6 MB directory metadata. A read-only 100-`lstat` comparison measured 1.015985 seconds for that directory versus 0.000462 seconds for the task's isolated temporary directory (`temp-metadata-probe-20260914.json`). This supports, but does not prove, metadata contention as the boundary-child delay. Existing fixtures are untouched. Any necessary rerun will use a task-owned temporary directory with the same source inputs, assertions and timeouts, after the original run terminates. Preliminary oracle and conformance synchronization checks both exit 0; final exact-base source gates remain required.
+
+
+All seven exact-base source gates pass against `e0db9ec0cf20494022fbd8365a231c25f5b5779c`, with source/test inputs unchanged: TS7, LOC/function budgets, coercion inventory, oracle ratchet, moved-reference preservation/dead exports and conformance synchronization. A byte-identical isolated copy of a live negative fixture (103 files) completes in 0.417 seconds and reports its deliberately missing module. This further supports the environmental diagnosis. Based on that new evidence, the same complete eight-file suite is running with a task-owned `TMPDIR` while the original run is preserved independently; the earlier intention to wait for the original terminal result before a comparison is superseded. Both runs pin identical source, test, helper, fixture and policy inputs. No assertion or timeout was changed, no original run was killed, and neither pending run is counted as a pass.
+
+
+The original composition run terminated at 586/633, with all 328 production/resource tests passing and 47 boundary subprocess errors; no input hash changed. The isolated-directory comparison terminated at 632/633, with no subprocess errors and one measured census mismatch: 399 imports (251 type-only, 148 runtime), versus the previous 392 (248/144). Both original reports are retained. An AST-based comparison against the exact main base accounts for all seven added imports: three type-only imports of declaration types, three runtime imports of the shared declaration executor, and the Promise producer's runtime closure-layout import. There are no removed imports. Only the census expectation/comment is corrected; allowed edges, historical records, source inputs, negative controls and timeouts remain unchanged. The complete 305-test boundary suite must pass after this correction before publication.
+
+
+The complete corrected boundary suite passes 305/305 with all input hashes unchanged during the run. Combined with the unchanged seven production/resource suites (328/328), all 633 tests in the eight-file population have passing evidence. The original 586/633 and isolated 632/633 failures remain archived; the only test repair is the independently explained import census. Normal signed hooks and publication remain pending. Fresh main advanced to `e27dbf482b1c01cb61c6dc34e8f6fccb51ae4cdd`, including the early-error fix merged by PR #5924; that additional source change must be incorporated and validated before protected queue admission.
+
+
+Signed merge `4256ebd2d5e65c4f13956266f9570327a5521d09` preserves the validated composition. Normal hooks pass; the changed-root lane self-skips at 90 inherited root test files, so it is not execution evidence. Post-hook source/test pins are unchanged. Fresh main `e27dbf482b1c01cb61c6dc34e8f6fccb51ae4cdd` then merges cleanly. Only `src/compiler/early-errors/node-checks.ts` and `predicates.ts` differ among previously pinned source inputs. All seven production suites plus the new early-error regression suite pass 351/351 with unchanged inputs. Together with the unaffected 305/305 boundary suite, the current nine-file population has 656 passing tests. Current-base source gates and normal hooks remain required before publication.
+
+
+All seven current-base source gates pass against `e27dbf482b1c01cb61c6dc34e8f6fccb51ae4cdd` with unchanged validation inputs. This is exact-base local evidence; protected head checks, merge-group checks and main delivery remain unverified.

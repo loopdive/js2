@@ -1,9 +1,10 @@
 ---
 id: 6462
 title: "test262: stop recompiling the harness prelude per test — link a per-worker prelude module"
-status: ready
+status: wont-fix
 created: 2026-09-13
 updated: 2026-09-13
+completed: 2026-09-13
 priority: high
 horizon: xl
 feasibility: hard
@@ -17,6 +18,11 @@ related: [3433, 3451, 3461, 6463]
 ---
 
 # #6462 — reuse the compiled harness prelude across tests
+
+> **Closed as a duplicate of #3451** (2026-09-13). #3451 already carries the
+> decision (single statically linked module), the slice plan and the ABI
+> inventory; the measurements and the slice-2 smoke results from this work
+> were recorded there. Nothing further tracked here.
 
 ## Problem
 

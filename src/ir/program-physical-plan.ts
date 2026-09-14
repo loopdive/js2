@@ -10,10 +10,30 @@
 // just as importantly, every resource this increment cannot yet materialize.
 // A gap is a located, typed `unsupported` at ACCEPTANCE time; it is never a
 // smaller module. The returned plan is deep-frozen data over A's types; this
-// module imports no backend, codegen or frontend code.
+// Native string declarations are borrowed from the canonical backend recipe;
+// no resource allocation, codegen context or frontend code enters this plan.
 
-import { irGlobalBindingKey } from "./abi-bindings.js";
-import { irCallableBindingKey, irUnitCallableBindingId } from "./callable-bindings.js";
+import { irGlobalBindingKey, irTypeBindingKey, irSupportGlobalRef, irSourceTypeRef } from "./abi-bindings.js";
+import {
+  irCallableBindingKey,
+  irUnitCallableBindingId,
+  irSupportFuncRef,
+  irRuntimeFuncRef,
+} from "./callable-bindings.js";
+import type { IrFuncRef, IrGlobalRef } from "./core/value-references.js";
+import type { IrTypeRef } from "./core/types.js";
+import { INTRINSIC_DEFINITIONS } from "./core/intrinsics.js";
+import { NUMBER_BOUNDARY_RUNTIME_PROVIDERS } from "./runtime/manifest.js";
+import { ProgramAbiMap, type ProgramAbiPlanEntry } from "./program/abi.js";
+import { preparedIrCallableSignature, preparedIrTypeKey, preparedIrDataKey } from "./program-abi-contracts.js";
+import { preparedIrRuntimeAbiAnchor, preparedIrRuntimeCallableBindingId } from "./program-runtime-abi.js";
+import { preparedIrDataMismatch } from "./program/data.js";
+import {
+  planNativeStringValuePhysical,
+  type NativeStringValuePhysicalPlan,
+  type NativeStringValueReservationInput,
+} from "../backend/wasmgc/program/native-string-values.js";
+import type { NativeStringValueDeclaration } from "../runtime/wasmgc/values/native-resource-declaration-types.js";
 import type { IrBindingId, IrUnitId } from "./identity.js";
 import { forEachInstrDeep, type IrFunction, type IrType } from "./nodes.js";
 import type { IrPreparationFailure } from "./outcomes.js";
@@ -32,6 +52,7 @@ import { deriveNativeVectorResourcePlan, type NativeVectorResourcePlan } from ".
 import { assertPreparedIrProgram } from "./program-validation.js";
 import {
   deriveNativeValueResourcePlan,
+  assertNativeValueResourcePlanFor,
   type NativeValueResourcePlan,
   type NativeValueStringRepresentation,
 } from "./program/native-value-resources.js";
@@ -41,8 +62,19 @@ import {
   type NativePromiseResourcePlan,
 } from "./program/native-promise-resources.js";
 
-/** Vector carriers stay logical until the consumer reserves their shared types. */
-export type PhysicalSignatureType = ValType | Extract<IrType, { kind: "vec" }>;
+/** Vector/string carriers stay logical until the consumer reserves their shared types. */
+export type PhysicalSignatureType = ValType | Extract<IrType, { kind: "vec" | "string" }>;
+
+export interface NativeStringValueAbiBinding {
+  readonly resourceKey: string;
+  readonly entry: ProgramAbiPlanEntry;
+  readonly reference: IrFuncRef | IrGlobalRef | IrTypeRef;
+}
+
+export interface PhysicalNativeStringSetup {
+  readonly resources: NativeStringValuePhysicalPlan;
+  readonly bindings: readonly NativeStringValueAbiBinding[];
+}
 
 export interface PhysicalFunctionSlot {
   readonly unitId: IrUnitId;
@@ -100,6 +132,8 @@ export interface PhysicalSetupPlan {
   readonly target: PreparedIrBackendOptions["target"];
   readonly exceptionTag: PhysicalExceptionTag;
   readonly vectors: NativeVectorResourcePlan;
+  /** Descriptive only: the issued reservation input stays in the consumer's private record. */
+  readonly nativeStrings?: PhysicalNativeStringSetup;
   readonly importedFunctions: readonly PhysicalImportedFunction[];
   readonly importedGlobals: readonly PhysicalImportedGlobal[];
   readonly definedGlobals: readonly PhysicalDefinedGlobal[];
@@ -241,28 +275,416 @@ function canonicalEntry(
   return current;
 }
 
-/**
- * Derive the physical setup for one projection, or the first located gap.
- * Only scalar carriers, unit/import callables, source/import globals, export
- * aliases onto functions or globals, wasm-start / deferred-export startup and
- * the `__exn` tag are materializable in this increment; every other need is
- * reported.
- */
-export function planPhysicalSetup(
+function nativeInvalid(detail: string): never {
+  throw new PreparedIrProgramInvariantError("invalid-prepared-data", `native string ABI: ${detail}`);
+}
+
+function nativeSame(actual: unknown, expected: unknown, detail: string): void {
+  if (preparedIrDataMismatch(actual, expected) !== undefined) nativeInvalid(detail);
+}
+
+function nativeRole(declaration: NativeStringValueDeclaration): string {
+  return "native-string-values:v1:" + JSON.stringify(declaration.role);
+}
+
+/** Opaque keys retain the complete versioned declaration, not eventual indices. */
+function nativeDeclarationKey(declaration: NativeStringValueDeclaration, part: unknown): string {
+  return "native-string-values:abi:v1:" + preparedIrDataKey({ declaration, part });
+}
+
+function nativeReferenceKey(ref: NativeStringValueAbiBinding["reference"]): string {
+  if (ref.kind === "func") return irCallableBindingKey(ref.binding);
+  return ref.kind === "global" ? irGlobalBindingKey(ref.binding) : irTypeBindingKey(ref.binding);
+}
+
+function declarationForRole(
+  resources: NativeStringValuePhysicalPlan,
+  role: readonly string[],
+): NativeStringValueDeclaration {
+  const rows = resources.declarations.filter((row) => preparedIrDataMismatch(row.role, role) === undefined);
+  if (rows.length !== 1) nativeInvalid(`missing/duplicate declaration role ${JSON.stringify(role)}`);
+  return rows[0]!;
+}
+
+function internalNativeBinding(
+  program: PreparedIrProgram,
+  declaration: NativeStringValueDeclaration,
+  declarationOrder: number,
+): NativeStringValueAbiBinding {
+  const anchor = preparedIrRuntimeAbiAnchor(program.inventory);
+  const role = nativeRole(declaration);
+  const name = declaration.space === "type" ? role : declaration.name;
+  const reference =
+    declaration.space === "function"
+      ? irSupportFuncRef(anchor.id, role, name)
+      : declaration.space === "global"
+        ? irSupportGlobalRef(anchor.id, role, name)
+        : irSourceTypeRef(anchor.id, role, name);
+  if (!("bindingId" in reference.binding)) nativeInvalid("internal declaration lacks a structural binding ID");
+  const intent: ProgramAbiPlanEntry["intent"] =
+    declaration.space === "function"
+      ? {
+          kind: "callable",
+          origin: "support",
+          sourceId: anchor.id,
+          signature: {
+            params: declaration.signature.params.map((value) => nativeDeclarationKey(declaration, value)),
+            results: declaration.signature.results.map((value) => nativeDeclarationKey(declaration, value)),
+          },
+        }
+      : declaration.space === "global"
+        ? {
+            kind: "global",
+            origin: "support",
+            valueType: nativeDeclarationKey(declaration, declaration.valueType),
+            mutable: declaration.mutable,
+          }
+        : { kind: "type", shapeKey: nativeDeclarationKey(declaration, declaration.shape) };
+  return {
+    resourceKey: declaration.key,
+    reference,
+    entry: {
+      id: reference.binding.bindingId,
+      order: { sourceOrder: anchor.order, declarationOrder },
+      displayName: name,
+      structuralReferenceKey: nativeReferenceKey(reference),
+      slotPolicy: "required",
+      slotSpace: declaration.space,
+      intent,
+    },
+  };
+}
+
+interface NativeAbiContext {
+  readonly program: PreparedIrProgram;
+  readonly resources: NativeStringValuePhysicalPlan;
+  readonly entries: ReadonlyMap<IrBindingId, PreparedIrAbiEntry>;
+  readonly abi: ProgramAbiMap;
+}
+
+/** An attached carrier must name this recipe's AnyString declaration structurally. */
+function nativeStringCarrier(type: IrType, context: NativeAbiContext): Extract<IrType, { kind: "string" }> {
+  const ref = type.kind === "string" ? type.carrierRef : type.kind === "val" ? type.typeRef : undefined;
+  if (type.kind !== "string" && !(type.kind === "val" && ref && type.val.kind === "ref"))
+    nativeInvalid("literal/signature is not a semantic string or explicitly joined string carrier");
+  if (ref) {
+    const declaration = declarationForRole(context.resources, ["string-type", "any"]);
+    const expected = internalNativeBinding(context.program, declaration, 0).reference;
+    if (ref.kind !== "type" || expected.kind !== "type" || nativeReferenceKey(ref) !== nativeReferenceKey(expected))
+      nativeInvalid("string carrier reference is not the accepted AnyString structural declaration");
+    const entry = context.entries.get(context.abi.canonicalId(ref.binding.bindingId));
+    if (
+      entry?.plan.slotPolicy !== "required" ||
+      entry.plan.slotSpace !== "type" ||
+      entry.contract.kind !== "type" ||
+      entry.plan.intent.kind !== "type" ||
+      nativeReferenceKey(entry.contract.ref) !== nativeReferenceKey(expected) ||
+      entry.contract.type.kind !== "string" ||
+      Object.hasOwn(entry.contract.type, "carrierRef")
+    )
+      nativeInvalid("string carrier reference has no explicit required semantic AnyString type join");
+    nativeSame(
+      entry.plan.intent.shapeKey,
+      preparedIrTypeKey(entry.contract.type),
+      "AnyString semantic shape contradicts its intent",
+    );
+  } else if (type.kind !== "string" || Object.hasOwn(type, "carrierRef")) {
+    nativeInvalid("missing explicit string carrier reference");
+  }
+  return type.kind === "string" ? type : { kind: "string", carrierRef: ref! };
+}
+
+function literalNativeBinding(
+  context: NativeAbiContext,
+  declaration: NativeStringValueDeclaration,
+  reference: IrGlobalRef | IrFuncRef,
+): NativeStringValueAbiBinding {
+  if (reference.binding.kind !== "support") nativeInvalid("literal reference is not support-owned");
+  const declared = context.entries.get(reference.binding.bindingId);
+  if (!declared || declared.plan.structuralReferenceKey !== nativeReferenceKey(reference))
+    nativeInvalid("existing literal reference lacks its exact ABI entry");
+  const entry = context.entries.get(context.abi.canonicalId(declared.plan.id));
+  if (!entry || entry.plan.slotPolicy !== "required" || entry.plan.slotSpace !== declaration.space)
+    nativeInvalid("existing literal reference resolves to missing, slotless or wrong-space storage");
+  const { contract, plan } = entry;
+  if (
+    reference.kind === "global" &&
+    declaration.space === "global" &&
+    contract.kind === "global" &&
+    plan.intent.kind === "global"
+  ) {
+    if (
+      contract.ref.binding.kind !== "support" ||
+      plan.intent.origin !== "support" ||
+      contract.mutable ||
+      plan.intent.mutable ||
+      declaration.mutable
+    )
+      nativeInvalid("literal global must be immutable support storage");
+    nativeStringCarrier(contract.type, context);
+    nativeSame(plan.intent.valueType, preparedIrTypeKey(contract.type), "literal global semantic intent differs");
+  } else if (
+    reference.kind === "func" &&
+    declaration.space === "function" &&
+    contract.kind === "callable" &&
+    plan.intent.kind === "callable"
+  ) {
+    if (
+      contract.ref.binding.kind !== "support" ||
+      plan.intent.origin !== "support" ||
+      contract.params.length !== 0 ||
+      contract.results.length !== 1 ||
+      Object.hasOwn(contract, "promise")
+    )
+      nativeInvalid("literal materializer is not zero-argument, one-string, non-Promise support");
+    nativeStringCarrier(contract.results[0]!, context);
+    nativeSame(
+      plan.intent.signature,
+      preparedIrCallableSignature(contract.params, contract.results),
+      "materializer semantic intent differs",
+    );
+  } else nativeInvalid("literal reference contract does not match its selected realization");
+  if (plan.structuralReferenceKey !== nativeReferenceKey(contract.ref))
+    nativeInvalid("canonical literal reference payload differs");
+  return { resourceKey: declaration.key, entry: plan, reference };
+}
+
+function nativeUnboxBinding(
+  context: NativeAbiContext,
+  input: NativeStringValueReservationInput,
+  declarationOrder: number,
+): NativeStringValueAbiBinding | undefined {
+  const { projection } = input.demands;
+  const demands = input.demands.intrinsics.filter(
+    (row) =>
+      row.instruction.id === "js.number.unbox" &&
+      input.demands.buffers[input.demands.occurrences[row.occurrence]!.bufferIndex]!.view === "projection",
+  );
+  if (!demands.length) {
+    if (input.plan.mode !== "literals") nativeInvalid("number-boundary plan has no actual unbox demand");
+    return undefined;
+  }
+  const canonical = NUMBER_BOUNDARY_RUNTIME_PROVIDERS.filter((row) => row.id === "native.js.number.unbox");
+  if (canonical.length !== 1) nativeInvalid("canonical unbox provider is not unique");
+  const provider = canonical[0]!;
+  if (provider.implementation.kind !== "runtime-callable" || !provider.signature)
+    nativeInvalid("canonical unbox contract is not callable");
+  const manifest = projection.prepared.manifest;
+  const selected = manifest.providers.filter((row) => row.id === provider.id || row.feature === provider.feature);
+  if (
+    input.plan.mode !== "number-boundary" ||
+    manifest.policy.numberBoundary.unbox !== "native" ||
+    selected.length !== 1
+  )
+    nativeInvalid("unbox requires the unique selected native number-boundary policy/provider");
+  nativeSame(selected[0], provider, "manifest unbox provider differs from complete canonical definition");
+  nativeSame(
+    projection.prepared.providers.get("js.number.unbox"),
+    provider,
+    "selected unbox lookup differs from canonical provider",
+  );
+  nativeSame(
+    provider.signature,
+    INTRINSIC_DEFINITIONS["js.number.unbox"].signature,
+    "canonical intrinsic/unbox signatures differ",
+  );
+  const reference = irRuntimeFuncRef(provider.implementation.symbol);
+  for (const { instruction } of demands) {
+    if (instruction.provider?.kind !== "callable") nativeInvalid("unbox attachment is not callable");
+    nativeSame(
+      instruction.provider.target.binding,
+      reference.binding,
+      "unbox attachment target is not the selected runtime binding",
+    );
+  }
+  const declaration = declarationForRole(context.resources, ["values", "unbox-number"]);
+  if (declaration.space !== "function") nativeInvalid("unbox declaration is not a function");
+  const physical = (type: IrType): ValType => {
+    if (type.kind !== "val" || Object.hasOwn(type, "typeRef"))
+      nativeInvalid("canonical number-boundary signature has a non-scalar carrier");
+    return type.val;
+  };
+  nativeSame(
+    declaration.signature,
+    { params: provider.signature.params.map(physical), results: [physical(provider.signature.result)] },
+    "unbox recipe disagrees with canonical carriers",
+  );
+  const signature = preparedIrCallableSignature(provider.signature.params, [provider.signature.result]);
+  const id = preparedIrRuntimeCallableBindingId(context.program.inventory, reference);
+  const entry: ProgramAbiPlanEntry = {
+    id,
+    order: { sourceOrder: preparedIrRuntimeAbiAnchor(context.program.inventory).order, declarationOrder },
+    displayName: reference.name,
+    structuralReferenceKey: irCallableBindingKey(reference.binding),
+    slotPolicy: "required",
+    slotSpace: "function",
+    intent: { kind: "callable", origin: "runtime", signature },
+  };
+  const previous = context.entries.get(id);
+  if (previous) {
+    nativeSame(
+      previous.plan,
+      { ...entry, order: previous.plan.order, displayName: previous.plan.displayName },
+      "existing runtime unbox ABI entry contradicts its canonical contract",
+    );
+    if (previous.contract.kind !== "callable" || Object.hasOwn(previous.contract, "promise"))
+      nativeInvalid("existing unbox semantic contract is not synchronous callable");
+    nativeSame(previous.contract.ref.binding, reference.binding, "existing unbox reference differs");
+    nativeSame(
+      preparedIrCallableSignature(previous.contract.params, previous.contract.results),
+      signature,
+      "existing unbox semantic signature differs",
+    );
+  }
+  return { resourceKey: declaration.key, entry: previous?.plan ?? entry, reference };
+}
+
+/** Complete descriptive ABI join. It never reserves or clones an issued native plan. */
+function nativeStringSetup(
   program: PreparedIrProgram,
   options: PreparedIrBackendOptions,
   projection: PreparedIrProgramRuntimeProjection,
-): PhysicalSetupOutcome {
-  const gaps = new Gaps();
-  const physical = projection.prepared.functions;
-  const bodies = new Map<IrUnitId, IrFunction>(physical.map((fn) => [fn.unitId, fn] as const));
-  const entries = new Map<IrBindingId, PreparedIrAbiEntry>(program.abi.entries.map((entry) => [entry.plan.id, entry]));
-  const vectors = planNativeVectorResources(program, options, projection);
+  input: NativeStringValueReservationInput,
+): PhysicalNativeStringSetup {
+  if (
+    options.backend !== "wasmgc" ||
+    options.target !== "standalone" ||
+    input.demands.program !== program ||
+    input.demands.projection !== projection
+  )
+    nativeInvalid("native input does not belong to the selected standalone program/projection");
+  const current = planNativeStringValuePhysical(input.demands, {
+    representation: "native-string",
+    utf8Storage: options.utf8Storage,
+  });
+  if (current.kind !== "planned") nativeInvalid("native input has no supported current physical recipe");
+  nativeSame(input.plan, current.plan, "native declarations or selection changed");
+  if (input.plan.mode === "number-boundary") {
+    if (!input.valueRequirements) nativeInvalid("missing exact issued native value plan");
+    assertNativeValueResourcePlanFor(input.valueRequirements, program, projection, "native-string");
+  } else if (input.valueRequirements !== undefined)
+    nativeInvalid("literal-only plan unexpectedly carries value requirements");
+  const abi = new ProgramAbiMap(program.inventory, program.derivedUnits);
+  for (const row of program.abi.entries) abi.plan(row.plan);
+  abi.sealPlan();
+  const context: NativeAbiContext = {
+    program,
+    resources: input.plan,
+    abi,
+    entries: new Map(program.abi.entries.map((row) => [row.plan.id, row])),
+  };
+  const anchor = preparedIrRuntimeAbiAnchor(program.inventory);
+  let baseOrder = 0;
+  for (const row of program.abi.entries)
+    if (row.plan.order.sourceOrder === anchor.order)
+      baseOrder = Math.max(baseOrder, row.plan.order.declarationOrder + 1);
+  if (!Number.isSafeInteger(baseOrder) || !Number.isSafeInteger(baseOrder + input.plan.declarations.length))
+    nativeInvalid("supplemental declaration order overflows safe integers");
+  const bindings: NativeStringValueAbiBinding[] = [];
+  const owners = new Map<string, IrBindingId>(),
+    keys = new Map<IrBindingId, string>();
+  const add = (binding: NativeStringValueAbiBinding) => {
+    const owner = owners.get(binding.resourceKey),
+      key = keys.get(binding.entry.id);
+    if ((owner && owner !== binding.entry.id) || (key && key !== binding.resourceKey))
+      nativeInvalid("two independent required roots cannot own one token, or one root two tokens");
+    owners.set(binding.resourceKey, binding.entry.id);
+    keys.set(binding.entry.id, binding.resourceKey);
+    if (
+      !bindings.some(
+        (row) =>
+          row.resourceKey === binding.resourceKey &&
+          nativeReferenceKey(row.reference) === nativeReferenceKey(binding.reference),
+      )
+    )
+      bindings.push(binding);
+  };
+  for (const use of input.plan.literalUses) {
+    const demand = input.demands.literals[use.demandIndex]!;
+    if (demand.kind !== "string.const") nativeInvalid("nonliteral in executable string binding population");
+    const reference = demand.instruction.storage ?? demand.instruction.materializer;
+    if (!reference) continue;
+    const declaration = declarationForRole(input.plan, [
+      reference.kind === "global" ? "literal-global" : "literal-materializer",
+      use.cacheKey,
+    ]);
+    const binding = literalNativeBinding(context, declaration, reference);
+    add(binding);
+    const root = context.entries.get(binding.entry.id)!.contract;
+    if (root.kind === "global" || root.kind === "callable") add({ ...binding, reference: root.ref });
+  }
+  const unboxIndex = input.plan.declarations.findIndex(
+    (row) => preparedIrDataMismatch(row.role, ["values", "unbox-number"]) === undefined,
+  );
+  const unbox = nativeUnboxBinding(context, input, baseOrder + unboxIndex);
+  if (unbox) add(unbox);
+  const seen = new Set<string>();
+  for (const [index, declaration] of input.plan.declarations.entries()) {
+    if (seen.has(declaration.key)) nativeInvalid("duplicate resource declaration key");
+    seen.add(declaration.key);
+    if (owners.has(declaration.key)) continue;
+    const binding = internalNativeBinding(program, declaration, baseOrder + index);
+    const previous = context.entries.get(binding.entry.id);
+    if (previous) {
+      if (
+        declaration.space === "type" &&
+        declaration.role.length === 2 &&
+        declaration.role[0] === "string-type" &&
+        declaration.role[1] === "any"
+      ) {
+        if (binding.reference.kind !== "type") nativeInvalid("AnyString recipe reference is not a type");
+        nativeStringCarrier({ kind: "string", carrierRef: binding.reference }, context);
+      } else
+        nativeSame(
+          previous.plan,
+          { ...binding.entry, order: previous.plan.order, displayName: previous.plan.displayName },
+          "existing internal declaration contradicts canonical recipe",
+        );
+      add({ ...binding, entry: previous.plan });
+    } else add(binding);
+  }
+  if (seen.size !== owners.size || bindings.some((row) => !seen.has(row.resourceKey)))
+    nativeInvalid("resource binding population does not equal complete recipe");
+  // Validate new IDs/orders and alias contracts using the same ABI rules as emission.
+  const joined = new ProgramAbiMap(program.inventory, program.derivedUnits);
+  for (const row of program.abi.entries) joined.plan(row.plan);
+  for (const [id] of keys)
+    if (!context.entries.has(id)) joined.plan(bindings.find((row) => row.entry.id === id)!.entry);
+  joined.sealPlan();
+  return { resources: input.plan, bindings };
+}
 
-  const convert = (types: readonly IrType[], where: string, unitId?: IrUnitId): PhysicalSignatureType[] => {
+function physicalSignatureConverter(
+  program: PreparedIrProgram,
+  vectors: NativeVectorResourcePlan,
+  gaps: Gaps,
+  native?: PhysicalNativeStringSetup,
+) {
+  const abi = native ? new ProgramAbiMap(program.inventory, program.derivedUnits) : undefined;
+  if (abi) {
+    for (const row of program.abi.entries) abi.plan(row.plan);
+    abi.sealPlan();
+  }
+  const context =
+    native && abi
+      ? {
+          program,
+          resources: native.resources,
+          abi,
+          entries: new Map(program.abi.entries.map((row) => [row.plan.id, row])),
+        }
+      : undefined;
+  return (types: readonly IrType[], where: string, unitId?: IrUnitId): PhysicalSignatureType[] => {
     const out: PhysicalSignatureType[] = [];
     for (const type of types) {
       const value = scalar(type);
+      if (
+        context &&
+        (type.kind === "string" || (type.kind === "val" && (type.val.kind === "ref" || type.val.kind === "ref_null")))
+      ) {
+        out.push(nativeStringCarrier(type, context));
+        continue;
+      }
       if (
         type.kind === "vec" &&
         !type.layout &&
@@ -274,15 +696,38 @@ export function planPhysicalSetup(
         out.push(type);
         continue;
       }
-      if (!value) {
+      if (!value)
         gaps.add(
           `${where} carries non-scalar IR type ${typeLabel(type)}; physical carrier materialization is not available`,
           unitId,
         );
-      } else out.push(value);
+      else out.push(value);
     }
     return out;
   };
+}
+
+/**
+ * Derive the physical setup for one projection, or the first located gap.
+ * Only scalar carriers, unit/import callables, source/import globals, export
+ * aliases onto functions or globals, wasm-start / deferred-export startup and
+ * the `__exn` tag are materializable in this increment; every other need is
+ * reported.
+ */
+export function planPhysicalSetup(
+  program: PreparedIrProgram,
+  options: PreparedIrBackendOptions,
+  projection: PreparedIrProgramRuntimeProjection,
+  native?: NativeStringValueReservationInput,
+): PhysicalSetupOutcome {
+  const gaps = new Gaps();
+  const physical = projection.prepared.functions;
+  const bodies = new Map<IrUnitId, IrFunction>(physical.map((fn) => [fn.unitId, fn] as const));
+  const entries = new Map<IrBindingId, PreparedIrAbiEntry>(program.abi.entries.map((entry) => [entry.plan.id, entry]));
+  const vectors = planNativeVectorResources(program, options, projection);
+  const nativeStrings = native ? nativeStringSetup(program, options, projection, native) : undefined;
+  const nativeIds = new Set(nativeStrings?.bindings.map((row) => row.entry.id));
+  const convert = physicalSignatureConverter(program, vectors, gaps, nativeStrings);
 
   // 1. Function slots: one per physical body, signature from the body's own ABI contract.
   const functions: PhysicalFunctionSlot[] = [];
@@ -330,6 +775,7 @@ export function planPhysicalSetup(
       continue;
     }
     if (plan.slotPolicy !== "required") continue;
+    if (nativeIds.has(plan.id)) continue;
     if (contract.kind === "callable") {
       const binding = contract.ref.binding;
       if (binding.kind === "unit") {
@@ -399,8 +845,16 @@ export function planPhysicalSetup(
     ...functions.map((slot) => irCallableBindingKey({ kind: "unit", unitId: slot.unitId })),
     ...importedFunctions.map((fn) => fn.referenceKey),
     ...(vectors.helper ? [vectors.helper.referenceKey] : []),
+    ...(nativeStrings?.bindings
+      .filter((row) => row.reference.kind === "func")
+      .map((row) => nativeReferenceKey(row.reference)) ?? []),
   ]);
-  const reservedGlobals = new Set<string>([...importedGlobals, ...definedGlobals].map((global) => global.referenceKey));
+  const reservedGlobals = new Set<string>([
+    ...[...importedGlobals, ...definedGlobals].map((global) => global.referenceKey),
+    ...(nativeStrings?.bindings
+      .filter((row) => row.reference.kind === "global")
+      .map((row) => nativeReferenceKey(row.reference)) ?? []),
+  ]);
   let exceptionRequired = vectors.exceptionRequired;
   for (const fn of physical) {
     for (const buffer of [
@@ -428,6 +882,12 @@ export function planPhysicalSetup(
             const provider = instruction.provider;
             if (!provider) gaps.add(`body ${fn.name} intrinsic ${instruction.id} has no physical provider`, fn.unitId);
             else if (
+              !(
+                nativeStrings &&
+                instruction.id === "js.number.unbox" &&
+                provider.kind === "callable" &&
+                reserved.has(irCallableBindingKey(provider.target.binding))
+              ) &&
               provider.kind !== "backend-op" &&
               provider.kind !== "backend-sequence" &&
               provider.kind !== "backend-composite"
@@ -497,6 +957,7 @@ export function planPhysicalSetup(
     target: options.target,
     exceptionTag: { required: exceptionRequired || options.sharedExceptionTag, shared: options.sharedExceptionTag },
     vectors,
+    ...(nativeStrings ? { nativeStrings } : {}),
     importedFunctions,
     importedGlobals,
     definedGlobals,
