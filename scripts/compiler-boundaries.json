@@ -170,9 +170,10 @@
         "src/ir/program/native-value-resources.ts",
         "src/ir/program/native-string-value-demands.ts",
         "src/ir/program/runtime-support.ts",
-        "src/ir/program/formatter-support.ts"
+        "src/ir/program/formatter-support.ts",
+        "src/ir/program/native-number-format-requirements.ts"
       ],
-      "minModules": 18
+      "minModules": 19
     },
     {
       "id": "runtime-contracts",
@@ -203,9 +204,13 @@
         "src/backend/wasmgc/resources/native-argument-vectors.ts",
         "src/backend/wasmgc/resources/native-closures.ts",
         "src/backend/wasmgc/resources/native-resource-declarations.ts",
-        "src/backend/wasmgc/program/native-string-values.ts"
+        "src/backend/wasmgc/program/native-string-values.ts",
+        "src/backend/wasmgc/program/native-number-format.ts",
+        "src/backend/wasmgc/resources/native-number-ryu.ts",
+        "src/backend/wasmgc/resources/native-number-format.ts",
+        "src/backend/wasmgc/resources/native-delay-combinator.ts"
       ],
-      "minModules": 11
+      "minModules": 15
     },
     {
       "id": "native-runtime",
@@ -234,9 +239,19 @@
         "src/runtime/wasmgc/values/string-utf8-decode-bodies.ts",
         "src/runtime/wasmgc/values/argument-vector-bodies.ts",
         "src/runtime/wasmgc/values/closure-layouts.ts",
-        "src/runtime/wasmgc/values/native-resource-declaration-types.ts"
+        "src/runtime/wasmgc/values/native-resource-declaration-types.ts",
+        "src/runtime/wasmgc/values/number-ryu-tables.ts",
+        "src/runtime/wasmgc/values/number-ryu-bodies.ts",
+        "src/runtime/wasmgc/values/number-ryu-digits.ts",
+        "src/runtime/wasmgc/values/number-ryu-to-buffer.ts",
+        "src/runtime/wasmgc/values/number-ryu-signatures.ts",
+        "src/runtime/wasmgc/values/number-format-bodies.ts",
+        "src/runtime/wasmgc/values/number-format-radix-bodies.ts",
+        "src/runtime/wasmgc/values/string-concat-bodies.ts",
+        "src/runtime/wasmgc/values/stdout-bodies.ts",
+        "src/runtime/wasmgc/promise/delay-combinator-layouts.ts"
       ],
-      "minModules": 22
+      "minModules": 32
     },
     {
       "id": "standalone-platform",
@@ -475,6 +490,60 @@
     }
   ],
   "activationHistory": [
+    {
+      "layer": "backend-wasmgc",
+      "entries": ["src/backend/wasmgc/resources/native-delay-combinator.ts"],
+      "minModules": 15
+    },
+    {
+      "layer": "native-runtime",
+      "entries": ["src/runtime/wasmgc/promise/delay-combinator-layouts.ts"],
+      "minModules": 32
+    },
+    {
+      "layer": "native-runtime",
+      "entries": ["src/runtime/wasmgc/values/string-concat-bodies.ts", "src/runtime/wasmgc/values/stdout-bodies.ts"],
+      "minModules": 2
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": ["src/backend/wasmgc/resources/native-number-format.ts"],
+      "minModules": 1
+    },
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/values/number-format-bodies.ts",
+        "src/runtime/wasmgc/values/number-format-radix-bodies.ts"
+      ],
+      "minModules": 2
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": ["src/backend/wasmgc/resources/native-number-ryu.ts"],
+      "minModules": 1
+    },
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/values/number-ryu-tables.ts",
+        "src/runtime/wasmgc/values/number-ryu-bodies.ts",
+        "src/runtime/wasmgc/values/number-ryu-digits.ts",
+        "src/runtime/wasmgc/values/number-ryu-to-buffer.ts",
+        "src/runtime/wasmgc/values/number-ryu-signatures.ts"
+      ],
+      "minModules": 5
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": ["src/backend/wasmgc/program/native-number-format.ts"],
+      "minModules": 1
+    },
+    {
+      "layer": "ir-program",
+      "entries": ["src/ir/program/native-number-format-requirements.ts"],
+      "minModules": 1
+    },
     {
       "layer": "frontend-ts",
       "entries": ["src/frontend/builtins/contracts.ts"],
@@ -12124,6 +12193,79 @@
       "path": "src/ir/core/type-references.ts",
       "state": "clean",
       "layer": "ir-core"
+    },
+    {
+      "path": "src/runtime/wasmgc/promise/delay-combinator-layouts.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/ir/program/native-number-format-requirements.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/backend/wasmgc/program/native-number-format.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-number-ryu.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/number-ryu-tables.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/number-ryu-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/number-ryu-digits.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/number-ryu-to-buffer.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/number-ryu-signatures.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-delay-combinator.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/ir/program-native-async-resources.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Relocated existing Promise and B3 checked source planning still imports program.ts, program-validation.ts, program-runtime-abi.ts, program-abi-contracts.ts and backend/wasmgc resource owners. Split prepared source admission from backend reservation composition without weakening census, ABI, configuration or borrowed-owner checks; retain only reusable module-owned reservation contracts in wasm/physical. This relocation is not clean IR-program activation or async body completion."
+    },
+    {
+      "path": "src/runtime/wasmgc/values/number-format-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/number-format-radix-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-number-format.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
     }
   ]
 }

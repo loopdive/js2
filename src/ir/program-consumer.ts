@@ -39,7 +39,35 @@ import {
 import { collectNativeStringValueDemands } from "./program/native-string-value-demands.js";
 import { deriveNativeValueResourcePlan, assertNativeValueResourcePlanFor } from "./program/native-value-resources.js";
 import { freezePreparedIrValue, preparedIrDataMismatch } from "./program/data.js";
-import { reserveNativeStringLiteralTypes } from "../backend/wasmgc/resources/native-string-literals.js";
+import {
+  reserveNativeStringLiteralTypes,
+  reserveNativeStringLiteralResources,
+  nativeStringLiteralReservationInventory,
+  fillNativeStringLiteralResources,
+  requireCompletedNativeStringLiterals,
+  type NativeStringLiteralReservations,
+} from "../backend/wasmgc/resources/native-string-literals.js";
+import {
+  reserveNativeNumberFormatResources,
+  requireNativeNumberFormatReservations,
+  nativeNumberFormatReservationInventory,
+  fillNativeNumberFormatResources,
+  requireCompletedNativeNumberFormat,
+  type NativeNumberFormatResourceRow,
+} from "../backend/wasmgc/resources/native-number-format.js";
+import {
+  planNativeNumberFormatStringLayout,
+  planNativeNumberFormatPhysical,
+} from "../backend/wasmgc/program/native-number-format.js";
+import { buildInlineNativeStringLiteral } from "../runtime/wasmgc/values/string-literal-bodies.js";
+import {
+  deriveNativeNumberFormatRequirements,
+  assertNativeNumberFormatRequirementsCurrent,
+  type NativeNumberFormatRequirements,
+} from "./program/native-number-format-requirements.js";
+import { numberFormatRadixSupportDeclarations } from "./program/formatter-support.js";
+import { prepareIrRuntimeManifest } from "./intrinsic-support.js";
+import type { PreparedIrRuntimeManifest, PreparedIrFunction } from "./runtime/contracts/prepared.js";
 import { compareNativeResourceDeclarationShape } from "../backend/wasmgc/resources/native-resource-declarations.js";
 import { indexPhysicalTypes } from "../wasm/physical/type-layout.js";
 import {
@@ -93,6 +121,13 @@ interface AcceptanceRecord {
   /** Exact issued dependencies; never deep-clone the native-value plan. */
   readonly nativeStrings?: NativeStringValueReservationInput;
   readonly nativeSnapshot?: unknown;
+  readonly nativeNumberFormat?: AcceptedNativeNumberFormat;
+}
+interface AcceptedNativeNumberFormat {
+  readonly requirements: NativeNumberFormatRequirements;
+  readonly support: PreparedIrRuntimeManifest;
+  readonly body: PreparedIrFunction;
+  readonly snapshot: unknown;
 }
 /** Only this module can mint acceptance or retain its issued dependencies. */
 const acceptances = new WeakMap<AcceptedPreparedIrProgram, AcceptanceRecord>();
@@ -129,7 +164,7 @@ function selectProjection(
   );
 }
 
-/** Exact option data: no own `linear` property unless one was supplied. */
+/** Exact option data: optional physical policies are retained only when supplied. */
 function canonicalOptions(options: PreparedIrBackendOptions): PreparedIrBackendOptions {
   const base = {
     backend: options.backend,
@@ -138,6 +173,11 @@ function canonicalOptions(options: PreparedIrBackendOptions): PreparedIrBackendO
     utf8Storage: options.utf8Storage,
     sourceMap: options.sourceMap,
     moduleName: options.moduleName,
+    ...(options.numberFormat === undefined
+      ? {}
+      : {
+          numberFormat: Object.freeze({ integerBeforeScratch: options.numberFormat.integerBeforeScratch }),
+        }),
   };
   return Object.freeze(options.linear === undefined ? base : { ...base, linear: Object.freeze({ ...options.linear }) });
 }
@@ -145,6 +185,43 @@ function canonicalOptions(options: PreparedIrBackendOptions): PreparedIrBackendO
 // ---------------------------------------------------------------------------
 // Acceptance
 // ---------------------------------------------------------------------------
+
+/** Retain the actual canonical preparation, never a caller-supplied body clone. */
+function prepareNativeNumberFormat(
+  program: PreparedIrProgram,
+  options: PreparedIrBackendOptions,
+  projection: PreparedIrProgramRuntimeProjection,
+): AcceptedNativeNumberFormat | undefined {
+  if (options.backend !== "wasmgc" || options.target !== "standalone" || !program.runtimeSupport) return undefined;
+  const integerBeforeScratch = options.numberFormat?.integerBeforeScratch;
+  if (typeof integerBeforeScratch !== "boolean")
+    programInvariant("invalid-prepared-data", "formatter support requires its resolved integer policy");
+  const requirements = deriveNativeNumberFormatRequirements({ program, projection, integerBeforeScratch });
+  if (!requirements) programInvariant("invalid-prepared-data", "formatter support has no actual demand");
+  const literalOwners = new Set<string>();
+  for (const use of requirements.literals) {
+    const instruction = use.instruction;
+    const key = JSON.stringify([use.allocation, instruction.value]);
+    if (
+      literalOwners.has(key) ||
+      Object.hasOwn(instruction, "storage") ||
+      Object.hasOwn(instruction, "materializer") ||
+      instruction.value.length > 10000
+    )
+      programInvariant("invalid-prepared-data", "formatter support literal lacks a unique bounded inline owner");
+    literalOwners.add(key);
+  }
+  const support = prepareIrRuntimeManifest({
+    functions: [requirements.batch.implementation.body],
+    sourceFile: "<stdlib:__sh_num_toString_radix>",
+    policy: projection.prepared.manifest.policy,
+    includeEmpty: true,
+  });
+  const body = support.functions[0];
+  if (support.functions.length !== 1 || !body || body.asyncPlan || body.asyncRuntime)
+    programInvariant("invalid-prepared-data", "formatter preparation must retain one synchronous support body");
+  return Object.freeze({ requirements, support, body, snapshot: freezePreparedIrValue(body) });
+}
 
 /**
  * Accept one complete program for one exact backend/target. Returns A's typed
@@ -157,6 +234,21 @@ export function acceptPreparedIrProgram(
   options: PreparedIrBackendOptions,
 ): PreparedIrBackendAcceptance {
   assertPreparedIrProgram(program);
+  if (
+    options.numberFormat !== undefined &&
+    (options.backend !== "wasmgc" ||
+      options.target !== "standalone" ||
+      options.numberFormat === null ||
+      typeof options.numberFormat !== "object" ||
+      Object.keys(options.numberFormat).length !== 1 ||
+      !Object.hasOwn(options.numberFormat, "integerBeforeScratch") ||
+      typeof options.numberFormat.integerBeforeScratch !== "boolean")
+  ) {
+    programInvariant(
+      "invalid-prepared-data",
+      "number formatter options require standalone WasmGC and one resolved boolean",
+    );
+  }
   if (options.linear !== undefined && options.backend !== "linear") {
     programInvariant("invalid-prepared-data", `linear physical options were supplied for backend ${options.backend}`);
   }
@@ -230,7 +322,8 @@ export function acceptPreparedIrProgram(
       });
     }
   }
-  const physical = planPhysicalSetup(program, options, runtime, nativeStrings);
+  const nativeNumberFormat = prepareNativeNumberFormat(program, options, runtime);
+  const physical = planPhysicalSetup(program, options, runtime, nativeStrings, nativeNumberFormat);
   if (physical.kind !== "planned") return physical;
 
   const accepted = Object.freeze({
@@ -244,6 +337,7 @@ export function acceptPreparedIrProgram(
     Object.freeze({
       physical: physical.plan,
       ...(nativeStrings ? { nativeStrings, nativeSnapshot: freezePreparedIrValue(nativeStrings.demands) } : {}),
+      ...(nativeNumberFormat ? { nativeNumberFormat } : {}),
     }),
   );
   observePreparedIrProgram({ phase: "accepted", program, backend: options.backend, target: options.target });
@@ -336,6 +430,24 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
   const { program, runtime } = accepted;
   const record = acceptances.get(accepted);
   if (!record || record.physical !== plan) emissionFailed("physical plan does not belong to acceptance");
+  if (Boolean(record.nativeNumberFormat) !== Boolean(plan.nativeNumberFormat))
+    emissionFailed("formatter acceptance/physical plan mismatch");
+  if (record.nativeNumberFormat) {
+    assertPreparedIrProgram(program);
+    const formatter = record.nativeNumberFormat;
+    assertNativeNumberFormatRequirementsCurrent(formatter.requirements, formatter.requirements);
+    const fresh = prepareNativeNumberFormat(program, accepted.options, runtime);
+    if (
+      !fresh ||
+      preparedIrDataMismatch(fresh.support, formatter.support) !== undefined ||
+      preparedIrDataMismatch(formatter.body, formatter.snapshot) !== undefined ||
+      formatter.support.functions[0] !== formatter.body
+    )
+      emissionFailed("formatter support changed after acceptance");
+    const current = planPhysicalSetup(program, accepted.options, runtime, record.nativeStrings, formatter);
+    if (current.kind !== "planned" || preparedIrDataMismatch(current.plan, plan) !== undefined)
+      emissionFailed("formatter physical plan is no longer current");
+  }
   if (record.nativeStrings) {
     assertPreparedIrProgram(program);
     if (record.nativeStrings.demands.program !== program || record.nativeStrings.demands.projection !== runtime)
@@ -346,9 +458,39 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
       assertNativeValueResourcePlanFor(record.nativeStrings.valueRequirements, program, runtime, "native-string");
   }
   const native = plan.nativeStrings;
-  if (Boolean(native) !== Boolean(record.nativeStrings)) emissionFailed("native acceptance/physical plan mismatch");
-  if (native && preparedIrDataMismatch(native.resources, record.nativeStrings!.plan) !== undefined)
+  const layoutOnly = native?.resources.mode === "formatter-layout";
+  if (layoutOnly) {
+    if (record.nativeStrings || !record.nativeNumberFormat)
+      emissionFailed("formatter layout has contradictory source dependencies");
+    const demands = collectNativeStringValueDemands(program, runtime);
+    const source = planNativeStringValuePhysical(demands, {
+      representation: "native-string",
+      utf8Storage: accepted.options.utf8Storage === true,
+    });
+    const fresh = planNativeNumberFormatStringLayout(
+      record.nativeNumberFormat.requirements,
+      accepted.options.utf8Storage === true,
+    );
+    if (source.kind !== "none" || preparedIrDataMismatch(native.resources, fresh) !== undefined)
+      emissionFailed("formatter layout no longer matches genuine empty source demand");
+  } else if (Boolean(native) !== Boolean(record.nativeStrings))
+    emissionFailed("native acceptance/physical plan mismatch");
+  if (
+    native &&
+    record.nativeStrings &&
+    preparedIrDataMismatch(native.resources, record.nativeStrings.plan) !== undefined
+  )
     emissionFailed("native physical resources contradict the accepted reservation input");
+  if (plan.nativeNumberFormat) {
+    if (!native || !record.nativeNumberFormat) emissionFailed("formatter has no shared string dependency");
+    const fresh = planNativeNumberFormatPhysical(
+      record.nativeNumberFormat.requirements,
+      native.resources.literalRequirements.key,
+      native.resources,
+    );
+    if (preparedIrDataMismatch(fresh, plan.nativeNumberFormat.resources) !== undefined)
+      emissionFailed("formatter resources or scratch join changed");
+  }
   let abi: ProgramAbiMap | undefined;
   if (native) {
     // Native supplemental ABI is accepted planning data, sealed before even
@@ -356,7 +498,7 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
     abi = new ProgramAbiMap(program.inventory, program.derivedUnits);
     const entries = new Map(program.abi.entries.map((entry) => [entry.plan.id, entry.plan]));
     for (const entry of program.abi.entries) abi.plan(entry.plan);
-    for (const binding of native.bindings) {
+    for (const binding of [...native.bindings, ...(plan.nativeNumberFormat?.bindings ?? [])]) {
       const existing = entries.get(binding.entry.id);
       if (existing) {
         if (preparedIrDataMismatch(existing, binding.entry) !== undefined)
@@ -383,15 +525,14 @@ interface NativeReconciliationContext {
 }
 /** Read actual owned module descriptors and populate the existing resolver maps. */
 function reconcileNativeEmission(
-  native: PhysicalSetupPlan["nativeStrings"],
-  nativePack: ReturnType<typeof reserveNativeStringValueResources> | undefined,
+  native: PhysicalSetupPlan["nativeStrings"] | PhysicalSetupPlan["nativeNumberFormat"],
+  nativeRows: readonly NativeNumberFormatResourceRow[],
   context: NativeReconciliationContext,
+  sharedTypes: ReadonlyMap<string, TypeReservation> = new Map(),
 ): Set<WasmFunction> {
   const { module, reservations, functionsByKey, globalsByKey, resourcesByBinding, typesByKey } = context;
-  const nativeRows = nativePack ? nativeStringValueReservationInventory(reservations, nativePack) : [];
   const nativeFunctions = new Set<WasmFunction>();
   if (native) {
-    if (!nativePack) emissionFailed("accepted native resources were not reserved");
     const rows = new Map(nativeRows.map((row) => [row.key, row]));
     if (rows.size !== nativeRows.length || rows.size !== native.resources.declarations.length)
       emissionFailed("native declaration/reservation population mismatch");
@@ -405,9 +546,13 @@ function reconcileNativeEmission(
       ) !== undefined
     )
       emissionFailed("native inventory contradicts accepted reservation order");
-    const typeTokens = new Map<string, TypeReservation>();
+    const typeTokens = new Map<string, TypeReservation>(sharedTypes);
     for (const row of nativeRows) {
-      if (row.space === "type") typeTokens.set(row.key, row.reservation);
+      if (row.space === "type") {
+        const prior = typeTokens.get(row.key);
+        if (prior && prior !== row.reservation) emissionFailed("native type dependency has two owners");
+        typeTokens.set(row.key, row.reservation);
+      }
       if (row.space === "function") nativeFunctions.add(row.reservation.object);
     }
     const physicalTypes = indexPhysicalTypes(module.types);
@@ -499,6 +644,7 @@ function recordEmissionObservation(
 function physicalSignatureConverter(
   vectorTypes: ReturnType<typeof reserveNativeVectorTypes>,
   stringTypes: ReturnType<typeof reserveNativeStringLiteralTypes> | undefined,
+  formatterScratch: NonNullable<PhysicalSetupPlan["nativeStrings"]>["formatterScratch"],
 ) {
   const physicalSignature = (signature: {
     readonly params: readonly PhysicalSignatureType[];
@@ -506,6 +652,11 @@ function physicalSignatureConverter(
   }) => {
     const convert = (types: readonly PhysicalSignatureType[]): ValType[] =>
       types.map((type) => {
+        if (type.kind === "support-ref") {
+          if (!stringTypes || !formatterScratch || preparedIrDataMismatch(type, formatterScratch) !== undefined)
+            emissionFailed("support signature is not the accepted formatter scratch type");
+          return { kind: type.nullable ? "ref_null" : "ref", typeIdx: stringTypes.layout.nativeStrDataTypeIdx };
+        }
         if (type.kind === "string") {
           if (!stringTypes) emissionFailed("logical string signature has no accepted string resources");
           return { kind: "ref", typeIdx: stringTypes.layout.anyStrTypeIdx };
@@ -520,13 +671,168 @@ function physicalSignatureConverter(
   return physicalSignature;
 }
 
+/** Authenticate the genuinely empty literal owner before exposing its type rows. */
+function emptyLayoutRows(
+  tx: PhysicalModuleReservations,
+  strings: NativeStringLiteralReservations,
+): readonly NativeNumberFormatResourceRow[] {
+  const inventory = nativeStringLiteralReservationInventory(tx, strings);
+  if (inventory.requests.length || inventory.globals.length || inventory.functions.length)
+    emissionFailed("formatter-only string pack contains source literal resources");
+  return inventory.typePack.types.map((reservation) => ({ key: reservation.key, space: "type", reservation }));
+}
+
+/** The separate support owner can reach only its canonical kernels and scratch. */
+function fillFormatterSupport(
+  record: AcceptedNativeNumberFormat,
+  pack: ReturnType<typeof reserveNativeNumberFormatResources>,
+  resolver: IrLowerResolver,
+  reservations: PhysicalModuleReservations,
+  module: ReturnType<typeof createEmptyModule>,
+): void {
+  const { requirements, body } = record;
+  assertNativeNumberFormatRequirementsCurrent(requirements, requirements);
+  if (preparedIrDataMismatch(body, record.snapshot) !== undefined) emissionFailed("formatter support body changed");
+  const declarations = numberFormatRadixSupportDeclarations(requirements.batch.sourceId);
+  const calls = [...declarations.kernels, declarations.implementation];
+  const supportResolver: IrLowerResolver = {
+    ...resolver,
+    resolveFunc: (ref) => {
+      if (!calls.some((entry) => preparedIrDataMismatch(entry.ref, ref) === undefined))
+        emissionFailed("formatter support called a foreign function");
+      return resolver.resolveFunc(ref);
+    },
+    resolveType: (ref) => {
+      if (preparedIrDataMismatch(ref, declarations.scratch.type.ref) !== undefined)
+        emissionFailed("formatter support used a foreign type");
+      if (!resolver.resolveType) emissionFailed("formatter support has no type resolver");
+      return resolver.resolveType(ref);
+    },
+    resolveGlobal: () => emissionFailed("formatter support has no global authority"),
+    emitStringConst: (value, alloc, storage, materializer) => {
+      if (storage !== undefined || materializer !== undefined) emissionFailed("formatter literal is not inline");
+      const uses = requirements.literals.filter(
+        (use) =>
+          use.instruction.value === value &&
+          use.allocation === alloc &&
+          requirements.supportBuffers[use.bufferIndex]?.ownerUnitId === body.unitId,
+      );
+      if (uses.length !== 1) emissionFailed("formatter literal has no unique original allocation owner");
+      const instruction = uses[0]!.instruction;
+      if (Object.hasOwn(instruction, "storage") || Object.hasOwn(instruction, "materializer") || value.length > 10000)
+        emissionFailed("formatter inline literal exceeds its accepted construction contract");
+      return buildInlineNativeStringLiteral(pack.strings.layout, value);
+    },
+  };
+  const lowered = lowerIrFunctionBody<Instr[], ValType>(
+    body,
+    supportResolver,
+    new WasmGcEmitter(supportResolver),
+    wasmValueTypeConverter("wasmgc", supportResolver, body.name),
+  );
+  const reserved = pack.functions["radix-body"];
+  const signature = indexPhysicalTypes(module.types).entries[reserved.object.typeIdx]?.definition;
+  if (
+    !signature ||
+    signature.kind !== "func" ||
+    !sameValTypes(
+      lowered.params.flatMap((param) => [...param.slots]),
+      signature.params,
+    ) ||
+    !sameValTypes(
+      lowered.results.flatMap((result) => [...result]),
+      signature.results,
+    )
+  )
+    emissionFailed("formatter support signature contradicts the actual reserved function type");
+  reservations.fillFunction(reserved, {
+    locals: lowered.locals.flatMap((local) =>
+      local.slots.map((type, slot) => ({
+        name: slot === 0 ? local.name : `${local.name}$${slot}`,
+        type,
+      })),
+    ),
+    body: lowered.body,
+  });
+}
+
+/** Lower one actual primary owner without extending its resolver authority. */
+function fillPrimaryBody(
+  accepted: AcceptedPreparedIrProgram,
+  declared: PhysicalSetupPlan["functions"][number],
+  fn: IrFunction,
+  reserved: FunctionReservation,
+  resolver: IrLowerResolver,
+  nativePack: ReturnType<typeof reserveNativeStringValueResources> | undefined,
+  reservations: PhysicalModuleReservations,
+  physicalSignature: ReturnType<typeof physicalSignatureConverter>,
+): void {
+  const { backend, target } = accepted.options;
+  let lowered: ReturnType<typeof lowerIrFunctionBody<Instr[], ValType>>;
+  try {
+    const ownerResolver: IrLowerResolver = nativePack
+      ? {
+          ...resolver,
+          emitStringConst: (value, alloc, storage, materializer) =>
+            emitPreparedNativeStringLiteral(reservations, nativePack, fn.unitId, value, alloc, storage, materializer),
+        }
+      : resolver;
+    const emitter = backend === "wasmgc" ? new WasmGcEmitter(ownerResolver) : new LinearEmitter();
+    lowered = lowerIrFunctionBody<Instr[], ValType>(
+      fn,
+      ownerResolver,
+      emitter,
+      wasmValueTypeConverter(backend, ownerResolver, fn.name),
+    );
+  } catch (error) {
+    emissionFailed(
+      `${backend}:${target} accepted body ${declared.unitId} and then failed to lower it: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  const params = lowered.params.flatMap((param) => [...param.slots]);
+  const results = lowered.results.flatMap((result) => [...result]);
+  const signature = physicalSignature(declared);
+  if (!sameValTypes(params, signature.params) || !sameValTypes(results, signature.results))
+    emissionFailed(`body ${declared.unitId} lowered to a signature that contradicts its reserved ABI slot`);
+  reservations.fillFunction(reserved, {
+    locals: lowered.locals.flatMap((local) =>
+      local.slots.map((type, slot) => ({
+        name: slot === 0 ? local.name : `${local.name}$${slot}`,
+        type,
+      })),
+    ),
+    body: lowered.body,
+  });
+}
+
+/** Publish the already reserved startup adapter without allocating a new slot. */
+function fillStartupAdapter(
+  startAdapter: FunctionReservation | undefined,
+  plan: PhysicalSetupPlan,
+  slots: ReadonlyMap<IrUnitId, FunctionReservation>,
+  reservations: PhysicalModuleReservations,
+): void {
+  if (!startAdapter) return;
+  const body = plan.startup.units.map((unitId): Instr => {
+    const target = slots.get(unitId);
+    if (!target) emissionFailed(`startup unit ${unitId} has no reserved slot`);
+    return { op: "call", funcIdx: target.handle };
+  });
+  reservations.fillFunction(startAdapter, { locals: [], body });
+  if (plan.startup.adapter === "wasm-start") reservations.defineStart(startAdapter);
+  else if (plan.startup.adapter === "deferred-export")
+    reservations.defineExport("publication:startup", "__module_init", startAdapter);
+  else emissionFailed(`startup adapter ${plan.startup.adapter} has executable units but no materialization`);
+}
+
 /** No observation or reusable capability escapes the physical transaction. */
 function materializePhysicalProgram(
   accepted: AcceptedPreparedIrProgram,
   plan: PhysicalSetupPlan,
 ): EmittedPreparedIrProgram {
-  const { program, options, runtime } = accepted;
-  const backend = options.backend;
+  const { program, runtime } = accepted;
   const { record, native, abi: plannedAbi } = prepareNativeEmission(accepted, plan);
   let abi = plannedAbi;
 
@@ -558,7 +864,7 @@ function materializePhysicalProgram(
         native.resources.literalRequirements.utf8Storage,
       )
     : undefined;
-  const physicalSignature = physicalSignatureConverter(vectorTypes, stringTypes);
+  const physicalSignature = physicalSignatureConverter(vectorTypes, stringTypes, native?.formatterScratch);
 
   for (const imported of plan.importedFunctions) {
     const reserved = reservations.reserveFunctionImport(
@@ -585,14 +891,47 @@ function materializePhysicalProgram(
     native && stringTypes && record.nativeStrings
       ? reserveNativeStringValueResources(reservations, record.nativeStrings, stringTypes)
       : undefined;
-  const nativeFunctions = reconcileNativeEmission(native, nativePack, {
+  const strings =
+    nativePack?.strings ??
+    (native?.resources.mode === "formatter-layout" && stringTypes
+      ? reserveNativeStringLiteralResources(reservations, native.resources.literalRequirements, stringTypes)
+      : undefined);
+  const nativeRows = nativePack
+    ? nativeStringValueReservationInventory(reservations, nativePack)
+    : strings
+      ? emptyLayoutRows(reservations, strings)
+      : [];
+  const reconciliation = {
     module,
     reservations,
     functionsByKey,
     globalsByKey,
     resourcesByBinding,
     typesByKey,
-  });
+  };
+  const nativeFunctions = reconcileNativeEmission(native, nativeRows, reconciliation);
+  const formatter = plan.nativeNumberFormat;
+  const formatterPack =
+    formatter && strings
+      ? reserveNativeNumberFormatResources(reservations, formatter.resources.input, strings)
+      : undefined;
+  if (formatter) {
+    if (!formatterPack || !strings) emissionFailed("formatter resources were not reserved");
+    requireNativeNumberFormatReservations(reservations, formatterPack, formatter.resources.input, strings);
+    const sharedTypes = new Map(
+      nativeRows.flatMap((row) => (row.space === "type" ? [[row.key, row.reservation] as const] : [])),
+    );
+    const owned = reconcileNativeEmission(
+      formatter,
+      nativeNumberFormatReservationInventory(reservations, formatterPack),
+      reconciliation,
+      sharedTypes,
+    );
+    for (const fn of owned) {
+      if (nativeFunctions.has(fn)) emissionFailed("formatter and source resource function owners overlap");
+      nativeFunctions.add(fn);
+    }
+  }
   for (const global of plan.definedGlobals) {
     const reserved = reservations.reserveGlobal(global.bindingId, global.name, global.type, global.mutable);
     globalsByKey.set(global.referenceKey, reserved);
@@ -665,7 +1004,7 @@ function materializePhysicalProgram(
   }
   if (native) {
     const bound = new Set<IrBindingId>();
-    for (const binding of native.bindings) {
+    for (const binding of [...native.bindings, ...(formatter?.bindings ?? [])]) {
       if (bound.has(binding.entry.id)) continue;
       const resource = resourcesByBinding.get(binding.entry.id);
       if (!resource || binding.entry.slotPolicy !== "required") emissionFailed("native ABI resource vanished");
@@ -678,6 +1017,8 @@ function materializePhysicalProgram(
   }
   abi.finishBinding();
   if (nativePack) fillNativeStringValueResources(reservations, nativePack);
+  else if (strings) fillNativeStringLiteralResources(reservations, strings);
+  if (formatterPack) fillNativeNumberFormatResources(reservations, formatterPack);
   if (vectorHelper) fillNativeVectorHelper(reservations, vectorHelper);
 
   // 4. Lower every physical body into its reserved slot.
@@ -715,60 +1056,23 @@ function materializePhysicalProgram(
     },
   };
   const bodies = new Map<IrUnitId, IrFunction>(runtime.prepared.functions.map((fn) => [fn.unitId, fn] as const));
+  if (formatterPack) {
+    if (!record.nativeNumberFormat) emissionFailed("formatter support authority vanished");
+    if (!formatter || resourcesByBinding.get(formatter.support.bindingId) !== formatterPack.functions["radix-body"])
+      emissionFailed("formatter support slot differs from its accepted ABI owner");
+    fillFormatterSupport(record.nativeNumberFormat, formatterPack, resolver, reservations, module);
+    if (!nativeFunctions.delete(formatterPack.functions["radix-body"].object))
+      emissionFailed("formatter support body is missing from its producer census");
+  }
   for (const declared of plan.functions) {
     const fn = bodies.get(declared.unitId);
     const reserved = slots.get(declared.unitId);
     if (!fn || !reserved) emissionFailed(`physical body ${declared.unitId} vanished between acceptance and emission`);
-    let lowered: ReturnType<typeof lowerIrFunctionBody<Instr[], ValType>>;
-    try {
-      const ownerResolver: IrLowerResolver = nativePack
-        ? {
-            ...resolver,
-            emitStringConst: (value, alloc, storage, materializer) =>
-              emitPreparedNativeStringLiteral(reservations, nativePack, fn.unitId, value, alloc, storage, materializer),
-          }
-        : resolver;
-      const emitter = backend === "wasmgc" ? new WasmGcEmitter(ownerResolver) : new LinearEmitter();
-      lowered = lowerIrFunctionBody<Instr[], ValType>(
-        fn,
-        ownerResolver,
-        emitter,
-        wasmValueTypeConverter(backend, ownerResolver, fn.name),
-      );
-    } catch (error) {
-      emissionFailed(
-        `${backend}:${options.target} accepted body ${declared.unitId} and then failed to lower it: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-    const params = lowered.params.flatMap((param) => [...param.slots]);
-    const results = lowered.results.flatMap((result) => [...result]);
-    const signature = physicalSignature(declared);
-    if (!sameValTypes(params, signature.params) || !sameValTypes(results, signature.results)) {
-      emissionFailed(`body ${declared.unitId} lowered to a signature that contradicts its reserved ABI slot`);
-    }
-    reservations.fillFunction(reserved, {
-      locals: lowered.locals.flatMap((local) =>
-        local.slots.map((type, slot) => ({ name: slot === 0 ? local.name : `${local.name}$${slot}`, type })),
-      ),
-      body: lowered.body,
-    });
+    fillPrimaryBody(accepted, declared, fn, reserved, resolver, nativePack, reservations, physicalSignature);
   }
 
   // 5. Startup adapter and ABI export aliases (by their planned index space).
-  if (startAdapter) {
-    const body = plan.startup.units.map((unitId): Instr => {
-      const target = slots.get(unitId);
-      if (!target) emissionFailed(`startup unit ${unitId} has no reserved slot`);
-      return { op: "call", funcIdx: target.handle };
-    });
-    reservations.fillFunction(startAdapter, { locals: [], body });
-    if (plan.startup.adapter === "wasm-start") reservations.defineStart(startAdapter);
-    else if (plan.startup.adapter === "deferred-export") {
-      reservations.defineExport("publication:startup", "__module_init", startAdapter);
-    } else emissionFailed(`startup adapter ${plan.startup.adapter} has executable units but no materialization`);
-  }
+  fillStartupAdapter(startAdapter, plan, slots, reservations);
   const exportNames = new Set<string>(module.exports.map((entry) => entry.name));
   for (const exported of plan.exports) {
     const final = abi.resolveFinalIndex(exported.targetBindingId);
@@ -791,13 +1095,20 @@ function materializePhysicalProgram(
 
   reservations.seal();
   if (nativePack) requireCompletedNativeStringValues(reservations, nativePack);
+  else if (strings) requireCompletedNativeStringLiterals(reservations, strings);
+  if (formatterPack) requireCompletedNativeNumberFormat(reservations, formatterPack);
 
   // 6. Receipts come from the module itself, never from the loop counter.
   const emittedUnitIds: IrUnitId[] = [];
   for (const fn of module.functions) {
     const unitId = slotOwners.get(fn);
     if (unitId === undefined) {
-      if (fn !== startAdapter?.object && fn !== vectorHelper?.function.object && !nativeFunctions.has(fn)) {
+      if (
+        fn !== startAdapter?.object &&
+        fn !== vectorHelper?.function.object &&
+        fn !== formatterPack?.functions["radix-body"].object &&
+        !nativeFunctions.has(fn)
+      ) {
         emissionFailed(`module carries an unowned function ${fn.name}`);
       }
       continue;

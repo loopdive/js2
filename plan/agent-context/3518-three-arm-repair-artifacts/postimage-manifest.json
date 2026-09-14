@@ -1,0 +1,469 @@
+{
+  "schema": "frame-delay-repaired-patch-artifacts-v1",
+  "status": "IMPLEMENTED_ARTIFACTS_ONLY_REVIEW_REQUIRED_NOT_RUN_AUTHORIZATION",
+  "candidate": {
+    "commit": "63079597adbfa485a1201de9eecabd9482aac8ce",
+    "sourceGitTree": "360f3b82efb0a1aee71233122f9c8dd92e9331ef",
+    "sourceCount": 1379,
+    "sourceCensusSha256": "787d3bdc1ecaa8deb77939c0269ef8c6c380297681a4570595655f73491b6950",
+    "censusProvenance": "Parent supplied; Git source tree independently resolved."
+  },
+  "reviewManifest": {
+    "path": "plan/agent-context/3518-frame-delay-three-arm-review-manifest-2026-09-09.json",
+    "sha256": "10dcb36ef97aac31ad09654e6a9d1ee58f725e03823e131fa39469364a0332ee"
+  },
+  "publishedPlanSha256": "1c1c7320ed9fe1fabfa56ef52d4cfdec975f9217e70f2930a0d437995ef31370",
+  "builderSha256": "7f5c4dc4f2136ac71cc8cfce690f34770bb7701c26f05887a4c20a2c1b83abdc",
+  "repairCommits": {
+    "promise": "00976e841109235a79991145ee5f0c30933bf3b1",
+    "scanner": "cf0026db2e926bf45c57204f6324fbae5fb168f7",
+    "vector": "c5c87e4abdd58539e22c89d96c4259c344461d40",
+    "vectorCarrier": "1e70f703325e95d410d318cd352f8652b7b05f3d"
+  },
+  "allowedSourceFiles": [
+    "src/codegen/async-scheduler.ts",
+    "src/codegen/closed-method-dispatch.ts",
+    "src/codegen/parse-number-native.ts",
+    "src/ir/backend/wasmgc-emitter.ts"
+  ],
+  "addedSourceFiles": [],
+  "roots": [
+    {
+      "armFamily": "frame",
+      "originalRoot": "/private/tmp/js2-3518-frame-baseline-0194-20260908",
+      "originalHead": "0194b64c246d2b5beab2db00af33a73498e2eb6e",
+      "originalSourceCount": 1306,
+      "originalSourceCensusSha256": "5670027d6b5815133f5058ef785a55f7522d82d1058676de532cbe933ab210b0",
+      "repairedSourceCount": 1306,
+      "repairedSourceCensusSha256": "b58c7e57596e5f2fce3a2798c6564cdf42108d81779623d6dbd97b353234bce1",
+      "censusMethod": "Exact sourceSnapshot recursive localeCompare ordering and SHA256(JSON.stringify([relativePath,SHA256(file)])); computed over full verified original census plus four exact in-memory postimages. No repaired checkout materialized.",
+      "patch": "frame-repairs.patch",
+      "patchSha256": "0f599134535848034b5dc43a14721a443a724dabad763a87b8910db13ed8f880",
+      "files": [
+        {
+          "path": "src/codegen/async-scheduler.ts",
+          "preimageSha256": "7220f0474d3d3c7009876d4d463f2b8c8182d49793f5957570fb0a27da1dfd4f",
+          "postimageSha256": "d7f68a0ad5cfe9eea1cda957878bc0e4e9e23f4ea9c3c9a941464345cae42f19",
+          "preimageGitBlob": "220df65e3a4fa8814aa2269e69a413622c376d1b",
+          "postimageGitBlob": "72f974dfad664c8411013fc2373c265c8f582146",
+          "preimageBytes": 215633,
+          "postimageBytes": 216334,
+          "hunks": [
+            {
+              "id": "P1-binding",
+              "originalStartLine": 899,
+              "occurrences": 1,
+              "beforeSha256": "48297d1051c8b779d644a2b3561cb6a9bd3bf44ade5a763a248405850316463b",
+              "afterSha256": "d61face79602b5cbf3eed24f1a19079e1c40cb3b82b8261907b86f2007a22b34"
+            },
+            {
+              "id": "P2-reservation",
+              "originalStartLine": 982,
+              "occurrences": 1,
+              "beforeSha256": "762d06dacb3bb784ca258e5677bad08a2befa48ebe19877243ac703f22a47c42",
+              "afterSha256": "02ed6e0002aebb6611b7e36976b4835a8c38d6a37d1d319686a6ee1128bfe9aa"
+            },
+            {
+              "id": "P3-return-binding",
+              "originalStartLine": 1095,
+              "occurrences": 1,
+              "beforeSha256": "387ac997c627f016d7f7848618f04fcbae41b8b0bba6e06ecb10b2fc317eddca",
+              "afterSha256": "3f41b5a935fd8c9fe7a1e2b1e515432fd0e04f710520aa706c359945425e97ab"
+            },
+            {
+              "id": "P4-local",
+              "originalStartLine": 1303,
+              "occurrences": 1,
+              "beforeSha256": "f8610e07cf2a94a168382f1c15c030664650a19dc8ce7b630a18b1b22ce3246c",
+              "afterSha256": "a343e13a1286c1922378771ddda52afad2da19c86c44d2ae3f5376fee70dbc33"
+            },
+            {
+              "id": "P5-lookup",
+              "originalStartLine": 1325,
+              "occurrences": 1,
+              "beforeSha256": "0680ca8f195ce2cc0aba8c7478c87c983b0e879835b2e21a2d822790e6871721",
+              "afterSha256": "894600662a2dd06343f0f1af352d0e84c808f7850daa8926dd64ce91e302777c"
+            },
+            {
+              "id": "P6-capture",
+              "originalStartLine": 1359,
+              "occurrences": 1,
+              "beforeSha256": "e2ccd047023b694739d00c6611940b8a39c39bb4249fcbf4258288705bdf2100",
+              "afterSha256": "248dfd53ccd17dcde4fdc67f99b62ca68312672cc8b913f170c6b667d09c94d1"
+            }
+          ],
+          "staticValidation": {
+            "untouchedOutsideApprovedEdits": true,
+            "syntaxParseDiagnostics": 0,
+            "unifiedPatchRoundtripExact": true,
+            "originalResolveLocalsExact": true,
+            "jobPrerequisitesAndBodyExact": true,
+            "nativePromiseOwnThenSelfResolutionAndAdoptionTailExact": true,
+            "reservationOrder": [
+              "const hasCallableThenFuncIdx = mintDefinedFunc(ctx);",
+              "const peelValueFuncIdx = mintDefinedFunc(ctx);",
+              "const lookupThenFuncIdx = mintDefinedFunc(ctx);",
+              "ctx.promiseThenableReserved = true;",
+              "const capsTypeIdx = getOrRegisterThenCapsType(ctx);",
+              "const applyClosureIdx = reserveApplyClosure(ctx);",
+              "const thenableJobFuncIdx = mintDefinedFunc(ctx);"
+            ]
+          }
+        },
+        {
+          "path": "src/codegen/closed-method-dispatch.ts",
+          "preimageSha256": "66b08ebb72d73ccf8cd3dc77fb841407073036be0a46d09802ad16b24cbea809",
+          "postimageSha256": "87d988a2dd3e815b8b83aa5c8c72fd274bb9739839a19e00c22d927aae475491",
+          "preimageGitBlob": "feb6de718276cea09a3189148205e85d4a27b669",
+          "postimageGitBlob": "83074295d9806d0cac30e06a5df8a97e515bf34b",
+          "preimageBytes": 104757,
+          "postimageBytes": 106029,
+          "hunks": [
+            {
+              "id": "P7-dual-mode",
+              "originalStartLine": 2080,
+              "occurrences": 1,
+              "beforeSha256": "d4015012c17a6289b66cc79846b11798ac9c411df3a837e5fdf22f890ba9c418",
+              "afterSha256": "af793aeb82552125ba48a5af35db6f78903eb7f9d5f8fdc3d22d56a91c6d3d94"
+            }
+          ],
+          "staticValidation": {
+            "untouchedOutsideApprovedEdits": true,
+            "syntaxParseDiagnostics": 0,
+            "unifiedPatchRoundtripExact": true,
+            "originalEarlyGuardsAndPeelFillExact": true,
+            "noFinalizationReservations": true,
+            "dualModeEditsReverseExactlyToOriginal": true,
+            "classifierFalseIdentity": "Static source algebra: verdict(n) returns original [i32.const n,return]; capture-only spreads/appends are empty at false; original collectors and order unchanged. Not executed."
+          }
+        },
+        {
+          "path": "src/codegen/parse-number-native.ts",
+          "preimageSha256": "8111e30ecf474d9da7a9728741b38a4a2166ddf24f68ed1cbe2974d33c99b12d",
+          "postimageSha256": "7e3e0cc9ef44f0e9bc132103bf9b5cd65254163d85045d667d5904c3d27850f9",
+          "preimageGitBlob": "a9d23c444ef0dabfa5e7ca713bda20e6ba18c594",
+          "postimageGitBlob": "aa425b0b366614e1a4f02ffcf87d9770a367a9fb",
+          "preimageBytes": 69067,
+          "postimageBytes": 70130,
+          "hunks": [
+            {
+              "id": "S1",
+              "originalStartLine": 928,
+              "occurrences": 1,
+              "beforeSha256": "874500902711191d153449729866bb31dc77eff305792c2aa20fd503fee64d34",
+              "afterSha256": "9fa940808ae5dc7b819e8f9e32a30681f5a3f3822c7a15a533dc54fabc15eac5"
+            }
+          ],
+          "staticValidation": {
+            "untouchedOutsideApprovedEdits": true,
+            "syntaxParseDiagnostics": 0,
+            "unifiedPatchRoundtripExact": true
+          }
+        },
+        {
+          "path": "src/ir/backend/wasmgc-emitter.ts",
+          "preimageSha256": "a23bbcb037bf8bb0fd2b22bc4c85a86d43e87ce90b77c8a2f1b0588ccbac1167",
+          "postimageSha256": "caba0379bf1a1515b5d8966d51a90064a572bd4c380370a57a2606eba4245e1b",
+          "preimageGitBlob": "d62446f4e1942b870fac851ffa71b8ee7a6cb438",
+          "postimageGitBlob": "e2affc4733c5a1a67d977f5ffcd021c1c50f0b6f",
+          "preimageBytes": 20075,
+          "postimageBytes": 20116,
+          "hunks": [
+            {
+              "id": "V1",
+              "originalStartLine": 177,
+              "occurrences": 1,
+              "beforeSha256": "5e6246316bcd282024c7ef3c06e84f0e4e12dafe225134df1fdd91afd8180cd2",
+              "afterSha256": "82e54ade42b5b45c3e5cd2f3246242a0858f701974e374b90b9de5682c593404"
+            }
+          ],
+          "staticValidation": {
+            "untouchedOutsideApprovedEdits": true,
+            "syntaxParseDiagnostics": 0,
+            "unifiedPatchRoundtripExact": true
+          }
+        }
+      ],
+      "difference": [
+        {
+          "path": "src/codegen/async-scheduler.ts",
+          "preimageSha256": "7220f0474d3d3c7009876d4d463f2b8c8182d49793f5957570fb0a27da1dfd4f",
+          "postimageSha256": "d7f68a0ad5cfe9eea1cda957878bc0e4e9e23f4ea9c3c9a941464345cae42f19"
+        },
+        {
+          "path": "src/codegen/closed-method-dispatch.ts",
+          "preimageSha256": "66b08ebb72d73ccf8cd3dc77fb841407073036be0a46d09802ad16b24cbea809",
+          "postimageSha256": "87d988a2dd3e815b8b83aa5c8c72fd274bb9739839a19e00c22d927aae475491"
+        },
+        {
+          "path": "src/codegen/parse-number-native.ts",
+          "preimageSha256": "8111e30ecf474d9da7a9728741b38a4a2166ddf24f68ed1cbe2974d33c99b12d",
+          "postimageSha256": "7e3e0cc9ef44f0e9bc132103bf9b5cd65254163d85045d667d5904c3d27850f9"
+        },
+        {
+          "path": "src/ir/backend/wasmgc-emitter.ts",
+          "preimageSha256": "a23bbcb037bf8bb0fd2b22bc4c85a86d43e87ce90b77c8a2f1b0588ccbac1167",
+          "postimageSha256": "caba0379bf1a1515b5d8966d51a90064a572bd4c380370a57a2606eba4245e1b"
+        }
+      ],
+      "requiredPopulation": {
+        "artifacts": 5,
+        "executionsPerArm": 12
+      },
+      "protectedOriginalCensusUnchanged": true
+    },
+    {
+      "armFamily": "delay",
+      "originalRoot": "/private/tmp/js2-3518-logical-vector-integration-20260908",
+      "originalHead": "1cb0f5c7f36be14d7be7eb4592973aea84a8c4e5",
+      "originalSourceCount": 1311,
+      "originalSourceCensusSha256": "d37ac41c596e80e223a7576003cec7c9a9ec0968c8b497da8c35876cdc77562a",
+      "repairedSourceCount": 1311,
+      "repairedSourceCensusSha256": "4a0c50c7fe09e175ee3c07def8197921034999e8b6d87c38756473e99815be7c",
+      "censusMethod": "Exact sourceSnapshot recursive localeCompare ordering and SHA256(JSON.stringify([relativePath,SHA256(file)])); computed over full verified original census plus four exact in-memory postimages. No repaired checkout materialized.",
+      "patch": "delay-repairs.patch",
+      "patchSha256": "5c4c6c9e53e2cb4fb6a4c9dc5b64c02284c1d20796b8b89a549416bf3fdda83c",
+      "files": [
+        {
+          "path": "src/codegen/async-scheduler.ts",
+          "preimageSha256": "4eaf5a44ab9db276c1eea41d9a82fb5691676108c1ffc11452eb44e60b153fc8",
+          "postimageSha256": "662d83d4acdac6e29c2a04c24336b8b4bd90a7be6d24daf34c4dbd4fec04ff61",
+          "preimageGitBlob": "541d6abf642eab21b16662cb92dd3b7e8a3d450e",
+          "postimageGitBlob": "659fd3b0675181692b4af9af06d81ba86533d181",
+          "preimageBytes": 211313,
+          "postimageBytes": 212014,
+          "hunks": [
+            {
+              "id": "P1-binding",
+              "originalStartLine": 950,
+              "occurrences": 1,
+              "beforeSha256": "48297d1051c8b779d644a2b3561cb6a9bd3bf44ade5a763a248405850316463b",
+              "afterSha256": "d61face79602b5cbf3eed24f1a19079e1c40cb3b82b8261907b86f2007a22b34"
+            },
+            {
+              "id": "P2-reservation",
+              "originalStartLine": 1033,
+              "occurrences": 1,
+              "beforeSha256": "762d06dacb3bb784ca258e5677bad08a2befa48ebe19877243ac703f22a47c42",
+              "afterSha256": "02ed6e0002aebb6611b7e36976b4835a8c38d6a37d1d319686a6ee1128bfe9aa"
+            },
+            {
+              "id": "P3-return-binding",
+              "originalStartLine": 1146,
+              "occurrences": 1,
+              "beforeSha256": "387ac997c627f016d7f7848618f04fcbae41b8b0bba6e06ecb10b2fc317eddca",
+              "afterSha256": "3f41b5a935fd8c9fe7a1e2b1e515432fd0e04f710520aa706c359945425e97ab"
+            },
+            {
+              "id": "P4-local",
+              "originalStartLine": 1210,
+              "occurrences": 1,
+              "beforeSha256": "f8610e07cf2a94a168382f1c15c030664650a19dc8ce7b630a18b1b22ce3246c",
+              "afterSha256": "a343e13a1286c1922378771ddda52afad2da19c86c44d2ae3f5376fee70dbc33"
+            },
+            {
+              "id": "P5-lookup",
+              "originalStartLine": 1232,
+              "occurrences": 1,
+              "beforeSha256": "0680ca8f195ce2cc0aba8c7478c87c983b0e879835b2e21a2d822790e6871721",
+              "afterSha256": "894600662a2dd06343f0f1af352d0e84c808f7850daa8926dd64ce91e302777c"
+            },
+            {
+              "id": "P6-capture",
+              "originalStartLine": 1266,
+              "occurrences": 1,
+              "beforeSha256": "e2ccd047023b694739d00c6611940b8a39c39bb4249fcbf4258288705bdf2100",
+              "afterSha256": "248dfd53ccd17dcde4fdc67f99b62ca68312672cc8b913f170c6b667d09c94d1"
+            }
+          ],
+          "staticValidation": {
+            "untouchedOutsideApprovedEdits": true,
+            "syntaxParseDiagnostics": 0,
+            "unifiedPatchRoundtripExact": true,
+            "originalResolveLocalsExact": true,
+            "jobPrerequisitesAndBodyExact": true,
+            "nativePromiseOwnThenSelfResolutionAndAdoptionTailExact": true,
+            "reservationOrder": [
+              "const hasCallableThenFuncIdx = mintDefinedFunc(ctx);",
+              "const peelValueFuncIdx = mintDefinedFunc(ctx);",
+              "const lookupThenFuncIdx = mintDefinedFunc(ctx);",
+              "ctx.promiseThenableReserved = true;",
+              "const capsTypeIdx = getOrRegisterThenCapsType(ctx);",
+              "const applyClosureIdx = reserveApplyClosure(ctx);",
+              "const thenableJobFuncIdx = mintDefinedFunc(ctx);"
+            ]
+          }
+        },
+        {
+          "path": "src/codegen/closed-method-dispatch.ts",
+          "preimageSha256": "66b08ebb72d73ccf8cd3dc77fb841407073036be0a46d09802ad16b24cbea809",
+          "postimageSha256": "87d988a2dd3e815b8b83aa5c8c72fd274bb9739839a19e00c22d927aae475491",
+          "preimageGitBlob": "feb6de718276cea09a3189148205e85d4a27b669",
+          "postimageGitBlob": "83074295d9806d0cac30e06a5df8a97e515bf34b",
+          "preimageBytes": 104757,
+          "postimageBytes": 106029,
+          "hunks": [
+            {
+              "id": "P7-dual-mode",
+              "originalStartLine": 2080,
+              "occurrences": 1,
+              "beforeSha256": "d4015012c17a6289b66cc79846b11798ac9c411df3a837e5fdf22f890ba9c418",
+              "afterSha256": "af793aeb82552125ba48a5af35db6f78903eb7f9d5f8fdc3d22d56a91c6d3d94"
+            }
+          ],
+          "staticValidation": {
+            "untouchedOutsideApprovedEdits": true,
+            "syntaxParseDiagnostics": 0,
+            "unifiedPatchRoundtripExact": true,
+            "originalEarlyGuardsAndPeelFillExact": true,
+            "noFinalizationReservations": true,
+            "dualModeEditsReverseExactlyToOriginal": true,
+            "classifierFalseIdentity": "Static source algebra: verdict(n) returns original [i32.const n,return]; capture-only spreads/appends are empty at false; original collectors and order unchanged. Not executed."
+          }
+        },
+        {
+          "path": "src/codegen/parse-number-native.ts",
+          "preimageSha256": "8111e30ecf474d9da7a9728741b38a4a2166ddf24f68ed1cbe2974d33c99b12d",
+          "postimageSha256": "7e3e0cc9ef44f0e9bc132103bf9b5cd65254163d85045d667d5904c3d27850f9",
+          "preimageGitBlob": "a9d23c444ef0dabfa5e7ca713bda20e6ba18c594",
+          "postimageGitBlob": "aa425b0b366614e1a4f02ffcf87d9770a367a9fb",
+          "preimageBytes": 69067,
+          "postimageBytes": 70130,
+          "hunks": [
+            {
+              "id": "S1",
+              "originalStartLine": 928,
+              "occurrences": 1,
+              "beforeSha256": "874500902711191d153449729866bb31dc77eff305792c2aa20fd503fee64d34",
+              "afterSha256": "9fa940808ae5dc7b819e8f9e32a30681f5a3f3822c7a15a533dc54fabc15eac5"
+            }
+          ],
+          "staticValidation": {
+            "untouchedOutsideApprovedEdits": true,
+            "syntaxParseDiagnostics": 0,
+            "unifiedPatchRoundtripExact": true
+          }
+        },
+        {
+          "path": "src/ir/backend/wasmgc-emitter.ts",
+          "preimageSha256": "a23bbcb037bf8bb0fd2b22bc4c85a86d43e87ce90b77c8a2f1b0588ccbac1167",
+          "postimageSha256": "caba0379bf1a1515b5d8966d51a90064a572bd4c380370a57a2606eba4245e1b",
+          "preimageGitBlob": "d62446f4e1942b870fac851ffa71b8ee7a6cb438",
+          "postimageGitBlob": "e2affc4733c5a1a67d977f5ffcd021c1c50f0b6f",
+          "preimageBytes": 20075,
+          "postimageBytes": 20116,
+          "hunks": [
+            {
+              "id": "V1",
+              "originalStartLine": 177,
+              "occurrences": 1,
+              "beforeSha256": "5e6246316bcd282024c7ef3c06e84f0e4e12dafe225134df1fdd91afd8180cd2",
+              "afterSha256": "82e54ade42b5b45c3e5cd2f3246242a0858f701974e374b90b9de5682c593404"
+            }
+          ],
+          "staticValidation": {
+            "untouchedOutsideApprovedEdits": true,
+            "syntaxParseDiagnostics": 0,
+            "unifiedPatchRoundtripExact": true
+          }
+        }
+      ],
+      "difference": [
+        {
+          "path": "src/codegen/async-scheduler.ts",
+          "preimageSha256": "4eaf5a44ab9db276c1eea41d9a82fb5691676108c1ffc11452eb44e60b153fc8",
+          "postimageSha256": "662d83d4acdac6e29c2a04c24336b8b4bd90a7be6d24daf34c4dbd4fec04ff61"
+        },
+        {
+          "path": "src/codegen/closed-method-dispatch.ts",
+          "preimageSha256": "66b08ebb72d73ccf8cd3dc77fb841407073036be0a46d09802ad16b24cbea809",
+          "postimageSha256": "87d988a2dd3e815b8b83aa5c8c72fd274bb9739839a19e00c22d927aae475491"
+        },
+        {
+          "path": "src/codegen/parse-number-native.ts",
+          "preimageSha256": "8111e30ecf474d9da7a9728741b38a4a2166ddf24f68ed1cbe2974d33c99b12d",
+          "postimageSha256": "7e3e0cc9ef44f0e9bc132103bf9b5cd65254163d85045d667d5904c3d27850f9"
+        },
+        {
+          "path": "src/ir/backend/wasmgc-emitter.ts",
+          "preimageSha256": "a23bbcb037bf8bb0fd2b22bc4c85a86d43e87ce90b77c8a2f1b0588ccbac1167",
+          "postimageSha256": "caba0379bf1a1515b5d8966d51a90064a572bd4c380370a57a2606eba4245e1b"
+        }
+      ],
+      "requiredPopulation": {
+        "artifacts": 11,
+        "executionsPerArm": 19
+      },
+      "protectedOriginalCensusUnchanged": true
+    }
+  ],
+  "syntaxParser": {
+    "package": "typescript",
+    "version": "5.9.3",
+    "entrypoint": "/Users/thomas/Code/js2/node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/lib/typescript.js",
+    "operation": "createSourceFile + parseDiagnostics only",
+    "typecheck": false,
+    "emit": false,
+    "compilerInvocations": 0,
+    "comparisonExecutions": 0
+  },
+  "P7": {
+    "originalBlockSha256": "9c4b3ce91b5cc0ce361e891d07eb67af5dcb246a4a36510c849e2432d8f3756b",
+    "replacementSha256": "ffaf9fb4c90283e736d0fb0700cc93c90147f5b595cfa8047452008c532c3863",
+    "replacement": "  // Keep the original classifier and capture lookup on the same ordered arms.\n  const buildThenableLookup = (capture: boolean): Pick<WasmFunction, \"locals\" | \"body\"> => {\n    // ── `__promise_has_callable_then(value) -> i32` ────────────────────────\n    const peeledLocalIdx = 1; // param 0 = value externref\n    const anyLocalIdx = 2;\n    const thenAnyLocalIdx = 3;\n    const capturedThenLocalIdx = 4;\n    const verdict = (callable: 0 | 1, captured = false): Instr[] => [\n      { op: \"i32.const\", value: callable },\n      ...(capture\n        ? [captured ? ({ op: \"local.get\", index: capturedThenLocalIdx } as Instr) : ({ op: \"ref.null.extern\" } as Instr)]\n        : []),\n      { op: \"return\" },\n    ];\n    const body: Instr[] = [\n      // peeled = __promise_peel_value(value) — classify the RAW payload.\n      { op: \"local.get\", index: 0 },\n      ...((peelIdx !== undefined ? [{ op: \"call\", funcIdx: peelIdx }] : []) satisfies Instr[]),\n      { op: \"local.set\", index: peeledLocalIdx },\n      // null externref (JS null / absent) → not a thenable.\n      { op: \"local.get\", index: peeledLocalIdx },\n      { op: \"ref.is_null\" },\n      {\n        op: \"if\",\n        blockType: { kind: \"empty\" },\n        then: verdict(0),\n      },\n      { op: \"local.get\", index: peeledLocalIdx },\n      { op: \"any.convert_extern\" },\n      { op: \"local.set\", index: anyLocalIdx },\n    ];\n\n    // Shared tail: test the externref left on the stack against the closure\n    // base wrappers; 1 on a hit, else 0.\n    const closureTest = (loadThen: Instr[]): Instr[] => [\n      ...loadThen,\n      ...(capture ? [{ op: \"local.tee\", index: capturedThenLocalIdx } as Instr] : []),\n      { op: \"any.convert_extern\" },\n      { op: \"local.set\", index: thenAnyLocalIdx },\n      ...buildClosureRefTestArms(ctx, thenAnyLocalIdx, verdict(1, true)),\n      ...verdict(0),\n    ];\n\n    // Closed-struct METHOD arms — a compiled `then` method is always callable.\n    const seenMethodType = new Set<number>();\n    for (const entry of collectMethodEntries(ctx, \"then\", null)) {\n      if (seenMethodType.has(entry.typeIdx)) continue;\n      seenMethodType.add(entry.typeIdx);\n      body.push({ op: \"local.get\", index: anyLocalIdx });\n      body.push({ op: \"ref.test\", typeIdx: entry.typeIdx });\n      body.push({\n        op: \"if\",\n        blockType: { kind: \"empty\" },\n        then: verdict(1),\n      });\n    }\n\n    // Closed-struct ACCESSOR arms (#1888 S5c) — MUST run BEFORE the field arms:\n    // `Object.defineProperty(o, 'then', {get})` on a closed-struct target stores\n    // the getter closure in a per-(struct,prop) module GLOBAL\n    // (`ctx.structAccessorClosure`), invisible to `__extern_get` — while the\n    // struct may ALSO carry a pre-shaped (runtime-null) `then` FIELD that would\n    // wrongly classify it non-thenable if tested first. Spec Get REQUIRES running\n    // the getter here — a poisoned getter must throw OUT of this predicate\n    // (resolve-poisoned-then), and a returned closure classifies the value as a\n    // thenable. A runtime-null getter global (define-site never executed) falls\n    // through to the field/$Object arms below.\n    const callAccessorGetIdx = ctx.funcMap.get(\"__call_accessor_get\");\n    if (callAccessorGetIdx !== undefined) {\n      for (const [key, entry] of ctx.structAccessorClosure) {\n        if (!key.endsWith(\"_then\") || entry.getGlobal === undefined) continue;\n        const structName = key.slice(0, -\"_then\".length);\n        const structTypeIdx = ctx.structMap.get(structName);\n        if (structTypeIdx === undefined) continue;\n        body.push({ op: \"local.get\", index: anyLocalIdx });\n        body.push({ op: \"ref.test\", typeIdx: structTypeIdx });\n        body.push({\n          op: \"if\",\n          blockType: { kind: \"empty\" },\n          then: [\n            { op: \"global.get\", index: entry.getGlobal },\n            { op: \"ref.is_null\" },\n            { op: \"i32.eqz\" },\n            {\n              op: \"if\",\n              blockType: { kind: \"empty\" },\n              then: closureTest([\n                // then = getter.call(value) — §7.3.2 GetV via the S5b driver.\n                { op: \"local.get\", index: peeledLocalIdx },\n                { op: \"global.get\", index: entry.getGlobal },\n                { op: \"call\", funcIdx: callAccessorGetIdx },\n              ]),\n            },\n          ],\n        });\n      }\n    }\n\n    // Closed-struct FIELD arms — `{ then: <value> }`: callable iff the stored\n    // value is a closure.\n    for (const fe of collectFieldEntries(ctx, \"then\")) {\n      body.push({ op: \"local.get\", index: anyLocalIdx });\n      body.push({ op: \"ref.test\", typeIdx: fe.typeIdx });\n      body.push({\n        op: \"if\",\n        blockType: { kind: \"empty\" },\n        then: closureTest([\n          { op: \"local.get\", index: anyLocalIdx },\n          { op: \"ref.cast\", typeIdx: fe.typeIdx },\n          { op: \"struct.get\", typeIdx: fe.typeIdx, fieldIdx: fe.fieldIdx },\n        ]),\n      });\n    }\n\n    // Open `$Object` arm — spec Get (runs accessors; a poisoned getter throws\n    // OUT of this predicate) + closure test.\n    const externGetIdx = ctx.funcMap.get(\"__extern_get\");\n    const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;\n    if (externGetIdx !== undefined && objectTypeIdx !== undefined) {\n      body.push({ op: \"local.get\", index: anyLocalIdx });\n      body.push({ op: \"ref.test\", typeIdx: objectTypeIdx });\n      body.push({\n        op: \"if\",\n        blockType: { kind: \"empty\" },\n        then: closureTest([\n          { op: \"local.get\", index: peeledLocalIdx },\n          ...stringConstantExternrefInstrs(ctx, \"then\"),\n          { op: \"call\", funcIdx: externGetIdx },\n        ]),\n      });\n    }\n\n    body.push({ op: \"i32.const\", value: 0 });\n    if (capture) body.push({ op: \"ref.null.extern\" });\n    const locals: WasmFunction[\"locals\"] = [\n      { name: \"__peeled\", type: { kind: \"externref\" } },\n      { name: \"__any\", type: { kind: \"anyref\" } },\n      { name: \"__thenAny\", type: { kind: \"anyref\" } },\n    ];\n    if (capture) locals.push({ name: \"__capturedThen\", type: { kind: \"externref\" } });\n    return { locals, body };\n  };\n  const classifier = buildThenableLookup(false);\n  predFn.locals = classifier.locals;\n  predFn.body = classifier.body;\n  const lookupIdx = ctx.funcMap.get(\"__promise_lookup_then\");\n  const lookupFn = lookupIdx === undefined ? undefined : definedFuncAt(ctx, lookupIdx);\n  if (lookupFn) {\n    const lookup = buildThenableLookup(true);\n    lookupFn.locals = lookup.locals;\n    lookupFn.body = lookup.body;\n  }",
+    "substitutions": [
+      {
+        "id": "P7a-capture-local-verdict",
+        "before": "  const thenAnyLocalIdx = 3;\n",
+        "after": "  const thenAnyLocalIdx = 3;\n  const capturedThenLocalIdx = 4;\n  const verdict = (callable: 0 | 1, captured = false): Instr[] => [\n    { op: \"i32.const\", value: callable },\n    ...(capture\n      ? [captured ? ({ op: \"local.get\", index: capturedThenLocalIdx } as Instr) : ({ op: \"ref.null.extern\" } as Instr)]\n      : []),\n    { op: \"return\" },\n  ];\n"
+      },
+      {
+        "id": "P7b-null-return",
+        "before": "      then: [{ op: \"i32.const\", value: 0 }, { op: \"return\" }],",
+        "after": "      then: verdict(0),"
+      },
+      {
+        "id": "P7c-capture-once",
+        "before": "    ...loadThen,\n",
+        "after": "    ...loadThen,\n    ...(capture ? [{ op: \"local.tee\", index: capturedThenLocalIdx } as Instr] : []),\n"
+      },
+      {
+        "id": "P7d-closure-returns",
+        "before": "    ...buildClosureRefTestArms(ctx, thenAnyLocalIdx, [{ op: \"i32.const\", value: 1 }, { op: \"return\" }]),\n    { op: \"i32.const\", value: 0 },\n    { op: \"return\" },",
+        "after": "    ...buildClosureRefTestArms(ctx, thenAnyLocalIdx, verdict(1, true)),\n    ...verdict(0),"
+      },
+      {
+        "id": "P7e-method-return",
+        "before": "      then: [{ op: \"i32.const\", value: 1 }, { op: \"return\" }],",
+        "after": "      then: verdict(1),"
+      },
+      {
+        "id": "P7f-fallthrough-locals",
+        "before": "  body.push({ op: \"i32.const\", value: 0 });\n  predFn.locals = [",
+        "after": "  body.push({ op: \"i32.const\", value: 0 });\n  if (capture) body.push({ op: \"ref.null.extern\" });\n  const locals: WasmFunction[\"locals\"] = ["
+      },
+      {
+        "id": "P7g-body-result",
+        "before": "  predFn.body = body;",
+        "after": "  if (capture) locals.push({ name: \"__capturedThen\", type: { kind: \"externref\" } });\n  return { locals, body };"
+      }
+    ],
+    "finalizationPolicy": "Original early guards retained; fill lookup only if its reserved function exists. Its scheduler placeholder is unreachable. No reservation performed by fill.",
+    "staticIdentityLimit": "Original classifier instruction construction is preserved by capture=false branch algebra and exact source reconstruction, not by executing compiler builders or comparing emitted binaries."
+  },
+  "provenance": {
+    "parentPromiseFindings": {
+      "source": "Parent supplied, not independently re-executed",
+      "resolveRows": 15,
+      "claim": "LCS changed-line review matches 00976e capture lookup/local.set8/caps local.get8; candidate lookup indices independently resolve lookup name. Two classifier calls305 resolve peel_value.",
+      "limit": "Exact source cause of peel inline decision remains inference without optimizer trace."
+    }
+  },
+  "limits": [
+    "No type checking, compiler execution, builder evaluation, Wasm execution or three-arm comparison.",
+    "No promise of repaired/candidate byte equality; optimizer peel inline cause remains an inference.",
+    "Repaired census hashes describe exact in-memory postimages. Parent must independently apply each patch to new isolated original-based roots and reproduce all file hashes/censuses before run approval.",
+    "Additive driver and execution-manifest approval remain parent-owned and separate.",
+    "Original failure receipts, gates and hold remain unchanged."
+  ]
+}
