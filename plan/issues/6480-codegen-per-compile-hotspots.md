@@ -63,3 +63,42 @@ here is a single big hotspot; the two buckets below are the mechanical ones.
   (rerun the same 12-file `--cpu-prof`), output binaries byte-identical.
 - `tests/equivalence` unchanged; `tests/issue-1109*`, `tests/issue-1302*`
   unchanged.
+
+## Implementation Plan (2026-09-14, Fable lane; implementation: Opus)
+
+Take the two levers in order; measure each with the same 12-file `--cpu-prof`
+before and after (`node --cpu-prof --cpu-prof-dir=<dir> --import tsx <probe>`
+over `built-ins/Array/prototype/map` bodies through `scripts/compiler-bundle.mjs`
+`compile` with `skipSemanticDiagnostics: true`; `.tmp/profsum.cjs`-style
+aggregation by self time is fine — record the two bucket totals).
+
+1. **Lib declaration scan memo** (`src/codegen/extern-declarations.ts`).
+   Find the entry that walks the lib composite's statements (the loop around
+   L900–970 calling `collectExternFromDeclareVar` / `collectInterfaceMembers`
+   with a `libIndex`). Everything it reads is (a) the lib `SourceFile`s, which
+   `src/checker/index.ts` caches per process (`LIB_SOURCE_FILES`), and (b) the
+   target profile; everything it writes lands on `ctx` maps
+   (`ctx.externClasses`, `ctx.externClassParent`, any others — list them by
+   reading the two collectors). Memoise the *written entries* per
+   `(lib composite name, JSON of the target-profile fields the collectors
+   read)` in a module-level `Map`, and on a hit copy the entries into the
+   fresh `ctx` maps (shallow copies of the value objects if the collectors
+   ever mutate them later — check with a grep of every writer). Guard: the
+   memo must be keyed by the same `LIB_SOURCE_FILES` identity, so
+   `preloadLibFiles` (which replaces lib sources) must clear it — export a
+   `clearExternLibScanMemoForTests()` and call it from `preloadLibFiles`.
+2. **Late-import shift batching** (`src/codegen/expressions/late-imports.ts`).
+   `shiftLateImportIndices` walks every live body per late import. The
+   `pending` path at ~L693 already defers one caller's shift; generalise:
+   accumulate `added` for late imports minted while a function body is being
+   compiled and apply ONE walk at the function's end (the existing
+   `#1109`/`#1302` guards stay — one flush is one `+added` per instruction).
+   Read all six call sites (`calls.ts:3709,7605,7698`, `assignment.ts:1247,2593`,
+   `late-imports.ts:693`) and confirm none reads a function index between the
+   mint and the flush; if one does, keep that site eager and batch the rest.
+3. Tests: the equivalence gate (`node scripts/equivalence-gate.mjs`) and
+   `tests/issue-1109*`, `tests/issue-1302*` are the correctness net; add a
+   unit test for the memo (two `analyzeSource`+`generateModule` runs yield
+   identical `externClasses` maps, and `preloadLibFiles` invalidates) and one
+   for batching (a body minting two late imports compiles to the same bytes
+   as before — compare against the pre-change binary captured in `.tmp/`).
