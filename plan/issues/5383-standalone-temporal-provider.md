@@ -6354,3 +6354,14 @@ constructor … no TypeError thrown` (4), and the three PlainDate/ZonedDateTime
 residuals named by #6486 — `__call_@@toPrimitive`'s ladder (same defect, its
 entries carry no struct name) and same-shaped OBJECT LITERALS (no `__tag` to
 test) — are unmeasured in this sample and are the cheapest next codegen slice.
+
+#### 8b. One gate red was NOT inherited, and is fixed here
+
+`check:compiler-boundaries` reported the new module as `unclassified-module` /
+`unclassified-target` — a NEW red, caused by this slice, and easy to wave
+through as "the boundaries gate was already red". It is not the same red.
+`scripts/compiler-boundaries.json` now classifies
+`src/codegen/class-arm-tag-guard.ts` with the entry of
+`src/codegen/class-proto-lookup.ts`, the sibling whose mechanism it
+generalizes, and the gate is back to the inherited
+`inventory-valid-architecture-incomplete` with `inventoryValid: true`.
