@@ -9057,3 +9057,20 @@ zero errors, explicitly inventory-valid-architecture-incomplete. Formatting and
 diff checks pass. Evidence is under .tmp/5798-queue-drain in the integration
 worktree. These are current8f4495ba-based checks; historical48/93 results, the
 original Linux failure and the unexecuted intervention remain separate.
+
+Delivery refresh continues on main d78c139d (baseline artifacts only). All seven
+source gates pass again and all1487 production input pins remain identical.
+The normal baseline-merge commit hook exposed an additional layout-instrument
+failure: delay-combinator-layout-ownership passes30/31; direct historical donor
+verification omits the delivered standard-EH forward projection. Original full
+hook output is preserved in latest-main-commit.log. No hash is rebaselined and
+no production fix or hook bypass is proposed. The separate async-declaration
+and scanner-chain suites pass40/40 with no skips/input drift. The baseline
+merge remains uncommitted pending the scoped test repair and normal hook retry.
+
+The layout proof repair passes31/31, zero skips/input drift. It authenticates
+the existing forward-EH projection, pins one tagged and one foreign catch and
+the original reference, then verifies all eight historical donors. The strict
+old verifier still explicitly rejects the current unprojected body. All other
+30 cases, helper contracts and original hashes remain unchanged. Formatting
+passes; retry the normal full commit hook, retaining its failed first run.

@@ -17,7 +17,7 @@ import * as all from "../src/codegen/ir-native-async-runtime.js";
 import { getOrCreateFuncRefWrapperTypes } from "../src/codegen/closures.js";
 import { definedFuncAt } from "../src/codegen/func-space.js";
 import { ensureLateImport, flushLateImportShifts } from "../src/codegen/expressions/late-imports.js";
-import { verifyHistorical } from "./helpers/native-delay-combinator-source-receipts.mjs";
+import { verifyForwardDelayHistorical, verifyHistorical } from "./helpers/native-delay-combinator-source-receipts.mjs";
 
 void compile;
 const read = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -118,12 +118,19 @@ afterEach(() => vi.restoreAllMocks());
 describe("B1 exact donor route", () => {
   it("reconstructs all three complete adapters and retains the original donor denominator", () => {
     for (const path of Object.keys(hashes)) expect(original(path).length).toBeGreaterThan(1000);
-    expect(verifyHistorical(read)).toEqual({
+    const forward = verifyForwardDelayHistorical(read);
+    expect(forward.historical).toEqual({
       historicalDonors: 8,
       delayRows: 4,
       vectorLoops: 1,
       sharedDispatchHelpers: 1,
     });
+    expect(forward.forwardEh).toEqual({
+      reference: "d4108568d43f14c361ecc3a58c82633027eaae39",
+      tagged: 1,
+      foreign: 1,
+    });
+    expect(() => verifyHistorical(read)).toThrow("historical body delay-provider");
   });
   for (const path of Object.keys(hashes)) {
     it(`rejects a live import/comment/order mutation in ${path}`, () => {
