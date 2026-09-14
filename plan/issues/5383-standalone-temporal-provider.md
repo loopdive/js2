@@ -6129,3 +6129,228 @@ of those rows go `fail → pass`, plus six more on `Missing internal slot`, for
 **233 → 245** over the 360-row three-family sample, with **0 legitimate
 `pass→fail`**, **0 `__temporal_*` leaks**, 286 must-not-move rows flat per file,
 both corpus lanes byte-identical and the equivalence gate at baseline.
+
+### S21 findings (2026-09-14) — the ladder DID have a class test; it was `ref.test`, and `ref.test` is structural
+
+Full write-up in
+[#6486](6486-standalone-per-name-method-ladder-no-class-test.md). Branch
+`issue-5383-standalone-temporal-s21`, based on S20b's tip `2e36ca346a`. Every
+number below was measured on this tree, both labels, by file-copy revert of the
+three changed files (`.tmp/s21base/`); nothing is inherited from S20's run.
+
+#### 1. The hand-off's diagnosis was right about WHERE and wrong about WHAT
+
+S20 handed over "a per-name ladder with **no runtime class test**; add a
+`ref.test` per declaring class". The ladder already emits one `ref.test` per
+declaring class, and has since #2151. **`ref.test $C` is not a class test.** It
+is a *shape* test: WasmGC canonicalizes struct types structurally, field NAMES
+do not exist in wasm, and the three probe classes — which keep their state in a
+`WeakMap` and therefore have no fields at all beyond the compiler's own
+`__tag` — are ONE runtime type. Every arm claims every instance; the ladder's
+assembly order then decides which body runs.
+
+The compiler's own registry does keep them apart (`__call_m_toJSON_0 entries:
+A#55 | B#59 | E#63`, with distinct tags 0/1/2), which is exactly why reading
+the emitter does not show the defect. Canonicalization happens below it.
+
+Two ladders, two different wrong answers, and the second was not in the
+hand-off's model at all:
+
+| ladder | assembly | wrong answer |
+| --- | --- | --- |
+| `__call_m_<name>_<arity>` (closed-method dispatch, fixed + vararg) | later arms wrap outermost | the **LAST** declarer |
+| `__call_toString` / `__call_valueOf` (ToPrimitive) | first arm that matches | the **FIRST** declarer |
+
+That is why the hand-off's two symptoms read as unrelated: `toJSON` picked the
+last declarer (E), `toString` picked the first (A, and
+`Number.prototype.toString` in the real provider). Same defect, opposite
+direction, because the two ladders are built in opposite orders.
+
+#### 2. It is a re-run of #4618, which fixed exactly this — for other ladders
+
+#4618 hit the same canonicalization on the JS-host class-member bridge
+(React's repeated `class Foo` declarations running a later sibling's
+`UNSAFE_componentWillMount`) and introduced a `__tag` guard. That guard was
+written as a **local helper inside `index.ts`, twice**, and applied to the two
+host ladders only. The standalone any-receiver ladder and the ToPrimitive
+ladder never got it. S21 moves the helper to `src/codegen/class-arm-tag-guard.ts`
+(index.ts **net −95 lines**) and applies it to both.
+
+The guard declines — emitting the caller's previous two instructions, so the
+bytes do not move — unless another emitted struct shares this one's layout.
+That is the byte-preservation property the hand-off asked for, and it is a
+property of the guard rather than of a flag.
+
+#### 3. Reduction — one standalone module, no polyfill, no link
+
+`.tmp/s21/c9.mjs` (S20's, re-run), `c10.mjs`, `c11.mjs` via `.tmp/s21/single.mjs`.
+
+| probe | base | S21 |
+| --- | --- | --- |
+| `f(new A(1))`, `f(new B(2))`, `f(new E(3))` → `o.toJSON()`, fieldless classes | `!invalid receiver E` ×2, `EJ3` | **`AJ1` / `BJ2` / `EJ3`** |
+| same through a dynamic-`new` receiver | `!invalid receiver E` ×2 | **`AJ1` / `BJ2`** |
+| `x.uniqB()` on an `A` — a member A does NOT declare | **`UB`** (B's body ran) | **throws** |
+| same-shape classes, DIFFERENT field names (`{p}` / `{q}` / `{r}`) | last declarer's body, wrong field read | **`GA1` / `GB2` / `GC3`** |
+| `o.toString()` on `A` / `B` (ToPrimitive ladder) | `AS1` / `!invalid receiver A` | **`AS1` / `BS2`** |
+| DISTINCT-layout classes (1 / 2 / 3 fields) — control | already correct | identical |
+| number `toString()`, string `toUpperCase()`, array `join()`, Map `get()`, `valueOf` via `+` — controls | — | identical, base and S21 (`c11-{base,new}.out`) |
+| subclass inherits parent's method / subclass overrides — controls | `PM/PM`, `PM/QM` | identical |
+
+#### 4. Provider-internal, the real polyfill, linked, fresh cache (`cacheHit=false`)
+
+`.tmp/s21/diag-{base,new}.out` — the S20 diagnostic injected into the frozen
+`Temporal` namespace, both labels built on this tree:
+
+| probe | base | S21 |
+| --- | --- | --- |
+| `Duration.from("P1Y").toJSON()` | **`!invalid receiver`** | **`P1Y`** |
+| `Duration.from("P1Y").toString()` | **`!toString() radix argument must be between 2 and 36`** | **`P1Y`** |
+| `"" + Duration.from("P1Y")` | `!…radix…` | **`P1Y`** |
+| `Duration.from({years:1})` → years / toJSON | `!invalid receiver` | **`1` / `P1Y`** |
+| `new (ce("%Temporal.Duration%"))(1).toJSON()` (inline and via a const) | `!invalid receiver` ×2 | **`P1Y`** ×2 |
+| `PlainDate.from("1976-11-18").toJSON()` | `!invalid receiver` | **`1976-11-18`** |
+| `new Duration(1)` toJSON/toString (static `new` — control) | `P1Y` / `P1Y` | identical |
+| `Object.getPrototypeOf(r) === Duration.prototype` | `false` | `false` (#6485 residual 2, unchanged) |
+
+Both hand-off symptom texts are present on base and **absent** on S21.
+
+#### 5. Regression sample — three families, 120 rows each
+
+`--target standalone`, provider linked, sequential, FRESH `JS2WASM_TEMPORAL_CACHE`
+per label (`cacheHit=false` on both prewarms), quickjs artifact + adapter
+present, both labels on this tree. Provider bytes **3,291,080 (base) vs
+3,302,429 (S21)**, +11,349 (+0.34 %) — the positive control that the change
+reaches the linked artifact (the corpus A/B cannot provide one, §7).
+
+| family | rows | base pass | S21 pass | fail→pass | **pass→fail** | leaks |
+| --- | --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 92 | **94** | 2 | **0** | 0 |
+| `built-ins/Temporal/Duration/**` | 120 | 64 | **65** | 1 | **0** | 0 |
+| `built-ins/Temporal/ZonedDateTime/prototype/**` | 120 | 88 | **90** | 2 | **0** | 0 |
+| total | 360 | 244 | **249** | **5** | **0** | **0** |
+
+The five gains are all `…-propertybag-{calendar,timezone}-wrong-type` rows
+(PlainDate `compare`/`from`, Duration `compare/relativeTo`, ZonedDateTime
+`equals` ×2) — the shape where the polyfill reads a bag field and dispatches a
+method on a value whose class is not static.
+
+**Nine rows flipped between `compile_error` and a status, in both directions.**
+Every one is a compile-budget artifact of the 15 s per-row cap. Re-run **solo at
+60 s on both trees** they agree exactly, row for row, with identical error
+messages (`.tmp/s21fam/solo-{base,new}.tsv`): six pass on both, three fail on
+both (`PlainDate/from/argument-plaindatetime.js`,
+`PlainDate/from/overflow-wrong-type.js`,
+`ZonedDateTime/prototype/add/constrain-when-ambiguous-result.js`). The table
+above already counts the solo verdicts on BOTH labels, which is why the base
+column reads 92/64/88 rather than the in-sample 89/62/87.
+
+Said plainly: this slice does **not** make consumer compiles slower — the S21
+rows ran 1–3 s FASTER than base on the same files under the same load (a
+narrower arm short-circuits earlier), which is why the CE drift moved mostly in
+the improving direction. That is an observation from two runs, not a benchmark.
+
+The `invalid receiver` text appears once on base and **zero** times on S21
+across all 360 rows; `radix` appears in neither — in the sample both are
+upstream of the row's reported error, which is why the provider-internal table
+in §4 is the load-bearing evidence and the row counts are not.
+
+#### 6. Must-not-move samples — 406 rows, per FILE, 0 flips
+
+Both labels on this tree, diffed per file:
+
+| sample | rows | flips |
+| --- | --- | --- |
+| `Object/keys` + `expressions/object` + `Reflect/{get,has}` | 140 | **0** |
+| `Object/{entries,values,getOwnPropertyNames}` + `statements/for-in` | 146 | **0** |
+| `language/expressions/call/**` + `built-ins/Object/prototype/**` | 120 | **0** |
+
+The third sample was added for this slice because it exercises method dispatch
+itself rather than the property paths the previous two cover.
+
+#### 7. Order preservation
+
+Corpus byte A/B — 42 modules × {gc, standalone}, 84 artifacts: **0 move on
+either lane.** Expected, and a WEAK probe: the corpus has no module with two
+same-layout classes declaring one name reached through an unknown receiver, so
+it cannot show the change arriving anywhere. The provider byte delta in §5 is
+the positive control. Equivalence gate at baseline: **22 failing / 1720
+passing**.
+
+#### 8. Gates
+
+`typecheck`, `lint`, `check-loc-budget`, `check-func-budget`,
+`check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`,
+`check:speculative-rollback`, `check:issue-ids:against-main`,
+`update-issues --check`, prettier — all green. The two **inherited** reds
+handed over by S20 reproduce unchanged and are not from this slice:
+`check:compiler-boundaries` → `inventory-valid-architecture-incomplete`, and
+under `LOC_GATE_BASE=origin/main` the `src/runtime.ts` ceiling (19,822 vs
+19,601) plus `buildImports` 308 > 300.
+
+The id **#6486** was verified `UNASSIGNED` on `origin/issue-assignments`
+(`claim-issue: OK — #6486 is unassigned (read origin/issue-assignments)`). The
+allocate WRITE could not be taken: `--allocate` exits **6** (`open-PR id scan
+FAILED … gh offline`), nothing reserved. GitHub pushes return 403 for every
+lane today, so there is no branch or PR yet.
+
+#### 9. Traps, carried forward and added to
+
+All S11–S20 traps still bite. New:
+
+- **A `ref.test`-per-class ladder is not a class dispatch.** Two readings —
+  S20's hand-off, and the first reading of this slice — looked at a ladder that
+  emits `ref.test $A / $B / $E` and concluded the class test was missing
+  elsewhere. The test is there and it is the wrong test. The one-minute
+  discriminator: give the classes DIFFERENT field shapes and watch the bug
+  disappear (`c10.mjs`, rows 04–06 correct while 01–03 are wrong).
+- **The same defect can point in opposite directions in one program.** `toJSON`
+  answered the LAST declarer and `toString` the FIRST, which reads as two
+  independent bugs and cost a detour into the extern-class resolver. Ladder
+  ORDER, not cause, is what differs.
+- **Look for the fix that already exists.** #4618 solved this, named the
+  mechanism correctly in its own comment, and left the helper private in
+  `index.ts`. Grepping for the *phenomenon* ("canonicaliz") rather than the
+  *symptom* found it in one search and turned a design question into a move.
+- **`biome check --write` is NOT this repo's formatter.** `npm run format` is
+  prettier; `npm run lint` is `biome lint` only. One `biome check --write` on
+  the changed files reflowed `index.ts` to 80 columns — a 6,000-line diff that
+  looked like a merge accident. Recovered from the `.tmp` revert copies in
+  seconds, *because they were taken at the first edit*.
+- **A per-row 15 s cap invents status flips in BOTH directions.** Nine of the
+  fourteen apparent flips here were budget artifacts; re-running them solo at
+  60 s on both trees is not bookkeeping, it is the difference between
+  "+5, 0 regressions" and "+11 with three regressions".
+
+### Artifacts (S21)
+
+`.tmp/s21/`, `.tmp/s21base/`, `.tmp/s21fam/`, `.tmp/s21mnm/` in
+`/home/user/js2/.claude/worktrees/agent-ad35392e138689617`: the probes
+`c9`–`c11` with their `-base`/`-new` outs, `diag-{base,new}.out`, the corpus
+hashes `corpus-{base,new}.jsonl`, the per-chunk family TSVs
+`{pd,du,zdt}-{base,new}.p{0,60}.tsv`, `solo-{base,new}.tsv`, the ten
+must-not-move TSVs per label, the revert copies in `.tmp/s21base/`, and the
+drivers `{single,dump,diag}.mjs`, `{famdiff,mnmdiff,buckets}.py`,
+`{fam,mnm,solo}.sh`, `{family,solo,prewarm,corpus}.mts`.
+
+### Acceptance criterion 4 — S21 update
+
+**MET.** The wrong-class-method bucket moves: provider-internal,
+`Duration.from("P1Y").toJSON()` and `.toString()` go from *invalid receiver* /
+*radix argument must be between 2 and 36* to `P1Y`, and seven of the nineteen
+provider probes flip from throwing to a correct answer. Over the 360-row
+three-family sample that is **244 → 249**, with **0 legitimate `pass→fail`**,
+**0 `__temporal_*` leaks**, **406** must-not-move rows flat per file across
+three samples, both corpus lanes byte-identical and the equivalence gate at
+baseline.
+
+### Next top bucket after S21
+
+With the wrong-class-method bucket retired, the residuals the S21 sample leaves
+are, in order: `Test262Error: prototype Expected SameValue(«null», «[object
+Function]»)` (7 rows across two line numbers — a prototype-descriptor read),
+`TypeError: Object method called on null or undefined` (5), `Calling as
+constructor … no TypeError thrown` (4), and the three PlainDate/ZonedDateTime
+`compile_error` rows that survive a 60 s solo budget. The two structural
+residuals named by #6486 — `__call_@@toPrimitive`'s ladder (same defect, its
+entries carry no struct name) and same-shaped OBJECT LITERALS (no `__tag` to
+test) — are unmeasured in this sample and are the cheapest next codegen slice.
