@@ -239,6 +239,12 @@ terminal is not worth its global.
    `### S17 findings` in #5383.
 5. Every `gc` artifact in the byte A/B corpus is sha256-identical. ✅ measured
 
+## RESOLVED 2026-09-14 — the stack was renumbered
+
+S14–S16 were renumbered by the coordinator on their own branches and merged
+forward: #6474 → #6479, #6475 → #6480, #6476 → #6481, #6477 → #6482. The
+section below is kept as the record of the collision.
+
 ## BLOCKER inherited from the stack — #6474–#6477 collide with `main`
 
 `npm run -s check:issue-ids:against-main` FAILS on this branch after the
