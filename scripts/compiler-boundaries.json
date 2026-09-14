@@ -26,7 +26,8 @@
         "src/shared/contracts/ir-counted-string-identity.ts",
         "src/shared/contracts/ir-preparation-failure.ts",
         "src/shared/contracts/ir-unit-inventory.ts",
-        "src/shared/contracts/program-abi-error.ts"
+        "src/shared/contracts/program-abi-error.ts",
+        "src/shared/contracts/prepared-component-tokens.ts"
       ],
       "minModules": 6
     },
@@ -12684,6 +12685,24 @@
       "path": "src/wasm/model/abi-value-key.ts",
       "state": "clean",
       "layer": "wasm-model"
+    },
+    {
+      "path": "src/shared/contracts/prepared-component-tokens.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/ir/program/component-candidate-demand.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/codegen/program-abi-component-preparation.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate session-bound allocator observation from remaining CodegenContext dependencies."
     }
   ]
 }

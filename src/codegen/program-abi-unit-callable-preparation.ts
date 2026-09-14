@@ -13,9 +13,8 @@ import {
   programAbiCallableSignaturesEqual,
 } from "./program-abi-signatures.js";
 
-export interface PreparedUnitCallableDescriptor {
-  readonly kind: "prepared-unit-callables";
-}
+import type { PreparedUnitCallableDescriptor } from "../shared/contracts/prepared-component-tokens.js";
+export type { PreparedUnitCallableDescriptor } from "../shared/contracts/prepared-component-tokens.js";
 interface Payload {
   readonly ctx: CodegenContext;
   readonly session: ProgramAbiSession;
@@ -31,6 +30,7 @@ function fail(message: string): never {
 function bindings(payload: Payload) {
   const { ctx, session, plans, terminalUnitIds } = payload;
   if (ctx.programAbiSession !== session) fail("prepared unit callables crossed sessions");
+  session.assertModule(ctx.mod);
   const owners = new Set(terminalUnitIds);
   const ids = new Set<IrUnitId>();
   return plans.map((plan) => {

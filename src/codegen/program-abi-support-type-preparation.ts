@@ -9,9 +9,8 @@ import type {
 } from "./program-abi-prepared-transaction.js";
 import { canonicalProgramAbiTypeDef } from "./program-abi-signatures.js";
 
-export interface PreparedSupportTypeDescriptor {
-  readonly kind: "prepared-support-types";
-}
+import type { PreparedSupportTypeDescriptor } from "../shared/contracts/prepared-component-tokens.js";
+export type { PreparedSupportTypeDescriptor } from "../shared/contracts/prepared-component-tokens.js";
 interface Payload {
   readonly ctx: CodegenContext;
   readonly session: ProgramAbiSession;
@@ -26,6 +25,7 @@ function fail(message: string): never {
 function bindings(payload: Payload) {
   const { ctx, session } = payload;
   if (ctx.programAbiSession !== session || !ctx.programAbiTypes) fail("support types crossed their session");
+  session.assertModule(ctx.mod);
   const candidates = new Map(
     ctx.programAbiTypes.provisionalSupportTypes().map((binding) => [binding.draft.id, binding]),
   );
