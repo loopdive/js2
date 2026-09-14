@@ -78,6 +78,7 @@ import { defaultValueInstrs } from "./type-coercion.js";
 // `standalone-class-construct.ts` is the second caller.
 import { buildCoerceIdxs, type CoerceIdxs, externArgCoercionInstrs, resultBoxingInstrs } from "./extern-arg-marshal.js";
 import { closedDispatchGuardsOwnSlot } from "./expressions/own-property-method-shadow.js";
+import { classArmClaimInstrs } from "./class-arm-tag-guard.js"; // (#6486) nominal `__tag` arm guard
 
 /**
  * (#2583) The callback-free, argument-taking array search/predicate methods
@@ -1818,8 +1819,10 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
             ] satisfies Instr[])
           : callAndCoerce;
       current = [
-        { op: "local.get", index: anyLocalIdx },
-        { op: "ref.test", typeIdx: entry.typeIdx },
+        // (#6486) NOMINAL claim: `ref.test` alone is structural, and every
+        // same-shaped class in the ladder passes it — so the outermost arm ran
+        // for every receiver. Byte-identical when no layout collides.
+        ...classArmClaimInstrs(ctx, entry.structName, entry.typeIdx, anyLocalIdx),
         { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: armBodyForEntry, else: current },
       ];
     }
@@ -1934,8 +1937,8 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
             ])
           : current;
       current = [
-        { op: "local.get", index: anyLocalIdx },
-        { op: "ref.test", typeIdx: entry.typeIdx },
+        // (#6486) Same nominal claim as the fixed-arity ladder above.
+        ...classArmClaimInstrs(ctx, entry.structName, entry.typeIdx, anyLocalIdx),
         { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: callAndCoerce, else: current },
       ];
     }

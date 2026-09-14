@@ -31,17 +31,16 @@
 // four that fail are the four the change moves, and the four that pass are the
 // controls and the two pinned residuals, which must not move.
 //
-// NOT covered here, on purpose — two residuals this change deliberately does
-// NOT touch, both PINNED by the last two `it`s so that fixing them fails this
-// file loudly instead of leaving a stale expectation:
+// NOT covered here, on purpose — two residuals this change deliberately did
+// NOT touch. Both were PINNED by the last two `it`s so that fixing them would
+// fail this file loudly instead of leaving a stale expectation. That is exactly
+// what happened to the first of them:
 //
-//   - a method call by NAME on a statically-unknown receiver resolves through a
-//     per-name ladder with no runtime class test, and picks the LAST-declared
-//     class that declares the name. It is why the real provider still throws on
-//     `Duration.from("P1Y").toJSON()` even though the instance is now correct,
-//     its slots are present and its brand check passes. It is NOT caused by
-//     this change — it reproduces on base with an `any`-typed parameter holding
-//     a statically constructed instance.
+//   - a method call by NAME on a statically-unknown receiver resolved through a
+//     per-name ladder with no runtime class test, and picked the LAST-declared
+//     class that declares the name. It was why the real provider still threw on
+//     `Duration.from("P1Y").toJSON()` even though the instance was correct.
+//     FIXED by #6486 (S21); the `it` below asserts the fixed answer instead.
 //   - `Object.getPrototypeOf(x) === C.prototype` is false for a dynamic-`new`
 //     instance (true for a static one), on base and on this branch alike.
 import { describe, expect, it } from "vitest";
@@ -163,11 +162,13 @@ describe("#6485 — `new (<call>)(…)`, standalone", () => {
     ).resolves.toBe("T1");
   });
 
-  it("PINS residual 1: a name-collided method on an unknown receiver picks the LAST declarer", async () => {
-    // Base tree: "!invalid receiver E" for BOTH — identical to this branch, via
-    // the `any`-typed parameter, which involves no dynamic `new` at all. When
-    // the per-name ladder learns a runtime class test this becomes "AJ1/BJ2";
-    // update then, and drop this note.
+  it("residual 1 is FIXED (#6486): a name-collided method resolves by class", async () => {
+    // Was pinned here at "EJ/EJ" by S20 — the per-name ladder had no runtime
+    // CLASS test, only `ref.test`, which is STRUCTURAL, so every same-shaped
+    // class matched and the LAST declarer won. #6486 (S21) adds the nominal
+    // `__tag` guard; measured on the S20 base this line still answered
+    // "EJ/EJ". Full coverage lives in
+    // `tests/issue-6486-standalone-method-ladder-class-test.test.ts`.
     await expect(
       runStandaloneString(`(() => {
       class A { toJSON() { return "AJ"; } }
@@ -175,7 +176,7 @@ describe("#6485 — `new (<call>)(…)`, standalone", () => {
       class E { toJSON() { return "EJ"; } }
       function f(o) { return o.toJSON(); }
       return f(new A()) + "/" + f(new B()); })()`),
-    ).resolves.toBe("EJ/EJ");
+    ).resolves.toBe("AJ/BJ");
   });
 
   it("PINS residual 2: a dynamic-`new` instance does not share its class's prototype identity", async () => {

@@ -287,6 +287,7 @@ import { ensureMapRuntimeTypes } from "./map-runtime.js";
 import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
 import { fillClassProtoLookupArm } from "./class-proto-lookup.js"; // (#5195 Step 1.7)
+import { classArmClaimInstrs, classArmTagCondition } from "./class-arm-tag-guard.js"; // (#4618 / #6486) nominal `__tag` arm guard
 import { fillClassPrototypeReadArm } from "./standalone-class-prototype-read.js"; // (#6457)
 import { fillStandaloneObjectCreateClassInstance } from "./standalone-object-create-class-instance.js"; // (#6464)
 import { mintStandaloneClassProtoBuilders } from "./standalone-class-dyn-member.js"; // (#5383 S2h)
@@ -7720,62 +7721,6 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
   const dispatchTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }], "$call_method_type");
 
   // Helper to emit a method dispatch export
-  // (#4618) Same-shaped same-named sibling classes canonicalize to ONE WasmGC
-  // struct type, so a bare `ref.test` dispatch arm matches BOTH classes'
-  // instances and the first arm wins — the canonical class's instance ran the
-  // SIBLING's method body (react's per-test `class Foo` re-declarations).
-  // When an entry's layout collides with another entry's, guard its arm with
-  // the `__tag` field: own tag plus every DESCENDANT's tag (a parent's arm
-  // must keep matching subclass instances for inherited-method dispatch).
-  // Returns undefined — zero byte change — when no collision exists.
-  const classDispatchTagCondition = (
-    structName: string,
-    typeIdx: number,
-    receiverLocal: number,
-  ): Instr[] | undefined => {
-    const fields = ctx.structFields.get(structName);
-    if (!fields || fields.length === 0 || fields[0]!.name !== "__tag") return undefined;
-    const layoutSig = (n: string): string | undefined => {
-      const fs = ctx.structFields.get(n);
-      return fs?.map((f) => `${f.type.kind}:${(f.type as { typeIdx?: number }).typeIdx ?? ""}`).join(",");
-    };
-    const own = layoutSig(structName);
-    if (own === undefined) return undefined;
-    // Compare against every emitted struct, not only the classes that also
-    // declare this member. A same-layout sibling that does NOT declare the
-    // key is the important negative case: without a tag guard its instance
-    // passes this arm's structural ref.test and appears to inherit an
-    // unrelated sibling-only lifecycle method (React's repeated `class Foo`
-    // tests observed UNSAFE_componentWillMount from a later sibling).
-    const conflict = [...ctx.structFields.keys()].some((name) => name !== structName && layoutSig(name) === own);
-    if (!conflict) return undefined;
-    const ownTag = ctx.classTagMap.get(structName);
-    if (ownTag === undefined) return undefined;
-    const tags = [ownTag];
-    const isDescendantOf = (n: string): boolean => {
-      let cur: string | undefined = ctx.classParentMap.get(n);
-      const seen = new Set<string>();
-      while (cur !== undefined && !seen.has(cur)) {
-        if (cur === structName) return true;
-        seen.add(cur);
-        cur = ctx.classParentMap.get(cur);
-      }
-      return false;
-    };
-    for (const [childName, tag] of ctx.classTagMap) {
-      if (childName !== structName && isDescendantOf(childName) && !tags.includes(tag)) tags.push(tag);
-    }
-    const readTag: Instr[] = [
-      { op: "local.get", index: receiverLocal },
-      { op: "ref.cast", typeIdx },
-      { op: "struct.get", typeIdx, fieldIdx: 0 },
-    ];
-    const cond: Instr[] = [...readTag, { op: "i32.const", value: tags[0]! }, { op: "i32.eq" }];
-    for (const t of tags.slice(1)) {
-      cond.push(...readTag, { op: "i32.const", value: t }, { op: "i32.eq" }, { op: "i32.or" });
-    }
-    return cond;
-  };
 
   const emitMethodDispatch = (
     methodSuffix: string,
@@ -8161,7 +8106,7 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
       // externref: no conversion needed
 
       const tagCond = classMember
-        ? classDispatchTagCondition(entry.structName, entry.typeIdx, receiverAnyLocal)
+        ? classArmTagCondition(ctx, entry.structName, entry.typeIdx, receiverAnyLocal)
         : undefined;
       current = [
         { op: "local.get", index: receiverAnyLocal },
@@ -8673,58 +8618,6 @@ function emitExternrefClassGetterDispatch(ctx: CodegenContext, className: string
  * ref.test cascade. Getters remain self-only; methods additionally publish
  * their declared arity so the host can select an arity-specific bridge.
  */
-// (#4618) Shared tag-guard condition for class member dispatch arms — see the
-// classDispatchTagCondition closure in generateModule for the rationale
-// (same-layout sibling classes canonicalize to ONE WasmGC type; `ref.test`
-// alone matches both). Guards only when the entry's field layout collides
-// with another entry's; own tag plus descendant tags keep inherited-method
-// dispatch working.
-function classArmTagCondition(
-  ctx: CodegenContext,
-  structName: string,
-  typeIdx: number,
-  receiverLocal: number,
-): Instr[] | undefined {
-  const fields = ctx.structFields.get(structName);
-  if (!fields || fields.length === 0 || fields[0]!.name !== "__tag") return undefined;
-  const layoutSig = (n: string): string | undefined => {
-    const fs = ctx.structFields.get(n);
-    return fs?.map((f) => `${f.type.kind}:${(f.type as { typeIdx?: number }).typeIdx ?? ""}`).join(",");
-  };
-  const own = layoutSig(structName);
-  if (own === undefined) return undefined;
-  // A class-member arm must also reject same-layout classes that do not own
-  // this member. Restricting the collision universe to `methodEntries` made a
-  // singleton entry look safe even though a structurally identical sibling
-  // could pass its ref.test and acquire the method.
-  if (![...ctx.structFields.keys()].some((name) => name !== structName && layoutSig(name) === own)) return undefined;
-  const ownTag = ctx.classTagMap.get(structName);
-  if (ownTag === undefined) return undefined;
-  const tags = [ownTag];
-  const isDescendantOf = (n: string): boolean => {
-    let cur: string | undefined = ctx.classParentMap.get(n);
-    const seen = new Set<string>();
-    while (cur !== undefined && !seen.has(cur)) {
-      if (cur === structName) return true;
-      seen.add(cur);
-      cur = ctx.classParentMap.get(cur);
-    }
-    return false;
-  };
-  for (const [childName, tag] of ctx.classTagMap) {
-    if (childName !== structName && isDescendantOf(childName) && !tags.includes(tag)) tags.push(tag);
-  }
-  const readTag: Instr[] = [
-    { op: "local.get", index: receiverLocal },
-    { op: "ref.cast", typeIdx },
-    { op: "struct.get", typeIdx, fieldIdx: 0 },
-  ];
-  const cond: Instr[] = [...readTag, { op: "i32.const", value: tags[0]! }, { op: "i32.eq" }];
-  for (const t of tags.slice(1)) {
-    cond.push(...readTag, { op: "i32.const", value: t }, { op: "i32.eq" }, { op: "i32.or" });
-  }
-  return cond;
-}
 
 function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number, keys: string[]): void {
   const mod = ctx.mod;
@@ -9691,8 +9584,14 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
             ];
 
       return [
-        { op: "local.get", index: anyLocal },
-        { op: "ref.test", typeIdx: entry.typeIdx },
+        // (#6486) NOMINAL claim. This ladder is FIRST-match, and `ref.test` is
+        // structural: with several same-shaped classes each declaring
+        // `toString`, the earliest arm ran for every one of them (measured:
+        // `o.toString()` on a `B` ran `A`'s body and threw A's brand error;
+        // in the compiled Temporal provider it surfaced as
+        // *toString() radix argument must be between 2 and 36*). Byte-identical
+        // when no other emitted struct shares this one's layout.
+        ...classArmClaimInstrs(ctx, entry.structName, entry.typeIdx, anyLocal),
         {
           op: "if",
           blockType: { kind: "val" as const, type: { kind: "externref" as const } },
