@@ -36,6 +36,7 @@ started). Acceptance criterion 4 of #5383 is therefore still open.
 | S15 | array-HOF callback asserted a nullable element non-null — the `sn()` bucket (#6480) | 199 → 201 | branch `…-s15`, stacked on S14, unpushed |
 | S16 | null native-string element binding truthiness; `void 0`/`undefined` comparison (#6481, #6482) | 201 → 202 (`sn()` bucket fully retired) | branch `…-s16`, stacked on S15, unpushed |
 | S17 | the link was ONE-DIRECTIONAL: runtime-installed reverse channel so the provider can read a consumer-built bag (#6478) | 202 → 232 (solo-corrected 233) | branch `…-s17`, stacked on S16, unpushed |
+| S18 | provider can CALL a method on a consumer-owned receiver — the reverse method-call hop (#6483); the `called value is not a function` bucket is TWO defects, neither at S17's guard | 232 → 232 (PlainDate 93 → 93, 0 flips; bucket did not move — criterion 4 NOT met for this slice) | branch `…-s18`, stacked on S17, unpushed |
 
 Fix commits also on main: the speculative-rollback gate fix on S2m (9501ffca13),
 the `test262` gitlink restoration (#5892), the revert of #5871/#5882 (#5914).
@@ -58,12 +59,12 @@ fails, `--check` + the gate before committing.
 
 ## Remaining buckets (post-S17 sample, 120 fail pooled) and the next census targets
 
-- `called value is not a function` **15** — provider calls a consumer method;
-  reverse GET now returns the closure but `wantIsCallableGuard` (`calls.ts`
-  ~L4851) runs the module-local `__is_callable` ladder and refuses a foreign
-  closure. Needs the reverse twin of the `callableKind` terminal. S18 dispatched
-  on it (branch `…-s18`, stacked on S17), plus provider WRITES to a consumer bag
-  not visible.
+- `called value is not a function` **15** — two defects. (a) provider calls
+  `o.m()` on a consumer carrier: FIXED by S18 (#6483). (b) consumer calls
+  `Temporal.Duration.from("P0Y")` on a provider receiver: a literal-named member
+  call takes a per-name `__call_m_<name>` dispatch path with no link-boundary
+  arm; the computed form `Temporal.Duration[k](…)` works. S19 dispatched on it
+  (branch `…-s19`, stacked on S18).
 - `prototype SameValue(«null»)` 7 · `Missing internal slot slot-years` 7 ·
   `Object method called on null or undefined` 5 · `__closure_N()` null pointer 5 ·
   `Expected a RangeError but got undefined` 5 · `Calling as constructor` 4 ·
