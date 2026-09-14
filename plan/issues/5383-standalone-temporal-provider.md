@@ -6365,3 +6365,15 @@ through as "the boundaries gate was already red". It is not the same red.
 `src/codegen/class-proto-lookup.ts`, the sibling whose mechanism it
 generalizes, and the gate is back to the inherited
 `inventory-valid-architecture-incomplete` with `inventoryValid: true`.
+
+#### 10. #6484 is NOT this ladder — measured, not assumed
+
+The hand-off asked whether S19's reduction A (`C[k]("A","B")` with a foldable
+key shifting its arguments, #6484) is the same defect. It is not.
+`.tmp/s21/c12-{base,new}.out`, seven probes, both labels on this tree: the
+STATIC computed-key rows are **identical** on base and S21 — still
+`"s2:function () { [native code] },A"`, i.e. the callee value arriving as
+argument 0 — for both `C[k2](…)` and the literal-key `C["s2"](…)`, and for a
+second class. Exactly one row moved, `o.m2("A","B")` through an `any`-typed
+parameter, which is this slice's ladder. #6484 is a separate static
+computed-member CALL lowering and keeps its own slice.
