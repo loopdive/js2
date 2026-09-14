@@ -78,6 +78,7 @@
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
+import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import type { CodegenContext } from "./context/types.js";
 import type { Instr, ValType } from "../ir/types.js";
 
@@ -94,11 +95,14 @@ export const LINK_REVERSE_PEER = Object.freeze({
   reverseKeys: "__js2wasm_link_reverse_keys",
   /** Provider-internal: the `has` miss hop — and the null-vs-absent oracle. */
   reverseHas: "__js2wasm_link_reverse_has",
+  /** Provider-internal: the `__extern_method_call` miss hop (#6483). */
+  reverseMethodCall: "__js2wasm_link_reverse_method_call",
   /** Consumer-internal: the normalising terminals it installs. */
   localGet: "__js2wasm_link_local_member_get",
   localKeys: "__js2wasm_link_local_object_keys",
   localHas: "__js2wasm_link_local_has",
   localIsNull: "__js2wasm_link_local_is_null",
+  localMethodCall: "__js2wasm_link_local_method_call",
 } as const);
 
 /** The host lane's `__boundary_object_has` tri-state for "mine, and present". */
@@ -111,6 +115,8 @@ export interface ReversePeerHops {
   has?: number;
   /** `__js2wasm_link_reverse_owned` — see `reverseGetArmInstrs`. */
   ownedGlobal?: number;
+  /** (#6483) `__js2wasm_link_reverse_method_call`. */
+  methodCall?: number;
 }
 
 /**
@@ -139,10 +145,12 @@ interface ReverseTypes {
   keysTypeIdx: number;
   hasTypeIdx: number;
   isNullTypeIdx: number;
+  methodCallTypeIdx: number;
   getRef: ValType;
   keysRef: ValType;
   hasRef: ValType;
   isNullRef: ValType;
+  methodCallRef: ValType;
 }
 
 /**
@@ -159,15 +167,24 @@ function reverseTypes(ctx: CodegenContext): ReverseTypes {
   // The same SHAPE as `has`, and deliberately its own type NAME: the two answer
   // different questions and must not land in each other's slot.
   const isNullTypeIdx = addFuncType(ctx, [EXTERNREF, EXTERNREF], [I32], "$__link_peer_is_null");
+  // (#6483) `(recv, name, args) -> result`, the shape of `__extern_method_call`.
+  const methodCallTypeIdx = addFuncType(
+    ctx,
+    [EXTERNREF, EXTERNREF, EXTERNREF],
+    [EXTERNREF],
+    "$__link_peer_method_call",
+  );
   return {
     getTypeIdx,
     keysTypeIdx,
     hasTypeIdx,
     isNullTypeIdx,
+    methodCallTypeIdx,
     getRef: { kind: "ref_null", typeIdx: getTypeIdx },
     keysRef: { kind: "ref_null", typeIdx: keysTypeIdx },
     hasRef: { kind: "ref_null", typeIdx: hasTypeIdx },
     isNullRef: { kind: "ref_null", typeIdx: isNullTypeIdx },
+    methodCallRef: { kind: "ref_null", typeIdx: methodCallTypeIdx },
   };
 }
 
@@ -272,6 +289,7 @@ export function reserveStandaloneLinkReversePeer(ctx: CodegenContext): ReversePe
       keys: ctx.funcMap.get(LINK_REVERSE_PEER.reverseKeys),
       has: ctx.funcMap.get(LINK_REVERSE_PEER.reverseHas),
       ownedGlobal: reverseOwnedGlobals.get(ctx),
+      methodCall: ctx.funcMap.get(LINK_REVERSE_PEER.reverseMethodCall),
     };
   }
   const types = reverseTypes(ctx);
@@ -286,6 +304,9 @@ export function reserveStandaloneLinkReversePeer(ctx: CodegenContext): ReversePe
   ]);
   const peerIsNullIdx = addGlobal(ctx, "__js2wasm_link_peer_is_null", types.isNullRef, [
     { op: "ref.null", typeIdx: types.isNullTypeIdx },
+  ]);
+  const peerMethodCallIdx = addGlobal(ctx, "__js2wasm_link_peer_method_call", types.methodCallRef, [
+    { op: "ref.null", typeIdx: types.methodCallTypeIdx },
   ]);
   const flagIdx = addGlobal(ctx, "__js2wasm_link_in_reverse", I32, [{ op: "i32.const", value: 0 }]);
   // The null-vs-absent channel — see `reverseGetArmInstrs` for why a second
@@ -378,10 +399,46 @@ export function reserveStandaloneLinkReversePeer(ctx: CodegenContext): ReversePe
       miss: { op: "i32.const", value: 0 },
     }),
   );
+  // (#6483) `recv.name(args)` where the RECEIVER is the CONSUMER's. The exact
+  // mirror of the forward `__js2wasm_link_method_call` terminal (S2h), and it
+  // exists for the same reason that one does: resolution and receiver binding
+  // both have to happen in the module that OWNS the receiver, because the
+  // method closure's trampoline reads `this` from its own module's
+  // `__current_this` global. Measured before this arm existed (`.tmp/s18/c7`,
+  // linked pair, `--target standalone`): provider code doing `o.m()` on a
+  // consumer bag threw `TypeError: called value is not a function` — from
+  // `resolved-callee-guard.ts`, which is the terminal miss of
+  // `__extern_method_call` and the LAST thing before the throw.
+  //
+  // A `null` answer is NOT adopted as a value here, and that asymmetry with the
+  // `get` hop is deliberate + measured. For `get`, "the peer owns the receiver
+  // and the key is present" fully determines that a null read IS the value. For
+  // a CALL it does not: the hop also answers null when the consumer resolved the
+  // method and its own `__apply_closure` declined to dispatch it. Adopting that
+  // null replaces a loud, correct TypeError with a silent wrong value —
+  // measured on the first cut of this slice (`.tmp/s18/witness-new.out`), where
+  // `o.add(3, 4)` went from a TypeError to `null` and `this.v` to `undefined`.
+  // So the arm returns ONLY a non-null answer, and every other case keeps the
+  // pre-#6483 miss path byte for byte.
+  const methodCall = define(
+    ctx,
+    LINK_REVERSE_PEER.reverseMethodCall,
+    [EXTERNREF, EXTERNREF, EXTERNREF],
+    [EXTERNREF],
+    [{ name: "r", type: EXTERNREF }],
+    reverseHopBody({
+      peerGlobalIdx: peerMethodCallIdx,
+      flagGlobalIdx: flagIdx,
+      typeIdx: types.methodCallTypeIdx,
+      arity: 3,
+      resultLocal: 3,
+      miss: { op: "ref.null.extern" },
+    }),
+  );
   define(
     ctx,
     LINK_REVERSE_PEER.install,
-    [types.getRef, types.keysRef, types.hasRef, types.isNullRef],
+    [types.getRef, types.keysRef, types.hasRef, types.isNullRef, types.methodCallRef],
     [],
     [],
     [
@@ -393,9 +450,11 @@ export function reserveStandaloneLinkReversePeer(ctx: CodegenContext): ReversePe
       { op: "global.set", index: peerHasIdx },
       { op: "local.get", index: 3 },
       { op: "global.set", index: peerIsNullIdx },
+      { op: "local.get", index: 4 },
+      { op: "global.set", index: peerMethodCallIdx },
     ],
   );
-  return { get, keys, has, ownedGlobal: ownedIdx };
+  return { get, keys, has, ownedGlobal: ownedIdx, methodCall };
 }
 
 /**
@@ -519,11 +578,91 @@ export function emitStandaloneLinkReverseLocalTerminals(ctx: CodegenContext): vo
     );
   }
 
+  // (#6483) The CALL twin of `localGet` — and it delegates to this module's own
+  // `__extern_method_call` rather than composing `__extern_get` +
+  // `__apply_closure` by hand.
+  //
+  // That distinction is measured, not stylistic. The hand-composed version
+  // dispatched but did NOT bind the receiver for an object-LITERAL method:
+  // `{ v: 42, readSelf() { return this.v; } }` answered `NaN` through the hop
+  // and `42` in a single module (`.tmp/s18/c10-new.out`) — a silent wrong value
+  // where the base tree threw. A class instance bound correctly either way,
+  // which is what localised it to the literal-method closure's `this`, supplied
+  // by machinery `__apply_closure` alone does not run. Delegating keeps ONE
+  // method-call semantics in this module instead of a second, subtly different
+  // copy.
+  //
+  // The `__extern_get` pre-check stays, and is what preserves the channel's
+  // contract: `__extern_method_call` THROWS on an absent member (§7.3.14, the
+  // #4221/#4656 guard), and a receiver this module does not own must answer
+  // `ref.null.extern` = "not mine" so the PROVIDER keeps its own miss path
+  // rather than eating a foreign TypeError. Cost: a member that resolves is
+  // resolved twice, so an accessor runs twice on this path — stated rather than
+  // hidden, and only on a path that previously always threw.
+  const applyClosure = ctx.funcMap.get("__apply_closure");
+  if (applyClosure !== undefined) {
+    const thisGlobalIdx = ensureCurrentThisGlobal(ctx);
+    define(
+      ctx,
+      LINK_REVERSE_PEER.localMethodCall,
+      [EXTERNREF, EXTERNREF, EXTERNREF],
+      [EXTERNREF],
+      [
+        { name: "m", type: EXTERNREF },
+        { name: "prevThis", type: EXTERNREF },
+        { name: "result", type: EXTERNREF },
+      ],
+      [
+        { op: "local.get", index: 0 },
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: externGet },
+        { op: "local.tee", index: 3 },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "ref.null.extern" }, { op: "return" }],
+        },
+        { op: "local.get", index: 3 },
+        { op: "call", funcIdx: isUndefined },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "ref.null.extern" }, { op: "return" }],
+        },
+        { op: "global.get", index: thisGlobalIdx },
+        { op: "local.set", index: 4 },
+        { op: "local.get", index: 0 },
+        { op: "global.set", index: thisGlobalIdx },
+        {
+          op: "try",
+          blockType: { kind: "empty" },
+          body: [
+            { op: "local.get", index: 3 },
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: 2 },
+            { op: "call", funcIdx: applyClosure },
+            { op: "local.set", index: 5 },
+          ],
+          catches: [],
+          catchAll: [
+            { op: "local.get", index: 4 },
+            { op: "global.set", index: thisGlobalIdx },
+            { op: "rethrow", depth: 0 },
+          ],
+        },
+        { op: "local.get", index: 4 },
+        { op: "global.set", index: thisGlobalIdx },
+        { op: "local.get", index: 5 },
+      ],
+    );
+  }
+
   const types = reverseTypes(ctx);
   ensureLateImport(
     ctx,
     LINK_REVERSE_PEER.install,
-    [types.getRef, types.keysRef, types.hasRef, types.isNullRef],
+    [types.getRef, types.keysRef, types.hasRef, types.isNullRef, types.methodCallRef],
     [],
     namespace,
   );
@@ -574,6 +713,45 @@ export function reverseGetArmInstrs(hops: ReversePeerHops, resultLocal: number):
 }
 
 /**
+ * (#6483) The `__extern_method_call` miss arm for the PROVIDER side.
+ *
+ * DELIBERATELY NOT shaped like `reverseGetArmInstrs`. That arm adopts a null
+ * answer as the value when the peer says it owns the receiver and the key is
+ * present, because for a READ those two facts settle it. For a CALL they do
+ * not: the hop also answers null when the consumer resolved the method and its
+ * own `__apply_closure` declined to dispatch it, and adopting THAT null turns a
+ * correct TypeError into a silent wrong value. Measured on the first cut of this
+ * slice (`.tmp/s18/witness-new.out`): `o.add(3, 4)` became `null` and
+ * `this.v` became `undefined` where both had thrown.
+ *
+ * So only a NON-NULL answer returns here; every other case falls through to the
+ * pre-#6483 miss path unchanged. That makes this arm strictly throw-reducing and
+ * never answer-changing.
+ *
+ * Takes the SAME slot as the forward peer / host-boundary call arm, so a module
+ * that has one of those never emits this one (a provider has no peer to ask and
+ * a consumer has no reverse channel — `isProvider` and `peerNamespace` are
+ * mutually exclusive by construction).
+ */
+export function reverseMethodCallArmInstrs(hops: ReversePeerHops, resultLocal: number): Instr[] {
+  if (hops.methodCall === undefined) return [];
+  return [
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: 1 },
+    { op: "local.get", index: 2 },
+    { op: "call", funcIdx: hops.methodCall },
+    { op: "local.tee", index: resultLocal },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "local.get", index: resultLocal }, { op: "return" }],
+    },
+  ];
+}
+
+/**
  * FINALIZE, both sides.
  *
  * Provider: publish the setter under its ABI name, resolving the index through
@@ -602,11 +780,12 @@ export function finalizeStandaloneLinkReversePeer(ctx: CodegenContext): void {
   const localKeysIdx = ctx.funcMap.get(LINK_REVERSE_PEER.localKeys);
   const localHasIdx = ctx.funcMap.get(LINK_REVERSE_PEER.localHas);
   const localIsNullIdx = ctx.funcMap.get(LINK_REVERSE_PEER.localIsNull);
+  const localMethodCallIdx = ctx.funcMap.get(LINK_REVERSE_PEER.localMethodCall);
   if (installIdx === undefined || localGetIdx === undefined || localKeysIdx === undefined) return;
-  if (localHasIdx === undefined || localIsNullIdx === undefined) return;
+  if (localHasIdx === undefined || localIsNullIdx === undefined || localMethodCallIdx === undefined) return;
   const initFn = ctx.programAbiModuleInitCallables?.firstFunction();
   if (!initFn) return;
-  for (const handle of [localGetIdx, localKeysIdx, localHasIdx, localIsNullIdx]) {
+  for (const handle of [localGetIdx, localKeysIdx, localHasIdx, localIsNullIdx, localMethodCallIdx]) {
     if (!ctx.mod.declaredFuncRefs.includes(handle)) ctx.mod.declaredFuncRefs.push(handle);
   }
   // A consumer that could not build BOTH terminals installs neither (the guard
@@ -617,6 +796,7 @@ export function finalizeStandaloneLinkReversePeer(ctx: CodegenContext): void {
     { op: "ref.func", funcIdx: localKeysIdx },
     { op: "ref.func", funcIdx: localHasIdx },
     { op: "ref.func", funcIdx: localIsNullIdx },
+    { op: "ref.func", funcIdx: localMethodCallIdx },
     { op: "call", funcIdx: installIdx },
     ...initFn.body,
   ];

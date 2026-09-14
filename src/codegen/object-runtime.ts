@@ -256,6 +256,7 @@ import {
   emitStandaloneLinkReverseLocalTerminals,
   reserveStandaloneLinkReversePeer,
   reverseGetArmInstrs,
+  reverseMethodCallArmInstrs,
 } from "./standalone-link-reverse-peer.js"; // (#5383 S17 / #6478) the REVERSE hop
 import {
   buildOwnToPrimitiveOverridePresent,
@@ -6641,7 +6642,17 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // host lane's `__boundary_object_call`: same arm, same arguments, same
     // "null means the peer does not own this receiver" contract.
     const boundaryOrPeerCallIdx = boundaryObjectCallIdx ?? peerMethodCallIdx;
-    const boundaryCallResultLocal = boundaryOrPeerCallIdx === undefined ? undefined : 3 + methodCallLocals.length;
+    // (#5383 S18 / #6483) …and the REVERSE twin, for a provider handed a
+    // receiver its consumer owns. It takes the same slot but not the same arm
+    // shape: here a `null` answer is ambiguous between "not the consumer's" and
+    // "the method returned null", exactly as it is for `__extern_get`, so the
+    // arm reads the hop's `callOwned` verdict instead of treating null as a
+    // miss. Mutually exclusive with the forward peer by construction.
+    const reverseMethodCallIdx = boundaryOrPeerCallIdx === undefined ? reversePeerHops.methodCall : undefined;
+    const boundaryCallResultLocal =
+      boundaryOrPeerCallIdx === undefined && reverseMethodCallIdx === undefined
+        ? undefined
+        : 3 + methodCallLocals.length;
     if (boundaryCallResultLocal !== undefined) {
       methodCallLocals.push({ name: "boundaryCallResult", type: { kind: "externref" } });
     }
@@ -6703,6 +6714,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                   then: [{ op: "local.get", index: boundaryCallResultLocal }, { op: "return" }],
                 },
               ] satisfies Instr[])
+            : []),
+          ...(reverseMethodCallIdx !== undefined && boundaryCallResultLocal !== undefined
+            ? reverseMethodCallArmInstrs(reversePeerHops, boundaryCallResultLocal)
             : []),
           ...buildVecOrClosurePropMethodCallElseArm(ctx, externGetIdx, applyClosureIdx, resolvedMethodGuard),
         ],
