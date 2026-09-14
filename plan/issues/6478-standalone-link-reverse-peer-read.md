@@ -268,20 +268,29 @@ branch would have rewritten the predecessor's own change-set and conflicted with
 it. The order actually run was (1) S16 renumbered, (2) this branch re-merged,
 (3) the gate went green — which is what happened.
 
-**Three things in that sequence are worth carrying forward.**
+**Three things in that sequence are worth carrying forward, and the first one
+subsumes the other two.**
 
-1. A red `check:issue-ids:against-main` blocks BOTH PRs of a stack and is
-   invisible until a catch-up merge pulls `main` in. It is not a reason to
+1. **After merging a predecessor, assert the exact tip you validated is in your
+   history — `git merge-base --is-ancestor <that-tip> HEAD` — not that the files
+   look right.** This branch had to merge S16 **twice**: a concurrent lane had
+   already merged an EARLIER S16 tip into it, pre-sweep, so every filename was
+   correctly renumbered, `check:issue-ids:against-main` was green, and
+   `git status` was clean, while the ancestor check answered **1** and seven
+   stale references were still present. Filenames, the id gate and a clean
+   worktree are all *downstream* of "is the commit I validated actually in this
+   history"; only the ancestor check asks that question, and it is the one that
+   catches the whole class rather than the instance you happened to hit.
+   (Agreed with the S16 lane, which proposed rule 2 first and then withdrew it
+   in favour of this one.)
+2. **The id gate compares FILENAMES, not prose** — the corollary, and the
+   instance. S16's renumber passed it with seven cross-slice `#<old-id>`
+   references still in issue text, a source comment and a test, each pointing a
+   reader at an unrelated issue `main` now owns under that number. Sweep
+   `grep -rn '#<old>'` repo-wide AFTER the gate goes green, not before.
+3. A red `check:issue-ids:against-main` blocks BOTH PRs of a stack and is
+   invisible until a catch-up merge pulls `main` in. That is not a reason to
    defer the merge; it is a reason to do it early.
-2. **The gate compares FILENAMES, not prose.** S16's renumber passed the gate
-   with seven cross-slice `#<old-id>` references still in issue text, source
-   comments and a test — each pointing a reader at an unrelated issue that
-   `main` now owns under that number. The sweep (`grep -rn '#<old>'` repo-wide)
-   has to run AFTER the gate goes green, not before.
-3. This branch had to merge S16 **twice**: a concurrent lane merged an earlier
-   S16 tip into it (pre-sweep), so `git merge-base --is-ancestor <s16-head> HEAD`
-   answered 1 while every file looked renumbered. Checking the ancestor rather
-   than the filenames is what caught it.
 
 ## Note on the issue id — #6478 is UNRESERVED
 
