@@ -126,8 +126,38 @@ function defaultFieldInstrs(type: ValType): Instr[] {
   }
 }
 
-/** Highest call-site arity a driver is minted for; above it the caller declines. */
+/**
+ * Highest arity for which the `__call_fn_method_<N>` dispatcher family exists.
+ *
+ * This is NOT a property of the driver — it is the range `closure-exports.ts`
+ * emits (`/^__call_fn_method_([0-8])$/`) and the host bridge scans. A driver at
+ * or below it can use the proven receiver-aware dispatcher for its ordinary
+ * module-local-closure tail; above it, that tail is unavailable and the driver
+ * packs an argument vector for `__apply_closure` instead (see
+ * `MAX_DYNAMIC_CONSTRUCT_ARITY`).
+ */
 export const MAX_NATIVE_CONSTRUCT_ARITY = 8;
+
+/**
+ * (#5383 S24) Highest call-site arity a construct driver is minted for.
+ *
+ * Until this existed the admission ceiling WAS `MAX_NATIVE_CONSTRUCT_ARITY`, so
+ * `new <runtime ctor value>(a0 … a8)` — nine arguments or more — declined, and
+ * for a callee the module does not own (the linked-provider case) the no-match
+ * base is `ref.null.extern` with the argument expressions never evaluated. The
+ * Temporal corpus hits this on its most ordinary spelling:
+ * `new Temporal.Duration(0, 0, 0, 5, 5, 5, 5, 5, 5, 5)` has TEN arguments and
+ * evaluated to null, which the polyfill then carried into `ToTemporalDuration`
+ * and reported as `TypeError: expected a string, not null`.
+ *
+ * Nothing about the driver body needs the 8: its argument-vector arms (class /
+ * boundary / proxy / runtime-marker) are already arity-generic, and the one
+ * arity-bound piece is the `__call_fn_method_<N>` tail. 16 covers every
+ * ten-slot constructor in the corpus (`Temporal.Duration`,
+ * `Temporal.PlainDateTime`) with headroom, while still bounding how large a
+ * function a single pathological call site can mint.
+ */
+export const MAX_DYNAMIC_CONSTRUCT_ARITY = 16;
 
 function driverName(arity: number): string {
   return `${DRIVER_PREFIX}${arity}`;
@@ -233,7 +263,7 @@ export function reserveTypedNativeConstructDriver(
 export function maxReservedNativeConstructArity(ctx: CodegenContext): number {
   let maxTyped = -1;
   for (const driver of typedDriversByContext.get(ctx) ?? []) maxTyped = Math.max(maxTyped, driver.arity);
-  for (let arity = MAX_NATIVE_CONSTRUCT_ARITY; arity >= 0; arity--) {
+  for (let arity = MAX_DYNAMIC_CONSTRUCT_ARITY; arity >= 0; arity--) {
     if (ctx.funcMap.has(driverName(arity))) return Math.max(arity, maxTyped);
   }
   return maxTyped;
@@ -255,7 +285,7 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
   // It gates itself: a module with no `new <runtime value>` site and no wasm
   // consumer gets `undefined` here and emits identical bytes.
   const classConstructIdx = ensureStandaloneClassConstructDispatch(ctx);
-  for (let arity = 0; arity <= MAX_NATIVE_CONSTRUCT_ARITY; arity++) {
+  for (let arity = 0; arity <= MAX_DYNAMIC_CONSTRUCT_ARITY; arity++) {
     const driverIdx = ctx.funcMap.get(driverName(arity));
     if (driverIdx === undefined) continue;
     const driver = definedFuncAt(ctx, driverIdx);
@@ -508,10 +538,33 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
     // marker cannot enter that module-local classifier, so an exact type+brand
     // arm packs the already-evaluated args and invokes `__apply_closure`.
     const ordinaryCall: Instr[] = [];
+    // (#5383 S24) Above `MAX_NATIVE_CONSTRUCT_ARITY` there is no
+    // `__call_fn_method_<N>` to dispatch through — that family stops at 8 and is
+    // not widened here (its arity range is also the host bridge's scan range).
+    // `__apply_closure` takes the arguments as a vector, so it serves any arity;
+    // it is the same terminal the runtime-marker arm below already uses. Gated
+    // strictly on `arity > MAX_NATIVE_CONSTRUCT_ARITY` so that a module which
+    // reserves a driver only for Proxy→admitted-JS construction (the
+    // `methodCallIdx === undefined` case that has always existed at arities ≤ 8)
+    // keeps its exact previous null tail and stays byte-identical.
+    const highArityApplyTail =
+      methodCallIdx === undefined &&
+      arity > MAX_NATIVE_CONSTRUCT_ARITY &&
+      applyClosureIdx !== undefined &&
+      objVecNewIdx !== undefined &&
+      objVecPushIdx !== undefined;
     if (methodCallIdx !== undefined) {
       ordinaryCall.push({ op: "local.get", index: selfLocal }, { op: "local.get", index: 0 });
       for (let arg = 0; arg < arity; arg++) ordinaryCall.push({ op: "local.get", index: arg + 2 });
       ordinaryCall.push({ op: "call", funcIdx: methodCallIdx });
+    } else if (highArityApplyTail) {
+      ordinaryCall.push(
+        ...buildArgsVec(),
+        { op: "local.get", index: 0 },
+        { op: "local.get", index: selfLocal },
+        { op: "local.get", index: argsVecLocal },
+        { op: "call", funcIdx: applyClosureIdx! },
+      );
     } else {
       // A module may reserve this driver solely for Proxy -> admitted-JS
       // construction. That path has no module-local closure dispatcher, but it
@@ -625,7 +678,7 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
       { name: "__ctor_proto", type: EXTERNREF },
       { name: "__ctor_self", type: EXTERNREF },
       { name: "__ctor_result", type: EXTERNREF },
-      ...(canApplyRuntimeMarker || canProxyConstruct || canBoundaryConstruct || canClassConstruct
+      ...(canApplyRuntimeMarker || canProxyConstruct || canBoundaryConstruct || canClassConstruct || highArityApplyTail
         ? [{ name: "__ctor_args", type: EXTERNREF }]
         : []),
     ];

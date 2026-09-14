@@ -79,6 +79,7 @@ import {
 } from "../literals.js";
 import { stringConstantExternrefInstrs, ensureAnyToStringHelper } from "../native-strings.js";
 import {
+  MAX_DYNAMIC_CONSTRUCT_ARITY,
   MAX_NATIVE_CONSTRUCT_ARITY,
   reserveNativeConstructDriver,
   reserveTypedNativeConstructDriver,
@@ -3958,7 +3959,24 @@ function tryCompileNativeConstructFromValue(
     flattenCallArgs(rawArgs) ??
     (ctx.standalone || ctx.wasi ? (resolveStaticSpreadArgs(ctx, rawArgs) ?? rawArgs) : rawArgs);
   if (args.some((a) => ts.isSpreadElement(a))) return undefined;
-  if (args.length > MAX_NATIVE_CONSTRUCT_ARITY) return undefined;
+  // (#5383 S24) The ceiling used to be `MAX_NATIVE_CONSTRUCT_ARITY` (8) because
+  // the driver's ordinary tail dispatches through `__call_fn_method_<N>`, which
+  // only exists for 0…8. But declining here is not a fallback: for a callee the
+  // module does not own — every linked-provider class — the no-match base is
+  // `ref.null.extern`, and the argument expressions are never evaluated at all.
+  // `new Temporal.Duration(0, 0, 0, 5, 5, 5, 5, 5, 5, 5)` (ten arguments, the
+  // spelling most of the Temporal corpus uses) therefore answered null. The
+  // driver's other arms — class, boundary, proxy, runtime-marker — already pack
+  // an argument VECTOR and are arity-generic; only the ordinary tail was bound
+  // to 8, and above 8 it now uses `__apply_closure` instead.
+  if (args.length > MAX_DYNAMIC_CONSTRUCT_ARITY) return undefined;
+  if (args.length > MAX_NATIVE_CONSTRUCT_ARITY) {
+    // The above-8 tail needs the argv builders and the generic apply bridge.
+    // No driver of that arity could exist before this change, so arming them
+    // here cannot alter a module that compiled previously.
+    ensureObjVecBuilders(ctx);
+    reserveApplyClosure(ctx);
+  }
 
   // Register the object-model helpers the driver body calls and flush ONCE,
   // before any emission — the driver bakes `call <funcIdx>` values that a later
