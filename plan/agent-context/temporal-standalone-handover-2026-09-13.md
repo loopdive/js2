@@ -32,33 +32,49 @@ started). Acceptance criterion 4 of #5383 is therefore still open.
 | S11 | a dynamic class object answers `.prototype` (#6457) | 139 → 170 | #5900 (merged) |
 | S12 | static arity for a spread from a `const` array binding into `new` (#6460) | 170 → 170 (bucket moved, rows die one step later) | #5909 (open, held — collateral) |
 | S13 | `Object.create(<value>.prototype)` produces a compiled instance (#6464) | 170 → 177 | branch `issue-5383-standalone-temporal-s13`, PR not yet opened (GitHub outage) |
+| S14 | ONE dynamic `new <value>()` in the harness poisoned every provider value (#6479) | 177 → 199 | branch `…-s14`, stacked on S13, unpushed (GitHub 403) |
+| S15 | array-HOF callback asserted a nullable element non-null — the `sn()` bucket (#6480) | 199 → 201 | branch `…-s15`, stacked on S14, unpushed |
+| S16 | null native-string element binding truthiness; `void 0`/`undefined` comparison (#6481, #6482) | 201 → 202 (`sn()` bucket fully retired) | branch `…-s16`, stacked on S15, unpushed |
+| S17 | the link was ONE-DIRECTIONAL: runtime-installed reverse channel so the provider can read a consumer-built bag (#6478) | 202 → 232 (solo-corrected 233) | branch `…-s17`, stacked on S16, unpushed |
 
 Fix commits also on main: the speculative-rollback gate fix on S2m (9501ffca13),
 the `test262` gitlink restoration (#5892), the revert of #5871/#5882 (#5914).
 
-## Attribution lesson (five slices running)
+## Attribution lesson (seven of eight slices)
 
 S9→S13 were each handed a bucket attributed to the link boundary (#5406) and
 each found the defect in module-local standalone codegen instead, reproducible
 in ONE standalone module with no provider. S12 was handed a module-local
 attribution and found the residual was cross-module. **The census decides;
 reduce in a single module first, cross the link only if that passes.**
+S14–S16 repeated the pattern (all module-local). S17 was the first slice where the
+boundary attribution held — and even there the three NAMED mechanisms were all
+wrong; the miss was on the provider side, which had no peer at all.
 
-## Remaining buckets (post-S13 sample) and the next census targets
+**Ids 6474–6477 collided with main** (hand-picked while `--allocate` could not
+write): S14–S16 were renumbered to #6479–#6482 and merged forward S14→S17;
+`check:issue-ids:against-main` is green on S17. Always `--allocate`; if the write
+fails, `--check` + the gate before committing.
 
-- PlainDate `calendar must be string in canonicalizeCalendarEra` **20** — S13
-  showed `typeof PlainDate.from(…).calendarId` answers `"string"` inline in the
-  consumer but the harness reads it through its own function PARAMETER and still
-  sees `undefined`: a second, independent defect on the parameter path. S14 was
-  dispatched on it (branch `issue-5383-standalone-temporal-s14`, from local S13).
-- Duration `years result … undefined` ~10, `dereferencing a null pointer in
-  sn()` 5; ZDT `required property 'timeZone' missing` 7, `reading 'equals'` 6,
-  `class field` 6.
+## Remaining buckets (post-S17 sample, 120 fail pooled) and the next census targets
+
+- `called value is not a function` **15** — provider calls a consumer method;
+  reverse GET now returns the closure but `wantIsCallableGuard` (`calls.ts`
+  ~L4851) runs the module-local `__is_callable` ladder and refuses a foreign
+  closure. Needs the reverse twin of the `callableKind` terminal. S18 dispatched
+  on it (branch `…-s18`, stacked on S17), plus provider WRITES to a consumer bag
+  not visible.
+- `prototype SameValue(«null»)` 7 · `Missing internal slot slot-years` 7 ·
+  `Object method called on null or undefined` 5 · `__closure_N()` null pointer 5 ·
+  `Expected a RangeError but got undefined` 5 · `Calling as constructor` 4 ·
+  `Proxy get trap is not callable` 4.
 - Known residuals pinned by executable expectations: `typeof <provider
-  instance>` = `"function"`; dynamic-RHS `instanceof` false; `gOPD(K,
-  "prototype")` / `"prototype" in K` miss; spread into a dynamic CALL dropped;
-  `new` with arity > 8 (`MAX_NATIVE_CONSTRUCT_ARITY`); `slice/reverse/includes/
-  splice/flat` on an `any` receiver.
+  instance>` = `"function"` (now also the cause of the 3 S17 pass→fail rows —
+  RangeError instead of TypeError for a provider-owned wrong-typed `calendar`);
+  cross-link `instanceof` false; `gOPD(K, "prototype")` miss; `const a = m[1]`
+  checker-keyed dispatch traps; `new` with arity > 8; `slice/reverse/includes/
+  splice/flat` on an `any` receiver; `PlainDate#add(bag)`/`#until(…, options)`
+  answer `""`.
 - Then #5407: link cost (linked/unlinked compile ratio 1.76–1.83×, 60 KB row
   at the 15 s budget) → make the artifact default-on in CI.
 
