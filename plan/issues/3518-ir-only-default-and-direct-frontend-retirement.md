@@ -8457,3 +8457,15 @@ facade remains byte-identical and all 17 formatter classification changes match
 the published policy. The verified independent corpus contains 53,889 test and
 44 harness files (86,743,051 bytes), exactly matching the pinned Git blobs; no
 source corpus or unrelated worktree was modified.
+
+All seven source gates passed against `abf9eeb53261b0c6883d7248ea6025e886418211`.
+Signed merge `d35790611108116cf72c3c1a690697e5784ae068` completed the full normal
+hook chain with no bypass and no validation-input drift. The hook itself skipped
+99 inherited changed root tests (>20); only the executed 612 selected checks
+above count as evidence. A fresh fetch then confirmed main at
+`35858c851f6dba219a5ab2f9a31cedb511cb38d0`, and the existing remote PR remains
+exactly `efe352fee8afc3feb6a28c34d00fc658dc1fb205`. Main's newer harness-smoke,
+budget-baseline and report updates merged cleanly; no compiler source or selected
+test inputs changed. Exact-base source gates are repeated before publication.
+
+All seven exact-base source gates pass against `35858c851f6dba219a5ab2f9a31cedb511cb38d0` with unchanged compiler and selected-test inputs. Protected queue verification and main delivery remain pending.

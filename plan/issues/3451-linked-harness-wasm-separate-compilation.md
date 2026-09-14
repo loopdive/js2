@@ -266,3 +266,76 @@ would change verdicts rather than merely accelerate them.
 - #2527 / #2514: core-Wasm shared-store and canonical WasmGC runtime ABI.
 - #3450 / #3461: native-host harness experiment and parity machinery.
 - #3491: static Test262 `_FIXTURE` module-graph linking.
+
+## Slice 2 — minimal linked smoke via the provider mechanism (2026-09-13)
+
+`scripts/test262-linked-harness-smoke.mts` compiles the harness prefix once
+per include-set as a **separately linked provider module** — the #2527
+package-linker path that `compileWithTemporalGlobal` (#5248) uses for the
+Temporal polyfill — and compiles each body against it with getter imports
+(`var assert = __js2wasm_get___h_assert_…();`). Provider: harness prefix +
+`export const __h_<name> = <name>` for every top-level binding (a `const`
+alias forces a getter boundary so constructors and objects cross as values).
+
+Measured (4-core container, warm process, `for-of/dstr` and
+`Array.prototype.map` bodies):
+
+| | honest single module | linked body |
+| --- | --- | --- |
+| compile per test | 600 – 1,400 ms | **30 – 96 ms** |
+| provider build (once per include-set) | — | 0.7 – 2.9 s, 380 – 500 KB |
+| provider instantiation per test | — | `new WebAssembly.Module` + instance, a few ms |
+
+So the speed ceiling is real: ~15–20× on the body compile, and 64 provider
+builds per lane amortise in seconds.
+
+**Parity does NOT hold across the module boundary, and it cannot with this
+mechanism.** Minimal-body probes (`.tmp`-style, reproduced by the smoke
+script's failing rows) isolate three classes:
+
+1. **Property reflection on body-side objects.** `verifyProperty(f, "name", …)`
+   on a body function/object fails with "should be an own property" / "name
+   descriptor value should be …": the provider's `Object.getOwnPropertyDescriptor`
+   runs on the *host mirror* of the body struct, which carries no own
+   properties. Everything in `propertyHelper.js` is affected — thousands of
+   `built-ins` tests.
+2. **Constructor identity round-trip.** `assert.throws(Test262Error, fn)`
+   fails with "Expected a undefined but got a HostTest262Error": the provider's
+   own `Test262Error`, handed to the body through the getter and passed back
+   as an argument, arrives as a different (mirrored) object whose `.name` is
+   undefined. Every `assert.throws(Test262Error, …)` in the corpus is affected.
+3. **Boxed-value shape.** One row reported
+   `Expected SameValue(«[object Object]», «12»)` — a body value reaching the
+   provider as a mirrored object rather than a number.
+
+Handing the body the provider's **raw** values instead of host mirrors (an
+experiment forcing `noHostMirror` in `instantiateLinkedProviders`) is worse:
+`assert.sameValue is not a function` and stack overflows — the two modules do
+not share struct layouts, so a raw provider struct is opaque to the body. That
+is the concrete form of this issue's original decision: **two instances
+connected by a host bridge cannot give object identity or reflection parity;
+only a single statically linked module with canonical GC types can.** Plain
+`assert.sameValue`/`compareArray`/callback/throws-of-native-errors bodies do
+pass linked (12/12 agreement on the `Array.prototype.map` slice), so the wiring
+itself is sound.
+
+**Consequence for the plan.** Slices 3–6 stay as written, but slice 3
+("shared-realm substrate") is now known to require the static linker (#33/#34
+relocatable objects + #2527 canonical rec-groups merged into ONE module), not
+runtime wrappers. Two candidate routes, both compiler work:
+
+- **Static link (as decided):** emit the harness object once, relocate function
+  / type / global / table / tag indices when appending the body object, merge
+  rec-groups canonically. Reuses the #33/#34 machinery; needs the GC-type
+  canonicalisation and closure/table relocation listed under "Required
+  compiler/linker work".
+- **In-module codegen snapshot:** compile the prefix first in the single-module
+  pipeline, snapshot the codegen context after its top-level statements, and
+  resume per body. Blocked on the same honesty question this issue already
+  lists — whether prefix lowering is body-independent (type-directed
+  specialisation of harness functions by call-site types would make it not
+  so) — and on rebinding `ts.Node`-keyed context state to the new program.
+
+Either is an XL compiler task; neither is a runner-only change. The strict-
+rerun elision (#6463) and the checker fix (#5814) were the runner-side levers
+and are landed; #6462 duplicated this issue and is closed as such.
