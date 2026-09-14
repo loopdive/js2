@@ -84,7 +84,7 @@ import {
 } from "../nodes.js";
 import type { AllocSiteRegistry } from "../alloc-registry.js";
 import type { IrUnitId } from "../identity.js";
-import { forkAllocInInstr } from "./alloc-discipline.js";
+import { forkAllocInInstr, retireAllocsIn } from "./alloc-discipline.js";
 
 const MAX_CALLEE_INSTRS = 10;
 const CALLER_SIZE_BUDGET_MULTIPLIER = 4;
@@ -292,6 +292,10 @@ function inlineIntoFunction(
       if (rewritten.result !== null) {
         callerRename.set(rewritten.result, renamedReturn);
       }
+
+      // The removed call has its own analysis site, separate from the fresh
+      // callee allocations. Retire it only after every inline bailout passed.
+      retireAllocsIn(rewritten, registry);
 
       currentSize += calleeSize;
       blockChanged = true;
