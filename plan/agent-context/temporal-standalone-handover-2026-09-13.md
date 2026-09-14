@@ -39,6 +39,7 @@ started). Acceptance criterion 4 of #5383 is therefore still open.
 | S18 | provider can CALL a method on a consumer-owned receiver — the reverse method-call hop (#6483); the `called value is not a function` bucket is TWO defects, neither at S17's guard | 232 → 232 (PlainDate 93 → 93, 0 flips; bucket did not move — criterion 4 NOT met for this slice) | branch `…-s18`, stacked on S17, unpushed |
 | S19 | diagnosis only, no compiler change: the consumer→provider half is NOT at the link — every dispatch layer is correct and `Duration.from`'s body (`sn()`) returns null on its own; ends at the polyfill's intrinsic registry, `new (ce("%Temporal.Duration%"))(1)` fails its own brand check in ONE module. Three single-module reductions filed as #6484 | — (not measured, tree byte-identical to base) | branch `…-s19`, stacked on S18, unpushed |
 | S20 | host-free dynamic `new (<call>)(…)`: no arm matched, fell to a nonexistent host import and emitted `ref.null` without evaluating the arguments (#6485) — the "brand check" clause was wrong, no instance was ever created. Lane restarted once (container restart, WIP salvaged from disk) | 233 → 245 (Duration 56 → 64, ZDT 84 → 88; 12 fail→pass, 0 pass→fail) | branch `…-s20b`, stacked on S19, unpushed |
+| S21 | per-name method ladders (`__call_m_*`, `__call_toString`/`valueOf`) tested class by STRUCTURAL `ref.test`, so field-less WeakMap-state classes all matched — the #4618 `__tag` guard now applies to them via `class-arm-tag-guard.ts` (#6486) | 244 → 249 (94/65/90; 0 pass→fail; `Duration.from("P1Y").toJSON()` → `P1Y`) | branch `…-s21`, stacked on S20b, unpushed |
 
 Fix commits also on main: the speculative-rollback gate fix on S2m (9501ffca13),
 the `test262` gitlink restoration (#5892), the revert of #5871/#5882 (#5914).
@@ -73,11 +74,14 @@ fails, `--check` + the gate before committing.
   through a per-name ladder with NO runtime class test and takes the
   LAST-DECLARED class declaring the name (`f(new A())` → `"UB"`); in the
   provider `Duration.from("P1Y").toJSON()` → *invalid receiver*, `toString()`
-  → `Number.prototype.toString`. S21 dispatched on it (branch `…-s21`, stacked
-  on S20b). S19's #6484 A/B/C
+  → `Number.prototype.toString`. FIXED by S21 (#6486). Two homes of the same
+  defect remain: the `__call_@@toPrimitive` ladder (entries carry no struct
+  name) and same-shaped OBJECT LITERALS (no `__tag`). S19's #6484 A/B/C
   (`C[k](…)` foldable-key arg shift; `o[k](a)` → null; class-derived method
   value `b.g()` → null) follow.
-- `prototype SameValue(«null»)` 7 · `Missing internal slot slot-years` 7 ·
+- post-S21 top buckets: `prototype Expected SameValue(«null», «[object Function]»)`
+  **7** (a prototype-descriptor read — the S11-era `gOPD(K,"prototype")` residual;
+  S22 dispatched on it, branch `…-s22`, stacked on S21) · `Missing internal slot slot-years` 7 ·
   `Object method called on null or undefined` 5 · `__closure_N()` null pointer 5 ·
   `Expected a RangeError but got undefined` 5 · `Calling as constructor` 4 ·
   `Proxy get trap is not callable` 4.
