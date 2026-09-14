@@ -1,9 +1,10 @@
 ---
 id: 6479
 title: "Multi-file compile: timer-shim and cjs-rewrite prepasses cost 9 s on a 1,244-file graph — measure per-file cost and cache by content hash"
-status: ready
+status: done
 created: 2026-09-14
 updated: 2026-09-14
+completed: 2026-09-14
 priority: medium
 horizon: m
 feasibility: easy
@@ -14,6 +15,16 @@ goal: npm-library-support
 sprint: current
 es_edition: n/a
 related: [3946, 3687, 3672, 4157]
+# 2026-09-14 (#6479): +16 lines in the god-file `src/import-resolver.ts` — the
+# textual pre-filter in `injectTimerShimOnly` is 1 line of code plus the
+# derivation comment proving the gate is exact (it enumerates why `used` and
+# `queueUsed` cannot be non-empty without one of the gated tokens, and why
+# `setImmediate` is deliberately excluded). A false negative here silently
+# drops the timer shim, so the proof lives next to the regex rather than in a
+# separate doc. Moving the 2-line mechanism to a new module would cost more
+# indirection than the lines it saves.
+loc-budget-allow:
+  - src/import-resolver.ts
 ---
 
 # #6479 — multi-file prepass cost on large graphs
@@ -79,14 +90,61 @@ the CJS work on this graph: ≈ 6.5 s of the 6.8 s, with no cache at all.
    pre-filter the remaining cost is the 13 + 98 files that genuinely need
    the pass.
 
+## Measured after (2026-09-14, pre-filter implemented)
+
+`JS2WASM_COMPILE_PROFILE=1 node --import tsx src/cli.ts benchmarks/suites/mixed.ts -o .tmp/out`,
+same box, same 1,331-file graph, A/B by file copy (`.tmp/base-*.ts`):
+
+| phase | before | after | delta |
+| --- | --- | --- | --- |
+| `timer-shim` | 6.89 s | **2.05 s** | −70 % |
+| `cjs-rewrite` | 3.92 s | **3.46 s** | −12 % |
+| `analyze` | 2.09 s | 1.54 s | (unchanged code; run-to-run) |
+| total compile | 12.90 s | **7.05 s** | −45 % |
+
+Per-file microbenchmark (`.tmp/prepass-cost.mts`, 1,381 `src/**/*.ts`, 34.3 MB):
+
+| pass | before | after |
+| --- | --- | --- |
+| `rewriteCjsRequireWithMap` | 2,492 ms | 1,885–1,920 ms (steady-state, `.tmp/cjs-only.mts`, base 2,234–2,238 ms) |
+| `injectTimerShimOnly` | 6,208 ms | **428 ms** |
+
+### Why the first acceptance box is NOT met, and why a pre-filter cannot meet it
+
+The plan's premise — "only 98 of 1,381 files contain the CJS tokens, so ~93 %
+of the work is skipped" — counts **files**, not **bytes**, and both passes cost
+time proportional to bytes. On this graph the matching files are the big ones:
+
+- 112 of 1,428 `src/**/*.ts` files match the CJS pattern, but they are
+  **11.2 MB of 36.1 MB (31 % of the bytes)**. Most of the large hits are
+  `exports.` occurring inside strings/comments of the compiler's own codegen
+  files (e.g. the import path `"./vec-access-exports.js"` in
+  `src/codegen/array-methods.ts`), which no textual filter can distinguish
+  from real code.
+- The dominant residual in the *graph* run is a single file:
+  `node_modules/typescript/lib/typescript.js`, 9.1 MB, which genuinely
+  contains `require(`, `module.exports` **and** `setTimeout`. Measured alone:
+  **2,699 ms cjs + 1,622 ms timer** — i.e. 78 % of the remaining `cjs-rewrite`
+  time and 79 % of the remaining `timer-shim` time is that one vendor bundle.
+
+So the deferred step 5 (content-hash caching) is **not** obsolete after all: it
+is now the only remaining lever, together with the option of not running the
+prepasses over `node_modules` bundles at all. Filed as follow-up work.
+
 ## Acceptance
 
-- [ ] Both prepass phases on the self-compile graph ≤ 0.5 s each (from 4.9 s
-      and 1.9 s).
-- [ ] Byte-identical output for every file in the test corpus, positives
-      included.
-- [ ] `tests/equivalence` and the multi-file tests (`tests/multi-file.test.ts`,
-      `tests/issue-1279*`) unchanged.
+- [ ] Both prepass phases on the self-compile graph ≤ 0.5 s each — **not met
+      and not reachable by a pre-filter**: `timer-shim` 6.89 s → 2.05 s,
+      `cjs-rewrite` 3.92 s → 3.46 s, with ~79 % of both residuals being one
+      9.1 MB vendor bundle that genuinely contains every gated token. See the
+      section above.
+- [x] Byte-identical output for every file in the test corpus, positives
+      included — `tests/issue-6479-prepass-prefilter.test.ts` (62 assertions:
+      every rewrite shape, the `globalThis`/`window` member forms, tokens
+      inside strings and comments, and 24 sampled real `src/` files) compares
+      the pre-filtered output against `{ prefilter: false }`.
+- [x] `tests/multi-file.test.ts` and `tests/issue-1279.test.ts` unchanged
+      (109 tests green), `node scripts/equivalence-gate.mjs` green.
 
 ## Original sketch (superseded by the plan above)
 
