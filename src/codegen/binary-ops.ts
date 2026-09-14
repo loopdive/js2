@@ -5,7 +5,7 @@
  * bitwise, modulo, boolean, and any-typed binary operations.
  */
 import { expressionHasWidenedPropertyType } from "./strict-eq-stale-type.js";
-import { isInertUndefinedLiteral } from "./void-undefined-operand.js"; // (#6477)
+import { isInertUndefinedLiteral } from "./void-undefined-operand.js"; // (#6482)
 import { ts } from "../ts-api.js";
 import type { TypeFact } from "../checker/oracle.js";
 import {
@@ -862,7 +862,7 @@ export function compileBinaryExpression(
     const trackedScalarOmission = compileTrackedScalarOmissionComparison(ctx, fctx, expr);
     if (trackedScalarOmission) return trackedScalarOmission;
     const rightIsNullKeyword = expr.right.kind === ts.SyntaxKind.NullKeyword;
-    // (#6477) `void 0` IS the undefined literal here — see
+    // (#6482) `void 0` IS the undefined literal here — see
     // void-undefined-operand.ts. This arm RECOGNISES the literal side instead
     // of compiling it, which is why the helper admits `void` only over an inert
     // literal; `void f()` keeps its evaluated lowering.

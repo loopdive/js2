@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * #6476 (#5383 S16) — a `let`/`const` bound to a **nullable native string**
+ * #6481 (#5383 S16) — a `let`/`const` bound to a **nullable native string**
  * element of a vec must not be slotted at the element's NON-NULL twin.
  *
  * ## The lie, and where it lands
