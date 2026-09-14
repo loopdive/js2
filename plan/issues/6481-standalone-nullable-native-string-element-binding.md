@@ -32,20 +32,33 @@ func-budget-allow:
   #   function. The filter has to be applied where `wasmType` is finally
   #   settled, which is inside `compileVariableStatement`; hoisting it out would
   #   mean recomputing the whole cascade in a second place, i.e. the two-sources
-  #   -of-truth hazard the #6475 module note warns about.
+  #   -of-truth hazard the #6480 module note warns about.
   - src/codegen/statements/variables.ts::compileVariableStatement
 ---
 
-> **Issue id reserved?** NO. `scripts/claim-issue.mjs --allocate` exits **6**
-> (`open-PR id scan DEGRADED — gh offline/unauthenticated`) for the whole of
-> this session, and GitHub pushes are refused with HTTP 403 for every lane. The
-> id **6481** is the next one after #6475 (S15, itself unreserved for the same
-> reason). It is therefore **unreserved** and has not been checked against
-> in-flight PRs.
+> **Issue id reserved?** NO, and it has already COLLIDED once. `claim-issue.mjs
+> --allocate` exits **6** (`open-PR id scan DEGRADED — gh
+> offline/unauthenticated`) for this whole session and pushes are 403 for every
+> lane, so the id was hand-picked.
+>
+> This file was first written as **#6476**. While it was unpushed, `main` landed
+> the whole `linked-harness` family on 6474–6477, and
+> `check:issue-ids:against-main` went red on all four of this stack's ids at
+> once (6474 → `linked-harness-prelude-module-goal`, 6475 →
+> `linked-provider-realm-error-constructors`, 6476 →
+> `linked-harness-async-done-marker`, 6477 →
+> `linked-harness-descriptor-reads`) — reported by the S17 lane, reproduced here
+> on a fresh catch-up merge. The four were renumbered to **6479–6482**, leaving
+> 6478 to the S17 lane, from a `--allocate --dry-run` preview (`next free id
+> would be #6478`).
+>
+> **6481 is therefore still UNRESERVED and unchecked against in-flight PRs** —
+> the same exposure that caused the first collision. The required
+> `check:issue-ids:against-main` gate is the backstop.
 
 ## Problem
 
-S15 (#6475) fixed the array-HOF callback boundary for a nullable vec element,
+S15 (#6480) fixed the array-HOF callback boundary for a nullable vec element,
 which unblocked the polyfill's `t.every(…)` guard in the minified
 `ToTemporalDuration` (`sn`). The 22-row bucket then moved **one step later in
 the same function** — 18 rows now trap at `__str_flatten` on a null pointer,
@@ -106,9 +119,9 @@ so every later read reports a non-null native string and takes the arm that
 dereferences it: `__str_flatten` for truthiness and for `+`, `ref.as_non_null`
 elsewhere. The null survives storage and dies on first use.
 
-This is the same shape of defect as #6475 — a checker type that is a
+This is the same shape of defect as #6480 — a checker type that is a
 **nullability lie** about a carrier the compiler knows is nullable — at the
-next boundary along: #6475 was the HOF callback parameter, this is the
+next boundary along: #6480 was the HOF callback parameter, this is the
 variable binding.
 
 ## Implementation Plan

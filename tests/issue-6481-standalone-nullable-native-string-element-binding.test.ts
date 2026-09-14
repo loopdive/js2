@@ -133,7 +133,7 @@ describe("#6481 controls — unchanged on both trees", () => {
       inlineConcat: await evalStandalone(`${MATCH} return "" + m[1];`),
       // An explicitly nullable annotation was already correct.
       annotated: await evalStandalone(`${MATCH} const a: string | undefined = m[1]; return a ? "T" : "F";`),
-      // A callback parameter is #6475's boundary, not this one.
+      // A callback parameter is #6480's boundary, not this one.
       parameter: await evalStandalone(`${MATCH} const f = (a) => (a ? "T" : "F"); return f(m[1]);`),
       // Null-comparison never depended on the slot type.
       strictEqUndefined: await evalStandalone(`${MATCH} const a = m[1]; return String(a === undefined);`),
