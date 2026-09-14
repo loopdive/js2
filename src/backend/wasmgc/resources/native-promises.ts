@@ -10,9 +10,26 @@ import type {
   FunctionReservation,
   TagReservation,
   TagImportReservation,
-  PhysicalFunctionSignature,
 } from "../../../wasm/physical/module-reservations.js";
 import { preparedIrDataMismatch, freezePreparedIrValue } from "../../../ir/program/data.js";
+import { createBuiltinFunctionMetadataShape } from "../../../runtime/wasmgc/values/closure-layouts.js";
+import type {
+  NativeResourceRecipe,
+  NativeDeclaredType,
+  NativeDeclaredSignature,
+  NativeDeclaredValType,
+  NativeStringValueDeclaration,
+  NativeStringValueReservationStep,
+} from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
+import {
+  freezeNativeResourceRecipe,
+  preflightNativeResourceRecipe,
+  instantiateNativeDeclaredType,
+  instantiateNativeDeclaredValType,
+  instantiateNativeDeclaredSignature,
+  requireNativeDeclaredReservation,
+  type NativeDeclaredReservation,
+} from "./native-resource-declarations.js";
 import type { NativePromiseResourcePlan, NativePromiseOwner } from "../../../ir/program/native-promise-resources.js";
 import { resolveNativeVectorForElement, type NativeVectorTypeReservations } from "./native-vectors.js";
 import {
@@ -51,10 +68,129 @@ import {
 } from "../../../runtime/wasmgc/promise/thenable-bodies.js";
 
 type Tag = TagReservation | TagImportReservation;
-const EXTERN: ValType = { kind: "externref" },
-  I32: ValType = { kind: "i32" },
-  F64: ValType = { kind: "f64" };
+const EXTERN = { kind: "externref" } as const,
+  I32 = { kind: "i32" } as const,
+  F64 = { kind: "f64" } as const;
 const callbackSignature = { params: [EXTERN, EXTERN], results: [EXTERN] };
+export interface NativePromiseDeclarationDependencies {
+  readonly argumentArrayKey: string;
+  readonly closureRootKey: string;
+  readonly settleMetadataKey: string;
+}
+export interface NativePromiseDeclarationPlan extends NativeResourceRecipe {
+  readonly dependencies: NativePromiseDeclarationDependencies;
+  readonly callbackSignatureKey: string;
+}
+function promiseKey(plan: NativePromiseResourcePlan, role: string): string {
+  return `physical:promise:${JSON.stringify(plan.anchor)}:${role}`;
+}
+function promiseFunctionKey(plan: NativePromiseResourcePlan, role: string, name: string): string {
+  const bindings = plan.callableBindings.filter(
+    (entry) =>
+      entry.contract.kind === "callable" &&
+      (entry.contract.ref.binding.kind === "runtime" || entry.contract.ref.binding.kind === "intrinsic") &&
+      entry.contract.ref.binding.symbol === name,
+  );
+  if (bindings.length > 1) fail("duplicate canonical helper binding");
+  return bindings[0]?.plan.id ?? promiseKey(plan, role);
+}
+export function declareNativePromiseResources(
+  plan: NativePromiseResourcePlan,
+  dependencies: NativePromiseDeclarationDependencies,
+): NativePromiseDeclarationPlan {
+  if (!plan.required || !plan.anchor) fail("missing required native Promise plan");
+  const key = (role: string) => promiseKey(plan, role);
+  const declarations: NativeStringValueDeclaration[] = [],
+    reservationSteps: NativeStringValueReservationStep[] = [];
+  const add = (row: NativeStringValueDeclaration) => {
+    declarations.push(row);
+    reservationSteps.push({ phase: "resources", kind: "reserve", resourceKey: row.key });
+  };
+  const type = (role: string, shape: NativeDeclaredType) =>
+    add({ key: key(role), role: ["promise", role], space: "type", shape });
+  const global = (role: string, name: string, valueType: NativeDeclaredValType) =>
+    add({ key: key(role), role: ["promise", role], space: "global", name, valueType, mutable: true });
+  const fn = (role: string, name: string, signature: NativeDeclaredSignature) =>
+    add({ key: promiseFunctionKey(plan, role, name), role: ["promise", role], space: "function", name, signature });
+  type("queue:function-array", { kind: "array", name: "__arr_mt_func", element: { kind: "funcref" }, mutable: true });
+  const callbackSignatureKey = key("queue:callback-signature");
+  reservationSteps.push({
+    phase: "resources",
+    kind: "intern-signature",
+    key: callbackSignatureKey,
+    name: "$__mt_func_type",
+    signature: callbackSignature,
+  });
+  global("queue:head", "__mt_head", I32);
+  global("queue:tail", "__mt_tail", I32);
+  global("queue:capacity", "__mt_cap", I32);
+  global("queue:functions", "__mt_funcs", { kind: "ref_null", typeKey: key("queue:function-array") });
+  global("queue:captures", "__mt_caps", { kind: "ref_null", typeKey: dependencies.argumentArrayKey });
+  global("queue:arguments", "__mt_args", { kind: "ref_null", typeKey: dependencies.argumentArrayKey });
+  fn("queue:grow", "__microtask_grow", { params: [I32], results: [] });
+  fn("queue:enqueue", "__microtask_enqueue", { params: [{ kind: "funcref" }, EXTERN, EXTERN], results: [] });
+  fn("queue:drain", "__drain_microtasks", { params: [], results: [] });
+  type("carrier", {
+    kind: "struct",
+    name: "$Promise",
+    fields: [
+      { name: "state", type: I32, mutable: true },
+      { name: "value", type: EXTERN, mutable: true },
+      { name: "callbacks", type: EXTERN, mutable: true },
+      { name: "$bag", type: EXTERN, mutable: true },
+    ],
+  });
+  type("callback", {
+    kind: "struct",
+    name: "$PromiseCallback",
+    fields: [
+      { name: "onFulfilledFn", type: { kind: "funcref" }, mutable: false },
+      { name: "onFulfilledCaps", type: EXTERN, mutable: false },
+      { name: "onRejectedFn", type: { kind: "funcref" }, mutable: false },
+      { name: "onRejectedCaps", type: EXTERN, mutable: false },
+      { name: "next", type: EXTERN, mutable: false },
+    ],
+  });
+  const promiseRef: NativeDeclaredValType = { kind: "ref", typeKey: key("carrier") };
+  type("captures", {
+    kind: "struct",
+    name: "$__then_caps",
+    fields: [
+      { name: "callback", type: EXTERN, mutable: false },
+      { name: "chained", type: promiseRef, mutable: false },
+    ],
+  });
+  const settle = { params: [promiseRef, EXTERN], results: [EXTERN] };
+  fn("fulfill", "__promise_fulfill", settle);
+  fn("reject", "__promise_reject", settle);
+  fn("identity-fulfill", "__then_identity_fulfill", callbackSignature);
+  fn("identity-reject", "__then_identity_reject", callbackSignature);
+  fn("resolve-value", "__promise_resolve_value", settle);
+  const metadata = createBuiltinFunctionMetadataShape("", {
+    kind: "resource" as const,
+    typeKey: dependencies.settleMetadataKey,
+  });
+  type("settle-capture", {
+    kind: "struct",
+    name: "$__promise_settle_cap",
+    parent: metadata.parent,
+    fields: [...metadata.fields, { name: "cap_promise", type: promiseRef, mutable: false }],
+  });
+  const trampoline = { params: [{ kind: "ref" as const, typeKey: dependencies.closureRootKey }, EXTERN], results: [] };
+  fn("resolve-closure", "__promise_resolve_cl", trampoline);
+  fn("reject-closure", "__promise_reject_cl", trampoline);
+  fn("peel", "__promise_peel_value", { params: [EXTERN], results: [EXTERN] });
+  fn("classifier", "__promise_has_callable_then", { params: [EXTERN], results: [I32] });
+  fn("lookup-then", "__promise_lookup_then", { params: [EXTERN], results: [I32, EXTERN] });
+  fn("thenable-job", "__promise_thenable_job", callbackSignature);
+  const result = { dependencies, callbackSignatureKey, declarations, reservationSteps };
+  preflightNativeResourceRecipe(result, [
+    dependencies.argumentArrayKey,
+    dependencies.closureRootKey,
+    dependencies.settleMetadataKey,
+  ]);
+  return freezeNativeResourceRecipe(result);
+}
 export interface NativePromiseReservationDependencies {
   readonly vectors: NativeVectorTypeReservations;
   readonly exceptionTag: Tag;
@@ -159,9 +295,13 @@ const owners = new WeakMap<
     tx: PhysicalModuleReservations;
     plan: NativePromiseResourcePlan;
     dependencies: NativePromiseReservationDependencies;
+    sourceDependencies: NativePromiseReservationDependencies;
     settleMetadata: NativeClosureMetadataBinding;
     snapshots: readonly { token: TypeReservation; descriptor: TypeDef }[];
     filled: boolean;
+    declarationPlan: NativePromiseDeclarationPlan;
+    sourcePlan: NativePromiseResourcePlan;
+    records: ReadonlyMap<string, NativeDeclaredReservation>;
   }
 >();
 function fail(detail: string): never {
@@ -196,6 +336,7 @@ export function reserveNativePromiseResources(
   tx: PhysicalModuleReservations,
   plan: NativePromiseResourcePlan,
   dependencies: NativePromiseReservationDependencies,
+  expectedPlan?: NativePromiseDeclarationPlan,
 ): NativePromiseReservations {
   if (!plan.required || !plan.anchor) fail("missing required native Promise plan");
   const settleMetadata = requireSettleMetadata(tx, dependencies);
@@ -209,108 +350,82 @@ export function reserveNativePromiseResources(
     { kind: "array", name: "__arr_externref", element: EXTERN, mutable: true },
     "shared array descriptor mismatch",
   );
+  tx.assertTypeReservation(argumentArray);
   const metadataFields = structFields(settleMetadata.type);
-  // The actual metadata subtype may sit below a signature wrapper; ancestry is checked by the ledger.
-  const key = (role: string) => `physical:promise:${JSON.stringify(plan.anchor)}:${role}`;
-  const functionsType = tx.reserveType(key("queue:function-array"), {
-    kind: "array",
-    name: "__arr_mt_func",
-    element: { kind: "funcref" },
-    mutable: true,
+  const declaration = declareNativePromiseResources(plan, {
+    argumentArrayKey: argumentArray.key,
+    closureRootKey: closureRoot.key,
+    settleMetadataKey: settleMetadata.type.key,
   });
-  const callbackType = tx.internFunctionType(callbackSignature.params, callbackSignature.results, "$__mt_func_type");
-  const head = tx.reserveGlobal(key("queue:head"), "__mt_head", I32, true);
-  const tail = tx.reserveGlobal(key("queue:tail"), "__mt_tail", I32, true);
-  const capacity = tx.reserveGlobal(key("queue:capacity"), "__mt_cap", I32, true);
-  const functionsGlobal = tx.reserveGlobal(
-    key("queue:functions"),
-    "__mt_funcs",
-    { kind: "ref_null", typeIdx: functionsType.typeIndex },
-    true,
-  );
-  const capturesGlobal = tx.reserveGlobal(
-    key("queue:captures"),
-    "__mt_caps",
-    { kind: "ref_null", typeIdx: argumentArray.typeIndex },
-    true,
-  );
-  const argumentsGlobal = tx.reserveGlobal(
-    key("queue:arguments"),
-    "__mt_args",
-    { kind: "ref_null", typeIdx: argumentArray.typeIndex },
-    true,
-  );
-  const reserve = (role: string, name: string, signature: PhysicalFunctionSignature) => {
-    const bindings = plan.callableBindings.filter(
-      (entry) =>
-        entry.contract.kind === "callable" &&
-        (entry.contract.ref.binding.kind === "runtime" || entry.contract.ref.binding.kind === "intrinsic") &&
-        entry.contract.ref.binding.symbol === name,
-    );
-    if (bindings.length > 1) fail("duplicate canonical helper binding");
-    return tx.reserveFunction(bindings[0]?.plan.id ?? key(role), name, signature);
+  if (expectedPlan) same(declaration, expectedPlan, "substituted Promise declaration plan");
+  const declarationPlan = expectedPlan ?? declaration;
+  const key = (role: string) => promiseKey(plan, role);
+  const types = new Map([argumentArray, closureRoot, settleMetadata.type].map((token) => [token.key, token]));
+  const records = new Map<string, NativeDeclaredReservation>();
+  let callbackType: number | undefined;
+  for (const step of declarationPlan.reservationSteps) {
+    if (step.kind === "intern-signature") {
+      const signature = instantiateNativeDeclaredSignature(tx, step.signature, types);
+      callbackType = tx.internFunctionType(signature.params, signature.results, step.name);
+      continue;
+    }
+    const row = declarationPlan.declarations.find((entry) => entry.key === step.resourceKey)!;
+    let token: NativeDeclaredReservation;
+    if (row.space === "type") {
+      let descriptor = instantiateNativeDeclaredType(tx, row.shape, types);
+      if (row.key === key("settle-capture")) {
+        if (descriptor.kind !== "struct") fail("invalid settle-capture declaration");
+        same(metadataFields, descriptor.fields.slice(0, 5), "altered inherited metadata fields");
+        descriptor = {
+          ...descriptor,
+          fields: [...metadataFields.map((field) => ({ ...field })), descriptor.fields[5]!],
+        };
+      }
+      token = tx.reserveType(row.key, descriptor);
+      types.set(row.key, token);
+    } else if (row.space === "global") {
+      token = tx.reserveGlobal(
+        row.key,
+        row.name,
+        instantiateNativeDeclaredValType(tx, row.valueType, types),
+        row.mutable,
+      );
+    } else token = tx.reserveFunction(row.key, row.name, instantiateNativeDeclaredSignature(tx, row.signature, types));
+    records.set(row.key, token);
+  }
+  if (callbackType === undefined) fail("missing actual callback signature observation");
+  const type = (role: string) => requireNativeDeclaredReservation(records, key(role), "type");
+  const global = (role: string) => requireNativeDeclaredReservation(records, key(role), "global");
+  const fn = (role: string) => {
+    const declaration = declarationPlan.declarations.find((row) => row.role[1] === role && row.space === "function");
+    if (!declaration) fail("missing Promise function declaration");
+    return requireNativeDeclaredReservation(records, declaration.key, "function");
   };
-  const grow = reserve("queue:grow", "__microtask_grow", { params: [I32], results: [] });
-  const enqueue = reserve("queue:enqueue", "__microtask_enqueue", {
-    params: [{ kind: "funcref" }, EXTERN, EXTERN],
-    results: [],
-  });
-  const drain = reserve("queue:drain", "__drain_microtasks", { params: [], results: [] });
-  const promise = tx.reserveType(key("carrier"), {
-    kind: "struct",
-    name: "$Promise",
-    fields: [
-      { name: "state", type: I32, mutable: true },
-      { name: "value", type: EXTERN, mutable: true },
-      { name: "callbacks", type: EXTERN, mutable: true },
-      { name: "$bag", type: EXTERN, mutable: true },
-    ],
-  });
-  const callback = tx.reserveType(key("callback"), {
-    kind: "struct",
-    name: "$PromiseCallback",
-    fields: [
-      { name: "onFulfilledFn", type: { kind: "funcref" }, mutable: false },
-      { name: "onFulfilledCaps", type: EXTERN, mutable: false },
-      { name: "onRejectedFn", type: { kind: "funcref" }, mutable: false },
-      { name: "onRejectedCaps", type: EXTERN, mutable: false },
-      { name: "next", type: EXTERN, mutable: false },
-    ],
-  });
-  const promiseRef: ValType = { kind: "ref", typeIdx: promise.typeIndex };
-  const captures = tx.reserveType(key("captures"), {
-    kind: "struct",
-    name: "$__then_caps",
-    fields: [
-      { name: "callback", type: EXTERN, mutable: false },
-      { name: "chained", type: promiseRef, mutable: false },
-    ],
-  });
-  const settle = { params: [promiseRef, EXTERN], results: [EXTERN] };
-  const fulfill = reserve("fulfill", "__promise_fulfill", settle);
-  const reject = reserve("reject", "__promise_reject", settle);
-  const identityFulfill = reserve("identity-fulfill", "__then_identity_fulfill", callbackSignature);
-  const identityReject = reserve("identity-reject", "__then_identity_reject", callbackSignature);
-  const resolveValue = reserve("resolve-value", "__promise_resolve_value", settle);
-  const settleCapture = tx.reserveType(key("settle-capture"), {
-    kind: "struct",
-    name: "$__promise_settle_cap",
-    superTypeIdx: settleMetadata.type.typeIndex,
-    fields: [
-      ...metadataFields.map((field) => ({ ...field })),
-      { name: "cap_promise", type: promiseRef, mutable: false },
-    ],
-  });
-  const trampoline = {
-    params: [{ kind: "ref", typeIdx: closureRoot.typeIndex } as ValType, EXTERN],
-    results: [],
-  };
-  const resolveClosure = reserve("resolve-closure", "__promise_resolve_cl", trampoline);
-  const rejectClosure = reserve("reject-closure", "__promise_reject_cl", trampoline);
-  const peel = reserve("peel", "__promise_peel_value", { params: [EXTERN], results: [EXTERN] });
-  const classifier = reserve("classifier", "__promise_has_callable_then", { params: [EXTERN], results: [I32] });
-  const lookupThen = reserve("lookup-then", "__promise_lookup_then", { params: [EXTERN], results: [I32, EXTERN] });
-  const thenableJob = reserve("thenable-job", "__promise_thenable_job", callbackSignature);
+  const functionsType = type("queue:function-array"),
+    promise = type("carrier"),
+    callback = type("callback"),
+    captures = type("captures"),
+    settleCapture = type("settle-capture");
+  const head = global("queue:head"),
+    tail = global("queue:tail"),
+    capacity = global("queue:capacity"),
+    functionsGlobal = global("queue:functions"),
+    capturesGlobal = global("queue:captures"),
+    argumentsGlobal = global("queue:arguments");
+  const grow = fn("queue:grow"),
+    enqueue = fn("queue:enqueue"),
+    drain = fn("queue:drain"),
+    fulfill = fn("fulfill"),
+    reject = fn("reject"),
+    identityFulfill = fn("identity-fulfill"),
+    identityReject = fn("identity-reject"),
+    resolveValue = fn("resolve-value"),
+    resolveClosure = fn("resolve-closure"),
+    rejectClosure = fn("reject-closure"),
+    peel = fn("peel"),
+    classifier = fn("classifier"),
+    lookupThen = fn("lookup-then"),
+    thenableJob = fn("thenable-job");
   const result: NativePromiseReservations = Object.freeze({
     types: Object.freeze({
       arguments: argumentArray,
@@ -360,9 +475,13 @@ export function reserveNativePromiseResources(
     tx,
     plan: freezePreparedIrValue(plan) as NativePromiseResourcePlan,
     dependencies: Object.freeze({ ...dependencies }),
+    sourceDependencies: dependencies,
     settleMetadata,
     snapshots,
     filled: false,
+    declarationPlan,
+    sourcePlan: plan,
+    records,
   });
   return result;
 }
@@ -384,6 +503,61 @@ function promiseQueueReservations(
     grow: { kind: "function", index: pack.functions.grow.handle },
     initialCapacity: 8192,
   };
+}
+
+export function nativePromiseReservationInventory(
+  tx: PhysicalModuleReservations,
+  pack: NativePromiseReservations,
+  expectedPlan: NativePromiseDeclarationPlan,
+): readonly NativeDeclaredReservation[] {
+  const owner = owners.get(pack);
+  if (!owner || owner.tx !== tx || owner.declarationPlan !== expectedPlan)
+    fail("foreign or substituted Promise declaration plan");
+  same(owner.sourcePlan, owner.plan, "stale Promise requirements");
+  if (owner.sourceDependencies.exceptionTag !== owner.dependencies.exceptionTag)
+    fail("changed borrowed exception tag association");
+  if (
+    owner.sourceDependencies.vectors !== owner.dependencies.vectors ||
+    owner.sourceDependencies.closures !== owner.dependencies.closures ||
+    owner.sourceDependencies.settleMetadataRequestId !== owner.dependencies.settleMetadataRequestId
+  )
+    fail("changed Promise dependency association");
+  // No reserve-phase tag assertion exists in the ledger. The parent issues
+  // this borrowed prerequisite; exact association is retained here, with
+  // ledger provenance authenticated once final coordinates are available.
+  if (tx.state !== "reserving") tx.physicalIndex(owner.dependencies.exceptionTag);
+  if (requireSettleMetadata(tx, owner.dependencies) !== owner.settleMetadata) fail("changed settle metadata binding");
+  const argumentArray = owner.dependencies.vectors.layouts.find((row) => row.element === "externref")?.array;
+  if (!argumentArray || argumentArray !== pack.types.arguments) fail("changed shared argument array");
+  resolveNativeVectorForElement(owner.dependencies.vectors, EXTERN);
+  same(
+    declareNativePromiseResources(owner.sourcePlan, {
+      argumentArrayKey: argumentArray.key,
+      closureRootKey: owner.dependencies.closures.root.key,
+      settleMetadataKey: owner.settleMetadata.type.key,
+    }),
+    expectedPlan,
+    "stale Promise declaration plan",
+  );
+  for (const { token, descriptor } of owner.snapshots) {
+    if (tx.state === "reserving") tx.assertTypeReservation(token);
+    else tx.physicalIndex(token);
+    same(token.object, descriptor, "changed Promise type descriptor");
+  }
+  const fields = structFields(pack.types.settleCapture),
+    metadata = structFields(owner.settleMetadata.type);
+  for (let index = 0; index < metadata.length; index++) {
+    if (fields[index] === metadata[index] || fields[index]?.type !== metadata[index]!.type)
+      fail("lost inherited metadata field/type identity");
+  }
+  return Object.freeze(
+    expectedPlan.declarations.map((row) => {
+      const token = owner.records.get(row.key);
+      if (!token) fail("missing Promise reservation");
+      if (tx.state !== "reserving") tx.physicalIndex(token);
+      return token;
+    }),
+  );
 }
 
 /** No fallback: resolution/classification/value dependencies must all be real same-ledger reservations. */

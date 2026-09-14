@@ -107,7 +107,7 @@ import {
  * VALUES (bit 1 left clear ⇒ non-enumerable). Same constant the generator
  * prototype singleton uses (`array-object-proto.ts`).
  */
-const METHOD_FLAGS = 0x01 | 0x04;
+export const METHOD_FLAGS = 0x01 | 0x04;
 
 /** The `__priv_` prefix `resolveClassMemberName` gives `#private` element names. */
 const PRIVATE_NAME_PREFIX = "__priv_";
@@ -125,7 +125,7 @@ const protoObjectsInProgress = new Set<string>();
  * not abstract), excluding private elements, and only those whose canonical
  * closure singleton is actually resolvable.
  */
-function installableMethodNames(ctx: CodegenContext, className: string): string[] {
+export function installableInstanceMethodNames(ctx: CodegenContext, className: string): string[] {
   const declared = ctx.classMethodNames.get(className);
   if (!declared || declared.length === 0) return [];
   const out: string[] = [];
@@ -207,7 +207,7 @@ export function emitStandaloneClassProtoObject(
   if (newObjectIdx === undefined || defineIdx === undefined) return false;
 
   const structTypeIdx = ctx.structMap.get(className)!;
-  const methodNames = installableMethodNames(ctx, className);
+  const methodNames = installableInstanceMethodNames(ctx, className);
   const accessors = installableClassAccessors(ctx, className);
   // (#4455) The accessor store is a separate native from the data-property one;
   // a class that has accessors and cannot reach it must keep the legacy struct

@@ -355,7 +355,10 @@ export function exportedExnTagIndex(
   ctx: CodegenContext,
   mod: { imports: readonly { desc: { kind: string } }[] },
 ): number {
-  if (ctx.sharedExnTag) return ctx.exnTagIdx;
+  // (#5383 S2m) `exnTagImported` is the standalone twin of `sharedExnTag` — in
+  // both cases the tag lives in the IMPORT space, so `exnTagIdx` is already
+  // absolute and adding the import-tag count would name a different tag.
+  if (ctx.sharedExnTag || ctx.exnTagImported) return ctx.exnTagIdx;
   return mod.imports.filter((imp) => imp.desc.kind === "tag").length + ctx.exnTagIdx;
 }
 
@@ -566,6 +569,7 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
   shiftMap(ctx.protoGlobals);
   shiftMap(ctx.nativeProtoGlobals);
   shiftMap(ctx.classObjectGlobals); // (#1395) — same shift discipline as protoGlobals
+  shiftMap(ctx.classStaticSidecarGlobals); // (#5195 Step 2 / #5383 S2i) — ditto for the static sidecar
   shiftMap(ctx.methodClosureGlobals); // (#1394) — cached per-method closure globals
   shiftMap(ctx.funcClosureGlobals); // (#1340) — cached per-function closure globals
   // (#4617) Prepared metadata and native names retain absolute global slots.
@@ -1841,6 +1845,13 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
   // 14. __typeof_function(externref) -> i32 — wasi binaries don't expose
   //     callable JS functions to the outside, so this is conservatively 0.
   registerNative("__typeof_function", externrefToI32, [{ op: "i32.const", value: 0 }]);
+
+  // 14a. __is_callable(externref) -> i32 — deliberately DISTINCT from
+  // `__typeof_function`: class constructors report typeof "function" but have
+  // no [[Call]]. `fillStandaloneTypeofClosureArms` fills this conservative
+  // placeholder at finalize from the same host-free carrier inventory, omitting
+  // only class-object singletons.
+  registerNative("__is_callable", externrefToI32, [{ op: "i32.const", value: 0 }]);
 
   // 15. __typeof(externref) -> externref — the MATERIALIZED typeof result.
   //     (#2965) This was a `ref.null.extern` stub ("defer until a wasi caller

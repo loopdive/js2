@@ -166,6 +166,7 @@ import {
   knownMethodRestInfo,
 } from "./object-method-rest-abi.js";
 import { objectLiteralMethodNeedsCallReceiver } from "../object-literal-method-receiver.js";
+import { emitHostMethodCallArgs } from "../host-method-args.js"; // (#5361)
 import {
   noteOwnShadowDispatchCandidate,
   ownShadowFuncIdx,
@@ -4551,6 +4552,11 @@ export function compileReceiverMethodCall(
         // #1472: the JS-array builders are not globally safe to alias.
         let arrNewIdx: number | undefined;
         let arrPushIdx: number | undefined;
+        // (#5361) The push helper's funcidx is re-resolved by NAME after the
+        // spread builder runs: expanding a spread can register late imports,
+        // which shifts every defined-function index captured before them.
+        const arrPushName =
+          ctx.targetProfile.semanticProviders === "native-first" ? "__objvec_push" : "__js_array_push";
         if (ctx.targetProfile.semanticProviders === "native-first") {
           const b = ensureObjVecBuilders(ctx);
           arrNewIdx = b.newIdx;
@@ -4601,22 +4607,7 @@ export function compileReceiverMethodCall(
           fctx.body.push({ op: "call", funcIdx: arrNewIdx });
           const argsLocal = allocLocal(fctx, `__emc_args_${fctx.locals.length}`, { kind: "externref" });
           fctx.body.push({ op: "local.set", index: argsLocal });
-
-          for (const arg of expr.arguments) {
-            fctx.body.push({ op: "local.get", index: argsLocal });
-            const argType = compileExpression(ctx, fctx, arg, { kind: "externref" });
-            if (argType && argType.kind !== "externref") {
-              fctx.body.push({ op: "extern.convert_any" });
-            }
-            if (argType === null) {
-              fctx.body.push({ op: "ref.null.extern" });
-            }
-            // (#3429) A statically-name-resolvable compiled function/class
-            // argument (e.g. `assert.throws(MyError, fn)`) gets its real
-            // `.name` stamped before crossing — see maybeStampCompiledFunctionArgName.
-            maybeStampCompiledFunctionArgName(ctx, fctx, arg);
-            fctx.body.push({ op: "call", funcIdx: arrPushIdx });
-          }
+          emitHostMethodCallArgs(ctx, fctx, expr, argsLocal, arrPushName, arrPushIdx);
 
           // Push receiver, method name, args array → call __extern_method_call
           fctx.body.push({ op: "local.get", index: recvLocal });

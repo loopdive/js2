@@ -43,6 +43,7 @@
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
+import { taCtorIdentityTestInstrs } from "./registry/types.js";
 
 /**
  * `[[Call]]` on a reified builtin carrier. `$Object.flags` bit; 0x01/0x02/0x04
@@ -197,11 +198,13 @@ export function buildBuiltinBrandTestArm(
  * byte-identical.
  */
 function buildTaCtorBrandTestArm(ctx: CodegenContext, anyLocalIdx: number, onMatch: Instr[]): Instr[] {
-  const taCtorTypeIdx = ctx.taCtorTypeIdx;
-  if (taCtorTypeIdx === undefined || taCtorTypeIdx < 0) return [];
+  if (ctx.taCtorTypeIdx === undefined || ctx.taCtorTypeIdx < 0) return [];
+  // (#5383 S2f R11) IDENTITY, not shape: a bare `ref.test` here matched every
+  // instance of a field-less class (same canonical struct — see
+  // `taCtorIdentityTestInstrs`), which made `typeof` answer `"function"` for
+  // every Temporal object in the standalone polyfill provider.
   return [
-    { op: "local.get", index: anyLocalIdx },
-    { op: "ref.test", typeIdx: taCtorTypeIdx },
+    ...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: anyLocalIdx }]),
     { op: "if", blockType: { kind: "empty" }, then: [...onMatch] },
   ];
 }

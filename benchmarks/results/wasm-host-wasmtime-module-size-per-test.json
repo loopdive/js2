@@ -16,7 +16,7 @@
   {
     "name": "Engine",
     "path": "fib",
-    "value": 14792177,
+    "value": 14792088,
     "label": "14.8 MB",
     "jsUs": 98
   },
@@ -37,7 +37,7 @@
   {
     "name": "Engine",
     "path": "fib-recursive",
-    "value": 14794796,
+    "value": 14794856,
     "label": "14.8 MB",
     "jsUs": 86
   },
@@ -79,7 +79,7 @@
   {
     "name": "Engine",
     "path": "string-hash",
-    "value": 14797585,
+    "value": 14797611,
     "label": "14.8 MB",
     "jsUs": 238
   }
