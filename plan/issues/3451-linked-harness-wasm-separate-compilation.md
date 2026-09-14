@@ -510,3 +510,91 @@ Authority flip (slice 6) is a separate PR after a full two-lane parity run.
 - `resetLinkedProjectRegistry()` before every row (already in
   `instantiateTest262Module`).
 - Do not touch `scripts/*-baseline.json`, do not enqueue, no `--no-verify`.
+
+## Slice 3 measurements (2026-09-14)
+
+Implemented P1-P4. All numbers below are from THIS worktree at the slice-3
+commits, 4-core container, `COMPILER_POOL_SIZE=1`, both lanes run at the same
+commit through the real worker (`tests/test262-local-shard1.test.ts`, chunk 1/16
+of the filtered set), honest first then `TEST262_ORACLE_MODE=linked`.
+
+### Speed — the ceiling is real and it holds through the runner
+
+| sample | rows | median `compile_ms` honest | median `compile_ms` linked | factor |
+| --- | --- | --- | --- | --- |
+| `Array/prototype/map` + `statements/for-of` | 60 | 360 | **68** | 5.3× |
+| `Object/defineProperty` + `expressions/class` + `Promise/prototype/then` + `statements/with` | 344 | 404 | **73** | 5.5× |
+
+The plan's bar was **median ≤ 300 ms**; measured 68-73 ms. Wall clock for the
+second sample fell 232.9 s → 145.7 s (−37%) even while the linked lane also paid
+43 cold provider builds inside the run.
+
+Provider cost, for the amortisation argument: 0.9-1.6 s each, 80-194 KB, and the
+pre-warm of three distinct include-sets took 4.0 s total. 64 sets per lane.
+
+### Parity — 109 verdict differences in 404 common rows
+
+| sample | rows | differences | fallback rows |
+| --- | --- | --- | --- |
+| map + for-of | 60 | 14 | 7 |
+| defineProperty + class + then + with | 344 | 95 | 43 |
+
+Not zero, so the plan's parity acceptance box is **NOT** green. Every difference
+is classified and filed; none is unexplained:
+
+| class | rows | filed as |
+| --- | --- | --- |
+| async completion marker not observed | 49 | #6476 |
+| "different error constructor with the same name" (native errors) | ~32 | #6475 |
+| descriptor VALUE read wrong (honest passes) | ~14 | #6477 |
+| script-vs-module: top-level `var`, `arguments` | ~4 | #6474 |
+
+The single largest lever is #6475: the provider rebuilds its own `env`, so it
+resolves the AMBIENT error constructors while the consumer gets the runner's
+per-test realm ones. That also plausibly explains part of #6477.
+
+### What P2 fixed, and a correction to the plan
+
+Three defects, one root cause — an identity registered under the provider's host
+MIRROR and queried under the raw closure struct, or the reverse. Details in the
+P2 commit; the 12-case substrate probe went 8/12 → 12/12 and the smoke reached
+12/12 on `Array/prototype/map`, `for-of/dstr` and `Object/defineProperty`.
+
+**The plan's class 2 was misattributed.** `verifyProperty` failures are NOT a
+module-boundary defect: `Object.prototype.hasOwnProperty.call` / `in` /
+`Object.hasOwn` on a compiled object answer wrong in the HONEST single-module
+lane too, under `allowJs`, while `Object.keys` answers right. Both lanes fail
+those bodies alike, so they are already at parity and the "thousands of
+built-ins tests" framing does not apply to the shadow lane. #6477 covers the
+part that IS a difference (descriptor values the honest lane gets right).
+
+**The plan's class 3 does not reproduce.** Both reductions of the boxed-value
+symptom pass in both lanes; the row it came from
+(`for-of/dstr/array-elem-init-assignment.js`) fails in both for an unrelated
+reason.
+
+**A fourth defect, not in the plan and worse than any of them:** the linked lane
+silently RAN source the honest lane rejects (`var a = ;;;` compiled and
+executed). `compileMulti` suppresses syntactic diagnostics under `allowJs`;
+without `strictJsSyntax` every `negative: SyntaxError` row would have flipped
+pass→fail, in the lane whose only purpose is parity. Fixed, together with
+hoisting `TOLERATED_SYNTAX_CODES` so the multi-file gate applies the same
+tolerances as the single-file one (otherwise the flag over-corrects and rejects
+valid JavaScript).
+
+### Acceptance boxes
+
+- [x] P2 repros pass as vitest cases; smoke 12/12 on both named sample dirs.
+- [ ] Shadow lane with **zero** verdict differences — **NO**: 109/404, all four
+      classes filed (#6474-#6477). Fallback count reported per row and stamped
+      `oracle_lane: "linked-harness-fallback"`; 50/404 rows fell back.
+- [x] Median `compile_ms` ≤ 300 at pool 1 — measured **68-73**.
+- [x] `TEST262_ORACLE_MODE=linked` is opt-in; unset ⇒ honest behaviour, asserted
+      in `tests/issue-3451-linked-harness-lane.test.ts` (same binary for a row,
+      plus the gating expressions and the `diff-test262` refusal).
+- [x] Every remaining difference is filed with its class and mechanism.
+
+`diff-test262` refuses a linked run against any other lane **unconditionally** —
+`ORACLE_REBASE=1` does not excuse it, because seeding a linked baseline IS the
+authority flip (slice 6), and an escape hatch here is exactly how a shadow lane
+silently becomes the published number.
