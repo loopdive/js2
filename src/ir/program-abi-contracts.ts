@@ -1,5 +1,12 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { preparedIrTypeKey, preparedIrCallableSignature } from "./program/abi-signatures.js";
+export {
+  preparedIrTypeKey,
+  preparedIrDataKey,
+  preparedIrClassLayoutKey,
+  preparedIrCallableSignature,
+} from "./program/abi-signatures.js";
 import { createIrBindingId } from "./identity-values.js";
 import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
 import type { IrBindingId, IrSourceId, IrUnitId } from "../shared/contracts/ir-identity.js";
@@ -7,11 +14,10 @@ import type { IrUnitInventory } from "../shared/contracts/ir-unit-inventory.js";
 import { irCallableBindingKey, irUnitCallableBindingId, irUnitFuncRef } from "./callable-bindings.js";
 import { irGlobalBindingKey, irTypeBindingKey } from "./abi-bindings.js";
 import type { PreparedIrModule as IrModule } from "./runtime/contracts/prepared.js";
-import type { IrClassShape, IrType } from "./core/types.js";
+import type { IrType } from "./core/types.js";
 import type { IrGlobalRef } from "./core/value-references.js";
-import { irTypeKey } from "./type-key.js";
 import type { IrModuleInitPlan } from "./program/startup.js";
-import type { ProgramAbiCallableSignature, ProgramAbiDerivedUnitRecord } from "./program/abi.js";
+import type { ProgramAbiDerivedUnitRecord } from "./program/abi.js";
 import type { PreparedComponentAbiLookup } from "./program/abi-lookup.js";
 import { PreparedIrProgramInvariantError } from "./program.js";
 import type { PreparedIrAbiEntry } from "./program/prepared-contracts.js";
@@ -26,59 +32,6 @@ import {
   preparedIrRuntimeAbiAnchor,
   preparedIrRuntimeCallableBindingId,
 } from "./program-runtime-abi.js";
-
-/** Semantic signature key; backend layout indices are deliberately not encoded here. */
-export function preparedIrTypeKey(type: IrType): string {
-  if (type.kind === "support-ref") return irTypeKey(type);
-  return `${irTypeKey(type)}:${preparedIrDataKey(type)}`;
-}
-
-/** Class references use the existing nominal identity; layouts are checked separately. */
-export function preparedIrDataKey(data: unknown): string {
-  const active = new Set<object>();
-  const canonical = (value: unknown): unknown => {
-    if (value === null || typeof value !== "object") return value;
-    const typed = value as Partial<IrType>;
-    if (typed.kind === "support-ref") {
-      if (!typed.ref || typeof typed.nullable !== "boolean" || typed.ref.binding.kind !== "support")
-        throw new PreparedIrProgramInvariantError("invalid-prepared-data", "support type lacks its declared identity");
-      return { kind: "support-ref", key: preparedIrTypeKey(typed as IrType) };
-    }
-    if (typed.kind === "class") {
-      if (!typed.shape || typeof typed.shape.classId !== "string")
-        throw new PreparedIrProgramInvariantError("invalid-prepared-data", "class type lacks its declared identity");
-      return { kind: "class", classId: typed.shape.classId };
-    }
-    if (active.has(value))
-      throw new PreparedIrProgramInvariantError(
-        "invalid-prepared-data",
-        "recursive anonymous data has no declared class identity",
-      );
-    active.add(value);
-    try {
-      if (Array.isArray(value)) return value.map(canonical);
-      return Object.fromEntries(
-        Object.entries(value)
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(([key, item]) => [key, canonical(item)]),
-      );
-    } finally {
-      active.delete(value);
-    }
-  };
-  return JSON.stringify(canonical(data));
-}
-
-export function preparedIrClassLayoutKey(shape: IrClassShape): string {
-  return preparedIrDataKey(shape);
-}
-
-export function preparedIrCallableSignature(
-  params: readonly IrType[],
-  results: readonly IrType[],
-): ProgramAbiCallableSignature {
-  return { params: params.map(preparedIrTypeKey), results: results.map(preparedIrTypeKey) };
-}
 
 /** Read surface during preparation over the same entry vector that will be sealed. */
 export function preparedIrDraftAbiLookup(entries: readonly PreparedIrAbiEntry[]): PreparedComponentAbiLookup {

@@ -66,7 +66,6 @@ export { buildStringConstants, buildStringConstants16 };
 export { _resetIteratorRuntimeIntrinsicsForRealmIsolation };
 import {
   compiledClosureNativeSource,
-  createNativeFunctionCallbackBridge,
   installNativeFunctionSourceFacade,
   invokeNativeFunctionCallback,
   normalizeModuleCallbackException,
@@ -105,7 +104,15 @@ import { createDynamicFunctionImport } from "./runtime/dynamic-function-import.j
 import { createBoundaryObjectAdapter } from "./runtime/boundary-object-adapter.js";
 import { createBoundaryCallbackAdapter } from "./runtime/boundary-callback-adapter.js";
 import { createBoundaryPromiseAdapter } from "./runtime/boundary-promise-adapter.js";
-import { createPromiseThenImport } from "./runtime/promise-then-reactions.js"; // (#5372)
+import {
+  createCaughtExceptionImport,
+  createHostAsyncCallbackMaker,
+  createHostNumberBoxImport,
+  createHostNumberUnboxImport,
+  createHostPromiseBuiltinImport,
+  createHostUndefinedImport,
+} from "./runtime/host-async-imports.js";
+import { createHostImportCallState } from "./runtime/host-import-call-state.js";
 import { createBoundaryValueAdapter, isBoundaryValueImportIntent } from "./runtime/boundary-value-adapter.js";
 import { createInstanceLifecycleAdapter } from "./runtime/instance-lifecycle-adapter.js";
 import {
@@ -11090,7 +11097,7 @@ function resolveImport(
   if (compatibilitySemantic) return compatibilitySemantic;
   switch (intent.type) {
     case "caught_exception":
-      return () => getCaughtException?.();
+      return createCaughtExceptionImport(getCaughtException);
     case "string_method": {
       const method = intent.method;
       // Methods whose first argument participates in Symbol.* protocol
@@ -13449,7 +13456,7 @@ assert._isSameValue = isSameValue;
           }
           return 0;
         };
-      if (name === "__get_undefined") return () => undefined;
+      if (name === "__get_undefined") return createHostUndefinedImport();
       // (#1343) ToBoolean for externref values per ECMA-262 §7.1.2.
       // The pre-existing externref path for `Boolean(x)` only checked
       // `ref.is_null` — which returns false for JS `undefined` (since
@@ -16956,7 +16963,7 @@ assert._isSameValue = isSameValue;
       // (#4736) Promise.resolve has the same host boundary as the combinators:
       // a Wasm object-literal thenable must be mirrored before V8 performs
       // PromiseResolve, while ordinary objects remain raw for === identity.
-      if (name === "Promise_resolve") return (val: any) => Promise.resolve(_wrapThenable(val));
+      if (name === "Promise_resolve") return createHostPromiseBuiltinImport(name, _wrapThenable, _wrapPromiseReaction);
       if (name === "Promise_reject")
         return (val: any) => {
           // (#2978) Pre-mark the rejection as handled. Compiled code holds the
@@ -16976,26 +16983,8 @@ assert._isSameValue = isSameValue;
       // it from a continuation that runs as a microtask. We stash the
       // resolve/reject capabilities on the promise object so the settle
       // imports can fire them by reference.
-      if (name === "Promise_new_pending")
-        return () => {
-          let r: (v: any) => void = () => {};
-          let j: (e: any) => void = () => {};
-          const p: any = new Promise((res: any, rej: any) => {
-            r = res;
-            j = rej;
-          });
-          p.__r = r;
-          p.__j = j;
-          return p;
-        };
-      if (name === "Promise_settle_resolve")
-        return (p: any, val: any) => {
-          if (p && typeof p.__r === "function") p.__r(val);
-        };
-      if (name === "Promise_settle_reject")
-        return (p: any, reason: any) => {
-          if (p && typeof p.__j === "function") p.__j(reason);
-        };
+      if (name === "Promise_new_pending" || name === "Promise_settle_resolve" || name === "Promise_settle_reject")
+        return createHostPromiseBuiltinImport(name, _wrapThenable, _wrapPromiseReaction);
       // (#1382) `executor` is called as `executor(resolve, reject)` — arity 2.
       if (name === "Promise_new") {
         // Honor source-realm Promise[@@species]; product callers retain the intrinsic fallback.
@@ -17004,7 +16993,7 @@ assert._isSameValue = isSameValue;
       }
       // (#1382) `onFulfilled` / `onRejected` callbacks are arity-1 (the value or reason).
       if (name === "Promise_then" || name === "Promise_then2" || name === "Promise_then2_frame")
-        return createPromiseThenImport(name, _wrapPromiseReaction); // (#5372) the frame variant rejects the frame on a trap
+        return createHostPromiseBuiltinImport(name, _wrapThenable, _wrapPromiseReaction); // (#5372) the frame variant rejects the frame on a trap
       if (name === "Promise_catch") return (p: any, cb: any) => p.catch(_maybeWrapCallable(cb, 1, callbackState));
       // (#1382) `onFinally` is arity-0 (no arg per spec §27.2.5.3).
       if (name === "Promise_finally") return (p: any, cb: any) => p.finally(_maybeWrapCallable(cb, 0, callbackState));
@@ -18378,13 +18367,7 @@ assert._isSameValue = isSameValue;
     // maker the compiler picks for an ordinary function definition — the one
     // callable form with [[Construct]]. Everything else keeps the arrow bridge.
     case "callback_maker":
-      return (id: number, cap: any) => {
-        if (id === -2) return _wrapVoidHostCallback(cap, callbackState, false);
-        if (id === -1) return _wrapVoidHostCallback(cap, callbackState);
-        const policy = ASYNC_CALLBACK_EXCEPTION_POLICY;
-        const constructible = intent.constructible === true;
-        return createNativeFunctionCallbackBridge(id, cap, callbackState, policy, constructible);
-      };
+      return createHostAsyncCallbackMaker(callbackState, _wrapVoidHostCallback, () => intent.constructible === true);
     case "getter_callback_maker":
       return (id: number, cap: any) => {
         // Regular function (not arrow) so 'this' is bound to the receiver;
@@ -18440,7 +18423,7 @@ assert._isSameValue = isSameValue;
       // (#1644) __box_bigint: JS-BigInt-integration already delivers the wasm
       // i64 as a JS bigint at the boundary, so boxing is identity.
       if (intent.targetType === "bigint") return (v: bigint) => v;
-      return (v: number) => v;
+      return createHostNumberBoxImport();
     case "unbox":
       if (intent.targetType === "boolean") return (v: any) => (v ? 1 : 0);
       if (intent.targetType === "symbol") {
@@ -18465,32 +18448,7 @@ assert._isSameValue = isSameValue;
           return BigInt(v);
         };
       }
-      return (v: any) => {
-        // For objects, try our ToPrimitive first — Number() on WasmGC structs
-        // returns NaN without throwing (#866), and proxied structs may have
-        // WasmGC closures for Symbol.toPrimitive that V8 can't call (#1090).
-        if (v != null && typeof v === "object") {
-          const prim = _toPrimitive(v, "number", callbackState);
-          if (prim !== undefined) {
-            // #1434 — Number() throws TypeError on Symbol/BigInt primitives.
-            // Per ECMA-262 §7.1.4 ToNumber, Symbol MUST throw TypeError; the
-            // unbox/number intent is the centralized ToNumber funnel, so we
-            // let the exception propagate to Wasm catch_all instead of
-            // silently turning it into NaN.
-            return Number(prim);
-          }
-          // _toPrimitive returned undefined — try the full host ToPrimitive (#1090)
-          // which checks real JS properties, sidecar, and Wasm exports.
-          // Let TypeError propagate so Wasm catch_all can intercept it.
-          const prim2 = _hostToPrimitive(v, "number", callbackState);
-          return Number(prim2);
-        }
-        // #1434 — Symbol/BigInt primitives: Number() throws TypeError per
-        // §7.1.4. The previous try/catch swallowed this and returned NaN,
-        // letting `Number(Symbol())`, `+Symbol()`, `-Symbol()`, `~Symbol()`,
-        // `0 + Symbol()` etc. silently coerce. Let the exception propagate.
-        return Number(v);
-      };
+      return createHostNumberUnboxImport(callbackState, _toPrimitive, _hostToPrimitive);
     case "any_to_index":
       // #3511 — Symbol-safe array-index probe. The dynamic-`any`-index element
       // access (`obj[key]` get/set/delete) ToNumber-probes the key to decide
@@ -18962,28 +18920,6 @@ function wrapWithContainment(
 }
 
 /**
- * These intents resolve to leaf functions that cannot throw or call user code,
- * so they cannot re-enter Wasm. Their import wrappers therefore do not need the
- * recursion-depth or catch-all bookkeeping used by general host operations.
- * Keep this predicate intent-based: `buildImports` is public and must not trust
- * a caller-supplied import name to imply safe behaviour.
- */
-function isFastLeafHostImport(imp: ImportDescriptor): boolean {
-  switch (imp.intent.type) {
-    case "box":
-    case "typeof_check":
-    case "truthy_check":
-      return true;
-    case "unbox":
-      return imp.intent.targetType === "boolean";
-    case "builtin":
-      return imp.intent.name === "__get_undefined";
-    default:
-      return false;
-  }
-}
-
-/**
  * Build the WebAssembly import object from a closed manifest.
  *
  * After instantiation, prefer `setInstance(instance)`. It proves the
@@ -19095,25 +19031,12 @@ export function buildImports(
   const callbackState = lifecycle.callbackState;
   timerCallbackBridge.bindCallbackState(callbackState, (value, arity) => _wrapWasmClosure(value, arity, callbackState));
   domCapabilityRuntime?.bindCallbackState(callbackState);
-  let lastCaughtException: any = undefined;
-  const envImportNames: string[] = [];
-  let importCounts: Uint32Array | undefined;
+  const hostImportCallState = createHostImportCallState();
 
   // (#1467 / #1933) Each instantiated module gets its own symbol id space and
   // per-instance symbol cache/registry, RegExp legacy state, and subclass/
   // parent registries — initialized in `instanceState` above (was module-level,
   // which crossed and retained concurrently-live instances).
-
-  // Recursion depth guard: host imports can call back into Wasm exports
-  // (e.g. callback_maker, valueOf/toString coercion, iterator protocol),
-  // which can call back into host imports, creating infinite recursion.
-  // Track depth across ALL host imports sharing a single counter.
-  // Legitimate parser recursion can cross the generic host bridge once per
-  // nested expression/parser method. Acorn's valid async-generator Test262
-  // cases exceed 100 crossings before returning, so keep the cycle guard well
-  // below V8's native stack limit without rejecting ordinary source depth.
-  const MAX_HOST_RECURSION_DEPTH = 512;
-  let hostCallDepth = 0;
 
   for (const imp of manifest) {
     if (imp.module !== "env") continue;
@@ -19127,7 +19050,7 @@ export function buildImports(
         );
       }
     }
-    const importIndex = envImportNames.push(imp.name) - 1;
+    const importIndex = hostImportCallState.registerImport(imp.name);
     let fn: Function;
 
     const domBinding = domCapabilityRuntime?.bindImport(imp);
@@ -19144,7 +19067,7 @@ export function buildImports(
         imp.paramCount,
         options?.dynamicCode,
         options?.dynamicCodeEvaluator,
-        () => lastCaughtException,
+        hostImportCallState.getCaughtException,
       );
 
     // DOM containment wrapping
@@ -19157,144 +19080,11 @@ export function buildImports(
       }
     }
 
-    // Acorn executes millions of these leaf calls per parse. They cannot throw
-    // or re-enter Wasm, so avoid constructing and invoking the general guarded
-    // wrapper. Preserve import diagnostics and the Wasm signature's fixed
-    // arity. The switch provides rollout containment.
-    const fastLeaf = process.env.JS2WASM_FAST_LEAF_HOST_IMPORTS !== "0" && isFastLeafHostImport(imp);
-    if (fastLeaf && imp.paramCount === 0) {
-      const original = fn;
-      env[imp.name] = function () {
-        if (importCounts) importCounts[importIndex]++;
-        return original();
-      };
+    const wrappedImport = hostImportCallState.wrap(imp, fn, importIndex);
+    fn = wrappedImport.fn;
+    if (wrappedImport.fastLeaf) {
+      env[imp.name] = fn;
       continue;
-    }
-    if (fastLeaf && imp.paramCount === 1) {
-      const original = fn;
-      env[imp.name] = function (a: any) {
-        if (importCounts) importCounts[importIndex]++;
-        return original(a);
-      };
-      continue;
-    }
-
-    // Wrap host imports with recursion depth guard + exception capture for catch_all.
-    //
-    // (#4150) Arity-specialized. This wrapper sits on EVERY host import, so its
-    // cost is paid on every wasm->JS crossing in every program — 7,000 times in
-    // one `dom/set-attributes` call alone. The rest-parameter form allocated a
-    // fresh args array per crossing and dispatched through `Function.apply`,
-    // which V8 cannot inline as well as a fixed-arity direct call. Specializing
-    // on the callee's declared arity removes both. Semantics are identical: the
-    // counter, the depth check, `lastCaughtException` and the decrement are the
-    // same in every arm, and a variadic or higher-arity callee still gets the
-    // original rest form. Measured on dom/set-attributes: ~20-25% of the lane.
-    {
-      const original = fn;
-      const guardEnter = (): void => {
-        if (importCounts) importCounts[importIndex]++;
-        if (hostCallDepth >= MAX_HOST_RECURSION_DEPTH) {
-          const err = new RangeError("Maximum call stack size exceeded");
-          lastCaughtException = err;
-          throw err;
-        }
-        hostCallDepth++;
-      };
-      // The arity comes from the WASM IMPORT SIGNATURE (`paramCount`), not from
-      // `original.length`. The wasm side is what does the calling and its call
-      // sites are fixed-arity, so this count is exactly how many arguments the
-      // wrapper can ever receive. `original.length` would be wrong: it excludes
-      // rest and defaulted parameters, so a variadic callee under-reports
-      // (`Math.max.length` is 2) and a wrapper sized from it would silently
-      // drop arguments. Anything without a declared count keeps the rest form.
-      const arity = imp.paramCount ?? -1;
-      const variadic = arity < 0 || arity > 4;
-      if (variadic) {
-        fn = function (this: any, ...args: any[]) {
-          guardEnter();
-          try {
-            return original.apply(this, args);
-          } catch (e) {
-            lastCaughtException = e;
-            throw e;
-          } finally {
-            hostCallDepth--;
-          }
-        };
-      } else if (arity === 0) {
-        fn = function (this: any) {
-          guardEnter();
-          try {
-            return original();
-          } catch (e) {
-            lastCaughtException = e;
-            throw e;
-          } finally {
-            hostCallDepth--;
-          }
-        };
-      } else if (arity === 1) {
-        fn = function (this: any, a: any) {
-          guardEnter();
-          try {
-            return original(a);
-          } catch (e) {
-            lastCaughtException = e;
-            throw e;
-          } finally {
-            hostCallDepth--;
-          }
-        };
-      } else if (arity === 2) {
-        fn = function (this: any, a: any, b: any) {
-          guardEnter();
-          try {
-            return original(a, b);
-          } catch (e) {
-            lastCaughtException = e;
-            throw e;
-          } finally {
-            hostCallDepth--;
-          }
-        };
-      } else if (arity === 3) {
-        fn = function (this: any, a: any, b: any, c: any) {
-          guardEnter();
-          try {
-            return original(a, b, c);
-          } catch (e) {
-            lastCaughtException = e;
-            throw e;
-          } finally {
-            hostCallDepth--;
-          }
-        };
-      } else if (arity === 4) {
-        fn = function (this: any, a: any, b: any, c: any, d: any) {
-          guardEnter();
-          try {
-            return original(a, b, c, d);
-          } catch (e) {
-            lastCaughtException = e;
-            throw e;
-          } finally {
-            hostCallDepth--;
-          }
-        };
-      } else {
-        fn = function (this: any, ...args: any[]) {
-          guardEnter();
-          try {
-            return original.apply(this, args);
-          } catch (e) {
-            lastCaughtException = e;
-            throw e;
-          } finally {
-            hostCallDepth--;
-          }
-        };
-      }
     }
     domCapabilityRuntime?.recordWrappedImport(imp, domBinding, fn);
     env[imp.name] = fn;
@@ -19326,19 +19116,8 @@ export function buildImports(
   // first data-struct authority.
   result.setExports = lifecycle.setExports;
   result.setInstance = lifecycle.setInstance;
-  result.startImportCounting = () => {
-    importCounts = new Uint32Array(envImportNames.length);
-  };
-  result.takeImportCounts = () => {
-    const counts: Record<string, number> = Object.create(null);
-    if (importCounts) {
-      for (let index = 0; index < envImportNames.length; index++) {
-        if (importCounts[index] > 0) counts[envImportNames[index]] = importCounts[index];
-      }
-    }
-    importCounts = undefined;
-    return counts;
-  };
+  result.startImportCounting = hostImportCallState.startImportCounting;
+  result.takeImportCounts = hostImportCallState.takeImportCounts;
   return result;
 }
 
