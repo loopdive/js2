@@ -102,6 +102,176 @@ afterEach(() => {
 const codes = (result: ReturnType<ReturnType<typeof fixture>["run"]>) =>
   result.report.errors.map((error: { code: string }) => error.code);
 
+it("records exactly the existing frontend debt affected by contracts-only activation", () => {
+  const policy = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
+  const changed = [
+    ...[
+      "binder",
+      "builtin-shadow",
+      "dts-entrypoint-seeds",
+      "index",
+      "inhouse-globals",
+      "inhouse-oracle",
+      "language-service",
+      "multi-file-paths",
+      "oracle-backend",
+      "oracle-declaration-snapshot",
+      "oracle",
+      "ts5-trace",
+      "type-mapper",
+      "usage-inference",
+    ].map((name) => `src/checker/${name}.ts`),
+    "src/ir/planning-sites.ts",
+    "src/ir/program-logical-types.ts",
+    "src/ir/program-native-async-source.ts",
+  ];
+  expect(changed).toHaveLength(17);
+  for (const path of changed)
+    expect(policy.files.find((row: { path: string }) => row.path === path)).toMatchObject({
+      state: "unmigrated",
+      layer: "mixed-needs-split",
+      destination: "frontend-ts",
+      owner: "3518-coordinator",
+    });
+  for (const path of ["src/checker/divergence-classifier.ts", "src/checker/node-capability-map.ts", "src/ts-api.ts"])
+    expect(policy.files.find((row: { path: string }) => row.path === path)).toEqual({
+      path,
+      state: "unmigrated",
+      layer: "frontend-ts",
+    });
+  expect(policy.layers.find((row: { id: string }) => row.id === "frontend-ts")).toEqual({
+    id: "frontend-ts",
+    status: "active",
+    roots: ["src/frontend/builtins/contracts.ts"],
+    required: true,
+    entries: ["src/frontend/builtins/contracts.ts"],
+    minModules: 1,
+  });
+});
+
+for (const debtLayer of ["frontend-ts", "mixed-needs-split"]) {
+  it.each(["type", "value"])(`formatter contracts cannot import ${debtLayer} debt via %s`, (form) => {
+    const f = fixture();
+    const path = "src/frontend/builtins/contracts.ts";
+    f.put(path, "export type Contract = number;");
+    f.policy.files.push({ path, state: "clean", layer: "frontend-ts" });
+    const debt = f.policy.files.find((row: { path: string }) => row.path === "src/frontend/parser.ts");
+    debt.state = "unmigrated";
+    debt.layer = debtLayer;
+    f.put(debt.path, "export type Parsed = number; export const parsed = 1;");
+    // Remove the old fixture's clean-entry obligation, not a production rule.
+    const front = f.policy.layers.find((row: { id: string }) => row.id === "frontend-ts");
+    front.entries = [path];
+    front.roots = [path];
+    if (debtLayer === "mixed-needs-split") {
+      debt.owner = "fixture-owner";
+      debt.destination = "frontend-ts";
+      debt.nextBoundary = "Separate this fixture's explicit migration debt before frontend admission.";
+      f.policy.layers.push({
+        id: debtLayer,
+        status: "planned",
+        roots: [debt.path],
+        required: true,
+        entries: [debt.path],
+        minModules: 1,
+      });
+      f.policy.allowedEdges[debtLayer] = [];
+    }
+    const baseline = f.run("inventory");
+    expect(baseline.exit, JSON.stringify(baseline.report)).toBe(0);
+    f.put(
+      path,
+      form === "type" ? 'export type { Parsed } from "../parser.js";' : 'export { parsed } from "../parser.js";',
+    );
+    const result = f.run("inventory");
+    expect(result.exit).toBe(1);
+    expect(codes(result)).toContain("forbidden-clean-edge");
+  });
+}
+
+it("keeps formatter support contracts and the canonical type factory mandatory", () => {
+  const policy = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
+  for (const [layerId, paths] of [
+    ["ir-core", ["src/ir/core/type-references.ts"]],
+    ["ir-program", ["src/ir/program/runtime-support.ts", "src/ir/program/formatter-support.ts"]],
+  ] as const) {
+    const layer = policy.layers.find((item: { id: string }) => item.id === layerId);
+    expect(layer).toMatchObject({ status: "active", required: true });
+    expect(layer.entries).toEqual(expect.arrayContaining(paths));
+    expect(layer.minModules).toBeGreaterThanOrEqual(18);
+    for (const path of paths) {
+      expect(policy.files.find((item: { path: string }) => item.path === path)).toEqual({
+        path,
+        state: "clean",
+        layer: layerId,
+      });
+      expect(
+        policy.activationHistory.some(
+          (entry: { layer: string; entries: string[] }) => entry.layer === layerId && entry.entries.includes(path),
+        ),
+      ).toBe(true);
+      expect(readFileSync(resolve(repository, path), "utf8").length).toBeGreaterThan(0);
+    }
+  }
+  expect(policy.allowedEdges["ir-core"]).toEqual(["ir-core", "foundation", "wasm-model"]);
+  expect(policy.allowedEdges["ir-program"]).not.toContain("frontend-ts");
+  expect(policy.allowedEdges["ir-program"]).not.toContain("mixed-needs-split");
+});
+
+for (const [layerId, path] of [
+  ["frontend-ts", "src/frontend/builtins/contracts.ts"],
+  ["ir-core", "src/ir/core/type-references.ts"],
+  ["ir-program", "src/ir/program/runtime-support.ts"],
+  ["ir-program", "src/ir/program/formatter-support.ts"],
+] as const) {
+  it.each(["delete", "demote", "type-import", "value-import"] as const)(
+    `formatter boundary ${path} rejects %s after its positive control`,
+    (mutation) => {
+      const f = fixture();
+      const source = "export type Contract = number; export const present = 1;";
+      f.put(path, source);
+      f.policy.files.push({ path, state: "clean", layer: layerId });
+      const existing = f.policy.layers.find((layer: { id: string }) => layer.id === layerId);
+      if (existing) {
+        existing.entries.push(path);
+        existing.minModules++;
+      } else {
+        f.policy.layers.push({
+          id: layerId,
+          status: "active",
+          roots: [path],
+          required: true,
+          entries: [path],
+          minModules: 1,
+        });
+        f.policy.allowedEdges[layerId] = [layerId, "foundation"];
+      }
+      f.policy.activationHistory.push({ layer: layerId, entries: [path], minModules: 1 });
+      f.put("src/legacy.ts", "export type Legacy = number; export const legacy = 1;");
+      f.policy.layers.push({
+        id: "legacy-wasmgc",
+        status: "active",
+        roots: ["src/legacy.ts"],
+        required: true,
+        entries: ["src/legacy.ts"],
+        minModules: 1,
+      });
+      f.policy.allowedEdges["legacy-wasmgc"] = ["legacy-wasmgc"];
+      f.policy.files.push({ path: "src/legacy.ts", state: "clean", layer: "legacy-wasmgc" });
+      expect(f.run().exit).toBe(0);
+      if (mutation === "delete") rmSync(resolve(f.root, path));
+      if (mutation === "demote")
+        f.policy.files.find((file: { path: string }) => file.path === path).state = "unmigrated";
+      if (mutation === "type-import")
+        f.put(path, source + '\nimport type { Legacy } from "../../legacy.js"; export type Hidden = Legacy;');
+      if (mutation === "value-import") f.put(path, source + '\nexport { legacy } from "../../legacy.js";');
+      const result = f.run();
+      expect(result.exit).not.toBe(0);
+      if (mutation.endsWith("import")) expect(codes(result)).toContain("forbidden-clean-edge");
+    },
+  );
+}
+
 // Synthetic history exists only in temporary fixture repositories. Writing Git
 // objects avoids requiring signing credentials or executing project commit hooks
 // to model the historical policies that the detector must read.

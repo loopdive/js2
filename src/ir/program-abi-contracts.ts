@@ -5,7 +5,7 @@ import { preparedIrProgramCallableResults } from "./program-callable-contract.js
 import type { IrBindingId, IrSourceId, IrUnitId } from "../shared/contracts/ir-identity.js";
 import type { IrUnitInventory } from "../shared/contracts/ir-unit-inventory.js";
 import { irCallableBindingKey, irUnitCallableBindingId, irUnitFuncRef } from "./callable-bindings.js";
-import { irGlobalBindingKey } from "./abi-bindings.js";
+import { irGlobalBindingKey, irTypeBindingKey } from "./abi-bindings.js";
 import type { PreparedIrModule as IrModule } from "./runtime/contracts/prepared.js";
 import type { IrClassShape, IrType } from "./core/types.js";
 import type { IrGlobalRef } from "./core/value-references.js";
@@ -19,6 +19,8 @@ import type { TypedIrProgramGlobal } from "./program/input-contracts.js";
 import type { IrProgramCallableBindingRecord } from "./program/callable-bindings.js";
 import type { IrRuntimeCallableDeclaration } from "./runtime-callable-declarations.js";
 import { irRuntimeCallableHasNoSlot } from "./runtime/native-async-callables.js";
+import type { IrRuntimeSupport } from "./program/runtime-support.js";
+import { numberFormatRadixSupportDeclarations } from "./program/formatter-support.js";
 import {
   assertPreparedIrRuntimeCallableDeclaration,
   preparedIrRuntimeAbiAnchor,
@@ -27,6 +29,7 @@ import {
 
 /** Semantic signature key; backend layout indices are deliberately not encoded here. */
 export function preparedIrTypeKey(type: IrType): string {
+  if (type.kind === "support-ref") return irTypeKey(type);
   return `${irTypeKey(type)}:${preparedIrDataKey(type)}`;
 }
 
@@ -36,6 +39,11 @@ export function preparedIrDataKey(data: unknown): string {
   const canonical = (value: unknown): unknown => {
     if (value === null || typeof value !== "object") return value;
     const typed = value as Partial<IrType>;
+    if (typed.kind === "support-ref") {
+      if (!typed.ref || typeof typed.nullable !== "boolean" || typed.ref.binding.kind !== "support")
+        throw new PreparedIrProgramInvariantError("invalid-prepared-data", "support type lacks its declared identity");
+      return { kind: "support-ref", key: preparedIrTypeKey(typed as IrType) };
+    }
     if (typed.kind === "class") {
       if (!typed.shape || typeof typed.shape.classId !== "string")
         throw new PreparedIrProgramInvariantError("invalid-prepared-data", "class type lacks its declared identity");
@@ -89,6 +97,7 @@ export interface PrepareIrProgramAbiInput {
   readonly globals: readonly TypedIrProgramGlobal[];
   readonly startup: readonly IrModuleInitPlan[];
   readonly callables: readonly IrProgramCallableBindingRecord[];
+  readonly runtimeSupport?: IrRuntimeSupport;
 }
 
 /** Produce semantic contracts from declared bodies/storage, never from a call's guessed usage. */
@@ -221,6 +230,45 @@ export function prepareIrProgramAbiEntries(
           intent: { kind: "export", externalName, targetId },
         },
         contract: { kind: "export", externalName, targetId },
+      });
+    }
+  }
+  // These are real type/function declarations, never ordinary source units or
+  // slotless runtime intents. Keep the canonical runtime tail after this vector.
+  for (const batch of input.runtimeSupport?.batches ?? []) {
+    const declaration = numberFormatRadixSupportDeclarations(batch.sourceId);
+    const type = declaration.scratch.type;
+    entries.push({
+      plan: {
+        id: type.ref.binding.bindingId,
+        order: order(batch.sourceId),
+        displayName: type.ref.name,
+        structuralReferenceKey: irTypeBindingKey(type.ref.binding),
+        slotPolicy: "required",
+        slotSpace: "type",
+        intent: { kind: "type", shapeKey: preparedIrTypeKey(type) },
+      },
+      contract: { kind: "type", ref: type.ref, type },
+    });
+    for (const callable of [...declaration.kernels, declaration.implementation]) {
+      if (callable.ref.binding.kind !== "support")
+        throw new PreparedIrProgramInvariantError("invalid-prepared-data", "formatter callable lacks support binding");
+      entries.push({
+        plan: {
+          id: callable.ref.binding.bindingId,
+          order: order(batch.sourceId),
+          displayName: callable.ref.name,
+          structuralReferenceKey: irCallableBindingKey(callable.ref.binding),
+          slotPolicy: "required",
+          slotSpace: "function",
+          intent: {
+            kind: "callable",
+            origin: "support",
+            sourceId: batch.sourceId,
+            signature: preparedIrCallableSignature(callable.params, callable.results),
+          },
+        },
+        contract: { kind: "callable", ref: callable.ref, params: callable.params, results: callable.results },
       });
     }
   }
