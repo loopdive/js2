@@ -4917,8 +4917,8 @@ number is claimed; a corpus run remains the tech lead's to schedule.
 
 ### S15 findings (2026-09-13) — `sn()` did not need a Temporal fix; it needed the array-HOF callback to stop asserting a nullable element non-null. 199 → 201, and the whole 22-row `sn()` bucket moved one step
 
-**#6475 is the slice.** Full write-up, tables and residuals in the issue file
-`plan/issues/6475-standalone-nullable-vec-element-callback-param.md`.
+**#6480 is the slice.** Full write-up, tables and residuals in the issue file
+`plan/issues/6480-standalone-nullable-vec-element-callback-param.md`.
 
 #### 1. Root cause, and why six slices of Temporal work never reached it
 
@@ -4995,7 +4995,7 @@ and each lowering that forgets it has to be taught separately.
 Still open behind it: `instanceof` across the provider link with a dynamic RHS
 (S11 residual, gates 2 Duration rows), ZonedDateTime's 7-row
 `required property 'timeZone' missing`, PlainDate's 6-row `year is required`
-and its 3-row `__closure_N()` null pointer — **measured NOT to be the #6475
+and its 3-row `__closure_N()` null pointer — **measured NOT to be the #6480
 family**, since PlainDate did not move at all.
 
 #### 5. Traps, carried forward

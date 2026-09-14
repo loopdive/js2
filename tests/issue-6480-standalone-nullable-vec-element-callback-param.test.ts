@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #6475 (#5383 S15) — an array-HOF callback must not assert a NULLABLE vec
+// #6480 (#5383 S15) — an array-HOF callback must not assert a NULLABLE vec
 // element non-null at the callback boundary.
 //
 // WHY THIS REDUCTION EXISTS. Standalone `RegExp.prototype.exec` returns a
@@ -85,7 +85,7 @@ export function at(i) { return __s.charCodeAt(i); }`;
   return out;
 }
 
-describe("#6475 array HOFs over a nullable vec element", () => {
+describe("#6480 array HOFs over a nullable vec element", () => {
   it("do not trap on an unmatched capture group, and see it as `undefined`", { timeout: 600_000 }, async () => {
     const observed: Record<string, string> = {
       every: await evalStandalone(`${MATCH} return String(m.every((e, i) => i < 2 || true));`),
@@ -139,7 +139,7 @@ describe("#6475 array HOFs over a nullable vec element", () => {
   });
 });
 
-describe("#6475 controls — nothing outside the nullability lie may move", () => {
+describe("#6480 controls — nothing outside the nullability lie may move", () => {
   it("answers exactly as before for map, index reads and non-nullable receivers", { timeout: 600_000 }, async () => {
     const observed: Record<string, string> = {
       map: await evalStandalone(`${MATCH} return m.map((e) => (undefined === e ? "u" : "S")).join(",");`),

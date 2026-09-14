@@ -1,7 +1,7 @@
 ---
-id: 6475
+id: 6480
 title: "standalone: a nullable vec element is asserted non-null at every array-HOF callback boundary"
-slug: 6475-standalone-nullable-vec-element-callback-param
+slug: 6480-standalone-nullable-vec-element-callback-param
 status: done
 completed: 2026-09-13
 sprint: current
@@ -14,7 +14,7 @@ goal: standalone-gap
 assignee: ttraenkler/dev-5383-s15
 created: 2026-09-13
 loc-budget-allow:
-  # 2026-09-13 (#6475, S15) — the nullable-element callback arm is wired at
+  # 2026-09-13 (#6480, S15) — the nullable-element callback arm is wired at
   #   the array-HOF call sites (+16) and callback-param nullability flows
   #   through closure lowering (+10); the mechanism itself lives in
   #   src/codegen/array-hof-nullable-elem-param.ts.
@@ -25,7 +25,7 @@ loc-budget-allow:
 > **Issue id reserved?** NO. `scripts/claim-issue.mjs --allocate` exits **6**
 > (`open-PR id scan DEGRADED — gh offline/unauthenticated`) for the whole of
 > this session; GitHub pushes are refused with HTTP 403 for every lane. The id
-> **6475** was taken from `--allocate --dry-run --no-pr-scan` (which reported
+> **6480** was taken from `--allocate --dry-run --no-pr-scan` (which reported
 > #6474, already consumed unreserved by the S14 slice) plus one. It is
 > therefore **unreserved** and has not been checked against in-flight PRs.
 
