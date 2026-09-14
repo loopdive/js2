@@ -5757,3 +5757,142 @@ independent defects; the Temporal half is a literal-vs-computed member-name spli
 whose dispatch path has no link-boundary arm) plus the C-PROV half fixed and
 witnessed. The regression sample is flat with 0 `pass→fail` and 0 `__temporal_*`
 leaks over 211 compared rows. No full-corpus number is claimed.
+
+### S19 findings (2026-09-14) — the bucket is not at the link, not in the dispatchers, and not even in `from`: it ends at the polyfill's own intrinsic registry
+
+Full write-up in
+[#6484](6484-standalone-class-static-dynamic-dispatch.md). **No compiler change
+ships this slice**, deliberately — §4.
+
+#### 1. The hand-off was wrong in every clause, for the ninth slice running
+
+S18 handed over: "a literal-named member call takes a per-name
+`__call_m_<name>` dispatch path with no link-boundary arm; only the computed
+form reaches the generic native where the peer arm lives, and the forward
+terminal is never consulted on the literal path."
+
+Measured on S18's own tip, which is this branch's base:
+
+| S18's claim | what the base tree does |
+| --- | --- |
+| literal call takes `__call_m_from_1` | the consumer WAT emits `call $__extern_method_call` **directly** (`.tmp/s19/w1-names.txt`, func 228) |
+| the forward terminal is never consulted | it IS consulted and exits through its **apply** |
+| `Temporal.Duration[k]("P0Y")` works | **`null`** — a silent wrong value |
+| `const f = Temporal.Duration.from; f("P0Y")` works | **`null`** |
+
+S18's own marker legend already said what the missing marker meant ("a thrown
+TypeError ⇒ it resolved AND applied, and `__apply_closure` answered null"); the
+prose recorded the opposite. **An absent marker is evidence about WHICH exit
+fired, never evidence that the function was not entered** — that inversion cost
+a whole slice, and it is the trap to carry forward.
+
+A synthetic linked pair refused the attribution in the first ten minutes: a
+provider-owned class whose static is called by LITERAL name across the link
+answers correctly (`"F:x"`), while the COMPUTED form answers `null`
+(`.tmp/s19/c1-base.out`) — the exact inverse of the hand-off.
+
+#### 2. The chain, instrumented layer by layer
+
+Seven separate instrumented builds of the real linked provider, fresh
+`JS2WASM_TEMPORAL_CACHE` per label, `cacheHit=false` on every prewarm:
+
+| layer | marker | verdict |
+| --- | --- | --- |
+| consumer `__extern_method_call` `$Object` arm | `MC-OBJARM` | not taken |
+| provider forward terminal, resolve exits | `MC-NULLGET` / `MC-UNDEFGET` | neither — the member RESOLVED |
+| provider forward terminal, apply exit | `MC-APPLYNULL` | **fires** |
+| provider `__apply_closure` | `AC-NULLRES-1` | **fires** — the arity-1 arm ran and returned null |
+| provider `__call_fn_method_1` ladder terminal | `MD-MISS-1` | not reached — an arm matched |
+| provider native-proto front arm (`S19_NO_NP`) | — | not the culprit |
+
+Every dispatch layer is correct. **The callee returns null on its own.**
+
+#### 3. Below the dispatch — one module, no link, no consumer
+
+A diagnostic injected into the polyfill's frozen `Temporal` namespace literal
+lets the provider answer questions about itself (`.tmp/s19/diag3.out`):
+
+| probe, provider-internal | answer |
+| --- | --- |
+| `Duration.from("P0Y")` | **`null`** |
+| `sn("P0Y")` — the entire body of `Duration.from` | **`null`** (`=== null` is `true`) |
+| `Ye.exec("P0Y")` | a 12-element match — the parse works |
+| `Ae("P0Y")` / `lt("P0Y")` | `false` / `false` — `sn` takes its string branch |
+| `new (ce("%Temporal.Duration%"))(1)` `.toJSON()` | **`invalid receiver: method called with the wrong type of this-object`** |
+| `new Duration(1).toJSON()` | `P1Y` — the real class is fine |
+| the exact `iife + destructure + captured-const new` shape `sn` uses | correct, 7/7 (`.tmp/s19/c6-base.out`) |
+
+So the bucket ends at **`ce()`, the polyfill's intrinsic registry**: `new` on the
+value it returns for `%Temporal.Duration%` yields an object that fails its own
+brand check. Single-module, standalone, several layers below the link. That is
+the next slice and the one that moves rows.
+
+#### 4. Why nothing was changed, said plainly
+
+Criterion 4 asks the `called value is not a function` bucket to move. **It does
+not move this slice, and no link-side change could move it** — the boundary
+already resolves and already applies; the applied callee answers null. Three
+independent single-module defects were found on the way (§5), each real, none on
+the failing rows' critical path. Shipping a codegen change into the hottest path
+in the compiler, under a hard "0 legitimate `pass→fail`" bar, that provably
+cannot move the bucket it is measured against, is not worth the regression risk.
+
+**No family measurement is reported and none was needed.** The branch's source
+tree is byte-identical to its base — the diff touches nothing outside
+`plan/issues/` — so there is provably nothing to measure, and a run quoted here
+would be attribution dressed as measurement. The corpus byte A/B and the
+equivalence gate are flat for the same reason.
+
+#### 5. Three reductions handed forward, each ~10 lines, one standalone module
+
+- **A — the receiver is passed as argument 0.** `C[k]("A")` with a
+  compile-time-foldable key on a class object emits
+  `global.get <class singleton>; call $C_one` — the class lands in the first
+  formal and the real arguments shift right. `C[k2]("A","B")` answers
+  `two:function () { [native code] },A`. A silent wrong answer. Visible in the
+  real provider as `Temporal.PlainDate[k]("1976-11-18")` →
+  `Options parameter must be an object, not string`.
+- **B — the call emits nothing.** `function callDyn(o,k,a){return o[k](a);}`
+  compiles to `ref.null extern; return`.
+- **C — a class-derived method value fails every receiver-bearing apply.**
+  `f("A")` and `Reflect.apply(f,C,["A"])` are correct; `b.g("A")` answers
+  `null` and `f.call(C,"A")` / `f.apply(C,["A"])` throw
+  `called value is not a function`. A plain function value is correct in all
+  five shapes. This retires #6483's residual 2 as a boundary property — it
+  reproduces with no link at all.
+
+#### 6. Traps, carried forward and added to
+
+All S11–S18 traps still bite. New:
+
+- **An absent marker says WHICH EXIT fired, not that the function was skipped.**
+  §1. Put a marker on the SUCCESS path too, or the negative space is
+  unreadable.
+- **`typeof <call>` hides a null.** S18 read `typeof Temporal.Duration[k](…)`
+  as "works"; the value was `null` and `typeof null` is `"object"`. Stringify
+  the value, never its `typeof`, when the question is whether a call worked.
+- **Ask the PROVIDER about itself before blaming the boundary.** Injecting one
+  function into the polyfill's namespace literal took ten minutes and moved the
+  attribution four layers. Three consecutive slices blamed the link for a
+  defect that reproduces in one module.
+- **A reduction that disagrees with the brief is the finding.** The synthetic
+  pair refuted the hand-off before any compiler file was opened; everything
+  after that was confirmation.
+
+### Artifacts (S19)
+
+`.tmp/s19/` and `.tmp/s19base/` in
+`/home/user/js2/.claude/worktrees/agent-a93eeeb2d60f16ed8`: censuses `c1`–`c6`
+with their `-base` outs, the real-provider reductions `r1-base.out` and
+`r1-inst{1,2,3,4,5}.out`, the provider-internal diagnostics `diag{1,2,3}.out`,
+the WAT dumps `w1-names.txt` / `sw-{opaque,cmp,c4,c4b}.txt`, and the drivers
+`{single,swat,watnames,diag,probe,pair2}.mjs`.
+
+### Acceptance criterion 4 — S19 update
+
+**NOT met, and deliberately not claimed.** The
+`called value is not a function` bucket does not move. What S19 delivers is the
+corrected attribution — the bucket is not at the link, not in the dispatchers,
+and not in `Duration.from`; it ends at `ce("%Temporal.Duration%")` inside the
+provider — plus three single-module reductions and a named next target. No
+source file changed, so no conformance number is claimed in either direction.
