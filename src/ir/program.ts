@@ -47,6 +47,8 @@ export interface PreparedIrBackendOptions {
   readonly utf8Storage: boolean;
   readonly sourceMap: boolean;
   readonly moduleName: string;
+  /** Explicitly resolved by the caller; never read from the environment during emission. */
+  readonly numberFormat?: Readonly<{ integerBeforeScratch: boolean }>;
   readonly linear?: Readonly<
     Pick<
       LinearOptions,

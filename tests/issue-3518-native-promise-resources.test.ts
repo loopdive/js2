@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createEmptyModule } from "../src/ir/types.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
-import { prepareIrProgramSources, captureTypedIrProgramInput } from "../src/ir/program-source.js";
+import { prepareIrProgramSources } from "../src/ir/program-source.js";
+import { captureNativeFamilyRuntimeSupport } from "./helpers/native-family-runtime-support.js";
 import { prepareTypedIrProgram } from "../src/ir/program-prepare-ir.js";
 import { sourceInput, typedOptions, requireProgram } from "./helpers/typed-program-fixtures.js";
 import { encodeTypedPacket, decodeTypedPacket } from "./helpers/typed-program-transport.mjs";
@@ -14,12 +15,16 @@ import { deriveNativeVectorResourcePlan } from "../src/ir/program/native-vector-
 import { reserveNativeVectorTypes } from "../src/backend/wasmgc/resources/native-vectors.js";
 import {
   reserveNativeClosureResources,
+  declareNativeClosureResources,
+  reserveNativeClosureResourcesPrefix,
+  resumeNativeClosureResources,
   type NativeClosureRequirements,
 } from "../src/backend/wasmgc/resources/native-closures.js";
 import {
   reserveNativePromiseResources,
   declareNativePromiseResources,
   nativePromiseReservationInventory,
+  assertNativePromiseResourcePlanFor,
   fillNativePromiseResources,
   type NativePromiseFillDependencies,
 } from "../src/backend/wasmgc/resources/native-promises.js";
@@ -48,7 +53,7 @@ function prepare(gvnMode: "off" | "on" = "off", replay = false) {
     asyncFamilyProjection: "standalone-native",
   });
   if (source.kind !== "prepared") throw new Error(source.detail);
-  const packet = captureTypedIrProgramInput(source);
+  const packet = captureNativeFamilyRuntimeSupport(source, policy);
   const input = replay ? decodeTypedPacket(encodeTypedPacket(packet)) : packet;
   const program = requireProgram(
     prepareTypedIrProgram(input, {
@@ -86,8 +91,8 @@ function closureRequests(): NativeClosureRequirements["requests"] {
     { kind: "metadata", id: "settle-meta", signatureId: "settle", key: "promise:settle", name: "", length: 1 },
   ];
 }
-function prerequisites(requests = closureRequests(), settleMetadataRequestId = "settle-meta") {
-  const { plan, vectorPlan } = actual();
+function prerequisites(requests = closureRequests(), settleMetadataRequestId = "settle-meta", prepared = actual()) {
+  const { plan, vectorPlan } = prepared;
   const module = createEmptyModule(),
     tx = new PhysicalModuleReservations(module);
   const tag = tx.reserveTag(
@@ -167,6 +172,36 @@ function futureReservationProbe(tx: PhysicalModuleReservations) {
 }
 
 describe("native Promise resource requirements, not whole-family materialization", () => {
+  it.each([false, true])(
+    "authenticates source configuration despite equal recipes, decoded=%s",
+    (replay) => {
+      const prepared = prepare("off", replay);
+      const a = prerequisites(closureRequests(), "settle-meta", prepared);
+      const declaration = declarationFor(a);
+      const different = planNativePromiseResources(prepared.program, backendOptions, prepared.program.runtime[0]!, {
+        hooks: "dispatch",
+        unhandledRejections: "disabled",
+      });
+      expect(different).not.toStrictEqual(a.plan);
+      expect(declareNativePromiseResources(different, declaration.dependencies)).toStrictEqual(declaration);
+      const pack = reserveNativePromiseResources(a.tx, a.plan, a.dependencies, declaration);
+      const fresh = () =>
+        planNativePromiseResources(prepared.program, backendOptions, prepared.program.runtime[0]!, configuration);
+      expect(() => assertNativePromiseResourcePlanFor(a.tx, pack, declaration, fresh())).not.toThrow();
+      const unchanged = unchangedModule(a.module);
+      expect(() => assertNativePromiseResourcePlanFor(a.tx, pack, declaration, different)).toThrow(
+        "Promise source requirements differ from checked source plan",
+      );
+      unchanged();
+      expect(a.tx.state).toBe("reserving");
+      expect(() => assertNativePromiseResourcePlanFor(a.tx, pack, declaration, fresh())).not.toThrow();
+      const twin = prerequisites(closureRequests(), "settle-meta", prepared);
+      reserveNativePromiseResources(twin.tx, twin.plan, twin.dependencies, declarationFor(twin));
+      expect(futureReservationProbe(a.tx)).toStrictEqual(futureReservationProbe(twin.tx));
+    },
+    35000,
+  );
+
   it("rejects structural clones that lose the retained metadata field type identity", () => {
     const a = reserve();
     expect(nativePromiseReservationInventory(a.tx, a.pack, a.declaration)).toHaveLength(25);
@@ -423,6 +458,67 @@ describe("native Promise resource requirements, not whole-family materialization
 });
 
 describe("reservation-only Promise pack controls; missing native dependencies remain a gap", () => {
+  it("admits genuine settle prefix only for reserve/inventory and demands complete closures at fill", () => {
+    const absent = undefined as unknown as NativePromiseFillDependencies;
+    const control = reserve();
+    expect(nativePromiseReservationInventory(control.tx, control.pack, control.declaration)).toHaveLength(
+      control.declaration.declarations.length,
+    );
+    expect(() => fillNativePromiseResources(control.tx, control.pack, absent)).toThrow(
+      "complete native dependencies are missing",
+    );
+    for (const freezeEarly of [false, true]) {
+      const { plan, vectorPlan } = actual(),
+        module = createEmptyModule(),
+        tx = new PhysicalModuleReservations(module);
+      const exceptionTag = tx.reserveTag(
+        "tag",
+        { params: [{ kind: "externref" }], results: [] },
+        { kind: "defined", name: "__exn" },
+      );
+      const vectors = reserveNativeVectorTypes(tx, vectorPlan);
+      const requests = [
+        { kind: "signature", id: "settle", params: [{ kind: "externref" }], results: [], allocationMode: "ordinary" },
+        { kind: "metadata", id: "settle-meta", signatureId: "settle", key: "promise:settle", name: "", length: 1 },
+        { kind: "signature", id: "delay", params: [], results: [], allocationMode: "host-one-shot" },
+      ] as const;
+      const closurePlan = declareNativeClosureResources({
+        key: "staged",
+        startingClosureCounter: 0,
+        requests,
+        referenceTypeKeys: [],
+      });
+      const closures = reserveNativeClosureResourcesPrefix(
+        tx,
+        { key: "staged", startingClosureCounter: 0, requests, referenceTypes: [] },
+        closurePlan,
+        2,
+      );
+      const metadata = closures.metadata[0]!.binding;
+      const declaration = declareNativePromiseResources(plan, {
+        argumentArrayKey: vectors.layouts.find((row) => row.element === "externref")!.array.key,
+        closureRootKey: closures.root.key,
+        settleMetadataKey: metadata.type.key,
+      });
+      const pack = reserveNativePromiseResources(
+        tx,
+        plan,
+        { vectors, exceptionTag, closures, settleMetadataRequestId: "settle-meta" },
+        declaration,
+      );
+      expect(nativePromiseReservationInventory(tx, pack, declaration)).toHaveLength(declaration.declarations.length);
+      if (freezeEarly) tx.freezeReservations();
+      expect(() => fillNativePromiseResources(tx, pack, absent)).toThrow(
+        freezeEarly ? "unfinished closure pack" : "incomplete closure reservation population",
+      );
+      if (!freezeEarly) {
+        resumeNativeClosureResources(tx, closures, 3);
+        expect(closures.metadata[0]!.binding).toBe(metadata);
+        expect(nativePromiseReservationInventory(tx, pack, declaration)).toHaveLength(declaration.declarations.length);
+        expect(() => fillNativePromiseResources(tx, pack, absent)).toThrow("complete native dependencies are missing");
+      }
+    }
+  });
   it("joins genuine metadata while preserving an alternate first-signature root", () => {
     const a = reserve();
     expect(a.dependencies.closures.root).toBe(a.dependencies.closures.signatures[0]!.binding.type);
@@ -521,7 +617,7 @@ describe("reservation-only Promise pack controls; missing native dependencies re
           : mutation === "stale"
             ? "stale closure request sequence"
             : mutation === "missing-request"
-              ? "missing or ambiguous settle metadata request"
+              ? "missing or future closure request"
               : "invalid settle metadata";
       expect(() => reserveNativePromiseResources(tx, plan, dependencies)).toThrow(error);
       assertUnchanged();

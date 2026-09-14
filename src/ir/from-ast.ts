@@ -804,6 +804,8 @@ export interface AstToIrOptions {
   readonly exported?: boolean;
   /** Explicit string-typed unary numeric conversion; omission keeps historical lowering. */
   readonly stringNumericCoercion?: "number-boundary";
+  /** Explicit semantic f64 throw boxing; provider admission remains a separate preparation decision. */
+  readonly numericThrow?: "number-boundary";
   /** Authoritative identity for the main artifact and exact feature-plan owner. */
   readonly ownerUnitId: IrUnitId;
   /**
@@ -1046,6 +1048,11 @@ function lowerConstructorBody(
     for (const statement of statements) lowerStmt(statement, cx);
   }
   builder.terminate({ kind: "return", values: [thisValue] });
+}
+
+/** Preserve explicit numeric projections across top-level and lifted contexts. */
+function numericProjectionOptions(options: Pick<AstToIrOptions, "stringNumericCoercion" | "numericThrow">) {
+  return { stringNumericCoercion: options.stringNumericCoercion, numericThrow: options.numericThrow };
 }
 
 export function lowerFunctionAstToIr(
@@ -1333,7 +1340,7 @@ export function lowerFunctionAstToIr(
     funcName: name,
     ownerUnitId: options.ownerUnitId,
     returnType,
-    stringNumericCoercion: options.stringNumericCoercion,
+    ...numericProjectionOptions(options),
     logicalVectorTypes: options.logicalVectorTypes,
     logicalVectorConsumed,
     calleeTypes: options.calleeTypes,
@@ -2346,6 +2353,7 @@ interface NestedCapture {
 interface LowerCtx {
   readonly builder: IrFunctionBuilder;
   readonly stringNumericCoercion?: AstToIrOptions["stringNumericCoercion"];
+  readonly numericThrow?: AstToIrOptions["numericThrow"];
   readonly logicalVectorTypes?: AstToIrOptions["logicalVectorTypes"];
   readonly logicalVectorConsumed?: Set<ts.Node>;
   readonly scope: Map<string, ScopeBinding>;
@@ -3420,6 +3428,20 @@ function validateVectorInitializer(
   }
 }
 
+function resolveMutableLocalRepresentation(
+  inferred: IrType,
+  widenDynamic: boolean,
+  cx: LowerCtx,
+): IrSlotRepresentation | null {
+  const logicalType = inferred.kind === "dynamic" && widenDynamic ? irDynamic() : inferred;
+  if (logicalType.kind === "support-ref")
+    demoteToLegacy(
+      "operand-coercion-unsupported",
+      `ir/from-ast: support-ref cannot use a physical mutable slot (${cx.funcName})`,
+    );
+  return resolveIrSlotRepresentation(logicalType, cx.resolver, cx.funcName);
+}
+
 function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
   const isConst = !!(stmt.declarationList.flags & ts.NodeFlags.Const);
   for (const d of stmt.declarationList.declarations) {
@@ -3691,8 +3713,7 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
     // Logical string, dynamic, and vector values use resolver-selected
     // backend storage while identifier reads retain their logical IR type.
     if (!isConst && cx.mutatedLets.has(name)) {
-      const logicalType = inferred.kind === "dynamic" && widenDynamic ? irDynamic() : inferred;
-      const representation = resolveIrSlotRepresentation(logicalType, cx.resolver, cx.funcName);
+      const representation = resolveMutableLocalRepresentation(inferred, widenDynamic, cx);
       if (representation) {
         const slotIndex = cx.builder.declareSlot(name, representation.storageType);
         cx.builder.emitSlotWrite(slotIndex, value);
@@ -3971,6 +3992,7 @@ function coerceIrNumeric(value: IrValueId, target: IrType, cx: LowerCtx): IrValu
 
 /** Short debug string for IrType, used in error messages. */
 function describeIrType(t: IrType): string {
+  if (t.kind === "support-ref") return `support-ref<${t.ref.binding.bindingId}>${t.nullable ? "?" : ""}`;
   if (t.kind === "val") return t.val.kind;
   if (t.kind === "string") return "string";
   if (t.kind === "vec") return `vec<${describeIrType(t.elementType)}>${t.nullable ? "?" : ""}`;
@@ -5275,6 +5297,8 @@ function staticTypeOfFor(t: IrType): string | null {
  */
 function isIrTypeNullable(t: IrType): boolean {
   switch (t.kind) {
+    case "support-ref":
+      return t.nullable;
     case "object":
     case "class":
     case "string":
@@ -9897,6 +9921,11 @@ function lowerYield(expr: ts.YieldExpression, cx: LowerCtx): void {
  */
 function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts.Expression): IrValueId {
   const declared = cx.returnType;
+  const supportActual = cx.builder.typeOf(value);
+  if (declared?.kind === "support-ref" || supportActual.kind === "support-ref") {
+    if (declared && irTypeEquals(supportActual, declared)) return value;
+    demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: incompatible support-ref return in ${cx.funcName}`);
+  }
   if (declared?.kind === "callable") {
     const actual = cx.builder.typeOf(value);
     if (actual.kind === "callable" && closureSignatureEquals(actual.signature, declared.signature)) return value;
@@ -15151,7 +15180,7 @@ function liftNestedFunction(
     funcName: liftedName,
     ownerUnitId: cx.ownerUnitId,
     returnType: signature.returnType,
-    stringNumericCoercion: cx.stringNumericCoercion,
+    ...numericProjectionOptions(cx),
     calleeTypes: cx.calleeTypes,
     directCalls: cx.directCalls,
     importedCalls: cx.importedCalls,
@@ -15293,7 +15322,7 @@ function liftClosureBody(
     funcName: liftedName,
     ownerUnitId: cx.ownerUnitId,
     returnType: signature.returnType,
-    stringNumericCoercion: cx.stringNumericCoercion,
+    ...numericProjectionOptions(cx),
     calleeTypes: cx.calleeTypes,
     directCalls: cx.directCalls,
     importedCalls: cx.importedCalls,
@@ -15542,12 +15571,11 @@ function collectBindingNames(name: ts.BindingName, out: Set<string>): void {
  *
  * Coercion strategy mirrors the legacy
  * `compileThrowStatement` in `src/codegen/statements/exceptions.ts`:
- *   - f64 / i32                → `__box_number(value)` host import.
- *                                 Slice 9 defers numeric throws — they
- *                                 require the box helper; numeric
- *                                 throws are rare and the function falls
- *                                 back to legacy via the unsupported-
- *                                 expression error.
+ *   - f64                      → `js.number.box` only under the explicit
+ *                                 numericThrow semantic projection. Its
+ *                                 provider is checked during preparation.
+ *   - f64 without projection / i32
+ *                              → the historical typed legacy refusal.
  *   - externref                → no-op; passed through.
  *   - object / class /
  *     closure / string / ref / ref_null
@@ -15567,6 +15595,16 @@ function lowerThrowStatement(stmt: ts.ThrowStatement, cx: LowerCtx): void {
   const value = lowerExpr(stmt.expression, cx, irVal({ kind: "externref" }));
   const valueType = cx.builder.typeOf(value);
   const valTy = asVal(valueType);
+  if (
+    cx.numericThrow === "number-boundary" &&
+    valueType.kind === "val" &&
+    valTy?.kind === "f64" &&
+    (valueType.signed ?? true)
+  ) {
+    const boxed = cx.builder.emitIntrinsic("js.number.box", [value]);
+    cx.builder.emitThrow(boxed);
+    return;
+  }
   if (valTy?.kind === "f64" || valTy?.kind === "i32") {
     // Slice 9 still defers numerics (they need a box helper). Class instances
     // are lowered again (#4097): #4035 declined them for a render gap that the

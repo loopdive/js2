@@ -32,8 +32,15 @@ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { emitSelfHostedFunc } from "./stdlib-selfhost.js";
 import { numToStringRadixDef } from "../stdlib/number-format.js";
 
-const L = (i: number): Instr => ({ op: "local.get", index: i });
-const TRUNC: Instr = { op: "i32.trunc_sat_f64_s" };
+import {
+  buildNumberFormatNewBody,
+  buildNumberFormatGetBody,
+  buildNumberFormatSetBody,
+  buildNumberFormatFinBody,
+  buildNumberFormatTrapBody,
+  buildNumberFormatRadixThunkBody,
+} from "../runtime/wasmgc/values/number-format-radix-bodies.js";
+import { numberFormatSignatures } from "../runtime/wasmgc/values/number-format-bodies.js";
 
 function emitFunc(
   ctx: CodegenContext,
@@ -53,98 +60,36 @@ function emitFunc(
 /** Materialize the `__nfd_*` buffer micro-kernels (idempotent via funcMap). */
 function ensureNumFmtBufKernels(ctx: CodegenContext): void {
   if (ctx.funcMap.get("__nfd_new") !== undefined) return;
-  const strTypeIdx = ctx.nativeStrTypeIdx;
-  const strDataTypeIdx = ctx.nativeStrDataTypeIdx;
-  const bufRef: ValType = { kind: "ref_null", typeIdx: strDataTypeIdx };
-  const f64: ValType = { kind: "f64" };
-  const i32: ValType = { kind: "i32" };
-  const anyStrRef: ValType = { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
-
+  const types = {
+    dataTypeIdx: ctx.nativeStrDataTypeIdx,
+    nativeStringTypeIdx: ctx.nativeStrTypeIdx,
+    anyStringTypeIdx: ctx.anyStrTypeIdx,
+  };
+  const signatures = numberFormatSignatures<ValType>({
+    data: { kind: "ref", typeIdx: types.dataTypeIdx },
+    nullableData: { kind: "ref_null", typeIdx: types.dataTypeIdx },
+    anyString: { kind: "ref", typeIdx: types.anyStringTypeIdx },
+  });
+  const emit = (
+    name: string,
+    signature: { params: ValType[]; results: ValType[] },
+    built: { locals: LocalDef[]; body: Instr[] },
+  ): void => {
+    emitFunc(ctx, name, signature.params, signature.results, built.locals, built.body);
+  };
   // __nfd_new(cap) -> fresh zero-filled scratch buffer
-  emitFunc(ctx, "__nfd_new", [f64], [bufRef], [], [L(0), TRUNC, { op: "array.new_default", typeIdx: strDataTypeIdx }]);
+  emit("__nfd_new", signatures.new, buildNumberFormatNewBody(types));
   // __nfd_get(buf, i) -> f64 code unit
-  emitFunc(
-    ctx,
-    "__nfd_get",
-    [bufRef, f64],
-    [f64],
-    [],
-    [L(0), L(1), TRUNC, { op: "array.get_u", typeIdx: strDataTypeIdx }, { op: "f64.convert_i32_u" }],
-  );
+  emit("__nfd_get", signatures.get, buildNumberFormatGetBody(types));
   // __nfd_set(buf, i, v)
-  emitFunc(
-    ctx,
-    "__nfd_set",
-    [bufRef, f64, f64],
-    [],
-    [],
-    [L(0), L(1), TRUNC, L(2), TRUNC, { op: "array.set", typeIdx: strDataTypeIdx }],
-  );
+  emit("__nfd_set", signatures.set, buildNumberFormatSetBody(types));
   // __num_fmt_trap() — unreachable (hand-parity for the unsafe-integer arm)
-  emitFunc(ctx, "__num_fmt_trap", [], [], [], [{ op: "unreachable" }]);
+  emit("__num_fmt_trap", signatures.trap, buildNumberFormatTrapBody());
 
   // __nfd_fin(buf, len) -> (ref $AnyString): copy buf[0..len) into a tight
   // $NativeString — the same copy loop as __num_fmt_finalize, f64-ABI, struct
   // result (the legacy thunk widens to externref).
-  const L_BUF = 0;
-  const L_LENF = 1;
-  const L_LEN = 2;
-  const L_OUT = 3;
-  const L_I = 4;
-  emitFunc(
-    ctx,
-    "__nfd_fin",
-    [bufRef, f64],
-    [anyStrRef],
-    [
-      { name: "len", type: i32 },
-      { name: "out", type: { kind: "ref_null", typeIdx: strDataTypeIdx } },
-      { name: "i", type: i32 },
-    ],
-    [
-      L(L_LENF),
-      TRUNC,
-      { op: "local.set", index: L_LEN },
-      L(L_LEN),
-      { op: "array.new_default", typeIdx: strDataTypeIdx },
-      { op: "local.set", index: L_OUT },
-      { op: "i32.const", value: 0 },
-      { op: "local.set", index: L_I },
-      {
-        op: "block",
-        blockType: { kind: "empty" },
-        body: [
-          {
-            op: "loop",
-            blockType: { kind: "empty" },
-            body: [
-              L(L_I),
-              L(L_LEN),
-              { op: "i32.ge_s" },
-              { op: "br_if", depth: 1 },
-              L(L_OUT),
-              { op: "ref.as_non_null" },
-              L(L_I),
-              L(L_BUF),
-              L(L_I),
-              { op: "array.get_u", typeIdx: strDataTypeIdx },
-              { op: "array.set", typeIdx: strDataTypeIdx },
-              L(L_I),
-              { op: "i32.const", value: 1 },
-              { op: "i32.add" },
-              { op: "local.set", index: L_I },
-              { op: "br", depth: 0 },
-            ],
-          },
-        ],
-      },
-      L(L_LEN),
-      { op: "i32.const", value: 0 },
-      L(L_OUT),
-      { op: "ref.as_non_null" },
-      { op: "struct.new", typeIdx: strTypeIdx },
-    ],
-  );
+  emit("__nfd_fin", signatures.fin, buildNumberFormatFinBody(types));
 }
 
 /**
@@ -159,13 +104,11 @@ export function emitSelfHostedToStringRadix(ctx: CodegenContext): void {
   const bufRef: IrType = irVal({ kind: "ref_null", typeIdx: ctx.nativeStrDataTypeIdx });
   const shIdx = emitSelfHostedFunc(ctx, numToStringRadixDef(bufRef));
 
-  const f64: ValType = { kind: "f64" };
-  emitFunc(
-    ctx,
-    "number_toString_radix",
-    [f64, f64],
-    [{ kind: "externref" }],
-    [],
-    [L(0), L(1), { op: "call", funcIdx: shIdx }, { op: "extern.convert_any" }],
-  );
+  const signature = numberFormatSignatures<ValType>({
+    data: { kind: "ref", typeIdx: ctx.nativeStrDataTypeIdx },
+    nullableData: { kind: "ref_null", typeIdx: ctx.nativeStrDataTypeIdx },
+    anyString: { kind: "ref", typeIdx: ctx.anyStrTypeIdx },
+  }).radixThunk;
+  const built = buildNumberFormatRadixThunkBody(shIdx);
+  emitFunc(ctx, "number_toString_radix", signature.params, signature.results, built.locals, built.body);
 }

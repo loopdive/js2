@@ -77,6 +77,10 @@ export interface NativeClosureDeclarationPlan extends NativeResourceRecipe {
 export function declareNativeClosureResources(
   requirements: NativeClosureDeclarationRequirements,
 ): NativeClosureDeclarationPlan {
+  return walkClosureDeclarations(requirements).plan;
+}
+function walkClosureDeclarations(requirements: NativeClosureDeclarationRequirements) {
+  const stepEnds: number[] = [];
   if (
     !requirements.key ||
     !Number.isSafeInteger(requirements.startingClosureCounter) ||
@@ -202,6 +206,7 @@ export function declareNativeClosureResources(
       }
       metadata.push({ requestId: request.id, signatureRequestId: request.signatureId, typeKey: binding.typeKey });
     } else fail("unknown closure request kind");
+    stepEnds.push(reservationSteps.length);
   }
   if (!rootKey) fail("missing first signature/root");
   if (used.size !== external.size) fail("unused concrete reference prerequisite");
@@ -216,7 +221,22 @@ export function declareNativeClosureResources(
     reservationSteps,
   };
   preflightNativeResourceRecipe(plan, requirements.referenceTypeKeys);
-  return freezeNativeResourceRecipe(plan);
+  return { plan: freezeNativeResourceRecipe(plan), stepEnds: Object.freeze(stepEnds) };
+}
+function validateCut(plan: NativeClosureDeclarationPlan, end: number): void {
+  const requests = plan.requirements.requests;
+  if (!Number.isSafeInteger(end) || end < 1 || end > requests.length) fail("invalid closure request cut");
+  if (end < requests.length && requests.slice(end).some((request) => request.kind === "metadata"))
+    fail("metadata cannot remain after a closure pause");
+}
+export function nativeClosureReservationStepEnd(
+  plan: NativeClosureDeclarationPlan,
+  endRequestExclusive: number,
+): number {
+  const canonical = walkClosureDeclarations(plan.requirements);
+  same(plan, canonical.plan, "substituted closure declaration plan");
+  validateCut(plan, endRequestExclusive);
+  return canonical.stepEnds[endRequestExclusive - 1]!;
 }
 
 export function instantiateNativeClosureRequirements(
@@ -306,16 +326,63 @@ export interface NativeClosureReservations {
   readonly registrations: readonly NativeClosureRegistration[];
 }
 type MutableInfo = { -readonly [K in keyof NativeClosureInfo]: NativeClosureInfo[K] };
-const owners = new WeakMap<
-  NativeClosureReservations,
-  {
-    tx: PhysicalModuleReservations;
-    requirements: NativeClosureRequirements;
-    snapshot: unknown;
-    external: readonly TypeReservation[];
-    plan: NativeClosureDeclarationPlan;
+interface ClosureOwner {
+  tx: PhysicalModuleReservations;
+  requirements: NativeClosureRequirements;
+  snapshot: unknown;
+  external: readonly TypeReservation[];
+  plan: NativeClosureDeclarationPlan;
+  stepEnds: readonly number[];
+  requestCursor: number;
+  operationCursor: number;
+  complete: boolean;
+  failed: boolean;
+  engine: Generator<NativeClosureReservations, NativeClosureReservations, void>;
+  evidence: readonly PrefixEvidence[];
+}
+interface PrefixEvidence {
+  object: object;
+  keys: readonly PropertyKey[];
+  descriptors: PropertyDescriptorMap;
+}
+const owners = new WeakMap<NativeClosureReservations, ClosureOwner>();
+function prefixEvidence(pack: NativeClosureReservations): readonly PrefixEvidence[] {
+  const result: PrefixEvidence[] = [],
+    seen = new Set<object>();
+  const visit = (value: unknown): void => {
+    if (value === null || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+    const keys = Reflect.ownKeys(value),
+      descriptors = Object.getOwnPropertyDescriptors(value);
+    result.push({ object: value, keys, descriptors });
+    for (const key of keys) {
+      const descriptor = Reflect.get(descriptors, key) as PropertyDescriptor;
+      if (!Object.hasOwn(descriptor, "value")) fail("closure prefix contains an accessor");
+      visit(descriptor.value);
+    }
+  };
+  visit(pack);
+  return result;
+}
+function assertPrefixEvidence(owner: ClosureOwner): void {
+  for (const row of owner.evidence) {
+    const keys = Reflect.ownKeys(row.object);
+    if (keys.length !== row.keys.length || keys.some((key, index) => key !== row.keys[index]))
+      fail("changed issued closure prefix keys");
+    for (const key of keys) {
+      const expected = Reflect.get(row.descriptors, key) as PropertyDescriptor;
+      const actual = Object.getOwnPropertyDescriptor(row.object, key)!;
+      if (
+        !Object.hasOwn(actual, "value") ||
+        !Object.is(actual.value, expected.value) ||
+        actual.writable !== expected.writable ||
+        actual.enumerable !== expected.enumerable ||
+        actual.configurable !== expected.configurable
+      )
+        fail("changed issued closure prefix identity/value");
+    }
   }
->();
+}
 function fail(detail: string): never {
   throw new Error(`native closures: ${detail}`);
 }
@@ -411,16 +478,80 @@ function validateRequests(tx: PhysicalModuleReservations, requirements: NativeCl
   if (!Number.isSafeInteger(requirements.startingClosureCounter + cache.size)) fail("closure counter overflow");
 }
 
-/** No trampoline/body/fill API: these are actual type and lifted-signature resources. */
+/** Atomic compatibility entry point; the same owner consumes the complete cut. */
 export function reserveNativeClosureResources(
   tx: PhysicalModuleReservations,
   requirements: NativeClosureRequirements,
   expectedPlan?: NativeClosureDeclarationPlan,
 ): NativeClosureReservations {
-  validateRequests(tx, requirements); // Entire population and all foreign tokens checked BEFORE allocation.
-  const derivedPlan = declareNativeClosureResources(symbolicRequirements(requirements));
-  if (expectedPlan) same(derivedPlan, expectedPlan, "substituted closure declaration plan");
-  const plan = expectedPlan ?? derivedPlan;
+  validateRequests(tx, requirements);
+  const plan = expectedPlan ?? declareNativeClosureResources(symbolicRequirements(requirements));
+  return reserveNativeClosureResourcesPrefix(tx, requirements, plan, requirements.requests.length);
+}
+export function reserveNativeClosureResourcesPrefix(
+  tx: PhysicalModuleReservations,
+  requirements: NativeClosureRequirements,
+  expectedPlan: NativeClosureDeclarationPlan,
+  endRequestExclusive: number,
+): NativeClosureReservations {
+  validateRequests(tx, requirements);
+  const canonical = walkClosureDeclarations(symbolicRequirements(requirements));
+  same(canonical.plan, expectedPlan, "substituted closure declaration plan");
+  validateCut(expectedPlan, endRequestExclusive);
+  const owner: ClosureOwner = {
+    tx,
+    requirements,
+    snapshot: structuredClone(requestData(requirements)),
+    external: Object.freeze([...requirements.referenceTypes]),
+    plan: expectedPlan,
+    stepEnds: canonical.stepEnds,
+    requestCursor: 0,
+    operationCursor: 0,
+    complete: false,
+    failed: false,
+    evidence: [],
+    engine: reserveClosureEngine(tx, requirements, expectedPlan, canonical.stepEnds),
+  };
+  return advanceClosureOwner(owner, endRequestExclusive);
+}
+function advanceClosureOwner(owner: ClosureOwner, end: number): NativeClosureReservations {
+  try {
+    let pack: NativeClosureReservations | undefined;
+    while (owner.requestCursor < end) {
+      const result = owner.engine.next();
+      pack = result.value;
+      owner.requestCursor++;
+      owner.operationCursor = owner.stepEnds[owner.requestCursor - 1]!;
+      owner.complete = result.done === true;
+      if (owner.complete !== (owner.requestCursor === owner.requirements.requests.length))
+        fail("closure engine completion mismatch");
+    }
+    if (!pack) fail("closure request cursor did not advance");
+    owners.set(pack, owner);
+    owner.evidence = prefixEvidence(pack);
+    return pack;
+  } catch (error) {
+    owner.failed = true;
+    throw error;
+  }
+}
+export function resumeNativeClosureResources(
+  tx: PhysicalModuleReservations,
+  pack: NativeClosureReservations,
+  endRequestExclusive: number,
+): NativeClosureReservations {
+  const owner = requireClosureOwner(tx, pack);
+  if (owner.complete) fail("closure pack already complete");
+  validateCut(owner.plan, endRequestExclusive);
+  if (endRequestExclusive <= owner.requestCursor) fail("closure resume must advance");
+  return advanceClosureOwner(owner, endRequestExclusive);
+}
+function* reserveClosureEngine(
+  tx: PhysicalModuleReservations,
+  requirements: NativeClosureRequirements,
+  plan: NativeClosureDeclarationPlan,
+  stepEnds: readonly number[],
+): Generator<NativeClosureReservations, NativeClosureReservations, void> {
   const types = new Map(requirements.referenceTypes.map((token) => [token.key, token]));
   let cursor = 0;
   const reserve = (key: string, self?: number): TypeReservation => {
@@ -435,7 +566,6 @@ export function reserveNativeClosureResources(
     types.set(key, token);
     return token;
   };
-  const snapshot = structuredClone(requestData(requirements));
   const cache = new Map<string, NativeClosureWrapperBinding>();
   const byId = new Map<string, NativeClosureWrapperBinding>();
   const metaCache = new Map<string, NativeClosureMetadataBinding>();
@@ -455,6 +585,8 @@ export function reserveNativeClosureResources(
   // subsequent ledger operation either appends here or interns an older type.
   // No external allocator/callback runs inside this synchronous reservation.
   let nextTypeIndex = -1;
+  let pack: { -readonly [K in keyof NativeClosureReservations]: NativeClosureReservations[K] } | undefined;
+  let requestCursor = 0;
   for (const request of requirements.requests) {
     if (request.kind === "signature") {
       const key = signatureKey(request);
@@ -525,6 +657,11 @@ export function reserveNativeClosureResources(
       }
       metadata.push(Object.freeze({ id: request.id, binding }));
     }
+    requestCursor++;
+    if (cursor !== stepEnds[requestCursor - 1]) fail("closure recipe operation boundary mismatch");
+    pack ??= { root: root!, signatures, metadata, resultingClosureCounter: counter, registrations };
+    pack.resultingClosureCounter = counter;
+    if (requestCursor < requirements.requests.length) yield pack;
   }
   function observe(binding: NativeClosureWrapperBinding, request: NativeClosureSignatureRequest): void {
     const info = binding.info as MutableInfo;
@@ -551,24 +688,20 @@ export function reserveNativeClosureResources(
     fail("unconsumed closure recipe operations");
   for (const binding of cache.values()) Object.freeze(binding);
   for (const binding of metaCache.values()) Object.freeze(binding);
-  const pack = Object.freeze({
-    root: root!,
-    signatures: Object.freeze(signatures),
-    metadata: Object.freeze(metadata),
-    resultingClosureCounter: counter,
-    registrations: Object.freeze(registrations.map((record) => Object.freeze(record))),
-  });
-  owners.set(pack, { tx, requirements, snapshot, external: Object.freeze([...requirements.referenceTypes]), plan });
-  return pack;
+  Object.freeze(signatures);
+  Object.freeze(metadata);
+  for (const record of registrations) Object.freeze(record);
+  Object.freeze(registrations);
+  return Object.freeze(pack!);
 }
 
 /** Authenticate the exact issued pack at reserve time or after the shared freeze. */
-export function requireNativeClosureReservations(
-  tx: PhysicalModuleReservations,
-  pack: NativeClosureReservations,
-): NativeClosureReservations {
+function requireClosureOwner(tx: PhysicalModuleReservations, pack: NativeClosureReservations): ClosureOwner {
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) fail("foreign or copied closure pack");
+  if (owner.failed) fail("failed closure reservation owner");
+  if (!owner.complete && tx.state !== "reserving") fail("unfinished closure pack requires reserving phase");
+  assertPrefixEvidence(owner);
   same(requestData(owner.requirements), owner.snapshot, "stale closure request sequence");
   same(
     declareNativeClosureResources(symbolicRequirements(owner.requirements)),
@@ -590,6 +723,25 @@ export function requireNativeClosureReservations(
     if (tx.state === "reserving") tx.assertTypeReservation(token);
     else if (tx.physicalIndex(token) !== token.typeIndex) fail("closure type coordinate mismatch");
   }
+  return owner;
+}
+export function requireNativeClosureReservations(
+  tx: PhysicalModuleReservations,
+  pack: NativeClosureReservations,
+): NativeClosureReservations {
+  const owner = requireClosureOwner(tx, pack);
+  if (!owner.complete) fail("incomplete closure reservation population");
+  return pack;
+}
+export function requireNativeClosureReservationPrefix(
+  tx: PhysicalModuleReservations,
+  pack: NativeClosureReservations,
+  requestId: string,
+): NativeClosureReservations {
+  const owner = requireClosureOwner(tx, pack);
+  const index = owner.requirements.requests.findIndex((request) => request.id === requestId);
+  if (index < 0 || index >= owner.requestCursor) fail("missing or future closure request");
+  if (owner.complete) return requireNativeClosureReservations(tx, pack);
   return pack;
 }
 
