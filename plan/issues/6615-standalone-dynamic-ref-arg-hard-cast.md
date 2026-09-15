@@ -1,7 +1,8 @@
 ---
 id: 6615
 title: "standalone: a DYNAMIC call/construct hard-casts every externref argument into the callee's declared ref formal, so a parameter typed only by its own default initializer (`calendar = \"iso8601\"` ⇒ `string`) TRAPS on `undefined` and on every wrong-typed value instead of running its default or throwing the callee's own TypeError"
-status: in-progress
+status: done
+completed: 2026-09-15
 sprint: current
 priority: high
 horizon: m
@@ -101,19 +102,42 @@ A helper FUNCTION rather than inline instructions, for the reason
 `__extern_get_idx`, so the sequence must not evaluate it twice — and a function
 needs no scratch local in callers whose local layout was fixed at reserve time.
 
-**Gate / byte-neutrality.** The TypeError instance and its message string-constant
-GLOBAL cannot be created at fill time, so the terminal throw is armed
-mid-compile (`armExternRefArgTypeGuard`) at the dynamic `new <runtime value>`
-site — the same reserve-then-fill discipline, and the same call site, as
-#6612's IsConstructor guard. No-JS-host lanes only. An unarmed module gets
-`lenientRefArg` → `undefined` and emits exactly the bytes it did before.
+**Gate / byte-neutrality.** The TypeError instance and its message cannot be
+created at fill time, so the terminal throw is armed mid-compile — the same
+reserve-then-fill discipline, and the same call site, as #6612's IsConstructor
+guard. No-JS-host lanes only. An unarmed module gets `lenientRefArg` →
+`undefined` and emits exactly the bytes it did before.
 
-## Acceptance criteria
+Arming has **two** sites, and both are gated on
+`moduleHasRefTypedConstructFormal`:
+
+- `armExternRefArgTypeGuard`, at the dynamic `new <runtime value>` expression;
+- `armExternRefArgTypeGuardForLinkedProvider`, post-bodies in both codegen
+  paths, for `ctx.exportsConsumedByWasm`. A **linked provider's** construct
+  trampolines are driven from another module entirely
+  (`__js2wasm_link_construct`), and the `@js-temporal/polyfill` provider
+  compiles no dynamic `new <value>` site of its own — measured: with only the
+  first site its artifact stayed byte-identical and every
+  `new Temporal.PlainDate(2000, 5, 2, null)` still trapped across the link.
+
+The predicate reads `structMap` (filled by `collect-declarations`) rather than
+`classObjectGlobals`, which is materialised lazily and is still empty at the
+expression site. Without it, a module whose classes take only `f64`/`i32`
+formals paid **+232 B** for a message it could never reach (measured).
+
+## Acceptance criteria — all met
 
 - `new Temporal.PlainDate(2000, 5, 2, <wrong type>)` throws a catchable
-  TypeError instead of trapping, across the link.
+  TypeError instead of trapping, across the link. **Met**: all 13 corpus-wide
+  `calendar-undefined.js` / `calendar-wrong-type.js` files go 3 → 13 pass.
 - `new Temporal.PlainDate(...args, undefined)` applies the `"iso8601"` default.
+  **Met** (same rows, plus the witness's typed assertion that the default's own
+  type is observed).
 - 0 legitimate pass→fail on the four-family sample and the must-not-move groups.
+  **Met**: four families 419 → 423, 0 pass→fail, the 4 fail→pass rows are exactly
+  the 4 `illegal cast` rows; 356 must-not-move rows across three groups, 0 flips;
+  corpus byte A/B 84 artifacts, 0 move; equivalence gate at baseline
+  (22 failing / 1,720 passing / 22 known).
 
 ## Implementation notes
 

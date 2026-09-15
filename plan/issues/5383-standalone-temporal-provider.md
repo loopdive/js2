@@ -7864,3 +7864,290 @@ Everything in S26 §Traps still holds. Two additions:
   nothing about any of them. Drive each case as its own module
   (`.tmp/s27/each.mjs`); it costs one compile per case and is the only form in
   which a spelling matrix means anything.
+
+### S28 findings (2026-09-15) — the ninth cause is a marshal that answers a DECLARED type where the caller supplied a DYNAMIC value. Four families, 419 → 423; corpus-wide the two target families go 3 → 13 of 13
+
+Full write-up in
+[#6615](6615-standalone-dynamic-ref-arg-hard-cast.md). Branch
+`issue-5383-standalone-temporal-s28`, based on S27's tip `1438da85ab`; the fix
+is commits `a306c24168` + `8828ace5a5` + `0406214506`.
+
+The 480-row sample moves **+4, 0 pass→fail**, and the four rows that move are
+exactly the four `illegal cast in __class_construct_dispatch()` rows S27
+recommended. Corpus-wide the two target families are **13 files and they go
+3 → 13 pass** — every one of them.
+
+#### 1. The defect — a hard `ref.cast` into a formal typed by its own default
+
+```js
+class PD { constructor(y, m, d, cal = "iso8601") { this.t = typeof cal; } }
+function mk(C, a, b, c, d) { return new C(a, b, c, d); }
+
+mk(PD, 2020, 12, 24, undefined);  // TRAP illegal cast — spec: run the default
+mk(PD, 2020, 12, 24, null);       // TRAP illegal cast
+mk(PD, 2020, 12, 24, 1);          // TRAP illegal cast
+mk(PD, 2020, 12, 24, {});         // TRAP illegal cast
+mk(PD, 2020, 12, 24, Symbol());   // TRAP illegal cast
+mk(PD, 2020, 12, 24, "gregory");  // "gregory" — only a MATCHING type survives
+mk3(PD, 2020, 12, 24);            // "iso8601" — a MISSING argument is fine
+```
+
+`externArgCoercionInstrs`' ref arm was two instructions — `any.convert_extern`
++ a NON-null `ref.cast` — and a failed `ref.cast` is a wasm **trap**, which
+kills the instance so no `catch` in the program can see it. The formal is
+whatever the checker inferred, and `cal = "iso8601"` makes that `string`
+(lowered to `(ref null $string)`). **The declared type describes the DEFAULT,
+not the argument**, and a dynamic caller is under no obligation to honour it.
+
+S26 reduced this in one module and named the mechanism; that reduction
+reproduced exactly, line for line (`.tmp/s28/cases-a.mjs`, 16 spellings, each
+its own module).
+
+#### 2. The fix — three arms, and arms 1 and 3 are reachable ONLY where the cast already trapped
+
+`src/codegen/extern-arg-marshal.ts` mints, per formal type, a lenient
+replacement for the inline cast: `__extern_arg_ref_<typeIdx>[_opt]
+(externref) -> (ref [null] $T)`.
+
+1. **`undefined` into a DEFAULTED nullable formal → `ref.null`.** The callee's
+   parameter prologue fires a ref-typed default on `ref.is_null`
+   (`function-body.ts`), so a typed null IS the "run your default" signal — the
+   ref-lane twin of #5380's f64 sNaN sentinel.
+2. **A value that inhabits `$T` → the same cast as before**, byte for byte.
+   `ref.test (ref $T)` succeeds exactly where `ref.cast (ref $T)` does.
+3. **Anything else → a catchable `TypeError` INSTANCE** (`e instanceof
+   TypeError` **and** `e.constructor === TypeError`, measured — `assert.throws`
+   reads both). It is also what the callee itself would have done for all ten
+   values `calendar-wrong-type.js` passes: the polyfill's `Ve` is
+   `if ("string" != typeof e) throw new TypeError(…)`.
+
+**That structure is the whole safety argument, and it is a proof rather than a
+sample**: arm 2 is the old behaviour, and arms 1 and 3 are reached only for
+values that previously TRAPPED. A trap always fails a test262 row, so the change
+is monotone — 0 pass→fail is not a measurement that came out lucky.
+
+A helper FUNCTION rather than inline instructions, for the reason
+`ensureUnboxNumberOrOmitted` already is one: the argument may come from
+`__extern_get_idx`, so the sequence must not evaluate it twice — and a function
+needs no scratch local in callers whose local layout was fixed at reserve time.
+Being in the one shared marshal, it reaches BOTH finalize-time callers (the
+construct trampolines and the closed-method dispatchers), which is what that
+module exists for.
+
+#### 3. What the hand-off got right, and the one clause that was wrong
+
+The brief's mechanism was **right** — this is the first slice in the S9–S28 run
+where the inherited attribution survived reduction intact. Its two suggested
+fixes split, though:
+
+- **"a `ref.test`-guarded cast that falls back to the extern carrier"** — the
+  fallback cannot be the extern carrier. The callee's formal is
+  `(ref null $string)`; there is no way to put a number or a symbol in it, so
+  "carry the value as the boxed/any carrier and let the body's own checks run"
+  is unavailable without changing the callee's SIGNATURE.
+- **"widening the formal to the any-carrier for dynamically-invoked callees"**
+  is the semantically correct fix and was rejected on measurement, not taste:
+  the checker still types the parameter `string`, and every use site inside the
+  body resolves its ValType from that type. The established widening mechanism
+  (`ctx.objectHashConsumerTypes`, keyed by `ts.Type` IDENTITY — S27's fix) cannot
+  express it, because the identity in question is the SHARED primitive `string`.
+  Registering it would make every string in the module an externref.
+
+  The compiler already contains the widened answer for one spelling, which is
+  what makes the tradeoff concrete: an ARROW with a defaulted string parameter
+  called through a value answers `"number"` correctly, because an arrow's
+  closure formals are externref. A `function` declaration with the identical
+  body traps.
+
+So arm 3 throws where a widened formal would have let the body decide. That is
+a deliberate approximation, and it is stated as one: for THIS corpus it is
+exactly right, and everywhere else it replaces a trap with a catchable error.
+
+#### 4. The result
+
+| family (first 120 files) | base | branch | Δ | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| `PlainDate/**` | 107 | 109 | +2 | 0 | 2 |
+| `Duration/**` | 100 | 100 | 0 | 0 | 0 |
+| `PlainDateTime/**` | 109 | 111 | +2 | 0 | 2 |
+| `ZonedDateTime/prototype/**` | 103 | 103 | 0 | 0 | 0 |
+| **total** | **419** | **423** | **+4** | **0** | **4** |
+
+The base total **reproduces S27's 419 family for family** (107/100/109/103), so
+the two slices' numbers are directly comparable.
+
+**Corpus-wide, the two target families:** every `calendar-undefined.js` and
+`calendar-wrong-type.js` under `Temporal` — **13 files**, run per file on both
+labels at 60 s, solo:
+
+| | base | branch | Δ |
+| --- | --- | --- | --- |
+| 13 files, both target families | **3 pass** | **13 pass** | **+10, 0 pass→fail** |
+
+Aggregating the 480 base rows and the 480 branch rows by digit-normalised
+message: 37 buckets on the base side, 36 on the branch side, and **exactly one
+moves** — `illegal cast in __class_construct_dispatch()` **4 → 0**. The other 36
+are unchanged, count for count.
+
+Runs were solo, sequential, at a **60 s** per-row budget from the start, on a
+FRESH `JS2WASM_TEMPORAL_CACHE` per label (`cacheHit: false` on both prewarms,
+key `a11c84e5…`). There is **no `compile_error` and no `timeout` cell anywhere
+in the 960**, and no `__temporal_*` leak in any row of any label.
+
+#### 5. Controls
+
+**Must-not-move — 356 rows, three groups, per file, 0 flips.**
+
+| group | rows | base pass | branch pass | flips |
+| --- | --- | --- | --- | --- |
+| A: `Object/keys` + `expressions/object` + `Reflect/{get,has}` | 81 | 79 | 79 | 0 |
+| B: `Object/{entries,values,getOwnPropertyNames}` + `statements/for-in` | 97 | 77 | 77 | 0 |
+| **F: `class/dstr` (150) + `function`/`arrow-function` `dflt-params-*` (18) + `Reflect/construct` (10)** | 178 | 143 | 143 | 0 |
+
+A/B are the inherited INSENSITIVE controls. **F is the group this change needs**
+and was chosen for it: the parameter-DEFAULT corpus (the semantics arm 1
+changes) plus the dynamic-CONSTRUCT corpus (`Reflect/construct`, the other way
+into the same trampolines). Its 3 `compile_error` cells are identical on both
+labels.
+
+**Byte A/B — the control the corpus cannot give, in both directions:**
+
+| artifact | base | branch | |
+| --- | --- | --- | --- |
+| standalone, dynamic `new` + defaulted STRING formal | `ffbf7bc2…` 210,032 B | `766f1ee9…` 210,375 B | **moved** |
+| standalone, dynamic `new` + defaulted OBJECT formal | `688fa998…` 210,398 B | `f96abaa9…` 210,748 B | **moved** |
+| standalone, dynamic `new`, `f64` formals ONLY | `792a1803…` 210,205 B | identical | the arming gate |
+| standalone, same class, NO dynamic `new` site | `9f9cb3bb…` 138,431 B | identical | |
+| **gc lane, the SAME armed string-formal source** | `096400ac…` 5,704 B | identical | the lane gate |
+| **gc lane, the SAME armed object-formal source** | `b9463566…` 6,236 B | identical | the lane gate |
+| **linked provider, class with a defaulted ref formal** | `e8af7103…` 155,982 B | `1147f0ee…` 156,546 B | **moved** |
+| linked provider, no class at all | `f765e43d…` 157,098 B | identical | |
+
+Exactly the three armed artifacts move; every unarmed one is byte-identical,
+including both gc-lane artifacts compiled from the same armed sources.
+
+**The `f64`-formals-only row is a fix, not a decoration.** The first cut armed
+at every dynamic `new <value>` site and that module moved **+232 B** — a
+TypeError message string it could never reach. `moduleHasRefTypedConstructFormal`
+now gates both arming sites; it reads `structMap` (filled by
+`collect-declarations`) rather than `classObjectGlobals`, which is materialised
+LAZILY and is still empty at the expression site that arms the guard.
+
+**Temporal provider**: `dc159623…` 3,307,526 B → `a7bd3c5f…` 3,308,117 B
+(**+591 B**) — the provider artifact is SUPPOSED to move here, and that is the
+second half of a finding, not a caveat: see §6.
+
+**Corpus byte A/B**: 42 modules × {gc, standalone} = **84 artifacts, 0 move**. As
+in S24–S27 this is a NULL control and saying only "0 moved" overstates it: no
+module in that corpus constructs from a runtime value into a ref formal. The
+byte table above is what shows the change does anything.
+
+**Equivalence gate**: 22 failing / 1,720 passing / 22 known-failures — baseline
+exactly.
+
+#### 6. The arming site the expression could not reach — and how it announced itself
+
+The first working cut fixed the single-module reduction completely and moved
+**nothing** across the link: all 13 corpus-wide rows still trapped in
+`__class_construct_dispatch`. The tell was one number in the prewarm stamp —
+the provider artifact was **byte-identical** to S26's and S27's.
+
+`classConstructWanted` turns the construct trampolines on for *two* reasons: a
+`new <value>` site in THIS module, or `ctx.exportsConsumedByWasm` — and in the
+second case the dynamic caller is in another module entirely
+(`__js2wasm_link_construct`, provider side). The `@js-temporal/polyfill` provider
+compiles **no dynamic `new <value>` site of its own**, so arming at the
+expression site never fired in the artifact that needed it.
+
+`armExternRefArgTypeGuardForLinkedProvider` runs post-bodies in BOTH codegen
+paths. Post-bodies rather than at finalize because building the throw
+materialises an error constructor; no `fctx` to flush against because no body is
+live there, and none is needed: under `semanticProviders: "native-first"`
+`__new_TypeError` routes to `emitWasiErrorConstructor` (a DEFINED function, no
+import, no index shift), and with `nativeStrings` the message adds a string-pool
+entry rather than an imported global.
+
+**Generalisation worth carrying**: for anything gated on "this module compiles
+X", ask whether the PROVIDER spelling of the same feature has an X at all. Three
+slices' worth of link-boundary work (S17, S18, S24) each turned on a
+provider-side path whose trigger lived on the consumer side.
+
+#### 7. Residuals, each reduced rather than listed
+
+**(a) The same hard cast has at least three more homes, and they are NOT this
+module's** (measured, `.tmp/s28/cases-b.mjs`, one module per case, unchanged by
+this slice):
+
+| dynamic entry | defaulted `string` formal given `1` |
+| --- | --- |
+| class construct trampoline | **fixed here** |
+| `o.m(1)` closed-method dispatcher | fixed here **when the module is armed**; otherwise still traps |
+| `f(1)` through a plain-`function` value | traps — the closure bridge, a different marshal |
+| `K.s(1)` static method through a value | traps — same closure bridge |
+| `(x = "a") => …` arrow through a value | **already correct** — arrow formals are externref |
+
+The arming gate is a CONSTRUCT-formal predicate, so the method dispatcher rides
+along only when some class in the module also has a ref-typed constructor
+formal. That is arbitrary, and it is stated as arbitrary: it is strictly better
+than the previous trap everywhere it fires, and never worse anywhere it does
+not.
+
+**(b) A defaulted ref formal still cannot express `null`, and this is
+structural.** The callee's prologue fires a ref-typed default on `ref.is_null`,
+so a typed null is indistinguishable from "absent" — passing null would silently
+apply the default, which is exactly what the spec forbids. Arm 3 therefore
+throws for `null`, which is also what `calendar-wrong-type.js` wants. Pinned as
+an executable expectation in the witness so a future widening that CAN carry
+null has to update it.
+
+**(c) The secondary candidate the brief named is TWO mechanisms, and neither is
+this one** (`constructor.js: Expected a TypeError`, 3 rows / 16 files —
+reduced, `.tmp/s28/cases-d.mjs`):
+
+- the 3 `constructor.js` rows are `Temporal.PlainDate(1970, 1, 2)` — a class
+  called AS A FUNCTION, which must throw because NewTarget is undefined. In ONE
+  module that **already throws TypeError correctly**, so the rows are the
+  CROSS-LINK spelling: a class reached through a provider namespace and called,
+  not constructed. That is the call-side twin of #6612's IsConstructor guard,
+  at the link boundary;
+- the 2 `invalid-type.js` rows in the same bucket ARE this marshal — on the
+  **f64** lane, failing in the opposite direction. `new Temporal.Duration(Symbol())`
+  and `(1n)` answer `NaN` where ToNumber must throw a TypeError, because
+  `__unbox_number` is silently lenient. Deliberately untouched here: making the
+  f64 arm throw changes the bytes of every numeric dynamic argument in every
+  module, which is a slice of its own.
+
+The S26 amendment applies again — a bucket NAME measures a coalition. This time
+the coalition split 3/2 across two unrelated causes.
+
+#### 8. Residual buckets, branch tree, all four families (57 rows, 37 buckets)
+
+| bucket | rows | file-name footprint corpus-wide | reduced to |
+| --- | --- | --- | --- |
+| `Proxy get trap is not callable` | 6 | `order-of-operations.js` 63 + `observable-get-overflow-argument-primitive.js` 5 | not reduced; standalone Proxy support, a slice of its own |
+| `Built-in objects must be extensible` | 3 | `builtin.js` 129 | not reduced |
+| `Expected a TypeError … no exception` | 3 | `constructor.js` 16 | §7c: a class CALLED as a function across the link — correct module-locally |
+| `Expected a RangeError … no exception` | 3 | mixed | not reduced |
+| `Cannot read properties of undefined (reading 'apply'/'equals')` | 4 | `subclassing-ignored.js` 45 + `math-order-of-operations-*.js` | not reduced |
+| 33 further buckets | ≤2 each | | |
+
+**Recommended next slice: the `Proxy get trap is not callable` bucket** (6 rows,
+68 files corpus-wide). It is now the largest by both measures and the only one
+left whose size and mechanism plausibly coincide — but it is unreduced
+standalone-Proxy work, so **size it by reducing one `order-of-operations.js` row
+in a single module before committing to it** (the S26 amendment). The cheaper
+alternative with a named mechanism already in hand is §7c's f64-lane twin:
+`__unbox_number` must throw a TypeError for a Symbol or a BigInt instead of
+answering `NaN`. Small, reduced, and it is the same defect family this slice
+only half-closed.
+
+#### 9. Traps, carried forward and added to
+
+Everything in S26 §Traps and S27 §9 still holds. One addition:
+
+- **A prewarm stamp's `bytes` is a free before/after check on the PROVIDER
+  half of any linked fix, and it is the fastest one available.** A provider
+  artifact that is byte-identical to the previous slice's means the compiler
+  change did not reach it — a complete answer in ~30 s, before any test262 row
+  runs. It is how §6 was found; running the 13-file corpus first would have cost
+  12 minutes to say the same thing less precisely.
