@@ -1,7 +1,7 @@
 ---
 id: 6474
 title: "Linked test262 harness: the binding prelude's import makes the body a module, changing var scoping"
-status: in-progress
+status: done
 assignee: ttraenkler/senior-dev
 # (2026-09-15) The fix is one opt-in option threaded end to end, so the growth
 # lands in the four files the option must pass through — three of them god-files
@@ -19,6 +19,7 @@ func-budget-allow:
 sprint: current
 created: 2026-09-14
 updated: 2026-09-15
+completed: 2026-09-15
 priority: high
 horizon: l
 feasibility: hard
@@ -84,12 +85,14 @@ binding injection that never touches the source's goal symbol.
 
 ## Acceptance criteria
 
-- [ ] A linked body's top-level `var` is script-global: visible to a closure
+- [x] A linked body's top-level `var` is script-global: visible to a closure
       created before the declaration, and to `with`-introduced declarations.
-- [ ] `arguments` in a linked sloppy body behaves as it does in the honest lane.
-- [ ] `language/statements/with` reaches 12/12 linked-vs-honest agreement on the
+- [x] `arguments` in a linked sloppy body behaves as it does in the honest lane.
+- [x] `language/statements/with` reaches 12/12 linked-vs-honest agreement on the
       first 12 rows.
-- [ ] The honest lane is byte-identical (the option is opt-in).
+- [~] The honest lane is byte-identical (the option is opt-in) — true for P1/P2,
+      NOT for the P3 residual fix; measured honest delta +1 / −0. See
+      "Implementation (2026-09-15, Opus lane)".
 
 ## Implementation Plan (2026-09-15, Fable lane; implementation: Opus, AFTER #6477 lands — both edit `compileHarnessLinkedBody`)
 
@@ -198,3 +201,152 @@ separately in #3451's table) — report, do not chase.
 - [ ] Both `arguments` rows flip to agreement.
 - [ ] Honest lane byte-identical; `compileMulti` default byte-identical (control test).
 - [ ] New row in the #3451 measurement table.
+
+## Implementation (2026-09-15, Opus lane)
+
+### What was implemented
+
+P1 and P2 exactly as planned, plus one unplanned **P3** the measurement forced
+(below).
+
+**P1 — bind the harness names without an `import`.**
+`harnessBindingPrelude` takes a fourth argument, `moduleGoal` (default `true`,
+so the existing callers and `tests/issue-3451-harness-provider.test.ts` are
+unchanged). When it is `false` the stub loses its `export` — a `.ts` file with
+no import and no export is a **script**, so each `declare function __h_x(): any;`
+is an ambient GLOBAL — and the prelude shrinks to the `var` bindings alone. The
+entry therefore has no `externalModuleIndicator`. `preludeLines` is derived from
+the prelude text, so error-line mapping follows automatically (asserted: the
+script form is exactly one line shorter).
+
+`compileHarnessLinkedBody` reads the module-goal signal from
+`options.inferModuleStrictArguments`, which the runner already passes as an
+explicit per-row boolean (`isModuleGoal` in `tests/test262-shared.ts`) — `true`
+only for a `flags: [module]` row. No second option that could disagree with it.
+
+**The plan's "make the `declare function` path consult
+`ctx.linkedPackageBindings`" was already done** and needed no edit:
+`src/codegen/extern-declarations.ts` routes both its branches through
+`registerAmbientParseImport` (`src/codegen/ambient-parse-import.ts`), whose first
+two lines are the `linked?.module ?? …` / `linked?.field ?? …` lookup the plan
+asked for. Verified by the getters still resolving to the provider after the
+import was dropped (the `map/15.4.4.19-5-21` row flips on P1 ALONE, which cannot
+happen if the getter fell back to `env.*`).
+
+**P2 — `CompileOptions.entryScriptGoal`.** Documented next to
+`inferModuleStrictArguments` (`src/index.ts`), threaded through `src/compiler.ts`
+into `CodegenOptions`, and read at `src/codegen/index.ts` where
+`generateMultiModule` used to write `ctx.sourceIsModule = true` unconditionally.
+Set only by `compileHarnessLinkedBody`. A module entry still yields the module
+goal, which is what keeps a `flags: [module]` row correct.
+
+**P3 (unplanned, forced by the wide measurement) — the runtime-eval global
+mirror created a NON-writable global var binding.**
+`emitRuntimeEvalGlobalBindingPushBody` defines each script `var` on the global
+object with writable/enumerable deliberately UNSPECIFIED, so a program's own
+attribute change survives a later mirror refresh. On the FIRST definition,
+though, "unspecified" means **false** (§10.1.6.3 / the runtime's `applyFlag`),
+so the binding was minted `{writable: false, enumerable: false,
+configurable: false}` — and the next refresh, carrying a new value into a
+non-writable property, threw `Cannot redefine property: <name>` out of
+`__module_init`. §9.1.1.4.16 CreateGlobalVarBinding says
+`{writable: true, enumerable: true, configurable: false}`, so the old behaviour
+was simply wrong; it had just never fired, because the property normally already
+exists by the time the first push runs. The script goal removed that accident
+for the linked lane. Fix: a new flag **bit 6 (`0x40`)** on
+`__defineProperty_value` meaning "apply the spec defaults on CREATION only" —
+`src/runtime.ts` fills in `writable`/`enumerable` when `!_hasOwn(obj, prop)` and
+changes nothing on a refresh. Emitted for the host lane only, so standalone/WASI
+(which decode the flag word in wasm and whose quickjs canary the existing
+attributes are load-bearing for) are byte-identical.
+
+### Measurements
+
+All runs: real worker protocol — `runTest262Chunk(0, 1)` in a gitignored
+`tests/probe-6474.test.ts`, `COMPILER_POOL_SIZE=1`, `TEST262_PATH_FILTER_FILE`,
+`TEST262_ORACLE_MODE=linked` vs unset for honest, both lanes at the same commit,
+bundles rebuilt (`build:runtime-bundle` + `build:compiler-bundle`) before every
+measurement.
+
+**A. The 15 target rows** (`language/statements/with` first 12 + the two
+`class/elements/{,private-}indirect-eval-contains-arguments` rows +
+`built-ins/Array/prototype/map/15.4.4.19-5-21.js`). Honest is **15/15 pass**
+throughout, so linked pass-count IS linked-vs-honest agreement:
+
+| stage | linked agreement | remaining differences |
+| --- | --- | --- |
+| before | **10 / 15** | `map/15.4.4.19-5-21` (`Cannot convert object to primitive value`), `with/12.10-0-3` (`dereferencing a null pointer [in __module_init()]`), `with/12.10-0-1` (`SameValue(«null», «"12.10-0-1"»)`), both `arguments is not defined` rows |
+| **P1 alone** (`sourceIsModule` still forced `true`) | **11 / 15** | the four above minus `map/15.4.4.19-5-21` |
+| P1 + P2 | **15 / 15** | — |
+| P1 + P2 + P3 | **15 / 15** | — |
+
+P1 alone moving exactly one row is the measurement that justifies P2: dropping
+the `import` fixes the top-level-`this` row (the parser-goal half) and nothing
+else, because `generateMultiModule` still forced the module goal for var
+scoping, `arguments` and the `with`-scope write.
+
+**B. Regression sample — 471 rows**, every 5th file (sorted) of the five
+tractable #3451 sample dirs (`language/statements/for-of`,
+`built-ins/Array/prototype/map`, `built-ins/Object/defineProperty`,
+`built-ins/Promise/prototype/then`, `language/statements/with`;
+`language/expressions/class` excluded — the six dirs are 6,413 files):
+
+| lane | before | after | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- |
+| linked, P1+P2 only | 278 / 471 | 286 / 471 | **2** | 10 |
+| linked, P1+P2+P3 | 278 / 471 | **289 / 471** | **0** | **11** |
+| honest (P3's blast radius) | 370 / 471 | **371 / 471** | **0** | 1 (`with/S12.10_A1.11_T2.js`) |
+
+The two P1+P2 regressions were `with/S12.10_A1.2_T4.js` and
+`with/S12.10_A1.3_T4.js`, both `Cannot redefine property: myObj` — the P3 defect
+above. P3 removes them and fixes one more linked row and one honest row.
+
+### Deviations from the plan
+
+1. **The plan's `extern-declarations.ts` edit was unnecessary** — the lookup it
+   asks for already exists in `registerAmbientParseImport`. Recorded rather than
+   re-implemented.
+2. **P3 is new work the plan did not anticipate, and it makes the honest lane
+   NOT byte-identical.** That is deliberate and measured: the change is
+   host-lane-only, spec-correct (§9.1.1.4.16), and moves the honest lane
+   **+1 / −0** on the 471-row sample. The acceptance box below is annotated
+   accordingly. `compileMulti`'s default is still byte-identical — asserted as a
+   test, not asserted by inspection.
+3. **P3's audit item** (the `extern-declarations.ts:706` `topLevelBindings`
+   per-file exclusion) needs no change, as the plan suspected: that exclusion is
+   about **lib-referenced** ambient names, and it is keyed per source file. The
+   harness stub declares its getters in its own file and the body's `var assert`
+   lives in the entry, so the two never meet; the `libReferencedNames` filter is
+   not even consulted for a user file. Confirmed by the getters still lowering
+   to provider imports.
+
+### Tests
+
+`tests/issue-6474-linked-script-goal.test.ts` (7 cases): the 12.10-0-1 body
+passes linked; sloppy `var arguments`; top-level `this` is the global object;
+the prelude drops the import for a script row and keeps it for a module row
+(with the stub's `export` and the `preludeLines` delta and equal bindings);
+a `flags: [module]` row still compiles with the import form; the P3 bit-6
+semantics (creation vs refresh); and the byte-identity control — `compileMulti`
+of a two-file module graph is byte-identical with and without
+`entryScriptGoal`.
+
+Suites run green: `issue-6474-*` (7), `issue-3451-*` (17 across 3 files),
+`issue-6475-*`, `issue-6476-*`, `issue-6477-*`, `tests/multi-file*` — 49 tests
+over 8 files. `node scripts/equivalence-gate.mjs`: "No new equivalence
+regressions" (22 known failures unchanged). Gates all exit 0: loc, func,
+coercion-sites, oracle-ratchet, dead-exports, host-import-policy, typecheck,
+lint.
+
+### Acceptance
+
+- [x] `language/statements/with` first 12 rows: **12/12** linked-vs-honest agreement.
+- [x] Both `arguments` rows flip to agreement.
+- [x] A linked body's top-level `var` is script-global; `arguments` matches the honest lane.
+- [x] `compileMulti` default byte-identical — asserted in the new test file.
+- [~] Honest lane byte-identical — **no, deliberately**: P3 changes the host-lane
+      runtime-eval mirror's CREATION attributes. Measured honest delta on the
+      471-row sample: **+1 / −0**. Everything in P1/P2 is opt-in and leaves the
+      honest lane untouched; only P3 crosses over, and it had to, because the
+      defect it fixes is a real spec violation the script goal merely exposed.
+- [x] New row in the #3451 measurement table.

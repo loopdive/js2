@@ -153,6 +153,40 @@ describe("#6474 — the linked lane compiles a script body with the script goal"
     expect(result.harnessPrelude.prelude).toContain("import ");
   }, 600_000);
 
+  // The residual the script goal un-masked (see the issue's P3 note). The
+  // runtime-eval global mirror defines a script's top-level `var` binding with
+  // writable/enumerable deliberately UNSPECIFIED, so a program's own attribute
+  // change survives a refresh — but on the FIRST definition "unspecified" means
+  // `false`, and the next refresh then carried a new value into a non-writable
+  // property and threw `Cannot redefine property`. Bit 6 (0x40) applies
+  // §9.1.1.4.16's `{writable: true, enumerable: true}` on creation only.
+  it("__defineProperty_value bit 6 creates a global var binding writable+enumerable, once", () => {
+    const define = buildImports([
+      {
+        module: "env",
+        kind: "func",
+        name: "__defineProperty_value",
+        paramCount: 4,
+        intent: { type: "builtin", name: "__defineProperty_value" },
+      },
+    ] as never).env.__defineProperty_value as (o: object, p: string, v: unknown, f: number) => unknown;
+    const SCRIPT_VAR_CREATE = 0x80 | 0x40 | 0x23;
+
+    const target: Record<string, unknown> = {};
+    define(target, "myObj", 1, SCRIPT_VAR_CREATE);
+    const first = Object.getOwnPropertyDescriptor(target, "myObj");
+    expect(first).toMatchObject({ value: 1, writable: true, enumerable: true, configurable: false });
+    // The refresh that used to throw.
+    expect(() => define(target, "myObj", 2, SCRIPT_VAR_CREATE)).not.toThrow();
+    expect(target.myObj).toBe(2);
+
+    // Creation defaults apply ONLY on creation: an attribute the program
+    // narrowed afterwards must survive the next refresh.
+    Object.defineProperty(target, "kept", { value: 1, writable: true, enumerable: false, configurable: true });
+    define(target, "kept", 3, SCRIPT_VAR_CREATE);
+    expect(Object.getOwnPropertyDescriptor(target, "kept")).toMatchObject({ value: 3, enumerable: false });
+  });
+
   // Control. `entryScriptGoal` may only ever be a no-op for callers that do not
   // set it, and for a genuine module entry it must be byte-inert even when set
   // — the goal comes from the entry file, not from the flag.
