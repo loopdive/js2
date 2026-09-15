@@ -1,7 +1,21 @@
 ---
 id: 6474
 title: "Linked test262 harness: the binding prelude's import makes the body a module, changing var scoping"
-status: ready
+status: in-progress
+assignee: ttraenkler/senior-dev
+# (2026-09-15) The fix is one opt-in option threaded end to end, so the growth
+# lands in the four files the option must pass through — three of them god-files
+# by definition (the public option barrel, the codegen driver that owns
+# `ctx.sourceIsModule`, and the codegen options interface). Most of the added
+# lines are the WHY comments this issue exists to record: the module goal was
+# forced silently, and the next reader has to be able to see that `sourceIsModule`
+# is now entry-derived under an opt-in flag and why both switches had to flip.
+loc-budget-allow:
+  - src/index.ts
+  - src/codegen/index.ts
+  - src/codegen/context/types.ts
+func-budget-allow:
+  - src/codegen/index.ts::generateMultiModule
 sprint: current
 created: 2026-09-14
 updated: 2026-09-15
