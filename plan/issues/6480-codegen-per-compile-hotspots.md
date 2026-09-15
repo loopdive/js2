@@ -1,7 +1,8 @@
 ---
 id: 6480
 title: "Codegen per-compile hotspots: lib declaration scan re-run per compile, late-import index shifting walks every body per import"
-status: in-progress
+status: done
+completed: 2026-09-15
 created: 2026-09-14
 updated: 2026-09-15
 assignee: ttraenkler/senior-dev
@@ -14,7 +15,7 @@ area: codegen
 goal: test262-conformance
 sprint: Backlog
 es_edition: n/a
-related: [3433, 3451, 6463, 1109, 1302]
+related: [3433, 3451, 6463, 1109, 1302, 6481]
 # 2026-09-15 (#6480 lever 1): the lib-scan memo keeps its bulk in the new
 # src/codegen/lib-extern-scan-memo.ts, but the memo WRAPPER must live next to
 # the scan it wraps — collectExternDeclarations is split into a thin memoised
@@ -197,3 +198,12 @@ number is stated rather than the bar being called met.
 - Output binaries byte-identical: ✅ (12/12, verified after each lever).
 - `tests/issue-1109*`, `tests/issue-1302*`, `tests/multi-file`, the equivalence
   gate: unchanged. ✅
+
+### Acceptance decision (2026-09-15, Fable lane)
+
+Accepted as done with the shift-bucket target **retargeted**: the plan's
+lever-2 route (coarser flush batching) does not exist as specced — deferral is
+already universal and the 769 `flushLateImportShifts` sites each guard an
+immediately-baked `funcIdx`, so the ~9 ms prize is not worth the invariant risk
+(cf. the −601 / −2 621 test262 breakages cited above). The remaining fix is a
+symbolic funcIdx resolved once at emit time, filed as #6481.
