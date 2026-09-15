@@ -1,11 +1,14 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { describe, expect, it } from "vitest";
+import { setFlagsFromString } from "node:v8";
 
 import { compileMulti, wrapExports } from "../src/index.js";
 
 const SOURCES = {
   "./src/compiler/core.ts": `
+export function identity<T>(value: T): T { return value; }
+
 export function cast<TOut extends TIn, TIn = unknown>(value: TIn, test: (value: TIn) => value is TOut): TOut {
   return test(value) ? value : undefined!;
 }
@@ -62,6 +65,7 @@ export interface NodeArray<T extends Node> extends Array<T> {
 }
 
 export interface ParenthesizerRules {
+  parenthesizeExpressionOfExpressionStatement(expression: Expression): Expression;
   parenthesizeExpressionOfNew(expression: Expression): LeftHandSideExpression;
   parenthesizeLeftSideOfAccess(expression: Expression, optionalChain?: boolean): LeftHandSideExpression;
   parenthesizeOperandOfPostfixUnary(operand: Expression): LeftHandSideExpression;
@@ -118,7 +122,7 @@ import type {
   ParenthesizerRules,
   UnaryExpression,
 } from "./_namespaces/ts.js";
-import { cast, isNodeArray } from "./_namespaces/ts.js";
+import { cast, identity, isNodeArray } from "./_namespaces/ts.js";
 
 function isLeftHandSideExpression(value: Node): value is LeftHandSideExpression {
   return value.kind === 1;
@@ -129,6 +133,7 @@ function isUnaryExpression(value: Node): value is UnaryExpression {
 }
 
 export const nullParenthesizerRules: ParenthesizerRules = {
+  parenthesizeExpressionOfExpressionStatement: identity,
   parenthesizeExpressionOfNew: expression => cast(expression, isLeftHandSideExpression),
   parenthesizeLeftSideOfAccess: expression => cast(expression, isLeftHandSideExpression),
   parenthesizeOperandOfPostfixUnary: operand => cast(operand, isLeftHandSideExpression),
@@ -148,6 +153,11 @@ const parenthesizerRules = memoize(() => nullParenthesizerRules);
 export function probe(): number {
   const expression = createBaseNode<Expression>(1, 42);
   return parenthesizerRules().parenthesizeLeftSideOfAccess(expression, false).value;
+}
+
+export function probeStatement(): number {
+  const expression = createBaseNode<Expression>(1, 42);
+  return parenthesizerRules().parenthesizeExpressionOfExpressionStatement(expression).value;
 }
 
 export function probeNodeArray(): number {
@@ -245,6 +255,29 @@ export function parseHeritageWithoutTypeArguments(): number {
 } as const;
 
 describe("#1058 parenthesizer callable-property identity", () => {
+  it("calls memoized parenthesizer rules through raw standalone exports", async () => {
+    const result = await compileMulti(SOURCES, "./src/compiler/nodeFactory.ts", {
+      target: "standalone",
+      skipSemanticDiagnostics: true,
+      experimentalIR: false,
+      resolve: { consumerDrivenBarrels: true },
+    });
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    const module = new WebAssembly.Module(result.binary);
+    expect(WebAssembly.Module.imports(module)).toEqual([]);
+    if (process.env.JS2WASM_TEST_TRACE) setFlagsFromString("--trace-wasm");
+    try {
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as { probe(): number; probeNodeArray(): number; probeStatement(): number };
+      expect(exports.probe()).toBe(42);
+      expect(exports.probe()).toBe(42);
+      expect(exports.probeNodeArray()).toBe(42);
+      expect(exports.probeStatement()).toBe(42);
+    } finally {
+      if (process.env.JS2WASM_TEST_TRACE) setFlagsFromString("--no-trace-wasm");
+    }
+  });
+
   it("keeps the parser's generic Node allocation on its zero-cost Expression view", async () => {
     const result = await compileMulti(SOURCES, "./src/compiler/nodeFactory.ts", {
       target: "gc",

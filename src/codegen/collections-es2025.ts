@@ -67,6 +67,7 @@ import type { InnerResult } from "./shared.js";
 import { addUnionImportsViaRegistry, compileArrowAsClosure, compileExpression } from "./shared.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { coercionInstrs } from "./type-coercion.js";
+import { ensureSymbolCarrier, ensureSymbolRegistry, usesNativeSymbolProvider } from "./symbol-native.js";
 
 // ── `$Map` layout mirrors (map-runtime.ts) ──────────────────────────────
 const TOMBSTONE_BIT = 0x40000000;
@@ -164,6 +165,13 @@ export function ensureGetOrInsertKernels(ctx: CodegenContext): void {
   if (ctx.mapTypeIdx < 0) return;
   addUnionImportsViaRegistry(ctx); // __box_number for __canon_key
 
+  // Prepare before publishing any cached kernel or capturing helper indices.
+  // The first call may use a Map/object key, before a later Symbol.for producer
+  // has registered its carrier. Host providers keep their existing path.
+  const nativeWeakSymbols = usesNativeSymbolProvider(ctx) && (ctx.standalone || ctx.wasi);
+  const weakSymbolTypeIdx = nativeWeakSymbols ? ensureSymbolCarrier(ctx) : undefined;
+  const weakSymbolKeyForIdx = nativeWeakSymbols ? ensureSymbolRegistry(ctx).keyForIdx : undefined;
+
   const mref: ValType = { kind: "ref", typeIdx: ctx.mapTypeIdx };
   const anyref: ValType = { kind: "anyref" };
   const i32: ValType = { kind: "i32" };
@@ -242,7 +250,7 @@ export function ensureGetOrInsertKernels(ctx: CodegenContext): void {
   }
 
   // ── __weak_key_ok(k) -> i32 — §24.5.1 CanBeHeldWeakly ──
-  // Objects (structs, closures, symbols) → 1; null/undefined + boxed
+  // Objects and unregistered symbols → 1; null/undefined + boxed
   // primitives (number/boolean/bigint) + strings → 0. An `$AnyValue` wrapper
   // is OK only for its tag-6 (GC-object refval) form.
   {
@@ -262,6 +270,46 @@ export function ensureGetOrInsertKernels(ctx: CodegenContext): void {
     else if (ctx.nativeStrTypeIdx >= 0) pushRejectTest(ctx.nativeStrTypeIdx);
 
     const avT = ctx.anyValueTypeIdx;
+    const acceptNonPrimitive: Instr[] =
+      avT >= 0
+        ? [
+            { op: "local.get", index: 0 },
+            { op: "ref.test", typeIdx: avT },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "i32" } },
+              then: [
+                { op: "local.get", index: 0 },
+                { op: "ref.cast", typeIdx: avT },
+                { op: "struct.get", typeIdx: avT, fieldIdx: 0 },
+                { op: "i32.const", value: 6 },
+                { op: "i32.eq" },
+              ],
+              else: [{ op: "i32.const", value: 1 }],
+            },
+          ]
+        : [{ op: "i32.const", value: 1 }];
+    const acceptWeakKey: Instr[] =
+      weakSymbolTypeIdx !== undefined && weakSymbolKeyForIdx !== undefined
+        ? [
+            { op: "local.get", index: 0 },
+            { op: "ref.test", typeIdx: weakSymbolTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "i32" } },
+              then: [
+                { op: "local.get", index: 0 },
+                { op: "ref.cast", typeIdx: weakSymbolTypeIdx },
+                { op: "struct.get", typeIdx: weakSymbolTypeIdx, fieldIdx: 0 },
+                { op: "call", funcIdx: weakSymbolKeyForIdx },
+                // Registry absence, not key truthiness: Symbol.for("") is
+                // registered too. Descriptions never establish membership.
+                { op: "ref.is_null" },
+              ],
+              else: acceptNonPrimitive,
+            },
+          ]
+        : acceptNonPrimitive;
     const body: Instr[] = [
       { op: "local.get", index: 0 },
       { op: "ref.is_null" },
@@ -277,28 +325,10 @@ export function ensureGetOrInsertKernels(ctx: CodegenContext): void {
                   op: "if",
                   blockType: { kind: "val", type: { kind: "i32" } },
                   then: [{ op: "i32.const", value: 0 }],
-                  else:
-                    avT >= 0
-                      ? [
-                          { op: "local.get", index: 0 },
-                          { op: "ref.test", typeIdx: avT },
-                          {
-                            op: "if",
-                            blockType: { kind: "val", type: { kind: "i32" } },
-                            then: [
-                              { op: "local.get", index: 0 },
-                              { op: "ref.cast", typeIdx: avT },
-                              { op: "struct.get", typeIdx: avT, fieldIdx: 0 }, // tag
-                              { op: "i32.const", value: 6 },
-                              { op: "i32.eq" },
-                            ],
-                            else: [{ op: "i32.const", value: 1 }],
-                          },
-                        ]
-                      : [{ op: "i32.const", value: 1 }],
+                  else: acceptWeakKey,
                 },
               ]
-            : [{ op: "i32.const", value: 1 }]) satisfies Instr[]),
+            : acceptWeakKey) satisfies Instr[]),
         ],
       },
     ];

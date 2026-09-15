@@ -32,6 +32,7 @@ import { recordFnMetaMemberDeclaration } from "./function-instance-meta-methods.
 import { resolveClassHeritageAlias } from "./class-expression-identity.js";
 import { installAstFreeClassConstructorNewWrapper } from "./class-constructor-wrapper.js";
 import { commitClassStructLayout } from "./class-layout-registration.js";
+import { collectDeclaredClassProperties, type ClassFieldSource } from "./class-field-provenance.js";
 import { mintDefinedFunc, pushProgramAbiClassCallable } from "./program-abi-class-callable-planning.js";
 import { setProgramAbiInheritedClassCallableAlias } from "./program-abi-class-callable-planning.js";
 import { absoluteFuncIndex } from "../emit/resolve-layout.js"; // (#1916 S3b) resolve handles for order-stable declaredFuncRefs sort
@@ -1168,14 +1169,10 @@ export function collectClassDeclaration(
   // Find the constructor to determine struct fields from `this.x = ...` assignments
   const ctor = findConstructorImplementation(decl);
   const ownFields: FieldDef[] = [];
+  const sources: ClassFieldSource[] = [];
   // (#3673) Declared instance properties, by name — the constructor-assignment
   // pass below needs the DECLARATION to see an explicit native annotation.
-  const declaredPropertyByName = new Map<string, ts.PropertyDeclaration>();
-  for (const member of decl.members) {
-    if (!ts.isPropertyDeclaration(member) || !member.name || hasStaticModifier(member)) continue;
-    const declaredName = resolveClassMemberName(ctx, member.name);
-    if (declaredName !== undefined) declaredPropertyByName.set(declaredName, member);
-  }
+  const declaredPropertyByName = collectDeclaredClassProperties(decl, (name) => resolveClassMemberName(ctx, name));
   const voidClearedInstanceFields = collectVoidClearedInstanceFields(ctx, decl);
 
   if (ctor?.body) {
@@ -1197,6 +1194,7 @@ export function collectClassDeclaration(
       ) {
         const rawName = stmt.expression.left.name.text;
         const fieldName = ts.isPrivateIdentifier(stmt.expression.left.name) ? "__priv_" + rawName.slice(1) : rawName;
+        sources.push({ name: fieldName, node: stmt.expression.left.name });
         // Skip if this field is already defined in parent
         if (parentFields.some((f) => f.name === fieldName)) continue;
         const fieldTsType = ctx.checker.getTypeAtLocation(stmt.expression.left);
@@ -1240,6 +1238,7 @@ export function collectClassDeclaration(
       const fieldName = resolveClassMemberName(ctx, member.name);
       if (fieldName === undefined) continue; // dynamic computed name — skip
       if (hasStaticModifier(member)) continue; // handled below
+      sources.push({ name: fieldName, node: member.name });
       // Skip if this field is already defined in parent
       if (parentFields.some((f) => f.name === fieldName)) continue;
       if (!ownFields.some((f) => f.name === fieldName)) {
@@ -1353,7 +1352,7 @@ export function collectClassDeclaration(
   if (parentStructTypeIdx !== undefined) {
     structDef.superTypeIdx = parentStructTypeIdx;
   }
-  commitClassStructLayout(ctx, decl, className, structTypeIdx, structDef, fields);
+  commitClassStructLayout(ctx, decl, className, structTypeIdx, structDef, fields, { sources, ownFields, parentFields });
 
   // Register a prototype singleton global (externref, lazily initialized)
   // Used by ClassName.prototype and Object.getPrototypeOf(instance).

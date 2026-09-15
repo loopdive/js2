@@ -42,6 +42,10 @@ import { buildObjectIntegrityPredicates } from "./object-integrity-carrier.js";
 import { buildObjectIntegrityMutationHelpers } from "./object-runtime-integrity.js";
 import { bagGopdBetween, bagKeysIf } from "./carrier-bag-visibility.js"; // (#4010 S3) visibility over the bags
 import {
+  classMarkerDefineState,
+  classMarkerDataCommit,
+  accessorCarrierNonExtensibleArm,
+  defineCarrierBagEnsureInstrs,
   defineCarrierBagSubstitutionArm,
   definePropertiesCarrierBagArm,
   isDefineCarrierInstrs,
@@ -337,6 +341,14 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       { op: "i32.const", value: 0 },
       { op: "i32.ne" },
     ];
+    const valueMarker = classMarkerDefineState(ctx, {
+      firstLocal:
+        13 +
+        (defineCarrierBagEnsureInstrs(ctx, 0) ? 1 : 0) +
+        (boundaryObjectDefinePropertyValueIdx !== undefined ? 1 : 0),
+      objectLocal: 4,
+      currentLocal: 11,
+    });
     // The preflight body, emitted after `o` (local 4) and `hf` (local 9) are set,
     // before the grow/insert. §10.1.6.3 in spec order.
     const s4Preflight: Instr[] = [
@@ -345,7 +357,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       { op: "ref.as_non_null" },
       { op: "local.get", index: 1 },
       { op: "call", funcIdx: objFindIdx },
-      { op: "local.tee", index: 11 },
+      ...(valueMarker?.authenticate ?? [{ op: "local.tee", index: 11 } as Instr]),
       { op: "ref.is_null" },
       {
         op: "if",
@@ -692,6 +704,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
           { op: "return" },
         ],
       },
+      ...classMarkerDataCommit(ctx, valueMarker),
       // load = o.count + o.tombstones ; cap = o.props.len ; grow at LF 0.7
       { op: "local.get", index: 4 },
       { op: "ref.as_non_null" },
@@ -765,6 +778,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         ...(boundaryObjectDefinePropertyValueIdx !== undefined
           ? ([{ name: "boundaryResult", type: { kind: "externref" } }] as { name: string; type: ValType }[])
           : []),
+        ...(valueMarker?.locals ?? []),
       ],
       body,
     );
@@ -851,55 +865,12 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       { op: "i32.const", value: 0 },
       { op: "i32.ne" },
     ];
-    // (#5316 r6) OWN-key predicate for the non-extensible arm below; see
-    // OWN_KEY_PREDICATE for why it is this native and not `__desc_has_own`.
-    // Absent on the host/gc lanes, where `env::__defineProperty_accessor` owns
-    // this path and the native is never emitted — the arm then keeps the plain
-    // throw, which is why host output stays byte-identical.
-    const accOwnKeyIdx = ctx.funcMap.get(OWN_KEY_PREDICATE);
-    // (#5316 r6) `__obj_find` answers the `$Object` prop table ONLY. On a #4194
-    // instance carrier — a class instance, or the `__anon_*` struct an object
-    // LITERAL lowers to — the receiver's own DATA properties are physical STRUCT
-    // FIELDS, not bag entries, so an EXISTING key reads as "new" here and the
-    // §10.1.6.3 step 2 throw fires on a define that must succeed. Consult the
-    // receiver `O` (local 0), not the substituted bag `o` (local 5): only the
-    // receiver can answer for its fields.
-    //   owns  → the property EXISTS; a sealed/frozen carrier makes it
-    //           non-configurable, so the data→accessor conversion is the
-    //           §10.1.6.3 step 7 rejection; otherwise fall through to the insert,
-    //           which shadows the field with a bag accessor entry exactly as it
-    //           did before #5316 recorded the flag on these carriers at all.
-    //   !owns → genuinely new; throw as before.
-    // For a plain `$Object` receiver this guard is a NO-OP: `__obj_find` null
-    // implies own-key absent, so the predicate answers false and control reaches
-    // the same throw.
-    const accNonExtensibleArm: Instr[] =
-      accOwnKeyIdx === undefined
-        ? accThrow("TypeError: Cannot define property, object is not extensible")
-        : [
-            { op: "local.get", index: 0 },
-            { op: "local.get", index: 1 },
-            { op: "call", funcIdx: accOwnKeyIdx },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                { op: "local.get", index: 5 },
-                { op: "ref.as_non_null" },
-                { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
-                { op: "i32.const", value: OBJ_FLAG_SEALED | OBJ_FLAG_FROZEN },
-                { op: "i32.and" },
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: accThrow(
-                    "TypeError: Cannot redefine property: cannot convert a non-configurable data property to an accessor",
-                  ),
-                },
-              ],
-              else: accThrow("TypeError: Cannot define property, object is not extensible"),
-            },
-          ];
+    const accNonExtensibleArm = accessorCarrierNonExtensibleArm(
+      ctx.funcMap.get(OWN_KEY_PREDICATE),
+      objectTypeIdx,
+      OBJ_FLAG_SEALED | OBJ_FLAG_FROZEN,
+      accThrow,
+    );
     // (#4161, #4098) Carrier-bag substitution; bag local APPENDED at index 16
     // (standalone/wasi only) — same shape as the `__defineProperty_value` arm.
     const dpAccessorClosureArm = defineCarrierBagSubstitutionArm(ctx, {
@@ -910,6 +881,11 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       fallback: [{ op: "local.get", index: 0 }, { op: "return" }],
     });
     const dpAccessorBoundaryLocal = 16 + (dpAccessorClosureArm ? 1 : 0);
+    const accessorMarker = classMarkerDefineState(ctx, {
+      firstLocal: dpAccessorBoundaryLocal + (boundaryObjectDefinePropertyAccessorIdx !== undefined ? 1 : 0),
+      objectLocal: 5,
+      currentLocal: 12,
+    });
     const body: Instr[] = [
       // any = any.convert_extern(obj) ; if !$Object → vec receivers route to
       // the #3251 overlay; a closure or native Error receiver defines into its
@@ -988,7 +964,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       { op: "ref.as_non_null" },
       { op: "local.get", index: 1 },
       { op: "call", funcIdx: objFindIdx },
-      { op: "local.tee", index: 12 },
+      ...(accessorMarker?.authenticate ?? [{ op: "local.tee", index: 12 } as Instr]),
       { op: "ref.is_null" },
       { op: "i32.eqz" },
       {
@@ -1172,8 +1148,26 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: accNonExtensibleArm,
+        then: [
+          ...(accessorMarker
+            ? ([
+                ...accessorMarker.present,
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: accThrow("TypeError: Cannot define property, object is not extensible"),
+                },
+              ] as Instr[])
+            : []),
+          ...accNonExtensibleArm,
+        ],
       },
+      ...(accessorMarker?.commit(
+        [{ op: "ref.null", typeIdx: NONE_HEAP }],
+        9,
+        [{ op: "local.get", index: 2 }, { op: "any.convert_extern" }],
+        [{ op: "local.get", index: 3 }, { op: "any.convert_extern" }],
+      ) ?? []),
       // load = o.count + o.tombstones ; cap = o.props.len ; grow at LF 0.7
       { op: "local.get", index: 5 },
       { op: "ref.as_non_null" },
@@ -1287,6 +1281,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         ...(boundaryObjectDefinePropertyAccessorIdx !== undefined
           ? ([{ name: "boundaryResult", type: { kind: "externref" } }] as { name: string; type: ValType }[])
           : []),
+        ...(accessorMarker?.locals ?? []),
       ],
       body,
     );

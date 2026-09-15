@@ -184,7 +184,7 @@ export function markLeafStructsFinal(
  *
  * 3. call returning externref + struct.get/struct.set → call + any.convert_extern + ref.cast $typeIdx
  *
- * Recurses into nested blocks, loops, if/then/else, and try/catch bodies.
+ * Visits nested blocks, loops, branches and catches without using the JS stack.
  */
 export function repairStructTypeMismatches(mod: WasmModule, diagnostics?: CodegenError[]): number {
   let totalFixed = 0;
@@ -213,41 +213,34 @@ export function repairBody(
   reportedBlocked = new WeakSet<Instr[]>(),
   diagnostics?: CodegenError[],
 ): number {
-  if (contextBlocked.has(body)) {
-    recordContextBlockedFixup(mod, reportedBlocked, body, "struct mismatch repair", diagnostics);
-    return 0;
-  }
-  if (visited.has(body)) return 0;
-  visited.add(body);
   let fixed = 0;
-
-  // Recurse into nested blocks first
-  for (const instr of body) {
-    switch (instr.op) {
-      case "block":
-      case "loop":
-      case "try_table":
-        if (instr.body)
-          fixed += repairBody(instr.body, localTypes, mod, visited, contextBlocked, reportedBlocked, diagnostics);
-        break;
-      case "if":
-        if (instr.then)
-          fixed += repairBody(instr.then, localTypes, mod, visited, contextBlocked, reportedBlocked, diagnostics);
-        if (instr.else)
-          fixed += repairBody(instr.else, localTypes, mod, visited, contextBlocked, reportedBlocked, diagnostics);
-        break;
-      case "try":
-        if (instr.body)
-          fixed += repairBody(instr.body, localTypes, mod, visited, contextBlocked, reportedBlocked, diagnostics);
-        if ((instr as any).catches) {
-          for (const c of (instr as any).catches) {
-            if (c.body)
-              fixed += repairBody(c.body, localTypes, mod, visited, contextBlocked, reportedBlocked, diagnostics);
-          }
-        }
-        break;
+  const pending = [{ body, exiting: false }];
+  while (pending.length > 0) {
+    const frame = pending.pop()!;
+    if (frame.exiting) {
+      fixed += repairBodyPatterns(frame.body, localTypes, mod);
+      continue;
+    }
+    if (contextBlocked.has(frame.body)) {
+      recordContextBlockedFixup(mod, reportedBlocked, frame.body, "struct mismatch repair", diagnostics);
+      continue;
+    }
+    if (visited.has(frame.body)) continue;
+    visited.add(frame.body);
+    pending.push({ body: frame.body, exiting: true });
+    // Mark on entry, not scheduling: shared children retain recursive first-
+    // owner order. The same enumerator serves the cross-function safety check.
+    const children: Instr[][] = [];
+    for (const instr of frame.body) for (const child of nestedBodies(instr)) children.push(child);
+    for (let index = children.length - 1; index >= 0; index--) {
+      pending.push({ body: children[index]!, exiting: false });
     }
   }
+  return fixed;
+}
+
+function repairBodyPatterns(body: Instr[], localTypes: ValType[], mod: WasmModule): number {
+  let fixed = 0;
 
   // Scan for struct.get preceded by externref-producing instructions
   let i = 0;

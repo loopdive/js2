@@ -1741,7 +1741,7 @@ export function fillAnyIterNext(ctx: CodegenContext): void {
     if (recognized.length > 2) recognized.push({ op: "i32.or" });
   }
   if (recognized.length === 0) {
-    // Nothing native to recognize — behave exactly like the legacy route.
+    // Only an emitted legacy factory needs the host fallback, not a reserved import.
     fn.body =
       genNextIdx === undefined
         ? (nonIterableThrowInstrs(ctx) ?? [{ op: "unreachable" }])

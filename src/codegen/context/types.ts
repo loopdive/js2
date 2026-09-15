@@ -1487,6 +1487,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   targetProfile: CompileTargetProfile;
   programAbiSession?: import("../program-abi-session.js").ProgramAbiSession;
+  programAbiComponentPreparation?: import("../program-abi-component-preparation.js").ProgramAbiComponentPreparation;
   programAbiModuleInitCallables?: import("../program-abi-module-init-planning.js").ProgramAbiModuleInitCallableRegistry;
   programAbiSourceCallables?: import("../program-abi-source-callable-planning.js").ProgramAbiSourceCallableRegistry;
   programAbiCallableImports?: import("../program-abi-import-planning.js").ProgramAbiCallableImportRegistry;

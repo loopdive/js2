@@ -7,6 +7,7 @@
  */
 import type { ArrayTypeDef, Instr, StructTypeDef, TypeDef, ValType, WasmFunction } from "../ir/types.js";
 import { coercionPlan } from "./coercion-plan.js";
+import { ensureVecProjectionIdentity, VEC_PROJECTION_ALIAS } from "./vec-projection-identity.js";
 import { recordVecFromExternMaterializer } from "./compiler-support-abi.js";
 import { boxToAny, UNDEF_F64_BITS } from "./value-tags.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
@@ -1300,6 +1301,8 @@ export function buildVecFromExternMaterializer(ctx: CodegenContext, vecTypeIdx: 
     // fresh target vec, so reserve the same sidecar bridge used by the typed
     // vec-to-vec projector before buildVecFromExternref freezes import indices.
     ensureLateImport(ctx, "__copy_wasm_struct_sidecar", [{ kind: "externref" }, { kind: "externref" }], []);
+  } else {
+    ensureVecProjectionIdentity(ctx);
   }
 
   // The cross-rep / host-array conversion (registers its late imports + flushes
@@ -1310,7 +1313,7 @@ export function buildVecFromExternMaterializer(ctx: CodegenContext, vecTypeIdx: 
   const copySidecarIdx =
     !ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first"
       ? ctx.funcMap.get("__copy_wasm_struct_sidecar")
-      : undefined;
+      : ctx.funcMap.get(VEC_PROJECTION_ALIAS);
   const tmpAny = allocLocal(fctx, `__vfe_any_${fctx.locals.length}`, { kind: "anyref" } as ValType);
   const crossRepInstrs: Instr[] = matInstrs;
   if (copySidecarIdx !== undefined) {
@@ -2060,6 +2063,8 @@ function emitVecToVecBody(
     ensureLateImport(ctx, "__copy_wasm_struct_sidecar", [{ kind: "externref" }, { kind: "externref" }], []);
     flushLateImportShifts(ctx, fctx);
     copySidecarIdx = ctx.funcMap.get("__copy_wasm_struct_sidecar");
+  } else {
+    copySidecarIdx = ensureVecProjectionIdentity(ctx);
   }
 
   // Save the source vec ref to a temp local
@@ -3101,6 +3106,8 @@ export function coerceType(
         // materializes a fresh vec from a host Array mirror, so preserve the
         // source vec's ordinary-property sidecar here as well.
         ensureLateImport(ctx, "__copy_wasm_struct_sidecar", [{ kind: "externref" }, { kind: "externref" }], []);
+      } else {
+        ensureVecProjectionIdentity(ctx);
       }
       const materializeVec = buildVecFromExternref(ctx, fctx, tmpExternLocal, toIdx, vecInfo);
       // buildVecFromExternref flushes every late-import shift. Resolve the
@@ -3110,7 +3117,7 @@ export function coerceType(
       const copySidecarIdx =
         !ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first"
           ? ctx.funcMap.get("__copy_wasm_struct_sidecar")
-          : undefined;
+          : ctx.funcMap.get(VEC_PROJECTION_ALIAS);
       const materializeWithSidecar: Instr[] = materializeVec;
       if (copySidecarIdx !== undefined) {
         const resultLocal = allocLocal(fctx, `__coerce_vec_result_${fctx.locals.length}`, {

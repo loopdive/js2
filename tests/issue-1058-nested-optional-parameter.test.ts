@@ -86,8 +86,8 @@ describe("#1058 nested optional-parameter ABI", () => {
     expect(exports.run!(1)).toBe(0);
   });
 
-  it("keeps an unobserved optional boolean on its scalar ABI", async () => {
-    const result = await compile(`
+  it.each(["gc", "standalone"] as const)("preserves a shadowed undefined binding in %s", async (target) => {
+    const source = `
       export function run(): number {
         function createBaseStringLiteral(isSingleQuote?: boolean): number {
           return isSingleQuote ? 1 : 0;
@@ -97,11 +97,19 @@ describe("#1058 nested optional-parameter ABI", () => {
         }
         return createBaseStringLiteral(false) + shadowedUndefined(false, false);
       }
-    `);
+    `;
+    const result = await compile(source, { target });
 
     expect(result.success).toBe(true);
-    expect(result.wat).toMatch(/\(func \$createBaseStringLiteral \(param i32\)/);
-    expect(result.wat).not.toMatch(/\(func \$createBaseStringLiteral \(param externref\)/);
-    expect(result.wat).toMatch(/\(func \$shadowedUndefined \(param i32 i32\)/);
+    expect(result.wat).toMatch(
+      /\(func \$createBaseStringLiteral \(param externref\)|\(type \$createBaseStringLiteral_type \(func \(param externref\)/,
+    );
+    expect(result.wat).toMatch(/\(func \$shadowedUndefined \(param i32 externref\)/);
+    const module = new WebAssembly.Module(result.binary);
+    if (target === "standalone") expect(WebAssembly.Module.imports(module)).toEqual([]);
+    const imports = result.importObject ?? {};
+    const instance = await WebAssembly.instantiate(module, imports);
+    (imports as { __setInstance?: (value: WebAssembly.Instance) => void }).__setInstance?.(instance);
+    expect((instance.exports.run as () => number)()).toBe(2);
   });
 });
