@@ -10605,7 +10605,19 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     ctx.runtimeEvalCallableBoundaryEnabled = true;
   }
   // Multi-file compilation is linked through import/export module records.
-  ctx.sourceIsModule = true;
+  //
+  // (#6474) …except when the caller says the ENTRY may legitimately be a
+  // script. The linked test262 harness lane compiles a test262 script plus an
+  // ambient-global stub file, and forcing the module goal here silently changed
+  // observable semantics the honest single-file lane gets right: a top-level
+  // `var` became module-scoped rather than a global-object property, top-level
+  // `this` became `undefined`, and an undeclared assignment stopped creating a
+  // global. Under `entryScriptGoal` the goal comes from the entry's own
+  // `externalModuleIndicator`, so a real `import`/`export` still yields a
+  // module. Unset (every other caller) keeps the unconditional `true`.
+  ctx.sourceIsModule = options?.entryScriptGoal
+    ? (multiAst.entryFile as { externalModuleIndicator?: ts.Node }).externalModuleIndicator !== undefined
+    : true;
   // (#3057 multi-source parity) Discover dynamic TypedArray constructors over
   // the complete graph before any shared runtime helper is emitted. A helper
   // in an earlier source file may receive the resulting `$__ta_dyn_view` as

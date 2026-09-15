@@ -14134,6 +14134,21 @@ assert._isSameValue = isSameValue;
           if (flags & (1 << 3)) desc.writable = !!(flags & 1);
           if (flags & (1 << 4)) desc.enumerable = !!(flags & (1 << 1));
           if (flags & (1 << 5)) desc.configurable = !!(flags & (1 << 2));
+          // (#6474) Bit 6 — "spec defaults on CREATION only". §9.1.1.4.16
+          // CreateGlobalVarBinding makes a script's top-level `var` binding
+          // `{writable: true, enumerable: true, configurable: false}`. The
+          // runtime-eval global mirror deliberately leaves writable/enumerable
+          // UNSPECIFIED so a program's own attribute change survives a later
+          // mirror refresh — but on the FIRST definition "unspecified" means
+          // `false`, so it minted a non-writable, non-enumerable binding. The
+          // next refresh then carried a new value into a non-writable property
+          // and threw `Cannot redefine property`. This bit says: apply the spec
+          // attributes when the property does not exist yet, and keep the
+          // unspecified-on-update behaviour otherwise.
+          if (flags & (1 << 6) && !_hasOwn(obj, prop)) {
+            if (!_hasOwn(desc, "writable")) desc.writable = true;
+            if (!_hasOwn(desc, "enumerable")) desc.enumerable = true;
+          }
           try {
             if (_vecDefineOwnProperty(obj, prop, desc, callbackState)) return obj;
             Object.defineProperty(obj, prop, desc);

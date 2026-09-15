@@ -516,7 +516,19 @@ function emitRuntimeEvalGlobalBindingPushBody(
       // defect is actually observed.
       const moduleOwnsTheName =
         ctx.sourceIsModule && !ctx.standalone && !ctx.wasi && !IMMUTABLE_GLOBAL_PROPERTY_NAMES.has(name);
-      const attributes = isScriptBinding ? (moduleOwnsTheName ? 0x2d : 0x23) : 0x05;
+      // (#6474) Bit 6 on the script-binding word: on the FIRST definition apply
+      // §9.1.1.4.16's `{writable: true, enumerable: true}`; on a later refresh
+      // keep them unspecified, exactly as before. Without it the first mirror
+      // define created a NON-writable global var binding (unspecified defaults
+      // to false on creation) and the second refresh threw
+      // `Cannot redefine property` carrying the new value into it. Latent until
+      // a script-goal consumer whose var was not already mirrored hit it — two
+      // `language/statements/with` rows in the linked lane.
+      // Host lane only, like `moduleOwnsTheName` above: standalone/WASI mirror
+      // onto a synthesized carrier and decode the flag word in wasm, so they
+      // stay byte-identical.
+      const createWithSpecDefaults = !ctx.standalone && !ctx.wasi ? 0x40 : 0;
+      const attributes = isScriptBinding ? (moduleOwnsTheName ? 0x2d : createWithSpecDefaults | 0x23) : 0x05;
       fctx.body.push(
         { op: "f64.const", value: 0x80 | attributes },
         { op: "call", funcIdx: liveDefineIdx },

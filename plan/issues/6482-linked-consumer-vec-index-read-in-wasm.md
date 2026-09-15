@@ -34,7 +34,11 @@ membership for the vec carrier, or a boundary terminal that routes the miss to
 the cross-module decoder instead of the default).
 
 Rows: `built-ins/Object/defineProperty/15.2.3.6-4-{299-1,300,540-8}.js`, the
-`arr540` and `plainval` minimal bodies in #6477.
+`arr540` and `plainval` minimal bodies in #6477; after #6474 (script goal moves
+top-level values from module globals to global-object properties, which routes
+the provider's read down the same in-wasm vec path) also
+`built-ins/Object/defineProperty/15.2.3.6-4-258.js` and `15.2.3.6-3-185.js`
+(reproduced in isolation by the #6474 lane, 2026-09-15).
 
 ## Acceptance criteria
 

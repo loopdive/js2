@@ -849,6 +849,8 @@ function buildCodegenOptions(
     strictNoHostImports: targetProfile.strictEnvImportGate,
     // (#2119) thread module-strictness inference uniformly across all drivers.
     inferModuleStrictArguments: options.inferModuleStrictArguments,
+    // (#6474) opt-in: let the multi-file path read the entry's own source goal.
+    entryScriptGoal: options.entryScriptGoal,
     // Phase 2 (#1131): default experimentalIR to on so recursive numeric
     // kernels (fib, factorial, etc.) compile without the boxing roundtrip the
     // legacy path emits for untyped JS parameters. Pass `experimentalIR: false`

@@ -398,16 +398,45 @@ export interface HarnessBindingPrelude {
  *
  * The strict directive comes FIRST, ahead of the import — a `"use strict"`
  * that is not the first statement is not a directive prologue at all.
+ *
+ * (#6474) `moduleGoal` selects between two binding forms that must produce the
+ * SAME Wasm imports but a different **source goal**:
+ *
+ * - `true` (a `flags: [module]` row, and the default for existing callers):
+ *   an `export declare function` stub plus a real `import` in the entry. The
+ *   import is the parser's `externalModuleIndicator`, so the body is an ES
+ *   module — which is correct, because the row IS one.
+ * - `false` (every script-goal row — the overwhelming majority): the stub is a
+ *   GLOBAL ambient declaration file (no `export` ⇒ the stub itself is a script
+ *   and each getter is an ambient global), and the entry carries no import at
+ *   all. A test262 script's top-level `var` is then a property of the global
+ *   object, visible to a closure created before the declaration and to a
+ *   `with`-introduced declaration — the semantics the import silently took
+ *   away. The getter call still lowers to the provider import because
+ *   `registerAmbientParseImport` consults `ctx.linkedPackageBindings`.
+ *
+ * Dropping the import is only half the fix: the multi-file codegen path forces
+ * `ctx.sourceIsModule = true` regardless of the entry file. `entryScriptGoal`
+ * (set by {@link compileHarnessLinkedBody}) is the other half.
  */
-export function harnessBindingPrelude(provider: HarnessProvider, body: string, strict: boolean): HarnessBindingPrelude {
+export function harnessBindingPrelude(
+  provider: HarnessProvider,
+  body: string,
+  strict: boolean,
+  moduleGoal = true,
+): HarnessBindingPrelude {
   const names = referencedHarnessNames(provider, body);
   const getters = names.map((name) => provider.getters.get(name) as string);
-  const stubSource = `${getters.map((getter) => `export declare function ${getter}(): any;`).join("\n")}\n`;
+  const stubSource = `${getters
+    .map((getter) => `${moduleGoal ? "export " : ""}declare function ${getter}(): any;`)
+    .join("\n")}\n`;
+  const bindingLine = `${names.map((name, index) => `var ${name} = ${getters[index]}();`).join(" ")}\n`;
   const prelude =
     (strict ? '"use strict";\n' : "") +
     (getters.length > 0
-      ? `import { ${getters.join(", ")} } from "${HARNESS_STUB_KEY.replace(/\.ts$/, "")}";\n` +
-        `${names.map((name, index) => `var ${name} = ${getters[index]}();`).join(" ")}\n`
+      ? moduleGoal
+        ? `import { ${getters.join(", ")} } from "${HARNESS_STUB_KEY.replace(/\.ts$/, "")}";\n${bindingLine}`
+        : bindingLine
       : "");
   const bindings = new Map(getters.map((getter) => [getter, { module: provider.namespace, field: getter }]));
   return {
@@ -438,7 +467,13 @@ export async function compileHarnessLinkedBody(
   options?: CompileHarnessLinkedBodyOptions,
 ): Promise<CompileResult & { harnessPrelude: HarnessBindingPrelude }> {
   const entryKey = options?.fileName ?? "test.js";
-  const prelude = harnessBindingPrelude(provider, body, options?.strict === true);
+  // (#6474) The runner passes `inferModuleStrictArguments` as an EXPLICIT
+  // boolean per row: `true` exactly for a `flags: [module]` row (see
+  // `isModuleGoal` in tests/test262-shared.ts), `false` for a script. That is
+  // already the module-goal signal, so the prelude reads it rather than
+  // growing a second option that could disagree with it.
+  const moduleGoal = options?.inferModuleStrictArguments === true;
+  const prelude = harnessBindingPrelude(provider, body, options?.strict === true, moduleGoal);
   const files: Record<string, string> = {
     [HARNESS_STUB_KEY]: prelude.stubSource,
     [entryKey]: `${prelude.prelude}${body}`,
@@ -471,6 +506,17 @@ export async function compileHarnessLinkedBody(
     // keeps its identity in the body's `catch` and vice versa.
     sharedExceptionTag: true,
     inferModuleStrictArguments: options?.inferModuleStrictArguments ?? false,
+    // (#6474) The other half of the script-goal fix. Dropping the prelude's
+    // `import` (above) is not enough: `generateMultiModule` forces
+    // `ctx.sourceIsModule = true` for every multi-file graph, which keeps the
+    // module-goal var scoping, the module-goal top-level `this` and the
+    // module-goal unresolvable-assignment behaviour even though the entry is a
+    // script. With this flag the goal follows the entry's own
+    // `externalModuleIndicator`, so a `flags: [module]` row (whose prelude
+    // KEEPS the import) still compiles as a module. Consumer-only: the provider
+    // build and every other `compileMulti`/`compileProject` caller are
+    // untouched and byte-identical.
+    entryScriptGoal: options?.entryScriptGoal ?? true,
     link: [...new Set([...(options?.link ?? []), provider.namespace])],
     linkedPackageBindings: prelude.bindings,
   });
