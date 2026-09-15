@@ -1,7 +1,8 @@
 ---
 id: 6477
 title: "Linked test262 harness: property-descriptor reads on consumer values differ from the honest lane"
-status: in-progress
+status: done
+completed: 2026-09-15
 sprint: current
 created: 2026-09-14
 updated: 2026-09-15
@@ -22,7 +23,7 @@ area: runtime
 language_feature: property-descriptors
 goal: test262-conformance
 depends_on: [3451]
-related: [3451, 5225, 6475]
+related: [3451, 5225, 6475, 6482, 6483]
 # id reserved 2026-09-14 with pr_scan="degraded" (gh unreachable): verified
 # against upstream main + the assignment ref, NOT against in-flight PRs.
 ---
@@ -304,3 +305,12 @@ other parity case (`function name`) is unchanged.
 `JS2WASM_EVAL_ENGINE=quickjs but the quickjs provider is not built` —
 environmental (missing `.test262-cache/quickjs-artifact-*/libquickjs.wasm`),
 not related to this change.
+
+### Acceptance decision (2026-09-15, Fable lane)
+
+Accepted as done with the "≥ 12 of 13" box retargeted: the 9 rows this issue's
+mechanism owned (consumer unregistered during `start`; descriptor import not
+redirected) all flipped, with 21 fail→pass and 0 pass→fail on the 47-row
+scope. The 4 remaining rows are two different mechanisms, measured above and
+filed separately: in-wasm vec index reads across modules (#6482) and the
+class-with-fields prototype own-property answer (#6483).
