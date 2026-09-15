@@ -43,6 +43,12 @@ import {
   _installIteratorHelperPolyfills,
   _resetIteratorRuntimeIntrinsicsForRealmIsolation,
 } from "./runtime/iterator-polyfills.js";
+import {
+  createEagerGeneratorBuffer,
+  appendEagerGeneratorValue,
+  drainSynchronousGeneratorDelegation,
+  EAGER_GENERATOR_LIMIT as __EAGER_GEN_LIMIT,
+} from "./runtime/generator-buffer.js";
 import { buildStringConstants, buildStringConstants16 } from "./runtime/string-constants.js";
 import {
   classDispatchExportName,
@@ -16997,38 +17003,24 @@ assert._isSameValue = isSameValue;
       if (name === "Promise_catch") return (p: any, cb: any) => p.catch(_maybeWrapCallable(cb, 1, callbackState));
       // (#1382) `onFinally` is arity-0 (no arg per spec §27.2.5.3).
       if (name === "Promise_finally") return (p: any, cb: any) => p.finally(_maybeWrapCallable(cb, 0, callbackState));
-      // Generator support: buffer management and generator creation
-      //
-      // Eager-generator hard cap (#991/#992): we lower generators to an array
-      // that is fully populated before .next() can be called. An infinite
-      // generator (e.g. `while (true) { yield; }`) would push forever, OOMing
-      // the Node process and causing the parent test runner to register a
-      // 30s timeout. Throwing a RangeError after a bounded number of yields
-      // turns those tests into a quick runtime exception instead of a
-      // worker-killing OOM. The cap is high enough (1M) that real-world
-      // generators are never affected.
-      const __EAGER_GEN_LIMIT = 1_000_000;
-      if (name === "__gen_create_buffer") return () => [];
-      if (name === "__gen_push_f64")
-        return (buf: any[], v: number) => {
-          if (buf.length >= __EAGER_GEN_LIMIT) {
-            throw new RangeError("Eager generator buffer exceeded " + __EAGER_GEN_LIMIT + " yields");
+      // Generator support: buffer management and generator creation.
+      if (name === "__gen_create_buffer") return createEagerGeneratorBuffer;
+      if (name === "__gen_push_f64" || name === "__gen_push_i32" || name === "__gen_push_ref") {
+        return appendEagerGeneratorValue;
+      }
+      if (name === "__gen_yield_star_result")
+        return (buf: unknown[], rawIterable: any) => {
+          // Only positively identified vectors may be materialized. In
+          // particular, pre-draining closure iterators would erase completion.
+          let iterable = rawIterable;
+          if (iterable != null && _isWasmStruct(iterable)) {
+            const exports = marshalExports(callbackState);
+            if (!exports || typeof exports.__is_vec !== "function" || !_isWasmVec(iterable, exports)) {
+              throw new TypeError("Unsupported opaque delegation carrier");
+            }
+            iterable = _materializeIterable(iterable, callbackState);
           }
-          buf.push(v);
-        };
-      if (name === "__gen_push_i32")
-        return (buf: any[], v: number) => {
-          if (buf.length >= __EAGER_GEN_LIMIT) {
-            throw new RangeError("Eager generator buffer exceeded " + __EAGER_GEN_LIMIT + " yields");
-          }
-          buf.push(v);
-        };
-      if (name === "__gen_push_ref")
-        return (buf: any[], v: any) => {
-          if (buf.length >= __EAGER_GEN_LIMIT) {
-            throw new RangeError("Eager generator buffer exceeded " + __EAGER_GEN_LIMIT + " yields");
-          }
-          buf.push(v);
+          return drainSynchronousGeneratorDelegation(buf, iterable);
         };
       if (name === "__gen_yield_star")
         return (buf: any[], rawIterable: any) => {

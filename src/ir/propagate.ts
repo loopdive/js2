@@ -82,6 +82,14 @@
 //   it is not a full CFG analysis.
 
 import type { DtsEntrypointSeeds } from "../checker/dts-entrypoint-seeds.js";
+import {
+  collectIndexedFunctionDeclarations,
+  collectReassignedCallables,
+  hasStableGeneratorReturnFlow,
+  makeCallTargetResolver,
+  type CallTargetResolver,
+  type PropagationFunction,
+} from "./propagation-callables.js";
 import { fnctorCtorParamTypesFlagEnabled } from "../derivation-flags.js";
 import { ts, forEachChild } from "../ts-api.js";
 import { buildIrUnitInventory, type IrSourceId, type IrUnitId } from "./identity.js";
@@ -89,7 +97,6 @@ import {
   buildIrLegacyUnitProjection,
   buildIrPlanningIdentityContext,
   type IrLegacyUnitProjection,
-  IrPlanningIdentityInvariantError,
   type IrPlanningIdentityContext,
 } from "./planning-identity.js";
 
@@ -135,6 +142,8 @@ export type LatticeAtom =
 
 export type LatticeType =
   | { readonly kind: "unknown" }
+  // Semantic callable result, never a structural-field or scalar-union atom.
+  | { readonly kind: "generator-object" }
   | LatticeAtom
   | { readonly kind: "union"; readonly members: readonly LatticeAtom[] }
   | { readonly kind: "dynamic" };
@@ -266,14 +275,6 @@ const DYNAMIC: LatticeType = { kind: "dynamic" };
 // Entry point
 // ---------------------------------------------------------------------------
 
-interface PropagationFunction {
-  readonly unitId: IrUnitId;
-  readonly displayName: string;
-  readonly declaration: ts.FunctionDeclaration;
-}
-
-type CallTargetResolver = (identifier: ts.Identifier) => IrUnitId | undefined;
-
 /**
  * Build propagation facts for the requested source files using the exact AST
  * declarations captured by `identityContext.inventory`.
@@ -296,6 +297,7 @@ export function buildIrUnitTypeMap(
   if (decls.size === 0) return new Map();
 
   const resolveCallTarget = makeCallTargetResolver(functions, checker, identityContext);
+  const reassignedCallables = collectReassignedCallables(sourceFiles, resolveCallTarget);
   // Fnctor admission is an explicit opt-in.  It is intentionally represented
   // as the same first-refusal extension used by the satellite evaluators so
   // every ordinary expression rule remains unchanged when no admission
@@ -406,7 +408,7 @@ export function buildIrUnitTypeMap(
         }
       }
       let newReturn: LatticeType = seed.returnType;
-      if (fn.body) {
+      if (fn.body && seed.returnType.kind !== "generator-object") {
         // #1845 — a concrete seed keeps its authority over a `dynamic` body
         // inference (our expression inference is deliberately narrow, so
         // `dynamic` usually just means "couldn't see through the local
@@ -434,6 +436,13 @@ export function buildIrUnitTypeMap(
           fnctorExtension,
         );
       }
+
+      if (
+        newReturn.kind === "generator-object" &&
+        (reassignedCallables.has(unitId) ||
+          (seed.returnType.kind !== "generator-object" && !hasStableGeneratorReturnFlow(fn)))
+      )
+        newReturn = DYNAMIC;
 
       // --- detect change ---------------------------------------------
       if (!paramsEqual(cur.params, newParams) || !typesEqual(cur.returnType, newReturn)) {
@@ -630,6 +639,9 @@ function seedReturnType(
   fn: ts.FunctionDeclaration | ts.FunctionExpression,
   checker: ts.TypeChecker | undefined,
 ): LatticeType {
+  if (fn.asteriskToken && !fn.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)) {
+    return { kind: "generator-object" };
+  }
   if (fn.type) {
     const t = typeNodeToLattice(fn.type);
     if (t !== null) return t;
@@ -1147,6 +1159,9 @@ function join(a: LatticeType, b: LatticeType): LatticeType {
   if (a.kind === "dynamic" || b.kind === "dynamic") return DYNAMIC;
   if (a.kind === "unknown") return b;
   if (b.kind === "unknown") return a;
+  if (a.kind === "generator-object" || b.kind === "generator-object") {
+    return a.kind === b.kind ? a : DYNAMIC;
+  }
 
   // #1126 Stage 1 — numeric-domain widening rules. Joining two distinct
   // numeric atoms (any combination of i32/u32/f64) widens to f64 rather
@@ -1353,103 +1368,6 @@ function paramsEqual(a: readonly LatticeType[], b: readonly LatticeType[]): bool
 // Helpers
 // ---------------------------------------------------------------------------
 
-function collectIndexedFunctionDeclarations(
-  sourceFiles: readonly ts.SourceFile[],
-  identityContext: IrPlanningIdentityContext,
-): readonly PropagationFunction[] {
-  const selectedSources = new Set<ts.SourceFile>();
-  for (const sourceFile of sourceFiles) {
-    if (!identityContext.sourceIdBySourceFile.has(sourceFile)) {
-      throw new IrPlanningIdentityInvariantError(
-        "source-record-mismatch",
-        `IR propagation source ${sourceFile.fileName} is not part of the supplied planning identity context`,
-      );
-    }
-    selectedSources.add(sourceFile);
-  }
-
-  const functions: PropagationFunction[] = [];
-  for (const unit of identityContext.inventory.allUnits) {
-    const declaration = identityContext.declarationByUnitId.get(unit.id);
-    if (
-      !declaration ||
-      !ts.isFunctionDeclaration(declaration) ||
-      !declaration.name ||
-      !declaration.body ||
-      !ts.isSourceFile(declaration.parent) ||
-      !selectedSources.has(declaration.parent)
-    ) {
-      continue;
-    }
-    functions.push({ unitId: unit.id, displayName: declaration.name.text, declaration });
-  }
-  return functions;
-}
-
-function makeCallTargetResolver(
-  functions: readonly PropagationFunction[],
-  checker: ts.TypeChecker | undefined,
-  identityContext: IrPlanningIdentityContext,
-): CallTargetResolver {
-  const eligible = new Set(functions.map((info) => info.unitId));
-  if (!checker) {
-    const byDisplayName = new Map<string, IrUnitId[]>();
-    for (const info of functions) {
-      const matches = byDisplayName.get(info.displayName);
-      if (matches) matches.push(info.unitId);
-      else byDisplayName.set(info.displayName, [info.unitId]);
-    }
-    return (identifier) => {
-      const matches = byDisplayName.get(identifier.text);
-      return matches?.length === 1 ? matches[0] : undefined;
-    };
-  }
-
-  const symbolCache = new Map<ts.Symbol, IrUnitId | null>();
-  const identifierCache = new Map<ts.Identifier, IrUnitId | null>();
-  const resolveSymbol = (input: ts.Symbol): IrUnitId | undefined => {
-    if (symbolCache.has(input)) return symbolCache.get(input) ?? undefined;
-    let symbol = input;
-    if ((symbol.flags & ts.SymbolFlags.Alias) !== 0) {
-      try {
-        symbol = checker.getAliasedSymbol(symbol);
-      } catch {
-        symbolCache.set(input, null);
-        return undefined;
-      }
-    }
-    if (symbolCache.has(symbol)) {
-      const resolved = symbolCache.get(symbol) ?? null;
-      symbolCache.set(input, resolved);
-      return resolved ?? undefined;
-    }
-
-    let match: IrUnitId | undefined;
-    let ambiguous = false;
-    const consider = (declaration: ts.Declaration | undefined): void => {
-      if (!declaration) return;
-      const unitId = identityContext.unitIdByDeclaration.get(declaration);
-      if (!unitId || !eligible.has(unitId)) return;
-      if (match !== undefined && match !== unitId) ambiguous = true;
-      else match = unitId;
-    };
-    for (const declaration of symbol.declarations ?? []) consider(declaration);
-    consider(symbol.valueDeclaration);
-    const resolved = ambiguous ? null : (match ?? null);
-    symbolCache.set(symbol, resolved);
-    symbolCache.set(input, resolved);
-    return resolved ?? undefined;
-  };
-
-  return (identifier) => {
-    if (identifierCache.has(identifier)) return identifierCache.get(identifier) ?? undefined;
-    const symbol = checker.getSymbolAtLocation(identifier);
-    const resolved = symbol ? (resolveSymbol(symbol) ?? null) : null;
-    identifierCache.set(identifier, resolved);
-    return resolved ?? undefined;
-  };
-}
-
 /**
  * Walk the function body, tracking `let`/`const` declarations into a
  * mutable scope clone and reporting every reachable `return` expression's
@@ -1603,6 +1521,7 @@ export function lowerTypeToIrType(t: LatticeType): import("./nodes.js").IrType |
     }
     case "unknown":
     case "dynamic":
+    case "generator-object":
       return null;
   }
 }

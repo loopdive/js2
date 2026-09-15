@@ -8,6 +8,7 @@ import { isNullablePrimitiveType, isStringType, isVoidType } from "../../checker
 import type { Instr, ValType } from "../../ir/types.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
+import { isHostDelegationCompletion } from "../expressions/misc.js";
 import {
   flushRedirectedPatternBindings,
   redirectBoxedPatternBindings,
@@ -47,8 +48,7 @@ import {
 } from "../registry/types.js";
 import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 import { resolveFnctorTypedBindingType } from "../fnctor-typed-bindings.js";
-import { genericStructFactoryExpression } from "../generic-struct-factory.js";
-import { readonlyErasureMappedAliasTarget } from "../readonly-erasure-mapped-type.js";
+import { planDeclarationFreshFactoryCarrier } from "../bindings/initializer-carriers.js";
 import { canEmitAssertedStructExtension, emitAssertedStructExtension, emitGuardedRefCast } from "../type-coercion.js";
 import {
   inferNativeTaViewCallResultType,
@@ -1869,44 +1869,11 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // (#3054 B1) `new <TA>(buffer)` → shared-backing `$__ta_view` local type.
     const taViewType = inferTaViewType(ctx, decl.initializer);
     const taViewCallResultType = inferNativeTaViewCallResultType(ctx, decl.initializer);
-    const genericFactory = decl.initializer ? genericStructFactoryExpression(ctx, decl.initializer) : null;
-    const genericFactorySource = genericFactory ? resolveWasmType(ctx, genericFactory.sourceConstraint) : null;
-    const genericFactorySignatureTarget = genericFactory ? resolveWasmType(ctx, genericFactory.target) : null;
-    const genericFactoryBindingTarget = genericFactory
-      ? resolveWasmType(ctx, readonlyErasureMappedAliasTarget(varType) ?? varType)
-      : null;
-    // Program-ABI replay can retain the concrete binding type while collapsing
-    // the call's instantiated return back to its generic constraint. Recover
-    // the binding destination only for an already-proven fresh factory and
-    // only when it is a physically compatible strict extension of that source.
-    const genericFactoryTarget =
-      genericFactorySource &&
-      genericFactorySignatureTarget &&
-      genericFactoryBindingTarget &&
-      (genericFactorySource.kind === "ref" || genericFactorySource.kind === "ref_null") &&
-      (genericFactorySignatureTarget.kind === "ref" || genericFactorySignatureTarget.kind === "ref_null") &&
-      (genericFactoryBindingTarget.kind === "ref" || genericFactoryBindingTarget.kind === "ref_null") &&
-      genericFactorySignatureTarget.typeIdx === genericFactorySource.typeIdx &&
-      genericFactoryBindingTarget.typeIdx !== genericFactorySource.typeIdx &&
-      canEmitAssertedStructExtension(
-        ctx,
-        { kind: "ref_null", typeIdx: genericFactorySource.typeIdx },
-        { kind: "ref_null", typeIdx: genericFactoryBindingTarget.typeIdx },
-      )
-        ? genericFactoryBindingTarget
-        : genericFactorySignatureTarget;
-    const genericFactoryInitializerType: ValType | null =
-      genericFactoryTarget?.kind === "ref" || genericFactoryTarget?.kind === "ref_null"
-        ? { kind: "ref_null", typeIdx: genericFactoryTarget.typeIdx }
-        : (decl.parent.flags & ts.NodeFlags.Const) !== 0 &&
-            genericFactory?.sourceResultAbi === true &&
-            (genericFactoryTarget?.kind === "externref" || genericFactoryTarget?.kind === "ref_extern") &&
-            (genericFactorySource?.kind === "ref" || genericFactorySource?.kind === "ref_null")
-          ? // Keep this declaration in lockstep with the let/const pre-hoister:
-            // an opaque logical T still carries the proven factory's physical
-            // source fields.
-            { kind: "ref_null", typeIdx: genericFactorySource.typeIdx }
-          : null;
+    const {
+      source: genericFactorySource,
+      target: genericFactoryTarget,
+      initializerType: genericFactoryInitializerType,
+    } = planDeclarationFreshFactoryCarrier(ctx, decl, varType);
     // (#2615/#4397) Proxy and Proxy.revocable initializers must use externref
     // slots so dynamic MOP/result-object reads do not become struct.get on the
     // checker-inferred target/revocable shapes.
@@ -1980,9 +1947,10 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         ? { kind: "ref_null", typeIdx: getOrRegisterVecType(ctx, "externref", { kind: "externref" }) }
         : undefined;
     const filterResultDynamicCarrier = filterResultNeedsDynamicCarrier(ctx, decl.initializer);
-    const nativeGenBindingType: ValType | null = initIsTransferredArrayLikeResult
-      ? { kind: "externref" }
-      : nativeGeneratorBindingType(ctx, decl.initializer);
+    const nativeGenBindingType: ValType | null =
+      initIsTransferredArrayLikeResult || isHostDelegationCompletion(ctx, decl.initializer)
+        ? { kind: "externref" }
+        : nativeGeneratorBindingType(ctx, decl.initializer);
     const wasmTypeBase: ValType =
       nativeGenBindingType ??
       // (#3123) A widened fnctor-subclass binding (pre-hoist recorded it in

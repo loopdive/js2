@@ -337,6 +337,18 @@ function canInline(
   externalCapabilityBoundaryUnits: ReadonlySet<IrUnitId>,
   provenanceBearingUnitIds: ReadonlySet<IrUnitId>,
 ): boolean {
+  // This pass transfers ordinary SSA only, not the callee's local frame,
+  // captured environment, or suspension protocol. Reject before allocating
+  // fresh ids or forking allocation sites; retain the original symbolic call.
+  if (
+    (callee.slots?.length ?? 0) > 0 ||
+    callee.generatorBufferSlot !== undefined ||
+    callee.closureSubtype !== undefined ||
+    callee.asyncPlan !== undefined ||
+    callee.asyncRuntime !== undefined ||
+    (callee.funcKind !== undefined && callee.funcKind !== "regular")
+  )
+    return false;
   if (provenanceBearingUnitIds.has(callee.unitId)) return false;
   if (callee.blocks.length !== 1) return false;
   if (recursiveSet.has(callee.unitId)) return false;
@@ -367,6 +379,16 @@ function canInline(
   // raw.wasm carries function-local backend indices that don't survive a
   // change of enclosing function — conservative skip in the same spirit.
   for (const inst of body.instrs) {
+    if (
+      inst.kind === "slot.read" ||
+      inst.kind === "slot.write" ||
+      inst.kind === "gen.push" ||
+      inst.kind === "gen.epilogue" ||
+      inst.kind === "gen.yieldStar" ||
+      inst.kind === "gen.setReturn" ||
+      inst.kind === "closure.cap"
+    )
+      return false;
     if (inst.kind === "raw.wasm") return false;
     if (
       inst.kind === "forof.vec" ||

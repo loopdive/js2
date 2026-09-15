@@ -2994,6 +2994,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/bindings/initializer-carriers.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/binary-ops.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -4579,6 +4587,14 @@
     },
     {
       "path": "src/codegen/expressions/destructuring-unresolved.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/expressions/dynamic-import.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -7843,6 +7859,14 @@
     },
     {
       "path": "src/codegen/registry/import-collector-delegates.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/registry/generator-imports.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -11274,6 +11298,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/propagation-callables.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate frontend AST/checker callable identity and flow evidence from pure IR contracts; this extraction retains frontend relocation debt."
+    },
+    {
       "path": "src/ir/property-key-fold.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -11400,6 +11432,14 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/selection-return-types.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate frontend type-annotation classification from pure IR signatures; this extraction retains frontend relocation debt."
     },
     {
       "path": "src/ir/semantic-declaration-snapshot.ts",
@@ -11867,6 +11907,11 @@
     },
     {
       "path": "src/runtime/instance-lifecycle-adapter.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
+      "path": "src/runtime/generator-buffer.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
     },
