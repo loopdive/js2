@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-15T00:37:51.214Z",
-  "baseline_generated_at": "2026-09-15T00:37:51.214Z",
-  "baseline_sha": "9f3a5afd7478fe0eb2e2d67cf6187cd341b9bde6",
+  "timestamp": "2026-09-15T05:04:37.052Z",
+  "baseline_generated_at": "2026-09-15T05:04:37.052Z",
+  "baseline_sha": "ae5b54227c47a20fda8e4a7526e59d2cf1ae85c1",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -1294,16 +1294,16 @@
         "sample_files": [
           "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
-          "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
-          "test/built-ins/Temporal/PlainDate/prototype/toPlainDateTime/argument-string-unknown-annotation.js"
+          "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
+          "test/built-ins/Temporal/ZonedDateTime/prototype/with/disambiguation-wrong-type.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: null Expected a RangeError but got a TypeError",
           "type_error:TypeError: Cannot read properties of undefined (reading 'until')",
-          "host_import_leak:standalone target emitted host imports: env::__temporal_plain_date_add_field, env::__temporal_plain_date_from_string_field (##)",
           "type_error:TypeError: Cannot read properties of undefined (reading 'round')",
-          "type_error:TypeError: called value is not a function"
+          "host_import_leak:standalone target emitted host imports: env::__temporal_plain_date_add_field, env::__temporal_plain_date_from_string_field (##)",
+          "other:ReferenceError: Temporal is not defined"
         ]
       },
       {
@@ -1335,8 +1335,8 @@
         "sample_files": [
           "test/built-ins/AsyncDisposableStack/prototype/move/not-a-constructor.js",
           "test/built-ins/AsyncDisposableStack/prototype/move/sets-state-to-disposed.js",
-          "test/built-ins/AsyncDisposableStack/instance-extensible.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.asyncDispose-property-not-callable.js",
+          "test/built-ins/AsyncDisposableStack/instance-extensible.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.dispose-property-not-callable.js"
         ],
         "sample_signatures": [
@@ -2552,8 +2552,8 @@
           "ES2023": 39,
           "Unclassified (untagged)": 69,
           "ES2017": 11,
-          "ES2022": 2,
           "Unclassified (legacy)": 1,
+          "ES2022": 2,
           "Proposals": 7,
           "ES2025": 5,
           "ES2024": 1
@@ -2958,7 +2958,7 @@
           "test/built-ins/WeakRef/throws-when-target-cannot-be-held-weakly.js",
           "test/built-ins/Atomics/wait/cannot-suspend-throws.js",
           "test/built-ins/FinalizationRegistry/prototype/register/return-undefined-register-symbol.js",
-          "test/built-ins/FinalizationRegistry/target-not-callable-throws.js"
+          "test/built-ins/FinalizationRegistry/prototype/unregister/custom-this.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)",

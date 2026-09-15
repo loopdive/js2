@@ -84,6 +84,45 @@ export interface LibDeclIndex {
  * mirroring the checker's `symbol.getDeclarations()` order.
  */
 export function buildLibDeclIndex(files: readonly ts.SourceFile[]): LibDeclIndex {
+  // (#6480) The index is a pure function of the lib `SourceFile` OBJECTS, and
+  // those are cached per process by `getLibSourceFile` (checker/index.ts) — so
+  // every compile in a pooled worker rebuilds the identical index from the very
+  // same nodes. Memoise on the file-identity list. `preloadLibFiles` drops the
+  // cached `SourceFile`s, so a replaced lib re-parses to a NEW object and misses
+  // here by construction: no explicit invalidation hook is needed. Two entries
+  // cover the DOM / DOM-free composites alternating in one process.
+  const cached = findCachedLibDeclIndex(files);
+  if (cached) return cached;
+  const built = buildLibDeclIndexUncached(files);
+  LIB_DECL_INDEX_CACHE.unshift({ files: [...files], index: built });
+  if (LIB_DECL_INDEX_CACHE.length > LIB_DECL_INDEX_CACHE_MAX) LIB_DECL_INDEX_CACHE.length = LIB_DECL_INDEX_CACHE_MAX;
+  return built;
+}
+
+const LIB_DECL_INDEX_CACHE_MAX = 4;
+const LIB_DECL_INDEX_CACHE: { files: readonly ts.SourceFile[]; index: LibDeclIndex }[] = [];
+
+function findCachedLibDeclIndex(files: readonly ts.SourceFile[]): LibDeclIndex | undefined {
+  for (const entry of LIB_DECL_INDEX_CACHE) {
+    if (entry.files.length !== files.length) continue;
+    let same = true;
+    for (let i = 0; i < files.length; i++) {
+      if (entry.files[i] !== files[i]) {
+        same = false;
+        break;
+      }
+    }
+    if (same) return entry.index;
+  }
+  return undefined;
+}
+
+/** Test seam (#6480): drop the per-process lib declaration index cache. */
+export function clearLibDeclIndexCacheForTests(): void {
+  LIB_DECL_INDEX_CACHE.length = 0;
+}
+
+function buildLibDeclIndexUncached(files: readonly ts.SourceFile[]): LibDeclIndex {
   const index: LibDeclIndex = {
     interfaces: new Map(),
     aliases: new Map(),

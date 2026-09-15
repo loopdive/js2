@@ -1,8 +1,8 @@
 [
   {
     "edition": "ES5",
-    "pass": 7962,
-    "fail": 1042,
+    "pass": 7966,
+    "fail": 1038,
     "ce": 25,
     "skip": 0,
     "total": 9029,
@@ -2186,8 +2186,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4362,
-    "fail": 1382,
+    "pass": 4369,
+    "fail": 1375,
     "ce": 48,
     "skip": 0,
     "total": 5792,
@@ -2195,8 +2195,8 @@
     "features": [
       {
         "name": "class",
-        "pass": 3555,
-        "fail": 712,
+        "pass": 3562,
+        "fail": 705,
         "ce": 16,
         "skip": 0,
         "total": 4283,
@@ -2213,8 +2213,8 @@
       },
       {
         "name": "class-methods-private",
-        "pass": 1388,
-        "fail": 318,
+        "pass": 1391,
+        "fail": 315,
         "ce": 3,
         "skip": 0,
         "total": 1709,
@@ -2222,8 +2222,8 @@
       },
       {
         "name": "class-static-methods-private",
-        "pass": 1230,
-        "fail": 282,
+        "pass": 1233,
+        "fail": 279,
         "ce": 1,
         "skip": 0,
         "total": 1513,
@@ -2285,8 +2285,8 @@
       },
       {
         "name": "class-static-fields-private",
-        "pass": 264,
-        "fail": 81,
+        "pass": 265,
+        "fail": 80,
         "ce": 0,
         "skip": 0,
         "total": 345,
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4424,
-    "fail": 875,
+    "pass": 4431,
+    "fail": 868,
     "ce": 146,
     "skip": 0,
     "total": 5445,

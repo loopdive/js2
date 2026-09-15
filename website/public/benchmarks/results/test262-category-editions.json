@@ -517,8 +517,8 @@
       "skip": 0
     },
     "ES2022": {
-      "pass": 1875,
-      "fail": 536,
+      "pass": 1882,
+      "fail": 529,
       "ce": 7,
       "skip": 0
     },
@@ -577,8 +577,8 @@
   },
   "built-ins/Array": {
     "ES5": {
-      "pass": 163,
-      "fail": 46,
+      "pass": 164,
+      "fail": 45,
       "ce": 3,
       "skip": 0
     },
@@ -641,8 +641,8 @@
   },
   "language/statements": {
     "ES5": {
-      "pass": 645,
-      "fail": 87,
+      "pass": 648,
+      "fail": 84,
       "ce": 0,
       "skip": 0
     },
@@ -787,20 +787,6 @@
       "skip": 0
     }
   },
-  "built-ins/WeakMap": {
-    "ES2015": {
-      "pass": 86,
-      "fail": 16,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2026": {
-      "pass": 31,
-      "fail": 8,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "built-ins/AsyncIteratorPrototype": {
     "ES2018": {
       "pass": 4,
@@ -811,6 +797,20 @@
     "ES2027": {
       "pass": 0,
       "fail": 9,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "built-ins/WeakMap": {
+    "ES2015": {
+      "pass": 86,
+      "fail": 16,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2026": {
+      "pass": 31,
+      "fail": 8,
       "ce": 0,
       "skip": 0
     }
@@ -957,6 +957,32 @@
       "skip": 0
     }
   },
+  "built-ins/Math": {
+    "ES5": {
+      "pass": 81,
+      "fail": 0,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2015": {
+      "pass": 151,
+      "fail": 0,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2025": {
+      "pass": 5,
+      "fail": 0,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2026": {
+      "pass": 0,
+      "fail": 10,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "built-ins/Symbol": {
     "ES2015": {
       "pass": 72,
@@ -985,32 +1011,6 @@
     "ES2027": {
       "pass": 6,
       "fail": 0,
-      "ce": 0,
-      "skip": 0
-    }
-  },
-  "built-ins/Math": {
-    "ES5": {
-      "pass": 81,
-      "fail": 0,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2015": {
-      "pass": 151,
-      "fail": 0,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2025": {
-      "pass": 5,
-      "fail": 0,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2026": {
-      "pass": 0,
-      "fail": 10,
       "ce": 0,
       "skip": 0
     }
@@ -1233,20 +1233,6 @@
       "skip": 0
     }
   },
-  "language/reserved-words": {
-    "ES5": {
-      "pass": 13,
-      "fail": 0,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2015": {
-      "pass": 2,
-      "fail": 0,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "built-ins/AsyncFunction": {
     "ES2015": {
       "pass": 0,
@@ -1257,6 +1243,20 @@
     "ES2017": {
       "pass": 0,
       "fail": 2,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "language/reserved-words": {
+    "ES5": {
+      "pass": 13,
+      "fail": 0,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2015": {
+      "pass": 2,
+      "fail": 0,
       "ce": 0,
       "skip": 0
     }
@@ -1383,6 +1383,14 @@
       "skip": 0
     }
   },
+  "language/directive-prologue": {
+    "ES5": {
+      "pass": 61,
+      "fail": 1,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "harness": {
     "ES5": {
       "pass": 97,
@@ -1405,14 +1413,6 @@
     "ES2020": {
       "pass": 2,
       "fail": 0,
-      "ce": 0,
-      "skip": 0
-    }
-  },
-  "language/directive-prologue": {
-    "ES5": {
-      "pass": 61,
-      "fail": 1,
       "ce": 0,
       "skip": 0
     }
@@ -1607,20 +1607,6 @@
       "skip": 0
     }
   },
-  "built-ins/eval": {
-    "ES2015": {
-      "pass": 1,
-      "fail": 0,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2022": {
-      "pass": 0,
-      "fail": 1,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "language/comments": {
     "ES5": {
       "pass": 17,
@@ -1637,6 +1623,20 @@
     "ES2023": {
       "pass": 26,
       "fail": 3,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "built-ins/eval": {
+    "ES2015": {
+      "pass": 1,
+      "fail": 0,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2022": {
+      "pass": 0,
+      "fail": 1,
       "ce": 0,
       "skip": 0
     }
