@@ -82,6 +82,9 @@ import {
 } from "../promise-combinators.js";
 import type { InnerResult } from "../shared.js";
 import { brandExternMethodResult, coerceType, compileExpression, VOID_RESULT } from "../shared.js";
+import { compileSpreadCallArgs } from "./extern.js";
+import { emitKnownRestMethodArguments, knownMethodRestInfo } from "./object-method-rest-abi.js";
+import { compileSpreadCallArgsWithArguments } from "./spread-arguments-call.js";
 import { emitSetExtrasArgv, maybeSetArgcForKnownCall } from "../statements/nested-declarations.js";
 import {
   ensureNativeSymbolBoundaryBridge,
@@ -3877,18 +3880,45 @@ export function compileNamespaceStaticCall(
         const staticParamCount = paramTypes ? paramTypes.length : expr.arguments.length;
         const calleeReadsArgsEarly = ctx.funcUsesArguments.has(fullName);
         const memberDecl = ctx.fnMetaMemberDecls?.get(fullName);
-        for (let i = 0; i < Math.min(expr.arguments.length, staticParamCount); i++) {
-          const sourceParam =
-            memberDecl !== undefined && ts.isMethodDeclaration(memberDecl) ? memberDecl.parameters[i] : undefined;
-          const forceArrayLiteralVec =
-            (ctx.standalone || ctx.wasi) && sourceParam !== undefined && ts.isArrayBindingPattern(sourceParam.name);
-          if (forceArrayLiteralVec) {
-            compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i], true);
-          } else {
-            compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[i]);
+        // (#6616) `K.s(...xs)` — this arm is the one that CLAIMS a static call
+        // through a class-object identifier, and it bound each argument NODE to
+        // one formal. A spread element therefore arrived whole: the callee saw
+        // the array (or, for an inline `[1, 2]`, a tuple struct) in formal 0 and
+        // `undefined` in every other. `paramOffset` is 0 — a static body has no
+        // `self` param.
+        //
+        // (#6616) The same arm also never materialised the hidden REST vec, so
+        // a `static f(...args)` body saw `args === null` and trapped on the
+        // first read — `K.f(1, 2)` with no spread anywhere. Every other callee
+        // shape (object-literal method, plain function, instance method) was
+        // already correct; only the static-through-a-class-object arm was
+        // missing both halves of the known-callee argument ABI.
+        const restInfoStatic = knownMethodRestInfo(ctx, expr, fullName, paramTypes, 0);
+        const handledRestStatic =
+          restInfoStatic !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoStatic, 0);
+        const hasSpreadStatic = expr.arguments.some((argument) => ts.isSpreadElement(argument));
+        const handledSpreadStatic = !handledRestStatic && hasSpreadStatic && staticParamCount > 0;
+        const handledArgvSpreadStatic =
+          handledSpreadStatic &&
+          calleeReadsArgsEarly &&
+          restInfoStatic === undefined &&
+          compileSpreadCallArgsWithArguments(ctx, fctx, expr, funcIdx, 0, fullName);
+        if (handledSpreadStatic) {
+          if (!handledArgvSpreadStatic) compileSpreadCallArgs(ctx, fctx, expr, funcIdx, restInfoStatic, 0);
+        } else if (!handledRestStatic) {
+          for (let i = 0; i < Math.min(expr.arguments.length, staticParamCount); i++) {
+            const sourceParam =
+              memberDecl !== undefined && ts.isMethodDeclaration(memberDecl) ? memberDecl.parameters[i] : undefined;
+            const forceArrayLiteralVec =
+              (ctx.standalone || ctx.wasi) && sourceParam !== undefined && ts.isArrayBindingPattern(sourceParam.name);
+            if (forceArrayLiteralVec) {
+              compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i], true);
+            } else {
+              compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[i]);
+            }
           }
         }
-        if (expr.arguments.length > staticParamCount) {
+        if (!handledRestStatic && !handledSpreadStatic && expr.arguments.length > staticParamCount) {
           if (calleeReadsArgsEarly) {
             emitSetExtrasArgv(ctx, fctx, expr.arguments as unknown as ts.Expression[], staticParamCount);
           } else {
@@ -3901,13 +3931,15 @@ export function compileNamespaceStaticCall(
           }
         }
         // Pad missing arguments with defaults
-        if (paramTypes) {
+        if (paramTypes && !handledRestStatic && !handledSpreadStatic) {
           for (let i = expr.arguments.length; i < paramTypes.length; i++) {
             pushDefaultValue(fctx, paramTypes[i]!, ctx);
           }
         }
         // Set __argc before the call so the callee knows the actual arg count
-        maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, staticParamCount);
+        // (#5093: not over a flattened spread, which published a runtime one).
+        if (!handledArgvSpreadStatic)
+          maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, staticParamCount);
         // Re-lookup funcIdx: argument compilation may trigger addUnionImports
         const finalStaticIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static")) ?? funcIdx; // (#1983)
         fctx.body.push({ op: "call", funcIdx: finalStaticIdx });

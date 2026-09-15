@@ -1999,12 +1999,28 @@ export function compileReceiverMethodCall(
         const restInfoStatic = knownMethodRestInfo(ctx, expr, fullName, paramTypes, 0);
         const handledRestStatic =
           restInfoStatic !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoStatic, 0);
-        if (!handledRestStatic) {
+        // (#6616) A STATIC method reached through its class object is the same
+        // known-callee call as the instance arm below, and it needs the same
+        // spread handling. Without it a `K.s(...xs)` site compiled the spread
+        // SOURCE as one positional argument: the callee saw the array in its
+        // first formal and `undefined` in the rest, or — for a tuple-struct
+        // carrier (an inline `[1, 2]`) — the module failed wasm validation.
+        // `paramOffset` is 0 here: a static body has no `self` param.
+        const handledSpreadStatic =
+          !handledRestStatic && paramCount > 0 && expr.arguments.some((argument) => ts.isSpreadElement(argument));
+        const handledArgvSpreadStatic =
+          handledSpreadStatic &&
+          calleeReadsArgsStatic &&
+          restInfoStatic === undefined &&
+          compileSpreadCallArgsWithArguments(ctx, fctx, expr, resolvedStaticIdx, 0, fullName);
+        if (handledSpreadStatic) {
+          if (!handledArgvSpreadStatic) compileSpreadCallArgs(ctx, fctx, expr, resolvedStaticIdx, restInfoStatic, 0);
+        } else if (!handledRestStatic) {
           for (let i = 0; i < Math.min(expr.arguments.length, paramCount); i++) {
             compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i]);
           }
         }
-        if (!handledRestStatic && expr.arguments.length > paramCount) {
+        if (!handledRestStatic && !handledSpreadStatic && expr.arguments.length > paramCount) {
           if (calleeReadsArgsStatic) {
             emitSetExtrasArgv(ctx, fctx, expr.arguments as unknown as ts.Expression[], paramCount);
           } else {
@@ -2016,13 +2032,15 @@ export function compileReceiverMethodCall(
             }
           }
         }
-        if (paramTypes && !handledRestStatic) {
+        if (paramTypes && !handledRestStatic && !handledSpreadStatic) {
           for (let i = expr.arguments.length; i < paramTypes.length; i++) {
             pushDefaultValue(fctx, paramTypes[i]!, ctx);
           }
         }
-        // Set __argc before the call so the callee knows the actual arg count
-        maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, paramCount);
+        // Set __argc before the call so the callee knows the actual arg count.
+        // (#5093) The flattened-spread path published a RUNTIME count already; a
+        // constant here would clobber it back to the un-flattened node count.
+        if (!handledArgvSpreadStatic) maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, paramCount);
         const finalMethodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static")) ?? resolvedStaticIdx; // (#1983)
         fctx.body.push({ op: "call", funcIdx: finalMethodIdx });
         const sig = ctx.checker.getResolvedSignature(expr);
@@ -2392,12 +2410,24 @@ export function compileReceiverMethodCall(
           const restInfoSm = knownMethodRestInfo(ctx, expr, fullName, paramTypes, 1);
           const handledRestSm =
             restInfoSm !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoSm, 1);
-          if (!handledRestSm) {
+          // (#6616) Same spread handling as the class-instance arm below — an
+          // OBJECT-LITERAL method reached through a struct-typed receiver is a
+          // known callee with a `self` param, so `paramOffset` is 1.
+          const handledSpreadSm =
+            !handledRestSm && smMethodParamCount > 0 && expr.arguments.some((argument) => ts.isSpreadElement(argument));
+          const handledArgvSpreadSm =
+            handledSpreadSm &&
+            calleeReadsArgsSm &&
+            restInfoSm === undefined &&
+            compileSpreadCallArgsWithArguments(ctx, fctx, expr, funcIdx, 1, fullName);
+          if (handledSpreadSm) {
+            if (!handledArgvSpreadSm) compileSpreadCallArgs(ctx, fctx, expr, funcIdx, restInfoSm, 1);
+          } else if (!handledRestSm) {
             for (let i = 0; i < Math.min(expr.arguments.length, smMethodParamCount); i++) {
               compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1]);
             }
           }
-          if (!handledRestSm && expr.arguments.length > smMethodParamCount) {
+          if (!handledRestSm && !handledSpreadSm && expr.arguments.length > smMethodParamCount) {
             if (calleeReadsArgsSm) {
               emitSetExtrasArgv(ctx, fctx, expr.arguments as unknown as ts.Expression[], smMethodParamCount);
             } else {
@@ -2409,13 +2439,15 @@ export function compileReceiverMethodCall(
               }
             }
           }
-          if (paramTypes && !handledRestSm) {
+          if (paramTypes && !handledRestSm && !handledSpreadSm) {
             for (let i = Math.min(expr.arguments.length, smMethodParamCount) + 1; i < paramTypes.length; i++) {
               pushDefaultValue(fctx, paramTypes[i]!, ctx);
             }
           }
           // Set __argc before the call so the callee knows the actual arg count
-          maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, smMethodParamCount);
+          // (#5093: not over a flattened spread, which published a runtime one).
+          if (!handledArgvSpreadSm)
+            maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, smMethodParamCount);
           const finalStructMethodIdx =
             ownShadowFuncIdx(ctx, ownShadowNameS) ??
             (hasLiteralMethodOverride ? funcIdx : (ctx.funcMap.get(fullName) ?? funcIdx));
@@ -2457,12 +2489,24 @@ export function compileReceiverMethodCall(
         const restInfoNns = knownMethodRestInfo(ctx, expr, fullName, paramTypes, 1);
         const handledRestNns =
           restInfoNns !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoNns, 1);
-        if (!handledRestNns) {
+        // (#6616) Spread handling for the non-nullable struct receiver — the arm
+        // that actually claims `H.m(...xs)` / `this.m(...args)` on an
+        // object-literal method.
+        const handledSpreadNns =
+          !handledRestNns && nnMethodParamCount > 0 && expr.arguments.some((argument) => ts.isSpreadElement(argument));
+        const handledArgvSpreadNns =
+          handledSpreadNns &&
+          calleeReadsArgsNns &&
+          restInfoNns === undefined &&
+          compileSpreadCallArgsWithArguments(ctx, fctx, expr, funcIdx, 1, fullName);
+        if (handledSpreadNns) {
+          if (!handledArgvSpreadNns) compileSpreadCallArgs(ctx, fctx, expr, funcIdx, restInfoNns, 1);
+        } else if (!handledRestNns) {
           for (let i = 0; i < Math.min(expr.arguments.length, nnMethodParamCount); i++) {
             compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i + 1]); // +1 to skip self
           }
         }
-        if (!handledRestNns && expr.arguments.length > nnMethodParamCount) {
+        if (!handledRestNns && !handledSpreadNns && expr.arguments.length > nnMethodParamCount) {
           if (calleeReadsArgsNns) {
             emitSetExtrasArgv(ctx, fctx, expr.arguments as unknown as ts.Expression[], nnMethodParamCount);
           } else {
@@ -2475,13 +2519,15 @@ export function compileReceiverMethodCall(
           }
         }
         // Pad missing arguments with defaults (skip self param at index 0)
-        if (paramTypes && !handledRestNns) {
+        if (paramTypes && !handledRestNns && !handledSpreadNns) {
           for (let i = Math.min(expr.arguments.length, nnMethodParamCount) + 1; i < paramTypes.length; i++) {
             pushDefaultValue(fctx, paramTypes[i]!, ctx);
           }
         }
         // Set __argc before the call so the callee knows the actual arg count
-        maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, nnMethodParamCount);
+        // (#5093: not over a flattened spread, which published a runtime one).
+        if (!handledArgvSpreadNns)
+          maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, nnMethodParamCount);
         // Re-lookup funcIdx: argument compilation may trigger addUnionImports
         const finalStructMethodIdx =
           ownShadowFuncIdx(ctx, ownShadowNameS) ??
