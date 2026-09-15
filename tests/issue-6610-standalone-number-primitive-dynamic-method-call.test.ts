@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #6488 (#5383 S23) — `x.toPrecision(p)` on a number PRIMITIVE reached through
+// #6610 (#5383 S23) — `x.toPrecision(p)` on a number PRIMITIVE reached through
 // an `any` receiver threw `TypeError: called value is not a function` under
 // `--target standalone`.
 //
@@ -129,7 +129,7 @@ const PROVIDER = `
   });`;
 
 async function linkedPair(consumer: string): Promise<Record<string, () => unknown>> {
-  const root = mkdtempSync(join(tmpdir(), "issue-6488-"));
+  const root = mkdtempSync(join(tmpdir(), "issue-6610-"));
   const packageRoot = join(root, "node_modules", "ns6488");
   mkdirSync(packageRoot, { recursive: true });
   writeFileSync(
@@ -180,7 +180,7 @@ const CONSUMER = `
   }
 `;
 
-describe("#6488 number-primitive dynamic method call (standalone)", () => {
+describe("#6610 number-primitive dynamic method call (standalone)", () => {
   it("answers §21.1.3.5 for an `any` number receiver, and keeps every other receiver", async () => {
     const ex = await singleModule(SINGLE);
     // TEETH — every one of these answered -1 (threw `called value is not a

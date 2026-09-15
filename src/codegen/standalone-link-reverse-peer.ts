@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// standalone-link-reverse-peer.ts — (#5383 S17 / #6478) the REVERSE half of the
+// standalone-link-reverse-peer.ts — (#5383 S17 / #6600) the REVERSE half of the
 // #5383 S2d standalone link boundary: a CONSUMER-owned carrier read by PROVIDER
 // code.
 //
@@ -95,7 +95,7 @@ export const LINK_REVERSE_PEER = Object.freeze({
   reverseKeys: "__js2wasm_link_reverse_keys",
   /** Provider-internal: the `has` miss hop — and the null-vs-absent oracle. */
   reverseHas: "__js2wasm_link_reverse_has",
-  /** Provider-internal: the `__extern_method_call` miss hop (#6483). */
+  /** Provider-internal: the `__extern_method_call` miss hop (#6605). */
   reverseMethodCall: "__js2wasm_link_reverse_method_call",
   /** Consumer-internal: the normalising terminals it installs. */
   localGet: "__js2wasm_link_local_member_get",
@@ -115,7 +115,7 @@ export interface ReversePeerHops {
   has?: number;
   /** `__js2wasm_link_reverse_owned` — see `reverseGetArmInstrs`. */
   ownedGlobal?: number;
-  /** (#6483) `__js2wasm_link_reverse_method_call`. */
+  /** (#6605) `__js2wasm_link_reverse_method_call`. */
   methodCall?: number;
 }
 
@@ -167,7 +167,7 @@ function reverseTypes(ctx: CodegenContext): ReverseTypes {
   // The same SHAPE as `has`, and deliberately its own type NAME: the two answer
   // different questions and must not land in each other's slot.
   const isNullTypeIdx = addFuncType(ctx, [EXTERNREF, EXTERNREF], [I32], "$__link_peer_is_null");
-  // (#6483) `(recv, name, args) -> result`, the shape of `__extern_method_call`.
+  // (#6605) `(recv, name, args) -> result`, the shape of `__extern_method_call`.
   const methodCallTypeIdx = addFuncType(
     ctx,
     [EXTERNREF, EXTERNREF, EXTERNREF],
@@ -399,7 +399,7 @@ export function reserveStandaloneLinkReversePeer(ctx: CodegenContext): ReversePe
       miss: { op: "i32.const", value: 0 },
     }),
   );
-  // (#6483) `recv.name(args)` where the RECEIVER is the CONSUMER's. The exact
+  // (#6605) `recv.name(args)` where the RECEIVER is the CONSUMER's. The exact
   // mirror of the forward `__js2wasm_link_method_call` terminal (S2h), and it
   // exists for the same reason that one does: resolution and receiver binding
   // both have to happen in the module that OWNS the receiver, because the
@@ -419,7 +419,7 @@ export function reserveStandaloneLinkReversePeer(ctx: CodegenContext): ReversePe
   // measured on the first cut of this slice (`.tmp/s18/witness-new.out`), where
   // `o.add(3, 4)` went from a TypeError to `null` and `this.v` to `undefined`.
   // So the arm returns ONLY a non-null answer, and every other case keeps the
-  // pre-#6483 miss path byte for byte.
+  // pre-#6605 miss path byte for byte.
   const methodCall = define(
     ctx,
     LINK_REVERSE_PEER.reverseMethodCall,
@@ -578,7 +578,7 @@ export function emitStandaloneLinkReverseLocalTerminals(ctx: CodegenContext): vo
     );
   }
 
-  // (#6483) The CALL twin of `localGet` — and it delegates to this module's own
+  // (#6605) The CALL twin of `localGet` — and it delegates to this module's own
   // `__extern_method_call` rather than composing `__extern_get` +
   // `__apply_closure` by hand.
   //
@@ -713,7 +713,7 @@ export function reverseGetArmInstrs(hops: ReversePeerHops, resultLocal: number):
 }
 
 /**
- * (#6483) The `__extern_method_call` miss arm for the PROVIDER side.
+ * (#6605) The `__extern_method_call` miss arm for the PROVIDER side.
  *
  * DELIBERATELY NOT shaped like `reverseGetArmInstrs`. That arm adopts a null
  * answer as the value when the peer says it owns the receiver and the key is
@@ -725,7 +725,7 @@ export function reverseGetArmInstrs(hops: ReversePeerHops, resultLocal: number):
  * `this.v` became `undefined` where both had thrown.
  *
  * So only a NON-NULL answer returns here; every other case falls through to the
- * pre-#6483 miss path unchanged. That makes this arm strictly throw-reducing and
+ * pre-#6605 miss path unchanged. That makes this arm strictly throw-reducing and
  * never answer-changing.
  *
  * Takes the SAME slot as the forward peer / host-boundary call arm, so a module

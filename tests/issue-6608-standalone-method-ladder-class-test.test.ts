@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #6486 — a method call by NAME on a statically-unknown receiver, standalone.
+// #6608 — a method call by NAME on a statically-unknown receiver, standalone.
 //
 // WHY THIS REDUCTION EXISTS. Walked down into the compiled
 // `@js-temporal/polyfill` provider (#5383 S21). `Duration.from("P1Y").toJSON()`
@@ -82,7 +82,7 @@ const SLOTTED = `
   ie["%A%"] = A; ie["%B%"] = B; ie["%E%"] = E;
   function ce(k) { return ie[k]; }`;
 
-describe("#6486 — per-name method dispatch on an unknown receiver, standalone", () => {
+describe("#6608 — per-name method dispatch on an unknown receiver, standalone", () => {
   it("runs the receiver's OWN method when three fieldless classes declare the name", async () => {
     // Base tree: "!invalid receiver E" — the FIRST `f(new A(1))` already ran
     // E's body (E is the LAST declarer) and threw E's brand error, so the
@@ -97,7 +97,7 @@ describe("#6486 — per-name method dispatch on an unknown receiver, standalone"
 
   it("does the same for a receiver that came out of a registry by dynamic `new`", async () => {
     // Base tree: "!invalid receiver E" — same throw, on the first call. The
-    // #6485 arm made the INSTANCE correct; this is the call on it.
+    // #6607 arm made the INSTANCE correct; this is the call on it.
     await expect(
       runStandaloneString(`(() => {${SLOTTED}
       const x = new (ce("%A%"))(1), y = new (ce("%B%"))(2);

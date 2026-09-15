@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#6490 / #5383 S25) §13.3.5.1 EvaluateNew step 5 — `IsConstructor(constructor)`
+ * (#6612 / #5383 S25) §13.3.5.1 EvaluateNew step 5 — `IsConstructor(constructor)`
  * — for the DYNAMIC `new <runtime value>(…)` driver under `--target standalone`
  * / WASI.
  *
@@ -99,7 +99,7 @@ const NOT_A_CONSTRUCTOR_MESSAGE = "value is not a constructor";
 /**
  * The armed throw template, per module. A `WeakMap` rather than a
  * `CodegenContext` field: nothing outside this file reads it, and an unarmed
- * module must be indistinguishable from one compiled before #6490.
+ * module must be indistinguishable from one compiled before #6612.
  */
 const armedThrow = new WeakMap<CodegenContext, Instr[]>();
 

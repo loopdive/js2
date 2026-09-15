@@ -1,5 +1,5 @@
 ---
-id: 6491
+id: 6613
 title: "standalone: a heterogeneous array literal traps at CONSTRUCTION — element zero's closed struct carrier is guard-cast onto a string/number/boolean/vec sibling, and `ref.as_non_null` on the null answer dereferences a null pointer"
 status: done
 completed: 2026-09-15
@@ -13,18 +13,18 @@ parent: 5383
 assignee: ttraenkler/s26-lane
 created: 2026-09-15
 loc-budget-allow:
-  # 2026-09-15 (#6491): INHERITED red, restated here — not growth this change
+  # 2026-09-15 (#6613): INHERITED red, restated here — not growth this change
   # made. This PR touches only `src/codegen/**` (+ this issue file and one
   # test); `src/runtime.ts` measures 19,822 against a 19,601 ceiling under
   # `LOC_GATE_BASE=origin/main` because main's post-merge baseline refresh has
   # not caught up with an earlier slice's landed growth. The grant lives in an
   # issue file this PR does not modify, so CI's merge-preview base would report
-  # it as a STRANDED grant and fail `quality` (the #6490 precedent). Restated
+  # it as a STRANDED grant and fail `quality` (the #6612 precedent). Restated
   # verbatim rather than fixed: re-splitting `runtime.ts` is not this slice's
   # work, and lowering the number by editing the baseline is forbidden (main is
   # its sole writer, #3131).
   - src/runtime.ts
-  # 2026-09-15 (#6491): GENUINE growth this change makes — `literals.ts`
+  # 2026-09-15 (#6613): GENUINE growth this change makes — `literals.ts`
   # 6,761 > 6,734 (+27), all of it at the ONE call site this fix adds. 21 of the
   # 27 lines are the comment that records the measured trap and the reason the
   # widening is standalone-gated; the predicate itself lives in
@@ -32,11 +32,11 @@ loc-budget-allow:
   # fills, precisely so the god-file takes the call and not the logic.
   - src/codegen/literals.ts
 func-budget-allow:
-  # 2026-09-15 (#6491): same inherited red, same rationale — `buildImports` is
+  # 2026-09-15 (#6613): same inherited red, same rationale — `buildImports` is
   # 308 against a 300 ceiling under `LOC_GATE_BASE=origin/main`. Untouched by
   # this PR.
   - src/runtime.ts::buildImports
-  # 2026-09-15 (#6491): the twin of the `literals.ts` grant above —
+  # 2026-09-15 (#6613): the twin of the `literals.ts` grant above —
   # `compileArrayLiteral` 1,332 > 1,305 (+27), the same 27 lines. The function
   # is already the project's element-carrier decision table (six widenings
   # before this one); a seventh entry belongs in the table, and extracting the
@@ -158,7 +158,7 @@ already covers it: the question is which WasmGC carrier an element lowers to, a
 
 The four-family Temporal sample scores this as ONE row
 (`Temporal/PlainDate/from/limits.js`). That undercounts the defect the same way
-#6490's "4 rows" undercounted a missing spec step:
+#6612's "4 rows" undercounted a missing spec step:
 
 - `limits.js` is 23 files corpus-wide, `infinity-throws-rangeerror.js` 74,
   `overflow-wrong-type.js` 20 — but the defect is not keyed to a file NAME, it
@@ -236,7 +236,7 @@ the family delta is entirely in the TEST module.
      `local.set[0] expected type (ref null 60), found local.get of type f64`
 
    Element zero is not a struct, so this slice's predicate correctly declines.
-   This is the `typeof`-of-a-union-element lowering plus the #6480 family
+   This is the `typeof`-of-a-union-element lowering plus the #6602 family
    (array-HOF callback parameter), and the two invalid-module spellings are
    strictly worse than a trap: nothing in the module runs at all.
 
@@ -271,7 +271,7 @@ the family delta is entirely in the TEST module.
 The S26 brief's leading hypothesis was that `__class_construct_dispatch` "tests
 classes structurally (S21's problem on the CONSTRUCT side), so a same-shaped
 instance/class of another polyfill class is cast to the wrong struct", and that
-the fix was to apply #6486's `__tag` nominal guard to the construct ladder.
+the fix was to apply #6608's `__tag` nominal guard to the construct ladder.
 
 That is not what the dispatcher does. `ensureStandaloneClassConstructDispatch`
 (`src/codegen/standalone-class-construct.ts`) discriminates by **identity**:
@@ -312,6 +312,6 @@ than an annotation. Both are bigger than a guard.
 
 ## Witness
 
-`tests/issue-6491-heterogeneous-array-literal.test.ts` — single-module and
+`tests/issue-6613-heterogeneous-array-literal.test.ts` — single-module and
 linked-pair cases, every one of them measured FAILING on the base tree by
 file-copy revert before being asserted here.

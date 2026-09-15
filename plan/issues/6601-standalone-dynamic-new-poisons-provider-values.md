@@ -1,5 +1,5 @@
 ---
-id: 6479
+id: 6601
 title: "standalone: a provider CLASS OBJECT passes a bare `ref.test $__ta_ctor`, so the `%TypedArray%.of/from` and dynamic-`new` arms build a typed array out of it — ONE `new <runtime value>()` anywhere in a linked consumer, even in a function that is never called, then makes EVERY provider value unreadable; `test262/harness/temporalHelpers.js` contains that spelling, which is why it accounts for 71 of the 169 failing rows in the #5383 three-family sample"
 status: done
 completed: 2026-09-13
@@ -17,11 +17,11 @@ created: 2026-09-13
 > **Issue id reserved?** NO, and it has already COLLIDED once — this file was
 > first written as **#6474**, which `main` took for
 > `linked-harness-prelude-module-goal` while the branch was unpushed. See the
-> same note in `plan/issues/6481-standalone-nullable-native-string-element-binding.md`
+> same note in `plan/issues/6603-standalone-nullable-native-string-element-binding.md`
 > for the full account; all four of this stack's hand-picked ids (6474–6477)
-> were renumbered to 6479–6482, leaving 6478 to the S17 lane. `claim-issue.mjs
+> were renumbered to 6601–6604, leaving 6600 to the S17 lane. `claim-issue.mjs
 > --allocate` still exits **6** (`open-PR id scan DEGRADED`) and pushes are 403,
-> so **6479 is unreserved and unchecked against in-flight PRs**; the required
+> so **6601 is unreserved and unchecked against in-flight PRs**; the required
 > `check:issue-ids:against-main` gate is the backstop.
 
 # The defect, in two lines of consumer

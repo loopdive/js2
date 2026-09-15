@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #6490 (#5383 S25) — §13.3.5.1 EvaluateNew step 5, `IsConstructor(constructor)`,
+// #6612 (#5383 S25) — §13.3.5.1 EvaluateNew step 5, `IsConstructor(constructor)`,
 // for the DYNAMIC `new <runtime value>(…)` driver under `--target standalone`.
 //
 // WHY THIS REDUCTION EXISTS. The dispatched bucket was six rows of the S25
@@ -24,7 +24,7 @@
 // `__boundary_object_callable_kind` publishes bit 1 without bit 2 fell straight
 // into the tail and constructed successfully.
 //
-// WHY BOTH ARMS HAVE TEETH — and this is the asymmetry with #6489, whose
+// WHY BOTH ARMS HAVE TEETH — and this is the asymmetry with #6611, whose
 // single-module probes were controls only. This defect is a property of the
 // DRIVER, not of callee ownership, so it reproduces in ONE module with no link
 // at all (`.tmp/s25/p1.mjs`) and equally across the link (`.tmp/s25/p2.mts`,
@@ -95,7 +95,7 @@ async function runStandaloneString(expression: string): Promise<string> {
  * registry read (`const C = reg["%K%"]; new C()`), does NOT: in a single module
  * that site falls to `emitDynamicNewFallback`'s tag dispatch, which has a
  * candidate only for a module-local CLASS, so a plain function or a built-in
- * answers `null` there on BOTH trees (#6489's residual, measured again here).
+ * answers `null` there on BOTH trees (#6611's residual, measured again here).
  * A test written that way would assert `null` and never exercise the guard.
  */
 const PRELUDE = `
@@ -125,7 +125,7 @@ function group(callees: string[]): string {
 }
 
 async function linkedPair(provider: string, consumer: string): Promise<Record<string, () => unknown>> {
-  const root = mkdtempSync(join(tmpdir(), "issue-6490-"));
+  const root = mkdtempSync(join(tmpdir(), "issue-6612-"));
   const packageRoot = join(root, "node_modules", "ns6490");
   mkdirSync(packageRoot, { recursive: true });
   writeFileSync(
@@ -218,7 +218,7 @@ const CONSUMER = `
   }
 `;
 
-describe("#6490 — §13.3.5.1 step 5 IsConstructor for dynamic `new`, standalone", () => {
+describe("#6612 — §13.3.5.1 step 5 IsConstructor for dynamic `new`, standalone", () => {
   it("throws TypeError for a callable that has no [[Construct]] (single module)", async () => {
     // TEETH. Base tree: "obj/obj/obj/obj/obj" — every one of these constructed
     // successfully, which is the whole defect. `%max%` is the built-in arm,

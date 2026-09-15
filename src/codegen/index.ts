@@ -287,7 +287,7 @@ import { ensureMapRuntimeTypes } from "./map-runtime.js";
 import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
 import { fillClassProtoLookupArm } from "./class-proto-lookup.js"; // (#5195 Step 1.7)
-import { classArmClaimInstrs, classArmTagCondition } from "./class-arm-tag-guard.js"; // (#4618 / #6486) nominal `__tag` arm guard
+import { classArmClaimInstrs, classArmTagCondition } from "./class-arm-tag-guard.js"; // (#4618 / #6608) nominal `__tag` arm guard
 import { fillClassPrototypeReadArm } from "./standalone-class-prototype-read.js"; // (#6457)
 import { fillStandaloneObjectCreateClassInstance } from "./standalone-object-create-class-instance.js"; // (#6464)
 import { mintStandaloneClassProtoBuilders } from "./standalone-class-dyn-member.js"; // (#5383 S2h)
@@ -405,7 +405,7 @@ import {
   noteNumberPrimitiveMethodDemand,
   prepareNumberPrimitiveMethodCallArm,
   unshiftExternMethodCallNumberPrimitiveArm,
-} from "./number-primitive-method-call.js"; // (#5383 S23 / #6488) number-PRIMITIVE receiver method CALL
+} from "./number-primitive-method-call.js"; // (#5383 S23 / #6610) number-PRIMITIVE receiver method CALL
 import { unshiftExternMethodCallTaDynViewArm } from "./ta-dyn-method-call.js"; // (#5194 r3-1) dyn-view receiver method CALL
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillProtoFunctionValue } from "./proto-function-value.js"; // (#4637 A1) function value in a [[Prototype]] slot
@@ -504,7 +504,7 @@ import {
 } from "./stack-balance.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { ensureRegexMatchVecType } from "./native-regex.js";
-import { nullableNativeStringElemBindingType } from "./nullable-native-string-elem-binding.js"; // (#6481)
+import { nullableNativeStringElemBindingType } from "./nullable-native-string-elem-binding.js"; // (#6603)
 import { STANDALONE_REGEXP_REFLECTION_PROPS } from "./regexp-standalone.js";
 import { ensureVecElemSet, ensureVecNewSized } from "./vec-elem-set.js";
 
@@ -5208,7 +5208,7 @@ export function generateModule(
   const sourceFileInternal = ast.sourceFile as ts.SourceFile & { externalModuleIndicator?: ts.Node };
   ctx.sourceIsModule = sourceFileInternal.externalModuleIndicator !== undefined;
   recordSourceGlobalEnvironment(ctx, ast.sourceFile);
-  // (#5383 S23 / #6488) Demand for the number-PRIMITIVE method-call arm.
+  // (#5383 S23 / #6610) Demand for the number-PRIMITIVE method-call arm.
   noteNumberPrimitiveMethodDemand(ctx, ast.sourceFile);
   // (#2138) Populated only under JS2WASM_IR_FIRST=1 — the top-level functions
   // whose legacy body emission was skipped (IR owns the slot). Declared out
@@ -6519,7 +6519,7 @@ export function generateModule(
     // prototype-lookup cache hit arm ahead of the ladder arms unshifted above.
     // (#4223) BEFORE the cache arm (which must stay last): answer
     // `<wrapper>.constructor` from the builtin ctor carrier.
-    // (#5383 S23 / #6488) Materialize `%Number.prototype%` BEFORE the proto
+    // (#5383 S23 / #6610) Materialize `%Number.prototype%` BEFORE the proto
     // member ladder below is assembled from the minted/seeded brands.
     prepareNumberPrimitiveMethodCallArm(ctx);
     unshiftExternGetWrapperCtorArm(ctx);
@@ -6530,7 +6530,7 @@ export function generateModule(
     // (#4619) The CALL twin, which delegates to `__extern_get` — so it must
     // run after the read arm above. See native-proto-method-call.ts.
     unshiftExternMethodCallProtoArm(ctx);
-    // (#5383 S23 / #6488) The number-PRIMITIVE twin — same delegation to
+    // (#5383 S23 / #6610) The number-PRIMITIVE twin — same delegation to
     // `__extern_get`, so it must also run after the read arm above. See
     // number-primitive-method-call.ts.
     unshiftExternMethodCallNumberPrimitiveArm(ctx);
@@ -7113,7 +7113,7 @@ function finalizeStandaloneTimerCallbackExports(ctx: CodegenContext): void {
   // finalize. A provider that declines keeps the reserved "not mine" body.
   fillLinkBoundaryToStringTagTerminal(ctx);
   publishStandaloneLinkBoundaryExports(ctx);
-  // (#5383 S17 / #6478) The reverse channel's two finalize duties, in the same
+  // (#5383 S17 / #6600) The reverse channel's two finalize duties, in the same
   // post-strip window and for the same reason: the provider publishes its
   // installer under the ABI name, and the consumer prepends the install call to
   // `__module_init`. Both resolve through `funcMap`, because every late import
@@ -9598,7 +9598,7 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
             ];
 
       return [
-        // (#6486) NOMINAL claim. This ladder is FIRST-match, and `ref.test` is
+        // (#6608) NOMINAL claim. This ladder is FIRST-match, and `ref.test` is
         // structural: with several same-shaped classes each declaring
         // `toString`, the earliest arm ran for every one of them (measured:
         // `o.toString()` on a `B` ran `A`'s body and threw A's brand error;
@@ -10796,7 +10796,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
           ctx.arrayIteratorMaybeOverridden = true;
         }
         recordSourceGlobalEnvironment(ctx, sf);
-        // (#5383 S23 / #6488) Demand for the number-PRIMITIVE method-call arm.
+        // (#5383 S23 / #6610) Demand for the number-PRIMITIVE method-call arm.
         noteNumberPrimitiveMethodDemand(ctx, sf);
       }
       // (#5139) Second pass: the brand must be final before any slot is rooted.
@@ -14836,7 +14836,7 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
                   inferLetConstInitializerWasmType(ctx, fctx, decl) ??
                   usageInferredLocalType(ctx, decl) ??
                   resolveWasmType(ctx, varType));
-        // (#6481) LAST step of the cascade, and a post-filter rather than
+        // (#6603) LAST step of the cascade, and a post-filter rather than
         // another arm: it only ever rewrites `ref $anyStr` → `ref_null $anyStr`
         // for a binding whose initializer reads a NULL-carrying native-string
         // vec element, so it cannot preempt an arm above it. See

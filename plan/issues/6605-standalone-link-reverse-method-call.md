@@ -1,5 +1,5 @@
 ---
-id: 6483
+id: 6605
 title: "standalone link: a PROVIDER calling a method on a CONSUMER-owned receiver throws TypeError"
 status: done
 sprint: current
@@ -12,7 +12,7 @@ parent: 5383
 assignee: ttraenkler/s18-lane
 completed: 2026-09-14
 loc-budget-allow:
-  # 2026-09-14 (#6483): the reverse channel (#6478) grows a fifth terminal —
+  # 2026-09-14 (#6605): the reverse channel (#6600) grows a fifth terminal —
   # `__js2wasm_link_reverse_method_call` — plus its consumer-side local wrapper,
   # its peer global, its `callOwned` null-vs-miss global and the provider-side
   # miss arm. Measured: without it, provider code doing `o.m()` on a
@@ -24,15 +24,15 @@ loc-budget-allow:
   - src/codegen/standalone-link-reverse-peer.ts
   - src/codegen/object-runtime.ts
 func-budget-allow:
-  # 2026-09-14 (#6483): one new exported arm builder,
+  # 2026-09-14 (#6605): one new exported arm builder,
   # `reverseMethodCallArmInstrs`, the exact twin of `reverseGetArmInstrs`.
   - src/codegen/standalone-link-reverse-peer.ts
 ---
 
-# #6483 — standalone link: provider → consumer method calls
+# #6605 — standalone link: provider → consumer method calls
 
 Child of [#5383](5383-standalone-temporal-provider.md) (S18), following
-[#6478](6478-standalone-link-reverse-peer-read.md) (S17).
+[#6600](6600-standalone-link-reverse-peer-read.md) (S17).
 
 ## Problem
 
@@ -129,7 +129,7 @@ ordinary (S2m).
   install/restore, normalising unresolved/`undefined` to `ref.null.extern` =
   "not mine".
 - `reverseMethodCallArmInstrs` — the provider-side miss arm; returns only a
-  non-null answer, and otherwise falls through to the pre-#6483 path unchanged.
+  non-null answer, and otherwise falls through to the pre-#6605 path unchanged.
 - `__js2wasm_link_install_peer` grows from four funcref parameters to five.
 
 `src/codegen/object-runtime.ts`: the reverse arm takes the same slot as the
@@ -141,7 +141,7 @@ it.
 
 ## Test
 
-`tests/issue-6483-link-reverse-method-call.test.ts` — linked-pair witness. Two
+`tests/issue-6605-link-reverse-method-call.test.ts` — linked-pair witness. Two
 teeth (both `-1` on base, `.tmp/s18/witness-base.out`): a provider method calling
 `o.m()` on a consumer-built object literal answers `7`, and one that reads `this`
 answers `42`. Five controls are asserted rather than omitted, because each is a

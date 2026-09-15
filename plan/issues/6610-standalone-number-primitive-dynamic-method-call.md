@@ -1,5 +1,5 @@
 ---
-id: 6488
+id: 6610
 title: "standalone: `x.toPrecision(p)` on a number PRIMITIVE through an `any` receiver throws `called value is not a function` — `__extern_method_call` has no number-primitive arm"
 status: done
 completed: 2026-09-14
@@ -39,8 +39,8 @@ of `Number.prototype` are not in it, the consult answers null, and #4221's
 absent-callee guard turns that into the TypeError.
 
 This is the FOURTH distinct cause behind the `called value is not a function`
-bucket in #5383's linked Temporal lane (S18 #6483 reverse method-call hop, S20
-#6485 dynamic `new (<call>)`, S21 #6486 per-name ladder nominal guard). All
+bucket in #5383's linked Temporal lane (S18 #6605 reverse method-call hop, S20
+#6607 dynamic `new (<call>)`, S21 #6608 per-name ladder nominal guard). All
 **nine** of the bucket's rows in the post-S22 sample fire this one cause, and
 all nine reduce to the same missing member: the polyfill's exact-arithmetic
 helper calls `n.toPrecision(k)` on a number primitive —

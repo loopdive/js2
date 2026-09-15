@@ -257,7 +257,7 @@ import {
   reserveStandaloneLinkReversePeer,
   reverseGetArmInstrs,
   reverseMethodCallArmInstrs,
-} from "./standalone-link-reverse-peer.js"; // (#5383 S17 / #6478) the REVERSE hop
+} from "./standalone-link-reverse-peer.js"; // (#5383 S17 / #6600) the REVERSE hop
 import {
   buildOwnToPrimitiveOverridePresent,
   buildWrapperSlotShortCircuit,
@@ -1045,7 +1045,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // method, because the trampoline's `this` lives in the owner's globals.
     methodCall: peerMethodCallIdx,
   } = standaloneLinkBoundaryPeerIndices(ctx);
-  // (#5383 S17 / #6478) The same question asked from the other side: a PROVIDER
+  // (#5383 S17 / #6600) The same question asked from the other side: a PROVIDER
   // handed a carrier its consumer owns. Registered in this window, next to the
   // forward peer, because the two miss arms below bake both funcIdx values and
   // because the installer's import must precede the #1984 freeze. `{}` for
@@ -6642,7 +6642,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // host lane's `__boundary_object_call`: same arm, same arguments, same
     // "null means the peer does not own this receiver" contract.
     const boundaryOrPeerCallIdx = boundaryObjectCallIdx ?? peerMethodCallIdx;
-    // (#5383 S18 / #6483) …and the REVERSE twin, for a provider handed a
+    // (#5383 S18 / #6605) …and the REVERSE twin, for a provider handed a
     // receiver its consumer owns. It takes the same slot but not the same arm
     // shape: here a `null` answer is ambiguous between "not the consumer's" and
     // "the method returned null", exactly as it is for `__extern_get`, so the
@@ -6828,7 +6828,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // above has only just finished registering.
   emitStandaloneLinkBoundaryTerminals(ctx, registerNative);
 
-  // (#5383 S17 / #6478) The consumer's half of the reverse channel: the two
+  // (#5383 S17 / #6600) The consumer's half of the reverse channel: the two
   // normalising terminals it hands its provider as `ref.func` at init. Same
   // position and same reason — both wrap terminals the block above has only
   // just finished registering — and still ahead of the #1984 freeze, which the

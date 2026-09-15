@@ -1,5 +1,5 @@
 ---
-id: 6484
+id: 6606
 title: "standalone: a class STATIC method is mis-dispatched on every dynamic path, and `Temporal.Duration.from` bottoms out below all of them"
 status: ready
 sprint: current
@@ -12,10 +12,10 @@ parent: 5383
 assignee: ttraenkler/s19-lane
 ---
 
-# #6484 — standalone class-static dynamic dispatch, and where the Temporal `from` bucket really ends
+# #6606 — standalone class-static dynamic dispatch, and where the Temporal `from` bucket really ends
 
 Child of [#5383](5383-standalone-temporal-provider.md) (S19), following
-[#6483](6483-standalone-link-reverse-method-call.md) (S18).
+[#6605](6605-standalone-link-reverse-method-call.md) (S18).
 
 ## Summary
 
@@ -135,7 +135,7 @@ f.apply(C, ["A"]);      // TypeError: called value is not a function
 
 A plain function value is correct in all five shapes; a class value's STATIC
 method and a class INSTANCE method value both fail the receiver-bearing ones
-(`.tmp/s19/c5-base.out`). `f.call` / `f.apply` here is the same residual #6483
+(`.tmp/s19/c5-base.out`). `f.call` / `f.apply` here is the same residual #6605
 recorded as "`Function.prototype.call` is not reachable on a boundary closure" —
 it is not a boundary property at all, it reproduces in one module.
 
@@ -171,7 +171,7 @@ run here would be attribution dressed as measurement.
 2. Reduction **A** — the receiver-as-argument-0 shift. Silent wrong answers
    across every class static reached by a folded computed key.
 3. Reduction **C** — `f.call` / `f.apply` / `bag.m()` on a class-derived method
-   value. Retires #6483's residual 2 and part of the named bucket.
+   value. Retires #6605's residual 2 and part of the named bucket.
 
 ## Artifacts
 

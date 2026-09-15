@@ -20,7 +20,7 @@ import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { integrityVarKey } from "../widened-var-key.js";
 import { objectLiteralHasColonProto } from "../literals.js"; // (#5270 step 2)
 import { sourceShadowsGlobalName } from "../source-function-members.js"; // (#5194 review F1)
-import { allocLocal } from "../context/locals.js"; // (#6487)
+import { allocLocal } from "../context/locals.js"; // (#6609)
 
 const NATIVE_COLLECTION_NAMES = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
 
@@ -433,7 +433,7 @@ export function tryCompileEs5GetPrototypeOfValue(
 }
 
 /**
- * (#6487) `Object.getPrototypeOf(<value that is callable only at RUNTIME>)` →
+ * (#6609) `Object.getPrototypeOf(<value that is callable only at RUNTIME>)` →
  * `%Function.prototype%` (§10.3.1: every built-in function object's
  * [[Prototype]] is %Function.prototype%).
  *
@@ -496,7 +496,7 @@ export function tryEmitDynamicCallableGetPrototypeOf(
   const isCallableIdx = ctx.funcMap.get("__is_callable");
   const getPrototypeIdx = ctx.funcMap.get("__getPrototypeOf");
   if (isCallableIdx === undefined || getPrototypeIdx === undefined) {
-    // Degrade to the pre-#6487 answer rather than to a broken call.
+    // Degrade to the pre-#6609 answer rather than to a broken call.
     fctx.body.push({ op: "local.get", index: valueLocal });
     return false;
   }

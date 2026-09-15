@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #6478 (#5383 S17) — a CONSUMER-owned property bag read by PROVIDER code.
+// #6600 (#5383 S17) — a CONSUMER-owned property bag read by PROVIDER code.
 //
 // WHY THIS REDUCTION EXISTS. The #5383 S2d link boundary is consumer→provider
 // only: the provider exports its generic terminals and the consumer calls them
@@ -55,7 +55,7 @@ const PROVIDER = `
   });`;
 
 async function linkedPair(provider: string, consumer: string): Promise<Record<string, () => unknown>> {
-  const root = mkdtempSync(join(tmpdir(), "issue-6478-"));
+  const root = mkdtempSync(join(tmpdir(), "issue-6600-"));
   const packageRoot = join(root, "node_modules", "ns6478");
   mkdirSync(packageRoot, { recursive: true });
   writeFileSync(
@@ -151,7 +151,7 @@ const CONSUMER = `
   }
 `;
 
-describe("#6478 a consumer-owned carrier read inside a linked standalone provider", () => {
+describe("#6600 a consumer-owned carrier read inside a linked standalone provider", () => {
   it(
     "answers the consumer's own fields for a literal bag, a class instance and Object.keys",
     { timeout: 600_000 },

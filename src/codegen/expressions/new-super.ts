@@ -85,7 +85,7 @@ import {
   reserveTypedNativeConstructDriver,
 } from "../native-construct.js"; // (#3981 / #1058)
 import { markClassValueConstructSite } from "../standalone-class-construct.js"; // (#5383 S2g)
-import { armConstructIsConstructorGuard } from "../construct-is-constructor-guard.js"; // (#6490 / #5383 S25)
+import { armConstructIsConstructorGuard } from "../construct-is-constructor-guard.js"; // (#6612 / #5383 S25)
 import { linkCompatibleDeclaredStructAncestor } from "../struct-hierarchy-layout.js";
 import { emitBoundConstructOnNull } from "../construct-bound.js"; // (#4196) §10.4.1.2
 import { emitRuntimeEvalConstructOnNull } from "../runtime-eval-construct.js"; // (#4438) §10.2.2
@@ -724,7 +724,7 @@ function linkLateAssignedConstructResultAncestor(
  *    constructor.
  */
 /**
- * (#6485) Standalone-lane companion to `resolvesToDynamicAnyCtorValue` for a
+ * (#6607) Standalone-lane companion to `resolvesToDynamicAnyCtorValue` for a
  * CALL-expression callee: `new (ce("%Temporal.Duration%"))(y, mo, w, d, …)`, the
  * intrinsic-registry spelling `@js-temporal/polyfill` emits at three sites —
  * including the string branch of `Duration.from`.
@@ -3989,7 +3989,7 @@ function tryCompileNativeConstructFromValue(
   // (#5383 S2g) This is a construct from a runtime VALUE, so the callee may be
   // a class-object singleton — arm the class trampolines for this module.
   markClassValueConstructSite(ctx);
-  // (#6490 / #5383 S25) Arm §13.3.5.1 step 5 (IsConstructor) for this module's
+  // (#6612 / #5383 S25) Arm §13.3.5.1 step 5 (IsConstructor) for this module's
   // construct drivers. Built HERE, mid-compile, for the same reason
   // `protoKeyInstrs` is: the throw materialises a TypeError instance and a
   // string constant, neither of which may be created at fill time.
@@ -4174,7 +4174,7 @@ function emitDynamicNewFallback(
   calleeExpr: ts.Expression,
   ctorName: string,
   /**
-   * (#6485) Keep the pre-existing `ref.null.extern` no-match outcome instead of
+   * (#6607) Keep the pre-existing `ref.null.extern` no-match outcome instead of
    * the standalone TypedArray-construct base. Set only by the call-callee arm —
    * see the base selection below for why the size matters.
    */
@@ -4800,7 +4800,7 @@ function emitDynamicNewFallback(
     fctx.body = savedBody2;
     noMatchBase = base;
   } else if (plainNullNoMatchBase) {
-    // (#6485) The call-callee arm keeps the PRE-EXISTING no-match outcome
+    // (#6607) The call-callee arm keeps the PRE-EXISTING no-match outcome
     // verbatim. Two reasons, and the second is the load-bearing one:
     //  - a value fetched from an intrinsic registry is never a `$__ta_ctor`, so
     //    the TA arm below could only ever decline for this shape; and
@@ -7651,7 +7651,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       // exactly this case). Standalone keeps the pre-existing member handling.
       const dynMemberCallee =
         !ts.isIdentifier(dynCallee) && !noJsHost(ctx) && resolvesToDynamicAnyCtorValue(ctx, dynCallee);
-      // (#6485) …and, in the HOST-FREE lane only, a CALL-expression callee —
+      // (#6607) …and, in the HOST-FREE lane only, a CALL-expression callee —
       // `new (ce("%Temporal.Duration%"))(…)`. It matched no arm before and fell
       // through to `__new___unknown` → `ref.null.extern` (a silent null, with
       // the arguments never evaluated). The tag dispatch below is callee-shape

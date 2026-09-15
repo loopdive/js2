@@ -24,7 +24,7 @@ import {
   varBindingNeedsExternrefForUndefined,
 } from "../index.js";
 import { nativeTypeOfDeclaration } from "../native-type-annotations.js";
-import { nullableNativeStringElemBindingType } from "../nullable-native-string-elem-binding.js"; // (#6481)
+import { nullableNativeStringElemBindingType } from "../nullable-native-string-elem-binding.js"; // (#6603)
 import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import { concatCallYieldsDynamicCarrier } from "../array-concat-carrier.js"; // (#4655) concat result-slot carrier
 import { filterResultNeedsDynamicCarrier } from "../array-filter-spec-access.js";

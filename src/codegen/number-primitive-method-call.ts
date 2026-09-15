@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#5383 S23 / #6488) `__extern_method_call`'s missing NUMBER-PRIMITIVE receiver
+ * (#5383 S23 / #6610) `__extern_method_call`'s missing NUMBER-PRIMITIVE receiver
  * arm — `x.toPrecision(p)` where `x`'s static type is `any`.
  *
  * ## What was broken

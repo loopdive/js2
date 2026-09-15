@@ -24,7 +24,7 @@ import type {
 import type { IrModuleBindingRefusal } from "../../ir/module-bindings.js";
 import type { IrObservedOutcome } from "../../ir/outcomes.js";
 import type { IrR2Withdrawal } from "../../ir/r2-withdrawal.js";
-import type { NullableElemParamOverride } from "../array-hof-nullable-elem-param.js"; // (#6480)
+import type { NullableElemParamOverride } from "../array-hof-nullable-elem-param.js"; // (#6602)
 import type { StandaloneRegExpEngineConfig } from "../regexp-standalone.js";
 import type { ObjectRuntimeTypes } from "../object-runtime.js";
 import type { FallbackCounts } from "../fallback-telemetry.js";
@@ -2627,7 +2627,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   arrayMapCallbackFirstParamOverride?: ValType;
   /**
-   * (#6480 / #5383 S15) Transient carrier for the receiver's REAL element type
+   * (#6602 / #5383 S15) Transient carrier for the receiver's REAL element type
    * — and WHICH callback parameter receives it — while an array-HOF callback
    * closure is compiled (`setupArrayCallback` window:
    * `every`/`some`/`filter`/`forEach`/`find*`/`reduce`/`reduceRight`, i.e. the
@@ -4196,7 +4196,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   nativeProtoGlobals?: Map<number, number>;
   /**
-   * (#5383 S23 / #6488) Some source file in the realm CALLS a
+   * (#5383 S23 / #6610) Some source file in the realm CALLS a
    * `Number.prototype` numeric-format method by name, so
    * `unshiftExternMethodCallNumberPrimitiveArm` may pay for the
    * `%Number.prototype%` singleton. Set by the early AST scan
@@ -4205,7 +4205,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   numberPrimitiveMethodCallDemand?: boolean;
   /**
-   * (#5383 S23 / #6488) The stashed `%Number.prototype%` singleton read, built
+   * (#5383 S23 / #6610) The stashed `%Number.prototype%` singleton read, built
    * by `prepareNumberPrimitiveMethodCallArm` BEFORE `__extern_get`'s per-brand
    * member ladder is assembled, and consumed by the `__extern_method_call` arm
    * unshifted after it.

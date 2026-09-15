@@ -1,5 +1,5 @@
 ---
-id: 6489
+id: 6611
 title: "standalone: `new <runtime ctor value>(a0 … a8)` with MORE than eight arguments evaluates to null and never evaluates its arguments — the construct-driver admission ceiling was the `__call_fn_method_<N>` range"
 status: done
 completed: 2026-09-14
@@ -52,7 +52,7 @@ Declining is not a graceful fallback. For a callee the module does not own there
 are no candidate classes for `emitDynamicNewFallback` to tag-dispatch on, so the
 site lands on the pre-existing `ref.null.extern` no-match base — and that base
 is emitted *instead of* the argument evaluation, so the arguments are dropped
-too. Same signature as #6485, one ceiling further out.
+too. Same signature as #6607, one ceiling further out.
 
 ## Fix
 
@@ -71,7 +71,7 @@ too. Same signature as #6485, one ceiling further out.
 - `new <foreign ctor value>(…)` with 9–16 arguments constructs, and evaluates
   its arguments left to right.
 - A driver of arity ≤ 8 is byte-identical.
-- `tests/issue-6489-dynamic-new-arity.test.ts`: single-module + linked-pair
+- `tests/issue-6611-dynamic-new-arity.test.ts`: single-module + linked-pair
   witnesses, plus the arity-8 no-change control.
 
 ## Measured (2026-09-14, branch `issue-5383-standalone-temporal-s24b`)
@@ -117,7 +117,7 @@ now construct and fail later and differently, at
 
 ## Witness test
 
-`tests/issue-6489-dynamic-new-arity.test.ts`. Measured on both trees by
+`tests/issue-6611-dynamic-new-arity.test.ts`. Measured on both trees by
 file-copy revert: on base the linked `it` FAILS and both single-module `it`s
 pass; on the branch all three pass. The single-module cases are labelled
 CONTROLS, not witnesses, because a module owns its own classes and so the
@@ -131,8 +131,8 @@ trees and none is this defect.
 
 ## Claim
 
-`node scripts/claim-issue.mjs 6489 --check` →
-`#6489 is UNASSIGNED (read origin/issue-assignments)`. The lane that opened this
+`node scripts/claim-issue.mjs 6611 --check` →
+`#6611 is UNASSIGNED (read origin/issue-assignments)`. The lane that opened this
 issue was killed by a container restart before it wrote a claim, and this
 session cannot write one — all pushes return 403. `check:issue-ids:against-main`
 passes, so the id is free on `main`.

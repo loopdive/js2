@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #6487 (#5383 S22) — `Object.getPrototypeOf(<value that is callable only at
+// #6609 (#5383 S22) — `Object.getPrototypeOf(<value that is callable only at
 // RUNTIME>)` answered `null` under `--target standalone`.
 //
 // WHY THIS REDUCTION EXISTS. The compile-time arm in `object-get-prototype-of.ts`
@@ -118,7 +118,7 @@ const PROVIDER = `
   });`;
 
 async function linkedPair(consumer: string): Promise<Record<string, () => unknown>> {
-  const root = mkdtempSync(join(tmpdir(), "issue-6487-"));
+  const root = mkdtempSync(join(tmpdir(), "issue-6609-"));
   const packageRoot = join(root, "node_modules", "ns6487");
   mkdirSync(packageRoot, { recursive: true });
   writeFileSync(
@@ -175,7 +175,7 @@ const CONSUMER = `
   }
 `;
 
-describe("#6487 Object.getPrototypeOf of a value that is callable only at runtime (standalone)", () => {
+describe("#6609 Object.getPrototypeOf of a value that is callable only at runtime (standalone)", () => {
   it("answers %Function.prototype% module-locally, and keeps every non-callable receiver", async () => {
     const ex = await singleModule(SINGLE);
     // TEETH — all three answered 0 on the base tree.

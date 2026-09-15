@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * #6482 (#5383 S16) — `void 0` is the `undefined` LITERAL for the purposes of
+ * #6604 (#5383 S16) — `void 0` is the `undefined` LITERAL for the purposes of
  * the §7.2.14 / §7.2.16 null-and-undefined comparison shortcut.
  *
  * ## The defect

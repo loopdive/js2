@@ -1,5 +1,5 @@
 ---
-id: 6490
+id: 6612
 title: "standalone: `new <runtime value>(…)` on a callable with NO [[Construct]] returns an object instead of throwing — §13.3.5.1 step 5 was never implemented in the dynamic construct driver"
 status: done
 completed: 2026-09-15
@@ -13,7 +13,7 @@ parent: 5383
 assignee: ttraenkler/s25b-lane
 created: 2026-09-15
 loc-budget-allow:
-  # 2026-09-15 (#6490): INHERITED red, restated here — not growth this change
+  # 2026-09-15 (#6612): INHERITED red, restated here — not growth this change
   # made. This PR touches only `src/codegen/**`; `src/runtime.ts` is 19,822 vs a
   # 19,601 ceiling against `origin/main` (8c9b65b389) because main's post-merge
   # baseline refresh has not caught up with an earlier slice's landed growth.
@@ -24,7 +24,7 @@ loc-budget-allow:
   # (main is its sole writer, #3131).
   - src/runtime.ts
 func-budget-allow:
-  # 2026-09-15 (#6490): same inherited red, same rationale —
+  # 2026-09-15 (#6612): same inherited red, same rationale —
   # `buildImports` is 308 vs a 300 ceiling against `origin/main`. Untouched by
   # this PR.
   - src/runtime.ts::buildImports
@@ -244,12 +244,12 @@ label — so no family cell was served a stale provider.
 
 ## Witness test
 
-`tests/issue-6490-dynamic-new-is-constructor.test.ts`, six cases, measured on
+`tests/issue-6612-dynamic-new-is-constructor.test.ts`, six cases, measured on
 BOTH trees by file-copy revert of `src/codegen/native-construct.ts` and
 `src/codegen/expressions/new-super.ts`. On base **3 fail / 3 pass**; on the
 branch **6 pass**.
 
-Unlike #6489, **both** the single-module and the linked arms are witnesses: this
+Unlike #6611, **both** the single-module and the linked arms are witnesses: this
 defect is a property of the DRIVER, not of callee ownership, so it reproduces
 with no link at all. The linked arm additionally covers the foreign-function
 path, where the callable/constructible distinction arrives as a `callableKind`
@@ -285,7 +285,7 @@ Two things the file records that are NOT claims of this fix:
 
 ## Claim
 
-`node scripts/claim-issue.mjs --check 6490` → `#6490 is UNASSIGNED
+`node scripts/claim-issue.mjs --check 6612` → `#6612 is UNASSIGNED
 (read origin/issue-assignments)`. This session cannot write a claim — all
 GitHub pushes return 403. `check:issue-ids:against-main` passes, so the id is
 free on `main`.

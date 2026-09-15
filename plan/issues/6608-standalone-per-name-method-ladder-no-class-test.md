@@ -1,5 +1,5 @@
 ---
-id: 6486
+id: 6608
 title: "standalone: a method call by name on a statically-unknown receiver runs the WRONG class's body — every per-name dispatch ladder tests `ref.test`, which is structural"
 status: done
 completed: 2026-09-14
@@ -44,7 +44,7 @@ func-budget-allow:
   - src/codegen/index.ts::emitDispatchForMethod
 ---
 
-# #6486 — the per-name method ladder has no runtime CLASS test, only a shape test
+# #6608 — the per-name method ladder has no runtime CLASS test, only a shape test
 
 ## Symptom
 
@@ -124,4 +124,4 @@ once, is byte-identical.
 - A same-shaped OBJECT LITERAL pair has no `__tag` to test, so the ladder
   still picks by order for `{ m(){…} }` carriers. Unchanged by this slice.
 - `Object.getPrototypeOf(x) === C.prototype` remains false for a dynamic-`new`
-  instance (#6485 residual 2, still pinned by that file's last `it`).
+  instance (#6607 residual 2, still pinned by that file's last `it`).

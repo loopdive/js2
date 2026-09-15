@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #6485 — `new (<call expression>)(…)` under `--target standalone`.
+// #6607 — `new (<call expression>)(…)` under `--target standalone`.
 //
 // WHY THIS REDUCTION EXISTS. Found by walking down into the compiled
 // `@js-temporal/polyfill` provider (#5383 S20). S19 ended at the polyfill's
@@ -40,7 +40,7 @@
 //     per-name ladder with no runtime class test, and picked the LAST-declared
 //     class that declares the name. It was why the real provider still threw on
 //     `Duration.from("P1Y").toJSON()` even though the instance was correct.
-//     FIXED by #6486 (S21); the `it` below asserts the fixed answer instead.
+//     FIXED by #6608 (S21); the `it` below asserts the fixed answer instead.
 //   - `Object.getPrototypeOf(x) === C.prototype` is false for a dynamic-`new`
 //     instance (true for a static one), on base and on this branch alike.
 import { describe, expect, it } from "vitest";
@@ -88,7 +88,7 @@ const REGISTRY = `
   ie["%C%"] = C; ie["%D%"] = D; ie["%N%"] = null; ie["%X%"] = 7;
   function ce(k) { return ie[k]; }`;
 
-describe("#6485 — `new (<call>)(…)`, standalone", () => {
+describe("#6607 — `new (<call>)(…)`, standalone", () => {
   it("constructs from a value fetched out of a registry by a call", async () => {
     // Base tree: "undefined" — the `new` evaluated to null.
     await expect(
@@ -162,13 +162,13 @@ describe("#6485 — `new (<call>)(…)`, standalone", () => {
     ).resolves.toBe("T1");
   });
 
-  it("residual 1 is FIXED (#6486): a name-collided method resolves by class", async () => {
+  it("residual 1 is FIXED (#6608): a name-collided method resolves by class", async () => {
     // Was pinned here at "EJ/EJ" by S20 — the per-name ladder had no runtime
     // CLASS test, only `ref.test`, which is STRUCTURAL, so every same-shaped
-    // class matched and the LAST declarer won. #6486 (S21) adds the nominal
+    // class matched and the LAST declarer won. #6608 (S21) adds the nominal
     // `__tag` guard; measured on the S20 base this line still answered
     // "EJ/EJ". Full coverage lives in
-    // `tests/issue-6486-standalone-method-ladder-class-test.test.ts`.
+    // `tests/issue-6608-standalone-method-ladder-class-test.test.ts`.
     await expect(
       runStandaloneString(`(() => {
       class A { toJSON() { return "AJ"; } }

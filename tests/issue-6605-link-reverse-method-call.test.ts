@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #6483 (#5383 S18) — PROVIDER code CALLING a method on a CONSUMER-owned
+// #6605 (#5383 S18) — PROVIDER code CALLING a method on a CONSUMER-owned
 // receiver.
 //
-// WHY THIS REDUCTION EXISTS. #6478 (S17) taught the reverse channel to READ a
+// WHY THIS REDUCTION EXISTS. #6600 (S17) taught the reverse channel to READ a
 // consumer-owned carrier. It could not CALL one: `__extern_method_call`'s
 // non-`$Object` arm asks `boundaryObjectCallIdx ?? peerMethodCallIdx` — the
 // JS-host boundary and the CONSUMER's forward terminal — and a provider has
@@ -49,7 +49,7 @@ const PROVIDER = `
   });`;
 
 async function linkedPair(provider: string, consumer: string): Promise<Record<string, () => unknown>> {
-  const root = mkdtempSync(join(tmpdir(), "issue-6483-"));
+  const root = mkdtempSync(join(tmpdir(), "issue-6605-"));
   const packageRoot = join(root, "node_modules", "ns6483");
   mkdirSync(packageRoot, { recursive: true });
   writeFileSync(
@@ -120,7 +120,7 @@ const CONSUMER = `
   }
 `;
 
-describe("#6483 a consumer-owned receiver whose method is CALLED inside a linked standalone provider", () => {
+describe("#6605 a consumer-owned receiver whose method is CALLED inside a linked standalone provider", () => {
   it("dispatches the call on the owning module, with the receiver bound", { timeout: 600_000 }, async () => {
     const ex = await linkedPair(PROVIDER, CONSUMER);
     // TEETH — both threw on the base tree (`.tmp/s18/witness-base.out`: -1).
@@ -132,7 +132,7 @@ describe("#6483 a consumer-owned receiver whose method is CALLED inside a linked
     expect(ex.receiverIsBound()).toBe(42);
     // CONTROLS — measured identical on base and branch. Asserted rather than
     // omitted: each is a residual this slice deliberately did NOT fix, and a
-    // change in any of them is a real event (#6483 "Deliberately NOT fixed").
+    // change in any of them is a real event (#6605 "Deliberately NOT fixed").
     //  · a computed-key call already answered null before this slice;
     expect(ex.callsThroughComputedKey()).toBe(null);
     //  · arguments do not cross the boundary, so the call still declines;

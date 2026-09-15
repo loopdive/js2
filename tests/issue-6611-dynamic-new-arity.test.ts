@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #6489 (#5383 S24) — `new <runtime ctor VALUE>(…)` with MORE than eight
+// #6611 (#5383 S24) — `new <runtime ctor VALUE>(…)` with MORE than eight
 // arguments, under `--target standalone`.
 //
 // WHY THIS REDUCTION EXISTS. The dispatched bucket was nine test262 rows
@@ -110,7 +110,7 @@ const PROVIDER = `
   });`;
 
 async function linkedPair(provider: string, consumer: string): Promise<Record<string, () => unknown>> {
-  const root = mkdtempSync(join(tmpdir(), "issue-6489-"));
+  const root = mkdtempSync(join(tmpdir(), "issue-6611-"));
   const packageRoot = join(root, "node_modules", "ns6489");
   mkdirSync(packageRoot, { recursive: true });
   writeFileSync(
@@ -222,7 +222,7 @@ const CONSUMER = `
       return marks;
     } catch (e) { return -1; }
   }
-  // PINNED RESIDUAL: a CALL-expression callee (#6485's arm) whose class is
+  // PINNED RESIDUAL: a CALL-expression callee (#6607's arm) whose class is
   // foreign. Null on both trees.
   export function callCalleeTenArgs() {
     try {
@@ -233,7 +233,7 @@ const CONSUMER = `
   }
 `;
 
-describe("#6489 — `new <ctor value>(…)` above eight arguments, standalone", () => {
+describe("#6611 — `new <ctor value>(…)` above eight arguments, standalone", () => {
   it(
     "constructs across the link at nine and ten arguments, and evaluates them in order",
     { timeout: 600_000 },

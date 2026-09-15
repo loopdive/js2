@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * #6481 (#5383 S16) — a `let`/`const` bound to a **nullable native string**
+ * #6603 (#5383 S16) — a `let`/`const` bound to a **nullable native string**
  * element of a vec must not be slotted at the element's NON-NULL twin.
  *
  * ## The lie, and where it lands
@@ -37,7 +37,7 @@
  * `+` / `===` / `typeof` / ToBoolean each already answer correctly once they
  * are told the value is nullable.
  *
- * Sibling of `array-hof-nullable-elem-param.ts` (#6480), which is the same lie
+ * Sibling of `array-hof-nullable-elem-param.ts` (#6602), which is the same lie
  * one boundary earlier (the array-HOF callback parameter), and narrowed on the
  * same principle: fire only on the exact non-null-twin pair, so no other
  * binding shape can change a single emitted byte.

@@ -1,5 +1,5 @@
 ---
-id: 6487
+id: 6609
 title: "standalone: `Object.getPrototypeOf(<value callable only at runtime>)` answers `null` instead of `%Function.prototype%` — every linked-provider method, and the seven Temporal `builtin.js` rows"
 status: done
 completed: 2026-09-14

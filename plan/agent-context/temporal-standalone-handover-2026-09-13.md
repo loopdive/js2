@@ -32,19 +32,19 @@ started). Acceptance criterion 4 of #5383 is therefore still open.
 | S11 | a dynamic class object answers `.prototype` (#6457) | 139 → 170 | #5900 (merged) |
 | S12 | static arity for a spread from a `const` array binding into `new` (#6460) | 170 → 170 (bucket moved, rows die one step later) | #5909 (open, held — collateral) |
 | S13 | `Object.create(<value>.prototype)` produces a compiled instance (#6464) | 170 → 177 | branch `issue-5383-standalone-temporal-s13`, PR not yet opened (GitHub outage) |
-| S14 | ONE dynamic `new <value>()` in the harness poisoned every provider value (#6479) | 177 → 199 | branch `…-s14`, stacked on S13, unpushed (GitHub 403) |
-| S15 | array-HOF callback asserted a nullable element non-null — the `sn()` bucket (#6480) | 199 → 201 | branch `…-s15`, stacked on S14, unpushed |
-| S16 | null native-string element binding truthiness; `void 0`/`undefined` comparison (#6481, #6482) | 201 → 202 (`sn()` bucket fully retired) | branch `…-s16`, stacked on S15, unpushed |
-| S17 | the link was ONE-DIRECTIONAL: runtime-installed reverse channel so the provider can read a consumer-built bag (#6478) | 202 → 232 (solo-corrected 233) | branch `…-s17`, stacked on S16, unpushed |
-| S18 | provider can CALL a method on a consumer-owned receiver — the reverse method-call hop (#6483); the `called value is not a function` bucket is TWO defects, neither at S17's guard | 232 → 232 (PlainDate 93 → 93, 0 flips; bucket did not move — criterion 4 NOT met for this slice) | branch `…-s18`, stacked on S17, unpushed |
-| S19 | diagnosis only, no compiler change: the consumer→provider half is NOT at the link — every dispatch layer is correct and `Duration.from`'s body (`sn()`) returns null on its own; ends at the polyfill's intrinsic registry, `new (ce("%Temporal.Duration%"))(1)` fails its own brand check in ONE module. Three single-module reductions filed as #6484 | — (not measured, tree byte-identical to base) | branch `…-s19`, stacked on S18, unpushed |
-| S20 | host-free dynamic `new (<call>)(…)`: no arm matched, fell to a nonexistent host import and emitted `ref.null` without evaluating the arguments (#6485) — the "brand check" clause was wrong, no instance was ever created. Lane restarted once (container restart, WIP salvaged from disk) | 233 → 245 (Duration 56 → 64, ZDT 84 → 88; 12 fail→pass, 0 pass→fail) | branch `…-s20b`, stacked on S19, unpushed |
-| S21 | per-name method ladders (`__call_m_*`, `__call_toString`/`valueOf`) tested class by STRUCTURAL `ref.test`, so field-less WeakMap-state classes all matched — the #4618 `__tag` guard now applies to them via `class-arm-tag-guard.ts` (#6486) | 244 → 249 (94/65/90; 0 pass→fail; `Duration.from("P1Y").toJSON()` → `P1Y`) | branch `…-s21`, stacked on S20b, unpushed |
-| S22 | `Object.getPrototypeOf(<runtime-only callable>)` answered null in standalone; now `__is_callable ? Function.prototype : __getPrototypeOf` (#6487) — the 7 rows were `*/builtin.js`, NOT the gOPD descriptor residual | 249 → 256 (96/68/92; 0 pass→fail) | branch `…-s22`, stacked on S21, unpushed |
-| S23 | fourth `called value is not a function` cause: `n.toPrecision(a)` on a number PRIMITIVE through an `any` receiver — `__extern_method_call` had no primitive-receiver arm (#6488, `number-primitive-method-call.ts`); the candidate list in the brief was wrong, the instrument-the-sites method was right | 258 → 271 (97/77/97; 0 pass→fail; bucket 10 → 0) | branch `…-s23`, stacked on S22, unpushed |
-| S24 | dynamic `new NS.wide(…)` above arity 8 (`MAX_NATIVE_CONSTRUCT_ARITY`) emitted null without evaluating args (#6489) — upstream of the `expected a string, not null` bucket (9 → 0). Lane restarted once (container restart; WIP commit + partial TSVs salvaged). `const C = NS.wide; new C(…)` → null is a DIFFERENT, arity-independent residual, pinned | 271 → 300 (101/97/102; 0 pass→fail; 29 fail→pass) | branch `…-s24b`, stacked on S23, unpushed |
-| S25 | dynamic `new <value>` had no IsConstructor step — `new` on a method/arrow/builtin did not throw TypeError (#6490, `construct-is-constructor-guard.ts`); `not-a-constructor.js` is 123 files under Temporal and 536 corpus-wide, so the "4 rows" sized the sample, not the defect. Lane restarted once (WIP + all four family TSVs salvaged) | 300 → 304 (103/99/102; PlainDateTime 104 → 106; 0 pass→fail; one fail→pass in `language/expressions/new/` must-not-move, same defect) | branch `…-s25b`, stacked on S24b, unpushed |
-| S26 | a heterogeneous ARRAY LITERAL trapped at CONSTRUCTION: element zero's closed struct carrier was guard-cast onto a string/number/boolean/vec sibling, and `ref.as_non_null` on the null answer dereferenced a null pointer (#6491) — the gap #4289's own doc comment names and declines ("another widening's business"), with no other widening. BOTH of the brief's named hypotheses were wrong: `__class_construct_dispatch` discriminates by IDENTITY not structurally (its illegal cast is a hard `ref.cast` in `externArgCoercionInstrs` for a formal typed by inference from its default), and the `__closure_N` null bucket is ≥2 mechanisms, the larger not a closure defect at all | 410 → 411 (104/99/102/106; 0 pass→fail; 1 of 38 message buckets moves, 7 → 6; 604 must-not-move rows, 0 flips) | branch `…-s26`, stacked on S25b, unpushed (GitHub 403) |
+| S14 | ONE dynamic `new <value>()` in the harness poisoned every provider value (#6601) | 177 → 199 | branch `…-s14`, stacked on S13, unpushed (GitHub 403) |
+| S15 | array-HOF callback asserted a nullable element non-null — the `sn()` bucket (#6602) | 199 → 201 | branch `…-s15`, stacked on S14, unpushed |
+| S16 | null native-string element binding truthiness; `void 0`/`undefined` comparison (#6603, #6604) | 201 → 202 (`sn()` bucket fully retired) | branch `…-s16`, stacked on S15, unpushed |
+| S17 | the link was ONE-DIRECTIONAL: runtime-installed reverse channel so the provider can read a consumer-built bag (#6600) | 202 → 232 (solo-corrected 233) | branch `…-s17`, stacked on S16, unpushed |
+| S18 | provider can CALL a method on a consumer-owned receiver — the reverse method-call hop (#6605); the `called value is not a function` bucket is TWO defects, neither at S17's guard | 232 → 232 (PlainDate 93 → 93, 0 flips; bucket did not move — criterion 4 NOT met for this slice) | branch `…-s18`, stacked on S17, unpushed |
+| S19 | diagnosis only, no compiler change: the consumer→provider half is NOT at the link — every dispatch layer is correct and `Duration.from`'s body (`sn()`) returns null on its own; ends at the polyfill's intrinsic registry, `new (ce("%Temporal.Duration%"))(1)` fails its own brand check in ONE module. Three single-module reductions filed as #6606 | — (not measured, tree byte-identical to base) | branch `…-s19`, stacked on S18, unpushed |
+| S20 | host-free dynamic `new (<call>)(…)`: no arm matched, fell to a nonexistent host import and emitted `ref.null` without evaluating the arguments (#6607) — the "brand check" clause was wrong, no instance was ever created. Lane restarted once (container restart, WIP salvaged from disk) | 233 → 245 (Duration 56 → 64, ZDT 84 → 88; 12 fail→pass, 0 pass→fail) | branch `…-s20b`, stacked on S19, unpushed |
+| S21 | per-name method ladders (`__call_m_*`, `__call_toString`/`valueOf`) tested class by STRUCTURAL `ref.test`, so field-less WeakMap-state classes all matched — the #4618 `__tag` guard now applies to them via `class-arm-tag-guard.ts` (#6608) | 244 → 249 (94/65/90; 0 pass→fail; `Duration.from("P1Y").toJSON()` → `P1Y`) | branch `…-s21`, stacked on S20b, unpushed |
+| S22 | `Object.getPrototypeOf(<runtime-only callable>)` answered null in standalone; now `__is_callable ? Function.prototype : __getPrototypeOf` (#6609) — the 7 rows were `*/builtin.js`, NOT the gOPD descriptor residual | 249 → 256 (96/68/92; 0 pass→fail) | branch `…-s22`, stacked on S21, unpushed |
+| S23 | fourth `called value is not a function` cause: `n.toPrecision(a)` on a number PRIMITIVE through an `any` receiver — `__extern_method_call` had no primitive-receiver arm (#6610, `number-primitive-method-call.ts`); the candidate list in the brief was wrong, the instrument-the-sites method was right | 258 → 271 (97/77/97; 0 pass→fail; bucket 10 → 0) | branch `…-s23`, stacked on S22, unpushed |
+| S24 | dynamic `new NS.wide(…)` above arity 8 (`MAX_NATIVE_CONSTRUCT_ARITY`) emitted null without evaluating args (#6611) — upstream of the `expected a string, not null` bucket (9 → 0). Lane restarted once (container restart; WIP commit + partial TSVs salvaged). `const C = NS.wide; new C(…)` → null is a DIFFERENT, arity-independent residual, pinned | 271 → 300 (101/97/102; 0 pass→fail; 29 fail→pass) | branch `…-s24b`, stacked on S23, unpushed |
+| S25 | dynamic `new <value>` had no IsConstructor step — `new` on a method/arrow/builtin did not throw TypeError (#6612, `construct-is-constructor-guard.ts`); `not-a-constructor.js` is 123 files under Temporal and 536 corpus-wide, so the "4 rows" sized the sample, not the defect. Lane restarted once (WIP + all four family TSVs salvaged) | 300 → 304 (103/99/102; PlainDateTime 104 → 106; 0 pass→fail; one fail→pass in `language/expressions/new/` must-not-move, same defect) | branch `…-s25b`, stacked on S24b, unpushed |
+| S26 | a heterogeneous ARRAY LITERAL trapped at CONSTRUCTION: element zero's closed struct carrier was guard-cast onto a string/number/boolean/vec sibling, and `ref.as_non_null` on the null answer dereferenced a null pointer (#6613) — the gap #4289's own doc comment names and declines ("another widening's business"), with no other widening. BOTH of the brief's named hypotheses were wrong: `__class_construct_dispatch` discriminates by IDENTITY not structurally (its illegal cast is a hard `ref.cast` in `externArgCoercionInstrs` for a formal typed by inference from its default), and the `__closure_N` null bucket is ≥2 mechanisms, the larger not a closure defect at all | 410 → 411 (104/99/102/106; 0 pass→fail; 1 of 38 message buckets moves, 7 → 6; 604 must-not-move rows, 0 flips) | branch `…-s26`, stacked on S25b, unpushed (GitHub 403) |
 
 Fix commits also on main: the speculative-rollback gate fix on S2m (9501ffca13),
 the `test262` gitlink restoration (#5892), the revert of #5871/#5882 (#5914).
@@ -61,40 +61,40 @@ boundary attribution held — and even there the three NAMED mechanisms were all
 wrong; the miss was on the provider side, which had no peer at all.
 
 **Ids 6474–6477 collided with main** (hand-picked while `--allocate` could not
-write): S14–S16 were renumbered to #6479–#6482 and merged forward S14→S17;
+write): S14–S16 were renumbered to #6601–#6604 and merged forward S14→S17;
 `check:issue-ids:against-main` is green on S17. Always `--allocate`; if the write
 fails, `--check` + the gate before committing.
 
 ## Remaining buckets (post-S17 sample, 120 fail pooled) and the next census targets
 
 - `called value is not a function` **15** — two defects. (a) provider calls
-  `o.m()` on a consumer carrier: FIXED by S18 (#6483). (b) consumer calls
+  `o.m()` on a consumer carrier: FIXED by S18 (#6605). (b) consumer calls
   `Temporal.Duration.from("P0Y")` on a provider receiver: a literal-named member
   call takes a per-name `__call_m_<name>` dispatch path with no link-boundary
   arm — REFUTED by S19 (the "works" rows were `typeof null`). Real end: the
   provider's intrinsic registry — `new (ce("%Temporal.Duration%"))(1)` yields an
   instance that fails its class's brand check; single module, no link. S20
-  FIXED by S20 (#6485) — the real cause was `new (<call>)(…)` with no dynamic-new
+  FIXED by S20 (#6607) — the real cause was `new (<call>)(…)` with no dynamic-new
   arm. Next: a method call by name on a statically-unknown receiver resolves
   through a per-name ladder with NO runtime class test and takes the
   LAST-DECLARED class declaring the name (`f(new A())` → `"UB"`); in the
   provider `Duration.from("P1Y").toJSON()` → *invalid receiver*, `toString()`
-  → `Number.prototype.toString`. FIXED by S21 (#6486). Two homes of the same
+  → `Number.prototype.toString`. FIXED by S21 (#6608). Two homes of the same
   defect remain: the `__call_@@toPrimitive` ladder (entries carry no struct
-  name) and same-shaped OBJECT LITERALS (no `__tag`). S19's #6484 A/B/C
+  name) and same-shaped OBJECT LITERALS (no `__tag`). S19's #6606 A/B/C
   (`C[k](…)` foldable-key arg shift; `o[k](a)` → null; class-derived method
   value `b.g()` → null) follow.
 - post-S21 top buckets: `prototype Expected SameValue(«null», «[object Function]»)`
   **7** (a prototype-descriptor read — the S11-era `gOPD(K,"prototype")` residual;
   FIXED by S22 — it was `Object.getPrototypeOf(Temporal.X.compare)` in
   `*/builtin.js`, not a descriptor read). Post-S22 (solo-corrected): `called
-  value is not a function` 10 → **0** (S23, #6488) · post-S23 top: `expected a
-  string, not null` 9 → **0** (S24, #6489). Post-S24: no dominant cause left in
+  value is not a function` 10 → **0** (S23, #6610) · post-S23 top: `expected a
+  string, not null` 9 → **0** (S24, #6611). Post-S24: no dominant cause left in
   the 360-row sample — `Calling as constructor Expected a TypeError` 4 · `Proxy
   get trap is not callable` 4 · `illegal cast in __class_construct_dispatch()` 2
   · `Cannot read properties of undefined (reading 'equals')` 2 · the `const C =
   NS.wide; new C(…)` null residual. S25 fixed the non-constructor `new`
-  (#6490). Post-S25, four families (480 rows, 70 residual rows in 40 buckets, 33
+  (#6612). Post-S25, four families (480 rows, 70 residual rows in 40 buckets, 33
   of them ≤2 rows): `Proxy get trap is not callable` **6** · `dereferencing a
   null pointer in __closure_N()` **6** · `illegal cast in
   __class_construct_dispatch()` **4** (a wasm trap — plausibly S21's structural

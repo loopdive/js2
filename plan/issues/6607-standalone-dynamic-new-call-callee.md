@@ -1,5 +1,5 @@
 ---
-id: 6485
+id: 6607
 title: "standalone: `new (registryLookup(key))(…)` evaluates to null and never evaluates its arguments — a CALL-expression callee matches no dynamic-`new` arm"
 status: done
 completed: 2026-09-14
@@ -37,10 +37,10 @@ func-budget-allow:
   - src/codegen/expressions/new-super.ts::emitDynamicNewFallback
 ---
 
-# #6485 — `new (<call>)(…)` in a host-free module: a silent null, with the arguments never evaluated
+# #6607 — `new (<call>)(…)` in a host-free module: a silent null, with the arguments never evaluated
 
 Child of [#5383](5383-standalone-temporal-provider.md) (S20), following
-[#6484](6484-standalone-class-static-dynamic-dispatch.md) (S19).
+[#6606](6606-standalone-class-static-dynamic-dispatch.md) (S19).
 
 ## Summary
 
@@ -130,7 +130,7 @@ in a 3.3 MB provider that links into every consumer compile.
 
 - The reduction above moves in one standalone module with no polyfill (§ the
   probe table).
-- `tests/issue-6485-standalone-dynamic-new-call-callee.test.ts` — eight probes;
+- `tests/issue-6607-standalone-dynamic-new-call-callee.test.ts` — eight probes;
   the whole file was run against base by file-copy revert (4 failed, 4 passed).
 - Three-family Temporal sample, 120 rows each, provider linked, fresh cache per
   label: **233 → 245 pass**, **12 `fail → pass`**, **0 legitimate `pass→fail`**,

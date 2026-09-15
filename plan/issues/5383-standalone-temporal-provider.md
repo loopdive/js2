@@ -4684,7 +4684,7 @@ number is claimed; a corpus run remains the tech lead's to schedule.
 
 ## S14 findings (2026-09-13) — the harness itself was the input; ONE `new <value>()` poisoned every provider value, and the linked lane goes 177 → 199
 
-**#6479 is the slice.**
+**#6601 is the slice.**
 
 ### 1. The attribution was wrong for the SIXTH slice running, and this time the census procedure itself was at fault
 
@@ -4733,7 +4733,7 @@ collision, measured on this exact provider: `taCtorIdentityTestInstrs`
 these two did not. **Twelve** bare `ref.test $__ta_ctor` sites remain
 (`dataview-native.ts` ×5, `ta-ctor-meta.ts` ×2, `expressions/calls.ts`,
 `property-access-dispatch.ts`); none was on a path this slice could measure
-moving, so they are written down in #6479 rather than changed blind.
+moving, so they are written down in #6601 rather than changed blind.
 
 ### 3. Why ONE never-called function is the whole input
 
@@ -4917,8 +4917,8 @@ number is claimed; a corpus run remains the tech lead's to schedule.
 
 ### S15 findings (2026-09-13) — `sn()` did not need a Temporal fix; it needed the array-HOF callback to stop asserting a nullable element non-null. 199 → 201, and the whole 22-row `sn()` bucket moved one step
 
-**#6480 is the slice.** Full write-up, tables and residuals in the issue file
-`plan/issues/6480-standalone-nullable-vec-element-callback-param.md`.
+**#6602 is the slice.** Full write-up, tables and residuals in the issue file
+`plan/issues/6602-standalone-nullable-vec-element-callback-param.md`.
 
 #### 1. Root cause, and why six slices of Temporal work never reached it
 
@@ -4995,7 +4995,7 @@ and each lowering that forgets it has to be taught separately.
 Still open behind it: `instanceof` across the provider link with a dynamic RHS
 (S11 residual, gates 2 Duration rows), ZonedDateTime's 7-row
 `required property 'timeZone' missing`, PlainDate's 6-row `year is required`
-and its 3-row `__closure_N()` null pointer — **measured NOT to be the #6480
+and its 3-row `__closure_N()` null pointer — **measured NOT to be the #6602
 family**, since PlainDate did not move at all.
 
 #### 5. Traps, carried forward
@@ -5035,10 +5035,10 @@ tech lead's to schedule.
 
 ### S16 findings (2026-09-13/14) — the `sn()` bucket is fully retired; two general standalone correctness bugs, 201 → 202, and the row count is the least interesting number here
 
-**Two slices: #6481 (the nullable native-string BINDING) and #6482 (`void 0` in
+**Two slices: #6603 (the nullable native-string BINDING) and #6604 (`void 0` in
 a nullish comparison).** Full write-ups in
-`plan/issues/6481-standalone-nullable-native-string-element-binding.md` and
-`plan/issues/6482-standalone-void-0-undefined-comparison.md`.
+`plan/issues/6603-standalone-nullable-native-string-element-binding.md` and
+`plan/issues/6604-standalone-void-0-undefined-comparison.md`.
 
 #### 1. The hand-off attribution was wrong for the SEVENTH slice running, and this time it named the wrong LAYER
 
@@ -5082,7 +5082,7 @@ that does not", and here that is one `const`.
 
 #### 2. Root causes, both general standalone bugs rather than Temporal ones
 
-**#6481** — `walkStmtForLetConst` (the authoritative let/const slot-typer) ends
+**#6603** — `walkStmtForLetConst` (the authoritative let/const slot-typer) ends
 its cascade at `resolveWasmType`, which answers the NON-null `ref $anyStr` for
 an element the checker types `string`. The store does not fail (a `ref` local
 gets a defaultable nullable slot), so the null is written and kept; every later
@@ -5092,7 +5092,7 @@ native-string element — `resolveWasmType` returns a non-null `ref` for class
 and object structs too, and re-typing every `const x = objArray[i]` in both
 lanes is a blast radius this defect does not justify.
 
-**#6482** — the null-and-undefined comparison shortcut recognised the undefined
+**#6604** — the null-and-undefined comparison shortcut recognised the undefined
 literal as the IDENTIFIER `undefined` only, so a `void 0` operand fell into the
 generic reference equality, which on standalone compares carriers structurally
 and answers `void 0 !== undefined` as TRUE. **Every minifier emits `void 0`**,
@@ -5108,14 +5108,14 @@ for an answer that is already right.
 
 #### 3. The bucket, through all three states — this is the real result
 
-| bucket, in `sn` | base (S15 head) | +#6481 | +#6481 +#6482 |
+| bucket, in `sn` | base (S15 head) | +#6603 | +#6603 +#6604 |
 | --- | --- | --- | --- |
 | `null pointer in __str_flatten` | **18** (13 Du, 5 ZDT) | 0 | 0 |
 | `null pointer in __str_concat` | 0 | **11** (8 Du, 3 ZDT) | **0** |
 | spurious `only the smallest unit can be fractional` | **4** (3 Du, 1 ZDT) | 4 | **0** |
 
 The 22-row `sn()` family that has gated every string-argument Duration entry
-point since S10 is now **entirely retired**. #6481 alone moved it one step and
+point since S10 is now **entirely retired**. #6603 alone moved it one step and
 scored nothing; the pair retires it.
 
 #### 4. The three-family sample, LINKED, re-measured
@@ -5127,7 +5127,7 @@ taken by file-copy revert of the three edited source files on this tree. The
 provider binary differs between labels (3,324,826 vs 3,325,244 bytes), which is
 independent proof the compiler change reached the linked artifact.
 
-| family | rows | base pass | #6481 only | **S16 pass** | fail | ce | pass→fail |
+| family | rows | base pass | #6603 only | **S16 pass** | fail | ce | pass→fail |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `built-ins/Temporal/PlainDate/**` | 120 | 78 | 78 | **78** | 41 | 1 | **0** |
 | `built-ins/Temporal/Duration/**` | 120 | 51 | 51 | **52** | 65 | 3 | **0** |
@@ -5167,7 +5167,7 @@ Temporal defect and not the nullability family. Neither bucket moved in S16
 (7→7, and 15→15 counting all three families), which is consistent with that
 attribution.
 
-**CONFIRMED by S17 (#6478), which is worth stating because it is the first time
+**CONFIRMED by S17 (#6600), which is worth stating because it is the first time
 in this stack that a hand-off attribution held.** S17 found the link boundary to
 be one-directional — a consumer-owned object literal or class instance is
 undecodable inside a linked provider — installed a reverse channel, and reports
@@ -5205,7 +5205,7 @@ whole-function scan rather than at the declaration.
 | `String/prototype/{split,match}` + `Array/prototype/{join,indexOf}` | 113 | 95 pass / 18 fail | identical | **0** |
 
 The second sample exists because the targeted byte A/B falsified the narrow
-reading of #6481: a PLAIN string array's element type is nullable in standalone
+reading of #6603: a PLAIN string array's element type is nullable in standalone
 too, so `const s = a[0]` re-types there as well. A sample chosen only from the
 RegExp surface would not have covered that.
 
@@ -5214,8 +5214,8 @@ RegExp surface would not have covered that.
 Byte A/B on a 42-file fixed corpus (`website/playground/examples` +
 `tests/fixtures`) × {gc, standalone}: **no artifact moves on either lane, for
 either slice.** A targeted 23-shape A/B: the `gc` lane is byte-identical
-throughout; on standalone exactly the intended shapes move (6 for #6481, 5 for
-#6482) and every control — an inline element read, a `var`, an annotated
+throughout; on standalone exactly the intended shapes move (6 for #6603, 5 for
+#6604) and every control — an inline element read, a `var`, an annotated
 binding, a number/object element, a matched group, the identifier `undefined`
 form, `void f()` — is identical.
 
@@ -5236,11 +5236,11 @@ reproduced again (exit 1 with `81 passed | 3 todo`). Three additions:
   a nicety, it is the whole measurement. The *evidence* that the label actually
   differed is the provider BYTE COUNT in the prewarm stamp, not `cacheHit`.
 - **A "control" that moves is a mislabelled teeth row, not a regression.** The
-  #6482 witness's `void "x" === a` row failed the base run as a control; it is
+  #6604 witness's `void "x" === a` row failed the base run as a control; it is
   an inert literal, so the fix covers it by design. Reading the diff rather
   than re-expecting the observed value is what caught it.
 
-#### 9a. The hand-picked ids COLLIDED with main, and the whole stack was renumbered 6474–6477 → 6479–6482
+#### 9a. The hand-picked ids COLLIDED with main, and the whole stack was renumbered 6474–6477 → 6601–6604
 
 `claim-issue.mjs --allocate` has exited **6** (`open-PR id scan DEGRADED — gh
 offline/unauthenticated`) for this entire session and pushes are 403, so S14,
@@ -5251,12 +5251,12 @@ lane, reproduced here on a fresh catch-up merge). They are now:
 
 | was | is | slice |
 | --- | --- | --- |
-| 6474 | **6479** | S14 — dynamic `new` poisons provider values |
-| 6475 | **6480** | S15 — nullable vec element at the HOF callback |
-| 6476 | **6481** | S16 — nullable native-string element BINDING |
-| 6477 | **6482** | S16 — `void 0` in a nullish comparison |
+| 6474 | **6601** | S14 — dynamic `new` poisons provider values |
+| 6475 | **6602** | S15 — nullable vec element at the HOF callback |
+| 6476 | **6603** | S16 — nullable native-string element BINDING |
+| 6477 | **6604** | S16 — `void 0` in a nullish comparison |
 
-6478 is left to the S17 lane. Issue files, test filenames and every `#NNNN`
+6600 is left to the S17 lane. Issue files, test filenames and every `#NNNN`
 reference in `src/` and `tests/` were rewritten with them.
 
 **One thing the renumber nearly missed, and it is the reusable lesson.** The
@@ -5306,14 +5306,14 @@ MET-for-the-sample at **202/360** (was 201), same three families, **0
 pass→fail**, both must-not-move samples flat with 0 flips, the `gc` lane
 byte-identical on both corpora AND on the targeted shapes, the equivalence gate
 at baseline, and 0 `__temporal_*` leaks. Base and branch were both measured on
-this tree by file-copy revert, with an intermediate #6481-only label, so the
+this tree by file-copy revert, with an intermediate #6603-only label, so the
 attribution between the two slices is measured rather than argued. No
 full-corpus number is claimed; a corpus run remains the tech lead's to
 schedule.
 
 ### S17 findings (2026-09-14) — the boundary attribution was RIGHT for the first time in eight slices; the link turns out to be ONE-DIRECTIONAL, and the linked lane goes 202 → 232
 
-Full write-up in `plan/issues/6478-standalone-link-reverse-peer-read.md`.
+Full write-up in `plan/issues/6600-standalone-link-reverse-peer-read.md`.
 
 #### 1. The hand-off attribution reproduced, and the reduction took one probe set
 
@@ -5369,7 +5369,7 @@ has no peer, so its own miss arms have nothing to call. That shape cannot be
 mirrored — wasm imports may not be cyclic, and the provider is compiled and
 CACHED before any consumer exists.
 
-**Fix (#6478): install the channel at runtime instead of linking it.** The
+**Fix (#6600): install the channel at runtime instead of linking it.** The
 provider exports one setter and holds nullable typed-funcref globals; the
 consumer calls the setter from the top of `__module_init` with `ref.func` of its
 own normalising terminals; the provider's miss arms `call_ref` through the
@@ -5554,7 +5554,7 @@ is claimed; a corpus run remains the tech lead's to schedule.
 
 ### S18 findings (2026-09-14) — the `called value is not a function` attribution was wrong again, and the real Temporal cause is a literal-vs-computed member-name split
 
-Full write-up in `plan/issues/6483-standalone-link-reverse-method-call.md`.
+Full write-up in `plan/issues/6605-standalone-link-reverse-method-call.md`.
 
 #### 1. The hand-off attribution did not reproduce, and it took three probe sets to say why
 
@@ -5605,7 +5605,7 @@ guard throwing first it never fired in any probed shape". The guard that threw
 first was this one, and the hop was never placed in the arm that reaches it. The
 hop was the fix; it was removed for the wrong reason.
 
-#6483 adds it: `__js2wasm_link_reverse_method_call` plus the consumer-side
+#6605 adds it: `__js2wasm_link_reverse_method_call` plus the consumer-side
 `__js2wasm_link_local_method_call`, a fifth funcref slot on
 `__js2wasm_link_install_peer`.
 
@@ -5726,7 +5726,7 @@ All S11–S17 traps still bite. New this slice:
   pointed at one file; `C-PROV` vs `C-CONS` is what split one bucket into two
   unrelated defects, one of which was not a provider problem at all.
 - **Measure the base of your own witness before you write its assertions.** The
-  #6483 witness was first written asserting "every one of these threw on base",
+  #6605 witness was first written asserting "every one of these threw on base",
   taken from the hand-off narrative. Run against base, three of the seven had
   never thrown, and one of the two the slice "fixed" was actually a regression
   (a throw turned into `undefined`). One `cp` and one run; it changed what
@@ -5761,7 +5761,7 @@ leaks over 211 compared rows. No full-corpus number is claimed.
 ### S19 findings (2026-09-14) — the bucket is not at the link, not in the dispatchers, and not even in `from`: it ends at the polyfill's own intrinsic registry
 
 Full write-up in
-[#6484](6484-standalone-class-static-dynamic-dispatch.md). **No compiler change
+[#6606](6606-standalone-class-static-dynamic-dispatch.md). **No compiler change
 ships this slice**, deliberately — §4.
 
 #### 1. The hand-off was wrong in every clause, for the ninth slice running
@@ -5858,7 +5858,7 @@ equivalence gate are flat for the same reason.
   `f("A")` and `Reflect.apply(f,C,["A"])` are correct; `b.g("A")` answers
   `null` and `f.call(C,"A")` / `f.apply(C,["A"])` throw
   `called value is not a function`. A plain function value is correct in all
-  five shapes. This retires #6483's residual 2 as a boundary property — it
+  five shapes. This retires #6605's residual 2 as a boundary property — it
   reproduces with no link at all.
 
 #### 6. Traps, carried forward and added to
@@ -5900,7 +5900,7 @@ source file changed, so no conformance number is claimed in either direction.
 ### S20 findings (2026-09-14) — the brand check was the symptom; no instance was ever created, and the arguments were never evaluated
 
 Full write-up in
-[#6485](6485-standalone-dynamic-new-call-callee.md). **A container restart
+[#6607](6607-standalone-dynamic-new-call-callee.md). **A container restart
 killed the first S20 lane mid-slice**; what survived was an uncommitted 54-line
 change to `src/codegen/expressions/new-super.ts` plus its probe outputs in
 `.tmp/s20/`. Those were salvaged, re-verified from scratch on a fresh branch
@@ -6079,8 +6079,8 @@ change reverted:
   deliberately NOT done here because it would have invalidated every base
   measurement above.
 
-The issue id **#6485** was verified `UNASSIGNED` on `origin/issue-assignments`
-(`claim-issue: OK — #6485 is unassigned (read origin/issue-assignments)`) and is
+The issue id **#6607** was verified `UNASSIGNED` on `origin/issue-assignments`
+(`claim-issue: OK — #6607 is unassigned (read origin/issue-assignments)`) and is
 free on `origin/main` and in every local worktree. The claim WRITE could not be
 taken: `claim-issue.mjs` exits **5** after every retry — heavy contention on the
 ref, nothing written. GitHub pushes return 403 for all lanes today, so no branch
@@ -6133,7 +6133,7 @@ both corpus lanes byte-identical and the equivalence gate at baseline.
 ### S21 findings (2026-09-14) — the ladder DID have a class test; it was `ref.test`, and `ref.test` is structural
 
 Full write-up in
-[#6486](6486-standalone-per-name-method-ladder-no-class-test.md). Branch
+[#6608](6608-standalone-per-name-method-ladder-no-class-test.md). Branch
 `issue-5383-standalone-temporal-s21`, based on S20b's tip `2e36ca346a`. Every
 number below was measured on this tree, both labels, by file-copy revert of the
 three changed files (`.tmp/s21base/`); nothing is inherited from S20's run.
@@ -6210,7 +6210,7 @@ property of the guard rather than of a flag.
 | `new (ce("%Temporal.Duration%"))(1).toJSON()` (inline and via a const) | `!invalid receiver` ×2 | **`P1Y`** ×2 |
 | `PlainDate.from("1976-11-18").toJSON()` | `!invalid receiver` | **`1976-11-18`** |
 | `new Duration(1)` toJSON/toString (static `new` — control) | `P1Y` / `P1Y` | identical |
-| `Object.getPrototypeOf(r) === Duration.prototype` | `false` | `false` (#6485 residual 2, unchanged) |
+| `Object.getPrototypeOf(r) === Duration.prototype` | `false` | `false` (#6607 residual 2, unchanged) |
 
 Both hand-off symptom texts are present on base and **absent** on S21.
 
@@ -6287,8 +6287,8 @@ handed over by S20 reproduce unchanged and are not from this slice:
 under `LOC_GATE_BASE=origin/main` the `src/runtime.ts` ceiling (19,822 vs
 19,601) plus `buildImports` 308 > 300.
 
-The id **#6486** was verified `UNASSIGNED` on `origin/issue-assignments`
-(`claim-issue: OK — #6486 is unassigned (read origin/issue-assignments)`). The
+The id **#6608** was verified `UNASSIGNED` on `origin/issue-assignments`
+(`claim-issue: OK — #6608 is unassigned (read origin/issue-assignments)`). The
 allocate WRITE could not be taken: `--allocate` exits **6** (`open-PR id scan
 FAILED … gh offline`), nothing reserved. GitHub pushes return 403 for every
 lane today, so there is no branch or PR yet.
@@ -6351,7 +6351,7 @@ Function]»)` (7 rows across two line numbers — a prototype-descriptor read),
 `TypeError: Object method called on null or undefined` (5), `Calling as
 constructor … no TypeError thrown` (4), and the three PlainDate/ZonedDateTime
 `compile_error` rows that survive a 60 s solo budget. The two structural
-residuals named by #6486 — `__call_@@toPrimitive`'s ladder (same defect, its
+residuals named by #6608 — `__call_@@toPrimitive`'s ladder (same defect, its
 entries carry no struct name) and same-shaped OBJECT LITERALS (no `__tag` to
 test) — are unmeasured in this sample and are the cheapest next codegen slice.
 
@@ -6366,22 +6366,22 @@ through as "the boundaries gate was already red". It is not the same red.
 generalizes, and the gate is back to the inherited
 `inventory-valid-architecture-incomplete` with `inventoryValid: true`.
 
-#### 10. #6484 is NOT this ladder — measured, not assumed
+#### 10. #6606 is NOT this ladder — measured, not assumed
 
 The hand-off asked whether S19's reduction A (`C[k]("A","B")` with a foldable
-key shifting its arguments, #6484) is the same defect. It is not.
+key shifting its arguments, #6606) is the same defect. It is not.
 `.tmp/s21/c12-{base,new}.out`, seven probes, both labels on this tree: the
 STATIC computed-key rows are **identical** on base and S21 — still
 `"s2:function () { [native code] },A"`, i.e. the callee value arriving as
 argument 0 — for both `C[k2](…)` and the literal-key `C["s2"](…)`, and for a
 second class. Exactly one row moved, `o.m2("A","B")` through an `any`-typed
-parameter, which is this slice's ladder. #6484 is a separate static
+parameter, which is this slice's ladder. #6606 is a separate static
 computed-member CALL lowering and keeps its own slice.
 
 ### S22 findings (2026-09-14) — the bucket was not a descriptor read; it was `Object.getPrototypeOf` of a FUNCTION, and the answer was `null`
 
 Full write-up in
-[#6487](6487-standalone-dynamic-callable-getprototypeof.md). Branch
+[#6609](6609-standalone-dynamic-callable-getprototypeof.md). Branch
 `issue-5383-standalone-temporal-s22`, based on S21's FINAL tip `ebfe5aa8de`.
 Every number below was measured on this tree, both labels, by file-copy revert
 of the two changed files (`.tmp/s22base/`); nothing is inherited from S21's run
@@ -6546,15 +6546,15 @@ S21 reproduce unchanged and are not from this slice:
 under `LOC_GATE_BASE=origin/main` `src/runtime.ts` 19,822 > 19,601 plus
 `buildImports` 308 > 300.
 
-The id **#6487** was verified `UNASSIGNED` on `origin/issue-assignments`
-(`claim-issue: OK — #6487 is unassigned (read origin/issue-assignments)`). The
+The id **#6609** was verified `UNASSIGNED` on `origin/issue-assignments`
+(`claim-issue: OK — #6609 is unassigned (read origin/issue-assignments)`). The
 allocate WRITE could not be taken: `--allocate` exits **6**
 (`open-PR id scan FAILED … gh offline`), nothing reserved — and its `--dry-run`
-preview offered **#6478**, which THIS BRANCH ALREADY USES
-(`tests/issue-6478-standalone-link-reverse-peer-read.test.ts`, landed in S17).
+preview offered **#6600**, which THIS BRANCH ALREADY USES
+(`tests/issue-6600-standalone-link-reverse-peer-read.test.ts`, landed in S17).
 With `gh` offline the scan cannot see the stack's own unmerged ids, so the
 dry-run preview is not a safe id on a stacked branch; the brief's
-"6474–6486 are TAKEN" is what kept this slice off a collision. GitHub pushes
+"6474–6608 are TAKEN" is what kept this slice off a collision. GitHub pushes
 return 403 for every lane today, so there is no branch or PR yet.
 
 #### 9. Traps, carried forward and added to
@@ -6632,7 +6632,7 @@ target: one file name, three families, all three answering
 `Object method called on null or undefined`, and all three invisible in a
 sampled run because the 15 s cap scores them `compile_error`.
 
-Structurally, #6486's two named residuals (the `__call_@@toPrimitive` ladder's
+Structurally, #6608's two named residuals (the `__call_@@toPrimitive` ladder's
 unnamed entries and same-shaped OBJECT LITERALS) remain the cheapest codegen
 slice, and this slice adds two of its own: `gPO(<top-level function
 declaration>)` answers a different object from `Function.prototype`, and
@@ -6641,7 +6641,7 @@ declaration>)` answers a different object from `Function.prototype`, and
 ### S23 findings (2026-09-14) — the fourth cause is ONE missing member on ONE receiver brand: `Number.prototype.toPrecision` on a number PRIMITIVE
 
 Full write-up in
-[#6488](6488-standalone-number-primitive-dynamic-method-call.md). Branch
+[#6610](6610-standalone-number-primitive-dynamic-method-call.md). Branch
 `issue-5383-standalone-temporal-s23`, based on S22's FINAL tip `cd4a115386`.
 Every number below was measured on this tree, both labels, by file-copy revert
 of the three changed files (`.tmp/s23base/`; the new copies in
@@ -6681,7 +6681,7 @@ return { div: r * Number.parseInt(o.slice(0, a - t), 10), … };
 on a number PRIMITIVE reached through an `any` parameter.
 
 **Which clauses of the hand-off were wrong.** The brief offered three plausible
-fourth causes from S19's #6484 — the foldable-key `C[k]("A","B")` arg shift, the
+fourth causes from S19's #6606 — the foldable-key `C[k]("A","B")` arg shift, the
 `o[k](a)` → `ref.null.extern` return, and the class-derived method VALUE — plus
 the `typeof <provider instance>` residual. **None of them is this bucket.** All
 four are about resolving a CALLEE through a dynamic key or a class value; this
@@ -6742,7 +6742,7 @@ A member the MODULE installs on `Number.prototype` must outrank the builtin
 base to the builtin's `"5.0"` — a wrong answer where the base was right. That is
 the only regression this slice produced, it was produced by the obvious version
 of the arm, and it is caught only by a probe that asserts the OVERRIDE, not the
-builtin. It has its own module in `tests/issue-6488-*.test.ts`.
+builtin. It has its own module in `tests/issue-6610-*.test.ts`.
 
 #### 5. Reduction — one standalone module (`.tmp/s23/c8.mjs`, both labels)
 
@@ -6859,11 +6859,11 @@ all green. **No new budget grant was needed.** The new module is classified in
 two inherited reds reproduce unchanged and are not from this slice:
 `src/runtime.ts` 19,822 > 19,601 and `buildImports` 308 > 300.
 
-The id **#6488** was verified `UNASSIGNED` on `origin/issue-assignments`
-(`claim-issue: OK — #6488 is unassigned (read origin/issue-assignments)`). The
+The id **#6610** was verified `UNASSIGNED` on `origin/issue-assignments`
+(`claim-issue: OK — #6610 is unassigned (read origin/issue-assignments)`). The
 allocate WRITE could not be taken — `--allocate` exits **6**
 (`open-PR id scan FAILED … gh offline`), nothing reserved — and its `--dry-run`
-preview again offered **#6478**, which this branch has used since S17. That is
+preview again offered **#6600**, which this branch has used since S17. That is
 the same trap S22 recorded, one slice later, unchanged: **with `gh` offline the
 dry-run preview is not a safe id on a stacked branch.** GitHub pushes return 403
 for every lane, so there is no branch or PR yet; `.tmp/pr-body.md` is ready.
@@ -6960,14 +6960,14 @@ receiver still throws while `x.toString()` does not.
 ### S24 findings (2026-09-14) — the fifth cause is an ARITY CEILING, not a lookup: `new <foreign ctor>(…)` above eight arguments answered null and never evaluated its arguments. 271 → 300
 
 Full write-up in
-[#6489](6489-standalone-dynamic-new-arity-above-eight.md). Branch
+[#6611](6611-standalone-dynamic-new-arity-above-eight.md). Branch
 `issue-5383-standalone-temporal-s24b`, based on S23's tip; the code is the
 salvaged S24 commit `8d11a10336`.
 
 **This slice was interrupted.** The container restarted mid-measurement and
 killed the S24 lane. Salvaged from its worktree, unchanged: the WIP fix commit
 (`src/codegen/native-construct.ts`, `src/codegen/expressions/new-super.ts`, both
-byte-verified against its validated copies), the #6489 issue file, its probes,
+byte-verified against its validated copies), the #6611 issue file, its probes,
 and four of six family halves. Re-measured here: `du-base` p60, `zdt-base` p0
 and p60, and every solo correction on both trees. The base column below was
 produced on THIS tree by file-copy revert (`.tmp/s24base/`), and it lands on
@@ -7014,7 +7014,7 @@ single-module probe ever showed this.
 `Temporal.Duration` takes **ten** parameters; `Temporal.PlainDateTime` takes
 nine. The corpus's most ordinary spelling sat one argument past the ceiling.
 
-Same signature as S20's #6485 (`new (<call>)(…)`), one ceiling further out.
+Same signature as S20's #6607 (`new (<call>)(…)`), one ceiling further out.
 
 #### 3. Fix
 
@@ -7099,7 +7099,7 @@ The first linked reduction written for this slice used the bound-identifier
 spelling and failed identically before and after the fix — which would have read
 as "the fix does not work" rather than "the reduction is the wrong spelling".
 All four residuals are pinned in
-`tests/issue-6489-dynamic-new-arity.test.ts` so the distinction is not
+`tests/issue-6611-dynamic-new-arity.test.ts` so the distinction is not
 rediscovered. `new Temporal.Duration(…)` — the real corpus spelling — is the
 member form.
 
@@ -7115,7 +7115,7 @@ single dominant cause remains in this sample.
 ### S25 findings (2026-09-15) — the sixth cause is a MISSING SPEC STEP, not a lookup or a ceiling: `new <value>` never ran §13.3.5.1 step 5. Four families, 404 → 410, and the hand-off's "no single dominant cause remains" was the clause that was wrong
 
 Full write-up in
-[#6490](6490-standalone-dynamic-new-not-a-constructor.md). Branch
+[#6612](6612-standalone-dynamic-new-not-a-constructor.md). Branch
 `issue-5383-standalone-temporal-s25b`, based on S24's tip; the code is the
 salvaged S25 commit `50db519d23`.
 
@@ -7217,7 +7217,7 @@ hand-off's three-family figure —
 
 The last row is the clause that **held**: S24 pinned that spelling as a
 different, pre-existing, arity-independent mechanism, and
-`tests/issue-6489-dynamic-new-arity.test.ts` still passes unchanged on this
+`tests/issue-6611-dynamic-new-arity.test.ts` still passes unchanged on this
 branch, its `-2` residual intact. Widening the sample corrected the sizes; it
 did not overturn that attribution.
 
@@ -7285,10 +7285,10 @@ exactly.
 
 #### 5. The witness, and the spelling trap that made the first cut vacuous
 
-`tests/issue-6490-dynamic-new-is-constructor.test.ts`, six cases, measured on
+`tests/issue-6612-dynamic-new-is-constructor.test.ts`, six cases, measured on
 both trees by file-copy revert: base **3 fail / 3 pass**, branch **6 pass**.
 
-Unlike #6489, BOTH the single-module and the linked arms are witnesses. This
+Unlike #6611, BOTH the single-module and the linked arms are witnesses. This
 defect is a property of the DRIVER, not of callee ownership, so it reproduces
 with no link at all; the linked arm additionally covers the foreign-function
 path, where the callable/constructible distinction arrives as a `callableKind`
@@ -7339,7 +7339,7 @@ count in this sample.
 ### S26 findings (2026-09-15) — the seventh cause is a CARRIER hole an existing proof documents and declines, not a lookup, a ceiling or a spec step. Four families, 410 → 411, and BOTH of the hand-off's named hypotheses were wrong
 
 Full write-up in
-[#6491](6491-standalone-heterogeneous-array-literal-carrier.md). Branch
+[#6613](6613-standalone-heterogeneous-array-literal-carrier.md). Branch
 `issue-5383-standalone-temporal-s26`, based on S25b's tip `3e0825eb09`; the fix
 is commit `e80ee7c571`.
 
@@ -7533,7 +7533,7 @@ exactly.
 
 #### 5. The witness
 
-`tests/issue-6491-heterogeneous-array-literal.test.ts`, four `it`s, measured on
+`tests/issue-6613-heterogeneous-array-literal.test.ts`, four `it`s, measured on
 both trees by file-copy revert: base **3 fail / 1 pass**, branch **4 pass**.
 
 Both arms have teeth. The single-module arm is the defect itself; the linked arm
@@ -7543,9 +7543,9 @@ indices are not the single-module ones. Its FOREIGN-element case is labelled a
 control, not a witness, because a provider-built object crosses the link as
 `externref`, which this predicate skips by construction — and the control
 assertions run FIRST, so their "base tree: …" notes are measurements rather than
-inference (the #6490 discipline point, applied).
+inference (the #6612 discipline point, applied).
 
-The spelling trap here is the mirror of #6490's: element zero must be an
+The spelling trap here is the mirror of #6612's: element zero must be an
 IDENTIFIER bound to an object. Written inline (`[{ year: 1 }, "str"]`) every
 case passes on BOTH trees and the witness is vacuous.
 
@@ -7553,14 +7553,14 @@ case passes on BOTH trees and the witness is vacuous.
 
 **BLOCKER, not this slice's, and it wedges the merge queue if ignored:**
 `npm run -s check:issue-ids:against-main` FAILS on this stack. Main has since
-taken ids **6478, 6479 and 6480**, which S17/S15/S16 also used
-(`6478-standalone-link-reverse-peer-read.md`,
-`6479-standalone-dynamic-new-poisons-provider-values.md`,
-`6480-standalone-nullable-vec-element-callback-param.md`). Three renames plus
+taken ids **6600, 6601 and 6602**, which S17/S15/S16 also used
+(`6600-standalone-link-reverse-peer-read.md`,
+`6601-standalone-dynamic-new-poisons-provider-values.md`,
+`6602-standalone-nullable-vec-element-callback-param.md`). Three renames plus
 their in-branch references are needed before this stack can be enqueued. Note
-also that `claim-issue.mjs --allocate --dry-run --no-pr-scan` answers **#6484**
+also that `claim-issue.mjs --allocate --dry-run --no-pr-scan` answers **#6606**
 on this box — it cannot see the stack's unpushed issue files — so do NOT take
-its suggestion; #6491 was verified free on `origin/main` and `UNASSIGNED` on
+its suggestion; #6613 was verified free on `origin/main` and `UNASSIGNED` on
 `origin/issue-assignments` before use.
 
 Residual buckets, branch tree, all four families (69 rows, 38 buckets):
@@ -7581,7 +7581,7 @@ getter side effect, a getter that answers the receiver) suggest a single
 accessor-lowering cause rather than three.
 
 Filed but not fixed here, each with a reduction in
-[#6491](6491-standalone-heterogeneous-array-literal-carrier.md): a
+[#6613](6613-standalone-heterogeneous-array-literal-carrier.md): a
 numeric-first mixed vec read through a HOF answers `"nullnull"` and, in two
 spellings, produces an **INVALID MODULE** (`typeof a[0]` on `[1, "a"]`;
 `for (const v of [1, true])`). An invalid module is strictly worse than a trap —

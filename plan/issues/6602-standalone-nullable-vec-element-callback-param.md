@@ -1,7 +1,7 @@
 ---
-id: 6480
+id: 6602
 title: "standalone: a nullable vec element is asserted non-null at every array-HOF callback boundary"
-slug: 6480-standalone-nullable-vec-element-callback-param
+slug: 6602-standalone-nullable-vec-element-callback-param
 status: done
 completed: 2026-09-13
 sprint: current
@@ -14,7 +14,7 @@ goal: standalone-gap
 assignee: ttraenkler/dev-5383-s15
 created: 2026-09-13
 loc-budget-allow:
-  # 2026-09-13 (#6480, S15) — the nullable-element callback arm is wired at
+  # 2026-09-13 (#6602, S15) — the nullable-element callback arm is wired at
   #   the array-HOF call sites (+16) and callback-param nullability flows
   #   through closure lowering (+10); the mechanism itself lives in
   #   src/codegen/array-hof-nullable-elem-param.ts.
@@ -32,9 +32,9 @@ loc-budget-allow:
 > hand-picked ids collided at once (6474 → `linked-harness-prelude-module-goal`,
 > 6475 → `linked-provider-realm-error-constructors`, 6476 →
 > `linked-harness-async-done-marker`, 6477 → `linked-harness-descriptor-reads`).
-> They were renumbered to **6479–6482**, leaving 6478 to the S17 lane.
+> They were renumbered to **6601–6604**, leaving 6600 to the S17 lane.
 >
-> **6480 is therefore still UNRESERVED and unchecked against in-flight PRs** —
+> **6602 is therefore still UNRESERVED and unchecked against in-flight PRs** —
 > the same exposure that caused the first collision. The required
 > `check:issue-ids:against-main` gate is the backstop.
 

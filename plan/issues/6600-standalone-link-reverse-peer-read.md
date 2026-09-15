@@ -1,5 +1,5 @@
 ---
-id: 6478
+id: 6600
 title: "standalone: the link boundary is ONE-DIRECTIONAL — a consumer-owned object literal or class instance is undecodable inside a linked PROVIDER, so `Get(bag, \"year\")` answers `undefined`, `k in bag` answers false and `Object.keys(bag)` answers `[]`; the Temporal polyfill reads every property bag that way"
 status: done
 completed: 2026-09-14
@@ -243,7 +243,10 @@ terminal is not worth its global.
 
 **RESOLVED 2026-09-14.** S14–S16 renumbered on their own branches and the fix
 was merged forward: **#6474 → #6479, #6475 → #6480, #6476 → #6481,
-#6477 → #6482**. #6478 was never in the collision and did not move. The account
+#6477 → #6482**. This file (then #6478) was not in that collision. **Second
+renumber, 2026-09-15:** while pushes were blocked, `origin/main` took 6478–6483
+as well, so the whole stack moved once more, in order, to a far block:
+#6478–#6491 → **#6600–#6613** (this file is #6600). The account
 below is kept because the failure mode is reusable, not because it is open.
 
 `npm run -s check:issue-ids:against-main` went RED on this branch the moment the
@@ -260,7 +263,7 @@ slice's**:
 This is exactly the #2531 merge-queue wedge: those four ids were hand-picked
 rather than reserved (`claim-issue.mjs --allocate` was, and still is, exiting 6
 because the open-PR scan cannot reach `gh`), and `main` has since landed the
-`linked-harness` family on them. **#6478 is clean** — the gate names only the
+`linked-harness` family on them. **#6600 is clean** — the gate names only the
 four above.
 
 The fix belonged in the S16 PR, not here: renaming those files from this stacked
@@ -292,16 +295,16 @@ subsumes the other two.**
    invisible until a catch-up merge pulls `main` in. That is not a reason to
    defer the merge; it is a reason to do it early.
 
-## Note on the issue id — #6478 is UNRESERVED
+## Note on the issue id — #6600 is UNRESERVED
 
 `node scripts/claim-issue.mjs --allocate` exited **6** (`open-PR id scan FAILED
 … gh offline/unauthenticated`) every time it was run this session, so nothing
 could be reserved. `--dry-run` previewed **#6474**, which was already in use by
 an unreserved file on this branch — 6474–6477 were all taken that way, and all
 four then collided with `main`. This slice therefore took the next id after
-6477, **#6478**, per the S17 brief.
+6477, **#6600**, per the S17 brief.
 
-**That means #6478 carries exactly the same exposure the other four did**: it is
+**That means #6600 carries exactly the same exposure the other four did**: it is
 free on `main` and on the open-PR scan as of 2026-09-14, and nothing holds it.
 The required `check:issue-ids:against-main` gate is the only backstop until
 `--allocate` can reach the assignment book again; if it goes red on this id,

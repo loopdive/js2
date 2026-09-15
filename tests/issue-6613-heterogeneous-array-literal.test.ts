@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #6491 (#5383 S26) — a heterogeneous ARRAY LITERAL traps at CONSTRUCTION under
+// #6613 (#5383 S26) — a heterogeneous ARRAY LITERAL traps at CONSTRUCTION under
 // `--target standalone`.
 //
 // WHY THIS REDUCTION EXISTS. `compileArrayLiteral` keys the vec to element
@@ -68,7 +68,7 @@ async function runStandaloneString(expression: string): Promise<string> {
     instance = await WebAssembly.instantiate(module, {});
   } catch (error) {
     // An INVALID module is a distinct, worse failure mode than a trap and must
-    // not be reported as one (two of the residuals in #6491 are invalid
+    // not be reported as one (two of the residuals in #6613 are invalid
     // modules, and they would otherwise read as "trap" here).
     return `!invalid ${String((error as Error)?.message ?? error).slice(0, 80)}`;
   }
@@ -86,7 +86,7 @@ async function runStandaloneString(expression: string): Promise<string> {
 
 const OBJ = `const obj = { year: -271821, month: 4, day: 18 };`;
 
-describe("#6491 heterogeneous array literal, standalone — single module", () => {
+describe("#6613 heterogeneous array literal, standalone — single module", () => {
   it("constructs a literal whose siblings are not structs at all (base tree: every one traps)", async () => {
     // Base tree, measured: "!trap dereferencing a null pointer" for all four.
     expect(await runStandaloneString(`(() => { ${OBJ} return [obj, "str"].length; })()`)).toBe("2");
@@ -132,7 +132,7 @@ describe("#6491 heterogeneous array literal, standalone — single module", () =
 });
 
 async function linkedPair(provider: string, consumer: string): Promise<Record<string, () => unknown>> {
-  const root = mkdtempSync(join(tmpdir(), "issue-6491-"));
+  const root = mkdtempSync(join(tmpdir(), "issue-6613-"));
   const packageRoot = join(root, "node_modules", "ns6491");
   mkdirSync(packageRoot, { recursive: true });
   writeFileSync(
@@ -205,12 +205,12 @@ const CONSUMER = `
     return n;
   }`;
 
-describe("#6491 heterogeneous array literal, standalone — linked pair", () => {
+describe("#6613 heterogeneous array literal, standalone — linked pair", () => {
   it("widens a consumer-local mixed literal in a LINKED build, and leaves the foreign-element control alone", async () => {
     const exports = await linkedPair(PROVIDER, CONSUMER);
     // The CONTROL runs FIRST, deliberately: an expectation placed after a
     // failing one is never reached on the base tree, so its "base tree: …" note
-    // would be inference rather than a measurement (the #6490 discipline
+    // would be inference rather than a measurement (the #6612 discipline
     // point). Measured on base: 2 and 11 — this pair does not move.
     expect(exports.mixedForeign!()).toBe(2);
     expect(exports.foreignTypes!()).toBe(11);

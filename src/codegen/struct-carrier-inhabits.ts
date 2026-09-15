@@ -142,7 +142,7 @@ function carrierOf(ctx: CodegenContext, node: ts.Expression): ValType {
 }
 
 /**
- * (#6491) Does the literal hold an element that CANNOT inhabit a closed
+ * (#6613) Does the literal hold an element that CANNOT inhabit a closed
  * data-struct carrier at all — a number, a boolean, a native string, a nested
  * vec?
  *

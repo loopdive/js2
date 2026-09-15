@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #6481 (#5383 S16) — a `let`/`const` bound to a NULLABLE native-string vec
+// #6603 (#5383 S16) — a `let`/`const` bound to a NULLABLE native-string vec
 // element must not be slotted at the element's non-null twin.
 //
 // WHY THIS REDUCTION EXISTS. Standalone `RegExp.prototype.exec` stores an
@@ -85,7 +85,7 @@ export function at(i) { return __s.charCodeAt(i); }`;
   return out;
 }
 
-describe("#6481 a binding over a nullable native-string element", () => {
+describe("#6603 a binding over a nullable native-string element", () => {
   it("reads as `undefined` in every short-circuiting position", { timeout: 600_000 }, async () => {
     const observed: Record<string, string> = {
       conditional: await evalStandalone(`${MATCH} const a = m[1]; return a ? "T" : "F";`),
@@ -123,7 +123,7 @@ describe("#6481 a binding over a nullable native-string element", () => {
   });
 });
 
-describe("#6481 controls — unchanged on both trees", () => {
+describe("#6603 controls — unchanged on both trees", () => {
   it("keeps every binding shape the filter does not name", { timeout: 600_000 }, async () => {
     const observed: Record<string, string> = {
       // A MATCHED group through the same (now nullable) slot still reads.
@@ -133,7 +133,7 @@ describe("#6481 controls — unchanged on both trees", () => {
       inlineConcat: await evalStandalone(`${MATCH} return "" + m[1];`),
       // An explicitly nullable annotation was already correct.
       annotated: await evalStandalone(`${MATCH} const a: string | undefined = m[1]; return a ? "T" : "F";`),
-      // A callback parameter is #6480's boundary, not this one.
+      // A callback parameter is #6602's boundary, not this one.
       parameter: await evalStandalone(`${MATCH} const f = (a) => (a ? "T" : "F"); return f(m[1]);`),
       // Null-comparison never depended on the slot type.
       strictEqUndefined: await evalStandalone(`${MATCH} const a = m[1]; return String(a === undefined);`),

@@ -1,7 +1,7 @@
 ---
-id: 6481
+id: 6603
 title: "standalone: `const c = m[7]` binds a NULL native string to a non-null slot, so every later read of the binding asserts non-null (truthiness, `||`, `??`, concat all trap)"
-slug: 6481-standalone-nullable-native-string-element-binding
+slug: 6603-standalone-nullable-native-string-element-binding
 status: done
 sprint: current
 priority: high
@@ -14,7 +14,7 @@ assignee: ttraenkler/dev-5383-s16
 created: 2026-09-13
 completed: 2026-09-14
 loc-budget-allow:
-  # 2026-09-13 (#6481, S16) — the mechanism lives entirely in the NEW module
+  # 2026-09-13 (#6603, S16) — the mechanism lives entirely in the NEW module
   #   src/codegen/nullable-native-string-elem-binding.ts. What grows here is the
   #   SECOND of its two call sites and cannot move out of the god-file:
   #   statements/variables.ts  +5  `compileVariableStatement`'s `wasmType`
@@ -28,11 +28,11 @@ loc-budget-allow:
   #     shape no byte A/B over the flat reduction would show.
   - src/codegen/statements/variables.ts
 func-budget-allow:
-  # 2026-09-13 (#6481, S16) — same five lines, counted against the enclosing
+  # 2026-09-13 (#6603, S16) — same five lines, counted against the enclosing
   #   function. The filter has to be applied where `wasmType` is finally
   #   settled, which is inside `compileVariableStatement`; hoisting it out would
   #   mean recomputing the whole cascade in a second place, i.e. the two-sources
-  #   -of-truth hazard the #6480 module note warns about.
+  #   -of-truth hazard the #6602 module note warns about.
   - src/codegen/statements/variables.ts::compileVariableStatement
 ---
 
@@ -48,17 +48,17 @@ func-budget-allow:
 > `linked-provider-realm-error-constructors`, 6476 →
 > `linked-harness-async-done-marker`, 6477 →
 > `linked-harness-descriptor-reads`) — reported by the S17 lane, reproduced here
-> on a fresh catch-up merge. The four were renumbered to **6479–6482**, leaving
-> 6478 to the S17 lane, from a `--allocate --dry-run` preview (`next free id
-> would be #6478`).
+> on a fresh catch-up merge. The four were renumbered to **6601–6604**, leaving
+> 6600 to the S17 lane, from a `--allocate --dry-run` preview (`next free id
+> would be #6600`).
 >
-> **6481 is therefore still UNRESERVED and unchecked against in-flight PRs** —
+> **6603 is therefore still UNRESERVED and unchecked against in-flight PRs** —
 > the same exposure that caused the first collision. The required
 > `check:issue-ids:against-main` gate is the backstop.
 
 ## Problem
 
-S15 (#6480) fixed the array-HOF callback boundary for a nullable vec element,
+S15 (#6602) fixed the array-HOF callback boundary for a nullable vec element,
 which unblocked the polyfill's `t.every(…)` guard in the minified
 `ToTemporalDuration` (`sn`). The 22-row bucket then moved **one step later in
 the same function** — 18 rows now trap at `__str_flatten` on a null pointer,
@@ -119,9 +119,9 @@ so every later read reports a non-null native string and takes the arm that
 dereferences it: `__str_flatten` for truthiness and for `+`, `ref.as_non_null`
 elsewhere. The null survives storage and dies on first use.
 
-This is the same shape of defect as #6480 — a checker type that is a
+This is the same shape of defect as #6602 — a checker type that is a
 **nullability lie** about a carrier the compiler knows is nullable — at the
-next boundary along: #6480 was the HOF callback parameter, this is the
+next boundary along: #6602 was the HOF callback parameter, this is the
 variable binding.
 
 ## Implementation Plan

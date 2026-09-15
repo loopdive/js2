@@ -21,7 +21,7 @@ import type { FieldDef, Instr, LocalDef, StructTypeDef, ValType } from "../ir/ty
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2867 Gap 1) native-$Promise carrier gate
 import { emitEagerAsyncPromiseWrap, parkedAsyncClosureWrapsPromise } from "./async-eager-promise.js"; // (#4630)
 import { widenAsyncThenableResult } from "./async-thenable-return.js"; // (#5371)
-import { applyNullableElemParamOverride } from "./array-hof-nullable-elem-param.js"; // (#6480) nullable vec element at the HOF callback boundary
+import { applyNullableElemParamOverride } from "./array-hof-nullable-elem-param.js"; // (#6602) nullable vec element at the HOF callback boundary
 import { definedFuncAt, funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { pushProgramAbiNestedCallable, pushProgramAbiTypedThisTwin } from "./program-abi-source-callable-planning.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3b) manual import-shift must skip stable handles
@@ -2048,7 +2048,7 @@ export function computeClosureWrapperSig(
         ? ctx.arrayMapCallbackFirstParamOverride
         : !ts.isFunctionDeclaration(arrow) && setAccessorParamIsDynamic(arrow)
           ? EXTERNREF_PARAM
-          : // (#6480) The receiver's element type wins over the checker's ONLY
+          : // (#6602) The receiver's element type wins over the checker's ONLY
             // at the callback's ELEMENT parameter (0 for the predicate family,
             // 1 for `reduce`/`reduceRight` whose parameter 0 is the
             // accumulator), and only when the checker handed back that type's

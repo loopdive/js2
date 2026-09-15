@@ -1,7 +1,7 @@
 ---
-id: 6482
+id: 6604
 title: "standalone: `void 0 === x` / `void 0 !== x` answers WRONG for an undefined `x` — the nullish-comparison arm recognises only the identifier `undefined`, so every minified `undefined` test is miscompiled"
-slug: 6482-standalone-void-0-undefined-comparison
+slug: 6604-standalone-void-0-undefined-comparison
 status: done
 sprint: current
 priority: high
@@ -14,7 +14,7 @@ assignee: ttraenkler/dev-5383-s16
 created: 2026-09-13
 completed: 2026-09-14
 loc-budget-allow:
-  # 2026-09-13 (#6482, S16) — the predicate itself lives in the NEW module
+  # 2026-09-13 (#6604, S16) — the predicate itself lives in the NEW module
   #   src/codegen/void-undefined-operand.ts. What grows in the god-file is the
   #   one place it can go:
   #   binary-ops.ts  +21  the two operand tests in `compileBinaryExpression`'s
@@ -29,7 +29,7 @@ loc-budget-allow:
   #     be read at the same point the arm decides.
   - src/codegen/binary-ops.ts
 func-budget-allow:
-  # 2026-09-13 (#6482, S16) — the same 21 lines counted against the enclosing
+  # 2026-09-13 (#6604, S16) — the same 21 lines counted against the enclosing
   #   function. `compileBinaryExpression` is where the nullish shortcut decides;
   #   extracting the decision would need the whole operand cascade passed out,
   #   which is a refactor of the arm, not of this fix.
@@ -39,11 +39,11 @@ func-budget-allow:
 > **Issue id reserved?** NO, and it has already COLLIDED once — this file was
 > first written as **#6477**, which `main` took for
 > `linked-harness-descriptor-reads` while the branch was unpushed. See the same
-> note in `plan/issues/6481-standalone-nullable-native-string-element-binding.md`
+> note in `plan/issues/6603-standalone-nullable-native-string-element-binding.md`
 > for the full account; all four of this stack's hand-picked ids (6474–6477)
-> were renumbered to 6479–6482, leaving 6478 to the S17 lane. `claim-issue.mjs
+> were renumbered to 6601–6604, leaving 6600 to the S17 lane. `claim-issue.mjs
 > --allocate` still exits **6** (`open-PR id scan DEGRADED`) and pushes are 403,
-> so **6482 is unreserved and unchecked against in-flight PRs**; the required
+> so **6604 is unreserved and unchecked against in-flight PRs**; the required
 > `check:issue-ids:against-main` gate is the backstop.
 
 ## Problem
@@ -87,7 +87,7 @@ if (void 0 !== c) { if (d ?? h ?? u ?? l) throw …; y = 3600 * _e((c + "0000000
 The guard admitted a NULL group, so `c + "000000000"` dereferenced it: **8
 Duration + 3 ZonedDateTime rows** in the #5383 three-family sample were failing
 with `dereferencing a null pointer in __str_concat() … via sn`. That bucket is
-the whole residue of the 18-row `sn()` bucket that #6481 moved one step.
+the whole residue of the 18-row `sn()` bucket that #6603 moved one step.
 
 ## Root cause
 

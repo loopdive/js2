@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 /**
- * (#4618 / #6486) The nominal `__tag` guard that makes a per-class dispatch arm
+ * (#4618 / #6608) The nominal `__tag` guard that makes a per-class dispatch arm
  * fire only for its OWN class.
  *
  * `ref.test $C` is a STRUCTURAL test. WasmGC canonicalizes struct types by

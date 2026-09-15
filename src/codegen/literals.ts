@@ -31,7 +31,7 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import { emitHoleSentinel } from "./array-holes.js"; // (#2001 S1)
 import { objectLiteralTakesToPrimitiveOpenPath } from "./to-primitive-open-object.js"; // (#5269 R3-2) shared with the type-level twin in index.ts
 import { bareAnyArrayLiteralNeedsExternref } from "./array-literal-any-carrier.js";
-import { hasIncompatibleElementCarrier, hasNonStructElementForStructCarrier } from "./struct-carrier-inhabits.js"; // (#5327 / #6491) array-literal element-carrier compatibility proofs
+import { hasIncompatibleElementCarrier, hasNonStructElementForStructCarrier } from "./struct-carrier-inhabits.js"; // (#5327 / #6613) array-literal element-carrier compatibility proofs
 import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#4491 T11)
 import { ensureStrToCharVecHelper, stringConstantExternrefInstrs } from "./native-strings.js";
@@ -5619,7 +5619,7 @@ export function compileArrayLiteral(
     ) {
       elemWasm = { kind: "externref" };
     }
-    // (#6491) The sibling case #4289's proof names and declines: an element
+    // (#6613) The sibling case #4289's proof names and declines: an element
     // that is not a struct AT ALL — a number, a boolean, a native string, a
     // nested vec — cannot inhabit element zero's closed struct either, and the
     // guard cast answers null, so `ref.as_non_null` TRAPS while the literal is
