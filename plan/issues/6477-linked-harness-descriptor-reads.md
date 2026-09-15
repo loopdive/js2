@@ -5,6 +5,14 @@ status: in-progress
 sprint: current
 created: 2026-09-14
 updated: 2026-09-15
+# (2026-09-15, #6477 P2) The descriptor read and the two enumeration imports
+# gain a `_decoderExportsFor` redirect plus the comment that explains WHY the
+# redirect belongs at `_readOwnDescriptor`'s top rather than at each caller.
+# The growth is comment-dominated; the mechanism is three assignments.
+loc-budget-allow:
+  - src/runtime.ts
+func-budget-allow:
+  - src/runtime.ts::resolveImport
 priority: medium
 horizon: m
 feasibility: hard

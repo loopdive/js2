@@ -457,6 +457,16 @@ export async function compileHarnessLinkedBody(
     // from pass to fail, silently, in a lane whose whole purpose is parity.
     strictJsSyntax: options?.strictJsSyntax ?? true,
     canonicalRuntimeTypes: true,
+    // (#6477) Do NOT run the body in the wasm `start` section. Top-level test262
+    // code runs during `WebAssembly.instantiate`, i.e. BEFORE
+    // `wireCompiledInstance` can register this consumer in the #5225 decoder
+    // registry — so every cross-module read the provider makes on a struct this
+    // module minted resolves with the PROVIDER's exports and answers with a
+    // `ref.test`-miss default (`undefined` / `null` / `0`). Deferring to an
+    // exported `__module_init` (#2796) lets `instantiateTest262Module` register
+    // the consumer first and only then run the body. Consumer-only: the
+    // provider build (`compileProject`) is untouched, as is the honest lane.
+    deferTopLevelInit: true,
     // (#5226) Match the provider's imported `env.__exn` tag so a harness throw
     // keeps its identity in the body's `catch` and vice versa.
     sharedExceptionTag: true,

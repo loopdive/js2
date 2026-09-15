@@ -267,6 +267,16 @@ export async function instantiateTest262Module(binary, importObj, options = {}) 
     instantiateLinkedProviders(linkedModules, importObj, options.linkedHost);
     const instance = await WebAssembly.instantiate(wasmModule, importObj);
     wireCompiledInstance(importObj, instance, true);
+    // (#6477) The linked body is compiled with `deferTopLevelInit` (#2796), so
+    // its top-level code is an exported `__module_init` rather than a `start`
+    // section. Run it HERE — after `wireCompiledInstance` has registered this
+    // consumer in the #5225 decoder registry — so the provider's reads on
+    // consumer structs resolve through the exports that can decode them. A
+    // start-section throw surfaced as a rejection from `WebAssembly.instantiate`;
+    // letting this call throw synchronously out of an async function reproduces
+    // that exactly, which is what the worker classifies the row from.
+    const moduleInit = instance.exports?.__module_init;
+    if (typeof moduleInit === "function") moduleInit();
     return instance;
   }
   if (options.target !== "standalone") {
