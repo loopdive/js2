@@ -12724,6 +12724,16 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate canonical provider reservation from remaining CodegenContext and host import dependencies."
+    },
+    {
+      "path": "src/ir/program/native-promise-inventory.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-promise-inventory.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
     }
   ]
 }

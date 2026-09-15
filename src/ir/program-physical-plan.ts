@@ -84,6 +84,7 @@ import {
 } from "./program/native-value-resources.js";
 
 import { planAsyncFrameSetup, type AsyncFrameSetup } from "./program/async-frame-setup.js";
+import { planNativePromiseInventoryPreflight } from "./program-native-async-resources.js";
 
 /** Vector/string carriers stay logical until the consumer reserves their shared types. */
 export type PhysicalSignatureType = ValType | Extract<IrType, { kind: "vec" | "string" | "support-ref" }>;
@@ -1333,6 +1334,15 @@ export function planPhysicalSetup(
   // 5. Linear physical needs beyond scalar bodies.
   if (options.backend === "linear" && program.allocations.size > 0) {
     gaps.add(`linear memory plan for ${program.allocations.size} allocation site(s) is not materializable`);
+  }
+
+  // Preserve the existing first refusal while making missing inventory evidence
+  // part of ordinary acceptance. Runtime configuration is not yet forwarded.
+  if (options.backend === "wasmgc" && options.target === "standalone") {
+    const inventory = planNativePromiseInventoryPreflight(program, options, projection, native, undefined);
+    if (inventory.kind === "unavailable")
+      for (const row of inventory.obligations)
+        gaps.add(`native Promise inventory ${row.code}: ${row.detail}`, row.unitId);
   }
 
   if (gaps.rows.length > 0) {

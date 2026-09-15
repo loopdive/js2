@@ -42,4 +42,27 @@ binding with an open dynamic overlay. Real staged-overlay and live late-refusal
 controls are present, but do not claim that additional execution coverage.
 Inventory validity is not architectural completion or IR-only retirement.
 Parent remains the sole integration/publication owner; #5748's runtime repairs
-and #5939's independent native-inventory CI repair are separate worktrees.
+remain in a separate worktree.
+
+## Published checkpoint and native-inventory main integration
+
+Published head b8d311b89ec5187ede09b8b8e20b222be3712f18 includes the reviewed
+canonical numeric-helper selection repair. The earlier compiler-main composition
+passed43 files,734 tests with1 existing skip. The subsequent two-file repair
+passed138 worker tests,86 parent tests and34 independent High tests (overlapping,
+not additive). It reuses the existing AnyValue helper list; exact bounded inverses
+retain the original donor/C1 receipts and mutation controls. Normal push gates,
+including coercion and18 numeric parity tests, passed. The earlier failed
+coercion-gate push remains a real failed attempt; no allowance was added.
+
+PR5939 subsequently reached main at9f3a5afd7478fe0eb2e2d67cf6187cd341b9bde6.
+Parent verified published9fd8ff9dcdc4 ancestry and exact key implementation files.
+Its merge into this branch conflicted only in the inventory append list; both
+sets of records and their original classifications are retained.
+
+The combined six-file validation passed181/181 tests: all three native Promise
+inventory suites plus component-candidate, undefined-provider and closure-dynamic
+evidence suites. TypeScript7 and layering85/90 pass. Inventory reports1480 tracked
+modules, zero errors, architectureComplete=false. These results describe the
+resolved merge tree, not the pre-merge b8d311b8 head. Normal commit/push and fresh
+protected CI remain required. Do not push if this PR has entered the merge queue.
