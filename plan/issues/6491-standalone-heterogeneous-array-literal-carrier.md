@@ -170,6 +170,58 @@ The four-family Temporal sample scores this as ONE row
   object, and many do not run standalone), and the one-row sample score is a
   lower bound; the true figure is between them.
 
+## Measured result (S26, 2026-09-15)
+
+Four-family standalone sample, first 120 files each, provider linked,
+sequential, fresh `JS2WASM_TEMPORAL_CACHE` per label (`cacheHit: false` both
+prewarms, key `a11c84e5…`, 3,307,526 B), 60 s per-row budget from the start —
+**no `compile_error` and no `timeout` cell in the 960**.
+
+| family | base | branch | Δ | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| `PlainDate/**` | 103 | 104 | +1 | 0 | 1 |
+| `Duration/**` | 99 | 99 | 0 | 0 | 0 |
+| `PlainDateTime/**` | 106 | 106 | 0 | 0 | 0 |
+| `ZonedDateTime/prototype/**` | 102 | 102 | 0 | 0 | 0 |
+| **total** | **410** | **411** | **+1** | **0** | **1** |
+
+The base reproduces S25's 410 family for family. Aggregating all 960 rows by
+digit-normalised message: 38 buckets on each side and **exactly one moves**,
+`dereferencing a null pointer in __closure_N()` 7 → 6. The moved row is
+`Temporal/PlainDate/from/limits.js`.
+
+**Must-not-move — 604 rows, six groups, per file, 0 flips.** A (100),
+B (116), C1 (133), C2 (100) are the hand-off's groups; **D1 (75:
+`language/expressions/array` + `Array/prototype/join`) and D2 (80:
+`Array/prototype/{map,forEach}`) were added for THIS change** — the inherited
+groups were chosen for a different hypothesis and are insensitive to a carrier
+widening. Four `compile_error` cells (C1, C2) are identical on both labels.
+
+**Byte A/B**, both directions:
+
+| artifact | base | branch | |
+| --- | --- | --- | --- |
+| standalone, `[obj, "str"]` | `de5b9fe1…` 51,209 B | `68da276d…` 50,859 B | **moved** |
+| standalone, `[obj, 7]` | `0693c3ec…` 51,161 B | `be25d351…` 50,889 B | **moved** |
+| standalone, `[obj, obj]` | `1a6399b8…` 51,165 B | identical | |
+| standalone, `[{year:1}, "str"]` | `ee6bfe28…` 136,190 B | identical | |
+| standalone, no array literal | `fb2f7abd…` 49,625 B | identical | |
+| gc lane, the SAME armed source | `97d908fc…` 2,856 B | identical | the lane gate |
+| linked provider | `f9c3d1e4…` 155,696 B | identical | |
+
+Both armed artifacts got SMALLER (−350 B, −272 B): the externref vec drops the
+per-element guard-cast-and-assert the closed carrier needed.
+
+**Corpus byte A/B**: 42 modules × {gc, standalone} = 84 artifacts, **0 move** —
+a NULL control (no corpus module writes a mixed literal), stated as one.
+
+**Temporal provider**: byte-identical between the two labels (same sha256), so
+the family delta is entirely in the TEST module.
+
+**Equivalence gate**: 22 failing / 1,720 passing / 22 known-failures — baseline.
+
+**Witness**: base 3 fail / 1 pass, branch 4 pass.
+
 ## Residuals — measured here, deliberately NOT fixed, each with its reduction
 
 1. **Numeric/string-first vec, read through an array HOF or `for-of`** —

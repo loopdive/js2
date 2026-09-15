@@ -7335,3 +7335,255 @@ that a spec-step cause's corpus footprint is invisible in a Temporal-only
 sample — six rows here, 536 files corpus-wide. Size the candidate by counting
 its test262 FAMILY corpus-wide before committing a slice to it, not by its row
 count in this sample.
+
+### S26 findings (2026-09-15) — the seventh cause is a CARRIER hole an existing proof documents and declines, not a lookup, a ceiling or a spec step. Four families, 410 → 411, and BOTH of the hand-off's named hypotheses were wrong
+
+Full write-up in
+[#6491](6491-standalone-heterogeneous-array-literal-carrier.md). Branch
+`issue-5383-standalone-temporal-s26`, based on S25b's tip `3e0825eb09`; the fix
+is commit `e80ee7c571`.
+
+The headline number is small and the slice is deliberately reported that way:
+**+1 row on the 480-row sample, 0 pass→fail, exactly one of 38 message buckets
+moves.** What makes it worth a slice is the shape of what moved — a hard TRAP
+during array-literal CONSTRUCTION, on four lines of ordinary JavaScript with no
+Temporal, no provider and no link in sight.
+
+#### 1. The defect — a heterogeneous array literal trapped while being built
+
+```js
+const obj = { year: -271821, month: 4, day: 18 };
+[obj, "str"].length; // RuntimeError: dereferencing a null pointer
+```
+
+`.length` is enough; the elements are never read. `compileArrayLiteral` keys the
+vec to element zero's carrier — here the closed `$__anon_N` struct for `obj` —
+and guard-casts every later element into it. A string, number, boolean or
+nested vec cannot inhabit that struct, so the guard emits
+`ref.test` → `ref.null`, and the non-nullable element slot hits the null with
+`ref.as_non_null`. Disassembled, it is four instructions:
+
+```wat
+(array.new_fixed $13 2
+  (ref.as_non_null (global.get $global$9))
+  (ref.as_non_null
+    (if (result (ref null $7))
+      (ref.test (ref $7) (local.tee $0 (global.get $global$14)))
+      (then (ref.cast (ref null $7) (local.get $0)))
+      (else (ref.null none)))))
+```
+
+The fix is one predicate, `hasNonStructElementForStructCarrier`, added beside
+#4289/#5327's `hasIncompatibleElementCarrier` in
+`src/codegen/struct-carrier-inhabits.ts` and called from the same decision table
+in `literals.ts`, standalone/WASI-gated.
+
+**The most useful thing in this slice is that the gap was already written
+down.** #4289's doc comment says, in its own words, that it "stays narrow on
+purpose: only elements that themselves resolve to a closed data struct are
+consulted (**a string / number / vec element is another widening's
+business**)". There was no other widening. A documented deferral with no owner
+read as a documented decision for two slices.
+
+Two adjacent measurements explain why nobody tripped over it sooner:
+
+- the INLINE spelling `[{ year: 1 }, "str"]` already widened (the first-object
+  arm rejects any non-object sibling outright) — only the BINDING spelling
+  reached the hole, because `unwrapObjectLiteralElement` does not resolve an
+  identifier to its initializer. The two spellings of the same array disagreed;
+- the JS-host/GC lane does not trap for a STRING sibling (a string is plain
+  `externref` there), which is why the standalone lane owned this alone.
+
+#### 2. The result — four families, and a histogram that moves in exactly one place
+
+| family (first 120 files) | base | branch | Δ | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| `PlainDate/**` | 103 | 104 | +1 | 0 | 1 |
+| `Duration/**` | 99 | 99 | 0 | 0 | 0 |
+| `PlainDateTime/**` | 106 | 106 | 0 | 0 | 0 |
+| `ZonedDateTime/prototype/**` | 102 | 102 | 0 | 0 | 0 |
+| **total** | **410** | **411** | **+1** | **0** | **1** |
+
+The base total **reproduces S25's 410 family for family** (103/99/102/106) on a
+freshly prewarmed cache, so the two slices' numbers are directly comparable.
+
+Aggregating all 480 base rows and all 480 branch rows by digit-normalised
+message: 38 buckets on each side, and **exactly one moves** —
+`dereferencing a null pointer in __closure_N()` **7 → 6**. The other 37 are
+unchanged, count for count. The moved row is
+`Temporal/PlainDate/from/limits.js`, whose `[tooEarly, tooLate,
+"-271821-04-18", "+275760-09-14"]` is the defect written in test262's house
+style.
+
+Runs were solo, sequential, at a **60 s** per-row budget from the start, on a
+FRESH `JS2WASM_TEMPORAL_CACHE` per label (`cacheHit: false` on both prewarms,
+key `a11c84e5…`, 3,307,526 B). There is **no `compile_error` and no `timeout`
+cell anywhere in the 960**.
+
+#### 3. Which clauses of the hand-off were wrong — both named hypotheses
+
+The brief ranked three candidates and named a mechanism for the first. Both
+named mechanisms are wrong, and the ranking inverted once the buckets were
+reduced rather than counted.
+
+**(a) `illegal cast in __class_construct_dispatch()` — "the construct ladder
+tests classes structurally (S21's problem on the CONSTRUCT side)".** It does
+not. `ensureStandaloneClassConstructDispatch` discriminates by **identity**:
+`ref.eq` against each class-object singleton global, each arm guarded by a
+`ref.test` on the lazily-materialised global. Its own header says why —
+"keyed by the class's IDENTITY … the same discriminator #5383 S2f R13 had to
+use for `typeof`". S21's structural hazard cannot exist here, and the `__tag`
+guard has nothing to attach to.
+
+The real cause, reduced to ONE module with no link: `externArgCoercionInstrs`'
+ref arm emits a **hard** `ref.cast` into the formal's type. `f64`/`i32` formals
+are lenient (NaN / 0); a ref formal traps. A parameter typed by INFERENCE from
+its default (`calendar = "iso8601"` ⇒ `string`) is unsound for a dynamic
+caller:
+
+```js
+class PD { constructor(y, m, d, cal = "iso8601") { this.cal = cal; } }
+mk(PD, 2020, 12, 24, undefined);  // TRAP illegal cast
+mk(PD, 2020, 12, 24, 1);          // TRAP illegal cast
+mk(PD, 2020, 12, 24, "gregory");  // "gregory" — only a matching type survives
+```
+
+**(b) `dereferencing a null pointer in __closure_N()` — "a closure-call null …
+if it is one mechanism".** It is not one mechanism; it is at least two, and the
+BIG half is not a closure defect at all. Bisecting `limits.js` reached a variant
+with **no Temporal in the file** that still trapped — the array-literal carrier
+hole this slice fixes. The remaining 6 rows
+(`infinity-throws-rangeerror.js`) reduce to something else entirely:
+`TemporalHelpers.toPrimitiveObserver`, an object-literal METHOD returning an
+object whose GETTERS return closures over the method's parameters. Three
+distinct defects sit on that one shape, all measured standalone:
+
+| spelling | answer |
+| --- | --- |
+| object-literal METHOD form (the harness's own) | `Cannot access property on null or undefined` |
+| plain FUNCTION form | right value, but the getter's side effect is LOST (`calls` stays empty) |
+| single-getter form | `o.valueOf()` answers `[object Object]` |
+
+**(c) The sizing instruction was right and it is what picked this slice.** The
+hand-off said to size a candidate by its test262 family corpus-wide before
+committing. Doing that showed the three candidates' file-name footprints —
+`infinity-throws-rangeerror.js` 74 files, `order-of-operations.js` 64,
+`overflow-wrong-type.js` 20, `limits.js` 23, against `calendar-undefined.js` 5
+and `calendar-wrong-type.js` 8 — and then reduction showed the name counts were
+attached to the WRONG mechanisms. The lesson S25 wrote ("size by the FAMILY, not
+the row count") needs one amendment after this slice: **size by the family, then
+REDUCE before you believe the size**, because a bucket's rows can belong to two
+or three unrelated causes and the name count then measures a coalition, not a
+defect.
+
+#### 4. Controls
+
+**Must-not-move — 604 rows, six groups, per file, 0 flips.**
+
+| group | rows | base pass | branch pass | flips |
+| --- | --- | --- | --- | --- |
+| A: `Object/keys` + `expressions/object` + `Reflect/{get,has}` | 100 | 94 | 94 | 0 |
+| B: `Object/{entries,values,getOwnPropertyNames}` + `statements/for-in` | 116 | 93 | 93 | 0 |
+| C1: `class/subclass` + `Reflect/construct` + `new.target` | 133 | 80 | 80 | 0 |
+| C2: `expressions/arrow-function` (first 100) | 100 | 96 | 96 | 0 |
+| **D1: `language/expressions/array` + `Array/prototype/join`** | 75 | 69 | 69 | 0 |
+| **D2: `Array/prototype/{map,forEach}` (first 40 each)** | 80 | 54 | 54 | 0 |
+
+A/B/C are the hand-off's groups and are the INSENSITIVE controls here — they
+were chosen for the construct-ladder hypothesis this slice did not take. **D is
+the group this change actually needs** and was added for it: the core-language
+array-literal corpus plus the HOFs that read a widened vec back. Running only
+the inherited groups would have produced a flat table that proved nothing about
+the change that was made.
+
+Four `compile_error` cells (2 in C1, 2 in C2) are identical on both labels and
+are feature compile errors, not budget artefacts.
+
+**Byte A/B — the control the corpus cannot give, and it answers in both
+directions:**
+
+| artifact | base | branch | |
+| --- | --- | --- | --- |
+| standalone, `[obj, "str"]` | `de5b9fe1…` 51,209 B | `68da276d…` 50,859 B | **moved** |
+| standalone, `[obj, 7]` | `0693c3ec…` 51,161 B | `be25d351…` 50,889 B | **moved** |
+| standalone, `[obj, obj]` (homogeneous) | `1a6399b8…` 51,165 B | identical | |
+| standalone, `[{year:1}, "str"]` (inline elem 0) | `ee6bfe28…` 136,190 B | identical | |
+| standalone, no array literal | `fb2f7abd…` 49,625 B | identical | |
+| **gc lane, the SAME armed source** | `97d908fc…` 2,856 B | identical | the lane gate |
+| linked provider (no mixed literal) | `f9c3d1e4…` 155,696 B | identical | |
+
+Exactly the two armed artifacts move; every unarmed one is byte-identical,
+including the gc lane compiled from the same source — that row is the lane gate
+proved rather than asserted. Both armed artifacts got SMALLER (−350 B, −272 B):
+the externref vec drops the per-element guard-cast-and-assert sequence the
+closed carrier needed.
+
+**Temporal provider**: the cached artifact is byte-identical between the two
+labels (same sha256, 3,307,526 B), so no family cell was served a differently
+compiled polyfill — the whole family delta is in the TEST module.
+
+**Corpus byte A/B**: 42 modules × {gc, standalone} = **84 artifacts, 0 move**.
+As in S24/S25 this is a NULL control and saying only "0 moved" overstates it: no
+module in that corpus writes a mixed array literal, so it can show the change is
+not a broad perturbation but cannot show it does anything. The byte table above
+is what shows that.
+
+**Equivalence gate**: 22 failing / 1,720 passing / 22 known-failures — baseline
+exactly.
+
+#### 5. The witness
+
+`tests/issue-6491-heterogeneous-array-literal.test.ts`, four `it`s, measured on
+both trees by file-copy revert: base **3 fail / 1 pass**, branch **4 pass**.
+
+Both arms have teeth. The single-module arm is the defect itself; the linked arm
+compiles the same consumer-local literal in a module that also links a provider,
+proving the widening survives a linked build where the rec group and the type
+indices are not the single-module ones. Its FOREIGN-element case is labelled a
+control, not a witness, because a provider-built object crosses the link as
+`externref`, which this predicate skips by construction — and the control
+assertions run FIRST, so their "base tree: …" notes are measurements rather than
+inference (the #6490 discipline point, applied).
+
+The spelling trap here is the mirror of #6490's: element zero must be an
+IDENTIFIER bound to an object. Written inline (`[{ year: 1 }, "str"]`) every
+case passes on BOTH trees and the witness is vacuous.
+
+#### 6. Next bucket — and an inherited red that must be cleared first
+
+**BLOCKER, not this slice's, and it wedges the merge queue if ignored:**
+`npm run -s check:issue-ids:against-main` FAILS on this stack. Main has since
+taken ids **6478, 6479 and 6480**, which S17/S15/S16 also used
+(`6478-standalone-link-reverse-peer-read.md`,
+`6479-standalone-dynamic-new-poisons-provider-values.md`,
+`6480-standalone-nullable-vec-element-callback-param.md`). Three renames plus
+their in-branch references are needed before this stack can be enqueued. Note
+also that `claim-issue.mjs --allocate --dry-run --no-pr-scan` answers **#6484**
+on this box — it cannot see the stack's unpushed issue files — so do NOT take
+its suggestion; #6491 was verified free on `origin/main` and `UNASSIGNED` on
+`origin/issue-assignments` before use.
+
+Residual buckets, branch tree, all four families (69 rows, 38 buckets):
+
+| bucket | rows | reduced to |
+| --- | --- | --- |
+| `dereferencing a null pointer in __closure_N()` | 6 | the `toPrimitiveObserver` getter/closure cluster (§3b) — three defects, one shape |
+| `Proxy get trap is not callable` | 6 | not reduced; standalone Proxy support, a slice of its own |
+| `illegal cast in __class_construct_dispatch()` | 4 | a hard `ref.cast` in `externArgCoercionInstrs` for a formal typed by inference from its default (§3a) |
+| `Built-in objects must be extensible` | 3 | not reduced |
+| `constructor.js: Expected a TypeError` | 3 | not reduced |
+| `null pointer in __anon_N_checkStringOptionWrongType` | 3 | same cluster as row 1 |
+| 32 further buckets | ≤2 each | |
+
+Recommended next slice: **the `toPrimitiveObserver` getter cluster** — 9 rows
+across two buckets, one reduction, and the three symptoms (a null return, a lost
+getter side effect, a getter that answers the receiver) suggest a single
+accessor-lowering cause rather than three.
+
+Filed but not fixed here, each with a reduction in
+[#6491](6491-standalone-heterogeneous-array-literal-carrier.md): a
+numeric-first mixed vec read through a HOF answers `"nullnull"` and, in two
+spellings, produces an **INVALID MODULE** (`typeof a[0]` on `[1, "a"]`;
+`for (const v of [1, true])`). An invalid module is strictly worse than a trap —
+nothing in it runs at all — and neither spelling appears in any current bucket,
+which is its own warning about sizing by symptom.
