@@ -582,11 +582,36 @@ hoisting `TOLERATED_SYNTAX_CODES` so the multi-file gate applies the same
 tolerances as the single-file one (otherwise the flag over-corrects and rejects
 valid JavaScript).
 
+### Re-measured 2026-09-15 after #6475/#6476 — 109 → 21 differences
+
+Same protocol as the 2026-09-14 row (real worker, `tests/test262-local-shard1.test.ts`,
+`COMPILER_POOL_SIZE=1`, both lanes at the same commit — here the `linkedHost`
+commit), one combined filter over all six sample dirs: 399 common rows.
+
+| class | before (2026-09-14) | after |
+| --- | --- | --- |
+| async completion marker not observed (#6476) | 49 | **0** |
+| native error constructor identity (#6475) | ~32 | **0** |
+| descriptor VALUE read wrong (#6477) | ~14 | 13 |
+| script-vs-module: `arguments`, unresolvable assignment (#6474) | ~4 | 3 |
+| `with`-scope write not seen (`S12.10_A3.11_T3`) | — | 1 |
+| `illegal cast [in __cb_2()]`, async-gen destructuring | — | 1 |
+| `Cannot convert object to primitive value` (`map/15.4.4.19-5-21`) | — | 1 |
+| honest `compile_timeout` vs linked `fail` (timing artifact, not a lane defect) | — | 1 |
+| linked **passes** where honest fails | — | 1 |
+| **total** | **109 / 404** | **21 / 399** |
+
+Both target classes went to zero, which is the whole of the 81-row drop; the
+four residual rows now visible as their own classes were inside the 109 before
+and are newly legible rather than newly caused. Wall clock 414 s honest vs
+156 s linked on the same 399 rows.
+
 ### Acceptance boxes
 
 - [x] P2 repros pass as vitest cases; smoke 12/12 on both named sample dirs.
-- [ ] Shadow lane with **zero** verdict differences — **NO**: 109/404, all four
-      classes filed (#6474-#6477). Fallback count reported per row and stamped
+- [ ] Shadow lane with **zero** verdict differences — **NO**, but 109/404 →
+      **21/399** after #6475/#6476 (table above); remaining classes filed
+      (#6474, #6477) plus three singletons. Fallback count reported per row and stamped
       `oracle_lane: "linked-harness-fallback"`; 50/404 rows fell back.
 - [x] Median `compile_ms` ≤ 300 at pool 1 — measured **68-73**.
 - [x] `TEST262_ORACLE_MODE=linked` is opt-in; unset ⇒ honest behaviour, asserted
