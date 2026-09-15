@@ -71,6 +71,7 @@ async function run(result: {
   try {
     await instantiateTest262Module(result.binary, importObject, {
       linkedModules: result.linkedModules ?? [],
+      runDeferredInit: true,
       linkedRuntime,
     });
     return "pass";
@@ -190,8 +191,14 @@ describe("#3451 P2 — linked-harness shared-realm substrate", () => {
   // compiled object under `allowJs`), so the shadow lane agreeing is the whole
   // requirement. If a later change makes the honest lane pass, this test starts
   // failing and the linked lane gets looked at — which is the intent.
+  // (#6477, 2026-09-15) The "object own property" case LEFT this list: once the
+  // linked body runs after the consumer is registered in the #5225 decoder
+  // registry, `verifyProperty(o, "a", { value: 1 })` PASSES in the linked lane
+  // while the honest lane still fails on the pre-existing `allowJs`
+  // hasOwnProperty gap. That is the good direction — the shadow lane is now
+  // strictly better — so it is pinned below as a one-sided assertion rather
+  // than deleted or weakened back to parity.
   it.each([
-    ["object own property", `var o = {a: 1};\nverifyProperty(o, "a", { value: 1 });`],
     [
       "function name",
       `function f() {}\nverifyProperty(f, "name", { value: "f", writable: false, enumerable: false, configurable: true });`,
@@ -204,6 +211,14 @@ describe("#3451 P2 — linked-harness shared-realm substrate", () => {
     },
     300_000,
   );
+
+  it("verifyProperty on a consumer object own property now PASSES in the linked lane (#6477)", async () => {
+    const { honest, linked } = await bothLanes(`var o = {a: 1};\nverifyProperty(o, "a", { value: 1 });`);
+    expect(cls(linked)).toBe("pass");
+    // The honest lane's own gap is untouched by #6477 — recorded so a later
+    // honest-lane fix shows up here as a deliberate edit, not a surprise.
+    expect(cls(honest)).toBe("fail");
+  }, 300_000);
 
   // The plan's third class ("boxed-value shape"): both reductions of the
   // reported row pass in both lanes, so there is nothing to fix. Kept as a

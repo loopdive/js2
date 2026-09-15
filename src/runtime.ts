@@ -6853,6 +6853,15 @@ function _readOwnDescriptor(
   prop: string | symbol,
   exports: Record<string, Function> | undefined,
 ): PropertyDescriptor | undefined {
+  // (#6477) Every export this function reaches (`__is_vec`, `__vec_len`,
+  // `__vec_get`, `__sget_<name>`, and the `_wasmStructHasOwn` gate) must come
+  // from the module that MINTED `obj`. Across a #5225 linked boundary the
+  // reader is frequently the other module, and its `ref.test` answers a miss —
+  // so the descriptor came back `undefined`, or with a `0`/`null` value.
+  // Redirecting here rather than at each caller covers the descriptor-value
+  // path AND `_wasmStructPropertyIsEnumerable`, which funnels into it.
+  // Idempotent, and a no-op when no linked project is live.
+  exports = _decoderExportsFor(obj, exports);
   if (prop === "length" && exports) {
     const nativeString = _nativeStringToHost(obj, exports);
     if (nativeString !== _MISS)
@@ -14456,7 +14465,14 @@ assert._isSameValue = isSameValue;
           }
           // (#1629 S1) WasmGC struct: single canonical read-back path, shared
           // with Object.getOwnPropertyDescriptors.
-          const desc = _readOwnDescriptor(obj, prop, callbackState?.getExports());
+          // (#6477) Resolve against the exports that can DECODE this struct, not
+          // whichever module is reading. `_readOwnDescriptor` reaches
+          // `__is_vec` / `__vec_get` / `__sget_<name>` directly, so passing the
+          // reader's exports across a #5225 linked boundary reads a miss-default
+          // instead of the value. No-op single-module: `_decoderExportsFor`
+          // returns its argument when no linked project is live.
+          const descExports = _decoderExportsFor(obj, callbackState?.getExports());
+          const desc = _readOwnDescriptor(obj, prop, descExports);
           // (#4371) A declared class static is stored as its raw Wasm closure
           // so compiled reads/calls stay in the existing closure ABI. A
           // descriptor object, however, is an ordinary host object; expose its
@@ -14472,7 +14488,7 @@ assert._isSameValue = isSameValue;
               // `__call_<method>` bridge needed by modules whose only closure
               // value is this static and therefore do not export a generic
               // closure discriminator.
-              const wrapped = _wrapForHost(obj, callbackState?.getExports());
+              const wrapped = _wrapForHost(obj, descExports);
               const callable = wrapped?.[prop];
               desc.value = typeof callable === "function" ? callable : _getClassMethodBridge(obj, String(prop));
             } else {
@@ -14486,7 +14502,10 @@ assert._isSameValue = isSameValue;
           // ES §20.1.2.10 Object.getOwnPropertyNames → ToObject (§7.1.18) throws on null/undefined.
           if (obj == null) throw new TypeError(`Cannot convert ${obj === null ? "null" : "undefined"} to object`);
           if (!_isWasmStruct(obj)) return Object.getOwnPropertyNames(obj);
-          const exports = callbackState?.getExports();
+          // (#6477) Same cross-module decoder redirect as the descriptor read
+          // above — the tail of this import reads `__struct_field_names` /
+          // `__shas_*` through `exports` directly.
+          const exports = _decoderExportsFor(obj, callbackState?.getExports());
           // #1047 — registered class prototype: return only the allowlist
           // (filtered through the #1364b deletion set).
           const protoMethods = _prototypeMethodNames.get(obj);
