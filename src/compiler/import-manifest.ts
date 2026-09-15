@@ -11,6 +11,8 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   if (strValue !== undefined) return { type: "string_literal", value: strValue };
 
   // Console (log, warn, error)
+  const consoleGroup = /^console_(log|warn|error|info|debug)_group_([nbse]+|0)$/.exec(name);
+  if (consoleGroup) return { type: "console_log", variant: `${consoleGroup[1]}_group_${consoleGroup[2]}` };
   // For console.log, keep backward-compatible variant format ("number", "bool", etc.)
   if (name === "console_log_number") return { type: "console_log", variant: "number" };
   if (name === "console_log_bool") return { type: "console_log", variant: "bool" };

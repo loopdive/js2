@@ -28,7 +28,7 @@
       "loadPolicy": "runtime-callback-argument",
       "defaultSpecifier": null,
       "reviewedSourceRevision": "57aa0d73025526812d06a3863d63552929618288",
-      "contentHash": "ea5e10a98f23e1cdacb50f190feb9a7011453162",
+      "contentHash": "5be91af4ea7d7725b7f5e5881ad47c5d47c3739f",
       "digestAlgorithm": "git-blob-sha1",
       "importer": "src/runtime/platform-capability-adapter.ts",
       "resolutionBase": "original-importer",

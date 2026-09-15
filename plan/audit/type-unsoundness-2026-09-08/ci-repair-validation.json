@@ -1,0 +1,237 @@
+{
+  "sourceTreeSha256": "9f57a1c7cef598fbfb2ed3140fa867d2179820d14affc058e42f96feb6c69252",
+  "compilerCommit": "90b974e0da1ebc9e078fc7a07dcb4868178fd0f4",
+  "dirty": true,
+  "equivalence": {
+    "shards": [
+      {
+        "shard": 1,
+        "exitCode": 0,
+        "summary": ["equivalence-gate: 5 failing, 181 passing, 22 known-failures in baseline."]
+      },
+      {
+        "shard": 2,
+        "exitCode": 0,
+        "summary": ["equivalence-gate: 4 failing, 212 passing, 22 known-failures in baseline."]
+      },
+      {
+        "shard": 3,
+        "exitCode": 0,
+        "summary": ["equivalence-gate: 3 failing, 294 passing, 22 known-failures in baseline."]
+      },
+      {
+        "shard": 4,
+        "exitCode": 0,
+        "summary": ["equivalence-gate: 0 failing, 166 passing, 22 known-failures in baseline."]
+      },
+      {
+        "shard": 5,
+        "exitCode": 0,
+        "summary": ["equivalence-gate: 2 failing, 196 passing, 22 known-failures in baseline."]
+      },
+      {
+        "shard": 6,
+        "exitCode": 0,
+        "summary": ["equivalence-gate: 7 failing, 213 passing, 22 known-failures in baseline."]
+      },
+      {
+        "shard": 7,
+        "exitCode": 0,
+        "summary": ["equivalence-gate: 0 failing, 273 passing, 22 known-failures in baseline."]
+      },
+      {
+        "shard": 8,
+        "exitCode": 0,
+        "summary": ["equivalence-gate: 1 failing, 185 passing, 22 known-failures in baseline."]
+      }
+    ],
+    "counts": {
+      "passed": 1720,
+      "failed": 22,
+      "pending": 0,
+      "todo": 3
+    },
+    "knownFailures": [
+      {
+        "file": "tests/equivalence/null-dereference-guards.test.ts",
+        "test": "null dereference guards (#396) property access on null struct returns NaN instead of trapping"
+      },
+      {
+        "file": "tests/equivalence/null-dereference-guards.test.ts",
+        "test": "null dereference guards (#396) method call on null class instance returns default instead of trapping"
+      },
+      {
+        "file": "tests/equivalence/null-dereference-guards.test.ts",
+        "test": "null dereference guards (#396) array element access on null array returns NaN instead of trapping"
+      },
+      {
+        "file": "tests/equivalence/null-dereference-guards.test.ts",
+        "test": "null dereference guards (#396) chained property access on null intermediate returns default"
+      },
+      {
+        "file": "tests/equivalence/null-dereference-guards.test.ts",
+        "test": "null dereference guards (#396) uninitialized class variable property access returns default"
+      },
+      {
+        "file": "tests/equivalence/logical-conditional-identity.test.ts",
+        "test": "logical/conditional operators preserve object identity (#435) isNaN(void x) is true (void produces undefined which is NaN as number)"
+      },
+      {
+        "file": "tests/equivalence/logical-conditional-identity.test.ts",
+        "test": "logical/conditional operators preserve object identity (#435) void x in numeric context produces NaN (test262 S11.4.2_A4_T3 pattern)"
+      },
+      {
+        "file": "tests/equivalence/logical-conditional-identity.test.ts",
+        "test": "logical/conditional operators preserve object identity (#435) void numeric literal in numeric context produces NaN"
+      },
+      {
+        "file": "tests/equivalence/misc-small-patterns.test.ts",
+        "test": "named function expression reassignment (#374) name binding is read-only inside function body"
+      },
+      {
+        "file": "tests/equivalence/arguments-nested-and-loops.test.ts",
+        "test": "Arguments object in nested functions (#211) for-loop with function declaration in body"
+      },
+      {
+        "file": "tests/equivalence/new-non-constructor.test.ts",
+        "test": "new on non-constructor builtins (#432) not-a-constructor test262 pattern compiles without stack underflow"
+      },
+      {
+        "file": "tests/equivalence/new-non-constructor.test.ts",
+        "test": "new on non-constructor builtins (#432) guard preamble with many exported functions does not double-remap"
+      },
+      {
+        "file": "tests/equivalence/array-inline-return.test.ts",
+        "test": "array inline methods should not hijack function return find does not hijack return"
+      },
+      {
+        "file": "tests/equivalence/reflect-api.test.ts",
+        "test": "Reflect API compile-time rewrites Reflect.construct creates a new instance"
+      },
+      {
+        "file": "tests/equivalence/tdz-reference-error.test.ts",
+        "test": "Temporal Dead Zone (TDZ) detection (#428) let: use before declaration in prior statement"
+      },
+      {
+        "file": "tests/equivalence/tdz-reference-error.test.ts",
+        "test": "Temporal Dead Zone (TDZ) detection (#428) let: self-reference in initializer"
+      },
+      {
+        "file": "tests/equivalence/tdz-reference-error.test.ts",
+        "test": "Temporal Dead Zone (TDZ) detection (#428) const: use before declaration in prior statement"
+      },
+      {
+        "file": "tests/equivalence/tdz-reference-error.test.ts",
+        "test": "Temporal Dead Zone (TDZ) detection (#428) const: self-reference in initializer"
+      },
+      {
+        "file": "tests/equivalence/tdz-reference-error.test.ts",
+        "test": "Temporal Dead Zone (TDZ) detection (#428) TDZ in block scope"
+      },
+      {
+        "file": "tests/equivalence/tdz-reference-error.test.ts",
+        "test": "Temporal Dead Zone (TDZ) detection (#428) assignment to let before declaration"
+      },
+      {
+        "file": "tests/equivalence/yield-as-expression.test.ts",
+        "test": "yield as expression (#763) yield with value used as expression"
+      },
+      {
+        "file": "tests/equivalence/delete-sentinel.test.ts",
+        "test": "delete operator via sentinel (#1112) delete string property makes it undefined"
+      }
+    ],
+    "baselineExpanded": false
+  },
+  "guards": {
+    "passed": 255,
+    "failed": 0,
+    "localNodeRequiredFlag": "--experimental-wasm-exnref"
+  },
+  "dogfood": {
+    "compiled": 6,
+    "validated": 6
+  },
+  "typeAudit": {
+    "node": 26,
+    "wasm": 52,
+    "matches": 19,
+    "diagnostics": 33,
+    "failures": 0
+  },
+  "remoteRepairValidation": {
+    "head": "f816631c2ee108bd75ae916f94aac4f9ef9abcf5",
+    "checks": [
+      {
+        "name": "changes",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101978375560"
+      },
+      {
+        "name": "quality",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101978375985"
+      },
+      {
+        "name": "issue-tests",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101978597761"
+      },
+      {
+        "name": "linear-tests",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101978597672"
+      },
+      {
+        "name": "equivalence-shard (1)",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101978597860"
+      },
+      {
+        "name": "equivalence-shard (2)",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101978597819"
+      },
+      {
+        "name": "equivalence-shard (3)",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101978597883"
+      },
+      {
+        "name": "equivalence-shard (4)",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101978597927"
+      },
+      {
+        "name": "equivalence-shard (5)",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101978597893"
+      },
+      {
+        "name": "equivalence-shard (6)",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101978597812"
+      },
+      {
+        "name": "equivalence-shard (7)",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101978597969"
+      },
+      {
+        "name": "equivalence-shard (8)",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101978597997"
+      },
+      {
+        "name": "Cancel Test262 after quality failure",
+        "conclusion": "SKIPPED",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101981312699"
+      },
+      {
+        "name": "equivalence-gate",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101979619557"
+      }
+    ]
+  }
+}

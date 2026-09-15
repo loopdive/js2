@@ -4,6 +4,7 @@
  * property method calls, IIFEs, and conditional callees.
  */
 import { ts, forEachChild } from "../../ts-api.js";
+import { compileHostDynamicImport } from "./dynamic-import.js";
 import { profilePhase } from "../../compile-profile.js";
 import {
   isBigIntType,
@@ -6034,7 +6035,7 @@ export function compileNumberIsPredicate(
     const t = compileExpression(ctx, fctx, arg);
     if (t) fctx.body.push({ op: "drop" });
     fctx.body.push({ op: "i32.const", value: 0 });
-    return { kind: "i32" };
+    return { kind: "i32", boolean: true };
   }
 
   // Several non-Number primitive types reuse a numeric Wasm representation that
@@ -6059,7 +6060,7 @@ export function compileNumberIsPredicate(
     const valTmp = allocLocal(fctx, `__numpred_${fctx.locals.length}`, { kind: "f64" });
     fctx.body.push({ op: "local.set", index: valTmp });
     for (const instr of emitPredicate(valTmp)) fctx.body.push(instr);
-    return { kind: "i32" };
+    return { kind: "i32", boolean: true };
   }
 
   // Any-typed argument: inspect the box's runtime type. Non-numbers are `false`
@@ -6087,7 +6088,7 @@ export function compileNumberIsPredicate(
     ],
     else: [{ op: "i32.const", value: 0 }],
   });
-  return { kind: "i32" };
+  return { kind: "i32", boolean: true };
 }
 
 /**
@@ -7689,47 +7690,7 @@ function compileCallExpression(
       );
       return null;
     }
-    // Ensure __dynamic_import is registered
-    let dynIdx = ctx.funcMap.get("__dynamic_import");
-    if (dynIdx === undefined) {
-      const importsBefore = ctx.numImportFuncs;
-      const dynType = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
-      addImport(ctx, "env", "__dynamic_import", { kind: "func", typeIdx: dynType });
-      shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
-      dynIdx = ctx.funcMap.get("__dynamic_import");
-    }
-    if (dynIdx === undefined) {
-      fctx.body.push({ op: "unreachable" });
-      return null;
-    }
-    // Compile the specifier argument
-    const specArg = expr.arguments[0];
-    if (specArg) {
-      const specResult = compileExpression(ctx, fctx, specArg);
-      // Coerce to externref if needed
-      if (specResult && specResult.kind !== "externref") {
-        coerceType(ctx, fctx, specResult, { kind: "externref" });
-      }
-    } else {
-      // No argument — pass undefined (null externref)
-      fctx.body.push({ op: "ref.null.extern" });
-    }
-
-    // Evaluate remaining arguments (e.g. import attributes/options) for side effects.
-    // Per spec, the second argument (optionsExpression) is evaluated before the
-    // host import is performed. If it throws, the throw propagates synchronously.
-    // We evaluate and drop the result since __dynamic_import only takes the specifier.
-    for (let ai = 1; ai < expr.arguments.length; ai++) {
-      const extraArg = expr.arguments[ai];
-      const extraResult = compileExpression(ctx, fctx, extraArg);
-      // Drop the value from the stack if the expression produced one
-      if (extraResult) {
-        fctx.body.push({ op: "drop" });
-      }
-    }
-
-    fctx.body.push({ op: "call", funcIdx: dynIdx });
-    return { kind: "externref" };
+    return compileHostDynamicImport(ctx, fctx, expr);
   }
 
   // Unwrap parenthesized callee: (fn)(...), ((obj.method))(...) etc.

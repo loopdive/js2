@@ -1,0 +1,878 @@
+{
+  "version": 1,
+  "expectedCount": 168,
+  "sourceRoot": "../../..",
+  "cases": [
+    {
+      "id": "corpus/array/01-basic.js",
+      "category": "array",
+      "sourcePath": "tests/differential/corpus/array/01-basic.js"
+    },
+    {
+      "id": "corpus/array/02-push-pop.js",
+      "category": "array",
+      "sourcePath": "tests/differential/corpus/array/02-push-pop.js"
+    },
+    {
+      "id": "corpus/array/03-shift-unshift.js",
+      "category": "array",
+      "sourcePath": "tests/differential/corpus/array/03-shift-unshift.js"
+    },
+    {
+      "id": "corpus/array/04-map.js",
+      "category": "array",
+      "sourcePath": "tests/differential/corpus/array/04-map.js"
+    },
+    {
+      "id": "corpus/array/05-filter.js",
+      "category": "array",
+      "sourcePath": "tests/differential/corpus/array/05-filter.js"
+    },
+    {
+      "id": "corpus/array/06-reduce.js",
+      "category": "array",
+      "sourcePath": "tests/differential/corpus/array/06-reduce.js"
+    },
+    {
+      "id": "corpus/array/07-find-some-every.js",
+      "category": "array",
+      "sourcePath": "tests/differential/corpus/array/07-find-some-every.js"
+    },
+    {
+      "id": "corpus/array/08-includes-indexOf.js",
+      "category": "array",
+      "sourcePath": "tests/differential/corpus/array/08-includes-indexOf.js"
+    },
+    {
+      "id": "corpus/array/09-slice-splice.js",
+      "category": "array",
+      "sourcePath": "tests/differential/corpus/array/09-slice-splice.js"
+    },
+    {
+      "id": "corpus/array/10-sort-reverse.js",
+      "category": "array",
+      "sourcePath": "tests/differential/corpus/array/10-sort-reverse.js"
+    },
+    {
+      "id": "corpus/array/11-flat-flatMap.js",
+      "category": "array",
+      "sourcePath": "tests/differential/corpus/array/11-flat-flatMap.js"
+    },
+    {
+      "id": "corpus/array/12-from-of.js",
+      "category": "array",
+      "sourcePath": "tests/differential/corpus/array/12-from-of.js"
+    },
+    {
+      "id": "corpus/array/13-spread-destructure.js",
+      "category": "array",
+      "sourcePath": "tests/differential/corpus/array/13-spread-destructure.js"
+    },
+    {
+      "id": "corpus/array/14-fill.js",
+      "category": "array",
+      "sourcePath": "tests/differential/corpus/array/14-fill.js"
+    },
+    {
+      "id": "corpus/array/15-join-tostring.js",
+      "category": "array",
+      "sourcePath": "tests/differential/corpus/array/15-join-tostring.js"
+    },
+    {
+      "id": "corpus/builtins/01-json-stringify.js",
+      "category": "builtins",
+      "sourcePath": "tests/differential/corpus/builtins/01-json-stringify.js"
+    },
+    {
+      "id": "corpus/builtins/02-json-parse.js",
+      "category": "builtins",
+      "sourcePath": "tests/differential/corpus/builtins/02-json-parse.js"
+    },
+    {
+      "id": "corpus/builtins/03-map-set.js",
+      "category": "builtins",
+      "sourcePath": "tests/differential/corpus/builtins/03-map-set.js"
+    },
+    {
+      "id": "corpus/builtins/04-symbol.js",
+      "category": "builtins",
+      "sourcePath": "tests/differential/corpus/builtins/04-symbol.js"
+    },
+    {
+      "id": "corpus/builtins/05-date.js",
+      "category": "builtins",
+      "sourcePath": "tests/differential/corpus/builtins/05-date.js"
+    },
+    {
+      "id": "corpus/builtins/06-regexp.js",
+      "category": "builtins",
+      "sourcePath": "tests/differential/corpus/builtins/06-regexp.js"
+    },
+    {
+      "id": "corpus/builtins/07-promise-basic.js",
+      "category": "builtins",
+      "sourcePath": "tests/differential/corpus/builtins/07-promise-basic.js",
+      "async": true
+    },
+    {
+      "id": "corpus/builtins/08-promise-chain.js",
+      "category": "builtins",
+      "sourcePath": "tests/differential/corpus/builtins/08-promise-chain.js",
+      "async": true
+    },
+    {
+      "id": "corpus/builtins/09-async-await.js",
+      "category": "builtins",
+      "sourcePath": "tests/differential/corpus/builtins/09-async-await.js",
+      "async": true
+    },
+    {
+      "id": "corpus/builtins/10-error-classes.js",
+      "category": "builtins",
+      "sourcePath": "tests/differential/corpus/builtins/10-error-classes.js"
+    },
+    {
+      "id": "corpus/builtins/11-typed-array.js",
+      "category": "builtins",
+      "sourcePath": "tests/differential/corpus/builtins/11-typed-array.js"
+    },
+    {
+      "id": "corpus/builtins/12-arraybuffer.js",
+      "category": "builtins",
+      "sourcePath": "tests/differential/corpus/builtins/12-arraybuffer.js"
+    },
+    {
+      "id": "corpus/builtins/13-iterator.js",
+      "category": "builtins",
+      "sourcePath": "tests/differential/corpus/builtins/13-iterator.js"
+    },
+    {
+      "id": "corpus/builtins/14-spread-args.js",
+      "category": "builtins",
+      "sourcePath": "tests/differential/corpus/builtins/14-spread-args.js"
+    },
+    {
+      "id": "corpus/builtins/15-tag-template.js",
+      "category": "builtins",
+      "sourcePath": "tests/differential/corpus/builtins/15-tag-template.js"
+    },
+    {
+      "id": "corpus/builtins/16-regex-named-groups.js",
+      "category": "builtins",
+      "sourcePath": "tests/differential/corpus/builtins/16-regex-named-groups.js"
+    },
+    {
+      "id": "corpus/builtins/17-regex-matchall.js",
+      "category": "builtins",
+      "sourcePath": "tests/differential/corpus/builtins/17-regex-matchall.js"
+    },
+    {
+      "id": "corpus/builtins/18-regex-split-capture.js",
+      "category": "builtins",
+      "sourcePath": "tests/differential/corpus/builtins/18-regex-split-capture.js"
+    },
+    {
+      "id": "corpus/builtins/19-symbol-iterator.js",
+      "category": "builtins",
+      "sourcePath": "tests/differential/corpus/builtins/19-symbol-iterator.js"
+    },
+    {
+      "id": "corpus/builtins/20-symbol-map-key.js",
+      "category": "builtins",
+      "sourcePath": "tests/differential/corpus/builtins/20-symbol-map-key.js"
+    },
+    {
+      "id": "corpus/classes/01-basic.js",
+      "category": "classes",
+      "sourcePath": "tests/differential/corpus/classes/01-basic.js"
+    },
+    {
+      "id": "corpus/classes/02-inheritance.js",
+      "category": "classes",
+      "sourcePath": "tests/differential/corpus/classes/02-inheritance.js"
+    },
+    {
+      "id": "corpus/classes/03-static.js",
+      "category": "classes",
+      "sourcePath": "tests/differential/corpus/classes/03-static.js"
+    },
+    {
+      "id": "corpus/classes/04-getter-setter.js",
+      "category": "classes",
+      "sourcePath": "tests/differential/corpus/classes/04-getter-setter.js"
+    },
+    {
+      "id": "corpus/classes/05-method.js",
+      "category": "classes",
+      "sourcePath": "tests/differential/corpus/classes/05-method.js"
+    },
+    {
+      "id": "corpus/classes/06-instanceof.js",
+      "category": "classes",
+      "sourcePath": "tests/differential/corpus/classes/06-instanceof.js"
+    },
+    {
+      "id": "corpus/classes/07-prototype-call.js",
+      "category": "classes",
+      "sourcePath": "tests/differential/corpus/classes/07-prototype-call.js"
+    },
+    {
+      "id": "corpus/classes/08-fields.js",
+      "category": "classes",
+      "sourcePath": "tests/differential/corpus/classes/08-fields.js"
+    },
+    {
+      "id": "corpus/classes/09-super-constructor.js",
+      "category": "classes",
+      "sourcePath": "tests/differential/corpus/classes/09-super-constructor.js"
+    },
+    {
+      "id": "corpus/classes/10-toString-impl.js",
+      "category": "classes",
+      "sourcePath": "tests/differential/corpus/classes/10-toString-impl.js"
+    },
+    {
+      "id": "corpus/closures/01-basic.js",
+      "category": "closures",
+      "sourcePath": "tests/differential/corpus/closures/01-basic.js"
+    },
+    {
+      "id": "corpus/closures/02-counter.js",
+      "category": "closures",
+      "sourcePath": "tests/differential/corpus/closures/02-counter.js"
+    },
+    {
+      "id": "corpus/closures/03-iife.js",
+      "category": "closures",
+      "sourcePath": "tests/differential/corpus/closures/03-iife.js"
+    },
+    {
+      "id": "corpus/closures/04-shared-state.js",
+      "category": "closures",
+      "sourcePath": "tests/differential/corpus/closures/04-shared-state.js"
+    },
+    {
+      "id": "corpus/closures/05-loop-capture.js",
+      "category": "closures",
+      "sourcePath": "tests/differential/corpus/closures/05-loop-capture.js"
+    },
+    {
+      "id": "corpus/closures/06-nested.js",
+      "category": "closures",
+      "sourcePath": "tests/differential/corpus/closures/06-nested.js"
+    },
+    {
+      "id": "corpus/closures/07-arrow-this.js",
+      "category": "closures",
+      "sourcePath": "tests/differential/corpus/closures/07-arrow-this.js"
+    },
+    {
+      "id": "corpus/closures/08-method-chain.js",
+      "category": "closures",
+      "sourcePath": "tests/differential/corpus/closures/08-method-chain.js"
+    },
+    {
+      "id": "corpus/closures/09-callback.js",
+      "category": "closures",
+      "sourcePath": "tests/differential/corpus/closures/09-callback.js"
+    },
+    {
+      "id": "corpus/closures/10-mutual.js",
+      "category": "closures",
+      "sourcePath": "tests/differential/corpus/closures/10-mutual.js"
+    },
+    {
+      "id": "corpus/control/01-if-else.js",
+      "category": "control",
+      "sourcePath": "tests/differential/corpus/control/01-if-else.js"
+    },
+    {
+      "id": "corpus/control/02-for.js",
+      "category": "control",
+      "sourcePath": "tests/differential/corpus/control/02-for.js"
+    },
+    {
+      "id": "corpus/control/03-while.js",
+      "category": "control",
+      "sourcePath": "tests/differential/corpus/control/03-while.js"
+    },
+    {
+      "id": "corpus/control/04-break-continue.js",
+      "category": "control",
+      "sourcePath": "tests/differential/corpus/control/04-break-continue.js"
+    },
+    {
+      "id": "corpus/control/05-labeled-break.js",
+      "category": "control",
+      "sourcePath": "tests/differential/corpus/control/05-labeled-break.js"
+    },
+    {
+      "id": "corpus/control/06-switch.js",
+      "category": "control",
+      "sourcePath": "tests/differential/corpus/control/06-switch.js"
+    },
+    {
+      "id": "corpus/control/07-try-catch.js",
+      "category": "control",
+      "sourcePath": "tests/differential/corpus/control/07-try-catch.js"
+    },
+    {
+      "id": "corpus/control/08-try-finally.js",
+      "category": "control",
+      "sourcePath": "tests/differential/corpus/control/08-try-finally.js"
+    },
+    {
+      "id": "corpus/control/09-ternary.js",
+      "category": "control",
+      "sourcePath": "tests/differential/corpus/control/09-ternary.js"
+    },
+    {
+      "id": "corpus/control/10-logical-ops.js",
+      "category": "control",
+      "sourcePath": "tests/differential/corpus/control/10-logical-ops.js"
+    },
+    {
+      "id": "corpus/control/11-for-of-array.js",
+      "category": "control",
+      "sourcePath": "tests/differential/corpus/control/11-for-of-array.js"
+    },
+    {
+      "id": "corpus/control/12-for-in-object.js",
+      "category": "control",
+      "sourcePath": "tests/differential/corpus/control/12-for-in-object.js"
+    },
+    {
+      "id": "corpus/generators/01-basics.js",
+      "category": "generators",
+      "sourcePath": "tests/differential/corpus/generators/01-basics.js"
+    },
+    {
+      "id": "corpus/generators/02-for-of.js",
+      "category": "generators",
+      "sourcePath": "tests/differential/corpus/generators/02-for-of.js"
+    },
+    {
+      "id": "corpus/generators/03-return-throw.js",
+      "category": "generators",
+      "sourcePath": "tests/differential/corpus/generators/03-return-throw.js"
+    },
+    {
+      "id": "corpus/generators/04-sent-values.js",
+      "category": "generators",
+      "sourcePath": "tests/differential/corpus/generators/04-sent-values.js"
+    },
+    {
+      "id": "corpus/generators/05-yield-star.js",
+      "category": "generators",
+      "sourcePath": "tests/differential/corpus/generators/05-yield-star.js"
+    },
+    {
+      "id": "corpus/generators/06-closure-state.js",
+      "category": "generators",
+      "sourcePath": "tests/differential/corpus/generators/06-closure-state.js"
+    },
+    {
+      "id": "corpus/numeric/01-basic-arithmetic.js",
+      "category": "numeric",
+      "sourcePath": "tests/differential/corpus/numeric/01-basic-arithmetic.js"
+    },
+    {
+      "id": "corpus/numeric/02-float-precision.js",
+      "category": "numeric",
+      "sourcePath": "tests/differential/corpus/numeric/02-float-precision.js"
+    },
+    {
+      "id": "corpus/numeric/03-negative-zero.js",
+      "category": "numeric",
+      "sourcePath": "tests/differential/corpus/numeric/03-negative-zero.js"
+    },
+    {
+      "id": "corpus/numeric/04-infinity.js",
+      "category": "numeric",
+      "sourcePath": "tests/differential/corpus/numeric/04-infinity.js"
+    },
+    {
+      "id": "corpus/numeric/05-nan-propagation.js",
+      "category": "numeric",
+      "sourcePath": "tests/differential/corpus/numeric/05-nan-propagation.js"
+    },
+    {
+      "id": "corpus/numeric/06-integer-overflow.js",
+      "category": "numeric",
+      "sourcePath": "tests/differential/corpus/numeric/06-integer-overflow.js"
+    },
+    {
+      "id": "corpus/numeric/07-math-sqrt.js",
+      "category": "numeric",
+      "sourcePath": "tests/differential/corpus/numeric/07-math-sqrt.js"
+    },
+    {
+      "id": "corpus/numeric/08-math-trig.js",
+      "category": "numeric",
+      "sourcePath": "tests/differential/corpus/numeric/08-math-trig.js"
+    },
+    {
+      "id": "corpus/numeric/09-math-min-max.js",
+      "category": "numeric",
+      "sourcePath": "tests/differential/corpus/numeric/09-math-min-max.js"
+    },
+    {
+      "id": "corpus/numeric/10-math-floor-ceil-round.js",
+      "category": "numeric",
+      "sourcePath": "tests/differential/corpus/numeric/10-math-floor-ceil-round.js"
+    },
+    {
+      "id": "corpus/numeric/11-bitwise.js",
+      "category": "numeric",
+      "sourcePath": "tests/differential/corpus/numeric/11-bitwise.js"
+    },
+    {
+      "id": "corpus/numeric/12-comparison.js",
+      "category": "numeric",
+      "sourcePath": "tests/differential/corpus/numeric/12-comparison.js"
+    },
+    {
+      "id": "corpus/numeric/13-typeof-number.js",
+      "category": "numeric",
+      "sourcePath": "tests/differential/corpus/numeric/13-typeof-number.js"
+    },
+    {
+      "id": "corpus/numeric/14-tostring-radix.js",
+      "category": "numeric",
+      "sourcePath": "tests/differential/corpus/numeric/14-tostring-radix.js"
+    },
+    {
+      "id": "corpus/numeric/15-parse-int-float.js",
+      "category": "numeric",
+      "sourcePath": "tests/differential/corpus/numeric/15-parse-int-float.js"
+    },
+    {
+      "id": "corpus/object/01-literal.js",
+      "category": "object",
+      "sourcePath": "tests/differential/corpus/object/01-literal.js"
+    },
+    {
+      "id": "corpus/object/02-spread.js",
+      "category": "object",
+      "sourcePath": "tests/differential/corpus/object/02-spread.js"
+    },
+    {
+      "id": "corpus/object/03-destructure.js",
+      "category": "object",
+      "sourcePath": "tests/differential/corpus/object/03-destructure.js"
+    },
+    {
+      "id": "corpus/object/04-keys-values-entries.js",
+      "category": "object",
+      "sourcePath": "tests/differential/corpus/object/04-keys-values-entries.js"
+    },
+    {
+      "id": "corpus/object/05-in-operator.js",
+      "category": "object",
+      "sourcePath": "tests/differential/corpus/object/05-in-operator.js"
+    },
+    {
+      "id": "corpus/object/06-delete.js",
+      "category": "object",
+      "sourcePath": "tests/differential/corpus/object/06-delete.js"
+    },
+    {
+      "id": "corpus/object/07-property-shorthand.js",
+      "category": "object",
+      "sourcePath": "tests/differential/corpus/object/07-property-shorthand.js"
+    },
+    {
+      "id": "corpus/object/08-computed-keys.js",
+      "category": "object",
+      "sourcePath": "tests/differential/corpus/object/08-computed-keys.js"
+    },
+    {
+      "id": "corpus/object/09-nested.js",
+      "category": "object",
+      "sourcePath": "tests/differential/corpus/object/09-nested.js"
+    },
+    {
+      "id": "corpus/object/10-typeof.js",
+      "category": "object",
+      "sourcePath": "tests/differential/corpus/object/10-typeof.js"
+    },
+    {
+      "id": "corpus/object/11-equality.js",
+      "category": "object",
+      "sourcePath": "tests/differential/corpus/object/11-equality.js"
+    },
+    {
+      "id": "corpus/object/12-assign.js",
+      "category": "object",
+      "sourcePath": "tests/differential/corpus/object/12-assign.js"
+    },
+    {
+      "id": "corpus/private-fields/01-fields.js",
+      "category": "private-fields",
+      "sourcePath": "tests/differential/corpus/private-fields/01-fields.js"
+    },
+    {
+      "id": "corpus/private-fields/02-methods.js",
+      "category": "private-fields",
+      "sourcePath": "tests/differential/corpus/private-fields/02-methods.js"
+    },
+    {
+      "id": "corpus/private-fields/03-statics.js",
+      "category": "private-fields",
+      "sourcePath": "tests/differential/corpus/private-fields/03-statics.js"
+    },
+    {
+      "id": "corpus/private-fields/04-accessors.js",
+      "category": "private-fields",
+      "sourcePath": "tests/differential/corpus/private-fields/04-accessors.js"
+    },
+    {
+      "id": "corpus/private-fields/05-brand-checks.js",
+      "category": "private-fields",
+      "sourcePath": "tests/differential/corpus/private-fields/05-brand-checks.js"
+    },
+    {
+      "id": "corpus/string/01-concat.js",
+      "category": "string",
+      "sourcePath": "tests/differential/corpus/string/01-concat.js"
+    },
+    {
+      "id": "corpus/string/02-length.js",
+      "category": "string",
+      "sourcePath": "tests/differential/corpus/string/02-length.js"
+    },
+    {
+      "id": "corpus/string/03-charAt.js",
+      "category": "string",
+      "sourcePath": "tests/differential/corpus/string/03-charAt.js"
+    },
+    {
+      "id": "corpus/string/04-slice.js",
+      "category": "string",
+      "sourcePath": "tests/differential/corpus/string/04-slice.js"
+    },
+    {
+      "id": "corpus/string/05-substring.js",
+      "category": "string",
+      "sourcePath": "tests/differential/corpus/string/05-substring.js"
+    },
+    {
+      "id": "corpus/string/06-indexOf.js",
+      "category": "string",
+      "sourcePath": "tests/differential/corpus/string/06-indexOf.js"
+    },
+    {
+      "id": "corpus/string/07-includes.js",
+      "category": "string",
+      "sourcePath": "tests/differential/corpus/string/07-includes.js"
+    },
+    {
+      "id": "corpus/string/08-toUpperLower.js",
+      "category": "string",
+      "sourcePath": "tests/differential/corpus/string/08-toUpperLower.js"
+    },
+    {
+      "id": "corpus/string/09-split.js",
+      "category": "string",
+      "sourcePath": "tests/differential/corpus/string/09-split.js"
+    },
+    {
+      "id": "corpus/string/10-replace.js",
+      "category": "string",
+      "sourcePath": "tests/differential/corpus/string/10-replace.js"
+    },
+    {
+      "id": "corpus/string/11-trim.js",
+      "category": "string",
+      "sourcePath": "tests/differential/corpus/string/11-trim.js"
+    },
+    {
+      "id": "corpus/string/12-repeat-pad.js",
+      "category": "string",
+      "sourcePath": "tests/differential/corpus/string/12-repeat-pad.js"
+    },
+    {
+      "id": "corpus/string/13-template-literal.js",
+      "category": "string",
+      "sourcePath": "tests/differential/corpus/string/13-template-literal.js"
+    },
+    {
+      "id": "corpus/string/14-comparison.js",
+      "category": "string",
+      "sourcePath": "tests/differential/corpus/string/14-comparison.js"
+    },
+    {
+      "id": "corpus/string/15-fromCharCode.js",
+      "category": "string",
+      "sourcePath": "tests/differential/corpus/string/15-fromCharCode.js"
+    },
+    {
+      "id": "general/numeric/signed-zero",
+      "category": "numeric",
+      "source": "var x=-0; console.log(Object.is(x,-0),1/x,Object.is(0,-0));"
+    },
+    {
+      "id": "general/numeric/nan-and-integer-boundary",
+      "category": "numeric",
+      "source": "var n=Number(\"bad\"); console.log(n!==n,Object.is(n,NaN),9007199254740992+1===9007199254740992);"
+    },
+    {
+      "id": "general/numeric/bigint-exact",
+      "category": "numeric",
+      "source": "var n=9007199254740993n; console.log(String(n+2n),typeof n,n===9007199254740993n);"
+    },
+    {
+      "id": "general/numeric/bigint-mixed-throws",
+      "category": "numeric",
+      "source": "try { var n=1n; console.log(n+1); } catch(e) {console.log(e.name);}"
+    },
+    {
+      "id": "general/coercion-order/valueof-order",
+      "category": "coercion-order",
+      "source": "var trace=\"\";var a={valueOf(){trace+=\"a\";return 2}};var b={valueOf(){trace+=\"b\";return 3}};console.log(a+b,trace);"
+    },
+    {
+      "id": "general/coercion-order/symbol-numeric-throws",
+      "category": "coercion-order",
+      "source": "var x=Symbol(\"x\");try{console.log(+x)}catch(e){console.log(e.name)}"
+    },
+    {
+      "id": "general/coercion-order/array-coercion",
+      "category": "coercion-order",
+      "source": "var a=[1,,3];console.log(a+4,Number([]),Number([2]),Number([1,2]));"
+    },
+    {
+      "id": "general/coercion-order/compound-accessor-order",
+      "category": "coercion-order",
+      "source": "var trace=\"\";var n=1;var o={get x(){trace+=\"g\";return n},set x(v){trace+=\"s\";n=v}};var r=(o.x+=2);console.log(r,n,trace);"
+    },
+    {
+      "id": "general/lookup-presence/hole-vs-undefined",
+      "category": "lookup-presence",
+      "source": "var a=[,undefined];console.log(0 in a,1 in a,a.length,a[0]===undefined);"
+    },
+    {
+      "id": "general/lookup-presence/inherited-array-element",
+      "category": "lookup-presence",
+      "source": "var p={2:7};var a=[1];Object.setPrototypeOf(a,p);console.log(a[2],2 in a,Object.prototype.hasOwnProperty.call(a,2));"
+    },
+    {
+      "id": "general/lookup-presence/array-delete-length",
+      "category": "lookup-presence",
+      "source": "var a=[1,2,3];delete a[1];console.log(a.length,1 in a,a[1]===undefined);"
+    },
+    {
+      "id": "general/lookup-presence/missing-nullish",
+      "category": "lookup-presence",
+      "source": "var o={x:null,y:0};console.log(o.missing??7,o.x??8,o.y??9);"
+    },
+    {
+      "id": "general/identity-alias/shared-mutation",
+      "category": "identity-alias",
+      "source": "var a={x:1};var b=a;b.x=2;console.log(a===b,a.x);"
+    },
+    {
+      "id": "general/identity-alias/map-object-identity",
+      "category": "identity-alias",
+      "source": "var a={};var b={};var m=new Map();m.set(a,1);m.set(b,2);console.log(m.size,m.get(a),m.get(b),m.get({})===undefined);"
+    },
+    {
+      "id": "general/identity-alias/spread-shallow-alias",
+      "category": "identity-alias",
+      "source": "var a={nested:{x:1}};var b={...a};b.nested.x=2;console.log(a!==b,a.nested===b.nested,a.nested.x);"
+    },
+    {
+      "id": "general/identity-alias/strict-object-equality",
+      "category": "identity-alias",
+      "source": "var a={};var b={};console.log(a===a,a===b,a==b,Object.is(a,b));"
+    },
+    {
+      "id": "general/descriptors-prototypes/define-property-accessor",
+      "category": "descriptors-prototypes",
+      "source": "var n=1;var o={};Object.defineProperty(o,\"x\",{get(){return n},set(v){n=v},enumerable:true});o.x=3;console.log(o.x,Object.keys(o).join(\",\"));"
+    },
+    {
+      "id": "general/descriptors-prototypes/inherited-setter-receiver",
+      "category": "descriptors-prototypes",
+      "source": "var p={set x(v){this.y=v}};var o=Object.create(p);o.x=5;console.log(o.y,p.y===undefined,Object.prototype.hasOwnProperty.call(o,\"x\"));"
+    },
+    {
+      "id": "general/descriptors-prototypes/own-key-order",
+      "category": "descriptors-prototypes",
+      "source": "var o={b:1,2:2,a:3,1:4};delete o.b;o.b=5;console.log(Object.keys(o).join(\",\"));"
+    },
+    {
+      "id": "general/descriptors-prototypes/frozen-strict-write",
+      "category": "descriptors-prototypes",
+      "source": "\"use strict\";var o=Object.freeze({x:1});try{o.x=2}catch(e){console.log(e.name)}console.log(o.x);"
+    },
+    {
+      "id": "general/calls-closures/call-receiver",
+      "category": "calls-closures",
+      "source": "var o={x:2,f(){return this.x}};var p={x:3};console.log(o.f(),o.f.call(p));"
+    },
+    {
+      "id": "general/calls-closures/sloppy-arguments-alias",
+      "category": "calls-closures",
+      "source": "function f(a){arguments[0]=4;return a}console.log(f(1));"
+    },
+    {
+      "id": "general/calls-closures/per-iteration-let",
+      "category": "calls-closures",
+      "source": "var fs=[];for(let i=0;i<3;i++){fs.push(()=>i)}console.log(fs[0](),fs[1](),fs[2]());"
+    },
+    {
+      "id": "general/calls-closures/default-parameter-order",
+      "category": "calls-closures",
+      "source": "var t=\"\";function f(a=(t+=\"a\",1),b=(t+=\"b\",a+1)){return a+b}console.log(f(),t);"
+    },
+    {
+      "id": "general/abrupt-completion/finally-overrides-return",
+      "category": "abrupt-completion",
+      "source": "function f(){try{return 1}finally{return 2}}console.log(f());"
+    },
+    {
+      "id": "general/abrupt-completion/throw-effects-finally",
+      "category": "abrupt-completion",
+      "source": "var t=\"\";try{try{t+=\"a\";throw 7}finally{t+=\"f\"}}catch(e){t+=\"c\";console.log(e,t)}"
+    },
+    {
+      "id": "general/abrupt-completion/iterator-close-break",
+      "category": "abrupt-completion",
+      "source": "var t=\"\";var it={[Symbol.iterator](){return this},next(){t+=\"n\";return{value:1,done:false}},return(){t+=\"r\";return{done:true}}};for(var x of it){t+=\"b\";break}console.log(t);"
+    },
+    {
+      "id": "general/abrupt-completion/iterator-next-throws",
+      "category": "abrupt-completion",
+      "source": "var t=\"\";var it={[Symbol.iterator](){return this},next(){t+=\"n\";throw 7},return(){t+=\"r\";return{done:true}}};try{for(var x of it){t+=\"b\"}}catch(e){console.log(e,t)}"
+    },
+    {
+      "id": "general/scope-dynamic-code/tdz-before-let",
+      "category": "scope-dynamic-code",
+      "source": "try {console.log(x);let x=1;}catch(e){console.log(e.name)}"
+    },
+    {
+      "id": "general/scope-dynamic-code/function-hoisting",
+      "category": "scope-dynamic-code",
+      "source": "console.log(f());function f(){return 3}"
+    },
+    {
+      "id": "general/scope-dynamic-code/direct-eval-local",
+      "category": "scope-dynamic-code",
+      "source": "function f(){var x=1;eval(\"x=3\");return x}console.log(f());"
+    },
+    {
+      "id": "general/scope-dynamic-code/function-global-scope",
+      "category": "scope-dynamic-code",
+      "source": "function f(){var localOnly=7;return Function(\"return typeof localOnly\")()}console.log(f());"
+    },
+    {
+      "id": "general/class-semantics/super-getter-receiver",
+      "category": "class-semantics",
+      "source": "class A{get x(){return this.y}}class B extends A{constructor(){super();this.y=3}f(){return super.x}}console.log(new B().f());"
+    },
+    {
+      "id": "general/class-semantics/private-brand",
+      "category": "class-semantics",
+      "source": "class A{#x=2;read(o){return o.#x}}var a=new A();console.log(a.read(a));try{a.read({})}catch(e){console.log(e.name)}"
+    },
+    {
+      "id": "general/class-semantics/derived-constructor-object-return",
+      "category": "class-semantics",
+      "source": "class A{}class B extends A{constructor(){return {x:3}}}var b=new B();console.log(b.x,b instanceof B);"
+    },
+    {
+      "id": "general/class-semantics/class-static-initialization-order",
+      "category": "class-semantics",
+      "source": "var t=\"\";class A{static x=(t+=\"x\",1);static{t+=\"b\"}static y=(t+=\"y\",2)}console.log(t,A.x+A.y);"
+    },
+    {
+      "id": "general/iterator-generator/generator-finally-return",
+      "category": "iterator-generator",
+      "source": "var t=\"\";function* g(){try{yield 1;yield 2}finally{t+=\"f\"}}var it=g();console.log(it.next().value,it.return(9).value,t);"
+    },
+    {
+      "id": "general/iterator-generator/yield-star-return",
+      "category": "iterator-generator",
+      "source": "function* a(){yield 1;return 7}function* b(){return yield* a()}var it=b();console.log(it.next().value,it.next().value,it.next().done);"
+    },
+    {
+      "id": "general/iterator-generator/array-iterator-mutation",
+      "category": "iterator-generator",
+      "source": "var a=[1,2];var it=a[Symbol.iterator]();console.log(it.next().value);a.push(3);console.log(it.next().value,it.next().value,it.next().done);"
+    },
+    {
+      "id": "general/iterator-generator/for-in-own-inherited",
+      "category": "iterator-generator",
+      "source": "var p={a:1};var o=Object.create(p);o.b=2;o.a=3;var t=\"\";for(var k in o)t+=k;console.log(t);"
+    },
+    {
+      "id": "general/async-order/promise-reaction-order",
+      "category": "async-order",
+      "source": "var t=\"a\";Promise.resolve().then(()=>{t+=\"b\"}).then(()=>{console.log(t);console.log(\"AUDIT_DONE\")});t+=\"c\";",
+      "async": true,
+      "completionMarker": "AUDIT_DONE"
+    },
+    {
+      "id": "general/async-order/await-finally",
+      "category": "async-order",
+      "source": "async function f(){var t=\"a\";try{await Promise.resolve();t+=\"b\";return t}finally{console.log(\"finally\")}}f().then(x=>{console.log(x);console.log(\"AUDIT_DONE\")});",
+      "async": true,
+      "completionMarker": "AUDIT_DONE"
+    },
+    {
+      "id": "general/async-order/promise-all-order",
+      "category": "async-order",
+      "source": "Promise.all([Promise.resolve(2),Promise.resolve(1)]).then(x=>{console.log(x.join(\",\"));console.log(\"AUDIT_DONE\")});",
+      "async": true,
+      "completionMarker": "AUDIT_DONE"
+    },
+    {
+      "id": "general/async-order/promise-rejection-finally",
+      "category": "async-order",
+      "source": "var t=\"\";Promise.reject(7).catch(x=>{t+=\"c\"+x;return 2}).finally(()=>{t+=\"f\"}).then(x=>{console.log(x,t);console.log(\"AUDIT_DONE\")});",
+      "async": true,
+      "completionMarker": "AUDIT_DONE"
+    },
+    {
+      "id": "general/modules/live-binding",
+      "category": "modules",
+      "files": {
+        "main.js": "import {value,bump} from \"./dep.js\"; console.log(value);bump();console.log(value);",
+        "dep.js": "export let value=1;export function bump(){value++}"
+      },
+      "entry": "main.js"
+    },
+    {
+      "id": "general/modules/cyclic-live-function",
+      "category": "modules",
+      "files": {
+        "main.js": "import {read} from \"./a.js\";console.log(read());",
+        "a.js": "import {b} from \"./b.js\";export const a=1;export function read(){return a+b()}",
+        "b.js": "import {a} from \"./a.js\";export function b(){return a+1}"
+      },
+      "entry": "main.js"
+    },
+    {
+      "id": "general/modules/reexport-identity",
+      "category": "modules",
+      "files": {
+        "main.js": "import {o as a} from \"./dep.js\";import {o as b} from \"./other.js\";console.log(a===b);",
+        "dep.js": "export const o={x:1};",
+        "other.js": "export {o} from \"./dep.js\";"
+      },
+      "entry": "main.js"
+    },
+    {
+      "id": "general/modules/dynamic-import-completion",
+      "category": "modules",
+      "files": {
+        "main.js": "import(\"./dep.js\").then(m=>{console.log(m.value);console.log(\"AUDIT_DONE\")});",
+        "dep.js": "export const value=7;"
+      },
+      "entry": "main.js",
+      "async": true,
+      "completionMarker": "AUDIT_DONE"
+    }
+  ]
+}

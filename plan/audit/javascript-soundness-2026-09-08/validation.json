@@ -1,0 +1,257 @@
+{
+  "version": 1,
+  "node": "v24.4.1",
+  "compilerCommit": "f816631c2ee108bd75ae916f94aac4f9ef9abcf5",
+  "dirty": true,
+  "sourceStateHash": "4cea93d7ea94a5488252f1b99ba499beb701805c9d7b5f56a89c6390d3c8ba7c",
+  "sourceStateStable": true,
+  "audit": {
+    "programs": 168,
+    "referenceObservations": 168,
+    "wasmComparisons": 672,
+    "totalObservations": 840,
+    "complete": true,
+    "baseline": {
+      "match": 528,
+      "output_mismatch": 100,
+      "diagnostic_refusal": 10,
+      "oracle_inconclusive": 16,
+      "completion_mismatch": 16,
+      "invalid_wasm": 2
+    },
+    "candidate": {
+      "match": 594,
+      "diagnostic_refusal": 62,
+      "oracle_inconclusive": 16
+    },
+    "byLane": {
+      "host": {
+        "match": 148,
+        "oracle_inconclusive": 4,
+        "diagnostic_refusal": 16
+      },
+      "host-O": {
+        "match": 148,
+        "oracle_inconclusive": 4,
+        "diagnostic_refusal": 16
+      },
+      "standalone": {
+        "match": 149,
+        "diagnostic_refusal": 15,
+        "oracle_inconclusive": 4
+      },
+      "standalone-O": {
+        "match": 149,
+        "diagnostic_refusal": 15,
+        "oracle_inconclusive": 4
+      }
+    },
+    "sourceLocatedRefusals": 62,
+    "matchedGains": 66,
+    "divergencesReplacedWithErrors": 52
+  },
+  "equivalence": {
+    "shards": [
+      {
+        "shard": 1,
+        "exitCode": 0,
+        "summary": [
+          "equivalence-gate: wrote partial .tmp/general-publish-equivalence/shard-1.json (5 fail / 181 pass)",
+          "equivalence-gate: 5 failing, 181 passing, 22 known-failures in baseline."
+        ]
+      },
+      {
+        "shard": 2,
+        "exitCode": 0,
+        "summary": [
+          "equivalence-gate: wrote partial .tmp/general-publish-equivalence/shard-2.json (4 fail / 212 pass)",
+          "equivalence-gate: 4 failing, 212 passing, 22 known-failures in baseline."
+        ]
+      },
+      {
+        "shard": 3,
+        "exitCode": 0,
+        "summary": [
+          "equivalence-gate: wrote partial .tmp/general-publish-equivalence/shard-3.json (3 fail / 294 pass)",
+          "equivalence-gate: 3 failing, 294 passing, 22 known-failures in baseline."
+        ]
+      },
+      {
+        "shard": 4,
+        "exitCode": 0,
+        "summary": [
+          "equivalence-gate: wrote partial .tmp/general-publish-equivalence/shard-4.json (0 fail / 166 pass)",
+          "equivalence-gate: 0 failing, 166 passing, 22 known-failures in baseline."
+        ]
+      },
+      {
+        "shard": 5,
+        "exitCode": 0,
+        "summary": [
+          "equivalence-gate: wrote partial .tmp/general-publish-equivalence/shard-5.json (2 fail / 196 pass)",
+          "equivalence-gate: 2 failing, 196 passing, 22 known-failures in baseline."
+        ]
+      },
+      {
+        "shard": 6,
+        "exitCode": 0,
+        "summary": [
+          "equivalence-gate: wrote partial .tmp/general-publish-equivalence/shard-6.json (7 fail / 213 pass)",
+          "equivalence-gate: 7 failing, 213 passing, 22 known-failures in baseline."
+        ]
+      },
+      {
+        "shard": 7,
+        "exitCode": 0,
+        "summary": [
+          "equivalence-gate: wrote partial .tmp/general-publish-equivalence/shard-7.json (0 fail / 273 pass)",
+          "equivalence-gate: 0 failing, 273 passing, 22 known-failures in baseline."
+        ]
+      },
+      {
+        "shard": 8,
+        "exitCode": 0,
+        "summary": [
+          "equivalence-gate: wrote partial .tmp/general-publish-equivalence/shard-8.json (1 fail / 185 pass)",
+          "equivalence-gate: 1 failing, 185 passing, 22 known-failures in baseline."
+        ]
+      }
+    ],
+    "passed": 1720,
+    "knownFailures": 22,
+    "existingTodo": 3,
+    "failureBaselineExpanded": false,
+    "scope": "All eight gates ran after the final code generation changes. The subsequent enumeration-only diagnostic narrowing is covered by the focused scope/restoration checks and the final complete audit."
+  },
+  "tests": [
+    {
+      "scope": "Focused audit, console, runtime-safety, and original alias tests before final enumeration narrowing",
+      "files": 16,
+      "passed": 223,
+      "log": ".tmp/general-publish-tests.log"
+    },
+    {
+      "scope": "Required guards plus preceding type-flow tests before final enumeration narrowing",
+      "files": 24,
+      "passed": 341,
+      "log": ".tmp/general-publish-guards-and-type-tests.log"
+    },
+    {
+      "scope": "Final enumeration diagnostic and execution controls after narrowing",
+      "files": 1,
+      "passed": 32,
+      "log": ".tmp/general-publish-enumeration-final.log"
+    }
+  ],
+  "typeUnsoundnessAudit": {
+    "programs": 26,
+    "referenceRuns": 26,
+    "wasmComparisons": 52,
+    "matches": 19,
+    "diagnosticRefusals": 33,
+    "mismatches": 0,
+    "artifact": "../type-unsoundness-2026-09-08/candidate.jsonl"
+  },
+  "quality": [
+    {
+      "check": "typecheck",
+      "exitCode": 0
+    },
+    {
+      "check": "lint",
+      "exitCode": 0
+    },
+    {
+      "check": "format",
+      "exitCode": 0
+    },
+    {
+      "check": "loc",
+      "exitCode": 0
+    },
+    {
+      "check": "function",
+      "exitCode": 0
+    },
+    {
+      "check": "inventory",
+      "exitCode": 0
+    }
+  ],
+  "policy": [
+    {
+      "check": "check-ir-dialect.mjs",
+      "exitCode": 0
+    },
+    {
+      "check": "check-ir-kind-neutrality.mjs",
+      "exitCode": 0
+    },
+    {
+      "check": "check-ir-layering.mjs",
+      "exitCode": 0
+    },
+    {
+      "check": "check-oracle-ratchet.mjs",
+      "exitCode": 0
+    },
+    {
+      "check": "check-coercion-sites.mjs",
+      "exitCode": 0
+    },
+    {
+      "check": "check-issue-spec-coverage.mjs",
+      "exitCode": 0
+    },
+    {
+      "check": "check-ir-optimization-retirement.mjs",
+      "exitCode": 0
+    },
+    {
+      "check": "check-ir-fallbacks.mjs",
+      "exitCode": 0,
+      "command": ["node", "--import", "tsx", "scripts/check-ir-fallbacks.ts"]
+    },
+    {
+      "check": "check-stack-balance.mjs",
+      "exitCode": 0,
+      "command": ["node", "--import", "tsx", "scripts/check-stack-balance.ts"]
+    },
+    {
+      "check": "check-codegen-fallbacks.mjs",
+      "exitCode": 0,
+      "command": ["node", "--import", "tsx", "scripts/check-codegen-fallbacks.ts"]
+    }
+  ],
+  "additionalVerification": {
+    "dogfood": {
+      "gatedPackages": 6,
+      "compiledAndValidated": 6,
+      "scope": "After the broad semantic changes, before the final primitive console display and enumeration narrowing; recorded in .tmp/general-final-dogfood.log."
+    },
+    "hostImportPolicy": {
+      "probes": 33,
+      "imports": 395,
+      "unknown": 0,
+      "legacy": 0
+    },
+    "movedRuntimePreservation": {
+      "witnessesPassed": 6,
+      "graphClosed": false,
+      "remainingNonliteralImports": 2
+    }
+  },
+  "ciRepair": {
+    "commit": "f816631c2ee108bd75ae916f94aac4f9ef9abcf5",
+    "requiredChecks": "All passed on GitHub",
+    "evidence": "../type-unsoundness-2026-09-08/ci-repair-validation.json"
+  },
+  "limits": [
+    "Finite observations do not certify arbitrary accepted JavaScript.",
+    "Compiler refusals and unknowns are not conformance passes.",
+    "Three unmarked Promise programs and one dynamic-import graph remain inconclusive in four compiler lanes.",
+    "Error category is compared, not arbitrary Error properties or stacks.",
+    "Separate stdout/stderr strings do not establish inter-channel ordering.",
+    "Number parameter shadowing and raw negative-zero/BigInt console regression controls are outside the 168-program denominator."
+  ]
+}
