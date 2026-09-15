@@ -56,6 +56,25 @@ Two things to establish first, because they lead to different fixes:
 - [ ] The 49 rows in the slice-3 sample flip to agreement.
 - [ ] The honest lane is unchanged.
 
+## Mechanism — established by measurement 2026-09-15 (Opus lane)
+
+Confirmed, and the confirmation is an artifact of the test rather than a
+transient probe: `tests/issue-6476-linked-async-marker.test.ts` runs the
+resolving body through the linked lane WITHOUT `linkedHost`, and vitest captures
+
+```
+stdout | … > without linkedHost the marker never reaches the row's console
+Test262:AsyncTestComplete
+```
+
+on the REAL console while the row's capturing proxy stays empty. So the answer
+to the issue's question 1 is: `$DONE` **is** called, `print` **does** run, and
+the marker is emitted — to the process console, because the provider's `env`
+was built with no `deps`. Question 2 does not arise: the sink the runner polls
+(`harnessOutput`, fed by the row's `consoleProxy`) is correct; nothing was
+wired to it from the provider side. Not a completion-plumbing defect, and not
+a separate fix — the same `linkedHost` threading as #6475.
+
 ## Implementation Plan (2026-09-14, Fable lane)
 
 Mechanism, from reading the code (confirm with one instrumented row before
