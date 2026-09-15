@@ -31,7 +31,7 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import { emitHoleSentinel } from "./array-holes.js"; // (#2001 S1)
 import { objectLiteralTakesToPrimitiveOpenPath } from "./to-primitive-open-object.js"; // (#5269 R3-2) shared with the type-level twin in index.ts
 import { bareAnyArrayLiteralNeedsExternref } from "./array-literal-any-carrier.js";
-import { hasIncompatibleElementCarrier } from "./struct-carrier-inhabits.js"; // (#5327) array-literal element-carrier compatibility proof
+import { hasIncompatibleElementCarrier, hasNonStructElementForStructCarrier } from "./struct-carrier-inhabits.js"; // (#5327 / #6491) array-literal element-carrier compatibility proofs
 import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#4491 T11)
 import { ensureStrToCharVecHelper, stringConstantExternrefInstrs } from "./native-strings.js";
@@ -5616,6 +5616,33 @@ export function compileArrayLiteral(
       !hasContextualRefCarrier &&
       (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") &&
       hasIncompatibleElementCarrier(ctx, expr, firstElem)
+    ) {
+      elemWasm = { kind: "externref" };
+    }
+    // (#6491) The sibling case #4289's proof names and declines: an element
+    // that is not a struct AT ALL — a number, a boolean, a native string, a
+    // nested vec — cannot inhabit element zero's closed struct either, and the
+    // guard cast answers null, so `ref.as_non_null` TRAPS while the literal is
+    // still being constructed. Measured standalone on this tree:
+    // `const obj = {year:1,month:2,day:3}; [obj, "str"].length` →
+    // "dereferencing a null pointer". That is the shape test262's wrong-type
+    // tables are written in (`[tooEarly, "-271821-04-18"]` in
+    // `Temporal/PlainDate/from/limits.js`), and the inline spelling
+    // `[{year:1}, "str"]` already widened — only the BINDING spelling reached
+    // the hole, because `unwrapObjectLiteralElement` does not resolve an
+    // identifier to its initializer.
+    //
+    // Standalone / WASI only. The predicate itself is lane-agnostic (it skips
+    // `externref` elements, which is what a string is on the JS-host lane), but
+    // the gate is explicit so the host lane's bytes cannot move: the host lane
+    // has its own, differently-shaped residual for a NUMERIC sibling, which is
+    // filed rather than fixed here (this slice is standalone-scoped).
+    if (
+      !hasSpread &&
+      !hasContextualRefCarrier &&
+      (ctx.standalone || ctx.wasi) &&
+      (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") &&
+      hasNonStructElementForStructCarrier(ctx, expr, elemWasm)
     ) {
       elemWasm = { kind: "externref" };
     }

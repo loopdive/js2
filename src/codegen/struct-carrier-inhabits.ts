@@ -106,15 +106,10 @@ export function hasIncompatibleElementCarrier(
   expr: ts.ArrayLiteralExpression,
   first: ts.Expression,
 ): boolean {
-  // One resolution site for the whole proof: the question is which WasmGC
-  // carrier an element LOWERS to, which is a `ValType` fact above what
-  // `ctx.oracle` models (#1930 / #3273).
-  const carrierOf = (node: ts.Expression): ValType => resolveWasmType(ctx, ctx.checker.getTypeAtLocation(node));
-
   const firstObject = unwrapObjectLiteralElement(first);
   const firstKeys = firstObject ? staticObjectLiteralDataKeys(ctx, firstObject) : null;
   if (firstObject && !firstKeys) return true;
-  const firstCarrier = carrierOf(firstObject ?? unwrapArrayCarrierExpression(first));
+  const firstCarrier = carrierOf(ctx, firstObject ?? unwrapArrayCarrierExpression(first));
   const firstStructIdx = firstObject ? -1 : closedDataStructCarrierIdx(ctx, firstCarrier);
   if (firstStructIdx === null) return false;
 
@@ -127,12 +122,80 @@ export function hasIncompatibleElementCarrier(
       if (!keys || keys.length !== firstKeys!.length || keys.some((key, index) => key !== firstKeys![index])) {
         return true;
       }
-      if (!valTypesMatch(carrierOf(object), firstCarrier)) return true;
+      if (!valTypesMatch(carrierOf(ctx, object), firstCarrier)) return true;
       continue;
     }
-    const structIdx = closedDataStructCarrierIdx(ctx, carrierOf(object ?? unwrapArrayCarrierExpression(element)));
+    const structIdx = closedDataStructCarrierIdx(ctx, carrierOf(ctx, object ?? unwrapArrayCarrierExpression(element)));
     if (structIdx === null) continue;
     if (!structCarrierInhabits(ctx, structIdx, firstStructIdx)) return true;
+  }
+  return false;
+}
+
+/**
+ * One resolution site for every carrier proof in this module: the question is
+ * which WasmGC carrier an element LOWERS to, which is a `ValType` fact above
+ * what `ctx.oracle` models (#1930 / #3273).
+ */
+function carrierOf(ctx: CodegenContext, node: ts.Expression): ValType {
+  return resolveWasmType(ctx, ctx.checker.getTypeAtLocation(node));
+}
+
+/**
+ * (#6491) Does the literal hold an element that CANNOT inhabit a closed
+ * data-struct carrier at all — a number, a boolean, a native string, a nested
+ * vec?
+ *
+ * This is the case {@link hasIncompatibleElementCarrier}'s doc comment names
+ * and deliberately declines ("a string / number / vec element is another
+ * widening's business"). It had no other widening. Element zero fixes the vec
+ * to its closed `$__anon_N` struct and `compileArrayLiteral` guard-casts every
+ * later element into it; for an element whose carrier is not a struct at all
+ * the only lowering available is `ref.test` → `ref.null` → `ref.as_non_null`,
+ * which TRAPS while the literal is still being CONSTRUCTED. Measured on this
+ * tree, standalone, four lines and no provider:
+ *
+ *     const obj = { year: 1, month: 2, day: 3 };
+ *     [obj, "str"].length            // RuntimeError: dereferencing a null pointer
+ *
+ * `[{ year: 1 }, "str"]` — the same array written with element zero INLINE —
+ * already widens, because the first-object arm above rejects any non-object
+ * sibling outright. Only the far more common binding spelling
+ * (`const obj = {…}; [obj, "str"]`) reached this hole, since
+ * `unwrapObjectLiteralElement` does not resolve an identifier to its
+ * initializer.
+ *
+ * Narrowness, in the same spirit as the proof above:
+ *
+ *  - an element whose carrier IS a closed data struct is #4289/#5327's
+ *    business (the declared-supertype chain decides), so it is skipped here;
+ *  - an `externref`/`anyref` element is the dynamic widenings' business
+ *    (`hasDynamicOrCallableElement` and friends) and is skipped too — which is
+ *    also why the JS-host lane, where a string element is plain `externref`,
+ *    is untouched by this predicate;
+ *  - a spread, a hole and an `undefined`-like element are skipped exactly as
+ *    the proof above skips them.
+ */
+export function hasNonStructElementForStructCarrier(
+  ctx: CodegenContext,
+  expr: ts.ArrayLiteralExpression,
+  carrier: ValType,
+): boolean {
+  const baseIdx = closedDataStructCarrierIdx(ctx, carrier);
+  if (baseIdx === null) return false;
+  for (const element of expr.elements) {
+    if (ts.isOmittedExpression(element) || ts.isSpreadElement(element) || _isUndefinedLike(element)) continue;
+    const value = unwrapObjectLiteralElement(element) ?? unwrapArrayCarrierExpression(element);
+    const elemCarrier = carrierOf(ctx, value);
+    // A number or a boolean lowers to a scalar: no cast into a struct exists.
+    if (elemCarrier.kind === "f64" || elemCarrier.kind === "i32") return true;
+    if (elemCarrier.kind !== "ref" && elemCarrier.kind !== "ref_null") continue;
+    if ((elemCarrier as { typeIdx: number }).typeIdx === baseIdx) continue;
+    // A closed data struct is the declared-supertype proof's business.
+    if (closedDataStructCarrierIdx(ctx, elemCarrier) !== null) continue;
+    // A native string / vec ref: a different rec-group member, never a subtype
+    // of the element-zero struct, so the guard cast can only answer null.
+    return true;
   }
   return false;
 }
