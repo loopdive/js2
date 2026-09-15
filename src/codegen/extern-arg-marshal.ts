@@ -17,7 +17,9 @@
 // S2g notes).
 
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { buildThrowJsErrorInstrs, usesNativeJsErrors } from "./js-errors.js";
 import { addFuncType } from "./registry/types.js";
 
 /** Coerce helper funcIdxs, read once per fill pass (registered at reserve). */
@@ -35,7 +37,144 @@ export type CoerceIdxs = {
    * without one emits exactly the bytes it did before.
    */
   unboxNumOrOmitted?: () => number | undefined;
+  /**
+   * (#6615) Lazy accessor for the LENIENT ref-argument marshal — see
+   * {@link ensureLenientRefArgHelper}. A thunk taking the formal's `want` type
+   * and whether that formal is defaulted, so a module that never armed the
+   * guard (or a `want` the helper cannot express) keeps its previous
+   * `any.convert_extern` + hard `ref.cast` bytes exactly.
+   */
+  lenientRefArg?: (want: ValType, optionalHere: boolean) => number | undefined;
 };
+
+const EXTERNREF_VT: ValType = { kind: "externref" };
+
+/**
+ * (#6615) The message the lenient ref-argument marshal throws with. Worded as
+ * the polyfill's own `Ve` does (`expected a string, not …`) minus the value,
+ * which the marshal cannot stringify without running user code.
+ */
+const REF_ARG_TYPE_ERROR_MESSAGE = "argument type is not assignable to the callee's declared parameter type";
+
+/**
+ * (#6615) Per-module armed TypeError template for the lenient ref-argument
+ * marshal. A `WeakMap` rather than a `CodegenContext` field for the same reason
+ * `construct-is-constructor-guard.ts` uses one: an UNARMED module must be
+ * byte-indistinguishable from one compiled before this existed.
+ */
+const armedRefArgThrow = new WeakMap<CodegenContext, Instr[]>();
+
+/**
+ * (#6615) Arm the lenient ref-argument marshal for this module.
+ *
+ * Reserve-then-fill, exactly as `armConstructIsConstructorGuard` does and for
+ * the same reason: the marshal runs at FINALIZE, but building a real TypeError
+ * instance materialises an error constructor and a string-constant GLOBAL, and
+ * a finalize-time global append is not safe. So the terminal throw is built
+ * HERE, mid-compile, against a live `fctx` the late-import shifter can relocate.
+ *
+ * No-JS-host lanes only (`--target standalone` / `wasi`): the JS-host lane
+ * marshals dynamic arguments through its own mirrors, must stay byte-identical,
+ * and is the one lane where the throw would need a late IMPORT that cannot be
+ * added at fill time.
+ */
+export function armExternRefArgTypeGuard(ctx: CodegenContext, fctx: FunctionContext): void {
+  if (!usesNativeJsErrors(ctx)) return;
+  if (armedRefArgThrow.has(ctx)) return;
+  armedRefArgThrow.set(ctx, buildThrowJsErrorInstrs(ctx, "TypeError", REF_ARG_TYPE_ERROR_MESSAGE, { flush: fctx }));
+}
+
+/**
+ * (#6615) Mint (once per formal type) `__extern_arg_ref_<typeIdx>[_opt]
+ * (externref) -> (ref [null] $T)`: the ref-typed replacement for the
+ * unconditional `ref.cast` the ref arm used to emit inline.
+ *
+ * ## Why the hard cast is unsound HERE and not at a static call site
+ *
+ * A dynamic caller — `__class_construct_dispatch`'s per-class trampoline, a
+ * closed-method dispatcher — hands the callee whatever value the PROGRAM
+ * produced, while the callee's formal carries whatever type the CHECKER
+ * inferred. For a parameter typed only by its own default initializer
+ * (`constructor(y, m, d, calendar = "iso8601")` ⇒ `calendar: string`) those two
+ * are not the same question: the declared type describes the default, not the
+ * argument. `ref.cast` on a mismatch is a wasm TRAP — it kills the instance,
+ * so no `catch` in the program can see it, and the spec-mandated TypeError the
+ * callee's own body would have thrown never runs.
+ *
+ * Three arms, and the ONLY values that reach arms 1 and 3 are exactly the ones
+ * `ref.cast` would already have trapped on, so this cannot change the answer of
+ * any program that previously worked:
+ *
+ * 1. **`undefined` into a DEFAULTED nullable formal → `ref.null`.** The callee's
+ *    parameter prologue fires a ref-typed default on `ref.is_null`
+ *    (`function-body.ts`), so a typed null IS the "run your default" signal —
+ *    the ref-lane twin of #5380's f64 sNaN sentinel. `new
+ *    Temporal.PlainDate(2020, 12, 24, undefined)` must behave as the 3-argument
+ *    call does (`calendar-undefined.js`).
+ * 2. **A value that inhabits `$T` → the same cast as before**, byte for byte.
+ * 3. **Anything else → a catchable `TypeError`.** `null`, `true`, `1`, `1n`,
+ *    `{}`, a symbol, a foreign instance: none can be REPRESENTED in a
+ *    `(ref null $string)` formal, so the callee cannot run its own check on the
+ *    raw value. Throwing is what the callee would have done for every one of
+ *    the ten values `calendar-wrong-type.js` passes (the polyfill's `Ve` is
+ *    `if ("string" != typeof e) throw new TypeError(…)`), and unlike a trap it
+ *    is catchable and leaves the instance alive.
+ *
+ * A helper FUNCTION rather than inline instructions, for the same reason
+ * {@link ensureUnboxNumberOrOmitted} is one: the caller's argument may come from
+ * `__extern_get_idx`, so the sequence must not evaluate it twice — and a
+ * function needs no scratch local in callers whose local layout was fixed at
+ * reserve time.
+ *
+ * Returns `undefined` (caller keeps its previous bytes) when the module never
+ * armed the throw, when `__extern_is_undefined` is unavailable, or when `want`
+ * carries no concrete type index.
+ */
+function ensureLenientRefArgHelper(ctx: CodegenContext, want: ValType, optionalHere: boolean): number | undefined {
+  const throwInstrs = armedRefArgThrow.get(ctx);
+  if (throwInstrs === undefined || throwInstrs.length === 0) return undefined;
+  const typeIdx = (want as { typeIdx?: number }).typeIdx;
+  if (typeIdx === undefined || typeIdx < 0) return undefined;
+  const nullable = want.kind === "ref_null";
+  // Arm 1 needs a formal that can HOLD the typed null and a callee prologue
+  // that reads it as "absent" — i.e. a defaulted, nullable formal.
+  const defaultOnUndefined = nullable && optionalHere;
+  const name = `__extern_arg_ref_${typeIdx}${defaultOnUndefined ? "_opt" : ""}`;
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+  if (defaultOnUndefined && isUndefinedIdx === undefined) return undefined;
+  const result: ValType = nullable ? { kind: "ref_null", typeIdx } : { kind: "ref", typeIdx };
+  const inhabitsOrThrow: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: result },
+      then: [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "ref.cast", typeIdx }],
+      else: [...throwInstrs],
+    },
+  ];
+  const body: Instr[] =
+    defaultOnUndefined && isUndefinedIdx !== undefined
+      ? [
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: isUndefinedIdx },
+          {
+            op: "if",
+            blockType: { kind: "val", type: result },
+            then: [{ op: "ref.null", typeIdx }],
+            else: inhabitsOrThrow,
+          },
+        ]
+      : inhabitsOrThrow;
+  const fnTypeIdx = addFuncType(ctx, [EXTERNREF_VT], [result], `$${name}_type`);
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, { name, typeIdx: fnTypeIdx, locals: [], body, exported: false } as WasmFunction);
+  ctx.funcMap.set(name, funcIdx);
+  return funcIdx;
+}
 
 /**
  * (#5380) Mint (once) `__unbox_number_or_omitted(externref) -> f64`: the plain
@@ -101,6 +240,7 @@ export function buildCoerceIdxs(ctx: CodegenContext): CoerceIdxs {
     unboxBoolIdx: ctx.funcMap.get("__unbox_boolean"),
     undefinedIdx: ctx.funcMap.get("__get_undefined"),
     unboxNumOrOmitted: () => ensureUnboxNumberOrOmitted(ctx, ci.unboxNumIdx),
+    lenientRefArg: (want, optionalHere) => ensureLenientRefArgHelper(ctx, want, optionalHere),
   };
   return ci;
 }
@@ -129,8 +269,15 @@ export function externArgCoercionInstrs(ci: CoerceIdxs, want: ValType, optionalH
       out.push({ op: "drop" }, { op: "i32.const", value: 0 });
     }
   } else if (want.kind === "ref" || want.kind === "ref_null") {
-    out.push({ op: "any.convert_extern" });
-    out.push({ op: "ref.cast", typeIdx: (want as { typeIdx: number }).typeIdx });
+    // (#6615) The lenient marshal when this module armed it; otherwise the
+    // unconditional cast, byte for byte.
+    const lenientIdx = ci.lenientRefArg?.(want, optionalHere);
+    if (lenientIdx !== undefined) {
+      out.push({ op: "call", funcIdx: lenientIdx });
+    } else {
+      out.push({ op: "any.convert_extern" });
+      out.push({ op: "ref.cast", typeIdx: (want as { typeIdx: number }).typeIdx });
+    }
   }
   // externref param: already externref — no coercion.
   return out;

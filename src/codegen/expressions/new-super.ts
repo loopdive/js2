@@ -85,6 +85,7 @@ import {
   reserveTypedNativeConstructDriver,
 } from "../native-construct.js"; // (#3981 / #1058)
 import { markClassValueConstructSite } from "../standalone-class-construct.js"; // (#5383 S2g)
+import { armExternRefArgTypeGuard } from "../extern-arg-marshal.js"; // (#6615 / #5383 S28)
 import { armConstructIsConstructorGuard } from "../construct-is-constructor-guard.js"; // (#6612 / #5383 S25)
 import { linkCompatibleDeclaredStructAncestor } from "../struct-hierarchy-layout.js";
 import { emitBoundConstructOnNull } from "../construct-bound.js"; // (#4196) §10.4.1.2
@@ -3994,6 +3995,11 @@ function tryCompileNativeConstructFromValue(
   // `protoKeyInstrs` is: the throw materialises a TypeError instance and a
   // string constant, neither of which may be created at fill time.
   armConstructIsConstructorGuard(ctx, fctx);
+  // (#6615 / #5383 S28) Arm the lenient ref-argument marshal for the class
+  // construct trampolines this site turns on. Same reserve-then-fill reason as
+  // the two lines above: the TypeError instance and its message string-constant
+  // global cannot be created at fill time.
+  armExternRefArgTypeGuard(ctx, fctx);
   const driverIdx = reserveNativeConstructDriver(ctx, args.length, stringConstantExternrefInstrs(ctx, "prototype"));
 
   // Evaluate the callee, then each argument, exactly once and in source order.
