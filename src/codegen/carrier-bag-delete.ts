@@ -66,8 +66,10 @@
  */
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { buildBagMarkerTestInstrs } from "./carrier-bag-visibility.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { buildInstanceTombstoneDeleteArm } from "./instance-tombstones.js"; // (#4098 G1 s1)
+import { buildInstanceTombstoneDeleteArm, IS_CLASS_INSTANCE_CARRIER } from "./instance-tombstones.js"; // (#4098 G1 s1)
+import { FLAG_DEFAULT } from "./object-runtime.js";
 import { addFuncType } from "./registry/types.js";
 
 /** The tri-state carrier-bag delete native minted here. */
@@ -99,7 +101,8 @@ export function reserveCarrierBagDelete(ctx: CodegenContext): number | undefined
   const hasCarrier =
     ctx.funcMap.get(IS_CLOSURE_PROP_CARRIER) !== undefined ||
     ctx.funcMap.get(IS_VEC_PROP_CARRIER) !== undefined ||
-    ctx.funcMap.get(IS_ERROR_PROP_CARRIER) !== undefined;
+    ctx.funcMap.get(IS_ERROR_PROP_CARRIER) !== undefined ||
+    ctx.funcMap.get(IS_CLASS_INSTANCE_CARRIER) !== undefined;
   if (!hasCarrier) return undefined;
 
   const externref = { kind: "externref" } as const;
@@ -233,7 +236,7 @@ export function fillCarrierBagDelete(ctx: CodegenContext): void {
   if (objectTypeIdx === undefined || objFindIdx === undefined || deleteIdx === undefined) return;
 
   /** `if (<carrier predicate>) bag = <lookup>(obj);` guarded on bag still being null. */
-  const lookupArm = (isIdx: number | undefined, lookupIdx: number | undefined): Instr[] =>
+  const lookupArm = (isIdx: number | undefined, lookupIdx: number | undefined, claimed: Instr[] = []): Instr[] =>
     isIdx === undefined || lookupIdx === undefined
       ? []
       : [
@@ -252,6 +255,7 @@ export function fillCarrierBagDelete(ctx: CodegenContext): void {
                   { op: "local.get", index: 0 },
                   { op: "call", funcIdx: lookupIdx },
                   { op: "local.set", index: BAG },
+                  ...claimed,
                 ],
               },
             ],
@@ -300,8 +304,30 @@ export function fillCarrierBagDelete(ctx: CodegenContext): void {
         ];
   const vecArm = lookupArm(ctx.funcMap.get(IS_VEC_PROP_CARRIER), ctx.funcMap.get(VEC_BAG_LOOKUP));
   const errorArm = lookupArm(ctx.funcMap.get(IS_ERROR_PROP_CARRIER), ctx.funcMap.get(ERROR_PROP_BAG_LOOKUP));
-  if (closureArm.length === 0 && nativeGeneratorArm.length === 0 && vecArm.length === 0 && errorArm.length === 0)
+  const propEntryTypeIdx = ctx.objectRuntimeTypes?.propEntryTypeIdx;
+  const classArm =
+    propEntryTypeIdx === undefined
+      ? []
+      : lookupArm(ctx.funcMap.get(IS_CLASS_INSTANCE_CARRIER), ctx.funcMap.get(CLOSURE_BAG_LOOKUP), [
+          { op: "i32.const", value: 1 },
+          { op: "local.set", index: 3 },
+        ]);
+  if (
+    closureArm.length === 0 &&
+    nativeGeneratorArm.length === 0 &&
+    vecArm.length === 0 &&
+    errorArm.length === 0 &&
+    classArm.length === 0
+  )
     return;
+
+  if (classArm.length > 0)
+    fn.locals = [
+      fn.locals[0]!,
+      { name: "classBag", type: { kind: "i32" } },
+      { name: "classEntry", type: { kind: "ref_null", typeIdx: propEntryTypeIdx! } },
+      { name: "markerValue", type: { kind: "anyref" } },
+    ];
 
   const notHandled: Instr[] = [{ op: "i32.const", value: -1 }, { op: "return" }];
   fn.body = [
@@ -309,6 +335,7 @@ export function fillCarrierBagDelete(ctx: CodegenContext): void {
     ...nativeGeneratorArm,
     ...vecArm,
     ...errorArm,
+    ...classArm,
     { op: "local.get", index: BAG },
     { op: "ref.is_null" },
     { op: "if", blockType: { kind: "empty" }, then: notHandled.map((i) => ({ ...i })) },
@@ -320,6 +347,16 @@ export function fillCarrierBagDelete(ctx: CodegenContext): void {
     { op: "ref.test", typeIdx: objectTypeIdx },
     { op: "i32.eqz" },
     { op: "if", blockType: { kind: "empty" }, then: notHandled.map((i) => ({ ...i })) },
+    ...(classArm.length === 0
+      ? []
+      : ([
+          { op: "local.get", index: 3 },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: buildClassRetainedDelete(ctx, objectTypeIdx, propEntryTypeIdx!, objFindIdx, deleteIdx),
+          },
+        ] as Instr[])),
     // Presence in the bag is what makes this arm additive — see the tri-state
     // table above. `__obj_find` already skips tombstoned entries, so a key
     // deleted twice reports "not handled" and the caller's `return 1` (delete of
@@ -334,5 +371,64 @@ export function fillCarrierBagDelete(ctx: CodegenContext): void {
     { op: "local.get", index: BAG },
     { op: "local.get", index: 1 },
     { op: "call", funcIdx: deleteIdx },
+  ];
+}
+
+/** Keep physical-field suppression without a public Set or an extensibility preflight. */
+function buildClassRetainedDelete(
+  ctx: CodegenContext,
+  objectTypeIdx: number,
+  entryTypeIdx: number,
+  findIdx: number,
+  deleteIdx: number,
+): Instr[] {
+  const bag = (): Instr[] => [
+    { op: "local.get", index: BAG },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: objectTypeIdx },
+  ];
+  const entry = (): Instr[] => [{ op: "local.get", index: 4 }, { op: "ref.as_non_null" }];
+  return [
+    ...bag(),
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: findIdx },
+    { op: "local.tee", index: 4 },
+    { op: "ref.is_null" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: -1 }, { op: "return" }] },
+    ...buildBagMarkerTestInstrs(ctx, { entryLocal: 4, bagLocal: BAG, tmpAnyLocal: 5 }),
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
+    { op: "local.get", index: BAG },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: deleteIdx },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+    // No calls or allocations between actual deletion and restoration of this exact entry.
+    ...entry(),
+    { op: "local.get", index: BAG },
+    { op: "any.convert_extern" },
+    { op: "struct.set", typeIdx: entryTypeIdx, fieldIdx: 1 },
+    ...entry(),
+    { op: "i32.const", value: FLAG_DEFAULT },
+    { op: "struct.set", typeIdx: entryTypeIdx, fieldIdx: 2 },
+    ...entry(),
+    { op: "ref.null", typeIdx: -18 },
+    { op: "struct.set", typeIdx: entryTypeIdx, fieldIdx: 4 },
+    ...entry(),
+    { op: "ref.null", typeIdx: -18 },
+    { op: "struct.set", typeIdx: entryTypeIdx, fieldIdx: 5 },
+    ...bag(),
+    ...bag(),
+    { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 2 },
+    { op: "i32.const", value: 1 },
+    { op: "i32.add" },
+    { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 2 },
+    ...bag(),
+    ...bag(),
+    { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 3 },
+    { op: "i32.const", value: 1 },
+    { op: "i32.sub" },
+    { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 3 },
+    { op: "i32.const", value: 1 },
+    { op: "return" },
   ];
 }
