@@ -2,6 +2,21 @@
 
 ## Current checkpoint scope
 
+WeakMap registry repair is integrated as `e5f2cc15fb` (source
+`9d63cb83664102e072a5edced65f7e88cf33e11c`), with explicit O0/O2 controls in
+`2ab60119af` (source `e5addb7f314fc5206c84e386e19ef5f09e9a2c4e`). Agent
+focused38/38 and existing33/33 pass. Default original-worker paired results
+are e9 2/2, cb0/2, fixed2/2; extra forced-strict diagnostics are4/4,0/4,4/4.
+Default strict-neutral elision is NOT two executions. The original fixtures and
+failed exploratory controls are retained. See the committed WeakMap handoff.
+
+Clean publication composition controls passed58/58 across class/array/WeakMap
+tests before the eight additive optimizer controls, plus the separate existing
+collection suite33/33. The initially requested nonexistent3172 filename selected
+nothing; the real `tests/issue-3172.test.ts` was then explicitly run (33/33).
+TypeScript7 and scoped formatting pass. Publication excludes the Error attempt
+and no full-floor/CI25 or main-delivery claim is made.
+
 The reviewed class producer-only prerequisite is integrated as `90330c95e9`
 (source `dc12270720f0c731197bed60e469f001fb5b3d8d`); the complete two-array
 repair is integrated as `79ba30cc13` (source
