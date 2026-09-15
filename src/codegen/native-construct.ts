@@ -66,6 +66,7 @@ import type { Instr, TypeDef, ValType, WasmFunction } from "../ir/types.js";
 import { addFuncType } from "./registry/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { constructIsConstructorGuard } from "./construct-is-constructor-guard.js"; // (#6490 / #5383 S25)
 import { standaloneLinkBoundaryPeerIndex } from "./standalone-link-boundary.js"; // (#5383 S2f R12)
 import { ensureStandaloneClassConstructDispatch } from "./standalone-class-construct.js"; // (#5383 S2g)
 import { RUNTIME_EVAL_INTERP_CALLBACK_BRAND_A, RUNTIME_EVAL_INTERP_CALLBACK_BRAND_B } from "./runtime-eval-boundary.js";
@@ -510,6 +511,19 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
         },
       );
     }
+    // (#6490 / #5383 S25) §13.3.5.1 EvaluateNew step 5 — IsConstructor. Every
+    // arm above answers for a callee that HAS [[Construct]]; the ordinary tail
+    // below runs §10.2.2 unconditionally, so a callee that is callable but NOT
+    // constructible (arrow, method, built-in, foreign function with
+    // `callableKind` bit 1 but not bit 2) silently produced an OBJECT where the
+    // spec requires a TypeError. `[]` — and therefore identical bytes — unless
+    // a dynamic `new <value>` site armed the throw template.
+    body.push(
+      ...constructIsConstructorGuard(ctx, 0, {
+        typeofFunctionIdx,
+        runtimeCallbackTypeIdx,
+      }),
+    );
     body.push(
       // proto = suppliedProto ?? callee.prototype. The `__extern_get` arm reads
       // the closure own-property side table (#3468), which is where a

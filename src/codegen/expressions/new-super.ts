@@ -85,6 +85,7 @@ import {
   reserveTypedNativeConstructDriver,
 } from "../native-construct.js"; // (#3981 / #1058)
 import { markClassValueConstructSite } from "../standalone-class-construct.js"; // (#5383 S2g)
+import { armConstructIsConstructorGuard } from "../construct-is-constructor-guard.js"; // (#6490 / #5383 S25)
 import { linkCompatibleDeclaredStructAncestor } from "../struct-hierarchy-layout.js";
 import { emitBoundConstructOnNull } from "../construct-bound.js"; // (#4196) §10.4.1.2
 import { emitRuntimeEvalConstructOnNull } from "../runtime-eval-construct.js"; // (#4438) §10.2.2
@@ -3988,6 +3989,11 @@ function tryCompileNativeConstructFromValue(
   // (#5383 S2g) This is a construct from a runtime VALUE, so the callee may be
   // a class-object singleton — arm the class trampolines for this module.
   markClassValueConstructSite(ctx);
+  // (#6490 / #5383 S25) Arm §13.3.5.1 step 5 (IsConstructor) for this module's
+  // construct drivers. Built HERE, mid-compile, for the same reason
+  // `protoKeyInstrs` is: the throw materialises a TypeError instance and a
+  // string constant, neither of which may be created at fill time.
+  armConstructIsConstructorGuard(ctx, fctx);
   const driverIdx = reserveNativeConstructDriver(ctx, args.length, stringConstantExternrefInstrs(ctx, "prototype"));
 
   // Evaluate the callee, then each argument, exactly once and in source order.
