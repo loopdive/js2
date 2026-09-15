@@ -7506,6 +7506,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/promise-observable-combinators.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven observable combinator lowering, allocator-owned live aggregate resources, and canonical native body construction."
+    },
+    {
       "path": "src/codegen/promise-executor.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
