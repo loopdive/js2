@@ -437,7 +437,11 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
   function shiftGlobalIndices(instrs: Instr[]): void {
     if (visitedArrays.has(instrs)) return;
     visitedArrays.add(instrs);
-    for (const instr of instrs) {
+    // (#6480) Indexed loop rather than `for…of`: this walk runs ~36 times per
+    // compile over every live body, and the per-array iterator object is pure
+    // overhead on arrays this small and this numerous. Semantics unchanged.
+    for (let i = 0; i < instrs.length; i++) {
+      const instr = instrs[i]!;
       if ((instr.op === "global.get" || instr.op === "global.set") && instr.index >= threshold) {
         if (!visitedInstrs.has(instr as object)) {
           visitedInstrs.add(instr as object);

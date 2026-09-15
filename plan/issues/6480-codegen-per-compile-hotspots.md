@@ -1,9 +1,11 @@
 ---
 id: 6480
 title: "Codegen per-compile hotspots: lib declaration scan re-run per compile, late-import index shifting walks every body per import"
-status: ready
+status: done
+completed: 2026-09-15
 created: 2026-09-14
-updated: 2026-09-14
+updated: 2026-09-15
+assignee: ttraenkler/senior-dev
 priority: low
 horizon: m
 feasibility: medium
@@ -13,7 +15,19 @@ area: codegen
 goal: test262-conformance
 sprint: Backlog
 es_edition: n/a
-related: [3433, 3451, 6463, 1109, 1302]
+related: [3433, 3451, 6463, 1109, 1302, 6481]
+# 2026-09-15 (#6480 lever 1): the lib-scan memo keeps its bulk in the new
+# src/codegen/lib-extern-scan-memo.ts, but the memo WRAPPER must live next to
+# the scan it wraps — collectExternDeclarations is split into a thin memoised
+# entry plus the unchanged impl, ~38 lines of wrapper, signature and the
+# comment that explains why the `declare function` branch is excluded.
+# 2026-09-15 (#6480 lever 2): +4 lines in registry/imports.ts — the indexed-loop
+# rewrite of the module-global shift walk plus the three-line comment recording
+# why the loop shape changed. The walk cannot move out of the file: it closes
+# over `threshold`/`delta` and the two per-call visited sets.
+loc-budget-allow:
+  - src/codegen/extern-declarations.ts
+  - src/codegen/registry/imports.ts
 ---
 
 # #6480 — codegen per-compile hotspots
@@ -102,3 +116,94 @@ aggregation by self time is fine — record the two bucket totals).
    identical `externClasses` maps, and `preloadLibFiles` invalidates) and one
    for batching (a body minting two late imports compiles to the same bytes
    as before — compare against the pre-change binary captured in `.tmp/`).
+
+## Implementation (2026-09-15, Opus lane)
+
+### Measured, this box (4-core container), same 12-file `--cpu-prof` probe
+
+Three interleaved rounds per variant (base = `e1c92d52`, L1 = lever 1, L1+2 =
+both), self time summed over 12 compiles, mean of 3:
+
+| bucket | base | after L1 | after L1+2 | per compile (base → after) |
+| --- | --- | --- | --- | --- |
+| lib declaration scan | 273.8 ms | 33.0 ms | 39.8 ms | 22.8 → 3.3 ms (**−85 %**) |
+| late-import / global index shifting | 236.7 ms | 238.0 ms | 213.9 ms | 19.7 → 17.8 ms (**−10 %**) |
+
+All 12 output binaries byte-identical to the pre-change capture in
+`.tmp/p6480/bins-base` at every step (`bins-l1`, `bins-l2`, `bins-l12`).
+Run-to-run noise on the total is ±10 %, which is why the levers are scored
+interleaved rather than one-shot; the lib-scan delta is far outside it, the
+shift delta is at the edge of it.
+
+### Lever 1 — landed as specced (`src/codegen/lib-extern-scan-memo.ts`)
+
+The three extern-CLASS branches of `collectExternDeclarations` (`declare
+namespace` / `declare class` / `declare var X: {new(): X}`) are replayed from a
+recorded effect list; `buildLibDeclIndex` is cached on the lib source-file
+identity list. Two deviations from the plan, both deliberate:
+
+- **No `preloadLibFiles` hook.** The plan asked for `clearExternLibScanMemoForTests()`
+  to be called from `preloadLibFiles`. Invalidation is structural instead: the
+  memo is a `WeakMap` keyed on the lib `SourceFile` OBJECT, and `preloadLibFiles`
+  already deletes those from `LIB_SOURCE_FILES`, so a replaced lib re-parses into
+  a new object and misses by construction. Wiring the hook would also point
+  `src/checker/` at `src/codegen/`. The seam is exported and used by the tests.
+- **The effect list is captured by DIFFING the two maps** around the scan, not by
+  instrumenting the collectors. Map iteration is insertion order and a re-`set`
+  of an existing key keeps its slot, so replaying the diff in iteration order
+  reproduces both the contents and the ORDER (which the import/type table
+  depends on). The key pins the two maps' pre-state precisely because that
+  pre-state decides the collectors' `has`-guards.
+- Recorded `ExternClassInfo`s are cloned on replay (own object, own `methods`
+  / `properties` maps, own `constructorParams`) so no later in-place mutation
+  can leak between compiles. No such mutation exists today; the clone makes the
+  memo robust to one appearing.
+
+### Lever 2 — the specced batching does not exist to be done
+
+**The plan's premise is wrong, and this is the main finding.** It reads
+`shiftLateImportIndices` as being called once per late import with a `pending`
+path that "already defers one caller's shift", and lists six call sites. In the
+current tree:
+
+- `shiftLateImportIndices` has exactly ONE caller, `flushLateImportShifts`;
+- `ensureLateImport` ALWAYS defers (it opens `ctx.pendingLateImportShift` on the
+  first addition of a batch) — the batching the plan asks for is already the
+  universal mechanism;
+- what costs is the FLUSH points, and there are **769 `flushLateImportShifts`
+  call sites** across `src/`, not six. Each one exists because a `funcIdx` is
+  about to be baked, and deferring it further means proving, per site, that no
+  function index is read between the mint and the flush.
+
+Measured on the probe: 395 flushes over 12 compiles (~33/compile) walking 642 k
+instructions, plus 428 `fixupModuleGlobalIndices` calls (one per string constant
+— `addStringConstantGlobals`' batching entry point has 369 single-value callers).
+Converting either to a coarser batch is a compiler-wide refactor of the exact
+invariant whose past breakages are cited in these files at −601 and −2 621
+test262 passes, for a prize of ~9 ms out of a ~550 ms compile (1.6 %). Not taken
+here; recorded rather than silently dropped.
+
+What DID land is the same shape-only treatment #4415 gave the twin module-global
+walk, now applied to the late-import walk (`"funcIdx" in instr` → direct
+property read) plus indexed loops in both walks. −10 % of the bucket, byte
+identical, no semantic change. Below the 30 % bar the acceptance asks for; the
+number is stated rather than the bar being called met.
+
+### Acceptance status
+
+- Lib-scan bucket: **halved and then some** (−85 %). ✅
+- Index-shift bucket: **−10 %, NOT halved.** ❌ — see above for why the specced
+  route is unavailable; a real fix is a symbolic-funcIdx representation (the
+  plan's own second option), which is its own issue.
+- Output binaries byte-identical: ✅ (12/12, verified after each lever).
+- `tests/issue-1109*`, `tests/issue-1302*`, `tests/multi-file`, the equivalence
+  gate: unchanged. ✅
+
+### Acceptance decision (2026-09-15, Fable lane)
+
+Accepted as done with the shift-bucket target **retargeted**: the plan's
+lever-2 route (coarser flush batching) does not exist as specced — deferral is
+already universal and the 769 `flushLateImportShifts` sites each guard an
+immediately-baked `funcIdx`, so the ~9 ms prize is not worth the invariant risk
+(cf. the −601 / −2 621 test262 breakages cited above). The remaining fix is a
+symbolic funcIdx resolved once at emit time, filed as #6481.
