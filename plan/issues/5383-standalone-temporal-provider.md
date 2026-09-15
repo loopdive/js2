@@ -7111,3 +7111,227 @@ groups in the 360 rows are `Calling as constructor Expected a TypeError` (4) and
 including two `RuntimeError: illegal cast in __class_construct_dispatch()`. No
 single dominant cause remains in this sample.
 
+
+### S25 findings (2026-09-15) — the sixth cause is a MISSING SPEC STEP, not a lookup or a ceiling: `new <value>` never ran §13.3.5.1 step 5. Four families, 404 → 410, and the hand-off's "no single dominant cause remains" was the clause that was wrong
+
+Full write-up in
+[#6490](6490-standalone-dynamic-new-not-a-constructor.md). Branch
+`issue-5383-standalone-temporal-s25b`, based on S24's tip; the code is the
+salvaged S25 commit `50db519d23`.
+
+**This slice was interrupted too.** The container restarted mid-measurement and
+killed the S25 lane, the second slice in a row to be cut that way. Salvaged from
+its worktree, unchanged: the WIP fix commit (`src/codegen/native-construct.ts`,
+`src/codegen/expressions/new-super.ts`, plus the new module
+`src/codegen/construct-is-constructor-guard.ts`; all three byte-verified against
+its validated copies), the `.tmp/s25` probes `p1`–`p4`, and **all four family
+halves on both labels** — 960 cells, already complete. What was missing was
+everything downstream of the numbers: the per-file diff, the must-not-move new
+labels, the corpus and byte controls, the equivalence gate, the witness test and
+both issue files. Those were produced here.
+
+Two things the salvage let this slice check rather than assume: the four family
+halves were run **solo at a 60 s budget from the start** (the dead lane's
+`fam.mts` passes `60000`, and `run.sh` passes it through), so there is **no
+`compile_error` and no `timeout` cell anywhere in the 960** — the brief's
+instruction to "solo-correct every CE-involved row" had nothing to correct, and
+that is a measured statement, not an assumption: the slowest cell in the matrix
+is 22.6 s. And the provider is byte-identical under both labels (cache key
+`a11c84e5…`, 3,307,526 B, `cacheHit: false` on a FRESH cache per label), so no
+cell was served a stale artifact.
+
+#### 1. The defect — `new` on a callable with no [[Construct]] quietly returned an object
+
+`__native_construct_<N>` implements §10.2.2 OrdinaryCallEvaluateBody and nothing
+else. Its tail — `Object.create(callee.prototype)`, run the body, return the
+object — is unconditional. Every arm above it answers for a callee that HAS
+[[Construct]]; nothing answered for one that does not. So an arrow, a static or
+prototype method, an object-literal method, a built-in function, or a foreign
+function whose `callableKind` publishes bit 1 without bit 2 fell into the tail
+and **constructed successfully**, where §13.3.5.1 EvaluateNew step 5 requires a
+TypeError.
+
+The fix is one new module, `src/codegen/construct-is-constructor-guard.ts`,
+spliced immediately before that tail — after every arm that answers for a
+constructible callee has declined. It reads `__reflect_is_constructor`, the same
+predicate test262's own `isConstructor.js` harness reads, with three
+narrowings (must present as `typeof "function"`; the runtime-eval
+interpreted-callback marker is exempt; no-JS-host lanes only) because a
+wrongly-firing guard turns working code into a hard throw — a worse regression
+than the defect.
+
+**Why inside the driver, not at the call site**: §13.3.5.1 evaluates the
+argument list (step 4) BEFORE the IsConstructor test (step 5). The call site has
+already spilled callee and every argument into locals by the time it emits
+`call <driver>`, so the driver's entry is the first program point where that
+order holds — and it is one place instead of one per call site. The witness pins
+it: the arguments still run, once, left to right, before the throw.
+
+#### 2. The result — four families, and a histogram that moves in exactly one place
+
+| family (first 120 files) | base | branch | Δ | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| `PlainDate/**` | 101 | 103 | +2 | 0 | 2 |
+| `Duration/**` | 97 | 99 | +2 | 0 | 2 |
+| `PlainDateTime/**` | 104 | 106 | +2 | 0 | 2 |
+| `ZonedDateTime/prototype/**` | 102 | 102 | 0 | 0 | 0 |
+| **total** | **404** | **410** | **+6** | **0** | **6** |
+
+Zero pass→fail, so there is nothing to explain. The stronger statement is the
+histogram: aggregating all 480 base rows and all 480 branch rows by
+digit-normalised message, the bucket `Calling as constructor Expected a
+TypeError to be thrown but no exception was thrown` goes **6 → 0**. The base
+histogram has 41 buckets; one retires and **the other 40 are unchanged, count
+for count**. A one-bucket delta across 41 is a sharper safety claim than the row
+count.
+
+ZonedDateTime is flat because its sample is the `prototype/**` subtree, which
+contains no `not-a-constructor.js` file — not because the fix missed it.
+
+#### 3. Which clause of the hand-off was wrong
+
+S24's §7 listed four candidates and closed with **"No single dominant cause
+remains in this sample."** That sentence is the wrong clause, and it is wrong in
+kind rather than in size.
+
+`Calling as constructor Expected a TypeError` was presented as a **4-row**
+residual, tied with `Proxy get trap is not callable` for the top of a flat
+distribution. It is not a 4-row residual. It is a **missing spec step**:
+`not-a-constructor.js` is **123 files under `built-ins/Temporal/**` alone and
+536 files corpus-wide**, and the same defect is reachable from plain
+`language/expressions/new/**` with no Temporal in sight — this slice's
+must-not-move group C caught exactly that (see §4). The "4" measured the
+SAMPLE, not the defect, and reading it as a tie between two equally-sized
+leftovers is what made it look like the sample had gone flat.
+
+The size correction is real too, and it points the same way: on the widened
+480-row four-family sample **every** listed candidate is bigger than the
+hand-off's three-family figure —
+
+| hand-off candidate (360-row sample) | stated | measured on 480 rows | fixed here |
+| --- | --- | --- | --- |
+| non-constructor `new` not throwing TypeError | 4 | **6** | **yes, → 0** |
+| `Proxy get trap is not callable` | 4 | **6** | no |
+| `illegal cast in __class_construct_dispatch()` | 2 | **4** | no |
+| `const C = NS.wide; new C(…)` → null residual | — | unchanged | no, and still correct |
+
+The last row is the clause that **held**: S24 pinned that spelling as a
+different, pre-existing, arity-independent mechanism, and
+`tests/issue-6489-dynamic-new-arity.test.ts` still passes unchanged on this
+branch, its `-2` residual intact. Widening the sample corrected the sizes; it
+did not overturn that attribution.
+
+#### 4. Controls
+
+**Must-not-move — 314 rows, per file.**
+
+| group | rows | base pass | branch pass | flips |
+| --- | --- | --- | --- | --- |
+| A: `Object/keys` + `language/expressions/object` + `Reflect/{get,has}` | 100 | 95 | 95 | 0 |
+| B: `Object/{entries,values,getOwnPropertyNames}` | 45 | 25 | 25 | 0 |
+| C: `language/expressions/new/**` (59) + `Reflect/construct/**` (10) + `language/statements/class/subclass/**` (100) | 169 | 119 | **120** | **1, fail→pass** |
+
+A and B are the insensitive controls and are flat to the file. C is the
+deliberately SENSITIVE group — the core-language corpus for the exact path this
+change touches — and it is the one that moved:
+`language/expressions/new/non-ctor-err-realm.js`, **fail → pass**. Nothing moved
+the other way. That single row is the best evidence in the slice that the guard
+implements the spec rule rather than a Temporal-shaped special case, and it is
+why §3 calls the hand-off's framing wrong in kind.
+
+Method note worth keeping: the second label was driven from the FIRST label's
+own row list (`.tmp/s25/list.mts`), not from a `root:limit` spec re-walked per
+label. A limit that clipped a directory differently between runs would otherwise
+compare two different populations and report the difference as flips.
+
+Two `compile_error` cells survive (one in A, one in C). Both are **feature**
+compile errors — "native generator lowering currently supports only sequential
+numeric yields", "standalone Reflect.construct currently requires …" — identical
+on both labels. A longer budget cannot remove them and they say nothing about
+this change.
+
+**Corpus byte A/B**: 42 modules × {gc, standalone} = **84 artifacts, 0 move**.
+As in S24 this is a NULL control and saying only "0 moved" overstates it: no
+module in that corpus compiles a dynamic `new <value>` site, so it can show the
+change is not a broad perturbation but cannot show it does anything.
+
+**Byte control** (`.tmp/s25/bytes6490.mts`) — the evidence the corpus cannot
+give, and it answers in both directions:
+
+| artifact | base | branch | |
+| --- | --- | --- | --- |
+| provider (no `new <value>` site) | `12f3866d…` 165,069 B | identical | |
+| consumer with no `new` at all | `af0b92c7…` 48,980 B | identical | |
+| ONE module, statically-resolved `new K(5)` | `93c494e1…` 137,661 B | identical | the unarmed case |
+| consumer, `new <param>()` across the link | `6a607192…` 164,097 B | `b0e3b74e…` 164,088 B | moved |
+| consumer, `new NS.PD(5)` across the link | `5429282b…` 133,138 B | `112a461e…` 133,230 B | moved |
+| ONE module, `new <param>(5)` | `d61b742d…` 246,044 B | `c74c651c…` 245,995 B | moved |
+
+Exactly the three artifacts that compile a dynamic `new <value>` site move;
+every artifact that does not is byte-identical. That is reserve-then-fill proven
+in both directions, not only the safe one.
+
+**One row of that table was written expecting the opposite answer and is kept as
+measured.** `new NS.PD(5)` was labelled "directly-named `new`" and predicted
+byte-identical. It moved — `NS.PD` is a member access on a runtime namespace, so
+it IS a dynamic `new <value>` site. The single-module named case was added
+afterwards precisely because no linked fixture can express a statically-resolved
+callee. (Two of the three moved artifacts got SMALLER, −9 B and −49 B, though
+the guard only adds instructions; function-index and LEB widths shift around the
+driver bodies. Noted, not chased.)
+
+**Equivalence gate**: 22 failing / 1,720 passing / 22 known-failures — baseline
+exactly.
+
+#### 5. The witness, and the spelling trap that made the first cut vacuous
+
+`tests/issue-6490-dynamic-new-is-constructor.test.ts`, six cases, measured on
+both trees by file-copy revert: base **3 fail / 3 pass**, branch **6 pass**.
+
+Unlike #6489, BOTH the single-module and the linked arms are witnesses. This
+defect is a property of the DRIVER, not of callee ownership, so it reproduces
+with no link at all; the linked arm additionally covers the foreign-function
+path, where the callable/constructible distinction arrives as a `callableKind`
+bitmask rather than as a closure the module owns.
+
+The trap, which cost a full cycle and is the reason this is written down: the
+callee must arrive as a **function PARAMETER** (`nw0(F) { return new F(); }`).
+The obvious alternative — a registry read, `const C = reg["%K%"]; new C()` — does
+NOT reach this driver in a single module. It falls to `emitDynamicNewFallback`'s
+tag dispatch, whose only candidates are module-local CLASSES, so a plain
+function or a built-in answers `null` there on BOTH trees. The first cut of the
+witness was written that way and **four of its six cases were vacuous** — they
+asserted `null` and never exercised the guard. Measured, not reasoned.
+
+A second discipline point from the same file: the linked `it` now asserts the
+argument-ORDER expectation FIRST. An expectation placed after a failing one is
+never reached on the base tree, so its inline "base tree: …" note would have
+been written from inference rather than from a run. Reordering made 146 and 5 a
+measurement.
+
+#### 6. Next bucket — chosen from the widened sample
+
+`PlainDateTime/**` residual, branch tree, solo-corrected (14 rows):
+
+| bucket | rows |
+| --- | --- |
+| `TypeError: Proxy get trap is not callable` | 2 |
+| `year result: Expected SameValue(«N», «N,N,MN,…»)` | 2 |
+| `RuntimeError: illegal cast in __class_construct_dispatch()` | 2 |
+| `RuntimeError: dereferencing a null pointer in __closure_N()` | 2 |
+| six singletons | 6 |
+
+Across all four families (70 branch-tree residual rows, 40 buckets) the three
+largest are `Proxy get trap is not callable` (**6**), `dereferencing a null
+pointer in __closure_N()` (**6**) and `illegal cast in
+__class_construct_dispatch()` (**4**). The tail is genuinely flat — 33 of the 40
+buckets have ≤2 rows.
+
+So the honest read of "next" is the opposite of picking the biggest number, and
+S25 is the cautionary case for it: `Proxy get trap is not callable` and
+`illegal cast in __class_construct_dispatch()` are both **shaped like spec
+steps** (a MOP invariant and a brand/cast invariant), and this slice just showed
+that a spec-step cause's corpus footprint is invisible in a Temporal-only
+sample — six rows here, 536 files corpus-wide. Size the candidate by counting
+its test262 FAMILY corpus-wide before committing a slice to it, not by its row
+count in this sample.

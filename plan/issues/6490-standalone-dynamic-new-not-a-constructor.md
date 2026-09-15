@@ -1,7 +1,8 @@
 ---
 id: 6490
 title: "standalone: `new <runtime value>(…)` on a callable with NO [[Construct]] returns an object instead of throwing — §13.3.5.1 step 5 was never implemented in the dynamic construct driver"
-status: in-progress
+status: done
+completed: 2026-09-15
 sprint: current
 priority: high
 horizon: m
@@ -159,12 +160,87 @@ The delta is **surgical in the bucket histogram too**, which is the stronger
 statement: aggregating the 480 base rows and the 480 branch rows by
 digit-normalised error message, the bucket
 `Test262Error: Calling as constructor Expected a TypeError to be thrown but no
-exception was thrown` goes **6 → 0**, and **every other one of the 40 residual
-buckets is unchanged, count for count**.
+exception was thrown` goes **6 → 0**. The base histogram has 41 buckets; one
+retires and **the other 40 are unchanged, count for count**.
 
 ## Controls
 
-(filled in below as they complete)
+### Must-not-move — 314 rows, base vs branch, per file
+
+| group | rows | base pass | branch pass | flips |
+| --- | --- | --- | --- | --- |
+| A: `Object/keys` + `language/expressions/object` + `Reflect/{get,has}` | 100 | 95 | 95 | **0** |
+| B: `Object/{entries,values,getOwnPropertyNames}` | 45 | 25 | 25 | **0** |
+| C: `language/expressions/new/**` (59) + `Reflect/construct/**` (10) + `language/statements/class/subclass/**` (first 100) | 169 | 119 | 120 | **1 (fail→pass)** |
+
+Groups A and B are the insensitive controls and are flat to the file. **Group C
+is deliberately the SENSITIVE one** — it is the core-language corpus for exactly
+the construct path this change touches — and it is the one that moved:
+`language/expressions/new/non-ctor-err-realm.js`, **fail → pass**. That is this
+defect appearing outside Temporal, in `language/**`, which is the strongest
+available evidence that the guard implements the spec rule and not a
+Temporal-shaped special case. No row moved the other way.
+
+The second label was driven from the FIRST label's own row list
+(`.tmp/s25/list.mts`), not from a `root:limit` spec re-walked per label — a
+limit that clipped a directory differently between runs would otherwise compare
+two different populations and report the difference as flips.
+
+Two `compile_error` cells appear, one in group A
+(`language/expressions/object/accessor-name-computed-yield-expr.js`, "native
+generator lowering currently supports only sequential numeric yields") and one
+in group C (`Reflect/construct/arguments-list-is-not-array-like.js`, "standalone
+Reflect.construct currently requires …"). Both are **feature** compile errors,
+identical on both labels, not budget timeouts — solo re-running at a longer
+budget cannot remove them and they are not evidence of anything about this
+change.
+
+### Corpus byte A/B
+
+42 modules × {gc, standalone} = **84 artifacts, 0 move** (sha256-16 of the
+emitted binary, base vs branch, byte-for-byte). As in S24 this is a NULL control
+— no module in that corpus compiles a dynamic `new <value>` site, so on its own
+it cannot distinguish "safe" from "inert".
+
+### Byte control — which modules move, and which must not
+
+The evidence the corpus cannot give (`.tmp/s25/bytes6490.mts`):
+
+| artifact | base | branch | |
+| --- | --- | --- | --- |
+| provider (no `new <value>` site) | `12f3866d…` 165,069 B | `12f3866d…` 165,069 B | identical |
+| consumer, no `new` at all | `af0b92c7…` 48,980 B | `af0b92c7…` 48,980 B | identical |
+| ONE module, statically-resolved `new K(5)` | `93c494e1…` 137,661 B | `93c494e1…` 137,661 B | identical |
+| consumer, `new <param>()` across the link | `6a607192…` 164,097 B | `b0e3b74e…` 164,088 B | **moved** |
+| consumer, `new NS.PD(5)` across the link | `5429282b…` 133,138 B | `112a461e…` 133,230 B | **moved** |
+| ONE module, `new <param>(5)` | `d61b742d…` 246,044 B | `c74c651c…` 245,995 B | **moved** |
+
+Exactly the three artifacts that compile a dynamic `new <value>` site move, and
+every artifact that does not is byte-identical — which is the reserve-then-fill
+claim proven in both directions rather than only the safe one.
+
+**One row was written expecting the opposite answer and is recorded as measured:**
+`new NS.PD(5)` was labelled "directly-named `new`" and predicted byte-identical.
+It moved. `NS.PD` is a member access on a runtime namespace object, so it IS a
+dynamic `new <value>` site; only a callee the compiler resolves statically
+(`single-named-new`) leaves the template unarmed. The single-module named case
+was added afterwards precisely because the linked fixture cannot express one.
+
+Two of the three moved artifacts got SMALLER (−9 B and −49 B) even though the
+guard only adds instructions; the third grew (+92 B). Noted, not chased — the
+driver bodies shift function-index and LEB widths around them.
+
+### Equivalence gate
+
+`pnpm run test:equivalence:gate` → **22 failing / 1,720 passing, 22
+known-failures in baseline**, "No new equivalence regressions". Baseline exactly.
+
+### Provider control
+
+The `@js-temporal/polyfill` provider artifact is byte-identical under both
+labels: cache key `a11c84e5561934596091bf886da12bb688ddb9aa5ca8f4cdc9d564bc352fd608`,
+3,307,526 B, `cacheHit: false` on a FRESH `JS2WASM_TEMPORAL_CACHE` for each
+label — so no family cell was served a stale provider.
 
 ## Witness test
 
