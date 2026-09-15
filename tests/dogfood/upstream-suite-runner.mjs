@@ -796,6 +796,8 @@ function __upstreamTypeExpectation() {
 function expectTypeOf() { return __upstreamTypeExpectation(); }
 const __qunitAssert = {
   expect(_count) {},
+  isTrue(value, message) { const n = ++__upstreamAssertion; if (value !== true) __upstreamFail("assertion " + n + ": " + (message || "expected true") + "; got " + __upstreamValue(value)); },
+  isFalse(value, message) { const n = ++__upstreamAssertion; if (value !== false) __upstreamFail("assertion " + n + ": " + (message || "expected false") + "; got " + __upstreamValue(value)); },
   ok(value, message) { const n = ++__upstreamAssertion; if (!value) __upstreamFail("assertion " + n + ": " + (message || "expected truthy value") + "; got " + __upstreamValue(value)); },
   notOk(value, message) { const n = ++__upstreamAssertion; if (value) __upstreamFail("assertion " + n + ": " + (message || "expected falsey value") + "; got " + __upstreamValue(value)); },
   isDefined(value, message) { const n = ++__upstreamAssertion; if (value === undefined) __upstreamFail("assertion " + n + ": " + (message || "expected defined value")); },
@@ -1152,9 +1154,18 @@ async function runNative(generatedPath, source) {
 function runIsolatedCompile(generatedPath, timeoutMs, mode = "project", workerEnv = {}) {
   return new Promise((resolve) => {
     const workerPath = new URL("./upstream-suite-compile-worker.mjs", import.meta.url);
-    const child = spawn(process.execPath, [...process.execArgv, fileURLToPath(workerPath), generatedPath, mode], {
+    const childEnv = { ...process.env };
+    for (const [name, value] of Object.entries(workerEnv)) {
+      if (value === undefined || value === null) delete childEnv[name];
+      else childEnv[name] = String(value);
+    }
+    const workerExecArgv = [...process.execArgv];
+    if (childEnv.DOGFOOD_TARGET === "standalone" && !workerExecArgv.includes("--experimental-wasm-exnref")) {
+      workerExecArgv.push("--experimental-wasm-exnref");
+    }
+    const child = spawn(process.execPath, [...workerExecArgv, fileURLToPath(workerPath), generatedPath, mode], {
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...workerEnv },
+      env: childEnv,
     });
     let stdout = "";
     let stderr = "";
@@ -1470,6 +1481,10 @@ export function summarizeUpstreamRuns({ name, pin, testFiles, selectedFiles, run
   report.compile.details = runs.map((run) => ({
     file: run.file,
     ...run.result.compile,
+    nativeTestCount: run.result.native.count,
+    nativeStatusCount: Array.isArray(run.result.native.statuses) ? run.result.native.statuses.length : null,
+    wasmTestCount: run.result.wasm?.count ?? null,
+    wasmStatusCount: Array.isArray(run.result.wasm?.statuses) ? run.result.wasm.statuses.length : null,
     // A rejection that belongs to no test is still the module's, and it must
     // be readable here rather than vanishing into a null (#5369).
     nativeError: run.result.native.fatal ?? moduleRejectionText(run.result.native.unhandledRejections) ?? null,

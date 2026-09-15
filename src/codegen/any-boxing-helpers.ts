@@ -134,15 +134,17 @@ export function registerAnyBoxHelpers(
   //
   // NULLISH-honest externref boxing for the `undefinedSingleton` regime:
   //   null extern                    → tag-0 box (JS null)
-  //   tag-1 `$AnyValue` (singleton)  → recovered exactly (tag-1)
+  //   existing `$AnyValue`          → recovered exactly (all tags)
   //   `$BoxedNumber` w/ UNDEF_F64    → tag-1 box (undefined through f64 lane)
   //   everything else               → the legacy tag-5 box (#1888 lie KEPT)
   // Rationale: full honest classification is #2141's flag (measured −788/−794
   // when flipped alone — the comparator depends on the tag-5 lie for
   // non-nullish values). S1 only needs the NULLISH partition honest so
   // `__any_strict_eq`/`__any_eq`/`__any_to_string`/`__any_to_f64` (already
-  // tag-correct) observe null≠undefined; the non-nullish arms stay
-  // byte-equivalent to `__any_box_string`.
+  // tag-correct) observe null≠undefined. Already-tagged compiler values must
+  // round-trip unchanged: reboxing a union through a generic function turns
+  // its string/number payload into an object. Untagged non-nullish values
+  // retain the legacy classification below.
   if (undefinedSingletonActive(ctx) && ctx.undefinedGlobalIdx !== undefined) {
     const undefBoxInstrs: Instr[] = [{ op: "global.get", index: ctx.undefinedGlobalIdx }];
     addHelper(
@@ -173,19 +175,10 @@ export function registerAnyBoxHelpers(
           op: "if",
           blockType: { kind: "empty" },
           then: [
-            // tag-1 box (the singleton or any undefined box) → recover exactly.
-            // Other wrapped tags fall through to the legacy tag-5 wrap below,
-            // preserving the legacy double-wrap behaviour for non-nullish.
+            // This is an existing compiler value, not a raw host object.
             { op: "local.get", index: 1 },
             { op: "ref.cast", typeIdx: anyTypeIdx },
-            { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 0 },
-            { op: "i32.const", value: 1 },
-            { op: "i32.eq" },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [{ op: "local.get", index: 1 }, { op: "ref.cast", typeIdx: anyTypeIdx }, { op: "return" }],
-            },
+            { op: "return" },
           ],
         },
         ...((ctx.nativeBoxNumberTypeIdx >= 0

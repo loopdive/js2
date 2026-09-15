@@ -219,7 +219,7 @@ export function boxToAny(ctx: CodegenContext, fctx: FunctionContext, from: ValTy
     // to the legacy lie so the flag can never produce a compile-time hole.
     if (ctx.honestAnyBoxing && emit("__any_from_extern")) return true;
     // (#2106 S1) NULLISH-honest boxing under the `undefinedSingleton` regime:
-    // null → tag-0, the singleton / UNDEF-box → tag-1, everything else keeps
+    // null → tag-0, existing AnyValue → unchanged, UNDEF-box → tag-1; raw values keep
     // the legacy tag-5 wrap byte-equivalently (see __any_box_extern_s1 —
     // deliberately NOT the full-honest #2141 classification, whose solo flip
     // measured −788/−794). Without this, `u === miss` over two `any` operands

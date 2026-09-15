@@ -5,6 +5,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import { isSymbolType } from "../checker/type-mapper.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { ensureSymbolCarrier } from "./symbol-native.js";
 
 export function symbolBrand(type: ts.Type, wasmType: ValType): ValType {
   if (wasmType.kind !== "i32") return wasmType;
@@ -45,7 +46,8 @@ export function symbolBoundaryCoercionInstrs(
   fctx?: FunctionContext,
 ): Instr[] | undefined {
   if ((from.kind === "externref" || from.kind === "ref_extern") && to.kind === "i32" && to.symbol === true) {
-    if ((ctx.standalone || ctx.wasi) && ctx.symbolTypeIdx >= 0) {
+    if (ctx.standalone || ctx.wasi) {
+      ensureSymbolCarrier(ctx);
       return [
         { op: "any.convert_extern" },
         { op: "ref.cast", typeIdx: ctx.symbolTypeIdx },

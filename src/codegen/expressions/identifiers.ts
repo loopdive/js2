@@ -1920,7 +1920,9 @@ function compileIdentifierCore(
   // standalone; gc/host and the namespace-object / native-error-tag builtins are
   // untouched. Order: AFTER local/module/declared-global shadowing and the
   // class-object / promise-subclass singleton blocks (so a user binding or a real
-  // class always wins), BEFORE the null-externref fallback.
+  // class always wins), BEFORE the null-externref fallback. Source function
+  // declarations are wrapped later, so explicitly exclude them here: the
+  // TypeScript allocator's `() => Symbol` must return its own constructor.
   //
   // (#5349 r4) `ArrayBuffer` — and ONLY that name — extends to the WASI lane.
   // §25.1.5.3's species ladder has to answer "is this C the intrinsic
@@ -1936,7 +1938,11 @@ function compileIdentifierCore(
   // `x instanceof ArrayBuffer` at the instanceof lowering, `typeof ArrayBuffer`
   // at the typeof fold. Only the bare-value read changes, and only from a value
   // no conforming program can observe as the constructor.
-  if ((ctx.standalone || (noJsHost(ctx) && name === "ArrayBuffer")) && isBuiltinConstructorIdentityName(name)) {
+  if (
+    (ctx.standalone || (noJsHost(ctx) && name === "ArrayBuffer")) &&
+    isBuiltinConstructorIdentityName(name) &&
+    (resolvedValueDeclaration === undefined || readsAmbientDeclaration)
+  ) {
     return emitBuiltinConstructorIdentity(ctx, fctx, name);
   }
 

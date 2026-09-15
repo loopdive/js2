@@ -63,6 +63,7 @@ import {
   buildArgumentVectorPushBody,
 } from "../runtime/wasmgc/values/argument-vector-bodies.js";
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
+import { buildTupleIndexReadArms } from "./tuple-index-read.js";
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { classObjectDisplayName } from "./class-static-metadata.js";
@@ -8849,7 +8850,12 @@ export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
     fn.body[1]?.op === "any.convert_extern" &&
     fn.body[2]?.op === "local.set"
   ) {
-    fn.body.splice(SETUP_LEN, 0, ...vecArms);
+    fn.body.splice(
+      SETUP_LEN,
+      0,
+      ...buildTupleIndexReadArms(ctx, (type) => boxVecElementToExternref(ctx, type)),
+      ...vecArms,
+    );
   } else {
     // Defensive: preamble shape changed — prepend the arms after a fresh setup
     // is not safe, so skip rather than risk an unbalanced body.

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -11,11 +12,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
 // @ts-expect-error — .mjs dogfood helpers have no declaration files
 import {
+  assertTypescriptBuildProbeInvocationSupported,
   publishTypescriptBuildProbeArtifact,
   publishTypescriptBuildProbeArtifactAfterExit,
   takeTypescriptBuildProbeArtifactCandidate,
@@ -23,6 +26,8 @@ import {
   typescriptBuildProbeErrorSummary,
   typescriptBuildProbeExitCode,
   typescriptBuildProbeSucceeded,
+  typescriptBuildProbeTarget,
+  typescriptBuildProbeTargetFromArgs,
   typescriptInvocationMatches,
 } from "./typescript-upstream-build-probe.mjs";
 // @ts-expect-error — .mjs dogfood helpers have no declaration files
@@ -37,13 +42,35 @@ function sha256(value: string) {
 }
 
 function passingSuiteReport() {
+  const selectedFiles = ["base64.ts", "comments.ts", "compilerCore.ts", "convertToBase64.ts", "parsePseudoBigInt.ts"];
+  const testCounts = [1, 3, 11, 5, 5];
+  const details = selectedFiles.map((file, index) => ({
+    file,
+    requestedTarget: "gc",
+    actualTarget: "gc",
+    targetMatches: true,
+    moduleImports: [] as Array<{ module: string; name: string; kind: string }>,
+    linkedModuleImports: [],
+    importPolicyMatches: true,
+    nativeTestCount: testCounts[index],
+    nativeStatusCount: testCounts[index],
+    wasmTestCount: testCounts[index],
+    wasmStatusCount: testCounts[index],
+  }));
   return {
     upstreamSuite: {
-      selectedFiles: ["base64.ts", "comments.ts", "convertToBase64.ts", "parsePseudoBigInt.ts"],
+      selectedFiles,
     },
-    extraction: { testsRegistered: 14, nativePassed: 14, nativeFailed: 0 },
-    compile: { modules: 4, succeeded: 4, validated: 4 },
-    results: { scored: 14, passed: 14, failed: 0, runtimeFailed: 0 },
+    extraction: { testsRegistered: 25, nativePassed: 25, nativeFailed: 0 },
+    compile: { modules: 5, succeeded: 5, validated: 5, details },
+    results: { scored: 25, passed: 25, failed: 0, runtimeFailed: 0 },
+    target: {
+      requestedTarget: "gc",
+      actualTargets: ["gc"],
+      importArtifacts: details.map(({ file }) => ({ file, artifact: "entry", moduleImportCount: 0 })),
+      moduleImportCount: 0,
+      zeroImports: true,
+    },
   };
 }
 
@@ -75,7 +102,7 @@ describe("TypeScript dogfood acceptance verdicts", () => {
     expect(JSON.stringify(message)).toBe('{"type":"result","binaryBytes":20}');
   });
 
-  it("keeps parser and binder diagnostic artifacts separate without moving the parser path", () => {
+  it("keeps workload, mode, and deployment-target diagnostic artifacts separate", () => {
     expect(typescriptBuildProbeArtifactPath("/fixtures/typescript-parser-workload.ts")).toBe(
       "/private/tmp/ts2wasm-typescript-parser-latest.wasm",
     );
@@ -91,9 +118,60 @@ describe("TypeScript dogfood acceptance verdicts", () => {
     expect(typescriptBuildProbeArtifactPath("/typescript/lib/typescript.js", "/artifacts", "bundle")).toBe(
       "/artifacts/ts2wasm-typescript-bundle-latest.wasm",
     );
+    expect(
+      typescriptBuildProbeArtifactPath("/fixtures/typescript-parser-workload.ts", "/private/tmp", null, "standalone"),
+    ).toBe("/private/tmp/ts2wasm-typescript-parser-standalone-latest.wasm");
+    expect(
+      typescriptBuildProbeArtifactPath(
+        "/typescript/src/typescript/typescript.ts",
+        "/artifacts",
+        "source",
+        "standalone",
+      ),
+    ).toBe("/artifacts/ts2wasm-typescript-source-standalone-latest.wasm");
     expect(typescriptBuildProbeArtifactPath("../../escape/evil workload.ts", "/artifacts", "../bundle")).toBe(
       "/artifacts/ts2wasm-evil-workload-bundle-latest.wasm",
     );
+  });
+
+  it("accepts only explicit deployment targets and limits standalone to static zero-argument oracles", () => {
+    expect(typescriptBuildProbeTarget(null)).toBe("gc");
+    expect(typescriptBuildProbeTarget("gc")).toBe("gc");
+    expect(typescriptBuildProbeTarget("standalone")).toBe("standalone");
+    expect(() => typescriptBuildProbeTarget(undefined)).toThrow("--target expects gc or standalone");
+    expect(() => typescriptBuildProbeTarget("wasi")).toThrow("--target expects gc or standalone");
+    expect(typescriptBuildProbeTargetFromArgs(["node", "probe.mjs"])).toBe("gc");
+    expect(typescriptBuildProbeTargetFromArgs(["node", "probe.mjs", "--target=standalone"])).toBe("standalone");
+    expect(() =>
+      typescriptBuildProbeTargetFromArgs(["node", "probe.mjs", "--target", "gc", "--target=standalone"]),
+    ).toThrow("--target may be specified only once");
+
+    expect(() => assertTypescriptBuildProbeInvocationSupported("gc", true)).not.toThrow();
+    expect(() => assertTypescriptBuildProbeInvocationSupported("standalone", false)).not.toThrow();
+    expect(() => assertTypescriptBuildProbeInvocationSupported("standalone", true, true)).not.toThrow();
+    expect(() => assertTypescriptBuildProbeInvocationSupported("standalone", true)).toThrow(
+      /supports only static --invoke-zero-case oracles/,
+    );
+  });
+
+  it("rejects legacy oracle flags that omit the export to invoke", () => {
+    const probe = fileURLToPath(new URL("./typescript-upstream-build-probe.mjs", import.meta.url));
+    for (const orphanedFlags of [
+      ["--invoke-string", "const x = 1;"],
+      ["--expected-number", "42"],
+      ["--invoke-string", "const x = 1;", "--expected-number", "42"],
+    ]) {
+      const result = spawnSync(
+        process.execPath,
+        [probe, "--root", tmpdir(), "--entry", "missing.ts", ...orphanedFlags, "--json"],
+        { encoding: "utf8" },
+      );
+      expect(result.status).toBe(1);
+      expect(`${result.stdout}\n${result.stderr}`).toContain(
+        "--invoke-string/--expected-number require --invoke-export",
+      );
+      expect(`${result.stdout}\n${result.stderr}`).not.toContain("entry does not exist");
+    }
   });
 
   it("publishes only accepted diagnostic artifacts and preserves the last-good pair on failure", () => {
@@ -426,20 +504,20 @@ describe("TypeScript dogfood acceptance verdicts", () => {
     expect(typescriptUpstreamReportSucceeded(passingSuiteReport())).toBe(true);
 
     const admittedFailure = passingSuiteReport();
-    admittedFailure.results.passed = 13;
+    admittedFailure.results.passed = 24;
     admittedFailure.results.failed = 1;
     expect(typescriptUpstreamReportSucceeded(admittedFailure)).toBe(false);
 
     const runtimeFailure = passingSuiteReport();
-    runtimeFailure.results.passed = 13;
+    runtimeFailure.results.passed = 24;
     runtimeFailure.results.runtimeFailed = 1;
     expect(typescriptUpstreamReportSucceeded(runtimeFailure)).toBe(false);
 
     const silentlyReduced = passingSuiteReport();
-    silentlyReduced.extraction.testsRegistered = 13;
-    silentlyReduced.extraction.nativePassed = 13;
-    silentlyReduced.results.scored = 13;
-    silentlyReduced.results.passed = 13;
+    silentlyReduced.extraction.testsRegistered = 24;
+    silentlyReduced.extraction.nativePassed = 24;
+    silentlyReduced.results.scored = 24;
+    silentlyReduced.results.passed = 24;
     expect(typescriptUpstreamReportSucceeded(silentlyReduced)).toBe(false);
 
     const empty = passingSuiteReport();
@@ -450,8 +528,20 @@ describe("TypeScript dogfood acceptance verdicts", () => {
     expect(typescriptUpstreamReportSucceeded(empty)).toBe(false);
 
     const invalidModule = passingSuiteReport();
-    invalidModule.compile.validated = 3;
+    invalidModule.compile.validated = 4;
     expect(typescriptUpstreamReportSucceeded(invalidModule)).toBe(false);
+
+    const missingTarget = passingSuiteReport() as ReturnType<typeof passingSuiteReport> & { target?: unknown };
+    missingTarget.target = undefined;
+    expect(typescriptUpstreamReportSucceeded(missingTarget)).toBe(false);
+
+    const runtimeCountMismatch = passingSuiteReport();
+    runtimeCountMismatch.compile.details[0]!.wasmTestCount = 2;
+    expect(typescriptUpstreamReportSucceeded(runtimeCountMismatch)).toBe(false);
+
+    const runtimeStatusCountMismatch = passingSuiteReport();
+    runtimeStatusCountMismatch.compile.details[0]!.wasmStatusCount = 2;
+    expect(typescriptUpstreamReportSucceeded(runtimeStatusCountMismatch)).toBe(false);
   });
 
   it("turns a rejected strict report verdict into a nonzero CLI status", async () => {
@@ -488,6 +578,66 @@ describe("TypeScript dogfood acceptance verdicts", () => {
     const missingInvocation = passingProbeResult();
     missingInvocation.invocation = undefined as unknown as { actual: number; expected: number; matches: boolean };
     expect(typescriptBuildProbeSucceeded(missingInvocation, true)).toBe(false);
+  });
+
+  it("requires coherent target provenance and zero Wasm imports for standalone acceptance", () => {
+    const standalone = {
+      ...passingProbeResult(),
+      requestedTarget: "standalone",
+      actualTarget: "standalone",
+      moduleImports: [],
+    };
+    expect(typescriptBuildProbeSucceeded(standalone, false, "standalone")).toBe(true);
+    expect(typescriptBuildProbeExitCode(standalone, false, false, 0, "standalone")).toBe(0);
+
+    expect(
+      typescriptBuildProbeSucceeded(
+        {
+          ...standalone,
+          moduleImports: [{ module: "env", name: "__console_log", kind: "function" }],
+        },
+        false,
+        "standalone",
+      ),
+    ).toBe(false);
+    expect(typescriptBuildProbeSucceeded({ ...standalone, actualTarget: "gc" }, false, "standalone")).toBe(false);
+    expect(typescriptBuildProbeSucceeded({ ...standalone, moduleImports: null }, false, "standalone")).toBe(false);
+
+    const gc = {
+      ...passingProbeResult(),
+      requestedTarget: "gc",
+      actualTarget: "gc",
+      moduleImports: [{ module: "env", name: "__console_log", kind: "function" }],
+    };
+    expect(typescriptBuildProbeSucceeded(gc, false, "gc")).toBe(true);
+    expect(typescriptBuildProbeSucceeded({ ...gc, requestedTarget: "standalone" }, false, "gc")).toBe(false);
+
+    const zeroArgumentOracle = {
+      ...standalone,
+      invocation: null,
+      invocations: [{ actual: 42, expected: 42, matches: true, zeroArguments: true }],
+    };
+    expect(typescriptBuildProbeSucceeded(zeroArgumentOracle, 1, "standalone")).toBe(true);
+    expect(
+      typescriptBuildProbeSucceeded(
+        {
+          ...zeroArgumentOracle,
+          invocations: [{ actual: 42, expected: 42, matches: true, zeroArguments: false }],
+        },
+        1,
+        "standalone",
+      ),
+    ).toBe(false);
+    expect(
+      typescriptBuildProbeSucceeded(
+        {
+          ...zeroArgumentOracle,
+          invocations: [{ actual: 42, expected: 42, matches: true }],
+        },
+        1,
+        "standalone",
+      ),
+    ).toBe(false);
   });
 
   it("recomputes every required parser oracle instead of trusting an aggregate verdict", () => {

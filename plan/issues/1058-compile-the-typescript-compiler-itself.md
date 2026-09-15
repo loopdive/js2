@@ -3,7 +3,7 @@ id: 1058
 title: "Compile the TypeScript compiler itself to Wasm — self-hosting stress test"
 status: in_progress
 created: 2026-04-11
-updated: 2026-09-05
+updated: 2026-09-08
 priority: high
 feasibility: hard
 model: fable
@@ -13,6 +13,33 @@ sprint: Backlog
 depends_on: [1042, 1044, 1046]
 required_by: [1059, 1066, 1165, 1584]
 loc-budget-allow:
+  # 2026-09-08: typed ref-cell construction keeps logical dynamic payloads
+  # intact until carrier resolution; the scalar API delegates to this builder.
+  - src/ir/builder.ts
+  # 2026-09-08: +14 lines declare source object field order, callable-field
+  # allocation metadata and equality; allocation logic remains in leaf modules.
+  - src/ir/nodes.ts
+  # 2026-09-08: +2 lines each to import/call the shared declaration-only
+  # return-suffix normalizer. Implementation stays in its own small IR module.
+  - src/ir/select.ts
+  - src/ir/from-ast.ts
+  # 2026-09-08: pass the existing ref-cell registry into prepared callable slots (+1 line).
+  - src/ir/integration.ts
+  # Wire the receiver-aware variadic Function.prototype.call body.
+  - src/codegen/array-object-proto.ts
+  # Open index-signature objects must use runtime own-property enumeration.
+  - src/codegen/object-ops.ts
+  # Reified Date.now shares the direct-call clock policy instead of throwing.
+  - src/codegen/builtin-value-read.ts
+  # Source-level Map.get values must leave the kernel's anyref storage plane.
+  - src/codegen/map-runtime.ts
+  # The for-of planner shares the generator's region/unwind cursor; its
+  # instruction emitter is isolated in generators-native-for-of.ts.
+  - src/codegen/generators-native.ts
+  - src/codegen/generators-native-consumer.ts
+  # Preserve undefined versus null in the native JSON value dispatcher.
+  - src/codegen/json-codec-native.ts
+  - src/codegen/expressions/call-namespace-static.ts
   # 2026-08-29: the deferred object-literal method install (the Tier-3
   # createIdentifier null-deref fix) adds the patch-up block to
   # compileObjectLiteralForStruct.
@@ -60,6 +87,10 @@ loc-budget-allow:
   - src/codegen/generic-callback-result.ts
   - src/codegen/generic-struct-factory.ts
   - src/codegen/module-scale-profile.ts
+  # 2026-09-05: direct Program/namespace functions now share the same
+  # optional-scalar forwarding analysis as lifted declarations, so a parser
+  # helper can preserve its incoming argc before forwarding an optional flag.
+  - src/codegen/function-body.ts
   # 2026-09-01: the binder runtime reaches TypeScript's bounded
   # `Debug[AssertionKeys]` self-replacement protocol. The namespace-value
   # subsystem now materializes that checker-proven callable projection.
@@ -75,6 +106,37 @@ loc-budget-allow:
   # identity so parser metadata survives element-type widening.
   - src/runtime.ts
 func-budget-allow:
+  # 2026-09-08: +9 lines detect/reserve the canonical undefined IR provider
+  # before lowering; its adapter implementation stays in a separate module.
+  - src/ir/integration.ts::preregisterDynamicSupport
+  # 2026-09-08: +29 lines wire late-placeholder lifetime, withdrawn lifted
+  # families and deferred binding of reused unpublished candidate slots.
+  - src/ir/integration.ts::compileIrPathFunctions
+  # 2026-09-08: one normalization call shared with the AST lowerer; no inline algorithm.
+  - src/ir/select.ts::isPhase1StatementListInScope
+  # Select the extracted native collection-size reader for an optional chain's saved receiver.
+  - src/codegen/property-access.ts::compileOptionalPropertyAccess
+  # Four additional hash instructions honor the string view's length/offset.
+  - src/codegen/map-runtime.ts::ensureMapHelpers
+  - src/codegen/array-object-proto.ts::makeGlue
+  - src/codegen/object-ops.ts::compileObjectKeysOrValues
+  # Twelve lines select Date.now's existing clock policy in the static closure owner.
+  - src/codegen/builtin-value-read.ts::ensureStandaloneBuiltinStaticMethodClosure
+  # Captured native Set lookup is extracted; the optional-call owner must
+  # select its boxed boolean/undefined branch result and admit abstract refs.
+  - src/codegen/expressions/calls-optional.ts::compileOptionalCallExpression
+  # Register tuple numeric-index arms in the existing finalize-time reader.
+  - src/codegen/object-runtime.ts::fillExternGetIdxVecArms
+  - src/codegen/generators-native.ts::buildNativeGeneratorPlan
+  - src/codegen/generators-native.ts::compileState
+  - src/codegen/json-codec-native.ts::emitJsonStringifyValue
+  # 2026-09-05: prototype presence/storage and inherited lookup share the
+  # existing vec side-table reserve/fill lifecycle; native operation wiring
+  # is kept separately in vec-prototype.ts.
+  - src/codegen/vec-props.ts::fillVecPropHelpers
+  - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
+  # Resolve user-defined Buffer bindings before the generic builtin fallback.
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
   # 2026-09-01: the standalone apply bridge rejects a local closure whose live
   # declared arity exceeds its fixed eight-position ABI while preserving the
   # existing full-vector linked/native fallback.
@@ -165,6 +227,1540 @@ oracle-ratchet-allow:
   - src/codegen/closures/callback-classification.ts
 ---
 # #1058 — Compile the TypeScript compiler to Wasm (self-hosting stress test)
+
+## Main synchronization check — 2026-09-08
+
+### Full-source upstream unit expansion
+
+After the main sync, add a separate source-module runner for the unmodified
+upstream `factory.ts` (three callbacks) and `diagnosticCollection.ts` (five).
+These import the real compiler namespace with consumer-driven barrel resolution,
+not the utility projection. The established 25-test gate is unchanged; these
+new files are exploratory until native and zero-import Wasm results agree.
+Command: `node --import tsx tests/dogfood/typescript-source-unit-suite.mjs factory`.
+The runner retains every original assertion and has an explicit callback floor.
+
+Native source reference is bundled with esbuild (including Node globals needed
+by upstream `sys` initialization); the Wasm input remains the source graph.
+Direct native execution passes **3/3 factory** and **5/5 diagnostic collection**
+callbacks. The new verdict rejects partial callbacks, wrong target, failed
+validation, and entry or linked-module imports. Harness controls pass **24/24**
+(`.tmp/ts5-source-suite-controls.log`); the final verdict-only rerun passes 3/3.
+
+Both initial full-source runs completed: factory compiles and validates at
+**63,631,844 bytes / zero imports / 408,182 ms**, but **0/3 Wasm tests pass**;
+diagnostic collection compiles and validates at **89,253,806 bytes / zero imports
+/ 399,899 ms**, but **0/5 Wasm tests pass**. Logs are
+`.tmp/ts5-source-factory.log` and `.tmp/ts5-source-diagnostics.log`; both drivers
+exit 1. All eight throw opaque WebAssembly exceptions, not assertion passes.
+These source results do not increase the accepted 25-test count.
+
+Checkpoint `07a6a23cadc41e` records the new runner. Typecheck passed before the
+diagnostic addition (`.tmp/ts5-source-suite-typecheck.log`). The next run adds
+guest-side message capture, rethrows the same exception, and exposes text through
+bounded numeric UTF-16 exports. No host imports or assertion changes. Its raw
+Wasm sentinel verifies that the exception still escapes and its exact message
+is readable; the diagnostic/worker controls pass **10/10**
+(`.tmp/ts5-source-error-controls.log`). Typecheck after the diagnostic addition
+also passes (`.tmp/ts5-source-errors-typecheck.log`).
+
+Instrumented factory run completed in **158,195 ms**, valid **63,632,570-byte**
+standalone module, **zero imports**, still **0/3 Wasm / 3/3 native**. Each guest
+message says `Cannot access property on null or undefined`, at generated
+819:27, 849:23, and 860:25: respectively the FIRST `ts.factory` access in each
+callback (`createClassExpression`, `createObjectLiteralExpression`, and
+`createIdentifier`). This is before any parenthesizing assertion. Next reduce
+the namespace-imported exported factory value/initialization path; do not infer
+the diagnostic-collection failure has the same cause without its own evidence.
+Log: `.tmp/ts5-source-factory-error-text.log`; persistent report:
+`tests/dogfood/report/typescript-source-unit-factory.json`. All compilation and
+typecheck processes from this expansion are terminal; no live handle to resume.
+
+Reduced the factory failure to a module exporting an accessor-bearing factory
+alongside an unrelated mutable export. Both direct and barrel namespace imports
+trap before the fix (**0/2**). Namespace-object materialization deliberately
+declines when it cannot publish live bindings, but static variable reads also
+declined source-module namespaces and fell through to a null receiver.
+`tryEmitRuntimeNamespaceVariableValue` now resolves exact source-module export
+declarations through the oracle and reads their program-ABI global, retaining
+the dynamic TDZ check. Ambient and non-top-level declarations still decline;
+the existing runtime-namespace ownership checks remain unchanged. The reduced
+cases now pass **2/2**, zero imports, and the LOC/function gates pass without
+new allowances. Added a same-named cross-module live-binding control as well.
+
+Namespace fix checkpoint: `59dad92583ede4`. Real-source reruns are terminal:
+factory **74714** (`.tmp/ts5-source-factory-binding.log`) compiles/validates in
+184,181 ms at 63,616,239 bytes, zero imports, still **0/3 Wasm / 3/3 native**.
+Its first/third failures moved past the initial factory reads to
+`ts.SyntaxKind.StaticKeyword` (generated 820:78) and `ts.SyntaxKind.CommaToken`
+(874:22). The second advances into `createArrowFunction`, where it traps with
+an illegal cast (wasm-function 3010 at 0xdd4e8d, through
+`__fn_tramp_createArrowFunction_1383`). Diagnostics **38802**
+(`.tmp/ts5-source-diagnostics-binding.log`) compiles/validates in 236,473 ms at
+89,255,662 bytes, zero imports, still **0/5 Wasm / 5/5 native**. All five fail
+at `ts.ScriptTarget.ESNext` on the first `createSourceFile` call (generated
+808:73, 830:73, 862:73, 885:73, 904:73). Next reduce qualified namespace enum
+reads, then the arrow-factory cast separately. No imported-factory failure
+remains at the original three sites; no new upstream pass is claimed.
+
+Namespace controls pass **19/19**
+(`.tmp/ts5-namespace-value-controls.log`), including exact cross-module identity,
+existing namespace constructor controls and TDZ. Typecheck and scoped lint pass
+(`.tmp/ts5-namespace-value-typecheck.log`). All runs from this expansion are now
+terminal. The qualified enum dispatch currently calls `getConstantValue` in
+`property-access-dispatch.ts`; inspect its receiver guard before changing it.
+
+### Qualified const enum reads — 2026-09-08
+
+Both direct and barrel imports of `ts.Kind.Next` / `ts.Kind.Text` reproduce
+the null-namespace failure (**0/2 before**). The exact const-enum member branch
+was enclosed in an identifier-only receiver guard, excluding `ts.SyntaxKind`.
+It now accepts statically proven namespace qualification via
+`static-enum-receiver.ts`. Qualification must resolve to namespace imports or
+module declarations, not calls, getters or ordinary object bindings; the
+existing exact const-enum declaration check and constant-value emission remain.
+Direct/barrel reductions plus the existing nested const enum test pass **3/3**;
+LOC/function gates pass without new allowances.
+
+The enum-fixed source runs completed. Factory compiles/validates at 63,606,833
+bytes, zero imports, 172,239 ms, still **0/3 Wasm / 3/3 native**. Its first case
+now reaches a null dereference in the parenthesizer trampoline, the second still
+traps inside `createArrowFunction`, and the third reaches `ts.Debug.formatSyntaxKind`
+(generated 806:60), another nested namespace value path. Log:
+`.tmp/ts5-source-factory-enum.log`. Diagnostics now fails compilation after
+179,705 ms with `Maximum call stack size exceeded (at src/codegen/fixups.ts:207:17)`
+(`.tmp/ts5-source-diagnostics-enum.log`); no binary or new pass is claimed.
+Expanded enum/worker controls pass **12/12**, and typecheck passes.
+
+The fixup recursion independently reproduces at 20,000 nested shared instruction
+bodies (the 28-level and cross-function safety controls pass before the fix).
+`repairBody` now uses an explicit child-first stack and a separate unchanged
+pattern scan. It marks physical arrays on entry, preserves first-owner order,
+and retains the cross-function refusal/diagnostic before traversal. Its child
+enumerator is shared with the ownership scan and also covers `catchAll`.
+Initial fixup controls pass **16/16**, including the deep graph; function/LOC
+gates pass without new allowances. Added idempotence and catch-all coverage.
+
+Both full-source retries completed, confirming stack-safe diagnostic compilation:
+**89,252,855 bytes / validates / zero imports / 220,668 ms**, but still **0/5 Wasm
+/ 5/5 native**. All five now reach `createDiagnosticForNode` and null-dereference;
+the nearest source mapping is utilities.ts:2364 (`getSourceFileOfNode(node)`).
+Log: `.tmp/ts5-source-diagnostics-stack-safe.log`. Next distinguish an absent
+statement from a broken parent chain or diagnostic argument carrier; the shared
+error signature alone does not prove which value is null.
+
+Factory remains **0/3 Wasm / 3/3 native**, with a valid zero-import 63,606,837-byte
+module in 164,782 ms (`.tmp/ts5-source-factory-locations.log`). The arrow cast
+maps to nodeFactory.ts:3260, the parenthesizer call/body assignment. The first
+failure is in `__fn_tramp_parenthesizeExpressionOfExportDefault_675`; its mapping
+lands on parenthesizerRules.ts:668 (a different sibling), so treat that source
+location as approximate rather than attributing the failure to that statement.
+The third still fails at the original assertion's `ts.Debug.formatSyntaxKind`
+read (generated 806:60). Investigate qualified runtime namespace function reads
+and the lazily created parenthesizer's captured factory independently.
+
+Final controls pass **21/21**, and typecheck passes (logs
+`.tmp/ts5-enum-stack-final-controls.log`, `.tmp/ts5-enum-stack-typecheck.log`).
+The final catch-all fixture/idempotence rerun passes **4/4**
+(`.tmp/ts5-fixups-last-controls.log`). Source and regression formatting, scoped
+lint, and function/LOC gates pass. No allowances or upstream assertions changed.
+All handles from this turn are terminal. No additional upstream passes claimed;
+the established projected suite remains the previously verified 25/25, with the
+remaining full 256-file requirement and self-hosting goal still open.
+
+### Qualified namespace and parenthesizer triage (2026-09-08, uncommitted)
+
+Qualified runtime namespace reads/calls now use the static namespace proof for
+`ts.Debug.format`, mutable `ts.Debug.enabled`, and direct calls. Direct/barrel
+regressions improved from 0/2 to 2/2; focused namespace controls pass 21/21
+(`.tmp/ts5-qualified-runtime-final.log`). Typecheck completed successfully
+(`.tmp/ts5-qualified-runtime-typecheck.log`). Full factory remains 0/3 Wasm
+versus 3/3 native, but the third failure advances into debug.ts:445, which
+reflects `(ts as any).SyntaxKind`; runtime enum objects remain unsupported.
+The zero-import factory module validates (63,605,817 bytes).
+
+Full-source parser-parent triage passes 3/3: statement existence, parent
+identity, and `getSourceFileOfNode` identity (83,351,219-byte valid zero-import
+module; `.tmp/ts5-source-node-parent.log`). This rules out a universally broken
+parent chain, not the full diagnostic unit's argument transport.
+
+The shorter-arity parenthesizer fixture fails in both GC and standalone.
+Standalone inspection independently gives realRules failure / nullRules=421;
+disabling experimental IR retains the same result. Staged instrumentation
+shows the memoizer callback returns, but the real parenthesizer method is never
+entered. Generated Wasm proves the caller dispatch expects `(Node, i32)`, while
+the named callback wrapper has `(Node, externref)`. The optional-declaration
+parameter policy widens the implementation boolean, whereas
+`compileCallablePropertyCall` resolves its interface parameter directly to i32.
+The reference-only candidate bridge rejects that scalar/externref mismatch.
+
+Diagnostic A/B on the current working tree, standalone raw Wasm, same extracted
+fixture and compiler: changing only `optionalChain?: boolean` to required
+`optionalChain: boolean` makes realRules=421 and nullRules=421 (2/2).
+Logs: `.tmp/ts5-parenthesizer-no-ir.log`, `.tmp/ts5-parenthesizer-stage2.log`,
+`.tmp/ts5-parenthesizer-required.log`; inspector
+`.tmp/ts5-inspect-parenthesizer.mts`. This is diagnostic evidence, NOT a source
+workaround or an upstream pass. Preserve optionality in the actual fix and cover
+named/arrow callbacks, boolean/number values, missing arguments, and side effects.
+Do not assume this optional-boolean defect explains every full factory failure.
+All processes started during this triage are terminal. Full upstream unit-suite
+acceptance and self-hosting remain unfinished.
+
+### Optional callable ABI implementation (2026-09-08, uncommitted)
+
+Callable property and element signature lowering now applies the same optional
+scalar policy as named declaration wrappers. Arrow/function-expression wrappers
+also apply that policy, and explicit scalar `T | undefined` syntax retains the
+dynamic carrier just like `T?`. The latter is required by TypeScript's scanner:
+its interface uses optional parameters while its implementation uses explicit
+undefined unions. Native annotations and parameters with defaults keep the
+existing policy. No runtime dispatch fallback or upstream source workaround was
+added.
+
+The original real/null parenthesizer regression passes in GC and standalone
+(2/2). New optional-property tests exercise named and arrow boolean/number
+callbacks, omission, explicit undefined, false/true/zero, and side-effect count;
+they pass in both lanes. Array-held optional callbacks also pass (2/2 updated
+tests, `.tmp/ts5-optional-elements.log`). Broader controls pass 27/27 across
+eight files (`.tmp/ts5-optional-abi-final-controls.log`), plus optional direct
+closure calls 2/2. An intermediate arrow-only NaN result and scanner-padding
+failure drove the uniform ABI policy; both now pass.
+
+An additional legacy `tests/optional-params.test.ts` run fails 3/3 during host
+instantiation because it supplies only hand-written console imports and omits
+the generated `string_constants` imports. Its first expected value also treats
+`10 + undefined` as 10 rather than NaN. It was not changed or counted as passing;
+baseline attribution has not been measured. Final post-element-edit scoped lint,
+typecheck, diff whitespace check, and LOC/function gates pass (logs
+`.tmp/ts5-optional-abi-complete-{typecheck,loc,func}.log`).
+
+The first full-source factory retry, launched before the arrow/union alignment,
+compiled a valid zero-import 63,092,533-byte module but remains 0/3 Wasm versus
+3/3 native (`.tmp/ts5-source-factory-optional-abi.log`, 163,987 ms). Same three
+runtime boundaries remain, so the reduced fix is not evidence that the full
+factory failures are resolved. The aligned retry completed: valid zero-import
+62,956,028-byte module, 155,404 ms, still 0/3 Wasm versus 3/3 native, with the
+same null-pointer, arrow-body cast, and debug enum-reflection failures. Log:
+`.tmp/ts5-source-factory-optional-abi-final.log`; it started before the final
+element-access alignment. All processes from this implementation turn are now
+terminal. Next isolate the actual full-source factory node/callback carrier,
+not the already-fixed reduced optional-parameter mismatch.
+
+### IR-first alignment directive (2026-09-08)
+
+User direction: align this work with the new IR path early to avoid duplicate
+implementation. Before the next compiler fix, identify which failing source
+functions are selected/prepared by IR and which fall back, including the reason
+for that fallback. The production compiler defaults `experimentalIR` on
+(`src/compiler.ts`), so existing source probes already enable the IR overlay;
+that does not prove a particular failing function is IR-owned.
+
+Prefer fixes in shared semantic/callable ABI planning or the prepared IR
+lowering path. Reuse exact prepared callable bindings and component ownership
+instead of adding another legacy dispatch heuristic. If a missing IR capability
+prevents the real TypeScript function from using that path, assess closing that
+gap before extending legacy emission. Keep a legacy-only change only where the
+measured current execution boundary requires it, and document why. Preserve the
+existing standalone no-import and upstream correctness oracles; do not equate
+enabling IR with proving its ownership or widening claims without preparation.
+Relevant integration points: `src/ir/prepared-callable-resolution.ts`,
+`src/ir/integration-options.ts`, and `src/codegen/ir-legacy-caller-abi.ts`.
+The latter deliberately excludes optional/default/rest signatures from its
+syntax-only cross-path ABI certification; do not relax that guard speculatively.
+
+IR ownership measurement is now wired into the source-build worker behind
+`JS2WASM_TYPESCRIPT_PROBE_IR_OUTCOMES=1`: it requests the compiler's existing
+`trackIrOutcomes` ledger and preserves the complete rows in the result. Missing
+ledger data is null, not a fabricated empty success. Acceptance logic is
+unchanged. A fresh run compares cached and freshly constructed parenthesizer
+rules (session 3860, `.tmp/ts5-factory-ir-ownership.log`) while collecting the
+source-qualified emission/refusal evidence. This run completed with a valid
+60,002,638-byte zero-import module (154,146 ms), but 0/4 checks pass: fresh rules
+and cached rules have identical concise-body cast and export null-pointer
+failures. The cache is not necessary to trigger the defect.
+
+The full-source ledger contains 607 rows, 578 reporting legacy body emission,
+and zero reporting IR body emission. `memoize` is rejected for type parameters;
+`createParenthesizerRules` and `createNodeFactory` report body-shape rejection,
+with direct-body=1 / IR-body=0. Nested parenthesizer functions have no separate
+rows here, so do not invent individual nested-unit ownership receipts. A
+standalone scalar positive control (`add(19,23)=42`) reports one prepared
+IR-emitted function, direct-body=0 / IR-body=1, validating that the observation
+path can report actual IR ownership (`.tmp/ts5-ir-ownership-positive.log`).
+
+Reduced shape diagnostics (`.tmp/ts5-reduced-ir-shape.log`) identify
+`nontail-unhandled-stmt:ReturnStatement` for createParenthesizerRules: returning
+the method table before nested declarations is outside the current sequential
+statement-list selection/lowering contract. createNodeFactory rejects at
+`closure-return-type:ArrowFunction`; memoize rejects generic parameters.
+`src/ir/select.ts` and `src/ir/from-ast.ts` currently process nested declarations
+in statement order. A safe IR-first next slice therefore needs matching
+declaration-hoisting/capture and selector/lowerer support, not merely removing
+the return rejection. Evaluate that slice before more legacy-specific fixes;
+retain the actual-source cached/fresh and no-wrap controls as correctness
+oracles. The current evidence does not yet identify the exact failing capture
+or return-carrier instruction.
+
+Harness verdict controls pass 18/18; formatting, scoped lint, and whitespace
+checks pass. All processes from this measurement turn are terminal. No new
+upstream unit passes or IR coverage gains claimed.
+
+### IR declaration-only return suffix (2026-09-08, uncommitted)
+
+Added shared `src/ir/tail-function-declarations.ts` ordering used by both
+selection and AST-to-IR lowering. A declaration-only function suffix following
+the final return is presented before that return, retaining original AST node
+identities and leaving every executable statement in order. This addresses the
+measured non-tail-return gate without changing legacy code or relaxing
+preparation proofs. It is not general declaration hoisting across executable
+statements.
+
+The standalone immutable-capture witness now returns 42 and records a prepared
+IR-emitted owner with no direct body emission. The mutable-local witness returns
+42 through the existing fallback: the builder refuses a slot capture as
+`captures non-local binding "offset"`. That unresolved capture-storage gap is
+explicitly tested, not replaced with an unsafe value snapshot. Added AST identity,
+idempotence, and executable-suffix controls. Existing returned/lifted closure
+ownership controls plus the initial witnesses pass 11/11 across three files.
+The final helper/runtime rerun passes 3/3, typecheck and scoped lint pass, and
+the projected standalone adapter remains 25/25 with 251/256 files deferred.
+Logs `.tmp/ts5-ir-tail-*` and `.tmp/ts5-projected-after-ir-tail.log`.
+Size gates initially rejected +2 integration lines in each large IR file and
++1 line in the selector function. Added explicit change-scoped allowances above
+for those import/call sites only; the algorithm lives in the new 15-line module.
+No baseline budget file was changed. Both gate reruns passed; all processes
+started in this IR implementation turn are terminal. Changes are uncommitted.
+
+The reduced actual parenthesizer shape advances beyond its non-tail-return
+refusal but is still rejected inside nested-function checking; its optional
+parameter and broader callable/object shape are not newly supported. No full
+TypeScript factory IR claim or upstream pass is inferred from this first slice.
+Next align nested optional signatures/capture storage with shared ABI planning,
+then remeasure the full-source ownership ledger before extending legacy code.
+
+### IR named method-table boundary investigation (2026-09-08, in progress)
+
+Post-PR continuation: rerun the original full-source factory unit file against
+f350cf36dc5bbf (`.tmp/ts5-factory-after-pr5753.log`). In parallel investigate the
+IR failed-owner placeholder defect exposed by the method-table experiment:
+late synthetic allocations use type index zero, which may name a struct rather
+than a function. The cleanup deliberately declines non-function types, leaving
+an invalid retained artifact. Prove this with an unmodified-selector witness
+before changing placeholder allocation; keep ABI withdrawal intact.
+The fresh full-source run remains **0/3 Wasm, 3/3 native**, with a valid
+62,956,028-byte standalone module, zero imports and 152,298 ms compilation.
+The errors remain default-export parenthesizer null dereference, arrow factory
+illegal cast and enum-formatting null access; no factory-unit gain is claimed.
+
+Reduced withdrawal witness now reproduces the defect without extending the
+selector: an out-of-order numeric object return and captured nested `add`
+withdraw on ABI parity, stranding `make__nested_add_0` at a non-function type
+zero (`.tmp/ts5-ir-withdrawal-direct.log`). Fix uses a valid temporary empty
+function signature and an explicit unsettled-late-unit set to defer publication
+of that provisional signature. Merely making type zero valid was insufficient:
+it first falsely published the provisional source binding, then exposed an
+inlined caller using a withdrawn lifted callee and returning 3 instead of 5.
+The same source with IR disabled returns 5 (`.tmp/ts5-ir-withdrawal-ab.log`).
+
+The ABI-withdrawal set now includes the failed owner's lifted artifact units,
+so callers retaining such references after inlining withdraw together. This
+keeps the existing parity guard and healthy-owner behavior intact. Controls
+pass **26/26 across five files** (`.tmp/ts5-ir-withdrawal-family.log`), and the
+final 2/2 regression asserts both runtime parity and make/run withdrawal
+(`.tmp/ts5-ir-withdrawal-final.log`). The local patch is not yet published.
+
+Next IR prerequisite: object construction currently assumes canonical logical
+field order equals physical layout order, whereas get/set already consult the
+resolver. Test and correct construction using an explicit reversed layout,
+including mixed field types and observable operand order. Do not change
+anonymous-struct selection by guessing the first order-insensitive match:
+the registry also publishes declared shapes and method-signature metadata.
+Both closure preparation and final lowering will need the same exact source
+layout binding before the production factory can use this capability.
+The broader bytecode control exposed an outdated hand-built call reference
+without the now-required binding (the same dereference exists at HEAD).
+Update that fixture to an exact test unit reference without changing its
+expected opcode sequence; also exercise reordered objects through the real
+bytecode lowerer/VM, not just the emitter's primitive unit tests.
+
+IR construction now uses a validated physical-index permutation supplied by
+the resolver (`src/ir/object-construction-order.ts`); logical shape ordering
+and both production object registries are unchanged. The before-patch reduced
+Wasm witness returned `[23,17]` instead of `[17,23]` with equal field types and
+failed validation with mixed i32/f64 fields
+(`.tmp/ts5-ir-object-order-before.log`). Afterward the real IR lowerer passes
+reversed/canonical layouts, mixed types, repeated side-effectful calls,
+mutation, invalid indexes, and the bytecode VM: **13/13 new tests**.
+Combined controls pass **45/45 across four files**
+(`.tmp/ts5-ir-object-order-final.log`). Source typecheck, scoped lint/format,
+LOC/function budgets and diff checks pass. The selected standalone adapter
+remains **25/25, 251/256 files deferred**
+(`.tmp/ts5-ir-object-order-projected.log`); no new full-source factory gain is
+claimed. The factory's latest full-source measurement remains 0/3 Wasm vs
+3/3 native. These changes and the withdrawal fix remain local/uncommitted.
+
+Resume at the source-to-IR object carrier binding: `IrObjectShape` currently
+contains only canonical fields, while `ObjectStructRegistry` and
+`prepareClosureObjectType` independently choose an exact order-sensitive hash.
+Carry an exact source ABI layout through preparation into both resolvers;
+do not replace either with an ambiguous registry scan. The new construction
+permutation can then consume that layout without corrupting field values.
+
+Source-order experiment in progress: carry the exact declared data-field order
+beside canonical logical fields, use it in both existing order-sensitive
+allocation keys and callable support keys, and contextualize object literals
+from their expected object type. No registry scan, new checker query, or legacy
+emission change. Distinguish representation-incompatible orders in IR equality
+so an unconverted value cannot silently cross the boundary. Verify annotated
+returns, parameters, nested shapes and closure signatures; retain a genuinely
+late withdrawal witness for the earlier cleanup defect.
+
+Source-order checkpoint implemented (2026-09-08): `IrObjectShape.fieldOrder`
+retains declared data order while logical fields stay sorted. Both object
+allocators consume that order. IR equality, monomorphization keys and prepared
+object-support keys distinguish incompatible representations; the final object
+registry uses the same complete support key, including scalar brands.
+Contextual object literals inherit the declared shape, including nested fields.
+The shared source data-hash implementation moved unchanged to
+`src/codegen/registry/data-fields-key.ts`; both IR copies now use it. ABI debug
+proved two additional drifts: IR dropped boolean branding, and hashed nested
+references after widening them to nullable storage. Both are corrected on the
+IR path, with storage widening still performed after computing the source key.
+
+Five source-level regression fixtures (not upstream compiler tests) now execute
+their selected owner through IR: captured nested-function return, mixed-field
+argument, object captured by an explicitly typed escaped closure, nested
+layouts, and two different declared orders in one module. These are late IR
+overlays where indicated by the ledger, not a claim of zero direct emission.
+Metadata/key and malformed-order checks bring the new source-layout file to
+**7/7**. Final combined controls pass **56/56 across six files**
+(`.tmp/ts5-ir-source-order-final-verified.log`), including actual Wasm and
+bytecode execution. Typecheck completes successfully
+(`.tmp/ts5-ir-source-order-typecheck-final.log`); scoped lint/format,
+LOC/function budgets and the oracle ratchet pass without new checker-query
+allowances. The selected standalone upstream adapter remains **25/25 with
+251/256 files deferred** (`.tmp/ts5-ir-source-order-projected.log`).
+
+The original annotated withdrawal witness now succeeds in IR. An inferred
+return variant was rejected before lowering, and polymorphic variants either
+used early IR or converged; none was accepted as a withdrawal control. The
+regression now injects a valid-but-incompatible lowered signature for the
+late `make` owner only, leaving original source/runtime assertions unchanged.
+Removal controls prove it remains load-bearing: removing valid placeholder
+types causes the retained nested function to reference non-function type zero
+(`.tmp/ts5-ir-fault-withdrawal-no-valid-placeholder.log`); removing lifted-family
+withdrawal returns **3 instead of 5**
+(`.tmp/ts5-ir-fault-withdrawal-no-family.log`). Both implementations were
+restored before final validation.
+
+Fresh full-source factory run remains **0/3 Wasm vs 3/3 native**: valid
+62,956,028-byte standalone module, zero imports, 156,175 ms compile
+(`.tmp/ts5-ir-source-order-full-factory.log`). It began before the final
+object-cache-key consolidation, so this is that source-order checkpoint's
+measurement, not a full-suite claim for later edits. Errors remain the same
+default-export null dereference, arrow-function illegal cast and enum-format
+null access. Next: typed callable fields in returned method tables, exact
+callable packing/signature keys, then renewed real factory ownership/runtime
+measurement. Inferred object-return selection and unannotated arrow admission
+remain separate gaps; do not blanket-admit them or mark this issue complete.
+
+Callable-field continuation (2026-09-08): the actual
+`ParenthesizerRules` interface uses method signatures, overloads, recursive
+node types, optional parameters and higher-order returns. Primitive method
+tables alone therefore cannot establish real-factory coverage. First make the
+existing named-table witness require IR execution, then connect explicit
+function/method signatures, canonical callable packing, and the source
+method-signature hash suffix. Keep unsupported overload/recursive signatures
+explicit; do not make an erased externref field masquerade as an exact closure.
+
+Primitive callable-field checkpoint implemented on the **IR path**: explicit
+function-property and method signatures map to exact IR callables; returned
+named closures are packed at the declared object boundary. Source-order method
+hashes and declared-interface allocation metadata preserve the existing source
+layout contract. The `src/codegen/index.ts` changes are the source-to-IR bridge,
+not a new legacy direct-emission implementation.
+
+Validation: **28/28 tests across four files** pass, including actual IR owner
+execution for anonymous and named-interface tables, shared captured state,
+layout/withdrawal controls, and unsupported-signature/key checks
+(`.tmp/ts5-ir-callable-field-validated.log`). Source typecheck, scoped formatting
+and lint, LOC/function budgets, oracle and coercion ratchets pass. The selected
+standalone upstream adapter remains **25/25**, with **251 upstream files
+explicitly deferred** (`.tmp/ts5-ir-callable-projected.log`). The full-source
+factory has **not** been remeasured for this checkpoint; its previous 0/3 Wasm
+result above remains the last measurement. Next: receiver-sensitive negative
+runtime controls, richer callable signatures/recursive source carriers, then
+real factory ownership and original-assertion validation. Do not infer full
+TypeScript factory support from these primitive table witnesses.
+
+Next validation pass (2026-09-08, in progress): rerun the complete factory
+source graph with IR ownership reporting on the published callable-field
+checkpoint, retaining all three original assertions. Add an IR-enabled versus
+disabled receiver-sensitive table control before expanding callable admission.
+The complete run remains 0/3 Wasm versus 3/3 native (62,956,028 bytes,
+157,595 ms, valid, zero imports; `.tmp/ts5-ir-callable-full-factory.log`).
+Its ownership field was absent: the full-source unit driver uses
+`upstream-suite-compile-worker.mjs`, not the build-probe worker that already
+supports the opt-in flag. Wire the same existing compiler ledger into this
+driver, preserve null for unavailable data, and verify it with an actually
+IR-emitted positive control before rerunning the graph. No acceptance changes.
+
+Completed ledger retry: **661 rows, zero IR-emitted rows, 633 legacy-emitted
+rows**. The 607-row measurement above used a different triage entrypoint and
+is not the denominator for this original-unit graph. `memoize` and
+`memoizeOne` reject generic parameters; `createParenthesizerRules` and
+`createNodeFactory` reject body shape, all at selection. The complete factory
+again measures **0/3 Wasm vs 3/3 native**, valid 62,956,028 bytes, zero imports,
+155,936 ms (`.tmp/ts5-ir-source-ledger-factory.log`). Do not infer actual-source
+IR coverage from the primitive table controls. Next obtain the current precise
+shape-rejection arms for these original functions, then close their source
+carrier/signature preparation gaps rather than adding more primitive-only
+witnesses or another direct-emission workaround.
+
+The driver now requests/preserves the existing ledger in both source/project
+compilation modes only when opted in. Unavailable data stays null; default
+reports remain unchanged. An actual `upstreamTestCount` IR emission proves the
+project-worker reporting path. Worker and receiver controls pass **14/14**
+(`.tmp/ts5-ir-source-ledger-controls.log`); runner/protocol controls pass
+**25/25** (`.tmp/ts5-ir-source-ledger-protocol.log`). The receiver-sensitive
+table returns 42 with IR enabled and disabled; its owner safely declines IR.
+Formatting, scoped lint and whitespace checks pass. All processes are terminal.
+
+Precise original-source selection pass (2026-09-08, in progress): run the
+same factory driver with both the verified ownership ledger and
+`JS2WASM_IR_SHAPE_DIAG=1`. Check the actual first refusal before changing
+local interface erasure, uninitialized cache variables, or closure annotations;
+source-text candidates alone do not establish which transformed node is seen
+by the production selector.
+The measured first refusal is `nontail-unhandled-stmt:InterfaceDeclaration`
+for `createParenthesizerRules`; `createNodeFactory` first reports
+`expr-ident-not-in-scope:Identifier` (661 rows, 149,491 ms;
+`.tmp/ts5-ir-original-shape-factory.log`). Implement matched IR erasure for
+local interface/type-alias declarations without introducing value bindings or
+moving executable statements, then remeasure the next original-source gate.
+Implemented shared erasure before declaration-suffix ordering, plus matched
+selector/body-lowering no-ops for nested blocks. Only interface/type-alias
+statements are erased; enums and executable trailing statements remain in
+place. Original runtime node identities are retained and normalization is
+idempotent. The standalone control failed IR ownership before the fix and now
+returns 42 through IR with no direct body; it also checks a type alias sharing
+a runtime binding name. Initial focused controls pass 18/18. A full-source
+retry is in progress in `.tmp/ts5-ir-type-erasure-factory.log`.
+Retry completed: the original `createParenthesizerRules` now advances to
+`vardecl-noinit:VariableDeclaration`, confirming removal of its interface gate.
+`createNodeFactory` remains at `expr-ident-not-in-scope:Identifier`. Still
+**0/3 Wasm vs 3/3 native**, 661 rows with zero IR emissions, valid 62,956,028
+bytes, zero imports, 159,070 ms. Next represent the initially undefined cache
+locals and their later captured Map writes correctly in IR; do not substitute
+numeric zero or erase their initialization semantics. Final typecheck,
+lint/format, LOC/function gates pass; final erasure/worker controls pass 10/10
+and the standalone selected adapter remains 25/25 with 251 files deferred.
+All processes from this erasure pass are terminal.
+
+Undefined-cache implementation pass (2026-09-08, in progress): the next gate
+requires several matched capabilities, not a removed initializer check.
+Current shared-capture installation accepts scalar cells only; native Map
+methods are module-binding/number-value specific; ordinary `void` lowering
+still uses a numeric approximation. First extend exact logical dynamic-cell
+storage through the existing canonical carrier/ref-cell registries, then
+materialize true undefined for uninitialized locals and preserve later writes.
+Do not claim native local Map support from the existing module-only adapter.
+
+Dynamic-cell substrate implemented, not yet source-admitted: the builder now
+has exact logical-payload construction, lowering resolves that payload for all
+new/get/set/signature paths, and prepared closure support uses the same
+`resolveIrDynamicCarrierType` as ordinary IR. No alternate ref-cell registry or
+raw module-index payload is introduced. The first source witness did not reach
+cell lowering: it was rejected at `param-type-not-resolvable`
+(`.tmp/ts5-ir-dynamic-capture-before.log`). Do not label that a cell regression
+or relax the dynamic-use selector just to accept the witness.
+
+Hand-built IR tests exercise actual zero-import Wasm with both canonical
+carriers: externref preserves JS undefined, a Map reference, strings/numbers,
+null and booleans; the native carrier preserves the real reserved undefined
+singleton distinctly from null. Reads before and after a second function's
+write retain order and share one cell across the call. These are storage tests,
+not source-level Map execution. Canonical dynamic-type/linear-plan controls
+pass **27/27**, and named/tail capture controls initially pass **20/20**.
+Source typecheck passes. Next wire true undefined production and captured
+local initialization/updates through this storage, with source-level controls
+before admitting the actual TypeScript cache declarations.
+Final storage/capture/type/allocation matrix passes **45/45 across five files**
+(`.tmp/ts5-ir-dynamic-cell-final.log`). The selected standalone adapter remains
+**25/25 with 251 upstream files deferred** (`.tmp/ts5-ir-dynamic-cell-projected.log`).
+Typecheck, formatting, scoped lint, LOC/function budgets and whitespace checks
+pass. This kernel does not yet change the source initializer/capture gates;
+the previous full factory 0/3 result remains the last original-source result.
+All processes are terminal; this dynamic-cell checkpoint remains local.
+
+Source initialization pass (2026-09-08, in progress): connect local lexical
+declarations without initializers to the existing undefined producer and a
+logical dynamic slot/cell. Preserve module-init ownership, const rejection,
+and temporal-dead-zone scope checks. First test true undefined observation,
+then assignment and shared closure writes before widening native Map calls.
+
+Source initialization checkpoint (2026-09-08, local and not ready to publish):
+canonical undefined now comes from an IR-owned runtime adapter, reserving the
+native singleton or the exact host provider before lowering. Flush host late
+imports before minting the adapter; otherwise GC function signatures/indices
+are corrupted. The unchanged source matrix passes **6/10** across GC and
+standalone: undefined observation, subsequent assignment, and strict null
+distinction pass in both lanes. Captured reads and writes remain red.
+The captured-write arithmetic classifier inspected the ref-cell storage kind
+instead of its logical payload; it now recognizes boxed dynamic locals and
+uses the existing runtime dynamic-add path. The failure consequently advances
+from `operand-coercion-unsupported` to the same retained-source-callable exact
+allocator error as captured reads (`.tmp/ts5-ir-capture-payload-dispatch.log`).
+No test assertions were weakened and this is not a source-capture success.
+
+Diagnostic instrumentation (removed after measurement) recorded incomplete
+early prepared dependencies: `__ir_undefined_value` has no prepared structural
+binding, and dynamic carrier/box/tag-test support lacks symbolic evidence
+(`.tmp/ts5-ir-capture-failure-trace.log`). Follow the prepared dependency and
+source-callable publication lifecycle; do not relax the exact allocator guard.
+Reusing an already observed source slot for every non-derived lift did not
+fix captures and additionally withdrew five previously passing returned-table
+owners on signature parity. That experiment was removed, not accepted as a
+fallback solution (`.tmp/ts5-ir-capture-exact-source-slot.log`: 36/45).
+The source typecheck passed (`.tmp/ts5-ir-uninitialized-typecheck.log`).
+After removing the slot-reuse experiment, the exact five-file storage,
+named-table, tail-declaration, allocation, and dynamic-type control matrix
+passes **45/45** (`.tmp/ts5-ir-capture-dispatch-final-controls.log`). This does
+not include or supersede the failing 6/10 source-initialization matrix.
+Formatting and whitespace checks pass; all processes from this checkpoint
+are terminal. Changes remain local pending correct prepared capture support.
+The original full factory remains last measured **0/3 Wasm vs 3/3 native**;
+no new full-factory run or publication is justified by these failing controls.
+
+Prepared capture ownership root cause confirmed (2026-09-08): the first
+registration of `run__closure_0` comes from
+`prepareDependencyCompletePreparedComponents`' pre-scope callable loop,
+via the early free-function preparation path. It calls
+`planProgramAbiUnitCallable` before dependency completeness is known
+(`.tmp/ts5-ir-capture-plan-stack.log`; temporary stack logging removed).
+Aborting the subsequent component scope does not undo those earlier writes.
+The new `issue-1058-ir-capture-preparation-abort.test.ts` observes actual scope
+aborts and checks the session at abort time, before fallback can legitimately
+replan. Both GC and standalone retain the exact source arrow binding when
+they should not: **0/2**, with the expected leaked binding printed in
+`.tmp/ts5-ir-capture-abort-baseline.log`. The test also requires successful
+fallback execution returning 12 and zero standalone imports once rollback is
+fixed; it does not treat compilation alone as correctness.
+
+Next implementation boundary: stage candidate source-callable contributions
+through the existing prepared-component planning overlay, rather than writing
+them into the live session before opening a scope. Dependency discovery needs
+the provisional draft and structural-reference view; successful sealing must
+publish the exact allocator and signature atomically with the rest of the
+component. Abort must leave existing source plans untouched and discard only
+the provisional contributions. The affected shared contracts are drafts,
+draft-order ownership, locators and reverse ownership, structural references,
+and callable type contracts (already grouped by
+`PreparedProgramAbiPlanningOverlay`). Extend that authenticated descriptor
+boundary; do not add an ad-hoc session snapshot, relax exact locator checks,
+or replace a retained source ABI with a different IR closure ABI.
+
+Transactional source-callable implementation, first part (2026-09-08):
+extracted `describeProgramAbiUnitCallable` from the existing publishing
+planner. It produces the same provisional draft, structural reference,
+allocator locator, and cloned signature without changing session state.
+The publishing API now consumes that description, preserving its exact-unit
+and conflicting-allocator checks. This is shared Program ABI planning for IR
+preparation, not a legacy AST code-generation extension. Three new controls
+check all absent session views with an actual publication as the positive
+control, independent cloned contracts, and rejection of unknown/non-unit or
+conflicting allocator ownership. Together with existing prepared-provider
+transaction tests, **24/24** pass (`.tmp/ts5-ir-callable-description.log`).
+This supplies the side-effect-free contribution needed by the authenticated
+scope descriptor; it does not yet replace the leaking pre-scope loop, so the
+two abort regressions and four source-capture failures remain unresolved.
+Existing callable-planning/session controls also pass **27/27**
+(`.tmp/ts5-ir-callable-description-abi-controls.log`), including production IR
+replacement-object publication. Source typecheck passes
+(`.tmp/ts5-ir-callable-description-typecheck.log`); scoped lint/format,
+whitespace and LOC/function gates pass. The function grant covers the measured
+nine-line undefined-provider preregistration growth, not a baseline edit.
+All processes from this checkpoint are terminal; no changes were published.
+
+Transactional candidate-callable wiring (2026-09-08, local): added an opaque
+`PreparedUnitCallableDescriptor` with authenticated session/terminal/allocator
+ownership, cloned signatures, one-shot claim/consume, and stale-state checks.
+The existing prepared batch now stages its drafts, locators, reverse ownership,
+structural references and contracts through the shared planning overlay.
+Dependency discovery sees provisional descriptions without writing the live
+session. Retained terminal/class/module callable reservations remain on their
+existing path: moving those too broke the ReferenceError setter controls,
+because direct fallback requires their pre-existing exact reservations.
+Only candidate nonterminal lifts use the new contribution. An allocated slot
+left by aborted early preparation also retains the late path's deferred-binding
+rule when reused; allocation alone is not proof of published source ownership.
+
+Measured result: captured writes now execute through IR and return 142 in both
+GC and standalone. The unchanged source initialization matrix is **8/10**;
+captured reads still fail. Their error has advanced from duplicate source
+callable ownership to an abandoned required closure-support type whose
+allocator is removed from the final module. Both forced-abort tests now pass
+their at-abort source-binding check but still fail the required successful
+runtime result for that type-lifecycle reason (**8/12** combined, not success;
+`.tmp/ts5-ir-unit-callable-transaction-final-source.log`). The abort test now
+derives exact arrow binding IDs from the scope's frozen inventory and requires
+an observed abort containing that arrow; it no longer depends on the old
+publishing method being called or on a display-name match.
+
+Descriptor tests cover abort/commit, consumed-token replay, forged tokens,
+stale exact allocators and no publication on failures. They pass together with
+returned-table and provider-transaction controls: **38/38**
+(`.tmp/ts5-ir-unit-callable-transaction-retained.log`). Source typecheck,
+scoped lint/format, whitespace and LOC/function gates pass. Next inspect
+`prepareDependencyCompleteClosureSupport` calling
+`prepareClosureSupportLayouts` and `prepareRefCellSupportTypes` before the
+candidate's dependency verdict. Their required type registrations are a
+separate lifecycle from callable ownership and must not survive an abandoned
+candidate merely because its types were allocated. Do not suppress the missing
+allocator assertion or preserve dead types as a substitute for exact ownership.
+No full factory rerun or push; original factory remains last measured 0/3.
+All processes from this checkpoint are terminal.
+
+Closure-type lifetime checkpoint (2026-09-08, local): the strengthened
+forced-abort regression records the actual captured-subtype references returned
+by `prepareClosureSupportLayouts` and checks their session ownership at abort.
+It floors both the observed arrow scope and allocated captured-type population.
+Source callable bindings are absent as intended, but the captured subtype is
+still required in both lanes: **0/2** at the new type assertion, not merely a
+later DCE error (`.tmp/ts5-ir-support-type-description.log`). No missing-type
+assertion was weakened and no dead type was pinned to manufacture validity.
+
+Extracted `describeProgramAbiSupportType` from the type registry's publishing
+helper. It produces the same draft, structural key and exact session-owned
+type-cell locator without marking the type as required. The old publishing
+helper consumes that description, preserving normal behavior. A new control
+checks every absent ownership view, then uses real publication as a positive
+control; foreign-session cells and mismatched allocator types are rejected.
+All seven description/transaction controls and all twelve existing closure
+support tests pass (**19/19**); the two intentional end-to-end abort regressions
+remain red. The next step is to stage closure/ref-cell/object support type
+descriptions via authenticated prepared-scope descriptors, keeping the stable
+batch keys/ordinals and canonical type-cell aliases. Merely adding provisional
+descriptions without changing the batch cache's immediate-publication behavior
+would not fix the leak: `closureSupportBatchPlanned`, `refCellSupportBatchPlanned`
+and `objectSupportBatchPlanned` also govern repeated requests and role expansion.
+Original source initialization remains last measured **8/10**, factory **0/3**;
+this refactoring alone claims no additional TypeScript test gain.
+Source typecheck, scoped lint/format, whitespace and LOC/function gates pass
+(`.tmp/ts5-ir-support-type-description-typecheck.log`, `-loc.log`, `-func.log`).
+All processes from this type-description checkpoint are terminal; changes
+remain local and unpublished.
+
+Undefined local/capture checkpoint completed (2026-09-08, local): closure,
+ref-cell and object support preparation now has a provisional mode. Candidate
+type descriptions and canonical type-cell aliases stay in the registry until
+an authenticated `PreparedSupportTypeDescriptor` stages exactly the component's
+referenced types through the existing prepared planning overlay. Committing
+publishes required ownership; abort consumes the descriptor without publishing
+it. Default immediate preparation remains available, including promotion of a
+previously described cached layout without changing its identity. Batch key
+ordering and refusal of later role/layout expansion remain unchanged.
+
+The unchanged source initialization/capture matrix now passes **10/10** through
+IR in GC/standalone, and both forced-abort controls pass their callable/type
+ownership checks and execute the fallback result 12 (**2/2**). Together with
+the closure-support and returned-table tests, this run passes **35/35**
+(`.tmp/ts5-ir-support-type-provisional-first.log`). A separate regression matrix
+passes **79/79 across seven files** (`.tmp/ts5-ir-uninitialized-final-controls.log`).
+Descriptor controls additionally cover commit/abort, a disjoint scope abort
+preserving an already committed shared type, default promotion after a
+provisional request, and stale type-shape rejection; the full description
+control file passes **10/10** (`.tmp/ts5-ir-support-type-descriptor-final.log`).
+Source typecheck, scoped lint/format, whitespace and LOC/function gates pass.
+
+Original factory remeasurement (`.tmp/ts5-ir-uninitialized-full-factory.log`):
+**0/3 Wasm vs 3/3 native**, valid 62,956,028-byte standalone module, zero imports,
+154,866 ms; 661 ownership rows, zero IR emissions, 633 legacy emissions.
+`createParenthesizerRules` advances from `vardecl-noinit:VariableDeclaration`
+to **`unattributed-arm:helper-internal`**. `createNodeFactory` remains at
+`expr-ident-not-in-scope:Identifier`. The three runtime failures are unchanged.
+The selected adapter still passes **25/25 with 251 upstream files deferred**
+(`.tmp/ts5-ir-uninitialized-projected.log`). Thus the source initializer gate
+is removed, not the full factory failure. Next give the helper-internal
+selector refusal an exact diagnostic and implement the actual original-source
+requirement it identifies; do not infer local Map/recursive Node support from
+the now-green scalar capture controls. No completion claim for the full goal.
+Oracle and coercion ratchets also pass (`.tmp/ts5-ir-uninitialized-oracle.log`,
+`.tmp/ts5-ir-uninitialized-coercions.log`), without new checker allowances or
+baseline edits. All processes from this checkpoint are terminal. The changes
+remain local pending publication review; PR #5753 has not been updated by this
+checkpoint.
+
+Original nested-helper attribution (2026-09-08): the nested-function selector
+now records exact first-wins labels for missing/unsupported return types,
+parameter shapes/types, modifiers, names and body failures. It does not change
+admission or generated code. Two focused tests prove those labels, preserve a
+deeper expression failure, and compare claims/reasons with diagnostics off.
+The older diagnostic control had stale expectations: the safe `for (var ...)`
+fixture is already admitted by HEAD's var proof, and the Promise fixture now
+fails at typed constructor capability rather than generic new-expression
+shape. Both fixtures remain, with current positive-admission/exact-reason
+assertions. Combined diagnostic controls pass **4/4**
+(`.tmp/ts5-ir-nested-shape-controls-verified.log`).
+
+The original factory retry confirms
+`createParenthesizerRules`: **`nested-function-return-type-missing:FunctionDeclaration`**
+(`.tmp/ts5-ir-nested-shape-full-factory.log`). The first source helper,
+`getParenthesizeLeftSideOfBinaryForOperator`, has an inferred return type and
+returns a callback cached in a local Map. Both `isPhase1NestedFunc` and
+`lowerNestedFunctionDeclaration` currently require an explicit return annotation;
+address-taken declarations also reach `lowerClosureExpression`'s explicit
+annotation gate. Matching signature inference must cover selector and both
+lowering paths, retain canonical callable/Node representations, and not invent
+a numeric signature for this higher-order return. Full factory remains **0/3
+Wasm vs 3/3 native**, valid zero-import 62,956,028 bytes, 146,541 ms, 661 ledger
+rows with zero IR bodies. `createNodeFactory` remains out-of-scope identifier.
+Publication preparation: PR #5753 was verified open, ready and not queued at
+head `a38afaea15187581c98e7a6c3cb4e8f962acb0b0`; no full-goal completion claim.
+
+Higher-order signature continuation (2026-09-08, in progress): the checkpoint
+above is published as signed commit `5be04db2a76714911efbbf7e0c496c9cde2ff078`
+on PR #5753. The next IR prerequisite is retaining the returned callback's
+signature: `TsCheckerOracle.signatureOf` currently classifies its return as
+`{ kind: "function" }`, losing the `Expression -> Expression` boundary. Audit
+existing signature consumers before adding registry-free nested signature
+facts; do not substitute `dynamic` or a scalar signature for this source.
+Selection, direct-only nested lifting and address-taken closure lifting must
+ultimately consume the same exact source-owned plan. This prerequisite alone
+does not remove the local Map or recursive Node representation requirements.
+
+Implemented the fact prerequisite locally: signature positions retain nested
+fixed-arity callback signatures, using instantiated parameter symbols instead
+of their generic source declarations. Ordinary `typeFactOf` remains shallow;
+no source selection or direct-codegen emission was changed. Unsupported
+overloads, generic call signatures, optional/rest/default parameters, explicit
+receivers and constructor-only types retain a function tag **without** a
+signature. Expansion has an active-type cycle guard, depth ceiling six and
+64-signature budget; truncation likewise does not invent an ABI.
+
+Consumer audit: existing production `signatureOf` readers test availability,
+return kind or callable-boundary presence, rather than nested signatures.
+The new facts do not authorize those callers to allocate a carrier. The
+differential signature serializer did erase this new evidence via the shared
+`factKey`; it now includes nested signatures without changing `factKey`'s
+in-house join/intern semantics. Differing nested metadata is surfaced as a
+conservative disagreement (the string classifier does not yet distinguish
+missing callback metadata from a genuinely incompatible callable signature).
+
+Validation: the pre-change focused run had **4 failures / 10 tests**, all
+missing higher-order facts. Final bounded controls pass **33/33 across five
+files**, including **12/12** new controls, instantiated generics, conservative
+refusals, recursive and branching expansion and differential visibility
+(`.tmp/ts5-higher-order-facts-bounded.log`). Typecheck, scoped Biome/Prettier,
+LOC/function and oracle/coercion gates pass without new grants or baseline
+edits. Dead-export preservation passes **6/6 full + 6/6 cut**, still not a
+strict graph-closure or deletion certificate.
+
+The real source was inspected through `analyzeFiles` on the original factory
+entry, not an extracted replacement (`.tmp/ts5-original-signature-facts.mts`).
+Both cached helpers now report `(Expression) -> Expression` returned callbacks
+and non-nullish numeric enum unions of **42** parts for their operator input;
+`mixingBinaryOperatorsRequiresParentheses` reports two numeric enum unions of
+**360** parts and a boolean return. Class-name facts do **not** identify a
+canonical Node layout: the next IR step still needs source-position-owned
+carrier resolution shared across selector and both nested lowering routes.
+Do not register by spelling `Expression`, widen it to dynamic, or declare the
+factory admitted based only on these facts.
+
+Full-factory verification before adding the expansion-budget hardening remains
+**0/3 Wasm vs 3/3 native**, same 62,956,028-byte valid zero-import module,
+151,985 ms (`.tmp/ts5-higher-order-full-factory.log`). This is no factory
+runtime gain. The selected adapter remains **25/25**, with **251 upstream
+files deferred** (`.tmp/ts5-higher-order-projected.log`). The final bounded
+original-source fact probe and final typecheck/gates are recorded separately;
+do not mislabel the earlier full-module run as testing later edits.
+The bounded source probe matches the earlier three-helper facts byte for byte
+(`cmp` exit 0); final typecheck, LOC and function gates all terminate with
+exit 0 (`.tmp/ts5-higher-order-typecheck-final.log`,
+`.tmp/ts5-higher-order-loc-final.log`, `.tmp/ts5-higher-order-func-final.log`).
+All verification processes are terminal. These five files remain uncommitted
+on `codex/1058-typescript-standalone`; PR #5753 still contains `5be04db2`.
+
+Exact signature-position continuation (2026-09-08, in progress): add a
+registry-free oracle query for a parameter/return path through nested callable
+signatures. It must retain an opaque type identity and expose a source type
+annotation only when that annotation resolves to the **same instantiated
+type**, not merely the same name. This lets a later IR signature planner use
+the existing position resolver where proven and refuse missing recursive
+carrier evidence. In-house resolution must abstain where it cannot prove
+identity; neither a generic declaration's `T` nor a same-named interface from
+another scope is a valid substitute.
+
+The query is implemented as `signaturePositionOf(node, path)`, where a path
+uses zero-based parameter indexes and `"return"` steps. Checker types stay in
+the checker implementation; consumers receive a registry-free fact, an opaque
+key interned through the existing `typeKeyOf` cache, and an annotation only
+after exact type-identity verification. Empty/out-of-range/deep paths,
+non-callable intermediates, overload sets and unresolved generic signatures
+abstain. The in-house backend explicitly abstains rather than reusing its
+structural type interning as nominal/source identity. Differential queries
+return the primary key unchanged and compare facts/source coordinates rather
+than comparing generated symbol labels.
+
+Fresh original-source evidence: **6/6 requested positions** in the two cached
+parenthesizer helpers resolve to verified `BinaryOperator`/`Expression`
+annotations in `parenthesizerRules.ts`. All **4/4 callback input/result
+positions** share the same `Expression` type key
+(`.tmp/ts5-original-signature-positions.log`; probe exits 0 and asserts both
+denominators and identity equality). This is stronger than same-name evidence
+and does not claim an IR Node layout exists. New tests distinguish same-named
+types in separate scopes, reject a generic `T` annotation for an instantiated
+`number` position, check invalid paths and overload abstention, and retain the
+primary identity through differential mode. An initial parameterized invalid-
+path test accidentally spread path arrays into test arguments; it was corrected
+to use object rows before the final **44/44 across six files** run, including
+**11/11** signature-position controls (`.tmp/ts5-signature-position-verified.log`).
+
+Typecheck, scoped lint/format, LOC/function, oracle/coercion and dead-export
+preservation gates pass (`.tmp/ts5-signature-position-*.log`). No new checker
+allowances, baseline changes, source selection or legacy emitter edits. All
+verification processes are terminal. The eight-file combined fact/identity
+checkpoint is ready to commit. Next integrate one source-owned inferred
+signature plan into selection and both nested lowering routes, resolving
+nominal/recursive leaves only from exact prepared carrier ownership. The
+existing finite object expander rejects recursive shapes; merely feeding it
+the now-verified `Expression` annotation is not the remaining implementation.
+Local Map adapters are still needed, and the full standalone TypeScript goal
+remains incomplete.
+
+IR symbolic carrier implementation (2026-09-08, in progress): reuse existing
+`IrType.val.typeRef` and its Program ABI type-cell relocation rather than add
+a second recursive object representation. Closure support preparation must
+resolve the exact owned binding, preserve nullability, and refuse raw indices
+or scalar attachments. Allocation-cache keys opt into symbolic identities;
+ordinary semantic keys retain their existing contract. Kernel tests are next;
+this does not yet admit the original factory or implement local Map support.
+
+Verified checkpoint: `lowerPreparedClosureSupportType` now resolves an owned
+symbolic physical reference through its current Program ABI type cell, and
+canonical closure/ref-cell keys accept symbolic references while still
+rejecting unbound physical indices. `irPhysicalTypeKey` is used only by the
+closure allocation registry; `irTypeKey` and prepared-callable semantic
+fingerprints retain their previous behavior. No direct AST emitter changes.
+
+The new six-case `issue-1058-ir-symbolic-closure-carrier.test.ts` proves key
+identity/nullability, whole-layout relocation, cache reuse, refusal of an
+unowned same-index carrier (including after cache population), and rejection
+of scalar attachments/raw indices. Two real zero-import Wasm runtime cases
+pass a recursive Node-shaped struct through a closure argument/result and a
+capture/result, checking reference identity with distinct parent/child nodes
+in both orders. These are hand-built IR kernel proofs, NOT original factory
+admission or TypeScript unit-suite completion.
+
+Verification: **42/42 across six files** in
+`.tmp/ts5-symbolic-closure-verified.log`; after adding the cache-refusal control,
+**19/19 across two files** (six carrier cases plus thirteen prepared-callable
+boundary controls) in `.tmp/ts5-symbolic-closure-boundary.log`. Typecheck,
+targeted lint/format, LOC/function budgets and diff checks pass. Initial
+failures were fixture defects: the layout omitted context-created types, then
+the runtime module omitted the lifted function's declarative `ref.func` entry;
+both are corrected and rerun. No allowance/baseline updates.
+
+Next: attach exact source-owned carrier
+references using the measured top-level slot witnesses, then provide one
+shared inferred-signature plan to selection and both nested-function lowering
+routes. Do not use raw positional matches for hidden-capture signatures, and
+do not treat opaque reference transport as support for Node field access or
+local Map operations. Full factory results have NOT been rerun for this kernel
+change; the last original-source measurement remains 0/3 Wasm versus 3/3 native.
+
+Integration trace: `select.ts::isPhase1NestedFunc` rejects missing returns,
+and `isPhase1ClosureLiteral` separately requires annotated returns/parameters.
+`from-ast.ts::lowerNestedFunctionDeclaration` (direct-call capture parameters)
+and `lowerClosureExpression` (address-taken closure objects) independently
+reconstruct signatures. The shared plan must reach all four sites, not merely
+relax selection. Production selection gets evidence through `IrSelectionOptions`
+in `planIrOverlay`; nested lowering already receives `oracle` and exact
+`identityContext` through `LowerCtx`. Existing top-level `overrideMapByUnitId`
+does not automatically supply nested positions. Keep source-to-physical slot
+witnessing separate from closure allocation; a `val.typeRef` can transport a
+Node but does not supply field-layout metadata for object operations.
+
+Recursive Node carrier investigation (2026-09-08, in progress): verify whether
+already-allocated exact source callable parameter slots provide consistent
+physical evidence for the inferred callback's `Expression` type. A match by
+opaque source type identity may reuse an existing recursive layout without
+expanding it, but mismatching carriers or hidden-parameter offsets must not be
+silently accepted. Instrument the actual original factory graph read-only at
+IR planning, then remove the temporary instrumentation before publication.
+
+Measured result: the original graph has **8/8 matching top-level parameter
+slots** with identical physical carrier, a `ref` to the same ten-field
+recursive struct (index 216 in this particular pre-lowering snapshot; **never
+hardcode that index**). Source and physical arities match in all eight:
+`isCommaExpression`, `isCommaSequence`, `getRightMostAssignedExpression`,
+`getExpressionAssociativity`, `getExpressionPrecedence`, `getOperator`,
+`getLeftmostExpression`, and `addDefaultValueAssignmentForInitializer`.
+The match used `signaturePositionOf(helper, ["return", 0]).typeKey`, queried
+each source parameter through the same oracle, joined declarations/units
+bidirectionally through the planning inventory, and read the exact allocated
+source function through `programAbiSourceCallables.functionForUnit`.
+
+The layout has numeric `pos`, `end`, `kind`, `flags`, `modifierFlagsCache`,
+`transformFlags`; externref `id`; self-referential `parent` and `original`;
+and a reference to `emitNode` storage. Thus an already-allocated recursive
+carrier exists; the next implementation need not invent a recursive expansion
+of `IrObjectShape`. Treat these as planning-time observations, not immutable
+final indexes or field-nullability contracts: type relocation, field storage
+normalization and prepared-scope ownership still have to be respected.
+
+The complete raw scan has **160 matching source positions**, but only the
+eight top-level slots above are valid same-index carrier evidence. Nested
+parenthesizer functions have one extra physical capture parameter (e.g.
+`parenthesizeLeftSideOfBinary` has source arity 2 versus physical arity 3).
+Reading their same-numbered slots reports unrelated `f64` or capture-struct
+carriers. That is a diagnostic indexing error, **not** proof of conflicting
+`Expression` layouts. A production adapter needs an exact source-to-physical
+slot map before it can include those witnesses; arity guesses are insufficient.
+
+Probe provenance and controls:
+
+- The first probe incorrectly attempted to iterate
+  `sourceFunctionHandleByDeclaration`, which is a WeakMap. Its compile failure
+  (`.tmp/ts5-source-carrier-probe.log`) is instrumentation-only and supplies no
+  carrier evidence. The corrected walk enumerates `declarationByUnitId` and
+  uses the weak map only for lookup.
+- The normal suite discards worker stderr on successful compilation, so its
+  corrected run is only a regression result: **0/3 Wasm vs 3/3 native**, valid
+  zero-import 62,956,028 bytes, 158,108 ms
+  (`.tmp/ts5-source-carrier-probe-fixed.log`).
+- Direct worker capture preserves the actual diagnostic rows:
+  `.tmp/ts5-source-carrier-direct.log` contains **1/1 probe event**, target
+  found, the 160 raw rows and 8 top-level witnesses. The same original
+  generated factory entry compiled to the same valid zero-import byte size
+  in 154,102 ms and executed **0/3** successfully. It does not run the native
+  reference; the native denominator above belongs to the normal-suite run.
+- Temporary instrumentation was removed with an exact patch; `git diff --
+  src/codegen/index.ts` is empty. Both worker processes are terminal. Upstream
+  main was rechecked and remains `04c8e72156cf576cf584a3ed3a5a66ec5a2b91b0`.
+
+Next implementation direction, now backed by original-source evidence:
+introduce exact prepared-carrier reuse for an IR object boundary, analogous
+to existing string/vec carrier references. Preserve the original type cell
+and physical field order instead of minting a structural duplicate. Cover
+`lowerPreparedClosureSupportType`, `ObjectStructRegistry`, object-shape
+identity/equality and prepared type dependency collection together. Current
+closure preparation rejects raw `val(ref)` leaves and the object registry
+hashes/reallocates structural shapes, so merely passing physical type indexes
+would not be a sound bridge. Test relocation, scope abort, stale/mismatched
+field layout and self-referential storage, then connect the proven source
+signature positions to this carrier route in selector and both nested
+lowering paths. This remains IR work, not a legacy emitter fix; the full
+factory and overall standalone TypeScript goal are not yet passing.
+
+Final publication-query migration in progress: indexed record element facts now
+come from TypeOracle (property names, scalar/union facts and optionality; no
+checker types or Wasm indexes escape). JSON preflight uses source facts, then
+the emitter validates the expression's actual compiled storage. The existing
+speculative transaction rolls back a declined storage path; successful
+materialization compiles/evaluates the input once. Validate nullable/optional
+fields, field order, classes/accessors and observable evaluation count before
+calling this publication-ready.
+The oracle ratchet now passes with no new exemptions or baseline edits
+(`.tmp/ts5-json-oracle-ratchet.log`: +0 getTypeAtLocation, -1 ctxChecker after
+the branch's pre-existing allowances). The namespace legend required the
+dispatcher's already-resolved declared array carrier for an erased value;
+that carrier is threaded into JSON materialization without another checker
+query. All seven tracing/JSON standalone tests pass, including single
+evaluation, null arrays/elements, optional-field omission, type assertions and
+namespace declaration ordering (`.tmp/ts5-json-oracle-carrier.log`).
+Final broader controls pass **40/40 across seven files**
+(`.tmp/ts5-oracle-json-broad.log`), and the corrected typecheck completes
+successfully (`.tmp/ts5-oracle-json-typecheck.log`). Scoped lint, formatting,
+diff, LOC and function gates pass. This supersedes the earlier pending
+typechecks and seven-file publication-blocker notes, which remain historical.
+
+Second oracle migration slice: add registry-free exact call-declaration,
+non-nullish type-declaration and tri-state index-signature queries. Differential
+mode compares these facts; the in-house oracle explicitly reports unavailable
+information rather than claiming a type is closed. Generic scalar result tags,
+optional native collection provenance and spread enumeration consume these
+queries. In particular unknown spread shape must retain dynamic enumeration.
+Validation now passes **17/17 across four files**
+(`.tmp/ts5-oracle-second-verified.log`). Exact-fact tests cover overload selection,
+non-nullish receiver declarations, any/unknown and a mixed open/closed union,
+plus checker/in-house/differential behavior. The index query checks unknown
+before non-nullish narrowing (which otherwise turns unknown into `{}`), and
+declines to prove a type-parameter or ambiguous union closed. Resolved-call
+declarations include JSDoc signatures in their AST-only return type.
+The ratchet now flags only json-record-array.ts (+1 getTypeAtLocation, +2 net
+ctxChecker; `.tmp/ts5-oracle-second-ratchet.log`). Formatting and lint pass.
+The pre-correction typecheck completed with the JSDocSignature return-type
+omission (`.tmp/ts5-oracle-second-last-typecheck.log`). After it became terminal,
+started validation of the corrected AST return type (session 69630,
+`.tmp/ts5-oracle-second-corrected-typecheck.log`); observe this same handle.
+JSON must separate source field facts from allocated
+Wasm layouts; do not return checker types from TypeOracle to clear the gate.
+
+PR checkpoint (user request): new implementation belongs in IR wherever possible.
+Final checkpoint validation: **32/32 tests across six files** pass
+(`.tmp/ts5-ir-pr-verified.log`); typecheck, scoped lint, formatting, diff and
+both size gates pass after removing the experimental object-field changes.
+The experimental callable-object extension was removed before publication;
+it is not part of the verified closure slice. A single-method witness reached
+late IR emission after matching the legacy callable-signature suffix, but still
+compiled a direct body first (`return-signature-unstable`). A two-method witness
+failed ABI parity and stranded a placeholder function type. Logs:
+`.tmp/ts5-ir-method-fields-key.log`, `.tmp/ts5-ir-pr-controls.log` (30/32).
+The attempted source-order fix accidentally targeted the lattice resolver,
+not the checker object resolver; both it and all speculative field-admission,
+packing and key changes were removed. Next work must cover contextual field
+order, exact source layout identity, early preparation and failed-owner slot
+cleanup together. Keep the single- and multi-method runtime controls, without
+mislabeling their current legacy fallback as IR ownership.
+
+Publication gate rechecked: `.tmp/ts5-pr-oracle.log` rejects direct checker
+growth in expressions.ts, optional-native-set.ts, generic-scalar-union-result.ts,
+indexed-object-spread.ts, json-record-array.ts, optional-declaration-parameter.ts
+and uninitialised-variable-undefined.ts. These predate the IR slice. They need
+registry-free TypeOracle facts, not moved checker queries or new allowances.
+No gate bypass or new oracle exception is authorized by this handoff.
+
+Oracle migration continuation: replace undefined-identifier and uninitialized
+binding queries with existing TypeOracle facts and exact declaration lookups.
+Reuse the native-annotation resolver with oracle declaration lookup rather than
+duplicating its alias proof. Unknown facts must decline the optimization.
+This slice removes three of the seven flagged files without exemptions:
+expressions.ts, optional-declaration-parameter.ts and
+uninitialised-variable-undefined.ts. The remaining ratchet is +4 direct
+getTypeAtLocation / +8 ctxChecker, in optional-native-set,
+generic-scalar-union-result, indexed-object-spread and json-record-array
+(`.tmp/ts5-oracle-first-ratchet.log`). The native-annotation helper accepts
+oracle declaration lookup while retaining the existing checker API for older
+callers; it does not duplicate native alias resolution.
+Validation: 16/16 compiler controls across four files, plus 1/1 exact-binding
+oracle test covering nullable/optional/unknown/any/initialized locals, shadowed
+undefined and native annotation parity. Logs `.tmp/ts5-oracle-first-controls.log`
+and `.tmp/ts5-oracle-boundary.log`. Scoped lint, formatting, diff and size gates
+pass. Changes remain local pending the rest of the publication migration.
+
+Current continuation: admitting a function-typed object field as an internal
+`closure` reaches preparation but fails source ABI parity (`IR=140, legacy=45`),
+then exposes a retained lifted-function type error. Evidence:
+`.tmp/ts5-ir-method-fields.log`. Do not ship that representation. Testing the
+existing source `callable` carrier plus exact-signature packing when constructing
+a contextually typed object literal; this shares the established closure ABI.
+
+The next reduced witness returns `{ add }` where `add` is a trailing named
+function capturing a numeric parameter. Standalone execution returns 42 via
+legacy, but IR ownership is **0/1**: resolution rejects the annotated object
+because its function-valued field is not an IR object field type. Evidence:
+`.tmp/ts5-ir-method-table-before.log`. Address-taken function materialization
+alone does not change this result (`.tmp/ts5-ir-method-table-after.log`).
+Any implementation must resolve the callable field ABI and materialize the
+closure through the shared IR machinery, with runtime and ownership assertions;
+do not count legacy fallback as migration success.
+
+The bounded implementation now materializes an address-taken named declaration
+through the existing IR closure-expression path, preserving its original AST
+identity and the shared capture-cell machinery. Direct-only named functions
+retain their existing lifted-call path. Discovery uses exact checker symbols,
+including shorthand property symbols; missing checker evidence does not guess.
+This supports returning the function itself, without adding a second closure ABI.
+
+Validation: `.tmp/ts5-ir-named-final.log` passes **29/29 across six files**.
+The new named-function tests assert runtime values and actual IR ownership in
+both GC and standalone: immutable capture returns 42; escaped mutable closures
+remain live and isolated per factory instance (714). Only standalone asserts
+zero imports; GC uses the standard runtime imports. The method-table test is
+explicitly runtime-only and makes no IR ownership claim. The original table
+ownership failure above remains the next implementation boundary, not fixed by
+this slice. Typecheck, scoped lint, diff check, LOC and function gates pass.
+An additional binding-discovery test covers direct calls, shadowed references,
+shorthand fields and escaped values; see `.tmp/ts5-ir-named-discovery-final.log`.
+These changes remain local and uncommitted; no full-source factory gain or full
+upstream-suite completion is claimed.
+The post-change selected standalone adapter remains **25/25**, with **251/256
+upstream files deferred** (`.tmp/ts5-projected-after-ir-named-values.log`).
+
+### IR shared mutable captures (2026-09-08, uncommitted)
+
+The previous scalar slot-capture refusal is now addressed in IR. Mutable local
+declarations proven by checker binding identity to be captured by a nested
+function allocate the existing ref-cell storage from initialization, before
+any outer updates. This avoids converting an already-used slot into a snapshot
+at closure creation and lets sibling closures and the outer body share updates.
+Only scalar cells are admitted; unknown/shadowed bindings do not gain capture
+authority, and i32 slot promotion is disabled for this shared-cell binding.
+
+Named lifted functions initially exposed a preparation error: their signature
+allocator called `lowerPreparedClosureSupportType` without the ref-cell registry
+already used for dependency preparation. Threaded that exact registry through
+derived callable slot/type allocation; no parallel layout registry or runtime
+fallback was added. The signature and capture field now resolve the same cell.
+
+The formerly refused mutable return-suffix witness now records IR body emission
+with no direct body. New controls cover sibling writes/readback, closure
+creation before an outer update, loop updates, and lexical shadow identity.
+All 24 tests across five files pass, including existing returned/lifted/literal
+closure ownership tests in GC and standalone
+(`.tmp/ts5-ir-shared-cell-controls.log`). This supersedes the mutable fallback
+boundary in the preceding subsection. The helper's no-checker result remains
+conservative rather than guessing capture identity. Typecheck, scoped lint, and
+size gates pass; the selected standalone adapter remains 25/25
+(`.tmp/ts5-projected-after-ir-shared-cell.log`). Extracted cell installation to
+a small helper to keep lowerVarDecl within its function budget; the one-line
+integration registry argument has a documented file allowance above. Final
+focused tests pass 7/7 (`.tmp/ts5-ir-shared-cell-final.log`). All processes from
+this turn are terminal; these IR changes remain uncommitted.
+No full-source TypeScript factory or checker pass is claimed yet.
+
+### Actual-source parenthesizer boundary probe (2026-09-08)
+
+Added `typescript-source-factory-parenthesizer-workload.ts` with six independent
+numeric oracles against the pinned real compiler source: object/class creation,
+direct concise-body/export parenthesizer calls, and arrow/export factory calls.
+This avoids depending on debug enum formatting during triage without modifying
+or accepting any upstream assertion. The initial probe completed: 2/6, valid
+59,974,784-byte zero-import module, 162,709 ms compile. Object/class creation
+pass; both direct parenthesizer calls fail just like the enclosing arrow/export
+factory calls (concise body illegal cast; export parenthesizer null pointer).
+Log `.tmp/ts5-factory-parenthesizer-source.log`. Thus neither upstream assertion
+formatting nor its test callback harness is necessary for these failures.
+Expanded the same fixture to ten cases: direct parenthesized node construction,
+getLeftmostExpression identity, skipPartiallyEmittedExpressions identity, and
+the no-parentheses-needed identifier path. The expanded probe completed 6/10:
+all four added checks pass, while the same four original wrapping checks fail.
+Valid 59,978,602-byte zero-import module, 156,217 ms compile. Log
+`.tmp/ts5-factory-parenthesizer-source-expanded.log`. This distinguishes the
+wrapping path from both traversal and no-wrap callback entry. Next compare
+fresh `createParenthesizerRules(ts.factory)` with the cached factory getter,
+then inspect the captured factory/method value and wrapping return carrier;
+do not infer that ordinary node allocation or traversal is broken.
+
+Signed implementation checkpoint: `2fbd0f2c7a3a2c7d6757d0c61c73d6efa235b341`.
+Signature verified in the commit object; pre-commit lint and size gates passed.
+All probe/test/commit processes from this turn are terminal. This paragraph's
+expanded-probe result was recorded after the checkpoint.
+
+Fresh namespace controls pass 21/21. The selected upstream adapter was first
+run in its default GC lane: 14/25 (compilerCore 5/11, convertToBase64 0/5;
+other files 9/9). This is not the standalone goal lane and has no measured
+same-lane baseline in this turn. The explicit standalone recheck completed:
+25/25 native and Wasm, 5/5 compiled modules, actual target standalone, zero
+imports, 251/256 upstream files deferred. Log
+`.tmp/ts5-projected-standalone-after-optional.log`. No full-source upstream
+unit pass is inferred from this projected selection.
+
+Main-sync verification (2026-09-08): fetched `https://github.com/loopdive/js2.git`
+and independently checked live `refs/heads/main` at
+`04c8e72156cf576cf584a3ed3a5a66ec5a2b91b0`. That commit is already an ancestor
+of `codex/1058-typescript-standalone` HEAD `ac266354848de0`; zero incoming
+commits, so no merge was needed. All pending implementation and test changes
+were preserved; no tests rerun for this no-op synchronization.
+
+Signed checkpoint: `ac266354848de0`. Post-checkpoint projected-suite regression
+run completed with **25/25 native and Wasm**, **5/5 modules compiled/validated**,
+**zero imports** (`.tmp/ts5-projected-after-enum-stack.log`, exit 0). This confirms
+the existing slice remains intact; its inventory still explicitly defers 251
+of 256 files. No live process remains from this turn.
+
+### Source-defined collection carrier investigation (resumed)
+
+Generator-method follow-up after `085c67795aad5e`: WAT for the real `*entries()`
+method shows an ordinary closure executing its loop and dropping each yield,
+then returning undefined. The open-object method path passes a MethodDeclaration
+through the function-expression closure API, whose generator checks only
+recognized FunctionExpression nodes. Testing recognition of MethodDeclaration
+at signature selection, closure registration, and native frame emission; a new
+regression checks lazy creation, captured state, tuple yields and exhaustion.
+This fix now passes **25/25 selected upstream tests**, **5/5 modules compiled
+and validated**, **zero imports** (`.tmp/ts5-upstream-all-selected.log`). This is
+still only **5/256 upstream files**; the 251 deferred files and full compiler /
+self-hosting acceptance remain open.
+
+Open-method `this` now uses the existing frame-carried dynamic receiver when
+there is no synthesized receiver parameter. Direct `.next()` also exposed a
+dead host import retained by `__any_iter_next`; its final fill now includes the
+legacy fallback only if a legacy generator factory actually emitted, matching
+the native generator dispatcher's existing rule.
+
+Focused final run: **24/24** across five files, including two new open-object
+generator tests, lazy generator expressions, destructuring methods, dynamic
+receiver capture, and collection iterator prototypes. Log:
+`.tmp/ts5-open-generator-final-controls.log`. Shared generator-node recognition
+was extracted into `closures/generator-declaration.ts` to keep the signature
+and body paths consistent and satisfy the function budget without allowances.
+Full parser recheck passed **3/3 exact fingerprints**, with a valid 80,351,322-byte
+module and **zero imports**, in 461,664 ms (five warnings, zero errors).
+Evidence: `.tmp/ts5-parser-open-generator-method.log`.
+
+Requested main sync: fetched and independently checked live upstream main at
+`04c8e72156cf576cf584a3ed3a5a66ec5a2b91b0` (six incoming commits). Saved the
+generator-method changes in signed checkpoint `05a791a94bafcc`, then merged
+without conflicts in signed merge `8e29e3a4136e2b`. Verified upstream is an
+ancestor (zero commits behind). No manual stash or changes to the unrelated
+dirty main checkout. Post-merge controls pass **14/14 across three files**:
+open-object generator methods and the incoming conditional-alias property-write
+tests, including console coverage (`.tmp/ts5-main-sync-controls.log`). The full
+parser and selected upstream suite results above precede this merge; neither
+was rerun as part of this sync-only request. No push or PR was performed.
+
+Next-boundary investigation after checkpoint `9465e0c392cdd0`: the reduced real
+factory probe's `arrayFrom(set.values())` returns all three values (sum 6), while
+`forEach` throws `TypeError: Cannot access property on null or undefined` at the
+callback invocation in release-core line 152. A separate native-Set callback
+with three supplied arguments and a one-parameter consumer passes. These are
+diagnostic controls, not evidence that the two remaining upstream cases share
+a cause. Diagnostic logs: `.tmp/ts5-custom-set-error.log` and
+`.tmp/ts5-collection-callback-minimal.log`.
+
+The decisive reduction is a multi-file source `createSet<T, H>` with a captured
+element and a `forEach(action)` method. The number-typed consumer failed while
+an otherwise identical `any` consumer passed. Preserve the callback parameter
+as externref only when the source factory method itself declares that callback
+parameter using a type parameter owned by the factory. Inspect the source
+method, not merely the ambient Set interface: the latter incorrectly widened
+a non-generic source-method control. No new raw-checker query or shared mutable
+registry is introduced.
+
+Verified result after this follow-up: **24/25 original admitted tests pass**,
+compilerCore **10/11**, all **5/5 modules compile and validate with zero imports**.
+Only upstream `iteration` remains failing in this selected set. `forEach` now
+passes unchanged; the adapter regenerated the release projection, removing all
+temporary diagnostic edits before this run. Log:
+`.tmp/ts5-upstream-source-callback-proof.log`. Scope remains 5/256 files admitted,
+251 deferred; this is not completion of the standalone compiler/unit-suite goal.
+
+Focused controls: **16/16** across the new five-case collection-callback test,
+four collection-carrier checks, and seven optional standalone Set checks. The
+callback cases include native and non-generic source controls plus later-module
+number/any/Boolean consumers. Log: `.tmp/ts5-source-callback-final-controls.log`.
+Format/lint and LOC/function budgets pass without new allowances. Full parser,
+binder, checker and all-unit-suite acceptance have not been rerun or established.
+The next reduced failure is `arrayFrom(set.entries())`: it throws
+`TypeError: value is not iterable`, while `arrayFrom(set.values())` and `forEach`
+each return all three values (sum 6) in the same real-factory probe. Inspect the
+`*entries()` method's nested `getElementIterator()` loop next. Log:
+`.tmp/ts5-custom-set-entries.log`; probe `.tmp/ts5-custom-set-probe.ts`.
+
+The real `createSet` factory returns an open object, not native Set storage.
+Reduced standalone probes now preserve initial size, mutation, and `return this`
+identity. Added a durable four-case native-vs-Wasm regression covering a direct
+factory, native Set, asserted object literal, and a shorthand callable property
+inside a callback; all four pass with zero imports
+(`.tmp/ts5-source-collection-test5.log`). Type assertions also need unwrapping
+when selecting the local's physical carrier. The final four-case run also
+exercises the source-defined `forEach` callback
+(`.tmp/ts5-collection-foreach-controls.log`, 4/4 passing).
+
+The selected upstream adapter creates `const ts = { createSet, ... }`, rather
+than a module namespace. Its callable-property result ABI was still casting
+the factory result to native Set. Resolving the shorthand through oracle
+declarations and retaining an externref result exposed a compile-time stack
+imbalance: the array `forEach` fast path tried to construct a five-field Map
+using a two-field array layout. Declining array/native collection dispatch for
+the source-object carrier resolves that compile failure.
+
+Final upstream run: **23/25 passing, 5/5 modules compiled and validated, zero
+imports**, up from **19/25** on the previous checkpoint. CompilerCore is **9/11**;
+mutation, resizing, clear, and string-hash tests now pass. `forEach` and
+`iteration` still throw opaque Wasm exceptions. The suite still admits only
+5/256 upstream files; 251 remain deferred. See
+`.tmp/ts5-upstream-source-collection-no-array.log` and the generated report.
+No assertions or compiler verification gates were weakened. Full parser/binder
+checks have not been rerun on this candidate.
+
+Ancillary controls: Date/accessor-import files pass; the accessor-widening file
+passes 13/14, with its GC-only data-property control returning 0 instead of 1.
+That failure has not been A/B-attributed to this change. All seven standalone
+cases in that file pass. Typecheck, scoped lint, LOC and function budgets pass;
+no new allowance was added. Temporary stack-balance tracing was removed.
+Additional collection/call controls pass 18/20: optional-method padding 7/7,
+optional standalone Set 7/7, optional Map-size 3/4, Proxy carrier 1/2.
+The remaining failures are GC Map-size (-1 vs 256) and a Proxy-global shape
+assertion expecting a non-externref slot; neither is A/B-attributed here.
+Log: `.tmp/ts5-collection-native-controls.log`.
+
+Fetched `main` directly from `https://github.com/loopdive/js2.git` and
+independently verified its live ref as
+`16498efb481cb022ee5c4dcc9bb137b6d4c91a50`. The TypeScript worktree branch
+`codex/1058-typescript-standalone` at `5e7d1d1302178a` already contains that
+commit (8 commits ahead, 0 behind), so no merge was necessary. Preserved the
+four uncommitted source-collection carrier investigation files unchanged.
+This synchronization check does not constitute new compiler/test validation.
+
+## PR handoff — 2026-09-06
+
+### Resumed optional-parameter investigation — 2026-09-08
+
+Typed-array delegation follow-up: the numeric-only slot registration hardcoded
+the f64 vector even though slots already record an element type. Resolve the
+source array's actual vector layout and coerce the loaded element to the
+generator result carrier. Include delegated array element facts in carrier
+selection (otherwise object-only `yield*` defaults to f64). The generic iterable
+admission query now uses the oracle's well-known iterator fact instead of raw
+checker property enumeration; this offsets the one layout-resolution query
+without adding a checker-usage exception.
+Fresh upstream run with typed slots reaches **19/25** tests, native 25/25,
+compilerCore 5/11 and zero generator imports. The six now-executing failures
+are illegal casts in mutation, resizing, clear, forEach, iteration and string
+hash code. Expanded worklist controls are **7/8**: direct object-array iteration
+returns 12 and writes back to both original objects; generic factory-backed
+`runObjects` still throws a WebAssembly exception. Existing array/iterable/
+try-region controls pass **32/32**. Logs: `.tmp/ts5-typed-delegate-carrier.log`,
+`.tmp/ts5-typed-delegate-stable-controls.log` and
+`.tmp/ts5-upstream-typed-delegate-final.log`. Typecheck/lint pass. Layout
+resolution was extracted into a helper to pass the function-size gate, without
+adding an exception. This is not a full-suite passing claim; 251 files remain
+deferred, and the newly executable createSet tests expose the next cast frontier.
+
+Generator frontier follow-up: fresh upstream adapter on `3e0d2386` still
+measures native 25/25, standalone 14/25, 251/256 files deferred. The worklist
+reduction reproduces generator imports (runAll) and rejected cleanup shapes
+(runReturn/runThrow). Implementing structured unwind for numeric-vector
+delegation, preserving the guard for generic/native-generator delegates until
+their full return/throw/done-false forwarding is implemented. Array delegation
+must replace a thrown value with TypeError when its iterator lacks `throw`,
+then run enclosing cleanup; removing the admission guard alone is unsound.
+The new path passes **6/6** standalone/native-oracle checks: complete worklist,
+outer iterator close on return, missing-throw TypeError and cleanup, caught
+TypeError followed by a yield, original thrown value before delegation starts,
+and finally suspension with done=false before resuming the pending return.
+The last case's generator declares a numeric return via `return 0` so its
+`.return(9)` call is type-correct; expected native/standalone behavior is 1.
+The existing array/generic iterable/try-region controls pass 32/32 separately.
+Fresh upstream rerun remains **14/25**: compilerCore still imports four host
+generator helpers. Its `getElementIterator` delegates generic `TElement[]`
+after `isArray(value)`; widening typed vector delegation beyond numeric storage
+and implementing general iterator protocol forwarding remain the next steps.
+Do not claim the reduced numeric worklist resolves compilerCore yet.
+
+The merged optional-vector reduction still returns `[7, 7, 8]` instead of
+`[17, 7, 8]`. Its emitted WAT declares `wrap` with parameters `(ref null 50),
+i32`, while nested `make` takes `(ref null 50), externref`: the omitted optional
+boolean is already false before the factory sees it. Both resolved-generic
+registration paths in `declarations.ts` bypass the existing optional declaration
+parameter helper. Applying that helper to copied resolved parameter arrays
+fixes both original failing cases without changing their expected values.
+Added explicit-undefined boolean and optional-number controls in both lanes.
+The expanded factory file plus generic identity/callback and main's dynamic
+result/rest-callable controls pass **107/107**. Nested optional-parameter and
+rest-vector controls measured **11/13** before the new tests: only the two
+already documented absent optional-array-field assertions fail.
+Full standalone parser acceptance on `3e0d2386f83a30` now passes **3/3**:
+performance 49645738923599, builder 13386537220945, core 40098163538143.
+The binary is **80,351,322 bytes**, validates and executes with **zero imports**.
+Elapsed wall time 255,164 ms; five diagnostics are warnings, not errors.
+Local log: `.tmp/ts5-parser-main-sync-optional.log`; process completed normally.
+Typecheck, lint, formatting and file/function size gates pass. Full binder and
+upstream unit-suite coverage still require fresh post-sync verification; the
+next broad frontier remains generator support and expansion beyond 5/256 files.
+
+2026-09-08: merging this work branch with fetched `loopdive/js2` main
+`16498efb481cb022ee5c4dcc9bb137b6d4c91a50` (680 incoming commits).
+The pre-sync measurements below are not validation of the merged candidate.
+Resolved three textual conflicts, retaining both source-function shadowing and
+main's WASI ArrayBuffer identity, both candidate snapshot and rest dispatch
+support, and both object-spread/accessor imports. Removed a duplicate import
+and an overlapping abstract-reference truthiness arm exposed by typecheck.
+Focused merged-candidate check: 102/104 tests pass across six files. The two
+optional-vector factory preregistration cases (GC and standalone) return 7
+instead of 17; their origin has not been established by a baseline comparison.
+Main's dynamic-result/rest-callable/ArrayBuffer tests and the branch's builtin
+shadowing/module-function-identity controls pass. No full parser/binder rerun.
+
+This is an incomplete checkpoint, not completion of the TypeScript 5 unit-suite
+or self-hosting goal. Work is paused at the user's request. This summary
+supersedes pending-run and binder-trap attribution in the chronological notes.
+
+**Publishing blocker:** signed checkpoint `1e18c20f9740220425c3eb94c86789d1cb7130f9`
+is local; no PR has been opened. Pre-push typecheck, lint and formatting pass,
+but the oracle ratchet rejects net new checker usage in eight paths:
+`expressions.ts`, `expressions/optional-native-set.ts`,
+`generic-scalar-union-result.ts`, `indexed-object-spread.ts`,
+`json-record-array.ts`, `optional-declaration-parameter.ts`,
+`source-function-call.ts`, and `uninitialised-variable-undefined.ts`
+(all under `src/codegen/`). The reported unallowed growth is five
+`getTypeAtLocation` and fifteen `ctx.checker` references. Migrate these to
+`ctx.oracle` while preserving source identity and ABI decisions, or obtain
+explicit user approval for issue-scoped exceptions. Automated safety review
+rejected adding those exceptions without approval; no exceptions were added
+and neither hooks nor signing were bypassed.
+
+### Measured state
+
+- **Latest binder candidate: 5/5 exact checks pass**, including both original
+  binder workload cases (2/2). It compiles to 88,010,457 bytes, validates and
+  instantiates with **zero imports**. Results: diagnostic array before bind 0;
+  push before bind 1; const-local fingerprint 65792; duplicate-let fingerprint
+  131330; detailed duplicate diagnostics 1 (positions, messages and file identity).
+  Local evidence: `.tmp/ts5-binder-rest-fixed.log`, completed run 85103.
+- **Parser: 3/3 original fingerprints passed** at the earlier parser checkpoint:
+  performance 49645738923599, builder 13386537220945, core 40098163538143;
+  79,134,616 bytes, zero imports. This measurement predates the latest factory,
+  rest-vector and stack-safety changes; rerun it on the final checkpoint.
+- **Selected upstream unit adapter: native 25/25, standalone 14/25**, measured
+  on an earlier candidate. Only 5/256 upstream files were selected; 251 files
+  and 1,736 registrations remained deferred. All five modules compiled and
+  validated; compilerCore's 11 cases stopped before execution on generator
+  imports (`__gen_create_buffer`, `__gen_push_ref`, `__gen_yield_star`,
+  `__create_generator`). This is not full-suite coverage.
+- Latest source gates passed: TypeScript typecheck, function/LOC budgets and
+  whitespace check. Focused results: WAT stack/format controls 21/21;
+  peephole DAG/order controls 13/13 plus dead-load runtime controls 4/4;
+  diagnostic array initialization 5/5; capture controls 2/2; formatter controls
+  4/4. No full repository regression suite was completed for this checkpoint.
+
+### What changed and what remains
+
+The latest binder fix registers rest metadata for resolved generic signatures
+and compiles the trailing spread against the callee's vector type. The old
+illegal cast was **relatedInformation passed to addRelatedInfo**, not the
+bindDiagnostics getter: exact trap bytes identified `ref.cast_null 517` with
+the source vector stored as type 494. The latest full binder run confirms both
+duplicate-diagnostic cases now execute successfully.
+
+The checkpoint also preserves exact source-function identity across modules,
+respects source shadowing of builtin Symbol, bridges tagged callback results,
+preserves already-tagged AnyValue payloads, supports fresh asserted object
+factories, and makes peephole traversal and diagnostic WAT printing stack-safe.
+Earlier runtime/collection/Buffer and upstream-harness work is retained below.
+
+Known red tests are deliberately retained, so this PR is genuinely WIP:
+
+1. Rest-spread diagnostic reduction: **3/5 pass**. The empty optional array
+   field reads as null instead of strict undefined; a no-rest control reproduces
+   it independently. Do not misattribute this to the now-passing binder cast.
+2. Generic scalar roundtrip: **1/2 pass**, dependent on first instantiation.
+3. Source diagnostic constructor reduction: **1/2 pass**; explicit TypeScript
+   `this` is treated as a user parameter in the failing constructor path.
+4. Generator worklist delegation: native **3/3**, standalone **0/3**. Implement
+   correct iterator return/throw, done-false and outer-unwind behavior; do not
+   simply remove the state/finally guard.
+5. Some GC/factory and legacy host-harness controls remain red as detailed
+   below. Existing rest lowering also needs fresh-array semantics and general
+   multiple-rest/spread handling; the latest fix does not claim to solve these.
+
+Resume by rerunning parser acceptance on this checkpoint, fixing the retained
+reductions and generator frontier, then expanding actual upstream unit coverage.
+Checker compilation/execution, all 256 unit files and self-hosting remain open.
+Keep the original fingerprints and strict assertions; do not weaken them.
+
+### Reproduce the expanded binder check
+
+Use the pinned runtime setup described in `tests/dogfood/README.md`, then:
+
+```sh
+node --experimental-wasm-exnref tests/dogfood/typescript-upstream-build-probe.mjs \
+  --root tests/dogfood/.npm-upstream-suites/typescript --prepare-pinned-typescript \
+  --mode source --entry ../../fixtures/typescript-binder-diagnostic-details.ts \
+  --consumer-driven-barrels --target standalone --require-invocations 5 \
+  --invoke-zero-case runDiagnosticArrayBeforeBind=0 \
+  --invoke-zero-case runDiagnosticArrayPushBeforeBind=1 \
+  --invoke-zero-case runConstLocal=65792 \
+  --invoke-zero-case runDuplicateLet=131330 \
+  --invoke-zero-case runDuplicateDiagnosticDetails=1 \
+  --timeout-ms 1200000 --heap-mb 4096 --json
+```
+
+Generated `.tmp` logs, Wasm binaries and million-line WAT dumps are local
+diagnostic artifacts, not PR contents. No verification process remains running.
 
 ## Goal
 
@@ -1528,6 +3124,12 @@ callable-handle refresh, while nested declarations retain main's promoted and
 forwarded pre-registration ABI together with this branch's canonical reserved
 capture plan. The seven conflict-focused suites pass **34/34**.
 
+Main advanced again during the resumed probe. Merge commit
+`22c990ab481a0d` brings the branch through
+`33a532e9344667`; that delta contains benchmark/edition artifacts and no
+binder-path conflict. Its new edition import test passes and both compiler
+typechecks remain green.
+
 The sync exposed a TypeScript 5-only source typecheck regression inherited
 from main: TS5's DOM declarations do not yet contain `WebAssembly.Tag`, while
 TS7's do. Commit `45b7d783353d04` describes the feature-detected tag locally by
@@ -1558,6 +3160,1749 @@ each result is exactly 65,536 too high, inspect
 `externalModuleIndicator`/`isExternalModule` before changing constructor
 lowering.
 
+The lower-load 30-minute rerun then completed in **680,967 ms** wall /
+**766,863 ms CPU** (1.13 average cores), peaking at **3,784.5 MiB RSS**. It
+compiled and validated a **75,812,899-byte** module with **4,864 functions**,
+the same **32 source files / 36 Program files / 312 module-init statements**,
+**21 non-fatal warnings**, and no hard compile errors. This is authoritative
+evidence that main's read-only capture repair removed the old
+`binder.ts:3133:9` constructor failure. Both binder inputs now enter the parser
+and stop at the same earlier runtime operation: the destructured
+`factoryCreateIdentifier(...)` call at `parser.ts:2657:31`.
+
+That new frontier was reduced to the already-committed sub-second
+`issue-1058-node-array-factory` regression and bisected to main commit
+`c0213bad543aba2c74c8249bb314f49897f3a21a` (#5290's omitted-parameter ABI
+repair). The public contextual signature widens an optional Boolean to
+externref, while the lifted nested implementation intentionally retains its
+branded i32 ABI and carries omission through `__argc`; the dynamic identifier
+dispatcher consequently omitted the live funcref from its candidate set. The
+candidate bridge now admits only a call-site-proven Boolean (including an
+omitted or forwarded nested optional Boolean), uses the existing branded
+`__unbox_boolean` helper for supplied values, and supplies i32 zero for an
+omitted slot while preserving the real argument count. Unproven externref and
+unbranded i32 candidates remain excluded. The affected #1058 factory,
+contextual, forwarding, generic callback, and #5290 suites pass **116/116**;
+both TS5 and TS7 typechecks pass. The next authoritative run must establish
+whether both binder fingerprints now match or expose the next bounded runtime
+frontier.
+
+### 2026-09-05 standalone pivot and parser-wrapper frontier
+
+The first authoritative run after the contextual optional-Boolean repair
+completed in **992,561 ms wall / 1,065,682 ms CPU** (1.07 average cores),
+peaked at **3,687.6 MiB RSS**, and compiled and validated a
+**75,813,710-byte** module. The graph remained **32 source files / 36 Program
+files / 312 module-init statements / 4,864 functions** with **21 non-fatal
+warnings**. The two committed binder controls then exposed different later
+parser call boundaries: `factoryCreateNumericLiteral(...)` at
+`parser.ts:3768:50` and `factoryCreateVariableDeclaration(...)` at
+`parser.ts:7659:22`.
+
+Focused regressions identified two ABI gaps. A non-null union whose every
+member is numeric is now sufficient call-site proof for unboxing a contextual
+numeric enum such as `TokenFlags`; the ordinary static-JS-type oracle
+deliberately reports all unions as mixed. Separately, a public omittable
+reference parameter may select a nested implementation's exact nullable GC
+reference ABI only when the actual argument is omitted, statically undefined,
+or an identifier already backed by that exact physical local type. Asserted
+host/plain-object values remain excluded. The focused and related #1058
+callable suites pass **120/120**, and both compiler typechecks pass.
+
+The next authoritative run completed in **786,825 ms wall / 857,649 ms CPU**
+(1.09 average cores), peaked at **3,980 MiB RSS**, and compiled and validated a
+**75,814,890-byte** module with the same graph shape and warning count. Both
+old call boundaries are gone. Both binder inputs now converge on
+`factoryCreateNodeArray(elements, hasTrailingComma)` at `parser.ts:2595:23`.
+The exact sub-second reproduction is the parser wrapper around a destructured
+generic node-array factory. It showed that the contextual signature exposes
+both optional parameters as externref, while the live implementation expects
+the exact node-vector carrier plus branded i32 Boolean. The exact vector bridge
+was excluded, and direct namespace functions did not share lifted functions'
+incoming-argc cache. The working-tree repair admits only the exact vector and
+extends the declaration-identity-based optional-scalar tracker to direct
+functions. Its focused omitted-versus-explicit-false oracle passes; a new full
+binder run is still required before this frontier is considered cleared.
+
+The deployment target is now explicit in the TypeScript build probe. `gc`
+remains the default compatibility lane; `standalone` omits the Node platform,
+records requested and actual target provenance, inventories the emitted
+module's imports, requires **zero imports** for acceptance, and uses a separate
+diagnostic artifact name. Unknown targets and JS-string runtime oracles in
+standalone fail closed. Instead, tracked static fixtures embed the same pinned
+input bytes and expose zero-argument numeric exports. A standalone canary
+compiled, validated, instantiated with `{}`, reported zero imports, and
+returned its expected raw-Wasm value. The real parser/binder workloads still
+need that same proof.
+
+The existing TypeScript upstream-unit adapter now has the same explicit target
+and raw-Wasm lane. Its first standalone measurement compiled and validated all
+**4/4** selected modules as actual target `standalone`, emitted **4,871,809
+bytes** in aggregate in **12,279 ms**, and reported zero imports for every
+module. The isolated Node 24.4.1 worker enables its experimental Wasm exnref
+flag for this lane; without it, all four otherwise-emitted modules fail host
+validation at opcode `0x1f`. Native remained **14/14**. Wasm passed **6/14**
+callbacks: the base64 control and all five `parsePseudoBigInt` cases. The three
+comment-scanner callbacks threw WebAssembly exceptions, and `convertToBase64`
+threw during module initialization, making its five callbacks runtime-failed.
+This is a real standalone frontier, not a suite pass. The adapter still covers
+only 4 of 256 files and 14 of 1,761 static registrations, leaving 252 files and
+1,747 registrations deferred. Standalone TypeScript 5 and its full unit suite
+are therefore the active end goal, not a completed milestone.
+
+The broad #1058 regression sweep also exposed an older module-evaluation
+cycle, reproduced unchanged at the clean pre-checkpoint head: importing the
+codegen index could reach collection-brand and standalone-subclass tables
+before `map-runtime` had initialized `COLLECTION_KIND`. Both tables now resolve
+their tags lazily. The scope-cache regression and the Map/Set subclass controls
+pass, and the current checkpoint passes all **76** `issue-1058` files and all
+**364** assertions. TS5/TS7 typechecks and the LOC, function-size, oracle, IR,
+and codegen-fallback ratchets also pass.
+
+### 2026-09-05 resumed standalone measurements
+
+The omitted generic-vector review regression now passes in both GC and
+standalone: omission, explicit `undefined`, and populated vectors preserve
+their values (**11/11** node-array factory tests). The strict harness review
+checks and upstream runner tests pass **41/41**. Missing target evidence,
+orphaned legacy invocation flags, non-zero-argument standalone invocation
+records, and mismatched native/Wasm callback counts are rejected.
+
+A fresh upstream unit run (`DOGFOOD_TARGET=standalone DOGFOOD_SOURCE_DIAG=1
+node --import tsx tests/dogfood/typescript-upstream-suite.mjs`) reproduces
+**6/14** passing callbacks. A new working-tree reduction,
+`tests/issue-1058-comment-accumulator.test.ts`, returns the expected **282**
+in GC but throws in standalone. It retains the scanner's generic reducer and
+six-argument callback with a defaulted array accumulator. The emitted
+standalone dispatcher omitted the concrete append callback signature and ended
+in its exception arm. The subsequent repair retains the vector's exact GC
+carrier across the erased callback boundary, preserving accumulator identity
+and its typed-null default sentinel. The inverse cast rejects incompatible
+representations. This reduction now passes in both lanes; the node-array tests
+pass **11/11**, and related callback/vector regressions pass **103/103**.
+
+The authoritative upstream rerun after that repair improves standalone from
+**6/14 to 9/14**: all **3/3** original comment-scanner callbacks now pass.
+All **4/4** modules compile and validate with zero imports, emitting
+**4,872,713 bytes** in **13,494 ms** aggregate compile time. The five
+`convertToBase64` callbacks still fail during module initialization; their
+upstream source reads the Node `Buffer` global before registration, which is
+the next environment boundary to investigate. Coverage remains **4/256**
+files and **14/1,761** static registrations. The full updated regression
+sweep passes **77/77** files and **368/368** assertions; TS7 typechecking and
+`git diff --check` pass.
+
+The first full standalone parser probe completed in **255,435 ms wall /
+267,141 ms CPU**, peaking at **2,945 MiB RSS**. Its graph contains **31 source
+files / 35 Program files / 313 module-init statements / 5,581 functions after
+bodies**. Compilation failed with **two errors and five warnings**, emitted
+**zero bytes**, and executed **0/3** requested parser oracles:
+
+- `core.ts:332:1`: `mapIterator` requires generator lowering beyond sequential
+  numeric yields in standalone.
+- `tracing.ts:356:38`: `dumpLegend` uses an unsupported native
+  `JSON.stringify(legend)` shape.
+
+Next work must determine whether these functions are semantically reachable
+from the selected parser root before either implementing the capabilities or
+removing proven-unreachable declarations before code generation. Merely
+suppressing the errors would not establish parser correctness. The standalone
+convertToBase64 initialization failure also remains open. No replacement PR
+has been opened yet.
+
+### 2026-09-05 standalone Buffer dependency investigation
+
+The remaining unit file requires the Node `Buffer` global, whose current
+compiler support delegates to the JavaScript host. An available `buffer@5.7.1`
+package provides a real source implementation to investigate as a standalone
+dependency. The diagnostic fixture
+`tests/dogfood/fixtures/typescript-buffer-standalone-probe.ts` checks UTF-8
+bytes for `hé` and the independent expected base64 string `aMOp`. It currently
+uses the installed pnpm package path; packaging it as a reproducible harness
+dependency remains follow-up work.
+
+Its initial compile failed because generic method dispatch classified the
+package's own `Buffer` function as a host builtin by name. The receiver path
+now checks the resolved binding before requesting `__get_builtin`.
+`tests/issue-1058-buffer-shadow-static.test.ts` reproduces the original failure
+and now executes successfully with zero imports. All **7/7** existing host
+Buffer tests and TS7 typechecking pass.
+
+The real Buffer package now compiles and validates as **1,543,838 bytes** of
+standalone Wasm with **zero imports**, but module initialization traps with
+`illegal cast` before the oracle executes (**0/1**). A source-map-enabled rerun
+points to the module-init chunk near
+`buffer/index.js:16:1` (nearest mapping, not an exact statement attribution).
+The source-map binary is **1,543,928 bytes** and still has zero imports. The
+TypeScript unit result remains **9/14**. Commit and main
+synchronization are still pending: signing failed, and the current process
+cannot connect to an SSH authentication agent.
+
+### 2026-09-05 Buffer initialization Symbol boundary
+
+The module-init cast is reproduced by the Buffer source's guarded
+`Symbol['for'](...) : null` initializer. Two repairs are required: preserve
+the `symbol: true` marker on `Symbol.for`'s i32 result so conditional boxing
+does not produce a Number, and register the native Symbol carrier before an
+externref-to-symbol conversion instead of importing `__unbox_symbol` when
+that carrier has not been registered yet. The focused initializer now runs
+with zero imports. TS7 typechecking passes. The registry, symbol-array, and
+host symbol regressions pass **72/73**; the remaining empty-string-description
+test also fails with both repairs removed, establishing it as pre-existing
+relative to this change.
+
+The real Buffer package now initializes and reaches its oracle. It still
+returns an incorrect result: the expanded five-export probe reports byte
+length **0** (expected **3**), non-finite byte reads (serialized as `null`),
+and an exception from base64 conversion (**0/5**). All four source modules
+compile into a valid **1,552,698-byte** module with zero imports. Next work
+must trace `Buffer.from`'s byte construction; initialization is no longer
+the failing stage. This does not change the TypeScript unit score of **9/14**.
+
+### 2026-09-05 Buffer prototype augmentation reproduction
+
+The four additional real-package controls return `Buffer.byteLength('hé',
+'utf8') === 3`, `Buffer.alloc(3).length === 3`, and
+`Buffer.from([104, 195, 169])[0] === 104`; all three pass. The fourth,
+`Buffer.TYPED_ARRAY_SUPPORT`, returns false instead of true. The module is
+valid, has zero imports, and is **1,556,461 bytes**. These controls narrow
+the next investigation to augmentation, not UTF-8 length calculation.
+
+`tests/issue-1058-buffer-prototype.test.ts` reproduces the package's
+`typedArraySupport` pattern without Buffer. It compiles and instantiates
+with zero imports but returns **-2**: immediately after
+`Object.setPrototypeOf(arr, proto)`, `Object.getPrototypeOf(arr) !== proto`.
+The later checks separately distinguish a missing method (-3) from a wrong
+call result (-1), with 42 as the required result. This regression currently
+fails and the patch is not merge-ready.
+
+Code inspection identifies the non-`$Object` return in
+`src/codegen/object-runtime-prototype.ts`'s `__object_setPrototypeOf` as a
+candidate write-side gap; standalone has no host boundary fallback there.
+The receiver-method fallback also does not dispatch this native typed-array
+receiver. Merely routing that call through the existing native dispatcher
+still returns the wrong result, so that speculative change was removed.
+Next: trace the actual typed-array prototype storage/read path and implement
+identity-preserving set/get/prototype lookup before retrying method dispatch.
+Do not hardcode the Buffer support flag or replace the upstream assertions.
+
+Further emitted-Wasm inspection confirms the receiver is the packed-byte
+`__vec_*` representation (length plus array), not `$__ta_dyn_view`. Therefore
+adding only a dynamic-view prototype override cannot fix this source. The
+`Object.getPrototypeOf(arr)` expression emits the intrinsic Uint8Array
+prototype singleton directly, without a runtime receiver lookup; its fold is
+in `expressions/object-get-prototype-of.ts` (the declared-name typed-array
+arm). The writer passes the raw vec identity to `__object_setPrototypeOf`,
+whose ordinary-object guard rejects it. Both write and read need repair.
+
+A positive control in `tests/issue-1058-typed-array-expando-call.test.ts`
+passes unchanged: an own method on `new Uint8Array(2)` receives ordered
+arguments, reads `this[0]`, and writes `this[1]` on the original array.
+Expected numeric oracle **1**, observed **1**, zero imports. This establishes
+that own-method compilation and receiver identity work for that concrete
+shape; do not replace that path wholesale while adding inherited lookup.
+
+Implementation direction: extend the identity-keyed vec side-table substrate
+in `vec-props.ts` with an explicit prototype override (distinguishing absent
+from explicitly null), consult it before the declared-type intrinsic fallback,
+and use the same link in inherited property lookup. Preserve own-property
+precedence, getter receiver, extensibility refusal, and cycle checks. Include
+both packed-byte vecs and dynamic typed-array views in the regression matrix,
+but do not assume their storage layouts are interchangeable. The inherited
+method call must then delegate only after existing compiled method paths
+decline. The full Buffer prototype reproduction remains failing.
+
+### 2026-09-05 prototype-store implementation checkpoint (not merge-ready)
+
+Implemented an explicit prototype/presence pair on the identity-keyed vec
+record, native get/set/status integration in `vec-prototype.ts`, inherited
+lookup with the original receiver, and a packed-typed-array method fallback.
+The declared-type getPrototypeOf path now consults the override before using
+the intrinsic prototype. The Buffer prototype reproduction now passes (42),
+and the own-method control still passes (1), both with zero imports.
+
+Real Buffer measurements improve: `TYPED_ARRAY_SUPPORT` now returns **1**;
+`Buffer.from('hé', 'utf8')` now reports length **3** and bytes **104, 195, 169**
+instead of length 0/non-finite byte reads. The expanded byte/base64 probe is
+**4/5**, valid **1,557,095 bytes**, zero imports. Base64 still raises a Wasm
+exception; neither the full Buffer oracle nor the deferred TypeScript base64
+unit file passes yet. Do not change the TypeScript **9/14** score from this.
+
+Focused checks are **7/8**: null replacement, distinct identities, own-property
+precedence, Buffer init, shadowed static binding, own method, and inherited
+method pass. The new top-level-array/nonextensible check fails its identity
+assertion immediately after setup, before checking refusal. It needs tracing;
+do not claim full extensibility correctness. Also test a frozen array with its
+unmodified intrinsic prototype: the generic runtime reader still lacks the
+packed carrier's intrinsic kind, so SameValue handling needs scrutiny.
+
+Existing nearby checks: **25/28** with a computed `length` write mismatch in
+`issue-3537.test.ts` (not baseline-attributed yet) and two Node exnref-flag
+failures in `issue-5194-es2015-typedarray-r3.test.ts`. Passing the flag on the
+Vitest parent did not propagate it to that test's execution context. The
+host expando and both-lane extensibility suites pass **7/7**. Next: repair the
+top-level identity case, baseline-attribute the length failure, exercise dynamic
+views and getter receivers, then diagnose Buffer's remaining base64 exception.
+
+### 2026-09-05 integrity-fold repair and base64 isolation
+
+The top-level identity failure was an earlier `getPrototypeOf` fast path:
+`nonExtensibleVars` caused the compiler to emit `Object.prototype` for the
+typed-array binding. Excluding typed arrays from that plain-object fold fixes
+all **4/4** prototype-storage checks, including self-cycle refusal, unchanged
+prototype acceptance after preventExtensions, and rejected replacement with
+identity preserved. This does not yet settle the separate unmodified-intrinsic
+SameValue concern above.
+
+The computed-length failure is reproduced with `vec-props.ts` restored to
+its HEAD version (f8ab271d), while all other worktree changes are held fixed:
+the same single targeted test returns **2** instead of **1**. The edited
+vec-props file was restored after this diagnostic. This attributes that
+failure as independent of the new vec prototype storage/wiring, not as a
+whole-branch clean baseline result.
+
+Further real-package controls: base64-js `fromByteArray([104,195,169])` returns
+the expected `aMOp` (**1/1**); Buffer's zero-argument UTF-8 `toString` oracle
+returns **0** instead of **1**. The two-export module validates with zero
+imports (**1,557,386 bytes**). A focused inherited-method
+`slow.apply(this, arguments)` control also passes **1/1**. Emitted Wasm shows
+the zero-argument Buffer `toString()` goes through `__extern_toString`, whereas
+the encoding-argument call goes through `__call_m_toString_1`, whose body
+delegates to `__extern_method_call`. Next trace that runtime member lookup and
+Buffer's own toString closure; do not substitute the direct base64 control for
+the failing upstream Buffer behavior.
+
+### 2026-09-05 Buffer toString diagnostic refinement
+
+The method-forwarding reproduction now includes a function constructor's
+prototype, a named method expression, `this.length`, `arguments.length`, and
+two omitted parameters of `slow.apply(this, arguments)`. Both `foo` and
+`toString` pass when the receiver crosses an untyped identity function.
+The concrete typed-array `toString` call fails where `foo` passes; preserve
+both receiver forms in the regression matrix. This is evidence of a static
+builtin fast-path defect, not evidence that generic apply is broken.
+
+In the real Buffer package, method identity compares equal and callable-type
+checks return the expected mask **7** for prototype toString, instance
+toString, and prototype write. Directly calling
+`Buffer.prototype.toString.call(bytes, 'base64')` returns a non-string; the
+normal argument-bearing call throws. The exception-message diagnostic has
+length **30** and begins `ca`, consistent with the native `called value is not
+a function` guard (not a decoded full-message proof). Its numeric diagnostic
+is **97099030**. These diagnostic exports are not upstream test passes.
+The direct-base64 encoder remains a passing control. Next inspect the
+prototype method value/body and its module-init assignment separately from
+the static zero-argument `__extern_toString` shortcut.
+
+### 2026-09-05 concrete toString dispatch checkpoint
+
+`vec-prototype-method-call.ts` adds a guarded two-arm call for local packed
+typed-array identifiers. An explicit prototype override resolves its method
+before evaluating arguments and applies the captured callee to the original
+receiver. The no-override arm retains builtin lowering. Spread, arbitrary
+receiver expressions, and non-standalone lanes remain on their existing paths.
+The four method/receiver combinations now pass **4/4**; builtin fallback and
+two string-result ordering controls bring the focused file to **7/7**.
+
+The initial ordering controls returned numbers from `toString` and assigned
+the result to a variable inferred as string; those failed and diagnostic
+arithmetic reached string coercions. The ordering controls now use string
+results to isolate ordering. Numeric results in the direct comparison matrix
+remain covered. A numeric override result stored in an inferred-string local
+is a separate unresolved representation case, not claimed fixed by the
+string-result controls.
+
+The real Buffer module remains **0/2** for combined byte/base64 and no-argument
+UTF-8 string conversion: base64 raises a Wasm exception and UTF-8 reports 0.
+It validates with zero imports (**1,560,459 bytes**). The concrete-local fix
+does not reach the package's erased-return call. WAT inspection locates its
+actual toString implementation in `__closure_45`, which references
+`__fn_tramp_slowToString_cached`; `__set_member_toString` is only the write
+dispatcher, not the method body. Continue tracing the closure invocation and
+runtime string-conversion path. Full upstream TypeScript score remains 9/14.
+Retry verification: all **22/22** tests across the six focused Buffer/vec
+files and the host-expando/both-lane-extensibility suites pass. TS7 typecheck
+and whitespace validation pass. This does not cover the unresolved cases
+explicitly recorded above or establish full TypeScript unit-suite completion.
+
+### 2026-09-05 CommonJS dependency isolation
+
+Temporary runtime error instrumentation (removed after measurement) identified
+the failing Buffer base64 method as `fromByteArray`, called through the
+`base64-js` CommonJS default object. Direct named ESM invocation of the encoder
+works. A two-file standalone CommonJS control returns 299 for bytes 104/195;
+adding a second CommonJS module makes the first import's method disappear
+(`typeof` callable check returns 0) and the nested call throws. The focused
+`issue-1058-cjs-dependency-method.test.ts` records these runtime expectations,
+not merely validation. Investigating exact imported-variable storage instead
+of graph-wide name aliases; no TypeScript-suite score improvement claimed yet.
+
+WAT establishes the collision: both module initializer sections write globals
+26/27/28 (`__cjs_default_export`, `exports`, `module`) and the imported read
+uses global 26. The second object replaces the first. Program ABI's exact
+declaration lookup also resolves to that same allocator object, so an
+import-read-only patch was tested, did not fix either failure, and was removed.
+`registerModuleGlobal` in `src/codegen/module-global-registration.ts` reuses
+`ctx.moduleGlobals.get(name)` and observes the existing allocator under each
+declaration. Next fix must isolate module storage and project each source's
+bindings consistently for initialization, reads, writes, and import aliases.
+Do not merely special-case `base64-js` or rename its method. Temporary debug
+instrumentation is removed; the regression matrix includes a single-module
+positive control, a sibling-module collision, and a nested dependency call.
+
+Implementation checkpoint: module variable registration now allocates separate
+cells for external-module declarations from different source files, retaining
+same-source redeclaration reuse. Source-owned cells and import aliases are
+projected before body compilation and each accumulated initializer statement.
+The focused matrix is **4/4**, including independently mutable ESM bindings
+and live import aliases across repeated calls. The real Buffer byte/base64
+oracle now returns **1** (previously threw); UTF-8 no-argument conversion still
+returns **0**. Thus actual Buffer is **1/2**, valid **1,560,672 bytes**, zero
+imports. Nearby module tests are **51/53**: the two failures are missing local
+Test262 `namespace/internals/set-prototype-of-null.js` fixtures, not runtime
+verdicts. TS7 typecheck passes. Broader regression/TDZ and source-scoped metadata
+coverage remains required before calling this storage change merge-ready.
+
+Broad checkpoint verification completed: **84/84 `issue-1058` files, 387/387
+assertions pass** (79.55 seconds). Formatting, whitespace, LOC and function
+budget gates pass. This does not replace full module/TDZ conformance coverage.
+Next goal-facing step: make the real Buffer polyfill an explicitly pinned
+standalone test-environment dependency and wire it into the original
+`convertToBase64` unit file, without changing its assertions. Current adapter
+still has the previously measured 9/14 score; no new upstream-unit pass is
+claimed from the separate Buffer probe. UTF-8 `.toString()` remains independently
+open. The polyfill is currently available only under PNPM's transitive store,
+not a root `buffer` package dependency; avoid baking that store path into the
+production adapter.
+
+### 2026-09-05 independent base64 oracle and 14/14 standalone unit checkpoint
+
+The adapter's old `ts.sys.base64encode` called TypeScript's own base64 function,
+so the convertToBase64 comparison was not an independent oracle. Restored the
+Buffer-based system implementation while preserving the original test bodies
+and assertions. `typescript-runtime-pin.json` pins buffer 5.7.1, base64-js 1.5.1,
+and ieee754 1.2.1 as published npm tarballs with verified digests. Setup extracts
+and links only its private cache; it does not install into shared node_modules.
+The report now carries runtime oracle version **2**. A negative-control test
+substitutes a broken TypeScript encoder and verifies that the comparison fails;
+another test compares the pinned Buffer implementation with native Node Buffer.
+
+`DOGFOOD_TARGET=standalone pnpm run dogfood:typescript-upstream-suite` now exits
+0: **14/14 native and 14/14 standalone callbacks**, **4/4 modules compiled and
+validated**, **zero imports**, **6,659,948 aggregate Wasm bytes**. Per file:
+base64 **1/1**, comments **3/3**, convertToBase64 **5/5**, parsePseudoBigInt
+**5/5**. Full inventory remains **256 files / 1,761 registrations**; selected
+coverage is **4 files / 14 callbacks**, with **252 files / 1,747 registrations
+deferred**. Do not mark the goal complete. Runtime/verdict regression tests
+are **20/20**. Buffer's no-argument UTF-8 conversion is still open separately.
+
+### 2026-09-05 fresh full standalone parser measurement
+
+After the module-storage/runtime-oracle fixes, reran the documented three-case
+standalone parser command against verified generated TypeScript diagnostics.
+It completed (not timed out) in **238,296 ms**, peak RSS **2,837.4 MiB**, with
+**31 source files / 35 program files**. Compilation still fails: **two errors**
+(`core.ts:332` generator `mapIterator`, `tracing.ts:356` JSON.stringify legend)
+plus five IR fallback warnings. No Wasm artifact and no parser invocation
+results; the three required runtime cases are **unexecuted**, not passes.
+
+Added focused reproductions for both remaining shapes. The legend test has two
+variants: its declared TraceRecord[] type is refused at compile time; an
+`unknown as object` assertion bypasses that gate but yields the wrong runtime
+JSON (**0/2**). Thus removing the array refusal is NOT a fix. The codec has a
+packed-vector normalization arm, but closed record elements still lack the
+required serialization behavior. The generator reproduction checks laziness,
+callback counts, two yields, and undefined completion, not merely compilation;
+the needed implementation is resumable iterable-loop lowering, not eager
+array buffering. These new regressions deliberately remain red pending fixes;
+the earlier 387/387 checkpoint predates these newly added assertions.
+
+### 2026-09-05 tracing-record JSON implementation checkpoint
+
+Implemented compact/nullish-replacer serialization of flat data-record arrays
+via the existing closed-record materializer and ObjVec codec. This path reads
+the array once and preserves null arrays/elements; class records, nested field
+carriers, and record `toJSON` members are not admitted by this bounded layout
+check. Nullable string slots proven to represent optional/undefined properties
+are restored to canonical undefined in the temporary open record. The native
+JSON dispatcher previously serialized the undefined singleton as `null`; it now
+returns an absent serialization piece, letting object callers omit it and array
+callers emit null. Other replacer paths retain their existing behavior.
+
+The exact legend tests and nullable controls pass **5/5**; the combined focused
+JSON run passes **28/28**. An attempted dynamic-key record route was removed
+after measuring `[{}]` (closed-record runtime enumeration exposes no fields),
+not shipped as a substitute. Full-parser remeasurement is running; do not claim
+the tracing error removed from that graph until its result is inspected. The
+generic mapIterator standalone regression remains a known compile failure.
+The expanded JSON matrix is now **6/6**, including side-effectful array
+production (evaluated once) and boolean/numeric fields. TS7 typecheck,
+formatting, whitespace and size/function gates pass. The independent-oracle
+upstream slice was rerun after the JSON dispatcher change and remains **14/14
+standalone**, with all four modules free of host imports.
+The full issue-1058 regression run completed with **393/394 assertions across
+86 files**: **85 files pass**, and the only failure is the explicitly added
+generic `mapIterator` standalone reproduction. This is not an all-green run.
+Full-parser remeasurement completed in **319,969 ms**, peak RSS **3,505.1 MiB**,
+with the same **two hard errors plus five warnings**, no artifact and no
+invocations. The tracing JSON error is **NOT removed from the complete graph**
+despite the local runtime improvement. Next isolate the full graph's actual
+namespace-record/vector carrier; do not widen the JSON gate without validating
+the runtime representation. A namespace-scoped, declaration-after-functions
+control is being added to distinguish that source shape from graph interactions.
+That namespace control reproduced the refusal: its anonymous record layout uses
+externref for optional string fields instead of nullable native-string refs.
+The layout gate now accepts boxed fields only when the source property type is
+provably a scalar JSON union (string/number/boolean/null/undefined). These fields
+already preserve canonical undefined, so they do not use nullable-slot repair.
+The expanded tracing suite now passes **7/7**, including the namespace case.
+Temporary layout logging was removed. A new full-parser build is still needed
+after this last boxed-field change; the prior full-graph failure remains the
+latest authoritative full-parser result until that measurement completes.
+
+The subsequent full-parser run (started 2026-09-05T17:58:24Z, recovered from
+session 32215) completed in **260,376 ms**, peak RSS **3,088.9 MiB**. It now
+reports **one hard error plus five warnings**: the tracing JSON refusal is gone;
+`core.ts:332` generic `mapIterator` remains unsupported. There is still **no
+Wasm artifact, no validation, and no invocation**. The next implementation is
+resumable `for...of` lowering, preserving lazy iteration and IteratorClose on
+abrupt completion; the module-initializer call must not be discarded as dead.
+
+### Resumable for-of implementation checkpoint (2026-09-05)
+
+The worktree now has synchronous iterator-init/step/close state terminators,
+with separate instruction emission in `generators-native-for-of.ts`. The body
+uses a state-lowered close region: normal exhaustion and IteratorStep failure
+do not close; injected return/throw and body exceptions do. An existing throw
+keeps precedence over a close error. Captured loop bindings, colliding frame
+names, async iteration, and unsupported own break/continue remain declined.
+The existing shared-pending-slot restriction also applies inside yielding
+finally blocks. Explicit source returns through such a region remain refused
+by the existing planner, rather than bypassing close.
+
+Two representation fixes were necessary after the first emitted code:
+generic generator callable parameters use the finalize-filled apply bridge
+instead of a prematurely frozen ABI candidate list, and numeric `.value`
+consumers include boxed result carriers rather than silently returning zero.
+
+The new regression suite currently passes **12/14**. It validates Wasm and
+asserts zero imports in a Node child with standardized exception handling
+enabled (10-second runtime timeout). Numeric/generic reads, callback laziness,
+normal exhaustion, return-before-start, return/throw close, body/next exceptions,
+and close-error precedence pass. Two explicit regressions remain **failing**:
+
+- TypeScript's inverse option Map initializer compiles but returns the wrong
+  result; isolate tuple mapping versus Map's iterable constructor next.
+- Mutating/appending to a numeric array between suspensions observes a stale
+  element (`-2`): the shared native `__iterator` materializes a boxed copy of
+  numeric vectors. A real iterator must retain the live original source.
+
+This is an uncommitted implementation checkpoint, **not** a completed parser
+or conforming generic-iteration claim. A fresh full graph is running in session
+22820; recover that handle before starting another full build. Two accidentally
+misconfigured Vitest launchers (sessions 1055 and 37949; PIDs 68543/69314) are
+waiting for stdin, not executing tests. Permission to stop only those launchers
+was requested; do not confuse them with the correctly completed 12/14 run.
+
+The nearby compatibility run passes **172/172 tests in 8/8 files** (generator
+carriers, terminal undefined, boolean done, try-regions, generic callback
+results/registration, and the original host-lane inverse-Map fixture).
+Typechecking, formatting, whitespace, and both change-scoped size budgets pass.
+Further isolation adds a fifteenth regression: mapped heterogeneous Map entries
+already have a wrong first key before the inverse Map constructor sees them
+(`-20`). The initializer's first Map has size 2, but the inverse has size 1
+(`-21`), consistent with key collapse; this is not yet a proven root cause.
+That two-test isolation run is **0/2**, with 13 tests intentionally unselected;
+do not report the entire new suite as green.
+
+Full-parser session **22820 completed**: **275,557 ms**, **3,092.4 MiB peak
+RSS**, **80,283,267 emitted Wasm bytes**, actual target **standalone**. Both
+former hard errors are gone (**compileSuccess=true**, five warnings), but
+**validation fails** in function 235, `measure`: `if[0] expected type i32,
+found local.tee of type anyref`, Wasm offset 2,541,151. Therefore the parser is
+**not runnable**, all **3/3 requested workloads fail before invocation**, and
+the import count remains **unmeasured** (module construction failed). Diagnostic
+artifact saving was disabled; do not claim that the emitted binary is saved at
+the suggested artifact path. Next isolate `measure`'s optional performance
+receiver/truthiness lowering, or rerun with environment variable
+`JS2WASM_TYPESCRIPT_PROBE_DIAGNOSTIC=1` for the full
+binary if needed. No second full-parser build is currently running.
+
+The final combined new-suite run is **12/15 passing**, with exactly the three
+Map/tuple and live-array failures described above. No tests are skipped in that
+run. The 172/172 compatibility result remains separate from this failing suite.
+
+The `measure` validation failure now has a small source-level reproduction in
+`tests/issue-1058-performance-measure-standalone.test.ts`. It copies the upstream
+optional-mark lookup/nullish fallback, numeric duration accumulation, and
+optional performance method call. Compilation succeeds but validation reports
+the same `if[0] expected type i32, found local.tee of type anyref` in `measure`
+(function 51, offset 53,946 in this smaller module). This permits local
+optimization/codegen isolation without another full-parser build.
+
+The local WAT proves the malformed condition belongs to `durations.get(name)
+|| 0`, not the optional performance receiver. `emitToBoolean` omitted abstract
+`anyref`/`eqref`, leaving a reference directly on the `if` condition stack.
+Both representations now externalize by identity and use the existing canonical
+truthiness classifier. Optimization disabled also reproduced the invalid code.
+After that fix, accumulation returned 40 but inline `Map.get(...) === 40`
+still folded false: typed Map.get exposed its kernel anyref storage carrier to
+source-expression dispatch. The Map.get boundary now returns externref, like
+the existing IR Map adapter; keys and stored values are unchanged.
+
+The initial combined Map/performance run passes **26/26**, including correct
+duration accumulation, 13 truthiness/identity/short-circuit cases, and 12 nearby
+Map/Set tests. Two direct emitter tests additionally pin abstract-reference
+truthiness so normalizing Map.get cannot mask regression of the coercion fix.
+
+The expanded performance test passes **16/16**, including both emitter controls.
+Full-parser session **47254 completed** in **244,335 ms**, peak RSS **2,940.1
+MiB**, with **80,283,472 Wasm bytes**. It now **compiles AND validates** under
+the actual standalone target. It still has **one host import: `env.Set_has`**,
+so the host-free gate correctly prevents all **3/3** workload invocations.
+The five IR fallback warnings remain. Diagnostic publication is false (the
+host-free/run verdict failed), so no newly saved artifact is claimed. This
+measurement predates the subsequent tuple-index-reader edit. Next resolve the
+source/ABI path retaining `Set_has`; do not provide a host shim to pass the gate.
+
+The tuple failure was isolated by comparing a direct `.next().value` binding
+with indexing through a saved IteratorResult. The yielded value was a physical
+tuple struct; the dynamic `__extern_get_idx` reader knew vectors but not tuple
+`_N` storage fields. New `tuple-index-read.ts` emits exact numeric-index arms
+from `ctx.tupleTypeMap` into the existing finalize-time reader, using the actual
+field carrier and preserving boolean brands/object identity. It does not change
+the tuple allocation or copy the value. TypeScript's inverse option Map and
+the intermediate mapped-entry regression now both pass.
+
+Latest combined focused run: **31/32 passing** — performance **16/16** and
+generator/tuple **15/16**. The one remaining failure is numeric-array mutation
+between generator suspensions (shared iterator snapshot, `-2`). The escaped
+tuple test checks string/number/boolean/object values and negative, fractional,
+and out-of-range indices. Typechecking, formatting, whitespace and both size
+budgets pass. No full-parser process is running; its latest complete-graph
+measurement remains the validating, one-import session 47254 above.
+
+### Optional native Set follow-up (2026-09-05)
+
+The parser contains `notParenthesizedArrow?.has(tokenPos)`. Optional calls had
+their own extern method dispatch, bypassing native Set helpers. Added a captured
+native Set `has`/`delete` adapter, preserving receiver single evaluation and
+argument short-circuiting. Its boolean result is boxed so the nullish arm can
+return canonical undefined rather than false. Abstract-reference receivers now
+participate in the existing null/undefined guard instead of being discarded.
+
+Focused tests: **7/7**, validating, zero imports, correct return values. The
+pre-change control loads `HEAD:src/codegen/expressions/calls-optional.ts` through
+an ignored Vitest pre-load plugin without modifying any production files;
+all other dirty worktree code is identical. That control fails **6/6** initial
+new tests. A seventh concretely typed receiver test directly reproduces
+`env.Set_has` in the control and passes import-free with the adapter. These
+controls attribute both the semantic and host-import fixes to this change.
+Neighbor run: **21/22** across four files (before adding the last three Set
+cases). The `o.f?.(x)` case in `issue-2049.test.ts` returns -1 rather than 6 in
+both candidate and the pre-change control: not introduced by this change,
+but still open. Typechecking, formatting, whitespace and size gates pass.
+Full parser session **55162 is complete**: started 2026-09-05T18:50:26.287Z,
+**380,009 ms**, peak RSS **2,950.9 MiB**, **80,285,778 bytes**,
+`actualTarget=standalone`, `compileSuccess=true`, `validates=true`,
+**zero imports**. Same 31-source/35-program-file graph and five IR fallback
+warnings. This is the first measured complete-graph zero-import result in this
+handoff. It includes the tuple-index change as well as the optional Set fix.
+
+All **3/3 requested invocations remain failing before invocation**: instantiation
+throws `[object WebAssembly.Exception]` during module initialization, with no
+stack/offset available from the current error formatter. No diagnostic binary
+was published because the verdict failed. Next: expose the startup exception's
+payload/source through a diagnostic-only path and fix the offending initializer;
+do not weaken the raw instantiation/import/oracle gates or count this as a
+working parser. No full-parser process remains live.
+
+Startup diagnostic control: a standalone module whose initializer throws a
+known Error reproduces an actual `WebAssembly.Exception` with no own properties
+and no `.stack`; changing the formatter alone cannot recover a location. V8
+tracing enabled only around instantiation reports `__module_init` and
+`__new_Error` in that control. Added opt-in
+`JS2WASM_TYPESCRIPT_PROBE_TRACE_STARTUP=1` to the build worker, resetting the
+flag in `finally`. It leaves the original binary, imports, invocation handling,
+and verdict gates unchanged. Do not use Node's global `--trace-wasm` flag for
+this probe: that also traces tsx's compiler-side Wasm parser and floods output.
+The actual probe control is now automated in
+`tests/dogfood/typescript-startup-trace.test.ts`: **1/1** passes, with the known
+startup throw still producing a failed verdict despite valid zero-import Wasm.
+The existing harness verdict tests also pass **18/18**; typechecking and
+formatting pass. Complete-graph traced session **50763 is complete**:
+**380,866 ms**, peak RSS **3,215.1 MiB**, same **80,285,778 bytes**, validating,
+zero imports, still failing all three cases at instantiation. No artifact
+published and no full-parser process remains live.
+
+The startup trace pinpoints:
+`__module_init -> __module_init_chunk_1 -> Version_new -> Version_init -> every
+-> __extern_get_idx -> __new_TypeError`. Actual pinned `semver.ts` initializes
+`Version.zero = new Version(0, 0, 0, ["0"])`; its constructor calls
+`every(prereleaseArray, s => prereleasePartRegExp.test(s))` and the equivalent
+build predicate. Trace reaches the element read and TypeError without entering
+the predicate, making callback dispatch/registration a candidate, not a proven
+root cause. Do not broaden the generic-generator callback adapter merely on
+this hypothesis.
+
+`tests/issue-1058-version-startup.test.ts` currently provides **4/4 passing
+controls**: exported generic every, static Version initialization, string/array
+union narrowing and one-argument string/RegExp predicates, both single-file and
+two-module compilation. These DO NOT reproduce the complete-graph failure.
+Next reduction must preserve more real semver constructor overload/default and
+module-scale callback registration context (including the module-level RegExp
+binding) until it produces the same startup TypeError. No runtime fix claimed.
+
+### Version initializer callback registration (2026-09-05)
+
+The reduction now reproduces the startup exception when it retains every's
+overloads, the five-parameter overloaded Version constructor, module-level
+RegExp predicates, and the barrel import. Four simpler controls pass; the new
+fifth case fails during instantiation with a WebAssembly.Exception.
+Focused WAT (`.tmp/ts5-version-types.txt.wat`) proves the mismatch: `every`
+accepts function types 124–132, none taking a native string, while Version_init
+passes a later-created closure with function type 135
+`(ref null 123, ref null 6) -> i32`. The closure struct is a valid subtype of
+the shared closure carrier; the stale function-signature ladder cannot call it
+and reaches `__new_TypeError` instead. This is not a RegExp parsing failure.
+
+Extended the existing finalize-filled generic-generator callable adapter to
+ordinary generic function/method parameters as well. The standalone, callable
+parameter, no-spread and maximum-eight-arguments boundaries remain unchanged.
+Focused Version plus neighboring callback suites initially passed **103/103**.
+Additional negative controls found that the shared apply bridge deliberately
+returns undefined for non-callables (it also serves optional probes). Generic
+source calls now use the finalize-filled `__typeof_function` classifier and
+throw TypeError after evaluating arguments when the value is not callable.
+Current Version/callback suite **9/9**, including null, undefined, number and
+plain-object callees plus an argument-side-effect check. Typechecking and
+formatting pass. The nearby standalone suites remain **38/39**, with only the
+known live-array iterator snapshot failure. After the callable guard, the
+generic/multifile/iterator run is **113/114** with that same sole failure;
+both size gates and typechecking pass on the guarded code.
+
+Complete-graph session **98374 finished**, started
+2026-09-05T19:15:26.084Z: **325,234 ms**, peak RSS **2,479.7 MiB**,
+**78,984,248 bytes**, validates, zero imports, same five warnings. This run
+contains the generic callback dispatch fix but **predates the new callable
+guard**. The trace proves the Version failure is fixed in the actual graph:
+`every -> __apply_closure -> __call_fn_method_2 -> __closure_671 -> __regex_search`
+returns true, both assertions pass, and `Version_init` returns.
+
+The next startup failure is
+`tryGetPerformanceHooks -> tryGetPerformance -> __new_TypeError`, before any
+workload invocation (**0/3 invoked**, all blocked by instantiation). No artifact
+was published; no full-parser process is live. `performanceCore.ts` starts with
+`isNodeLikeSystem()`; its real implementation in `core.ts:2586` tests
+`typeof process !== "undefined" && !!process.nextTick && !process.browser &&
+typeof require !== "undefined"`. Investigate ambient/global presence and the
+call site rather than adding a performance host shim. Full guarded-compiler
+measurement is still required.
+
+### Standalone ambient capability presence (2026-09-05)
+
+A three-case reduction found Node detection already correct, but absent
+`declare const performance: Performance | undefined` incorrectly classified as
+an object in standalone (**1/3 before**, **3/3 after**). The explicit ambient
+identity helper was disabled for standalone, so both runtime lookup and typeof
+anti-folding guards were bypassed. Standalone now uses the same explicit typed
+ambient identity path, backed by its existing **native global environment**;
+no host import or performance implementation is introduced. WASI/other strict
+host-disabled lanes retain their prior gating. This also gives ambient reads
+priority over unrelated flat-map locals, including the dead destructuring
+binding in TypeScript's performanceCore.
+
+Full traced run **16487 is complete** with this change and the generic-callable
+guard: started 2026-09-05T19:25:38.471Z, **320,524 ms**, peak RSS
+**2,783.3 MiB**, **79,395,997 bytes**, validates, zero imports, five warnings.
+Version initialization still passes, but the same
+`tryGetPerformanceHooks -> tryGetPerformance -> __new_TypeError` remains.
+All three workloads fail before invocation; no artifact was published and no
+full-parser process remains live. The ambient-presence defect is fixed in the
+reduction, but **was not the only cause of this full-graph startup failure**.
+Next run should use the existing `JS2WASM_DUMP_TYPES=<worktree>/.tmp/<name>`
+and `JS2WASM_DUMP_WAT_FN=tryGetPerformance,isNodeLikeSystem` diagnostics to inspect
+the emitted failing operation rather than infer it from adjacent source.
+Runtime-presence/removal and
+lexical-shadow controls plus the existing host ambient suite pass **13/13**
+(5 standalone presence cases, 8 existing ambient cases). Supplied native
+capabilities remain observable, deletion changes subsequent plain/compared
+typeof results, and dead locals/real lexical shadows retain their behavior.
+Typechecking, formatting, whitespace and both size gates pass.
+
+Follow-up diagnostic session **13180 completed**, emitting focused WAT for
+`tryGetPerformance,isNodeLikeSystem` to
+`.tmp/ts5-performance-full-types.txt.wat` using the existing debug emitter.
+The real pinned `performanceCore.ts`, compiled with its exact
+`isNodeLikeSystem` function extracted from core.ts and a re-export barrel,
+**initializes and returns 1** from a no-native-hooks check (scratch driver
+`.tmp/ts5-performance-debug.mts`). Thus the remaining full-graph exception is
+not reproduced by performanceCore source alone; inspect the full emitted call
+and binding representation before changing the environment behavior again.
+
+The full WAT identifies the mismatch precisely: `isNodeLikeSystem` begins with
+`i32.const 1` for `typeof process !== "undefined"`, then loads `ref.null extern`
+for process and throws TypeError before reading nextTick. The same body is
+inlined into `tryGetPerformance`, explaining why the runtime trace did not show
+an isNodeLikeSystem entry. The checker injects `__js2wasm_node_env.d.ts` when
+the joined graph contains a `node:` reference; even a comment can trigger this
+type-level hint. That declaration is not runtime provision of process.
+
+Two focused controls reproduce both errors before the fix: absent process has
+the wrong typeof, and an explicitly supplied native process value cannot be
+read. Standalone ambient `process` variables from declaration files now enter
+the existing native-global-environment reader and typeof anti-folding guards.
+No unconditional absent/present answer is used. Both controls pass afterward;
+the combined presence suite is **7/7** before adding the exact Node-detector
+guard control. Existing host paths and concrete lexical shadows stay separate.
+Full traced session **58591 completed** with the fix: started
+2026-09-05T19:41:33.496Z, **274,238 ms**, peak RSS **2,858.1 MiB**,
+**79,447,831 bytes**, validates, zero imports, five warnings. The trace now
+gets through performance-hook detection and finishes module-init chunk 1.
+Chunk 2 calls `__builtin_static_Date_now`, whose body throws TypeError.
+All three workloads still fail before invocation; no artifact published and
+no full-parser process remains live. Presence suite is now **8/8**, host ambient
+suite **8/8**, typecheck and both size gates pass.
+
+Next identified mismatch: first-class `Date.now` enters builtin-value-read.ts's
+generic throwing static-method fallback, unlike direct Date.now() in
+call-namespace-static.ts. The latter already has an explicit standalone clock
+policy (legacy epoch-zero fallback, or certified clock capability); WASI uses
+its clock helper. Reified Date.now should share the existing policy, not invent
+a clock source or add an unapproved host import. Inspect
+`standalone-clock-capability.ts` before wiring the extracted function path.
+
+Follow-up: added typed and dynamic stored-Date.now module-initializer tests.
+Both reproduce an instantiation exception before the fix. The value closure
+now returns f64 through the existing standalone clock emitter (or existing
+WASI helper), preserving singleton identity and the no-clock epoch fallback.
+No new clock source or capability import is introduced. Both focused tests
+now pass (2/2); the existing clock capability suite also passes (23/23).
+TypeScript typechecking, whitespace, LOC and function-budget checks pass.
+
+Full parser session 10479 completed (started 2026-09-05T19:54:54.481Z):
+253,722 ms wall time, 2,631.3 MiB peak RSS, 79,447,650 binary bytes,
+compileSuccess=true, validates=true, standalone, zero imports. Startup now
+passes the former Date.now exception in chunk 2 and reaches chunk 5.
+All three required oracle cases still fail at instantiation (0/3):
+`RuntimeError: illegal cast` in `__module_init_chunk_5`, function 5464,
+binary offset 47035288 (0x2cdb398). The final traced helper is `__map_new`.
+The diagnostic publisher correctly did not publish the rejected binary.
+
+Next: dump chunk 5's WAT and identify the cast immediately after Map creation;
+reproduce its source initializer independently before changing carrier code.
+The five existing IR fallback warnings remain. This is startup progress, not
+parser-oracle or upstream unit-suite completion.
+
+Diagnostic session 73633 reproduced the same binary and offset in 256,468 ms,
+peak RSS 2,862.4 MiB. `.tmp/ts5-chunk5-types.txt.wat` identifies the first
+scanner Map initializer: `new Map(Object.entries(textToKeywordObj))`.
+The source is `MapLike<KeywordSyntaxKind>` with a string index signature;
+the object literal is emitted through native dynamic-object writes. At WAT
+line 25240 its externref global is cast to the empty MapLike struct (type 80),
+before an incorrectly empty entries array is constructed. Thus the runtime
+Map kernel is not the failing cast. Add single-/multi-module reproductions and
+route open index-signature enumeration through the existing runtime helpers.
+Both reproductions failed with `illegal cast` before the fix and pass afterward
+(2/2), verifying three Map entries and ordered keys/values with zero imports.
+The fix excludes string-/number-index-signature types from closed-struct
+enumeration; their runtime own properties, not the checker's declared field
+list, determine keys/values/entries. Typecheck, whitespace and both size gates
+pass. Six neighboring test files: 57 passed, 2 failed, 17 skipped (76 total).
+Both failures reproduce identically with object-ops.ts loaded from HEAD via
+`.tmp/ts5-enumeration-baseline.config.mts`: host array hasOwnProperty returns
+10 rather than 1, and the interface-slot sort returns `aAbB` rather than the
+test's `bBaA`. The latter test explicitly pins an older broken no-op sort.
+The same control makes both new MapLike regressions fail again, establishing
+the enumeration change's causal effect without reverting production files.
+Full parser rerun session 1077 completed: started 2026-09-05T20:08:04.921Z,
+301,719 ms, peak RSS 3,167.9 MiB, 79,446,815 bytes, valid standalone Wasm,
+zero imports. The trace now iterates and seeds the keyword Map successfully,
+then creates the next Map and traps in chunk 5 at offset 47034701
+(0x2cdb14d), still 0/3 oracles, no published artifact.
+
+Next reproducer added to the same test: `new Map(Object.entries({ ...keywords,
+extra: 4 }))`. Spreading alone passes, but adding the own field recreates
+`illegal cast`; current test result is 2 passed / 1 failed (3 total).
+`compileObjectLiteralForStruct` in literals.ts around line 3229 resolves the
+index-signature spread source to the empty MapLike struct and stores its
+dynamic-object value in `__spread_obj_*` with that static type. Inspect the
+literal's runtime-spread routing and enumeration together: merely removing
+the cast must not lose copied keys or property order. No spread fix yet.
+
+Spread follow-up implementation: a shared indexed-spread predicate selects the
+existing open-object builder even when generic contextual inference lists only
+the added fields. Hoisted var storage follows the same decision; inline
+keys/values/entries enumerate the runtime property set. Original three tests
+pass, including single evaluation, insertion order, and later-field overwrite
+checks. Neighbor suites: 30 passed, 10 pre-existing skips. Adding explicit
+module-level `var`/`const` annotations found that moduleGlobalWasmType also
+needed the shared predicate; both failed before that storage fix. The final
+focused suite passes 5/5 afterward, all validated with zero imports.
+Full probe session 13014 completed with the spread/enumeration fix but
+predates the final module-global storage adjustment. Do not label that probe
+as verification of the later storage edit. Started 2026-09-05T20:17:14.131Z,
+273,735 ms, peak RSS 3,078.6 MiB, 79,411,211 bytes: compileSuccess=true,
+validates=true, standalone, zero imports, unchanged five IR fallback warnings.
+Startup passes chunk 5 and reaches chunk 10. All three oracles still fail at
+instantiation: `illegal cast` in `__str_to_number` (function 50, offset
+2427982 / 0x250c4e), called by `__module_init_chunk_10` (function 5470,
+offset 0x2cdef4a). No diagnostic binary published. No full probe remains live.
+Next dump chunk 10 and the string-number helper; identify the actual value
+passed to conversion and reproduce that initializer without the full graph.
+Latest focused suite 5/5, typecheck, formatting, whitespace and function-budget
+gate pass after the module-global storage adjustment.
+
+Chunk-10 diagnostic session 89444 completed on the latest storage code:
+244,889 ms, peak RSS 2,874.2 MiB, same 79,411,211-byte valid zero-import binary
+and same failure. `.tmp/ts5-chunk10-types.txt.wat` line 23099 calls
+`__str_to_number` while converting makeReverseMap's string-vector return to
+the numeric `regExpFlagCharCodes` vector. The preceding call initializes
+`tokenStrings` using the same generic function. Scanner source line 401:
+`makeReverseMap<T>(source: Map<T, number>): T[]` captures an empty T[] in
+Map.forEach and stores each key at its numeric value index. First call has
+string keys, second numeric enum keys. Added a small mixed-instantiation
+regression to distinguish generic array specialization from numeric parsing.
+The small test reproduced the same __str_to_number illegal cast. Generic
+declaration return lowering now keeps the declaration's erased array carrier
+for unconstrained T[] instead of the first call's concrete array element type.
+Both call orders pass, along with 91 generic identity/callback neighbors
+(93/93). An added array-identity control then caught a copying regression in
+the broad result rule. The final rule preserves the agreed parameter carrier
+when a parameter has the exact same array type as the declared return; only
+otherwise does the unconstrained T[] result use the erased declaration carrier.
+Both reverse-map call orders including identity now pass (2/2). Final
+typecheck, whitespace and both size gates pass. Full probe session 72670
+predates this final identity refinement; do not call it a full verification of
+that later edit. It completed: started 2026-09-05T20:32:06.911Z, 245,593 ms,
+peak RSS 3,010.6 MiB, 79,411,533 bytes, valid standalone Wasm, zero imports,
+five existing IR fallback warnings. Startup moved beyond __str_to_number and
+now throws a catchable TypeError (0/3 oracles, no published diagnostic binary).
+Tail trace: __call_m_call_2 -> __extern_method_call -> __closure_method_call ->
+__apply_closure -> __call_fn_method_2 -> __proto_method_-1073741805_call ->
+__new_TypeError. Next identify the source .call receiver and inspect reified
+Function.prototype.call support. The retained 100-line tail does not establish
+which source initializer/chunk owns this call. No full probe remains live.
+
+Stored hasOwnProperty.call repro (alias and holder property) reproduces the
+startup exception, with Function.prototype.call explicitly reified. The
+Function glue advertised call but supplied only the generic refusal body.
+Added a receiver-aware variadic body: validate callable this, split the first
+argument as thisArg (undefined if omitted), forward the remaining complete
+argument list to the existing apply-closure bridge. Focused verification pending.
+The first emitter test caught invalid branch field names (`labelIdx` instead
+of IR `depth`); corrected before any full probe. The focused hasOwn tests now
+trace directly into the separate hasOwnProperty refusal body, not call's
+body. An isolated ordinary-function control using stored callValue.call
+passes with zero imports. Added multi-argument forwarding and non-callable
+TypeError checks; neighbor verification is running. Full probe rerun started
+with filtered startup trace retaining chunk and hasOwnProperty/call events.
+Ordinary-function control passes all added checks. Neighbor run: 21 passed,
+10 failed (31 total). Two are the separately identified hasOwnProperty refusal;
+eight cannot run because their Test262 source files are absent (ENOENT), not
+compiler verdicts. The 7 closure-call/apply and 10 function-expression-this
+tests pass, as do three self-contained null/undefined call/apply controls.
+Final typecheck passes after the branch-field correction. Full probe session
+13232 is live; no new hasOwnProperty implementation yet.
+The ordinary-call control also passes strict omitted-this forwarding.
+Loading HEAD's array-object-proto.ts through the Vitest pre-load control
+`.tmp/ts5-call-baseline.config.mts` restores its startup exception, proving
+the new call body is exercised rather than a pre-existing direct-call route.
+Full session 13232 completed: started 2026-09-05T20:45:02.192Z, 248,855 ms,
+peak RSS 2,804.2 MiB, 79,411,815 bytes, valid standalone Wasm, zero imports,
+five existing warnings, 0/3 oracles (instantiation failure), no published
+artifact. Filtered trace reaches __module_init_chunk_23 (function 5551),
+hasProperty (119), the now-executing Function.prototype.call body (2705), then
+__proto_method_-1073741806_hasOwnProperty (1510) -> __new_TypeError (56).
+Next implement the reified Object.prototype.hasOwnProperty body through the
+existing native own-property predicate, preserving ToPropertyKey-before-
+ToObject ordering and nullish receiver errors. Its kernel alone returns false
+for null, so wiring only a raw __hasOwnProperty call would be incorrect.
+
+Resume checkpoint: implemented the reified hasOwnProperty body in
+`object-proto-has-own.ts`, wired through the prototype closure factory. It
+converts the key before rejecting nullish receivers, then calls the native
+own-property predicate. Expanded the stored-function regression to exercise
+primitive receivers, inherited properties, throwing key conversion, and
+undefined receivers. Session 23830 measured 1/3 passing: ordinary call passes;
+both native modes return -5 on primitive-string own properties. The predicate's
+String-exotic helper only recognized boxed strings. Extended that helper to
+recognize primitive strings too, using the same string-data representation and
+canonical-index checks without allocating an unobservable temporary wrapper.
+Session 56731 is testing this correction; no full-parser success claimed.
+
+Session 56731 completed 3/3 passing. Expanded again for canonical-index
+rejections, boxed strings, booleans, symbol keys, undefined-valued own
+properties, and undefined keys: session 24487 passed 19/19 across the new
+stored-function regression and hasownproperty-call, issue-2934 function
+receiver coercion, and issue-4187 delete controls. The three issue-2934 cases
+assert Wasm validity only; the new regression explicitly instantiates with
+zero imports and checks returned values. Typecheck, formatting, whitespace,
+and both size gates passed. Full real-source standalone parser session 73211
+is live with the same three required fingerprints; verdict pending.
+
+Full session 73211 completed (started 2026-09-05T20:58:07.818Z): 311,934 ms,
+2,747 MiB peak RSS, 79,445,165 bytes, valid standalone Wasm, zero imports.
+Startup now completes: every failure moved from instantiate to invoking the
+requested parser workload. Still 0/3 matching fingerprints. All three fail
+with `dereferencing a null pointer` at createIdentifier, function 885, binary
+offset 0x34d445 (3462213), called by parseMemberExpressionOrHigher (1064),
+parseLeftHandSideExpressionOrHigher (1063), parseUpdateExpression (1062).
+The five existing IR fallback warnings remain. Diagnostic artifact was NOT
+published because the verdict failed. Final typecheck session 8424 passed.
+Next: inspect emitted createIdentifier and its factory receiver in standalone;
+do not assume this is identical to the earlier GC-lane createIdentifier fix
+merely because the function name matches. Full units and self-hosting remain
+unverified and incomplete.
+
+Next-turn diagnostic: full session 42468 rebuilds the same graph with only
+createIdentifier WAT dumped to `.tmp/ts5-create-identifier-types.txt.wat`.
+The earlier Identifier constructor regression is now parameterized for GC and
+standalone (raw exports and asserted zero imports in standalone), to test
+whether the existing factory controls reproduce this runtime frontier.
+Session 49118 passed 6/6 (3 GC + 3 standalone), including the late-assigned
+Identifier constructor, namespace factory destructuring, and generic
+finishNode chain. These reduced factory cases do not reproduce the full
+parser failure. Formatting and whitespace checks passed for the test change.
+
+Session 42468 completed: 281,562 ms, peak RSS 2,960.6 MiB, identical
+79,445,165-byte valid zero-import module and 0/3 invoke failures at 0x34d445.
+The emitted parser createIdentifier (WAT line 22510 onward) guard-casts its
+factory result from Node (219) to ArrayLiteralExpression (289), then executes
+ref.as_non_null before finishNode. The declared generic constraint is Node;
+the first caller's sibling specialization is not a sound shared ABI.
+Changed the reduced test's primeFinishNodeSpecialization input from Node to
+ArrayLiteralExpression: session 25375 measured 5/6 passing, with exactly the
+standalone Identifier chain now reproducing a null dereference (GC passes).
+Changed resolveGenericDeclarationCallSiteTypes to use the declared constraint
+parameter carrier for native constrained object T -> T contracts, and keep
+the matching reference result carrier. This does not open all native structs
+or change unconstrained scalar generics. Session 5145 is testing this fix and
+neighboring generic identity/factory/array controls; full post-fix run pending.
+Session 5145 passed 11/11 across four files, including the newly failing
+standalone sibling-prime case. Full post-fix parser session 75523 is live;
+typecheck session 92371 and size/whitespace gates session 70839 are pending.
+Sessions 92371 and 70839 completed successfully: typecheck, formatting, both
+size gates, and whitespace checks pass. Parser session 75523 remains live;
+resume that handle rather than starting another build.
+Continuation regression session 88186 passed 107/107 across five files:
+generic asserted write-through, nested asserted identity, nullable generic
+results, generic base-node factories (including negative freshness controls),
+and generic callback results. Parser session 75523 remains pending.
+
+Session 75523 completed, started 2026-09-05T21:13:05.021Z: 281,689 ms,
+peak RSS 2,950.5 MiB, 79,407,334-byte valid standalone module, zero imports.
+All three workloads pass the former createIdentifier trap and now fail while
+invoking unescapeLeadingUnderscores (317), offset 0x2cd231 (2937393), through
+parseErrorForMissingSemicolonAfter (865), parseExpressionOrLabeledStatement
+(1124), parseStatement (1140), and parseList (916). Still 0/3 fingerprints.
+Next diagnose the missing identifier text and why semicolon recovery is
+entered; do not patch unescapeLeadingUnderscores to hide the invalid value.
+
+Added `typescript-parser-startup-probe.ts` as a diagnostic entry, re-exporting
+the three unchanged acceptance workloads and adding scanner keyword/value
+and single-Identifier parsing controls. Native `node --import tsx` session
+46825 measured both controls returning 1. This diagnostic entry is not a
+replacement for the canonical standalone acceptance entry. The next Wasm run
+executes all five oracles and dumps unescapeLeadingUnderscores,
+parseErrorForMissingSemicolonAfter, and createBaseIdentifier WAT to
+`.tmp/ts5-parser-text-types.txt.wat` to locate the missing text upstream.
+That live diagnostic build is session 54588; poll it on resume. No new
+compiler fix has been made for the missing-text failure yet.
+Expanded the Identifier factory regression with TypeScript's branded
+string/void-intersection union for escapedText. Session 10828 passed 6/6
+(3 GC + 3 standalone); the reduced branded field round trip is not the cause.
+
+Diagnostic session 54588 completed: 307,972 ms, peak RSS 3,153.5 MiB,
+79,430,783-byte valid zero-import module, 32 source / 36 program files.
+Scanner control returns -1 (first token is not ImportKeyword); Identifier
+control throws a Wasm exception. The three re-exported acceptance functions
+were absent from the module, so these were lookup failures, NOT three new
+parser verdicts. Replaced the diagnostic re-exports with explicit forwarding
+functions; the canonical fixture remains unchanged. Missing re-export
+emission is a separate unresolved compiler defect, not fixed by this wrapper.
+The scanner control now reports the mismatched token as -1000-token.
+Added a scanner-only real-source entry to split keyword recognition from
+token text and parser factory behavior. Native session 43092 returns
+importToken=102, importValue=1, identifierToken=80, identifierValue=1.
+The scanner-only standalone probe is running with those four exact oracles,
+and dumps getIdentifierToken/scan/setText and entry functions to
+`.tmp/ts5-scanner-probe-types.txt.wat`.
+
+Scanner-only session 55605 completed: 121,593 ms, 1,592.3 MiB peak RSS,
+6,049,462-byte valid standalone module, zero imports, 18 source / 22 program
+files. Three of four controls pass; importToken is 80 (Identifier), not 102
+(ImportKeyword), while the text "import" is correct. Native corrected-wrapper
+session 38143 passes all five controls/fingerprints unchanged.
+The scanner lookup uses a substring token against literal Map keys.
+Added a substring-key lookup to the indexed-object regression: session 92904
+fails all six cases with -5 at that lookup, including a computed-key mode.
+Found __hash_anyref hashes the entire NativeString backing array with no
+offset. Changed it to hash exactly len code units starting at off; equal
+literal and slice strings must choose the same bucket. Focused rerun pending.
+Session 26968 passed 6/6 after the hash correction. Expanded Map replacement,
+size, lookup and deletion plus Set deduplication/has/delete controls:
+session 19900 passed 13/13 across indexed enumeration and optional Set tests.
+Canonical three-workload full parser session 27660 is live after this fix;
+typecheck/format session 15192 is also live. No post-hash parser success yet.
+Typecheck/format session 15192 passed. Session 18281 passed whitespace and
+file-size checks but flagged four lines of intentional ensureMapHelpers
+growth for the substring hash instructions. Added the function-specific
+allowance here (no baseline reseed); rerun pending.
+Function gate rerun 26188 passed. Canonical parser session 27660 completed,
+started 2026-09-05T21:33:08.076Z: 274,645 ms, peak RSS 2,891.6 MiB,
+79,407,345-byte valid standalone module, zero imports. All three calls now
+throw opaque WebAssembly.Exception instead of the previous null-pointer
+stack; still 0/3. Added opt-in TRACE_INVOKE diagnostics around the actual
+invocation only, always disabled in finally, with startup/invocation throwing
+controls to ensure failures remain rejected. No acceptance logic changed.
+Trace tests session 44943 passed 2/2. Canonical invocation-trace session 50947
+is live (filtered source/call-dispatch/error-constructor entries, final 80
+lines). Resume this handle rather than duplicate the build. Harness-verdict
+regression session 19098 is pending; whitespace check passed.
+Session 19098 passed 18/18 harness-verdict tests. While invocation-trace
+session 50947 continues, rerunning the admitted four-file/14-callback original
+upstream slice under DOGFOOD_TARGET=standalone after the recent compiler fixes.
+This is regression evidence only, not the full 256-file unit acceptance bar.
+Unit session 48639 was a launcher failure: omitted `--import tsx`, so all
+four compiler children failed resolving bundle-manifest.js before compilation
+(14/14 native, zero Wasm callbacks executed). This is not a code regression
+measurement. Correct command is `DOGFOOD_TARGET=standalone node --import tsx
+--experimental-wasm-exnref tests/dogfood/typescript-upstream-suite.mjs`;
+session 43008 is now running that command.
+Session 43008 completed successfully: native 14/14, standalone 14/14,
+four valid modules with zero imports, 6,417,424 aggregate binary bytes.
+Read-back report confirms actualTargets=[standalone], no missing result files,
+and counts 1+3+5+5. Still 252 files / 1,747 registrations explicitly deferred;
+the full upstream unit goal is not complete.
+
+Invocation trace session 50947 completed: started 2026-09-05T21:40:10.501Z,
+323,588 ms, 2,656.6 MiB peak RSS, same 79,407,345-byte valid zero-import
+module and 0/3 fingerprints. Final traced call chain (performance workload):
+createExpressionStatement (3586) -> __closure_612 (2578) ->
+__get_member_parenthesizeExpressionOfExpressionStatement (3947), then
+__new_TypeError (56). The missing callable belongs to memoized parenthesizer
+rules. Added a raw zero-import standalone case to the existing parenthesizer
+identity regression to distinguish the memoized object path from later
+generic callable dispatch; test run pending.
+Session 12073 measured 2/3 passing: the new raw standalone parenthesizer case
+throws WebAssembly.Exception; both existing GC cases pass. A fast reduced
+trace/dump is now running before any compiler change for this defect.
+Reduced traces 7830/41542 reproduce the same getter failure. In
+`.tmp/ts5-parenthesizer-types.txt.wat`, probe's live type-169 memoize arm
+executes call_ref, drops its externref result, then pushes ref.null 40
+(ParenthesizerRules). The later null fallback consults the original closure
+as the receiver, explaining the misleading member-get trace. Memoized body
+and callback dumps show a normal stored result. Added an import-free
+externref-to-instantiated-reference return bridge restricted to bindings
+proven to come from a generic callable factory. Focused rerun pending.
+Session 17445 passed 94/94 (3 parenthesizer, 89 callback-result, 2 generic
+identity tests). Typecheck/format session 50532 passed; size/whitespace gates
+80300 completed. Full canonical invocation-trace session 53327 is live after
+the return bridge; no post-fix parser fingerprint result yet. Resume 53327.
+Function gate session 2487 passed. Post-bridge upstream unit rerun 97877
+passed native 14/14 and standalone 14/14. Report read-back confirms four
+zero-import standalone modules and unchanged byte counts totaling 6,417,424;
+252 files / 1,747 registrations remain deferred. Updated the stale dispatch
+comment that incorrectly asserted every live arm matched the public return
+ABI; this comment-only follow-up does not affect the running parser binary.
+Full session 53327 completed: started 2026-09-05T21:52:17.891Z, 290,908 ms,
+2,717.4 MiB peak RSS, 79,407,481-byte valid zero-import module, still 0/3.
+Final trace now runs createExpressionStatement -> __closure_612 -> TypeError
+without the prior __get_member lookup failure. The real null parenthesizer's
+expression-statement method is the generic `identity` function, unlike the
+existing reduced cast-arrow methods. Added that exact callable property and
+a raw numeric probe to the regression; measurement pending.
+Both pending alias/property tests already capture this failure. No live probe.
+
+Reduced generic-property runs 86139/94881 measured 2/3 passing, with the raw
+standalone statement probe throwing before identity executes. The existing
+callablePropertyRefBridge admitted raw ref/externref transport only in the host
+lane (except native generator results), excluding the erased identity candidate
+from standalone dispatch. Removed that lane-only restriction: raw references use
+import-free extern.convert_any / any.convert_extern plus the declared result
+cast. Tagged AnyValue carriers remain excluded in both directions. Expanded
+generic identity controls to both gc and standalone, checking zero imports in
+standalone. Focused generator/property tests and typecheck are running; this is
+not yet evidence of a passing full parser workload.
+Focused run 92971 passed 13/13 (3 parenthesizer, 2 pre-expansion identity,
+8 generator receiver controls). Expanded run 52698 passed 115/115: 4 two-lane
+identity, 89 generic callback, 4 deferred property, 5 property-wrapper, and
+13 boxed-string controls. Typecheck 87389 and function/LOC/whitespace gates
+23518 passed. Full canonical trace run 60073 is in progress after this fix;
+resume its result before claiming any new parser fingerprint count.
+Post-property-bridge upstream run 38417 passed 14/14 native and 14/14
+standalone. Report read-back confirms all four modules have zero imports;
+252 files / 1,747 registrations remain deferred. Formatting check 93717 passed.
+Full session 60073 completed: started 2026-09-05T22:04:36.791Z, 265,130 ms,
+2,815.4 MiB peak RSS, 79,595,968-byte valid standalone module, zero imports,
+still 0/3 fingerprints. BuilderStatePublic and PerformanceCore now fail with
+`illegal cast` at parser createNodeArray (function 881, offset 0x34efb1), called
+from parseBlock -> parseList -> parseSourceFile. CorePublic still throws a Wasm
+exception; the tail trace does not identify its separate cause. The performance
+trace now passes createExpressionStatement's memoized rules call, writes its
+expression, propagates flags, finishes the node, and reaches createNodeArray.
+Next: reduce/dump parser createNodeArray's argument/return carrier at this site;
+do not assume the reduced NodeArray controls cover the full graph's generic
+array layout. No full build remains live. No new commit or PR in this checkpoint.
+
+Next continuation: full createNodeArray dump run 57611 started on the same
+compiler state. Expanded parser wrapper to standalone; run 59943 passes 12/12.
+New parser-list-array-carrier regression reproduces illegal cast at createNodeArray
+in both gc and standalone (63562: 0/2), adding a generic callback-built list and
+sibling Parameter/Statement element types. Reduced standalone dump 77608 is
+running to locate the precise carrier mismatch before a compiler change.
+Full dump 57611 completed unchanged: 264,202 ms, 2,729.2 MiB RSS,
+79,595,968 bytes, valid zero-import module, 0/3. Full and reduced WAT agree:
+parser createNodeArray receives vec_externref; the live factory arm directly
+casts its public externref argument to vec_ref_Node. Those vector types are
+siblings, not cast-compatible. Added physical vector argument snapshots at
+the original evaluation point and use existing vector coercion in the selected
+candidate arm instead of the erased scalar cast. No source-name special case.
+Run 95005 passed 14/14 (new regression both lanes + 12 factory controls),
+typecheck 46444 and function/LOC/whitespace gates 45253 passed. Added an
+argument-order regression that reassigns the source list in the next argument.
+Broader regression run 10878, order check 94334, and full trace run 58034 are
+in progress. Full parser success remains unproven.
+Run 10878 passed 95/95 (89 callback, 1 NodeArray metadata projection,
+2 reverse-map, 3 parenthesizer); order check 94334 passed both lanes. Upstream
+rerun 48456 remains 14/14 native and 14/14 standalone; report read-back confirms
+four zero-import modules, with 252 files / 1,747 registrations still deferred.
+Formatting check 39662 passed. A subsequent comment-only change clarifies that
+vector snapshots apply in both lanes; it does not change the running binary.
+Full 58034 completed: started 2026-09-05T22:16:18.642Z, 275,907 ms,
+2,895.2 MiB peak RSS, 79,599,898-byte valid zero-import standalone module;
+still 0/3 (all Wasm exceptions). Performance trace confirms the former input
+cast is cleared: parser createNodeArray invokes the real factory, isNodeArray,
+aggregateChildrenFlags and attachNodeArrayDebugInfo, then reaches
+setTextRangePosEnd -> setTextRangePos -> TypeError. Next reduce the generic
+TextRange setter on the factory-returned vector; existing reduced tests set
+array.pos/end directly, so they do not cover this boundary. No full run live.
+
+Setter continuation: replaced direct metadata writes in the list regression
+with the real generic setTextRangePos/End/PosEnd shape. Run 47475 passes gc
+and fails standalone (1/2). Reduced WAT shows the standalone setter already
+accepts externref but casts it to TextRange before writing, nulling a vector.
+Allow the existing asserted-structural identity marker for native parameters
+whose ABI is already externref/ref_extern; concrete native structs retain their
+current dispatch. Focused run 90628 is in progress.
+Run 90628 passed 9/9 (two-lane list/range regression, original asserted-write
+control, six Identifier factory controls). Typecheck 27061 passed. Expanded
+the original asserted-write control to standalone with zero-import checking;
+broader run 11941 and full canonical trace 38098 are running. No post-fix
+full parser fingerprint count yet.
+Run 11941 passed 94/94 (2 two-lane asserted writes, 89 callbacks,
+3 parenthesizer controls). Function/LOC/whitespace gate 26779 and formatting
+44543 passed. Upstream rerun 5969 passed 14/14 native and 14/14 standalone;
+report confirms four zero-import modules, 252 files / 1,747 registrations
+remain deferred. Full trace 38098 remains live.
+Full 38098 completed: started 2026-09-05T22:24:29.464Z, 259,593 ms,
+2,837.7 MiB peak RSS, 79,640,038-byte valid zero-import standalone module,
+still 0/3. BuilderStatePublic and PerformanceCore now null-trap in
+unescapeLeadingUnderscores (317, offset 0x2cd51f), called by
+parseErrorForMissingSemicolonAfter -> parseExpressionOrLabeledStatement.
+CorePublic remains a Wasm exception with no stack. Trace confirms native
+setTextRangePos/End now call the generated pos/end member setters successfully.
+Next separate incorrect scanning/parsing (why a missing-semicolon recovery path
+is reached) from identifier escapedText preservation. The earlier minimal
+scanner probe has not been rerun after the string-view hash fix; it is a useful
+control before attributing the new null to the older Identifier ABI defect.
+No full build remains live at this checkpoint.
+Pragma cast continuation: started full processCommentPragmas/
+processPragmasIntoFields WAT dump and canonical trace in session 89274.
+Expanded the reduced pragma callback to capture and mutate its context,
+matching an additional full-source feature. Run 55754 passes both lanes (2/2),
+including checking that the callback write is visible on the original object.
+Context capture alone therefore does not reproduce the current full illegal cast.
+Run 79300 also passes four reduced pragma cases with/without the TypeScript
+shared-Node allocation-view representation, in both lanes. No compiler changes
+were made in this continuation. Full dump 89274 completed: started
+2026-09-05T23:32:21.785Z, 306,699 ms, 2,733.4 MiB peak RSS, unchanged
+79,033,650-byte valid zero-import module, same 0/3 verdict and Builder illegal
+cast at processPragmasIntoFields1271 offset0x3d8bf4. The function has an
+unguarded native Map108 cast immediately after __extern_get(context,"pragmas")
+and before callback construction. processCommentPragmas creates Map via call1283
+and writes it through call4011. Inspect those full getter/setter paths next;
+the reduced shared-Node and captured-context variants both pass, so neither
+feature alone explains the mismatch. Started the fuller access-helper dump
+with __set_member_pragmas/__extern_get/__map_new selected.
+Access-helper dump session 96397 is active; output stem
+`.tmp/ts5-pragma-access-types.txt`. Resume that handle rather than restarting it.
+Bare-node allocation continuation: changed only the reduced shared-Node variant
+to allocate kind/pos/end first, then assign SourceFile properties, matching the
+factory's allocation order. Run 71955 reproduces the illegal cast in standalone
+(3/4 pass), while object-literal initialization and both GC cases pass.
+The instance-expando whitelist recognizes classes/fnctors/anonymous shapes but
+not source-declared named interface structs. A bare Node consequently drops
+its new pragma property. Added physical-type-object provenance for non-.d.ts
+interfaces and object aliases; the existing shared user-struct predicate now
+admits those exact carriers for both expando storage and enumeration. A builtin
+later reusing the same display name does not inherit the provenance.
+Run 82335 passes all four reduced pragma variants after this change. Broader
+reflection/expando/inherited-set checks and typecheck are running. Full access
+dump 96397 remains the pre-fix control, not evidence for this new change.
+Typecheck 37303 and function/LOC/whitespace gate 57341 passed. Broader 22424
+has passed 30/30 closed-struct reflection and 12/12 instance-expando tests;
+computed-write suite is 2/3 (computedWriteCtorField returns 1 instead of 11).
+Control 63762 disabled the new provenance admission and reproduced that same
+computed-write failure, then the candidate admission was restored.
+The inherited-set suite worker exited before ready; parent session 22424 is
+still alive and has not yielded a usable verdict for that suite. Do not count
+it as passed or launch a duplicate blindly. Added direct named-interface and
+object-alias expando/visibility controls with Map/Date internal-slot negatives.
+Direct named-struct expando controls passed 2/2 in 12451. The pre-fix full
+access-helper dump 96397 ended without a runtime verdict: selected __extern_get
+WAT formatting exceeded the JS string-length limit (RangeError in emit/wat.ts,
+548,123 ms total, 3,878.2 MiB peak RSS). This is a diagnostic serialization
+failure, not evidence of a new Wasm regression. Do not repeat that giant WAT
+selection. Started the post-provenance-fix canonical run without WAT dumping,
+plus a fresh upstream unit run.
+Post-fix full parser session is 85869 and is active. Upstream rerun 34923
+completed 14/14 native and standalone, still 252 deferred files. Formatting
+checks passed. Requested permission to stop only the stalled inherited-set
+runner (PID9805/session22424); do not kill it without an answer and rechecking
+the exact process. Its beforeAll allows 600 seconds, so it may terminate itself.
+Confirmed the inherited-set worker prerequisites scripts/compiler-bundle.mjs
+and scripts/runtime-bundle.mjs were absent. Built both from the current worktree
+using the repository esbuild commands (compiler build 73571 succeeded; runtime
+build succeeded). They are ignored generated artifacts, not source changes.
+Wait for 22424 to terminate (or approved targeted shutdown) before rerunning
+that suite with the prerequisites present.
+
+Resume verification: session 22424 is terminal (exit 1): 44 passed, one
+computed-write failure, and 36 inherited-set tests skipped after the 600-second
+beforeAll timeout. No process was killed. Session 85869 is no longer available;
+process inspection confirms no matching parser worker remains, but its final
+verdict was not recovered, so it cannot support an acceptance claim. Fresh
+canonical parser run 81578 saves filtered invocation output and its JSON result
+to `.tmp/ts5-parser-resume-provenance.log`. Inherited-set retry 33610 is running
+with both generated worker bundles now present. The full goal remains open.
+Run 76581 confirms 11/13 focused controls: named structural expandos 2/2 and
+sibling projections 9/11, including all four pragma variants. Both previously
+recorded standalone user-Map-name negatives still fail. Inherited retry 33610
+now initializes but reports 10 passed, 14 failed, 12 skipped: twelve failures
+are missing `test262/harness/assert.js`, while the physical-field/side-bag test
+throws and fnctor flow-slot lookup returns 6 instead of 7. Linked the existing
+main checkout's harness and test directories into this worktree's empty
+Test262 directory for a complete retry; no fixtures were copied or modified.
+Fixture-complete retry 68103 is terminal: 13/36 pass, 23 fail. Worker-backed
+rows now reach compilation but this local Node 24 runtime rejects exception
+opcode 0x1f: CompilerPool replaces execArgv without preserving the exnref flag.
+Run 40477 uses an ignored `.tmp/ts5-enable-wasm-exnref.cjs` V8-flag preload,
+inherited through NODE_OPTIONS, to enable the same runtime feature in child
+workers. This is local diagnostic setup, not an acceptance waiver or compiler
+change. Direct physical-field/side-bag and fnctor flow-slot failures are still
+unattributed and are not explained by this worker-flag failure.
+Run 40477 completed 34/36 after enabling exnref in children: all nine authentic
+Test262 acceptance rows pass, while the two direct failures above remain.
+Canonical run 81578 completed in 288,467 ms, peak RSS 2,733 MiB: valid
+79,487,196-byte zero-import module, still 0/3 exact fingerprints. Builder now
+returns 13,383,740,112,891 rather than trapping (expected 13,386,537,220,945).
+Both decode to three statements and 44 visited nodes; their 32-bit hashes are
+622,018,555 versus 3,419,126,609. Thus node/statement counts match, but AST
+content/ranges/flags or hashing still diverge. Core and Performance still throw
+Wasm exceptions. The filtered trace only contains Builder entry through its
+first isNodeArray call, despite Builder returning a numeric result; do not
+interpret that truncated trace tail as the other workloads' failure location.
+Strengthened the reduced generic parser-list regression with the real
+hasOwnProperty-based isNodeArray predicate and small-array slice branch;
+run 25660 is pending. No full parser process remains live.
+Run 25660 passed 2/2; formatting and whitespace checks pass. Control 42977
+temporarily disabled only the new named-struct admission line and reproduced
+both direct inherited-set failures unchanged (exception and 6 versus 7), then
+restored the candidate. Those failures are not attributable to this admission
+change. Started full run 82201 with Core first, then Performance and Builder,
+keeping all three original expected fingerprints. This tests fresh parser
+state as well as capturing the early Core trace without Builder preceding it.
+Output: `.tmp/ts5-parser-core-first-provenance.log`. Resume that live handle.
+Added a two-lane fingerprint arithmetic control: derive the numeric mix stream
+from the tracked Builder fixture using installed TypeScript 5.9.3, assert the
+native 44-node/three-statement/hash oracle, then hash that exact stream inside
+Wasm using the same captured mix closure and unsigned arithmetic. This
+separates hashing/packing errors from a wrongly constructed AST; it does not
+replace the actual parser acceptance test. Run 76667 is pending.
+Run 76667 passed 2/2: native stream hashing and packing reproduce the exact
+Builder oracle in both lanes. Typecheck 89093 passed. Native diagnostic checks
+also reject simple global substitutions (all node flags zero/synthesized,
+array positions/ends zero/-1, all trailing-comma bits false, node positions or
+ends zero) as explanations for the observed hash. No single mix-value change
+to an integer in [-1, 4999] transforms the native 410-value stream into the
+observed hash (reverse FNV check). These are hypothesis eliminations, not
+proof of AST correctness. Core-first run 82201 remains active.
+Core-first run 82201 completed: 252,158 ms, 2,823.9 MiB peak RSS, identical
+79,487,196-byte valid zero-import module and identical 0/3 results regardless
+of invocation order. Core's trace reaches variable-declaration-list completion:
+createNodeArray, setTextRangePosEnd, setContextFlag, then __new_TypeError before
+factoryCreateVariableDeclarationList enters. This is the next candidate ABI
+boundary, not yet a proven cause. Added a reduced parsed-list / defaulted-flags
+factory test, run 12494 pending. Gates 74143 passed. No full build remains live.
+Reduced factory run 12494 stopped at minimal-lib never[] semantic diagnostics;
+rerun 8007 with the full probe's skipSemanticDiagnostics policy reached a
+namespace object null at Parser.parse before the intended factory boundary
+(both lanes). Run 79440 uses default experimental-IR routing, matching the
+full compileProject probe and existing namespace controls, to avoid attributing
+that earlier namespace failure to the intended array/default-parameter call.
+Run 79440 now passes GC and fails standalone at runtime (1/2); this is a
+small lane-specific reproduction candidate. Started a standalone-only bounded
+WAT dump selecting probe, parse, createVariableDeclarationList, with output
+stem `.tmp/ts5-variable-list-factory-types.txt` for the next ABI inspection.
+Dump 57452 confirms the actual wrapper accepts (vec, f64) while the public
+interface dispatch only includes (vec, externref) candidates. Its TypeError
+terminal is reached because standalone scalarBridgePlan admits proven Boolean
+unboxing but not proven Number unboxing. Added the native __unbox_number bridge
+under the existing call-site Number proof, retaining rejection of arbitrary
+any/Boolean/BigInt and sentinel-branded target carriers. Candidate discovery
+and invocation share this same plan. Run 6791 passes 2/2 after the change.
+Strengthened the omitted-argument check with a nonzero default of 4 (oracle
+221) so zero padding cannot masquerade as a working initializer. Broader run
+34020 and typecheck/gates are running; post-fix full Core-first parser run
+saves `.tmp/ts5-parser-numeric-factory.log` with all three original oracles.
+Run 34020 passed 106/106 (90 generic callback, 12 node-array factory, two
+literal factory, two variable-list factory including the nonzero default).
+Typecheck, formatting, function/LOC gates, and whitespace checks 41582 passed.
+Full run 82508 remains active; a fresh upstream unit adapter rerun is also
+running. Neither the focused success nor the previous 14 admitted unit tests
+establishes the full 256-file upstream goal.
+Upstream rerun 40189 passed 14/14 native and standalone. Report read-back
+confirms all four entry modules have zero imports, 256 total files, 252
+deferred files and 1,747 deferred registrations. NaN/infinity supplied-argument
+checks added to the numeric factory regression also pass in both lanes (1688,
+2/2): neither takes the nonzero default intended for omitted arguments. Full
+parser 82508 remains active.
+Full numeric-bridge run 82508 completed in 312,201 ms, 3,073.4 MiB peak RSS:
+valid 79,493,304-byte zero-import module, still 0/3 exact fingerprints. Core
+now returns 40,099,680,121,158 (expected 40,098,163,538,143), clearing its
+factory-call TypeError. Builder remains 13,383,740,112,891; Performance still
+throws. Added diagnostic-only `typescript-parser-builder-fields.ts` to compare
+separate hashes for node kinds/positions/ends/flags, array metadata/trailing
+commas, and texts. Native evaluation uses installed TypeScript 5.9.3 and verifies
+the embedded source equals the tracked canonical Builder input. Its seven
+expected hashes are 356767627, 3958391185, 3952552808, 2614092085, 826173832,
+953171930, 1233566727 respectively. Field diagnostic run saves
+`.tmp/ts5-parser-builder-fields.log`; the original three full-AST oracles are
+unchanged and remain the acceptance requirements.
+Core's post-fix packed results both decode to nine statements and 120 nodes;
+only the hash differs (1865445702 versus 348862687). Diagnostic session is
+81072; resume that handle. No canonical parser run remains live.
+While the field diagnostic runs, extended the existing NodeArray vec-projection
+test from GC-only to both lanes. Standalone checks raw numeric exports for
+direct, widened, and callback metadata reads plus zero imports; the host
+mirror/host dispatcher checks remain GC-only because those APIs are not part
+of the standalone contract. Run 88710 is pending.
+Run 88710 passes GC but fails standalone: sourceMetadata returns 171591,
+while widening the array makes test() return NaN. This isolates a real
+metadata-loss path. emitVecToVecBody in type-coercion.ts copies ordinary
+property sidecars only in host-backed mode; standalone's vec-props identity
+table has no projection transfer hook. Before implementing one, preserve the
+table's shared bag semantics and audit prototype/descriptor consumers rather
+than copying only pos/end keys. The full field diagnostic remains active.
+Field diagnostic 81072 completed: 254,058 ms, 2,747.4 MiB peak RSS, valid
+79,489,179-byte zero-import module. Five of seven hashes match exactly: node
+kinds, positions, ends, flags, and texts. Array metadata is 4096183195 instead
+of 826173832; trailing-comma bits are 2138539933 instead of 953171930.
+Implemented native projection-to-source identity registration for typed vec
+conversions, with flattened aliases. Bag lookup/ensure and all prototype
+read/write helpers canonicalize their lookup key; ordinary getters retain
+their original receiver. This shares existing and future property state rather
+than copying pos/end or taking a prototype snapshot. The identity registry
+is append-only and used only for fresh physical projections; it does not
+claim to fix indexed-element mutation aliasing or separate numeric overlays.
+Run 90088 passes the reduced metadata test 2/2. Added shared-property write,
+deletion, and bidirectional prototype-update controls; run 46258 and gates
+22186 are pending. No full parser process remains live.
+Run 46258: 3/4 pass. Both parser-list cases and the standalone projection
+case pass, including shared writes, deletion and bidirectional prototype
+changes. The strengthened GC projection case returns -2 on shared deletion;
+the host sidecar path was not changed, but no dedicated removal-control run
+has yet attributed that new assertion failure. Keep it visible, not waived.
+Full parser run 17668 is active with Performance first and all three original
+oracles, saving `.tmp/ts5-parser-vec-identity.log`. Broader vec-prototype and
+instance-expando checks are running in 85065; gates 22186 remain active.
+Run 85065 passed 16/16 (four prototype-storage, twelve instance-expando).
+Typecheck and function/LOC gates 22186 passed. Full parser 17668 remains live.
+Added an erased-metadata control to the projection test: makeDerived passes
+through unknown and fingerprintFromExtern before its fields are read. This
+checks the separate externref materialization path, which still transfers
+sidecars only in host mode. Run 7141 is pending. If extending alias transfer
+there, guard the source as a real vec first; non-array inputs materialize a
+new array and must not inherit the input object's identity.
+Run 7141 passes standalone, including the erased-metadata control. This
+input does not demonstrate a remaining materializer defect, so no additional
+source change was made to that path. Full parser 17668 remains active.
+Post-identity upstream rerun 85405 passed 14/14 native and standalone, with
+252 files still deferred. Formatting and whitespace check 61935 passed. Full
+parser 17668 was revalidated live with active CPU use; wait on that handle,
+not a duplicate build.
+Full run 17668 completed: 290,566 ms, 2,740.4 MiB peak RSS, valid
+79,497,551-byte zero-import module, still 0/3. Builder is unchanged at
+13383740112891; Core changed to 40100245097399 but remains wrong; Performance
+still throws. Its complete first trace reaches parseTokenNode/createToken,
+then createNodeArray and setTextRangePosEnd, then TypeError (trace lines
+6165–6194). The typed projection metadata fix alone is insufficient.
+Added a dynamic assignment into a typed NodeArray property to exercise the
+separate field-setter materializer; standalone run 10616 is pending. No full
+parser build remains live.
+Run 10616 passes standalone; the reduced typed-property assignment does not
+reproduce the full remaining metadata loss. Native Builder has six visited
+arrays. Its observed trailing-comma hash equals all six bits being false
+(2138539933), losing the import-specifier list's sole true bit. Continue with
+the full conversion/metadata evidence rather than assuming the reduced
+assignment test covers that production path.
+Native hash reconstruction reproduces the observed array-metadata hash exactly
+when only the import-specifier and two modifier arrays have pos/end reset to
+-1 (rows [8,53,2], [84,94,1], [220,230,1]); their other counts remain intact.
+This suggests repeated factory reconstruction, not generic zero/undefined
+reads, and remains an inference pending direct production verification.
+Extended identity transfer to both remaining native externref-to-vec
+materialization paths, matching the existing host sidecar transfer sites.
+The alias helper now explicitly rejects non-vec sources before registration;
+array-like non-array materialization cannot inherit the input's identity.
+Helper indices are read after late-import flushing. Regression run 27909
+is pending; no full build is active yet.
+Run 27909: 15/16 pass; only the previously observed GC shared-deletion
+assertion fails at -2. All standalone projection checks and the parser-list /
+node-array factory regressions pass. Typecheck/gates 61262 and a full
+Performance-first parser rerun are active. Full output saves
+`.tmp/ts5-parser-all-vec-identity.log`; all three original oracles are retained.
+Typecheck, function/LOC gates, and whitespace check 61262 passed. Full parser
+session is 72044; resume it rather than starting another build.
+Broader run 92997 is 8/9: nullable vecs, contextual factory, typed-array
+expando, and prototype tests pass. Optional vec-factory preregistration's
+host default run(0) returns 7 rather than 17; this failure is recorded but
+not yet attributed by removal control. Upstream 17343 still passes 14/14
+native and standalone with 252 deferred files.
+Performance's preceding trace identifies parseUnionOrIntersectionType calling
+its createTypeNode callback immediately after createNodeArray. Extended the
+existing union-carrier test to exercise union/intersection callback paths in
+standalone with raw exports/zero imports, not only its prior direct concrete
+factory controls. Run 94838 is pending. Full 72044 remains active.
+Run 94838 passes GC and fails the expanded standalone callback case (1/2).
+Started a standalone-only bounded WAT dump of parseUnionOrIntersectionType,
+createUnionTypeNode and createIntersectionTypeNode; output stem
+`.tmp/ts5-union-callback-types.txt`. This is a reduced candidate for the
+remaining Performance failure, not yet a verified root-cause attribution.
+Full all-materializer run 72044 completed: 275,775 ms, 2,466.1 MiB peak RSS,
+valid 79,509,039-byte zero-import module. Builder and Core now match their
+original exact fingerprints: 2/3. Performance still throws. This validates
+the missing native materializer identity transfer, without claiming full goal
+completion.
+Union callback dump 48798 omitted live concrete-return funcrefs from its
+externref-result dispatch. Added lossless native reference export under the
+existing declaration-proven factory-callback admission (excluding AnyValue).
+Run 60799 still fails the full reduced factory, but dump 6040 confirms the
+two real wrapper arms are now present. Added separate callback controls using
+the already-working concrete constructors to distinguish dispatch from the
+reduced generic union constructor's own narrowing failure. No full parser
+build remains active; the reference-export candidate is not fully validated.
+Concrete-constructor callback controls 91262 pass 2/2, checking both union
+and intersection returns in each lane. The complete reduced generic-union
+constructor failure remains visible. Started full Performance-first rerun
+with all original oracles, saving `.tmp/ts5-parser-union-callback.log`, plus
+broader callback/factory regressions. Typecheck/gates 64153 are pending.
+
+Literal-factory continuation: added a two-lane regression matching
+factoryCreateStringLiteral(text, undefined, hasExtendedUnicodeEscape()).
+Run 44210 fails both lanes with Wasm exceptions (0/2). It explicitly checks
+that the middle argument remains undefined while the later flag is true.
+Reduced dump 67395 and full literal-factory dump 96208 are active; no new
+compiler change yet for this defect.
+Reduced WAT confirms createStringLiteral's implementation takes string/i32/i32,
+while its public optional slots are externref. Explicit undefined in the middle
+cannot be represented by an argument-count-only protocol, and candidate
+discovery rejects it. Added a shared optional declaration scalar ABI helper,
+used by both nested declaration phases and function-declaration closure wrapper
+signature derivation. Optional booleans without initializers now retain
+externref, like optional numeric declaration parameters; explicit native
+annotations remain unchanged. Focused run 4287 and typecheck are running.
+Run 4287 clears the exception but fails the undefined-field assertion in both
+lanes (-1), with 12/12 factory neighbors passing. The second defect is declared
+nullable boolean fields using i32, erasing undefined on assignment. Updated
+their declared field carrier to externref; run 30261 passes 17/17 (2 literal,
+12 factory, 3 parenthesizer). Added false-vs-undefined and omitted-tail controls.
+The earlier full pre-fix dump 96208 completed: 308,622 ms, 3,271.5 MiB
+peak RSS, 79,655,021-byte valid zero-import module, still 0/3 Wasm exceptions.
+Expanded controls and callback/Identifier neighbors passed 98/98 in run 78383.
+Both pending typechecks (78590 and 2315) completed successfully. Function/LOC
+and whitespace checks 57286 passed without new allowances; formatting passed.
+Post-fix canonical full parser invocation trace 12608 and upstream unit rerun
+23498 are active. The post-fix full parser verdict is not yet known.
+Upstream 23498 completed 14/14 in both lanes; report read-back still shows
+252 deferred files / 1,747 registrations. Broader run 62405 passed 31/37:
+one old scalar-ABI assertion, four descriptor tests in issue-2984, and the
+standalone live-closure arity-cap control in issue-1058-barrel-computed-option-capture.
+The arity control reproduced solo (91920); descriptor failures reproduced in
+58019. Attribution to the current optional-boolean changes remains unproven.
+Replacing the scalar-ABI assertion with the new shared ABI plus an actual
+runtime check exposed a shadowed `undefined` equality defect (0 instead of 2).
+The binary nullish shortcut recognized only the spelling, not the operand type.
+It now requires the undefined type before using that shortcut; run 91030 checks
+the shadowed parameter and literal-factory controls. Full 12608 began before
+this separate equality change and must be labeled accordingly.
+Full 12608 completed: started 2026-09-05T23:06:54.481Z, 362,612 ms,
+2,823.4 MiB peak RSS, 79,233,535-byte valid zero-import module, still 0/3.
+BuilderStatePublic now null-traps in parseSourceFile (806, offset 0x33dc72);
+CorePublic and PerformanceCore remain Wasm exceptions. The last trace tail
+ends in a TypeError after vec-property writes; its enclosing source caller
+is not retained in this short tail. No full build remains live.
+The shadowed-undefined runtime also required fixing the direct identifier
+read in expressions.ts; equality-only run 91030 exposed the second spelling
+shortcut (and a WAT regex that did not allow a named type). After both fixes,
+25008 passed 7/7. The runtime control is now expanded to both lanes.
+Control 33516 removed only the nullable-boolean-field change and reproduced
+the same five descriptor/arity failures (19/24); that field change alone
+does not explain those failures. A second control disables optional boolean
+parameter widening as well before restoring both candidate changes.
+Control 97843 disabled both optional-boolean changes and reproduced the same
+five failures (19/24). Both candidate changes were then restored. Final focused
+run 37303 passed 23/23: six optional-parameter checks (including both lanes for
+the shadowed binding), two literal-factory, eight nullable primitive, and seven
+loose-equality checks. Function/LOC/format/whitespace gate 8156 passed.
+The old routing WAT suggests the next parseSourceFile null is a SourceFile
+shape conversion (219 to 379) before metadata setters, but that is historical
+evidence, not yet a confirmed cause in the current binary. Started a fresh
+canonical dump of parseSourceFile/createSourceFile/createSourceFileWorker to
+verify the current shape and caller. The trace filter now requires an
+alphabetic first character after the function-name opening quote; the old
+negated-underscore pattern also matched a closing quote and retained helper
+noise instead of useful callers.
+Fresh full dump/invocation run is session 45982, writing
+`.tmp/ts5-sourcefile-post-literal-types.txt.wat`; it is still active.
+Typecheck 65683 completed successfully.
+Pragma identity continuation: historical WAT type 379 is PragmaContext,
+not SourceFile. The parser deliberately passes `sourceFile as {} as
+PragmaContext` to processCommentPragmas/processPragmasIntoFields. Added a
+two-lane regression that writes a new referencedFiles array and boolean
+through such a call, then reads the original object's fields and marker.
+Run 22113 passed GC but returned NaN rather than 725 in standalone (3/4 total).
+The existing double-assertion identity proof was disabled by a blanket
+concrete-native parameter bail. Moved that restriction to the generic
+asserted-write case only, so proven double-asserted mutable call parameters
+use identity-preserving externref in both lanes. Full diagnostic 45982 began
+before this change and remains the pre-fix control.
+Pragma identity fix run 36572 passed 12/12 (four asserted-write, two parser
+list, six Identifier tests). Typecheck 2506 and function/LOC/whitespace gate
+2961 passed. Expanded the existing sibling-projection regression to both lanes
+for Map-backed pragma writes and a cross-module ordinary caller. Run 60958
+passed 97/98 (90 generic callback, one nested identity, six sibling checks),
+with the new standalone Map-backed pragma case throwing; cross-module identity
+passed both lanes. Reduced dump 35450 confirms the receiver is still cast to
+the nominal PragmaMap interface even though new Map produces the native Map
+struct. Testing native resolveWasmType inheritance recognition in 62930.
+Full pre-pragma-fix dump 45982 completed: started 2026-09-05T23:16:08.165Z,
+338,847 ms, 2,431.3 MiB peak RSS, 79,233,535 bytes, valid and zero imports,
+still 0/3. Builder null remains parseSourceFile806 offset0x33dc72. Current WAT
+confirms the PragmaContext379 guarded cast immediately before call1270.
+No full build remains live; the Map-backed regression is the next local check.
+Native carrier-only run 62930 still failed validation; diagnostic 62575 shows
+processPragmasIntoFields constructing a five-field Map with a two-field vector
+sequence. The unresolved refined-interface method was falling through to array
+forEach lowering. Enabled the existing ambient-Map inheritance proof for method
+and property dispatch in native mode too, while keeping host carrier resolution
+externref and native resolution on the existing Map type. Real subclasses and
+user-defined Map names remain excluded by the inheritance proof.
+Run 18049 passes all seven sibling-projection checks, including the standalone
+Map-backed pragma case. Canonical post-fix parser trace 32058, broader Map run
+2769, and typecheck 5883 are active. No post-fix full fingerprint verdict yet.
+Broader Map run 2769 passed 28/29 executable tests: seven sibling-projection,
+six native Map.forEach, and 15/16 mapIterator. The known array-mutation-between-
+suspensions test still returns -2 instead of 1. tests/map-set-basic.test.ts
+did not collect because its ../../src/runtime.js import does not resolve from
+tests/; this is not a passing control. Function/LOC/whitespace gate 60114 and
+format checks passed. Upstream 75045 passed 14/14 native and 14/14 standalone;
+252 files remain deferred. Full parser run 32058 is still active.
+Typecheck 5883 completed successfully.
+Expanded the user-class/interface Map-name controls to standalone and added
+runtime checks (88 and 5), rather than accepting validation alone. Run 8729
+passed 7/9; both new standalone name-shadow controls fail (class: invalid Wasm;
+interface: module-init struct.new underflow by four). Control 68162 disabled
+both native Map-inheritance carrier/dispatch changes and reproduced the same
+two failures. Restored the candidate changes afterwards. These newly exposed
+failures are retained as failing coverage, not waived or claimed fixed.
+Upstream report read-back confirms all four artifacts remain zero-import,
+6,424,494 bytes total, 14/14 passing with 252 files / 1,747 registrations deferred.
+Full post-fix 32058 completed: started 2026-09-05T23:26:27.604Z,
+313,770 ms, 3,132.8 MiB peak RSS, 79,033,650-byte valid zero-import module,
+still 0/3. BuilderStatePublic clears the PragmaContext call-boundary null and
+now illegal-casts inside processPragmasIntoFields (1271, offset0x3d8bf4),
+called from parseSourceFile806 offset0x33db05. CorePublic and PerformanceCore
+remain Wasm exceptions. Next dump processPragmasIntoFields and its concrete
+Map/array/callback operands; the reduced Map-backed case now passes, so its
+shape must be compared against the full source rather than assumed identical.
+No full build remains live at this checkpoint.
+
+Scanner/identifier continuation: expanded the minimal scanner fixture with an
+eight-token import sequence control (including EOF). Native run 74569 matches
+all five expected values (102, 1, 80, 1, 1); standalone run 29752 is active.
+Added a minimal import-declaration AST control beside the existing identifier
+and scanner controls in the full-graph diagnostic fixture; this does not
+replace the three canonical real-source workload oracles.
+Standalone scanner run 29752 passed 5/5: started 2026-09-05T22:30:51.273Z,
+107,461 ms, 1,231.2 MiB RSS, 6,070,644-byte valid zero-import module.
+This directly verifies the earlier keyword hash fix in the scanner-only graph,
+including import/from classification and EOF sequencing. Full-graph native
+controls 53612 pass all six expected values; standalone diagnostic run 80272
+is active (three small controls plus all three original workload wrappers).
+Reduced Identifier constructor run 5410 passes 6/6 after adding the real
+factory's optional token-kind and Unicode-escape arguments. Now matching its
+inferred createBaseIdentifier return (instead of an explicit Identifier
+annotation) as another control while the full diagnostic graph compiles.
+Inferred-return run 17771 passes 6/6; adding actual Map<string,string>
+internIdentifier and a substring input also passes 6/6 (72005). Typecheck
+67875 passed before the final interning-only fixture extension.
+Full diagnostic 80272 completed: started 2026-09-05T22:32:32.818Z,
+263,853 ms, 3,155.1 MiB RSS, 79,664,794-byte valid zero-import module,
+1/6 invocations passing. The full-graph scanner control passes. `x;` parsing
+null-traps in parseSourceFile (806, offset 0x33df57); minimal import and
+BuilderStatePublic/PerformanceCore null-trap in unescapeLeadingUnderscores
+(317, 0x2cd765) from missing-semicolon recovery; CorePublic throws a Wasm
+exception. All original 3 fingerprints still fail. Scanner success in this
+same graph rejects the simple keyword-map hypothesis. Next trace parser
+lookahead/current-token routing for the minimal import and dump parseSourceFile
+for the separate post-list null. No build remains live.
+
+Routing continuation: full diagnostic trace/dump 99253 is running, selecting
+parseSourceFile, isDeclaration/isStartOfDeclaration, token/nextTokenWithoutCheck,
+and both speculation helpers. Inspection found the stateful scalar/TypeNode
+callback regression used only target gc. Added a standalone variant with
+zero-import verification; focused run 13290 is active before any new fix.
+Focused run 13290 passes both lanes (2/2, 88 unrelated cases filtered out).
+Whole generic-callback file run 23307 passes 90/90. The added native case
+therefore does not reproduce the real parser failure; do not attribute the
+failure to generic lookahead transport without the full trace/dump evidence.
+Full run 99253 completed 0/2, same diagnostic binary 79,664,794 bytes,
+302,210 ms, 3,635.7 MiB RSS. WAT at `.tmp/ts5-parser-routing-types.txt.wat`
+shows parser lookAhead calls speculationHelper then returns i32.const 0;
+speculationHelper has a void own result ABI. The generic callback proof is
+not active for this full graph, letting the first void invocation freeze its
+shared result. Real scanner installs a debug getter, whereas the passing
+stateful reduced fixture installed a data value; changed that control to a
+getter to test the fallback path before changing lowering.
+Getter-only control 85044 passes both lanes, so that hypothesis alone was
+rejected. Adding a globalThis reference to invalidate global builtin stability
+exposes dropped node results in gc (50037); a first void instantiation makes
+its later scalar result zero (15856). Standalone reduced control still passes,
+but the real standalone dump directly demonstrates the same void result ABI.
+Changed the unconstrained generic result fallback to externref when no earlier
+identity/factory/array carrier applies; this preserves a shared T result even
+without callback provenance. The conservative semantic detector is unchanged.
+Focused regression run 51452 and typecheck are running.
+Run 51452 passed 96/96 (90 callback/detector, 4 identity, 2 reverse-map).
+Typecheck 90032 passed. Canonical full invocation trace 59790 is running after
+the fallback fix; no post-fix full fingerprint verdict yet.
+Function/LOC/whitespace gate 64235 and formatting 54972 passed. Upstream
+rerun 58385 passed 14/14 native and 14/14 standalone; report read-back confirms
+all four modules have zero imports. Still 252 files / 1,747 registrations
+deferred. Full 59790 remains live.
+Full 59790 completed: started 2026-09-05T22:49:41.200Z, 241,148 ms,
+4,261.2 MiB peak RSS, 79,655,021-byte valid zero-import standalone module,
+still 0/3 (all Wasm exceptions). Performance trace now reaches parseExpected,
+scans the quoted module path, enters parseModuleSpecifier -> parseLiteralNode
+-> parseLiteralLikeNode, then TypeError after getTokenValue/Unicode-escape
+scanner calls. The prior import-as-expression/missing-semicolon null is cleared
+on this trace. Next inspect the string-literal factory callable's argument ABI.
+The separate simple `x;` post-list null has not been rerun after this change.
+No full build remains live at this checkpoint.
+
 The module plan remains capability-based: parser, binder, checker, and
 printer/emitter are separate public roots. A runtime module that is neither
 reachable from the selected runtime entry nor re-exported may be removed only
@@ -1573,15 +4918,960 @@ the binder slice must be `const x: number = "str"` producing TS2322; `1 +
 equivalence should be a separate `createPrinter().printFile` slice before full
 emit and self-hosting.
 
+### Resume: Performance executes but its AST still differs
+
+Full standalone run 19103 is terminal: 303982 ms, 79,578,110 bytes,
+valid Wasm with zero imports. Builder and Core retain their exact fingerprints
+(2/3 total). Performance now returns 49594410090848 instead of
+49645738923599; clearing the exception is not a passing parser result.
+The authoritative output is `.tmp/ts5-parser-union-callback.log`.
+Callback/factory regression run 5895 passed 94/94. Gate handle 64153 is
+no longer available, so its final verdict is not claimed.
+
+Next diagnostic: partition Performance's AST into independently hashed node
+kinds, positions, ends, flags, array metadata, trailing commas, and text using
+`typescript-parser-performance-fields.ts`. Keep canonical acceptance unchanged;
+native TypeScript supplies the diagnostic expectations, not the candidate.
+The full 256-file unit-suite and self-hosting scope remains unfinished.
+
+Native reconstruction now reproduces Performance's **exact** wrong packed
+fingerprint by omitting its three UnionType subtrees. Native has 295 nodes and
+11 statements; standalone has 283 nodes and 11 statements. Each union subtree
+contains four nodes, at source positions 827, 1985, and 2992. Running the
+unchanged canonical fingerprint with only those child callbacks suppressed
+returns 49594410090848, exactly the candidate's result (normal native:
+49645738923599). This is a focused attribution, not an acceptance workaround.
+
+Reduced union test run 77145 is 3/4: both concrete-constructor callback lanes
+and the host production-shaped factory pass; standalone generic union
+construction fails. WAT `.tmp/ts5-union-construction-types.txt.wat` shows
+createUnionOrIntersectionTypeNode retaining a base Node (heap type 38), storing
+`types` through the open-property setter, and returning it as externref.
+createUnionTypeNode then tests for the physical UnionTypeNode (heap type 40)
+and replaces a failed test with null. The next implementation must preserve
+the original object's identity and fields across this assertion; merely
+copying fields into a new record would leave alias/mutation semantics broken.
+The full diagnostic seven-field build 82742 completed in 262069 ms with a
+valid 79,581,577-byte zero-import module, peak RSS 2862.1 MiB. All seven
+field hashes differ from complete native TypeScript (0/7), and all seven
+exactly match native TypeScript with only the three union subtrees omitted:
+nodeKinds 1190267654, nodePositions 3306985177, nodeEnds 1648673728,
+nodeFlags 3603851679, arrayMetadata 1555702382, trailingCommas 325998914,
+texts 502775548. This independently corroborates the missing-union diagnosis;
+none of those altered-native values replace acceptance expectations.
+Output: `.tmp/ts5-parser-performance-fields.log`. No diagnostic parser run
+remains live. Typecheck, fixture/test formatting, and whitespace checks 83075
+all passed. Next: repair the generic union constructor's identity-preserving
+carrier/narrowing behavior, then rerun the reduced union test and all three
+original standalone parser fingerprints before expanding the upstream units.
+
+### Native union allocation-view candidate
+
+The existing proven shared-Node allocation-view registration already handles
+UnionTypeNode and IntersectionTypeNode in the host lane, but explicitly excludes
+standalone/WASI. Removed only that target restriction: the exact source contract,
+single TypeNode base, and proven merged TypeNode-to-Node alias checks remain.
+This keeps union nodes on their actual base allocation and uses the existing
+native ordinary-property sidecar for `types`, instead of copying a new struct.
+Reduced factory and alias/mutation tests plus full parser acceptance must verify
+this candidate before claiming the third parser workload passes.
+
+Initial reduced run 24442 passes 4/4. Expanded run 97887 passes 40/42,
+including all 6 union tests with shared-reference equality, sidecar writes in
+both directions, and base-field writes in both lanes. The two failures are
+GC/Node literal diamond/Shared LiteralLikeNode tests in the generic-base-node
+suite; neither fixture declares UnionTypeNode or IntersectionTypeNode, and
+the host allocation-view predicate is unchanged by this candidate. They remain
+visible unresolved failures, not waived acceptance. Token specialization,
+property-access chain, shape DAG and NodeArray factory checks pass.
+Typecheck, function/LOC gates and whitespace run 51098 passed. Upstream run
+86846 remains 14/14 native and standalone, with 252 deferred files.
+Full parser run 46082 is live with all three original expectations, output
+`.tmp/ts5-parser-native-union-carrier.log`; poll the same handle.
+
+Run 46082 completed successfully: **3/3 original standalone parser
+fingerprints pass**, valid 79,155,162-byte Wasm, zero imports, 258041 ms total,
+3094.6 MiB peak RSS. Performance 49645738923599, Builder 13386537220945,
+Core 40098163538143 all match exactly. The five reported diagnostics are
+IR-selection warnings, not compilation errors. No oracle or upstream source
+was changed. The target-independent shared allocation view fixes the missing
+union nodes without introducing copied-object aliasing.
+Expanded union/intersection alias tests 83987 pass 6/6, and generic callback
+regressions 27521 pass 90/90. Native TypeScript revalidated binder smoke
+expectations from the committed fixtures: const-local 65792, duplicate-let
+131330. Continue with the standalone binder entry, then broaden original
+unit coverage; parser acceptance is not full TypeScript/unit-suite completion.
+Standalone binder run 66820 is active, with both original smoke expectations
+and zero-import enforcement; output `.tmp/ts5-binder-native-union-carrier.log`.
+Resume this handle rather than launching another binder build.
+
+### Broaden original upstream unit coverage after parser acceptance
+
+Added the complete original `compilerCore.ts` unit file (11 registrations),
+raising the adapter's required floor from 4 files/14 tests to 5 files/25 tests.
+The exact release-source projection now includes arrayFrom, equalOwnProperties,
+createSet and their original helper implementations. Test bodies/assertions are
+unchanged. This exposes custom-set mutation, iteration, collision and object
+equality behavior, not a hand-written substitute. Updated verdict canaries and
+bumped the report oracle version to 3. The expanded run must report failures
+honestly; selection is not a passing claim, and 251 files remain deferred.
+Initial expanded run 62869 is active; binder run 66820 is still active.
+
+Binder 66820 completed: compile succeeds, 88,206,186-byte module validates,
+268063 ms total, 2990.4 MiB peak RSS. It still imports `env.WeakMap_get`,
+so the zero-import gate correctly rejects both smoke invocations before
+instantiation (0/2, no runtime result). Next binder repair is the native
+WeakMap method routing, not changing import enforcement or adding a host shim.
+
+Initial expanded unit run 62869 completed with 25 registered tests but only
+15 native passes: 10 compilerCore tests exposed missing isTrue/isFalse in the
+assertion adapter. Added exact-boolean assertion helpers and positive/negative
+canaries (truthy/falsy substitutes must fail). Also split the exact core source
+projection into its own module: importing its generator definitions into every
+utility module introduced four host generator imports in otherwise independent
+tests. CompilerCore retains its entire implementation, including generators;
+those imports must be fixed, not hidden. Rerun 36448 is active, with unchanged
+25-test/5-file gate and explicit 251-file deferral.
+
+Run 36448 completed: **25/25 native, 14/25 standalone**. All original four
+modules retain their zero-import passes. CompilerCore registers and passes all
+11 original callbacks natively, but its compiled module is rejected for four
+host generator imports: `__gen_create_buffer`, `__gen_push_ref`,
+`__gen_yield_star`, `__create_generator`. The strict gate returns failure,
+as required; none of the 11 newly exposed tests is silently deferred.
+Report: `tests/dogfood/report/typescript-upstream-suite.json` (oracle version 3).
+Harness/verdict/worker controls 28801 pass 24/24; typecheck and whitespace
+22334 pass. No binder or upstream adapter run remains live at this checkpoint.
+
+Next frontiers: (1) binder's single WeakMap_get import, with actual native
+WeakMap semantics rather than a host shim; (2) the original core createSet's
+nested getElementIterator/yield-star and generator entries method, which still
+select host generator helpers. Preserve the 3/3 parser fingerprints and the
+now-expanded 25-test denominator during these repairs.
+
+### Binder WeakMap import investigation
+
+Added captured WeakMap/getter and module-global cache controls. Run 25188
+passes 2/2 in GC and standalone, checking object-key identity, cached strings,
+and zero imports in the native lane. The reduced valid case does not reproduce
+the binder's import. A full binder diagnostic now logs only native WeakMap/
+WeakSet calls declined by the native emitter (`JS2WASM_TRACE_WEAK_DISPATCH`).
+The temporary trace must be removed after locating the real fallback; no host
+shim or import-gate relaxation is permitted.
+Full diagnostic run is 76102, log `.tmp/ts5-binder-weak-dispatch.log`; it is
+still live. Resume its handle. The source diagnostic in expressions/extern.ts
+is temporary and must be removed after the observation.
+
+Generator investigation correction: the early nested-declaration comment and
+no-capture registration are not the complete implementation. The later
+capturing branch (nested-declarations.ts around 2094) already passes captured
+cells/TDZ flags into registerNativeGenerator, and resume restores them. Do not
+implement duplicate capture machinery or claim capture alone is the root cause.
+The host-import pre-scan still checks generatorCapturesOuterScope; determine
+the actual rejected plan/emitter for the original core generators before
+changing that admission or its imports.
+
+Direct compilerCore diagnostic 58907 locates the actual rejection:
+buildNativeGeneratorPlan -> lowerForOf -> lowerIf -> emitYield rejects
+`yield* value` because its unwind chain contains the implicit IteratorClose
+finally region from the enclosing for-of. Both the import pre-scan and real
+nested-function registration hit that same rejection. The original nested
+getElementIterator is the rejected generator; captures alone are not the
+cause. Removed the temporary generator trace after collecting this stack.
+Fix requires yield-star abrupt-mode forwarding through state-lowered unwind
+regions, including inner completion/throw/return and outer IteratorClose; do
+not merely remove the admission guard to pass normal-iteration tests.
+
+Binder trace 76102 completed byte-identically (88,206,186 bytes; same lone
+WeakMap_get import), with no direct native WeakMap-method fallback logged.
+Removed that temporary trace and moved it to registry/imports.ts addImport
+for WeakMap_get only. New full trace run 35445 is active; log
+`.tmp/ts5-binder-weak-import-producer.log`. Remove this temporary registry
+trace once its producer stack is known.
+
+Run 35445 completed with the WeakMap_get registration stack in the extern
+property-call pre-scan (registry/imports.ts visit/register). Removed the
+temporary registry trace. TypeScript factory/nodeChildren.ts uses the exact
+nested lookup `sourceFileToNodeChildren.get(sourceFile)?.get(node)`, and the
+optional-call emitter had native Set.has/delete only before its extern path.
+Extended the saved-receiver native helper to Map/ReadonlyMap/WeakMap get,
+has/delete plus WeakSet has/delete, with declaration-file provenance to avoid
+hijacking user classes sharing builtin names. get preserves its anyref payload
+as externref; short-circuiting still returns canonical undefined.
+
+Expanded regression 55154 reproduces an invalid standalone optional get
+(externref import called with anyref receiver). Its GC lane separately returns
+-2 at the missing-receiver key-evaluation check, retained as a visible failure.
+Candidate test run checks the nested lookup, missing receiver key suppression,
+array identity, has/delete booleans, and existing optional Set behavior.
+
+Run 88617: all 7 existing optional Set checks pass. The expanded WeakMap
+module now validates with zero imports in standalone, clearing its prior
+externref/anyref call mismatch, but both lanes fail the local keyCalls control.
+Diagnostic 79542 returns NaN for `-200 - keyCalls`: this is not evidence of an
+extra key invocation. Preserve the captured numeric-counter failure and add
+an independent object-state counter control (run 60802 pending) to test lookup
+semantics without conflating the capture representation defect.
+Full binder candidate run 99624 is active with the two unchanged smoke
+oracles; output `.tmp/ts5-binder-optional-weakmap.log`. Typecheck/gates 47670
+are also pending. All temporary WeakMap/generator tracing edits were removed.
+
+### Resumed verification: optional collection runtime boundary
+
+Recovered terminal binder run 99624: compile succeeds, 88,206,870-byte Wasm
+validates with **zero imports**, but **0/2** unchanged binder invocations pass:
+both throw a WebAssembly.Exception during invocation. Total 285514 ms,
+peak 3161.6 MiB. This clears the host-import blocker, not binder acceptance.
+Invocation-only trace run 18350 is investigating the exception, with output in
+`.tmp/ts5-binder-optional-weakmap-invoke-trace.log`.
+
+Missing handles 60802/47670 did not preserve a recoverable verdict. Fresh
+WeakMap run 32626 established that the standalone object-backed counter
+control passes while the numeric captured counter returns NaN. Split all three
+exports into independent tests, keeping every failing assertion. Run 61014:
+**10/13 pass** across WeakMap and optional Set tests; all seven Set tests pass,
+ordinary captured WeakMap getter passes in both lanes, object-backed optional
+WeakMap lookup passes standalone but traps with illegal cast in GC, and the
+numeric-counter optional lookup fails with NaN in both lanes.
+
+The existing `emitEagerCaptureBoxes` explicitly skips TDZ (`let`/`const`)
+captures and documents conditional-call lazy boxing as residual follow-up.
+This is a concrete lead for the numeric counter, not yet an attributed fix.
+Do not weaken the counter assertion or substitute the object-backed control
+for its semantics. Full upstream scope remains 256 files.
+
+Reduced regression `tests/issue-1058-conditional-let-capture.test.ts` removes
+collections and optional chaining entirely. Run 3799: **2/4 pass**; both `var`
+controls pass, both `let` variants return NaN only when the capturing call is
+skipped. The taken-call assertion passes for every variant. This isolates a
+lexical-capture initialization defect independently of the new native lookup
+helper. Fresh run 42250 passes TypeScript no-emit checking, function/LOC gates,
+and whitespace checks; both new/updated regression files pass Prettier.
+
+### Conditional lexical capture repair and binder exception trace
+
+Direct nested-call boxing now records `rawLocalIdx` and uses a nullable cell,
+matching the existing conditional capture repair contract. Already-boxed
+direct calls repair the cell before forwarding it. This reuses the existing
+identifier/assignment/update read and write repairs, rather than changing
+lexical declaration timing. No context map is moved; the existing
+`boxedCaptures` lifecycle and original-slot guards remain in force.
+
+Run 67311: **23/25 pass**, including all four reduced let/var cases, all twelve
+eager-box controls, three destructuring controls, and all three standalone
+WeakMap exports. The two GC optional WeakMap exports still trap with illegal
+cast; the numeric case now gets past the prior NaN failure. Expanded control
+run 86815 passes **35/35**, including conditional-arm capture, lifted cell
+identity and capture-depth suites. The reduced test also checks writes and
+unconditional forwarding after a skipped first call. New gates run 84565 is
+pending; formatting of the implementation and capture regression passes.
+
+Binder trace 18350 completed: byte-identical 88,206,870-byte, zero-import,
+valid Wasm; still **0/2** invocation matches. Total 279502 ms. Both trace paths
+reach `bindJSDocImports`, which immediately constructs a TypeError. Its source
+first guards `jsDocImports === undefined` and then iterates the array. Added
+`tests/issue-1058-binder-pending-array.test.ts` to check an unset captured typed
+worklist, population and reset across calls; run 99743 is pending. This trace
+predates the direct-call capture repair, so it is not a full candidate verdict.
+
+Run 99743 reproduces a WebAssembly.Exception in both lanes (**0/2**) for the
+reduced binder pending-array case. It is retained as the next investigation,
+not yet proof of the precise representation defect. Gates 84565 pass
+typechecking, both code-size gates and whitespace checks. Pending-array test
+formatting passes.
+
+Parser compile recheck 62530 is running in
+`.tmp/ts5-parser-conditional-capture-repair.log`, but its invocation arguments
+were mistakenly named runPerformance/runBuilder/runCore. The actual exports
+are runPerformanceCore/runBuilderStatePublic/runCorePublic, with unchanged
+expected values 49645738923599/13386537220945/40098163538143. Consequently this
+run can provide compile/validation/import evidence only, NOT parser invocation
+acceptance; let it finish under the no-test-kill rule and use the correct
+export names for the next full recheck. No parser regression verdict is yet
+available for the capture repair.
+
+### Binder unset worklist: strict comparison preserves declaration default
+
+Diagnostic 22638 shows the reduced `flush` emits a captured array read followed
+by `drop; i32.const 0` for `pending === undefined`; the following for-of throws
+on the null vector. The physical slot uses ref.null for the unset value, but
+the comparison relied only on the declared `Tag[]` type and folded the guard
+away. This matches the full trace's `bindJSDocImports` entry shape.
+
+Added `readsUninitialisedVariableSlot` for identifiers resolving to explicitly
+typed variable declarations without initializers. Concrete reference strict
+nullish comparisons now treat those declaration defaults as undefined.
+Declarations admitting null/any/unknown stay out of this additional predicate;
+the existing mixed-carrier policy remains unchanged. This is not a global
+null-equals-undefined change and does not modify the externref comparison path.
+Run 79732 passes the reduced binder lifecycle **2/2**, up from two exceptions.
+Run 40049 adds an explicit nullable-array control and checks field and vector
+nullish suites; gates 90172 are pending. No full binder acceptance credit yet.
+
+Run 40049 completes **75/75** regression checks, including the explicit-null
+variable control. The field suite intentionally includes known-divergence
+assertions; these counts are regression stability, not 75 newly conforming
+behaviors. Full standalone binder retry 45060 is running with the original
+runConstLocal=65792 and runDuplicateLet=131330 oracles, logging to
+`.tmp/ts5-binder-unset-worklist.log`. Parser compile-only diagnostic 62530 and
+gates 90172 remain live at this checkpoint. All 256 upstream files and the
+generator-delegation blocker remain in the goal's scope.
+
+### Generator worklist delegation acceptance controls
+
+Added `tests/issue-1058-generator-worklist-delegation.test.ts`: native-JS
+oracles and strict zero-import standalone checks for Map.values()-backed
+flattening (123), `.return(9)` closing the enclosing iterator once, and
+`.throw(9)` on an array delegate producing TypeError while closing the
+enclosing iterator once. Array iterators lack a throw method: do not replace
+that TypeError with propagation of the original numeric payload.
+
+Initial run 7728 exposed a test-source return-type mismatch; corrected the
+generator's normal return to numeric 0 rather than suppressing semantic
+diagnostics. Run 49509: all **3/3 native oracles pass**, all **0/3 standalone**
+checks stop at the native-generator unsupported-shape diagnostic. The
+planner's non-replay unwind guard remains intact: lifting that guard alone
+would skip delegate abrupt-method semantics. These tests are not a substitute
+for the eleven original compilerCore tests or the full 256-file unit scope.
+
+Gates 90172 completed successfully. Parser run 62530 completed in 305896 ms,
+peak 2837.8 MiB: 79,155,603-byte valid Wasm, zero imports; all three invocation
+lookups failed solely on the documented wrong export names. Correct full
+parser run 45226 is now active with runPerformanceCore/runBuilderStatePublic/
+runCorePublic and the unchanged original fingerprints, logging to
+`.tmp/ts5-parser-unset-worklist-repair.log`. Binder candidate 45060 remains
+active. No runtime acceptance inferred from either pending run.
+
+Binder candidate 45060 completed: **0/2** unchanged invocation oracles still
+throw WebAssembly.Exception. Compile succeeds; 88,207,292-byte Wasm validates
+with zero imports; total 319691 ms, peak 3232.2 MiB. The reduced worklist fix
+is therefore not sufficient evidence of a full binder repair. Invocation
+trace 18167 is now running on this candidate, logging to
+`.tmp/ts5-binder-unset-worklist-trace.log`, to distinguish a moved exception
+from a source-projection case missed by the reduction. Correct parser run
+45226 remains active.
+
+Generator implementation audit: `__iterator_return` is IteratorClose and
+deliberately discards its result; it cannot implement yield-star forwarding
+where `.return()` may yield `{ done: false }`. The iterable delegation state
+only invokes `__iterator_next`, while the legacy native-generator delegation
+abrupt arm drives the inner once and discards its result. A correct extension
+must retain delegate results and route completion through the outer unwind
+chain, including missing `.throw` producing TypeError and enclosing iterator
+cleanup. Do not substitute `__iterator_return` or remove the planner guard
+as if either were full delegation support.
+
+Correct parser recheck 45226 completed successfully: **3/3 exact original
+fingerprints match**, valid 79,155,603-byte standalone Wasm, zero imports.
+Performance=49645738923599, Builder=13386537220945, Core=40098163538143.
+Total 271764 ms, peak 3307.8 MiB. This verifies parser acceptance after the
+conditional-capture and unset-worklist comparison changes; it does not prove
+binder or upstream-unit completion. Binder trace 18167 remains live. A fresh
+expanded upstream adapter run is logging to `.tmp/ts5-upstream-unset-worklist.log`.
+
+Expanded adapter run 52174 completed on the current candidate: **25/25 native,
+14/25 standalone**, five selected files and 251 explicitly deferred files.
+All five modules compile and validate. Four modules run with zero imports;
+compilerCore's eleven tests remain blocked before execution by exactly
+`__gen_create_buffer`, `__gen_push_ref`, `__gen_yield_star`, and
+`__create_generator`. Report retains oracleVersion 3 and all original counts.
+No new unit acceptance credit; this is fresh evidence that the capture and
+worklist fixes preserve the current floor and do not remove the delegation
+blocker.
+
+### Binder trace moves past binding; optional native collection size
+
+Trace 18167 completes in 263472 ms on the same 88,207,292-byte candidate:
+both invocations still throw, but now `bindSourceFile` RETURNS before the
+failure. The tail reads `symbolCount` and `locals`, then attempts Map primitive
+conversion via valueOf/toString and throws TypeError. The committed oracle
+reads `source.locals?.size` before its range checks and arithmetic.
+
+Reduced `tests/issue-1058-optional-map-size.test.ts` run 68974 reproduces
+standalone's populated-size failure (-2); GC separately fails the missing
+receiver case (-1). The optional-property extern reader emits no getter when
+its host import is absent, leaving the collection receiver in place of size.
+Added an extracted native size reader before that branch. It consumes the
+saved non-null receiver, calls the existing `__map_size`, and requires actual
+declaration-file Map/ReadonlyMap/Set/ReadonlySet symbols, excluding user classes.
+
+Run 8961 passes **8/9**: standalone size now passes and all seven optional Set
+controls pass; GC's initial missing-value failure remains. Expanded size
+controls (read-only collections and getter receiver evaluated exactly once)
+run 21012 is pending; typecheck 38770 is pending. Full binder retry 34787 is
+active, logging `.tmp/ts5-binder-optional-map-size.log` with the unchanged two
+smoke oracles. No binder acceptance credited until this full run succeeds.
+
+Expanded run 21012 confirms the standalone read-only Map/Set and exactly-once
+receiver controls pass; GC still fails the initial absent optional property
+check. Both function and LOC gates pass (the combined command's exit 0 is
+the gate result, NOT a green Vitest result). Typecheck 38770 passes. Binder
+34787 remains the authoritative pending full candidate check.
+
+Run 25536 adds and passes both user-defined Map/Set size-getter controls;
+standalone collection-size test also passes (**3/4** total, the retained GC
+missing-value failure is the fourth). Formatting and whitespace run 51918
+passes. Split the generator normal-worklist source from cleanup sources to
+avoid attributing a shared-module compile failure to every behavior. Run
+24794 retains **3/3 native, 0/3 standalone** but now precisely distinguishes:
+normal Map.values flattening compiles and validates, then fails the zero-import
+gate on three generator imports; cleanup fixtures fail code generation.
+Both kinds of missing support remain required. Binder 34787 is still live.
+
+Binder 34787 has now completed: **both invocations execute without exception**,
+but both return **0**, versus unchanged expected 65792 and 131330 (**0/2
+matches**). Compile succeeds; 88,207,339-byte Wasm validates with zero imports.
+Total 256928 ms, peak 3139.3 MiB. The optional-size repair clears the TypeError
+but does not establish semantic correctness. Next diagnosis must separate the
+symbol/local/diagnostic counts and verify binding ran on the returned source
+object; retain original smoke expectations, never reseed them to zero.
+
+### Binder zero counts: cross-module traversal-function collision
+
+Diagnostic fixture `typescript-binder-fields.ts` decomposes the packed oracle
+without replacing it. Native TypeScript 5.9.3 yields parse-shape 3080101,
+const symbols/locals/diagnostics/has-x = 1/1/0/1, duplicate counts = 2/1/2.
+Full standalone run 50234 (236551 ms, 88,208,095 bytes, zero imports) matches
+only parse-shape and const diagnostics (**2/8** diagnostic matches); every
+post-bind count and has-x is zero. Parser output is nonempty and initially
+unbound, so missing symbols are not merely a packed-arithmetic problem.
+
+Existing trace 18167 shows `bindEachChild -> forEachChild -> visitNodes ->
+visitArrayWorker`. That last helper belongs to visitorPublic.ts's transforming
+`visitNodes`, not parser.ts's same-named traversal function. Both declarations
+have incompatible parameter order. This suggests a module-initializer closure
+compiled under another module's bare-name function binding.
+
+New multi-module regression 51158 reproduces exceptions in both lanes.
+Candidate `fixedSourceFunctionCallHandle` uses the exact fixed-arity top-level
+declaration's registered handle and suppresses stale name-keyed inlining and
+nested captures. Run 85700 preserves five existing collision controls, but
+the new two tests now trap with illegal cast in `__closure_16`; candidate is
+NOT yet a verified fix. WAT diagnostic 47547 is examining the remaining call
+ABI mismatch. Do not claim the new handle selection fully fixes module scope.
+
+WAT diagnostic 89680 exposed one final `finalFuncIdx` lookup still reverting
+to the bare-name map AFTER the arguments had been compiled for the exact
+declaration; mismatch repair then cast the callback into the other function's
+array parameter. Preserve the exact handle at that final emission too.
+Run 1423 now passes **8/8**: both new module-initializer collision tests,
+five existing module collision controls, and the nested factory-name control.
+Formatting run 94096 passes. Wider generic-callback/capture run 14215 and
+gates 6661 are pending. Full binder retry 95759 is active with unchanged
+65792/131330 oracles, logging `.tmp/ts5-binder-source-function-identity.log`.
+This is the first full binder run with the exact-call handle repair; its
+success is not presumed from the reduced regression.
+
+Wider run 14215 passes **94/94** (90 generic callback-result cases and four
+conditional-capture cases). Full binder 95759 and gates 6661 remain pending.
+
+Gates 6661 pass typecheck, function/LOC gates and whitespace checks. Parser
+recheck 78543 is running in `.tmp/ts5-parser-source-function-identity.log` with
+the three unchanged fingerprints. Binder 95759 remains live.
+
+Expanded collision regression 40649 adds a same-named foreign rest function:
+the two original rows pass, but both rest rows emit invalid calls (two required
+operands versus one packed array). Exact function identity must also reject
+the unrelated name-keyed rest/default metadata. The exact-handle predicate
+already proves the source declaration has neither; suppress those two metadata
+lookups for proven fixed-arity source calls. Run 80913 confirms all **4/4**
+collision rows now pass; its source-callable ABI suite is still running.
+Formatting passes; renewed typecheck 90998 is pending. Full compiler runs
+95759/78543 began before this last metadata refinement; label their results
+accordingly rather than presenting them as a final whole-candidate verdict.
+
+Run 80913 completed **17/17** (four collision rows plus thirteen exact source
+callable-ABI controls). Binder 95759 completed: valid 87,966,578-byte Wasm,
+zero imports, total 304778 ms, peak 3237.5 MiB, **0/2** matches. Both cases now
+trap at `declareSymbol` (offset 0x151b8ea / 22132970), reached through
+bindBlockScopedDeclaration -> bindVariableDeclarationOrBindingElement ->
+bindWorker -> bind -> forEach -> bindEach. This is a new, concrete downstream
+failure: traversal now reaches variable declarations instead of silently
+skipping them. Next diagnosis should inspect declareSymbol's null operand,
+not revert expected counts or count an exception as acceptance.
+
+Parser 78543 completes **3/3 unchanged exact fingerprints**, valid
+79,099,700-byte Wasm and zero imports, total 261813 ms. This run includes the
+exact source-handle selection, before the final rest/default metadata guard.
+Typecheck 90998 passes after that guard. No full compiler process remains
+running at this checkpoint.
+
+### Binder Symbol constructor shadowing follow-up
+
+Source-mapped trace 35124 completed with **0/2** unchanged binder oracles:
+both traps map to binder.ts:889 after `createSymbol` returns without invoking
+a constructor (`__closure_arity` returns -1). The reduced captured symbol-table
+matrix (35281) passes the standalone object-literal control but traps with the
+allocator-returned constructor; both GC rows also fail (1/4 overall).
+Reduced WAT identifies the standalone defect: `() => Symbol as any` materializes
+the builtin Symbol singleton instead of the source `function Symbol`. The bare
+builtin value arm precedes source function wrapping and lacked a declaration
+shadowing guard. Add the existing resolved-declaration/ambient check at that
+arm; targeted and full-graph validation remain required. No acceptance values
+or full-unit-suite denominators changed.
+
+Validation after the guard: 10411 is **8/10** (both standalone symbol-table
+cases plus all six existing constructor-factory tests pass; the two existing
+GC symbol-table cast failures remain). Builtin identity controls 4268 pass
+**14/14**. New source-function value controls 60552 pass **4/4** for Symbol,
+Map, Set and RegExp. Typecheck 85145 passes. Full binder retry 6509 is live,
+logging to `.tmp/ts5-binder-symbol-shadowing.log`, with original 65792/131330
+oracles; do not infer a full binder pass from the reduced constructor result.
+Typed-this twin and module-function collision controls 90172 pass **16/16**.
+Function/LOC gates 11530 and `git diff --check` pass after the change.
+
+Full binder 6509 is now terminal: **1/2** original acceptance workloads pass.
+`runConstLocal` returns exactly **65792** (previously trapped); duplicate-let
+still throws a WebAssembly.Exception rather than returning **131330**. Binary
+size is 87,999,385 bytes. This establishes a real binder gain, not completion.
+Next trace should target duplicate-declaration/diagnostic handling; the former
+Symbol-constructor null trap is cleared for the const workload. No full build
+process remains live at this checkpoint. Full 256-file upstream unit coverage,
+generator delegation, checker and self-hosting remain unfinished.
+
+Duplicate-declaration follow-up: trace/source-map retry 31476 is running at
+`.tmp/ts5-binder-duplicate-trace.log`, retaining both original binder oracles.
+Add a reduced diagnostic rest-argument/regexp replacement control while tracing
+the real exception; it is a diagnostic hypothesis, not an attributed root cause.
+
+31476 completed **1/2**, preserving const=65792. Trace stops at
+`getTextOfNodeFromSourceText -> isJSDocTypeExpressionOrChild -> findAncestor ->
+__new_TypeError`, before diagnostic formatting. `findAncestor` accepts a
+boolean-or-"quit" callback; this caller passes the boolean type predicate
+`isJSDocTypeExpression`. Add the ancestor predicate callback reduction next.
+Separately, formatter matrix 66625 is **1/2**: direct indexed args pass,
+generic `checkDefined(args[index])` fails. A character-code probe shows
+`Cannot redeclare [object Object].` instead of `Cannot redeclare x.`; WAT
+shows the already-tagged argument reboxed before stringification. This is a
+separate defect, not evidence explaining the current binder exception.
+
+Ancestor reduction initially throws (10912). Removing the zero-argument
+restriction on externref Boolean boxing did not help (37232), so that edit
+was reverted. WAT instead shows a callback result of `$AnyValue`, with an
+i32 Boolean predicate omitted from the funcref dispatch ladder. Explicit
+`__any_box_bool` adapts that proven result; matrix 84156 then passes match
+and missing, while the string "quit" callback still throws (2/3). Add the
+matching native-string-to-union result conversion via `__any_box_string`.
+Both are representation-proven boxing, not arbitrary object downcasts.
+Validation 85549 passes **93/93**: all three ancestor cases plus 90 existing
+generic callback tests. Full binder retry is logging to
+`.tmp/ts5-binder-predicate-union.log`; it must retain 65792/131330. Formatter
+generic-return reboxing remains unfixed, and broader/full-graph acceptance
+is not implied by the reduced tests.
+
+Live handles at this checkpoint: binder **34295**, function/LOC/diff gates
+**7039**. Typecheck and formatting **55951** completed successfully. Poll the
+existing handles before starting replacement runs.
+
+Gates 7039 completed successfully; binder 34295 remains live. Formatter
+follow-up changes `__any_box_extern_s1` to recover an existing `$AnyValue`
+for every tag instead of only undefined. This preserves compiler-owned
+tagged values crossing erased generic ABIs without enabling honest
+classification of arbitrary raw externrefs. The helper's emitting call site
+is `value-tags.ts`; its contract comment is updated too. Targeted tests
+77438 are pending; broader nullish/boxing regression checks are required.
+
+77438 completes **95/95** (formatter direct/generic 2/2, ancestor 3/3,
+generic callback controls 90/90). Nullish/boxing regression run 94696 passes
+**27/27** across host default returns, hoisted regexp values, any-array tags,
+undefined-singleton behavior and array absence/defaults. Binder 34295 began
+before this boxing edit and must be labelled as the predicate-union candidate,
+not as validation of the formatter repair.
+
+Typecheck 77632, formatting/diff check 80963 and function/LOC/diff gates
+72138 pass. Full parser regression 66724 is live with all three unchanged
+fingerprints, logging to `.tmp/ts5-parser-union-box-roundtrip.log`; unlike
+binder 34295, this run includes the formatter boxing repair.
+
+Binder 34295 completed: **1/2**, const=65792 and duplicate-let still throws,
+valid 88,001,151-byte Wasm, zero imports, 284714 ms. This predates formatter
+boxing preservation; no assertion about the remaining exception's location
+is justified without tracing again. A current-candidate trace is logging to
+`.tmp/ts5-binder-union-box-trace.log` while parser 66724 remains live.
+The binder trace handle is **18044**. Poll 18044 and 66724 on continuation;
+do not replace either run merely because a polling interval expires.
+
+Additional representation guard: `issue-1058-union-generic-roundtrip.test.ts`
+passes runtime-selected string/number/true/false union-array elements through
+generic `defined<T>` and checks both `typeof` and exact value. Run 41548 is
+pending; parser 66724 and binder trace 18044 were confirmed live on resume.
+
+Parser 66724 completes **3/3 exact original fingerprints**, valid
+79,134,618-byte Wasm, zero imports, 300676 ms. This includes the predicate
+union callback and existing-AnyValue preservation repairs. Broader union
+roundtrip test 41548 fails number/boolean rows; split control 31877 is **1/2**:
+direct reads preserve all four brands/values, generic-return reads give
+[1,-2,-3,-4]. Thus formatting now works but general generic union brands are
+not yet correct. Binder trace 18044 remains live.
+
+Binder trace 18044 is terminal: valid 88,001,430 bytes, zero imports, **1/2**.
+The trace now executes `__fn_tramp_isJSDocTypeExpression_cached` through the
+ancestor walk, then reaches diagnostic formatting. The remaining throw is
+`formatStringFromArgs -> __closure_861 -> checkDefined ->
+__call_accessor_get -> __call_fn_method_0 ->
+__proto_method_-1073741806_toString -> __new_TypeError`. The full-graph
+formatter carrier still differs from the passing reduction; adding an
+assertion-function-style guard passes all three formatter rows (69286).
+
+For the separately measured generic scalar-brand loss, add
+`generic-scalar-union-result.ts` at expression result coercion: only erased
+externref results of generic calls with proven string/number/boolean union
+types recover tags via the existing honest classifier. Unrestricted any
+results retain their existing path. Test run 90074 is pending. Both full
+build processes are finished; no new full acceptance result is claimed.
+
+90074 passes **5/5**: generic/direct union brands and all three formatter
+variants. Regression 48264 passes **108/108** (90 generic callbacks, three
+ancestor cases, six constructor-factory cases, nine undefined-singleton
+controls). Typecheck/format handle 71921 is still pending. Parser 66724's
+3/3 result predates this latest generic-scalar-union-result helper.
+
+71921 completed typecheck/format successfully. `builtin-brands.ts` identifies
+the full-graph throw's brand -1073741806 as **Object.prototype.toString**,
+not String.prototype. Its classifier can refuse unknown carriers. Next work
+should inspect the diagnostic argument at the full graph's erased generic
+return / concatenation boundary; do not "fix" it by swallowing this refusal
+or accepting diagnostic counts with wrong message text. No full build is live.
+Final function/LOC/diff gates 62241 pass after the scalar-union result helper.
+
+Formatter graph diagnosis: 98591 runs `compileProject` on the same tracked
+binder entry and standalone options, emitting only selected formatter/caller
+function WAT into `.tmp/ts5-binder-formatter-wat.log` and then invoking both
+original exports. This is diagnostic output, not an acceptance artifact.
+Cross-module captured-rest/same-name diagnostic-function reduction 77245 is
+pending in `issue-1058-diagnostic-module-forwarding.test.ts`.
+
+77245 passes **1/1**. Native TypeScript **5.9.3** verifies the unchanged
+duplicate-let input produces two code-2451/category-1 diagnostics at starts
+4 and 94, length 1 each, both message `Cannot redeclare block-scoped variable
+'x'.`. Add `typescript-binder-diagnostic-details.ts` to check these fields and
+source-file identity; it reexports the original two count oracles rather than
+replacing them. Its standalone detail export is not yet measured.
+
+98591 completed: compile succeeds, 88,001,121 bytes, zero imports,
+const=65792, duplicate-let throws. Full `__closure_861` WAT reads the captured
+union vec through `__extern_get_idx`, calls erased `checkDefined`, then sends
+the result straight to external string conversion. It never enters an
+expected-AnyValue coercion site. Move proven generic scalar-union recovery
+to the expression's natural result boundary, before expected-type coercion,
+so concatenation receives a tagged scalar too. Targeted tests are pending.
+The new detail fixture returns 1 under native TypeScript (53301); standalone
+detail acceptance remains unverified.
+
+Moving recovery to the natural result initially passed 95/96 (46574) but
+regressed the standalone boolean-first parser scalar control from 1042 to
+42. The checker represents boolean as `true | false`; the helper must not
+change that homogeneous scalar ABI. Require at least two primitive brands
+(string/number/boolean), not merely `type.isUnion()`. Rerun 58114 is pending.
+Typecheck/format 15159 passes before this final classifier refinement.
+
+58114 passes **96/96**, restoring the boolean-first parser control while
+preserving all diagnostic/union tests. Full diagnostic-details trace is
+running at `.tmp/ts5-binder-diagnostic-details.log`: original const=65792,
+duplicate-let=131330, plus diagnostic details=1 (three required invocations).
+The original two acceptance values are unchanged; the third strengthens
+the result with message/location/category/file-identity checks.
+Live handles: full binder **88439**, typecheck/format/function/LOC/diff gates
+**70054**. Poll these handles on continuation instead of restarting them.
+70054 has now passed all gates; only full binder 88439 remains live.
+
+88439 is confirmed live on continuation. Start a current-candidate parser
+regression at `.tmp/ts5-parser-natural-scalar-union.log`, retaining the three
+original fingerprints, to check the natural-result recovery plus primitive
+brand discrimination (the preceding full parser run predates that change).
+
+Current parser handle is **97684**. Add homogeneous boolean/string-literal/
+number-literal union checks to the generic-roundtrip regression, preserving
+the existing heterogeneous-brand assertions. Test 42198 is pending; binder
+88439 and parser 97684 remain live.
+
+42198 completes **1/2** after strengthening the regression. With the earlier
+heterogeneous generic call present, homogeneous checks pass; without that
+call (direct-read control), homogeneous checks return [21,121] instead of
+[22,111]. This is an additional first-instantiation-sensitive generic result
+defect, not permission to remove the new assertion. Previous 96/96 predates
+these additional assertions. Full binder/parser runs are still pending.
+
+88439 completed: valid 88,009,347 bytes, zero imports, **0/3** matches.
+Two rows did not execute: re-export-only count entrypoints were absent.
+Replace those fixture reexports with explicit wrappers calling the original
+functions; do not reinterpret missing exports as binder behavior. The detail
+row executes and now passes `formatStringFromArgs -> checkDefined ->
+__any_from_extern_honest`, then traps after `__get_member_bindDiagnostics`
+with an illegal cast in declareSymbol (offset 22179008). The prior formatter
+TypeError is cleared in this trace, but no diagnostic-detail pass is claimed.
+Next inspect the diagnostic array's element carrier. Parser 97684 is live.
+
+Parser 97684 completes **3/3 original fingerprints**, valid 79,134,616 bytes,
+zero imports, 309909 ms, including the heterogeneous natural-result repair.
+Add `issue-1058-source-diagnostic-array.test.ts` (7344) for empty diagnostic
+array initialization on a constructor-backed extended Source node. Start
+selected WAT diagnosis for declareSymbol/createFileDiagnostic/the diagnostic
+array getter at `.tmp/ts5-binder-diagnostic-array-wat.log`, invoking all three
+detail-fixture exports now that the count wrappers are explicit.
+
+Source diagnostic array reduction 7344 null-dereferences. Split matrix 49967
+is **1/2**: plain-object Source passes, constructor-backed extended Source
+null-dereferences. This distinguishes constructor/projection setup from an
+ordinary diagnostic-array push, but does not yet attribute the full graph's
+illegal cast to the same cause. Full selected-WAT build **98119** is live at
+`.tmp/ts5-binder-diagnostic-array-wat.log`; no other full build is running.
+Formatting/diff check 17538 is pending. Keep the homogeneous generic failure
+from 42198 as a separate remaining defect.
+
+Reduced WAT 78331 attributes its null trap earlier than array access:
+`new (Node as any)(308)` drops 308, emits `ref.null Node; ref.as_non_null`,
+then calls the typed-this constructor with a zero numeric argument. This is
+an erased direct-new/typed-this ABI defect, not evidence that the full
+binder's diagnostic-array cast has the same cause. Keep the reduced test;
+inspect full WAT 98119 before changing array conversion.
+
+98119 completed: compile succeeds, 88,009,123 bytes, zero imports. Explicit
+count wrappers now execute: const=65792; duplicate-let and detail both
+illegal-cast in declareSymbol at 0x1526c05. Full WAT line 57825 reads
+bindDiagnostics through getter 5445, then `any.convert_extern; ref.cast_null
+494` before array push. Getter's direct SourceFile arm reads field 47 of
+type 395; fallback reads through __extern_get. The selected-function log
+discarded type declarations, so allocation-vs-read mismatch is not yet
+attributed. A new selected type/parseSourceFileWorker WAT run is logging to
+`.tmp/ts5-binder-diagnostic-types-wat.log` to recover that evidence.
+
+On continuation, handle 31023 is missing and its log contains only
+`COMPILE false 0` (the diagnostic command omitted errors). This is terminal,
+not a live wait. Error-reporting retry **48505** uses the same entry/options
+and selected parseSourceFileWorker WAT; inspect its errors before attributing
+the failed diagnostic run. The prior approval-service usage-limit rejection
+prevented the last handoff edit; tool reads and a subsequent test edit now
+succeed. Strengthen the constructor reduction with `source.kind === 308` so
+future repairs cannot pass while dropping the constructor's assigned value.
+
+### Retry checkpoint: stack-safe peephole traversal
+
+Type-inspection retry 48505 terminated with `success:false`, zero bytes and
+`Maximum call stack size exceeded (at src/codegen/peephole.ts:114:10)`.
+Replace recursive child-first optimization with an explicit postorder stack,
+preserving physical-array deduplication and cross-function local-type guards.
+Add a deep-nesting regression before retrying the full diagnostic compile.
+The strengthened source diagnostic-array reduction remains 1/2: plain objects
+pass, constructor mode traps. No new binder acceptance gain is claimed.
+
+Implemented the explicit postorder traversal, retaining the shared child
+enumerator and per-module visited set. The 20,000-level shared-body test first
+failed with the original recursive optimizer, then passed with the fix.
+Current focused checks: 13/13 DAG/order/catchAll/pattern tests and 4/4
+dead-load runtime controls pass. The older ref-cast suite is 1/7: six cases
+fail at instantiation on missing `string_constants` imports; this retry has
+not attributed those failures. Full type-inspection retry is recorded in
+`.tmp/ts5-binder-stack-safe-type-probe.log` (handle 27490), with typecheck and
+quality gates running separately (74401). Do not infer full compilation or
+diagnostic-array repair from the focused optimizer checks.
+
+TypeScript `tsc --noEmit` passed. The first formatting gate caught the new
+test's array layout; formatting was corrected and the rerun passed formatting,
+function/LOC budgets, and `git diff --check`. Parser source initializes
+`bindDiagnostics = []` inside `createSourceFile`'s nested `setFields`, not
+directly inside `parseSourceFileWorker`; target that function for the next
+allocation trace after obtaining the actual field/vector type declarations.
+
+Retry 27490 is now terminal: compile **success**, **88,009,123 bytes**, no
+error-severity diagnostics. The same direct compile that overflowed before
+now completes. This diagnostic command did not instantiate or invoke exports;
+do not promote it to runtime acceptance. Its name-filtered type output exposes
+JsonSourceFile.bindDiagnostics as `(ref null 494)` but omits the main SourceFile
+carrier (its emitted name does not match the filter). Next trace must retain
+all type declarations (bounded extraction afterwards) and nested `setFields`
+WAT, avoiding another misleading name-filtered view. No processes from this
+retry remain live. Binder acceptance remains the previously measured 1/2,
+expanded diagnostic-detail acceptance 1/3; all 256 upstream files remain the goal.
+
+### Diagnostic field initialization trace
+
+The previous turn made progress (stack-safe optimizer plus successful full
+compile). Current full trace 33765 retains all emitted types and selected
+`setFields`/`createSourceFile`/diagnostic getter WAT via the existing dump
+hooks, and invokes all three binder exports. Logs are
+`.tmp/ts5-binder-field-all-types.log` and `.tmp/ts5-binder-field-all-types.txt.wat`.
+Upstream nodeFactory initially writes `bindDiagnostics = undefined!`, then
+parser.createSourceFile.setFields writes `[]`. Added a focused matrix for
+that initialization through nested functions, including a base-Node view.
+This is separate from the explicit-this constructor reduction.
+
+The new matrix measured 2/3: plain Source and a fresh Node returned through
+a local both pass; directly returning the identical Node object literal
+traps in factory before field initialization. Reduced WAT proves a nominal
+test against the not-yet-allocated Source carrier falls back to null. Extend
+the existing fresh-wrapper factory proof to direct returned object literals,
+with the same source/target assignability checks. Full trace 33765 started
+before this extension; keep its candidate provenance separate. Regression
+checks are running before claiming the direct-return case fixed.
+
+Full trace 33765 terminated: success, 88,009,123 bytes, imports `[]`, const
+65792; duplicate-let and details both illegal-cast. Flat type 395 is actually
+JsonSourceFile, not the general SourceFile carrier. `setFields` receives Node
+223, allocates vector **494** (data array 493 / DiagnosticWithLocation 442),
+then extern-converts it and calls setter 4160. Thus allocation agrees with the
+failing expected vector type. The getter tests JsonSourceFile 395, otherwise
+calls `__extern_get` (1495). Next inspect setter/property storage and the
+fallback getter's result representation, not the empty-array type choice.
+
+The direct-return factory extension passed the initialization matrix 3/3;
+combined node-array/parenthesizer/sibling controls measured 27/29, with two
+standalone user-Map failures (one invalid binary, one module-init stack
+underflow). Temporarily remove only this turn's nine-line extension and run
+the Map controls (25147) to attribute those failures before restoring it.
+Typecheck, formatting, function/LOC budgets and diff checks passed with the
+extension present. No binder acceptance gain is attributed to that extension.
+
+Map A/B 25147 reproduces the identical two standalone failures with the
+extension absent. Restored the extension; additional base-node and SourceFile
+controls measured 16/18 (including initialization 3/3). Both failing diamond /
+LiteralLikeNode cases also reproduce without the extension (40223, 0/2), so
+neither pair is caused by this change. The extension is restored in the worktree.
+
+Next storage trace **41081** runs the current candidate with the restored
+extension and includes a new `runDiagnosticArrayBeforeBind` export. Native
+TypeScript 5.9.3 confirms the expected pre-bind diagnostics length is 0.
+The trace retains setter/getter and `__extern_set[_strict]`/`__extern_get`
+WAT, plus all types, under `.tmp/ts5-binder-field-storage*`. It executes the
+new pre-bind check and all three original binder exports. Await this live
+handle; do not restart on an observation timeout.
+
+Expanded initialization matrix now passes **4/4**, including dynamic expando
+storage of the typed diagnostic vector on a base Node, identity equality,
+push, and write-through. This rules out the simplest generic expando roundtrip
+as a reproduction. Formatting and diff checks pass. Storage trace 41081 is
+still confirmed live on the last poll; its log has no result yet. No source
+change beyond the restored direct-object-literal proof was made while it ran.
+
+### Stack-safe WAT diagnostic printer
+
+Storage trace 41081 is terminal, but failed before invocation: the selected
+`__extern_get` WAT dump overflows `formatInstrIndented` in src/emit/wat.ts.
+This is a second recursive traversal issue, not a failed binary acceptance
+run. Replace recursive formatting with an explicit work stack, preserving
+child order, repeated shared-body occurrences, and exact empty-arm formatting.
+Add deep nesting and formatting controls before retrying storage inspection.
+
+The 3,000-level WAT test first reproduced the exact formatInstrIndented
+overflow. Iterative string/instruction frames now pass it, preserving repeated
+shared arms (not deduplicating semantic occurrences), catchAll and empty-arm
+whitespace. WAT stack/escaping/SIMD/emit-option controls pass **21/21**.
+The expanded diagnostic initialization matrix also passes **5/5**, including
+overwriting an undefined dynamic entry after adjacent field writes.
+
+Full storage retry **14691** runs with the stack-safe WAT printer; output is
+`.tmp/ts5-binder-storage-stack-safe.log` and matching `-types.txt[.wat]`.
+It retains all four requested runtime invocations and the same selected
+storage functions. Quality gates are running separately as **64375**. Both
+handles are live at launch; do not treat an empty log as a terminal result.
+
+64375 completed successfully: typecheck, formatting, function and LOC budgets,
+and diff checks all pass. Storage trace 14691 remains confirmed live; no new
+runtime result has been reported yet.
+
+14691 is now terminal: iterative traversal clears the stack overflow, but
+the selected giant helper hits `RangeError: Invalid string length` at the
+final chunks.join in formatInstrIndented. Cap cosmetic indentation at 64
+levels to avoid quadratic whitespace growth; ordinary-depth output is
+unchanged and no instruction is removed. Add output-size/indentation bounds
+to the 3,000-level regression before retrying the same storage trace.
+
+Bounded-indentation printer checks pass **21/21**, and formatting/function/LOC
+budgets/diff checks pass (82609). The previous typecheck passed before this
+Math.min-only printer adjustment. Full retry **16992** uses
+`.tmp/ts5-binder-storage-bounded.log` and matching `-types.txt[.wat]`, with the
+same four runtime exports and selected helpers; it remains live on the latest
+30-second wait. This retry is diagnostic infrastructure progress, not a new
+binder acceptance claim.
+
+16992 completed: compile success **88,009,782 bytes**, zero imports;
+pre-bind length=0 and const=65792, duplicate-let/details still illegal-cast in
+declareSymbol (5279, 0x1526e79): **2/4 expanded diagnostic checks**. Bounded
+WAT succeeded and retained the full storage helpers. Important caveat: the
+pre-bind length WAT tests vector 494 but falls back to generic __extern_length
+when that brand fails. Thus length=0 proves a readable length, not the exact
+push-compatible vector representation. Do NOT conclude binding corrupted a
+previously proven exact vector. Add a pre-bind push export (native expected 1)
+to distinguish this representation hypothesis from captured-file corruption.
+
+Pre-bind push run **86230** is live; output `.tmp/ts5-binder-prebind-push.log`.
+Prepared `.tmp/ts5-binder-inspect.mts` for subsequent runs: it retains a
+diagnostic-only binary and prints the exact trap bytes/offset along with all
+five expected values. Existing source maps are too coarse to attribute the
+trap to one particular cast (the old mapping is >100 KB before the trap).
+Do not promote the nearest WAT cast as proven without matching binary bytes.
+The retained-artifact runner has not yet been executed; wait for 86230 first.
+
+86230 completed: compile success **88,010,437 bytes**, zero imports,
+pre-bind length=0, pre-bind push=1, const=65792; duplicate-let/details both
+illegal-cast in declareSymbol (5280, 0x15270e5). Expanded checks **3/5**,
+original binder acceptance still **1/2**. Native 5.9.3 confirms push length=1
+and diagnostic.file identity. This rules out a generally unpushable freshly
+parsed diagnostics array, but not capture/projection effects inside binding.
+Launch the retained-binary runner next to identify the actual cast instruction
+at the trap offset, rather than inferring it from the coarse source map.
+
+Retained-binary runner is live as **1046**, logging
+`.tmp/ts5-binder-retained.log`; on compile success it writes the diagnostic-only
+`.tmp/ts5-binder-retained.wasm`. Added a binder-shaped file-cell regression
+covering direct/nested generic forEach callbacks, diagnostic creation, two
+source files in succession, and exact diagnostic file identity. This tests
+the simple capture hypothesis while the authoritative binary is compiling.
+
+1046 completed, preserving `.tmp/ts5-binder-retained.wasm`: 88,010,437 bytes,
+zero imports, **3/5** exact checks. Trap bytes at 22180069 are
+`fb 17 85 04` = `ref.cast_null 517`, NOT 494. Existing matching WAT shows
+`local.get 52; ref.cast_null 517; call 638`, where local 52 is
+`relatedInformation: (ref null 494)`. This is the rest-spread argument to
+`addRelatedInfo`, after successfully obtaining bindDiagnostics for push.
+Correct the earlier attribution: the diagnostic-array getter was not proven
+to be failing. The binder-shaped capture matrix passes **2/2**.
+
+`compileSpreadCallArgs`' rest arm compiles a trailing spread with no expected
+type, then passes its vector directly. The callee's different invariant Wasm
+vector type is patched by a nominal cast and traps. Add empty/non-empty
+derived-diagnostic-vector regressions, then apply the callee's expected rest
+type through the existing coercion path instead of relying on stack repair.
+
+The reduction exposed two layers. Applying a rest-type hint alone leaves its
+binary unchanged: resolved generic declarations skipped funcRestParams
+registration, so the caller treated the spread as positional arguments and
+passed element zero as the rest vector. Added `resolved-rest-parameter.ts`
+to recover metadata from the exact resolved vector ABI at both top-level
+registration sites, plus the callee-type hint in the rest spread emitter.
+The non-empty diagnostic vector now passes; the empty case no longer traps
+and passes returned identity/code/start checks, but returns -3 at its strict
+optional-field undefined assertion (**1/2**, not green). Formatter controls
+remain **4/4**. The old spread-rest suite fails **13/13** at missing
+string_constants host imports and cannot validate these changes in this harness.
+
+Full retained-binary retry is logging `.tmp/ts5-binder-rest-fixed.log`, preserving
+its candidate as `.tmp/ts5-binder-rest-fixed.wasm` separately from the prior
+binary. Verify all five runtime rows before attributing a binder improvement.
+
+Full run handle is **85103**, still live. Gates **51566** completed: typecheck,
+function/LOC budgets and diff checks pass; formatting also passed separately.
+Numeric resolved-generic rest controls pass **2/2** (spread and ordinary args).
+An absent optional diagnostic-vector control with NO rest call returns 0
+instead of expected 1 (**0/1**), independently reproducing the empty row's
+strict-undefined issue. Current rest diagnostic file is therefore **3/5**
+across the measured rows, with the two optional-field assertions unresolved.
+
 ## Acceptance criteria
 
 - [ ] `scripts/ts-compiler-stress.ts` exists and runs against a local `typescript` install
 - [ ] Tier 2 (leaf modules: `core.ts`, `path.ts`) compiles cleanly
-- [x] Tier 3 scanner+parser graph compiles, validates, and executes all three pinned real-source workloads
+- [x] Tier 3 scanner+parser graph compiles, validates, and executes all three
+      pinned real-source workloads in the GC/Node compatibility lane
+- [x] Tier 3 scanner+parser graph compiles and validates as standalone Wasm,
+      has zero imports, and executes equivalent tracked zero-argument oracles
 - [x] Consumer-driven source resolution narrows the parser graph with default
       resolution unchanged and focused static/dynamic-demand tests
 - [ ] Binder slice compiles, validates, preserves the three accepted parser
-      fingerprints, and matches both committed native/Wasm binder oracles
+      fingerprints, and matches both committed native/Wasm binder oracles in
+      both GC/Node and standalone lanes
+- [ ] The pinned TypeScript 5.9.3 upstream unit adapter runs all 256 files with
+      no deferred registrations in standalone mode
 - [ ] ≥ 5 follow-up issues filed for concrete gap patterns
 - [x] Results document the real-package compile rate, not hand-written toy subset (supersedes #452's scope)
 - [x] **Stretch 1 (Tier 3):** compiled scanner+parser produces native-equivalent AST fingerprints for all three pinned real `.ts` files
@@ -1590,7 +5880,6 @@ emit and self-hosting.
 
 ## Non-goals
 
-- Full TypeScript compatibility — stress test / correctness harvest, not reimplementation
 - Compiling the language service (`typescript/lib/tsserver.js`) — out of scope
 - Performance parity with native tsc — correctness first
 - Incremental compilation state across runs — the real tsc caches; we don't need that for single-shot

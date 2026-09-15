@@ -15,6 +15,7 @@ import { RUNTIME_RECGROUP_ABI_VERSION, RUNTIME_RECGROUP_TYPE_NAMES } from "../..
 import { nativeLiteralRegExpEngineConfig } from "../regexp-standalone.js";
 import { createFallbackCounts } from "../fallback-telemetry.js";
 import type { ProgramAbiSession } from "../program-abi-session.js";
+import { ProgramAbiComponentPreparation } from "../program-abi-component-preparation.js";
 import { createBodyRouteAudit } from "./body-route-audit.js";
 import { ProgramAbiClassCallableRegistry } from "../program-abi-class-callable-planning.js";
 import { ProgramAbiCallableRegistry } from "../program-abi-callable-planning.js";
@@ -505,6 +506,7 @@ export function createCodegenContext(
     irPlanningIdentityContext,
   );
   if (programAbiSession) {
+    ctx.programAbiComponentPreparation = new ProgramAbiComponentPreparation(programAbiSession, ctx);
     ctx.programAbiCallableProviders = new ProgramAbiCallableProviderRegistry(programAbiSession, ctx);
     ctx.programAbiCallables = new ProgramAbiCallableRegistry(programAbiSession, ctx);
     ctx.programAbiGlobals = new ProgramAbiGlobalRegistry(programAbiSession, ctx);

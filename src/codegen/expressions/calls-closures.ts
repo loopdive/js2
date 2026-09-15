@@ -8,6 +8,7 @@
  * - tryExternClassMethodOnAny — resolve method call on any-typed receiver via extern classes
  */
 import { ts } from "../../ts-api.js";
+import { preserveOptionalDeclarationParameter } from "../optional-declaration-parameter.js";
 import { isVoidType, isPromiseType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { callablePropertyIsExtractedHostBuiltin } from "./callable-property-host-value.js"; // (#5342)
@@ -103,6 +104,7 @@ import { addStringConstantGlobal } from "../registry/imports.js";
 import type { ObjectLiteralMethodReceiverBind } from "../object-literal-method-receiver.js";
 import { programDeclaresClassMethod, receiverOriginRejectsExternBinding } from "../class-instance-method-names.js";
 import { sourceAssignsAliasedFunctionMember, sourceDefinesFunctionMember } from "../source-function-members.js";
+import { sourceCollectionFactoryUsesObjectCarrier } from "../source-collection-factory.js";
 import {
   captureObjectLiteralMethodReceiver,
   emitObjectLiteralMethodThisInstall,
@@ -136,27 +138,18 @@ type FuncCandidate = {
  * `(externref) -> externref`, while a concrete interface field holding it can
  * be called as `(ref Box) -> ref Box`. Both crossings preserve the same GC
  * reference: export the concrete argument and narrow the declared concrete
- * result at the field boundary. In standalone, #5255 admits the analogous
- * result-only crossing only for a registered native-generator state. `$AnyValue`
+ * result at the field boundary. These Wasm conversions need no host imports
+ * and preserve native-generator state references as well. `$AnyValue`
  * is a tagged carrier rather than a raw object reference, so it must keep its
  * semantic projection path.
  */
 function callablePropertyRefBridge(ctx: CodegenContext, from: ValType, to: ValType): Instr[] | null {
   const isHostExtern = (type: ValType): boolean => type.kind === "externref" || type.kind === "ref_extern";
   if (valTypesMatch(from, to) || (isHostExtern(from) && isHostExtern(to))) return [];
-  if (ctx.standalone || ctx.wasi) {
-    if ((from.kind === "ref" || from.kind === "ref_null") && isHostExtern(to)) {
-      for (const info of ctx.nativeGenerators.values()) {
-        if (info.stateTypeIdx === from.typeIdx) return [{ op: "extern.convert_any" }];
-      }
-    }
-    return null;
-  }
-
   if ((from.kind === "ref" || from.kind === "ref_null") && from.typeIdx !== ctx.anyValueTypeIdx && isHostExtern(to)) {
     return [{ op: "extern.convert_any" }];
   }
-  if (isHostExtern(from) && (to.kind === "ref" || to.kind === "ref_null")) {
+  if (isHostExtern(from) && (to.kind === "ref" || to.kind === "ref_null") && to.typeIdx !== ctx.anyValueTypeIdx) {
     return [
       { op: "any.convert_extern" },
       { op: to.kind === "ref_null" ? "ref.cast_null" : "ref.cast", typeIdx: to.typeIdx },
@@ -1588,11 +1581,18 @@ export function compileCallablePropertyCall(
   const sigParameters = runtimeSignatureParameters(sig);
   const sigParamCount = sigParameters.length;
   const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
-  const sigRetWasm = isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType);
+  const resolvedSigRetWasm = isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType);
+  const sigRetWasm = sourceCollectionFactoryUsesObjectCarrier(ctx, expr)
+    ? { kind: "externref" as const }
+    : resolvedSigRetWasm;
   const sigParamWasmTypes: ValType[] = [];
   for (let i = 0; i < sigParamCount; i++) {
     const paramType = ctx.checker.getTypeOfSymbol(sigParameters[i]!);
-    sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+    const declaration = sigParameters[i]!.valueDeclaration;
+    const type = resolveWasmType(ctx, paramType);
+    sigParamWasmTypes.push(
+      declaration && ts.isParameter(declaration) ? preserveOptionalDeclarationParameter(ctx, declaration, type) : type,
+    );
   }
   const pushMissingCallablePropertyArgument = (index: number, type: ValType): void => {
     const declaration = sigParameters[index]?.valueDeclaration;
@@ -2192,7 +2192,11 @@ export function compileCallableElementAccessCall(
   const sigParamWasmTypes: ValType[] = [];
   for (let i = 0; i < sigParamCount; i++) {
     const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
-    sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+    const declaration = sig.parameters[i]!.valueDeclaration;
+    const type = resolveWasmType(ctx, paramType);
+    sigParamWasmTypes.push(
+      declaration && ts.isParameter(declaration) ? preserveOptionalDeclarationParameter(ctx, declaration, type) : type,
+    );
   }
 
   // 2. Eagerly create / find the wrapper struct (signature-keyed cache)
