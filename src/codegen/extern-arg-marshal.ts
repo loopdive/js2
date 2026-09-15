@@ -85,6 +85,34 @@ export function armExternRefArgTypeGuard(ctx: CodegenContext, fctx: FunctionCont
 }
 
 /**
+ * (#6615) Arm the same guard for a module compiled AS A LINKED PROVIDER.
+ *
+ * The site above is the module's own dynamic `new <value>` expression, and it
+ * is not the only way to reach a construct trampoline: `classConstructWanted`
+ * also turns them on for `ctx.exportsConsumedByWasm`, where the dynamic caller
+ * lives in ANOTHER module entirely (`__js2wasm_link_construct` on the provider
+ * side). Measured: the `@js-temporal/polyfill` provider compiles no dynamic
+ * `new <value>` site of its own, so arming only at the expression site left its
+ * artifact byte-identical and every `new Temporal.PlainDate(2000, 5, 2, null)`
+ * still trapped across the link.
+ *
+ * Called once per module from the post-bodies point of BOTH codegen paths —
+ * late enough that arming costs a module which never needed it nothing, early
+ * enough that it is not a finalize-time mutation. No `fctx` to flush against
+ * because no body is live there, and none is needed: under
+ * `semanticProviders: "native-first"` `__new_TypeError` routes to
+ * `emitWasiErrorConstructor` (a DEFINED function, no import, no index shift)
+ * and, with `nativeStrings`, the message adds a string-pool entry rather than
+ * an imported global.
+ */
+export function armExternRefArgTypeGuardForLinkedProvider(ctx: CodegenContext): void {
+  if (!ctx.exportsConsumedByWasm) return;
+  if (!usesNativeJsErrors(ctx)) return;
+  if (armedRefArgThrow.has(ctx)) return;
+  armedRefArgThrow.set(ctx, buildThrowJsErrorInstrs(ctx, "TypeError", REF_ARG_TYPE_ERROR_MESSAGE));
+}
+
+/**
  * (#6615) Mint (once per formal type) `__extern_arg_ref_<typeIdx>[_opt]
  * (externref) -> (ref [null] $T)`: the ref-typed replacement for the
  * unconditional `ref.cast` the ref arm used to emit inline.
