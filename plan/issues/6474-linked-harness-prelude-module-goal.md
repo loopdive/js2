@@ -54,7 +54,9 @@ all: the honest whole-assembly source plus a dummy `import { __g } from
 "./__stub"; var __u = __g;` fails identically. The import alone does it.
 
 The same root cause produces `arguments is not defined` and `x is not defined`
-rows in the `for-of` sample.
+rows in the `for-of` sample, and (2026-09-15) `built-ins/Array/prototype/map/15.4.4.19-5-21.js`
+(`var global = this; … this === global` — top-level `this` is `undefined` under
+the module goal), previously listed as a singleton in #3451's table.
 
 ## What a fix has to provide
 
