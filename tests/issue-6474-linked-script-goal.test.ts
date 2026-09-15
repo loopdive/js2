@@ -80,6 +80,9 @@ async function runLinked(source: string): Promise<string> {
     await instantiateTest262Module(result.binary, importObject, {
       linkedModules: result.linkedModules ?? [],
       linkedRuntime,
+      // (#6477 follow-up) In-process callers own the deferred `__module_init`
+      // call; the sharded worker makes it itself (#3123).
+      runDeferredInit: true,
     });
     return "pass";
   } catch (error) {

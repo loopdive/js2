@@ -350,3 +350,58 @@ lint.
       honest lane untouched; only P3 crosses over, and it had to, because the
       defect it fixes is a real spec violation the script goal merely exposed.
 - [x] New row in the #3451 measurement table.
+
+### CORRECTION (2026-09-15) — every number above was taken on a broken base; re-measured
+
+The base carried a bug fixed after this work started: #6477's
+`instantiateTest262Module` ran the deferred `__module_init()` unconditionally,
+but the sharded worker already calls it itself (#3123), so **every linked row in
+the worker ran module init TWICE**. Commit `1c8b440a74` makes the call opt-in
+(`runDeferredInit: true`, passed by the in-process callers only) and is
+cherry-picked onto this branch; `tests/issue-6474-linked-script-goal.test.ts`
+passes it too. **All worker measurements were re-run on the corrected base.**
+The numbers in the section above are superseded by these; they are kept only
+because the P1-alone/P2 ordering conclusion is unchanged under both.
+
+**A. The 15 target rows.** Honest 15/15 pass throughout.
+
+| stage | linked agreement |
+| --- | --- |
+| before | **10 / 15** |
+| P1 alone (import dropped, `sourceIsModule` still forced `true`) | **11 / 15** |
+| P1 + P2 + P3 | **15 / 15** |
+
+Identical to the pre-correction run — the double init did not touch these rows —
+so the conclusion stands: dropping the `import` alone buys exactly the
+top-level-`this` row, and P2 is what buys the other four.
+
+**B. Regression sample — the same 471 rows.**
+
+| lane | before | after | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- |
+| linked | 348 / 471 | **361 / 471** | **2** | **15** |
+| honest | 370 / 471 | **371 / 471** | **0** | 1 (`with/S12.10_A1.11_T2.js`) |
+
+(The corrected base is worth +70 linked rows on its own — 278 → 348 — which is
+why the deltas differ from the section above.)
+
+**The two remaining linked regressions are NOT the P3 class and NOT fixed by
+it** — reproduced in isolation with P3 reverted, so P1/P2 own them:
+
+| row | message |
+| --- | --- |
+| `built-ins/Object/defineProperty/15.2.3.6-4-258.js` | `0 descriptor should be enumerable; 0 descriptor should be writable; 0 descriptor should be configurable` |
+| `built-ins/Object/defineProperty/15.2.3.6-3-185.js` | `Invalid descriptor field: label` |
+
+Both are `verifyProperty` on a CONSUMER-minted value read from the PROVIDER —
+`arrObj = [100]` by array index in the first, the descriptor literal itself in
+the second. That is #6482's class verbatim (the provider's `arr[name]` lowers to
+in-wasm vec access against its OWN types, misses the `ref.test`, and answers a
+default; no host-side redirect can see it). The script goal moved these two
+values from module globals to global-object properties, which is enough to route
+the read down that broken path — it exposes #6482 on two more rows rather than
+introducing a new mechanism. Net on the sample is **+13 linked, +1 honest, and
+the two known-class rows**; recorded here and belonging to #6482, not chased.
+
+Also re-verified on the corrected base: honest 0 pass→fail, so P3's
+non-byte-identical honest-lane change is still strictly an improvement.

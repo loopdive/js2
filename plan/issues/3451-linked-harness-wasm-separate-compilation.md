@@ -627,18 +627,21 @@ in the wasm `start` section) plus the descriptor read's decoder redirect. The
 two residual classes are a codegen/ABI question, not a host-side one — details
 in #6477.
 
-### Re-measured 2026-09-15 after #6474 — script-goal class 3 → 0, 0 regressions
+### Re-measured 2026-09-15 after #6474 — script-goal class 3 → 0
 
 The linked consumer is now compiled with the **script** goal (no prelude
 `import`; `entryScriptGoal` lets `generateMultiModule` read the entry's own
-goal). Two scopes, same worker protocol (`COMPILER_POOL_SIZE=1`,
+goal). Measured on the corrected base, i.e. AFTER `1c8b440a74` stopped the
+worker running the deferred `__module_init()` twice — that fix alone is worth
++70 rows on the sample below, so any #6474 number taken before it is not
+comparable. Same worker protocol throughout (`COMPILER_POOL_SIZE=1`,
 `TEST262_PATH_FILTER_FILE`, `TEST262_ORACLE_MODE=linked` vs honest, same commit,
 bundles rebuilt before each run).
 
 **Target rows** — `language/statements/with` first 12 + the two
 `class/elements/{,private-}indirect-eval-contains-arguments` rows +
 `built-ins/Array/prototype/map/15.4.4.19-5-21.js`. Honest is 15/15 pass
-throughout, so linked pass-count IS agreement:
+throughout, so the linked pass-count IS agreement:
 
 | stage | linked agreement |
 | --- | --- |
@@ -647,24 +650,30 @@ throughout, so linked pass-count IS agreement:
 | P1 + P2 (+ P3) | **15 / 15** |
 
 **Regression sample** — 471 rows, every 5th file of the five tractable sample
-dirs (`class` excluded; the six dirs are 6,413 files):
+dirs (`language/expressions/class` excluded; the six dirs are 6,413 files):
 
 | lane | before | after | pass→fail | fail→pass |
 | --- | --- | --- | --- | --- |
-| linked, P1+P2 only | 278 / 471 | 286 / 471 | 2 | 10 |
-| linked, P1+P2+P3 | 278 / 471 | **289 / 471** | **0** | **11** |
-| honest (P3's blast radius) | 370 / 471 | 371 / 471 | **0** | 1 |
+| linked | 348 / 471 | **361 / 471** | 2 | 15 |
+| honest | 370 / 471 | 371 / 471 | **0** | 1 |
 
-The two P1+P2 regressions (`with/S12.10_A1.2_T4`, `S12.10_A1.3_T4`,
-`Cannot redefine property: myObj`) were a **latent** defect the script goal
-un-masked, not one it caused: the runtime-eval global mirror created a script
-var binding with writable/enumerable unspecified, i.e. `false`, against
-§9.1.1.4.16. P3 fixes it with a creation-only spec-defaults flag bit and is the
-one part of #6474 that is not honest-lane-byte-identical (+1 / −0). Classes
-`script-vs-module: arguments, unresolvable assignment` and
-`Cannot convert object to primitive value (map/15.4.4.19-5-21)` from the
-2026-09-15 table go to **0**; `with`-scope write (`S12.10_A3.11_T3`) also
-flipped to pass.
+Classes `script-vs-module: arguments, unresolvable assignment` and
+`Cannot convert object to primitive value (map/15.4.4.19-5-21)` go to **0**, and
+the `with`-scope write row (`S12.10_A3.11_T3`) flipped to pass as well.
+
+Two caveats, both recorded in #6474:
+
+- #6474 carries a **P3** that is NOT honest-lane-byte-identical: the
+  runtime-eval global mirror created a script `var` binding with
+  writable/enumerable unspecified, i.e. `false`, against §9.1.1.4.16, so the
+  next mirror refresh threw `Cannot redefine property`. Fixed with a
+  creation-only spec-defaults flag bit; honest delta +1 / −0.
+- The 2 linked regressions are `defineProperty/15.2.3.6-4-258` and `-3-185`,
+  both `verifyProperty` on a consumer-minted value read from the provider —
+  **#6482's class**, reproduced with P3 reverted. The script goal moves those
+  values from module globals to global-object properties, which routes the read
+  down the already-broken in-wasm vec path; it exposes #6482 on two more rows
+  rather than introducing a mechanism.
 
 ### Acceptance boxes
 
