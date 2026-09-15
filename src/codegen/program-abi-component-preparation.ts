@@ -28,6 +28,7 @@ import {
 } from "../ir/callable-bindings.js";
 import type { IrBindingId, IrClassId, IrUnitId, IrUnitInventory } from "../ir/identity.js";
 import { IrInvariantError, IrUnsupportedError } from "../ir/outcomes.js";
+import { IR_UNDEFINED_VALUE_FN } from "../ir/undefined-value-provider.js";
 import type { Import, WasmFunction } from "../ir/types.js";
 import type { ProgramAbiSession } from "./program-abi-session.js";
 
@@ -98,20 +99,37 @@ function describePreparedComponentBatch(
     }
     return ctx.programAbiExports?.describePrepared(targets);
   };
-  if (component.status === "complete") {
+  // A committed binding closes dependency discovery, not resource authentication.
+  // Retain the ordinary descriptor for each actual undefined consumer so its
+  // allocator/resource checks survive deferred sealing and final commit.
+  const undefinedKey = irCallableBindingKey(irRuntimeFuncRef(IR_UNDEFINED_VALUE_FN).binding);
+  const consumedProviderKeys = new Set(
+    component.externalCallables
+      .filter(({ structuralReferenceKey }) => structuralReferenceKey === undefinedKey)
+      .map(({ structuralReferenceKey }) => structuralReferenceKey),
+  );
+  if (component.status === "complete" && consumedProviderKeys.size === 0) {
     const exportAliases = describeExportAliases();
     return exportAliases
       ? Object.freeze({ requestedStructuralReferenceKeys: Object.freeze([]), exportAliases })
       : undefined;
   }
-  if (component.status !== "blocked" || component.failures.length === 0) return undefined;
+  if (component.status !== "complete" && (component.status !== "blocked" || component.failures.length === 0))
+    return undefined;
   const importRegistry = ctx.programAbiCallableImports;
   const providerRegistry = ctx.programAbiCallableProviders;
   const typeRegistry = ctx.programAbiTypes;
   const selectedImports = new Set<Import>();
-  const selectedProviderKeys = new Set<string>();
+  const selectedProviderKeys = new Set(consumedProviderKeys);
   const selectedClassIds = new Set<IrClassId>();
-  const requestedKeys = new Set<string>();
+  // Requests include authenticated reuse; do not fabricate unplanned failures
+  // or change a complete component's dependency evidence to select a descriptor.
+  const requestedKeys = new Set(consumedProviderKeys);
+  if (consumedProviderKeys.size > 0) {
+    const providerImports = providerRegistry?.importsForPreparedProviders(consumedProviderKeys);
+    if (providerImports === undefined) fail("undefined consumers lost their authenticated provider reservation");
+    for (const imported of providerImports) selectedImports.add(imported);
+  }
 
   for (const failure of component.failures) {
     const classId = preparableClassLayoutId(ctx, classIdByBindingId, failure);
@@ -182,8 +200,9 @@ function describePreparedComponentBatch(
   if (requestedStructuralReferenceKeys.length !== component.failures.length) {
     // Multiple identical failures are valid evidence, but the complete blocker
     // set must still project to one exact structural request per dependency.
-    const uniqueFailureRequests = new Set(
-      component.failures.map((failure) => {
+    const uniqueDependencyRequests = new Set([
+      ...consumedProviderKeys,
+      ...component.failures.map((failure) => {
         const classId = preparableClassLayoutId(ctx, classIdByBindingId, failure);
         if (classId !== undefined) {
           const record = ctx.programAbiSession!.inventory.classes.find(({ id }) => id === classId)!;
@@ -191,8 +210,8 @@ function describePreparedComponentBatch(
         }
         return failure.structuralReferenceKey!;
       }),
-    );
-    if (uniqueFailureRequests.size !== requestedStructuralReferenceKeys.length) return undefined;
+    ]);
+    if (uniqueDependencyRequests.size !== requestedStructuralReferenceKeys.length) return undefined;
   }
   return Object.freeze({
     requestedStructuralReferenceKeys,

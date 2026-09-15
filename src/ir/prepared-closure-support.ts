@@ -8,10 +8,14 @@ import type {
   ProgramAbiClosureSupportLayoutRequest,
   ProgramAbiClosureSupportRole,
   ProgramAbiRefCellSupportRequest,
+  ProgramAbiTypeRegistry,
+  ClosureDynamicCarrierLookup,
 } from "../codegen/program-abi-type-planning.js";
 import { addFuncType } from "../codegen/registry/types.js";
 import { objectFieldsHashKey } from "./object-method-key.js";
-import { resolveIrDynamicCarrierType } from "../codegen/any-helpers.js";
+import { canonicalProgramAbiRefCellKey } from "./core/support-key.js";
+import type { ClosureDynamicCarrierDemand } from "./program/closure-dynamic-carrier.js";
+import { ProgramAbiInvariantError } from "../shared/contracts/program-abi-error.js";
 import { irTypeBindingKey } from "./abi-bindings.js";
 import { orderedObjectFields } from "./object-layout.js";
 import type { IrUnitId } from "./identity.js";
@@ -43,6 +47,95 @@ export interface PreparedRefCellRegistry {
   resolveIr(inner: IrType): IrRefCellLowering | null;
 }
 
+/** Census final prepared types by terminal identity, including nested/nominal graphs. */
+export function collectClosureDynamicCarrierDemands(
+  entries: readonly { readonly terminalOwnerUnitId: IrUnitId; readonly fn: IrFunction }[],
+): readonly ClosureDynamicCarrierDemand[] {
+  const demands = new Map<string, ClosureDynamicCarrierDemand>();
+  for (const { terminalOwnerUnitId, fn } of entries) {
+    const seen = new Set<object>();
+    const signature = (sig: IrClosureSignature): void => {
+      if (seen.has(sig)) return;
+      seen.add(sig);
+      sig.params.forEach(visit);
+      if (sig.returnType) visit(sig.returnType);
+    };
+    const visit = (type: IrType): void => {
+      if (seen.has(type)) return;
+      seen.add(type);
+      switch (type.kind) {
+        case "dynamic": {
+          const logicalTypeKey = canonicalProgramAbiRefCellKey(type);
+          const demand = Object.freeze({
+            terminalUnitId: terminalOwnerUnitId,
+            logicalTypeKey,
+            role: "closure-dynamic-payload" as const,
+          });
+          demands.set(JSON.stringify([terminalOwnerUnitId, logicalTypeKey, demand.role]), demand);
+          return;
+        }
+        case "object":
+          type.shape.fields.forEach((field) => visit(field.type));
+          return;
+        case "closure":
+        case "callable":
+          signature(type.signature);
+          return;
+        case "boxed":
+          visit(type.inner);
+          return;
+        case "union":
+          type.members.forEach(visit);
+          return;
+        case "vec":
+          visit(type.elementType);
+          return;
+        case "class":
+        case "fnctor":
+          if (seen.has(type.shape)) return;
+          seen.add(type.shape);
+          type.shape.fields.forEach((field) => visit(field.type));
+          if (type.kind === "class") {
+            type.shape.constructorParams.forEach(visit);
+            type.shape.methods.forEach((method) => signature(method));
+            if (type.shape.parent) visit({ kind: "class", shape: type.shape.parent });
+          } else {
+            type.shape.captures.forEach((capture) => visit(capture.type));
+            type.shape.userParamTypes.forEach(visit);
+          }
+          return;
+        case "val":
+        case "support-ref":
+        case "string":
+        case "extern":
+          return;
+        default: {
+          const exhaustive: never = type;
+          throw new Error(`unknown closure dynamic demand type ${(exhaustive as IrType).kind}`);
+        }
+      }
+    };
+    fn.params.forEach((param) => visit(param.type));
+    fn.resultTypes.forEach(visit);
+    if (fn.closureSubtype) {
+      signature(fn.closureSubtype.signature);
+      fn.closureSubtype.captureFieldTypes.forEach(visit);
+    }
+    for (const block of fn.blocks) {
+      block.blockArgTypes.forEach(visit);
+      for (const instr of block.instrs)
+        forEachInstrDeep(instr, (nested) => {
+          if (nested.resultType) visit(nested.resultType);
+          if (nested.kind === "closure.new") {
+            signature(nested.signature);
+            nested.captureFieldTypes.forEach(visit);
+          }
+        });
+    }
+  }
+  return Object.freeze([...demands.values()]);
+}
+
 /**
  * Allocate a closed object layout before closure signatures are frozen. This
  * mirrors ObjectStructRegistry's anonymous-struct contract, including nullable
@@ -54,9 +147,18 @@ function prepareClosureObjectType(
   type: Extract<IrType, { readonly kind: "object" }>,
   refCells?: PreparedRefCellRegistry,
   closures?: PreparedClosureRegistry,
+  dynamicCarriers: ProgramAbiTypeRegistry | undefined = ctx.programAbiTypes,
+  dynamicLookup?: ClosureDynamicCarrierLookup,
 ): ValType {
   const fields: FieldDef[] = orderedObjectFields(type.shape).map((field) => {
-    const physical = lowerPreparedClosureSupportType(ctx, field.type, refCells, closures);
+    const physical = lowerPreparedClosureSupportType(
+      ctx,
+      field.type,
+      refCells,
+      closures,
+      dynamicCarriers,
+      dynamicLookup,
+    );
     return { name: field.name, type: physical, mutable: true };
   });
   const key = objectFieldsHashKey(type.shape, fields);
@@ -85,6 +187,8 @@ export function lowerPreparedClosureSupportType(
   type: IrType,
   refCells?: PreparedRefCellRegistry,
   closures?: PreparedClosureRegistry,
+  dynamicCarriers: ProgramAbiTypeRegistry | undefined = ctx.programAbiTypes,
+  dynamicLookup?: ClosureDynamicCarrierLookup,
 ): ValType {
   if (type.kind === "val" && type.typeRef) {
     if (type.val.kind !== "ref" && type.val.kind !== "ref_null") {
@@ -106,7 +210,15 @@ export function lowerPreparedClosureSupportType(
     };
   }
   if (type.kind === "val" && type.val.kind !== "ref" && type.val.kind !== "ref_null") return type.val;
-  if (type.kind === "dynamic") return resolveIrDynamicCarrierType(ctx);
+  if (type.kind === "dynamic") {
+    if (!dynamicCarriers || dynamicCarriers.ctx !== ctx || dynamicCarriers.session !== ctx.programAbiSession) {
+      throw new ProgramAbiInvariantError(
+        "context-session-mismatch",
+        "prepared closure dynamic payload requires authenticated registry evidence",
+      );
+    }
+    return dynamicCarriers.resolveClosureDynamicCarrier(type, undefined, dynamicLookup);
+  }
   if (type.kind === "extern" || type.kind === "callable") return { kind: "externref" };
   if (type.kind === "string" && type.carrierRef && ctx.programAbiSession) {
     const ref = type.carrierRef;
@@ -135,7 +247,8 @@ export function lowerPreparedClosureSupportType(
       ),
     };
   }
-  if (type.kind === "object") return prepareClosureObjectType(ctx, type, refCells, closures);
+  if (type.kind === "object")
+    return prepareClosureObjectType(ctx, type, refCells, closures, dynamicCarriers, dynamicLookup);
   if (type.kind === "closure" && closures) {
     if (!closures.resolveBase(type.signature)) {
       throw new Error("prepared object field cannot allocate its closure signature");

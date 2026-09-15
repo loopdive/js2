@@ -26,6 +26,15 @@ import {
 import type { ProgramAbiSession, ProgramAbiTypeCell } from "./program-abi-session.js";
 import { canonicalProgramAbiTypeDef, canonicalProgramAbiValType } from "./program-abi-signatures.js";
 import { DOM_CALLBACK_AUTHORITY_FIELD } from "../dom-capability-contract.js";
+import { resolveIrDynamicCarrierType } from "./any-helpers.js";
+import {
+  canonicalClosureDynamicCarrierDemands,
+  closureDynamicCarrierAuthenticationPopulation,
+  type ClosureDynamicCarrierDemand,
+  type ClosureDynamicCarrierEvidence,
+} from "../ir/program/closure-dynamic-carrier.js";
+import type { PreparedComponentAbiLookup } from "../ir/program/abi-lookup.js";
+import type { PreparedProgramAbiScopeLookup } from "./program-abi-prepared-scope-lookup.js";
 import {
   canonicalProgramAbiClosureSignatureKey,
   canonicalProgramAbiClosureLayoutKey,
@@ -58,10 +67,20 @@ const PROGRAM_ABI_TYPE_ROLE = Object.freeze({
   classLayout: 0,
 } as const);
 
+function closureDynamicFailure(message: string): never {
+  throw new ProgramAbiInvariantError("type-remap-mismatch", message);
+}
+
 export interface ProgramAbiDynamicCarrierSupport {
   readonly carrierRef: IrTypeRef;
   readonly valueType: string;
 }
+
+export type ClosureDynamicCarrierLookup = Pick<
+  PreparedProgramAbiScopeLookup,
+  "resolveCurrentIndex" | "locatorObjectForBinding"
+> &
+  Pick<PreparedComponentAbiLookup, "get">;
 
 export type ProgramAbiClosureSupportRole = "carrier" | "invoke" | "allocate";
 
@@ -222,6 +241,11 @@ function vectorLogicalOrdinal(logicalKey: string): number {
  * generic retained-type entry.
  */
 export class ProgramAbiTypeRegistry {
+  private readonly closureDynamicProofs = new WeakMap<
+    ClosureDynamicCarrierEvidence,
+    { readonly cell?: ProgramAbiTypeCell; readonly shape: string }
+  >();
+  private readonly closureDynamicEvidence = new Map<string, ClosureDynamicCarrierEvidence>();
   private readonly classes = new Map<IrClassId, PreparedClassLayoutObservation[]>();
   private readonly vectorLayouts = new Map<
     string,
@@ -461,6 +485,117 @@ export class ProgramAbiTypeRegistry {
     const support = Object.freeze({ carrierRef: ref, valueType });
     this.dynamicCarrierSupport = Object.freeze({ support, ...(nativeType ? { type: nativeType, cell: cell! } : {}) });
     return support;
+  }
+
+  /** Prepare every terminal demand before allocating closure or derived-callable types. */
+  prepareClosureDynamicCarriers(
+    demands: readonly ClosureDynamicCarrierDemand[],
+  ): readonly ClosureDynamicCarrierEvidence[] {
+    this.session.assertModule(this.ctx.mod);
+    if (this.ctx.programAbiSession !== this.session || this.ctx.programAbiTypes !== this) {
+      throw new ProgramAbiInvariantError("context-session-mismatch", "dynamic evidence requires its owning registry");
+    }
+    if (this.planned) {
+      throw new ProgramAbiInvariantError("planning-sealed", "cannot prepare closure dynamic evidence after planning");
+    }
+    const checked = canonicalClosureDynamicCarrierDemands(demands, this.session.inventory.terminalUnits);
+    if (checked.length === 0) return Object.freeze([]);
+    const physical = resolveIrDynamicCarrierType(this.ctx);
+    const support = this.prepareDynamicCarrier(physical);
+    const state = this.dynamicCarrierSupport!;
+    const carrier = Object.freeze(
+      physical.kind === "externref"
+        ? { kind: "externref" as const, carrierTypeRef: support.carrierRef }
+        : { kind: "reference" as const, carrierTypeRef: support.carrierRef, nullable: physical.kind === "ref_null" },
+    );
+    const shape = state.cell?.current
+      ? canonicalProgramAbiTypeDef(state.cell.current)
+      : canonicalProgramAbiValType(physical);
+    const evidence = checked.map((demand) => {
+      const proof = Object.freeze({ ...demand, carrier });
+      this.closureDynamicProofs.set(proof, { cell: state.cell, shape });
+      return proof;
+    });
+    // Keep every consumer of a shared payload, including earlier accepted terminals.
+    for (const proof of evidence) {
+      this.closureDynamicEvidence.set(JSON.stringify([proof.terminalUnitId, proof.logicalTypeKey]), proof);
+    }
+    return Object.freeze(evidence);
+  }
+
+  /** Authenticate complete current peers AND original receipts, then resolve the exact current carrier. */
+  resolveClosureDynamicCarrier(
+    type: Extract<IrType, { readonly kind: "dynamic" }>,
+    evidence: readonly ClosureDynamicCarrierEvidence[] = [...this.closureDynamicEvidence.values()],
+    lookup?: ClosureDynamicCarrierLookup,
+    originalReceipts?: readonly ClosureDynamicCarrierEvidence[],
+  ): ValType {
+    this.session.assertModule(this.ctx.mod);
+    if (this.ctx.programAbiSession !== this.session || this.ctx.programAbiTypes !== this) {
+      throw new ProgramAbiInvariantError("context-session-mismatch", "dynamic evidence requires its owning registry");
+    }
+    const key = canonicalProgramAbiRefCellKey(type);
+    const consumers = [...this.closureDynamicEvidence.values()].filter((proof) => proof.logicalTypeKey === key);
+    const supplied = evidence.filter((proof) => proof.logicalTypeKey === key);
+    const proofs = closureDynamicCarrierAuthenticationPopulation(
+      consumers,
+      supplied,
+      originalReceipts?.filter((proof) => proof.logicalTypeKey === key),
+    );
+    let resolved: ValType | undefined;
+    for (const proof of proofs) {
+      const record = this.closureDynamicProofs.get(proof);
+      const state = this.dynamicCarrierSupport;
+      const ref = proof.carrier.carrierTypeRef;
+      const id = ref.binding.bindingId;
+      const structuralKey = irTypeBindingKey(ref.binding);
+      const draft = lookup ? lookup.get(id) : this.session.getDraft(id);
+      if (
+        !record ||
+        !state ||
+        proof.role !== "closure-dynamic-payload" ||
+        ref !== state.support.carrierRef ||
+        draft?.intent.kind !== "type" ||
+        draft.structuralReferenceKey !== structuralKey ||
+        draft.intent.shapeKey !== record.shape
+      ) {
+        closureDynamicFailure("closure dynamic evidence lost its exact type plan");
+      }
+      let value: ValType;
+      if (proof.carrier.kind === "externref") {
+        if (record.cell || draft.slotPolicy !== "none" || record.shape !== '{"kind":"externref"}') {
+          closureDynamicFailure("closure dynamic externref requires its slotless plan");
+        }
+        value = { kind: "externref" };
+      } else {
+        const cell = record.cell;
+        const current = cell?.current;
+        const owner = lookup ? lookup.locatorObjectForBinding(id) : this.session.locatorObjectForBinding(id);
+        if (
+          !cell ||
+          !current ||
+          cell !== state.cell ||
+          owner !== cell ||
+          this.session.typeCellFor(current) !== cell ||
+          canonicalProgramAbiTypeDef(current) !== record.shape ||
+          draft.slotPolicy !== "required"
+        ) {
+          closureDynamicFailure("closure dynamic evidence has a stale cell or changed shape");
+        }
+        const index = lookup
+          ? lookup.resolveCurrentIndex(id, "type", structuralKey)
+          : this.session.resolveCurrentIndex(id, "type", structuralKey);
+        if (this.ctx.mod.types[index] !== current) {
+          closureDynamicFailure("closure dynamic lookup resolved a foreign carrier");
+        }
+        value = { kind: proof.carrier.nullable ? "ref_null" : "ref", typeIdx: index };
+      }
+      if (resolved && canonicalProgramAbiValType(resolved) !== canonicalProgramAbiValType(value)) {
+        closureDynamicFailure("closure terminals selected different dynamic carriers");
+      }
+      resolved = value;
+    }
+    return resolved!;
   }
 
   /**

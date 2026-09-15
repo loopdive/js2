@@ -489,6 +489,7 @@ export function prepareDependencyCompletePreparedComponents(
       const scope = session.beginPreparedComponentScope(component.id, component.terminalUnitIds);
       let sealStarted = false;
       try {
+        ctx.programAbiCallableProviders?.assertUndefinedValueComponent(component);
         const batch = candidates.describe(
           component,
           demand,
@@ -526,13 +527,14 @@ export function prepareDependencyCompletePreparedComponents(
             component.failures,
           );
         }
-        includePreparedDependencies(
-          scope,
-          sealedComponent,
-          component.terminalUnitIds.flatMap((terminalUnitId) => [
+        includePreparedDependencies(scope, sealedComponent, [
+          ...component.terminalUnitIds.flatMap((terminalUnitId) => [
             ...(input.preparedBindingIdsByTerminalUnitId?.get(terminalUnitId) ?? []),
           ]),
-        );
+          ...(batch?.callableProviders
+            ? ctx.programAbiCallableProviders!.preparedUndefinedValueResourceBindingIds(batch.callableProviders)
+            : []),
+        ]);
         if (injectedInternalErrorComponentIds.has(component.id)) {
           throw new Error(`injected internal prepared ABI seal error for ${component.id}`);
         }

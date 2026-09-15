@@ -1,6 +1,11 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { expect, it } from "vitest";
 import { createCodegenContext } from "../src/codegen/context/create-context.js";
+import { analyzeSource } from "../src/checker/index.js";
+import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
+import { buildIrUnitInventory } from "../src/ir/identity.js";
+import { buildIrPlanningIdentityContext } from "../src/ir/planning-identity.js";
+import { canonicalProgramAbiRefCellKey } from "../src/ir/core/support-key.js";
 import { resolveIrDynamicCarrierType } from "../src/codegen/any-helpers.js";
 import { mintDefinedFunc, pushDefinedFunc } from "../src/codegen/func-space.js";
 import { addFuncType, getOrRegisterRefCellType } from "../src/codegen/registry/types.js";
@@ -17,8 +22,25 @@ import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js"
 const identities = createTestIrFunctionIdentityFactory("issue-1058-dynamic-cell");
 
 it.each([false, true])("preserves shared dynamic cells with the canonical carrier (native=%s)", (native) => {
-  const ctx = createCodegenContext(createEmptyModule(), {} as ts.TypeChecker, { fast: native, nativeStrings: native });
+  const ast = analyzeSource("export function run(): number { return 42; }", "/repo/dynamic-cell.ts");
+  const inventory = buildIrUnitInventory([ast.sourceFile], { entrySource: ast.sourceFile, checker: ast.checker });
+  const mod = createEmptyModule();
+  const session = new ProgramAbiSession(inventory, mod);
+  const ctx = createCodegenContext(
+    mod,
+    ast.checker,
+    { fast: native, nativeStrings: native },
+    session,
+    buildIrPlanningIdentityContext(inventory),
+  );
   const dynamic = irDynamic();
+  ctx.programAbiTypes!.prepareClosureDynamicCarriers([
+    {
+      terminalUnitId: inventory.terminalUnits[0]!.id,
+      logicalTypeKey: canonicalProgramAbiRefCellKey(dynamic),
+      role: "closure-dynamic-payload",
+    },
+  ]);
   const carrier = resolveIrDynamicCarrierType(ctx);
   expect(lowerPreparedClosureSupportType(ctx, dynamic)).toEqual(carrier);
   const boxed: IrType = { kind: "boxed", inner: dynamic };
@@ -89,6 +111,23 @@ it.each([false, true])("preserves shared dynamic cells with the canonical carrie
   expect(run(map, undefined)).toEqual([map, undefined]);
   expect(run(17, "changed")).toEqual([17, "changed"]);
   expect(run(null, false)).toEqual([null, false]);
+});
+
+it("refuses dynamic preparation without a session or authenticated evidence", () => {
+  const noSession = createCodegenContext(createEmptyModule(), {} as ts.TypeChecker, { fast: false });
+  expect(() => lowerPreparedClosureSupportType(noSession, irDynamic())).toThrow(/authenticated registry evidence/);
+  const ast = analyzeSource("export function run(): number { return 42; }", "/repo/missing-dynamic-evidence.ts");
+  const inventory = buildIrUnitInventory([ast.sourceFile], { entrySource: ast.sourceFile, checker: ast.checker });
+  const mod = createEmptyModule();
+  const session = new ProgramAbiSession(inventory, mod);
+  const ctx = createCodegenContext(
+    mod,
+    ast.checker,
+    { fast: false },
+    session,
+    buildIrPlanningIdentityContext(inventory),
+  );
+  expect(() => lowerPreparedClosureSupportType(ctx, irDynamic())).toThrow(/evidence population/);
 });
 
 it("rejects a mismatched logical cell initializer", () => {

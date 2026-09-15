@@ -428,18 +428,141 @@ it("retains exact moved token declarations and no physical candidates in the IR 
     expect(sealing).not.toContain(forbidden);
 });
 
-it("preserves the entire existing import/provider/class/export batch planner exactly", () => {
+// Parent-approved U1 follow-up: these two exact spans add real undefined
+// consumer reuse to selection, without rewriting the historical C1 receipt.
+const undefinedReuseInverse = [
+  {
+    current: `  // A committed binding closes dependency discovery, not resource authentication.
+  // Retain the ordinary descriptor for each actual undefined consumer so its
+  // allocator/resource checks survive deferred sealing and final commit.
+  const undefinedKey = irCallableBindingKey(irRuntimeFuncRef(IR_UNDEFINED_VALUE_FN).binding);
+  const consumedProviderKeys = new Set(
+    component.externalCallables
+      .filter(({ structuralReferenceKey }) => structuralReferenceKey === undefinedKey)
+      .map(({ structuralReferenceKey }) => structuralReferenceKey),
+  );
+  if (component.status === "complete" && consumedProviderKeys.size === 0) {
+    const exportAliases = describeExportAliases();
+    return exportAliases
+      ? Object.freeze({ requestedStructuralReferenceKeys: Object.freeze([]), exportAliases })
+      : undefined;
+  }
+  if (component.status !== "complete" && (component.status !== "blocked" || component.failures.length === 0))
+    return undefined;
+  const importRegistry = ctx.programAbiCallableImports;
+  const providerRegistry = ctx.programAbiCallableProviders;
+  const typeRegistry = ctx.programAbiTypes;
+  const selectedImports = new Set<Import>();
+  const selectedProviderKeys = new Set(consumedProviderKeys);
+  const selectedClassIds = new Set<IrClassId>();
+  // Requests include authenticated reuse; do not fabricate unplanned failures
+  // or change a complete component's dependency evidence to select a descriptor.
+  const requestedKeys = new Set(consumedProviderKeys);
+  if (consumedProviderKeys.size > 0) {
+    const providerImports = providerRegistry?.importsForPreparedProviders(consumedProviderKeys);
+    if (providerImports === undefined) fail("undefined consumers lost their authenticated provider reservation");
+    for (const imported of providerImports) selectedImports.add(imported);
+  }`,
+    original: `  if (component.status === "complete") {
+    const exportAliases = describeExportAliases();
+    return exportAliases
+      ? Object.freeze({ requestedStructuralReferenceKeys: Object.freeze([]), exportAliases })
+      : undefined;
+  }
+  if (component.status !== "blocked" || component.failures.length === 0) return undefined;
+  const importRegistry = ctx.programAbiCallableImports;
+  const providerRegistry = ctx.programAbiCallableProviders;
+  const typeRegistry = ctx.programAbiTypes;
+  const selectedImports = new Set<Import>();
+  const selectedProviderKeys = new Set<string>();
+  const selectedClassIds = new Set<IrClassId>();
+  const requestedKeys = new Set<string>();`,
+  },
+  {
+    current: `    const uniqueDependencyRequests = new Set([
+      ...consumedProviderKeys,
+      ...component.failures.map((failure) => {
+        const classId = preparableClassLayoutId(ctx, classIdByBindingId, failure);
+        if (classId !== undefined) {
+          const record = ctx.programAbiSession!.inventory.classes.find(({ id }) => id === classId)!;
+          return irTypeBindingKey(irClassTypeRef(classId, record.displayName).binding);
+        }
+        return failure.structuralReferenceKey!;
+      }),
+    ]);
+    if (uniqueDependencyRequests.size !== requestedStructuralReferenceKeys.length) return undefined;`,
+    original: `    const uniqueFailureRequests = new Set(
+      component.failures.map((failure) => {
+        const classId = preparableClassLayoutId(ctx, classIdByBindingId, failure);
+        if (classId !== undefined) {
+          const record = ctx.programAbiSession!.inventory.classes.find(({ id }) => id === classId)!;
+          return irTypeBindingKey(irClassTypeRef(classId, record.displayName).binding);
+        }
+        return failure.structuralReferenceKey!;
+      }),
+    );
+    if (uniqueFailureRequests.size !== requestedStructuralReferenceKeys.length) return undefined;`,
+  },
+] as const;
+
+function undoUndefinedConsumerReuse(source: string): string {
+  for (const span of undefinedReuseInverse) {
+    if (source.split(span.current).length !== 2) throw new Error("approved U1 inverse span must occur exactly once");
+    source = source.replace(span.current, span.original);
+  }
+  return source;
+}
+
+function assertBatchPlannerReceipt(current: string): void {
   const path = "src/ir/prepared-component-sealing.ts";
   const old = execFileSync("git", ["show", "4085860f7a06415650fa5ef68ad0d58f0c88c8f0:" + path], { encoding: "utf8" });
-  const current = readFileSync(new URL("../src/codegen/program-abi-component-preparation.ts", import.meta.url), "utf8");
+  const c1 = execFileSync(
+    "git",
+    ["show", "a55f9a856e48d94a41ae766dc8782b1a41b346c7:src/codegen/program-abi-component-preparation.ts"],
+    { encoding: "utf8" },
+  );
   const named = (source: string, name: string) =>
     ts
       .createSourceFile("receipt.ts", source, ts.ScriptTarget.Latest, true)
       .statements.filter((node) => ts.isFunctionDeclaration(node) && node.name?.text === name);
   for (const name of ["describePreparedComponentBatch", "preparableClassLayoutId"]) {
     expect(named(old, name)).toHaveLength(1);
+    expect(named(c1, name)).toHaveLength(1);
     expect(named(current, name)).toHaveLength(1);
-    expect(named(current, name)[0]!.getText()).toBe(named(old, name)[0]!.getText());
+    const original = named(old, name)[0]!.getText();
+    expect(named(c1, name)[0]!.getText()).toBe(original);
+    const actual = named(current, name)[0]!.getText();
+    const restored = name === "describePreparedComponentBatch" ? undoUndefinedConsumerReuse(actual) : actual;
+    if (restored !== original) throw new Error("batch planner changed outside the approved U1 inverse spans");
+  }
+}
+
+it("preserves the entire existing import/provider/class/export batch planner exactly", () => {
+  assertBatchPlannerReceipt(
+    readFileSync(new URL("../src/codegen/program-abi-component-preparation.ts", import.meta.url), "utf8"),
+  );
+});
+
+it("rejects a planner mutation outside the approved U1 inverse spans", () => {
+  const current = readFileSync(new URL("../src/codegen/program-abi-component-preparation.ts", import.meta.url), "utf8");
+  assertBatchPlannerReceipt(current);
+  const anchor = "const targets = new Set<object>();";
+  expect(current.split(anchor)).toHaveLength(2);
+  const mutant = current.replace(anchor, "const targets = new Set<object>(preparedAllocatorTargets);");
+  expect(() => assertBatchPlannerReceipt(mutant)).toThrow(
+    "batch planner changed outside the approved U1 inverse spans",
+  );
+});
+
+it("rejects altered or duplicated approved U1 inverse spans", () => {
+  const current = readFileSync(new URL("../src/codegen/program-abi-component-preparation.ts", import.meta.url), "utf8");
+  assertBatchPlannerReceipt(current);
+  for (const span of undefinedReuseInverse) {
+    const altered = current.replace(span.current, span.current.replace("const ", "let "));
+    expect(() => assertBatchPlannerReceipt(altered)).toThrow("approved U1 inverse span must occur exactly once");
+    expect(() => assertBatchPlannerReceipt(current.replace(span.current, span.current + "\n" + span.current))).toThrow(
+      "approved U1 inverse span must occur exactly once",
+    );
   }
 });
 

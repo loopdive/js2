@@ -46,7 +46,11 @@ import {
   standaloneClockCapabilityImport,
 } from "../codegen/standalone-clock-capability.js";
 import { makeCalendarIrSelectionSupport } from "./calendar-selection-support.js";
-import { ensureIrUndefinedValueProvider, IR_UNDEFINED_VALUE_FN } from "./undefined-value-provider.js";
+import {
+  irUndefinedValueDemand,
+  IR_UNDEFINED_VALUE_FN,
+  type IrUndefinedValueDemand,
+} from "./undefined-value-provider.js";
 import { makeIrStandaloneDomCapabilityPlan, type IrStandaloneDomCapabilityPlan } from "./dom-capability.js";
 import {
   projectIrBackendTargetProfile,
@@ -437,6 +441,7 @@ import {
 } from "./integration-report.js";
 import {
   allocatePreparedDerivedCallableSlots,
+  collectClosureDynamicCarrierDemands,
   lowerPreparedClosureSupportType,
   prepareDependencyCompleteClosureSupport,
   type PreparedDerivedCallableSlot,
@@ -1001,10 +1006,17 @@ function prepareClosureTransaction(input: {
   readonly preparedModuleCallableAliasDescriptor?: IrIntegrationOptions["preparedModuleCallableAliasDescriptor"];
   readonly onSealFailure: PreparedComponentSealFailureHandler;
 }): PreparedClosureTransaction {
+  const dynamicDemands = collectClosureDynamicCarrierDemands(input.entries);
+  const dynamicCarriers = input.ctx.programAbiTypes;
+  if (dynamicDemands.length > 0 && !dynamicCarriers) {
+    throw new Error("prepared closure dynamic demands require the canonical Program ABI type registry");
+  }
+  const dynamicEvidence = dynamicCarriers?.prepareClosureDynamicCarriers(dynamicDemands) ?? [];
   const refCells = new RefCellRegistry(input.ctx);
-  let resolveValType: (type: IrType) => ValType = (type) => lowerPreparedClosureSupportType(input.ctx, type, refCells);
+  let resolveValType: (type: IrType) => ValType = (type) =>
+    lowerPreparedClosureSupportType(input.ctx, type, refCells, undefined, dynamicCarriers);
   const registry = new ClosureStructRegistry(input.ctx, (type) => resolveValType(type));
-  resolveValType = (type) => lowerPreparedClosureSupportType(input.ctx, type, refCells, registry);
+  resolveValType = (type) => lowerPreparedClosureSupportType(input.ctx, type, refCells, registry, dynamicCarriers);
   const closureSupport = prepareDependencyCompleteClosureSupport(input.ctx, input.entries, registry, refCells);
   const freshSlots = allocatePreparedDerivedCallableSlots(
     input.ctx,
@@ -1036,6 +1048,24 @@ function prepareClosureTransaction(input: {
   // P2A itself has no timer owners, but the shared preparation boundary must
   // not silently discard that scope when it is used by another aggregate.
   const preparedScopeLookup = mergePreparedScopeLookups(input.ctx, timerTransaction.openScopes);
+  const authenticateDynamicPopulation = (): void => {
+    try {
+      const currentLookup = mergePreparedScopeLookups(input.ctx, timerTransaction.openScopes);
+      for (const demand of dynamicDemands) {
+        // Include peers from earlier/later preparations without replacing our original receipts.
+        dynamicCarriers!.resolveClosureDynamicCarrier(
+          JSON.parse(demand.logicalTypeKey),
+          undefined,
+          currentLookup,
+          dynamicEvidence,
+        );
+      }
+    } catch (error) {
+      timerTransaction.abortOpenScopes();
+      throw error;
+    }
+  };
+  authenticateDynamicPopulation();
   const abortedComponentIds = new Set<string>();
   const sealedComponentIds = new Set<string>();
   return {
@@ -1055,6 +1085,7 @@ function prepareClosureTransaction(input: {
       }
     },
     sealPreparedScopes: () => {
+      authenticateDynamicPopulation();
       for (const open of timerTransaction.openScopes) {
         if (abortedComponentIds.has(open.componentId) || sealedComponentIds.has(open.componentId)) continue;
         open.scope.seal();
@@ -1063,9 +1094,24 @@ function prepareClosureTransaction(input: {
     },
     sealCompilerTimerShim: () => {
       timerTransaction.sealDeferred();
+      authenticateDynamicPopulation();
     },
     bindLowerResolver: (resolver) => {
-      resolveValType = (type) => lowerIrTypeToValType(type, resolver, "<closure-registry>");
+      // Cached closure/ref-cell layouts and nested payloads need not invoke
+      // resolveValType again. Authenticate the entire original population at
+      // final binding, through the current component overlay, before reuse.
+      authenticateDynamicPopulation();
+      resolveValType = (type) =>
+        type.kind === "dynamic"
+          ? lowerPreparedClosureSupportType(
+              input.ctx,
+              type,
+              refCells,
+              registry,
+              dynamicCarriers,
+              mergePreparedScopeLookups(input.ctx, timerTransaction.openScopes),
+            )
+          : lowerIrTypeToValType(type, resolver, "<closure-registry>");
     },
   };
 }
@@ -9061,7 +9107,7 @@ function preregisterDynamicSupport(
   // (#3526 F3-S3) The frozen `%Function.prototype%` call arm, read ONCE.
   const functionPrototypeCallArm = preparedFunctionPrototypeCallProvider(prepared);
   let usesFunctionPrototypeCall = false;
-  let usesUndefinedValue = false;
+  const undefinedValueDemands: IrUndefinedValueDemand[] = [];
   const nativeSemanticProviders = ctx.targetProfile.semanticProviders === "native-first";
   let usesDynamicOps = false;
   let usesEq = false;
@@ -9154,7 +9200,18 @@ function preregisterDynamicSupport(
           if (i.kind === "call" && i.target.binding.kind === "runtime") {
             switch (i.target.binding.symbol) {
               case IR_UNDEFINED_VALUE_FN:
-                usesUndefinedValue = true;
+                {
+                  const terminal = ctx.programAbiSession?.inventory.terminalUnits.find(
+                    (unit) => unit.id === entry.terminalOwnerUnitId,
+                  );
+                  if (!terminal)
+                    throw new IrInvariantError(
+                      "selection-preparation-mismatch",
+                      "resolve",
+                      "undefined demand has no exact terminal",
+                    );
+                  undefinedValueDemands.push(irUndefinedValueDemand(terminal.sourceId, terminal.id, i));
+                }
                 break;
               case "__new_plain_object":
               case "__extern_set":
@@ -9248,10 +9305,14 @@ function preregisterDynamicSupport(
   }
   admitFunctionPrototypeCall(ctx, usesFunctionPrototypeCall, functionPrototypeCallArm);
   if (usesRuntimeUnboxNumber) addUnionImports(ctx);
-  if (usesUndefinedValue) {
-    ensureIrUndefinedValueProvider(ctx);
-    flushLateImportShifts(ctx, null);
-    observeNativeRuntimeProvider(ctx, IR_UNDEFINED_VALUE_FN);
+  if (undefinedValueDemands.length > 0) {
+    if (!ctx.programAbiCallableProviders)
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "undefined demand has no provider registry",
+      );
+    ctx.programAbiCallableProviders.prepareUndefinedValueDemands(undefinedValueDemands);
   }
   // (#4461) Reserve the native undefined predicate and the `$Map` adapters
   // BEFORE Phase 3. `ensureObjectRuntime` / `ensureIrNativeMapAdapters` are

@@ -12697,12 +12697,25 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/closure-dynamic-carrier.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/codegen/program-abi-component-preparation.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate session-bound allocator observation from remaining CodegenContext dependencies."
+    },
+    {
+      "path": "src/codegen/undefined-value-provider.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate canonical provider reservation from remaining CodegenContext and host import dependencies."
     }
   ]
 }
