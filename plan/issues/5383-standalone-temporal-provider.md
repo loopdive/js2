@@ -8151,3 +8151,265 @@ Everything in S26 §Traps and S27 §9 still holds. One addition:
   change did not reach it — a complete answer in ~30 s, before any test262 row
   runs. It is how §6 was found; running the 13-file corpus first would have cost
   12 minutes to say the same thing less precisely.
+
+### S29 findings (2026-09-15) — the tenth cause is a missing argument ABI: a spread into a STATIC or OBJECT-LITERAL method was bound as ONE argument. Four families 423 → 423; the 45-file target family is now ONE cause away, and that cause is named
+
+Full write-up in
+[#6616](6616-standalone-static-objlit-spread-and-static-rest-abi.md). Branch
+`issue-5383-standalone-temporal-s29`, based on S28's tip `11fcafe07c`; the fix
+is commits `349b3f3c66` + `433d83525f`.
+
+**The headline is flat and that is the finding, not a failure to report one.**
+The dispatched bucket is retired to zero corpus-wide, the 45-file target family
+moves as a body — but it moves from one failure to the NEXT failure, because a
+second, unrelated cause sits behind the first. Reporting +0 with the successor
+cause named and sized is the honest result; reporting the bucket retirement as a
+win would not be.
+
+#### 1. The defect — two halves of the known-callee argument ABI, missing from four arms
+
+test262's `temporalHelpers.js` forwards through its own object literal:
+
+```js
+checkSubclassingIgnoredStatic(...args) { this.checkStaticInvalidReceiver(...args); }
+checkStaticInvalidReceiver(construct, method, methodArgs) {
+  const result = construct[method].apply(value, methodArgs);
+```
+
+`TemporalHelpers` is an OBJECT LITERAL, so `this.checkStaticInvalidReceiver(...args)`
+is an object-literal method reached with a spread — and that arm never flattened
+it. Each argument NODE was bound to one formal, so `construct` received the whole
+rest ARRAY and `method` received `undefined`; `construct[method]` was therefore
+`undefined` and the closed-method dispatcher's nullish-receiver guard threw
+
+    TypeError: Cannot read properties of undefined (reading 'apply')
+
+which is the bucket name — raised at the CALL SITE, not at the member read
+everyone (including this brief) assumed.
+
+Reduced to ONE module, no link, no Temporal:
+
+```js
+const H = { m2(a, b) { … }, fwd(...args) { return this.m2(...args); } };
+H.fwd(1, 2);                 // base: "1,2/undef"
+H.m3(...[1, 2, 3]);          // base: "[object Object]/undef/undef" — a TUPLE struct
+class K { static s2(a, b) { … } } K.s2(...xs);   // base: "1,2/undef"
+class K2 { static f(...args) { return args.length; } } K2.f(1, 2);
+                             // base: TRAP dereferencing a null pointer
+```
+
+The last line is the second half: the static-through-a-class-object arm also
+never materialised the hidden REST vec, so a `static f(...rest)` formal arrived
+**null** — with no spread at the call site at all. Object-literal methods, plain
+functions and instance methods were all already correct; only the static arm was
+missing it.
+
+**The two halves had to ship together, and that is a result rather than a
+convenience.** Fixing the spread alone turned
+`static fwd(...args) { return K.m2(...args); }` from a wrong value into an
+**uncatchable trap** — the flattened path actually READS the rest formal.
+Measured in that intermediate state, before the second half landed. A trap is
+worse in kind than a wrong value, so a spread-only slice would have been a
+regression in failure MODE even where the row failed either way.
+
+#### 2. The fix — four arms, each a copy of what the class-INSTANCE arm already had
+
+| file | arm | `paramOffset` | added |
+| --- | --- | --- | --- |
+| `call-namespace-static.ts` | static through a class-object identifier | 0 | spread **+ rest** |
+| `call-receiver-method.ts` | static (class arm) | 0 | spread |
+| `call-receiver-method.ts` | struct receiver, nullable | 1 | spread |
+| `call-receiver-method.ts` | struct receiver, non-nullable | 1 | spread |
+
+`compileSpreadCallArgsWithArguments` first when the callee reads `arguments`
+(#5093 — it publishes a RUNTIME `__argc` and the extras split), else
+`compileSpreadCallArgs`; extras loop, default padding and
+`maybeSetArgcForKnownCall` gated off when either path claimed the arguments.
+
+**Bounded by construction, not by sampling**: the new code is reached only at a
+call site carrying a `SpreadElement`, or a static callee declaring `...rest`.
+Every such site was previously wrong — a wrong value, a module that did not
+validate, or a null-deref trap. There is no site where the old path was right
+and the new path differs.
+
+#### 3. The result
+
+| family (first 120 files) | base | branch | Δ | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| `PlainDate/**` | 109 | 109 | 0 | 0 | 0 |
+| `Duration/**` | 100 | 100 | 0 | 0 | 0 |
+| `PlainDateTime/**` | 111 | 111 | 0 | 0 | 0 |
+| `ZonedDateTime/prototype/**` | 103 | 103 | 0 | 0 | 0 |
+| **total** | **423** | **423** | **0** | **0** | **0** |
+
+The base reproduces S28's branch family for family (109/100/111/103), measured
+HERE by file-copy revert on both labels rather than inherited. No
+`compile_error`, no `timeout`, and no `__temporal_*` leak in any of the 960 rows.
+
+**The 57 residual rows are not unchanged — 6 of them moved bucket:**
+`Cannot read properties of undefined (reading 'apply')` **2 → 0**, and four
+`year result: Expected SameValue(«N», «N,N,MN…»)` rows — whose expected value was
+literally the STRINGIFIED ARRAY, the mis-binding showing through the assertion
+message — now report distinct real values.
+
+**Corpus-wide, the two target families (61 files, per file, both labels):**
+
+| | base | branch | Δ |
+| --- | --- | --- | --- |
+| 45 `subclassing-ignored.js` + 16 `constructor.js` | **8 pass** | **8 pass** | 0, 0 flips |
+
+and the bucket table for those 61 rows moves in exactly one place:
+`Cannot read properties of undefined (reading 'apply')` **10 → 0**. Every other
+bucket is identical count for count.
+
+#### 4. Where the 45-file family now stops — the successor cause, named and sized
+
+All **45** `subclassing-ignored.js` files now fail on **one** assertion, the
+helper's last line:
+
+```js
+assert.sameValue(Object.getPrototypeOf(result), construct.prototype);
+// «null» vs «undefined»
+```
+
+`Object.getPrototypeOf(<instance produced by a linked provider class>)` answers
+**null**, and `construct.prototype` through the real polyfill answers
+**undefined**. Reduced in a synthetic linked pair (`.tmp/s29/cases-j.mjs`), where
+the split is sharper: `NS.PD.prototype` IS a value, but
+`Object.getPrototypeOf(new NS.PD(1))` is `null`, `… === NS.PD.prototype` is
+false, and `new NS.PD(1) instanceof NS.PD` is **"no"** — despite #5354 having
+landed linked-class `instanceof`. So the prototype LINK of an instance minted by
+a provider class is not visible to the consumer.
+
+That is the whole remaining distance for this family: 45 files, one cause, and it
+is the largest single-cause block left in the Temporal corpus.
+
+#### 5. Controls
+
+**Must-not-move — 270 rows, three groups, per file, both labels, 0 flips.**
+
+| group | rows | base pass | branch pass | flips |
+| --- | --- | --- | --- | --- |
+| A: `Object/keys` + `expressions/object` + `Reflect/{get,has}` | 60 | 56 | 56 | 0 |
+| B: `Object/{entries,values,getOwnPropertyNames}` + `statements/for-in` | 60 | 50 | 50 | 0 |
+| **C: `Function/prototype/{apply,call,bind}` + `Reflect/apply` + `class/subclass`** | 150 | 140 | 140 | 0 |
+
+C is the group this change needs and was chosen for it: the whole
+apply/call/bind corpus plus the subclass corpus — the two places an argument-ABI
+change would surface first. A and B are the inherited insensitive controls.
+
+**Byte A/B — the control the corpus cannot give, in BOTH directions and on BOTH
+lanes:**
+
+| source | lane | base | branch | |
+| --- | --- | --- | --- | --- |
+| object-literal method + spread | standalone | `f3f88147` 139,937 B | `6689bda2` 140,134 B | **moved** |
+| object-literal method + spread | gc | `d1c05435` 4,889 B | `0c5cf864` 4,947 B | **moved** |
+| static method + spread | standalone | `66cfa41f` 135,753 B | `cc4187a7` 135,950 B | **moved** |
+| static method + spread | gc | `e84770ba` 6,616 B | `6e8eff20` 6,673 B | **moved** |
+| static `...rest` formal | standalone | `d3fc081b` 50,499 B | `84e59444` 50,601 B | **moved** |
+| static `...rest` formal | gc | `8e543f09` 6,324 B | `5bf92378` 6,333 B | **moved** |
+| the SAME callees, positional call (objlit) | both | `be897334` / `a57491fa` | identical | |
+| the SAME callees, positional call (static) | both | `cb2586f0` / `177b6130` | identical | |
+| object-literal `...rest` (the arm already right) | both | `1cdadc99` / `5695616f` | identical | |
+| INSTANCE method + spread (the arm already right) | both | `1b4f999d` / `daf10f35` | identical | |
+| plain FUNCTION + spread (a different arm) | both | `e38b5fe2` / `8da4de1c` | identical | |
+
+**The gc lane moves here, deliberately, and that is a departure from S24–S28.**
+Every earlier slice in this stack gated its change to standalone and pinned gc
+byte-identical. This defect is **not lane-specific** — `H.m2(...xs)` bound the
+array into formal 0 on the WasmGC lane too — so gating it to standalone would
+have left the same wrong answer in the default lane in order to protect a
+control that was measuring lane-independence, not safety. The five unarmed rows
+being byte-identical on both lanes is what actually bounds the change.
+
+**Corpus byte A/B**: 42 modules × {gc, standalone} = **84 artifacts, 0 move**.
+As in S24–S28 this is a NULL control and "0 moved" overstates it: no module in
+that corpus spreads into a static or object-literal method. The table above is
+what shows the change does anything.
+
+**Provider artifact**: `a7bd3c5f…` 3,308,117 B on BOTH labels — **byte-identical,
+and correctly so.** S28 §9 reads a byte-identical provider as "the fix did not
+reach it"; here it means the fix has no business there. The forwarding object
+literal is in the test262 HARNESS, which compiles into the CONSUMER module; the
+pre-transpiled `@js-temporal/polyfill` provider contains no such site. The check
+is still the right first move — it just answers "which side", not "wired or not".
+
+**Equivalence gate**: 22 failing / 1,720 passing / 22 known-failures — baseline
+exactly.
+
+**Witness**: `tests/issue-6616-static-objlit-spread-rest-abi.test.ts`, 8 `it`s.
+Run against the reverted base: **6 fail, 2 pass** — the six teeth-bearing ones
+fail with exactly the values recorded in their comments (including the linked
+one reproducing `Cannot read properties of undefined (reading 'apply')`), and
+both controls pass on both trees.
+
+#### 6. Which clause of the hand-off was wrong
+
+The brief's mechanism for family 1 was **wrong, and wrong in an instructive
+way**. It proposed: "a PROVIDER function value reached through the link has no
+`apply`/`call` member — the member GET path needs S22's `Function.prototype`
+fallback." Measured (`.tmp/s29/cases-a.mjs`, linked pair):
+
+- `Object.getPrototypeOf(NS.pf)` **is** `Function.prototype` — S22's fix is
+  there;
+- `typeof NS.PD.from.apply` **is** `undefined` — so the member-GET claim is
+  literally TRUE;
+- and it is **irrelevant**, because `f.apply(…)` as a CALL never reads that
+  member. Every spelling works in a single module on the BASE tree
+  (`plain.apply`, `arrow.apply`, a static through a value, an object-literal
+  method through a value). The failing rows never got that far: the receiver was
+  already `undefined` two frames up.
+
+The generalisation is a cheap one this stack keeps re-buying: **a bucket named
+after a member read may be a call-site defect.**
+`Cannot read properties of undefined (reading 'X')` is emitted by
+`closed-method-dispatch.ts` for a NULLISH RECEIVER, so it names where the
+receiver was CONSUMED, not where it was produced.
+
+The brief's family-2 clause (`constructor.js`, "a class CALLED as a function
+across the link") was **not reached** — 8 of those 16 files already pass and the
+other 8 are unchanged here. The f64 `__unbox_number` twin was left untouched, as
+instructed.
+
+#### 7. Residual buckets, branch tree, all four families (57 rows)
+
+| bucket | rows | file-name footprint corpus-wide | reduced to |
+| --- | --- | --- | --- |
+| **`Object.getPrototypeOf` of a linked-class instance is null** | 4 (+35 already there) | **`subclassing-ignored.js` 45 — the whole family** | §4, reduced in a synthetic linked pair |
+| `Proxy get trap is not callable` | 6 | `order-of-operations.js` 63 + `observable-get-overflow-argument-primitive.js` 5 | not reduced; standalone Proxy support |
+| `Built-in objects must be extensible` | 3 | `builtin.js` 129 | not reduced |
+| `Expected a TypeError … no exception` | 3 | `constructor.js` 16 (8 already pass) | S28 §7c; untouched here |
+| `Expected a RangeError … no exception` | 3 | mixed | not reduced |
+| `Cannot read properties of undefined (reading 'equals')` | 2 | `math-order-of-operations-*.js` | NOT the `apply` cause — a chained `zdt[op](…)` returning undefined |
+| ~30 further buckets | ≤2 each | | |
+
+**Recommended next slice: §4's prototype link.** It is the only candidate whose
+size and mechanism are both already established — 45 files, one assertion, and a
+reduction in hand (`.tmp/s29/cases-j.mjs`) showing `instanceof` across the link
+failing for a provider-minted instance despite #5354. Every other bucket is
+either unreduced (Proxy, extensibility) or ≤3 rows.
+
+#### 8. Traps, carried forward and added to
+
+Everything in S26 §Traps, S27 §9 and S28 §9 still holds, with one correction and
+two additions:
+
+- **CORRECTION to S28 §9.** A byte-identical provider does *not* always mean the
+  fix failed to reach the corpus. It means the fix did not reach the PROVIDER —
+  which, for a defect living in the test262 harness (consumer-side), is the
+  expected answer. Keep running the check first; read it as "which side", not as
+  "wired or not".
+- **Instrumentation can be broken in the module you are instrumenting.** A probe
+  written as `function t(x) { return typeof x; }` answered **`null`** for every
+  argument inside the assembled test262 harness module — while the identical
+  function is correct in an ordinary module and in a linked pair. Two probe
+  generations were spent reading that noise as signal. When a probe's answers
+  are impossible (a `typeof` that is none of the eight values), suspect the
+  probe's own lowering before the subject's. Filed as a residual on #6616.
+- **Module CONTENT changes answers, again, and this time it nearly decided a
+  diagnosis.** The arity-2 object-literal spread "still failed" after the fix in
+  a shared-prelude probe and was clean in its own module — the shared prelude
+  carried several object literals with methods, which is an independent
+  interference. One module per case is not hygiene here; a shared prelude would
+  have sent this slice chasing a defect it had already fixed.

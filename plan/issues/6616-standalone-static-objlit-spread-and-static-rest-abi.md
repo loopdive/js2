@@ -1,7 +1,7 @@
 ---
 id: 6616
 title: "A spread call into a STATIC or OBJECT-LITERAL method bound the spread source as one argument — and a static `...rest` formal arrived null"
-status: in-progress
+status: done
 sprint: current
 priority: high
 horizon: l
@@ -9,6 +9,7 @@ feasibility: hard
 reasoning_effort: high
 goal: standalone-gap
 parent: 5383
+completed: 2026-09-15
 assignee: ttraenkler/senior-dev-s29
 loc-budget-allow:
   # 2026-09-15 — inherited from #6612–#6615 (the S25–S28 stack this branch is
@@ -124,13 +125,91 @@ previously miscompiled — wrong value, or a module that did not validate, or a
 null-deref trap. There is no site where the old path was right and the new path
 differs, so the change is monotone by construction, not by sampling.
 
+## Result (measured, both labels, fresh cache per label)
+
+| measurement | base | branch |
+| --- | --- | --- |
+| four families, 120 files each, standalone + provider linked | 423 (109/100/111/103) | **423**, 0 pass→fail, 0 fail→pass |
+| the 57 residual rows' message buckets | — | **6 move**; `Cannot read properties of undefined (reading 'apply')` 2 → 0 |
+| corpus-wide `subclassing-ignored.js` (45) + `constructor.js` (16) | 8 pass | **8 pass**, 0 flips; `reading 'apply'` **10 → 0** |
+| must-not-move: `Object/keys`+`expressions/object`+`Reflect/{get,has}` (60) | 56 | 56, 0 flips |
+| must-not-move: `Object/{entries,values,getOwnPropertyNames}`+`for-in` (60) | 50 | 50, 0 flips |
+| must-not-move: `Function/prototype/{apply,call,bind}`+`Reflect/apply`+`class/subclass` (150) | 140 | 140, 0 flips |
+| corpus byte A/B, 42 modules × {gc, standalone} | — | 84 artifacts, 0 move (a NULL control — nothing in it spreads into such a callee) |
+| targeted byte A/B | — | the 3 armed sources move on BOTH lanes; the 5 unarmed ones byte-identical on both |
+| Temporal provider artifact | `a7bd3c5f…` 3,308,117 B | identical — the defect is CONSUMER-side (the harness), not provider-side |
+| equivalence gate | 22 / 1720 / 22 | identical |
+
+**The headline is flat, and the reason is a second cause behind the first.** All
+**45** `subclassing-ignored.js` files corpus-wide now fail on ONE assertion —
+`assert.sameValue(Object.getPrototypeOf(result), construct.prototype)`, «null» vs
+«undefined». `Object.getPrototypeOf` of an instance minted by a **linked provider
+class** answers null, and `instanceof` across the link answers false for the same
+instance, despite #5354. That is the next slice, and it is 45 files behind one
+cause.
+
+**The gc lane moves here, deliberately.** Every earlier slice in the #5383 stack
+gated its change to standalone and pinned gc byte-identical. This defect is not
+lane-specific — `H.m2(...xs)` bound the array into formal 0 on the WasmGC lane
+too — so gating it would have left the same wrong answer in the default lane to
+protect a control that measures lane-independence rather than safety. The five
+unarmed byte controls, identical on both lanes, are what bounds the change.
+
+## Residuals — reduced and sized here, NOT given their own ids
+
+`claim-issue.mjs --allocate` exits **6** on this box (`the open-PR id scan
+DEGRADED`; GitHub is 403 for every lane in this session), so no id could be
+reserved against a complete universe. Reserving with `--allow-unscanned` would
+hand out an id verified against neither in-flight PRs nor a second lane, and an
+id reserved then abandoned leaves a permanent hole in the sequence (#3890/#3891
+were burned that way). So the three residuals below are filed HERE, each with
+its reduction and its corpus-wide count — enough for the next slice to open them
+under real ids once `gh` is reachable.
+
+### R1 — `Object.getPrototypeOf` of an instance minted by a LINKED provider class answers null (45 files)
+
+**The largest single-cause block left in the Temporal corpus**, and the one that
+now blocks every `subclassing-ignored.js`. Reduced in a synthetic linked pair
+(`.tmp/s29/cases-j.mjs`):
+
+| probe | answer |
+| --- | --- |
+| `typeof NS.PD.prototype` | `"object"` — the class object's `.prototype` IS there |
+| `Object.getPrototypeOf(new NS.PD(1))` | **`null`** |
+| `Object.getPrototypeOf(new NS.PD(1)) === NS.PD.prototype` | **`false`** |
+| `new NS.PD(1) instanceof NS.PD` | **`"no"`** — despite #5354 |
+
+Against the REAL polyfill the split differs and is worth carrying: there
+`construct.prototype` itself reads `undefined`, so the assertion reports
+«null» vs «undefined» rather than «null» vs «object».
+
+### R2 — `typeof x` in RETURN position answers `null` inside the assembled test262 harness module
+
+```js
+function a1(x) { return typeof x; }
+a1(7);   // "null" in the harness module; "number" in an ordinary module
+         // and in a linked pair
+function a3(x) { return typeof x.from; }
+a3(Temporal.PlainDate);  // "number" — a wrong member of the union
+```
+
+Correct at top level in the same file, and correct in every ordinary module
+tried. Cost two probe generations before being recognised as instrumentation
+failure rather than signal. Reduced in `.tmp/s29/t/probe4.js` + `probe5.js`;
+corpus-wide footprint unmeasured (a union-of-string-literals return type is
+everywhere, so this is likely narrower than it looks — it did not reproduce
+outside the harness assembly).
+
+### R3 — several object literals with methods in ONE module interfere
+
+The same `H.m2(...xs)` that compiles and runs clean in its own module fails wasm
+validation (`call[0] expected type (ref null 51), found ref.as_non_null of type
+(ref 125)`) when the module also carries `HF = { m2: function … }` and
+`HA = { m2: (a, b) => … }`. Measured on the BRANCH tree, so it is not the defect
+this issue fixes: `.tmp/s29/cases-f.mjs` (shared prelude, fails) vs
+`.tmp/s29/cases-g.mjs` (one module per case, all pass), identical expressions.
+Corpus-wide footprint unmeasured.
+
 ## Suspended / residual
 
-- `typeof x` **in return position** answers `null` (and sometimes a wrong
-  member of the union) inside the assembled test262 harness module, while it is
-  correct in an ordinary module and in a linked pair. Found while
-  instrumenting; not this slice's defect. Filed as a residual, reduced in
-  `.tmp/s29/t/probe4.js` + `probe5.js`.
-- Several object literals in ONE module still interfere: the same case that
-  passes alone can fail to validate when other object literals with methods are
-  present (`.tmp/s29/cases-f.mjs` vs `cases-g.mjs`, same expressions).
+Nothing is suspended. R1–R3 above are the open work this slice leaves behind.
