@@ -1,5 +1,12 @@
 # PR5753 late-authentication integration
 
+Checkpoint3870662235 passed the final33-file preserved regression/runtime group:
+413/413. Its push was stopped by the ancestry check because main advanced via
+PR5938 to095e87d47f6900e038a90bec7419aaea6dd24965. That main merges cleanly,
+preserving both inventories. CLI cache, optimizer path probing and multi-file
+prepass changes require fresh composed validation; do not transfer the413 result
+to the refreshed tree without rerunning it. No force push or stale-base push.
+
 Parent integration follows committed C1 checkpoint2a528c8743. D1 commits
 0b99423312, f5857656c3 and c1fb88f8a9 are composed with U1 commits7fef9b7e1b
 and9e5a292f26. Original published PR head51590be and main8c9b65b389 remain
