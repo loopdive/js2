@@ -1,9 +1,10 @@
 ---
 id: 6480
 title: "Codegen per-compile hotspots: lib declaration scan re-run per compile, late-import index shifting walks every body per import"
-status: ready
+status: in-progress
 created: 2026-09-14
-updated: 2026-09-14
+updated: 2026-09-15
+assignee: ttraenkler/senior-dev
 priority: low
 horizon: m
 feasibility: medium
@@ -14,6 +15,13 @@ goal: test262-conformance
 sprint: Backlog
 es_edition: n/a
 related: [3433, 3451, 6463, 1109, 1302]
+# 2026-09-15 (#6480 lever 1): the lib-scan memo keeps its bulk in the new
+# src/codegen/lib-extern-scan-memo.ts, but the memo WRAPPER must live next to
+# the scan it wraps — collectExternDeclarations is split into a thin memoised
+# entry plus the unchanged impl, ~38 lines of wrapper, signature and the
+# comment that explains why the `declare function` branch is excluded.
+loc-budget-allow:
+  - src/codegen/extern-declarations.ts
 ---
 
 # #6480 — codegen per-compile hotspots
