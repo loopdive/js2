@@ -76,6 +76,7 @@ async function runLinked(source: string): Promise<string> {
   try {
     await instantiateTest262Module(result.binary, importObject, {
       linkedModules: result.linkedModules ?? [],
+      runDeferredInit: true,
       linkedRuntime,
     });
     return "pass";

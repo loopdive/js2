@@ -105,6 +105,7 @@ async function linkedOutput(body: string, withHost: boolean): Promise<string[]> 
   });
   await instantiateTest262Module(result.binary, importObject, {
     linkedModules: result.linkedModules ?? [],
+    runDeferredInit: true,
     linkedRuntime,
     linkedHost: withHost ? { deps: { console: consoleProxy }, options: { globalSandbox: sandbox } } : undefined,
   });

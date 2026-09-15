@@ -314,3 +314,20 @@ redirected) all flipped, with 21 fail→pass and 0 pass→fail on the 47-row
 scope. The 4 remaining rows are two different mechanisms, measured above and
 filed separately: in-wasm vec index reads across modules (#6482) and the
 class-with-fields prototype own-property answer (#6483).
+
+### Merge-group regression and fix (2026-09-15, Fable lane)
+
+The first merge-group run of PR #5944 scored **−401** (bucket
+`built-ins/Temporal/ZonedDateTime/prototype` 67, messages mostly `wasm
+exception during module init`). Cause: the sharded worker ALREADY compiles
+every host-lane row with `deferTopLevelInit` (#3123) and calls
+`__module_init()` itself after `setInstance`; P1's unconditional call inside
+`instantiateTest262Module`'s linked arm therefore ran module init **twice** on
+every linked Temporal row. The P1 measurement was not affected in the
+in-process lanes (they never reach the worker's call), which is why the 47-row
+worker measurement is the one to re-read: those rows also ran init twice.
+
+Fix: the call is opt-in (`runDeferredInit: true`), passed only by the direct
+in-process callers (`scripts/test262-linked-harness-smoke.mts`, the
+`issue-3451-linked-harness-substrate` / `6475` / `6476` / `6477` suites). The
+worker keeps its single call and its own throw classification.

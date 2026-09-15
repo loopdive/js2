@@ -71,6 +71,7 @@ async function run(result: {
   try {
     await instantiateTest262Module(result.binary, importObject, {
       linkedModules: result.linkedModules ?? [],
+      runDeferredInit: true,
       linkedRuntime,
     });
     return "pass";
