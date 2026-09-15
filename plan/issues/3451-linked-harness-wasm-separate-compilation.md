@@ -606,6 +606,27 @@ four residual rows now visible as their own classes were inside the 109 before
 and are newly legible rather than newly caused. Wall clock 414 s honest vs
 156 s linked on the same 399 rows.
 
+### Re-measured 2026-09-15 after #6477 — descriptor-VALUE class 13 → 4
+
+Scoped rather than corpus-wide: 47 rows (the 7 named `defineProperty` rows plus
+the whole `class/elements/multiple-*privatename-identifier*` family), both
+lanes, same worker protocol (`COMPILER_POOL_SIZE=1`,
+`TEST262_PATH_FILTER_FILE`, `TEST262_ORACLE_MODE=linked` vs honest).
+
+| class | before | after |
+| --- | --- | --- |
+| honest/linked agreement over the 47-row scope | 4 / 47 | **25 / 47** |
+| descriptor VALUE read wrong (#6477) | 13 | **4** |
+| &nbsp;&nbsp;↳ consumer ARRAY index read in-wasm (no host import fires) | — | 3 |
+| &nbsp;&nbsp;↳ `verifyProperty(C.prototype, …)` on a class with fields | — | 1 (20 rows in the wider family) |
+| linked rows regressed pass→fail | — | **0** |
+
+#6477 fixed the registration window (the linked body now runs from an exported
+`__module_init` AFTER the consumer joins the #5225 decoder registry, instead of
+in the wasm `start` section) plus the descriptor read's decoder redirect. The
+two residual classes are a codegen/ABI question, not a host-side one — details
+in #6477.
+
 ### Acceptance boxes
 
 - [x] P2 repros pass as vitest cases; smoke 12/12 on both named sample dirs.

@@ -178,9 +178,129 @@ instead.
 
 ### Acceptance
 
-- [ ] The four minimal bodies pass in the linked lane (vitest).
-- [ ] ≥ 12 of the 13 rows flip to agreement on the real worker; any that do
-      not are named here with their remaining message.
-- [ ] Honest lane byte-identical (no `deferTopLevelInit` outside
-      `compileHarnessLinkedBody`; control test above).
-- [ ] `plan/issues/3451-…md` measurement table gets a new row.
+- [x] The four minimal bodies pass in the linked lane (vitest) — **3 of 4.**
+      `num`, `plainval` and `a67desc` pass and are pinned in
+      `tests/issue-6477-linked-descriptor-reads.test.ts`. `arr540`
+      (`verifyEqualTo` on a compiled ARRAY index) does NOT pass and is not
+      fixable host-side — see "Residual 1" below.
+- [ ] ≥ 12 of the 13 rows flip to agreement on the real worker — **NOT met:
+      9 of 13** (see the measurement below). The remaining 4 are two distinct
+      mechanisms, both outside P1/P2, both named below.
+- [x] Honest lane byte-identical — `deferTopLevelInit` is set only in
+      `compileHarnessLinkedBody`; the control test asserts an honest compile
+      still carries a wasm `start` section and exports no `__module_init`, and
+      the linked compile is the reverse. Equivalence gate: no new regressions
+      (22 failing / 1720 passing, all 22 in the baseline).
+- [x] `plan/issues/3451-…md` measurement table gets a new row.
+
+## Implementation notes (2026-09-15, Opus lane)
+
+### What was implemented
+
+Both parts of the plan, unchanged in intent. One deliberate deviation:
+
+**Deviation — P2's redirect went into `_readOwnDescriptor` itself, not only
+into the `__getOwnPropertyDescriptor` import.** The plan asked for the redirect
+at the import site. Doing it one level down (`exports = _decoderExportsFor(obj,
+exports)` as the first statement of `_readOwnDescriptor`) is strictly stronger
+and smaller: every export that function reaches — `__is_vec`, `__vec_len`,
+`__vec_get`, `__sget_<name>`, and the `_wasmStructHasOwn` gate — is redirected
+at once, and it also covers `_wasmStructPropertyIsEnumerable`, which funnels
+into `_readOwnDescriptor` and which the import-site fix would have missed.
+`_decoderExportsFor` is idempotent and a no-op when no linked project is live,
+so the single-module lane is unchanged. The import site keeps one local
+(`descExports`) because the static-method branch's `_wrapForHost` needs it too.
+`__getOwnPropertyNames` got the same one-line redirect; `__propertyIsEnumerable`
+needed none once `_readOwnDescriptor` redirects.
+
+### Measurement (real worker protocol)
+
+`tests/probe-6477.test.ts` = `runTest262Chunk(0, 1)` (gitignored probe),
+`COMPILER_POOL_SIZE=1`, `TEST262_PATH_FILTER_FILE` holding **47 rows**: the 7
+named `defineProperty` rows plus the WHOLE
+`language/expressions/class/elements/multiple-*privatename-identifier*` family
+(40 rows) — a superset, because the issue's 6 class names were elided and the
+family is the honest unit. Honest lane = same command without
+`TEST262_ORACLE_MODE=linked`. Note the filter paths need the `test/` prefix
+(`relative(TEST262_ROOT, …)` where `TEST262_ROOT` is the submodule root).
+
+| metric | before | after |
+| --- | --- | --- |
+| honest/linked agreement, 47 rows | **4 / 47** | **25 / 47** |
+| linked rows flipped fail→pass | — | **21** |
+| linked rows regressed pass→fail | — | **0** |
+| `class/elements` **stacked** variants | 0 / 20 | **18 / 20** |
+| `class/elements` **non-stacked** variants | 0 / 20 | 0 / 20 |
+
+The 7 named `defineProperty` rows individually:
+
+| row | before | after | remaining message |
+| --- | --- | --- | --- |
+| `15.2.3.6-4-49.js` | fail | **pass** | — |
+| `15.2.3.6-4-67.js` | fail | **pass** | — |
+| `15.2.3.6-4-354-10.js` | fail | **pass** | — |
+| `15.2.3.6-4-68.js` | fail | fail | `foo descriptor value should be fghj; foo value should be fghj` |
+| `15.2.3.6-4-299-1.js` | fail | fail | `Expected obj[0] to equal 10, actually 0` |
+| `15.2.3.6-4-300.js` | fail | fail | `Expected obj[0] to equal 10, actually 0` |
+| `15.2.3.6-4-540-8.js` | fail | fail | `wasm closure dispatcher __call_fn_0 is not available` |
+
+Scoring the issue's own 13 rows (reading the 6 elided class names as their
+`multiple-stacked-definitions-*` spellings, which is the only reading under
+which the issue's "honest=pass linked=fail" claim held for all 6): **9 of 13
+flip**, short of the ≥12 bar.
+
+The four minimal bodies via `scripts/test262-linked-harness-smoke.mts`
+(`.tmp/p6477/cases2`, honest column is the script's own limited lane):
+
+| body | before (linked) | after (linked) |
+| --- | --- | --- |
+| `a67desc` | pass | pass |
+| `num` | `numeric desc Expected SameValue(«undefined», «1001»)` | **pass** |
+| `plainval` | `Expected SameValue(«undefined», «"abcd"»)` | descriptor now reads `abcd`; the row still fails on its `verifyEqualTo` line (Residual 1) |
+| `arr540` | `Expected obj[0] to equal NaN, actually null` | unchanged (Residual 1) |
+
+### Residuals — why they are NOT P1/P2 bugs
+
+**Residual 1 — a provider reading a consumer ARRAY by index never reaches the
+host at all.** `verifyEqualTo(arr, "0", v)` is `arr[name]` inside the provider.
+Instrumenting `_safeGet` and the `__extern_get` import and running the smoke
+with the trace on: after `__module_init` is called, **zero** runtime imports
+fire for that row. The read is lowered to in-wasm vec access and `ref.test`s
+against the PROVIDER's own types, misses, and yields the null/0 default. No
+host-side decoder redirect can see it, so this needs a codegen/ABI answer
+(the linked ABI must make a consumer-minted vec castable in the provider), not
+another `_decoderExportsFor` call. This covers `arr540`, `plainval`'s second
+line, `15.2.3.6-4-299-1`, `-300`, and (as a closure-dispatch variant of the
+same crossing) `-540-8`.
+
+**Residual 2 — `verifyProperty(C.prototype, "m", …)` on a class that ALSO has
+fields.** All 20 `multiple-stacked-definitions-*` rows flip; all 20
+`multiple-definitions-*` rows still fail, and their message CHANGED from
+`foo descriptor value should be foobar` (the #6477 symptom, now gone) to
+`m should be an own property`. The only structural difference between the two
+templates is that the non-stacked one additionally declares `foo = "foobar"`
+plus prototype methods `m()`/`m2()` and then runs `verifyProperty` on
+`C.prototype`. The reduced form (`class C { m(){} }` + the same
+`verifyProperty`) PASSES in the linked lane, so the trigger is the combination
+of instance fields and prototype methods on one class object, not the
+descriptor path #6477 fixed. Worth its own issue.
+
+### Test-suite change outside the new file
+
+`tests/issue-3451-linked-harness-substrate.test.ts` — the
+`verifyProperty on a consumer object own property` case was a PARITY assertion
+(both lanes fail alike). The linked lane now PASSES it while the honest lane
+still fails on its pre-existing `allowJs` hasOwnProperty gap, which is the good
+direction, so the case was lifted out of the parity `it.each` into a one-sided
+assertion (`linked === "pass"`, `honest === "fail"`) with a dated note. The
+other parity case (`function name`) is unchanged.
+
+### Suites run
+
+`issue-6477-*` (5/5), `issue-3451-*` (11/11), `issue-6475-*` (6/6),
+`issue-6476-*` (3/3), `issue-5225-*`, `issue-5353-*`, `issue-5364-*`,
+`issue-5738-*` (42/42 together), equivalence gate clean.
+`tests/issue-4162.test.ts` has 2 failures in this container, both
+`JS2WASM_EVAL_ENGINE=quickjs but the quickjs provider is not built` —
+environmental (missing `.test262-cache/quickjs-artifact-*/libquickjs.wasm`),
+not related to this change.
