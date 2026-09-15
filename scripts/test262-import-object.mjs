@@ -190,7 +190,8 @@ let inProcessLinkedRuntime;
  * @param {BufferSource} binary
  * @param {Record<string, unknown>} importObj
  * @param {{ target?: string, providerLabel?: string, linkedModules?: readonly unknown[],
- *          linkedRuntime?: { instantiateLinkedProviders: Function, wireCompiledInstance: Function } }} [options]
+ *          linkedRuntime?: { instantiateLinkedProviders: Function, wireCompiledInstance: Function },
+ *          linkedHost?: { deps?: Record<string, unknown>, options?: Record<string, unknown> } }} [options]
  * @returns {Promise<WebAssembly.Instance>}
  */
 export async function instantiateTest262Module(binary, importObj, options = {}) {
@@ -256,7 +257,14 @@ export async function instantiateTest262Module(binary, importObj, options = {}) 
     resetTemporalRealmGlobals();
     const wasmModule = new WebAssembly.Module(binary);
     attachConditionalImportNamespaces(wasmModule, importObj, options);
-    instantiateLinkedProviders(linkedModules, importObj);
+    // (#6475) A provider's `env` is rebuilt, not inherited — so without the
+    // embedder's host context it resolves the AMBIENT realm's intrinsics and
+    // the real console, while the consumer's `importObj` was built against this
+    // row's sandbox + console proxy. Two `TypeError`s with the same name and
+    // different identity, and a `$DONE` marker printed where nobody is looking
+    // (#6476). `linkedHost` carries the same `{deps, options}` the lane passed
+    // to `buildImports` for the consumer; absent, behaviour is unchanged.
+    instantiateLinkedProviders(linkedModules, importObj, options.linkedHost);
     const instance = await WebAssembly.instantiate(wasmModule, importObj);
     wireCompiledInstance(importObj, instance, true);
     return instance;

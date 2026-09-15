@@ -2202,6 +2202,15 @@ process.on("message", async (msg) => {
         // scripts/test262-import-object.mjs.
         linkedModules: result.linkedModules ?? [],
         linkedRuntime: runtimeBundle,
+        // (#6475/#6476) Build the PROVIDER's adapter with this row's host
+        // context — the same two values the consumer's `buildImports` above
+        // received. Without them the provider resolves ambient intrinsics
+        // (so `assert.throws(TypeError, …)` sees a different constructor with
+        // the same name) and prints to the real console (so the `$DONE`
+        // completion marker never reaches `harnessOutput`).
+        linkedHost: originalHarness
+          ? { deps: { console: consoleProxy }, options: { globalSandbox: harnessSandbox } }
+          : undefined,
       });
     } catch (err) {
       const execMs = performance.now() - execStart;
