@@ -9256,3 +9256,31 @@ worker between synchronous cases. No production code, fixtures, assertions,
 timeouts or gates change. The focused suite passes 29/29 with zero skipped
 rows and unchanged inputs (`formatter-ci-split`); CI and main delivery remain
 pending for the corrected head.
+
+## 2026-09-15 — takeover, active PR blockers and descriptive Promise inventory
+
+Verified main is `8c9b65b389194c8c8fc3e857e4b7316b0ae524e1`, containing the
+native-output prerequisite. The current open-PR inventory has16 entries;
+the active IR integration owners are shepherding existing PR5748 and PR5753.
+PR5748 has the pushed conservative guard checkpoint4b9a66, not conformance
+acceptance. PR5753 has local composed boundary repairs through2a528c8743,
+not remote delivery. Preserve the original failures and all fixtures.
+
+The approved next native slice accounts for the unchanged full async fixture
+through ordinary physical planning. It collects exact borrowed source, support,
+ABI and allocation populations and observes the existing native string/value
+producer. Whole-program validation belongs to the existing live preflight,
+before its no-demand return or producer observation; descriptive census records
+are not acceptance capabilities. Native declaration lookup stays backend-owned.
+
+The full family still refuses, preserving the existing first refusal and adding
+explicit missing configuration, producer, source association, dispatch,
+construction and composition obligations. No reservations, emission, fallback
+or default runtime configuration are added. Inventory reports architecture
+incomplete; this is not one end-to-end IR program or direct-codegen retirement.
+
+Plan and current handoff: `plan/agent-context/3518-active-takeover-handoff-2026-09-15.md`.
+The adjacent native Promise contract and PR5753, generator and array specifications
+record exact ownership, dependencies, controls and remaining implementation.
+Parent alone integrates and publishes. Native agents own isolated bounded fixes;
+runtime array work follows the generator owner to avoid shared-file overwrite.
