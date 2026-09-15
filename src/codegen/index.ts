@@ -536,6 +536,7 @@ import { externrefBackedClassValType } from "./externref-backed-class-rep.js";
 import { classMemberFuncKey, fnctorAncestorOfClass, moduleHasFnctorSubclass } from "./class-member-keys.js"; // (#1983 / #3123)
 import { collectAccessorLiteralReturnCarrierTypes } from "./accessor-literal-return-carrier.js"; // (#6614) accessor-literal return slot
 import { armExternRefArgTypeGuardForLinkedProvider } from "./extern-arg-marshal.js"; // (#6615) lenient ref-argument marshal
+import { moduleHasRefTypedConstructFormal } from "./standalone-class-construct.js"; // (#6615) its arming gate
 import {
   applyShapeInference,
   collectDeclarations,
@@ -5995,7 +5996,7 @@ export function generateModule(
 
     // (#6615) Same post-bodies arming as the multi-source path — see
     // `armExternRefArgTypeGuardForLinkedProvider`.
-    armExternRefArgTypeGuardForLinkedProvider(ctx);
+    if (moduleHasRefTypedConstructFormal(ctx)) armExternRefArgTypeGuardForLinkedProvider(ctx);
 
     // Fixup pass: reconcile struct.new argument counts with actual struct field counts.
     // Dynamic field additions during expression compilation can add fields to struct types
@@ -11021,8 +11022,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
 
     // (#6615) A linked provider's construct trampolines are driven from ANOTHER
     // module, so the expression-site arming never fires here. Post-bodies, not
-    // finalize: the throw materialises an error constructor.
-    armExternRefArgTypeGuardForLinkedProvider(ctx);
+    // finalize: the throw materialises an error constructor. Gated on a
+    // REF-typed construct formal existing at all.
+    if (moduleHasRefTypedConstructFormal(ctx)) armExternRefArgTypeGuardForLinkedProvider(ctx);
 
     // (#1602) Rebuild method-closure trampolines against final method sigs.
     profilePhase("finalize-method-trampolines", () => finalizeMethodTrampolines(ctx));

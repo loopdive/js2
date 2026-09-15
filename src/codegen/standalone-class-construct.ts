@@ -187,6 +187,31 @@ function collectCandidates(ctx: CodegenContext): ClassConstructCandidate[] {
   return out;
 }
 
+/**
+ * (#6615) Does ANY class in this module have a constructor formal that lowers
+ * to a ref type — the only formals whose dynamic marshal is a hard `ref.cast`?
+ *
+ * The arming gate for the lenient ref-argument marshal. Without it, every
+ * standalone module with a dynamic `new <value>` site paid for a TypeError
+ * message it could never reach (measured: +232 B on a module whose only class
+ * has `f64` formals). Unlike `collectCandidates` this does NOT require
+ * `classObjectGlobals` — a class-object singleton is materialised lazily, often
+ * after the `new <value>` site that arms the guard has compiled — so it reads
+ * `structMap`, which `collect-declarations` fills before any body runs.
+ */
+export function moduleHasRefTypedConstructFormal(ctx: CodegenContext): boolean {
+  if (!ctx.standalone && !ctx.wasi) return false;
+  for (const className of ctx.structMap.keys()) {
+    if (ctx.classBuiltinParentMap.has(className)) continue;
+    const ctorFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, `${className}_new`));
+    if (ctorFuncIdx === undefined) continue;
+    const signature = funcSignatureOf(ctx, ctorFuncIdx);
+    if (!signature) continue;
+    if (signature.params.some((param) => param.kind === "ref" || param.kind === "ref_null")) return true;
+  }
+  return false;
+}
+
 /** Mint one function at FINALIZE, exactly as the late dispatcher fills do. */
 function mint(ctx: CodegenContext, name: string, params: ValType[], body: Instr[]): number {
   const typeIdx = addFuncType(ctx, params, [EXTERNREF], `$${name}_type`);
