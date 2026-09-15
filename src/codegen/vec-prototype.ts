@@ -12,6 +12,10 @@ export function wireVecPrototypeHelpers(ctx: CodegenContext): void {
   const isExtensible = idx("__object_isExtensible");
   const status = idx("__object_setPrototypeOf_status");
   if ([isVec, has, get, set, getProto, isExtensible, status].some((v) => v === undefined)) return;
+  const proxyTypeIdx = ctx.objectRuntimeTypes?.proxyTypeIdx;
+  if (proxyTypeIdx === undefined || proxyTypeIdx < 0) {
+    throw new Error("Vec prototype wiring requires the reserved Proxy layout");
+  }
   const find = (name: string) => ctx.mod.functions.find((fn) => fn.name === name);
   const eq = (a: number, b: number): Instr[] => [
     { op: "local.get", index: a },
@@ -70,6 +74,12 @@ export function wireVecPrototypeHelpers(ctx: CodegenContext): void {
                 { op: "br_if", depth: 1 },
                 ...eq(0, p),
                 { op: "if", blockType: { kind: "empty" }, then: answer(0) },
+                // OrdinarySetPrototypeOf stops before invoking an exotic
+                // [[GetPrototypeOf]], including a revoked Proxy's method.
+                { op: "local.get", index: p },
+                { op: "any.convert_extern" },
+                { op: "ref.test", typeIdx: proxyTypeIdx },
+                { op: "br_if", depth: 1 },
                 { op: "local.get", index: p },
                 { op: "call", funcIdx: getProto! },
                 { op: "local.set", index: p },

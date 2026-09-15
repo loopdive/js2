@@ -224,6 +224,7 @@ export function tryCompileEs5GetPrototypeOfEarly(
     ctx.standalone &&
     ts.isIdentifier(arg0) &&
     ctx.nonExtensibleVars.has(integrityVarKey(ctx, arg0)) &&
+    ES5_OBJECT_PROTOTYPES.get(ctx.oracle.declaredNameOf(arg0) ?? "") !== "Array" &&
     !isTypedArrayViewProtoName(ctx.oracle.declaredNameOf(arg0) ?? "") &&
     !isNativeGeneratorInstance(ctx, arg0)
   ) {
@@ -277,6 +278,46 @@ export function tryCompileEs5GetPrototypeOfEarly(
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
   }
   return null;
+}
+
+/** Read an Array override without folding away evaluation or explicit null. */
+function emitArrayPrototypeValue(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallExpression): InnerResult {
+  if ((!ctx.standalone && !ctx.wasi) || ctx.targetProfile.semanticProviders !== "native-first") {
+    return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Array");
+  }
+  ensureLateImport(ctx, "__getPrototypeOf", [{ kind: "externref" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  const argType = compileExpression(ctx, fctx, expr.arguments[0]!);
+  if (!argType || (argType.kind !== "ref" && argType.kind !== "ref_null" && argType.kind !== "externref")) {
+    throw new Error("Array prototype read requires a reference receiver");
+  }
+  if (argType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
+  const recv = allocLocal(fctx, "__gpo_array", { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: recv });
+  const start = fctx.body.length;
+  emitEs5IntrinsicPrototype(ctx, fctx, expr, "Array");
+  flushLateImportShifts(ctx, fctx);
+  const fallback = fctx.body.splice(start);
+  // Receiver and intrinsic lowering may shift indices; resolve only afterward.
+  const hasOverride = ctx.funcMap.get("__vec_proto_has");
+  const getOverride = ctx.funcMap.get("__vec_proto_get");
+  if (hasOverride === undefined || getOverride === undefined) {
+    throw new Error("Array prototype read requires the reserved vec prototype store");
+  }
+  fctx.body.push(
+    { op: "local.get", index: recv },
+    { op: "call", funcIdx: hasOverride },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [
+        { op: "local.get", index: recv },
+        { op: "call", funcIdx: getOverride },
+      ],
+      else: fallback,
+    },
+  );
+  return { kind: "externref" };
 }
 
 /**
@@ -429,6 +470,7 @@ export function tryCompileEs5GetPrototypeOfValue(
   if (staticType === "symbol") return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Symbol");
 
   const knownPrototypeName = ES5_OBJECT_PROTOTYPES.get(ctx.oracle.declaredNameOf(arg0) ?? "");
+  if (knownPrototypeName === "Array") return emitArrayPrototypeValue(ctx, fctx, expr);
   if (knownPrototypeName) {
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, knownPrototypeName);
   }
@@ -436,7 +478,7 @@ export function tryCompileEs5GetPrototypeOfValue(
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Function");
   }
   if (ts.isArrayLiteralExpression(arg0)) {
-    return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Array");
+    return emitArrayPrototypeValue(ctx, fctx, expr);
   }
   // (#5270 step 2) A colon-form `__proto__` key REPLACES the literal's
   // [[Prototype]] during evaluation, so folding to `%Object.prototype%` here
@@ -451,7 +493,7 @@ export function tryCompileEs5GetPrototypeOfValue(
       return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
     }
     if (initializer && ts.isArrayLiteralExpression(initializer)) {
-      return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Array");
+      return emitArrayPrototypeValue(ctx, fctx, expr);
     }
     if (initializer && ts.isObjectLiteralExpression(initializer) && !objectLiteralHasColonProto(ctx, initializer)) {
       return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
