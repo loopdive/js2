@@ -99,3 +99,19 @@ dynamic-key handling, host registry bridging, and argument evaluation ordering
 were not broadened. No original fixture edits, gate waivers, or baseline refresh.
 An unrelated checkout/LFS status for `website/public/acorn/acorn.wasm` was left
 untouched; do not include it in integration.
+
+## Explicit optimizer follow-up
+
+The initial 30 tests use the default optimization setting. An additive follow-up
+keeps that entire test source byte-for-byte and adds four closed controls at
+each explicit `optimize: 0` and `optimize: 2`: empty registered key refusal with
+callback count zero; stable unregistered key success with one callback; Map and
+object-key kernel initialization before registered symbols; and exactly-once
+source-key argument evaluation for both upserts. All assert empty import lists
+and actual exported results, with no diagnostic suppression.
+
+`node_modules/.bin/vitest run tests/issue-5753-weakmap-registry.test.ts
+--maxWorkers=1` passed 38/38, including all eight explicit optimizer cases.
+Full receipt: `.tmp/weakmap-explicit-o0-o2.log`; final TypeScript7 receipt:
+`.tmp/weakmap-explicit-o0-o2-typecheck.log`. Biome lint also passed. This follow-up
+changes tests and this handoff only, not production code or original fixtures.

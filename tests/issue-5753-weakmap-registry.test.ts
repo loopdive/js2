@@ -112,3 +112,67 @@ describe("WeakMap upsert canonical symbol registry", () => {
     ).toBe(1);
   });
 });
+
+describe.each([0, 2] as const)("WeakMap registry explicit O%i", (optimize) => {
+  async function runOptimized(source: string): Promise<number> {
+    const result = await compile(source, { fileName: "weakmap-registry-optimized.ts", target: "standalone", optimize });
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    const module = new WebAssembly.Module(result.binary);
+    expect(WebAssembly.Module.imports(module)).toEqual([]);
+    const instance = new WebAssembly.Instance(module, {});
+    return (instance.exports.test as () => number)();
+  }
+
+  it("rejects the empty registry key without invoking the callback", async () => {
+    expect(
+      await runOptimized(`export function test(): number {
+      const wm = new WeakMap(); const key = Symbol.for(''); let calls = 0;
+      try { wm.getOrInsertComputed(key, function(): number { calls++; return 7; }); return -1; }
+      catch(e) { if (!(e instanceof TypeError)) return -2; }
+      return calls === 0 && !wm.has(key) ? 1 : -3;
+    }`),
+    ).toBe(1);
+  });
+
+  it("keeps an unregistered key stable with exactly one callback", async () => {
+    expect(
+      await runOptimized(`export function test(): number {
+      Symbol.for(''); const wm = new WeakMap(); const key = Symbol(''); let calls = 0;
+      const first = wm.getOrInsertComputed(key, function(k: any): number { calls++; return k === key ? 7 : -1; });
+      const second = wm.getOrInsertComputed(key, function(): number { calls++; return -2; });
+      return first === 7 && second === 7 && calls === 1 ? 1 : -3;
+    }`),
+    ).toBe(1);
+  });
+
+  it("retains the guard when Map and object keys initialize kernels first", async () => {
+    expect(
+      await runOptimized(`export function test(): number {
+      const m = new Map(); const wm = new WeakMap(); const object = {};
+      const mapValue = m.getOrInsert(object, 3);
+      const weakValue = wm.getOrInsert(object, 4);
+      let rejected = 0; let calls = 0;
+      try { wm.getOrInsert(Symbol.for(''), 9); }
+      catch(e) { if (e instanceof TypeError) rejected++; }
+      try { wm.getOrInsertComputed(Symbol.for(''), function(): number { calls++; return 9; }); }
+      catch(e) { if (e instanceof TypeError) rejected++; }
+      return mapValue === 3 && weakValue === 4 && rejected === 2 && calls === 0 ? 1 : -1;
+    }`),
+    ).toBe(1);
+  });
+
+  it("evaluates each rejected key source argument exactly once", async () => {
+    expect(
+      await runOptimized(`export function test(): number {
+      const wm = new WeakMap(); let evaluations = 0; let callbacks = 0; let rejected = 0;
+      function key(): symbol { evaluations++; return Symbol.for(''); }
+      try { wm.getOrInsert(key(), 7); }
+      catch(e) { if (e instanceof TypeError) rejected++; }
+      if (evaluations !== 1 || rejected !== 1) return -1;
+      try { wm.getOrInsertComputed(key(), function(): number { callbacks++; return 8; }); }
+      catch(e) { if (e instanceof TypeError) rejected++; }
+      return evaluations === 2 && rejected === 2 && callbacks === 0 ? 1 : -2;
+    }`),
+    ).toBe(1);
+  });
+});
