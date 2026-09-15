@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-15T02:45:26.561Z",
-  "baseline_generated_at": "2026-09-15T02:45:26.562Z",
-  "baseline_sha": "e81399708a2a26147ffa277e484f716d3c05098f",
+  "timestamp": "2026-09-15T04:06:18.063Z",
+  "baseline_generated_at": "2026-09-15T04:06:18.063Z",
+  "baseline_sha": "d1e78c0f61e105666b6714e884673066f7d3f79c",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -13,8 +13,8 @@
     "total": 48232,
     "pass": 35532,
     "fail": 9654,
-    "compile_error": 3020,
-    "compile_timeout": 8,
+    "compile_error": 3021,
+    "compile_timeout": 7,
     "skip": 18,
     "compilable": 45186,
     "host_free_pass": 35532,
@@ -24,8 +24,8 @@
         "total": 47146,
         "pass": 34503,
         "fail": 9616,
-        "compile_error": 3001,
-        "compile_timeout": 8,
+        "compile_error": 3002,
+        "compile_timeout": 7,
         "skip": 18,
         "compilable": 44119,
         "host_free_pass": 34503,
@@ -60,8 +60,8 @@
         "total": 48232,
         "pass": 35532,
         "fail": 9654,
-        "compile_error": 3020,
-        "compile_timeout": 8,
+        "compile_error": 3021,
+        "compile_timeout": 7,
         "skip": 18,
         "compilable": 45186,
         "host_free_pass": 35532,
@@ -72,8 +72,8 @@
         "total": 48735,
         "pass": 35767,
         "fail": 9670,
-        "compile_error": 3176,
-        "compile_timeout": 8,
+        "compile_error": 3177,
+        "compile_timeout": 7,
         "skip": 114,
         "compilable": 45437,
         "host_free_pass": 35767,
@@ -86,8 +86,8 @@
     "total": 48232,
     "pass": 35532,
     "fail": 9654,
-    "compile_error": 3020,
-    "compile_timeout": 8,
+    "compile_error": 3021,
+    "compile_timeout": 7,
     "skip": 18,
     "compilable": 45186,
     "host_free_pass": 35532,
@@ -97,8 +97,8 @@
     "total": 48735,
     "pass": 35767,
     "fail": 9670,
-    "compile_error": 3176,
-    "compile_timeout": 8,
+    "compile_error": 3177,
+    "compile_timeout": 7,
     "skip": 114,
     "compilable": 45437,
     "host_free_pass": 35767,
@@ -108,8 +108,8 @@
     "total": 45721,
     "pass": 33253,
     "fail": 9513,
-    "compile_error": 2929,
-    "compile_timeout": 8,
+    "compile_error": 2930,
+    "compile_timeout": 7,
     "skip": 18,
     "compilable": 42766,
     "host_free_pass": 33253,
@@ -142,8 +142,8 @@
       "total": 47146,
       "pass": 34503,
       "fail": 9616,
-      "compile_error": 3001,
-      "compile_timeout": 8,
+      "compile_error": 3002,
+      "compile_timeout": 7,
       "skip": 18,
       "compilable": 44119,
       "host_free_pass": 34503,
@@ -805,8 +805,8 @@
       "path": "built-ins/TypedArray",
       "pass": 922,
       "fail": 512,
-      "compile_error": 11,
-      "compile_timeout": 1,
+      "compile_error": 12,
+      "compile_timeout": 0,
       "skip": 0,
       "total": 1446,
       "host_free_pass": 922
@@ -1205,7 +1205,7 @@
     "negative_test_fail": 3,
     "null_deref": 25,
     "oob": 7,
-    "other": 3230,
+    "other": 3231,
     "promise_error": 57,
     "range_error": 14,
     "runtime_error": 165,
@@ -1292,16 +1292,16 @@
           "ES2026": 4433
         },
         "sample_files": [
-          "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
+          "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
+          "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/with/disambiguation-wrong-type.js"
+          "test/built-ins/Temporal/Duration/prototype/round/subclassing-ignored.js"
         ],
         "sample_signatures": [
-          "type_error:TypeError: Cannot read properties of undefined (reading 'until')",
-          "assertion_fail:Test262Error: null Expected a RangeError but got a TypeError",
           "type_error:TypeError: Cannot read properties of undefined (reading 'round')",
+          "assertion_fail:Test262Error: null Expected a RangeError but got a TypeError",
+          "type_error:TypeError: Cannot read properties of undefined (reading 'until')",
           "host_import_leak:standalone target emitted host imports: env::__temporal_plain_date_add_field, env::__temporal_plain_date_from_string_field (##)",
           "other:ReferenceError: Temporal is not defined"
         ]
@@ -1978,8 +1978,8 @@
         "statuses": {
           "pass": 0,
           "fail": 1604,
-          "compile_error": 209,
-          "compile_timeout": 8,
+          "compile_error": 210,
+          "compile_timeout": 7,
           "skip": 0,
           "total": 1821,
           "host_free_pass": 0
@@ -1990,7 +1990,7 @@
           "illegal_cast": 176,
           "type_error": 253,
           "host_import_leak": 180,
-          "other": 34,
+          "other": 35,
           "wasm_compile": 4,
           "oob": 5
         },
@@ -2552,8 +2552,8 @@
           "ES2023": 39,
           "Unclassified (untagged)": 69,
           "ES2017": 11,
-          "ES2022": 2,
           "Unclassified (legacy)": 1,
+          "ES2022": 2,
           "Proposals": 7,
           "ES2025": 5,
           "ES2024": 1
@@ -2809,7 +2809,7 @@
           "assertion_fail:Test262Error: Expected true but got false",
           "other:[object WebAssembly.Exception]",
           "type_error:TypeError: Cannot convert undefined or null to object",
-          "other:L#:## Unexpected keyword or identifier.; L#:## Identifier expected.; L#:## Unexpected keyword or identifier.; L#:## Identifier expected.; L#:## Unexpected keyword or identifier.; L#:## Identifier expected.; L#:## Unexpected keyword or ident"
+          "other:L#:## ':' expected.; L#:## '=>' expected.; L#:## Declaration or statement expected.; L#:## Declaration or statement expected.; L#:## Declaration or statement expected."
         ]
       },
       {
@@ -2912,8 +2912,8 @@
         "sample_files": [
           "test/language/identifiers/part-unicode-16.0.0-escaped.js",
           "test/language/identifiers/start-unicode-17.0.0-class.js",
-          "test/language/identifiers/part-unicode-17.0.0-class.js",
           "test/language/identifiers/start-unicode-16.0.0-escaped.js",
+          "test/language/identifiers/part-unicode-17.0.0-class.js",
           "test/language/identifiers/start-unicode-17.0.0.js"
         ],
         "sample_signatures": [
