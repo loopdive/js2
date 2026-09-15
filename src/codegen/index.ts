@@ -534,6 +534,7 @@ import { finalizeForwardClassCallableAbis } from "./class-callable-abi.js";
 import { finalizeForwardClassFieldLayouts } from "./class-field-layout.js";
 import { externrefBackedClassValType } from "./externref-backed-class-rep.js";
 import { classMemberFuncKey, fnctorAncestorOfClass, moduleHasFnctorSubclass } from "./class-member-keys.js"; // (#1983 / #3123)
+import { collectAccessorLiteralReturnCarrierTypes } from "./accessor-literal-return-carrier.js"; // (#6614) accessor-literal return slot
 import {
   applyShapeInference,
   collectDeclarations,
@@ -5412,6 +5413,10 @@ export function generateModule(
     // and after the subview / ObjVecArr reservations so the type-table prefix is
     // already stable.
     collectDynamicObjectReturnCarrierTypes(ctx, ast.checker, ast.sourceFile);
+    // (#6614) Same relative position, same reason: the return type of any
+    // function-like that hands out an accessor-bearing object literal must be
+    // known to be externref BEFORE any binding is typed. Standalone/WASI only.
+    collectAccessorLiteralReturnCarrierTypes(ctx, ast.checker, ast.sourceFile);
     reserveFnctorStructTypes(ctx);
 
     // $AnyValue struct type is now registered lazily via ensureAnyValueType()
@@ -10850,6 +10855,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // graph reserves nothing and stays byte-identical.
     for (const sf of multiAst.sourceFiles) {
       collectDynamicObjectReturnCarrierTypes(ctx, multiAst.checker, sf);
+      // (#6614) Multi-source parity for the accessor-literal return carrier.
+      collectAccessorLiteralReturnCarrierTypes(ctx, multiAst.checker, sf);
     }
     reserveFnctorStructTypes(ctx);
 
