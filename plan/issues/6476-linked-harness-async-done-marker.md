@@ -1,10 +1,11 @@
 ---
 id: 6476
 title: "Linked test262 harness: async completion marker ($DONE) not observed across the provider boundary"
-status: ready
+status: done
 sprint: current
 created: 2026-09-14
-updated: 2026-09-14
+updated: 2026-09-15
+completed: 2026-09-15
 priority: high
 horizon: l
 feasibility: hard
@@ -49,12 +50,18 @@ Two things to establish first, because they lead to different fixes:
 
 ## Acceptance criteria
 
-- [ ] The mechanism is established by measurement and recorded here before the
-      fix.
-- [ ] An `async` row that passes honest passes linked, for both a resolving and
-      a rejecting promise.
-- [ ] The 49 rows in the slice-3 sample flip to agreement.
-- [ ] The honest lane is unchanged.
+- [x] The mechanism is established by measurement and recorded here before the
+      fix — see "Mechanism" below; the marker is printed, to the wrong sink.
+- [x] An `async` row that passes honest passes linked, for both a resolving and
+      a rejecting promise — `tests/issue-6476-linked-async-marker.test.ts`,
+      which also asserts the marker does NOT arrive without `linkedHost`.
+- [x] The 49 rows in the slice-3 sample flip to agreement — re-measured
+      2026-09-15 over 399 common rows: **0** rows in this class (#3451,
+      "Re-measured 2026-09-15").
+- [x] The honest lane is unchanged — the change is confined to the provider's
+      import-object build, which the honest lane does not reach;
+      `tests/issue-3451-linked-harness-lane.test.ts` (the honest-vs-linked
+      gating guard) green.
 
 ## Mechanism — established by measurement 2026-09-15 (Opus lane)
 
