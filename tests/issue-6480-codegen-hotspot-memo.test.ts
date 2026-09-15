@@ -66,6 +66,47 @@ describe("#6480 lib-scan memo is output-neutral", () => {
     expect(nativeA).not.toBe(hostA);
   });
 
+  // Lever 2 reshaped the two hot index-shift walks (the late-import funcIdx
+  // walk in expressions/late-imports.ts and the module-global walk in
+  // registry/imports.ts) into indexed loops with direct property reads. Both
+  // are shape-only changes, so the pin is the property the walks exist for: a
+  // body that mints SEVERAL distinct late imports interleaved with string
+  // constants — each mint shifting every already-emitted defined-function
+  // index, each string constant shifting every module-global index — must
+  // still produce a module that validates, and must do so identically on a
+  // repeat compile in the same process.
+  const SHIFT_HEAVY_SRC = `
+    function mix(xs: any[], k: any): string {
+      let acc = "start:";
+      for (let i = 0; i < xs.length; i++) {
+        const v = xs[i];
+        if (typeof v === "number") acc += "n" + (v + 1);
+        else if (typeof v === "string") acc += "s" + v;
+        else if (typeof v === "boolean") acc += "b" + (v ? "T" : "F");
+        else acc += "o";
+      }
+      try {
+        if (k === undefined) throw new TypeError("no key");
+        acc += "|k=" + k;
+      } catch (e) {
+        acc += "|caught";
+      }
+      return acc + "|end";
+    }
+    export function run(): string {
+      return mix([1, "a", true, {}], "z") + ";" + mix([2], undefined);
+    }
+  `;
+
+  it("shift-heavy body still compiles to a valid module, identically on repeat", async () => {
+    const r = await compile(SHIFT_HEAVY_SRC, { fileName: "t.ts" });
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(() => new WebAssembly.Module(r.binary)).not.toThrow();
+    const again = await binaryOf(SHIFT_HEAVY_SRC);
+    expect(again).toBe(Buffer.from(r.binary).toString("base64"));
+  });
+
   it("buildLibDeclIndex returns a cached index for the same source files", () => {
     clearLibDeclIndexCacheForTests();
     const ast = analyzeSource("var d = new Date();", "t.ts");
