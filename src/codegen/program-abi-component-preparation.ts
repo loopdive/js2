@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { CodegenContext } from "./context/types.js";
+import { NATIVE_PROMISE_NUMBER_BOUNDARY_HELPERS } from "./any-helpers.js";
 import { definedFuncAt } from "./func-space.js";
 import {
   describeProgramAbiUnitCallable,
@@ -91,7 +92,7 @@ function describePreparedComponentBatch(
         structuralReferenceKey === undefined ? [] : [structuralReferenceKey],
       ),
     ]);
-    for (const name of ["__typeof_number", "__unbox_number"] as const) {
+    for (const name of NATIVE_PROMISE_NUMBER_BOUNDARY_HELPERS) {
       if (!dependencyKeys.has(irCallableBindingKey(irRuntimeFuncRef(name).binding))) continue;
       const index = ctx.funcMap.get(name);
       const helper = index === undefined ? undefined : definedFuncAt(ctx, index);

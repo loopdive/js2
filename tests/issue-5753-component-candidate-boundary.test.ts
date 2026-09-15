@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { afterEach, expect, it, vi } from "vitest";
 import { createCodegenContext } from "../src/codegen/context/create-context.js";
+import { NATIVE_PROMISE_NUMBER_BOUNDARY_HELPERS } from "../src/codegen/any-helpers.js";
 import { mintDefinedFunc, pushDefinedFunc } from "../src/codegen/func-space.js";
 import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
 import * as unitPreparation from "../src/codegen/program-abi-unit-callable-preparation.js";
@@ -513,6 +514,18 @@ function undoUndefinedConsumerReuse(source: string): string {
   return source;
 }
 
+const numberBoundaryOwnerInverse = {
+  current: "    for (const name of NATIVE_PROMISE_NUMBER_BOUNDARY_HELPERS) {",
+  original: '    for (const name of ["__typeof_number", "__unbox_number"] as const) {',
+} as const;
+
+function undoNumberBoundaryOwnerReuse(source: string): string {
+  const span = numberBoundaryOwnerInverse;
+  if (source.split(span.current).length !== 2)
+    throw new Error("canonical number boundary inverse span must occur exactly once");
+  return source.replace(span.current, span.original);
+}
+
 function assertBatchPlannerReceipt(current: string): void {
   const path = "src/ir/prepared-component-sealing.ts";
   const old = execFileSync("git", ["show", "4085860f7a06415650fa5ef68ad0d58f0c88c8f0:" + path], { encoding: "utf8" });
@@ -532,7 +545,10 @@ function assertBatchPlannerReceipt(current: string): void {
     const original = named(old, name)[0]!.getText();
     expect(named(c1, name)[0]!.getText()).toBe(original);
     const actual = named(current, name)[0]!.getText();
-    const restored = name === "describePreparedComponentBatch" ? undoUndefinedConsumerReuse(actual) : actual;
+    const restored =
+      name === "describePreparedComponentBatch"
+        ? undoNumberBoundaryOwnerReuse(undoUndefinedConsumerReuse(actual))
+        : actual;
     if (restored !== original) throw new Error("batch planner changed outside the approved U1 inverse spans");
   }
 }
@@ -541,6 +557,24 @@ it("preserves the entire existing import/provider/class/export batch planner exa
   assertBatchPlannerReceipt(
     readFileSync(new URL("../src/codegen/program-abi-component-preparation.ts", import.meta.url), "utf8"),
   );
+});
+
+it("uses the canonical numeric boundary population in the original order", () => {
+  expect(NATIVE_PROMISE_NUMBER_BOUNDARY_HELPERS).toEqual(["__typeof_number", "__unbox_number"]);
+  const current = readFileSync(new URL("../src/codegen/program-abi-component-preparation.ts", import.meta.url), "utf8");
+  expect(current.split('import { NATIVE_PROMISE_NUMBER_BOUNDARY_HELPERS } from "./any-helpers.js";')).toHaveLength(2);
+  assertBatchPlannerReceipt(current);
+});
+
+it("rejects altered or duplicated canonical numeric boundary selection", () => {
+  const current = readFileSync(new URL("../src/codegen/program-abi-component-preparation.ts", import.meta.url), "utf8");
+  assertBatchPlannerReceipt(current);
+  const span = numberBoundaryOwnerInverse.current;
+  for (const replacement of [span.replace("HELPERS", "HELPERS.slice(0, 1)"), span + "\n" + span]) {
+    expect(() => assertBatchPlannerReceipt(current.replace(span, replacement))).toThrow(
+      "canonical number boundary inverse span must occur exactly once",
+    );
+  }
 });
 
 it("rejects a planner mutation outside the approved U1 inverse spans", () => {
