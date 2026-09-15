@@ -1044,6 +1044,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // a receiver this module cannot decode is one whose owner must run the
     // method, because the trampoline's `this` lives in the owner's globals.
     methodCall: peerMethodCallIdx,
+    // (#6617) …and the PROTOTYPE twin of the same question: an instance the
+    // provider minted is a closed struct in the provider's ladder and in no
+    // other, so only its owner can say which class's prototype it reports.
+    getPrototypeOf: peerGetPrototypeOfIdx,
   } = standaloneLinkBoundaryPeerIndices(ctx);
   // (#5383 S17 / #6600) The same question asked from the other side: a PROVIDER
   // handed a carrier its consumer owns. Registered in this window, next to the
@@ -5588,7 +5592,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     proxyTrapsTypeIdx,
     objRefNull,
     propMapRef,
-    boundaryObjectGetPrototypeIdx,
+    // (#6617) The two are mutually exclusive by construction — a JS-host module
+    // never has a wasm peer — so ONE arm serves both lanes, exactly as
+    // `hasBoundaryOrReverseIdx` does for `__extern_has`.
+    boundaryObjectGetPrototypeIdx: boundaryObjectGetPrototypeIdx ?? peerGetPrototypeOfIdx,
     boundaryObjectSetPrototypeIdx,
     INITIAL_CAP,
     OBJ_FLAG_NONEXTENSIBLE,

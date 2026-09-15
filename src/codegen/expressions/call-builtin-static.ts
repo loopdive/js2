@@ -143,6 +143,7 @@ import { emitUndefined, ensureGetUndefined, ensureLateImport, flushLateImportShi
 import { resolveStructName } from "./misc.js";
 import * as objectGetPrototypeOf from "./object-get-prototype-of.js";
 import { tryCompileFnctorInstanceGetPrototypeOf } from "../fnctor-instance-prototype.js";
+import { recordStandaloneRuntimeKeyClassMemberRead } from "../standalone-class-dyn-member.js"; // (#6617)
 import {
   BUILTIN_CLASS_NAMES,
   compileCallExpression,
@@ -239,6 +240,14 @@ function emitBuiltinGetPrototypeOfFallback(
   if (objectGetPrototypeOf.tryEmitDynamicCallableGetPrototypeOf(ctx, fctx, arg)) {
     return { kind: "externref" };
   }
+  // (#6617) Every static arm has declined, so the argument's class — if it has
+  // one — is not knowable here. The native helper's #6617 arm resolves it at
+  // RUNTIME from the instance's `__tag`, but only for classes whose prototype
+  // singleton exists, and in an ordinary module that set is demand-driven. This
+  // is the arming site for the generic question, the twin of #6457's for the
+  // dynamic `.prototype` read; in a linked PROVIDER the demand is already
+  // total (#5383 S2h), which is why the provider half needs no site of its own.
+  recordStandaloneRuntimeKeyClassMemberRead(ctx, undefined);
   const getPrototypeIdx = ensureLateImport(ctx, "__getPrototypeOf", [{ kind: "externref" }], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
   if (getPrototypeIdx !== undefined) {

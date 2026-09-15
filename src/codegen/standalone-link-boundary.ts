@@ -38,6 +38,7 @@ import { CLASS_CONSTRUCT_DISPATCH } from "./standalone-class-construct.js"; // (
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { definedFuncAt } from "./func-space.js";
 import { LINK_BOUNDARY_TO_STRING_TAG } from "./link-boundary-names.js";
+import { STANDALONE_CLASS_INSTANCE_PROTO } from "./standalone-class-instance-proto.js"; // (#6617)
 import type { CodegenContext } from "./context/types.js";
 import type { Instr, ValType } from "../ir/types.js";
 
@@ -78,6 +79,17 @@ export const LINK_BOUNDARY_EXPORTS = Object.freeze({
   // owning module keeps resolution AND receiver binding on the side that owns
   // both.
   methodCall: "__js2wasm_link_method_call",
+  // (#6617) `Object.getPrototypeOf(<instance the provider minted>)`.
+  //
+  // Not derivable from `memberGet`: an instance's [[Prototype]] is not a
+  // property of it, and the consumer cannot ask for one — the link is a
+  // per-class `__tag` fact over a WasmGC struct the consumer has no type for,
+  // exactly the reason `__class_object_of` (#5354) exists on the host lane.
+  // Answering it here is what joins the two halves of the object-identity
+  // graph across the seam: the value this returns IS the object
+  // `NS.C.prototype` already answers (one module global, reached by reference),
+  // so `getPrototypeOf(new NS.C()) === NS.C.prototype` holds by `ref.eq`.
+  getPrototypeOf: "__js2wasm_link_get_prototype_of",
   // (#5406) `Object.prototype.toString` over a value the consumer cannot
   // decode. The name lives in the leaf `link-boundary-names.ts` because the
   // CONSUMER side of this terminal is emitted by `object-proto-tostring.ts`,
@@ -110,6 +122,11 @@ const TERMINALS: ReadonlyArray<{ export: string; internal: string; params: ValTy
   {
     export: LINK_BOUNDARY_EXPORTS.toStringTag,
     internal: LINK_BOUNDARY_EXPORTS.toStringTag,
+    params: [EXTERNREF],
+  },
+  {
+    export: LINK_BOUNDARY_EXPORTS.getPrototypeOf,
+    internal: LINK_BOUNDARY_EXPORTS.getPrototypeOf,
     params: [EXTERNREF],
   },
 ];
@@ -271,6 +288,14 @@ export function emitStandaloneLinkBoundaryTerminals(ctx: CodegenContext, registe
   if (!ctx.funcMap.has(LINK_BOUNDARY_EXPORTS.toStringTag)) {
     registerNative(LINK_BOUNDARY_EXPORTS.toStringTag, [EXTERNREF], [EXTERNREF], [], [{ op: "ref.null.extern" }]);
   }
+  // (#6617) Reserved with the miss body ("not mine") for the same reason: the
+  // dispatcher it wraps (`__std_class_instance_proto`) is minted at finalize,
+  // over the class set and the prototype builders as they end up. A provider
+  // with no compiled class keeps this body and the consumer keeps its own
+  // (null) answer — which is today's behaviour, unchanged.
+  if (!ctx.funcMap.has(LINK_BOUNDARY_EXPORTS.getPrototypeOf)) {
+    registerNative(LINK_BOUNDARY_EXPORTS.getPrototypeOf, [EXTERNREF], [EXTERNREF], [], [{ op: "ref.null.extern" }]);
+  }
   if (!ctx.funcMap.has(LINK_BOUNDARY_EXPORTS.construct)) {
     registerNative(
       LINK_BOUNDARY_EXPORTS.construct,
@@ -312,6 +337,25 @@ function fillStandaloneLinkBoundaryLateTerminals(ctx: CodegenContext): void {
       { op: "i32.const", value: 1 },
       { op: "i32.shl" },
       { op: "i32.or" },
+    ];
+  }
+
+  // (#6617) The prototype terminal is a thin forward to the module's own
+  // class-instance dispatcher, and deliberately NOT to `__getPrototypeOf`.
+  // The consumer reaches this only after its own answer was null, so anything
+  // this returns REPLACES a null — and `__getPrototypeOf` would then answer the
+  // PROVIDER's `%Object.prototype%` for any provider-owned plain object, a
+  // foreign intrinsic the consumer can never name and never compare equal to
+  // its own. The dispatcher answers for exactly one shape, a tagged instance of
+  // one of this module's classes, which is the shape whose prototype the
+  // consumer genuinely cannot reach.
+  const prototypeTerminalIdx = ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.getPrototypeOf);
+  const prototypeTerminalFn = prototypeTerminalIdx === undefined ? undefined : definedFuncAt(ctx, prototypeTerminalIdx);
+  const classInstanceProtoIdx = ctx.funcMap.get(STANDALONE_CLASS_INSTANCE_PROTO);
+  if (prototypeTerminalFn && classInstanceProtoIdx !== undefined) {
+    prototypeTerminalFn.body = [
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: classInstanceProtoIdx },
     ];
   }
 
@@ -431,6 +475,7 @@ export function standaloneLinkBoundaryPeerIndices(ctx: CodegenContext): {
   memberGet?: number;
   objectKeys?: number;
   methodCall?: number;
+  getPrototypeOf?: number;
 } {
   const namespace = peerNamespaces(ctx)[0];
   if (namespace === undefined) return {};
@@ -456,6 +501,7 @@ export function standaloneLinkBoundaryPeerIndices(ctx: CodegenContext): {
     memberGet: ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.memberGet),
     objectKeys: ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.objectKeys),
     methodCall: ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.methodCall),
+    getPrototypeOf: ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.getPrototypeOf),
   };
 }
 

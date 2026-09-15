@@ -290,6 +290,7 @@ import { fillClassProtoLookupArm } from "./class-proto-lookup.js"; // (#5195 Ste
 import { classArmClaimInstrs, classArmTagCondition } from "./class-arm-tag-guard.js"; // (#4618 / #6608) nominal `__tag` arm guard
 import { fillClassPrototypeReadArm } from "./standalone-class-prototype-read.js"; // (#6457)
 import { fillStandaloneObjectCreateClassInstance } from "./standalone-object-create-class-instance.js"; // (#6464)
+import { fillStandaloneClassInstanceProtoArm } from "./standalone-class-instance-proto.js"; // (#6617)
 import { mintStandaloneClassProtoBuilders } from "./standalone-class-dyn-member.js"; // (#5383 S2h)
 import { mintStandaloneClassStaticBuilders } from "./standalone-class-dyn-static.js"; // (#5383 S2i)
 import { scanForArrayHoles, ensureHoleType } from "./array-holes.js"; // (#2001 S1)
@@ -6752,6 +6753,11 @@ export function generateModule(
     // (#6464) The `Object.create(<value>.prototype)` dispatcher, reserved at its
     // call sites and filled here because its body reads `ctx.protoGlobals`.
     fillStandaloneObjectCreateClassInstance(ctx);
+    // (#6617) `Object.getPrototypeOf(<class instance>)` through a dynamic value.
+    // Same window and the same reason: the builders it calls exist by now, and
+    // #802's marked-root arm must still take the front slot of
+    // `__getPrototypeOf` (the two arm sets are disjoint besides).
+    fillStandaloneClassInstanceProtoArm(ctx);
     fillDynamicProtoHelpers(ctx);
 
     // A separately compiled runtime-eval provider can invoke caller-owned AOT
@@ -11362,6 +11368,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fill-class-prototype-read", () => fillClassPrototypeReadArm(ctx));
     // (#6464) Same position and same reason as the twin site above.
     profilePhase("fill-object-create-class-instance", () => fillStandaloneObjectCreateClassInstance(ctx));
+    // (#6617) See the single-source path — same placement, same reason.
+    profilePhase("fill-class-instance-proto-arm", () => fillStandaloneClassInstanceProtoArm(ctx));
     profilePhase("fill-dynamic-proto-helpers", () => fillDynamicProtoHelpers(ctx));
     profilePhase("fill-runtime-eval-callable-get-arm", () => fillRuntimeEvalCallablePropertyGetArm(ctx));
     profilePhase("fill-runtime-eval-intrinsic-own-props", () => fillRuntimeEvalIntrinsicFunctionOwnProps(ctx));
