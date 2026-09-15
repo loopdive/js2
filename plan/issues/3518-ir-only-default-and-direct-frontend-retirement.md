@@ -3,7 +3,7 @@ id: 3518
 title: "IR-only default and direct front-end retirement"
 status: in-progress
 created: 2026-07-21
-updated: 2026-09-14
+updated: 2026-09-15
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -61,6 +61,15 @@ func-budget-allow:
 > source fails explicitly, and the direct front-end is deleted.
 
 ## Active sequencing amendment — standalone separation (2026-09-07)
+
+The user-requested [independent-pipeline strategy spike](../agent-context/3518-independent-pipeline-spike-2026-09-15.md)
+pins main `c3f80a8b6cf9a25a617c9af101047a91c4301264` and the unchanged async
+example. It is an experimental HOLD, not a replacement compiler or retirement
+acceptance. The measured scalar control executes; all four async preparation
+axes reach the same missing physical-runtime boundary and do not execute. The
+report preserves original failures and distinguishes diagnostic tests from
+conformance. Legacy development may continue under explicit shared ownership
+and tracked IR adoption; the comparison reference does not advance silently.
 
 The user now prioritizes the standalone WasmGC implementation and requires
 frontend, pure IR, backend, Wasm physical/model support and generated runtime
