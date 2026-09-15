@@ -1,7 +1,7 @@
 {
   "generated": "2026-09-15",
   "threshold": 1500,
-  "totalCeiling": 886593,
+  "totalCeiling": 886711,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -18,7 +18,7 @@
     "src/codegen/closed-method-dispatch.ts": 2032,
     "src/codegen/closure-exports.ts": 2287,
     "src/codegen/closures.ts": 4720,
-    "src/codegen/context/types.ts": 4724,
+    "src/codegen/context/types.ts": 4731,
     "src/codegen/dataview-native.ts": 9514,
     "src/codegen/declarations.ts": 6702,
     "src/codegen/declarations/import-collector.ts": 2298,
@@ -47,7 +47,7 @@
     "src/codegen/generators-native-consumer.ts": 1898,
     "src/codegen/generators-native.ts": 5702,
     "src/codegen/generic-struct-factory.ts": 1865,
-    "src/codegen/index.ts": 15193,
+    "src/codegen/index.ts": 15205,
     "src/codegen/ir-prepared-free-functions.ts": 2332,
     "src/codegen/iterator-native.ts": 5697,
     "src/codegen/json-codec-native.ts": 4554,
@@ -84,11 +84,11 @@
     "src/codegen/vec-access-exports.ts": 1578,
     "src/codegen/vec-overlay.ts": 2853,
     "src/codegen/wasi.ts": 2268,
-    "src/compiler.ts": 2048,
+    "src/compiler.ts": 2050,
     "src/compiler/early-errors/node-checks.ts": 2297,
     "src/emit/binary.ts": 2245,
     "src/import-resolver.ts": 1550,
-    "src/index.ts": 1519,
+    "src/index.ts": 1543,
     "src/interp/emitter.ts": 2398,
     "src/interp/loop.ts": 1556,
     "src/ir/backend/linear-integration.ts": 2383,
@@ -107,6 +107,6 @@
     "src/ir/select.ts": 11270,
     "src/ir/verify.ts": 2830,
     "src/package-linker.ts": 2120,
-    "src/runtime.ts": 19620
+    "src/runtime.ts": 19635
   }
 }
