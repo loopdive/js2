@@ -3665,6 +3665,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/class-field-provenance.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Compile-time class source evidence only; separate source origin from runtime own-property presence before consumer activation."
+    },
+    {
       "path": "src/codegen/class-instance-proto.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
