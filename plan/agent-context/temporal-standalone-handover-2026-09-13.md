@@ -43,6 +43,7 @@ started). Acceptance criterion 4 of #5383 is therefore still open.
 | S22 | `Object.getPrototypeOf(<runtime-only callable>)` answered null in standalone; now `__is_callable ? Function.prototype : __getPrototypeOf` (#6487) — the 7 rows were `*/builtin.js`, NOT the gOPD descriptor residual | 249 → 256 (96/68/92; 0 pass→fail) | branch `…-s22`, stacked on S21, unpushed |
 | S23 | fourth `called value is not a function` cause: `n.toPrecision(a)` on a number PRIMITIVE through an `any` receiver — `__extern_method_call` had no primitive-receiver arm (#6488, `number-primitive-method-call.ts`); the candidate list in the brief was wrong, the instrument-the-sites method was right | 258 → 271 (97/77/97; 0 pass→fail; bucket 10 → 0) | branch `…-s23`, stacked on S22, unpushed |
 | S24 | dynamic `new NS.wide(…)` above arity 8 (`MAX_NATIVE_CONSTRUCT_ARITY`) emitted null without evaluating args (#6489) — upstream of the `expected a string, not null` bucket (9 → 0). Lane restarted once (container restart; WIP commit + partial TSVs salvaged). `const C = NS.wide; new C(…)` → null is a DIFFERENT, arity-independent residual, pinned | 271 → 300 (101/97/102; 0 pass→fail; 29 fail→pass) | branch `…-s24b`, stacked on S23, unpushed |
+| S25 | dynamic `new <value>` had no IsConstructor step — `new` on a method/arrow/builtin did not throw TypeError (#6490, `construct-is-constructor-guard.ts`); `not-a-constructor.js` is 123 files under Temporal and 536 corpus-wide, so the "4 rows" sized the sample, not the defect. Lane restarted once (WIP + all four family TSVs salvaged) | 300 → 304 (103/99/102; PlainDateTime 104 → 106; 0 pass→fail; one fail→pass in `language/expressions/new/` must-not-move, same defect) | branch `…-s25b`, stacked on S24b, unpushed |
 
 Fix commits also on main: the speculative-rollback gate fix on S2m (9501ffca13),
 the `test262` gitlink restoration (#5892), the revert of #5871/#5882 (#5914).
@@ -91,10 +92,16 @@ fails, `--check` + the gate before committing.
   the 360-row sample — `Calling as constructor Expected a TypeError` 4 · `Proxy
   get trap is not callable` 4 · `illegal cast in __class_construct_dispatch()` 2
   · `Cannot read properties of undefined (reading 'equals')` 2 · the `const C =
-  NS.wide; new C(…)` null residual. S25 dispatched on the constructor-path
-  cluster (branch `…-s25`, stacked on S24b). After that: widen the sample (full
-  `built-ins/Temporal/**` solo at 60 s) before picking further slices, and #5407
-  (link cost → the 15 s cap is now the dominant noise source) · `expected a string, not null` 8 · `Object method called on null or
+  NS.wide; new C(…)` null residual. S25 fixed the non-constructor `new`
+  (#6490). Post-S25, four families (480 rows, 70 residual rows in 40 buckets, 33
+  of them ≤2 rows): `Proxy get trap is not callable` **6** · `dereferencing a
+  null pointer in __closure_N()` **6** · `illegal cast in
+  __class_construct_dispatch()` **4** (a wasm trap — plausibly S21's structural
+  `ref.test` problem on the CONSTRUCT ladder). S25's lesson: size a candidate by
+  its test262 family corpus-wide, not by rows in the Temporal sample. S26
+  dispatched on the `illegal cast` trap + closure null pointer (branch `…-s26`,
+  stacked on S25b). Standing: #5407 (link cost; the families now run solo at
+  60 s, slowest cell 22.6 s) · `expected a string, not null` 8 · `Object method called on null or
   undefined` 6 · `Expected a RangeError but got undefined` 6 · `__closure_N()`
   null pointer 5 · `Calling as constructor` 4 · `Proxy get trap` 4. Of the 6
   `Object method called on null or undefined`, FOUR are `calendar-temporal-object`
