@@ -7587,3 +7587,280 @@ spellings, produces an **INVALID MODULE** (`typeof a[0]` on `[1, "a"]`;
 `for (const v of [1, true])`). An invalid module is strictly worse than a trap —
 nothing in it runs at all — and neither spelling appears in any current bucket,
 which is its own warning about sizing by symptom.
+
+### S27 findings (2026-09-15) — the eighth cause is ONE existing rule reaching ONE spelling of "function". Four families, 411 → 419; corpus-wide the two target families go 14 → 79 of 93
+
+Full write-up in
+[#6614](6614-standalone-accessor-literal-return-carrier.md). Branch
+`issue-5383-standalone-temporal-s27`, based on S26's tip `528db1579e`; the fix
+is commit `9b41de035e`.
+
+The 480-row sample moves **+8, 0 pass→fail**, and the eight rows that move are
+exactly the eight `__closure_N` / `checkStringOptionWrongType` rows S26
+recommended. The number worth reporting, though, is the **corpus-wide** one: the
+two test262 families those rows belong to are 93 files, and they go **14 → 79
+pass (+65, 0 pass→fail)**. The 120-row-per-family sample sees 8 of that 65
+because it clips each family at its first 120 files.
+
+#### 1. The defect — an accessor object is null-dropped by the RETURN slot
+
+```js
+const M = { mk(pv) { return { get g() { return pv; } }; } };
+const r = M.mk(5);
+r.g;   // TypeError: Cannot access property on null or undefined
+       // spec, and the JS-host/WasmGC lane: 5
+```
+
+`compileObjectLiteralWithAccessors` builds such a literal as a HOST object
+(`__new_plain_object` + `__defineProperty_accessor`, an externref). The checker
+types the enclosing function's return as the anonymous shape the accessor
+implies, so the receiving binding is laid out as a **closed struct**; the store
+guard (`ref.test $__anon_N` on a host object) always fails, `ref.null` is
+written, and the first read is a `struct.get` on null. Disassembled:
+
+```wat
+(global $global$10 (mut (ref null $27)) (ref.null none))   ;; r — a CLOSED struct
+(struct.get $27 0 (local.get $0))                          ;; r.g — on the null
+```
+
+**The rule that prevents this already exists and is 300 lines away.**
+`declarations.ts::functionReturnsHostObjectLiteralCarrier` walks a function's
+returns for exactly this literal and registers its return type in
+`ctx.objectHashConsumerTypes`, which `resolveWasmType` answers `externref` for.
+It is reached from two call sites that both take a **`ts.FunctionDeclaration`**
+and both walk **source-file-level statements only**. So it fired for one
+spelling of "a function that returns an object":
+
+| spelling | base | branch |
+| --- | --- | --- |
+| top-level `function mk() { … }` | **correct** | correct |
+| `const mk = function () { … }` | trap | correct |
+| `const mk = () => ({ … })` | trap | correct |
+| `{ mk() { … } }` object-literal method | trap | correct |
+| `class C { mk() { … } }` | trap | correct |
+| `function` NESTED in another function | trap | correct |
+| IIFE | trap | correct |
+
+`TemporalHelpers.toPrimitiveObserver` is the object-literal-METHOD row.
+
+#### 2. Why seven wrong hypotheses preceded it, and what the reduction actually cost
+
+S26's symptom table named three distinct defects on one shape (a null return, a
+LOST getter side effect in the plain-function spelling, and a single-getter
+version answering `[object Object]`) and inferred "a single accessor-lowering
+cause". Reduced one module at a time, that resolves differently:
+
+- the **null return** and the **lost side effect** are the SAME defect — the
+  return-slot null-drop. `+obs` on a null answers `0` with `calls` empty, which
+  is what "the side effect is lost" looked like. The hand-off's note that the
+  plain-FUNCTION form kept the value and lost only the effect did **not**
+  reproduce: a top-level `function` spelling is the one spelling that was always
+  correct, side effect included (measured, `.tmp/s27/p1.mjs`);
+- the **`[object Object]`** symptom is a genuinely separate defect, and it is
+  **lane-INDEPENDENT** — the JS-host/WasmGC lane gives the same wrong answer.
+  It is therefore out of a standalone-only slice (see §7a).
+
+**What found it was a spelling matrix, not a deeper trace.** Thirteen one-line
+spellings of the same three-line program, each compiled as its OWN module
+(module CONTENT changes answers), split "object-literal method" from "function
+declaration" in one run and made the rule-with-one-spelling visible. The
+diagnostic cost was two `console.error` lines in `moduleGlobalWasmType` printing
+the chosen ValType and each named arm's answer; every arm reported `false` on
+both trees, which is what pointed at `resolveWasmType`'s type-identity set
+rather than at any of the widening arms.
+
+#### 3. The fix
+
+`src/codegen/accessor-literal-return-carrier.ts` — a standalone/WASI-gated
+pre-pass, driven from `index.ts` at the same deterministic point as
+`collectDynamicObjectReturnCarrierTypes` (before `collectDeclarations`, so
+before any binding is typed), in both the single- and multi-source paths. It
+mirrors the existing body scan for every function-LIKE node.
+
+It also registers the **call-site** type, and that second step is not
+belt-and-braces: a class method's declaration return type and its call site's
+resolved type are **two different `ts.Type` objects that both print
+`{ readonly g: any; }`**, and `objectHashConsumerTypes` is keyed by identity —
+so with only the first step, `new C().mk()` kept the closed-struct slot while
+`C_mk` already returned externref (measured; it is the one case of the matrix
+that stayed broken until the consult was added). That is the
+`oracle-ratchet-allow` in #6614's frontmatter, and the reason it is a genuine
+ValType-lowering question.
+
+Narrowed to **accessor** literals, the same scoping #5376 chose for the
+struct-FIELD twin of this defect; the other `objectLiteralForcesHostPath`
+reasons stay a separate, separately-measured change.
+
+#### 4. The result
+
+| family (first 120 files) | base | branch | Δ | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| `PlainDate/**` | 104 | 107 | +3 | 0 | 3 |
+| `Duration/**` | 99 | 100 | +1 | 0 | 1 |
+| `PlainDateTime/**` | 106 | 109 | +3 | 0 | 3 |
+| `ZonedDateTime/prototype/**` | 102 | 103 | +1 | 0 | 1 |
+| **total** | **411** | **419** | **+8** | **0** | **8** |
+
+The base total **reproduces S26's 411 family for family** (104/99/106/102) on a
+freshly prewarmed cache, so the two slices' numbers are directly comparable.
+
+**Corpus-wide, the two target families:** every `infinity-throws-rangeerror.js`
+and `overflow-wrong-type.js` under `Temporal` — **93 files**, run per file on
+both labels at 60 s, solo:
+
+| | base | branch | Δ |
+| --- | --- | --- | --- |
+| 93 files, both target families | **14 pass** | **79 pass** | **+65, 0 pass→fail** |
+
+Aggregating the 480 sample rows by digit-normalised message: **exactly three
+buckets move**, and the other 36 are unchanged count for count:
+
+| bucket | base | branch |
+| --- | --- | --- |
+| `dereferencing a null pointer in __closure_N()` | 6 | **0** |
+| `dereferencing a null pointer in __anon_N_checkStringOptionWrongType` | 3 | **0** |
+| `object with toString … «[object Object]n»` (new) | 0 | 1 |
+
+Both target buckets are retired outright. The single new row is
+`ZonedDateTime/prototype/add/overflow-wrong-type.js`, which clears this defect
+and lands on a **BigInt** one: `assert.sameValue(result.epochNanoseconds,
+1_000_086_400_987_654_321n)` renders the expected value as `[object Object]n`.
+Unrelated to accessors, and counted as fail→fail.
+
+Runs were solo, sequential, at a **60 s** per-row budget from the start, on a
+FRESH `JS2WASM_TEMPORAL_CACHE` per label (`cacheHit: false` on both prewarms,
+key `a11c84e5…`, 3,307,526 B). There is **no `compile_error` and no `timeout`
+cell anywhere in the 960**.
+
+#### 5. Controls
+
+**Must-not-move — 497 rows, five groups, per file, 0 flips.**
+
+| group | rows | base pass | branch pass | flips |
+| --- | --- | --- | --- | --- |
+| A: `Object/keys` + `expressions/object` + `Reflect/{get,has}` | 100 | 94 | 94 | 0 |
+| B: `Object/{entries,values,getOwnPropertyNames}` + `statements/for-in` | 116 | 93 | 93 | 0 |
+| **E1: `language/expressions/object/accessor-*`** | 24 | 23 | 23 | 0 |
+| **E2: `built-ins/Object/defineProperty` (first 150)** | 150 | 150 | 150 | 0 |
+| **E3: `template-literal` + `Symbol/toPrimitive` + `addition`** | 107 | 99 | 99 | 0 |
+
+A/B are the inherited groups and are the INSENSITIVE controls here. **E is the
+group this change needs** and was chosen for it: the accessor corpus itself, the
+descriptor-install corpus that mints the same host objects, and the two
+ToPrimitive consumers (`` `${obj}` `` and `+obj`) that read them back. The one E1
+`compile_error` cell is identical on both labels.
+
+**Byte A/B — the control the corpus cannot give, and it answers in both
+directions:**
+
+| artifact | base | branch | |
+| --- | --- | --- | --- |
+| standalone, object-literal METHOD carrier | `044dd6a1…` 145,362 B | `2e79bfcf…` 144,270 B | **moved** |
+| standalone, ARROW carrier | `fbc1fbc8…` 144,562 B | `65900e54…` 143,547 B | **moved** |
+| standalone, CLASS-METHOD carrier | `06d40ec2…` 146,121 B | `b76862ae…` 145,489 B | **moved** |
+| standalone, top-level `function` carrier (already correct) | `cb8b7068…` 142,014 B | identical | |
+| standalone, same shape with NO accessor | `5dd93d63…` 142,469 B | identical | |
+| standalone, top-level accessor literal, no carrier | `d5576819…` 143,101 B | identical | |
+| **gc lane, the SAME armed method source** | `adfa13cf…` 6,604 B | identical | the lane gate |
+| **gc lane, the SAME armed arrow source** | `e2dea7b2…` 6,359 B | identical | the lane gate |
+| linked provider (no accessor carrier) | `ce50b3f3…` 155,696 B | identical | |
+
+Exactly the three armed artifacts move; every unarmed one is byte-identical,
+including both gc-lane artifacts compiled from the same armed sources — the lane
+gate proved rather than asserted. All three armed artifacts got SMALLER (−1,092 /
+−1,015 / −632 B): an externref slot drops the guarded-cast-and-store sequence the
+closed struct needed.
+
+**Temporal provider**: the cached artifact is byte-identical between the two
+labels — and byte-identical to S26's (`dc159623…`, 3,307,526 B) — so no family
+cell was served a differently compiled polyfill and the whole delta is in the
+TEST module.
+
+**Corpus byte A/B**: 42 modules × {gc, standalone} = **84 artifacts, 0 move**. As
+in S24–S26 this is a NULL control and saying only "0 moved" overstates it: no
+module in that corpus returns an accessor literal from a function, so it shows
+the change is not a broad perturbation but cannot show it does anything. The byte
+table above is what shows that.
+
+**Equivalence gate**: 22 failing / 1,720 passing / 22 known-failures — baseline
+exactly.
+
+#### 6. The witness
+
+`tests/issue-6614-accessor-literal-return-carrier.test.ts`, four `it`s, measured
+on both trees by file-copy revert of `src/codegen/index.ts`: base **3 fail /
+1 pass**, branch **4 pass**.
+
+The side-effect arm is separate on purpose. A fix that merely stops the
+null-drop could still hand back an object whose accessor became a DATA property
+— right value, no side effect — and that is exactly what
+`checkStringOptionWrongType`'s `assert.compareArray(actual, expected, "order of
+operations")` catches. The arm asserts the getter is observed **exactly once, in
+spec order**, for `+obs` (valueOf first), for `` `${obs}` `` (toString first) and
+for a double read (4 log entries, not 0 and not 8).
+
+#### 7. Residuals, each reduced
+
+**(a) `o.valueOf()` as a DIRECT call answers the receiver.** LANE-INDEPENDENT —
+the gc lane gives the same wrong answer, so fixing it would move gc bytes and it
+is out of a standalone-only slice.
+
+```js
+const o = { get valueOf() { return function () { return 11; }; } };
+o.valueOf();                                           // "[object Object]"  spec: 11
+(function () { var f = o.valueOf; return f(); })();    // 11 — correct
+```
+
+Name-specific: `o.toString()`, `o.zz()` and `o.f()` are all correct with the
+identical shape, and a DATA-property or METHOD `valueOf` is correct too. A
+`valueOf` call fast path is reaching the receiver's builtin without first asking
+whether the own property is an accessor. No row in the current buckets depends
+on it.
+
+**(b) The reverse peer GET does not dispatch an ACCESSOR.** A provider reading
+`o.g` off a consumer-built object gets `undefined` where the consumer installed
+a getter; the DATA-property twin reads back correctly. Measured on BOTH trees
+with a TOP-LEVEL accessor literal — a spelling that was already correct locally
+— which pins it to the reverse channel and not to the return slot. Pinned as an
+expectation in the witness so it cannot rot silently. This answers the brief's
+"check the reverse GET honours accessors": it does not.
+
+#### 8. Residual buckets, branch tree, all four families (61 rows, 37 buckets)
+
+| bucket | rows | file-name footprint corpus-wide | reduced to |
+| --- | --- | --- | --- |
+| `Proxy get trap is not callable` | 6 | `order-of-operations.js` 64 + `observable-get-overflow-argument-primitive.js` 5 | not reduced; standalone Proxy support, a slice of its own |
+| `illegal cast in __class_construct_dispatch()` | 4 | `calendar-undefined.js` 5 + `calendar-wrong-type.js` 8 | S26 §3a: a hard `ref.cast` in `externArgCoercionInstrs` for a formal typed by INFERENCE from its default (`calendar = "iso8601"` ⇒ `string`), unsound for a dynamic caller |
+| `Built-in objects must be extensible` | 3 | `builtin.js` 129 | not reduced |
+| `constructor.js: Expected a TypeError` | 3 | `constructor.js` 16 | not reduced |
+| `Expected a RangeError … no exception` | 3 | mixed | not reduced |
+| 32 further buckets | ≤2 each | | |
+
+**Read the footprint column with S26's amendment applied**: a file-name count
+measures a COALITION, not a defect — `builtin.js` is 129 files of which 3 fail
+here. This slice is the counter-example that makes the amendment cut both ways:
+the two families it retired footprint at 93 files and **65 of them really did
+move**, because there the name and the mechanism happened to coincide. Size by
+the family, reduce before you believe the size, and then MEASURE the family.
+
+**Recommended next slice: the `illegal cast in __class_construct_dispatch()`
+bucket.** It is the only remaining bucket already reduced to a named mechanism
+in one module with no link, S26 did that reduction, and the shape (a parameter
+whose type is INFERRED from its default, hard-cast at a dynamic call) is general
+rather than Temporal-specific. `Proxy get trap is not callable` is larger (6
+rows, 69 files) but is unreduced standalone-Proxy work.
+
+#### 9. Traps, carried forward and added to
+
+Everything in S26 §Traps still holds. Two additions:
+
+- **`wabt` cannot read this tree's modules** (`readWasm failed: unexpected type
+  form (got -0x30)`). Use `./node_modules/.bin/wasm-dis -all` (binaryen), which
+  is already in `node_modules/.bin`. A disassembler that refuses is not a signal
+  about the module.
+- **A probe file with a SHARED prelude is one module**, so a single case that
+  fails to compile poisons every other case's answer — the first `p4` run
+  reported a uniform `stack-balance (#2090)` CE for all ten cases and said
+  nothing about any of them. Drive each case as its own module
+  (`.tmp/s27/each.mjs`); it costs one compile per case and is the only form in
+  which a spelling matrix means anything.
