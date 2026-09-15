@@ -63,7 +63,13 @@ wrong; the miss was on the provider side, which had no peer at all.
 **Ids 6474–6477 collided with main** (hand-picked while `--allocate` could not
 write): S14–S16 were renumbered to #6601–#6604 and merged forward S14→S17;
 `check:issue-ids:against-main` is green on S17. Always `--allocate`; if the write
-fails, `--check` + the gate before committing.
+fails, `--check` + the gate before committing. **Second collision, 2026-09-15:**
+with pushes blocked for ~40 h, `origin/main` took 6478–6483 too. The whole
+S14–S26 stack was renumbered ONCE MORE, in order, to a far block
+**#6478–#6491 → #6600–#6613** on the S26 tip (6516c62a30); the per-branch
+issue files on S14–S25 still carry the old ids, so those branches cannot be
+PR'd individually without the same renumber — land the stack from the S26 tip
+(or replay `.tmp/renumber.py` per branch) once GitHub is back.
 
 ## Remaining buckets (post-S17 sample, 120 fail pooled) and the next census targets
 
