@@ -48,7 +48,7 @@ import {
   pushElemSizeForKind,
   pushTaDynViewInBoundsLen,
 } from "./dataview-native.js";
-import { addFuncType, TA_CTOR_KINDS } from "./registry/types.js";
+import { addFuncType, TA_CTOR_KINDS, taCtorIdentityTestInstrs } from "./registry/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { BFN_ID_FIELD_IDX } from "./builtin-fn-meta.js"; // (#5194 r3 F3) refusal-closure filter
@@ -1359,8 +1359,30 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
     getFn.body.unshift(
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
-      { op: "local.tee", index: cAny },
-      { op: "ref.test", typeIdx: ctorIdx },
+      { op: "local.set", index: cAny },
+      // (#6620, mirrors #5194 r3 F1) A bare `ref.test $__ta_ctor` is a
+      // STRUCTURAL question, and WasmGC canonicalizes structurally-identical
+      // struct types. `$__ta_ctor` is `{kind: i32, brand: i32}`, which is
+      // EXACTLY the shape of a field-less class's compiled root
+      // (`{__tag: i32, __shape_brand: i32}`, `class-bodies.ts` #2158/#2009) —
+      // so in a module that both holds a TypedArray constructor value and
+      // links/declares such a class, every instance (or class-object
+      // singleton) of that class passes this bare `ref.test`. Measured
+      // 2026-09-16 on the standalone `@js-temporal/polyfill` provider: a
+      // dynamic `.prototype` read on `Temporal.Duration` (a class value with
+      // this exact two-i32-field root shape) answered `undefined` instead of
+      // the class's prototype object whenever ANY dynamic `new <any>(...)`
+      // elsewhere in the module armed `ctx.taCtorTypeIdx` — this arm's
+      // "prototype" key check matched (the receiver was misclassified as a
+      // `$__ta_ctor`), so it returned the wrong per-kind TA proto glue (or the
+      // `undef()` sentinel, when the garbage `cKind` field matched no known
+      // kind), pre-empting the correct fallback a few arms down
+      // (`__js2wasm_link_member_get`, the cross-module boundary call that
+      // answers correctly for a provider-owned class). `taCtorIdentityTestInstrs`
+      // is the same brand-VALUE-checked identity test `builtin-callable-brand.ts`
+      // and `reflect-construct-native.ts` already use for this exact reason —
+      // reused here rather than re-deriving a third brand check.
+      ...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: cAny }]),
       { op: "if", blockType: { kind: "empty" }, then: inner },
     );
   }

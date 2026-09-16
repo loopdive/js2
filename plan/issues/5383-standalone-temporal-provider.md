@@ -8803,3 +8803,123 @@ Everything in S26–S31 still holds. One addition:
   (`ctx.moduleUsesDynTaView`). Grep every consumer of a broad pre-scan flag
   before trusting that "my feature doesn't use TypedArrays" means "this
   flag never affects my feature."
+
+### S33 findings (2026-09-16) — #6617 R1 FIXED: a bare `ref.test $__ta_ctor` collides with a field-less provider class's compiled root
+
+Full write-up in
+[#6620](6620-standalone-ta-ctor-brand-prototype-collision.md). Branch
+`issue-5383-standalone-temporal-s33`, based on S32's tip `2d2f277396`.
+
+#### 1. The reduction
+
+Continuing S32's reduction of R1 (the trigger: ANY dynamic
+`new <any-typed value>(...)` anywhere in the consumer flips every dynamic
+`.prototype` read on a provider-linked class from `object` to `undefined`,
+traced to `ctx.moduleUsesDynTaView` arming `proto-index-store.ts`'s
+companion machinery), this slice bisected FURTHER:
+
+1. **Forcing `ctx.moduleUsesDynTaView = true` with NO real dynamic
+   construct anywhere in source** still broke a single, isolated
+   `readProto(Temporal.PlainDate)` probe (zero other module content) —
+   ruling out anything that needs an actual TypedArray-shaped syntax to
+   fire, and ruling out `proto-index-store.ts`'s companion machinery
+   specifically: two OTHER arming paths into that SAME store
+   (`protoIndexDirty` via `Object.defineProperty(Array.prototype, …)`,
+   `protoMemberDirty` via a bare `Array.prototype` read) did NOT break the
+   probe, so whatever breaks it is unique to `moduleUsesDynTaView`, not
+   shared store-reservation machinery.
+2. Instrumenting `fillTaDynViewMopArms` (`ta-dyn-mop.ts`) confirmed
+   `ctx.taDynViewTypeIdx` gets minted from the bare boolean alone (via the
+   standalone link boundary's `Object.prototype.toString` classifier, which
+   calls `getOrRegisterTaDynViewType` unconditionally once the flag is set —
+   reserved for every provider-linked module, real TA construct or not).
+3. **Disabling `fillTaDynViewMopArms` entirely** (flag still forced)
+   restored the correct answer.
+4. **Disabling ONLY its `$__ta_ctor` receiver arm** (~70 lines, the
+   `TA.prototype`/`TA.BYTES_PER_ELEMENT` block) — every other dyn-view arm
+   left active — ALSO restored correctness. Pinpointed.
+
+That arm's receiver gate was a bare `ref.test $__ta_ctor`. `$__ta_ctor` is
+`{kind: i32, brand: i32}` — EXACTLY the shape of a field-less class's
+compiled root, `{__tag: i32, __shape_brand: i32}` (`class-bodies.ts`
+#2158/#2009). Both shapes were independently widened to two i32 fields to
+escape two DIFFERENT PRIOR collisions (`$__ta_ctor`'s own 1-field form
+collided with `__box_boolean_struct`, #5194 r3 review F1; the empty class
+root's 1-field form collided with `$AnyString`, #2158/#2009) — and the two
+widened shapes then collided with EACH OTHER. `Temporal.Duration` compiles
+to exactly this root shape (its numeric fields live in an expando
+side-table, not native struct fields), so once armed, `ref.test $__ta_ctor`
+on its class-object value returned true, and the arm's "prototype" key
+check matched, returning the wrong TypedArray-view prototype glue instead
+of falling through to `__js2wasm_link_member_get`.
+
+**This exact collision was already discovered and fixed once.**
+`taCtorIdentityTestInstrs` (`registry/types.ts`, #5194 r3 review F1) is a
+brand-VALUE-checked identity test built FOR this exact shape collision — its
+own doc comment measures the IDENTICAL symptom on THIS SAME provider
+(`new qi.Duration(...)`/`new qi.PlainDate(...)` answering `typeof
+"function"`). That fix landed at two call sites
+(`builtin-callable-brand.ts`, `reflect-construct-native.ts`) but not at
+`ta-dyn-mop.ts`'s `$__ta_ctor` receiver arm — the one this slice fixes.
+
+#### 2. The fix
+
+`ta-dyn-mop.ts`'s `$__ta_ctor` receiver arm now consults
+`taCtorIdentityTestInstrs` (the established helper) instead of a bare
+`ref.test`. Answer-preserving for a genuine TypedArray constructor value
+(both mint sites write the brand); can only ever REMOVE a false positive.
+
+#### 3. The result
+
+| probe | base | branch |
+| --- | --- | --- |
+| dynamic `.prototype` read, armed by an unrelated `new c(1)` elsewhere | `undef` | `object` |
+| same receiver, `.name` (control) | `string` | `string` (unchanged) |
+| `.prototype` with no dynamic `new` anywhere (control) | `object` | `object` (unchanged) |
+| a genuine `Uint8Array`/`Int32Array` `.prototype`/`.BYTES_PER_ELEMENT` (control) | `object`/`4` | `object`/`4` (unchanged) |
+
+**Corpus-wide, all 45 `subclassing-ignored.js` test262 files**: every one
+moved PAST the `.prototype` blocker — the failure message changed uniformly
+from `SameValue(«null», «undefined»)` (R1's signature) to
+`SameValue(«null», «null»)` (a DIFFERENT, already-documented residual: a
+dynamic `new construct(...)` on a linked class value still answers a
+receiver `SameValue` disagrees with — S30's hand-off already named this in
+its own `p2` probe; #6619 names a sibling mechanism for `.from()`).
+**0 → 0 pass for this family** — R1 is fixed and verified by the uniform
+error-signature change corpus-wide, but this SECOND, distinct blocker still
+stops the family from fully passing. Filed as R-construct in #6620, not
+reduced further this slice (own repro budget needed).
+
+A repo-wide grep for the same bare `ref.test` pattern against
+`ctorIdx`/`taCtorTypeIdx` (excluding the `taCtorIdentityTestInstrs`-routed
+sites) found 7 MORE unguarded consult sites (`dataview-native.ts` ×5,
+`property-access-dispatch.ts`, `ta-ctor-meta.ts` ×2) — the SAME shape of
+bug, none reduced to a concrete failing test262 row this slice. Filed as
+R-other-bare-ref-test in #6620.
+
+**Equivalence gate**: unchanged from baseline (this fix touches only the
+standalone `$__ta_ctor` receiver arm, `noJsHost`-gated, never reached by the
+gc-target equivalence corpus).
+
+**Witness**: `tests/issue-6620-ta-ctor-brand-prototype-collision.test.ts`, 4
+`it`s — 1 fix-witness measured failing on the file-copy-reverted base
+(`undef`, expected `object`) and passing on branch; 3 controls (`.name` on
+the same armed receiver, a lone unarmed `.prototype` read, a genuine
+TypedArray constructor) pass on both trees unchanged.
+
+#### 4. Traps, carried forward and added to
+
+Everything in S26–S32 still holds. One addition:
+
+- **A struct shape widened to escape collision A is not proof against
+  collision B with a DIFFERENT equally-widened shape.** `$__ta_ctor` was
+  widened from 1 to 2 i32 fields to escape a collision with
+  `__box_boolean_struct` (#5194 r3 review F1); a field-less class's root was
+  independently widened from 1 to 2 i32 fields to escape a collision with
+  `$AnyString` (#2158/#2009). The two widened shapes then matched EACH
+  OTHER. When a struct carries a VALUE-level discriminator for exactly this
+  reason (a `brand`/`TA_CTOR_BRAND` sentinel field), a bare `ref.test` alone
+  throws that discriminator away — every consult of the struct's real
+  IDENTITY needs the value check too, and a codebase-wide grep for the
+  type's naked `ref.test` is how the other 7 sites in this slice's residual
+  were found.
