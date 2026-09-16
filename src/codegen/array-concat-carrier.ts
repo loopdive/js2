@@ -80,6 +80,45 @@ export function concatMustConsultPrototypeChain(ctx: CodegenContext): boolean {
   return ctx.targetProfile.semanticProviders === "native-first" && ctx.protoIndexDirty === true;
 }
 
+/**
+ * (#6485) The THIRD routing gate: does this module have to route
+ * `Array.prototype.concat` through the §23.1.3.1 spec loop because an operand
+ * may carry `@@isConcatSpreadable`?
+ *
+ * §23.1.3.1 step 5.b calls `IsConcatSpreadable(E)` (§23.1.3.1.1), whose step 2
+ * is `Get(E, @@isConcatSpreadable)` — a full MOP read that decides, per operand,
+ * whether the operand is FLATTENED or appended whole. Every path below the gate
+ * in `compileArrayConcat` decides that statically: the typed fast path
+ * `array.copy`s a vec operand's backing and the `allArgumentsAreArrays` dynamic
+ * path walks each operand's indices, so both spread unconditionally and neither
+ * ever performs the Get.
+ *
+ * Measured on the base tree (standalone, `.tmp/6485/js/probe5.js`), both
+ * directions wrong:
+ *
+ * ```js
+ * var a = [1, 2], b = [3, 4];
+ * b[Symbol.isConcatSpreadable] = false;
+ * a.concat(b).length;   // 4 — spec says 3 (b is appended whole)
+ * var c = [5, 6];
+ * c[Symbol.isConcatSpreadable] = false;
+ * c.concat().length;    // 2 — spec says 1 (the RECEIVER is an operand too)
+ * ```
+ *
+ * The gate is `ctx.isConcatSpreadableDirty`, the pre-scan flag set only by a
+ * module that can NAME the well-known symbol (see `array-holes.ts`). Same shape
+ * and same argument as `concatMustConsultPrototypeChain` above: with the flag
+ * clear the symbol cannot exist in the module, `IsConcatSpreadable` degenerates
+ * to `IsArray`, the fast path is exactly right, and the emitted bytes do not
+ * move at all.
+ *
+ * Restricted to `native-first` providers for the same reason: the JS-host lane
+ * delegates to `env::__array_concat_any`, which performs the Get itself.
+ */
+export function concatMustConsultIsConcatSpreadable(ctx: CodegenContext): boolean {
+  return ctx.targetProfile.semanticProviders === "native-first" && ctx.isConcatSpreadableDirty === true;
+}
+
 /** Strip the wrappers that can sit between a declaration and its call initializer. */
 function unwrap(expr: ts.Expression): ts.Expression {
   let current = expr;
@@ -135,6 +174,9 @@ function receiverIsArrayShaped(ctx: CodegenContext, receiver: ts.Expression): bo
  * 2. **`concatMustConsultPrototypeChain`.** With that gate on, the lowering
  *    sends EVERY arity — including 0 — to the spec loop, so every result is an
  *    `$ObjVec`.
+ * 3. **`concatMustConsultIsConcatSpreadable`** (#6485). Same property: the gate
+ *    routes EVERY arity to the spec loop, so the slot typer must agree or the
+ *    #4655 slot/value desync this file exists to prevent simply moves.
  *
  * Zero arguments with the gate off, and one argument in any configuration, both
  * answer `false`: their dispatch depends on the runtime receiver probe and on
@@ -148,5 +190,5 @@ export function concatCallYieldsDynamicCarrier(ctx: CodegenContext, expr: ts.Exp
   const callee = call.expression;
   if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== "concat") return false;
   if (!receiverIsArrayShaped(ctx, callee.expression)) return false;
-  return call.arguments.length > 1 || concatMustConsultPrototypeChain(ctx);
+  return call.arguments.length > 1 || concatMustConsultPrototypeChain(ctx) || concatMustConsultIsConcatSpreadable(ctx);
 }

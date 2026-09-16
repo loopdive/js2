@@ -72,6 +72,7 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
       ctx.vecIndexDeleteDirty &&
       ctx.vecOwnKeysDirty &&
       ctx.arraySpeciesDirty &&
+      ctx.isConcatSpreadableDirty &&
       ctx.dynamicCodeDirty
     ) {
       return;
@@ -133,6 +134,9 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     if (!ctx.arraySpeciesDirty && isArraySpeciesObservable(node)) {
       ctx.arraySpeciesDirty = true;
     }
+    if (!ctx.isConcatSpreadableDirty && isIsConcatSpreadableObservable(node)) {
+      ctx.isConcatSpreadableDirty = true;
+    }
     if (isOwnKeysOrDescriptorDefineUse(node)) {
       ctx.vecOwnKeysDirty = true;
       // ArraySetLength can expose absent f64 indices even when every literal
@@ -155,6 +159,7 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
       ctx.inheritedSetDescriptorDirty = true;
       ctx.vecIndexDeleteDirty = true;
       ctx.vecOwnKeysDirty = true;
+      ctx.isConcatSpreadableDirty = true;
     }
     forEachChild(node, visit);
   };
@@ -172,6 +177,10 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
       `[4602] allDirty=${ctx.inheritedSetDescriptorDirty} dynamicCode=${ctx.dynamicCodeDirty} keys=${JSON.stringify([...ctx.inheritedSetDirtyKeys])}`,
     );
   }
+  // (#6485) The gate's whole safety argument is "flag clear ⇒ not reached ⇒
+  // bytes unchanged", so the flag's HIT RATE over a corpus is evidence, not a
+  // detail. This makes it measurable without a second, drifting scan.
+  if (process.env.JS2WASM_DEBUG_6485) console.error(`[6485] isConcatSpreadableDirty=${ctx.isConcatSpreadableDirty}`);
   planHoleyArrayCarrier(ctx, root);
 }
 
@@ -638,6 +647,47 @@ function isArraySpeciesObservable(node: ts.Node): boolean {
     }
   }
   return isConstructorDescriptorDefine(node);
+}
+
+/** (#6485) The well-known symbol's NAME — the only handle a module has on it. */
+const WELL_KNOWN_CONCAT_SPREADABLE = "isConcatSpreadable";
+
+/**
+ * (#6485) Can this node make `@@isConcatSpreadable` OBSERVABLE anywhere in the
+ * module? Sets `ctx.isConcatSpreadableDirty`, the third `Array.prototype.concat`
+ * routing gate (see `array-concat-carrier.ts`).
+ *
+ * The match is on the NAME, in every spelling the language offers it:
+ *
+ *  - `Symbol.isConcatSpreadable` — a property access, the canonical spelling;
+ *  - `Symbol["isConcatSpreadable"]` / `o["isConcatSpreadable"]` — a string
+ *    literal, including one stored in a variable or a descriptor bag;
+ *  - `{ isConcatSpreadable: … }` / `o.isConcatSpreadable` — a property NAME,
+ *    which is how a descriptor bag or a re-export can carry it;
+ *  - `Symbol[k]` with a non-literal key — the only way to reach the well-known
+ *    symbol without naming it (`Symbol["isConcat" + "Spreadable"]`).
+ *
+ * Why a name match is COMPLETE for this compiler's unit of compilation, not
+ * merely a heuristic: a standalone module has no host and no second realm, and
+ * no builtin carries `@@isConcatSpreadable` as an own property, so the only
+ * producer of the symbol VALUE is `Symbol.isConcatSpreadable` itself. A module
+ * that never names it cannot install it, cannot copy it through a spread or
+ * `Object.assign` (there is nothing to copy), and cannot read it back. The one
+ * remaining vector is dynamic code, which the `dynamicCodeDirty` cascade in
+ * `scanForArrayHoles` already forces this flag for.
+ *
+ * The deliberate NON-match is a computed member write with an opaque key
+ * (`o[k] = v`). Arming on that would set the flag on ordinary code — the
+ * measured hazard on this lane, since a set flag costs the spec loop's bytes in
+ * every module that concats.
+ */
+function isIsConcatSpreadableObservable(node: ts.Node): boolean {
+  if (ts.isIdentifier(node) || ts.isStringLiteralLike(node)) return node.text === WELL_KNOWN_CONCAT_SPREADABLE;
+  // `Symbol[<expr>]` — a non-literal key can resolve to the well-known name.
+  if (!ts.isElementAccessExpression(node)) return false;
+  const base = unwrapExpr(node.expression);
+  if (!ts.isIdentifier(base) || base.text !== "Symbol") return false;
+  return !ts.isStringLiteralLike(node.argumentExpression) && !ts.isNumericLiteral(node.argumentExpression);
 }
 
 /**

@@ -1937,6 +1937,27 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   arraySpeciesDirty: boolean;
   /**
+   * (#6485) The module can make `@@isConcatSpreadable` OBSERVABLE — it mentions
+   * `isConcatSpreadable` anywhere (identifier, string literal, property name),
+   * reads a computed member of `Symbol`, or contains dynamic code.
+   *
+   * Consumer: `concatMustConsultIsConcatSpreadable` in `array-concat-carrier.ts`,
+   * which is the third routing gate on `Array.prototype.concat`. §23.1.3.1 step
+   * 5.b performs `Get(E, @@isConcatSpreadable)` on every operand; the typed
+   * `array.copy` fast path spreads unconditionally and never performs it, so a
+   * module that can install the symbol must take the spec loop. Clear — the
+   * common case — ⇒ the gate is never reached and emission is byte-identical.
+   *
+   * Why the scan keys on the NAME rather than over-approximating every computed
+   * member write: in a single-module standalone program `Symbol.isConcatSpreadable`
+   * is the ONLY way to obtain the well-known symbol (no host, no cross-realm
+   * import, and no builtin carries it as an own property), so a module that
+   * never names it cannot observe it. Arming on every `o[k] = v` instead would
+   * fire on ordinary code and turn a conformance fix into module-wide byte
+   * growth — the hazard this flag exists to avoid.
+   */
+  isConcatSpreadableDirty: boolean;
+  /**
    * (#4230 L1) The module mentions a descriptor-defining or own-name-reading
    * `Object`/`Reflect` builtin — `defineProperty`, `defineProperties`, a
    * two-argument `create`, `getOwnPropertyNames`, `ownKeys`,
