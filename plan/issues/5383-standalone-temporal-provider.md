@@ -8663,3 +8663,143 @@ Everything in S26–S30 still holds, with one addition:
   boundary) was broken. Three near-identical one-liners, three different
   compile paths, one of them broken — reducing to the wrong one would have
   reported a false negative.
+
+### S32 findings (2026-09-16) — the thirteenth cause: the f64 twin of #6615. Four families 426 → 427; R1 reduced past the S30/S31 hand-off but NOT fixed this slice (see #6619)
+
+Full write-up in
+[#6619](6619-standalone-f64-arg-marshal-symbol-bigint-throw.md). Branch
+`issue-5383-standalone-temporal-s32`, based on S31's tip `4c91fc99c6`; the
+fix is committed WIP `2d2f277396`.
+
+**This slice spent its first probing budget on #6617's R1** (`construct.prototype`
+answers `undefined`, content-sensitive) — the dispatch brief's designated
+primary target — and reduced it substantially past the S30/S31 hand-off's
+six one-variable probes to a single, precise trigger: **any dynamic
+`new <any-typed-value>(...)` call ANYWHERE in the module** (not necessarily
+on the same class, not necessarily in the same function) flips every dynamic
+`.prototype` read on a provider-linked class from `object` to `undefined`.
+Traced to `sourceHasDynamicTaConstruct` (`source-scan-predicates.ts`, #2872)
+— a conservative whole-module TypedArray-construction pre-scan that cannot
+distinguish "this dynamic `new` might be a TypedArray" from "this dynamic
+`new` is definitely something else" and sets `ctx.moduleUsesDynTaView = true`
+either way, which arms `proto-index-store.ts`'s companion/protoidx machinery
+module-wide and roughly doubles `__extern_get`'s compiled body (1,656 →
+3,473 WAT lines). The exact KEY-specific wrong arm inside that machinery
+(ruled out: mis-registered boundary import, wrong `$Object` classification,
+the S30 `__std_class_instance_proto` mechanism — none present) was not
+pinned down within this slice's probing budget, so per the dispatch brief's
+own fallback clause the slice moved to the f64 target rather than risk an
+under-verified patch to a subsystem the codebase's own comments describe as
+delicate. Full reduction, ruled-out list, and the exact next-step pointer
+(`proto-index-store.ts`'s `__protoidx_get_k`/`__protoidx_companion`) are in
+#6619's Residuals section — this is a running start for the next slice, not
+a restart.
+
+#### 1. The defect — `__unbox_number`'s Symbol/BigInt leniency reaches a SECOND caller with no guard
+
+`new Temporal.Duration(Symbol())` / `(0n)` answered `NaN` (a Duration with
+all-zero fields) where §7.1.4 ToNumber requires a TypeError
+(`built-ins/Temporal/Duration/invalid-type.js`). #6615's own fix (S28)
+already solved this for `ref`-typed dynamic construct/dispatch arguments;
+the `f64` arm of the SAME marshal (`extern-arg-marshal.ts`'s
+`externArgCoercionInstrs`) called `__unbox_number` directly, with no guard —
+`__unbox_number` is deliberately lenient (it doubles as the numeric-key
+probe for `__extern_set` on a vec receiver, which must NOT throw), so the
+Symbol/BigInt guard has to live in the CALLER, exactly as
+`tonumber-fast-paths.ts`'s `symbolThrowArm` already does for the GENERAL
+ToNumber path. This dynamic construct/dispatch marshal had none.
+
+#### 2. The fix — `__unbox_number_checked`, mirroring #6615's arming discipline exactly
+
+`extern-arg-marshal.ts` gains `__unbox_number_checked(externref) -> f64`:
+throws `TypeError` for a `$Symbol`/`$BigInt` operand, else calls
+`__unbox_number`. Consulted only by the f64 arm, and only when
+`moduleHasF64TypedConstructFormal` (new, `standalone-class-construct.ts`,
+mirrors `moduleHasRefTypedConstructFormal` field for field) says this
+module has an `f64`-typed construct formal to protect — an unarmed module
+pays nothing. Two arming sites, the SAME two #6615 uses (the module's own
+dynamic `new <value>` expression; post-bodies for a linked provider whose
+consumer is wasm, since `@js-temporal/polyfill` compiles no dynamic `new`
+site of its own). A defaulted `f64` formal composes with #5380's
+omitted-argument sentinel: `ensureUnboxNumberOrOmitted` now takes the
+checked funcIdx as its fallback, so `new C(undefined)` still runs the
+default while `new C(Symbol())` on the same formal still throws.
+
+#### 3. The result
+
+| family (first 120 files) | base | branch | Δ | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| `PlainDate/**` | 110 | 110 | 0 | 0 | 0 |
+| `Duration/**` | 101 | 102 | +1 | 0 | 1 |
+| `PlainDateTime/**` | 112 | 112 | 0 | 0 | 0 |
+| `ZonedDateTime/prototype/**` | 103 | 103 | 0 | 0 | 0 |
+| **total** | **426** | **427** | **+1** | **0** | **1** |
+
+The single fail→pass is `Duration/invalid-type.js`. No `compile_error`, no
+`timeout`, no `__temporal_*` leak in any row.
+
+**Corpus-wide, the two files a Symbol/BigInt construct argument can reach**:
+`Duration/invalid-type.js` (this fix — fail → pass) and
+`Duration/from/invalid-type.js` (a DIFFERENT mechanism — `.from()` extracts
+object-literal properties inside the provider's own body, never reaching
+this marshal at all — unchanged, filed as R-from in #6619).
+
+**The 45 `subclassing-ignored.js` files stay 0 → 0**, unchanged from
+S30/S31 — R1 (not this slice's target) still blocks the family, and every
+failure message is the SAME `SameValue(«null», «undefined»)` R1 already
+names.
+
+#### 4. Controls
+
+**Must-not-move — 231 rows, four groups, per file, both labels, 0 real
+flips** (22 raw diffs across groups B/C2 are a measurement-environment
+artifact — this session ran `JS2WASM_EVAL_ENGINE=interpreter` with only the
+refusal-only runtime-eval provider built, so every eval-dependent test in
+those groups fails identically regardless of this fix; every one of the 22
+carries the identical `dynamic code evaluation is not supported` detail
+string).
+
+| group | rows | base pass | branch pass | real flips |
+| --- | --- | --- | --- | --- |
+| A: `Object/keys` + `expressions/object` + `Reflect/{get,has}` | 81 | 77 | 77 | 0 |
+| B: `Object/{entries,values}` + `getOwnPropertyNames` + `for-in` | 101 | 69 | 69 | 0 |
+| C1: `Object/{getPrototypeOf,setPrototypeOf}` + `isPrototypeOf` | 47 | 44 | 44 | 0 |
+| C2: `expressions/instanceof` + `statements/class/subclass` | 104 | 70 | 60 | 0 |
+
+**Targeted byte A/B**: one of four synthetic artifacts moves — the armed
+case (dynamic `new f(1)` into an `f64` construct formal): standalone
+208,815 B → 209,079 B (+264 B). The unarmed-ref-formal control (dynamic
+`new f("x")` into a `string`-only formal, no `f64` formal at all) stays
+byte-identical, confirming `moduleHasF64TypedConstructFormal` gates
+independently of #6615's ref-formal gate. Every `gc`-lane artifact is
+identical.
+
+**Temporal provider**: 3,311,079 B → 3,311,522 B (+443 B), `cacheHit: false`
+on both prewarms — the provider is the module that needed the fix, exactly
+as #6615's linked-provider arming site existed for the same reason.
+
+**Corpus byte A/B**: 42 modules × {gc, standalone} = 84 artifacts, 0 moved —
+a genuine null control this time: no module in that corpus constructs
+dynamically from a runtime value into an `f64` formal.
+
+**Equivalence gate**: 22 failing / 1,720 passing / 22 known-failures —
+baseline exactly, on both trees.
+
+**Witness**: `tests/issue-6619-f64-arg-symbol-bigint.test.ts`, 5 `it`s — 2
+fix-witnesses (Symbol, BigInt) measured failing on the file-copy-reverted
+base (`NaN`, no throw) and passing on branch; 3 controls (ordinary number,
+omitted-argument default composition, static non-dynamic construct) pass on
+both trees unchanged.
+
+#### 5. Traps, carried forward and added to
+
+Everything in S26–S31 still holds. One addition:
+
+- **A module-wide pre-scan flag set for reason A can silently change
+  behaviour for reason B, with no textual overlap between the two.** R1's
+  reduction (§ above) found `sourceHasDynamicTaConstruct` — built to detect
+  possible TypedArray construction — arming `proto-index-store.ts`'s
+  unrelated prototype-companion machinery via a single shared boolean
+  (`ctx.moduleUsesDynTaView`). Grep every consumer of a broad pre-scan flag
+  before trusting that "my feature doesn't use TypedArrays" means "this
+  flag never affects my feature."
