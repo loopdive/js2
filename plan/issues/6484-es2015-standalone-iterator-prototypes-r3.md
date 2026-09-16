@@ -32,6 +32,15 @@ model: opus
 # plus an import (index.ts, +4). types.ts is the single declaration site for
 # CodegenContext and index.ts owns the finalize sequence — neither has another
 # home, and the arm cannot be armed without a flag set during body compilation.
+# 2026-09-16 (S3 review round 2) — closing the class-tag regression adds the
+# `$__IterRec` arm plus its doc block to object-proto-tostring-native.ts (+150;
+# that file is 355 lines, far under the 1,500 threshold, so it needs no grant),
+# one exported constant with its doc comment in iterator-native.ts (+9), the
+# durable `typedArrayIterRecDiverted` flag and its doc in context/types.ts (+11),
+# setting that flag at the divert site in call-tail-dispatch.ts (+3), and the two
+# finalize call sites in index.ts (+8). Same reasoning as round 1: types.ts is
+# the single CodegenContext declaration site and index.ts owns the finalize
+# sequence, so neither has another home.
 loc-budget-allow:
   - src/codegen/iterator-native.ts
   - src/codegen/expressions/call-tail-dispatch.ts
@@ -427,3 +436,119 @@ iterator arms has at least one more site.
 - Row runs for the acceptance and control sets above, each against a base tree
   built from the merge-base sha (`git archive` + `pnpm run -s build:compiler-bundle`),
   reporting pass counts for base and branch side by side.
+
+## S3 review round 2 — record (2026-09-16)
+
+Two findings from the second adversarial review. Both reproduced on this tree
+with the reviewer's own probes before being touched, both closed here.
+
+### 1. REGRESSION (closed) — `Object.prototype.toString` on the diverted iterator went value → throw
+
+`Object.prototype.toString.call(<any-typed TypedArray iterator>)` answered the
+string `"[object Array]"` on base (length 14) and **threw** a catchable TypeError
+on the S3 commit and after the round-1 fix. Reproduced exactly as reported:
+
+| tree | `tag` | `tagOnly` | `stepsStillOk` |
+| --- | --- | --- | --- |
+| base `66405a1244` | 2 (`[object Array]`) | 14 | THREW |
+| S3 `7eb5f8eb95` | 8 (catch arm) | THREW | 1 |
+| round-1 `7088bf90b4` | 8 (catch arm) | THREW | 1 |
+| **here** | **1 (`[object Array Iterator]`)** | **23** | **1** |
+
+Cause: swapping the snapshot `$Vec` for a `$__IterRec` removed the receiver from
+every arm of the §20.1.3.6 classifier — the classifier has a `$__vec_base` arm
+but none for the record — so control reached the refusal tail. The round-1
+`%ArrayIteratorPrototype%` arm did not help: it teaches `__getPrototypeOf` about
+the record, and `Object.prototype.toString` does not consult it.
+
+Fix: `fillIterRecObjectProtoToStringArm` (object-proto-tostring-native.ts), a
+finalize splice giving a kind-VEC `$__IterRec` the tag `[object Array Iterator]`.
+
+- **Why that tag and not base's `[object Array]`.** §23.2.3.36 makes
+  `%TypedArray%.prototype[@@iterator]` be `.values`, i.e. `CreateArrayIterator`,
+  so the object IS an Array Iterator and §20.1.3.6 step 15 reads `"Array
+  Iterator"` off `%ArrayIteratorPrototype%`. Base's answer was the snapshot vec
+  answering for itself — a value, but the wrong one. It also keeps the branch
+  self-consistent: the round-1 arm already reports `%ArrayIteratorPrototype%` as
+  this exact object's `[[Prototype]]`, and a tag of `"Array"` would contradict
+  the prototype the same module hands out.
+- **THREE consumers carry the classifier chain, not two.** The one that actually
+  answers `Object.prototype.toString.call(v)` for an `any` `v` — the whole
+  test262 surface — is `__object_proto_to_string_runtime`. Measured: in a module
+  that only uses that spelling, `__opts_classify` and the reflective closure are
+  **absent**, so the first cut of this fix (which patched only those two) had
+  `consumers=0` and changed nothing observable. Named in the function's doc so
+  the next person does not repeat it.
+- **A durable flag was required.** `typedArrayIterRecProtoPending` is a one-shot
+  cleared by `prependIterRecPrototypeArm`, which runs EARLIER in both finalize
+  sequences, so it always reads false by the time the class-tag step runs.
+  `typedArrayIterRecDiverted` is set once at the divert site and never cleared.
+
+Scoping, proven not asserted — a 9-module sha256 corpus, `--target standalone`:
+**exactly one module's bytes move base → here** (`c9-ta-iter.ts`, the
+typed-array-iterator module). Plain-array iteration, string iteration, Map/Set,
+ArrayBuffer/DataView, a non-iterating TypedArray, generators, class prototypes
+and a plain `Object.prototype.toString` module are all byte-identical. Round-1 →
+here is byte-identical on all nine, including `c9`: the arm costs bytes only in a
+module that BOTH diverts a typed-array `@@iterator` AND calls
+`Object.prototype.toString`.
+
+Neighbour controls, unchanged from base (`p10-tostring-matrix`): plain-array
+iterator `[object Array]`, plain object `[object Object]`, plain array
+`[object Array]`, Map/Set iterator still REFUSE (they are `ITER_KIND_MAPSET`,
+outside the arm).
+
+**RESIDUAL, inherited from round 1 and verified here, not newly introduced.** A
+string iterator is also a kind-VEC record, so in a module that iterates BOTH a
+typed array and a string an `any`-typed string iterator now reports
+`[object Array Iterator]` where base refused. This is the same missing `family`
+field as round 1's prototype residual, which was measured independently rather
+than taken on trust: `strIterProto` is `null` on base and
+`%ArrayIteratorPrototype%` on round-1 AND here. S1's `family` field deletes both
+arms at once. Not papered over with a different tag, because two arms disagreeing
+about one record would be worse than one shared, documented gap.
+
+Row impact: none. No test under
+`built-ins/TypedArray/prototype/{Symbol.iterator,values,keys,entries}` asks for
+the iterator's class tag (`grep -rln "Object.prototype.toString"` over those four
+directories returns nothing), which is exactly why the row sets could not have
+caught this and a probe had to.
+
+### 2. VACUOUS PIN (closed) — the Map/Set distinctness test asserted nothing
+
+Confirmed: `Object.getPrototypeOf(m.keys())` bound to an `any` local is `null` on
+base AND on branch, so the old test's `pm !== aip` / `ps !== aip` were
+`null !== <singleton>` — true whatever the arm does. The test could not have
+caught the collapse it advertised, and its comment (and the round-1 commit
+message) claimed Map/Set "keep their own singletons" when they keep `null`. That
+claim is withdrawn.
+
+Fixing it needed the module SHAPE, not a weaker assertion. The shape decides
+which mechanism answers:
+
+- **Shape A** — Map/Set queried only through an `any` local. The iterator stays a
+  `$__IterRec`, so `__getPrototypeOf` and the new arm are what answer, and the
+  answer is `null`. Pinning it AT `null` is what catches a collapse.
+- **Shape B** — the same query with the static type visible. `m.keys()` has
+  static type `MapIterator`, which fires the #3013 **compile-time** arm and
+  reaches the real singleton, so every comparison is object-vs-object.
+
+The `any` **local** is load-bearing: passing `m.keys()` straight into
+`Object.getPrototypeOf` keeps its static type and never reaches the runtime arm.
+That is the issue's own core defect, and it is why the first round-2 attempt —
+one module carrying both spellings — still passed with the narrowing defeated.
+
+Both shapes are now asserted, and the guard was verified to FAIL when it should:
+forcing the arm's `kind == ITER_KIND_VEC` test to constant 1 (so every record
+collapses onto `%ArrayIteratorPrototype%`) drives shape A's `dynIsNull` from
+`3` to `0` and the test red. Restored afterwards; `tests/issue-6484-s3-typedarray-iterator.test.ts`
+is 27/27 green on the real compiler.
+
+### Note on the round-1 wasi coverage
+
+While A/B-ing, a partial `src/` restore (leaving `closed-method-dispatch.ts` at
+base) made the `--target wasi` pin fail and briefly looked like a new regression.
+It was the restore, not the code: with the tree fully restored, the wasi test
+passes. Recorded because the same partial-restore mistake is easy to repeat — a
+file-copy A/B must restore EVERY file the branch touches, not only the ones the
+current edit touches.

@@ -217,28 +217,191 @@ describe("#6484 S3 — TypedArray [Symbol.iterator]() steps under standalone", (
 
   it("Map/Set iterator prototypes do NOT collapse onto %ArrayIteratorPrototype%", async () => {
     // The runtime arm is `kind == ITER_KIND_VEC` only, so a Map/Set record
-    // (ITER_KIND_MAPSET) keeps its own singleton — the distinctness #3013 asks
-    // for. Asserted INSIDE a module that also iterates a TypedArray, which is
-    // the only module shape where the arm is emitted at all.
-    const out = await runStandalone(`
+    // (ITER_KIND_MAPSET) must not be dragged onto `%ArrayIteratorPrototype%`.
+    // Asserted INSIDE a module that also iterates a TypedArray — the only module
+    // shape where the arm is emitted at all.
+    //
+    // CORRECTION (review round 2). The first version of this test was VACUOUS.
+    // It asserted only `pm !== aip` / `ps !== aip`, in a module whose ONLY
+    // Map/Set iterator queries were `any`-typed. Measured: in that module shape
+    // `Object.getPrototypeOf(m.keys())` is `null` on base AND on branch, so both
+    // assertions were `null !== <singleton>` — true whatever the arm does. The
+    // test could not have caught the collapse it advertised, and its comment's
+    // claim that Map/Set "keep their own singleton" described `null`.
+    //
+    // Fixing it needs TWO module shapes, because the shape decides which
+    // mechanism answers and therefore which regression is reachable:
+    //
+    //   Shape A — Map/Set queried ONLY through `any`. The iterator stays a
+    //     `$__IterRec`, so `__getPrototypeOf` — and the new arm prepended to it —
+    //     is what answers. The answer today is `null`, and pinning it AT `null`
+    //     is what catches the collapse: widening the arm past
+    //     `kind == ITER_KIND_VEC` turns it into `%ArrayIteratorPrototype%` and
+    //     this assertion fails. VERIFIED by doing exactly that (forcing the kind
+    //     test to 1) and watching `dynIsNull` go 3 → 0.
+    //
+    //   Shape B — the SAME question with the static type left visible:
+    //     `Object.getPrototypeOf(m.keys())` directly, whose argument still has
+    //     type `MapIterator`. That reaches the REAL singletons, so every
+    //     comparison is object-vs-object. This shape guards the singleton
+    //     machinery itself: a collapse onto the AIP, onto `null`, or of Map onto
+    //     Set clears a bit.
+    //
+    // Shape B alone is NOT enough — the round-2 first attempt used only it, and
+    // with the kind narrowing defeated it still passed, because in that shape the
+    // runtime arm is not on the path at all.
+    const shapeA = await runStandalone(`
       const ta = new Int8Array([1, 2]);
       const m = new Map<number, number>(); m.set(1, 2);
       const s = new Set<number>(); s.add(3);
-      export function distinct(): number {
+      export function tipIsAip(): number {
         const aip: any = Object.getPrototypeOf([].values());
         const tip: any = Object.getPrototypeOf(ta[Symbol.iterator]());
+        return tip === aip && aip !== null ? 1 : 0;
+      }
+      export function dynIsNull(): number {
+        // The any-typed LOCAL is load-bearing. Passing m.keys() straight into
+        // Object.getPrototypeOf keeps its static MapIterator type, which fires
+        // the #3013 COMPILE-TIME arm and never reaches the runtime one. Binding
+        // it to an any local first erases the type -- which is what every
+        // test262 program does, and the whole subject of this issue.
         const mi: any = m.keys();
         const si: any = s.values();
         const pm: any = Object.getPrototypeOf(mi);
         const ps: any = Object.getPrototypeOf(si);
         let r = 0;
-        if (tip === aip && aip !== null) r += 1;
-        if (pm !== aip) r += 2;
-        if (ps !== aip) r += 4;
+        if (pm === null) r += 1;
+        if (ps === null) r += 2;
         return r;
       }
     `);
-    expect(out.distinct).toBe(7);
+    expect(shapeA.tipIsAip).toBe(1);
+    // Both null: the arm did NOT drag the MAPSET records onto the AIP. This is
+    // the pre-existing S1 gap, not "their own singleton" -- when S1 gives these a
+    // real singleton this line SHOULD fail and be updated to match.
+    expect(shapeA.dynIsNull).toBe(3);
+
+    const shapeB = await runStandalone(`
+      const ta = new Int8Array([1, 2]);
+      const m = new Map<number, number>(); m.set(1, 2);
+      const s = new Set<number>(); s.add(3);
+      export function tipIsAip(): number {
+        const aip: any = Object.getPrototypeOf([].values());
+        const tip: any = Object.getPrototypeOf(ta[Symbol.iterator]());
+        return tip === aip && aip !== null ? 1 : 0;
+      }
+      export function staticNonNull(): number {
+        // Statically-typed argument -> the #3013 compile-time arm -> the REAL
+        // %MapIteratorPrototype% / %SetIteratorPrototype% singletons.
+        const aip: any = Object.getPrototypeOf([].values());
+        const pm: any = Object.getPrototypeOf(m.keys());
+        const ps: any = Object.getPrototypeOf(s.values());
+        let r = 0;
+        if (aip !== null) r += 1;
+        if (pm !== null) r += 2;
+        if (ps !== null) r += 4;
+        return r;
+      }
+      export function distinctFromAip(): number {
+        const aip: any = Object.getPrototypeOf([].values());
+        const pm: any = Object.getPrototypeOf(m.keys());
+        const ps: any = Object.getPrototypeOf(s.values());
+        let r = 0;
+        if (pm !== null) r += 1;
+        if (ps !== null) r += 2;
+        if (pm !== aip) r += 4;
+        if (ps !== aip) r += 8;
+        if (pm !== ps) r += 16;
+        return r;
+      }
+    `);
+    expect(shapeB.tipIsAip).toBe(1);
+    expect(shapeB.staticNonNull).toBe(7);
+    // No bit here can be satisfied by a null.
+    expect(shapeB.distinctFromAip).toBe(31);
+  });
+
+  it("Object.prototype.toString on the diverted iterator returns a value, not a throw", async () => {
+    // REGRESSION PIN (review round 2). Swapping the snapshot `$Vec` for a
+    // `$__IterRec` removed the receiver from every arm of the §20.1.3.6
+    // classifier, so it fell through to the refusal tail: base answered the
+    // STRING "[object Array]" (length 14) and the branch THREW a catchable
+    // TypeError. A value turning into a throw is a regression even though no
+    // test262 row under built-ins/TypedArray/prototype/{Symbol.iterator,values,
+    // keys,entries} asks for the iterator's class tag.
+    //
+    // The answer is `[object Array Iterator]`, not base's `[object Array]`:
+    // §23.2.3.36 makes this an Array Iterator, and the same module already hands
+    // out `%ArrayIteratorPrototype%` as its [[Prototype]] — a tag of "Array"
+    // would contradict that.
+    const out = await runStandalone(`
+      const ta = new Int8Array([1, 2]);
+      export function tagLen(): number {
+        // Uncaught on purpose: a throw here fails the test rather than being
+        // scored as one more bitmask value.
+        const it: any = ta[Symbol.iterator]();
+        const s: any = Object.prototype.toString.call(it);
+        return (s as string).length;
+      }
+      export function isArrayIteratorTag(): number {
+        const it: any = ta[Symbol.iterator]();
+        const s: any = Object.prototype.toString.call(it);
+        return s === "[object Array Iterator]" ? 1 : 0;
+      }
+      export function stepsStillWork(): number {
+        const it: any = ta[Symbol.iterator]();
+        const a: any = it.next();
+        return a.value === 1 ? 1 : 0;
+      }
+    `);
+    expect(out.tagLen).toBe("[object Array Iterator]".length);
+    expect(out.isArrayIteratorTag).toBe(1);
+    expect(out.stepsStillWork).toBe(1);
+  });
+
+  it("the class-tag arm does not disturb neighbouring receivers", async () => {
+    // The arm is spliced into a SHARED classifier body, so the controls matter
+    // more than the fix. Each of these is byte-for-byte the base answer,
+    // measured on 66405a1244: a plain-array iterator is still a snapshot vec
+    // ("[object Array]"), an ordinary object and an array are unchanged, and a
+    // Map/Set record still REFUSES exactly as it does on base (the arm is
+    // `kind == ITER_KIND_VEC` only).
+    const out = await runStandalone(`
+      const ta = new Int8Array([1, 2]);
+      const arr = [1, 2, 3];
+      const m = new Map<number, number>(); m.set(1, 2);
+      export function armed(): number {
+        const it: any = ta[Symbol.iterator]();
+        const a: any = it.next();
+        return a.value === 1 ? 1 : 0;
+      }
+      export function plainArrayIteratorTag(): number {
+        const it: any = arr[Symbol.iterator]();
+        const s: any = Object.prototype.toString.call(it);
+        return s === "[object Array]" ? 1 : 0;
+      }
+      export function plainObjectTag(): number {
+        const o: any = { a: 1 };
+        const s: any = Object.prototype.toString.call(o);
+        return s === "[object Object]" ? 1 : 0;
+      }
+      export function plainArrayTag(): number {
+        const a: any = arr;
+        const s: any = Object.prototype.toString.call(a);
+        return s === "[object Array]" ? 1 : 0;
+      }
+      export function mapIteratorStillRefuses(): number {
+        // ITER_KIND_MAPSET is outside the arm, so this keeps refusing as on base.
+        const it: any = m.keys();
+        try { const s: any = Object.prototype.toString.call(it); return (s as string).length > 0 ? 0 : 0; }
+        catch (e) { return 1; }
+      }
+    `);
+    expect(out.armed).toBe(1);
+    expect(out.plainArrayIteratorTag).toBe(1);
+    expect(out.plainObjectTag).toBe(1);
+    expect(out.plainArrayTag).toBe(1);
+    expect(out.mapIteratorStillRefuses).toBe(1);
   });
 
   it("the static receiver also steps under --target wasi", async () => {
