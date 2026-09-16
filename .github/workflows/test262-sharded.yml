@@ -785,11 +785,21 @@ jobs:
     # Same arms as `runtime-eval-provider` directly above, for the same reason:
     # a host-only merge_group still needs this job to SUCCEED so the shard
     # matrix is not cascade-skipped through `needs`.
+    #
+    # (#6489) PLUS a `schedule` arm, which `runtime-eval-provider` does not
+    # need: the measurement lanes (`test262-native-first`, `test262-linked`)
+    # are the only jobs that run on cron, they are host-lane (`gc`) only, and
+    # `test262-linked` now `needs:` this job for the provider artifact. Without
+    # this arm the cron linked lane would cascade-skip through `needs`. On
+    # `schedule` the `changes` job is skipped, so its outputs read empty —
+    # `run_host != 'false'` holds and the host provider is built, which is the
+    # correct answer for a host-only lane.
     if: |
       always() &&
       (
         (github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'true') ||
         ((github.event_name == 'push' && github.actor != 'github-actions[bot]') && needs.mg-artifact-probe.outputs.hit != 'true') ||
+        github.event_name == 'schedule' ||
         github.event_name == 'workflow_dispatch'
       )
     runs-on: ubuntu-latest
@@ -1136,6 +1146,15 @@ jobs:
     # `TEST262_TARGET: gc` because the linked oracle is host-lane ONLY
     # (tests/test262-shared.ts: `TEST262_ORACLE_MODE === "linked" && IS_HOST_LANE`);
     # any other target would silently produce honest rows under a linked label.
+    #
+    # (#6489) `needs: [temporal-provider]` — the linked lane was missing the
+    # provider download every honest host shard does, so `msg.temporal` rows
+    # ran with no `Temporal` global and the parity report attributed ~1,300
+    # provider-absence rows to the linked oracle. The provider job now admits
+    # `schedule` too (see its `if:`), so the implicit `success()` over `needs`
+    # holds on BOTH of this job's arms. Nothing required `needs:` this job, and
+    # this edge adds no path from it to a required check.
+    needs: [temporal-provider]
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.linked_lane)
     name: test262 linked shard ${{ matrix.chunk }}
     runs-on: ubuntu-latest
@@ -1215,6 +1234,11 @@ jobs:
       TEST262_TARGET: gc
       TEST262_ORACLE_MODE: linked
       TEST262_RESULT_PREFIX: test262-linked
+      # (#6489) Copied verbatim from `test262-shard`. Without it the worker's
+      # `getWorkerTemporalProvider` found no cache and every `msg.temporal` row
+      # ran without `Temporal` — the single largest parity-report bucket in the
+      # first full-corpus linked run (`Temporal is not defined`, 713 rows).
+      JS2WASM_TEMPORAL_CACHE: .test262-cache/temporal
 
     steps:
       - name: Checkout
@@ -1234,6 +1258,35 @@ jobs:
           pnpm run build:compiler-bundle
           ./node_modules/.bin/esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm \
             --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
+
+      # (#6489) The three provider steps of `test262-shard`, copied verbatim
+      # (same actions, same artifact names, same gate expressions). The two
+      # runtime-eval steps keep their standalone gate and are therefore INERT
+      # on this job, whose `TEST262_TARGET` is fixed to `gc` — they are kept so
+      # the linked lane stays a byte-for-byte copy of the honest lane's provider
+      # block if a standalone linked lane is ever added, and so the difference
+      # between the two jobs is visible rather than silent.
+      - name: Download compiled Temporal provider (#5353)
+        uses: actions/download-artifact@v7
+        with:
+          name: temporal-provider-${{ github.run_id }}
+          path: .test262-cache/temporal
+
+      - name: Download selected runtime-eval provider (#2928/#4242)
+        if: env.TEST262_TARGET == 'standalone'
+        uses: actions/download-artifact@v7
+        with:
+          name: runtime-eval-provider-${{ github.run_id }}
+          path: .test262-cache
+
+      - name: Verify shared runtime-eval provider cache (#2928/#4242)
+        if: env.TEST262_TARGET == 'standalone'
+        run: |
+          case "$JS2WASM_EVAL_ENGINE" in
+            interpreter) node scripts/build-runtime-eval-provider.mjs --require-full-cache ;;
+            quickjs) node scripts/build-quickjs-eval-provider.mjs --require-cache ;;
+            *) echo "Unknown JS2WASM_EVAL_ENGINE=$JS2WASM_EVAL_ENGINE" >&2; exit 1 ;;
+          esac
 
       # No harness-provider prewarm in this slice: the worker memoises a
       # provider per include-set per fork (`getWorkerHarnessProvider`), and
