@@ -15,6 +15,19 @@ language_feature: test262-harness
 goal: test262-conformance
 depends_on: [6490]
 related: [3451, 6486, 6489, 6490, 6491, 6482]
+# 2026-09-16 — bucket 2 (`__cb_<id>` erases `await`): the whole change is one
+# early bail at the TOP of `compileArrowAsCallback`, +30 lines of which 24 are
+# the comment recording WHY a suspending async callback must not reach the
+# host-callback bridge. The decision belongs where the bridge is entered — the
+# alternative (a predicate module) would put the condition one indirection away
+# from the `return compileArrowAsClosure(...)` escape it shares with the
+# standalone arm 400 lines below, which is the thing a reader has to see next to
+# it. `compileArrowAsCallback` is the god-function that owns callback lowering;
+# splitting it is #3399's job, not this bug's.
+loc-budget-allow:
+  - src/codegen/closures.ts
+func-budget-allow:
+  - src/codegen/closures.ts::compileArrowAsCallback
 ---
 
 # #6492 — linked lane residual after P3c
@@ -88,6 +101,98 @@ Order by rows × certainty; each step is one measured commit.
    equivalence gate once at the end; ONE `Model: Claude Opus 5 Max` trailer per
    commit. Budget allowances go in this file's frontmatter with a dated
    rationale.
+
+## Implementation notes (2026-09-16, Opus lane)
+
+Branch `issue-6492-linked-residual-buckets`, based on `0f69af09cb`.
+
+### Measurement setup (plan step 1)
+
+The CI artifact of run 35152748683 is not reachable from this container
+(`*.blob.core.windows.net` blocked) and `gh` is not installed here, so the
+sampled rows were derived locally instead of read off the report: the real
+runner (`tests/test262-chunk-dynamic.test.ts`) was run over **chunk 0 of 57 of
+the whole corpus in BOTH lanes** (850 rows, honest and `TEST262_ORACLE_MODE=linked`),
+and the pass→fail set diffed per row. That reproduces the parity report's method
+on a 1/57 sample and gave a live row for the `illegal cast` bucket; the buckets
+too small to appear in 850 rows were then hunted by their error string over a
+6,317-row linked run of the async/Promise/Iterator families, with the honest
+verdict fetched only for the matching rows.
+
+**Local hazard worth recording for the flip plan (#6488):** the provider cache
+(`/tmp/js2wasm-test262-harness-cache`, `JS2WASM_TEST262_HARNESS_CACHE`) is keyed
+on the harness prefix + ABI versions, **not on the compiler build**. The first
+survey here reported 4 `dereferencing a null pointer [in testWith…]` rows — the
+#6490 bucket, already fixed — purely because the cache still held day-old
+provider artifacts. Every measurement below uses a fresh cache dir. CI is not
+exposed (a runner's tmpdir is empty and the workflow does not restore that
+cache), but any local re-measurement is.
+
+### Bucket `illegal cast` (22 rows, the trap bucket) — FIXED
+
+Root cause: **the canonical method-closure trampoline is minted from a
+pre-final signature and its wrapper ABI is never repaired.**
+`ensureMethodClosureSingleton` mints `__obj_meth_tramp_<m>_cached` at the first
+access to the method as a value. In a MULTI-FILE graph — which is how the linked
+lane compiles a body — the member-get dispatcher reserves the singleton before
+the method body resolves its parameter ABI, so `class C { m([a]) {} }` captured
+a module-internal tuple struct `(ref $10)` while `C_method` finally accepted
+`externref`. `finalizeMethodTrampolines` rebuilds the trampoline BODY (#1602/
+#1669) but leaves the wrapper func type, and that type is what CALLERS dispatch
+on: the closure-call site matched the struct-param arm and emitted an unguarded
+`ref.cast (ref $10)` of the argument, so `C.prototype.m([1, 2])` trapped.
+
+Fix site: `finalizeMethodTrampolines` (`src/codegen/closures/method-trampolines.ts`)
+widens the trampoline's own func type back to the method's final ABI — narrowing
+direction only, and only to a wrapper that already exists
+(`peekFuncRefWrapperTypes`, new in `funcref-wrapper-types.ts`), so every
+already-emitted dispatch chain still knows the arm.
+
+Not lane-gated by a flag, and it does not need to be: the drift requires a
+multi-file graph, and the honest test262 lane compiles one file. Verified rather
+than assumed — honest chunk 0/57 before vs after: **850 rows, 0 verdict
+differences.**
+
+| measurement | before | after |
+| --- | --- | --- |
+| `language/statements/class/dstr/async-gen-meth-ary-ptrn-elision-step-err.js` (real runner, linked) | fail: illegal cast | **pass** |
+| linked chunk 0/57 vs honest, pass→fail | 11 | 10 |
+| `illegal cast` rows in that chunk | 1 | **0** |
+
+### Bucket `AsyncTestFailure … Cannot read properties of null (reading 'then')` (61) — FIXED
+
+Root cause: **the `__cb_<id>` host-callback bridge erases `await`.**
+`compileArrowAsCallback` compiles the callback body with no async activation, so
+a suspending async function literal became a plain synchronous function
+returning `undefined` (`__cb_0` drops the awaited call and returns
+`__get_undefined`). #4648 had already noticed the AWAIT-FREE half of this and
+added a Promise wrapper; the await-ful half was simply mis-lowered. Nothing
+caught it because the static call-site repair (`isAsyncCallExpression`) covers
+every call a single module makes ITSELF — and a separately compiled provider is
+precisely the case where the caller is another module:
+`asyncTest(async function () { await … })` → the provider's
+`testFunc().then(…)` reads `.then` of null.
+
+This is a **lane-independent compiler defect**, not a linked-lane artifact —
+`Promise.resolve(1).then(async function () { await Promise.all([]); })` in an
+ordinary single-file compile produces the same await-erased `__cb_0`. The fix
+here is deliberately scoped to the linked consumer (`ctx.linkedPackageBindings.size > 0`):
+such a callback routes to `compileArrowAsClosure`, which does activate the frame
+engine. Widening it to every host callback is a real fix worth doing and is NOT
+byte-neutral for the honest lane, so it is left for its own issue.
+
+| measurement | before | after |
+| --- | --- | --- |
+| 93 sampled null-read rows (linked), honest-pass/linked-fail | 32 | **17** |
+| … of which the `reading 'then'` family | 15 | **0** |
+| async/Promise/Iterator families, 6,317 linked rows | — | **+33 pass, 0 lost** |
+| linked chunk 0/57 vs honest, pass→fail | 10 | 9 |
+
+Residual in that sample: 17 rows of a DIFFERENT family —
+`Cannot read properties of null (reading 'next' / 'return')` in the
+`Iterator.prototype.{map,filter,take,drop,flatMap,chunks,windows}` helpers,
+where the consumer subclasses the harness/intrinsic `Iterator` and overrides
+`next` as a getter. Not the same substrate; see the residual table.
 
 ### Acceptance
 
