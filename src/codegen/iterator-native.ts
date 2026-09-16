@@ -51,15 +51,15 @@ import type { CodegenContext } from "./context/types.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import { addFuncType } from "./registry/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
-// (#3100) The vec-family normalize arms reuse the #2190 element-boxing recipe +
-// the non-array byte-carrier filter (ArrayBuffer/Uint8Array storage vecs).
+// (#3100) The vec-family normalize arms reuse the #2190 element-boxing recipe.
+// (#6484 S3) They no longer borrow the IsArray byte-carrier filter — only the
+// raw ArrayBuffer/DataView byte store (`i32_byte`) is non-iterable.
 // (#3100 S4) ensureObjectRuntime provides the native `__extern_length` /
 // `__extern_get_idx` readers the index-based `__extern_slice` copies through.
 import {
   boxVecElementToExternref,
   ensureObjectRuntime,
   ensureWrapperStringValueHelper,
-  NON_ARRAY_BYTE_VEC_ELEM_KINDS,
   reserveApplyClosure,
 } from "./object-runtime.js";
 import { ensureHoleType } from "./array-holes.js";
@@ -4207,12 +4207,32 @@ interface VecFamilyCarrier {
  * FINALIZE time (all module-local carrier types are registered by then):
  *   - `$ObjVec` (when the object runtime exists) — elements already externref.
  *   - every `ctx.vecTypeMap` carrier except the canonical externref `$Vec`
- *     (ladder arm 1 already handles it), the exclusively-non-array byte
- *     carriers (`i32_byte` ArrayBuffer / `i8_byte` Uint8Array storage — never
- *     plain-array iterables), and carriers whose element kind has no proven
- *     boxing recipe (`boxVecElementToExternref` returns null → the value keeps
- *     the legacy loud-trap tail rather than iterating silently-wrong values).
+ *     (ladder arm 1 already handles it), the raw ArrayBuffer / DataView byte
+ *     store (`i32_byte` — neither of those objects is iterable), and carriers
+ *     whose element kind has no proven boxing recipe
+ *     (`boxVecElementToExternref` returns null → the value keeps the legacy
+ *     loud-trap tail rather than iterating silently-wrong values).
  * Deduped by typeIdx, sorted for deterministic emission.
+ *
+ * (#6484 S3) The packed TypedArray ELEMENT carriers — `i8_byte`
+ * (Int8/Uint8/Uint8Clamped), `i16_byte` (Int16/Uint16), `i32_elem`
+ * (Int32/Uint32) — belong HERE, and their absence is the whole S3 defect.
+ * `NON_ARRAY_BYTE_VEC_ELEM_KINDS` is an **IsArray classification** set
+ * (§7.2.2: `Array.isArray(new Int8Array(1)) === false`), not an iterability
+ * set — the same distinction `__extern_set`/`__extern_get_idx` already draw
+ * (#2903 R4, object-runtime.ts). Using it as the filter here made a
+ * dynamically-typed (`any`) typed array match NO family arm, so `__iterator`
+ * fell through to its §7.4.1 tail and threw
+ * `TypeError: value is not iterable` for `new Int8Array([1,2])[Symbol.iterator]()`
+ * — while `%TypedArray%.prototype[@@iterator]` (§23.2.3.36) says it is
+ * iterable. `i8`/`i16` are PACKED, so they need `array.get_u` (plain
+ * `array.get` is invalid Wasm on a packed array) plus an explicit
+ * f64 box — the same recipe the strict spread provider and
+ * `__extern_get_idx` use. SIGNEDNESS BOUNDARY (inherited, unchanged): the
+ * carrier is shared by the signed and unsigned views of a width, so a
+ * negative `Int8Array`/`Int16Array` element iterates as its unsigned bit
+ * pattern; recovering it needs a per-signedness carrier type (deferred, the
+ * #2903 R4 residual).
  */
 function collectVecFamilyCarriers(ctx: CodegenContext, types: IterRuntimeTypes, strict = false): VecFamilyCarrier[] {
   const carriers: VecFamilyCarrier[] = [];
@@ -4225,14 +4245,16 @@ function collectVecFamilyCarriers(ctx: CodegenContext, types: IterRuntimeTypes, 
   }
 
   for (const [elemKind, vecTypeIdx] of ctx.vecTypeMap.entries()) {
-    if (!strict && NON_ARRAY_BYTE_VEC_ELEM_KINDS.has(elemKind)) continue;
+    if (!strict && elemKind === "i32_byte") continue; // ArrayBuffer/DataView byte store — not iterable
     if (seen.has(vecTypeIdx)) continue;
     const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
     if (arrTypeIdx < 0) continue;
     const arrDef = ctx.mod.types[arrTypeIdx];
     if (!arrDef || arrDef.kind !== "array") continue;
     let boxOps = boxVecElementToExternref(ctx, arrDef.element);
-    if (strict && (arrDef.element.kind === "i8" || arrDef.element.kind === "i16")) {
+    if (arrDef.element.kind === "i8" || arrDef.element.kind === "i16") {
+      // (#6484 S3) Packed element: `array.get_u` zero-extends into 0..255 /
+      // 0..65535, so the f64 convert is sign-agnostic. Unchanged for `strict`.
       const boxNumIdx = ctx.funcMap.get("__box_number");
       if (boxNumIdx !== undefined) {
         boxOps = [{ op: "f64.convert_i32_u" }, { op: "call", funcIdx: boxNumIdx }];
@@ -4377,8 +4399,11 @@ function buildVecFamilyArms(ctx: CodegenContext, types: IterRuntimeTypes, strict
                   { op: "struct.get", typeIdx: carrier.typeIdx, fieldIdx: 1 },
                   { op: "local.get", index: 3 },
                   {
+                    // (#6484 S3) A packed (i8/i16) TypedArray carrier MUST be
+                    // read with `array.get_u` — `array.get` on a packed array
+                    // is a hard validator error. Was `strict`-only; the
+                    // compatibility dispatcher now admits the same carriers.
                     op:
-                      strict &&
                       arrDef &&
                       arrDef.kind === "array" &&
                       (arrDef.element.kind === "i8" || arrDef.element.kind === "i16")

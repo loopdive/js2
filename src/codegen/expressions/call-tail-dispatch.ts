@@ -36,6 +36,7 @@ import {
   hoistLetConstWithTdz,
   hoistVarDeclarations,
   resolveWasmType,
+  TYPED_ARRAY_NAMES,
 } from "../index.js";
 import { objectLiteralTakesStandaloneAnyObjectPath, resolveComputedKeyExpression } from "../literals.js";
 import { emitNullCheckThrow, typeErrorThrowInstrs } from "../property-access.js";
@@ -756,7 +757,24 @@ export function compileTailDispatch(
             }
           }
         }
-        if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && resolveArrayInfo(ctx, receiverType)) {
+        // (#6484 S3) A TYPED-ARRAY receiver skips the snapshot-vec producer and
+        // falls through to `__iterator(recv)` below, which hands back a real
+        // `$__IterRec` cursor. §23.2.3.30 CreateArrayIterator wants a live
+        // iterator, and `built-ins/ArrayIteratorPrototype/next/<View>Array.js`
+        // reads `iterator.next().value` three times — on the snapshot vec that
+        // answers null, because a vec has no cursor (the #5147 note below).
+        // Scoped to TypedArray ONLY: the plain-array receiver keeps the vec
+        // carrier byte-for-byte, so the `%ArrayIteratorPrototype%` identity /
+        // metadata rows that key off it (#3013) are untouched, and the general
+        // carrier migration stays with the follow-up that moves that singleton.
+        const iterRecvSymName = receiverType.getSymbol()?.name;
+        const typedArrayIterRecv = iterRecvSymName !== undefined && TYPED_ARRAY_NAMES.has(iterRecvSymName);
+        if (
+          methodName === "@@iterator" &&
+          (ctx.standalone || ctx.wasi) &&
+          !typedArrayIterRecv &&
+          resolveArrayInfo(ctx, receiverType)
+        ) {
           // (#5147 note) This SNAPSHOT-vec result is why `.next()` on
           // `[1,2][Symbol.iterator]()` still answers null: a vec has no cursor.
           // Switching it to `__iterator(recv)` (a real `$__IterRec`) was tried
