@@ -397,6 +397,7 @@ import { unshiftNativeProtoHasOwnArms } from "./native-proto-own-props.js"; // (
 import { unshiftRegExpAccessorSetGuard } from "./regexp-accessor-set-guard.js"; // (#2875 w4-F)
 import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
 import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-read.js"; // (#4248) inherited method value
+import { unshiftExternGetIterRecArm } from "./iterator-proto-next.js"; // (#6484 S2) record property reads
 import { unshiftExternMethodCallProtoArm } from "./native-proto-method-call.js"; // (#4619) proto-receiver method CALL
 import { unshiftExternMethodCallTaDynViewArm } from "./ta-dyn-method-call.js"; // (#5194 r3-1) dyn-view receiver method CALL
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
@@ -6513,6 +6514,9 @@ export function generateModule(
     // instance (or off the prototype through a binding) must yield the same
     // singleton the static `<Builtin>.prototype.<m>` read does.
     unshiftExternGetProtoMethodArm(ctx);
+    // (#6484 S2) A `$__IterRec` has no own properties — resolve every read off
+    // one through `__iter_rec_proto`. No-op unless the module demanded it.
+    unshiftExternGetIterRecArm(ctx);
     // (#4619) The CALL twin, which delegates to `__extern_get` — so it must
     // run after the read arm above. See native-proto-method-call.ts.
     unshiftExternMethodCallProtoArm(ctx);
@@ -11306,6 +11310,11 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // instance (or off the prototype through a binding) must yield the same
     // singleton the static `<Builtin>.prototype.<m>` read does.
     profilePhase("unshift-extern-get-proto-method", () => unshiftExternGetProtoMethodArm(ctx));
+    // (#6484 S2) A `$__IterRec` has no own properties — resolve every read off
+    // one through `__iter_rec_proto`. No-op unless the module demanded that
+    // helper. MUST stay ahead of the cache arm below, which has to remain the
+    // body's PREFIX for the #4157 inline extractor.
+    profilePhase("unshift-extern-get-iter-rec", () => unshiftExternGetIterRecArm(ctx));
     // (#4619) The CALL twin, which delegates to `__extern_get` — so it must
     // run after the read arm above. See native-proto-method-call.ts.
     profilePhase("unshift-extern-method-call-proto", () => unshiftExternMethodCallProtoArm(ctx));

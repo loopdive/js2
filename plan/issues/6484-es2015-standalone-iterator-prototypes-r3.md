@@ -15,6 +15,47 @@ es_edition: ES2015
 goal: standalone-mode
 requested_by: ttraenkler/fable-es2015
 model: opus
+# 2026-09-16 (#6484 S1+S2): the slice adds a `family` field to `$__IterRec` and
+# the two routes that make the intrinsic iterator prototypes reachable. Each
+# grant below is where the mechanism has to live, not where it was convenient:
+#   - iterator-native.ts owns `$__IterRec`, so the field, the `ITER_FAMILY_*`
+#     enum and the per-arm family operand are all in-module. The exhausted-
+#     cursor latch (§23.1.5.1 step 6.a) is in the same step body.
+#   - array-object-proto.ts owns `emitIteratorPrototypeSingleton`; the new
+#     %IteratorPrototype% root and the %ArrayIteratorPrototype% `next` property
+#     are two more arms of that one factory, and the ArrayIterator glue sits
+#     next to its Map/Set twins.
+#   - call-builtin-static.ts / property-access.ts / call-tail-dispatch.ts /
+#     index.ts / map-runtime.ts each take ONE call-site arm; the shared
+#     mechanism itself is a NEW module, src/codegen/iterator-proto-next.ts.
+# 2026-09-16 (review follow-up): iter-hof-native.ts owns `__iter_hof_open`, the
+# positive-admission classifier for the eager Iterator helpers. The S2 carrier
+# migration made `arr[Symbol.iterator]()` a `$__IterRec`, which that classifier
+# did not admit, so `iter.reduce(cb, init)` silently stopped calling `cb`. The
+# one-arm pass-through has to live beside the three arms it copies.
+loc-budget-allow:
+  - src/codegen/iter-hof-native.ts
+  - src/codegen/array-object-proto.ts
+  - src/codegen/iterator-native.ts
+  - src/codegen/expressions/call-builtin-static.ts
+  - src/codegen/expressions/call-tail-dispatch.ts
+  - src/codegen/property-access.ts
+  - src/codegen/map-runtime.ts
+  - src/codegen/index.ts
+func-budget-allow:
+  # 2026-09-16 (review follow-up): the `$__IterRec` pass-through arm of
+  # `__iter_hof_open`. It is 4 instructions plus the comment that records the
+  # measured `calls=3 → calls=0` regression it fixes, and it must sit with the
+  # three sibling pass-through arms it copies — moving it out would separate the
+  # classifier from one of its cases.
+  - src/codegen/iter-hof-native.ts::fillIterHofSteppers
+  - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
+  - src/codegen/iterator-native.ts::buildIteratorBody
+  - src/codegen/iterator-native.ts::fillNativeIteratorLateArms
+  - src/codegen/iterator-native.ts::buildIteratorNextBody
+  - src/codegen/map-runtime.ts::fillMapSetDynDispatchArms
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/index.ts::generateModule
 ---
 
 # ES2015 standalone: iterator prototypes are unreachable from a dynamically-typed iterator
@@ -193,3 +234,111 @@ whole `built-ins/TypedArrayConstructors` tree, 0 lost.
 - Row runs for the acceptance and control sets above, each against a base tree
   built from the merge-base sha (`git archive` + `pnpm run -s build:compiler-bundle`),
   reporting pass counts for base and branch side by side.
+
+## Adversarial review of S1+S2 (2026-09-16) — what was wrong and what is left
+
+Three findings. Two were ONE defect; the third was a false claim in a comment.
+
+### 1 + 2. The run-time route was order-dependent (fixed)
+
+`ensureIterRecPrototypeHelper` declined whenever `$__IterRec` was not registered
+yet, and `emitBuiltinGetPrototypeOfFallback` deliberately calls it **before** it
+compiles its argument (the #2043 index-shift discipline). So the module's FIRST
+`Object.getPrototypeOf(<iterator>)` answered the historical `null`, while the
+identical expression one statement later answered a real prototype:
+
+```
+.tmp/adv/p14.ts (first statement)  firstTouch=0     <- the #6484 defect, unfixed
+.tmp/adv/p15.ts (one warm-up line) afterWarmup=1
+```
+
+Every pin in the first cut built its iterators in earlier statements, so all
+seven were immune by construction. Test262 programs use the cold shape.
+
+Finding 2 — `Object.getPrototypeOf(this.<field>)` inside a class METHOD
+answering `null` while every other access shape answered the real prototype —
+is the SAME defect reached by a different compile order: methods are compiled
+before the top-level body, so the read inside the method was the module's first
+occurrence. It needed no separate fix and is closed by the same change.
+
+Fix: `ensureIterRecPrototypeHelper` now calls `ensureNativeIteratorRuntime(ctx)`
+and re-reads `structMap`, exactly as its sibling `resolveIteratorFamilyNextClosure`
+has always done. A module that asks either question has an iterator either way.
+After the fix, cold-first: `firstTouch=1`, `mapFirst=1`, `protoNotNull=1`,
+`fromInsideMethod=1`, and a cold module also gets `typeof it.next === "function"`,
+cross-family distinctness and the shared `%IteratorPrototype%` root.
+
+Two new pins (`tests/issue-6484-iterator-prototypes.test.ts`) put the
+`getPrototypeOf` call FIRST, one at top level and one inside a class method.
+Both fail on the pre-fix helper and pass after — verified by an A/B file-copy
+revert, not by assumption.
+
+### 3. Growth during iteration — the comment was wrong, the behaviour is #3100's
+
+The #6484 latch comment claimed the length is re-read every step, full stop.
+Measured 2026-09-16 (standalone, `push` after the first step; V8 yields 3 for
+all three):
+
+| receiver | steps |
+| --- | --- |
+| `["a","b"]` (externref elements) | 3 — live |
+| `[{v:1},{v:2}]` (externref elements) | 3 — live |
+| `[1,2]` (f64 elements) | **2 — snapshot** |
+
+So the step body genuinely has no cached bound, and growth IS observed whenever
+the record's `vec` is the subject's own storage. The reviewer's proposed
+mechanism — "`push` reallocates and the immutable `vec` field hides it" — is
+not what happens: `push` mutates the carrier in place and an alias of the array
+reads `length === 3` (`.tmp/fix/alias.ts`: `bLen=3 aliasIdentity=1`). The real
+cause is the **#3100 vec-family normalization arm** (`buildVecFamilyArms`),
+which boxes a non-externref carrier into a FRESH `$__arr_externref` and cursors
+over that copy. It predates this slice and applies to every dynamic
+`GetIterator` on a numeric array.
+
+The comment has been corrected to say exactly this. The behaviour is NOT fixed
+here: making it live means re-deriving the per-carrier boxing at every step,
+which reopens #3100's carrier-normalization tradeoff and touches the hottest
+iteration path in the compiler. A pin locks the half that IS correct (the
+externref carrier growing live, plus the exhaustion latch); the numeric-carrier
+answer is deliberately left unpinned so a later fix does not have to fight a
+test that locks in the wrong number.
+
+**Residual (open, pre-existing, no test262 row):** a dynamic iterator over a
+numeric array is a snapshot — mid-iteration `push` and `pop` are invisible
+(`pushBeforeFirstNext` 12 vs 123, `shrinkMid` 123 vs 1). S1+S2 make this
+reachable for a statically-typed receiver, which used to throw instead. The
+test262 row that would catch it, `ArrayIteratorPrototype/next/iteration-mutable.js`,
+grows from an EMPTY array, and that shape works (empty ⇒ no copy).
+
+### 4. A control row the review did not report: the carrier migration silently broke `iter.reduce`
+
+Found by running the full 641-row control set against a base tree built from
+`66405a1244` (the merge base), not by the review. `built-ins/Iterator/prototype/
+reduce/reducer-memo-can-be-any-type.js` PASSED on base and FAILED on S1+S2 —
+and it fails on the S1+S2 commit alone, so it is the slice's, not the
+order-dependence fix's.
+
+Mechanism: `__iter_hof_open` (`src/codegen/iter-hof-native.ts`) is a
+positive-admission classifier — it passes through the handles it knows
+(`$LazyIterHelper`, a driven generator frame, a next-callable) and hands
+everything else to the `__iterator` ladder only for the carriers that ladder can
+take, with a NULL SENTINEL for the rest. S2 migrated `arr[Symbol.iterator]()`
+from a snapshot `$Vec` (admitted) to a live `$__IterRec` (admitted by nothing),
+so `iter.reduce(cb, init)` hit the sentinel and returned `undefined` **without
+calling `cb` once** — measured on a 3-element probe: `calls=3` on base,
+`calls=0` after the migration. Nothing threw; the failure was silent.
+
+Fix: one pass-through arm — a `$__IterRec` IS the handle, exactly like the three
+arms next to it, and `__iter_hof_next` / `__iter_hof_close` already delegate to
+`__iterator_next` / `__iterator_return`, which take that record. It is also
+closer to §27.1.4 than what it restores: stepping the record consumes the
+iterator, where the snapshot-vec route read a frozen copy and left the cursor
+untouched.
+
+Pinned in `tests/issue-6484-iterator-prototypes.test.ts`
+("an iterator VALUE still drives the eager helper loop").
+
+**Process note:** the review's seven pin tests and the S1+S2 control evidence
+were both narrower than the change. This row was only visible from a control set
+that included `built-ins/Iterator/prototype/**` and a base measured on this
+machine — the kind of run CLAUDE.md asks for and the kind this slice had skipped.
