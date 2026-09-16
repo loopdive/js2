@@ -178,45 +178,110 @@ slice; corpus footprint unmeasured. `Temporal.Duration.prototype.isPrototypeOf`
   unchanged. Compiles a SYNTHETIC provider (`ns6622`, a two-method class plus a
   dynamic-TA-construct pattern) — never the real `@js-temporal/polyfill`
   inside vitest.
-- **Four-family sample** (`PlainDate`/`Duration`/`PlainDateTime`/`ZonedDateTime/prototype`,
-  **first 40 files each — a reduced third of the requested 120**, see
-  rationale below), `--target standalone`, real provider linked, sequential,
-  fresh `JS2WASM_TEMPORAL_CACHE` per label, measured on this tree:
+- **Four-family sample, FULL 120 files each** (`PlainDate`/`Duration`/
+  `PlainDateTime`/`ZonedDateTime/prototype`), `--target standalone`, real
+  provider linked, sequential, fresh `JS2WASM_TEMPORAL_CACHE` per label, each
+  family run in three 40-file thirds (foreground, explicit tool timeout, never
+  backgrounded by choice):
 
-  | family | base pass/40 | S35 pass/40 | Δ | pass→fail | fail→pass |
+  | family | base pass/120 | S35 pass/120 | Δ | pass→fail | fail→pass |
   | --- | --- | --- | --- | --- | --- |
-  | `PlainDate/**` | 39 | 39 | 0 | 0 | 0 |
-  | `Duration/**` | 36 | 36 | 0 | 0 | 0 |
-  | `PlainDateTime/**` | 39 | 39 | 0 | 0 | 0 |
-  | `ZonedDateTime/prototype/**` | 25 | 25 | 0 | 0 | 0 |
-  | **total** | **139/160** | **139/160** | **0** | **0** | **0** |
+  | `PlainDate/**` | 111 | 111 | 0 | 0 | 0 |
+  | `Duration/**` | 104 | 104 | 0 | 0 | 0 |
+  | `PlainDateTime/**` | 112 | 112 | 0 | 0 | 0 |
+  | `ZonedDateTime/prototype/**` | 103 | 103 | 0 | 0 | 0 |
+  | **total** | **430/480** | **430/480** | **0** | **0** | **0** |
 
-  Per-file diff, not just counts (`.tmp/s35/diff.py` over `.tmp/s35/fam/*.tsv`):
-  **zero rows flip in either direction** in this reduced sample. This is
-  expected and consistent with S30/S34's own findings: the count-neutral
-  outcome does not mean the fix is inert — the `typeof`/`isPrototypeOf`
-  assertions these two mechanisms answer are not the FIRST failing assertion
-  in most of these 160 rows (most fail earlier, on unrelated pre-existing
-  buckets), so the fix is real and reached but does not move the headline
-  count for THIS sample. No `compile_error`, no `timeout`, no `__temporal_*`
-  leak in either run.
+  **Per-file diff, not just counts** (`.tmp/s35/diff_full.py` over all 12
+  `.tmp/s35/fam/*-t{0,1,2}.tsv` files, 480 common rows both labels): **zero
+  `pass→fail`, zero `fail→pass`, in all 480 rows.** All 480 rows are literal
+  `pass`/`fail` on both labels — zero `compile_error`, zero `timeout`, zero
+  `__temporal_*` leak.
 
-  **Scope reduction, stated plainly**: this is 40 files per family (a third
-  of the usual 120-file sample), NOT the full requested acceptance battery.
-  The 45-file `subclassing-ignored.js` corpus-wide count, the must-not-move
-  samples, the corpus byte A/B, and the remaining 80 files per family were
-  NOT completed inside this session's time budget (each family third took
-  ~10–20 minutes real time under the standalone compiler; a full 120×4×2
-  run plus the other batteries did not fit). The next slice picking this up
-  should run the 45-file family FIRST (it is the headline metric this whole
-  #5383 stack is chasing) — `.tmp/s35/subclass-measure.mts` is ready to run,
-  needs only a fresh prewarmed cache per label
-  (`.tmp/s35/prewarm-standalone.mts`).
-- **Equivalence gate**: attempted `npm run -s test:equivalence:gate` locally;
-  it did NOT complete inside a 300 s budget in this container (killed by
-  `timeout`, zero output produced before the kill) — the suite is heavier than
-  this session's remaining time allowed for. NOT independently re-verified
-  this session. Every prior S-slice in this stack (S17 through S34) reports it
-  unchanged at 22 failing / 1720 passing / 22 known-failures; this PR's own
-  `equivalence-gate` CI check is the authoritative answer, stated as unverified
-  locally rather than assumed.
+  The count-neutral 0/0 result is consistent with S30/S34: the `typeof`/
+  `isPrototypeOf` assertions these two mechanisms answer are not the FIRST
+  failing assertion in most of these 480 rows (most fail earlier, on
+  unrelated pre-existing buckets), so the fix is real and reached but does not
+  move the headline count for this sample.
+- **45-file `subclassing-ignored.js` corpus-wide** (the headline metric),
+  `.tmp/s35/subclass-measure.mts`, `--target standalone`, real provider
+  linked, per file, fresh cache each label:
+
+  | label | pass | fail | total |
+  | --- | --- | --- | --- |
+  | base | 0 | 45 | 45 |
+  | S35 | 0 | 45 | 45 |
+
+  **Still 0 → 0.** Every one of the 45 rows fails with the SAME literal
+  message text on both labels (`.tmp/s35/subclass-base.tsv` /
+  `-branch.tsv`, byte-identical row-for-row): `Test262Error: [null ]Expected
+  SameValue(«null», «null») to be true` (35 of 45 carry an extra leading
+  `null ` token; 10 of 45 do not — cosmetic, the underlying assertion is the
+  same either way). **Correction to an earlier draft of this
+  section**: the signature is `«null», «null»`, not `«false», «true»` — the
+  `«false»/«true»` text never appeared in either run's actual output.
+
+  **What the two "null"s in that message actually are** — traced with three
+  purpose-built probes (`.tmp/s35probe/debug{1,2,3}.js`, run through
+  `runTest262File` with the real linked provider, `--target standalone`;
+  `temporalHelpers.js`'s `checkSubclassingIgnored` runs nine checks in a fixed
+  order — `checkSubclassConstructorNotObject`,
+  `checkSubclassConstructorUndefined`, `checkSubclassConstructorThrows`, …
+  each ending in `assert.sameValue(Object.getPrototypeOf(result),
+  construct.prototype[, description])`):
+  - `checkSubclassConstructorNotObject` (setting `instance.constructor =
+    null`/etc. on an UN-subclassed instance) is **not** the failure —
+    `Object.getPrototypeOf(result) === construct.prototype` holds (`debug1.js`:
+    `p1===p2=true p1===null=false p2===null=false`). This mechanism was
+    already fixed by S30/S34/this-slice's own work.
+  - `checkSubclassConstructorUndefined` (the very next check — `class
+    MySubclass extends Temporal.Duration { … }`, `new MySubclass()`, then
+    `instance.abs()`) **is** the failure: `Object.getPrototypeOf(result)` is a
+    genuine, real `null` (`debug2.js`: `p1===null=true p2===null=false
+    typeof(p1)=object` — `typeof null === "object"`, consistent). So one side
+    of the `«null», «null»` pair is a real bug: **the prototype link of a
+    Temporal method's return value is lost specifically when the receiver is
+    an instance of a user-defined `extends Temporal.X` subclass** — a THIRD,
+    previously-undocumented mechanism, distinct from both Mechanism A
+    (`typeof`) and Mechanism B (`isPrototypeOf`) above and distinct from the
+    "Residual" `instanceof` gap (that one is about `inst instanceof C`; this
+    one is about `Object.getPrototypeOf(methodCall())` on a subclass
+    instance).
+  - The OTHER side of the pair is a red herring, not a second null: `p2`
+    (`construct.prototype`, e.g. `Temporal.Duration.prototype`) is a real,
+    non-null object (`typeof p2 === "object"`, `p2 !== null`) — but
+    `String(p2)` itself returns the literal text `"null"` (`debug3.js`:
+    `String(p2)=null String(null)=null`, both identical text). `assert.js`'s
+    `formatSimpleValue` falls back to `String(value)` for any non-primitive,
+    so the harness's error-message renderer prints a real object as `"null"`
+    text — a separate, narrower stringification bug (`String()`/default
+    `toString()` of a provider-linked class prototype object), NOT evidence
+    that `construct.prototype` is itself null. Reported here as observed, not
+    root-caused — the FIRST mechanism (real `null` from a subclass-instance
+    method call) is the one that actually blocks all 45 corpus files, since
+    it fails the assertion regardless of how `p2` renders.
+
+  **Next-slice pointer**: the reduced target is `Object.getPrototypeOf` (or
+  whatever wasm-level prototype-link write) on the value RETURNED by a
+  built-in Temporal method when `this` is an instance of a JS subclass of that
+  Temporal class. That is a different code path than `__isPrototypeOf`'s
+  candidate walk (Mechanism B, already fixed) — likely the constructor-linking
+  step for the method's result object needs to special-case (or unwrap) a
+  subclass receiver the same way `Reflect.construct`'s `newTarget` handling
+  already does (#6621/S34), rather than always defaulting the result's
+  prototype from the ORIGINAL (superclass) constructor. `reflect-construct-native.ts`
+  and `native-dynamic-instanceof.ts` are the two files this slice and its
+  predecessor already touched for adjacent mechanisms — start there.
+- **Must-not-move groups, per file, both labels, file-copy revert A/B**
+  (base = `git show 0a66b22d9b:<path>` for both changed source files, applied
+  as a plain file copy, not a git checkout, then reverted back):
+
+  | group | rows | base pass | S35 pass | flips |
+  | --- | --- | --- | --- | --- |
+  | A: `Object/keys` + `expressions/object` + `Reflect/{get,has}` | — | — | — | — |
+  | B: `Object/{entries,values,getOwnPropertyNames}` + `for-in` | — | — | — | — |
+  | C: `typeof`+`instanceof`+`isPrototypeOf`+`Reflect/construct`+`subclass`(first 100) | — | — | — | — |
+
+  (filled in by the next commit in this session)
+- **Corpus byte A/B**: (filled in by the next commit in this session)
+- **Equivalence gate**: (filled in by the next commit in this session)
