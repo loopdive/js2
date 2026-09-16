@@ -1259,34 +1259,16 @@ jobs:
           ./node_modules/.bin/esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm \
             --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
 
-      # (#6489) The three provider steps of `test262-shard`, copied verbatim
-      # (same actions, same artifact names, same gate expressions). The two
-      # runtime-eval steps keep their standalone gate and are therefore INERT
-      # on this job, whose `TEST262_TARGET` is fixed to `gc` — they are kept so
-      # the linked lane stays a byte-for-byte copy of the honest lane's provider
-      # block if a standalone linked lane is ever added, and so the difference
-      # between the two jobs is visible rather than silent.
+      # (#6489) The Temporal provider step of `test262-shard`, copied verbatim
+      # (same action, same artifact name). The runtime-eval provider steps are
+      # deliberately NOT copied: this job's `TEST262_TARGET` is fixed to `gc`,
+      # so they would be inert, and the #4242 wiring test counts their
+      # occurrences in this file.
       - name: Download compiled Temporal provider (#5353)
         uses: actions/download-artifact@v7
         with:
           name: temporal-provider-${{ github.run_id }}
           path: .test262-cache/temporal
-
-      - name: Download selected runtime-eval provider (#2928/#4242)
-        if: env.TEST262_TARGET == 'standalone'
-        uses: actions/download-artifact@v7
-        with:
-          name: runtime-eval-provider-${{ github.run_id }}
-          path: .test262-cache
-
-      - name: Verify shared runtime-eval provider cache (#2928/#4242)
-        if: env.TEST262_TARGET == 'standalone'
-        run: |
-          case "$JS2WASM_EVAL_ENGINE" in
-            interpreter) node scripts/build-runtime-eval-provider.mjs --require-full-cache ;;
-            quickjs) node scripts/build-quickjs-eval-provider.mjs --require-cache ;;
-            *) echo "Unknown JS2WASM_EVAL_ENGINE=$JS2WASM_EVAL_ENGINE" >&2; exit 1 ;;
-          esac
 
       # No harness-provider prewarm in this slice: the worker memoises a
       # provider per include-set per fork (`getWorkerHarnessProvider`), and
@@ -1880,9 +1862,21 @@ jobs:
           name: temporal-provider-${{ github.run_id }}
           path: .test262-cache/temporal
 
-      # No runtime-eval provider steps here: this job is `gc`-only, so the
-      # standalone-gated eval steps of `test262-shard` would be inert (#6489),
-      # and the #4242 wiring test counts their occurrences.
+      - name: Download selected runtime-eval provider (#2928/#4242)
+        if: matrix.test262_target == 'standalone'
+        uses: actions/download-artifact@v7
+        with:
+          name: runtime-eval-provider-${{ github.run_id }}
+          path: .test262-cache
+
+      - name: Verify shared runtime-eval provider cache (#2928/#4242)
+        if: matrix.test262_target == 'standalone'
+        run: |
+          case "$JS2WASM_EVAL_ENGINE" in
+            interpreter) node scripts/build-runtime-eval-provider.mjs --require-full-cache ;;
+            quickjs) node scripts/build-quickjs-eval-provider.mjs --require-cache ;;
+            *) echo "Unknown JS2WASM_EVAL_ENGINE=$JS2WASM_EVAL_ENGINE" >&2; exit 1 ;;
+          esac
 
       - name: Run shard
         run: |
