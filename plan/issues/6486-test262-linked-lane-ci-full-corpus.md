@@ -107,3 +107,115 @@ and wall time per lane. That record is the input for the flip issue.
       `tests/issue-3451-linked-harness-lane.test.ts` still green).
 - [ ] Workflow lint: `node scripts/check-workflow-*.mjs` if present, and the
       `quality` gate's workflow checks.
+
+## Implementation notes (2026-09-16, Opus lane) — P1 + P2 done, P3 open
+
+`status:` stays **in-progress** on purpose: P3 (the first full-corpus dispatch
+and the record written into #3451) is the lead's, and nothing in this branch
+can produce that number.
+
+### What landed
+
+**P1 — `test262-linked`** in `.github/workflows/test262-sharded.yml`, inserted
+between `merge-native-first-report` and `test262-shard`, modelled on
+`test262-native-first`.
+
+- `if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.linked_lane)`;
+  new boolean input `linked_lane` next to `native_first`.
+- Matrix is the **57**-chunk list, not 52 — the plan and the dispatch brief
+  both say "the 52-chunk matrix the required js-host job uses", but the job's
+  actual list, read out of the workflow as instructed, is 1…57 (identical to
+  native-first's). 52 does not appear anywhere in this workflow. Using 57 is
+  what makes the rows join 1:1 with the honest host rows, which is the whole
+  point of the count; `--expected-shards 57` in the merge job matches.
+- `env`: `TEST262_TARGET: gc`, `TEST262_ORACLE_MODE: linked`,
+  `TEST262_RESULT_PREFIX: test262-linked`,
+  `RUN_TIMESTAMP: ${{ github.run_id }}-linked-chunk${{ matrix.chunk }}`, plus
+  the host job's pool/heap/proposals settings.
+- No harness-provider prewarm, per the plan; the comment records the #5353
+  escape hatch and says to measure first.
+
+**P2 — `merge-linked-report`** + `scripts/test262-linked-parity.mjs`.
+
+- The job downloads `test262-linked-shard-*`, concatenates, validates
+  completeness across all manifests, builds
+  `linked-results/test262-linked-current.json`, runs the parity tool, and
+  uploads `test262-linked-baseline-<sha>`. It promotes nothing.
+- The honest side is a `continue-on-error` download of this run's
+  `test262-js-host-shard-*`. On a **schedule** run `test262-shard` does not run
+  at all (its `if:` admits only push/workflow_dispatch), so there are no honest
+  artifacts and the parity step skips cleanly through `--allow-missing`; the
+  linked report is still published. `needs: [test262-linked, test262-shard]`
+  with `always() && needs.test262-linked.result == 'success'` is what makes that
+  skip a skip rather than a failure.
+- The tool reports: common/only-one-side row counts, agreement count and %,
+  per-status totals per lane, `pass→fail` / `fail→pass` / other-difference
+  lists, the fallback-row count with a **reason histogram**, error-message
+  buckets (first 80 chars, sorted by size), and row-summed compile/exec ms —
+  explicitly labelled as row-summed, **not** job wall time, since `toJson(needs)`
+  does not carry step durations.
+- It joins on **(file, strict)**, not file alone: a file with both strict
+  variants emits two rows and a file-only key would collide them.
+- `scripts/diff-test262.ts`'s linked-lane refusal is **untouched** (verified:
+  the file is not in this branch's diff); the tool's header says why the
+  cross-lane comparison is allowed *here* — its output can never reach a gate
+  or a published baseline.
+
+**Row-schema change (not in the plan, needed by it).** The plan asks for a
+`fallbackReason` histogram, but the reason was never in the JSONL — only
+`linkedFallback: true` (→ `oracle_lane: linked-harness-fallback`) plus a
+once-per-fork stderr line that cannot be joined back to the rows it degraded.
+So `scripts/test262-worker.mjs` now carries `linkedFallbackReason` on the
+payload and `tests/test262-shared.ts` emits `linked_fallback_reason` (truncated
+to 200 chars). It is present **only** on a fallback row in the linked lane;
+honest rows are byte-identical.
+
+### Validated in-container
+
+- `tests/issue-6486-linked-parity-report.test.ts` — 8 tests green (agreement,
+  fallback counted separately + reason histogram, pass→fail and fail→pass
+  split, (file,strict) keying, wrong-lane rows rejected rather than mixed,
+  Markdown says NON-AUTHORITATIVE, CLI exits 0 on a difference and writes the
+  JSON, `--allow-missing` skip path).
+- **End-to-end on real rows**: `tests/test262-local-shard1.test.ts` run twice
+  with `COMPILER_POOL_SIZE=1 TEST262_PATH_FILTER=language/statements/if`, once
+  honest and once with `TEST262_ORACLE_MODE=linked`, then the tool on the two
+  JSONLs. 12 common rows, 100 % agreement, **11 of 12 rows were linked-lane
+  fallbacks** with reasons like "Lexical declaration cannot appear in a
+  single-statement context" (×4) and "Generator declarations are not allowed in
+  statement position" (×3). That directory is the pathological case for a
+  body-only split, so it is not a corpus estimate — but it is exactly the
+  signal P3 needs, and it would have been invisible without the reason field.
+- Workflow parsed structurally with `yaml`: 57 linked chunks == 57 host chunks;
+  `merge-linked-report` is the ONLY job whose `needs` mentions either new job;
+  no required context name (`merge shard reports`, `check for test262
+  regressions`, `cheap gate`, `quality`, `equivalence-gate`, `cla-check`) is
+  produced by them. `docs/ci-policy.md` is not modified.
+- `tests/issue-3451-linked-harness-lane.test.ts` (4) and `tests/issue-3462.test.ts`
+  (12) still green.
+- Gates, run bare: loc-budget, func-budget, coercion-sites, oracle-ratchet,
+  dead-exports, host-import-policy, typecheck, lint — all exit 0.
+
+### NOT validated in-container
+
+The live workflow run. There is no `gh` in this container and a 57-shard matrix
+is not runnable locally, so `workflow_dispatch(linked_lane: true)` — the first
+acceptance box — is unverified by construction. The failure modes it would
+catch that the structural parse cannot: an artifact-name typo between the
+shard upload and the merge download, and the `--expected-shards 57`
+completeness assertion against a real 57-shard set.
+
+### Acceptance box status
+
+- [~] `workflow_dispatch` with `linked_lane: true` runs 52 (→ **57**) linked
+      shards + the parity job green — **not verifiable in-container**;
+      structurally parsed, matrix count matched to the host job, isolation from
+      the required jobs verified. Required checks and the merge-queue path are
+      untouched: `docs/ci-policy.md` unchanged, neither new job is in the
+      ruleset, and no required job `needs:` them.
+- [x] `tests/issue-6486-linked-parity-report.test.ts` green; the tool exits 0
+      on differences and refuses nothing.
+- [x] `scripts/diff-test262.ts`'s guard unchanged;
+      `tests/issue-3451-linked-harness-lane.test.ts` green.
+- [x] No `scripts/check-*workflow*` script exists in this repo; `npm run lint`
+      (biome) and `typecheck` pass.
