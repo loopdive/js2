@@ -179,19 +179,44 @@ slice; corpus footprint unmeasured. `Temporal.Duration.prototype.isPrototypeOf`
   dynamic-TA-construct pattern) — never the real `@js-temporal/polyfill`
   inside vitest.
 - **Four-family sample** (`PlainDate`/`Duration`/`PlainDateTime`/`ZonedDateTime/prototype`,
-  **40 files each** — a reduced third of the requested 120, see rationale
-  below), `--target standalone`, real provider linked, sequential, fresh
-  `JS2WASM_TEMPORAL_CACHE` per label:
+  **first 40 files each — a reduced third of the requested 120**, see
+  rationale below), `--target standalone`, real provider linked, sequential,
+  fresh `JS2WASM_TEMPORAL_CACHE` per label, measured on this tree:
 
-  | family | base pass/40 | S35 pass/40 | Δ |
-  | --- | --- | --- | --- |
-  | `PlainDate/**` | 39 | 39 | 0 |
-  | `Duration/**` | 36 | (t0 in progress) | — |
-  | `PlainDateTime/**` | 39 | (t0 in progress) | — |
-  | `ZonedDateTime/prototype/**` | 25 | (t0 in progress) | — |
+  | family | base pass/40 | S35 pass/40 | Δ | pass→fail | fail→pass |
+  | --- | --- | --- | --- | --- | --- |
+  | `PlainDate/**` | 39 | 39 | 0 | 0 | 0 |
+  | `Duration/**` | 36 | 36 | 0 | 0 | 0 |
+  | `PlainDateTime/**` | 39 | 39 | 0 | 0 | 0 |
+  | `ZonedDateTime/prototype/**` | 25 | 25 | 0 | 0 | 0 |
+  | **total** | **139/160** | **139/160** | **0** | **0** | **0** |
 
-  Full numbers, the 45-file `subclassing-ignored.js` corpus-wide count, the
-  must-not-move samples and the corpus byte A/B were not all completed inside
-  this session's time budget — see the "S35 findings" section of
-  `plan/issues/5383-standalone-temporal-provider.md` for whatever was measured
-  before hand-off, and the honest statement of what was NOT measured.
+  Per-file diff, not just counts (`.tmp/s35/diff.py` over `.tmp/s35/fam/*.tsv`):
+  **zero rows flip in either direction** in this reduced sample. This is
+  expected and consistent with S30/S34's own findings: the count-neutral
+  outcome does not mean the fix is inert — the `typeof`/`isPrototypeOf`
+  assertions these two mechanisms answer are not the FIRST failing assertion
+  in most of these 160 rows (most fail earlier, on unrelated pre-existing
+  buckets), so the fix is real and reached but does not move the headline
+  count for THIS sample. No `compile_error`, no `timeout`, no `__temporal_*`
+  leak in either run.
+
+  **Scope reduction, stated plainly**: this is 40 files per family (a third
+  of the usual 120-file sample), NOT the full requested acceptance battery.
+  The 45-file `subclassing-ignored.js` corpus-wide count, the must-not-move
+  samples, the corpus byte A/B, and the remaining 80 files per family were
+  NOT completed inside this session's time budget (each family third took
+  ~10–20 minutes real time under the standalone compiler; a full 120×4×2
+  run plus the other batteries did not fit). The next slice picking this up
+  should run the 45-file family FIRST (it is the headline metric this whole
+  #5383 stack is chasing) — `.tmp/s35/subclass-measure.mts` is ready to run,
+  needs only a fresh prewarmed cache per label
+  (`.tmp/s35/prewarm-standalone.mts`).
+- **Equivalence gate**: attempted `npm run -s test:equivalence:gate` locally;
+  it did NOT complete inside a 300 s budget in this container (killed by
+  `timeout`, zero output produced before the kill) — the suite is heavier than
+  this session's remaining time allowed for. NOT independently re-verified
+  this session. Every prior S-slice in this stack (S17 through S34) reports it
+  unchanged at 22 failing / 1720 passing / 22 known-failures; this PR's own
+  `equivalence-gate` CI check is the authoritative answer, stated as unverified
+  locally rather than assumed.

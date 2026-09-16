@@ -9058,3 +9058,111 @@ Everything in S26–S33 still holds. One addition:
   a disposable copy of the real harness told them apart here — the fix did
   work, and the successor blocker is a distinct, already-documented (S20
   §4) mechanism.
+
+### S35 findings (2026-09-16) — the S11/S22 `typeof <provider instance>` residual and the #6617 R2 `isPrototypeOf` gap, both ROOT-CAUSED and FIXED; the headline 45-file count not yet re-measured
+
+Full write-up in
+[#6622](6622-standalone-class-instance-callable-kind-and-isprototypeof.md).
+Branch `issue-5383-standalone-temporal-s35`, based on S34's FINAL tip
+`0a66b22d9b`; the fix is committed WIP `4836b866151024d2ff622633bd115d9619b90fd6`.
+
+#### 1. Two root causes, both traced to the exact same structural-collision
+pattern (#5195/#5194/#2158/#2009), now hit at two NEW sites
+
+**Mechanism A** — `reflect-construct-native.ts`'s `__reflect_is_constructor`
+and `__is_native_reflect_target` each had ONE bare `ref.test $__ta_ctor` site
+(unlike every OTHER `$__ta_ctor` site in this backend, all of which already
+route through `taCtorIdentityTestInstrs`, #5383 S2f R11). `$__ta_ctor`
+(`{kind: i32, brand: i32}`) is structurally identical to a field-less compiled
+class root (`{__tag: i32, __shape_brand: i32}`), so WasmGC's isorecursive type
+canonicalization makes them the SAME runtime type: `ref.test` cannot
+distinguish a genuine TypedArray constructor from an instance of ANY colliding
+class. Measured against the real provider: 30+ field-less Temporal/helper
+classes (`TimeDuration`, `Instant`, `PlainDate`, `PlainDateTime`,
+`PlainMonthDay`, `PlainTime`, every calendar-helper class, …) share this exact
+shape. The bare test made `IsConstructor(instance)` answer `true` for every
+one of them — which is what fed the wrong bit into
+`standalone-link-boundary.ts`'s `callable_kind` terminal, producing the S11/S22
+standing residual: `typeof <provider instance>` answering `"function"`.
+
+**Mechanism B** — `object-runtime-prototype.ts`'s native `__isPrototypeOf`
+never seeded its `$proto` chain walk from a class instance (a closed
+`$ClassName` struct has no `$proto` field at all). Fixed with
+`classInstanceIsPrototypeOfSeed`, mirroring the EXISTING
+`fnctorIsPrototypeOfSeed` precedent one function up, reusing
+`__getPrototypeOf` — which already composes the module-local class-instance
+dispatcher (#6617/S30) AND the link-boundary hop — rather than adding a third
+prototype mechanism, exactly per #6617 R2's own conclusion.
+
+#### 2. The fix
+
+| file | what |
+| --- | --- |
+| `reflect-construct-native.ts` | both bare `taCtorTypeIdx` pushes replaced with `taCtorIdentityTestInstrs` |
+| `object-runtime-prototype.ts` | new `classInstanceIsPrototypeOfSeed` + `classInstanceProtoLocal`, spliced into `__isPrototypeOf` right after the existing fnctor seed |
+
+#### 3. The result, measured against the real provider
+
+| probe (`.tmp/s35/probe1.mjs`, fresh cache each side) | base | S35 |
+| --- | --- | --- |
+| `typeof (new Temporal.Duration(1))` through `any`, linked | `"function"` | `"object"` |
+| `typeof (new Temporal.Duration(1))` (bare) | `"function"` | `"object"` |
+| `Temporal.Duration.prototype.isPrototypeOf(new Temporal.Duration(1))` | `"no"` | `"yes"` |
+| `Object.getPrototypeOf(inst) === Duration.prototype` (#6617/S30, control) | `"yes"` | `"yes"` — unaffected |
+| provider artifact size | 3,311,544 B | 3,311,638 B (+94 B) |
+
+`(new Temporal.Duration(1)) instanceof Temporal.Duration` (dynamic RHS) stays
+`"no"` on both trees — `native-dynamic-instanceof.ts` acquires
+`target.prototype` through a THIRD, separate mechanism from `__isPrototypeOf`
+(`ownedPrototypeOrdinaryHasInstance`'s own-property-bag read, which has no
+concept of "own properties" for a `$ClassName` class value). Filed as this
+issue's Residual, not chased this slice — full `instanceof` needs a new arm in
+that native, parallel to `ownedPrototypeOrdinaryHasInstance`, corpus footprint
+unmeasured.
+
+**Four-family sample, reduced to the first 40 files per family (a third of
+the usual 120)** — time budget, stated plainly rather than hidden:
+
+| family (first 40 files) | base pass | S35 pass | Δ | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| `PlainDate/**` | 39 | 39 | 0 | 0 | 0 |
+| `Duration/**` | 36 | 36 | 0 | 0 | 0 |
+| `PlainDateTime/**` | 39 | 39 | 0 | 0 | 0 |
+| `ZonedDateTime/prototype/**` | 25 | 25 | 0 | 0 | 0 |
+| **total** | **139/160** | **139/160** | **0** | **0** | **0** |
+
+Per-file diff (not just counts): zero flips in either direction. Consistent
+with S30's own reading of a count-neutral result — the two assertions this
+slice fixes are not the FIRST failing assertion in most of these 160 rows, so
+the fix is real and reached (verified directly above, not inferred from the
+count) but does not move THIS sample's headline. No `compile_error`, no
+`timeout`, no `__temporal_*` leak in either 160-row run.
+
+**NOT completed this session, and stated as such rather than silently
+skipped**: the 45-file `subclassing-ignored.js` corpus-wide count (the
+headline metric this whole stack is chasing), the must-not-move samples, the
+corpus byte A/B, and the remaining 80 files per family in the four-family
+sample. `.tmp/s35/subclass-measure.mts` is ready for the next slice to run
+first — needs only a fresh prewarmed cache per label
+(`.tmp/s35/prewarm-standalone.mts`).
+
+#### 4. Traps, carried forward and added to
+
+Everything in S26–S34 still holds. Two additions:
+
+- **`$__ta_ctor` needs to ACTUALLY be minted in the colliding module** for the
+  collision to fire — reading a TypedArray constructor's `.of`/`.from` (a
+  static METHOD call) registers `ctx.taCtorTypeIdx`; merely reading
+  `.BYTES_PER_ELEMENT` off a `const T = Int8Array` binding does NOT (measured,
+  `.tmp/s35/probe5.mjs`) — narrower than #6601/#6620's own reductions state.
+  Worth re-checking if a future witness for this family reads "unexpectedly
+  still passing".
+- **A structural-collision fix at one call site does not imply the fix is
+  complete for the WHOLE backend.** `#5194`/`#6601`/`#6620` each independently
+  fixed the SAME `$__ta_ctor`/field-less-class collision at their own call
+  site; this slice is the fourth. A grep for a bare `ref.test` on
+  `ctx.taCtorTypeIdx` (or any typeIdx sourced from `getOrRegisterTaCtorType`)
+  NOT wrapped in `taCtorIdentityTestInstrs` is a reasonable audit for
+  whichever slice touches this area next — `reflect-construct-native.ts` had
+  TWO such sites in ONE file, found only by reading the whole file rather than
+  stopping at the first.
