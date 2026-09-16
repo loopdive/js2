@@ -8939,3 +8939,122 @@ Everything in S26–S32 still holds. One addition:
   IDENTITY needs the value check too, and a codebase-wide grep for the
   type's naked `ref.test` is how the other 7 sites in this slice's residual
   were found.
+
+### S34 findings (2026-09-16) — R-construct FIXED: a runtime-length spread into a foreign/linked dynamic construct answered null. Four families 427 → 430; the 45-file family's NEXT blocker is verified directly and named, not chased
+
+Full write-up in
+[#6621](6621-standalone-dynamic-new-runtime-argv-spread.md). Branch
+`issue-5383-standalone-temporal-s34`, based on S33's FINAL tip `020a8aba23`;
+the fix is committed WIP `c59f1d3145`.
+
+#### 1. The defect
+
+`new construct(...constructArgs)` — test262's own
+`checkSubclassConstructorNotObject` shape, `construct` and `constructArgs`
+both PARAMETERS forwarded through two layers of `...args` — answered `null`
+(or a field-less placeholder) whenever the spread's length could not be
+resolved at compile time AND the callee was not a module-local class. Two
+arms both had to decline for this shape to have no lowering at all:
+`tryCompileNativeConstructFromValue` gave up unconditionally on ANY
+unresolvable spread (`args.some(isSpreadElement) => return undefined`), and
+`emitDynamicNewFallback` — the only other standalone dynamic-`new`
+fallback — declines whenever the callee is not a LOCAL class and is never
+even reached for a member-access callee in standalone at all. Blocks all 45
+`built-ins/Temporal/**/subclassing-ignored.js` test262 files, pinned as
+S30's `p2` probe and named "R-construct" in #6620.
+
+#### 2. The fix
+
+`native-construct.ts`'s existing `__class_construct_dispatch` /
+`__js2wasm_link_construct` terminals were ALREADY arity-generic
+(`(callee, argsVec, argc)`); only the call site lacked a way to build that
+`argsVec` from a runtime-length call. One new module-level driver
+(`__native_construct_argv`, `reserveNativeConstructDriverArgv` +
+`fillArgvConstructDriver`) reuses those terminals unchanged, and a new
+call-site helper (`buildRuntimeConstructArgvVec` in `new-super.ts`) builds
+the runtime argv via the generic `__extern_length`/`__extern_get_idx`
+reader pair — the same protocol `Object.groupBy`'s native helper already
+uses for an arbitrary array-like source, so an untyped JS array PARAMETER
+(the harness's `constructArgs`) works. Standalone/WASI only; the JS-host
+lane already handles this correctly through `__construct_closure` and is
+untouched.
+
+#### 3. The result
+
+| family (first 120 files) | base | branch | Δ | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| `PlainDate/**` | 110 | 111 | +1 | 0 | 1 |
+| `Duration/**` | 102 | 104 | +2 | 0 | 2 |
+| `PlainDateTime/**` | 112 | 112 | 0 | 0 | 0 |
+| `ZonedDateTime/prototype/**` | 103 | 103 | 0 | 0 | 0 |
+| **total** | **427** | **430** | **+3** | **0** | **3** |
+
+No `compile_error`, no `timeout`, no `__temporal_*` leak in 960 rows.
+
+**The 45-file `subclassing-ignored.js` family stays 0 → 0** — verified
+directly, not assumed, by injecting a debug throw into a disposable COPY of
+the real `temporalHelpers.js` (never the shared `test262/` submodule
+checkout): `new construct(...constructArgs)` now genuinely constructs a
+real, field-populated instance with the CORRECT prototype link
+(`Object.getPrototypeOf(instance) === construct.prototype` flips
+false→true, a real constructor field flips `undefined`→a real value on the
+branch tree) — the fix is reached and correct. The family's headline does
+not move because the NEXT assertion is blocked by a SEPARATE, PRE-EXISTING
+mechanism: a dynamically-constructed class value's `typeof` answers
+`"function"` and `instanceof` answers `false`, identically on the UNFIXED
+base tree for the ALREADY-WORKING no-spread/member-direct construct paths
+too — matching S20 §4's already-documented "per-name ladder, no runtime
+class test" residual, named there as "the next slice, and the first one
+where the fix is in the hottest dispatch path in the compiler." Not chased
+this slice.
+
+#### 4. Controls
+
+**Must-not-move — 1,684 rows, four groups, per file, both labels, 0 flips.**
+
+| group | rows | base pass | branch pass | flips |
+| --- | --- | --- | --- | --- |
+| `Object/keys` + `expressions/object` + `Reflect/{get,has}` | 1,250 | 1,125 | 1,125 | 0 |
+| `Object/{entries,values,getOwnPropertyNames}` + `for-in` | 205 | 179 | 179 | 0 |
+| `language/expressions/new`(150) + `Reflect/construct` + `class/subclass`(100) | 169 | 120 | 120 | 0 |
+| `built-ins/TypedArrayConstructors/ctors`(60) | 60 | 34 | 34 | 0 |
+
+**Targeted byte A/B**: one of three synthetic artifacts moves — the armed
+case (a spread through a param callee into a local class): standalone
+140,670 B → 140,620 B. An unarmed no-spread control and an unarmed
+no-class control are byte-identical. Every `gc`-lane artifact is identical.
+
+**Corpus byte A/B**: 42 modules × {gc, standalone} = 84 artifacts, **0
+moved** — a null control (no module in that corpus constructs dynamically
+with a runtime-length spread into a foreign ctor).
+
+**Temporal provider**: `3,311,544 B` on BOTH labels — byte-identical,
+`cacheHit=false` on both fresh prewarms. The fix is reached only from a
+CONSUMER's own dynamic construct; the pre-transpiled
+`@js-temporal/polyfill` provider contains no such site.
+
+**Equivalence gate**: 22 failing / 1,720 passing / 22 known-failures —
+baseline exactly.
+
+**Witness**: `tests/issue-6621-dynamic-new-runtime-argv-spread.test.ts`, 5
+`it`s — 2 fix-witnesses measured failing on the file-copy-reverted base and
+passing on branch; 3 controls pass on both trees unchanged. Run alongside
+the other 22 `tests/issue-66*.test.ts` files: 23 files / 104 tests, all
+pass, ~136 s wall, no OOM.
+
+#### 5. Traps, carried forward and added to
+
+Everything in S26–S33 still holds. One addition:
+
+- **Two arms both had to decline for a shape to have NO lowering — check the
+  WHOLE fallback chain, not just the first decline.** A census reduced only
+  by LOCAL-class spellings (where `emitDynamicNewFallback`'s own runtime-argv
+  path already worked) would have reported "already works" and missed the
+  actual corpus blocker — which needs a FOREIGN class, the one shape that
+  never reaches ANY working fallback in standalone.
+- **A corpus-wide "0 → 0" needs its own direct verification.** The pass
+  count alone cannot distinguish "the fix did not work" from "the fix
+  worked and a different blocker is now first." A debug throw injected into
+  a disposable copy of the real harness told them apart here — the fix did
+  work, and the successor blocker is a distinct, already-documented (S20
+  §4) mechanism.
