@@ -692,3 +692,11 @@ Two caveats, both recorded in #6474:
 `ORACLE_REBASE=1` does not excuse it, because seeding a linked baseline IS the
 authority flip (slice 6), and an escape hatch here is exactly how a shadow lane
 silently becomes the published number.
+
+### Full corpus (2026-09-16, #6486 P3, run 35116762391)
+
+57 shards each lane: linked median 152 s vs honest 326 s per shard (2.1×);
+row-summed compile 16.1 M vs 52.7 M ms. Agreement 89.75 %; the two dominant
+difference classes are lane plumbing (#6489, Temporal/eval providers not
+downloaded in the linked job) and one provider helper (#6490,
+`testWithTypedArrayConstructors` null deref). Details in #6486.

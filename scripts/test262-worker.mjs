@@ -1452,6 +1452,17 @@ async function doCompile(
     // This leaves the incremental Language Service (compileMulti builds its own
     // program), which is part of the per-row price #5248 measured; the
     // alternative — prepending the polyfill to each body — costs ~32 s a row.
+    //
+    // (#6489) HONESTY STAMP. This branch is tested BEFORE the linked branch
+    // below, so inside a linked run a Temporal row is compiled by the honest
+    // path — it is not a linked measurement and must not be counted as linked
+    // agreement. Report it as a fallback with its own reason so the parity
+    // report attributes it correctly. (A real linked+Temporal co-link is a
+    // later slice; until then this is the accurate label, not a workaround.)
+    if (linkedHarness) {
+      linkedHarness.fellBack = true;
+      linkedHarness.fallbackReason = "temporal row: honest compile (compileWithTemporalGlobal)";
+    }
     return compilerBundle.compileWithTemporalGlobal(source, temporal, {
       allowJs: true,
       fileName: "test.js",
