@@ -15,6 +15,7 @@ import { planAsyncClosureActivation } from "../async-activation.js";
 import { isNumberType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, resolveArrayInfo } from "../array-methods.js";
+import { emitArrayIteratorPrototypeSingleton } from "../array-object-proto.js"; // (#6484 S3 review)
 import {
   compileArrowAsClosure,
   compileArrowFunction,
@@ -797,6 +798,24 @@ export function compileTailDispatch(
           const nativeResult = compileArrayMethodCall(ctx, fctx, elemAccess, expr, receiverType, "values");
           if (nativeResult !== undefined && nativeResult !== null) return nativeResult as ValType;
           // Fall through to the host bridge if the native path declined.
+        }
+        // (#6484 S3 review) The diverted TypedArray receiver hands back a
+        // `$__IterRec`, which models no `[[Prototype]]` — so
+        // `Object.getPrototypeOf(<any-typed binding of it>)` answered `null`,
+        // where the snapshot vec it replaced answered `%Array.prototype%` (the
+        // vec's own, ALSO wrong, answer — it is not `%ArrayIteratorPrototype%`;
+        // see the measurement in the issue file). §23.2.3.36 makes a TypedArray
+        // iterator an Array Iterator, so the spec answer is the #3013
+        // `%ArrayIteratorPrototype%` singleton. Materialize it here — the
+        // singleton is lazy, and the finalize arm below reads its global — and
+        // arm the finalize step. The statically-typed `ArrayIterator` binding
+        // already routes through the #3013 compile-time arm and is untouched.
+        if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && typedArrayIterRecv) {
+          const protoType = emitArrayIteratorPrototypeSingleton(ctx, fctx);
+          if (protoType) {
+            fctx.body.push({ op: "drop" });
+            ctx.typedArrayIterRecProtoPending = true;
+          }
         }
         const importName = methodName === "@@iterator" ? "__iterator" : "__async_iterator";
         // `%String.prototype%` is the empty String value (§22.1.3). Its
