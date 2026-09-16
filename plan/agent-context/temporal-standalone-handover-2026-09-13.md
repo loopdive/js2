@@ -53,6 +53,21 @@ started). Acceptance criterion 4 of #5383 is therefore still open.
 Fix commits also on main: the speculative-rollback gate fix on S2m (9501ffca13),
 the `test262` gitlink restoration (#5892), the revert of #5871/#5882 (#5914).
 
+## Stack state after the 2026-09-16 sync
+
+The stack head is the S30 branch (`issue-5383-standalone-temporal-s30`, worktree
+`agent-a85bfa9733f9bc958`), merged with `origin/main` at 66405a1244 (71 commits)
+in 908f9aaebf. On that tip: typecheck, loc/func (also against origin/main — the
+inherited `src/runtime.ts`/`buildImports` red is gone), coercion-sites,
+oracle-ratchet, dead-exports, speculative-rollback, issue-ids:against-main,
+update-issues — all green; `check:compiler-boundaries` red with
+`inventory-valid-architecture-incomplete`, verified red on `origin/main` itself
+(not the stack's). All 19 stack witness suites pass (83 tests; the #6607 pin
+for residual 2 was flipped to its #6617-fixed answer in 778bcd006f).
+Equivalence gate 22/1720 baseline. Pushes still 403 (since 2026-09-13 14:25);
+the Opus weekly limit is exhausted until 2026-09-18 21:00 UTC, so S31 onward
+run on a smaller model until then.
+
 ## Attribution lesson (seven of eight slices)
 
 S9→S13 were each handed a bucket attributed to the link boundary (#5406) and
