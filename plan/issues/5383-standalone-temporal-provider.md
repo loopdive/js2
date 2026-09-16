@@ -8897,6 +8897,22 @@ sites) found 7 MORE unguarded consult sites (`dataview-native.ts` ×5,
 bug, none reduced to a concrete failing test262 row this slice. Filed as
 R-other-bare-ref-test in #6620.
 
+**Criterion 4** (full tables in #6620): four-family sample (first 120 each,
+file-copy revert, fresh cache per label) — **427 → 427**
+(110/102/112/103, 0 pass→fail, 0 fail→pass, 0 per-file flips), an honest
+null for this sample (`subclassing-ignored.js` isn't among the first 120 in
+any of the four families — the corpus-wide 45-file measurement above is
+where R1's effect shows). Must-not-move: 1,136 rows across groups A/B
+(`Object/keys`+`expressions/object`+`Reflect/{get,has}`,
+`Object/{entries,values,getOwnPropertyNames}`+`for-in`) plus
+`built-ins/TypedArray` (150) + `TypedArrayConstructors/ctors` (100) +
+`expressions/member-expression` (1) + `statements/class/subclass` (100),
+**0 flips**. Corpus byte A/B: 42 modules × {gc, standalone} = 84 artifacts,
+**0 moved** (byte-identical both lanes). Provider bytes: base 3,311,522 B →
+branch 3,311,544 B (+22 B — `ta-dyn-mop.ts` also runs during the
+PROVIDER's own compile, since the polyfill carries the same internal
+dynamic-TA-construct pattern).
+
 **Equivalence gate**: unchanged from baseline (this fix touches only the
 standalone `$__ta_ctor` receiver arm, `noJsHost`-gated, never reached by the
 gc-target equivalence corpus).

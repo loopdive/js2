@@ -155,6 +155,82 @@ when the receiver BOTH structurally matches `$__ta_ctor` AND carries the
 does (both mint sites write it), so this is answer-preserving for genuine
 TypedArray constructor values and can only ever REMOVE a false positive.
 
+## Criterion 4 — four-family sample, must-not-move groups, corpus byte A/B
+
+Measured 2026-09-16, file-copy revert of `src/codegen/ta-dyn-mop.ts` only,
+`--target standalone`, provider linked, sequential (one heavy job per Bash
+call, no auto-backgrounding — each `measure.mts` invocation ran to
+completion inside one foreground call), 60 s/row budget for the
+Temporal-linked families, fresh `JS2WASM_TEMPORAL_CACHE` per label
+(`.tmp/s33/measure-base-cache` / `.tmp/s33/measure-branch-cache`, QuickJS
+present, 3 cache artifacts verified before starting):
+
+**Provider bytes**: base 3,311,522 B → branch 3,311,544 B (**+22 B**, NOT a
+null result — `ta-dyn-mop.ts` runs during the PROVIDER's own compile too,
+since `@js-temporal/polyfill` carries the same internal dynamic-TA-construct
+pattern that makes this defect reachable at all; +22 B matches the fix's
+LOC delta). Both `cacheHit: true` on prewarm.
+
+### Four-family sample (first 120 files each)
+
+| family | base pass | branch pass | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- |
+| `PlainDate/**` | 110 | 110 | 0 | 0 |
+| `Duration/**` | 102 | 102 | 0 | 0 |
+| `PlainDateTime/**` | 112 | 112 | 0 | 0 |
+| `ZonedDateTime/prototype/**` | 103 | 103 | 0 | 0 |
+| **total** | **427** | **427** | **0** | **0** |
+
+Reproduces S32's own base measurement exactly (110/102/112/103 = 427) and
+shows **zero net movement AND zero per-file flips** (verified by a `join`
+on filename, not just count equality — the count-neutral-swap trap #2097/
+edition-ratchet call out). This is an honest null result for THIS sample,
+not evidence the fix does nothing: `subclassing-ignored.js` is one file per
+leaf directory and — per S29/S30/S32's own corpus-wide numbers — the
+family's *targeted* corpus (the 45 `subclassing-ignored.js` files
+specifically) is where R1's effect actually shows (see the dedicated
+45-file measurement below and in "Result"). The first-120-sorted sample and
+the `subclassing-ignored.js` corpus are largely disjoint by design (test262
+sorts alphabetically per directory; `subclassing-ignored.js` is not among
+the first 120 in any of these four families).
+
+### Must-not-move groups (per-file, 0 flips)
+
+| group | base pass/total | branch pass/total | flips |
+| --- | --- | --- | --- |
+| A: `Object/keys` (59) | 55/59 | 55/59 | 0 |
+| A: `expressions/object` (capped 500) | 476/500 | 476/500 | 0 |
+| A: `Reflect/get` (11) | 10/11 | 10/11 | 0 |
+| A: `Reflect/has` (10) | 9/10 | 9/10 | 0 |
+| B: `Object/entries` (21) | 11/21 | 11/21 | 0 |
+| B: `Object/values` (20) | 10/20 | 10/20 | 0 |
+| B: `Object/getOwnPropertyNames` (45) | 42/45 | 42/45 | 0 |
+| B: `statements/for-in` (119) | 116/119 | 116/119 | 0 |
+| C: `built-ins/TypedArray` (first 150) | 86/150 | 86/150 | 0 |
+| C: `TypedArrayConstructors/ctors` (first 100) | 60/100 | 60/100 | 0 |
+| C: `expressions/member-expression` (1 — whole dir) | 0/1 | 0/1 | 0 |
+| C: `statements/class/subclass` (first 100) | 55/100 | 55/100 | 0 |
+
+Every group: **byte-for-byte identical pass/fail set** (a `join` on
+filename+status, not just matching totals) — 0 flips across 1,136 rows
+total. `built-ins/TypedArray` and `TypedArrayConstructors/ctors` are the
+groups most likely to exercise the CHANGED `$__ta_ctor` receiver arm
+directly (genuine TA constructors), and they are unmoved, confirming the
+brand-check narrowing does not disturb real TA-constructor dispatch.
+
+### Corpus byte A/B (42 modules × {gc, standalone} = 84 artifacts)
+
+`website/playground/examples/**/*.ts` + `tests/fixtures/**/*.ts`, compiled
+on both lanes, SHA-256 of the output binary: **0 of 84 moved** — every
+artifact byte-identical between base and branch, `gc` lane included (the
+fix is `ctx.standalone`-gated in `ta-dyn-mop.ts`, so the `gc` lane is
+structurally unreachable regardless of content). A genuine null control:
+none of the 42 corpus modules construct a field-less class dynamically
+alongside an internal TypedArray construct, so none exercise the collision
+this fix narrows.
+
+**Equivalence gate**: unchanged — see "Result" below.
+
 ## Result
 
 Verified against the real `@js-temporal/polyfill` provider, `--target
