@@ -192,11 +192,45 @@ gc-target corpus never exercises (the arm is `noJsHost`-gated and standalone
 `__extern_get`-only).
 
 **Witness**: `tests/issue-6620-ta-ctor-brand-prototype-collision.test.ts`, 4
-`it`s — 1 fix-witness (dynamic `.prototype` read under unrelated arming)
-measured FAILING on the file-copy-reverted base (`undef`, expected `object`)
-and passing on branch; 3 controls (`.name` on the same armed receiver, a
-lone unarmed `.prototype` read, a genuine TypedArray constructor's
-`.prototype`/`BYTES_PER_ELEMENT`) pass on both trees unchanged.
+`it`s, all SYNTHETIC (no real `@js-temporal/polyfill` provider — that OOM'd
+the vitest worker after ~84 s, `FATAL ERROR: Reached heap limit`, reproduced
+twice; the real-provider version of this test that shipped in the first cut
+of this issue is retired). The synthetic pair links a tiny npm package
+(`ns6620`) exporting a field-less class `PD` whose compiled root
+(`{__tag, __shape_brand}`) is made to collide with `$__ta_ctor` by giving the
+PROVIDER its own internal dynamic-TA-construct pattern (`new k(4)` on a
+parameter bound to `Uint8Array`) — this is what makes `PD`'s struct type and
+`$__ta_ctor` land on the SAME type slot WITHIN the provider's own compile
+(measured: `PD_new`'s declared return type and the provider's own
+`$__ta_ctor` singleton globals share one type index once the provider
+carries such a construct; `@js-temporal/polyfill` has the identical pattern
+internally, which is why Duration hits this in production). 11 filler
+classes ahead of `PD` push its compiler-assigned `__tag` to 11, outside
+`TA_CTOR_KINDS`' 0..10 range, so the SEPARATE bare-`ref.test` site in
+`ta-ctor-meta.ts` (R-other-bare-ref-test, below — real `Temporal.Duration`'s
+own `__tag` is in the 30s, #5194 r3 review F1's `{35, 0}`, so production was
+never exposed to that second site either) does not also intercept and mask
+which arm is under test.
+
+Base/branch counts, same synthetic pair, measured 2026-09-16 by file-copy
+revert of `src/codegen/ta-dyn-mop.ts` only: **base 3 pass / 1 fail** (the
+fix-witness fails: `undef` where `hasIdent=function ctorName=PD` is
+expected); **branch 4 pass / 0 fail**. Full suite run alongside the other 21
+`tests/issue-66*.test.ts` files: 22 files / 99 tests, all pass, ~122 s wall,
+no OOM.
+
+- Fix-witness: dynamic `.prototype` read under unrelated arming — base
+  `undef`, branch `hasIdent=function ctorName=PD` (the real prototype, whose
+  `.ident` method is real).
+- Control 1: `.name` on the SAME armed receiver (a member read that does NOT
+  chain through `.prototype`, so it is a genuine control, not a derived
+  assertion of the same bug) — `string:PD` on both trees.
+- Control 2: a lone `.prototype` read with no dynamic `new` anywhere —
+  `hasIdent=function ctorName=PD` on both trees (the CONSUMER's own arming is
+  required; the provider-side collision alone is not sufficient).
+- Control 3: a genuine `Uint8Array`/`Int32Array` `.prototype`/
+  `.BYTES_PER_ELEMENT` — `bpe=4 proto=object` on both trees (the fix narrows
+  the arm's receiver test, it must not disable the arm for real TA ctors).
 
 ## Residuals — sized here, not given their own ids
 
