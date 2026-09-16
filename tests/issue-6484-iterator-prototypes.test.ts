@@ -216,4 +216,117 @@ describe("#6484 — intrinsic iterator prototypes are reachable (standalone)", (
     expect(hostImports).toEqual([]);
     expect(value).toBe(7);
   });
+
+  // --- Order independence (adversarial review, 2026-09-16) -----------------
+  //
+  // `emitBuiltinGetPrototypeOfFallback` registers the resolver BEFORE it
+  // compiles its argument (the #2043 shift discipline), so on the module's
+  // FIRST `Object.getPrototypeOf(<iterator>)` the record runtime is not up yet.
+  // The first cut declined there and answered the historical null — while the
+  // identical expression one statement later answered a real prototype. Every
+  // case above is immune by construction, because each builds its iterators in
+  // earlier statements. These three are deliberately not.
+
+  it("answers on the module's FIRST iterator-touching expression", async () => {
+    const { value, hostImports } = await runStandalone(
+      // Nothing above this line touches an iterator: no warm-up, no for-of.
+      `var a: any = [1, 2, 3];
+       var p: any = Object.getPrototypeOf(a[Symbol.iterator]());
+       var m: any = new Map([[1, 2]]);
+       var pm: any = Object.getPrototypeOf(m[Symbol.iterator]());
+       var score = 0;
+       if (p !== null && p !== undefined) score += 1;
+       if (pm !== null && pm !== undefined) score += 2;
+       if (score === 3 && p !== pm) score += 4;
+       // The same expression later in the module must agree with the first one.
+       if (Object.getPrototypeOf([9][Symbol.iterator]()) === p) score += 8;
+       export function test(): number { return score; }`,
+    );
+    expect(hostImports).toEqual([]);
+    expect(value).toBe(15);
+  });
+
+  it("a class METHOD reading `this.<field>` agrees with a direct read", async () => {
+    // Methods are compiled before the top-level body, so the read inside
+    // `protoInMethod` is the module's first occurrence — the same first-touch
+    // decline, reached through a different compile order.
+    const { value, hostImports } = await runStandalone(
+      `class Holder {
+         it: any;
+         constructor(it: any) { this.it = it; }
+         protoInMethod(): any { return Object.getPrototypeOf(this.it); }
+       }
+       var arr: any = [1, 2];
+       var direct: any = Object.getPrototypeOf(arr[Symbol.iterator]());
+       var h = new Holder(arr[Symbol.iterator]());
+       var viaMethod: any = h.protoInMethod();
+       var score = 0;
+       if (direct !== null && direct !== undefined) score += 1;
+       if (viaMethod !== null && viaMethod !== undefined) score += 2;
+       if (score === 3 && viaMethod === direct) score += 4;
+       // Reading the same field from OUTSIDE the class must agree too.
+       var viaField: any = Object.getPrototypeOf(h.it);
+       if (viaField !== null && viaField !== undefined && viaField === direct) score += 8;
+       export function test(): number { return score; }`,
+    );
+    expect(hostImports).toEqual([]);
+    expect(value).toBe(15);
+  });
+
+  it("a live cursor re-reads its length every step (externref carrier)", async () => {
+    // §23.1.5.1 step 6: the length is re-read from the subject each step, and
+    // the step body has no cached bound, so a record whose `vec` IS the
+    // subject's storage observes growth. (A NUMBER-element array does not, and
+    // that is the #3100 normalization copy, not this latch — see the residual
+    // note on #6484; it is deliberately NOT pinned here, because pinning it
+    // would lock in the wrong answer.)
+    const { value, hostImports } = await runStandalone(
+      `var a: any = ["a", "b"];
+       var it: any = a[Symbol.iterator]();
+       var steps = 0;
+       var n = 0;
+       while (steps < 6) {
+         var r: any = it.next();
+         if (r.done) break;
+         n++;
+         if (steps === 0) a.push("c");
+         steps++;
+       }
+       // Exhaustion LATCHES: growth after done must not resume the cursor.
+       a.push("d");
+       var after: any = it.next();
+       var score = n;
+       if (after.done === true) score += 100;
+       export function test(): number { return score; }`,
+    );
+    expect(hostImports).toEqual([]);
+    expect(value).toBe(103);
+  });
+
+  it("an iterator VALUE still drives the eager helper loop (carrier migration)", async () => {
+    // S2 migrated `arr[Symbol.iterator]()` from a snapshot `$Vec` to a live
+    // `$__IterRec`. `__iter_hof_open` admitted the vec and not the record, so
+    // `iter.reduce(cb, init)` answered `undefined` WITHOUT calling `cb` once —
+    // silent, and it cost a test262 row that had been passing. The record is
+    // now a pass-through handle there.
+    const { value, hostImports } = await runStandalone(
+      `var values = [1, 2, 3];
+       var iter: any = values[Symbol.iterator]();
+       var initialValue: any = { tag: 7 };
+       var calls = 0;
+       var firstMemoWasInitial = 0;
+       var result: any = iter.reduce(function (memo: any, v: any) {
+         if (calls === 0) firstMemoWasInitial = memo === initialValue ? 1 : 0;
+         calls++;
+         return v;
+       }, initialValue);
+       var score = 0;
+       if (calls === 3) score += 1;
+       if (firstMemoWasInitial === 1) score += 2;
+       if (result === 3) score += 4;
+       export function test(): number { return score; }`,
+    );
+    expect(hostImports).toEqual([]);
+    expect(value).toBe(7);
+  });
 });

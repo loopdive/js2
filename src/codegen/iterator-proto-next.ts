@@ -79,8 +79,11 @@ function scratchFctx(name: string, params: ValType[]): FunctionContext {
 
 /**
  * (#6484 S1) Register (idempotently) `__iter_rec_proto(externref) -> externref`
- * and return its funcIdx, or `undefined` when this module has no iterator
- * records at all (then the caller keeps its existing behaviour byte-for-byte).
+ * and return its funcIdx, or `undefined` off the standalone/wasi lane (then the
+ * caller keeps its existing behaviour byte-for-byte).
+ *
+ * It BOOTSTRAPS the record runtime when that is not up yet rather than
+ * declining — see the comment on the `ensureNativeIteratorRuntime` call.
  *
  * CALL ORDER: the singleton emission below can add late imports, which shifts
  * every defined-function index. Call this BEFORE compiling any argument into
@@ -91,6 +94,16 @@ export function ensureIterRecPrototypeHelper(ctx: CodegenContext): number | unde
   const existing = ctx.funcMap.get("__iter_rec_proto");
   if (existing !== undefined) return existing;
   if (!(ctx.standalone || ctx.wasi)) return undefined;
+  // Bootstrap the record runtime rather than declining when it is not up yet.
+  // Declining here is ORDER-DEPENDENT, and the order is the one test262 uses:
+  // `emitBuiltinGetPrototypeOfFallback` deliberately calls this BEFORE compiling
+  // its argument (the #2043 shift discipline), so on the very first
+  // `Object.getPrototypeOf(a[Symbol.iterator]())` in a module `$__IterRec` is
+  // not registered yet and the call site would fall back to the historical null
+  // — while the SAME expression one statement later answers a real prototype.
+  // `resolveIteratorFamilyNextClosure` below has always bootstrapped for the
+  // same reason; a module that asks either question has an iterator either way.
+  ensureNativeIteratorRuntime(ctx);
   const recTypeIdx = ctx.structMap.get("__IterRec");
   if (recTypeIdx === undefined) return undefined;
 

@@ -4726,10 +4726,22 @@ function buildIteratorNextBody(
       ],
       // (#6484 S2) §23.1.5.1 step 6.a — an exhausted array iterator LATCHES:
       // it sets `[[IteratedArrayLike]]` to undefined, so growing the array
-      // afterwards must NOT resume it. Growth DURING iteration is still
-      // observed (the length is re-read every step, which is why the step above
-      // has no cached bound); only the done step is one-way. `vec` is immutable
-      // and `idx` is not, so park the cursor past any possible length —
+      // afterwards must NOT resume it; only the done step is one-way.
+      //
+      // The step above reads `vec.len` fresh every time — no cached bound — so
+      // growth during iteration IS observed whenever `vec` is the subject's own
+      // storage, and only then. Measured 2026-09-16 (standalone, push after the
+      // first step): an externref-element array steps 3 times like V8, a NUMBER
+      // array steps 2. That gap is NOT this latch and NOT the immutable `vec`
+      // field (`push` mutates the carrier in place — an alias of the array sees
+      // `length === 3`); it is the #3100 vec-family normalization arm, which
+      // boxes a non-externref carrier into a FRESH `$__arr_externref` and
+      // cursors over that copy. Making it live means re-deriving the
+      // per-carrier boxing at every step, which is #3100's tradeoff to reopen,
+      // not this slice's — recorded as a residual on #6484.
+      //
+      // `vec` is immutable and `idx` is not, so park the cursor past any
+      // possible length —
       // `i32.ge_s` against INT32_MAX is true for every vec. `__iterator_rest`
       // already clamps a negative `len - i` to zero, so a drained record still
       // yields the empty rest.
