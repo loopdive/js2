@@ -1880,21 +1880,9 @@ jobs:
           name: temporal-provider-${{ github.run_id }}
           path: .test262-cache/temporal
 
-      - name: Download selected runtime-eval provider (#2928/#4242)
-        if: matrix.test262_target == 'standalone'
-        uses: actions/download-artifact@v7
-        with:
-          name: runtime-eval-provider-${{ github.run_id }}
-          path: .test262-cache
-
-      - name: Verify shared runtime-eval provider cache (#2928/#4242)
-        if: matrix.test262_target == 'standalone'
-        run: |
-          case "$JS2WASM_EVAL_ENGINE" in
-            interpreter) node scripts/build-runtime-eval-provider.mjs --require-full-cache ;;
-            quickjs) node scripts/build-quickjs-eval-provider.mjs --require-cache ;;
-            *) echo "Unknown JS2WASM_EVAL_ENGINE=$JS2WASM_EVAL_ENGINE" >&2; exit 1 ;;
-          esac
+      # No runtime-eval provider steps here: this job is `gc`-only, so the
+      # standalone-gated eval steps of `test262-shard` would be inert (#6489),
+      # and the #4242 wiring test counts their occurrences.
 
       - name: Run shard
         run: |
