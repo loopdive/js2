@@ -8413,3 +8413,155 @@ two additions:
   carried several object literals with methods, which is an independent
   interference. One module per case is not hygiene here; a shared prelude would
   have sent this slice chasing a defect it had already fixed.
+
+### S30 findings (2026-09-15) — the eleventh cause is an identity the OWNER alone can answer. Four families 423 → 423; the 45-file family is fixed on the assertion it stops at and stops one cause EARLIER instead
+
+Full write-up in
+[#6617](6617-standalone-linked-class-instance-prototype.md). Branch
+`issue-5383-standalone-temporal-s30`, based on S29's tip `15d7c211ff`; the fix
+is commits `29141ed3fc` + `518ac029d1`.
+
+**The headline is flat for the second slice running, and the reason is
+different from S29's.** S29 retired its bucket and the family moved to the NEXT
+failure. S30 fixes the assertion that family stops ON — verified against the
+real polyfill, not only synthetically — and the family still does not move,
+because a SECOND, upstream cause kills the row two lines earlier. Both halves
+are needed; this one is now done and the other is reduced.
+
+#### 1. The defect — the prototype link of a compiled class instance is invisible to every dynamic reader
+
+`Object.getPrototypeOf(x)` under `--target standalone` answered correctly only
+where the CHECKER could name `x`'s class. Reduced to ONE module, no link, no
+Temporal (`.tmp/s30/cases-a.mjs`):
+
+```js
+class C { constructor(y) { this.y = y; } }
+const NS = { C };
+Object.getPrototypeOf(new C(1)) === C.prototype;   // true  — the static fold
+Object.getPrototypeOf(NS.C ? new C(1) : null);     // null  ← the gap
+```
+
+The generic native `__getPrototypeOf` walks `$Object.$proto`; a compiled class
+instance is a closed `$ClassName` struct with no such field. `ref.test $Object`
+fails, the #4643 fnctor ladder answers null, the boundary import is absent — so
+the helper answered `null`. Across the link that is total, because no value that
+crosses the seam has a checker type at all.
+
+**The brief's mechanism was RIGHT, and its file was wrong in a way worth
+recording**: it named `src/codegen/object-get-prototype-of.ts`, which does not
+exist — the expression-level folds live in
+`src/codegen/expressions/object-get-prototype-of.ts`, and the defect is not
+there at all. It is in the RUNTIME helper
+(`object-runtime-prototype.ts::buildObjectPrototypeHelpers`), which is exactly
+what the brief's own sentence about "`__getPrototypeOf`'s `$proto` walk decodes
+`$Object` receivers only" describes. Second inherited attribution in the stack
+to survive reduction (after S28's).
+
+#### 2. The fix — the standalone twin of a host-lane dispatcher, plus the hop
+
+| file | what |
+| --- | --- |
+| `standalone-class-instance-proto.ts` (new) | `__std_class_instance_proto`: `ref.test` + `__tag` + `ref.eq` cascade, most-derived first, declines the class OBJECT, builds the singleton via `__class_proto_build_<C>`; prepended to `__getPrototypeOf` |
+| `standalone-link-boundary.ts` | terminal `__js2wasm_link_get_prototype_of`, reserved with the miss body, filled at finalize |
+| `object-runtime.ts` | consumer miss arm: `boundaryObjectGetPrototypeIdx ?? peerGetPrototypeOfIdx` |
+| `expressions/call-builtin-static.ts` | the generic site raises the per-class prototype demand (#6457's arming twin) |
+
+The terminal wraps the DISPATCHER, not the provider's `__getPrototypeOf`. That
+distinction is the correctness argument: the consumer reaches the terminal only
+after its own answer was null, so anything returned replaces a null — and the
+wider wrapper would hand back the PROVIDER's `%Object.prototype%`, a foreign
+intrinsic the consumer can never name.
+
+#### 3. The result
+
+| family (first 120 files) | base | branch | Δ | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| `PlainDate/**` | 109 | 109 | 0 | 0 | 0 |
+| `Duration/**` | 100 | 100 | 0 | 0 | 0 |
+| `PlainDateTime/**` | 111 | 111 | 0 | 0 | 0 |
+| `ZonedDateTime/prototype/**` | 103 | 103 | 0 | 0 | 0 |
+| **total** | **423** | **423** | **0** | **0** | **0** |
+
+Base measured HERE by file-copy revert to `HEAD~1` on both labels, and it
+reproduces S29's branch family for family. No `compile_error`, no `timeout`, no
+`__temporal_*` leak in 960 rows. **The 34-bucket residual message table is
+identical count for count** — not one bucket moves, which for a change this
+narrow is the expected reading, not a disappointment.
+
+**Corpus-wide, the 45 `subclassing-ignored.js` (per file, both labels): 0 → 0
+pass, all 45 messages byte-identical.**
+
+#### 4. Why the family did not move, and the proof that the fix is real
+
+Against the REAL polyfill in one consumer module (`.tmp/s30/t/p1.js`):
+`gpoInst=object match=true matchR=true` — i.e.
+`Object.getPrototypeOf(new Temporal.Duration(1)) === Temporal.Duration.prototype`
+is now **true**. The rows die two lines earlier, in the harness's own
+`checkSubclassConstructorNotObject`, where `construct.prototype` reads
+`undefined` and `new construct(...constructArgs)` answers `null`
+(`.tmp/s30/t/p2.js`: `c=function cProto=undef … instT=null resT=null`).
+
+That read is CONTENT-SENSITIVE — `c.prototype` answers `undef` in a module whose
+only member read it is, and `object` as soon as the module also contains any
+static two-level member read, a read of a different class, a dynamic read of a
+sibling member, or a second copy of itself (`p4`–`p10`). The synthetic linked
+pair does not reproduce it. Filed as #6617 R1 with all six reductions rather
+than chased: it is a different mechanism, and the instability already cost one
+probe generation read as signal.
+
+#### 5. Controls
+
+**Must-not-move — 270 rows, four groups, per file, both labels, 0 flips.**
+
+| group | rows | base pass | branch pass | flips |
+| --- | --- | --- | --- | --- |
+| A: `Object/keys` + `expressions/object` + `Reflect/{get,has}` | 60 | 58 | 58 | 0 |
+| B: `Object/{entries,values,getOwnPropertyNames}` + `statements/for-in` | 60 | 47 | 47 | 0 |
+| C1: `Object/{getPrototypeOf,setPrototypeOf}` + `Object/prototype/isPrototypeOf` | 47 | 44 | 44 | 0 |
+| C2: `expressions/instanceof` + `statements/class/subclass` | 103 | 70 | 70 | 0 |
+
+**Targeted byte A/B**: ONE of twelve artifacts moves — the armed standalone
+module (`c922c20b` 200,869 B → `dee9a486` 201,067 B). The static fold, the
+no-class module, the class-without-the-query module, the dynamic MEMBER read and
+`setPrototypeOf` are all identical, and **the entire gc lane is identical**.
+That is a deliberate return to the S24–S28 posture after S29's lane-independent
+fix: the host lane already answers this through `__class_instance_proto`
+(#5347), so a shared fix would be a second mechanism for a solved problem.
+
+**Corpus byte A/B**: 42 modules × {gc, standalone} = 84 artifacts, 0 move — a
+NULL control, stated as such: nothing in that corpus asks the question.
+
+**Provider artifact**: 3,308,117 B → 3,311,079 B (+2,962 B), `cacheHit=false` on
+both prewarms. A MOVED provider is the right reading here (S28 §9 / S29's
+correction): the instance's owner is the only module that can answer, so the
+change has to be on that side.
+
+**Equivalence gate**: 22 failing / 1,720 passing / 22 known-failures — baseline
+exactly, on both trees.
+
+**Witness**: `tests/issue-6617-class-instance-prototype.test.ts`, 13 `it`s.
+Against the reverted base: **8 fail, 5 pass**.
+
+#### 6. Residual buckets, branch tree, all four families (57 rows, 34 buckets)
+
+Unchanged from S29 count for count. The `subclassing-ignored.js` family's blocker
+is now **#6617 R1** (`construct.prototype` → `undefined`, content-sensitive),
+not the prototype link. The other named residuals are #6617 R2 (`instanceof`
+across the link — `__instanceof_dynamic` walks `$Object.$proto` through
+`__isPrototypeOf` and so does NOT compose out of the now-correct
+`__getPrototypeOf`), R3 (`isPrototypeOf`, same root), R4 (a module-local dynamic
+`.constructor`), R5 (`getPrototypeOf` of a union-typed plain object).
+
+#### 7. Traps, carried forward and added to
+
+Everything in S26–S29 still holds, with one addition:
+
+- **A file named in a brief may not exist, and the nearby file that does may be
+  the wrong layer.** Two `object-get-prototype-of.ts`-shaped things exist here —
+  the EXPRESSION folds (`expressions/`) and the RUNTIME helper
+  (`object-runtime-prototype.ts`). The brief named a path that is neither. Grep
+  for the SYMBOL (`__getPrototypeOf`), not the filename.
+- **A byte-identical gc lane can be the right answer for a reason other than
+  gating.** Here the host lane is not missing the fix — it has had its own since
+  #5347. "Which lane needs this" is a question about where the answer already
+  exists, not only about where the flag is set.
