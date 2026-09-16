@@ -1,10 +1,11 @@
 ---
 id: 6489
 title: "test262 linked shadow job does not download the Temporal and runtime-eval providers — ~1,300 rows differ for that reason alone"
-status: in-progress
+status: done
 sprint: current
 created: 2026-09-16
 updated: 2026-09-16
+completed: 2026-09-16
 assignee: ttraenkler/senior-dev
 priority: high
 horizon: s
@@ -63,9 +64,10 @@ say so; see plan step 3).
 
 ## Acceptance
 
-- [ ] Next `linked_lane` dispatch: `Temporal is not defined` bucket = 0; the
-      Temporal rows appear as fallbacks with the new reason.
-- [ ] Required checks and `docs/ci-policy.md` untouched.
+- [x] Next `linked_lane` dispatch: `Temporal is not defined` bucket = 0; the
+      Temporal rows appear as fallbacks with the new reason (run 35144322208:
+      4,611 `temporal row: honest compile` fallbacks, bucket gone).
+- [x] Required checks and `docs/ci-policy.md` untouched.
 
 ## Implementation notes (2026-09-16, Opus lane)
 
@@ -148,3 +150,36 @@ download, the provider stamp match inside a runner, the `Temporal is not
 defined` bucket going to 0, and the Temporal rows surfacing under the new
 fallback reason. That needs the next `linked_lane` `workflow_dispatch` run,
 which the lead dispatches. Status stays `in-progress` until that run is read.
+
+## Second-run finding (2026-09-16, run 35144322208, main @ c55be108e0)
+
+The dispatch after PR #5948 landed replaced the `Temporal is not defined`
+bucket with a new one: `assert is not defined` 2,000 and `TemporalHelpers is
+not defined` 723 — every Temporal row in the linked lane, now correctly stamped
+as a fallback, failed on a MISSING HARNESS. Cause: in a linked run `source` is
+the body-only unit (the provider carries the harness prefix), and the Temporal
+branch of `doCompile` passed that `source` straight to
+`compileWithTemporalGlobal`, while the linked fallback three lines below
+reconstructs `linkedHarness.harnessPrefix + source`. Fix (this PR):
+`temporalSource = linkedHarness ? linkedHarness.harnessPrefix + source : source`.
+
+Measured in-container with the real runner (`tests/test262-chunk-dynamic.test.ts`,
+`TEST262_ORACLE_MODE=linked`, chunk 0/1, host Temporal provider pre-warmed),
+three Temporal rows (`PlainTime/prototype/hour/basic.js`,
+`PlainDate/prototype/monthsInYear/basic.js`,
+`Duration/prototype/negated/branding.js`): base worker = 3× `fail: assert is not
+defined`; fixed worker = 3× `pass`, all three stamped `temporal row: honest
+compile`. Expected on the next dispatch: those two buckets → 0, linked pass up by
+roughly the ~2,700 rows they cover, agreement ≈ 97 %.
+
+Two dispatch-path findings, not this issue's to fix:
+
+- `skip_promote=true` refuses without `baseline_commit`, and with the
+  `js2wasm-baselines` tip (`cef61fae`) the admit step fails on a missing
+  `test262-baseline-pair.json`, so the honest shard matrix cascade-skips and
+  the parity report is empty (runs 35135251334, 35140160393). A measurement
+  dispatch on the main tip therefore has to run WITHOUT `skip_promote` (a
+  re-promotion of the tip is a no-op).
+- Artifact downloads (`*.blob.core.windows.net`) are blocked from the agent
+  container, so the parity summary is read from the `merge linked evidence` job
+  log, which prints it in full.

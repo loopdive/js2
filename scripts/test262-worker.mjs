@@ -1459,11 +1459,20 @@ async function doCompile(
     // agreement. Report it as a fallback with its own reason so the parity
     // report attributes it correctly. (A real linked+Temporal co-link is a
     // later slice; until then this is the accurate label, not a workaround.)
+    //
+    // In a linked run `source` is the BODY-ONLY unit (the provider carries the
+    // harness prefix), so the honest compile must reconstruct the honest
+    // assembly exactly as the linked fallback below does. Measured on the
+    // second full-corpus run (35144322208): without this, every Temporal row
+    // in the linked lane scored `assert is not defined` / `TemporalHelpers is
+    // not defined` (2,000 + 723 rows) — the harness was never in the unit.
+    let temporalSource = source;
     if (linkedHarness) {
       linkedHarness.fellBack = true;
       linkedHarness.fallbackReason = "temporal row: honest compile (compileWithTemporalGlobal)";
+      temporalSource = linkedHarness.harnessPrefix + source;
     }
-    return compilerBundle.compileWithTemporalGlobal(source, temporal, {
+    return compilerBundle.compileWithTemporalGlobal(temporalSource, temporal, {
       allowJs: true,
       fileName: "test.js",
       sourceMap: true,

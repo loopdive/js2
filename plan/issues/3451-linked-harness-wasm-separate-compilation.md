@@ -700,3 +700,12 @@ row-summed compile 16.1 M vs 52.7 M ms. Agreement 89.75 %; the two dominant
 difference classes are lane plumbing (#6489, Temporal/eval providers not
 downloaded in the linked job) and one provider helper (#6490,
 `testWithTypedArrayConstructors` null deref). Details in #6486.
+
+### Full corpus, second run (2026-09-16, #6486 P3b, run 35144322208)
+
+After #6489 (PR #5948) and #6490 (PR #5949): agreement 91.63 %, linked pass
+35,332 vs honest 38,555, row-summed compile 13.9 M vs 51.6 M ms (3.7×). The
+Temporal and null-deref buckets are gone; the remaining top bucket (≈ 2,900
+rows, `assert`/`TemporalHelpers`/`verifyProperty is not defined`) is the
+Temporal branch compiling the body-only unit without the harness prefix — fixed
+in the #6489 follow-up. Details in #6486.

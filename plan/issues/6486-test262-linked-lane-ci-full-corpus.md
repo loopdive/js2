@@ -271,3 +271,39 @@ of this slice; no promotion happened.
 Conclusion for the flip: with #6489 and #6490 fixed the expected remaining
 difference is well under 1 % of the corpus; the flip PR (slice 6) waits for the
 next dispatch after those two land.
+
+## P3b — second full-corpus measurement (2026-09-16, run 35144322208, main @ c55be108e0, after #6489 PR #5948 + #6490 PR #5949)
+
+| metric | honest | linked |
+| --- | ---: | ---: |
+| rows | 48,735 | 48,735 |
+| pass | 38,555 | 35,332 |
+| fail | 9,546 | 12,883 |
+| compile_error | 507 | 400 |
+| compile_timeout | 13 | 6 |
+| row-summed compile_ms | 51.6 M | 13.9 M |
+| row-summed exec_ms | 2.12 M | 1.94 M |
+
+Agreement 44,655 / 48,735 (91.63 %, from 89.75 %); pass→fail 3,576 (from
+4,499); fail→pass 353; other 151. Linked fallbacks 9,246 (18.97 %): 4,611 are
+`temporal row: honest compile` (the #6489 honesty stamp — every Temporal row is
+honest-compiled inside the linked run), the rest negative-syntax rows as before.
+
+Difference buckets, attributed:
+
+| rows | bucket | cause |
+| ---: | --- | --- |
+| 2,000 + 723 + 155 | `assert is not defined`, `TemporalHelpers is not defined`, `verifyProperty is not defined` | #6489 second-run finding: the Temporal branch compiled the body-only unit without the harness prefix inside a linked run. Fixed in the #6489 follow-up PR (A/B on three rows: fail→pass). |
+| 128 | `Cannot convert 0 to a BigInt (Testing with BigInt64Array …)` | new, provider-side: the #6490 host-dispatch path now reaches the BigInt typed-array constructors; sample next run |
+| 61 | `AsyncTestFailure: … Cannot read properties of null (reading 'the…` | unclassified async rows |
+| 49 + 26 | `Expected a undefined to be thrown …` / `… but got a TypeError` | unclassified (carried from P3) |
+| 36 | `expected SyntaxError but compiled with no diagnostic` | #6491 |
+| 35 + 27 + 24 + 19 + 18 | descriptor-shape buckets | #6482 residuals |
+| 24 | `Cannot read properties of null (reading 'catch') [in __module_init()]` | unclassified |
+| 23 + 12 | `No dependency provided for extern class "badArrayType" / "OProxy"` | provider-side extern class stubs; new |
+| 22 | `illegal cast [in __cb_2() ← __closure_62]` | provider-side, likely #6490 sibling (`compileReceiverMethodCall`) |
+
+The `dereferencing a null pointer` (#6490) and `Temporal is not defined` (#6489)
+buckets are both gone. Removing the harness-prefix bucket alone puts the lane
+at ≈ 97 % agreement; the flip (slice 6) waits for that dispatch and a triage of
+the ~600 residual rows above.
