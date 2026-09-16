@@ -657,37 +657,81 @@ const WELL_KNOWN_CONCAT_SPREADABLE = "isConcatSpreadable";
  * module? Sets `ctx.isConcatSpreadableDirty`, the third `Array.prototype.concat`
  * routing gate (see `array-concat-carrier.ts`).
  *
- * The match is on the NAME, in every spelling the language offers it:
+ * Two independent triggers. The first is the NAME, in every spelling the
+ * language offers it:
  *
  *  - `Symbol.isConcatSpreadable` — a property access, the canonical spelling;
  *  - `Symbol["isConcatSpreadable"]` / `o["isConcatSpreadable"]` — a string
  *    literal, including one stored in a variable or a descriptor bag;
  *  - `{ isConcatSpreadable: … }` / `o.isConcatSpreadable` — a property NAME,
- *    which is how a descriptor bag or a re-export can carry it;
- *  - `Symbol[k]` with a non-literal key — the only way to reach the well-known
- *    symbol without naming it (`Symbol["isConcat" + "Spreadable"]`).
+ *    which is how a descriptor bag or a re-export can carry it.
  *
- * Why a name match is COMPLETE for this compiler's unit of compilation, not
- * merely a heuristic: a standalone module has no host and no second realm, and
- * no builtin carries `@@isConcatSpreadable` as an own property, so the only
- * producer of the symbol VALUE is `Symbol.isConcatSpreadable` itself. A module
- * that never names it cannot install it, cannot copy it through a spread or
- * `Object.assign` (there is nothing to copy), and cannot read it back. The one
- * remaining vector is dynamic code, which the `dynamicCodeDirty` cascade in
- * `scanForArrayHoles` already forces this flag for.
+ * The second is the `Symbol` INTRINSIC leaving the one shape the name match can
+ * see through. Every route to the well-known symbol starts at the global
+ * binding `Symbol`, so the flag also arms whenever that identifier is used as
+ * anything other than the base of a static property access:
  *
- * The deliberate NON-match is a computed member write with an opaque key
- * (`o[k] = v`). Arming on that would set the flag on ordinary code — the
- * measured hazard on this lane, since a set flag costs the spec loop's bytes in
- * every module that concats.
+ *  - `Symbol[k]` with a non-literal key — `Symbol["isConcat" + "Spreadable"]`;
+ *  - `var S = Symbol; S[p1 + p2]` — the intrinsic ALIASED into a variable;
+ *  - `pick(Symbol, name)` — the intrinsic passed across a function boundary;
+ *  - `Symbol(desc)` as a callee — the fresh symbol's `.constructor` is the
+ *    intrinsic again.
+ *
+ * `Symbol.iterator`, `Symbol.for(...)` and `typeof Symbol` are deliberately NOT
+ * matched: the intrinsic does not escape there, and those are the shapes
+ * ordinary modules (the test262 `testTypedArray.js` harness among them) use.
+ * That exclusion is what keeps the gate off for the common case.
+ *
+ * NOT complete, and the gap is named rather than papered over. Two vectors
+ * survive, both needing value-flow that a syntactic pre-pass cannot do, and
+ * both costing 0 test262 rows today (re-measured 2026-09-16):
+ *
+ *  - RE-DERIVING the intrinsic through a static-named property of a symbol
+ *    VALUE — `Symbol.for("x").constructor[k]`,
+ *    `Object.getOwnPropertySymbols(o)[0].constructor[k]`;
+ *  - a Proxy operand whose `get` trap answers for @@isConcatSpreadable without
+ *    the module ever mentioning the symbol.
+ *
+ * Widening to catch those means arming on every computed member write
+ * (`o[k] = v`), which fires on ordinary loop code — the measured hazard on this
+ * lane, since a set flag costs the spec loop's bytes in every module that
+ * concats. Dynamic code is a third vector and IS covered: the `dynamicCodeDirty`
+ * cascade in `scanForArrayHoles` forces this flag.
  */
 function isIsConcatSpreadableObservable(node: ts.Node): boolean {
-  if (ts.isIdentifier(node) || ts.isStringLiteralLike(node)) return node.text === WELL_KNOWN_CONCAT_SPREADABLE;
-  // `Symbol[<expr>]` — a non-literal key can resolve to the well-known name.
-  if (!ts.isElementAccessExpression(node)) return false;
-  const base = unwrapExpr(node.expression);
-  if (!ts.isIdentifier(base) || base.text !== "Symbol") return false;
-  return !ts.isStringLiteralLike(node.argumentExpression) && !ts.isNumericLiteral(node.argumentExpression);
+  if (ts.isStringLiteralLike(node)) return node.text === WELL_KNOWN_CONCAT_SPREADABLE;
+  if (ts.isIdentifier(node)) {
+    if (node.text === WELL_KNOWN_CONCAT_SPREADABLE) return true;
+    return node.text === "Symbol" && symbolIntrinsicEscapes(node);
+  }
+  return false;
+}
+
+/**
+ * (#6485) Does this reference to the global `Symbol` let the INTRINSIC escape,
+ * i.e. reach a position from which the module can later spell any well-known
+ * name with a key expression this pre-pass cannot read?
+ *
+ * `false` for exactly two shapes, which are the ones that keep the intrinsic
+ * pinned to a statically-readable member: `Symbol.<name>` (the base of a
+ * property access — `Symbol.iterator`, `Symbol.for`; a canonical
+ * `Symbol.isConcatSpreadable` is caught by the NAME match instead), and
+ * `typeof Symbol` (a feature probe that yields a string). A property NAME that
+ * happens to be `Symbol` (`o.Symbol`) is not the global at all.
+ *
+ * `Symbol["iterator"]` — a LITERAL key on the intrinsic — is likewise pinned,
+ * so it stays clear; any other element access on it arms.
+ */
+function symbolIntrinsicEscapes(node: ts.Identifier): boolean {
+  const parent = node.parent as ts.Node | undefined;
+  if (parent === undefined) return true;
+  if (ts.isPropertyAccessExpression(parent)) return parent.expression !== node;
+  if (ts.isElementAccessExpression(parent) && parent.expression === node) {
+    const key = parent.argumentExpression;
+    return !ts.isStringLiteralLike(key) && !ts.isNumericLiteral(key);
+  }
+  if (ts.isTypeOfExpression(parent)) return false;
+  return true;
 }
 
 /**

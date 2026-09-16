@@ -105,12 +105,21 @@ export function concatMustConsultPrototypeChain(ctx: CodegenContext): boolean {
  * c.concat().length;    // 2 — spec says 1 (the RECEIVER is an operand too)
  * ```
  *
- * The gate is `ctx.isConcatSpreadableDirty`, the pre-scan flag set only by a
- * module that can NAME the well-known symbol (see `array-holes.ts`). Same shape
- * and same argument as `concatMustConsultPrototypeChain` above: with the flag
- * clear the symbol cannot exist in the module, `IsConcatSpreadable` degenerates
- * to `IsArray`, the fast path is exactly right, and the emitted bytes do not
- * move at all.
+ * The gate is `ctx.isConcatSpreadableDirty`, the pre-scan flag set by a module
+ * that can NAME the well-known symbol or that lets the `Symbol` INTRINSIC
+ * escape the one shape the name match sees through (`var S = Symbol; S[k]`) —
+ * see `array-holes.ts`, which also names the two vectors the scan deliberately
+ * does NOT cover. Same shape and same argument as
+ * `concatMustConsultPrototypeChain` above: with the flag clear the symbol is
+ * (modulo those two residuals) unreachable in the module,
+ * `IsConcatSpreadable` degenerates to `IsArray`, and the fast path is right.
+ *
+ * What the flag being clear does NOT buy, contrary to this comment's first cut:
+ * that the COMMIT is byte-neutral. The gate is byte-neutral; the §23.1.3.1.1
+ * step-1 fix in `array-concat-spec.ts` is not gated and never could be, so any
+ * module that already reached the spec loop (via `concatMustConsultPrototypeChain`
+ * or `arraySpeciesActive`) emits different bytes with this flag clear. Measured
+ * +100 B standalone on a probe that only calls `[].concat(undefined)`.
  *
  * Restricted to `native-first` providers for the same reason: the JS-host lane
  * delegates to `env::__array_concat_any`, which performs the Get itself.

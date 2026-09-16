@@ -126,12 +126,22 @@ describe("#6485 Array.prototype.concat @@isConcatSpreadable (standalone)", () =>
   });
 
   // An arguments object reaches the spec loop and its `length` override is
-  // honoured, so the result has the right SHAPE. The VALUE at an index past the
-  // physical backing still reads back as `null` where §23.1.3.1 wants a hole
-  // (`undefined`) — #6485 S2, diagnosed and NOT fixed here, see the issue's
-  // Residuals. That part is deliberately not asserted rather than pinned wrong;
-  // the presence assertions below are the half that is already correct.
-  it("spreads an arguments object through the spec loop, absence included", async () => {
+  // honoured, so the result has the right SHAPE.
+  //
+  // Neither the VALUE nor the PRESENCE at an index past the physical backing is
+  // asserted, because both are the SAME unfixed defect — #6485 S2, see the
+  // issue's Residuals. `__extern_has_idx` reports such an index PRESENT on an
+  // arguments carrier, so the spec loop performs the `Get` and stores `null`
+  // where §23.1.3.1 wants a `$Hole`; the result then reads back `out[3] === null`
+  // (spec: `undefined`) and `3 in out === true` (spec: `false`).
+  //
+  // The presence half used to be asserted `false` here and passed — but only
+  // because `in` with a numeric key never consulted anything for an externref
+  // receiver (the R3 defect, fixed in this change-set). It was an accidental
+  // right answer sitting on top of a wrong stored value, and pinning it again
+  // would pin the accident. Recorded in prose instead, so an S2 fix has a
+  // reference point.
+  it("spreads an arguments object through the spec loop", async () => {
     await runScript(`${ASSERT}
       var args = (function(a, b, c) { return arguments; })(1, 2, 3);
       args[Symbol.isConcatSpreadable] = true;
@@ -140,8 +150,6 @@ describe("#6485 Array.prototype.concat @@isConcatSpreadable (standalone)", () =>
       eq(out.length, 6, "length");
       eq(out[0], 1, "out[0]");
       eq(out[2], 3, "out[2]");
-      eq(3 in out, false, "index 3 is ABSENT");
-      eq(5 in out, false, "index 5 is ABSENT");
     `);
   });
 
@@ -173,6 +181,112 @@ describe("#6485 Array.prototype.concat @@isConcatSpreadable (standalone)", () =>
       eq(out.length, 4, "length");
       eq(out[2], 3, "out[2]");
       eq(out[3], 4, "out[3]");
+    `);
+  });
+
+  // ── The gate must follow the INTRINSIC, not just the spelled name ────────
+  //
+  // A module can reach `@@isConcatSpreadable` without the string
+  // "isConcatSpreadable" appearing anywhere: alias `Symbol` into a variable, or
+  // pass it across a function boundary, then build the key at runtime. The
+  // first cut of this gate matched only the literal name or `Symbol[expr]` on
+  // the BARE identifier, so both shapes left the flag clear and kept the
+  // wrong answer (adversarial review, 2026-09-16). Both pins are the NEGATIVE
+  // direction, so a gate that armed on everything could not pass them vacuously
+  // either — the length would still have to come out right.
+  it("arms when `Symbol` is ALIASED into a variable and the key is computed", async () => {
+    await runScript(`${ASSERT}
+      var S = Symbol;
+      var p1 = "isConcat", p2 = "Spreadable";
+      var k = S[p1 + p2];
+      eq(typeof k, "symbol", "k is the well-known symbol");
+      var b = [3, 4];
+      b[k] = false;
+      var out = [1, 2].concat(b);
+      eq(out.length, 3, "length — b must be appended whole");
+      eq(out[0], 1, "out[0]");
+      eq(out[1], 2, "out[1]");
+    `);
+  });
+
+  it("arms when `Symbol` crosses a FUNCTION boundary", async () => {
+    await runScript(`${ASSERT}
+      function pick(o, key) { return o[key]; }
+      var name = "isConcat" + "Spreadable";
+      var b = [3, 4];
+      b[pick(Symbol, name)] = false;
+      var out = [1, 2].concat(b);
+      eq(out.length, 3, "length — b must be appended whole");
+    `);
+  });
+
+  // The other side of that widening: `Symbol.iterator` / `typeof Symbol` /
+  // `Symbol["iterator"]` must NOT arm it. They are what the test262
+  // `testTypedArray.js` harness prelude uses, and arming there would put ~2k
+  // rows on the spec loop for nothing. Behaviour is what a test can see; the
+  // flag itself is printed by `JS2WASM_DEBUG_6485` and counted out of band.
+  it("stays clear for Symbol.iterator / typeof Symbol / a literal-keyed member", async () => {
+    await runScript(`${ASSERT}
+      var src = [1, 2];
+      var obj = {};
+      obj.length = 2;
+      if (typeof Symbol !== "undefined" && Symbol.iterator) {
+        obj[Symbol.iterator] = function () { return src[Symbol.iterator](); };
+      }
+      var it = Symbol["iterator"];
+      eq(it === Symbol.iterator, true, "literal-keyed member is the same symbol");
+      var out = [1].concat([2], [3]);
+      eq(out.length, 3, "ordinary concat is unchanged");
+      eq(out[2], 3, "out[2]");
+    `);
+  });
+
+  // ── `in` on the dynamic concat carrier ──────────────────────────────────
+  //
+  // §13.10.1 step 6 is `HasProperty(rval, ToPropertyKey(lval))`. The call site
+  // boxes a numeric key as a Number rather than the string "0", and every
+  // index delegation in `__extern_has` sat behind `ref.test $AnyString`, so
+  // `k in <concat result>` answered ABSENT for present indices. A vec-TYPED
+  // receiver folds to an inline `idx < length` compare and never showed it;
+  // only a receiver whose slot is externref — the #4655 dynamic carrier — does.
+  // Measured on the base tree: `0 in [1].concat([2], [3])` was `false`.
+  it("answers `in` correctly on a multi-argument concat result", async () => {
+    await runScript(`${ASSERT}
+      var m = [1].concat([2], [3]);
+      eq(m.length, 3, "length");
+      eq(0 in m, true, "index 0 present");
+      eq(2 in m, true, "index 2 present");
+      eq(3 in m, false, "index 3 absent");
+      eq(m[2], 3, "value agrees with presence");
+    `);
+  });
+
+  it("keeps `in` on a concat result identical with and without the gate armed", async () => {
+    // Armed: the module can name the symbol, so every arity takes the spec loop.
+    await runScript(`${ASSERT}
+      var probe = {};
+      probe[Symbol.isConcatSpreadable] = true;
+      var u = [].concat(undefined);
+      eq(u.length, 1, "length");
+      eq(0 in u, true, "a stored undefined is PRESENT (§23.1.3.1 step 5.d)");
+      eq(u[0], undefined, "value");
+      var sp = [1].concat([1, , 3]);
+      eq(sp.length, 4, "sp length");
+      eq(1 in sp, true, "sp index 1 present");
+      eq(2 in sp, false, "sp index 2 is the source's HOLE");
+      eq(3 in sp, true, "sp index 3 present");
+    `);
+    // Unarmed twin: the same program minus the two probe lines.
+    await runScript(`${ASSERT}
+      var u = [].concat(undefined);
+      eq(u.length, 1, "length");
+      eq(0 in u, true, "a stored undefined is PRESENT");
+      eq(u[0], undefined, "value");
+      var sp = [1].concat([1, , 3]);
+      eq(sp.length, 4, "sp length");
+      eq(1 in sp, true, "sp index 1 present");
+      eq(2 in sp, false, "sp index 2 is the source's HOLE");
+      eq(3 in sp, true, "sp index 3 present");
     `);
   });
 });

@@ -5307,8 +5307,10 @@ function compileArrayConcat(
   // (#6485) Third gate, same argument, different observable: §23.1.3.1 step 5.b
   // performs `Get(E, @@isConcatSpreadable)` on EVERY operand — receiver included
   // — and every path below decides spreading statically, so a module that can
-  // name that symbol must take the spec loop for every arity. Flag clear ⇒ not
-  // reached ⇒ bytes unchanged. See array-concat-carrier.ts.
+  // reach that symbol must take the spec loop for every arity. Flag clear ⇒
+  // THIS gate is not reached (the spec loop's own step-1 fix is ungated and
+  // does move bytes for modules the two gates above already route there).
+  // See array-concat-carrier.ts.
   if (concatMustConsultPrototypeChain(ctx) || arraySpeciesActive(ctx) || concatMustConsultIsConcatSpreadable(ctx)) {
     const spec = compileArrayConcatNativeSpec(ctx, fctx, propAccess, callExpr);
     if (spec !== undefined) return spec;
