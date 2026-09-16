@@ -62,7 +62,7 @@ What remains, each a different mechanism:
 
 | row(s) | message | mechanism |
 | --- | --- | --- |
-| `15.2.3.6-4-540-8.js`, `plainval` | `to equal NaN, actually …` | #6487 — provider param body-inferred to f64 |
+| `15.2.3.6-4-540-8.js`, `plainval` | `to equal NaN, actually …` | #6487 — provider param body-inferred to f64 — **fixed 2026-09-16, both pass linked** |
 | `15.2.3.6-4-299-1.js`, `-300.js` | `Expected obj[0] to equal 10, actually 0` | `arguments` object with a defineProperty ACCESSOR read from the provider — `_safeGet`'s arguments fast path or the vec index path answers the raw slot |
 | `15.2.3.6-4-258.js` | `0 descriptor should be enumerable/writable/configurable` | element VALUE now right; the per-index flags (`_wasmPropDescs`) the consumer wrote are not what the provider's `_readOwnDescriptor` vec branch reads |
 | `15.2.3.6-3-185.js` | `Invalid descriptor field: label` | provider's `__getOwnPropertyNames` on the consumer's `{ value: undefined, writable: false }` literal returns a phantom name — decoder still resolving to the wrong module's `__struct_field_names` ladder for this shape |
