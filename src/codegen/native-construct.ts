@@ -68,7 +68,7 @@ import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { constructIsConstructorGuard } from "./construct-is-constructor-guard.js"; // (#6612 / #5383 S25)
 import { standaloneLinkBoundaryPeerIndex } from "./standalone-link-boundary.js"; // (#5383 S2f R12)
-import { ensureStandaloneClassConstructDispatch } from "./standalone-class-construct.js"; // (#5383 S2g)
+import { CLASS_CONSTRUCT_DISPATCH, ensureStandaloneClassConstructDispatch } from "./standalone-class-construct.js"; // (#5383 S2g)
 import { RUNTIME_EVAL_INTERP_CALLBACK_BRAND_A, RUNTIME_EVAL_INTERP_CALLBACK_BRAND_B } from "./runtime-eval-boundary.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
@@ -193,6 +193,41 @@ export function reserveNativeConstructDriver(ctx: CodegenContext, arity: number,
   return funcIdx;
 }
 
+/** Sentinel arity key for the argv driver's `nativeConstructProtoKey` slot — no fixed-arity driver ever reserves a negative arity. */
+const ARGV_DRIVER_ARITY_KEY = -1;
+const ARGV_DRIVER_NAME = `${DRIVER_PREFIX}argv`;
+
+/**
+ * (#5383 S34) Reserve the ONE non-arity-keyed construct driver:
+ * `(callee, proto, argsVec, argc) -> externref`, for a `new <value>(...spread)`
+ * call site whose spread length is not statically known (`args.some(isSpread)`
+ * survives `flattenCallArgs`/`resolveStaticSpreadArgs`). The per-arity drivers
+ * above are minted per call-site arity and cannot serve a runtime-length
+ * argument list; every one of their non-ordinary arms (class/boundary construct)
+ * already takes an args VECTOR + argc, so this driver reuses that exact shape
+ * instead of duplicating it per arity. See `fillNativeConstructDrivers` for the
+ * fill (skips the Proxy-identity arms — out of scope; always uses
+ * `__apply_closure` for the ordinary tail, mirroring the fixed drivers'
+ * above-`MAX_NATIVE_CONSTRUCT_ARITY` `highArityApplyTail`).
+ */
+export function reserveNativeConstructDriverArgv(ctx: CodegenContext, protoKeyInstrs: Instr[]): number {
+  const existing = ctx.funcMap.get(ARGV_DRIVER_NAME);
+  if (existing !== undefined) return existing;
+  const params = [EXTERNREF, EXTERNREF, EXTERNREF, { kind: "i32" } as ValType];
+  const typeIdx = addFuncType(ctx, params, [EXTERNREF], `$${ARGV_DRIVER_NAME}_type`);
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: ARGV_DRIVER_NAME,
+    typeIdx,
+    locals: [],
+    body: [{ op: "unreachable" }],
+    exported: false,
+  });
+  ctx.funcMap.set(ARGV_DRIVER_NAME, funcIdx);
+  ctx.nativeConstructProtoKey.set(ARGV_DRIVER_ARITY_KEY, protoKeyInstrs);
+  return funcIdx;
+}
+
 /**
  * Reserve a constructor-value driver whose fresh `this` has a checker-declared
  * structural result type.
@@ -268,6 +303,157 @@ export function maxReservedNativeConstructArity(ctx: CodegenContext): number {
     if (ctx.funcMap.has(driverName(arity))) return Math.max(arity, maxTyped);
   }
   return maxTyped;
+}
+
+/**
+ * (#5383 S34) Fill the ONE argv driver (`reserveNativeConstructDriverArgv`).
+ * No-op when nothing reserved it. Params: 0=callee, 1=proto, 2=argsVec
+ * (an externref `$ObjVec`, `__extern_length`/`__extern_get_idx`-readable —
+ * the SAME carrier `buildArgsVec()` builds for the fixed-arity drivers above),
+ * 3=argc. Locals: 4=effective proto, 5=self, 6=result.
+ *
+ * Deliberately narrower than the fixed-arity body: no Proxy-identity arms (a
+ * runtime-length spread into a Proxy constructor is out of this slice's
+ * scope — declining leaves the pre-existing null answer for that one shape,
+ * not a regression), and the ordinary tail unconditionally calls
+ * `__apply_closure` (no `__call_fn_method_<N>` fast path — arity is unknown at
+ * compile time), which is also what serves a runtime-eval callback marker, so
+ * no separate marker branch is needed either.
+ */
+function fillArgvConstructDriver(ctx: CodegenContext): void {
+  const driverIdx = ctx.funcMap.get(ARGV_DRIVER_NAME);
+  if (driverIdx === undefined) return;
+  const driver = definedFuncAt(ctx, driverIdx);
+  if (!driver) return;
+
+  const externGetIdx = ctx.funcMap.get("__extern_get");
+  const objectCreateIdx = ctx.funcMap.get("__object_create");
+  const applyClosureIdx = ctx.funcMap.get("__apply_closure");
+  const typeofObjectIdx = ctx.funcMap.get("__typeof_object");
+  const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+  const runtimeCallbackTypeIdx = ctx.runtimeEvalInterpretedCallbackTypeIdx;
+  const protoKeyInstrs = ctx.nativeConstructProtoKey.get(ARGV_DRIVER_ARITY_KEY);
+  if (
+    externGetIdx === undefined ||
+    objectCreateIdx === undefined ||
+    applyClosureIdx === undefined ||
+    protoKeyInstrs === undefined
+  ) {
+    driver.body = [{ op: "ref.null.extern" }];
+    driver.locals = [];
+    return;
+  }
+
+  const protoLocal = 4;
+  const selfLocal = 5;
+  const resultLocal = 6;
+  const body: Instr[] = [];
+
+  // (#5383 S2g twin) A class the CONSUMER owns (module-local candidates) is
+  // constructed by its own trampoline, keyed by identity.
+  const classConstructIdx = ctx.funcMap.get(CLASS_CONSTRUCT_DISPATCH);
+  if (classConstructIdx !== undefined) {
+    body.push(
+      { op: "local.get", index: 0 },
+      { op: "local.get", index: 2 },
+      { op: "local.get", index: 3 },
+      { op: "call", funcIdx: classConstructIdx },
+      { op: "local.tee", index: resultLocal },
+      { op: "ref.is_null" },
+      { op: "i32.eqz" },
+      { op: "if", blockType: { kind: "empty" }, then: [{ op: "local.get", index: resultLocal }, { op: "return" }] },
+    );
+  }
+
+  // (#5383 S2f R12 twin) A class the PROVIDER owns, reached across the link.
+  const boundaryCallableKindIdx =
+    ctx.funcMap.get("__boundary_object_callable_kind") ?? standaloneLinkBoundaryPeerIndex(ctx, "callableKind");
+  const boundaryConstructIdx =
+    ctx.funcMap.get("__boundary_object_construct") ?? standaloneLinkBoundaryPeerIndex(ctx, "construct");
+  if (boundaryCallableKindIdx !== undefined && boundaryConstructIdx !== undefined) {
+    body.push(
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: boundaryCallableKindIdx },
+      { op: "i32.const", value: 2 },
+      { op: "i32.and" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 2 },
+          { op: "ref.null.extern" },
+          { op: "call", funcIdx: boundaryConstructIdx },
+          { op: "return" },
+        ],
+      },
+    );
+  }
+
+  // (#6612 / #5383 S25 twin) §13.3.5.1 step 5 — IsConstructor.
+  body.push(...constructIsConstructorGuard(ctx, 0, { typeofFunctionIdx, runtimeCallbackTypeIdx }));
+
+  body.push(
+    { op: "local.get", index: 1 },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: EXTERNREF },
+      then: [{ op: "local.get", index: 0 }, ...protoKeyInstrs, { op: "call", funcIdx: externGetIdx }],
+      else: [{ op: "local.get", index: 1 }],
+    },
+    { op: "local.set", index: protoLocal },
+    { op: "local.get", index: protoLocal },
+    { op: "call", funcIdx: objectCreateIdx },
+    { op: "local.set", index: selfLocal },
+    // result = callee.[[Call]](self, argsVec) — arity-generic; also serves a
+    // runtime-eval interpreted-callback marker (its own driver arm calls the
+    // SAME `__apply_closure`, just from a freshly-built vec).
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: selfLocal },
+    { op: "local.get", index: 2 },
+    { op: "call", funcIdx: applyClosureIdx },
+    { op: "local.set", index: resultLocal },
+  );
+
+  const isObjectProbe: Instr[] = [];
+  if (typeofObjectIdx !== undefined) {
+    isObjectProbe.push({ op: "local.get", index: resultLocal }, { op: "call", funcIdx: typeofObjectIdx });
+    if (typeofFunctionIdx !== undefined) {
+      isObjectProbe.push(
+        { op: "local.get", index: resultLocal },
+        { op: "call", funcIdx: typeofFunctionIdx },
+        { op: "i32.or" },
+      );
+    }
+  } else {
+    isObjectProbe.push({ op: "i32.const", value: 0 });
+  }
+  body.push(
+    { op: "local.get", index: resultLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: EXTERNREF },
+      then: [{ op: "local.get", index: selfLocal }],
+      else: [
+        ...isObjectProbe,
+        {
+          op: "if",
+          blockType: { kind: "val", type: EXTERNREF },
+          then: [{ op: "local.get", index: resultLocal }],
+          else: [{ op: "local.get", index: selfLocal }],
+        },
+      ],
+    },
+  );
+
+  driver.locals = [
+    { name: "__ctor_proto", type: EXTERNREF },
+    { name: "__ctor_self", type: EXTERNREF },
+    { name: "__ctor_result", type: EXTERNREF },
+  ];
+  driver.body = body;
 }
 
 /**
@@ -698,6 +884,8 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
     ];
     driver.body = body;
   }
+
+  fillArgvConstructDriver(ctx);
 
   for (const { arity, func: driver } of typedDriversByContext.get(ctx) ?? []) {
     const selfType = driver.locals[0]?.type;

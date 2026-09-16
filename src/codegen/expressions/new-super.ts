@@ -82,6 +82,7 @@ import {
   MAX_DYNAMIC_CONSTRUCT_ARITY,
   MAX_NATIVE_CONSTRUCT_ARITY,
   reserveNativeConstructDriver,
+  reserveNativeConstructDriverArgv, // (#5383 S34)
   reserveTypedNativeConstructDriver,
 } from "../native-construct.js"; // (#3981 / #1058)
 import {
@@ -3964,7 +3965,21 @@ function tryCompileNativeConstructFromValue(
   const args =
     flattenCallArgs(rawArgs) ??
     (ctx.standalone || ctx.wasi ? (resolveStaticSpreadArgs(ctx, rawArgs) ?? rawArgs) : rawArgs);
-  if (args.some((a) => ts.isSpreadElement(a))) return undefined;
+  if (args.some((a) => ts.isSpreadElement(a))) {
+    // (#5383 S34) A genuinely runtime-length spread (`new construct(...args)`
+    // where `args` is a parameter, not a literal or a resolvable local) used to
+    // decline HERE unconditionally — for a callee this module does not own
+    // (every linked-provider class, reached either as a bare identifier or a
+    // member access), no other arm ever attempts the construct, so `new`
+    // silently evaluated to null with its arguments never run
+    // (test262 `built-ins/Temporal/**/subclassing-ignored.js`'s
+    // `checkSubclassConstructorNotObject`, `new construct(...constructArgs)`).
+    // Standalone/WASI route through the arity-generic argv driver instead; the
+    // JS-host lane is unaffected (it constructs through `__construct_closure`,
+    // which already accepts a JS array built from an arbitrary spread).
+    if (!noJsHost(ctx)) return undefined;
+    return compileNativeConstructRuntimeArgv(ctx, fctx, calleeExpr, rawArgs);
+  }
   // (#5383 S24) The ceiling used to be `MAX_NATIVE_CONSTRUCT_ARITY` (8) because
   // the driver's ordinary tail dispatches through `__call_fn_method_<N>`, which
   // only exists for 0…8. But declining here is not a fallback: for a callee the
@@ -4123,6 +4138,160 @@ function tryCompileNativeConstructFromValue(
   } else {
     fctx.body.push(...nativeDriverCall);
   }
+  return { kind: "externref" };
+}
+
+/**
+ * (#5383 S34) Build a runtime `$ObjVec` (the SAME externref carrier
+ * `buildArgsVec()` builds for the fixed-arity drivers in `native-construct.ts`
+ * — `__extern_length`/`__extern_get_idx`-readable, which is what
+ * `__class_construct_dispatch`/`__js2wasm_link_construct` already expect) from
+ * a call site's RAW arguments, evaluating each exactly once in source order.
+ * A positional argument is pushed directly; a `SpreadElement`'s source is
+ * compiled once, then copied element-by-element via the generic
+ * `__extern_length`/`__extern_get_idx` reader pair — the same protocol
+ * `Object.groupBy`'s native helper uses for an arbitrary array-like source, so
+ * this also accepts an untyped JS array PARAMETER (the test262 harness's
+ * `constructArgs`/`methodArgs` shape), not only a compile-time-typed vec.
+ */
+function buildRuntimeConstructArgvVec(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  rawArgs: readonly ts.Expression[],
+): { argvLocal: number; argcLocal: number } {
+  const { newIdx: objVecNewIdx, pushIdx: objVecPushIdx } = ensureObjVecBuilders(ctx);
+  const externLengthIdx = ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
+  const externGetIdxIdx = ensureLateImport(
+    ctx,
+    "__extern_get_idx",
+    [{ kind: "externref" }, { kind: "f64" }],
+    [{ kind: "externref" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+
+  const argvLocal = allocLocal(fctx, `__ncargv_${fctx.locals.length}`, { kind: "externref" });
+  const argcLocal = allocLocal(fctx, `__ncargc_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__objvec_new") ?? objVecNewIdx });
+  fctx.body.push({ op: "local.set", index: argvLocal });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "local.set", index: argcLocal });
+
+  const bumpArgc = (): void => {
+    fctx.body.push({ op: "local.get", index: argcLocal });
+    fctx.body.push({ op: "i32.const", value: 1 });
+    fctx.body.push({ op: "i32.add" });
+    fctx.body.push({ op: "local.set", index: argcLocal });
+  };
+
+  for (const arg of rawArgs) {
+    if (!ts.isSpreadElement(arg)) {
+      fctx.body.push({ op: "local.get", index: argvLocal });
+      const aTy = compileExpression(ctx, fctx, arg, { kind: "externref" });
+      if (aTy && aTy.kind !== "externref") coerceType(ctx, fctx, aTy, { kind: "externref" });
+      else if (aTy === null) fctx.body.push({ op: "ref.null.extern" });
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__objvec_push") ?? objVecPushIdx });
+      bumpArgc();
+      continue;
+    }
+    const srcTy = compileExpression(ctx, fctx, arg.expression, { kind: "externref" });
+    if (srcTy && srcTy.kind !== "externref") coerceType(ctx, fctx, srcTy, { kind: "externref" });
+    else if (srcTy === null) fctx.body.push({ op: "ref.null.extern" });
+    const srcLocal = allocLocal(fctx, `__ncsrc_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: srcLocal });
+
+    const lenLocal = allocLocal(fctx, `__nclen_${fctx.locals.length}`, { kind: "i32" });
+    fctx.body.push({ op: "local.get", index: srcLocal });
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_length") ?? externLengthIdx! });
+    fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+    fctx.body.push({ op: "local.set", index: lenLocal });
+
+    const jLocal = allocLocal(fctx, `__ncj_${fctx.locals.length}`, { kind: "i32" });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "local.set", index: jLocal });
+
+    // Loop body: `j >= len` breaks out (br_if depth 1, out of the enclosing
+    // `block`); otherwise push `srcLocal[j]`, bump argc, bump j, loop again
+    // (`br` depth 0, back to the `loop`'s own top).
+    const loopBody: Instr[] = [];
+    const savedBody = fctx.body;
+    fctx.body = loopBody;
+    fctx.body.push({ op: "local.get", index: jLocal });
+    fctx.body.push({ op: "local.get", index: lenLocal });
+    fctx.body.push({ op: "i32.ge_s" });
+    fctx.body.push({ op: "br_if", depth: 1 });
+    fctx.body.push({ op: "local.get", index: argvLocal });
+    fctx.body.push({ op: "local.get", index: srcLocal });
+    fctx.body.push({ op: "local.get", index: jLocal });
+    fctx.body.push({ op: "f64.convert_i32_s" });
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get_idx") ?? externGetIdxIdx! });
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__objvec_push") ?? objVecPushIdx });
+    bumpArgc();
+    fctx.body.push({ op: "local.get", index: jLocal });
+    fctx.body.push({ op: "i32.const", value: 1 });
+    fctx.body.push({ op: "i32.add" });
+    fctx.body.push({ op: "local.set", index: jLocal });
+    fctx.body.push({ op: "br", depth: 0 });
+    fctx.body = savedBody;
+
+    fctx.body.push({
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
+    });
+  }
+  return { argvLocal, argcLocal };
+}
+
+/**
+ * (#5383 S34) The runtime-argv twin of `tryCompileNativeConstructFromValue`'s
+ * fixed-arity body, for a call site whose spread length cannot be resolved at
+ * compile time. Reused prelude (imports, arming, `markClassValueConstructSite`)
+ * is IDENTICAL to the fixed-arity path — only the argument marshal and the
+ * driver differ.
+ */
+function compileNativeConstructRuntimeArgv(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  calleeExpr: ts.Expression,
+  rawArgs: readonly ts.Expression[],
+): ValType {
+  ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
+  ensureLateImport(ctx, "__object_create", [{ kind: "externref" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  addStringConstantGlobal(ctx, "prototype");
+  markClassValueConstructSite(ctx);
+  armConstructIsConstructorGuard(ctx, fctx);
+  if (moduleHasRefTypedConstructFormal(ctx)) armExternRefArgTypeGuard(ctx, fctx);
+  if (moduleHasF64TypedConstructFormal(ctx)) armExternF64ArgTypeGuard(ctx, fctx);
+  ensureObjVecBuilders(ctx);
+  reserveApplyClosure(ctx);
+  const driverIdx = reserveNativeConstructDriverArgv(ctx, stringConstantExternrefInstrs(ctx, "prototype"));
+
+  const calleeTy = compileExpression(ctx, fctx, calleeExpr, { kind: "externref" });
+  if (calleeTy && calleeTy.kind !== "externref") {
+    coerceType(ctx, fctx, calleeTy, { kind: "externref" });
+  } else if (calleeTy === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+  const calleeLocal = allocLocal(fctx, `__ncv_callee_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: calleeLocal });
+
+  const fnctorName = resolveUserFnctorName(ctx, calleeExpr);
+  if (fnctorName === undefined || !emitFnctorProtoGet(ctx, fctx, fnctorName)) {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+  const protoLocal = allocLocal(fctx, `__ncv_proto_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: protoLocal });
+
+  const { argvLocal, argcLocal } = buildRuntimeConstructArgvVec(ctx, fctx, rawArgs);
+
+  fctx.body.push(
+    { op: "local.get", index: calleeLocal },
+    { op: "local.get", index: protoLocal },
+    { op: "local.get", index: argvLocal },
+    { op: "local.get", index: argcLocal },
+    { op: "call", funcIdx: ctx.funcMap.get("__native_construct_argv") ?? driverIdx },
+  );
   return { kind: "externref" };
 }
 
