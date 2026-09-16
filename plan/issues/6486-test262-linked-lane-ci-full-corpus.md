@@ -219,3 +219,16 @@ completeness assertion against a real 57-shard set.
       `tests/issue-3451-linked-harness-lane.test.ts` green.
 - [x] No `scripts/check-*workflow*` script exists in this repo; `npm run lint`
       (biome) and `typecheck` pass.
+
+### Fallback class identified before P3 (2026-09-16, Fable lane)
+
+The 11/12 fallbacks the in-container `language/statements/if` run showed are
+all `negative: SyntaxError` rows (`if-const-else-const.js`, `if-gen-no-else.js`,
+…): the linked compile fails with exactly the expected diagnostic, the worker
+records a fallback and recompiles the honest assembly, which fails the same way
+and scores `pass`. Verdict correct, cost small (a parse failure never reaches
+codegen). For P3, read the parity report's fallback histogram with negative
+rows split out: a fallback on a `negative: parse|early` row is expected and
+cheap; a fallback on a positive row is the throughput signal. If the positive
+share is material, the worker can score a negative row's linked diagnostic
+directly instead of recompiling — a later, separate change.
