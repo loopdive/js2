@@ -307,3 +307,43 @@ The `dereferencing a null pointer` (#6490) and `Temporal is not defined` (#6489)
 buckets are both gone. Removing the harness-prefix bucket alone puts the lane
 at ≈ 97 % agreement; the flip (slice 6) waits for that dispatch and a triage of
 the ~600 residual rows above.
+
+## P3c — third full-corpus measurement (2026-09-16, run 35152748683, main @ 52b8143a39, after the #6489 harness-prefix fix PR #5950)
+
+| metric | honest | linked |
+| --- | ---: | ---: |
+| rows | 48,735 | 48,735 |
+| pass | 38,555 | 38,203 |
+| fail | 9,546 | 10,050 |
+| compile_error | 507 | 362 |
+| compile_timeout | 13 | 6 |
+| row-summed compile_ms | 52.7 M | 26.0 M |
+| row-summed exec_ms | 2.15 M | 2.38 M |
+
+Agreement 47,564 / 48,735 (**97.6 %**); pass→fail 705; fail→pass 353; other
+113; net −352 pass. Fallbacks unchanged at 9,246 (4,611 Temporal rows honest-
+compiled WITH the harness now, which is why row-summed compile rose from 13.9 M
+to 26.0 M — those rows pay the honest price by design until a Temporal co-link
+slice). Both harness buckets (`assert`/`TemporalHelpers is not defined`) are
+gone, as the A/B predicted.
+
+Residual buckets (all provider-side or verdict-side; tracked in #6492 unless
+named):
+
+| rows | bucket | owner |
+| ---: | --- | --- |
+| 128 | `TypeError: Cannot convert 0 to a BigInt (Testing with BigInt64Array …)` | #6492 |
+| 61 | `AsyncTestFailure: Cannot read properties of null (reading 'the…` | #6492 |
+| 49 + 26 | `Expected a undefined to be thrown …` / `… but got a TypeError` | #6492 |
+| 36 | `expected SyntaxError but compiled with no diagnostic` | #6491 |
+| 35 + 27 + 24 + 19 + 18 + 10 | descriptor-shape buckets | #6482 |
+| 24 + 9 + 9 | `Cannot read properties of null/undefined (reading 'catch'/'next') [in __module_init()]` | #6492 |
+| 23 + 12 | `No dependency provided for extern class "badArrayType" / "OProxy"` | #6492 |
+| 22 | `illegal cast [in __cb_2() ← __closure_62]` (uncatchable trap — blocks the flip via the #3189 trap ratchet) | #6492 |
+| 22 | `Thrown value was not an object!` | #6492 |
+| 18 + 15 + 14 + 12 | `Expected a TypeError …`, `async completion marker not observed`, `Expected a SyntaxError …`, `AsyncTestFailure: Expected true but got false` | #6492 |
+| 16 | `import.defer(...) is not supported` (proposal rows; honest lane CE, linked fail) | verdict-shape, harmless |
+
+The 353 fail→pass rows are mostly `dynamic-import/syntax/valid/*import-defer|source*` (honest CE, linked pass) and `Object.defineProperty`/`Proxy/*-realm` rows; they are not counted against the lane but are listed in the JSON artifact for the flip's rebase declaration.
+
+Slice 6 plan: `plan/issues/3451-linked-harness-wasm-separate-compilation.md`, "Implementation Plan — slice 6".

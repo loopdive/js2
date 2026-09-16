@@ -709,3 +709,114 @@ Temporal and null-deref buckets are gone; the remaining top bucket (≈ 2,900
 rows, `assert`/`TemporalHelpers`/`verifyProperty is not defined`) is the
 Temporal branch compiling the body-only unit without the harness prefix — fixed
 in the #6489 follow-up. Details in #6486.
+
+### Full corpus, third run (2026-09-16, #6486 P3c, run 35152748683)
+
+After the #6489 harness-prefix fix (PR #5950): agreement **97.6 %**, linked pass
+38,203 vs honest 38,555 (net −352: 705 pass→fail, 353 fail→pass), row-summed
+compile 26.0 M vs 52.7 M ms (2.0×; Temporal rows now pay the honest price by
+design). Residual buckets are provider-side and tracked in #6492 / #6491 /
+#6482. Details in #6486.
+
+## Implementation Plan — slice 6, authority flip (written 2026-09-16, Fable lane; implementation: Opus, after #6492 lands)
+
+### Decision
+
+The linked lane becomes the authoritative host (`gc`) test262 oracle in CI.
+The honest whole-assembly lane is retained as a scheduled audit with the same
+parity report, roles swapped. Standalone/linear lanes are untouched (the
+linked oracle is host-only by construction: `ORACLE_LANE === "linked-harness"`
+requires `IS_HOST_LANE`).
+
+Precondition (P0, separate PR, #6492): the 705 pass→fail residual must be
+triaged and the provider-side classes fixed so that (a) no bucket is an
+uncatchable trap (`illegal cast`, 22 rows — the #3189 trap ratchet is NOT
+excused by a re-baseline and would block the flip PR in the merge group) and
+(b) the remaining net loss is small enough to declare honestly. Target ≤ 250
+pass→fail after P0; re-measure with one `linked_lane=true` dispatch and record
+P3d in #6486 before opening the flip PR.
+
+### P1 — workflow (`.github/workflows/test262-sharded.yml`)
+
+1. `test262-shard` and `test262-shard-mg`: add `TEST262_ORACLE_MODE: linked` to
+   the job `env:` (it is a no-op on standalone cells — `tests/test262-shared.ts`
+   L181–186 only honours it when `TEST262_TARGET` is unset). Keep
+   `TEST262_RESULT_PREFIX` = `test262` so every downstream path (merge-report,
+   regression gate, promote-baseline, edition ratchet, Pages) is untouched.
+2. Swap the shadow: rename `test262-linked` → `test262-honest-audit` (env
+   `TEST262_ORACLE_MODE` removed, `TEST262_RESULT_PREFIX: test262-honest`,
+   `RUN_TIMESTAMP …-honest-chunk…`), keep `needs: [temporal-provider]`, the
+   `schedule` arm and the `workflow_dispatch` input (rename `linked_lane` →
+   `honest_audit`; keep `linked_lane` as a deprecated alias for one release or
+   update `tests/issue-6486-linked-parity-report.test.ts` accordingly).
+3. `merge-linked-report` → `merge-honest-audit-report`: same steps, artifact
+   `test262-honest-audit-<sha>`, parity script called with the authoritative
+   (now linked) rows as `honest=` side — rename the script's positional
+   semantics to `--authoritative`/`--audit` so the report headings stop saying
+   "honest" for the linked lane (`scripts/test262-linked-parity.mjs`, small).
+4. `test262-baseline-validate.yml` (spot-checks 50 baseline `pass` entries on
+   main HEAD): set `TEST262_ORACLE_MODE: linked` in its runner env, otherwise
+   it validates a linked baseline with honest verdicts and fails on the 353/705
+   flip rows.
+5. `docs/ci-policy.md`: one paragraph — the authoritative host oracle is the
+   linked harness (#3451 slice 6); the honest lane is a scheduled audit. No
+   required-check name changes.
+
+### P2 — oracle version and lane guards
+
+1. `tests/test262-oracle-version.ts`: `ORACLE_VERSION` 13 → 14, history note
+   "#3451 slice 6: host lane verdicts come from the linked-harness oracle;
+   linked-harness / linked-harness-fallback are the authoritative host lanes;
+   honest is the scheduled audit lane". This satisfies
+   `scripts/check-verdict-oracle-bump.mjs` and makes `diff-test262.ts`
+   forward-auto-rebase the first main run (the promote re-seeds
+   `loopdive/js2wasm-baselines` at v14 with `oracle_lane: linked-harness`).
+2. `scripts/diff-test262.ts` ~L1616: retire the UNCONDITIONAL refusal of the
+   `linked-harness` lane. New rule, mirroring the fast lane: same-lane diffs
+   are ordinary; `honest ↔ linked-harness` cross-lane diffs are refused unless
+   `ORACLE_REBASE=1` / a forward bump (that is exactly the flip PR's first
+   main run). The `linked-harness-fallback` → `linked-harness` normalisation
+   (L1328–1337) stays.
+3. Declare the ceiling in THIS issue's frontmatter (rebase-mode only, #3303):
+   `regressions-allow: { count: <P3d pass→fail>, reason: "#3451 slice 6 …" }`.
+   The count is the measured P3d number, not a round-up.
+4. Edition ratchet (`scripts/test262-edition-ratchet-baseline.json`): `--update`
+   refuses to lower, so hand-edit each edition floor by exactly its P3d
+   pass→fail minus fail→pass delta, with a `reason` naming this slice, in the
+   same PR; record the per-edition table in this issue. The standalone
+   high-water mark is untouched (standalone lane unchanged).
+5. `scripts/build-test262-report.mjs` and the dashboard: no code change
+   expected; verify the report's `oracle_lane` field renders `linked-harness`
+   and the landing page badge picks up the v14 baseline.
+
+### P3 — local runner and docs
+
+- `scripts/run-test262-vitest.sh`: `TEST262_ORACLE_MODE` default stays unset
+  (honest) for local runs — CI authority and local default are allowed to
+  differ, but say so in CLAUDE.md "Test262" and in `docs/ci-policy.md`, with
+  the one-line `TEST262_ORACLE_MODE=linked` recipe to reproduce CI verdicts.
+- `plan/log/` note + this issue's acceptance boxes (production ≥ 2× shard
+  median: P3 measured 2.1×; row-by-row parity: record the P3d number).
+
+### Order-preservation constraints
+
+- P0 (#6492) lands and is re-measured BEFORE the flip PR opens; the flip PR
+  bundles P1 + P2 + P3 in ONE PR (the oracle bump and the lane-guard change
+  must land together with the workflow env, or the first main run diffs
+  cross-lane without a rebase and parks).
+- Never edit `scripts/*-baseline.json` other than the edition-ratchet floors
+  named in P2.4 (that file is the documented hand-edit exception).
+- Do not touch the standalone matrix cells, `check-standalone-highwater.mjs`,
+  or the runtime-eval provider steps.
+
+### Acceptance
+
+- [ ] First push-to-main run after the flip: `promote-baseline` seeds a v14,
+      `oracle_lane: linked-harness` baseline; the regression gate reports a
+      rebase within the declared ceiling; no auto-park.
+- [ ] Next merge_group after that: same-lane diff, `SHARDS_RAN: true`, shard
+      wall median ≤ 170 s on the host matrix (P3: 152 s vs 326 s).
+- [ ] Scheduled `test262-honest-audit` runs and its parity report agrees with
+      the authoritative lane at ≥ 99 % (residual = #6491/#6482/#6492 leftovers).
+- [ ] `test262-baseline-validate.yml` green on main HEAD.
+- [ ] `docs/ci-policy.md` + CLAUDE.md name the authoritative oracle.
