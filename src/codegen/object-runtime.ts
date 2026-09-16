@@ -124,6 +124,8 @@ import { reserveProtoFunctionValue } from "./proto-function-value.js"; // (#4637
 import { buildFnctorMissingMethodDispatch } from "./fnctor-missing-method-dispatch.js";
 // (#4230 L1) the #3251 overlay companion as a THIRD key source for the vec key walks
 import { buildOverlayPushKeys, buildVecOverlayHasArm, reserveVecOverlayPushKeys } from "./vec-overlay-keys.js";
+// (#6485) `__extern_has`'s numeric-key delegation — §13.10.1 ToPropertyKey.
+import { buildVecNumericKeyHasArm } from "./vec-numeric-key-presence.js";
 // (#4194) instance expando substrate — composes AROUND the #3537/#3468 arms and
 // splices the declared-field write-through prologue onto `__extern_set`.
 import {
@@ -11120,6 +11122,9 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
             blockType: { kind: "empty" },
             then: strKeyBody,
           },
+          // (#6485) …and the NUMERIC-key half: `in` hands this helper a boxed
+          // Number, which the string test rejects. vec-numeric-key-presence.ts.
+          ...buildVecNumericKeyHasArm(ctx, { objParam: 0, keyParam: 1, numLocal: hN, hasIdxIdx: externHasIdxIdx }),
           // vec receiver, non-string / non-index / non-length key → the #3537
           // bag, then (#4176) the proto-property companions (Array.prototype →
           // Object.prototype — HasProperty §7.3.12 is prototype-inclusive; the
