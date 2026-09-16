@@ -179,16 +179,18 @@ describe("#6607 — `new (<call>)(…)`, standalone", () => {
     ).resolves.toBe("AJ/BJ");
   });
 
-  it("PINS residual 2: a dynamic-`new` instance does not share its class's prototype identity", async () => {
-    // Base tree: "true|false" — identical. `instanceof` and `.constructor` are
-    // both correct; it is `Object.getPrototypeOf` that hands back a distinct
-    // carrier. Unchanged by this slice, and recorded so it is not rediscovered.
+  it("residual 2 is FIXED (#6617): a dynamic-`new` instance shares its class's prototype identity", async () => {
+    // Was pinned at "true|false" through S29: `instanceof` and `.constructor`
+    // were correct but `Object.getPrototypeOf` handed back a distinct carrier
+    // (the native helper walked `$Object.$proto`, which a class instance lacks).
+    // #6617 (S30) routes a class instance through the standalone class-instance
+    // prototype dispatcher, so both spellings now agree.
     await expect(
       runStandaloneString(`(() => {${REGISTRY}
       const t = ce("%C%");
       const dyn = new t(1);
       return "" + (Object.getPrototypeOf(new C(1)) === C.prototype) + "|"
         + (Object.getPrototypeOf(dyn) === C.prototype); })()`),
-    ).resolves.toBe("true|false");
+    ).resolves.toBe("true|true");
   });
 });
