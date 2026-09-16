@@ -34,6 +34,7 @@ import {
   destructureParamArray,
   destructureParamObject,
   getArrTypeIdxFromVec,
+  TYPED_ARRAY_NAMES,
   getOrRegisterVecType,
   hoistLetConstWithTdz,
   hoistVarDeclarations,
@@ -758,6 +759,13 @@ export function compileTailDispatch(
             }
           }
         }
+        // (#6484 S3, kept through the S1+S2 merge) Whether this receiver is a
+        // TypedArray. S1+S2's general carrier migration routes every array-typed
+        // receiver through `__iterator`, so this no longer gates the dispatch —
+        // it only selects the prototype-materialisation arm further down, which
+        // arms the finalize step S3 added for the diverted carrier.
+        const iterRecvSymName = receiverType.getSymbol()?.name;
+        const typedArrayIterRecv = iterRecvSymName !== undefined && TYPED_ARRAY_NAMES.has(iterRecvSymName);
         if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && resolveArrayInfo(ctx, receiverType)) {
           // (#6484 S2) THE CARRIER MIGRATION the #5147 note deferred. This arm
           // used to answer a SNAPSHOT `$Vec`, which is why `.next()` on
