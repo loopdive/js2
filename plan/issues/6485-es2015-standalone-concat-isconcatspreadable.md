@@ -506,3 +506,113 @@ identical `elem2IsB=0`. The pin file's statically-typed twin
 So this is an `any`-lane boxing-identity question at the `$ObjVec` boundary,
 orthogonal to routing — the same family as the `__arrprod_concat` residual above.
 No test262 row scores it.
+
+## Second adversarial review — two findings, both closed 2026-09-16 (Opus lane)
+
+Both were real and both reproduced. One was a gap in what the report DISCLOSED;
+the other was a defect in the gate's exclusion test. Neither cost a test262 row.
+
+### r2-1 — the `in` fix flips hole-presence on three shapes, not one
+
+The R3 note above named a single casualty, the `arguments` pin. Measured on this
+tree (`.tmp/r3/f1.ts`, `.tmp/r3/a5.ts`, standalone, `imports` `[]`), routing a
+numeric key to `__extern_has_idx` changes the answer on **three common shapes**,
+all in the same direction — `false` → `true` where Node says `false`:
+
+| probe | pre-#6485 base | this tree | Node |
+| --- | --- | --- | --- |
+| `2 in new Array(5)` | 0 | 1 | 0 |
+| `3 in b` after `b = [1,2]; b.length = 5` | 0 | 1 | 0 |
+| `5 in m` after `m = [1].concat([2],[3]); m[7] = 9` | 0 | 1 | 0 |
+| `0 in b`, `1 in b` (real elements) | 0 | 1 | 1 |
+
+**Not fixable in this lane, and the evidence says why.** The carrier keeps no
+hole record for those indices at all, and the rest of the MOP already said so on
+BOTH trees — `.tmp/r3/f2.ts` is byte-for-byte identical base vs this tree:
+`hasOwnProperty.call(new Array(5), 2)` is `1`, `Object.keys(new Array(5)).length`
+is `5`, `hasOwnProperty.call(m, 5)` is `1`; Node answers `0`, `0`, `0`. A grown
+backing's tail slots hold plain wasm `null`, which is also how a stored
+`undefined` looks, so a slot test cannot separate them — that is the same #6485
+S2 GROW-path defect, and testing for null instead would break the pinned
+`0 in [].concat(undefined) === true`.
+
+So `in` was answering `false` only because it consulted nothing. The fix made it
+**consistent** with the rest of the MOP rather than newly inconsistent; making
+all of them right is S2's job. Recorded here, in the arm's own doc
+(`vec-numeric-key-presence.ts`), and pinned — the pin asserts the INVARIANT that
+survives the S2 fix (`in`, `hasOwnProperty` and `Object.keys` must agree on such
+a carrier), so an S2 lane flips them together and the pin stays green, while a
+change that moves `in` alone goes red.
+
+**Row cost: none.** `language/expressions/in` + `built-ins/Object/prototype/hasOwnProperty`
+(99 rows) measured below, and the concat directory is row-identical between this
+tree and the previous commit.
+
+### r2-2 — `symbolIntrinsicEscapes` armed on three non-escaping shapes
+
+The test read only the identifier's IMMEDIATE parent and matched on the text
+`Symbol`, so it armed where the intrinsic provably does not escape — including
+the one case its own doc claimed it excluded. All three reproduced on
+b3894b8868 via `JS2WASM_DEBUG_6485`, all three are clear now
+(`.tmp/r3/{c0,c1,g2,h5,h6}.ts`):
+
+| shape | b3894b8868 | this tree |
+| --- | --- | --- |
+| `var o = { Symbol: 1 }; o.Symbol` — a property NAME | armed (+949 B vs the renamed twin) | clear (+9 B, the name length — the base tree's figure) |
+| `function f(Symbol) { return Symbol + 1 }` — a SHADOW | armed | clear |
+| `(Symbol as any).iterator` — a cast before a static member | armed | clear |
+
+**Fix.** `symbolIntrinsicEscapes` now asks three questions in order instead of
+one: is this occurrence a NAME rather than a reference (property name,
+declaration name — `{ Symbol }` shorthand excluded, it IS a reference); is the
+binding SHADOWED by a local in an enclosing scope; and only then, does the
+reference escape — with the escape test seeing through `(…)`, `as`, `<T>` and
+`!` wrappers.
+
+**The narrowing gained a case too.** `globalThis.Symbol` / `window.Symbol` IS
+the intrinsic, so a `.Symbol` whose base is the global object re-enters the
+analysis with the whole property access as the reference:
+`globalThis.Symbol[k]` arms, `globalThis.Symbol.iterator` does not. The old code
+armed on both — by accident, via the name match.
+
+**The exclusion set is now pinned non-vacuously.** The old pin named for it
+asserted concat BEHAVIOUR, which is identical armed and unarmed, so an
+implementation that armed on everything passed it. The new
+`#6485 the @@isConcatSpreadable pre-scan gate` block reads the flag itself off
+the pre-scan's `JS2WASM_DEBUG_6485` line — 7 arming shapes and 8 clear ones.
+Verified non-vacuous: with `array-holes.ts` reverted to b3894b8868 (file copy,
+no git refs touched) **5 of the 8 clear pins go red**; with the fix they pass.
+Binary size was tried first and rejected as an instrument: adding an arming
+construct to an already-armed module still moves the binary 1,008–2,577 bytes,
+which overlaps the 1,480 a genuinely clear module moves.
+
+**Residual, widened and named rather than papered over.** Re-deriving the
+intrinsic through a property of some OTHER object — `var S = shim.Symbol;` or
+`var g = globalThis; g.Symbol[k]` — does not arm. Only the *literal* global
+object base is recognised, because `o.Symbol` on an arbitrary `o` is far more
+often an ordinary property than the intrinsic. That joins the two value-flow
+residuals R1 already recorded. Measured cost today: **zero rows** — no file in
+`test262/test` and no file in `test262/harness` combines `.concat(` with any of
+the four now-excluded shapes (`grep` over the 166 corpus files that call
+`.concat(`).
+
+### Measurements after this review (all on this tree, this container)
+
+**Rows — `--standalone`, `COMPILER_POOL_SIZE=2 npx tsx scripts/run-test262-paths.mts --isolate <chunk>`.**
+Three trees, one session, one eval engine, so the deltas are comparable:
+
+| set | rows | pre-#6485 `66405a1244` | b3894b8868 | this tree |
+| --- | --- | --- | --- | --- |
+| `built-ins/Array/prototype/concat` | 69 | 47 pass / 21 fail / 1 CE | 50 / 18 / 1 | **50 / 18 / 1** |
+
+**+3, 0 lost**, and the non-pass sets of the last two columns are identical
+row-by-row (`comm` over the sorted lists). The three rows are the ones S1 already
+claimed: `concat_spreadable-boolean-wrapper`, `is-concat-spreadable-proxy`,
+`is-concat-spreadable-is-array-proxy-revoked`.
+
+**Correction to the S1 report's absolute numbers.** It recorded
+`48/20/1 → 51/17/1`; this container measures `47/21/1 → 50/18/1` for the same
+two trees. The DELTA reproduces exactly; the absolute is one row lower here, an
+environment difference (runtime-eval provider), not a regression. An absolute
+pass count from a scoped local run is not CI-comparable — the delta is the
+measurement.

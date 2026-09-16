@@ -23,7 +23,7 @@
 //
 // The NEGATIVE direction (`@@isConcatSpreadable = false` must NOT spread) is
 // load-bearing: a fix that always spreads passes every positive pin vacuously.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { compile } from "../src/index.js";
 
 const OPTS = {
@@ -53,6 +53,46 @@ const ASSERT = `
 function eq(actual, expected, what) {
   if (actual !== expected) throw new Error(what + ": expected " + expected + " got " + actual);
 }
+`;
+
+/**
+ * Did `scanForArrayHoles` ARM `isConcatSpreadableDirty` for this module?
+ *
+ * Read from the pre-scan's own `JS2WASM_DEBUG_6485` line rather than inferred
+ * from behaviour or from binary size. Both of those alternatives are vacuous
+ * here and that is the whole point of this helper (adversarial review r2,
+ * 2026-09-16): a module in the EXCLUSION set behaves identically armed and
+ * unarmed — arming only costs bytes — so a behavioural pin named for the
+ * exclusion set would stay green against an implementation that armed on
+ * everything. Size is no better: measured on this tree, adding an arming
+ * construct to an already-armed module still moves the binary by 1,008–2,577
+ * bytes, which overlaps the 1,480 that a genuinely clear module moves. The flag
+ * itself is the only non-vacuous signal.
+ */
+async function gateArms(src: string, opts: Record<string, unknown> = OPTS): Promise<boolean> {
+  const previous = process.env.JS2WASM_DEBUG_6485;
+  process.env.JS2WASM_DEBUG_6485 = "1";
+  const lines: string[] = [];
+  const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+    lines.push(args.join(" "));
+  });
+  try {
+    const r = await compile(src, opts as Parameters<typeof compile>[1]);
+    expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
+  } finally {
+    spy.mockRestore();
+    if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_DEBUG_6485");
+    else process.env.JS2WASM_DEBUG_6485 = previous;
+  }
+  const reported = lines.filter((l) => l.startsWith("[6485] isConcatSpreadableDirty="));
+  expect(reported.length, "the pre-scan must report the flag at least once").toBeGreaterThan(0);
+  return reported.some((l) => l.endsWith("=true"));
+}
+
+/** Every arming probe ends in a concat, so the decision is not dead code. */
+const CONCAT_TAIL = `
+var out = [1, 2].concat([3]);
+if (out.length !== 3) throw new Error("len");
 `;
 
 describe("#6485 Array.prototype.concat @@isConcatSpreadable (standalone)", () => {
@@ -288,5 +328,100 @@ describe("#6485 Array.prototype.concat @@isConcatSpreadable (standalone)", () =>
       eq(2 in sp, false, "sp index 2 is the source's HOLE");
       eq(3 in sp, true, "sp index 3 present");
     `);
+  });
+
+  // ── The `in` fix's blast radius, stated rather than left to be found ─────
+  //
+  // Routing a numeric key to `__extern_has_idx` changed the answer on THREE
+  // common shapes, not only the `arguments` carrier above. `new Array(n)`,
+  // `arr.length = n` and a write past the end all produce indices the compiler
+  // models as PRESENT, so `k in arr` now answers `true` there where the base
+  // tree answered `false`. Node says `false` for all three.
+  //
+  // Not a regression that can be fixed here, and the reason is measurable: the
+  // rest of the MOP already answered PRESENT on those indices on BOTH trees
+  // (`hasOwnProperty.call(new Array(5), 2)` is `true`,
+  // `Object.keys(new Array(5)).length` is 5). The carrier keeps no hole record
+  // for a grown backing at all — its tail slots hold plain wasm null, which is
+  // also how a stored `undefined` looks — so `in` was answering `false` only
+  // because it consulted nothing. The fix made `in` CONSISTENT with the rest of
+  // the MOP; making all of them right is the #6485 S2 grow-path work.
+  //
+  // This pins the invariant that survives that fix — the three answers must
+  // agree — so an S2 lane flips them together and this stays green, while a
+  // change that moves `in` alone goes red.
+  it("keeps `in`, hasOwnProperty and Object.keys agreeing on a hole-less carrier", async () => {
+    await runScript(`${ASSERT}
+      function has(o, k) { return (k in o) ? 1 : 0; }
+      function own(o, k) { return Object.prototype.hasOwnProperty.call(o, k) ? 1 : 0; }
+
+      var a = new Array(5);
+      eq(has(a, 2), own(a, 2), "new Array(5): in agrees with hasOwnProperty at 2");
+      eq(Object.keys(a).length, 5, "new Array(5): every index is an own key (Node: 0)");
+
+      var b = [1, 2];
+      b.length = 5;
+      eq(has(b, 3), own(b, 3), "length-extended: in agrees with hasOwnProperty at 3");
+      eq(has(b, 0), 1, "length-extended: a real element is still present");
+
+      var m = [1].concat([2], [3]);
+      m[7] = 9;
+      eq(m.length, 8, "grow-past-end length");
+      eq(has(m, 5), own(m, 5), "grown carrier: in agrees with hasOwnProperty at 5");
+      eq(has(m, 7), 1, "grown carrier: the written index is present");
+      eq(m[7], 9, "grown carrier: value agrees with presence");
+    `);
+  });
+});
+
+// The gate's ARMING decision, asserted directly. Everything in this block is
+// about which modules pay for the spec loop; none of it is about concat's
+// answer, which is why it reads the flag instead of running a program.
+describe("#6485 the @@isConcatSpreadable pre-scan gate", () => {
+  const ARMS: Array<[string, string]> = [
+    ["the canonical spelling", `var b = [3, 4]; b[Symbol.isConcatSpreadable] = false;`],
+    ["`Symbol` ALIASED into a variable", `var S = Symbol; var k = S["isConcat" + "Spreadable"];`],
+    [
+      "`Symbol` across a function boundary",
+      `function pick(o, k) { return o[k]; } var k = pick(Symbol, "isConcat" + "Spreadable");`,
+    ],
+    ["`Symbol` in an object literal SHORTHAND", `var bag = { Symbol }; var k = bag.Symbol["a" + "b"];`],
+    ["`Symbol` as a callee", `var s = Symbol("d");`],
+    ["a computed key on the intrinsic", `var p = "isConcat"; var k = Symbol[p + "Spreadable"];`],
+    ["the global object's own `Symbol` property", `var k = globalThis.Symbol["a" + "b"];`],
+  ];
+  for (const [what, prelude] of ARMS) {
+    it(`arms for ${what}`, async () => {
+      expect(await gateArms(prelude + CONCAT_TAIL)).toBe(true);
+    });
+  }
+
+  // The exclusion set. Each of these was measured ARMING before the review
+  // (2026-09-16) except the first three, which are the shapes the design was
+  // always meant to exclude — the test262 `testTypedArray.js` harness prelude
+  // uses them, and arming there would route ~2,080 rows onto the spec loop.
+  const STAYS_CLEAR: Array<[string, string]> = [
+    ["a module that never mentions the symbol", ``],
+    ["`typeof Symbol` and `Symbol.iterator`", `var ok = typeof Symbol !== "undefined" && !!Symbol.iterator;`],
+    ["a LITERAL key on the intrinsic", `var it = Symbol["iterator"];`],
+    ["a property NAME that happens to be `Symbol`", `var o = { Symbol: 1 }; var q = o.Symbol;`],
+    ["a local binding that SHADOWS the global", `function f(Symbol) { return Symbol + 1; } var q = f(1);`],
+    ["a PARENTHESIZED reference before a static member", `var it = (Symbol).iterator;`],
+    ["the global object's `Symbol.iterator`", `var it = globalThis.Symbol.iterator;`],
+  ];
+  for (const [what, prelude] of STAYS_CLEAR) {
+    it(`stays clear for ${what}`, async () => {
+      expect(await gateArms(prelude + CONCAT_TAIL)).toBe(false);
+    });
+  }
+
+  // TypeScript-only wrapper: the review's repro was a cast, and a cast reaches
+  // the scanner as an `AsExpression` the `.js` pins above cannot produce.
+  it("stays clear for a CAST reference before a static member", async () => {
+    const armed = await gateArms(
+      `const it: any = (Symbol as any).iterator;\nconst out: any = [1, 2].concat([3]);\nexport function n(): number { return out.length; }\n`,
+      { fileName: "test.ts", skipSemanticDiagnostics: true, target: "standalone" },
+    );
+    expect(armed).toBe(false);
   });
 });

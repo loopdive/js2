@@ -651,6 +651,8 @@ function isArraySpeciesObservable(node: ts.Node): boolean {
 
 /** (#6485) The well-known symbol's NAME — the only handle a module has on it. */
 const WELL_KNOWN_CONCAT_SPREADABLE = "isConcatSpreadable";
+/** (#6485) The global binding every route to a well-known symbol starts at. */
+const SYMBOL_GLOBAL = "Symbol";
 
 /**
  * (#6485) Can this node make `@@isConcatSpreadable` OBSERVABLE anywhere in the
@@ -677,18 +679,26 @@ const WELL_KNOWN_CONCAT_SPREADABLE = "isConcatSpreadable";
  *  - `Symbol(desc)` as a callee — the fresh symbol's `.constructor` is the
  *    intrinsic again.
  *
- * `Symbol.iterator`, `Symbol.for(...)` and `typeof Symbol` are deliberately NOT
- * matched: the intrinsic does not escape there, and those are the shapes
- * ordinary modules (the test262 `testTypedArray.js` harness among them) use.
- * That exclusion is what keeps the gate off for the common case.
+ * `Symbol.iterator`, `Symbol.for(...)`, `Symbol["iterator"]` and
+ * `typeof Symbol` are deliberately NOT matched: the intrinsic does not escape
+ * there, and those are the shapes ordinary modules (the test262
+ * `testTypedArray.js` harness among them) use. Nor is an occurrence that is not
+ * the global binding at all — a property or declaration NAME (`o.Symbol`,
+ * `{ Symbol: 1 }`) or a local that SHADOWS it (`function f(Symbol)`). That
+ * exclusion set is what keeps the gate off for the common case;
+ * `symbolIntrinsicEscapes` owns it.
  *
- * NOT complete, and the gap is named rather than papered over. Two vectors
- * survive, both needing value-flow that a syntactic pre-pass cannot do, and
- * both costing 0 test262 rows today (re-measured 2026-09-16):
+ * NOT complete, and the gap is named rather than papered over. Three vectors
+ * survive, all needing value-flow that a syntactic pre-pass cannot do, and all
+ * costing 0 test262 rows today (re-measured 2026-09-16):
  *
  *  - RE-DERIVING the intrinsic through a static-named property of a symbol
  *    VALUE — `Symbol.for("x").constructor[k]`,
  *    `Object.getOwnPropertySymbols(o)[0].constructor[k]`;
+ *  - re-deriving it through a property of some OTHER object —
+ *    `var S = shim.Symbol; S[k]`. Only the global object's own property
+ *    (`globalThis.Symbol`) is recognised, because `o.Symbol` on an arbitrary
+ *    `o` is far more often an ordinary property than the intrinsic;
  *  - a Proxy operand whose `get` trap answers for @@isConcatSpreadable without
  *    the module ever mentioning the symbol.
  *
@@ -702,27 +712,122 @@ function isIsConcatSpreadableObservable(node: ts.Node): boolean {
   if (ts.isStringLiteralLike(node)) return node.text === WELL_KNOWN_CONCAT_SPREADABLE;
   if (ts.isIdentifier(node)) {
     if (node.text === WELL_KNOWN_CONCAT_SPREADABLE) return true;
-    return node.text === "Symbol" && symbolIntrinsicEscapes(node);
+    return node.text === SYMBOL_GLOBAL && symbolIntrinsicEscapes(node);
   }
   return false;
 }
 
 /**
- * (#6485) Does this reference to the global `Symbol` let the INTRINSIC escape,
- * i.e. reach a position from which the module can later spell any well-known
- * name with a key expression this pre-pass cannot read?
+ * (#6485) Does this occurrence of the identifier `Symbol` let the INTRINSIC
+ * escape, i.e. reach a position from which the module can later spell any
+ * well-known name with a key expression this pre-pass cannot read?
  *
- * `false` for exactly two shapes, which are the ones that keep the intrinsic
- * pinned to a statically-readable member: `Symbol.<name>` (the base of a
- * property access — `Symbol.iterator`, `Symbol.for`; a canonical
- * `Symbol.isConcatSpreadable` is caught by the NAME match instead), and
- * `typeof Symbol` (a feature probe that yields a string). A property NAME that
- * happens to be `Symbol` (`o.Symbol`) is not the global at all.
+ * Three questions, in order, and the first two are about whether the occurrence
+ * denotes the global at all (adversarial review r2, 2026-09-16 — the first cut
+ * asked only the third and so armed on all three of these):
  *
- * `Symbol["iterator"]` — a LITERAL key on the intrinsic — is likewise pinned,
- * so it stays clear; any other element access on it arms.
+ *  1. **Is it a NAME rather than a reference?** `o.Symbol`, `{ Symbol: 1 }`,
+ *     `function f(Symbol)`, `class C { Symbol() {} }` — a property or
+ *     declaration name is not the global binding. The one exception is the
+ *     global object's own property, `globalThis.Symbol` / `window.Symbol`,
+ *     which IS the intrinsic: that re-enters the analysis with the whole
+ *     property access as the reference, so `globalThis.Symbol.iterator` stays
+ *     pinned while `globalThis.Symbol[k]` arms. `{ Symbol }` is shorthand — a
+ *     real reference — and is deliberately not filtered.
+ *  2. **Is the binding SHADOWED?** A local `Symbol` (parameter, `var`/`let`,
+ *     function or class declaration) in any enclosing scope means this
+ *     occurrence resolves to that binding, not the intrinsic.
+ *     `symbolBindingIsShadowed`.
+ *  3. **Does the reference escape?** `referenceEscapes` — `false` for exactly
+ *     the shapes that keep the intrinsic pinned to a statically-readable
+ *     member: `Symbol.<name>` (`Symbol.iterator`, `Symbol.for`; a canonical
+ *     `Symbol.isConcatSpreadable` is caught by the NAME match instead),
+ *     `Symbol["iterator"]` (a LITERAL key), and `typeof Symbol` (a feature
+ *     probe that yields a string). Anything else arms.
  */
 function symbolIntrinsicEscapes(node: ts.Identifier): boolean {
+  const parent = node.parent as ts.Node | undefined;
+  if (parent === undefined) return true;
+  if (ts.isPropertyAccessExpression(parent) && parent.name === node) {
+    return isGlobalObjectReference(parent.expression) && referenceEscapes(parent);
+  }
+  if (isDeclarationNamePosition(node, parent)) return false;
+  if (symbolBindingIsShadowed(node)) return false;
+  return referenceEscapes(node);
+}
+
+/** The globals whose `.Symbol` property IS the intrinsic. */
+const GLOBAL_OBJECT_NAMES = new Set(["globalThis", "window", "self", "global"]);
+
+function isGlobalObjectReference(expr: ts.Expression): boolean {
+  let inner: ts.Node = expr;
+  while (isValueWrapper(inner) && "expression" in inner) inner = (inner as ts.ParenthesizedExpression).expression;
+  return ts.isIdentifier(inner) && GLOBAL_OBJECT_NAMES.has(inner.text);
+}
+
+/**
+ * (#6485) Is this identifier the NAME of a declaration or member rather than a
+ * reference to a binding? `parent.name`/`parent.propertyName` covers every such
+ * position the language has — parameter, variable, function, class, property
+ * assignment, method, import/export specifier — in one test.
+ *
+ * `{ Symbol }` (shorthand) is excluded: its `name` IS the reference.
+ */
+function isDeclarationNamePosition(node: ts.Identifier, parent: ts.Node): boolean {
+  if (ts.isShorthandPropertyAssignment(parent)) return false;
+  const named = parent as ts.Node & { name?: ts.Node; propertyName?: ts.Node };
+  return named.name === node || named.propertyName === node;
+}
+
+/**
+ * (#6485) Does an enclosing scope declare its own `Symbol`, so that this
+ * occurrence is a local and not the intrinsic? `function f(Symbol) { return
+ * Symbol + 1 }` is the review's repro.
+ *
+ * Deliberately partial in the ARMING (safe) direction: an `import { Symbol }`,
+ * a named function/class *expression*'s own name, and a `var` hoisted out of a
+ * nested block are not recognised as shadows, so such a module still arms and
+ * only pays bytes.
+ */
+function symbolBindingIsShadowed(node: ts.Identifier): boolean {
+  for (let scope: ts.Node | undefined = node.parent; scope !== undefined; scope = scope.parent) {
+    if (ts.isFunctionLike(scope) && scope.parameters.some((p) => bindingNameIsSymbol(p.name))) return true;
+    if (ts.isCatchClause(scope) && scope.variableDeclaration !== undefined) {
+      if (bindingNameIsSymbol(scope.variableDeclaration.name)) return true;
+    }
+    const statements = scopeStatements(scope);
+    if (statements !== undefined && statements.some(statementDeclaresSymbol)) return true;
+  }
+  return false;
+}
+
+function scopeStatements(scope: ts.Node): readonly ts.Statement[] | undefined {
+  if (ts.isBlock(scope) || ts.isSourceFile(scope) || ts.isModuleBlock(scope)) return scope.statements;
+  return undefined;
+}
+
+function statementDeclaresSymbol(stmt: ts.Statement): boolean {
+  if (ts.isVariableStatement(stmt)) return stmt.declarationList.declarations.some((d) => bindingNameIsSymbol(d.name));
+  if (ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) return stmt.name?.text === SYMBOL_GLOBAL;
+  return false;
+}
+
+/** `Symbol`, or a destructuring pattern that binds it. */
+function bindingNameIsSymbol(name: ts.BindingName): boolean {
+  if (ts.isIdentifier(name)) return name.text === SYMBOL_GLOBAL;
+  return name.elements.some((el) => ts.isBindingElement(el) && bindingNameIsSymbol(el.name));
+}
+
+/**
+ * (#6485) The escape test proper, applied to a reference that is known to
+ * denote the intrinsic. Sees through the wrappers that do not change WHICH
+ * value a reference denotes — `(Symbol as any).iterator`, `(Symbol).iterator`,
+ * `Symbol!.iterator` — which the first cut did not, so a single cast armed the
+ * gate (adversarial review r2, 2026-09-16).
+ */
+function referenceEscapes(ref: ts.Node): boolean {
+  let node = ref;
+  while (isValueWrapper(node.parent)) node = node.parent;
   const parent = node.parent as ts.Node | undefined;
   if (parent === undefined) return true;
   if (ts.isPropertyAccessExpression(parent)) return parent.expression !== node;
@@ -732,6 +837,17 @@ function symbolIntrinsicEscapes(node: ts.Identifier): boolean {
   }
   if (ts.isTypeOfExpression(parent)) return false;
   return true;
+}
+
+function isValueWrapper(node: ts.Node | undefined): node is ts.Node {
+  if (node === undefined) return false;
+  return (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isTypeAssertionExpression(node) ||
+    ts.isNonNullExpression(node) ||
+    ts.isSatisfiesExpression(node)
+  );
 }
 
 /**
