@@ -38,9 +38,43 @@ interface RequireRewrite {
  *
  * Returns the original source unchanged if no top-level require() calls are present.
  */
-export function rewriteCjsRequire(source: string): string {
-  return rewriteCjsRequireWithMap(source).source;
+export function rewriteCjsRequire(source: string, opts?: CjsRewriteOptions): string {
+  return rewriteCjsRequireWithMap(source, opts).source;
 }
+
+/** #6479 — options for the textual pre-filter (tests disable it to compare outputs). */
+export interface CjsRewriteOptions {
+  /** Set `false` to force the AST pass even when the source has no CJS token. */
+  prefilter?: boolean;
+}
+
+/**
+ * #6479 — cheap textual gate in front of the `ts.createSourceFile` parse.
+ *
+ * On a multi-file graph this pass parsed every source, and on the self-compile
+ * graph (1,381 files / 34 MB) that cost 2.5 s while only ~8 % of files carry
+ * any CommonJS surface at all. A false positive costs one wasted parse whose
+ * output is identical; a false negative silently drops a rewrite, so the
+ * pattern is a deliberate superset of every shape the AST visitor below can
+ * act on:
+ *
+ * | rewrite shape                                  | produced by                               | matched by       |
+ * | ---------------------------------------------- | ----------------------------------------- | ---------------- |
+ * | `const X = require("Y")`                       | `tryRenderRequireImport` (default import) | `require\s*\(`   |
+ * | `const { a, b: c } = require("Y")`             | `tryRenderRequireImport` (named import)   | `require\s*\(`   |
+ * | `const X = require("Y").member`                | `tryRenderRequireImport` (member import)  | `require\s*\(`   |
+ * | `const X = require("Y")(args)`                 | `tryRenderRequireImport` (factory call)   | `require\s*\(`   |
+ * | `var`/`let` forms of all of the above          | `tryRewriteStatement` (non-const branch)  | `require\s*\(`   |
+ * | `module.exports = <expr>` (single assignment)  | `tryRewriteSingleModuleExportsAssignment` | `module\s*\.\s*exports` |
+ * | `module.exports = require("Y")`                | same, re-exported default                 | `require\s*\(`   |
+ * | `module.exports` / `exports.foo` wrapping      | `shouldWrapModuleExports` + its visitor   | `module\s*\.\s*exports`, `exports\s*\.` |
+ *
+ * Every one of those requires the literal token `require`, `module.exports` or
+ * `exports.` in the source, because the AST guards compare identifier text
+ * against those exact names. This is strictly wider than the `includes("require(")`
+ * check it replaces (whitespace before `(` is now allowed) on the require side.
+ */
+const CJS_SURFACE_RE = /\brequire\s*\(|\bmodule\s*\.\s*exports\b|\bexports\s*\./;
 
 /**
  * #1928 — like {@link rewriteCjsRequire} but also returns a `PositionMap` from
@@ -49,10 +83,14 @@ export function rewriteCjsRequire(source: string): string {
  * declarations can be longer (and multi-line) than the `const … = require(…)`
  * they replace, shifting everything below.
  */
-export function rewriteCjsRequireWithMap(source: string): { source: string; positionMap: PositionMap } {
-  // Cheap pre-check: dependency leaves may have no `require()` calls but still
-  // need their `module.exports` value surfaced for a rewritten importer.
-  if (!source.includes("require(") && !source.includes("module.exports") && !source.includes("exports")) {
+export function rewriteCjsRequireWithMap(
+  source: string,
+  opts?: CjsRewriteOptions,
+): { source: string; positionMap: PositionMap } {
+  // Cheap pre-check (#6479): dependency leaves may have no `require()` calls but
+  // still need their `module.exports` value surfaced for a rewritten importer,
+  // so the gate covers the export surface too. See `CJS_SURFACE_RE`.
+  if (opts?.prefilter !== false && !CJS_SURFACE_RE.test(source)) {
     return { source, positionMap: PositionMap.identity() };
   }
 

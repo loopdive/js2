@@ -10,6 +10,13 @@
 import { ts, forEachChild } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext, ExternClassInfo } from "./context/types.js";
+import {
+  applyLibExternScanEffects,
+  captureLibExternScanEffects,
+  getLibExternScanEffects,
+  libExternScanMemoKey,
+  putLibExternScanEffects,
+} from "./lib-extern-scan-memo.js";
 import type { NodeBuiltinImport } from "../import-resolver.js";
 import { hasDeclareModifier } from "./ast-modifiers.js";
 import { isExternalDeclaredClass, isVoidType, mapTsTypeToWasm } from "../checker/type-mapper.js";
@@ -766,18 +773,49 @@ const WASI_STDIN_REACTOR_INTRINSICS = new Set([
 // `ctx.checker` queries. User-file call sites omit it and keep the checker
 // (user `declare`s are input-driven and cheap; lib files were 96 % of the
 // compiler's checker traffic).
+/**
+ * (#6480) The lib-file extern-CLASS scan is replayed from a per-process memo
+ * rather than re-walked on every compile; see `lib-extern-scan-memo.ts` for the
+ * key (lib source-file identity, lib index identity, the profile booleans the
+ * collectors read, and a fingerprint of the two maps' pre-state) and why the
+ * `declare function` branch below is deliberately excluded from it.
+ */
 export function collectExternDeclarations(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
   libReferencedNames?: Set<string>,
   libIndex?: LibDeclIndex,
 ): void {
+  if (!libIndex) {
+    collectExternDeclarationsImpl(ctx, sourceFile, libReferencedNames, libIndex, false);
+    return;
+  }
+  const key = libExternScanMemoKey(ctx, libIndex);
+  const hit = getLibExternScanEffects(sourceFile, key);
+  if (hit) {
+    applyLibExternScanEffects(ctx, hit);
+    collectExternDeclarationsImpl(ctx, sourceFile, libReferencedNames, libIndex, true);
+    return;
+  }
+  const beforeClasses = new Map(ctx.externClasses);
+  const beforeParents = new Map(ctx.externClassParent);
+  collectExternDeclarationsImpl(ctx, sourceFile, libReferencedNames, libIndex, false);
+  putLibExternScanEffects(sourceFile, key, captureLibExternScanEffects(ctx, beforeClasses, beforeParents));
+}
+
+function collectExternDeclarationsImpl(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  libReferencedNames: Set<string> | undefined,
+  libIndex: LibDeclIndex | undefined,
+  skipExternClasses: boolean,
+): void {
   for (const stmt of sourceFile.statements) {
-    if (ts.isModuleDeclaration(stmt) && hasDeclareModifier(stmt)) {
+    if (!skipExternClasses && ts.isModuleDeclaration(stmt) && hasDeclareModifier(stmt)) {
       collectDeclareNamespace(ctx, stmt, [], libIndex);
     }
     // Top-level declare class (e.g. user-defined or import-resolver stubs)
-    if (ts.isClassDeclaration(stmt) && stmt.name && hasDeclareModifier(stmt)) {
+    if (!skipExternClasses && ts.isClassDeclaration(stmt) && stmt.name && hasDeclareModifier(stmt)) {
       collectExternClass(ctx, stmt, [], libIndex);
     }
     // Top-level declare function stubs — registered as Wasm imports so that calls
@@ -909,7 +947,7 @@ export function collectExternDeclarations(
     }
     // declare var X: { prototype: X; new(): X } (lib.dom.d.ts pattern)
     // declare var Date: DateConstructor (interface with new() pattern)
-    if (ts.isVariableStatement(stmt) && hasDeclareModifier(stmt)) {
+    if (!skipExternClasses && ts.isVariableStatement(stmt) && hasDeclareModifier(stmt)) {
       for (const decl of stmt.declarationList.declarations) {
         if (!decl.name || !ts.isIdentifier(decl.name) || !decl.type) continue;
         // Inline type literal with construct signature

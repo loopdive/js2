@@ -13,6 +13,9 @@
 // Native string declarations are borrowed from the canonical backend recipe;
 // no resource allocation, codegen context or frontend code enters this plan.
 
+import { nativeStringOutputAbiBindings } from "../backend/wasmgc/program/native-string-output-abi.js";
+import { planHostNumberBoundary, type HostNumberBoundarySetup } from "./program/host-number-boundary-setup.js";
+import { planHostAsyncDynamicUnits, preparedHostAsyncDynamicCarrier } from "./program/host-async-dynamic.js";
 import { irGlobalBindingKey, irTypeBindingKey, irSupportGlobalRef, irSourceTypeRef } from "./abi-bindings.js";
 import {
   irCallableBindingKey,
@@ -80,6 +83,9 @@ import {
   type NativeValueStringRepresentation,
 } from "./program/native-value-resources.js";
 
+import { planAsyncFrameSetup, type AsyncFrameSetup } from "./program/async-frame-setup.js";
+import { planNativePromiseInventoryPreflight } from "./program-native-async-resources.js";
+
 /** Vector/string carriers stay logical until the consumer reserves their shared types. */
 export type PhysicalSignatureType = ValType | Extract<IrType, { kind: "vec" | "string" | "support-ref" }>;
 
@@ -120,6 +126,7 @@ export interface PhysicalFunctionSlot {
   readonly name: string;
   readonly params: readonly PhysicalSignatureType[];
   readonly results: readonly PhysicalSignatureType[];
+  readonly dynamicCarrier?: ValType;
 }
 
 export interface PhysicalImportedFunction {
@@ -170,6 +177,7 @@ export interface PhysicalSetupPlan {
   readonly target: PreparedIrBackendOptions["target"];
   readonly exceptionTag: PhysicalExceptionTag;
   readonly vectors: NativeVectorResourcePlan;
+  readonly asyncFrames?: AsyncFrameSetup;
   /** Descriptive only: the issued reservation input stays in the consumer's private record. */
   readonly nativeStrings?: PhysicalNativeStringSetup;
   readonly nativeNumberFormat?: PhysicalNativeNumberFormatSetup;
@@ -180,6 +188,7 @@ export interface PhysicalSetupPlan {
   readonly functions: readonly PhysicalFunctionSlot[];
   readonly exports: readonly PhysicalExport[];
   readonly startup: PhysicalStartup;
+  readonly hostNumberBoundary?: HostNumberBoundarySetup;
 }
 
 export type PhysicalSetupOutcome =
@@ -595,6 +604,7 @@ function nativeStringSetup(
   const current = planNativeStringValuePhysical(input.demands, {
     representation: "native-string",
     utf8Storage: options.utf8Storage,
+    stringConcatEmptyIdentity: options.stringConcatEmptyIdentity ?? true,
   });
   if (current.kind !== "planned") nativeInvalid("native input has no supported current physical recipe");
   nativeSame(input.plan, current.plan, "native declarations or selection changed");
@@ -679,6 +689,17 @@ function nativeStringSetup(
   );
   const unbox = nativeUnboxBinding(context, input, baseOrder + unboxIndex);
   if (unbox) add(unbox);
+  if (input.plan.output) {
+    if (!input.outputRequirements) nativeInvalid("missing output requirements for ABI join");
+    const offset = input.plan.declarations.findIndex((row) => row.key === input.plan.output!.declarations[0]?.key);
+    if (offset < 0) nativeInvalid("output recipe is detached from aggregate declarations");
+    for (const binding of nativeStringOutputAbiBindings(
+      input.outputRequirements,
+      input.plan.output,
+      baseOrder + offset,
+    ))
+      add(binding);
+  }
   const seen = new Set<string>();
   for (const [index, declaration] of input.plan.declarations.entries()) {
     if (seen.has(declaration.key)) nativeInvalid("duplicate resource declaration key");
@@ -931,6 +952,7 @@ function physicalSignatureConverter(
   vectors: NativeVectorResourcePlan,
   gaps: Gaps,
   native?: PhysicalNativeStringSetup,
+  dynamicUnits: readonly IrUnitId[] = [],
 ) {
   const abi = native ? new ProgramAbiMap(program.inventory, program.derivedUnits) : undefined;
   if (abi) {
@@ -949,7 +971,9 @@ function physicalSignatureConverter(
   return (types: readonly IrType[], where: string, unitId?: IrUnitId): PhysicalSignatureType[] => {
     const out: PhysicalSignatureType[] = [];
     for (const type of types) {
-      const value = scalar(type);
+      const value =
+        scalar(type) ??
+        (unitId !== undefined && dynamicUnits.includes(unitId) ? preparedHostAsyncDynamicCarrier(type) : undefined);
       if (
         type.kind === "support-ref" &&
         native?.formatterScratch &&
@@ -987,6 +1011,82 @@ function physicalSignatureConverter(
   };
 }
 
+function appendPhysicalImports(
+  imports: readonly PhysicalImportedFunction[],
+  importedFunctions: PhysicalImportedFunction[],
+): void {
+  for (const imported of imports) {
+    const previous = importedFunctions.find((row) => row.referenceKey === imported.referenceKey);
+    if (previous) {
+      if (
+        previous.bindingId !== imported.bindingId ||
+        preparedIrDataMismatch(previous.params, imported.params) !== undefined ||
+        preparedIrDataMismatch(previous.results, imported.results) !== undefined
+      )
+        throw new PreparedIrProgramInvariantError(
+          "invalid-prepared-data",
+          "canonical host import contradicts existing physical import",
+        );
+    } else
+      importedFunctions.push({
+        bindingId: imported.bindingId,
+        referenceKey: imported.referenceKey,
+        module: imported.module,
+        field: imported.field,
+        params: imported.params,
+        results: imported.results,
+      });
+  }
+}
+
+/** Join planned adapter imports and callback exports without discovering resources. */
+function appendAsyncPhysicalResources(
+  asyncFrames: AsyncFrameSetup | undefined,
+  importedFunctions: PhysicalImportedFunction[],
+  exports: PhysicalExport[],
+): void {
+  for (const frame of asyncFrames?.frames ?? []) {
+    appendPhysicalImports(frame.imports, importedFunctions);
+    exports.push(
+      ...frame.callbacks.map((row) => ({
+        externalName: row.externalName,
+        targetBindingId: row.targetBindingId,
+        space: "function" as const,
+      })),
+    );
+  }
+}
+
+/** Reserve each body's exact semantic ABI under its accepted carrier contract. */
+function planPhysicalFunctionSlots(
+  physical: readonly IrFunction[],
+  entries: ReadonlyMap<IrBindingId, PreparedIrAbiEntry>,
+  convert: ReturnType<typeof physicalSignatureConverter>,
+  dynamicUnits: readonly IrUnitId[],
+  gaps: Gaps,
+): PhysicalFunctionSlot[] {
+  const functions: PhysicalFunctionSlot[] = [];
+  for (const fn of physical) {
+    const bindingId = irUnitCallableBindingId(fn.unitId);
+    const own = entries.get(bindingId);
+    if (own?.contract.kind !== "callable") {
+      gaps.add(`body ${fn.name} has no declared callable ABI entry`, fn.unitId);
+      continue;
+    }
+
+    functions.push({
+      unitId: fn.unitId,
+      bindingId,
+      name: fn.name,
+      ...(dynamicUnits.includes(fn.unitId) ? { dynamicCarrier: { kind: "externref" as const } } : {}),
+      params: convert(own.contract.params, `body ${fn.name} params`, fn.unitId),
+      results: convert(own.contract.results, `body ${fn.name} results`, fn.unitId),
+    });
+  }
+
+  return functions;
+}
+
 /**
  * Derive the physical setup for one projection, or the first located gap.
  * Only scalar carriers, unit/import callables, source/import globals, export
@@ -1012,6 +1112,7 @@ export function planPhysicalSetup(
     const sourcePlan = planNativeStringValuePhysical(collectNativeStringValueDemands(program, projection), {
       representation: "native-string",
       utf8Storage: options.utf8Storage,
+      stringConcatEmptyIdentity: options.stringConcatEmptyIdentity ?? true,
     });
     if (sourcePlan.kind !== "none") {
       if (sourcePlan.kind !== "planned") return sourcePlan;
@@ -1023,29 +1124,29 @@ export function planPhysicalSetup(
     formatter && nativeStrings ? nativeFormatterSetup(program, nativeStrings, formatter.requirements) : undefined;
   const nativeBindings = [...(nativeStrings?.bindings ?? []), ...(nativeNumberFormat?.bindings ?? [])];
   if (nativeBindings.length) sealNativeBindingPlan(program, nativeBindings);
+  const hostNumberOutcome = planHostNumberBoundary(
+    program,
+    projection,
+    preparedIrRuntimeAbiAnchor(program.inventory),
+    nativeBindings.map((row) => row.entry),
+  );
+  const hostNumberBoundary = hostNumberOutcome.kind === "planned" ? hostNumberOutcome.setup : undefined;
+  if (hostNumberOutcome.kind !== "planned") gaps.add(hostNumberOutcome.detail, hostNumberOutcome.unitId);
+  const asyncOutcome = planAsyncFrameSetup(
+    program,
+    options,
+    projection,
+    [...nativeBindings.map((row) => row.entry), ...(hostNumberBoundary?.entries ?? [])],
+    preparedIrRuntimeAbiAnchor(program.inventory),
+  );
+  const asyncFrames = asyncOutcome.kind === "planned" ? asyncOutcome.setup : undefined;
+  if (asyncOutcome.kind !== "planned") gaps.add(asyncOutcome.detail, asyncOutcome.unitId);
   const nativeIds = new Set(nativeBindings.map((row) => row.entry.id));
-  const convert = physicalSignatureConverter(program, vectors, gaps, nativeStrings);
+  const dynamic = planHostAsyncDynamicUnits(program, projection, asyncFrames);
+  for (const gap of dynamic.gaps) gaps.add(gap.detail, gap.unitId);
+  const convert = physicalSignatureConverter(program, vectors, gaps, nativeStrings, dynamic.units);
 
-  // 1. Function slots: one per physical body, signature from the body's own ABI contract.
-  const functions: PhysicalFunctionSlot[] = [];
-  for (const fn of physical) {
-    const bindingId = irUnitCallableBindingId(fn.unitId);
-    const own = entries.get(bindingId);
-    if (own?.contract.kind !== "callable") {
-      gaps.add(`body ${fn.name} has no declared callable ABI entry`, fn.unitId);
-      continue;
-    }
-    if (fn.asyncPlan || fn.asyncRuntime) {
-      gaps.add(`async body ${fn.name} needs scheduler/promise runtime materialization`, fn.unitId);
-    }
-    functions.push({
-      unitId: fn.unitId,
-      bindingId,
-      name: fn.name,
-      params: convert(own.contract.params, `body ${fn.name} params`, fn.unitId),
-      results: convert(own.contract.results, `body ${fn.name} results`, fn.unitId),
-    });
-  }
+  const functions = planPhysicalFunctionSlots(physical, entries, convert, dynamic.units, gaps);
 
   // 2. Every other required slot: imports, globals, or a gap. Exports are resolved to their space.
   const importedFunctions: PhysicalImportedFunction[] = [];
@@ -1131,7 +1232,9 @@ export function planPhysicalSetup(
     }
     gaps.add(`support binding ${plan.id} (${contract.role}) needs runtime materialization`);
   }
-  const exportNames = new Set<string>();
+  appendPhysicalImports(hostNumberBoundary?.imports ?? [], importedFunctions);
+  appendAsyncPhysicalResources(asyncFrames, importedFunctions, exports);
+  const exportNames = new Set<string>(native?.plan.output?.stdout ? ["__stdout_prepare", "__stdout_char"] : []);
   for (const exported of exports) {
     if (exportNames.has(exported.externalName)) gaps.add(`export ${exported.externalName} is declared twice`);
     exportNames.add(exported.externalName);
@@ -1148,7 +1251,7 @@ export function planPhysicalSetup(
     ...[...importedGlobals, ...definedGlobals].map((global) => global.referenceKey),
     ...nativeBindings.filter((row) => row.reference.kind === "global").map((row) => nativeReferenceKey(row.reference)),
   ]);
-  let exceptionRequired = vectors.exceptionRequired;
+  let exceptionRequired = vectors.exceptionRequired || Boolean(asyncFrames?.frames.length);
   for (const fn of [...physical, ...(formatter ? formatter.support.functions : [])]) {
     const diagnosticUnit =
       formatter && fn === formatter.support.functions[0]
@@ -1181,10 +1284,13 @@ export function planPhysicalSetup(
               gaps.add(`body ${fn.name} intrinsic ${instruction.id} has no physical provider`, diagnosticUnit);
             else if (
               !(
-                nativeStrings &&
-                instruction.id === "js.number.unbox" &&
                 provider.kind === "callable" &&
-                reserved.has(irCallableBindingKey(provider.target.binding))
+                reserved.has(irCallableBindingKey(provider.target.binding)) &&
+                ((nativeStrings && instruction.id === "js.number.unbox") ||
+                  (instruction.id === "js.number.box" &&
+                    hostNumberBoundary?.imports.some(
+                      (row) => row.referenceKey === irCallableBindingKey(provider.target.binding),
+                    )))
               ) &&
               provider.kind !== "backend-op" &&
               provider.kind !== "backend-sequence" &&
@@ -1230,6 +1336,15 @@ export function planPhysicalSetup(
     gaps.add(`linear memory plan for ${program.allocations.size} allocation site(s) is not materializable`);
   }
 
+  // Preserve the existing first refusal while making missing inventory evidence
+  // part of ordinary acceptance. Runtime configuration is not yet forwarded.
+  if (options.backend === "wasmgc" && options.target === "standalone") {
+    const inventory = planNativePromiseInventoryPreflight(program, options, projection, native, undefined);
+    if (inventory.kind === "unavailable")
+      for (const row of inventory.obligations)
+        gaps.add(`native Promise inventory ${row.code}: ${row.detail}`, row.unitId);
+  }
+
   if (gaps.rows.length > 0) {
     const first = gaps.rows[0]!;
     const unitId = first.unitId ?? physical[0]?.unitId ?? program.inventory.terminalUnits[0]?.id;
@@ -1255,6 +1370,8 @@ export function planPhysicalSetup(
     target: options.target,
     exceptionTag: { required: exceptionRequired || options.sharedExceptionTag, shared: options.sharedExceptionTag },
     vectors,
+    ...(asyncFrames?.frames.length ? { asyncFrames } : {}),
+    ...(hostNumberBoundary?.imports.length ? { hostNumberBoundary } : {}),
     ...(nativeStrings ? { nativeStrings } : {}),
     ...(nativeNumberFormat ? { nativeNumberFormat } : {}),
     importedFunctions,

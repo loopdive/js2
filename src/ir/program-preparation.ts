@@ -54,6 +54,14 @@ export function prepareWholeIrProgram(input: IrWholeProgramPreparationInput): Ir
       "invalid-prepared-data",
       "native string-value source projection cannot request a runtime projection outside wasmgc:standalone",
     );
+  if (
+    input.nativeStringOutputProjection === "standalone-native" &&
+    policies.some((policy) => policy.backend !== "wasmgc" || policy.target !== "standalone")
+  )
+    throw new PreparedIrProgramInvariantError(
+      "invalid-prepared-data",
+      "native string output projection cannot request a runtime projection outside wasmgc:standalone",
+    );
   const source = prepareIrProgramSources(input);
   if (source.kind !== "prepared") return source;
   const runtimeSupport = prepareNumberFormatRuntimeSupport(source, input.policy);

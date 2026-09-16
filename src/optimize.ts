@@ -37,6 +37,16 @@ let _nodeImports: {
 
 const _wasmOptCompactImportsSupport = new Map<string, boolean>();
 
+// #6478 — resolving the wasm-opt executable costs a `which` spawn plus, when
+// that misses, a `--version` spawn of binaryen's bundled `bin/wasm-opt` (a
+// 10 MB Node script: ~290 ms measured on a 4-core container). `wasmOptPath`
+// used to be a per-call local, so every compile in a pooled process paid it
+// again. Memoise it keyed by `process.env.PATH`: the resolution depends on
+// nothing else, and a changed PATH (tests swap in a fake wasm-opt; a host may
+// install one mid-process) must re-probe rather than serve a stale answer.
+// `path: null` = probed under that PATH and no usable binary.
+let _resolvedWasmOptPath: { envPath: string | undefined; path: string | null } | undefined;
+
 async function getNodeImports() {
   if (_nodeImports) return _nodeImports;
   const [cp, fs, path, os] = await Promise.all([
@@ -501,25 +511,28 @@ function optimizeWithBinaryenModule(
   }
 }
 
-function optimizeWithSystemBinary(
-  binary: Uint8Array,
-  level: number,
-  gc: boolean,
-  referenceTypes: boolean,
-  exceptionHandling: boolean,
-  preserveNames: boolean,
-): OptimizeResult | null {
-  const n = getNodeImportsSync();
-  if (!n) return null; // Not in Node.js environment (browser)
+/**
+ * Resolve the wasm-opt executable, memoised per process (#6478).
+ *
+ * Priority order:
+ *   1. PATH lookup via `which` (covers system installs and npx-launched
+ *      processes where node_modules/.bin is already on PATH).
+ *   2. The `binaryen` npm package's bundled `bin/wasm-opt`. This is the
+ *      common case for any project that lists `binaryen` as an (optional)
+ *      dependency — it always ships a platform-appropriate binary. #1580:
+ *      without this fallback `node script.mjs` (no npx) reaches optimize
+ *      but `which` returns "not found", and we silently skip optimization.
+ *
+ * The `--version` probe on the binaryen candidate is kept — it is what proves
+ * the candidate is runnable — but it now runs once per process instead of
+ * once per compile (it spawns a 10 MB Node script: ~290 ms).
+ */
+function resolveWasmOptPath(n: NonNullable<typeof _nodeImports>): string | null {
+  const envPath = typeof process !== "undefined" ? process.env?.PATH : undefined;
+  if (_resolvedWasmOptPath !== undefined && _resolvedWasmOptPath.envPath === envPath) {
+    return _resolvedWasmOptPath.path;
+  }
 
-  // Resolve a wasm-opt binary. Try in priority order:
-  //   1. PATH lookup via `which` (covers system installs and npx-launched
-  //      processes where node_modules/.bin is already on PATH).
-  //   2. The `binaryen` npm package's bundled `bin/wasm-opt`. This is the
-  //      common case for any project that lists `binaryen` as a (optional)
-  //      dependency — it always ships a platform-appropriate binary. #1580:
-  //      without this fallback `node script.mjs` (no npx) reaches optimize
-  //      but `which` returns "not found", and we silently skip optimization.
   let wasmOptPath: string | undefined;
   try {
     const p = n.execFileSync("which", ["wasm-opt"], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
@@ -562,6 +575,23 @@ function optimizeWithSystemBinary(
       // resolution or probe failed — fall through to "not available"
     }
   }
+
+  _resolvedWasmOptPath = { envPath, path: wasmOptPath ?? null };
+  return _resolvedWasmOptPath.path;
+}
+
+function optimizeWithSystemBinary(
+  binary: Uint8Array,
+  level: number,
+  gc: boolean,
+  referenceTypes: boolean,
+  exceptionHandling: boolean,
+  preserveNames: boolean,
+): OptimizeResult | null {
+  const n = getNodeImportsSync();
+  if (!n) return null; // Not in Node.js environment (browser)
+
+  const wasmOptPath = resolveWasmOptPath(n);
   if (!wasmOptPath) return null;
 
   // Binaryen 132 added compact imports to --all-features. Capability-probe

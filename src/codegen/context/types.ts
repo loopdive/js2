@@ -328,6 +328,13 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
    * does not unmap sloppy (`noStrict`) arguments. See `CompileOptions`.
    */
   inferModuleStrictArguments?: boolean;
+  /**
+   * (#6474) Opt-in: `generateMultiModule` derives `ctx.sourceIsModule` from the
+   * entry file's own `externalModuleIndicator` instead of forcing `true`. Off
+   * by default ⇒ every existing multi-file caller is byte-identical. See
+   * `CompileOptions.entryScriptGoal`.
+   */
+  entryScriptGoal?: boolean;
 }
 
 /** Info about an externally declared class. */
