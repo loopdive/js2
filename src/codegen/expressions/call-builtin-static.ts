@@ -86,6 +86,7 @@ import {
   tryCompileOverriddenBuiltinProtoDescriptor,
 } from "../literals.js";
 import { emitCollectionIteratorVec, ensureMapGroupBy } from "../map-runtime.js";
+import { ensureIterRecPrototypeHelper } from "../iterator-proto-next.js"; // (#6484 S1)
 import {
   emitBrandCheckTypeError,
   emitLazyNativeProtoGet,
@@ -220,6 +221,56 @@ function emitBuiltinGetPrototypeOfFallback(
   fctx: FunctionContext,
   arg: ts.Expression,
 ): InnerResult {
+  // (#6484 S1) The four checker-keyed iterator arms above fire only when the
+  // argument's static type is `ArrayIterator`/`MapIterator`/`SetIterator`/
+  // `StringIterator`. A value that reached `any` — the shape most reflective
+  // code has — skips all four and used to answer `ref.null.extern` here.
+  // Register the run-time resolver FIRST (it can add late imports, and doing
+  // that mid-body is the #2043 index-shift hazard), then branch on the carrier:
+  // an `$__IterRec` resolves through its `family` tag, everything else keeps the
+  // exact generic lowering below.
+  const iterProtoIdx = ensureIterRecPrototypeHelper(ctx);
+  const iterRecTypeIdx = ctx.structMap.get("__IterRec");
+  if (iterProtoIdx !== undefined && iterRecTypeIdx !== undefined) {
+    flushLateImportShifts(ctx, fctx);
+    const gptIdx = ensureLateImport(ctx, "__getPrototypeOf", [{ kind: "externref" }], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, fctx);
+    // Below this point the shape mirrors the generic lowering exactly, arm for
+    // arm, so a decline anywhere leaves the historical answer on the stack.
+    const iterArgType = compileExpression(ctx, fctx, arg);
+    if (!iterArgType) {
+      fctx.body.push({ op: "ref.null.extern" });
+      return { kind: "externref" };
+    }
+    if (tryEmitBuiltinFunctionPrototype(ctx, fctx, iterArgType)) return { kind: "externref" };
+    if (iterArgType.kind !== "externref") coerceType(ctx, fctx, iterArgType, { kind: "externref" });
+    if (gptIdx === undefined) {
+      fctx.body.push({ op: "drop" }, { op: "ref.null.extern" });
+      return { kind: "externref" };
+    }
+    // Compile the argument EXACTLY once: both arms read it back from a local,
+    // so evaluation order and side effects are unchanged.
+    const recvLocal = allocLocal(fctx, `__gpo_iter_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push(
+      { op: "local.tee", index: recvLocal },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: iterRecTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: [
+          { op: "local.get", index: recvLocal },
+          { op: "call", funcIdx: iterProtoIdx },
+        ],
+        else: [
+          { op: "local.get", index: recvLocal },
+          { op: "call", funcIdx: gptIdx },
+        ],
+      },
+    );
+    return { kind: "externref" };
+  }
+
   const argType = compileExpression(ctx, fctx, arg);
   if (!argType) {
     fctx.body.push({ op: "ref.null.extern" });

@@ -203,6 +203,47 @@ const ITER_KIND_GENSTATE = 7;
 /** (#5131) Native Map/Set iterator records share the compatibility tag. */
 const ITER_KIND_MAPSET = 9;
 
+/**
+ * (#6484 S1) `$__IterRec.family` — the ECMAScript iterator FAMILY the record
+ * belongs to, i.e. which `%XIteratorPrototype%` intrinsic is its
+ * [[Prototype]]. Orthogonal to `ITER_KIND_*`, which names the *carrier*
+ * (vec / user object / generator frame / …): an array iterator and a string
+ * iterator are both `ITER_KIND_VEC` carriers but report different prototypes.
+ * `UNKNOWN` is the historical answer — a record stamped `UNKNOWN` reports a
+ * null prototype exactly as every record did before this field existed, so no
+ * value that resolves today can regress. A TypedArray iterator is an ARRAY
+ * iterator (§23.2.3.30 CreateArrayIterator), not a family of its own.
+ */
+export const ITER_FAMILY_UNKNOWN = 0;
+export const ITER_FAMILY_ARRAY = 1;
+export const ITER_FAMILY_MAP = 2;
+export const ITER_FAMILY_SET = 3;
+export const ITER_FAMILY_STRING = 4;
+
+/** (#6484 S1) Field index of `family` on `$__IterRec` (appended after 0..3). */
+export const ITER_REC_FAMILY_FIELD = 4;
+
+/**
+ * (#6484 S1) Local index of `__iterator`'s family slot. `__iterator` reserves
+ * locals 1..5 eagerly (objAny, userIter, i, len, out) so the finalize fill
+ * never grows the list; the family slot is APPENDED after them, at index 6.
+ * The strict provider reserves seven locals and keeps index 6 for its f64
+ * scratch, which is why it opts out of the family slot entirely.
+ */
+const ITER_FAMILY_LOCAL = 6;
+
+/**
+ * (#6484 S1) Push the `family` operand for a `struct.new $__IterRec`. Field 4
+ * is the LAST field, so this is always the final operand before the
+ * `struct.new`. `familyLocal` names an i32 local holding a family computed at
+ * run time (the `__iterator` vec ladder, whose subject may be an array or a
+ * string char-vec); `undefined` means the site knows its family statically.
+ * Fresh Instr objects per call (#2169b).
+ */
+function iterFamilyOperand(family: number, familyLocal?: number): Instr {
+  return familyLocal === undefined ? { op: "i32.const", value: family } : { op: "local.get", index: familyLocal };
+}
+
 /** `$Promise` field layout (async-scheduler.ts): state(0) i32 — 1=FULFILLED —
  *  and value(1) externref. */
 const PROMISE_FIELD_STATE = 0;
@@ -433,6 +474,10 @@ export function getOrRegisterIterRecType(ctx: CodegenContext): number {
     { name: "vec", type: { kind: "ref_null" as const, typeIdx: vecTypeIdx }, mutable: false },
     { name: "idx", type: { kind: "i32" as const }, mutable: true },
     { name: "userIter", type: { kind: "externref" as const }, mutable: true },
+    // (#6484 S1) family=4 — APPENDED, never inserted: fields 0..3 are read
+    // positionally by several bodies. Immutable: a record's family is fixed at
+    // construction.
+    { name: "family", type: { kind: "i32" as const }, mutable: false },
   ];
   const typeIdx = ctx.mod.types.length;
   ctx.mod.types.push({ kind: "struct", name: "__IterRec", fields });
@@ -1271,6 +1316,10 @@ export function ensureNativeIteratorRuntime(ctx: CodegenContext): void {
       { name: "i", type: { kind: "i32" } },
       { name: "len", type: { kind: "i32" } },
       { name: "out", type: { kind: "ref_null", typeIdx: arrTypeIdx } },
+      // (#6484 S1) local 6 = family — the ITER_FAMILY_* the vec ladder stamps
+      // onto the record it builds. Declared here for the same reason as the
+      // scratch locals above: the finalize fill must never grow the list.
+      { name: "family", type: { kind: "i32" } },
     ],
     buildIteratorBody(
       types,
@@ -1282,6 +1331,10 @@ export function ensureNativeIteratorRuntime(ctx: CodegenContext): void {
       undefined,
       undefined,
       nonIterableThrowInstrs(ctx),
+      false,
+      undefined,
+      undefined,
+      ITER_FAMILY_LOCAL,
     ),
   );
 
@@ -2605,29 +2658,45 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
   // helper BEFORE `buildVecFamilyArms` puts its vec type in `ctx.vecTypeMap`
   // in time for the collection. Defined-func appends only — fill-safe (same
   // discipline as `reserveApplyClosure`).
-  const stringArm: Instr[] = [];
-  if (ctx.nativeStrings) {
+  // (#6484 S1) `familyLocal` is the lane's family slot; the string arm stamps
+  // STRING there before falling through to the shared VEC arms, which is the
+  // only place the array/string distinction still exists. Fresh Instr objects
+  // per call (#2169b) — the two lanes build their own rather than sharing one
+  // array, since their local indices differ.
+  const buildStringArm = (familyLocal?: number): Instr[] => {
+    const arm: Instr[] = [];
+    if (!ctx.nativeStrings) return arm;
     const charVecGeom = ensureStrToCharVecHelper(ctx);
-    if (ctx.anyStrTypeIdx >= 0) {
-      stringArm.push(
-        { op: "local.get", index: 1 },
-        { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            { op: "local.get", index: 1 },
-            { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
-            { op: "call", funcIdx: charVecGeom.funcIdx },
-            { op: "local.set", index: 1 },
-          ],
-          else: [],
-        },
-      );
-    }
-  }
+    if (ctx.anyStrTypeIdx < 0) return arm;
+    arm.push(
+      { op: "local.get", index: 1 },
+      { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 1 },
+          { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+          { op: "call", funcIdx: charVecGeom.funcIdx },
+          { op: "local.set", index: 1 },
+          ...(familyLocal === undefined
+            ? []
+            : ([
+                { op: "i32.const", value: ITER_FAMILY_STRING },
+                { op: "local.set", index: familyLocal },
+              ] satisfies Instr[])),
+        ],
+        else: [],
+      },
+    );
+    return arm;
+  };
 
-  const familyArms = [...stringArm, ...buildVecFamilyArms(ctx, types), ...buildEmptyTupleFamilyArms(ctx, types)];
+  const familyArms = [
+    ...buildStringArm(ITER_FAMILY_LOCAL),
+    ...buildVecFamilyArms(ctx, types, false, ITER_FAMILY_LOCAL),
+    ...buildEmptyTupleFamilyArms(ctx, types),
+  ];
   // The strict spread provider is an independent dispatcher and must still
   // be rebuilt in a module whose legacy iterator has no late arms.  Without
   // this guard the vec-only early return leaves `__iterator_strict` unable to
@@ -2691,6 +2760,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
                     },
                     { op: "call", funcIdx: mapIterNewIdx },
                     { op: "extern.convert_any" },
+                    iterFamilyOperand(ITER_FAMILY_UNKNOWN),
                     { op: "struct.new", typeIdx: types.iterRecTypeIdx },
                     { op: "extern.convert_any" },
                     { op: "return" },
@@ -2705,10 +2775,12 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
       : [];
 
   // The compatibility and strict dispatchers are separate Wasm functions.
-  // Clone the compatibility string arm before embedding it in the strict
-  // body: finalize-time repair walks instructions in place and upstream's
-  // ownership guard rejects one instruction object reached from two bodies.
-  const strictStringArm: Instr[] = strictRuntime ? (structuredClone(stringArm) as Instr[]) : [];
+  // Build the strict lane its OWN string arm rather than sharing the
+  // compatibility one: finalize-time repair walks instructions in place and
+  // upstream's ownership guard rejects one instruction object reached from two
+  // bodies. (#6484: the two lanes also differ in their family-slot index, so a
+  // clone would carry the wrong `local.set` anyway.)
+  const strictStringArm: Instr[] = strictRuntime ? buildStringArm(undefined) : [];
   if (strictRuntime && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
     // `new String(…)` is represented by the open `$Object` wrapper, not by a
     // primitive `$AnyString`.  Its intrinsic string slot is nevertheless a
@@ -2760,6 +2832,10 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
       callIteratorIdx,
       sgDeps,
       nonIterableThrowInstrs(ctx), // (#3388) throw §7.4.1 TypeError, not trap
+      false,
+      undefined,
+      undefined,
+      ITER_FAMILY_LOCAL,
     );
   if ((deps || objDeps || hostDeps || agDeps || sgDeps) && iteratorNextFn) {
     // (#3164) The GENSTATE step's sentinel-aware f64 boxing needs an f64
@@ -3628,6 +3704,7 @@ function iterRecAdoptArm(types: IterRuntimeTypes, localIdx: number): Instr[] {
         { op: "ref.cast", typeIdx: vecTypeIdx },
         { op: "i32.const", value: 0 },
         { op: "ref.null.extern" },
+        iterFamilyOperand(ITER_FAMILY_UNKNOWN),
         { op: "struct.new", typeIdx: iterRecTypeIdx },
         { op: "extern.convert_any" },
         { op: "return" },
@@ -3668,6 +3745,15 @@ function buildIteratorBody(
   strictMethods?: StrictMethodDispatchDeps,
   /** (#5131) Context used to build no-argument defaults for direct calls. */
   strictCtx?: CodegenContext,
+  /**
+   * (#6484 S1) i32 local holding the `$__IterRec.family` for the vec ladder.
+   * The subject reaching the VEC arms is an array *or* a string normalized to
+   * its char vec, and only the string arm knows which — so the family is a
+   * run-time value, not a constant, on exactly those arms. `undefined` (the
+   * strict spread provider) stamps `UNKNOWN`: its records are drained
+   * internally and never reach a `getPrototypeOf`.
+   */
+  familyLocal?: number,
 ): Instr[] {
   const { iterRecTypeIdx, vecTypeIdx } = types;
 
@@ -3689,6 +3775,7 @@ function buildIteratorBody(
             { op: "ref.null", typeIdx: vecTypeIdx },
             { op: "i32.const", value: 0 },
             { op: "local.get", index: 0 },
+            iterFamilyOperand(ITER_FAMILY_UNKNOWN),
             { op: "struct.new", typeIdx: iterRecTypeIdx },
             { op: "extern.convert_any" },
             { op: "return" },
@@ -3717,6 +3804,7 @@ function buildIteratorBody(
             { op: "ref.null", typeIdx: vecTypeIdx },
             { op: "i32.const", value: 0 },
             { op: "local.get", index: 0 },
+            iterFamilyOperand(ITER_FAMILY_UNKNOWN),
             { op: "struct.new", typeIdx: iterRecTypeIdx },
             { op: "extern.convert_any" },
             { op: "return" },
@@ -3741,6 +3829,7 @@ function buildIteratorBody(
     { op: "ref.cast", typeIdx: vecTypeIdx },
     { op: "i32.const", value: 0 },
     { op: "ref.null.extern" },
+    iterFamilyOperand(ITER_FAMILY_ARRAY, familyLocal),
     { op: "struct.new", typeIdx: iterRecTypeIdx },
     { op: "extern.convert_any" },
   ];
@@ -3774,6 +3863,7 @@ function buildIteratorBody(
             { op: "ref.null", typeIdx: vecTypeIdx },
             { op: "i32.const", value: 0 },
             { op: "local.get", index: 0 },
+            iterFamilyOperand(ITER_FAMILY_UNKNOWN),
             { op: "struct.new", typeIdx: iterRecTypeIdx },
             { op: "extern.convert_any" },
             { op: "return" },
@@ -3834,6 +3924,7 @@ function buildIteratorBody(
             { op: "ref.null", typeIdx: vecTypeIdx },
             { op: "i32.const", value: 0 },
             { op: "local.get", index: 2 },
+            iterFamilyOperand(ITER_FAMILY_UNKNOWN),
             { op: "struct.new", typeIdx: iterRecTypeIdx },
             { op: "extern.convert_any" },
             { op: "return" },
@@ -3875,6 +3966,7 @@ function buildIteratorBody(
             { op: "ref.null", typeIdx: vecTypeIdx },
             { op: "i32.const", value: 0 },
             { op: "local.get", index: 0 },
+            iterFamilyOperand(ITER_FAMILY_UNKNOWN),
             { op: "struct.new", typeIdx: iterRecTypeIdx },
             { op: "extern.convert_any" },
             { op: "return" },
@@ -3953,6 +4045,7 @@ function buildIteratorBody(
                 { op: "ref.null", typeIdx: vecTypeIdx },
                 { op: "i32.const", value: 0 },
                 { op: "local.get", index: 2 },
+                iterFamilyOperand(ITER_FAMILY_UNKNOWN),
                 { op: "struct.new", typeIdx: iterRecTypeIdx },
                 { op: "extern.convert_any" },
                 { op: "return" },
@@ -4007,6 +4100,7 @@ function buildIteratorBody(
         { op: "ref.null", typeIdx: vecTypeIdx },
         { op: "i32.const", value: 0 },
         { op: "local.get", index: 2 },
+        iterFamilyOperand(ITER_FAMILY_UNKNOWN),
         { op: "struct.new", typeIdx: iterRecTypeIdx },
         { op: "extern.convert_any" },
       ]
@@ -4039,6 +4133,7 @@ function buildIteratorBody(
               { op: "ref.null", typeIdx: vecTypeIdx },
               { op: "i32.const", value: 0 },
               { op: "local.get", index: 2 },
+              iterFamilyOperand(ITER_FAMILY_UNKNOWN),
               { op: "struct.new", typeIdx: iterRecTypeIdx },
               { op: "extern.convert_any" },
               { op: "return" },
@@ -4109,6 +4204,7 @@ function buildIteratorBody(
               { op: "ref.null", typeIdx: vecTypeIdx },
               { op: "i32.const", value: 0 },
               { op: "local.get", index: 2 },
+              iterFamilyOperand(ITER_FAMILY_UNKNOWN),
               { op: "struct.new", typeIdx: iterRecTypeIdx },
               { op: "extern.convert_any" },
             ] as Instr[];
@@ -4156,6 +4252,17 @@ function buildIteratorBody(
   const iteratorTail = strictProtocol ? strictTail : tail;
 
   return [
+    // (#6484 S1) Seed the vec ladder's family with ARRAY. Wasm zero-inits the
+    // local to `ITER_FAMILY_UNKNOWN`, which is NOT what a bare canonical `$Vec`
+    // is, so the seed is written explicitly on every execution (a record built
+    // on the second call must be stamped exactly like the first — #5349 r4).
+    // The string arm inside `familyArms` overwrites it before falling through.
+    ...(familyLocal === undefined
+      ? []
+      : ([
+          { op: "i32.const", value: ITER_FAMILY_ARRAY },
+          { op: "local.set", index: familyLocal },
+        ] satisfies Instr[])),
     // (#5267 B-2) The SUBJECT is already an iterator record. Since `keys()` /
     // `values()` / `entries()` yield a live `$__IterRec` cursor rather than an
     // eager `$Vec`, every GetIterator on one of those results — `[...m.keys()]`
@@ -4285,7 +4392,12 @@ function collectVecFamilyCarriers(ctx: CodegenContext, types: IterRuntimeTypes, 
  *
  * Locals (declared at registration): 1=objAny, 3=i, 4=len, 5=out.
  */
-function buildVecFamilyArms(ctx: CodegenContext, types: IterRuntimeTypes, strict = false): Instr[] {
+function buildVecFamilyArms(
+  ctx: CodegenContext,
+  types: IterRuntimeTypes,
+  strict = false,
+  familyLocal?: number,
+): Instr[] {
   const { iterRecTypeIdx, vecTypeIdx, arrTypeIdx } = types;
   const arms: Instr[] = [];
   for (const carrier of collectVecFamilyCarriers(ctx, types, strict)) {
@@ -4405,6 +4517,7 @@ function buildVecFamilyArms(ctx: CodegenContext, types: IterRuntimeTypes, strict
           { op: "struct.new", typeIdx: vecTypeIdx },
           { op: "i32.const", value: 0 },
           { op: "ref.null.extern" },
+          iterFamilyOperand(ITER_FAMILY_ARRAY, familyLocal),
           { op: "struct.new", typeIdx: iterRecTypeIdx },
           { op: "extern.convert_any" },
           { op: "return" },
@@ -4453,6 +4566,7 @@ function buildEmptyTupleFamilyArms(ctx: CodegenContext, types: IterRuntimeTypes)
         { op: "struct.new", typeIdx: types.vecTypeIdx },
         { op: "i32.const", value: 0 },
         { op: "ref.null.extern" },
+        iterFamilyOperand(ITER_FAMILY_ARRAY),
         { op: "struct.new", typeIdx: types.iterRecTypeIdx },
         { op: "extern.convert_any" },
         { op: "return" },
@@ -4610,7 +4724,20 @@ function buildIteratorNextBody(
         { op: "i32.add" },
         { op: "struct.set", typeIdx: iterRecTypeIdx, fieldIdx: 2 },
       ],
-      else: [],
+      // (#6484 S2) §23.1.5.1 step 6.a — an exhausted array iterator LATCHES:
+      // it sets `[[IteratedArrayLike]]` to undefined, so growing the array
+      // afterwards must NOT resume it. Growth DURING iteration is still
+      // observed (the length is re-read every step, which is why the step above
+      // has no cached bound); only the done step is one-way. `vec` is immutable
+      // and `idx` is not, so park the cursor past any possible length —
+      // `i32.ge_s` against INT32_MAX is true for every vec. `__iterator_rest`
+      // already clamps a negative `len - i` to zero, so a drained record still
+      // yields the empty rest.
+      else: [
+        { op: "local.get", index: 1 },
+        { op: "i32.const", value: 0x7fffffff },
+        { op: "struct.set", typeIdx: iterRecTypeIdx, fieldIdx: 2 },
+      ],
     },
   ];
 
