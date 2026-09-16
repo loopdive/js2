@@ -1716,6 +1716,79 @@ function prependIterRecIdentityArm(ctx: CodegenContext): void {
 }
 
 /**
+ * (#6484 S3 review) FINALIZE: teach `__getPrototypeOf` that a kind-VEC
+ * `$__IterRec` reports `%ArrayIteratorPrototype%`.
+ *
+ * The S3 divert makes `<typedArray>[Symbol.iterator]()` produce a live
+ * `$__IterRec` instead of a snapshot `$Vec`. `$__IterRec` models no
+ * `[[Prototype]]` (#3013 says so explicitly), so `__getPrototypeOf` fell to its
+ * boundary arm and answered `null` for an `any`-typed binding of one — where the
+ * vec it replaced answered `%Array.prototype%`. BOTH are wrong: §23.2.3.36 makes
+ * a TypedArray iterator an Array Iterator, so the right answer is the ONE #3013
+ * `%ArrayIteratorPrototype%` singleton, the same object
+ * `Object.getPrototypeOf([].values())` reports.
+ *
+ * Three deliberate narrowings, so this cannot collapse the other intrinsic
+ * iterator prototypes onto `%ArrayIteratorPrototype%` the way #3013 warns about:
+ *   - Armed ONLY when {@link CodegenContext.typedArrayIterRecProtoPending} is
+ *     set, i.e. the module actually compiled a typed-array `@@iterator` divert.
+ *     Every other module keeps its pre-change `__getPrototypeOf` byte-for-byte.
+ *   - `kind == ITER_KIND_VEC` only, so a Map/Set record (`ITER_KIND_MAPSET`)
+ *     keeps answering through its own singleton and stays distinct.
+ *   - The singleton global is consulted at RUNTIME; a null global (never
+ *     materialized) falls through to the pre-change answer.
+ * RESIDUAL: a STRING iterator is also a kind-VEC record, so inside such a module
+ * an `any`-typed string iterator reports `%ArrayIteratorPrototype%` rather than
+ * `%StringIteratorPrototype%`. It reported `null` before, so no statically-typed
+ * routing changes; closing it needs a per-record prototype field (S1 follow-up).
+ */
+export function prependIterRecPrototypeArm(ctx: CodegenContext): void {
+  if (ctx.typedArrayIterRecProtoPending !== true) return;
+  const iterRecTypeIdx = ctx.structMap.get("__IterRec");
+  const gptIdx = ctx.funcMap.get("__getPrototypeOf");
+  const protoGlobalIdx = ctx.builtinObjectGlobals.get("__native_array_iterator_prototype");
+  if (iterRecTypeIdx === undefined || gptIdx === undefined || protoGlobalIdx === undefined) return;
+  const fn = definedFuncAt(ctx, gptIdx);
+  if (!fn) return;
+  // Cleared only on the path that actually prepends, so a module whose
+  // `__getPrototypeOf` is not yet defined at one finalize entry point can still
+  // be armed at the other (`generateModule` / `generateMultiModule`).
+  ctx.typedArrayIterRecProtoPending = false;
+  fn.body = [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: iterRecTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: iterRecTypeIdx },
+        { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 0 },
+        { op: "i32.const", value: ITER_KIND_VEC },
+        { op: "i32.eq" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "global.get", index: protoGlobalIdx },
+            { op: "ref.is_null" },
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "global.get", index: protoGlobalIdx }, { op: "return" }],
+            },
+          ],
+        },
+      ],
+    },
+    ...fn.body,
+  ];
+}
+
+/**
  * (#5147) FINALIZE fill for {@link reserveAnyIterNext}. Must run AFTER
  * `fillNativeIteratorLateArms` and `fillLazyIterLadderArms` so `__iterator_next`
  * already carries every carrier arm this delegates to.

@@ -1027,7 +1027,14 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     // carrier through the fully-armed `__iterator_next` and materialize a REAL
     // §7.4.11 result object. Placed outermost: a user closed struct with its own
     // `next` is neither carrier, so the `ref.test` misses and precedence holds.
-    if (ctx.standalone && methodName === "next" && arity === 0) {
+    // (#6484 S3 review) `ctx.wasi` joined the gate. WASI is the other no-JS-host
+    // lane and builds the same `$IterRec` carriers, but this arm was
+    // `ctx.standalone`-only, so `it.next()` on a typed-array iterator fell to
+    // `__extern_method_call` and threw `next is not a function` under
+    // `--target wasi` while standalone answered correctly. Map/Set hid the gap:
+    // map-runtime.ts prepends its OWN `$__IterRec.next()` arm to
+    // `__extern_method_call`, so only the vec carriers were exposed.
+    if ((ctx.standalone || ctx.wasi) && methodName === "next" && arity === 0) {
       const stepResultIdx = ctx.funcMap.get("__iter_next_result");
       const carrierTypeIdxs = [ctx.structMap.get("__IterRec"), ctx.structMap.get("$LazyIterHelper")].filter(
         (t): t is number => t !== undefined,

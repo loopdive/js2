@@ -22,14 +22,34 @@ model: opus
 # +18 lines). Both files are long-standing over-threshold codegen files; the change
 # is additive by construction (a new `ref.test` arm / a new guarded branch) and has
 # no smaller home — splitting either file is out of scope for a conformance slice.
+# 2026-09-16 (S3 review round 1) — closing the two review findings adds, on top of
+# the above: the `%ArrayIteratorPrototype%` finalize arm + its doc block
+# (iterator-native.ts, ~+70, mostly the block explaining the three narrowings that
+# keep it from collapsing Map/Set), the singleton materialisation at the divert
+# site (call-tail-dispatch.ts, +19), one ctx flag with its doc comment
+# (context/types.ts, +10), the `|| ctx.wasi` gate with the comment naming why
+# Map/Set hid the gap (closed-method-dispatch.ts, +7), and two finalize call sites
+# plus an import (index.ts, +4). types.ts is the single declaration site for
+# CodegenContext and index.ts owns the finalize sequence — neither has another
+# home, and the arm cannot be armed without a flag set during body compilation.
 loc-budget-allow:
   - src/codegen/iterator-native.ts
   - src/codegen/expressions/call-tail-dispatch.ts
+  - src/codegen/context/types.ts
+  - src/codegen/closed-method-dispatch.ts
+  - src/codegen/index.ts
 # The +17 inside `compileTailDispatch` is the TypedArray guard plus the comment
 # explaining why it is scoped to TypedArray and not to every array receiver.
 # Splitting that 2,000-line dispatcher is #3399's job, not a conformance slice's.
+# 2026-09-16 (S3 review round 1) — `fillClosedMethodDispatch` +7 is the comment on
+# the `|| ctx.wasi` gate (the gate itself is one token); `generateModule` +2 and
+# `generateMultiModule` +1 are the two finalize call sites, which must live in the
+# finalize sequence itself. Splitting any of the three is #3399's job.
 func-budget-allow:
   - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
+  - src/codegen/closed-method-dispatch.ts::fillClosedMethodDispatch
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 ---
 
 # ES2015 standalone: iterator prototypes are unreachable from a dynamically-typed iterator
@@ -236,6 +256,142 @@ That is the documented #2903 R4 signedness boundary — every dynamic read
 through `__extern_get_idx` already answers the same way — and recovering it
 needs a per-signedness carrier type. The acceptance rows use only positive
 values.
+
+#### S3 review round 1 (2026-09-16) — two findings, both closed
+
+An adversarial review of the S3 commit raised one regression and one coverage
+gap. Both reproduced on my own tree; both are fixed here. One factual correction
+to the report is recorded below, because it changes what "correct" means for the
+first one.
+
+**(1) REGRESSION — the diverted iterator had no `[[Prototype]]`.** The divert
+replaces a snapshot `$Vec` with a `$__IterRec`, and #3013 says in as many words
+that the record does not model `[[Prototype]]`. So
+`Object.getPrototypeOf(<any-typed binding of <typedArray>[Symbol.iterator]()>)`
+answered **`null`** on the S3 branch. Reproduced exactly as reported
+(`.tmp/repro_proto2.ts`: branch `bits=1`, base `bits=4`).
+
+*Correction to the report.* The report says base answered "the same object a
+plain Array's iterator has (%ArrayIteratorPrototype%)". It did not. Base
+answered **`%Array.prototype%`** — the snapshot vec's own answer, because a vec
+and the array it snapshots are the same carrier, which is the collapse #3013's
+own doc block warns about. Measured with a probe the reviewer's bitmask cannot
+express (`.tmp/diag1.ts`, base tree):
+
+| probe (base tree, `any` binding) | result |
+| --- | --- |
+| `p === Object.getPrototypeOf(arr)` (`%Array.prototype%`) | **true** |
+| `p === Object.getPrototypeOf([].values())` (the real `%ArrayIteratorPrototype%`) | false |
+| `Object.getPrototypeOf([].values()) === null` | false — the singleton exists and differs |
+
+So the reviewer's expected value of `4` is `%Array.prototype% === %Array.prototype%`,
+not the spec identity. Their own corroborating probe shows it: `protoHasNext=0`
+on **both** trees — base's answer has no `next`, so it was never
+`%ArrayIteratorPrototype%`.
+
+*Fix* — a down-payment on this issue's own S1 step 3/4, using the carrier `kind`
+tag S1 will replace with a `family` field:
+
+- `call-tail-dispatch.ts`: at the divert site, materialise the #3013
+  `%ArrayIteratorPrototype%` singleton (and drop it — the point is the lazy
+  global) and set `ctx.typedArrayIterRecProtoPending`.
+- `iterator-native.ts`: `prependIterRecPrototypeArm` — a finalize arm on
+  `__getPrototypeOf` answering that global for a `ref.test $__IterRec` whose
+  `kind` is `ITER_KIND_VEC`.
+
+Three narrowings keep it from collapsing the other families, which is the exact
+hazard #3013 documents:
+
+1. **Armed only when a typed-array `@@iterator` divert compiled in this module.**
+   Proven, not asserted: an 8-module sha256 corpus (`--target standalone`) is
+   byte-identical base → S3-branch → this commit for array iteration, string
+   iteration, Map/Set, ArrayBuffer/DataView, a non-iterating TypedArray,
+   generators and class prototypes. **Exactly one** module's bytes move, the one
+   that iterates a typed array.
+2. **`kind == ITER_KIND_VEC` only**, so a Map/Set record (`ITER_KIND_MAPSET`)
+   keeps its own singleton. (The issue text above says the `kind` tag cannot
+   tell iterator families apart — measured, it *does* separate MAPSET from VEC;
+   what it cannot separate is Array from String, both VEC.)
+3. **A null singleton global falls through** to the pre-change answer.
+
+Measured after the fix (`.tmp/p_identity.ts`, standalone, `imports=[]`):
+`taIterIsAIP=4` (not null · IS `%ArrayIteratorPrototype%` · is NOT
+`%Array.prototype%`), `taIterIsAIPTwice=2` (stable when the site runs twice —
+the #5349 r4→r5 lazy-global hazard), `crossFamily=15` (Array/Map/Set all
+distinct, TypedArray joins Array), `mapSetAnyProto=0` (no collapse).
+
+**RESIDUAL, stated plainly:** a string iterator is also a kind-VEC record, so
+*inside a module that also iterates a typed array* an `any`-typed string
+iterator now reports `%ArrayIteratorPrototype%` instead of `null`. Both answers
+are wrong (`%StringIteratorPrototype%` is right); the statically-typed routing
+that every test262 program actually takes is untouched. **S1 closes it** — when
+the `family` field lands, delete `prependIterRecPrototypeArm` and let
+`__iter_rec_proto` answer. The second residual is unchanged and is S1's too: a
+plain array's iterator still reports `%Array.prototype%` under an `any` binding,
+because the vec carrier IS the array.
+
+Not reachable from the test262 idiom, and this is worth knowing before anyone
+spends a row run on it: with the binding left un-annotated (`var iterator =
+array[Symbol.iterator]()`, which is what the harness compiles — the checker
+infers `ArrayIterator`), the #3013 compile-time arm answers and both trees are
+correct. Measured: `.tmp/diag2.ts` `inferredBinding=4` on the S3 branch. The
+regression needed an explicit `: any`.
+
+**(2) COVERAGE GAP — the static-receiver fix did not take effect under
+`--target wasi`.** Reproduced: `taStep` threw on the branch under wasi and
+answered `3121` under standalone. Root cause is one gate, and it is older than
+S3: the #5147 native-iterator `.next()` arm in
+`closed-method-dispatch.ts` was `ctx.standalone` alone, so under wasi
+`iterator.next()` on a `$__IterRec` fell through to `__extern_method_call` and
+threw `next is not a function`. Map/Set hid it — `map-runtime.ts` prepends its
+OWN `$__IterRec.next()` arm to `__extern_method_call`, so only the vec carriers
+were exposed (measured: `.tmp/p_mapnext.ts` passes on both targets, before and
+after). Fix: `(ctx.standalone || ctx.wasi)`. After it, wasi matches standalone
+exactly on every probe (`taStep=3121`, `taNextShape=103`, `taAnyNextShape=103`),
+still `imports=[]`.
+
+**Rows re-measured after the review fixes** (`--standalone`,
+`scripts/run-test262-paths.mts --isolate`, `COMPILER_POOL_SIZE=2`; base tree =
+`HEAD~1` via file copies of all five sources, so both sides ran in the same
+process/mode). Compared **per row** — the `(status, path)` pairs of the two
+non-pass lists, not the counts:
+
+| set | rows | base | this commit | per-row delta |
+| --- | ---: | --- | --- | --- |
+| acceptance `ArrayIteratorPrototype/next/<View>Array.js` | 9 | 0 pass | **9 pass** | +9 |
+| `built-ins/ArrayIteratorPrototype` (whole tree) | 27 | 8 pass / 19 fail | **17 pass / 10 fail** | +9, **0 lost** |
+| `built-ins/{String,Map,Set,RegExpString,AsyncFromSync}IteratorPrototype` + `built-ins/IteratorPrototype` | 84 | 28 pass | 28 pass | **identical pairs** |
+| `built-ins/{Object,Reflect}/getPrototypeOf` | 49 | 39 pass | 39 pass | **identical pairs** |
+| `Array/prototype/{values,keys,entries,Symbol.iterator}` + `String/prototype/Symbol.iterator` + `Map/prototype/entries` + `Set/prototype/values` | 71 | 53 pass | 53 pass | **identical pairs** |
+| `TypedArray/prototype/{Symbol.iterator,values,keys,entries,from,of}` + `TypedArray/{from,of}` | 89 | 40 pass | 40 pass | **identical pairs** |
+
+Control total **293 rows, 0 lost**. The iterator-prototype and `getPrototypeOf`
+families are the sets the new `__getPrototypeOf` arm could plausibly move, and
+they do not move. The S3 commit's larger controls
+(`built-ins/{ArrayBuffer,DataView}` 802, `TypedArray/prototype` +
+`TypedArrayConstructors` 2,122) were **not** re-run here; the corpus proof above
+is what stands in for them — those modules' bytes are identical base → this
+commit, so their rows cannot move. Say so rather than implying they were re-run.
+
+Host (`--target gc`) output: the 8-module corpus is byte-identical base vs this
+commit on every module. WASI bytes move for exactly the three modules that call
+`.next()` on a native iterator record, which is the fix; their behaviour under
+wasi is unchanged or repaired (`c02-string-iter` base **threw**, now answers;
+`c03-map-set` identical; `c08-typedarray-iter` base `312`, now `10312`).
+
+Equivalence suite (6 shards, `VITEST_FORK_MAX_OLD_SPACE_SIZE=2048` — the 512 MB
+default fork heap OOMs shard 3 on **base too**, so that is the box, not the
+change): 1,745 tests, **22 failures across 10 files**, and re-running those 10
+files on the base tree gives the **same 22 of 124**. None is iterator- or
+TypedArray-related.
+
+**Out of scope, found in passing, PRE-EXISTING on base (both targets):**
+`[...new Int8Array([3,1,2])]` — a *statically*-typed typed-array spread — emits
+an invalid module, `array.get: Immediate array type … has packed type i8. Use
+array.get_s or array.get_u`. Verified on the base tree, so S3 did not introduce
+it; the dynamic spread (`[...({} as any)]` holding the view) is fine. Worth its
+own issue — the packed-carrier `array.get_u` discipline S3 applied to the
+iterator arms has at least one more site.
 
 ## Order-preservation and hazards
 

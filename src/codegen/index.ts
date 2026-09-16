@@ -316,6 +316,7 @@ import { fillRuntimeEvalIntrinsicFunctionOwnProps } from "./runtime-eval-intrins
 import {
   ensureNativeIteratorRuntime,
   fillAnyIterNext,
+  prependIterRecPrototypeArm,
   fillIterResultObject,
   fillNativeIteratorLateArms,
   fillIteratorMethodPresent,
@@ -6191,6 +6192,8 @@ export function generateModule(
     // fully-armed `__iterator_next`.
     fillIterResultObject(ctx);
     fillAnyIterNext(ctx);
+    // (#6484 S3 review) `%ArrayIteratorPrototype%` for a kind-VEC `$__IterRec`.
+    prependIterRecPrototypeArm(ctx);
 
     // (#2922) Rebuild `__combinator_to_vec`'s user-iterable arm with the same
     // closed-struct dispatchers (identical five-dispatcher condition, so the
@@ -11485,6 +11488,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fill-iterator-method-present", () => fillIteratorMethodPresent(ctx));
     profilePhase("fill-iter-result-object", () => fillIterResultObject(ctx));
     profilePhase("fill-any-iter-next", () => fillAnyIterNext(ctx));
+    profilePhase("prepend-iter-rec-prototype-arm", () => prependIterRecPrototypeArm(ctx));
     profilePhase("fill-combinator-to-vec", () => fillCombinatorToVec(ctx));
 
     // Emit __call_fn_0 export for calling zero-arg closures from JS (#851, #1308).

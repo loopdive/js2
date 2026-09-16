@@ -36,8 +36,8 @@ const VIEWS = [
   "Float64Array",
 ] as const;
 
-async function runStandalone(source: string): Promise<Record<string, unknown>> {
-  const r = await compile(source, { fileName: "test.ts", target: "standalone" });
+async function run(source: string, target: "standalone" | "wasi"): Promise<Record<string, unknown>> {
+  const r = await compile(source, { fileName: "test.ts", target });
   expect(r.success, JSON.stringify(r.errors?.slice(0, 3))).toBe(true);
   // Host-free lane: a single leaked import makes the module unusable standalone.
   expect(r.imports ?? []).toEqual([]);
@@ -50,6 +50,10 @@ async function runStandalone(source: string): Promise<Record<string, unknown>> {
     out[name] = fn();
   }
   return out;
+}
+
+async function runStandalone(source: string): Promise<Record<string, unknown>> {
+  return run(source, "standalone");
 }
 
 describe("#6484 S3 — TypedArray [Symbol.iterator]() steps under standalone", () => {
@@ -170,5 +174,98 @@ describe("#6484 S3 — TypedArray [Symbol.iterator]() steps under standalone", (
       export function plainNextIsNullish(): boolean { return res === null || res === undefined; }
     `);
     expect(out.plainNextIsNullish).toBe(1); // a standalone `boolean` export is an i32
+  });
+
+  // ── review round 1 ──────────────────────────────────────────────────────────
+
+  it("the diverted iterator reports %ArrayIteratorPrototype%, not null", async () => {
+    // REGRESSION PIN. The divert replaces a snapshot `$Vec` with a `$__IterRec`,
+    // and the record models no [[Prototype]] — so an `any`-typed binding of it
+    // answered `null` from `Object.getPrototypeOf`. §23.2.3.36 makes a TypedArray
+    // iterator an Array Iterator, so the answer is the ONE #3013
+    // `%ArrayIteratorPrototype%` singleton `[].values()` reports. Bitmask, so a
+    // `null === null` tautology cannot read as a pass.
+    const out = await runStandalone(`
+      const ta = new Int8Array([1, 2]);
+      const arr = [1, 2];
+      export function bits(): number {
+        const it: any = ta[Symbol.iterator]();
+        const p: any = Object.getPrototypeOf(it);
+        const aip: any = Object.getPrototypeOf([].values());
+        let r = 0;
+        if (p === null) r += 1;
+        if (aip === null) r += 2;
+        if (p === aip) r += 4;
+        if (p === Object.getPrototypeOf(arr)) r += 8;
+        return r;
+      }
+      export function twice(): number {
+        // The singleton is cached in a module global; a site that only works on
+        // its first execution is the #5349 r4 → r5 hazard.
+        let n = 0;
+        for (let i = 0; i < 2; i++) {
+          const it: any = ta[Symbol.iterator]();
+          const p: any = Object.getPrototypeOf(it);
+          if (p !== null && p === Object.getPrototypeOf([].values())) n += 1;
+        }
+        return n;
+      }
+    `);
+    expect(out.bits).toBe(4); // not null, IS %ArrayIteratorPrototype%, is NOT %Array.prototype%
+    expect(out.twice).toBe(2);
+  });
+
+  it("Map/Set iterator prototypes do NOT collapse onto %ArrayIteratorPrototype%", async () => {
+    // The runtime arm is `kind == ITER_KIND_VEC` only, so a Map/Set record
+    // (ITER_KIND_MAPSET) keeps its own singleton — the distinctness #3013 asks
+    // for. Asserted INSIDE a module that also iterates a TypedArray, which is
+    // the only module shape where the arm is emitted at all.
+    const out = await runStandalone(`
+      const ta = new Int8Array([1, 2]);
+      const m = new Map<number, number>(); m.set(1, 2);
+      const s = new Set<number>(); s.add(3);
+      export function distinct(): number {
+        const aip: any = Object.getPrototypeOf([].values());
+        const tip: any = Object.getPrototypeOf(ta[Symbol.iterator]());
+        const mi: any = m.keys();
+        const si: any = s.values();
+        const pm: any = Object.getPrototypeOf(mi);
+        const ps: any = Object.getPrototypeOf(si);
+        let r = 0;
+        if (tip === aip && aip !== null) r += 1;
+        if (pm !== aip) r += 2;
+        if (ps !== aip) r += 4;
+        return r;
+      }
+    `);
+    expect(out.distinct).toBe(7);
+  });
+
+  it("the static receiver also steps under --target wasi", async () => {
+    // WASI is the other no-JS-host lane and the divert's guard names it, but the
+    // #5147 native-iterator `.next()` arm in closed-method-dispatch.ts was gated
+    // `ctx.standalone` alone — so `iterator.next()` threw `next is not a
+    // function` under wasi while standalone answered. Map/Set hid the gap: they
+    // carry their own `__extern_method_call` arm.
+    const out = await run(
+      `
+        var array = new Int8Array([3, 1, 2]);
+        var iterator = array[Symbol.iterator]();
+        var result: any = iterator.next();
+        const v1 = result.value as number;
+        result = iterator.next();
+        const v2 = result.value as number;
+        const dyn: any = array;
+        const dynIt: any = dyn[Symbol.iterator]();
+        const v3 = dynIt.next().value as number;
+        export function first(): number { return v1; }
+        export function second(): number { return v2; }
+        export function dynFirst(): number { return v3; }
+      `,
+      "wasi",
+    );
+    expect(out.first).toBe(3);
+    expect(out.second).toBe(1);
+    expect(out.dynFirst).toBe(3);
   });
 });
