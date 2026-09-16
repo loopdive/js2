@@ -1834,6 +1834,7 @@ async function buildInvalidBinaryError(source, sourceMapUrl, result, target) {
 process.on("message", async (msg) => {
   runtimeIntrinsicCanarySnapshot = null;
   currentLinkedFallback = false;
+  currentLinkedFallbackReason = undefined;
   const { id, source, execute, isNegative, isRuntimeNegative, expectedErrorType, originalHarness, asyncTest } = msg;
   // (#3461) Fast native-harness oracle (host lane). When set, `source` is the
   // body-only `bindingShim + body` unit (the harness was NOT concatenated into
@@ -2970,11 +2971,17 @@ function realmDriftRecycleReason(payload) {
  * over-state the linked lane's parity.
  */
 let currentLinkedFallback = false;
+// (#6486) The REASON travels with the row, not just the fork log. The parity
+// report histograms it: a linked lane whose misses are all one link-shape bug
+// is a different finding from one whose misses are spread, and a per-fork
+// stderr line cannot be joined back to the rows it degraded.
+let currentLinkedFallbackReason;
 const linkedFallbackReasonsSeen = new Set();
 
 /** Mark the row, and log each distinct reason ONCE per fork. */
 function noteLinkedFallback(reason) {
   currentLinkedFallback = true;
+  currentLinkedFallbackReason = reason ?? "unknown";
   const key = reason ?? "unknown";
   if (linkedFallbackReasonsSeen.has(key)) return;
   linkedFallbackReasonsSeen.add(key);
@@ -2985,7 +2992,8 @@ function noteLinkedFallback(reason) {
 }
 
 function sendResult(payload, forceRecycleReason) {
-  if (currentLinkedFallback && payload && typeof payload === "object") payload = { ...payload, linkedFallback: true };
+  if (currentLinkedFallback && payload && typeof payload === "object")
+    payload = { ...payload, linkedFallback: true, linkedFallbackReason: currentLinkedFallbackReason };
   const cleanup = postCompileCleanup();
   const driftReason = realmDriftRecycleReason(payload);
   const recycle = Boolean(forceRecycleReason || driftReason || cleanup.recycle);
