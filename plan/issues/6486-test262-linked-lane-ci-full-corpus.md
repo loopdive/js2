@@ -1,7 +1,8 @@
 ---
 id: 6486
 title: "test262 CI: run the linked-harness lane on the full corpus as a shadow job with a same-run parity report — prerequisite for making it the default"
-status: in-progress
+status: done
+completed: 2026-09-16
 sprint: current
 created: 2026-09-16
 updated: 2026-09-16
@@ -232,3 +233,41 @@ rows split out: a fallback on a `negative: parse|early` row is expected and
 cheap; a fallback on a positive row is the throughput signal. If the positive
 share is material, the worker can score a negative row's linked diagnostic
 directly instead of recompiling — a later, separate change.
+
+## P3 — first full-corpus measurement (2026-09-16, run 35116762391, main @ 8eeaee8e, `linked_lane=true`)
+
+| metric | honest | linked |
+| --- | ---: | ---: |
+| rows | 48,735 | 48,735 |
+| pass | 38,551 | 34,420 |
+| fail | 9,551 | 13,846 |
+| compile_error | 507 | 349 |
+| compile_timeout | 12 | 6 |
+| shard wall, median / max (57 shards) | 326 s / 376 s | 152 s / 199 s |
+| shard wall, total | 17,989 s | 8,508 s |
+| row-summed compile_ms | 52.7 M | 16.1 M |
+| row-summed exec_ms | 2.17 M | 1.44 M |
+
+Agreement 43,742 / 48,735 (89.75 %); pass→fail 4,499; fail→pass 368; other
+126. Linked fallbacks 4,635 (9.5 %), all `linked compile failed: <syntax
+diagnostic>` — i.e. negative-syntax rows scored by the honest recompile, as
+predicted above.
+
+Difference buckets, attributed:
+
+| rows (≈) | bucket | cause |
+| ---: | --- | --- |
+| ~1,300 | `Temporal is not defined`, `… null (reading 'since'/'until'/…)`, `since/until/round/total is not a function`, `Expected a RangeError but got a TypeError` | #6489 — the linked job never downloads the Temporal / runtime-eval providers |
+| ~1,340 | `dereferencing a null pointer [in testWithAllTypedArrayConstructors() …]` | #6490 — provider-side null deref in the typed-array helper |
+| 36 | `expected SyntaxError but compiled with no diagnostic` | #6491 |
+| 35 + 27 + 24 | `Invalid descriptor field: label`, `0 descriptor should not be …`, `4 should be an own property` | #6482 residuals |
+| 49 + 29 | `Expected a undefined to be thrown …`, `Expected a undefined but got a TypeError` | unclassified — a provider-side `assert.throws(undefined, …)`-shaped mismatch; sample after #6489/#6490 |
+
+The `check for test262 regressions` job of the same dispatch failed on the
+HONEST lane against a 35-hour-old baseline from a different lane (29,587 pass,
+compile-time base 6× lower) — a measurement artifact of the dispatch path, not
+of this slice; no promotion happened.
+
+Conclusion for the flip: with #6489 and #6490 fixed the expected remaining
+difference is well under 1 % of the corpus; the flip PR (slice 6) waits for the
+next dispatch after those two land.
