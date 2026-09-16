@@ -8565,3 +8565,101 @@ Everything in S26–S29 still holds, with one addition:
   gating.** Here the host lane is not missing the fix — it has had its own since
   #5347. "Which lane needs this" is a question about where the answer already
   exists, not only about where the flag is set.
+
+### S31 findings (2026-09-16) — the twelfth cause is the CALL-side twin of #6612: a class reached through `ns.C()` fell through to `__apply_closure`'s legacy null instead of throwing. Four families 423 → 426; the 16-file `constructor.js` family goes 8 → 16 of 16
+
+Full write-up in
+[#6618](6618-standalone-class-through-method-call-no-throw.md). Branch
+`issue-5383-standalone-temporal-s31`, based on S30's tip `bc2f314de8`; the
+fix is commit `0728f3094e`.
+
+#### 1. The defect
+
+Three ways to reach a class VALUE dynamically and call it without `new`; only
+the third missed §10.2.1 step 2's TypeError:
+
+| shape | mechanism | answered |
+| --- | --- | --- |
+| `C()` | `class-call-without-new.ts` (#4483) | throws |
+| `const f = C; f()` | `wantIsCallableGuard` (#6420) | throws |
+| `ns.C()`, `ns` a linked provider namespace | `__extern_method_call`'s guard (`resolved-callee-guard.ts`) | **null** |
+
+`Temporal.PlainDate(1970, 1, 2)` is exactly the third shape — 8 of the 16
+`built-ins/Temporal/**/constructor.js` files, one per class, all failing
+identically: `Expected a TypeError to be thrown but no exception was thrown
+at all`. Measured directly against `compileWithTemporalGlobal` (the same
+machinery the test262 runner uses): `const f = Temporal.PlainDate; f(1,1,1)`
+already threw; `Temporal.PlainDate(1,1,1)` did not — proof the defect is the
+method-call arm, not the class/callable classifier (which was already
+correct in both directions, module-locally and across the link).
+
+#### 2. The fix
+
+`resolved-callee-guard.ts`'s `buildResolvedCalleeGuard` gained one arm,
+alongside its existing primitive-brand checks: when `__typeof_function` and
+`__is_callable` are both already registered, throw when the resolved callee
+is `typeof_function() && !is_callable()`. The two natives share every
+classifier arm except one — `__is_callable` excludes a class-constructor
+identity that `__typeof_function` includes — so that conjunction can only be
+true for a class, and stays silent (not a wrong throw) for anything the
+callable classifier fails to recognise, since `__typeof_function` is built
+from the same base arms and would miss it too.
+
+#### 3. The result
+
+| family (first 120 files) | base | branch | Δ | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| `PlainDate/**` | 109 | 110 | +1 | 0 | 1 |
+| `Duration/**` | 100 | 101 | +1 | 0 | 1 |
+| `PlainDateTime/**` | 111 | 112 | +1 | 0 | 1 |
+| `ZonedDateTime/prototype/**` | 103 | 103 | 0 | 0 | 0 |
+| **total** | **423** | **426** | **+3** | **0** | **3** |
+
+`ZonedDateTime/prototype/**` has no `constructor.js` of its own (that file is
+one level up, in the 16-file family). No `compile_error`, no `timeout`, no
+`__temporal_*` leak in 960 rows.
+
+**Corpus-wide, the 16 `constructor.js` files, per file, both labels: 8 → 16,
++8, 0 pass→fail.**
+
+#### 4. Controls
+
+**Must-not-move, per file, both labels, 0 flips.**
+
+| group | rows | base pass | branch pass | flips |
+| --- | --- | --- | --- | --- |
+| A: `Object/keys`(30) + `expressions/object`(30) + `Reflect/{get,has}`(21) | 81 | 77 | 77 | 0 |
+| B: `Object/{entries,values}`(41) + `getOwnPropertyNames`(30) + `for-in`(30) | 101 | 81 | 81 | 0 |
+| C: `expressions/call`(92) + `statements/class`(100) + `Function/prototype/call`(49) | 241 | 192 | 192 | 0 |
+
+#### 5. Byte A/B — not a null control this time
+
+Targeted: the armed case (`ns.C()`) moves (+42 B standalone). Three UNARMED
+controls ALSO move by the same amount — `f()` via a bare value, `ns.fn()`,
+and `new ns.C(...)` — because the new check lives in the SHARED
+`__extern_method_call` native's body, spliced once whenever both natives
+happen to be registered, not gated per call site. Two controls stay
+byte-identical (a class with no dynamic call site; a plain-object method call
+in a module where neither native gets registered), confirming the
+byte-neutral case documented in the file still holds where it applies. Every
+`gc`-lane artifact, targeted and corpus, is identical. Corpus (42 modules ×
+2 lanes): 14/42 standalone artifacts move, same mechanism — not a null
+control, and reported as such rather than claimed as one.
+
+**Equivalence gate**: 22 failing / 1,720 passing / 22 known-failures —
+baseline exactly, on both trees.
+
+**Witness**: `tests/issue-6618-class-through-method-call.test.ts`, 7 `it`s.
+
+#### 6. Traps, carried forward and added to
+
+Everything in S26–S30 still holds, with one addition:
+
+- **A single-module reduction can be the WRONG reduction, three ways at
+  once.** `const f = C; f()` (bare value) already worked before this fix; a
+  same-module `NS.C()` compiled without a link reaches a THIRD path
+  (`class-call-without-new.ts`) that also already worked. Only the
+  MULTI-MODULE link shape (`ns.C()` where `ns` crosses the wasm→wasm
+  boundary) was broken. Three near-identical one-liners, three different
+  compile paths, one of them broken — reducing to the wrong one would have
+  reported a false negative.
