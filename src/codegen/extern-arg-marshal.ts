@@ -38,6 +38,12 @@ export type CoerceIdxs = {
    */
   unboxNumOrOmitted?: () => number | undefined;
   /**
+   * (#6619) Lazy accessor for `__unbox_number_checked` — see
+   * {@link ensureUnboxNumberChecked}. `undefined` unless this module armed
+   * the guard, so an unarmed module keeps calling `__unbox_number` directly.
+   */
+  unboxNumChecked?: () => number | undefined;
+  /**
    * (#6615) Lazy accessor for the LENIENT ref-argument marshal — see
    * {@link ensureLenientRefArgHelper}. A thunk taking the formal's `want` type
    * and whether that formal is defaulted, so a module that never armed the
@@ -110,6 +116,102 @@ export function armExternRefArgTypeGuardForLinkedProvider(ctx: CodegenContext): 
   if (!usesNativeJsErrors(ctx)) return;
   if (armedRefArgThrow.has(ctx)) return;
   armedRefArgThrow.set(ctx, buildThrowJsErrorInstrs(ctx, "TypeError", REF_ARG_TYPE_ERROR_MESSAGE));
+}
+
+/**
+ * (#6619) Per-module armed TypeError templates for the Symbol/BigInt-checked
+ * numeric-argument marshal — the f64 twin of {@link armedRefArgThrow}. Two
+ * templates because §7.1.4 ToNumber's TypeError text names the operand kind
+ * and test262 assertions (`invalid-type.js`) exercise both.
+ */
+const armedF64ArgThrow = new WeakMap<CodegenContext, { symbol: Instr[]; bigint: Instr[] }>();
+
+/**
+ * (#6619) Arm the Symbol/BigInt-checked numeric-argument marshal for this
+ * module — the f64 twin of {@link armExternRefArgTypeGuard}.
+ *
+ * `new Temporal.Duration(Symbol())` / `(0n)` reach `__unbox_number` through
+ * the SAME construct-trampoline marshal `armExternRefArgTypeGuard` protects,
+ * but `__unbox_number` itself must stay lenient: it doubles as the
+ * numeric-key probe for `__extern_set` on a vec receiver (`arr[sym] = v`,
+ * an ordinary property write that must not throw — see
+ * `tonumber-fast-paths.ts`'s `symbolThrowArm` for the identical reasoning on
+ * the general ToNumber path). So the guard lives in a WRAPPER
+ * (`ensureUnboxNumberChecked`) consulted only by this dynamic-argument
+ * marshal, never by `__unbox_number` itself.
+ */
+export function armExternF64ArgTypeGuard(ctx: CodegenContext, fctx: FunctionContext): void {
+  if (!usesNativeJsErrors(ctx)) return;
+  if (armedF64ArgThrow.has(ctx)) return;
+  armedF64ArgThrow.set(ctx, {
+    symbol: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a Symbol value to a number", { flush: fctx }),
+    bigint: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a BigInt value to a number", { flush: fctx }),
+  });
+}
+
+/**
+ * (#6619) Arm the same guard for a module compiled AS A LINKED PROVIDER — the
+ * f64 twin of {@link armExternRefArgTypeGuardForLinkedProvider}, for the same
+ * reason: `classConstructWanted` also turns the trampolines on for
+ * `ctx.exportsConsumedByWasm`, where the dynamic caller is on the OTHER side
+ * of the link (`__js2wasm_link_construct`).
+ */
+export function armExternF64ArgTypeGuardForLinkedProvider(ctx: CodegenContext): void {
+  if (!ctx.exportsConsumedByWasm) return;
+  if (!usesNativeJsErrors(ctx)) return;
+  if (armedF64ArgThrow.has(ctx)) return;
+  armedF64ArgThrow.set(ctx, {
+    symbol: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a Symbol value to a number"),
+    bigint: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a BigInt value to a number"),
+  });
+}
+
+/**
+ * (#6619) Mint (once) `__unbox_number_checked(externref) -> f64`: the plain
+ * numeric unbox, except a Symbol or BigInt operand throws a catchable
+ * TypeError per §7.1.4 ToNumber, instead of `__unbox_number`'s silent `NaN`.
+ *
+ * Returns `undefined` (caller keeps calling `__unbox_number` directly) unless
+ * this module armed the guard — an unarmed module's bytes are unchanged.
+ *
+ * A helper FUNCTION, for the same double-evaluation reason
+ * {@link ensureUnboxNumberOrOmitted} is one: the argument may come from
+ * `__extern_get_idx`.
+ */
+function ensureUnboxNumberChecked(ctx: CodegenContext, unboxIdx: number | undefined): number | undefined {
+  const existing = ctx.funcMap.get("__unbox_number_checked");
+  if (existing !== undefined) return existing;
+  const throwTemplates = armedF64ArgThrow.get(ctx);
+  if (unboxIdx === undefined || throwTemplates === undefined) return undefined;
+  const typeIdx = addFuncType(ctx, [EXTERNREF_VT], [{ kind: "f64" }], "$__unbox_number_checked_type");
+  const body: Instr[] = [];
+  if (ctx.symbolTypeIdx >= 0) {
+    body.push(
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: ctx.symbolTypeIdx },
+      { op: "if", blockType: { kind: "empty" }, then: [...throwTemplates.symbol] },
+    );
+  }
+  if (ctx.nativeBigIntTypeIdx >= 0) {
+    body.push(
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: ctx.nativeBigIntTypeIdx },
+      { op: "if", blockType: { kind: "empty" }, then: [...throwTemplates.bigint] },
+    );
+  }
+  body.push({ op: "local.get", index: 0 }, { op: "call", funcIdx: unboxIdx });
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: "__unbox_number_checked",
+    typeIdx,
+    locals: [],
+    body,
+    exported: false,
+  } as WasmFunction);
+  ctx.funcMap.set("__unbox_number_checked", funcIdx);
+  return funcIdx;
 }
 
 /**
@@ -222,11 +324,20 @@ function ensureLenientRefArgHelper(ctx: CodegenContext, want: ValType, optionalH
  * the read twice. Returns `undefined` when either primitive is unavailable, so
  * the caller keeps its previous bytes.
  */
-function ensureUnboxNumberOrOmitted(ctx: CodegenContext, unboxIdx: number | undefined): number | undefined {
+function ensureUnboxNumberOrOmitted(
+  ctx: CodegenContext,
+  unboxIdx: number | undefined,
+  checkedIdx: number | undefined,
+): number | undefined {
   const existing = ctx.funcMap.get("__unbox_number_or_omitted");
   if (existing !== undefined) return existing;
   const isUndefIdx = ctx.funcMap.get("__extern_is_undefined");
   if (unboxIdx === undefined || isUndefIdx === undefined) return undefined;
+  // (#6619) A present-but-Symbol/BigInt argument still must throw — only an
+  // ABSENT (`undefined`) one takes the sentinel. Prefer the checked unbox
+  // when this module armed it, so a defaulted f64 formal gets the same
+  // §7.1.4 ToNumber behaviour as a non-defaulted one.
+  const effectiveUnboxIdx = checkedIdx ?? unboxIdx;
   const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "f64" }], "$__unbox_number_or_omitted_type");
   const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
   ctx.mod.functions.push({
@@ -242,7 +353,7 @@ function ensureUnboxNumberOrOmitted(ctx: CodegenContext, unboxIdx: number | unde
         then: [{ op: "i64.const", value: 0x7ff00000deadc0den }, { op: "f64.reinterpret_i64" }],
         else: [
           { op: "local.get", index: 0 },
-          { op: "call", funcIdx: unboxIdx },
+          { op: "call", funcIdx: effectiveUnboxIdx },
         ],
       },
     ],
@@ -267,7 +378,8 @@ export function buildCoerceIdxs(ctx: CodegenContext): CoerceIdxs {
     unboxNumIdx: ctx.funcMap.get("__unbox_number"),
     unboxBoolIdx: ctx.funcMap.get("__unbox_boolean"),
     undefinedIdx: ctx.funcMap.get("__get_undefined"),
-    unboxNumOrOmitted: () => ensureUnboxNumberOrOmitted(ctx, ci.unboxNumIdx),
+    unboxNumChecked: () => ensureUnboxNumberChecked(ctx, ci.unboxNumIdx),
+    unboxNumOrOmitted: () => ensureUnboxNumberOrOmitted(ctx, ci.unboxNumIdx, ci.unboxNumChecked?.()),
     lenientRefArg: (want, optionalHere) => ensureLenientRefArgHelper(ctx, want, optionalHere),
   };
   return ci;
@@ -284,7 +396,12 @@ export function externArgCoercionInstrs(ci: CoerceIdxs, want: ValType, optionalH
   const out: Instr[] = [];
   if (want.kind === "f64") {
     const omittedAwareIdx = optionalHere ? ci.unboxNumOrOmitted?.() : undefined;
+    // (#6619) The checked unbox — armed modules only, byte-identical
+    // otherwise — throws for a Symbol/BigInt argument instead of silently
+    // answering NaN (§7.1.4 ToNumber).
+    const checkedIdx = ci.unboxNumChecked?.();
     if (omittedAwareIdx !== undefined) out.push({ op: "call", funcIdx: omittedAwareIdx });
+    else if (checkedIdx !== undefined) out.push({ op: "call", funcIdx: checkedIdx });
     else if (unboxNumIdx !== undefined) out.push({ op: "call", funcIdx: unboxNumIdx });
     else out.push({ op: "drop" }, { op: "f64.const", value: 0 });
   } else if (want.kind === "i32") {

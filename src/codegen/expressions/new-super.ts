@@ -84,8 +84,12 @@ import {
   reserveNativeConstructDriver,
   reserveTypedNativeConstructDriver,
 } from "../native-construct.js"; // (#3981 / #1058)
-import { markClassValueConstructSite, moduleHasRefTypedConstructFormal } from "../standalone-class-construct.js"; // (#5383 S2g, #6615)
-import { armExternRefArgTypeGuard } from "../extern-arg-marshal.js"; // (#6615 / #5383 S28)
+import {
+  markClassValueConstructSite,
+  moduleHasF64TypedConstructFormal,
+  moduleHasRefTypedConstructFormal,
+} from "../standalone-class-construct.js"; // (#5383 S2g, #6615, #6619)
+import { armExternF64ArgTypeGuard, armExternRefArgTypeGuard } from "../extern-arg-marshal.js"; // (#6615 / #5383 S28, #6619 / #5383 S32)
 import { armConstructIsConstructorGuard } from "../construct-is-constructor-guard.js"; // (#6612 / #5383 S25)
 import { linkCompatibleDeclaredStructAncestor } from "../struct-hierarchy-layout.js";
 import { emitBoundConstructOnNull } from "../construct-bound.js"; // (#4196) §10.4.1.2
@@ -4002,6 +4006,11 @@ function tryCompileNativeConstructFromValue(
   // existing at all — a module whose classes take only `f64`/`i32` has no hard
   // `ref.cast` to make lenient and must keep its previous bytes.
   if (moduleHasRefTypedConstructFormal(ctx)) armExternRefArgTypeGuard(ctx, fctx);
+  // (#6619) Same arming, f64 twin: a Symbol/BigInt argument into an f64
+  // construct formal must throw TypeError (§7.1.4 ToNumber) rather than
+  // silently unbox to NaN. Gated the same way — no f64 construct formal, no
+  // bytes.
+  if (moduleHasF64TypedConstructFormal(ctx)) armExternF64ArgTypeGuard(ctx, fctx);
   const driverIdx = reserveNativeConstructDriver(ctx, args.length, stringConstantExternrefInstrs(ctx, "prototype"));
 
   // Evaluate the callee, then each argument, exactly once and in source order.
