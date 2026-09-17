@@ -247,6 +247,116 @@ here with the diagnosis rather than half-done. It is likely to also move part of
 the `Thrown value was not an object!` and descriptor-shape residual, since those
 have the same shape (a compiled object losing its brand at the boundary).
 
+## Round 2 (2026-09-17, Opus lane) — branch `issue-6492-r2`, based on round 1
+
+### Measurement setup — the real runner, not the smoke
+
+Round 1's honest column came from a plain single-module compile, which is NOT
+the runner's honest lane; three of the rows sampled below fail that column
+identically and would have read as "no lane difference". Every number in this
+section instead comes from `tests/test262-chunk-dynamic.test.ts` (the real
+worker) run over the SAME explicit row list in both lanes, with a **fresh**
+`JS2WASM_TEST262_HARNESS_CACHE` per run (#6488) and both bundles rebuilt after
+every compiler edit. Base verdicts were captured before the first edit
+(`.tmp/p6492r2/{base-honest,base-linked}.jsonl`).
+
+One practical correction for whoever runs this next: `TEST262_PATH_FILTER` is a
+**pipe-separated list of SUBSTRINGS, not a regex** (`tests/test262-runner.ts`
+`parsePathFilter`). Escaping the dots — the natural thing to do — makes it match
+nothing and the run reports "No test suite found", which reads like a broken
+harness rather than an empty filter.
+
+### Bucket `Cannot convert 0 to a BigInt` (128 rows) — FIXED
+
+Round 1 diagnosed the brand loss and stopped there; the actual defect turned out
+to be one line further down than "the registry has no ArrayBuffer
+discriminator", and narrower.
+
+`_compiledAbToHostBuffer` is the only consumer of the AB discriminator, and it
+reads `__dv_byte_len` / `__dv_byte_get` / `__ab_max_len` off the READER's
+exports. In a linked graph those are the wrong module's — and usually not
+merely wrong but **absent**: a consumer body that never mentions `ArrayBuffer`
+emits no `__dv_byte_len` at all, so the function returns `undefined` on its
+second line. The buffer then fell through to `_materializeIterable`, arrived at
+the host `BigInt64Array` constructor as an array of NUMBERS, and threw.
+
+The #5225 registry could not cover this because its only probe is
+`__struct_field_names`, and a byte vec has no field-name list — it answers `""`
+in its OWN module too, so every buffer was cached under the `NONE` sentinel.
+The fix is `bufferDecoderFor` (`src/runtime/cross-module-struct-owners.ts`): a
+second owner probe keyed on `__dv_byte_len >= 0`, with its **own** cache, because
+a struct that is not field-nameable can still be a buffer and the two answers
+must not share a negative entry.
+
+Sample: the 823 corpus rows that reach `testWithAllTypedArrayConstructors`
+(directly or via `testWithTypedArrayConstructors` / `testWithBigInt…`), every
+third one — 275 rows, real runner, both lanes.
+
+| measurement | before | after |
+| --- | ---: | ---: |
+| honest-pass / linked-fail | 42 | **2** |
+| … of which `Cannot convert 0 to a BigInt` | 40 | **0** |
+| honest lane, before vs after | — | **0 differences** |
+
+Honest lane byte-identical by construction (the registry short-circuits on one
+boolean below two registered modules) and verified rather than assumed.
+Test: `tests/issue-6492-linked-arraybuffer-brand.test.ts` (3 cases; 2 of the 3
+fail on the pre-fix tree — the third is a regression guard on the arm that
+already worked through the TypedArray mirror).
+
+### `Expected a undefined …` (75) + `Expected a X but got a Y` (26) — ROOT CAUSE FOUND, not fixed
+
+This is the largest remaining lever and round 1's guess for it ("likely
+#6482-adjacent") is wrong. It is one defect, and it is not in the descriptor
+substrate.
+
+**A consumer class passed as a VALUE to a provider function crosses as the
+class's PROTOTYPE struct, not as its class OBJECT.** Instrumenting
+`_wrapForHost` (`.tmp/p6492r2/probe-param.mts`, a four-function micro-provider)
+shows the provider wrapping a struct for which `_classObjectByProtoStruct` has
+an entry and `_classCtorClosures` does not, so the constructible class-mirror
+arm never runs and the value becomes a plain data proxy:
+
+| read, inside the provider | `class MyErr extends Error {}` | `class Plain {}` |
+| --- | --- | --- |
+| `c.name` | `"Error"` (the extern BASE) | **`undefined`** |
+| `typeof c` | `"object"` | `"object"` |
+| `e.constructor === c` | **false** | **false** |
+
+Put that through `assert.throws(C, fn)` and both buckets fall out verbatim:
+`expectedErrorConstructor.name` is `undefined` → "Expected a **undefined** to be
+thrown…", and the identity check `thrown.constructor !== expectedErrorConstructor`
+fails against a correctly-named mirror → "Expected a Error but got a MyErr".
+Round 1's note 2 (function `.name` wrong for a provider closure) is the same
+family seen from the other side.
+
+The fix is NOT a blanket redirect in `_wrapForHost` — `C.prototype` is a
+legitimate value and must not become `C`. It belongs at the crossing: the
+consumer's class binding must hand over the registered class object. Next
+round should start at the linked class-binding lowering, and can reproduce in
+seconds with the micro-provider above (no runner needed, unlike the iterator
+family below).
+
+### Iterator-helper `reading 'next' / 'return'` — NOT reproducible outside the runner
+
+8 rows in a 327-row half-sample of `built-ins/Iterator` (4 `next`, 4 `return`),
+against 35 rows of the class-identity family above in the SAME sample — so the
+class-identity defect, not this one, is where the value is in this subtree.
+
+Worth recording so the next lane does not repeat it: `class T extends Iterator`
+instances have **no helper methods in either lane** outside the runner sandbox
+(`typeof it.some === "undefined"`, `new T() instanceof Iterator === false`), so
+the micro-provider cannot see this bucket at all and the runner is the only
+instrument. That is a pre-existing intrinsic-subclassing gap, not a lane
+difference.
+
+### Extern class stubs (35) — not attempted
+
+Round 1 could not put a lane-differing row in front of the runner and neither
+sample here produced one. The evidence now suggests these rows are downstream
+of the class-value crossing above rather than a linker rule, so they should be
+re-measured AFTER that lands rather than fixed on their own.
+
 ### Buckets not reached
 
 - **`Expected a undefined …` (75)**, **extern class stubs (35)**,
@@ -271,6 +381,12 @@ have the same shape (a compiled object losing its brand at the boundary).
    the flip — must point `JS2WASM_TEST262_HARNESS_CACHE` at a fresh directory.
    If the flip work ever adds a cache-restore step to speed the lane up, it must
    key on the compiler build or it will publish stale verdicts.
+0. **(round 2) `TEST262_PATH_FILTER` is substrings, not a regex.** An escaped
+   path list matches nothing and the run fails with "No test suite found",
+   which is indistinguishable from a broken harness. `TEST262_PATH_FILTER_FILE`
+   (exact paths, one per line) exists but does not drive the chunk test's suite
+   enumeration on its own, so the pipe-separated substring form is the one to
+   use for a row-list measurement.
 2. **Function `.name` is wrong for a provider closure read out of an array**:
    `factories[1].name` answered `fa` for `fb`, and `typedArrayCtorArgFactories[0..2].name`
    answered `undefined`. Harmless for pass/fail here, but it corrupts every
@@ -285,27 +401,32 @@ have the same shape (a compiled object losing its brand at the boundary).
       locally: the sampled row passes and the bucket is 0 in chunk 0/57. Corpus
       confirmation needs the next dispatch.
 - [ ] pass→fail residual ≤ 250 on the next `linked_lane=true` dispatch (record
-      as P3d in #6486 with the bucket table). **Not reached here**: two of the
-      705 rows' buckets are fixed (22 trap + 61 async-null ≈ 83 rows by the CI
-      table; the local 850-row sample moved 11 → 9), the 128-row BigInt bucket
-      is diagnosed but open, and ~200 rows of smaller buckets are untouched.
+      as P3d in #6486 with the bucket table). **Not reached.** After round 2
+      three buckets are fixed — 22 trap + 61 async-null + 128 BigInt ≈ 211 rows
+      by the CI table — which projects ~494 remaining, still above the bar. The
+      next single change worth making is the class-value crossing (75 + 26 rows
+      by the CI table, root cause in the round-2 notes); that alone would put
+      the projection near 390, so ≤ 250 needs it plus the two ~40-row families.
 - [x] Honest lane byte-identical / unaffected — the async fix is gated on
       `ctx.linkedPackageBindings.size > 0`; the trampoline fix needs a
       multi-file graph, which the honest lane is not, and that was verified
       rather than assumed (honest chunk 0/57 before vs after: 850 rows, **0**
       verdict differences). Equivalence gate: no new regressions.
 - [x] Each FIXED bucket has a test —
-      `tests/issue-6492-linked-method-trampoline-abi.test.ts` (4 cases) and
-      `tests/issue-6492-linked-async-callback-promise.test.ts` (5 cases); both
-      fail on the pre-fix tree.
+      `tests/issue-6492-linked-method-trampoline-abi.test.ts` (4 cases),
+      `tests/issue-6492-linked-async-callback-promise.test.ts` (5 cases) and
+      `tests/issue-6492-linked-arraybuffer-brand.test.ts` (3 cases, 2 failing
+      pre-fix); all fail on the pre-fix tree.
 
 ### Residual table (what a follow-up picks up, in value order)
 
+Updated after round 2 (2026-09-17).
+
 | rows (CI table) | bucket | state |
 | ---: | --- | --- |
-| 128 | `Cannot convert 0 to a BigInt` | **diagnosed** — compiled ArrayBuffer loses its brand across the module boundary (#5225 registry has no ArrayBuffer discriminator). Not started. |
-| ~42 | `__module_init` null `.catch` / `.next` | partly this issue's async fix; the **Iterator-helper** half (`next`/`return` off a getter-overridden subclass of the intrinsic `Iterator`) is untouched — 17 reproducible rows in the local sample. |
-| 75 | `Expected a undefined …` | untouched; likely #6482-adjacent. |
-| 35 | extern class stubs (`badArrayType` / `OProxy`) | untouched, and NOT reproduced locally — every local `No dependency provided for extern class` row fails honest identically. Pull the row list from the parity artifact. |
-| 22 | `Thrown value was not an object!` | untouched; same brand-loss shape as the BigInt bucket, may fall out with it. |
+| 128 | `Cannot convert 0 to a BigInt` | **FIXED** (round 2) — `bufferDecoderFor`. 40 → 0 in a 275-row real-runner sample; corpus confirmation needs the next `linked_lane` dispatch. |
+| 75 + 26 | `Expected a undefined …` / `Expected a X but got a Y` | **ROOT CAUSE FOUND, not fixed** — a consumer class crosses to the provider as its PROTOTYPE struct, so the class mirror never forms: `.name` reads `undefined` (plain class) or the extern base's name, and constructor identity breaks. Reproduces in seconds with `.tmp/p6492r2/probe-param.mts`. **Highest-value next target.** |
+| ~42 | `__module_init` null `.catch` / `.next` | the async half is round 1's fix; the Iterator-helper half is 8 rows in a 327-row sample and is **only visible through the real runner** — the micro-provider cannot see it (intrinsic `Iterator` has no helpers there in either lane). |
+| 35 | extern class stubs (`badArrayType` / `OProxy`) | untouched; still not reproduced as a lane difference. Re-measure AFTER the class-value crossing lands — the evidence now points at that, not at a linker rule. |
+| 22 | `Thrown value was not an object!` | untouched. No longer expected to fall out with the BigInt fix (that one was narrower than the "brand loss" framing suggested); more likely the class-identity family. |
 | 59 | four small buckets | untouched. |
