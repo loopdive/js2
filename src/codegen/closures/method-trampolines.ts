@@ -36,6 +36,7 @@ import {
   getFuncSignature,
   getOrCreateConstructibleFuncRefWrapperTypes,
   getOrCreateFuncRefWrapperTypes,
+  peekFuncRefWrapperTypes,
 } from "./funcref-wrapper-types.js";
 import { emitFuncRefAsClosure } from "./funcref-as-closure.js";
 import { normalizeOrdinaryFunctionConstructibility } from "./ordinary-fn-constructibility.js";
@@ -650,9 +651,49 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
     // from `t.trampolineFuncIdx` is unsafe: late-import shifting can move that
     // index relative to the recorded value, returning a different function's
     // signature (observed for async methods).
-    const wrapperUserParams = t.wrapperUserParams;
-    const wrapperResult = t.wrapperResult;
+    // (#6492) …and when the drift NARROWED the wrapper, rebuilding the body is
+    // not enough — the wrapper type is what CALLERS see.
+    //
+    // The trap: the canonical singleton trampoline is minted at the FIRST
+    // access, from whatever signature the method had then. In a multi-file
+    // graph (which is what the #3451 linked lane compiles a test262 body as)
+    // the member-get dispatcher reserves the singleton before the method body
+    // has resolved its parameter ABI, so the wrapper can capture a
+    // module-internal struct param — e.g. `class C { m([a]) {} }` captured
+    // `(ref $tuple)` where the method finally accepts `externref`. The dynamic
+    // closure-call site dispatches on the funcref's TYPE and, having matched
+    // that struct-param arm, emits an UNGUARDED `ref.cast (ref $tuple)` of the
+    // caller's argument: `C.prototype.m([1, 2])` passes a vec and the module
+    // TRAPS with `illegal cast`. A wasm trap is not catchable, so one such row
+    // kills the whole program rather than failing one assertion.
+    //
+    // Repair it by widening the trampoline's own func type back to the ABI the
+    // method actually accepts. Deliberately narrow:
+    //   * only the NARROWING direction (wrapper wants a GC struct ref, method
+    //     accepts `externref`) — widening can never invalidate a caller that
+    //     already matched, because every dispatch arm is `ref.test`-guarded and
+    //     a miss falls through to the next arm;
+    //   * only when that wider wrapper ALREADY exists (`peek…`), so the value
+    //     stays dispatchable at call sites already emitted;
+    //   * result type untouched (a result drift is handled below as before).
+    let wrapperUserParams = t.wrapperUserParams;
+    let wrapperResult = t.wrapperResult;
     const methodResult = sig.results[0];
+    const narrowedParam = wrapperUserParams.some(
+      (from, i) =>
+        (from?.kind === "ref" || from?.kind === "ref_null") &&
+        (from as { typeIdx?: number }).typeIdx !== undefined &&
+        methodUserParams[i]?.kind === "externref",
+    );
+    if (narrowedParam && wrapperResult?.kind === methodResult?.kind) {
+      const widened = peekFuncRefWrapperTypes(ctx, methodUserParams, sig.results);
+      const func = widened ? ctx.mod.functions.find((f) => f.body === t.trampolineBody) : undefined;
+      if (widened && func) {
+        func.typeIdx = widened.funcTypeIdx;
+        wrapperUserParams = methodUserParams;
+        wrapperResult = methodResult;
+      }
+    }
 
     // Build a minimal FunctionContext so coercions that need a scratch local
     // (externref → ref/ref_null) can allocate one. Its `params` mirror the
