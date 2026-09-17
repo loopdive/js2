@@ -21,6 +21,7 @@ import { integrityVarKey } from "../widened-var-key.js";
 import { objectLiteralHasColonProto } from "../literals.js"; // (#5270 step 2)
 import { sourceShadowsGlobalName } from "../source-function-members.js"; // (#5194 review F1)
 import { allocLocal } from "../context/locals.js"; // (#6609)
+import { popBody, pushBody } from "../context/bodies.js"; // (#6630 fallback)
 
 const NATIVE_COLLECTION_NAMES = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
 
@@ -499,19 +500,6 @@ export function tryEmitDynamicCallableGetPrototypeOf(
   const valueLocal = allocLocal(fctx, `__gpo_dyn_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: valueLocal });
 
-  // %Function.prototype% is a lazily-materialised singleton; reading it here
-  // (rather than inside the then-arm) keeps every funcIdx this arm emits in one
-  // straight-line body, so a late import added while compiling it shifts
-  // naturally. It has no observable side effects, so the eager read is free.
-  const fnProtoType = emitEs5IntrinsicPrototype(ctx, fctx, anchor, "Function");
-  if (fnProtoType !== null && typeof fnProtoType === "object" && fnProtoType.kind !== "externref") {
-    coerceType(ctx, fctx, fnProtoType, { kind: "externref" });
-  }
-  const protoLocal = allocLocal(fctx, `__gpo_fnproto_${fctx.locals.length}`, { kind: "externref" });
-  fctx.body.push({ op: "local.set", index: protoLocal });
-
-  // Re-read every index AFTER the singleton emit: compiling `Function.prototype`
-  // may itself add a late import, which shifts everything above it.
   const isCallableIdx = ctx.funcMap.get("__is_callable");
   const isClassObjectIdx = ctx.funcMap.get("__is_class_object");
   const getPrototypeIdx = ctx.funcMap.get("__getPrototypeOf");
@@ -520,19 +508,63 @@ export function tryEmitDynamicCallableGetPrototypeOf(
     fctx.body.push({ op: "local.get", index: valueLocal });
     return false;
   }
+
+  // (#6630 fallback, 2026-09-17) %Function.prototype% is a lazily-materialised
+  // singleton, and materialising it has a module-wide side effect the comment
+  // this replaces called "free": it triggers `ensureObjectRuntime`'s bootstrap
+  // (`emitFunctionPrototypeObjectSingleton` → `ensureObjectRuntime`), which
+  // bakes `__extern_method_call`'s body — including its `.call`/`.apply`
+  // dispatch — against whatever helpers are registered AT THAT MOMENT. A
+  // pre-existing (merge-independent) defect in that bootstrap, #6630, means a
+  // module that materialises %Function.prototype% BEFORE its first `.call`/
+  // `.apply` on an ordinary closure can misdispatch that call at runtime
+  // ("Function.prototype.call is not yet implemented in --target standalone").
+  // #6609/#6625 previously materialised it EAGERLY for every dynamic
+  // `Object.getPrototypeOf(<any-typed value>)`, regardless of whether the
+  // value actually turned out to be callable — so a module doing nothing more
+  // exotic than `Object.getPrototypeOf(<some object>)` followed by an ordinary
+  // `fn.call(...)` could trip #6630 even though the getPrototypeOf receiver
+  // was never callable (measured: `tests/issue-6484-iterator-prototypes
+  // .test.ts`'s "%IteratorPrototype% is the shared parent" case regressed
+  // exactly this way once #6629 restored this arm's reachability).
+  //
+  // Fix at the call site, not at #6630's architecture-level root cause (out of
+  // scope here — see #6630): materialise %Function.prototype% LAZILY, inside
+  // the `then:` arm, so it is only built (and #6630's bootstrap only triggers)
+  // when `__is_callable`/`__is_class_object` have ALREADY proven the value is
+  // one of the two cases that need it. A non-callable, non-class-object value
+  // — the common case for a bare `Object.getPrototypeOf` probe — never
+  // reaches `emitEs5IntrinsicPrototype` at all. #6609/#6625's own witnesses
+  // (a genuinely callable/class-object receiver) still take the `then:` arm
+  // and get the identical answer; only the ORDER changed (predicate first,
+  // materialisation second), not the result.
+  const savedThenBody = pushBody(fctx);
+  const fnProtoType = emitEs5IntrinsicPrototype(ctx, fctx, anchor, "Function");
+  if (fnProtoType !== null && typeof fnProtoType === "object" && fnProtoType.kind !== "externref") {
+    coerceType(ctx, fctx, fnProtoType, { kind: "externref" });
+  }
+  const thenArm = fctx.body;
+  popBody(fctx, savedThenBody);
+
+  // Re-read every index AFTER building the then-arm: compiling
+  // `Function.prototype` inside it may itself add a late import, which shifts
+  // everything emitted before it (mirrors the eager version's own re-read).
+  const isCallableIdxFinal = ctx.funcMap.get("__is_callable") ?? isCallableIdx;
+  const isClassObjectIdxFinal = ctx.funcMap.get("__is_class_object") ?? isClassObjectIdx;
+  const getPrototypeIdxFinal = ctx.funcMap.get("__getPrototypeOf") ?? getPrototypeIdx;
   fctx.body.push(
     { op: "local.get", index: valueLocal },
-    { op: "call", funcIdx: isCallableIdx },
+    { op: "call", funcIdx: isCallableIdxFinal },
     { op: "local.get", index: valueLocal },
-    { op: "call", funcIdx: isClassObjectIdx },
+    { op: "call", funcIdx: isClassObjectIdxFinal },
     { op: "i32.or" },
     {
       op: "if",
       blockType: { kind: "val", type: { kind: "externref" } },
-      then: [{ op: "local.get", index: protoLocal }],
+      then: thenArm,
       else: [
         { op: "local.get", index: valueLocal },
-        { op: "call", funcIdx: getPrototypeIdx },
+        { op: "call", funcIdx: getPrototypeIdxFinal },
       ],
     },
   );
