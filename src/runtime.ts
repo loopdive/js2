@@ -18044,6 +18044,33 @@ assert._isSameValue = isSameValue;
             }
             const ctor = (globalThis as any)[ctorName];
             if (typeof ctor === "function" && v instanceof ctor) return 1;
+            // (#6492 round 5) Ask the SANDBOX realm's constructor too.
+            //
+            // This name-keyed path resolves the RHS from the runtime's own
+            // `globalThis`, but the values it is asked about are not always
+            // from that realm: when a `globalSandbox` is supplied (test262 per
+            // row), construction sites already prefer it —
+            // `_createBoundaryPromiseImport`'s `globalSandbox?.Promise ??
+            // Promise` is the one that matters here — so a promise minted by
+            // compiled code is a SANDBOX Promise while `globalThis.Promise` is
+            // the worker's. `v instanceof <worker Promise>` is then false for a
+            // value that genuinely IS a promise. Measured 2026-09-17 on the
+            // linked lane: `v instanceof globalSandbox.Promise` → true,
+            // `v instanceof globalThis.Promise` → false, for the promise the
+            // provider's `assert.throwsAsync` returns (12
+            // `harness/asyncHelpers-throwsAsync-*` rows assert
+            // `assert(p instanceof Promise)`).
+            //
+            // Deliberately ADDITIVE and second: a `true` from the worker realm
+            // is never overturned, and a name the sandbox does not define is
+            // untouched. It is not gated on `coherentBuiltinRealms` because
+            // that flag governs which realm a builtin is TAKEN from; this is
+            // the weaker question of whether a value belongs to a realm the
+            // project is already handing out values from, and the worker lane
+            // never marks its sandbox coherent while still constructing
+            // sandbox promises.
+            const sandboxCtor = globalSandbox === undefined ? undefined : (globalSandbox as any)[ctorName];
+            if (sandboxCtor !== ctor && typeof sandboxCtor === "function" && v instanceof sandboxCtor) return 1;
             // (#4394) The host Test262Error by name — no registry knows it.
             if (ctorName === "Test262Error" && test262Host.isHostTest262Error(v)) return 1;
           } catch {

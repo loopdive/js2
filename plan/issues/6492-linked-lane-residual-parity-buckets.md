@@ -44,11 +44,22 @@ related: [3451, 6486, 6489, 6490, 6491, 6482]
 # either out of `_classChainRead` puts the correction one indirection away from
 # the guard it corrects. The function is 6 lines of dispatch; splitting it is
 # not a thing that exists to do.
+# 2026-09-17 (round 5) — `__instanceof` asks the sandbox realm: +27 lines in
+# `resolveImport`, of which 22 are the comment. The CODE is 2 lines and it has
+# to sit on the line after the `globalThis[ctorName]` lookup it corrects: the
+# thing a reader cannot recover from the diff is WHY a second realm exists at
+# all here — that the construction site (`globalSandbox?.Promise ?? Promise`)
+# already prefers the sandbox while this lookup did not, so the two disagreed
+# about the same value. Moving it out of the import factory would separate the
+# correction from `globalSandbox`, the parameter that makes it meaningful.
+# `resolveImport` is the import-name dispatch table; splitting it is #3399's
+# job, not this bug's.
 loc-budget-allow:
   - src/codegen/closures.ts
   - src/runtime.ts
 func-budget-allow:
   - src/codegen/closures.ts::compileArrowAsCallback
+  - src/runtime.ts::resolveImport
 ---
 
 # #6492 — linked lane residual after P3c
@@ -744,3 +755,78 @@ is ever picked up.
 Test: `tests/issue-6492-r4-linked-iterator-binding.test.ts` (4 cases — the
 assembler gate in both directions, `bodyLineOffset` exactness, and two linked
 compile-and-run cases). All 4 fail on the pre-fix tree.
+
+## Round 5 (2026-09-17, Opus lane) — the long tail
+
+Branch `issue-6492-r5`, based on `c698c755bb` (origin/main) with round 4's
+`%Iterator%` binding stratum (`ec8ff0752d`) and #6491's under-application fix
+(`376b9af99c`) cherry-picked FIRST, so every number below is measured on top of
+both.
+
+### Measurement setup
+
+Real runner (`tests/test262-chunk-dynamic.test.ts`), single chunk, over the
+138-row list (the 134 `bucket-rest.txt` rows + round 4's 4 `built-ins/Iterator`
+residuals) in BOTH lanes, fresh `JS2WASM_TEST262_HARNESS_CACHE` per run (#6488),
+both bundles rebuilt from their ENTRIES (`npm run build:{compiler,runtime}-bundle`)
+after every compiler edit. Base captured before the first edit:
+
+| lane | base |
+| --- | ---: |
+| honest | **135 / 138 pass** (3 rows are honest-fail — not lane differences) |
+| linked | **0 / 138 pass** |
+
+### Mechanism 1 — `__instanceof` resolved the RHS in the WRONG REALM
+
+Round 4's lesson applied again, one level down: the bucket was not a compiler
+defect and not a cross-module decoder miss. The `harness/asyncHelpers-throwsAsync-*`
+rows all assert `assert(p instanceof Promise)` on the promise the PROVIDER's
+`assert.throwsAsync` returns, and that answered `false`.
+
+A one-line synthetic corpus row through both lanes (round 4's finding 7) put the
+difference on the table in two 1-minute runs, and an instrumented `__instanceof`
+named it exactly:
+
+```
+v instanceof globalSandbox.Promise → true
+v instanceof globalThis.Promise    → false
+```
+
+`__instanceof(v, "<name>")` resolves the RHS by NAME off the runtime's own
+`globalThis`. But test262 gives every row a `globalSandbox`, and the
+CONSTRUCTION sites already prefer it — `_createBoundaryPromiseImport` uses
+`globalSandbox?.Promise ?? Promise`. So compiled code mints a SANDBOX Promise
+and the identity check asks the WORKER's. Two paths, two realms, same value.
+
+Three things this corrects for whoever reads the earlier rounds:
+
+- **It is not the `_wrapForHost` / #5225 substrate.** A `promiseDecoderFor`
+  owner probe (the exact shape of round 2's `bufferDecoderFor`) was built,
+  measured — **0 rows moved** — and REVERTED rather than left in as
+  plausible-looking code. The instrumented value is `isStruct=false`: it is a
+  real host object, never a compiled struct, so no decoder question applies.
+- **`coherentBuiltinRealms` does not cover this.** The worker
+  (`scripts/test262-worker.mjs`) never calls `markCoherentBuiltinRealm`, so the
+  `builtin()` helper always falls back to the host realm — while
+  `globalSandbox?.Promise ?? Promise` bypasses that helper entirely. The fix is
+  deliberately NOT gated on that flag: the flag governs which realm a builtin is
+  TAKEN from, this is the weaker question of whether a value belongs to a realm
+  the project is already handing values out of.
+- The arm is **additive and second**: a `true` from the host realm is never
+  overturned, so it can only turn `false` into `true`.
+
+| measurement | before | after |
+| --- | ---: | ---: |
+| `harness/*` rows (22), linked | 0 pass | **10 pass** |
+| 138-row list, linked | 0 pass | **10 pass** |
+| 138-row list, honest | 135 pass | **135 pass** (0 verdict differences) |
+| honest control slice, 867 rows (`instanceof` / `Promise` / `Error` / `Symbol.hasInstance`) | 512 pass | **513 pass, 0 lost** |
+
+The honest lane is a shared path here, so it was A/B'd rather than argued: the
+867-row control gains one row (`built-ins/Promise/resolve/S25.4.4.5_A4.1_T1.js`)
+and loses none.
+
+Test: `tests/issue-6492-r5-sandbox-realm-instanceof.test.ts` (2 cases, 7
+assertions — sandbox promise, sandbox `Object`, host-realm control, no false
+positive, unknown name, and a no-sandbox no-op case). The first case fails on
+the pre-fix tree.
