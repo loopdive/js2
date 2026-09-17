@@ -58,6 +58,34 @@ export function createCrossModuleStructOwners(canBeWeakKey: (value: unknown) => 
     }
   };
 
+  // (#6492) Second, INDEPENDENT owner cache for ArrayBuffer-shaped structs.
+  //
+  // `decodes` above asks `__struct_field_names`, which is the right question
+  // for a named data struct and the WRONG one for a compiled ArrayBuffer: an
+  // i32_byte vec has no field-name list, so it answers "" in its own module
+  // too and the generic registry files it under NONE. The consequence is not a
+  // missed optimisation — `_compiledAbToHostBuffer` then probes the READER's
+  // `__dv_byte_len`, which either does not exist (a consumer whose own body
+  // never mentions ArrayBuffer emits no such export) or `ref.test`-misses, so
+  // the buffer degrades to a generic vec and `new BigInt64Array(<crossed AB>)`
+  // sees an array of NUMBERS ("Cannot convert 0 to a BigInt", 128 linked-lane
+  // rows). Kept as a separate map rather than a second arm of `decodes`
+  // because the two answers are about different exports and must not share a
+  // NONE entry: a struct that is not field-nameable can still be a buffer.
+  const bufferOwners = new WeakMap<object, Record<string, Function>>();
+
+  /** Whether `exports` can read this struct AS A BUFFER (`__dv_byte_len` ≥ 0). */
+  const decodesBuffer = (exports: Record<string, Function>, obj: object): boolean => {
+    const fn = exports.__dv_byte_len;
+    if (typeof fn !== "function") return false;
+    try {
+      const n = fn(obj);
+      return typeof n === "number" && n >= 0;
+    } catch {
+      return false;
+    }
+  };
+
   return {
     registerModule(exports: Record<string, Function> | undefined): void {
       if (exports === undefined || !canBeWeakKey(exports) || modules.has(exports)) return;
@@ -97,6 +125,39 @@ export function createCrossModuleStructOwners(canBeWeakKey: (value: unknown) => 
       }
       if (cached !== undefined) return cached === local ? undefined : cached;
       owners.set(obj as object, NONE);
+      return undefined;
+    },
+
+    /**
+     * (#6492) The exports that can read `obj` as a compiled ArrayBuffer when
+     * `local` cannot — `undefined` when `local` already can, when no module of
+     * the project can, or when no linked project is live.
+     *
+     * Deliberately NOT folded into `decoderFor`: the buffer question is asked
+     * by one caller (`_compiledAbToHostBuffer`) on the host-construct-argument
+     * path, while `decoderFor` is on the `__extern_get` hot path where a second
+     * Wasm probe per miss is not free. Same miss-path discipline: `local` is
+     * always tried first, so the single-module lane never reaches this.
+     */
+    bufferDecoderFor(obj: unknown, local: Record<string, Function> | undefined): Record<string, Function> | undefined {
+      if (!enabled || !canBeWeakKey(obj)) return undefined;
+      const cached = bufferOwners.get(obj as object);
+      if (cached !== undefined && (cached === NONE || modules.has(cached))) {
+        return cached === local || cached === NONE ? undefined : cached;
+      }
+      if (local !== undefined && decodesBuffer(local, obj as object)) {
+        bufferOwners.set(obj as object, local);
+        return undefined;
+      }
+      for (const peer of modules) {
+        if (peer === local) continue;
+        if (decodesBuffer(peer, obj as object)) {
+          bufferOwners.set(obj as object, peer);
+          return peer;
+        }
+      }
+      if (cached !== undefined) return cached === local ? undefined : cached;
+      bufferOwners.set(obj as object, NONE);
       return undefined;
     },
 
