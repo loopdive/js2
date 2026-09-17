@@ -395,11 +395,43 @@ list on the change. Nothing before the runner's `=== counts ===` line is used.
 
 | list | base | branch | delta |
 | --- | --- | --- | --- |
-| the 33 ES2015 detached rows | 0 pass / 32 fail / 1 CE | **9 pass** / 23 fail / 1 CE | **+9, 0 lost** |
+| the 33 ES2015 detached rows (`--isolate`) | 0 pass / 32 fail / 1 CE | **9 pass** / 23 fail / 1 CE | **+9, 0 lost** |
+| 534-row control area (in-process) | 294 pass / 237 fail / 3 CE | **316 pass** / 215 fail / 3 CE | **+22, 0 lost** |
 
-Flipped to pass, all `built-ins/TypedArray/prototype/<m>/detached-buffer.js`:
-`entries`, `every`, `find`, `findIndex`, `forEach`, `keys`, `some`, `sort`,
-`values`.
+Flipped to pass on the 33-row list, all
+`built-ins/TypedArray/prototype/<m>/detached-buffer.js`: `entries`, `every`,
+`find`, `findIndex`, `forEach`, `keys`, `some`, `sort`, `values`.
+
+The 534-row control is the union of three sets, scored per test (not per
+count), with the per-subset split:
+
+| subset | n | base pass | branch pass | delta |
+| --- | --- | --- | --- | --- |
+| A — ES2015 non-pass in `built-ins/{TypedArray,TypedArrayConstructors,DataView,ArrayBuffer}` (the plan's 162) | 162 | 0 | 9 | +9 |
+| B — passing NEIGHBOURS, deterministic sample of `TypedArray/prototype/**` + `DataView/**` passes | 120 | 120 | 120 | **0 lost** |
+| C — every row whose path or error mentions `detach`, ALL editions | 304 | 194 | 216 | +22 |
+
+**Zero rows lost, and zero rows changed in any other direction** (no
+non-pass → different non-pass). Every one of the 22 gains is a
+`<method>/detached-buffer.js` row on a method in `TA_DYN_VALIDATE_METHOD_NAMES`
+— set C picks up 13 the ES2015 list does not: the `BigInt/` twins of the nine
+above, plus `findLast` and `findLastIndex` and their BigInt twins.
+
+Method note, stated because it changes how much the control number is worth:
+the 33-row list was run with `--isolate` (one child process per row, no realm
+contamination); the 534-row control was run **in-process** for throughput, so
+rows can contaminate each other. That is sound for a DIFF — the same list in
+the same order on both trees — and the list contains none of the known
+realm-poisoning families (no `dstr` / `array-prototype` rows). It is not a
+substitute for an isolated run if you want the absolute counts.
+
+Both trees are detached worktrees with the SAME `.test262-cache`,
+`node_modules` and `test262` symlinked in: base at the merge-base
+`68bcd9eb4d`, branch at `6d45d1f23c` (= merge-base + this change). The branch
+tree is deliberately PRE-merge: `origin/main` advanced 11 commits mid-session
+and those commits touch `tests/test262-oracle-version.ts` and the parity
+scripts, i.e. the runner's own judging, so measuring a merged branch against an
+unmerged base would have mixed a runner change into the compiler delta.
 
 Still failing, and why (each is a different defect, not this one):
 `copyWithin` / `fill/coerced-*` detach *during argument coercion*, so an
@@ -418,13 +450,31 @@ a TypeError on base — unchanged by this change); `ArrayIteratorPrototype/next`
 - "for a view constructed from a length the getter returns the same object
   twice" — **NOT delivered**, scoped out by name above with the probe that shows
   it. It is the static length-ctor path only, and it moves no rows.
-- 33 detached rows, both trees, **zero lost** — met.
+- 33 detached rows, both trees, **zero lost** — met (+9).
+- Control area re-run on both trees — met (534 rows, +22, zero lost).
 - `result.imports` stays `[]` — asserted in the pin test on every standalone
   compile.
-- Host/gc lane does not move — proven by sha256 on probe modules compiled both
-  ways on both trees, plus a gc-lane assertion in the pin test.
+- Host/gc lane does not move — sha256 of the gc-lane binary is IDENTICAL on
+  both trees for four probe modules:
 
-Pin test: `tests/issue-1645-detached-view-validate.test.ts`.
+  | module | gc sha256 (first 16 bytes, both trees) | standalone |
+  | --- | --- | --- |
+  | detach program (`.tmp/pin.ts`) | `a2c8e2b75e5fb9c1…` | changes (guard fires) |
+  | `.buffer` identity (`.tmp/rep3.ts`) | `97ee461b2add7c96…` | `40f72ed4671c3bd7…` **identical** — no dyn view, byte-inert |
+  | ordinary TA/array program (`.tmp/misc1.ts`) | `9aeffb0f1631a606…` | changes (dyn view + validating names present) |
+  | `.tmp/p1645.ts` | `18eb02c0a88cfcf3…` | compile-crashes identically on both (the `reverse` bug) |
+
+  The two standalone modules whose bytes DO move are the honest cost: a
+  standalone module that registers a `$__ta_dyn_view` and calls a validating
+  method name gets the prologue even if it never detaches. `misc1.ts`'s four
+  probes return the same values on both trees (`115 / 18 / 29 / 1`), so the
+  added bytes are inert at runtime.
+
+Pin test: `tests/issue-1645-detached-view-validate.test.ts` — 5 cases. Verified
+it FAILS on the base tree (the §23.2.4.4 case; the other four pass on both,
+which is the point: they pin behaviour that was already correct).
+`npm run -s test:equivalence:gate`: 1720 passing, 22 failing = the baseline's 22
+known-failures, "No new equivalence regressions".
 
 ### Follow-ups — file each as its own issue, NOT under this id
 
