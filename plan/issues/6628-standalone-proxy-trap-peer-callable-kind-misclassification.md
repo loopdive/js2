@@ -188,8 +188,91 @@ mechanism. Filed as the next slice's starting point below.
   trap-invoke drivers as dead code. Expected, benign, no behavior change.
 - **Equivalence gate**: `22 failing, 1720 passing, 22 known-failures` —
   unchanged from the pre-fix baseline.
-- **Must-not-move groups A/B/C/D** (S39b's 2,004-row definitions): NOT run in
-  this slice — time-budget cutoff. Flagged as an open verification gap for
-  whoever picks up the cross-module trap-invocation mechanism next; the
-  four-family sample and the 150-test regression suite are the strongest
-  signal collected so far that this fix is contained.
+## S41b: must-not-move battery completed (2026-09-17)
+
+Branch `issue-5383-standalone-temporal-s41b`, based on S41's `d9d43e634d`
+(measurement + docs only, no `src/` changes). Closes the "NOT run this slice"
+gap immediately above and adds a new group E covering Proxy/Reflect directly,
+since #6628 touches `object-runtime-proxy.ts`'s Proxy dispatch.
+
+Base = file-copy revert of `src/codegen/object-runtime-proxy.ts` to
+`ef08f7a8f0` (S40b's tip, pre-#6628) on the same tree; fix = the file as
+merged by S41 (`680f8190fd`). All runs `--target standalone`.
+
+### Groups A–D (S39b/S40b's 2,004-row definitions), unlinked
+
+| Group | Files | Base pass/fail/CE | Fix pass/fail/CE | Per-file diff |
+| ----- | ----: | ------------------ | ------------------ | -------------- |
+| A (Object/keys, expr/object, Reflect/get+has) | 1,250 | 1125 / 89 / 36 | 1125 / 89 / 36 | 0 lines |
+| B (Object/entries+values+getOwnPropertyNames, for-in) | 205 | 179 / 26 / 0 | 179 / 26 / 0 | 0 lines |
+| C (Object/Reflect.getPrototypeOf, Function/prototype×100, class subclass×100, class expr×100) | 249 | 196 / 53 / 0 | 196 / 53 / 0 | 0 lines |
+| D (TypedArray/TypedArrayConstructors/DataView, 100/subfamily) | 300 | 219 / 58 / 23 | 219 / 58 / 23 | 0 lines |
+
+All four groups: **0 pass→fail, 0 fail→pass** — exact per-file match (`diff` of
+sorted `file\tstatus` TSVs on both base and fix returns 0 lines for every
+group). The must-not-move bucket predicted by S40b/S41 reproduces exactly
+(1125/179/196/219 pass counts, matching the task brief's expected floor).
+
+### PlainDate re-confirmation (120 files, fresh `JS2WASM_TEMPORAL_CACHE` per
+state, `cacheHit=false` at prewarm, `cacheHit=true` on the immediately
+following in-process reuse of that same fresh build)
+
+Base 112/120, fix 112/120 — 0 per-file diff. Matches S41's four-family
+433/480 aggregate (this slice re-ran only PlainDate as the cheap
+reconfirmation the brief asked for; Duration/PlainDateTime/ZonedDateTime were
+NOT re-run).
+
+### Group E (new this slice): `test/built-ins/Proxy` (first 200) +
+`test/built-ins/Reflect` (first 100), standalone, unlinked AND linked
+
+**Unlinked** (ordinary `runTest262File`, no forced Temporal link): base
+235/58/7 (pass/fail/CE), fix 235/58/7 — 0 diff, 300/300 files identical.
+
+**Linked**: no existing harness knob forces a Temporal link onto a
+Proxy/Reflect file that doesn't declare the `Temporal` feature (no `src/`
+change permitted this slice to add one). Built a docs-only `.tmp/s41b/`
+script instead: for each file, copy it to a shadow path with a
+`features: [Temporal]` line inserted as the FIRST line inside its
+`/*--- ... ---*/` block (`parseMeta`'s regex takes the first match, so this
+reliably flips `test262NeedsTemporalGlobal` to true without touching
+`test262/` or any shared file) and run the shadow copy through the SAME
+production `runTest262File` → `compileWithTemporalGlobal` path every
+Temporal-tagged corpus row already takes. This puts the file through a real
+linked provider (content irrelevant — matches the S40/S41 9-line repro's
+"consumer, linked to any provider, not even called").
+
+| State | Pass | Fail | CE | Total |
+| ----- | ---: | ---: | -: | ----: |
+| base  | 220  | 72   | 8  | 300   |
+| fix   | 228  | 64   | 8  | 300   |
+
+**0 pass→fail. 8 fail→pass**, all in the `apply`/`has`/`get`/
+`getOwnPropertyDescriptor`/`getPrototypeOf`/`isExtensible`/`deleteProperty`
+`call-parameters.js`/`call-in.js`/`call-with.js` family — tests that assert
+the trap is invoked with the correct `this`/context, i.e. exactly the
+ENGINE-TRIGGERED trap dispatch sites `fillProxyDispatch` routes through
+`__call_fn_method_<N>` directly under this fix. Verified two of the eight by
+hand (`Proxy/apply/call-parameters.js`, `Proxy/has/call-in.js`): both throw
+`Test262Error: trap context is not the handler object` under base-linked and
+pass under fix-linked. The remaining ~64 linked failures (both states) are
+tests that invoke the trap MANUALLY via `Function.prototype.apply`/`.call()`
+in the test's own harness code — those calls go through the general,
+unfixed `__apply_closure` peer-callable-kind guard (#6420), not
+`fillProxyDispatch`, so they fail identically on base and fix, exactly as
+#6628's write-up predicts for the "does NOT close the bucket" direction.
+
+### PlainDate/equivalence gate cross-check
+
+`npm run -s test:equivalence:gate`: `22 failing, 1720 passing, 22
+known-failures in baseline` — unchanged, run at fix state after all group
+runs completed.
+
+### Verdict on Criterion 4 for this slice
+
+Complete. Every group S41 flagged as "NOT run" (A/B/C/D) now has a measured,
+0-pass→fail, exact per-file match. Group E (new, mandatory for this slice
+because the fix is inside Proxy dispatch) also shows 0 pass→fail in both its
+unlinked and linked variants, with the 8 linked-mode improvements fully
+explained by the fix's own mechanism. No regression found anywhere in this
+battery; #6628's fix is now measured-contained across group A–E plus the
+family sample and the equivalence gate.

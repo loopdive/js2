@@ -9776,6 +9776,25 @@ shift bytes even where Proxy is never constructed; benign. Equivalence gate
 **22/1720/22**, unchanged. **Must-not-move groups A/B/C/D were NOT run this
 slice** (time-budget cutoff) — flagged as an open verification gap.
 
+**S41b (2026-09-17, `issue-5383-standalone-temporal-s41b`, branched from
+S41's `d9d43e634d`) closed that gap**: groups A (1250 files)/B (205)/C
+(249)/D (300) all reproduce exactly (1125/179/196/219 pass, per the task's
+expected floor) with **0 pass→fail and 0 fail→pass**, exact per-file TSV
+match base vs fix. Added a new group E (`Proxy` first 200 + `Reflect` first
+100, standalone) since #6628 is inside Proxy dispatch: unlinked variant 0
+diff (235/300 both states); a docs-only forced-link variant (injects
+`features: [Temporal]` into a shadow copy of each file so the SAME
+production `compileWithTemporalGlobal` path every Temporal test already
+takes also runs these) shows 220→228/300 (0 pass→fail, 8 fail→pass), all 8
+in the engine-triggered trap-dispatch family (`apply`/`has`/`get`/etc.
+`call-parameters.js`) that #6628's `fillProxyDispatch` fix targets — the
+remaining ~64 linked failures (identical on both trees) are manual
+`.apply()`/`.call()` trap invocations in test harness code, which go
+through the still-unfixed general `__apply_closure` peer guard, exactly as
+predicted below. PlainDate re-confirmed 112/112 both states, 0 diff.
+Equivalence gate re-run 22/1720/22, unchanged. Full tables in
+[#6628](6628-standalone-proxy-trap-peer-callable-kind-misclassification.md).
+
 The bucket remains open. Next slice's starting point: fix the FORWARD
 direction correctly (provider invoking a genuinely foreign/consumer-owned
 trap must still route to `__apply_closure`'s peer bridge) while keeping the
