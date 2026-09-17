@@ -9138,13 +9138,36 @@ the fix is real and reached (verified directly above, not inferred from the
 count) but does not move THIS sample's headline. No `compile_error`, no
 `timeout`, no `__temporal_*` leak in either 160-row run.
 
-**NOT completed this session, and stated as such rather than silently
-skipped**: the 45-file `subclassing-ignored.js` corpus-wide count (the
-headline metric this whole stack is chasing), the must-not-move samples, the
-corpus byte A/B, and the remaining 80 files per family in the four-family
-sample. `.tmp/s35/subclass-measure.mts` is ready for the next slice to run
-first — needs only a fresh prewarmed cache per label
-(`.tmp/s35/prewarm-standalone.mts`).
+**Update (2026-09-17, same slice resumed after a container restart)** — every
+remaining battery listed above as "not completed" is now done, on this same
+tree, and the earlier 40-file-per-family draft is corrected:
+
+- **Four-family sample, FULL 120 files each**: 430/480 both labels, 0 flips.
+- **45-file `subclassing-ignored.js` corpus-wide** (the headline metric):
+  still **0/45 both labels** — NOT moved by this slice. Every row's residual
+  signature is `Test262Error: […]Expected SameValue(«null», «null») to be
+  true` (an earlier draft of this note said `«false», «true»` — that text
+  never appeared in either run; corrected). Traced with three purpose-built
+  probes to `checkSubclassConstructorUndefined` (`class MySubclass extends
+  Temporal.Duration`, then a method call): `Object.getPrototypeOf(result)` is
+  a genuine real `null` — a THIRD, previously undocumented mechanism, distinct
+  from Mechanism A (`typeof`) and Mechanism B (`isPrototypeOf`) above and from
+  the `instanceof` residual in §3: the prototype link of a Temporal method's
+  RETURN VALUE is lost when the receiver is a user-defined subclass instance.
+  (The OTHER "null" in the pair is a stringification red herring —
+  `String(construct.prototype)` itself prints the literal text `"null"` even
+  though the object is real and non-null; `assert.js`'s `formatSimpleValue`
+  falls back to `String()` for any non-primitive.) Full trace, tables and the
+  next-slice pointer are in
+  [#6622](6622-standalone-class-instance-callable-kind-and-isprototypeof.md).
+- **Must-not-move, 1,634 rows across 3 groups, file-copy A/B revert**: 0
+  pass→fail, 0 fail→pass on any group.
+- **Corpus byte A/B**: 0/42 `gc`-lane artifacts moved; 14/42 `standalone`-lane
+  artifacts moved (all still compile `ok` — the two touched files are shared
+  standalone-runtime natives, so any module reaching Reflect/dynamic-class/
+  prototype machinery is expected to move).
+- **Equivalence gate, run to completion**: 22 failing / 1720 passing / 22
+  known-failures — unchanged from every prior S-slice in this stack.
 
 #### 4. Traps, carried forward and added to
 
