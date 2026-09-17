@@ -4281,3 +4281,180 @@ and `.tmp/s11/{c1..c5,ab-base,ab-new,rerun-ce}.out` in this worktree
 `.tmp/s11/family.mts` (a copy of S10's, label `s11`) and compared against
 `.tmp/s11fam/{pd,du,zdt}-s10.tsv` (copies of the S10 worktree's TSVs) with
 `.tmp/s11/table.mjs`.
+
+## S12 findings (2026-09-13) — the brief's attribution did not reproduce; the fixed cause is `new` with a spread, and the SCORE does not move
+
+**#6460 is the slice.** Two things are worth more than the delta.
+
+### 1. The hand-off attribution was wrong AGAIN, in the other direction this time
+
+S11 handed S12 "property-bag FIELD EXTRACTION inside the provider
+(`PrepareCalendarFields` / `ToIntegerWithTruncation`)". Measured module-locally
+— one standalone module, no provider, no link — **every constituent of that
+path answers correctly**: `Object.create(null)` computed writes read back
+through a dot; `bag[k]` with `k` taken from a `concat`ed and then `sort`ed key
+array; `["year","month"].concat(["day"],[]).sort()` → `3:day,month,year`; and
+the whole `tn` shape with untyped parameters → `y=1976 m=11 mc=D d=18`.
+
+Where the previous three slices were handed a LINK attribution and found
+module-local codegen, this one was handed a MODULE-LOCAL attribution and the
+residual is cross-module. The lesson survives inverted: **the census, in one
+module, is what decides — not the direction of the previous correction.**
+
+### 2. The dominant residual, named and reduced but deliberately not started
+
+Every `X.from(…)` hands back an object whose accessor and method reads answer
+`null`: `PlainDate.from("1976-11-18").day` → `null`, `String(…)` → `null`, and
+likewise `PlainDateTime.from`, `PlainTime.from`, `Instant.from`,
+`ZonedDateTime.from`. The control `new Temporal.PlainDate(1976,11,18).day`
+answers `18`. The polyfill builds `from`'s results with
+`Object.create(intrinsic.prototype)` + WeakMap slots (`pn`, bundle L1946), not
+with `new` — and the single-module control (`Object.create(C.prototype)` where
+`C` has a getter) answers `18` correctly, so this is boundary identity.
+Attributed **~40 of the 360 rows** (PlainDate `canonicalizeCalendarEra` 21 +
+`year is required` 7, ZonedDateTime `timeZone` 7 + `reading 'equals'` 6).
+
+Cheapest handle for the next slice:
+`Object.getOwnPropertyNames(Temporal.PlainDate.prototype)` **TRAPS**
+(`illegal cast`). That trap is upstream of everything else in the list.
+
+### What was fixed
+
+A spread whose source is a `const` array binding has no STATIC arity, and two
+lowerings were asking the same too-narrow question (`flattenCallArgs`, which only
+recognises an inline array literal). The construct drivers are minted one per
+call-site arity, so the site declined and `new Temporal.Duration(...args)`
+evaluated to **`null`**; and the ordinary-function `new` path put the whole
+ARRAY in the first parameter. Fixed in `src/codegen/static-spread-arity.ts`
+(standalone/WASI-gated), with the refusal rules and the byte A/B in #6460.
+
+### The three-family sample, LINKED, re-measured
+
+120 rows each, `--target standalone`, provider linked, families run
+**sequentially**, FRESH `JS2WASM_TEMPORAL_CACHE` per label
+(`.tmp/s12famcache-{base,new}`), quickjs eval provider + adapter present as real
+files. Every run log carries `Temporal provider (standalone)
+js2wasm:npm:@js-temporal/polyfill:2c0506a30fe8f23d (3314480 B) … cacheHit=true`,
+and `__temporal_*` leaks are **0** in all three TSVs.
+
+**The base column is this worktree's own base run** (file-copy revert of the
+three touched files), not S11's numbers: S11's Duration figure was 43 and this
+tree's base sample scored 42, a one-row compile-budget artifact that the solo
+re-runs below resolve to 43. Comparing a new run against another worktree's
+number would have manufactured a +1.
+
+| family | rows | base pass | **S12 pass** | fail | compile_error | pass→fail |
+| --- | --- | --- | --- | --- | --- | --- |
+| `built-ins/Temporal/PlainDate/**` | 120 | 62 | **62** | 56 | 2 | **0** |
+| `built-ins/Temporal/Duration/**` | 120 | 43 | **43** | 72 | 5 | **0** |
+| `built-ins/Temporal/ZonedDateTime/prototype/**` | 120 | 65 | **65** | 52 | 3 | **0** |
+| **total** | **360** | **170** | **170** | **180** | **10** | **0** |
+
+**The score does not move, and that is the finding.** What moves is the bucket:
+Duration's `Cannot access property on null or undefined at 164:22` goes
+**9 → 4**, and five rows advance to `explicit: years result: Expected
+SameValue(«undefined», «1»)` — i.e. the constructor now returns a real Duration
+and the row dies one step later, on the residual above. Of the four rows left in
+the bucket, two (`microseconds-undefined.js`, `nanoseconds-undefined.js`) spread
+8 elements plus a trailing `undefined` = arity 9, over
+`MAX_NATIVE_CONSTRUCT_ARITY` (8); the other two use no spread at all.
+
+**Every CE↔fail/pass flip in the sample was a compile-budget artifact, and this
+was established by running the SAME six rows solo at 60 s on BOTH trees**, not
+by re-running the branch alone and reasoning about the base:
+
+| row | base solo | S12 solo |
+| --- | --- | --- |
+| `PlainDate/from/argument-plaindate.js` | fail 18.1 s | fail 18.2 s |
+| `Duration/call-builtin.js` | fail 13.7 s | fail 15.3 s |
+| `Duration/compare/order-of-operations.js` | fail 16.2 s | fail 15.7 s |
+| `Duration/from/argument-string-fractional-precision.js` | **pass 29.4 s** | **pass 30.2 s** |
+| `Duration/from/argument-string-fractional-units-rounding-mode.js` | fail 14.0 s | fail 13.7 s |
+| `ZonedDateTime/prototype/add/constrain-when-ambiguous-result.js` | fail 15.4 s | fail 15.4 s |
+
+All six agree across trees. Had only the branch been re-run, the
+`fractional-precision` row (29 s against the sample's 15 s budget) would have
+been reported as a +1 in Duration; it is not one.
+
+### Top error buckets, LINKED, S12
+
+PlainDate (56 fail): 20 `calendar must be string in canonicalizeCalendarEra` ·
+2 `illegal cast in __class_construct_dispatch()` · 2 `year is required` ·
+2 `prototype Expected SameValue(«null», «[object Function]»)`.
+
+Duration (72 fail): 5 `dereferencing a null pointer in sn()` ·
+5 `explicit: years result: Expected SameValue(«undefined», «N»)` (NEW — the five
+rows this slice advanced) · 5 `years result: Expected SameValue(«undefined»,
+«N»)` · 4 `Cannot access property on null or undefined at 164:22` (was 9).
+
+ZonedDateTime/prototype (52 fail): 7 `required property 'timeZone' missing` ·
+6 `Cannot read properties of undefined (reading a class field)` · 6 `reading
+'equals'` · 4 `dereferencing a null pointer in sn()` · 3 `Expected a RangeError
+but got a undefined`.
+
+### Two standalone samples that must NOT move, and did not
+
+`--target standalone`, base by file-copy revert on the same tree. Both tied to
+what this slice touched (the `new` lowering and the dynamic object surface its
+drivers use):
+
+| sample | base | S12 | pass→fail | flips |
+| --- | --- | --- | --- | --- |
+| `language/expressions/new/**` (59 rows — the whole directory) | 56 pass / 3 fail | 56 / 3 | **0** | **0** |
+| `built-ins/Object/**` (first 120) | 106 pass / 14 fail | 106 / 14 | **0** | **0** |
+
+### Order preservation
+
+Two corpora, base captured by file copy at the FIRST edit
+(`.tmp/base-{new-super,fnctor-constructor-identity}.ts`):
+
+- 40 modules (`website/playground/examples/**` + `tests/fixtures/**`) ×
+  {gc, standalone}: **80/80 sha256-identical**. That corpus contains no
+  spread-into-`new`, so it is a no-collateral control, not a positive one.
+- a targeted 11-shape corpus supplies the positive control: **all 11 `gc`
+  artifacts identical**, and on standalone exactly three move — the three
+  spread-into-function-constructor shapes this slice repairs. Every refusal
+  control (mutated source, `let` source, non-literal elements), the class-`new`
+  shape, the dynamic-call shape and the plain controls are byte-identical.
+
+### Traps, carried forward and added to
+
+- All prior traps still bite. This worktree arrived with `test262` **absent**
+  and no `node_modules`.
+- **NEW, and it cost a full round of family measurements: `JS2WASM_EVAL_ENGINE=quickjs`
+  with no built artifact fails EVERY row**, with an error that names the missing
+  `libquickjs.wasm` — so a first base run scored PlainDate **0 pass / 119 fail**
+  and looked like a catastrophic regression. Copying the artifact from a sibling
+  worktree's `.test262-cache/` restored the expected 62. Check
+  `ls -la .test262-cache/quickjs-artifact-*/libquickjs.wasm` before believing
+  any family number, base or branch.
+- **NEW: `git push` exit status is not the hook's.** The first push of this
+  branch ran the pre-push `typecheck` before `pnpm install` had been run in the
+  fresh worktree, printed `Fix typecheck errors before pushing` and pushed
+  nothing — while the backgrounded wrapper still reported `[exited with code 0]`.
+  The branch looked pushed for two hours. Verify with
+  `git ls-remote origin <branch>`, never with the exit code of a backgrounded
+  push.
+- **The S11 "new namespace hash" tell does not exist.** `temporalProviderCacheKey`
+  fingerprints the polyfill source and the compile options, so after a codegen
+  change the namespace hash and the artifact BYTE COUNT are both unchanged. The
+  only usable tell is `cacheHit=false` against a FRESH cache directory, which is
+  what this slice used.
+
+### Artifacts
+
+`.tmp/s12fam/{pd,du,zdt,mnm-new,mnm-obj}-{base,new}.tsv` (+ `.log`),
+`.tmp/s12/{census1..6,byteab-{base,new},byteab2-{base,new}}.*` and the probe sets
+`.tmp/s12/p-*.mjs` in this worktree
+(`/home/user/js2/.claude/worktrees/agent-a07c5e7da05114ff6`), produced by
+`.tmp/s12/family.mts` (a copy of S11's, label `s12`) and compared with
+`.tmp/s12/table.mjs`.
+
+### Acceptance criterion 4 — S12 update
+
+Unchanged in substance: MET-for-the-sample at 170/360, measured on the same
+three families, with **0 pass→fail** and both must-not-move samples flat. The
+S12 run adds one qualification that the earlier updates could not make — the
+base column was measured **on this tree**, by file-copy revert, so the 170 is a
+self-consistent before/after and not a comparison across worktrees. No
+full-corpus number is claimed; a corpus run remains the tech lead's to schedule.
