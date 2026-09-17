@@ -1452,7 +1452,27 @@ async function doCompile(
     // This leaves the incremental Language Service (compileMulti builds its own
     // program), which is part of the per-row price #5248 measured; the
     // alternative — prepending the polyfill to each body — costs ~32 s a row.
-    return compilerBundle.compileWithTemporalGlobal(source, temporal, {
+    //
+    // (#6489) HONESTY STAMP. This branch is tested BEFORE the linked branch
+    // below, so inside a linked run a Temporal row is compiled by the honest
+    // path — it is not a linked measurement and must not be counted as linked
+    // agreement. Report it as a fallback with its own reason so the parity
+    // report attributes it correctly. (A real linked+Temporal co-link is a
+    // later slice; until then this is the accurate label, not a workaround.)
+    //
+    // In a linked run `source` is the BODY-ONLY unit (the provider carries the
+    // harness prefix), so the honest compile must reconstruct the honest
+    // assembly exactly as the linked fallback below does. Measured on the
+    // second full-corpus run (35144322208): without this, every Temporal row
+    // in the linked lane scored `assert is not defined` / `TemporalHelpers is
+    // not defined` (2,000 + 723 rows) — the harness was never in the unit.
+    let temporalSource = source;
+    if (linkedHarness) {
+      linkedHarness.fellBack = true;
+      linkedHarness.fallbackReason = "temporal row: honest compile (compileWithTemporalGlobal)";
+      temporalSource = linkedHarness.harnessPrefix + source;
+    }
+    return compilerBundle.compileWithTemporalGlobal(temporalSource, temporal, {
       allowJs: true,
       fileName: "test.js",
       sourceMap: true,
@@ -1834,6 +1854,7 @@ async function buildInvalidBinaryError(source, sourceMapUrl, result, target) {
 process.on("message", async (msg) => {
   runtimeIntrinsicCanarySnapshot = null;
   currentLinkedFallback = false;
+  currentLinkedFallbackReason = undefined;
   const { id, source, execute, isNegative, isRuntimeNegative, expectedErrorType, originalHarness, asyncTest } = msg;
   // (#3461) Fast native-harness oracle (host lane). When set, `source` is the
   // body-only `bindingShim + body` unit (the harness was NOT concatenated into
@@ -2970,11 +2991,17 @@ function realmDriftRecycleReason(payload) {
  * over-state the linked lane's parity.
  */
 let currentLinkedFallback = false;
+// (#6486) The REASON travels with the row, not just the fork log. The parity
+// report histograms it: a linked lane whose misses are all one link-shape bug
+// is a different finding from one whose misses are spread, and a per-fork
+// stderr line cannot be joined back to the rows it degraded.
+let currentLinkedFallbackReason;
 const linkedFallbackReasonsSeen = new Set();
 
 /** Mark the row, and log each distinct reason ONCE per fork. */
 function noteLinkedFallback(reason) {
   currentLinkedFallback = true;
+  currentLinkedFallbackReason = reason ?? "unknown";
   const key = reason ?? "unknown";
   if (linkedFallbackReasonsSeen.has(key)) return;
   linkedFallbackReasonsSeen.add(key);
@@ -2985,7 +3012,8 @@ function noteLinkedFallback(reason) {
 }
 
 function sendResult(payload, forceRecycleReason) {
-  if (currentLinkedFallback && payload && typeof payload === "object") payload = { ...payload, linkedFallback: true };
+  if (currentLinkedFallback && payload && typeof payload === "object")
+    payload = { ...payload, linkedFallback: true, linkedFallbackReason: currentLinkedFallbackReason };
   const cleanup = postCompileCleanup();
   const driftReason = realmDriftRecycleReason(payload);
   const recycle = Boolean(forceRecycleReason || driftReason || cleanup.recycle);
