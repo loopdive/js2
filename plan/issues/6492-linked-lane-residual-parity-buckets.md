@@ -756,6 +756,118 @@ Test: `tests/issue-6492-r4-linked-iterator-binding.test.ts` (4 cases — the
 assembler gate in both directions, `bodyLineOffset` exactness, and two linked
 compile-and-run cases). All 4 fail on the pre-fix tree.
 
+## Round 4b (2026-09-17, Opus lane) — the shim must not SHADOW `%Iterator%`
+
+Branch `issue-6492-r4b`, based on `4a5d5c1dfb` (main, which contains round 4 as
+`0deaa0d2bc`). Round 4's first merge-group diff (run 35256162280) reported 138
+improvements and 20 regressions, 19 of them round 4's.
+
+### What round 4 got wrong
+
+The binding stratum was the right diagnosis; a SYNTHETIC binding was the wrong
+mechanism. `function Iterator() {}` shadows the real `%Iterator%` — and before
+the shim existed, `Iterator.concat` / `.from` / `.zip` / `.zipKeyed` and
+`Iterator.prototype.<helper>` resolved through the compiler's builtin machinery
+to that real object *while the bare identifier read `undefined`*. That split is
+the whole story: round 4 fixed every row that needs the BINDING and broke every
+row that needs the STATICS — `built-ins/Iterator/{concat,from,zip,zipKeyed}/{is-function,length,name,proto}.js`,
+`from/callable.js`, `prototype/{chunks,windows}/next-method-returns-non-object.js`.
+
+The two halves genuinely pull against each other, and both directions were
+measured rather than reasoned:
+
+| binding is… | statics | `new (class Sub extends Iterator {}) instanceof Iterator` |
+| --- | --- | --- |
+| synthetic `function Iterator() {}` (round 4) | **lost** | true |
+| the intrinsic (`%IteratorPrototype%.constructor`) | present | **false** — a compiled class instance does not satisfy `instanceof` against a host function |
+| synthetic + intrinsic's statics copied on (round 4b) | present | true |
+
+So the shim keeps the binding and the constructor role, its `.prototype` stays
+`%IteratorPrototype%` (measured: the builtin's `.prototype` IS the
+array-iterator-derived object, so nothing about prototype-method resolution
+changes), and the intrinsic's own function-valued statics are copied onto it.
+The copy ENUMERATES rather than listing the four ES2025 statics by hand,
+because the set is engine-dependent — CI runs Node 25
+(`.github/actions/setup-node-pnpm`, default `"25"`), this container Node 22.22 —
+and a hand list silently omits whatever the newer engine added.
+`length`/`name`/`prototype` are excluded so the shim keeps `Iterator.name ===
+"Iterator"`.
+
+### Second defect: the gate counted mentions in COMMENTS
+
+`needsIteratorBinding`'s comment claimed a false positive "merely adds a local
+shim". True of a shim that only declares a name; false once it reads
+`%IteratorPrototype%.constructor`. Measured: injecting into
+`Iterator/prototype/{drop,take}/underlying-iterator-advanced-in-parallel.js` —
+whose ONLY `Iterator` is `%Iterator.prototype%.drop` in the frontmatter `info:`
+block — flips both rows pass → fail. The gate now strips block and line
+comments before both halves of its test. A body that never names `Iterator` in
+code cannot reference the binding, so declining there is free.
+
+### Before / after — real runner, `built-ins/Iterator/`, 654 rows
+
+Artifacts on this branch: `benchmarks/results/test262-linked-{p0,g2}-results-*.jsonl`
+(p0 = the pre-round-4 assembler, i.e. the promoted linked baseline's behaviour;
+g2 = round 4b) and `test262-{honest}-{hm,h1}-results-*.jsonl` (hm = main today,
+h1 = round 4b). Fresh harness cache per run.
+
+| lane | pre-round-4 (p0) | round 4 (main) | round 4b (g2 / h1) |
+| --- | ---: | ---: | ---: |
+| linked passes | 240 | 341 | **352** |
+| honest passes | — | 265 (hm) | **280** |
+
+- **Linked vs the promoted baseline: +114, −2.** The two are
+  `prototype/{chunks,windows}/next-method-returns-non-object.js`, and they are
+  **local artifacts, not verifiable here**: this container's Node has no
+  `Iterator.prototype.chunks` at all, and the baseline's "pass" is accidental —
+  probed, pre-shim `new Sub().chunks` is `undefined` and `new Sub().chunks(1)`
+  returns **null** rather than throwing, so the TypeError the test asserts comes
+  from the NEXT line (`iterator.next()` on null). On CI's Node 25 the shim's
+  `.prototype` is the same `%IteratorPrototype%` the pre-shim read resolved, and
+  `Iterator.from` — which these rows also need — is restored, so they are
+  expected to pass for the real reason. **This is the one claim in this section
+  that is a prediction rather than a measurement.**
+- **Linked vs round 4: +17, −6.** The 17 are the regressed rows (all 16
+  `{concat,from,zip,zipKeyed}/{is-function,length,name,proto}` plus
+  `from/callable`). Of the 6: four are
+  `{concat,from,zip,zipKeyed}/non-constructible.js` and two are
+  `prototype/includes/{iterator-already-exhausted,result-is-boolean}.js` — **all
+  six fail in the promoted baseline too**, so none is a regression against it.
+  Round 4 passed the four `non-constructible` rows only because the property was
+  MISSING (`new undefined()` throws); with the real function present, js2's `new`
+  does not honour a host function's non-constructibility, so they fail honestly.
+- **Honest lane: +17, −2.** The two are `from/non-constructible.js` and
+  `zipKeyed/non-constructible.js` — the same accidental-pass mechanism, in the
+  lane where they had been passing. Stated plainly because the brief asked for
+  no honest losses: this trade (+17 real rows, −2 rows that passed because a
+  property was absent) is inherent to restoring the statics, and cannot be
+  avoided without breaking the `name`/`length`/`proto` rows it fixes.
+- **No collateral outside the directory**: the same 901-row sample
+  (`staging/sm/Iterator`, `language/statements/for-of/`,
+  `class/subclass/`, `built-ins/AsyncFromSyncIteratorPrototype/`), linked lane,
+  main's binding vs round 4b: **703 → 703, 0 rows changed either way.** (One row
+  was cut from the second run's tail by a harness timeout and was re-scored on
+  its own: `AsyncFromSyncIteratorPrototype/throw/throw-null.js` fails in both.)
+
+Tests: `tests/issue-6492-r4b-iterator-binding-statics.test.ts` (3 cases — the
+enumerate-and-exclude shape, the comment-stripping gate in both directions, and
+one linked compile-and-run asserting the statics AND `instanceof` together). All
+3 fail on main's binding. `tests/issue-6492-r4-…`, `issue-3451-linked-harness-lane`
+and `issue-6463-strict-rerun-elision` still pass unchanged.
+
+### For the next lane (continued)
+
+8. **A shim that shadows an intrinsic inherits responsibility for its whole
+   surface.** Round 4 replaced a name that resolved to a real object with one
+   that resolved to an empty function, and the 19 rows it broke were invisible
+   locally because the member-read path (`Iterator.from`) and the identifier
+   path (`typeof Iterator`) answered DIFFERENTLY — the first from the builtin,
+   the second `undefined`. Probe both shapes before shadowing anything.
+9. **Guard against accidental passes when reading a delta.** Four of the six
+   rows round 4b "loses" were passing because a property was missing. A row that
+   flips because the code under it got MORE correct is not a regression, and the
+   only way to tell is to look at why the baseline passed.
+
 ## Round 5 (2026-09-17, Opus lane) — the long tail
 
 Branch `issue-6492-r5`, based on `c698c755bb` (origin/main) with round 4's
