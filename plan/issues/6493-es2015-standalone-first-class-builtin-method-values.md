@@ -308,3 +308,106 @@ sample signatures, and no per-row standalone JSONL exists to count against.
    file so it fails loudly when fixed.
 4. **§20.1.3.6 step 14 `@@toStringTag`** is absent from the classifier — see the
    25-row reason-change group above.
+
+## S4 — close the last regression (blocking; plan written 2026-09-17)
+
+**This is not a judgment call — it is a hard gate.** The one lost row,
+`built-ins/Error/prototype/stack/setter-proxy-trap-rejects.js`, is classified
+**ES2015** (`website/public/benchmarks/results/test262-file-editions.json` maps
+it to edition index 3 = ES2015), ES2015 is `ratcheted: true` in
+`scripts/test262-edition-ratchet-baseline.json`, and the row reads
+`"status":"pass"` in `.test262-cache/test262-standalone-current.jsonl` (the very
+baseline CI's `--compare` arm uses). `scripts/test262-edition-ratchet.ts`
+Check 2 fails on **any single** pass→not-pass inside a ratcheted edition and has
+**no allowance, waiver or `regressions-allow` mechanism** — grep confirms. It
+runs inside the REQUIRED `merge shard reports` check, so net +2 with this row
+lost is ejected from the merge queue, whatever the headline says.
+
+### The fix: give the stack setter the success bit it is missing, for the one receiver where it exists
+
+Round 2's report said the blocker is that `__defineProperty_value` "has no
+result value at all", so the setter has nothing to test, and that giving it one
+changes a shared signature across four call-site families plus the host runtime.
+That is correct **for the ordinary path** and it stays out of scope. It is
+**not** the only channel. For a **Proxy** receiver — which is exactly what this
+test uses — the trap's own booleanish result is already carried by natives that
+exist today:
+
+| native | signature | what it returns |
+| --- | --- | --- |
+| `__proxy_define_dispatch` | `(proxy, key, desc) -> externref` | §10.5.6 the defineProperty trap's result, as-is |
+| `__proxy_set_dispatch` | `(proxy, key, value) -> externref` | §10.5.9 the set trap's result, as-is |
+| `__create_descriptor` | `(value: externref, flags: i32) -> externref` | a data descriptor object from a value + the same flag encoding `__defineProperty_value` decodes |
+| `__is_truthy` | booleanish externref → i32 | ToBoolean, the coercion every proxy front guard already uses |
+
+All four are **standalone natives**, not host imports (`registerNative` in
+`src/codegen/object-runtime-proxy.ts` / `object-runtime-descriptors.ts`), so
+this adds nothing to `result.imports`. That distinction is load-bearing: it is
+why `__extern_is_object` was rejected in round 2.
+
+### Change
+
+In `src/codegen/error-stack-accessor.ts`, `emitErrorStackSetterBody`, at the
+steps 3–4 `if/else` (the `create` / `assign` arms): wrap each arm in a
+**Proxy-receiver branch**, keeping the existing arm as the `else`.
+
+- Guard: `ref.test` the `$Proxy` struct type on `any.convert_extern(local 1)` —
+  the same front guard `object-runtime-proxy.ts` patches onto the `__extern_*`
+  helpers. A non-Proxy receiver takes the existing path **byte-for-byte**; this
+  must be provable, not assumed (see acceptance).
+- **create arm, Proxy receiver** (no own `stack`): build the descriptor with
+  `__create_descriptor(value, CREATE_DATA_PROPERTY_FLAGS)` — reuse the constant
+  already in this file, do not re-spell the flags — then
+  `__proxy_define_dispatch(recv, "stack", desc)`, coerce with `__is_truthy`,
+  and on **falsy** throw a TypeError via the file's existing
+  `buildThrowJsErrorInstrs`. That is §CreateDataPropertyOrThrow step 4.
+- **assign arm, Proxy receiver** (own `stack` present):
+  `__proxy_set_dispatch(recv, "stack", value)`, `__is_truthy`, falsy → TypeError.
+  That is §Set step 4 with Throw = true.
+- Every one of the four `funcMap.get` lookups must be `undefined`-guarded the
+  way the existing three are, and the whole S4 arm must **degrade to the current
+  behaviour** when any is missing — this file already returns `null` (no body)
+  rather than emitting a half-wired path, and that contract holds.
+
+### Order-preservation constraints
+
+- A trap that **throws** must still propagate unchanged; only a *falsy return*
+  becomes a TypeError.
+- The trap is invoked **exactly once** per set. Do not read the result back with
+  a `getOwnPropertyDescriptor` probe to infer success — that would add an
+  observable `getOwnPropertyDescriptor` trap call, which round 2 correctly
+  refused to do.
+- Step 1 (the primitive-receiver check) and step 2 (the home-object identity
+  compare) run **before** this, unchanged. A Proxy is an Object and passes
+  step 1; a Proxy wrapping `%Error.prototype%` is a different reference and
+  correctly passes step 2 on to its traps (`setter-proxy-wrapping-prototype.js`
+  already pins this and must stay green).
+
+### Acceptance
+
+1. The 112-row acceptance set: **40 pass on base → 43 on branch, zero lost.**
+   Same two-tree protocol as rounds 1–2 (merge-base worktree, `.test262-cache`
+   symlinked into both), same list file.
+2. `setter-proxy-trap-rejects.js` passes for **both** halves — (a) the
+   `defineProperty` trap and (b) the `set` trap — not just whichever one the
+   first assertion reaches.
+3. The 805-row control set stays identical, line for line.
+4. **Zero host imports**: assert `result.imports` is `[]` on a standalone probe
+   that exercises the new arm.
+5. Non-Proxy receivers emit **byte-identical** wasm: sha256 a standalone probe
+   that uses `Error.prototype.stack`'s setter on a plain object, before and
+   after. A diff here means the ordinary path moved and the claim above is false.
+6. Pin the two halves in
+   `tests/issue-6493-first-class-builtin-method-values.test.ts`, plus the
+   controls that prove the arm does not fire for an ordinary receiver.
+7. All gates exit 0, run bare, including the compiler-boundaries inventory
+   (`--mode inventory --base HEAD^1`) if any new module appears.
+
+### Out of scope, still
+
+Residuals 1 (`__apply_closure`'s >8-declared-parameter cap), 3 (`.length`
+through a variable) and 4 (§20.1.3.6 step 14 `@@toStringTag`) stay named and
+unfixed. Giving `__defineProperty_value` a general success channel — the fix for
+an **ordinary** receiver whose define fails (non-extensible target, non-writable
+own property) — also stays out: it is the shared-signature change round 2
+described, and this Proxy arm does not approximate it or block it.
