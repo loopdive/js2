@@ -8034,6 +8034,16 @@ const _ITER_HELPER_NAMES = [
   "some",
   "every",
   "find",
+  // (#6492 round 4c) Iterator Chunking. These are js2's OWN implementations
+  // (no engine ships them — checked on Node 22.22 and Node 25.9), but they
+  // drive the receiver through the same spec iterator record as every helper
+  // above, so a COMPILED receiver needs the same bridge. Without them a
+  // generator's `.chunks(1)` reports "chunks is not a function" even though the
+  // method is installed on the prototype: 31 of the 78 rows under
+  // `Iterator/prototype/{chunks,windows}/` fail on this list alone, not on the
+  // implementation.
+  "chunks",
+  "windows",
 ] as const;
 function _isIteratorHelperFn(f: any): boolean {
   if (typeof f !== "function") return false;

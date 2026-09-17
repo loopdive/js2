@@ -74,15 +74,33 @@ related: [3451, 6486, 6489, 6490, 6491, 6482]
 # no test names. The rest of the comment records the one fact the diff cannot
 # show — that `canonicalUndefinedExternInstrs` is read-only BY DESIGN and its
 # `ref.null.extern` fallback is not a fallback but a different VALUE.
+# 2026-09-17 (round 4c) — `Iterator.prototype.chunks` / `.windows`: +13 lines in
+# `src/runtime/iterator-polyfills.ts` (which crosses the 1500-line god-file
+# threshold) and +160 inside `_installIteratorHelperPolyfills`, plus +10 in
+# `src/runtime.ts` for two names and their comment in `_ITER_HELPER_NAMES`.
+# The two helpers cannot live anywhere else: they are written against four
+# bindings that are LOCAL to `_installIteratorHelperPolyfills` and exist only
+# once the host's `%Iterator%` has been resolved — `Iproto`,
+# `compilerIteratorProto`, `_makeHelperIterator` and `_closeIterator`. Every
+# one of the ten existing helpers (`map`/`filter`/`take`/`drop`/…) is written
+# there for exactly that reason, and hoisting two of the twelve out would put
+# them on the far side of the host/compiled prototype split whose handling is
+# the whole point of this change. The `_ITER_HELPER_NAMES` line is likewise
+# fixed: it is the #3049 list that decides whether a COMPILED receiver gets the
+# iterator-record bridge, and a helper absent from it is unreachable from a
+# generator however it is implemented. Splitting the god-function is #3399's
+# job; this is +2 entries in a 12-entry table.
 loc-budget-allow:
   - src/codegen/closures.ts
   - src/runtime.ts
   - src/codegen/extern-declarations.ts
   - src/codegen/type-coercion.ts
+  - src/runtime/iterator-polyfills.ts
 func-budget-allow:
   - src/codegen/closures.ts::compileArrowAsCallback
   - src/runtime.ts::resolveImport
   - src/codegen/type-coercion.ts::coerceType
+  - src/runtime/iterator-polyfills.ts::_installIteratorHelperPolyfills
 ---
 
 # #6492 — linked lane residual after P3c
@@ -1046,6 +1064,101 @@ differences and must not be chased as such.
 | 25 | descriptor reads | #6482's lane. |
 | ~30 | singles + small families | see the mechanism table above. |
 
+## Round 4c (2026-09-17, Opus lane) — `chunks` / `windows`, and round 4b's wrong prediction
+
+Branch `issue-6492-r4c`, based on `f25fd4bcda` (main, containing round 4b).
+Round 4b landed with exactly 2 regressions in the merge-group diff (run
+35272197717): `Iterator/prototype/{chunks,windows}/next-method-returns-non-object.js`.
+
+### The 4b prediction was wrong, and the reason is worth keeping
+
+Round 4b said those two rows "are expected to pass for the real reason" on CI,
+because CI's Node 25 would supply `Iterator.prototype.chunks`. **It does not.**
+Checked directly with `npx -y node@25` (v25.9.0 — the version
+`.github/actions/setup-node-pnpm` pins by default): `Iterator.prototype.chunks`
+and `.windows` are `undefined`, and `Object.getOwnPropertyNames(Iterator)` is
+`length,name,prototype,from`. The container's Node 22.22 is identical on all
+four counts.
+
+Two corrections follow, and both were load-bearing for the earlier rounds'
+reasoning:
+
+1. **`concat`/`zip`/`zipKeyed` never came from the host at all** — they are
+   js2's own polyfill (`_installIteratorHelperPolyfills`). Round 4b's framing
+   ("the host engine's real global") was wrong about the source even though its
+   fix was right about the mechanism (the shim shadowed *something real*).
+2. **Node 22 and Node 25 are interchangeable for this family**, so a local
+   measurement IS representative of CI. 4b's prediction was not just wrong, it
+   was avoidable for the price of one `npx` invocation — which is what this
+   round spent first.
+
+The rows' pre-4b "pass" was accidental, and the mechanism is now pinned: with
+`chunks` absent, probing under the pre-shim assembler showed `new Sub().chunks`
+is `undefined` and **`new Sub().chunks(1)` returns `null`** rather than
+throwing, so the `TypeError` the test asserts came from the NEXT line
+(`iterator.next()` on null).
+
+### The fix — option (a), js2 implements them
+
+Two defects, both required:
+
+- **The implementation.** `chunks`/`windows` join the other ten helpers in
+  `_installIteratorHelperPolyfills`, with the proposal's argument handling:
+  receiver Object-ness first, then `chunkSize`/`windowSize` validated WITHOUT
+  coercion (non-Number or non-integral → TypeError; a valid Number outside
+  `[1, 2^32-1]` → RangeError), and only then GetIteratorDirect reading `next`
+  exactly once. `windows` takes the second `undersized` argument
+  (`"only-full"` default, `"allow-partial"`, anything else TypeError).
+- **The #3049 helper list.** `_ITER_HELPER_NAMES` in `src/runtime.ts` decides
+  whether a COMPILED receiver gets the iterator-record bridge. Until `chunks`
+  and `windows` were added, a generator's `.chunks(1)` reported "chunks is not
+  a function" even with the method installed on the prototype — **31 of the 78
+  rows in these two directories failed on that list alone**, not on the
+  implementation. Measured in isolation: adding the implementation took the
+  directories 0 → 47 passes; adding the two names took 47 → 49; the
+  `undersized` argument took the family's last regression to zero.
+
+### Before / after — real runner, `built-ins/Iterator/`, 654 rows, both lanes
+
+Artifacts: `benchmarks/results/test262-{linked,honest}-{m0,n0,m3,n3}-results-*.jsonl`
+(`m0`/`n0` = main, `m3`/`n3` = this branch), fresh harness cache per run, both
+bundles rebuilt. The A/B was file-copy based and the final pair was re-run
+AFTER the last edit, so the committed tree is the measured tree.
+
+| lane | before (main) | after |
+| --- | ---: | ---: |
+| linked passes | 352 | **394** (+42, **0 lost**) |
+| honest passes | 355 | **397** (+42, **0 lost**) |
+
+Both target rows: `fail: chunks is not a function` → **pass**, in the linked
+lane, for the asserted reason (the helper now steps the underlying iterator and
+throws `TypeError` on a non-object result).
+
+Collateral, same 901-row sample outside the directory (`staging/sm/Iterator`,
+`for-of`, `class/subclass`, `AsyncFromSyncIteratorPrototype`), linked lane,
+main vs this: **705 → 705, 0 rows changed either way.**
+
+29 rows under `{chunks,windows}/` still fail — `return`-forwarding order,
+`argument-validation-failure-*` close semantics, and two `assert is not
+defined` rows. All of them failed before this change too; none is a regression.
+
+Test: `tests/issue-6492-r4c-iterator-chunking.test.ts` (8 cases, host-side, so
+they run in a second). 6 of 8 fail on the pre-fix tree; the other 2 assert
+TypeErrors that the pre-fix tree throws for the WRONG reason (calling
+`undefined`), which is precisely the accidental pass this round removes.
+
+### For the next lane (continued)
+
+10. **Check the environment claim before predicting from it.** One `npx -y
+    node@25 -e 'typeof Iterator.prototype.chunks'` — seconds — would have
+    replaced round 4b's prediction with a fact and saved a merge-group cycle.
+    When a conclusion rests on "CI's runtime has X", go get that runtime.
+11. **A prototype method is not reachable until BOTH halves agree.** Installing
+    on `%IteratorPrototype%` is half the job; `_ITER_HELPER_NAMES` (#3049) is the
+    other, and a helper missing from it is invisible to every compiled
+    receiver while looking perfectly present in a host-side unit test. Any new
+    `Iterator.prototype.*` needs an entry in both places.
+
 ## Round 6 (2026-09-17, Opus lane) — working the narrowed mechanisms
 
 Same worktree and branch as round 5 (`issue-6492-r5`), continuing from its tip.
@@ -1366,3 +1479,284 @@ specific to a GLOBAL lexical.
     `chunks`/`windows` rows really are unsupported by this Node — and by our own
     polyfill, which already supplies `take`/`drop`/`flatMap` for exactly this
     reason. The actionable sentence is the second one.
+
+## Implementation Plan — shared global object (2026-09-17)
+
+Written before any code, as round 8 asked. The short version: **most of this
+already exists in-tree, deliberately switched off for the host lane, and the
+switch-off comment names this exact follow-up.** The work is two narrow arms,
+not an architecture change — which reverses round 7's estimate, and the reason
+it does is recorded in step 1 so the next reader can check it.
+
+### 1. The current mechanism, exactly
+
+**Write side — the consumer's script top-level bindings.**
+`emitScriptGlobalFunctionBindings` (`src/codegen/global-function-bindings.ts`,
+#4394, §9.1.1.4.18) and `emitScriptGlobalVarBindings`
+(`src/codegen/global-var-bindings.ts`, #4491 T4, §9.1.1.4.17) already define a
+script's top-level `function` / `var` names as own properties of the global
+object, at the TOP of `__module_init` (hoisting order), with
+`{writable, enumerable, configurable: false}`. Both are called from
+`declarations.ts` (~L6134/L6138). Both open with the SAME two lines:
+
+```ts
+if (!ctx.standalone && !ctx.wasi) return;   // host lane: OFF
+if (ctx.sourceIsModule) return;             // modules: correctly off
+```
+
+and #4394's header says why, and what the follow-up is, verbatim: *"Host/GC is
+excluded on purpose for now: there `globalThis` is the embedder's own object —
+in the test262 runner, the per-test sandbox … Extending this to the host lane
+(and dropping the runner's `$DONE` stub) is the follow-up."* It even tabulates
+the exact symptom this round is chasing (`hasOwnProperty(globalThis, "$DONE")`
+false in host/GC, `typeof globalThis.$DONE` "function") and attributes 19
+standalone harness failures to it.
+
+So round 7's measurement — a body's `function probeFn(){}` is not an own
+property of the sandbox, while `typeof globalThis.probeFn` still answers
+`"function"` — is not a linked-seam defect at all. It is this gate, plus the
+read-side fallback that masks it.
+
+**Read side — the provider's free identifiers.** The harness provider's
+`index.js` is the harness prefix PLUS `export const __h_x = x;` aliases in ONE
+file, so it is an ES module and `ctx.sourceIsModule` is true. For `$DONE`,
+`identifierValueSymbol` answers `undefined`, so
+`moduleGoalIdentifierIsUndeclared` is true and lowering reaches the undeclared
+arm in `src/codegen/expressions/identifiers.ts` (~L2258).
+
+That arm ALREADY has a global-object read, and it is one condition away from
+firing:
+
+```ts
+if ((!unresolvedInModuleGoal || !sym) && ctx.standaloneGlobalThisImport !== undefined) {
+  … __extern_get(globalThis, name) …
+}
+```
+
+`!sym` is true for `$DONE`, so the first half passes. It declines only because
+`ctx.standaloneGlobalThisImport` is a STANDALONE-only carrier. The host lane
+falls through to the unconditional `__throw_reference_error`, which is the
+`$DONE is not defined` round 7 measured.
+
+**The read-side fallback that masked the write side.** A consumer
+`globalThis.probeFn` read goes through `__extern_get`, whose miss path resolves
+the module's own binding (`normalizeSandboxValue` / `_resolveHostField`). That
+is why the property looks present from inside the module that declared it and
+is absent from the sandbox's own-property list — round 7 finding 16.
+
+**#6474** is a different thing and is not part of this: it makes the linked
+consumer compile at SCRIPT goal so its top-level `var` is a global-object
+binding *in the compiler's model*. It sets up the conditions the two emitters
+above need; it does not itself publish anything to the host object.
+
+### 2. Options, with blast radius and cache-key impact
+
+The provider prefix is the compile-once cache key, so **any option that makes
+the provider's compiled bytes depend on the BODY is out** — that would fork the
+provider per test and destroy the property the linked lane exists for. This
+rules out, without measurement: declaring the body's names in the provider's
+synthetic project, and specialising the provider per include-set + body.
+
+| # | option | honest blast radius | cache key |
+| --- | --- | --- | --- |
+| (i) | lift the host-lane gate on the two emitters (write) + let a symbol-less free identifier read the host `globalThis` before throwing (read) | write: consumer-gated ⇒ none; read: every host-lane module with a symbol-less free identifier | untouched — the provider's bytes depend only on the prefix |
+| (ii) | consumer registers a top-level binding table with the runtime; the provider's miss path consults it | none (runtime-only) | untouched | 
+| (iii) | make the provider a SCRIPT (move the export aliases to a second file) | none | untouched, but cross-file script→module binding resolution is not a thing our front end does |
+
+**(iii) is out**: the aliases are what force the linker to publish getter
+boundaries; a script file has no exports to alias.
+
+**(ii) is tempting and worse than it looks.** It is a second, parallel
+global-environment mechanism living beside the spec one that already exists
+(#4394/#4491). It would answer `hasOwnProperty(globalThis, "$DONE")` only if the
+runtime ALSO faked the own-property — i.e. it re-creates the runner's `$DONE`
+stub as a runtime feature rather than removing the need for it. It also cannot
+serve `for…in this`, `Object.keys(this)` or `delete this.x`, which the spec
+emitters already do correctly in standalone.
+
+**(i) is the pick**, because it is the mechanism the tree already chose, tested
+and documented; this round only widens its lane. Both halves are needed and
+neither alone is enough — measured in round 7: with only the read side, the
+provider resolves the runner's no-op `$DONE` stub and the rows fail later, on
+`compareArray(doneValues, …)` instead of a ReferenceError.
+
+### 3. The pick, exactly
+
+**A1 — write side.** In `emitScriptGlobalFunctionBindings` and
+`emitScriptGlobalVarBindings`, admit the host lane **for the linked consumer
+only** (`ctx.linkedPackageBindings` non-empty), leaving every other host-lane
+module byte-identical. That keeps the honest lane out of scope for this round,
+which is what the acceptance criteria require; widening it to the whole host
+lane (and deleting the runner's `$DONE` stub) stays #4394's own follow-up and
+wants its own measured round.
+
+Order preservation: both emitters already run at the TOP of `__module_init`,
+and `deferTopLevelInit` (#6477) means the consumer's `__module_init` runs AFTER
+the provider is instantiated — so the consumer's `$DONE` overwrites the
+runner's sandbox stub before the body calls `asyncTest`. That ordering is the
+whole reason this works; do not move the emitters later.
+
+Known gap inherited from #4394: the seeded function value is a distinct closure
+instance, so `globalThis.f === f` is false. It does not affect these rows (the
+provider CALLS `$DONE`, never compares it) and closing it needs a value
+trampoline the IR does not mint for a call-only name.
+
+**A2 — read side.** In the undeclared-identifier arm of `identifiers.ts`, when
+there is NO symbol at all and the lane is host/GC, read the global object and
+throw ReferenceError only if the property is ABSENT — which is what §9.1.1.4.x
+actually says, and is strictly more correct than both of today's answers (the
+provider throws unconditionally; the consumer, through the `__extern_get`
+fallback, never throws). Uses `__get_globalThis` + an existing has-check import.
+A module with no symbol-less free identifier emits nothing new.
+
+### Acceptance
+
+- the 6 `harness/asyncHelpers-asyncTest-*` rows pass linked
+- the other 6 `harness/*` rows and the 4 `$262.createRealm()` rows: measured and
+  reported either way (they are a different family and may not move)
+- the 3 `await` non-thenable rows: measured (they were unreachable in-process
+  because `asyncTest`'s `hasOwnProperty` guard short-circuits; A1 makes that
+  guard answer from the body's own binding)
+- honest unchanged on a `harness/**` + `language/global-code/**` +
+  `language/eval-code/**` slice
+
+## Round 8 (2026-09-17, Opus lane) — the plan, one measured-negative attempt, one CI fix
+
+Branch `issue-6492-r8`, cut from `origin/main` at `f25fd4bcda` (which carries
+#5963's batch, #6491's widened-closure fix and the `%Iterator%`-statics fix)
+with rounds 6–7 cherry-picked. The design above was written before any code, as
+asked.
+
+### Before / after on the 138 rows
+
+| lane | round-7 tip | round-8 tip |
+| --- | ---: | ---: |
+| honest | 135 | **135** |
+| linked | 40 | **40** |
+
+Unchanged, because the one implementation attempt measured NET NEGATIVE and was
+reverted. The round's output is the plan above, two facts that make the next
+attempt concrete, and a CI fix that unblocks the PR carrying rounds 5–7.
+
+### The equivalence-gate regression (round 6 mechanism 2) — FIXED
+
+`equivalence-gate` shard 4 went red on
+`binding-null-guard.test.ts :: class method with destructured param`:
+
+```
+LinkError: Import #11 module="env" function="__get_undefined":
+           function import requires a callable
+```
+
+Not a late-import ordering bug and not a flag-conditional provider:
+`tests/equivalence/helpers.ts` builds its import object as a **hand-rolled stub
+table** that never contained `__get_undefined`. Round 6 made the coercion engine
+register that import at the UNDEF-SENTINEL boxing site — correctly, and both
+test262 runners serve it through `resolveImport` — so this row was simply the
+first equivalence case to need it. Served now with the provider's own one-liner
+(`createHostUndefinedImport` → `() => undefined`).
+
+Whole gate after: **1,720 passing, 22 known-failures = baseline, 0 new
+regressions**; shard 4 alone 166 passing, 0 failing. (`npx vitest run
+tests/equivalence/` as one job OOMs in this container even single-forked — the
+documented constraint; the gate script is what CI runs and it completed the full
+corpus.)
+
+### A1 (write side) — IMPLEMENTED, MEASURED, REVERTED at +1 / −2
+
+The plan's first half is real and it works: admitting the linked consumer to
+`emitScriptGlobalFunctionBindings` made the body's `function $DONE` an own
+property of the sandbox, and the in-process probe moved from
+`asyncTest called without async flag` (the `hasOwnProperty` gate) to
+`$DONE is not defined` (the CALL) — exactly the predicted half-way point.
+
+On the corpus it is net negative:
+
+| rows | change |
+| --- | --- |
+| `harness/proxytrapshelper-default.js` | **GAIN** (was `trap getPrototypeOf is not a function`) |
+| `built-ins/global/S10.2.3_A1.2_T2.js` | LOSS — `Cannot redefine property: test` |
+| `language/eval-code/indirect/global-env-rec-fun.js` | LOSS — `Cannot redefine property: testcase` |
+
+§9.1.1.4.18 defines the binding `configurable: false`, and on this lane the
+global object is the embedder's SHARED, pre-seeded sandbox — so a second define
+of the same name throws. The standalone twin never meets this because it owns a
+fresh `$Object`.
+
+**The obvious guard does not fix it, and that is the finding.** Adding the
+spec's own step-2 test — `__hasOwnProperty(globalThis, name)` → `__extern_set`
+when present, define when absent, which is exactly what the `var` twin
+(`emitScriptGlobalVarBindings`) already does — left the measurement
+**identical**: same +1, same two losses, same message. So the property is
+refused as non-configurable while `hasOwnProperty` answers that it is absent.
+Something other than a previous seed of the same name owns it; the two
+candidates worth checking first are the row's two strict VARIANTS meeting one
+sandbox, and the runner's own sandbox seeding. Until that is understood the
+write side cannot be landed, and I reverted rather than ship a net-negative or
+keep iterating blind.
+
+### A2 (read side) — the design's assumption is WRONG, with the correction
+
+Two measured corrections to the plan, both cheap to act on:
+
+1. **The throw is not in `compileIdentifier`.** `$DONE(err)` is a CALL of an
+   unresolvable identifier, and it lowers through
+   `tryEmitUndeclaredCalleeReferenceError`
+   (`src/codegen/expressions/undeclared-callee.ts`, #4650) →
+   `emitAnnexBUnboundReferenceError`. An arm added to the identifier-read path
+   never fires — verified with a debug print that produced ZERO lines — so it
+   was removed rather than left in as plausible dead code.
+2. **`declared_global` imports SNAPSHOT their value, so the tempting shortcut
+   cannot work.** `platform-capability-adapter.ts` resolves a `global_<name>`
+   import as
+   `const ambient = globals[intent.name]; return ambient !== undefined ? () => ambient : () => {};`
+   — read once, at import-resolution time. The provider is instantiated BEFORE
+   the consumer's `__module_init` runs (#6477 `deferTopLevelInit`), so any
+   scheme that declares `$DONE` as an ambient global in the provider's synthetic
+   project — including naming a file `lib.*.d.ts` so `collectDeclaredGlobals`
+   scans it — would capture the runner's stale stub and never see the body's
+   binding. It also degrades to a silent no-op `() => {}` when absent.
+
+So the read side needs a **live** lookup: at the unresolvable-callee site, read
+`globalThis[name]` and dispatch through `__call_function`, throwing
+ReferenceError only when `__extern_has` says the property is absent (the
+has-guard is what keeps `assert.throws(ReferenceError, …)` over a genuinely
+unbound name working). That is a contained codegen change of roughly 60–80
+lines at one site, but it is a shared path and wants its own honest A/B, so it
+is the next round's first commit rather than this one's last.
+
+**Estimate for the whole of Part A, now that both halves are understood:** one
+focused round for the read side (contained, one site), plus one for the write
+side once the `Cannot redefine property` owner is identified — the latter may
+turn out to be a runner-side fix (one sandbox per variant) rather than a
+compiler one, which would be smaller still. Not multi-day, but not one commit
+either.
+
+### Per-row status of the 95 (unchanged this round)
+
+34 descriptor (#6482's lane) · 6 `$DONE` family (both halves now diagnosed;
+A1 measured, A2 sited) · 4 `$262.createRealm()` · 6 other `harness/*` (one of
+them, `proxytrapshelper-default`, is a confirmed A1 gain waiting on A1 landing)
+· 4 `Promise.all*Keyed` timing · 3 `await` non-thenable · 4 `Iterator`
+observation order · 1 → #6498 · 2 → #6496 · 12 in six 2-row families · ~19
+singles.
+
+### Findings for the next lane (round 8)
+
+19. **A hand-rolled import table is a silent second provider.**
+    `tests/equivalence/helpers.ts` lists host imports by hand, so any codegen
+    change that registers a NEW import breaks it with a LinkError rather than a
+    wrong answer — and only on whichever row first needs it, which can be a
+    shard the author never runs. When a change makes codegen register an import
+    it did not before, grep for every place that builds an import object, not
+    just `resolveImport`.
+20. **Check the CALL path and the READ path separately.** An unresolvable
+    identifier has two lowerings (#1380 read, #4650 call) and they live in
+    different files. A fix written against the wrong one is not merely
+    ineffective, it is invisible — it compiles, it passes lint, and it emits
+    nothing.
+21. **A capability import that SNAPSHOTS is not a binding.** `declared_global`
+    reads its value once at instantiate. Anything that must observe a value
+    written later — by another module in the same linked graph, or by the body
+    itself — has to be a live lookup, and no amount of declaring the name more
+    convincingly changes that.
