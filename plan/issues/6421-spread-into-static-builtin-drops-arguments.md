@@ -7,14 +7,19 @@ created: 2026-09-12
 updated: 2026-09-13
 completed: 2026-09-13
 loc-budget-allow:
-  # 2026-09-13 (#6421): the `Array.of` arm gains a spread branch and the host
-  # arg loop a shared-builder branch; the runtime-length vec build itself was
-  # extracted to `src/codegen/array-of-spread.ts` rather than added here, and
-  # `calls.ts` shrank by ~60 lines in the same change-set.
+  # 2026-09-17 (#6421): re-measured after merging main, which had independently
+  # landed the fromCharCode/fromCodePoint half as #6430. Only the `Array.of`
+  # arm remains here: a spread branch plus a shared-builder branch in the host
+  # arg loop, +29 LOC against main 770455e4a8. The runtime-length vec build
+  # lives in `src/codegen/array-of-spread.ts`, not in this file. (The earlier
+  # 2026-09-13 rationale also cited a ~60-line shrink in `calls.ts`; that was
+  # this branch's own fromCharCode module, now dropped in favour of main's, so
+  # `calls.ts` is byte-identical to main and contributes nothing here.)
   - src/codegen/expressions/call-builtin-static.ts
 func-budget-allow:
-  # 2026-09-13 (#6421): same +31 lines, seen through the enclosing function —
-  # the Array.of and fromCharCode arms both live inside this one dispatcher.
+  # 2026-09-17 (#6421): the same +29 lines seen through the enclosing
+  # dispatcher, measured +26 against main 770455e4a8. Only the `Array.of` arm
+  # now lands inside it — the fromCharCode arm is main's #6430 code.
   - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
 priority: high
 horizon: m
@@ -144,17 +149,19 @@ Model: **opus**. Both defects are located to exact lines with a working sibling 
 ## Resolution
 
 Fixed on `issue-6421` (branched from `699df289e1`). Three sites, one idiom.
+The measurements below are that branch's; see **Superseded half** at the end of
+this section for what survived the 2026-09-17 merge of main.
 
-**1. `String.fromCharCode` / `String.fromCodePoint`** — new
-`src/codegen/from-char-code-spread.ts`. `compileFromCharCodeFamily`
-(`src/codegen/expressions/calls.ts`) built one string PART per argument AST
-node and folded the parts at compile time, so a spread compiled its SOURCE as
-one code unit (`NaN` → ToUint16 → `"\0"`). A spread-containing list now goes
-through `buildSpreadArgList` and folds at RUNTIME into an accumulator local
-seeded with `""`. The per-code-unit tail (§7.1.8 ToUint16 in the f64 domain,
-the #2601 range guard, the 1-char-string helper) moved into a shared
-`emitCodeUnitPart` both lanes call, so the loop and the accumulator cannot
-drift. A list with no spread keeps the old loop untouched.
+**1. `String.fromCharCode` / `String.fromCodePoint`** — SUPERSEDED by #6430,
+which landed on main independently while this branch sat unmerged and fixes the
+same defect. `compileFromCharCodeFamily` (`src/codegen/expressions/calls.ts`)
+built one string PART per argument AST node and folded the parts at compile
+time, so a spread compiled its SOURCE as one code unit (`NaN` → ToUint16 →
+`"\0"`). Main's `src/codegen/expressions/from-char-code-spread.ts`
+(`needsFromCharCodeSpread` / `compileFromCharCodeFamilySpread`) is the version
+that ships; this branch's twin `src/codegen/from-char-code-spread.ts` and its
+shared `emitCodeUnitPart` tail were deleted in the merge, and `calls.ts` is
+byte-identical to main.
 
 **2. `Array.of`** — the host path's `__js_array_new` + one `__js_array_push`
 per node is now `tryEmitSpreadHostArgs` (the exact #6411 edit) with the
@@ -246,3 +253,42 @@ issues, not one.
   [#6444](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6444-static-builtin-spread-audit-remaining-arms).
 - The hono signed-cookie VERIFY side, per the A/B above:
   [#6449](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6449-hono-signed-cookie-verify-returns-false).
+
+### Superseded half (merge of main, 2026-09-17)
+
+Main landed **#6430** while this branch was unmerged; it fixes the
+`String.fromCharCode` / `String.fromCodePoint` spread with its own module at
+`src/codegen/expressions/from-char-code-spread.ts`. The merge takes main's
+version wholesale:
+
+| item | outcome |
+| --- | --- |
+| `src/codegen/from-char-code-spread.ts` (this branch, 233 lines) | deleted |
+| `emitCodeUnitPart` shared tail in `compileFromCharCodeFamily` | reverted to main's inline ToUint16 + #2601 range guard + helper call |
+| widened `addStringImports` guards in `call-builtin-static.ts` | reverted — main's module calls `addStringImports` itself |
+| `src/codegen/expressions/calls.ts` | byte-identical to main |
+| `scripts/compiler-boundaries.json` entry for the deleted module | removed |
+
+What this branch still contributes, because #6430 does not cover it:
+
+- **`Array.of` spread** (`src/codegen/array-of-spread.ts` + the `Array.of` arm
+  of `call-builtin-static.ts`). Main's gate is still
+  `if (noJsHost(ctx) && !hasSpreadArg)`, which drops `Array.of(...xs)` onto the
+  host fallback and its `__js_array_new` / `__js_array_push` / `__array_of`
+  imports — unsatisfiable standalone, so the module does not instantiate at
+  all. The host half separately pushes one element per AST node, so
+  `Array.of(...[1,2,3])` has length 1.
+- **The `emitStores` shared-`Instr` clone** in `src/codegen/spread-arg-list.ts`.
+  Re-measured against main `770455e4a8` on 2026-09-17, compiling
+  `String.fromCharCode(48, ...[65, 66, 67])` at `target: "standalone"`:
+
+  | tree | `result.imports` | answer |
+  | --- | --- | --- |
+  | main as-is | `[]` | `"0"` (length 1) |
+  | main + this clone fix only | `[]` | `"0ABC"` (length 4) |
+
+  So #6430 does **not** subsume it: main's `emitStores` splices the caller's
+  sink arrays uncloned, and `shiftFuncIndices`
+  (`src/codegen/registry/imports.ts`) dedups by ARRAY identity while mutating
+  the `Instr` OBJECT, so one object reachable from two arrays is shifted twice.
+  The fix is kept.

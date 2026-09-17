@@ -1,8 +1,8 @@
 [
   {
     "edition": "ES5",
-    "pass": 7951,
-    "fail": 1053,
+    "pass": 7966,
+    "fail": 1038,
     "ce": 25,
     "skip": 0,
     "total": 9029,
@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 9944,
-    "fail": 1702,
+    "pass": 9959,
+    "fail": 1687,
     "ce": 58,
     "skip": 0,
     "total": 11704,
@@ -57,8 +57,8 @@
     "features": [
       {
         "name": "destructuring-binding",
-        "pass": 3837,
-        "fail": 282,
+        "pass": 3839,
+        "fail": 280,
         "ce": 34,
         "skip": 0,
         "total": 4153,
@@ -66,8 +66,8 @@
       },
       {
         "name": "generators",
-        "pass": 2076,
-        "fail": 398,
+        "pass": 2077,
+        "fail": 397,
         "ce": 12,
         "skip": 0,
         "total": 2486,
@@ -93,8 +93,8 @@
       },
       {
         "name": "Symbol.iterator",
-        "pass": 550,
-        "fail": 211,
+        "pass": 551,
+        "fail": 210,
         "ce": 34,
         "skip": 0,
         "total": 795,
@@ -111,21 +111,21 @@
       },
       {
         "name": "arrow-function",
-        "pass": 398,
-        "fail": 42,
+        "pass": 399,
+        "fail": 41,
         "ce": 0,
         "skip": 0,
         "total": 440,
-        "pct": 90
+        "pct": 91
       },
       {
         "name": "Proxy",
-        "pass": 286,
-        "fail": 145,
+        "pass": 292,
+        "fail": 139,
         "ce": 0,
         "skip": 0,
         "total": 431,
-        "pct": 66
+        "pct": 68
       },
       {
         "name": "Reflect.construct",
@@ -147,12 +147,12 @@
       },
       {
         "name": "Reflect",
-        "pass": 215,
-        "fail": 115,
+        "pass": 219,
+        "fail": 111,
         "ce": 0,
         "skip": 0,
         "total": 330,
-        "pct": 65
+        "pct": 66
       },
       {
         "name": "Symbol.species",
@@ -273,12 +273,12 @@
       },
       {
         "name": "Reflect.set",
-        "pass": 29,
-        "fail": 9,
+        "pass": 30,
+        "fail": 8,
         "ce": 0,
         "skip": 0,
         "total": 38,
-        "pct": 76
+        "pct": 79
       },
       {
         "name": "DataView.prototype.setUint8",
@@ -291,12 +291,12 @@
       },
       {
         "name": "new.target",
-        "pass": 21,
-        "fail": 14,
+        "pass": 22,
+        "fail": 13,
         "ce": 0,
         "skip": 0,
         "total": 35,
-        "pct": 60
+        "pct": 63
       },
       {
         "name": "DataView",
@@ -1062,8 +1062,8 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3658,
-    "fail": 1141,
+    "pass": 3657,
+    "fail": 1142,
     "ce": 24,
     "skip": 0,
     "total": 4823,
@@ -1080,8 +1080,8 @@
       },
       {
         "name": "destructuring-binding",
-        "pass": 999,
-        "fail": 384,
+        "pass": 998,
+        "fail": 385,
         "ce": 2,
         "skip": 0,
         "total": 1385,
@@ -1125,8 +1125,8 @@
       },
       {
         "name": "object-rest",
-        "pass": 226,
-        "fail": 56,
+        "pass": 225,
+        "fail": 57,
         "ce": 0,
         "skip": 0,
         "total": 282,
@@ -1923,9 +1923,9 @@
   },
   {
     "edition": "ES2021",
-    "pass": 335,
+    "pass": 336,
     "fail": 136,
-    "ce": 1,
+    "ce": 0,
     "skip": 0,
     "total": 472,
     "pct": 71,
@@ -1950,12 +1950,12 @@
       },
       {
         "name": "logical-assignment-operators",
-        "pass": 53,
+        "pass": 54,
         "fail": 18,
-        "ce": 1,
+        "ce": 0,
         "skip": 0,
         "total": 72,
-        "pct": 74
+        "pct": 75
       },
       {
         "name": "BigInt",
@@ -2186,8 +2186,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4362,
-    "fail": 1382,
+    "pass": 4369,
+    "fail": 1375,
     "ce": 48,
     "skip": 0,
     "total": 5792,
@@ -2195,8 +2195,8 @@
     "features": [
       {
         "name": "class",
-        "pass": 3555,
-        "fail": 712,
+        "pass": 3562,
+        "fail": 705,
         "ce": 16,
         "skip": 0,
         "total": 4283,
@@ -2213,8 +2213,8 @@
       },
       {
         "name": "class-methods-private",
-        "pass": 1388,
-        "fail": 318,
+        "pass": 1391,
+        "fail": 315,
         "ce": 3,
         "skip": 0,
         "total": 1709,
@@ -2222,8 +2222,8 @@
       },
       {
         "name": "class-static-methods-private",
-        "pass": 1230,
-        "fail": 282,
+        "pass": 1233,
+        "fail": 279,
         "ce": 1,
         "skip": 0,
         "total": 1513,
@@ -2285,8 +2285,8 @@
       },
       {
         "name": "class-static-fields-private",
-        "pass": 264,
-        "fail": 81,
+        "pass": 265,
+        "fail": 80,
         "ce": 0,
         "skip": 0,
         "total": 345,
@@ -3571,48 +3571,48 @@
   },
   {
     "edition": "ES2026",
-    "pass": 3333,
-    "fail": 1575,
+    "pass": 3408,
+    "fail": 1500,
     "ce": 13,
     "skip": 0,
     "total": 4921,
-    "pct": 68,
+    "pct": 69,
     "features": [
       {
         "name": "Temporal",
-        "pass": 3159,
-        "fail": 1439,
+        "pass": 3234,
+        "fail": 1364,
         "ce": 13,
         "skip": 0,
         "total": 4611,
-        "pct": 69
+        "pct": 70
       },
       {
         "name": "Symbol",
-        "pass": 279,
-        "fail": 115,
+        "pass": 282,
+        "fail": 112,
         "ce": 0,
         "skip": 0,
         "total": 394,
-        "pct": 71
+        "pct": 72
       },
       {
         "name": "BigInt",
-        "pass": 160,
-        "fail": 18,
+        "pass": 163,
+        "fail": 15,
         "ce": 1,
         "skip": 0,
         "total": 179,
-        "pct": 89
+        "pct": 91
       },
       {
         "name": "arrow-function",
-        "pass": 154,
-        "fail": 24,
+        "pass": 160,
+        "fail": 18,
         "ce": 0,
         "skip": 0,
         "total": 178,
-        "pct": 87
+        "pct": 90
       },
       {
         "name": "Reflect.construct",
@@ -3789,8 +3789,8 @@
   },
   {
     "edition": "ES2027",
-    "pass": 386,
-    "fail": 499,
+    "pass": 388,
+    "fail": 497,
     "ce": 12,
     "skip": 0,
     "total": 897,
@@ -3852,21 +3852,21 @@
       },
       {
         "name": "__getter__",
-        "pass": 15,
-        "fail": 12,
+        "pass": 16,
+        "fail": 11,
         "ce": 0,
         "skip": 0,
         "total": 27,
-        "pct": 56
+        "pct": 59
       },
       {
         "name": "__setter__",
-        "pass": 15,
-        "fail": 12,
+        "pass": 16,
+        "fail": 11,
         "ce": 0,
         "skip": 0,
         "total": 27,
-        "pct": 56
+        "pct": 59
       },
       {
         "name": "Reflect.construct",
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4422,
-    "fail": 877,
+    "pass": 4435,
+    "fail": 864,
     "ce": 146,
     "skip": 0,
     "total": 5445,

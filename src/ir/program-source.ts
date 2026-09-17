@@ -32,6 +32,7 @@ import { unwrapPromiseTypeNode } from "./async-static.js";
 import { postStartupCallableUnits } from "./program-startup-proof.js";
 import { makeIrIdentityImportedFunctionResolver } from "./imported-functions.js";
 import { makeIrPromiseDelayResolver } from "./promise-delay.js";
+import { prepareNativeStringOutputResolver } from "../frontend/builtins/prepare-string-output.js";
 import { prepareNativeAsyncSourceFamilies, type NativeAsyncSourceFamilies } from "./program-native-async-source.js";
 import {
   collectIrPromiseDelayOwners,
@@ -56,6 +57,10 @@ export interface IrProgramSourceInput {
   readonly promiseDelayProjection?: "disabled" | "standalone-native";
   /** Explicit full-family logical lowering; never inferred from target or fast/default settings. */
   readonly asyncFamilyProjection?: "disabled" | "standalone-native";
+  /** Explicit frontend string-number lowering; not provider availability or permission to emit. */
+  readonly nativeStringValueProjection?: "standalone-native";
+  /** Independent string-only console intents; no async family or runtime availability is implied. */
+  readonly nativeStringOutputProjection?: "standalone-native";
 }
 
 /** Frontend-only carrier; declarations never cross into PreparedIrProgram. */
@@ -82,7 +87,10 @@ function sourceDataField<T extends object, K extends keyof T>(object: T, key: K)
 }
 
 /** Explicit frontend projection; capture all semantic fields jointly with allocations. */
-export function captureTypedIrProgramInput(source: IrProgramSourcePreparation): TypedIrProgramInput {
+export function captureTypedIrProgramInput(
+  source: IrProgramSourcePreparation,
+  runtimeSupport?: TypedIrProgramInput["runtimeSupport"],
+): TypedIrProgramInput {
   const allocations = sourceDataField(source, "allocations");
   const inventory = sourceDataField(source, "inventory");
   const ir = sourceDataField(source, "ir");
@@ -120,7 +128,15 @@ export function captureTypedIrProgramInput(source: IrProgramSourcePreparation): 
       },
     });
   }
-  const captured = allocations.capturePreparationData({ inventory, ir, derivedUnits, startup, callables, globals });
+  const captured = allocations.capturePreparationData({
+    inventory,
+    ir,
+    derivedUnits,
+    startup,
+    callables,
+    globals,
+    ...(runtimeSupport === undefined ? {} : { runtimeSupport }),
+  });
   return {
     inventory: captured.data.inventory,
     ir: captured.data.ir,
@@ -129,6 +145,7 @@ export function captureTypedIrProgramInput(source: IrProgramSourcePreparation): 
     callables: captured.data.callables,
     globals: captured.data.globals,
     allocations: captured.allocations,
+    ...(captured.data.runtimeSupport === undefined ? {} : { runtimeSupport: captured.data.runtimeSupport }),
   };
 }
 
@@ -142,6 +159,49 @@ function checkerScalar(checker: ts.TypeChecker, node: ts.Node): IrType | undefin
   if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return { kind: "val", val: { kind: "i32", boolean: true } };
   if ((type.flags & ts.TypeFlags.StringLike) !== 0) return { kind: "string" };
   return undefined;
+}
+
+/** Canonical any identity excludes TypeScript's separate error-any recovery type. */
+function checkerAny(checker: ts.TypeChecker, node: ts.Node): IrType | undefined {
+  return checker.getTypeAtLocation(node) === checker.getAnyType() ? { kind: "dynamic" } : undefined;
+}
+
+function hostPromiseFulfillment(checker: ts.TypeChecker, type: ts.Type): ts.Type | undefined {
+  const ambient = checker.resolveName("Promise", undefined, ts.SymbolFlags.Type, false);
+  if (
+    !ambient?.declarations?.length ||
+    !ambient.declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile)
+  )
+    return undefined;
+  // Checking the resolved symbol admits aliases, but not source classes or structural thenables.
+  if ((type.flags & ts.TypeFlags.Object) === 0 || type.getSymbol() !== ambient) return undefined;
+  const arguments_ = checker.getTypeArguments(type as ts.TypeReference);
+  return arguments_.length === 1 ? arguments_[0] : undefined;
+}
+
+/** Preserve logical any independently of a typed Promise's host callable carrier. */
+function hostAsyncParameter(checker: ts.TypeChecker, parameter: ts.ParameterDeclaration): IrType | undefined {
+  if (!parameter.type) return undefined;
+  const declared = checker.getTypeFromTypeNode(parameter.type);
+  if (declared === checker.getAnyType()) return checkerAny(checker, parameter.name);
+  for (const type of [declared, checker.getTypeAtLocation(parameter.name)]) {
+    const fulfillment = hostPromiseFulfillment(checker, type);
+    if (!fulfillment || (fulfillment.flags & ts.TypeFlags.NumberLike) === 0) return undefined;
+  }
+  return { kind: "val", val: { kind: "externref" } };
+}
+
+function hostAsyncAnyResult(checker: ts.TypeChecker, declaration: ts.FunctionDeclaration): IrType | undefined {
+  const signature = checker.getSignatureFromDeclaration(declaration);
+  if (!signature) return undefined;
+  if (hostPromiseFulfillment(checker, checker.getReturnTypeOfSignature(signature)) !== checker.getAnyType())
+    return undefined;
+  if (
+    declaration.type &&
+    hostPromiseFulfillment(checker, checker.getTypeFromTypeNode(declaration.type)) !== checker.getAnyType()
+  )
+    return undefined;
+  return { kind: "dynamic" };
 }
 
 function storageType(identity: IrModuleBindingIdentity): IrType {
@@ -192,6 +252,39 @@ function selectNativeAsyncFamilyProjection(input: IrProgramSourceInput): boolean
       "native async family source projection requires explicit native delay and wasmgc:standalone policy",
     );
   return true;
+}
+
+/** Resolve before source planning; never infer string-number lowering from the target. */
+function selectNativeStringValueProjection(
+  input: Pick<IrProgramSourceInput, "nativeStringValueProjection" | "policy">,
+): boolean {
+  const projection = input.nativeStringValueProjection;
+  if (projection === undefined) return false;
+  if (projection !== "standalone-native" || input.policy.backend !== "wasmgc" || input.policy.target !== "standalone")
+    throw new PreparedIrProgramInvariantError(
+      "invalid-prepared-data",
+      "native string-value source projection requires an explicit standalone-native request with wasmgc:standalone policy",
+    );
+  return true;
+}
+
+function selectNativeStringOutputProjection(
+  input: Pick<IrProgramSourceInput, "nativeStringOutputProjection" | "policy">,
+): boolean {
+  const nativeStringOutput = input.nativeStringOutputProjection !== undefined;
+  if (
+    nativeStringOutput &&
+    (input.nativeStringOutputProjection !== "standalone-native" ||
+      input.policy.backend !== "wasmgc" ||
+      input.policy.target !== "standalone" ||
+      input.policy.stringConst?.storage !== "native" ||
+      input.policy.stringConcat?.concat !== "native")
+  )
+    throw new PreparedIrProgramInvariantError(
+      "invalid-prepared-data",
+      "native string output projection requires explicit standalone WasmGC native string policies",
+    );
+  return nativeStringOutput;
 }
 
 /** Mutable diagnostic cursor shared by source planning and its validation helpers. */
@@ -420,6 +513,7 @@ function validateNativePromiseDelaySourceLowering(
 /** Keep callable carriers separate from semantic fulfillment signatures. */
 function prepareSourceFunctionSignatures(
   checker: ts.TypeChecker,
+  policy: RuntimeManifestPolicy,
   inventory: IrUnitInventory,
   identity: ReturnType<typeof buildIrPlanningIdentityContext>,
   types: ReturnType<typeof buildIrUnitTypeMap>,
@@ -437,35 +531,39 @@ function prepareSourceFunctionSignatures(
       unsupported(`whole-program source producer has no body producer for ${unit.kind}`);
     const propagated = types.get(unit.id);
     const family = nativeFamily?.functions.get(unit.id);
+    const isAsync = declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
+    const hostAsync = isAsync && policy.backend === "wasmgc" && policy.target === "host";
     const params =
       family?.params ??
       declaration.parameters.map((param, index) =>
         param.type
-          ? typeNodeToIr(param.type, unit.displayName)
+          ? ((hostAsync ? hostAsyncParameter(checker, param) : undefined) ?? typeNodeToIr(param.type, unit.displayName))
           : propagated?.params[index]
             ? lowerTypeToIrType(propagated.params[index]!)
             : checkerScalar(checker, param),
       );
     if (params.some((type) => !type)) unsupported(`function ${unit.displayName} has an unresolved parameter contract`);
-    const isAsync = declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
     const returnNode = isAsync ? unwrapPromiseTypeNode(declaration.type) : declaration.type;
+    const dynamicResult = hostAsync ? hostAsyncAnyResult(checker, declaration) : undefined;
     const result: IrType | null = certifiedDelays.has(unit.id)
       ? { kind: "extern", className: "Promise" }
       : family
         ? family.result
-        : returnNode?.kind === ts.SyntaxKind.VoidKeyword
-          ? null
-          : !isAsync &&
-              returnNode &&
-              ts.isTypeReferenceNode(returnNode) &&
-              ts.isIdentifier(returnNode.typeName) &&
-              returnNode.typeName.text === "Promise"
-            ? { kind: "val", val: { kind: "externref" } }
-            : returnNode
-              ? typeNodeToIr(returnNode, unit.displayName)
-              : propagated
-                ? lowerTypeToIrType(propagated.returnType)
-                : null;
+        : dynamicResult
+          ? dynamicResult
+          : returnNode?.kind === ts.SyntaxKind.VoidKeyword
+            ? null
+            : !isAsync &&
+                returnNode &&
+                ts.isTypeReferenceNode(returnNode) &&
+                ts.isIdentifier(returnNode.typeName) &&
+                returnNode.typeName.text === "Promise"
+              ? { kind: "val", val: { kind: "externref" } }
+              : returnNode
+                ? typeNodeToIr(returnNode, unit.displayName)
+                : propagated
+                  ? lowerTypeToIrType(propagated.returnType)
+                  : null;
     bodyResults.set(unit.id, result);
     const callableResults = preparedIrProgramCallableResults({
       funcKind: isAsync ? "async" : "regular",
@@ -481,6 +579,8 @@ export function prepareIrProgramSources(
 ): IrProgramSourcePreparation | PreparedIrProgramFailure {
   const nativeDelay = selectNativePromiseDelaySourceProjection(input);
   const nativeAsyncFamily = selectNativeAsyncFamilyProjection(input);
+  const nativeStringValues = selectNativeStringValueProjection(input);
+  const nativeStringOutput = selectNativeStringOutputProjection(input);
   const inventory = buildIrUnitInventory(input.sourceFiles, {
     ...input.inventoryOptions,
     entrySource: input.entrySource,
@@ -556,6 +656,7 @@ export function prepareIrProgramSources(
       : undefined;
     prepareSourceFunctionSignatures(
       input.checker,
+      input.policy,
       inventory,
       identity,
       types,
@@ -656,11 +757,15 @@ export function prepareIrProgramSources(
       const resolver: IrFromAstResolver = {
         resolveModuleBinding: resolveBinding,
         preparedAsyncAwaitSite: (awaitExpression) => {
-          const resultType = checkerScalar(input.checker, awaitExpression);
-          const operandType = checkerScalar(input.checker, awaitExpression.expression) ?? {
-            kind: "val" as const,
-            val: { kind: "externref" as const },
-          };
+          const host = input.policy.backend === "wasmgc" && input.policy.target === "host";
+          const resultType =
+            (host ? checkerAny(input.checker, awaitExpression) : undefined) ??
+            checkerScalar(input.checker, awaitExpression);
+          const operandType = (host ? checkerAny(input.checker, awaitExpression.expression) : undefined) ??
+            checkerScalar(input.checker, awaitExpression.expression) ?? {
+              kind: "val" as const,
+              val: { kind: "externref" as const },
+            };
           return resultType ? { resultType, operandType } : null;
         },
         ...family?.resolver,
@@ -681,7 +786,12 @@ export function prepareIrProgramSources(
         oracle: input.oracle,
         allocRegistry: allocations,
         directCalls,
-        resolver,
+        resolver:
+          nativeStringOutput && !family
+            ? { ...resolver, ...prepareNativeStringOutputResolver(input.checker, declaration) }
+            : resolver,
+        ...(nativeStringValues ? { stringNumericCoercion: "number-boundary" as const } : {}),
+        numericThrow: "number-boundary",
         ...(nativeDelay ? { promiseDelays: promiseDelaysBySource.get(source) } : {}),
         ...(family ? { logicalVectorTypes: family.logicalVectorTypes } : {}),
         ...(moduleInit

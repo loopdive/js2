@@ -29,7 +29,7 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { resolveArrayInfo } from "../array-methods.js";
 import { ensureAnyHelpers, ensureAnyToExternHelper } from "../any-helpers.js";
 import { compileArrowAsClosure, getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "../closures.js";
-import { emitToNumber, emitToString } from "../coercion-engine.js";
+import { emitNumberToStringSentinelAware, emitToNumber, emitToString } from "../coercion-engine.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import { eagerCaptureCellForCall } from "../statements/eager-capture-box.js";
@@ -130,6 +130,7 @@ import { paramUndefinedTypeIsDefaultArtifact } from "../destructuring-params.js"
 import {
   calleeIsCapabilityCtorParam,
   calleeIsPromiseExecutorParam,
+  calleeIsLinkedProviderParam,
   calleeMayBeHostCallable,
   appendForwardedOptionalArgcOverride,
   compileCallExpression,
@@ -150,6 +151,7 @@ import {
   buildArgcResetNoLazyExtras,
   saveArgumentLocalAsExtern,
 } from "./argc-extras.js";
+import { resolvePlainCallThisTrampoline } from "../named-this-call.js"; // (#6436)
 
 function tryEmitGenericStructFactoryResult(
   ctx: CodegenContext,
@@ -1424,10 +1426,14 @@ export function compileIdentifierCall(
       }
 
       if (argType?.kind === "f64") {
-        // number → string
+        // number → string. (#6423) An absent number-shaped property read is a
+        // `{kind:"f64", undefSentinel:true}` carrying `UNDEF_F64_BITS`; that
+        // stringifies as "undefined", not as the sentinel's "NaN". The helper
+        // leaves the same externref `number_toString` does, so the
+        // `emitStringBuiltinNumberResult` tail is unchanged.
         const toStrIdx = ctx.funcMap.get("number_toString");
         if (toStrIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx: toStrIdx });
+          emitNumberToStringSentinelAware(ctx, fctx, argType, toStrIdx);
           return emitStringBuiltinNumberResult(ctx, fctx);
         }
       }
@@ -2914,6 +2920,12 @@ export function compileIdentifierCall(
             // params is preserved.
             (calleeMayBeHostCallable(ctx, expr.expression) ||
               calleeIsPromiseExecutorParam(ctx, expr.expression) ||
+              // (#6490) A callable param of a separately-linked PROVIDER can
+              // hold a consumer-module closure, whose struct belongs to the
+              // consumer's type group; the guarded cast here nulls and the
+              // dispatch traps un-catchably. Linker-only flag, so ordinary
+              // single-module compiles are byte-identical.
+              calleeIsLinkedProviderParam(ctx, expr.expression) ||
               // Captures explicitly marked as host-bound callback values stay
               // externref by design. They may be real JS functions after a
               // compiled method crosses the host boundary (Jest's Prompt
@@ -4251,7 +4263,10 @@ export function compileIdentifierCall(
 
     // Argument compilation may shift defined-function indices.
     const finalFuncIdx = ctx.funcMap.get(funcName) ?? funcIdx;
-    fctx.body.push({ op: "call", funcIdx: finalFuncIdx });
+    // (#6436) A plain call installs `undefined` as the receiver. Minted AFTER
+    // `maybeSetArgcForKnownCall`: the trampoline pushes no operand of its own.
+    const plainThis = resolvePlainCallThisTrampoline(ctx, funcName, finalFuncIdx);
+    fctx.body.push({ op: "call", funcIdx: plainThis ?? finalFuncIdx });
     // Foreign eval calls lack checker signatures; the resolved Wasm signature is authoritative.
     if (isForeignEvalNode(expr) && wasmFuncReturnsVoid(ctx, finalFuncIdx)) return VOID_RESULT;
     const sig = isForeignEvalNode(expr) ? undefined : ctx.checker.getResolvedSignature(expr);

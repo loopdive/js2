@@ -286,6 +286,7 @@ import { ensureMapRuntimeTypes } from "./map-runtime.js";
 import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
 import { fillClassProtoLookupArm } from "./class-proto-lookup.js"; // (#5195 Step 1.7)
+import { fillClassPrototypeReadArm } from "./standalone-class-prototype-read.js"; // (#6457)
 import { mintStandaloneClassProtoBuilders } from "./standalone-class-dyn-member.js"; // (#5383 S2h)
 import { mintStandaloneClassStaticBuilders } from "./standalone-class-dyn-static.js"; // (#5383 S2i)
 import { scanForArrayHoles, ensureHoleType } from "./array-holes.js"; // (#2001 S1)
@@ -6714,6 +6715,11 @@ export function generateModule(
     // prototype singleton. No-op unless the module has a class with a
     // runtime-keyed member.
     fillClassProtoLookupArm(ctx);
+    // (#6457) …and the `prototype` key on a class OBJECT, which that lookup
+    // routes to the STATIC sidecar and therefore misses. Between the two fills:
+    // in front of the sidecar delegation (which would only miss), behind #802's
+    // dynamic-proto arm, which must keep the front slot.
+    fillClassPrototypeReadArm(ctx);
     fillDynamicProtoHelpers(ctx);
 
     // A separately compiled runtime-eval provider can invoke caller-owned AOT
@@ -10599,7 +10605,19 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     ctx.runtimeEvalCallableBoundaryEnabled = true;
   }
   // Multi-file compilation is linked through import/export module records.
-  ctx.sourceIsModule = true;
+  //
+  // (#6474) …except when the caller says the ENTRY may legitimately be a
+  // script. The linked test262 harness lane compiles a test262 script plus an
+  // ambient-global stub file, and forcing the module goal here silently changed
+  // observable semantics the honest single-file lane gets right: a top-level
+  // `var` became module-scoped rather than a global-object property, top-level
+  // `this` became `undefined`, and an undeclared assignment stopped creating a
+  // global. Under `entryScriptGoal` the goal comes from the entry's own
+  // `externalModuleIndicator`, so a real `import`/`export` still yields a
+  // module. Unset (every other caller) keeps the unconditional `true`.
+  ctx.sourceIsModule = options?.entryScriptGoal
+    ? (multiAst.entryFile as { externalModuleIndicator?: ts.Node }).externalModuleIndicator !== undefined
+    : true;
   // (#3057 multi-source parity) Discover dynamic TypedArray constructors over
   // the complete graph before any shared runtime helper is emitted. A helper
   // in an earlier source file may receive the resulting `$__ta_dyn_view` as
@@ -11404,6 +11422,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("mint-class-static-builders", () => mintStandaloneClassStaticBuilders(ctx));
     profilePhase("mint-class-proto-builders", () => mintStandaloneClassProtoBuilders(ctx));
     profilePhase("fill-class-proto-lookup", () => fillClassProtoLookupArm(ctx));
+    // (#6457) Same position as the twin site above, same reason.
+    profilePhase("fill-class-prototype-read", () => fillClassPrototypeReadArm(ctx));
     profilePhase("fill-dynamic-proto-helpers", () => fillDynamicProtoHelpers(ctx));
     profilePhase("fill-runtime-eval-callable-get-arm", () => fillRuntimeEvalCallablePropertyGetArm(ctx));
     profilePhase("fill-runtime-eval-intrinsic-own-props", () => fillRuntimeEvalIntrinsicFunctionOwnProps(ctx));

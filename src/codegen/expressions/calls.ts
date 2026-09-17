@@ -511,7 +511,7 @@ import {
 } from "../native-strings.js";
 import { ensureTextEncodingHelpers } from "../text-encoding-native.js";
 import { emitVariadicStringConcat, hostStringRepr, nativeStringRepr } from "../builtin-scaffold.js";
-import { emitCodeUnitPart, tryEmitFromCharCodeSpread } from "../from-char-code-spread.js";
+import { compileFromCharCodeFamilySpread, needsFromCharCodeSpread } from "./from-char-code-spread.js";
 import { URI_DECODE_MASK, URI_ENCODE_MASK } from "../uri-encoding-native.js";
 import {
   buildInt8ArrayCarrierMatch,
@@ -532,7 +532,11 @@ import {
   sourceParamCountFromExpanded,
   wasmParamIndexForSourceParam,
 } from "../linear-uint8-signatures.js";
-import { resolveNamedThisCallTarget, tryReshapeApplyToNamedThisCall } from "../named-this-call.js";
+import {
+  resolveNamedThisCallTarget,
+  resolveUndefinedReceiverTrampoline,
+  tryReshapeApplyToNamedThisCall,
+} from "../named-this-call.js";
 import {
   emitClosureReceiverInstall,
   finishClosureReceiverCall,
@@ -2731,6 +2735,41 @@ export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression
 }
 
 /**
+ * (#6490) Is `expr` an identifier resolving to a **callable parameter of a
+ * separately-linked provider module**?
+ *
+ * In a linked graph (`src/package-linker.ts`, #2527 — the Temporal provider and
+ * the #3451 test262 harness provider) the provider is compiled as its own Wasm
+ * module and its callers live in a DIFFERENT module. A callback the consumer
+ * passes in therefore arrives as an `externref` whose wasm closure struct
+ * belongs to the consumer's type group, so the provider's guarded
+ * `ref.test`/`ref.cast` to ITS wrapper root misses and yields `ref.null` — and
+ * the callable-param dispatch then `struct.get`s a null and TRAPS with
+ * "dereferencing a null pointer". A wasm trap is not catchable, so it takes the
+ * whole program down.
+ *
+ * This is exactly the #1941 invariant — "pure local closures / function params
+ * are always wrapped into the closure struct, so the host arm would be dead
+ * code" — and it is FALSE by construction for a provider: the value did not
+ * come from this module. Measured on the test262 linked lane, where every call
+ * of `testTypedArray.js`'s `testWithTypedArrayConstructors(f)` trapped inside
+ * the provider (~1,340 corpus rows). The same reasoning #4616 applied to
+ * host-reachable METHOD params applies here to every param, because a
+ * provider's exports are its whole reason to exist.
+ *
+ * Gated on `ctx.exportsConsumedByWasm` (set only by the linker, #5247), so a
+ * single-module compile — every ordinary and honest-lane build — is
+ * byte-identical.
+ */
+export function calleeIsLinkedProviderParam(ctx: CodegenContext, expr: ts.Expression): boolean {
+  if (ctx.exportsConsumedByWasm !== true) return false;
+  if (ctx.standalone || ctx.wasi) return false;
+  if (!ts.isIdentifier(expr)) return false;
+  const decl = ctx.oracle.valueDeclarationOf(expr);
+  return decl !== undefined && ts.isParameter(decl);
+}
+
+/**
  * (#2028) Is `expr` an identifier resolving to a parameter of a **Promise
  * executor** — the `(resolve, reject) => {…}` arrow/function-expression passed
  * directly to `new Promise(...)`?
@@ -3351,17 +3390,6 @@ export function emitClosureCallArgcExtras(
 ): void {
   if (args.length > paramCount) {
     emitSetExtrasArgv(ctx, fctx, args as unknown as ts.Expression[], paramCount);
-  } else if (ctx.extrasArgvGlobalIdx >= 0) {
-    // (#6416) This call has no extras — but `arguments.length` is
-    // `argc + extrasLen`, so a vec left parked in the global by an earlier
-    // over-applied call (one whose callee never materialised `arguments` and
-    // therefore never consumed it) would be counted here. Null it out. Uses
-    // the no-lazy-registration convention of `buildArgcResetNoLazyExtras`:
-    // with no global yet, nothing in the module has ever written a vec.
-    fctx.body.push(
-      { op: "ref.null", typeIdx: ctx.extrasArgvVecTypeIdx },
-      { op: "global.set", index: ctx.extrasArgvGlobalIdx },
-    );
   }
   emitSetArgc(ctx, fctx, args.length, paramCount);
   appendForwardedOptionalArgcOverride(ctx, fctx, fctx.body, args, paramCount);
@@ -6143,26 +6171,13 @@ export function compileFromCharCodeFamily(
   opts: { native: boolean; helperIdx: number; isFromCodePoint?: boolean },
 ): ValType | null {
   const { native, helperIdx, isFromCodePoint } = opts;
-  // The helper's NAME, not the caller's captured index: expanding a spread
-  // registers late imports, which shifts every index captured before them.
-  const helperName = native
-    ? isFromCodePoint === true
-      ? "__str_fromCodePoint"
-      : "__str_fromCharCode"
-    : isFromCodePoint === true
-      ? "String_fromCodePoint"
-      : "String_fromCharCode";
-  // (#6421) A SPREAD argument contributes its RUNTIME element count, which one
-  // part per AST node cannot express — the source array coerced to a single
-  // `NaN` code unit. The spread lane folds the parts with an accumulator
-  // instead; it emits nothing and hands the call back when there is no spread
-  // (or no expansion substrate), so a static argument list stays on the loop
-  // below byte for byte.
-  const spread = tryEmitFromCharCodeSpread(ctx, fctx, expr, { native, helperName, isFromCodePoint });
-  if (spread !== undefined) return spread;
-  // Declining can still have flushed a late import (the substrate probe
-  // registers before it can answer), so the loop re-reads both by name too.
-  const loopHelperIdx = (native ? ctx.nativeStrHelpers.get(helperName) : ctx.funcMap.get(helperName)) ?? helperIdx;
+  // (#6430) `...src` has no lowering in the per-node fold below (it unwraps to
+  // `src` → NaN → one NUL char); the shared builder expands it. It emits
+  // nothing before it can decline, so `null` leaves the fold a clean slate.
+  if (needsFromCharCodeSpread(expr)) {
+    const spread = compileFromCharCodeFamilySpread(ctx, fctx, expr, opts);
+    if (spread !== null) return spread;
+  }
   const repr = native ? nativeStringRepr(ctx) : hostStringRepr(ctx);
   if (repr === undefined) return null;
 
@@ -6185,9 +6200,73 @@ export function compileFromCharCodeFamily(
         continue;
       }
       const argType = compileExpression(ctx, fctx, expr.arguments[i]!, { kind: "f64" });
-      // The per-code-unit tail (ToUint16 / #2601 range guard / helper call) is
-      // shared with the spread lane so the two cannot drift (#6421).
-      emitCodeUnitPart(ctx, fctx, buf, argType, { native, helperIdx: loopHelperIdx, isFromCodePoint });
+      // #2601 — §22.1.2.2 step 2b/2c: each fromCodePoint code point, after
+      // ToNumber, must be an INTEGRAL Number in [0, 0x10FFFF] else RangeError.
+      // (fromCharCode does ToUint16 with NO such check — fromCodePoint-only.)
+      // Scoped to standalone/WASI (`noJsHost`): the throw uses the in-module
+      // `__new_RangeError` constructor with no host bridge. The JS-host lane
+      // keeps its existing host-delegated behaviour (the slice is standalone).
+      const emitRangeGuard = isFromCodePoint === true && noJsHost(ctx);
+      if (emitRangeGuard) {
+        // Normalise to f64, then test `trunc(cp) != cp` (catches fractional AND
+        // NaN) OR `cp < 0` OR `cp > 0x10FFFF` (±∞ caught by the range test).
+        if (argType && argType.kind === "i32") buf.push({ op: "f64.convert_i32_s" });
+        const cpTmp = allocLocal(fctx, `__fcp_cp_${fctx.locals.length}`, { kind: "f64" });
+        buf.push({ op: "local.tee", index: cpTmp });
+        // integral: trunc(cp) != cp  → also true for NaN
+        buf.push({ op: "local.get", index: cpTmp });
+        buf.push({ op: "f64.trunc" });
+        buf.push({ op: "f64.ne" });
+        // range: cp < 0
+        buf.push({ op: "local.get", index: cpTmp });
+        buf.push({ op: "f64.const", value: 0 });
+        buf.push({ op: "f64.lt" });
+        // range: cp > 0x10FFFF
+        buf.push({ op: "local.get", index: cpTmp });
+        buf.push({ op: "f64.const", value: 0x10ffff });
+        buf.push({ op: "f64.gt" });
+        buf.push({ op: "i32.or" });
+        buf.push({ op: "i32.or" });
+        const throwBuf: Instr[] = [];
+        const savedForThrow = fctx.body;
+        fctx.body = throwBuf;
+        emitThrowRangeError(ctx, fctx, "RangeError: Invalid code point");
+        fctx.body = savedForThrow;
+        buf.push({ op: "if", blockType: { kind: "empty" }, then: throwBuf });
+        // Re-push the validated code point for the helper.
+        buf.push({ op: "local.get", index: cpTmp });
+      }
+      if (native) {
+        if (emitRangeGuard) {
+          // Already f64 in the temp above — trunc to the i32 the native helper wants.
+          buf.push({ op: "i32.trunc_sat_f64_s" });
+        } else if (argType && argType.kind !== "i32") {
+          // (#2875 slice 5) §7.1.8 ToUint16 computed in the f64 domain BEFORE
+          // the i32 conversion: t = trunc(x); m = t − floor(t/2^16)·2^16 ∈
+          // [0, 65535]. Division by 2^16 is a pure exponent shift, so every
+          // step is exact for all finite f64s; NaN and ±Inf propagate to a NaN
+          // m (Inf−Inf), which i32.trunc_sat then maps to the spec's +0.
+          // A bare `i32.trunc_sat_f64_s` SATURATES first — +Inf → 0x7FFFFFFF,
+          // which the helper's low-16 mask turns into 0xFFFF instead of 0
+          // (S9.7_A1 #5), and any |x| ≥ 2^31 loses its true modulo the same
+          // way. (The i32-typed arg arm needs none of this: the helper's mask
+          // IS ToUint16 for i32-representable integers.)
+          const u16Tmp = allocLocal(fctx, `__fcc_u16_${fctx.locals.length}`, { kind: "f64" });
+          buf.push({ op: "f64.trunc" });
+          buf.push({ op: "local.tee", index: u16Tmp });
+          buf.push({ op: "local.get", index: u16Tmp });
+          buf.push({ op: "f64.const", value: 65536 });
+          buf.push({ op: "f64.div" });
+          buf.push({ op: "f64.floor" });
+          buf.push({ op: "f64.const", value: 65536 });
+          buf.push({ op: "f64.mul" });
+          buf.push({ op: "f64.sub" });
+          buf.push({ op: "i32.trunc_sat_f64_s" });
+        }
+      } else {
+        if (argType && argType.kind === "i32") buf.push({ op: "f64.convert_i32_s" });
+      }
+      buf.push({ op: "call", funcIdx: helperIdx });
     } finally {
       fctx.body = savedBody;
     }
@@ -8693,7 +8772,12 @@ function compileCallExpression(
               getFuncParamTypes(ctx, funcIdx!)?.length ?? remainingArgs.length,
             );
             const finalFuncIdx = ctx.funcMap.get(funcName) ?? funcIdx!;
-            fctx.body.push({ op: "call", funcIdx: namedThisCall?.trampolineFuncIdx ?? finalFuncIdx });
+            // (#6436) `.call(undefined, …)` dropped its receiver here.
+            const undefinedThis =
+              namedThisCall === undefined
+                ? resolveUndefinedReceiverTrampoline(ctx, funcName, finalFuncIdx, expr.arguments[0])
+                : undefined;
+            fctx.body.push({ op: "call", funcIdx: namedThisCall?.trampolineFuncIdx ?? undefinedThis ?? finalFuncIdx });
 
             // Use actual Wasm return type — TS checker reports `any` for .call()/.apply()
             // which resolves to externref, but the actual function may return f64/i32/ref.
@@ -8774,7 +8858,9 @@ function compileCallExpression(
                 elements.length,
                 getFuncParamTypes(ctx, finalFuncIdx)?.length ?? elements.length,
               );
-              fctx.body.push({ op: "call", funcIdx: finalFuncIdx });
+              // (#6436) Same as the `.call` arm: `.apply(undefined, [...])`.
+              const applyThis = resolveUndefinedReceiverTrampoline(ctx, funcName, finalFuncIdx, expr.arguments[0]);
+              fctx.body.push({ op: "call", funcIdx: applyThis ?? finalFuncIdx });
               // Use actual Wasm return type for .apply()
               if (wasmFuncReturnsVoid(ctx, finalFuncIdx)) return VOID_RESULT;
               return getWasmFuncReturnType(ctx, finalFuncIdx) ?? VOID_RESULT;

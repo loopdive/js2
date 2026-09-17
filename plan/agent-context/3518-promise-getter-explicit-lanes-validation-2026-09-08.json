@@ -1,0 +1,43 @@
+{
+  "revision": "getter-capture-v2-explicit-lanes",
+  "base": "a7fbc6eb6fa8ebcde29529d67e55408592672fee",
+  "typecheck": {
+    "session": 40200,
+    "exitCode": 0,
+    "command": "NODE_OPTIONS=--max-old-space-size=2048 node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json",
+    "output": ""
+  },
+  "test": {
+    "session": 6839,
+    "exitCode": 0,
+    "command": "NODE_OPTIONS=--max-old-space-size=2048 VITEST_FORK_MAX_OLD_SPACE_SIZE=2048 VITEST_MAX_FORKS=1 pnpm exec vitest run tests/issue-3518-promise-resolution-preservation.test.ts tests/issue-3518-promise-getter-capture.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism --reporter=dot",
+    "output": "\n RUN  v3.2.4 /private/tmp/js2-3518-promise-getter-capture-20260908\n\n·······························································\n\n Test Files  2 passed (2)\n      Tests  63 passed (63)\n   Start at  20:20:44\n   Duration  18.53s (transform 7.60s, setup 0ms, collect 57ms, tests 18.15s, environment 0ms, prepare 48ms)\n\n",
+    "passed": 63,
+    "total": 63,
+    "preservation": 49,
+    "runtime": {
+      "experimentalIRFalse": 7,
+      "experimentalIRTrue": 7,
+      "skipped": 0,
+      "skipSemanticDiagnostics": false
+    },
+    "durationSeconds": 18.53
+  },
+  "controls": {
+    "JS2WASM_IR_GVN": "0",
+    "JS2WASM_IR_OWNERSHIP": "0",
+    "JS2WASM_IR_ESCAPE": "0",
+    "IR_VERIFY_ALLOC": "0",
+    "JS2WASM_IR_VERIFY_DOMINANCE_NAIVE": "0",
+    "JS2WASM_IR_INLINE": "0"
+  },
+  "earlierReceipts": [
+    ".tmp/promise-getter-capture-validation-9166.json",
+    ".tmp/promise-getter-capture-failed-85556.json"
+  ],
+  "heavySlotReleased": true,
+  "serial": true,
+  "singleFork": true,
+  "heapMiB": 2048,
+  "limits": "Both explicit compile modes passed scoped runtime expectations; not source-free prepared consumer, whole-family cutover or retirement acceptance."
+}

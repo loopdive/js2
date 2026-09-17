@@ -34,8 +34,12 @@
       "status": "active",
       "roots": ["src/wasm/model"],
       "required": true,
-      "entries": ["src/wasm/model/instructions.ts", "src/wasm/model/module-records.ts"],
-      "minModules": 2
+      "entries": [
+        "src/wasm/model/instructions.ts",
+        "src/wasm/model/module-records.ts",
+        "src/wasm/model/instruction-walk.ts"
+      ],
+      "minModules": 3
     },
     {
       "id": "wasm-physical",
@@ -46,9 +50,10 @@
         "src/wasm/physical/function-handles.ts",
         "src/wasm/physical/function-types.ts",
         "src/wasm/physical/module-reservations.ts",
-        "src/wasm/physical/exception-control.ts"
+        "src/wasm/physical/exception-control.ts",
+        "src/wasm/physical/type-layout.ts"
       ],
-      "minModules": 4
+      "minModules": 5
     },
     {
       "id": "wasm-emit",
@@ -60,11 +65,19 @@
     },
     {
       "id": "frontend-ts",
-      "status": "planned",
-      "roots": ["src/frontend/ts"],
+      "status": "active",
+      "roots": [
+        "src/frontend/builtins/contracts.ts",
+        "src/frontend/builtins/prepare-string-output.ts",
+        "src/frontend/typescript.ts"
+      ],
       "required": true,
-      "entries": ["src/frontend/ts/index.ts"],
-      "minModules": 1
+      "entries": [
+        "src/frontend/builtins/contracts.ts",
+        "src/frontend/builtins/prepare-string-output.ts",
+        "src/frontend/typescript.ts"
+      ],
+      "minModules": 3
     },
     {
       "id": "ir-core",
@@ -86,9 +99,15 @@
         "src/ir/core/binding-key-primitives.ts",
         "src/ir/core/intrinsic-contracts.ts",
         "src/ir/core/intrinsics.ts",
-        "src/ir/core/callable-bindings.ts"
+        "src/ir/core/callable-bindings.ts",
+        "src/ir/core/async-callables.ts",
+        "src/ir/core/vector-runtime.ts",
+        "src/ir/core/type-references.ts",
+        "src/ir/core/type-binding-keys.ts",
+        "src/ir/core/type-key.ts",
+        "src/ir/core/string-callables.ts"
       ],
-      "minModules": 15
+      "minModules": 21
     },
     {
       "id": "ir-analysis",
@@ -133,9 +152,11 @@
         "src/ir/runtime/callable-declarations.ts",
         "src/ir/runtime/manifest.ts",
         "src/ir/runtime/async-attachment.ts",
-        "src/ir/runtime/intrinsic-verification.ts"
+        "src/ir/runtime/intrinsic-verification.ts",
+        "src/ir/runtime/native-async-callables.ts",
+        "src/ir/runtime/vector-callables.ts"
       ],
-      "minModules": 10
+      "minModules": 12
     },
     {
       "id": "ir-program",
@@ -154,9 +175,24 @@
         "src/ir/program/prepared-contracts.ts",
         "src/ir/program/errors.ts",
         "src/ir/program/data.ts",
-        "src/ir/program/input.ts"
+        "src/ir/program/input.ts",
+        "src/ir/program/native-vector-resources.ts",
+        "src/ir/program/native-promise-resources.ts",
+        "src/ir/program/native-value-resources.ts",
+        "src/ir/program/native-string-value-demands.ts",
+        "src/ir/program/runtime-support.ts",
+        "src/ir/program/formatter-support.ts",
+        "src/ir/program/native-number-format-requirements.ts",
+        "src/ir/program/async-frame-setup.ts",
+        "src/ir/program/prepared-async-frame-plan.ts",
+        "src/ir/program/abi-signatures.ts",
+        "src/ir/program/host-async-dynamic.ts",
+        "src/ir/program/host-import-plan.ts",
+        "src/ir/program/host-number-boundary-setup.ts",
+        "src/ir/program/runtime-abi-identity.ts",
+        "src/ir/program/native-string-output-requirements.ts"
       ],
-      "minModules": 12
+      "minModules": 27
     },
     {
       "id": "runtime-contracts",
@@ -173,11 +209,32 @@
     },
     {
       "id": "backend-wasmgc",
-      "status": "planned",
+      "status": "active",
       "roots": ["src/backend/wasmgc"],
       "required": true,
-      "entries": ["src/backend/wasmgc/program/index.ts"],
-      "minModules": 1
+      "entries": [
+        "src/backend/wasmgc/resources/native-vectors.ts",
+        "src/backend/wasmgc/resources/native-promises.ts",
+        "src/backend/wasmgc/resources/native-string-literals.ts",
+        "src/backend/wasmgc/resources/native-errors.ts",
+        "src/backend/wasmgc/resources/native-values.ts",
+        "src/backend/wasmgc/resources/native-string-number.ts",
+        "src/backend/wasmgc/resources/native-string-flatten.ts",
+        "src/backend/wasmgc/resources/native-argument-vectors.ts",
+        "src/backend/wasmgc/resources/native-closures.ts",
+        "src/backend/wasmgc/resources/native-resource-declarations.ts",
+        "src/backend/wasmgc/program/native-string-values.ts",
+        "src/backend/wasmgc/program/native-number-format.ts",
+        "src/backend/wasmgc/resources/native-number-ryu.ts",
+        "src/backend/wasmgc/resources/native-number-format.ts",
+        "src/backend/wasmgc/resources/native-delay-combinator.ts",
+        "src/backend/wasmgc/async/prepared-async-frame-adapter.ts",
+        "src/backend/wasmgc/resources/prepared-async-frame.ts",
+        "src/backend/wasmgc/program/native-string-output-abi.ts",
+        "src/backend/wasmgc/program/native-string-output.ts",
+        "src/backend/wasmgc/resources/native-string-output.ts"
+      ],
+      "minModules": 20
     },
     {
       "id": "native-runtime",
@@ -190,9 +247,38 @@
         "src/runtime/wasmgc/async/frame-engine.ts",
         "src/runtime/wasmgc/async/native-await.ts",
         "src/runtime/wasmgc/promise/delay-bodies.ts",
-        "src/runtime/wasmgc/promise/combinator-bodies.ts"
+        "src/runtime/wasmgc/promise/combinator-bodies.ts",
+        "src/runtime/wasmgc/values/vector-grow-store.ts",
+        "src/runtime/wasmgc/promise/resolution-bodies.ts",
+        "src/runtime/wasmgc/promise/thenable-bodies.ts",
+        "src/runtime/wasmgc/values/string-layouts.ts",
+        "src/runtime/wasmgc/values/string-literal-bodies.ts",
+        "src/runtime/wasmgc/values/error-bodies.ts",
+        "src/runtime/wasmgc/values/primitive-layouts.ts",
+        "src/runtime/wasmgc/values/number-bodies.ts",
+        "src/runtime/wasmgc/values/string-number-grammar.ts",
+        "src/runtime/wasmgc/values/decimal-scale-bodies.ts",
+        "src/runtime/wasmgc/values/string-number-bodies.ts",
+        "src/runtime/wasmgc/values/string-flatten-bodies.ts",
+        "src/runtime/wasmgc/values/string-utf8-decode-bodies.ts",
+        "src/runtime/wasmgc/values/argument-vector-bodies.ts",
+        "src/runtime/wasmgc/values/closure-layouts.ts",
+        "src/runtime/wasmgc/values/native-resource-declaration-types.ts",
+        "src/runtime/wasmgc/values/number-ryu-tables.ts",
+        "src/runtime/wasmgc/values/number-ryu-bodies.ts",
+        "src/runtime/wasmgc/values/number-ryu-digits.ts",
+        "src/runtime/wasmgc/values/number-ryu-to-buffer.ts",
+        "src/runtime/wasmgc/values/number-ryu-signatures.ts",
+        "src/runtime/wasmgc/values/number-format-bodies.ts",
+        "src/runtime/wasmgc/values/number-format-radix-bodies.ts",
+        "src/runtime/wasmgc/values/string-concat-bodies.ts",
+        "src/runtime/wasmgc/values/stdout-bodies.ts",
+        "src/runtime/wasmgc/promise/delay-combinator-layouts.ts",
+        "src/runtime/wasmgc/async/frame-defaults.ts",
+        "src/runtime/wasmgc/async/prepared-async-frame-engine.ts",
+        "src/runtime/wasmgc/async/prepared-async-frame-types.ts"
       ],
-      "minModules": 6
+      "minModules": 35
     },
     {
       "id": "standalone-platform",
@@ -431,6 +517,694 @@
     }
   ],
   "activationHistory": [
+    {
+      "layer": "backend-wasmgc",
+      "entries": ["src/backend/wasmgc/resources/native-delay-combinator.ts"],
+      "minModules": 15
+    },
+    {
+      "layer": "native-runtime",
+      "entries": ["src/runtime/wasmgc/promise/delay-combinator-layouts.ts"],
+      "minModules": 32
+    },
+    {
+      "layer": "native-runtime",
+      "entries": ["src/runtime/wasmgc/values/string-concat-bodies.ts", "src/runtime/wasmgc/values/stdout-bodies.ts"],
+      "minModules": 2
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": ["src/backend/wasmgc/resources/native-number-format.ts"],
+      "minModules": 1
+    },
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/values/number-format-bodies.ts",
+        "src/runtime/wasmgc/values/number-format-radix-bodies.ts"
+      ],
+      "minModules": 2
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": ["src/backend/wasmgc/resources/native-number-ryu.ts"],
+      "minModules": 1
+    },
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/values/number-ryu-tables.ts",
+        "src/runtime/wasmgc/values/number-ryu-bodies.ts",
+        "src/runtime/wasmgc/values/number-ryu-digits.ts",
+        "src/runtime/wasmgc/values/number-ryu-to-buffer.ts",
+        "src/runtime/wasmgc/values/number-ryu-signatures.ts"
+      ],
+      "minModules": 5
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": ["src/backend/wasmgc/program/native-number-format.ts"],
+      "minModules": 1
+    },
+    {
+      "layer": "ir-program",
+      "entries": ["src/ir/program/native-number-format-requirements.ts"],
+      "minModules": 1
+    },
+    {
+      "layer": "frontend-ts",
+      "entries": ["src/frontend/builtins/contracts.ts"],
+      "minModules": 1
+    },
+    {
+      "layer": "ir-core",
+      "entries": ["src/ir/core/type-references.ts"],
+      "minModules": 1
+    },
+    {
+      "layer": "ir-program",
+      "entries": ["src/ir/program/runtime-support.ts", "src/ir/program/formatter-support.ts"],
+      "minModules": 2
+    },
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts",
+        "src/runtime/wasmgc/async/frame-engine.ts",
+        "src/runtime/wasmgc/async/native-await.ts",
+        "src/runtime/wasmgc/promise/delay-bodies.ts",
+        "src/runtime/wasmgc/promise/combinator-bodies.ts",
+        "src/runtime/wasmgc/values/vector-grow-store.ts",
+        "src/runtime/wasmgc/promise/resolution-bodies.ts",
+        "src/runtime/wasmgc/promise/thenable-bodies.ts",
+        "src/runtime/wasmgc/values/string-layouts.ts",
+        "src/runtime/wasmgc/values/string-literal-bodies.ts",
+        "src/runtime/wasmgc/values/error-bodies.ts",
+        "src/runtime/wasmgc/values/primitive-layouts.ts",
+        "src/runtime/wasmgc/values/number-bodies.ts",
+        "src/runtime/wasmgc/values/string-number-grammar.ts",
+        "src/runtime/wasmgc/values/decimal-scale-bodies.ts",
+        "src/runtime/wasmgc/values/string-number-bodies.ts",
+        "src/runtime/wasmgc/values/string-flatten-bodies.ts",
+        "src/runtime/wasmgc/values/string-utf8-decode-bodies.ts",
+        "src/runtime/wasmgc/values/native-resource-declaration-types.ts",
+        "src/runtime/wasmgc/values/argument-vector-bodies.ts",
+        "src/runtime/wasmgc/values/closure-layouts.ts"
+      ],
+      "minModules": 22
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": [
+        "src/backend/wasmgc/resources/native-vectors.ts",
+        "src/backend/wasmgc/resources/native-promises.ts",
+        "src/backend/wasmgc/resources/native-string-literals.ts",
+        "src/backend/wasmgc/resources/native-errors.ts",
+        "src/backend/wasmgc/resources/native-values.ts",
+        "src/backend/wasmgc/resources/native-string-number.ts",
+        "src/backend/wasmgc/resources/native-string-flatten.ts",
+        "src/backend/wasmgc/resources/native-resource-declarations.ts",
+        "src/backend/wasmgc/program/native-string-values.ts",
+        "src/backend/wasmgc/resources/native-argument-vectors.ts",
+        "src/backend/wasmgc/resources/native-closures.ts"
+      ],
+      "minModules": 11
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": [
+        "src/backend/wasmgc/resources/native-vectors.ts",
+        "src/backend/wasmgc/resources/native-promises.ts",
+        "src/backend/wasmgc/resources/native-string-literals.ts",
+        "src/backend/wasmgc/resources/native-errors.ts",
+        "src/backend/wasmgc/resources/native-values.ts",
+        "src/backend/wasmgc/resources/native-string-number.ts",
+        "src/backend/wasmgc/resources/native-string-flatten.ts",
+        "src/backend/wasmgc/resources/native-argument-vectors.ts",
+        "src/backend/wasmgc/resources/native-closures.ts",
+        "src/backend/wasmgc/resources/native-resource-declarations.ts",
+        "src/backend/wasmgc/program/native-string-values.ts"
+      ],
+      "minModules": 11
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": [
+        "src/backend/wasmgc/resources/native-vectors.ts",
+        "src/backend/wasmgc/resources/native-promises.ts",
+        "src/backend/wasmgc/resources/native-string-literals.ts",
+        "src/backend/wasmgc/resources/native-errors.ts",
+        "src/backend/wasmgc/resources/native-values.ts",
+        "src/backend/wasmgc/resources/native-string-number.ts",
+        "src/backend/wasmgc/resources/native-string-flatten.ts",
+        "src/backend/wasmgc/resources/native-resource-declarations.ts",
+        "src/backend/wasmgc/program/native-string-values.ts"
+      ],
+      "minModules": 9
+    },
+    {
+      "layer": "ir-program",
+      "entries": [
+        "src/ir/program/abi-inventory.ts",
+        "src/ir/program/abi.ts",
+        "src/ir/program/startup.ts",
+        "src/ir/program/abi-lookup.ts",
+        "src/ir/program/callable-bindings.ts",
+        "src/ir/program/controls.ts",
+        "src/ir/program/index.ts",
+        "src/ir/program/input-contracts.ts",
+        "src/ir/program/prepared-contracts.ts",
+        "src/ir/program/errors.ts",
+        "src/ir/program/data.ts",
+        "src/ir/program/input.ts",
+        "src/ir/program/native-vector-resources.ts",
+        "src/ir/program/native-promise-resources.ts",
+        "src/ir/program/native-value-resources.ts",
+        "src/ir/program/native-string-value-demands.ts"
+      ],
+      "minModules": 16
+    },
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts",
+        "src/runtime/wasmgc/async/frame-engine.ts",
+        "src/runtime/wasmgc/async/native-await.ts",
+        "src/runtime/wasmgc/promise/delay-bodies.ts",
+        "src/runtime/wasmgc/promise/combinator-bodies.ts",
+        "src/runtime/wasmgc/values/vector-grow-store.ts",
+        "src/runtime/wasmgc/promise/resolution-bodies.ts",
+        "src/runtime/wasmgc/promise/thenable-bodies.ts",
+        "src/runtime/wasmgc/values/string-layouts.ts",
+        "src/runtime/wasmgc/values/string-literal-bodies.ts",
+        "src/runtime/wasmgc/values/error-bodies.ts",
+        "src/runtime/wasmgc/values/primitive-layouts.ts",
+        "src/runtime/wasmgc/values/number-bodies.ts",
+        "src/runtime/wasmgc/values/string-number-grammar.ts",
+        "src/runtime/wasmgc/values/decimal-scale-bodies.ts",
+        "src/runtime/wasmgc/values/string-number-bodies.ts",
+        "src/runtime/wasmgc/values/string-flatten-bodies.ts",
+        "src/runtime/wasmgc/values/string-utf8-decode-bodies.ts",
+        "src/runtime/wasmgc/values/argument-vector-bodies.ts",
+        "src/runtime/wasmgc/values/closure-layouts.ts",
+        "src/runtime/wasmgc/values/native-resource-declaration-types.ts"
+      ],
+      "minModules": 22
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": [
+        "src/backend/wasmgc/resources/native-vectors.ts",
+        "src/backend/wasmgc/resources/native-promises.ts",
+        "src/backend/wasmgc/resources/native-string-literals.ts",
+        "src/backend/wasmgc/resources/native-errors.ts",
+        "src/backend/wasmgc/resources/native-values.ts",
+        "src/backend/wasmgc/resources/native-string-number.ts",
+        "src/backend/wasmgc/resources/native-string-flatten.ts",
+        "src/backend/wasmgc/resources/native-argument-vectors.ts",
+        "src/backend/wasmgc/resources/native-closures.ts",
+        "src/backend/wasmgc/resources/native-resource-declarations.ts"
+      ],
+      "minModules": 10
+    },
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts",
+        "src/runtime/wasmgc/async/frame-engine.ts",
+        "src/runtime/wasmgc/async/native-await.ts",
+        "src/runtime/wasmgc/promise/delay-bodies.ts",
+        "src/runtime/wasmgc/promise/combinator-bodies.ts",
+        "src/runtime/wasmgc/values/vector-grow-store.ts",
+        "src/runtime/wasmgc/promise/resolution-bodies.ts",
+        "src/runtime/wasmgc/promise/thenable-bodies.ts",
+        "src/runtime/wasmgc/values/string-layouts.ts",
+        "src/runtime/wasmgc/values/string-literal-bodies.ts",
+        "src/runtime/wasmgc/values/error-bodies.ts",
+        "src/runtime/wasmgc/values/primitive-layouts.ts",
+        "src/runtime/wasmgc/values/number-bodies.ts",
+        "src/runtime/wasmgc/values/string-number-grammar.ts",
+        "src/runtime/wasmgc/values/decimal-scale-bodies.ts",
+        "src/runtime/wasmgc/values/string-number-bodies.ts",
+        "src/runtime/wasmgc/values/string-flatten-bodies.ts",
+        "src/runtime/wasmgc/values/string-utf8-decode-bodies.ts",
+        "src/runtime/wasmgc/values/native-resource-declaration-types.ts"
+      ],
+      "minModules": 20
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": [
+        "src/backend/wasmgc/resources/native-vectors.ts",
+        "src/backend/wasmgc/resources/native-promises.ts",
+        "src/backend/wasmgc/resources/native-string-literals.ts",
+        "src/backend/wasmgc/resources/native-errors.ts",
+        "src/backend/wasmgc/resources/native-values.ts",
+        "src/backend/wasmgc/resources/native-string-number.ts",
+        "src/backend/wasmgc/resources/native-string-flatten.ts",
+        "src/backend/wasmgc/resources/native-resource-declarations.ts"
+      ],
+      "minModules": 8
+    },
+    {
+      "layer": "ir-program",
+      "entries": [
+        "src/ir/program/abi-inventory.ts",
+        "src/ir/program/abi.ts",
+        "src/ir/program/startup.ts",
+        "src/ir/program/abi-lookup.ts",
+        "src/ir/program/callable-bindings.ts",
+        "src/ir/program/controls.ts",
+        "src/ir/program/index.ts",
+        "src/ir/program/input-contracts.ts",
+        "src/ir/program/prepared-contracts.ts",
+        "src/ir/program/errors.ts",
+        "src/ir/program/data.ts",
+        "src/ir/program/input.ts",
+        "src/ir/program/native-vector-resources.ts",
+        "src/ir/program/native-promise-resources.ts",
+        "src/ir/program/native-value-resources.ts",
+        "src/ir/program/native-string-value-demands.ts"
+      ],
+      "minModules": 16
+    },
+    {
+      "layer": "wasm-model",
+      "entries": [
+        "src/wasm/model/instructions.ts",
+        "src/wasm/model/module-records.ts",
+        "src/wasm/model/instruction-walk.ts"
+      ],
+      "minModules": 3
+    },
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts",
+        "src/runtime/wasmgc/async/frame-engine.ts",
+        "src/runtime/wasmgc/async/native-await.ts",
+        "src/runtime/wasmgc/promise/delay-bodies.ts",
+        "src/runtime/wasmgc/promise/combinator-bodies.ts",
+        "src/runtime/wasmgc/values/vector-grow-store.ts",
+        "src/runtime/wasmgc/promise/resolution-bodies.ts",
+        "src/runtime/wasmgc/promise/thenable-bodies.ts",
+        "src/runtime/wasmgc/values/string-layouts.ts",
+        "src/runtime/wasmgc/values/string-literal-bodies.ts",
+        "src/runtime/wasmgc/values/error-bodies.ts",
+        "src/runtime/wasmgc/values/primitive-layouts.ts",
+        "src/runtime/wasmgc/values/number-bodies.ts",
+        "src/runtime/wasmgc/values/string-number-grammar.ts",
+        "src/runtime/wasmgc/values/decimal-scale-bodies.ts",
+        "src/runtime/wasmgc/values/string-number-bodies.ts",
+        "src/runtime/wasmgc/values/string-flatten-bodies.ts",
+        "src/runtime/wasmgc/values/string-utf8-decode-bodies.ts",
+        "src/runtime/wasmgc/values/argument-vector-bodies.ts",
+        "src/runtime/wasmgc/values/closure-layouts.ts"
+      ],
+      "minModules": 21
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": [
+        "src/backend/wasmgc/resources/native-vectors.ts",
+        "src/backend/wasmgc/resources/native-promises.ts",
+        "src/backend/wasmgc/resources/native-string-literals.ts",
+        "src/backend/wasmgc/resources/native-errors.ts",
+        "src/backend/wasmgc/resources/native-values.ts",
+        "src/backend/wasmgc/resources/native-string-number.ts",
+        "src/backend/wasmgc/resources/native-string-flatten.ts",
+        "src/backend/wasmgc/resources/native-argument-vectors.ts",
+        "src/backend/wasmgc/resources/native-closures.ts"
+      ],
+      "minModules": 9
+    },
+    {
+      "layer": "wasm-model",
+      "entries": [
+        "src/wasm/model/instructions.ts",
+        "src/wasm/model/module-records.ts",
+        "src/wasm/model/instruction-walk.ts"
+      ],
+      "minModules": 3
+    },
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts",
+        "src/runtime/wasmgc/async/frame-engine.ts",
+        "src/runtime/wasmgc/async/native-await.ts",
+        "src/runtime/wasmgc/promise/delay-bodies.ts",
+        "src/runtime/wasmgc/promise/combinator-bodies.ts",
+        "src/runtime/wasmgc/values/vector-grow-store.ts",
+        "src/runtime/wasmgc/promise/resolution-bodies.ts",
+        "src/runtime/wasmgc/promise/thenable-bodies.ts",
+        "src/runtime/wasmgc/values/string-layouts.ts",
+        "src/runtime/wasmgc/values/string-literal-bodies.ts",
+        "src/runtime/wasmgc/values/error-bodies.ts",
+        "src/runtime/wasmgc/values/primitive-layouts.ts",
+        "src/runtime/wasmgc/values/number-bodies.ts",
+        "src/runtime/wasmgc/values/string-number-grammar.ts",
+        "src/runtime/wasmgc/values/decimal-scale-bodies.ts",
+        "src/runtime/wasmgc/values/string-number-bodies.ts",
+        "src/runtime/wasmgc/values/string-flatten-bodies.ts",
+        "src/runtime/wasmgc/values/string-utf8-decode-bodies.ts"
+      ],
+      "minModules": 19
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": [
+        "src/backend/wasmgc/resources/native-vectors.ts",
+        "src/backend/wasmgc/resources/native-promises.ts",
+        "src/backend/wasmgc/resources/native-string-literals.ts",
+        "src/backend/wasmgc/resources/native-errors.ts",
+        "src/backend/wasmgc/resources/native-values.ts",
+        "src/backend/wasmgc/resources/native-string-number.ts",
+        "src/backend/wasmgc/resources/native-string-flatten.ts"
+      ],
+      "minModules": 7
+    },
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts",
+        "src/runtime/wasmgc/async/frame-engine.ts",
+        "src/runtime/wasmgc/async/native-await.ts",
+        "src/runtime/wasmgc/promise/delay-bodies.ts",
+        "src/runtime/wasmgc/promise/combinator-bodies.ts",
+        "src/runtime/wasmgc/values/vector-grow-store.ts",
+        "src/runtime/wasmgc/promise/resolution-bodies.ts",
+        "src/runtime/wasmgc/promise/thenable-bodies.ts",
+        "src/runtime/wasmgc/values/string-layouts.ts",
+        "src/runtime/wasmgc/values/string-literal-bodies.ts",
+        "src/runtime/wasmgc/values/error-bodies.ts",
+        "src/runtime/wasmgc/values/primitive-layouts.ts",
+        "src/runtime/wasmgc/values/number-bodies.ts",
+        "src/runtime/wasmgc/values/argument-vector-bodies.ts",
+        "src/runtime/wasmgc/values/closure-layouts.ts"
+      ],
+      "minModules": 16
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": [
+        "src/backend/wasmgc/resources/native-vectors.ts",
+        "src/backend/wasmgc/resources/native-promises.ts",
+        "src/backend/wasmgc/resources/native-string-literals.ts",
+        "src/backend/wasmgc/resources/native-errors.ts",
+        "src/backend/wasmgc/resources/native-values.ts",
+        "src/backend/wasmgc/resources/native-argument-vectors.ts",
+        "src/backend/wasmgc/resources/native-closures.ts"
+      ],
+      "minModules": 7
+    },
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts",
+        "src/runtime/wasmgc/async/frame-engine.ts",
+        "src/runtime/wasmgc/async/native-await.ts",
+        "src/runtime/wasmgc/promise/delay-bodies.ts",
+        "src/runtime/wasmgc/promise/combinator-bodies.ts",
+        "src/runtime/wasmgc/values/vector-grow-store.ts",
+        "src/runtime/wasmgc/promise/resolution-bodies.ts",
+        "src/runtime/wasmgc/promise/thenable-bodies.ts",
+        "src/runtime/wasmgc/values/string-layouts.ts",
+        "src/runtime/wasmgc/values/string-literal-bodies.ts",
+        "src/runtime/wasmgc/values/error-bodies.ts",
+        "src/runtime/wasmgc/values/primitive-layouts.ts",
+        "src/runtime/wasmgc/values/number-bodies.ts",
+        "src/runtime/wasmgc/values/argument-vector-bodies.ts"
+      ],
+      "minModules": 15
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": [
+        "src/backend/wasmgc/resources/native-vectors.ts",
+        "src/backend/wasmgc/resources/native-promises.ts",
+        "src/backend/wasmgc/resources/native-string-literals.ts",
+        "src/backend/wasmgc/resources/native-errors.ts",
+        "src/backend/wasmgc/resources/native-values.ts",
+        "src/backend/wasmgc/resources/native-argument-vectors.ts"
+      ],
+      "minModules": 6
+    },
+    {
+      "layer": "ir-program",
+      "entries": [
+        "src/ir/program/abi-inventory.ts",
+        "src/ir/program/abi.ts",
+        "src/ir/program/startup.ts",
+        "src/ir/program/abi-lookup.ts",
+        "src/ir/program/callable-bindings.ts",
+        "src/ir/program/controls.ts",
+        "src/ir/program/index.ts",
+        "src/ir/program/input-contracts.ts",
+        "src/ir/program/prepared-contracts.ts",
+        "src/ir/program/errors.ts",
+        "src/ir/program/data.ts",
+        "src/ir/program/input.ts",
+        "src/ir/program/native-vector-resources.ts",
+        "src/ir/program/native-promise-resources.ts",
+        "src/ir/program/native-value-resources.ts"
+      ],
+      "minModules": 15
+    },
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts",
+        "src/runtime/wasmgc/async/frame-engine.ts",
+        "src/runtime/wasmgc/async/native-await.ts",
+        "src/runtime/wasmgc/promise/delay-bodies.ts",
+        "src/runtime/wasmgc/promise/combinator-bodies.ts",
+        "src/runtime/wasmgc/values/vector-grow-store.ts",
+        "src/runtime/wasmgc/promise/resolution-bodies.ts",
+        "src/runtime/wasmgc/promise/thenable-bodies.ts",
+        "src/runtime/wasmgc/values/string-layouts.ts",
+        "src/runtime/wasmgc/values/string-literal-bodies.ts",
+        "src/runtime/wasmgc/values/error-bodies.ts",
+        "src/runtime/wasmgc/values/primitive-layouts.ts",
+        "src/runtime/wasmgc/values/number-bodies.ts"
+      ],
+      "minModules": 14
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": [
+        "src/backend/wasmgc/resources/native-vectors.ts",
+        "src/backend/wasmgc/resources/native-promises.ts",
+        "src/backend/wasmgc/resources/native-string-literals.ts",
+        "src/backend/wasmgc/resources/native-errors.ts",
+        "src/backend/wasmgc/resources/native-values.ts"
+      ],
+      "minModules": 5
+    },
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts",
+        "src/runtime/wasmgc/async/frame-engine.ts",
+        "src/runtime/wasmgc/async/native-await.ts",
+        "src/runtime/wasmgc/promise/delay-bodies.ts",
+        "src/runtime/wasmgc/promise/combinator-bodies.ts",
+        "src/runtime/wasmgc/values/vector-grow-store.ts",
+        "src/runtime/wasmgc/promise/resolution-bodies.ts",
+        "src/runtime/wasmgc/promise/thenable-bodies.ts",
+        "src/runtime/wasmgc/values/string-layouts.ts",
+        "src/runtime/wasmgc/values/string-literal-bodies.ts",
+        "src/runtime/wasmgc/values/error-bodies.ts"
+      ],
+      "minModules": 12
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": [
+        "src/backend/wasmgc/resources/native-vectors.ts",
+        "src/backend/wasmgc/resources/native-promises.ts",
+        "src/backend/wasmgc/resources/native-string-literals.ts",
+        "src/backend/wasmgc/resources/native-errors.ts"
+      ],
+      "minModules": 4
+    },
+    {
+      "layer": "ir-program",
+      "entries": [
+        "src/ir/program/abi-inventory.ts",
+        "src/ir/program/abi.ts",
+        "src/ir/program/startup.ts",
+        "src/ir/program/abi-lookup.ts",
+        "src/ir/program/callable-bindings.ts",
+        "src/ir/program/controls.ts",
+        "src/ir/program/index.ts",
+        "src/ir/program/input-contracts.ts",
+        "src/ir/program/prepared-contracts.ts",
+        "src/ir/program/errors.ts",
+        "src/ir/program/data.ts",
+        "src/ir/program/input.ts",
+        "src/ir/program/native-vector-resources.ts",
+        "src/ir/program/native-promise-resources.ts"
+      ],
+      "minModules": 14
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": ["src/backend/wasmgc/resources/native-vectors.ts", "src/backend/wasmgc/resources/native-promises.ts"],
+      "minModules": 2
+    },
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts",
+        "src/runtime/wasmgc/async/frame-engine.ts",
+        "src/runtime/wasmgc/async/native-await.ts",
+        "src/runtime/wasmgc/promise/delay-bodies.ts",
+        "src/runtime/wasmgc/promise/combinator-bodies.ts",
+        "src/runtime/wasmgc/values/vector-grow-store.ts",
+        "src/runtime/wasmgc/promise/resolution-bodies.ts",
+        "src/runtime/wasmgc/promise/thenable-bodies.ts"
+      ],
+      "minModules": 9
+    },
+    {
+      "layer": "ir-program",
+      "entries": [
+        "src/ir/program/abi-inventory.ts",
+        "src/ir/program/abi.ts",
+        "src/ir/program/startup.ts",
+        "src/ir/program/abi-lookup.ts",
+        "src/ir/program/callable-bindings.ts",
+        "src/ir/program/controls.ts",
+        "src/ir/program/index.ts",
+        "src/ir/program/input-contracts.ts",
+        "src/ir/program/prepared-contracts.ts",
+        "src/ir/program/errors.ts",
+        "src/ir/program/data.ts",
+        "src/ir/program/input.ts",
+        "src/ir/program/native-vector-resources.ts"
+      ],
+      "minModules": 13
+    },
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts",
+        "src/runtime/wasmgc/async/frame-engine.ts",
+        "src/runtime/wasmgc/async/native-await.ts",
+        "src/runtime/wasmgc/promise/delay-bodies.ts",
+        "src/runtime/wasmgc/promise/combinator-bodies.ts",
+        "src/runtime/wasmgc/values/vector-grow-store.ts"
+      ],
+      "minModules": 7
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": ["src/backend/wasmgc/resources/native-vectors.ts"],
+      "minModules": 1
+    },
+    {
+      "layer": "ir-core",
+      "entries": [
+        "src/ir/core/types.ts",
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/capability-provenance.ts",
+        "src/ir/core/tag-refinement.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/dialect/js.ts",
+        "src/ir/core/async-plan.ts",
+        "src/ir/core/intrinsic-vocabulary.ts",
+        "src/ir/core/async-intents.ts",
+        "src/ir/core/string-types.ts",
+        "src/ir/core/binding-key-primitives.ts",
+        "src/ir/core/intrinsic-contracts.ts",
+        "src/ir/core/intrinsics.ts",
+        "src/ir/core/callable-bindings.ts",
+        "src/ir/core/async-callables.ts",
+        "src/ir/core/vector-runtime.ts"
+      ],
+      "minModules": 17
+    },
+    {
+      "layer": "ir-runtime",
+      "entries": [
+        "src/ir/runtime/index.ts",
+        "src/ir/runtime/contracts/intrinsics.ts",
+        "src/ir/runtime/contracts/manifest.ts",
+        "src/ir/runtime/contracts/prepared.ts",
+        "src/ir/runtime/host-capabilities.ts",
+        "src/ir/runtime/async-providers.ts",
+        "src/ir/runtime/callable-declarations.ts",
+        "src/ir/runtime/manifest.ts",
+        "src/ir/runtime/async-attachment.ts",
+        "src/ir/runtime/intrinsic-verification.ts",
+        "src/ir/runtime/native-async-callables.ts",
+        "src/ir/runtime/vector-callables.ts"
+      ],
+      "minModules": 12
+    },
+    {
+      "layer": "ir-core",
+      "entries": [
+        "src/ir/core/types.ts",
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/capability-provenance.ts",
+        "src/ir/core/tag-refinement.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/dialect/js.ts",
+        "src/ir/core/async-plan.ts",
+        "src/ir/core/intrinsic-vocabulary.ts",
+        "src/ir/core/async-intents.ts",
+        "src/ir/core/string-types.ts",
+        "src/ir/core/binding-key-primitives.ts",
+        "src/ir/core/intrinsic-contracts.ts",
+        "src/ir/core/intrinsics.ts",
+        "src/ir/core/callable-bindings.ts",
+        "src/ir/core/async-callables.ts"
+      ],
+      "minModules": 16
+    },
+    {
+      "layer": "ir-runtime",
+      "entries": [
+        "src/ir/runtime/index.ts",
+        "src/ir/runtime/contracts/intrinsics.ts",
+        "src/ir/runtime/contracts/manifest.ts",
+        "src/ir/runtime/contracts/prepared.ts",
+        "src/ir/runtime/host-capabilities.ts",
+        "src/ir/runtime/async-providers.ts",
+        "src/ir/runtime/callable-declarations.ts",
+        "src/ir/runtime/manifest.ts",
+        "src/ir/runtime/async-attachment.ts",
+        "src/ir/runtime/intrinsic-verification.ts",
+        "src/ir/runtime/native-async-callables.ts"
+      ],
+      "minModules": 11
+    },
+    {
+      "layer": "wasm-physical",
+      "entries": [
+        "src/wasm/physical/function-handles.ts",
+        "src/wasm/physical/function-types.ts",
+        "src/wasm/physical/module-reservations.ts",
+        "src/wasm/physical/exception-control.ts",
+        "src/wasm/physical/type-layout.ts"
+      ],
+      "minModules": 5
+    },
     {
       "layer": "native-runtime",
       "entries": [
@@ -702,6 +1476,47 @@
       "layer": "native-runtime",
       "entries": ["src/runtime/wasmgc/async/microtask-queue-bodies.ts"],
       "minModules": 1
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": [
+        "src/backend/wasmgc/async/prepared-async-frame-adapter.ts",
+        "src/backend/wasmgc/resources/prepared-async-frame.ts"
+      ],
+      "minModules": 2
+    },
+    {
+      "layer": "ir-program",
+      "entries": [
+        "src/ir/program/async-frame-setup.ts",
+        "src/ir/program/prepared-async-frame-plan.ts",
+        "src/ir/program/abi-signatures.ts"
+      ],
+      "minModules": 3
+    },
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/async/frame-defaults.ts",
+        "src/runtime/wasmgc/async/prepared-async-frame-engine.ts",
+        "src/runtime/wasmgc/async/prepared-async-frame-types.ts"
+      ],
+      "minModules": 3
+    },
+    {
+      "layer": "ir-core",
+      "entries": ["src/ir/core/type-binding-keys.ts", "src/ir/core/type-key.ts"],
+      "minModules": 2
+    },
+    {
+      "layer": "ir-program",
+      "entries": ["src/ir/program/host-async-dynamic.ts"],
+      "minModules": 1
+    },
+    {
+      "layer": "ir-program",
+      "entries": ["src/ir/program/host-import-plan.ts", "src/ir/program/host-number-boundary-setup.ts"],
+      "minModules": 2
     }
   ],
   "nonModules": [
@@ -726,6 +1541,18 @@
     {
       "from": "src/codegen/prepared-async-frame-types.ts",
       "to": "src/runtime/wasmgc/async/prepared-async-frame-types.ts"
+    },
+    {
+      "from": "src/ir/type-key.ts",
+      "to": "src/ir/core/type-key.ts"
+    },
+    {
+      "from": "src/ir/abi-bindings.ts",
+      "to": "src/ir/core/type-binding-keys.ts"
+    },
+    {
+      "from": "src/ir/program-abi-contracts.ts",
+      "to": "src/ir/program/abi-signatures.ts"
     }
   ],
   "evidence": [
@@ -781,6 +1608,446 @@
   ],
   "files": [
     {
+      "path": "src/runtime/wasmgc/values/string-concat-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/stdout-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/backend/wasmgc/program/native-string-values.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/native-resource-declaration-types.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-resource-declarations.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/closure-layouts.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-closures.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/argument-vector-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-argument-vectors.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/wasm/model/instruction-walk.ts",
+      "state": "clean",
+      "layer": "wasm-model"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/string-number-grammar.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/decimal-scale-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/string-number-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/string-flatten-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/string-utf8-decode-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-string-number.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-string-flatten.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/ir/program/native-value-resources.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/native-string-value-demands.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/primitive-layouts.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/number-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-values.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/string-layouts.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/string-literal-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/error-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-string-literals.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-errors.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/ir/program/native-promise-resources.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-promises.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/runtime/wasmgc/promise/resolution-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/promise/thenable-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/ir/program/native-vector-resources.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-vectors.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/vector-grow-store.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/shared/contracts/ir-preparation-failure.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/shared/contracts/ir-unit-inventory.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/ir/analysis/contracts/allocations.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/alloc-registry.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/core/intrinsic-contracts.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/core/intrinsics.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/core/callable-bindings.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/analysis/effects.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/intrinsics.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/analysis/async-plan.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/runtime/host-capabilities.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/runtime/async-providers.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/runtime/callable-declarations.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/runtime/manifest.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/runtime/native-async-callables.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/core/async-callables.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/core/vector-runtime.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/runtime/vector-callables.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/runtime/async-attachment.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/runtime/intrinsic-verification.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/passes/contracts/gvn.ts",
+      "state": "clean",
+      "layer": "ir-passes"
+    },
+    {
+      "path": "src/ir/runtime/index.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/runtime/contracts/intrinsics.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/runtime/contracts/manifest.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/runtime/contracts/prepared.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/program/abi-lookup.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/callable-bindings.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/controls.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/index.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/input-contracts.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/prepared-contracts.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/errors.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/data.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/input.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/runtime/contracts/async-provider-schema.ts",
+      "state": "clean",
+      "layer": "runtime-contracts"
+    },
+    {
+      "path": "src/runtime/contracts/provider-policy.ts",
+      "state": "clean",
+      "layer": "runtime-contracts"
+    },
+    {
+      "path": "src/runtime/contracts/index.ts",
+      "state": "clean",
+      "layer": "runtime-contracts"
+    },
+    {
+      "path": "src/ir/core/binding-key-primitives.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/program/abi-inventory.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/abi.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/startup.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/runtime/contracts/host-capability-schema.ts",
+      "state": "clean",
+      "layer": "runtime-contracts"
+    },
+    {
+      "path": "src/ir/core/nodes.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/core/dialect/js.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/core/async-plan.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/core/intrinsic-vocabulary.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/core/async-intents.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/core/string-types.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/shared/contracts/ir-counted-string-identity.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/ir/core/types.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/core/fnctor-shapes.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/core/value-references.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/core/capability-provenance.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/core/tag-refinement.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
       "path": "src/adapter-manifest.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -823,12 +2090,18 @@
     {
       "path": "src/checker/binder.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/builtin-shadow.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/divergence-classifier.ts",
@@ -838,32 +2111,50 @@
     {
       "path": "src/checker/dts-entrypoint-seeds.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/index.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/inhouse-globals.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/inhouse-oracle.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/language-service.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/multi-file-paths.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/node-capability-map.ts",
@@ -873,35 +2164,61 @@
     {
       "path": "src/checker/oracle-backend.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/oracle-declaration-snapshot.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/oracle.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/ts5-trace.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/type-mapper.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/checker/usage-inference.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts"
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate existing TS-wrapper, module-resolution and mixed identity/type/planning dependencies before frontend closure. This file was already unmigrated before the contracts-only frontend activation; no source behavior changed."
     },
     {
       "path": "src/cjs-rewrite.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Review the frontend, orchestration, runtime and shared-contract split before migration."
+    },
+    {
+      "path": "src/cli-compile-cache.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "compiler",
@@ -1349,6 +2666,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/array-from-vec-carrier.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/array-holes.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -1541,7 +2866,7 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/async-await-hoist.ts",
+      "path": "src/codegen/async-closure-promise.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -1549,7 +2874,7 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/async-closure-promise.ts",
+      "path": "src/codegen/async-await-hoist.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -1622,6 +2947,14 @@
     },
     {
       "path": "src/codegen/async-thenable-return.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/async-value-sink-unwrap.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -2909,6 +4242,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/dyn-array-producers.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/dyn-ops.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -3102,6 +4443,14 @@
     },
     {
       "path": "src/codegen/expressions/builtin-prototype-constructor.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/expressions/from-char-code-spread.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -4093,14 +5442,6 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/from-char-code-spread.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
-    },
-    {
       "path": "src/codegen/frame-core.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -4942,6 +6283,14 @@
     },
     {
       "path": "src/codegen/legacy-body-audit.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/lib-extern-scan-memo.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -6189,6 +7538,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/promise-thenable-lookup.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Retire context-owned reservation and finalization after native Promise resource admission; executable bodies already have canonical owners."
+    },
+    {
       "path": "src/codegen/property-access-dispatch.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -6701,14 +8058,6 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/sidecar-owner-scope.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
-    },
-    {
       "path": "src/codegen/single-assignment-binding.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -6741,6 +8090,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/sidecar-owner-scope.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/spread-arg-list.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -6757,23 +8114,7 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/standalone-class-construct.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
-    },
-    {
-      "path": "src/codegen/standalone-class-dyn-member.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
-    },
-    {
-      "path": "src/codegen/standalone-class-dyn-static.ts",
+      "path": "src/codegen/standalone-class-prototype-read.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -6813,6 +8154,30 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/standalone-class-construct.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/standalone-class-dyn-member.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/standalone-class-dyn-static.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/standalone-link-boundary.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -6838,6 +8203,14 @@
     },
     {
       "path": "src/codegen/standalone-wrapper-instanceof.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/static-spread-arity.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -7781,6 +9154,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/vec-numeric-key-presence.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/vec-overlay-presence.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -8381,11 +9762,6 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
-      "path": "src/ir/analysis/alloc-registry.ts",
-      "state": "clean",
-      "layer": "ir-analysis"
-    },
-    {
       "path": "src/ir/analysis/ast-scope.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -8394,22 +9770,12 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
-      "path": "src/ir/analysis/async-plan.ts",
-      "state": "clean",
-      "layer": "ir-analysis"
-    },
-    {
       "path": "src/ir/analysis/binding-info.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
-    },
-    {
-      "path": "src/ir/analysis/contracts/allocations.ts",
-      "state": "clean",
-      "layer": "ir-analysis"
     },
     {
       "path": "src/ir/analysis/counted-string-append.ts",
@@ -8426,11 +9792,6 @@
       "destination": "ir-analysis",
       "owner": "3518-coordinator",
       "nextBoundary": "Move the complete dominance implementation into the clean ir-analysis layer; the contract-only subroot does not complete src/ir/analysis."
-    },
-    {
-      "path": "src/ir/analysis/effects.ts",
-      "state": "clean",
-      "layer": "ir-analysis"
     },
     {
       "path": "src/ir/analysis/encoding-inference.ts",
@@ -8471,11 +9832,6 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
-    },
-    {
-      "path": "src/ir/analysis/intrinsics.ts",
-      "state": "clean",
-      "layer": "ir-analysis"
     },
     {
       "path": "src/ir/analysis/lattice.ts",
@@ -8742,14 +10098,6 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
-      "path": "src/ir/backend/lower-contracts.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "ir-core",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Canonical lowering resolver/result types without implementation imports; existing IR-node and physical layout type dependencies still prevent a pure-contract certification."
-    },
-    {
       "path": "src/ir/backend/porffor/assembler.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -8806,14 +10154,6 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
-      "path": "src/ir/backend/wasm-constants.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "One shared Wasm constant implementation, independent of lowerers and concrete emitters; preserve deferred linear consumers and separate remaining IR-node model debt."
-    },
-    {
       "path": "src/ir/backend/wasm-int32-coercion.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -8822,20 +10162,36 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
-      "path": "src/ir/backend/wasm-lowering.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Explicit Wasm convenience assembly owns concrete-emitter selection; generic lowering must not import this wrapper or reach it through the compatibility facade."
-    },
-    {
       "path": "src/ir/backend/wasm-math-minmax.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/backend/lower-contracts.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Canonical lowering resolver/result types without implementation imports; existing IR-node and physical layout type dependencies still prevent a pure-contract certification."
+    },
+    {
+      "path": "src/ir/backend/wasm-constants.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "One shared Wasm constant implementation, independent of lowerers and concrete emitters; preserve deferred linear consumers and separate remaining IR-node model debt."
+    },
+    {
+      "path": "src/ir/backend/wasm-lowering.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Explicit Wasm convenience assembly owns concrete-emitter selection; generic lowering must not import this wrapper or reach it through the compatibility facade."
     },
     {
       "path": "src/ir/backend/wasmgc-emitter.ts",
@@ -8980,81 +10336,6 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
-    },
-    {
-      "path": "src/ir/core/async-intents.ts",
-      "state": "clean",
-      "layer": "ir-core"
-    },
-    {
-      "path": "src/ir/core/async-plan.ts",
-      "state": "clean",
-      "layer": "ir-core"
-    },
-    {
-      "path": "src/ir/core/binding-key-primitives.ts",
-      "state": "clean",
-      "layer": "ir-core"
-    },
-    {
-      "path": "src/ir/core/callable-bindings.ts",
-      "state": "clean",
-      "layer": "ir-core"
-    },
-    {
-      "path": "src/ir/core/capability-provenance.ts",
-      "state": "clean",
-      "layer": "ir-core"
-    },
-    {
-      "path": "src/ir/core/dialect/js.ts",
-      "state": "clean",
-      "layer": "ir-core"
-    },
-    {
-      "path": "src/ir/core/fnctor-shapes.ts",
-      "state": "clean",
-      "layer": "ir-core"
-    },
-    {
-      "path": "src/ir/core/intrinsic-contracts.ts",
-      "state": "clean",
-      "layer": "ir-core"
-    },
-    {
-      "path": "src/ir/core/intrinsic-vocabulary.ts",
-      "state": "clean",
-      "layer": "ir-core"
-    },
-    {
-      "path": "src/ir/core/intrinsics.ts",
-      "state": "clean",
-      "layer": "ir-core"
-    },
-    {
-      "path": "src/ir/core/nodes.ts",
-      "state": "clean",
-      "layer": "ir-core"
-    },
-    {
-      "path": "src/ir/core/string-types.ts",
-      "state": "clean",
-      "layer": "ir-core"
-    },
-    {
-      "path": "src/ir/core/tag-refinement.ts",
-      "state": "clean",
-      "layer": "ir-core"
-    },
-    {
-      "path": "src/ir/core/types.ts",
-      "state": "clean",
-      "layer": "ir-core"
-    },
-    {
-      "path": "src/ir/core/value-references.ts",
-      "state": "clean",
-      "layer": "ir-core"
     },
     {
       "path": "src/ir/counted-string-append-provenance.ts",
@@ -9609,11 +10890,6 @@
       "nextBoundary": "Move the complete constant-fold implementation into the clean ir-passes layer; the contract-only subroot does not complete src/ir/passes."
     },
     {
-      "path": "src/ir/passes/contracts/gvn.ts",
-      "state": "clean",
-      "layer": "ir-passes"
-    },
-    {
       "path": "src/ir/passes/dead-code.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -9686,19 +10962,20 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/planning-sites.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Source-bound AST identity validation shared with the legacy overlay; not a pure IR contract or physical runtime owner. Relocate under frontend/ts with its planning identity dependencies before frontend retirement.",
+      "destination": "frontend-ts"
+    },
+    {
       "path": "src/ir/planning-identity.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
-    },
-    {
-      "path": "src/ir/planning-sites.ts",
-      "state": "unmigrated",
-      "layer": "frontend-ts",
-      "owner": "3518-coordinator",
-      "nextBoundary": "Source-bound AST identity validation shared with the legacy overlay; not a pure IR contract or physical runtime owner. Relocate under frontend/ts with its planning identity dependencies before frontend retirement."
     },
     {
       "path": "src/ir/prepare.ts",
@@ -9903,16 +11180,18 @@
     {
       "path": "src/ir/program-logical-types.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts",
+      "layer": "mixed-needs-split",
       "owner": "3518-coordinator",
-      "nextBoundary": "Checker-bound logical vector facts for original source nodes; relocate under frontend/ts with source preparation before retirement. No physical type authority or pure IR closure claim."
+      "nextBoundary": "Checker-bound logical vector facts for original source nodes; relocate under frontend/ts with source preparation before retirement. No physical type authority or pure IR closure claim.",
+      "destination": "frontend-ts"
     },
     {
       "path": "src/ir/program-native-async-source.ts",
       "state": "unmigrated",
-      "layer": "frontend-ts",
+      "layer": "mixed-needs-split",
       "owner": "3518-coordinator",
-      "nextBoundary": "Original-AST native async family certification and logical lowering plans; relocate under frontend/ts with planning identity before retirement. Keep runtime declarations and physical providers separate."
+      "nextBoundary": "Original-AST native async family certification and logical lowering plans; relocate under frontend/ts with planning identity before retirement. Keep runtime declarations and physical providers separate.",
+      "destination": "frontend-ts"
     },
     {
       "path": "src/ir/program-observation.ts",
@@ -10009,66 +11288,6 @@
       "destination": "ir-program",
       "owner": "3518-coordinator",
       "nextBoundary": "Complete src/ir/program/index.ts with pure prepared data/ABI only after splitting frontend inventory/module-init/outcome edges, backend acceptance and emission contracts, and deferred LinearOptions. Preserve runtime validation/transaction behavior through explicit boundaries; no whole-file relocation or clean declaration."
-    },
-    {
-      "path": "src/ir/program/abi-inventory.ts",
-      "state": "clean",
-      "layer": "ir-program"
-    },
-    {
-      "path": "src/ir/program/abi-lookup.ts",
-      "state": "clean",
-      "layer": "ir-program"
-    },
-    {
-      "path": "src/ir/program/abi.ts",
-      "state": "clean",
-      "layer": "ir-program"
-    },
-    {
-      "path": "src/ir/program/callable-bindings.ts",
-      "state": "clean",
-      "layer": "ir-program"
-    },
-    {
-      "path": "src/ir/program/controls.ts",
-      "state": "clean",
-      "layer": "ir-program"
-    },
-    {
-      "path": "src/ir/program/data.ts",
-      "state": "clean",
-      "layer": "ir-program"
-    },
-    {
-      "path": "src/ir/program/errors.ts",
-      "state": "clean",
-      "layer": "ir-program"
-    },
-    {
-      "path": "src/ir/program/index.ts",
-      "state": "clean",
-      "layer": "ir-program"
-    },
-    {
-      "path": "src/ir/program/input-contracts.ts",
-      "state": "clean",
-      "layer": "ir-program"
-    },
-    {
-      "path": "src/ir/program/input.ts",
-      "state": "clean",
-      "layer": "ir-program"
-    },
-    {
-      "path": "src/ir/program/prepared-contracts.ts",
-      "state": "clean",
-      "layer": "ir-program"
-    },
-    {
-      "path": "src/ir/program/startup.ts",
-      "state": "clean",
-      "layer": "ir-program"
     },
     {
       "path": "src/ir/promise-delay-lowering.ts",
@@ -10189,56 +11408,6 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
-    },
-    {
-      "path": "src/ir/runtime/async-attachment.ts",
-      "state": "clean",
-      "layer": "ir-runtime"
-    },
-    {
-      "path": "src/ir/runtime/async-providers.ts",
-      "state": "clean",
-      "layer": "ir-runtime"
-    },
-    {
-      "path": "src/ir/runtime/callable-declarations.ts",
-      "state": "clean",
-      "layer": "ir-runtime"
-    },
-    {
-      "path": "src/ir/runtime/contracts/intrinsics.ts",
-      "state": "clean",
-      "layer": "ir-runtime"
-    },
-    {
-      "path": "src/ir/runtime/contracts/manifest.ts",
-      "state": "clean",
-      "layer": "ir-runtime"
-    },
-    {
-      "path": "src/ir/runtime/contracts/prepared.ts",
-      "state": "clean",
-      "layer": "ir-runtime"
-    },
-    {
-      "path": "src/ir/runtime/host-capabilities.ts",
-      "state": "clean",
-      "layer": "ir-runtime"
-    },
-    {
-      "path": "src/ir/runtime/index.ts",
-      "state": "clean",
-      "layer": "ir-runtime"
-    },
-    {
-      "path": "src/ir/runtime/intrinsic-verification.ts",
-      "state": "clean",
-      "layer": "ir-runtime"
-    },
-    {
-      "path": "src/ir/runtime/manifest.ts",
-      "state": "clean",
-      "layer": "ir-runtime"
     },
     {
       "path": "src/ir/select-expression-structure.ts",
@@ -10692,26 +11861,6 @@
       "layer": "legacy-host"
     },
     {
-      "path": "src/runtime/contracts/async-provider-schema.ts",
-      "state": "clean",
-      "layer": "runtime-contracts"
-    },
-    {
-      "path": "src/runtime/contracts/host-capability-schema.ts",
-      "state": "clean",
-      "layer": "runtime-contracts"
-    },
-    {
-      "path": "src/runtime/contracts/index.ts",
-      "state": "clean",
-      "layer": "runtime-contracts"
-    },
-    {
-      "path": "src/runtime/contracts/provider-policy.ts",
-      "state": "clean",
-      "layer": "runtime-contracts"
-    },
-    {
       "path": "src/runtime/cross-module-struct-owners.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
@@ -10797,6 +11946,11 @@
       "layer": "legacy-host"
     },
     {
+      "path": "src/runtime/raw-exports-struct-authority.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
       "path": "src/runtime/standalone-dom-string-bridge.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
@@ -10872,12 +12026,12 @@
       "layer": "native-runtime"
     },
     {
-      "path": "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+      "path": "src/runtime/wasmgc/async/native-await.ts",
       "state": "clean",
       "layer": "native-runtime"
     },
     {
-      "path": "src/runtime/wasmgc/async/native-await.ts",
+      "path": "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
     },
@@ -10915,22 +12069,7 @@
       "layer": "foundation"
     },
     {
-      "path": "src/shared/contracts/ir-counted-string-identity.ts",
-      "state": "clean",
-      "layer": "foundation"
-    },
-    {
       "path": "src/shared/contracts/ir-identity.ts",
-      "state": "clean",
-      "layer": "foundation"
-    },
-    {
-      "path": "src/shared/contracts/ir-preparation-failure.ts",
-      "state": "clean",
-      "layer": "foundation"
-    },
-    {
-      "path": "src/shared/contracts/ir-unit-inventory.ts",
       "state": "clean",
       "layer": "foundation"
     },
@@ -10980,6 +12119,14 @@
       "nextBoundary": "Review the frontend, orchestration, runtime and shared-contract split before migration."
     },
     {
+      "path": "src/standalone-intl-datetimeformat.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Review the frontend, orchestration, runtime and shared-contract split before migration."
+    },
+    {
       "path": "src/string-surrogate.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -11005,6 +12152,14 @@
     },
     {
       "path": "src/temporal-provider.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Review the frontend, orchestration, runtime and shared-contract split before migration."
+    },
+    {
+      "path": "src/test262-harness-provider.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "compiler",
@@ -11043,6 +12198,11 @@
       "layer": "wasm-model"
     },
     {
+      "path": "src/wasm/physical/type-layout.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
       "path": "src/wasm/physical/exception-control.ts",
       "state": "clean",
       "layer": "wasm-physical"
@@ -11069,6 +12229,240 @@
       "destination": "compiler",
       "owner": "3518-coordinator",
       "nextBoundary": "Review the frontend, orchestration, runtime and shared-contract split before migration."
+    },
+    {
+      "path": "src/frontend/builtins/contracts.ts",
+      "state": "clean",
+      "layer": "frontend-ts"
+    },
+    {
+      "path": "src/frontend/builtins/build-ir.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the existing mixed from-ast, direct-call planning, verifier and hygiene dependencies. The broader src/frontend/ts/index.ts boundary remains unfulfilled; contracts-only activation does not certify this implementation."
+    },
+    {
+      "path": "src/frontend/builtins/prepare-number-format.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the existing mixed source-preparation type and stdlib template dependencies from the canonical typed support producer. The broader src/frontend/ts/index.ts boundary remains unfulfilled."
+    },
+    {
+      "path": "src/ir/program/runtime-support.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/formatter-support.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/core/type-references.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/runtime/wasmgc/promise/delay-combinator-layouts.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/ir/program/native-number-format-requirements.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/backend/wasmgc/program/native-number-format.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-number-ryu.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/number-ryu-tables.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/number-ryu-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/number-ryu-digits.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/number-ryu-to-buffer.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/number-ryu-signatures.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-delay-combinator.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/ir/program-native-async-resources.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Relocated existing Promise and B3 checked source planning still imports program.ts, program-validation.ts, program-runtime-abi.ts, program-abi-contracts.ts and backend/wasmgc resource owners. Split prepared source admission from backend reservation composition without weakening census, ABI, configuration or borrowed-owner checks; retain only reusable module-owned reservation contracts in wasm/physical. This relocation is not clean IR-program activation or async body completion."
+    },
+    {
+      "path": "src/runtime/wasmgc/values/number-format-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/number-format-radix-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-number-format.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/async/prepared-async-frame-adapter.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/prepared-async-frame.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/ir/core/type-binding-keys.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/core/type-key.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/program/abi-signatures.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/async-frame-setup.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/prepared-async-frame-plan.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/runtime/wasmgc/async/frame-defaults.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/async/prepared-async-frame-engine.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/async/prepared-async-frame-types.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/host-async-imports.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
+      "path": "src/runtime/host-import-call-state.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
+      "path": "src/ir/program/host-async-dynamic.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/host-import-plan.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/host-number-boundary-setup.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/core/string-callables.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/program/runtime-abi-identity.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/native-string-output-requirements.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/backend/wasmgc/program/native-string-output-abi.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/program/native-string-output.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-string-output.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/frontend/builtins/prepare-string-output.ts",
+      "state": "clean",
+      "layer": "frontend-ts"
+    },
+    {
+      "path": "src/frontend/typescript.ts",
+      "state": "clean",
+      "layer": "frontend-ts"
+    },
+    {
+      "path": "src/ir/program/native-promise-inventory.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-promise-inventory.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
     }
   ]
 }

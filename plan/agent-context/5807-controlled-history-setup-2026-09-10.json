@@ -1,0 +1,178 @@
+{
+  "schema": "issue5807-controlled-history-setup-v1",
+  "root": "/private/tmp/js2-5807-controlled-history.Di6H7Q",
+  "node": {
+    "path": "/private/tmp/js2-5807-node25.SwC0fQ/node-v25.9.0-darwin-arm64/bin/node",
+    "version": "v25.9.0",
+    "sha256": "4b3fe8b384e30ee917e28a9f5b79a3ca64b72b13b70d9ab2273e6e9a823f4cbf",
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "dependencies": {
+    "root": "/private/tmp/js2-5807-controlled-history.Di6H7Q/node_modules",
+    "entryCount": 31789,
+    "links": 2204,
+    "bytes": 1223410516,
+    "algorithm": "SHA256(JSON.stringify(sorted recursive entries [relativePath,file,mode,sha256] or [relativePath,link,linkText]))",
+    "sha256": "30feb2a1053ccf8606ffacfda540a09b3c7a3d343e063f079c0c7b050a1708ed"
+  },
+  "arms": {
+    "donor": {
+      "root": "/private/tmp/js2-5807-controlled-history.Di6H7Q/donor",
+      "head": "129e3efd4530ae1be56dbf5fdea54ddbbd87443e",
+      "corpus": "b363f29d3c43c626dc852744ad64a0b48a003693",
+      "traceAdmission": {
+        "schema": "issue-5807-observation-install-v1",
+        "head": "129e3efd4530ae1be56dbf5fdea54ddbbd87443e",
+        "installerSha256": "3d23c7d9ead75f8b6a5a388fbe2dcd5faff388f7426cc7858a006ee6b5fdd911",
+        "modifiedPaths": [
+          "scripts/compiler-pool.ts",
+          "scripts/test262-import-object.mjs",
+          "scripts/test262-worker.mjs",
+          "src/runtime.ts",
+          "src/runtime/cross-module-struct-owners.ts"
+        ],
+        "untrackedPaths": ["scripts/issue-5807-observation-runtime.mjs"],
+        "files": [
+          {
+            "path": "scripts/compiler-pool.ts",
+            "preSha256": "f3a2c4568025adec4f75de147632286f51193a594c75e5447bf87a760606b60e",
+            "postSha256": "abb856ce2e12af3bb85d81ba05051368c3e5e321b2b83f67eb32b47ea5136f8f"
+          },
+          {
+            "path": "scripts/issue-5807-observation-runtime.mjs",
+            "preSha256": null,
+            "postSha256": "d29aa063f342392d964fb89790cfd5f340c90bfd5fafd221f4305c77ea955699"
+          },
+          {
+            "path": "scripts/test262-import-object.mjs",
+            "preSha256": "95c1fdd5f5b9982b87951db68f6569ec2aab9b3fba9d32fcfc6a0975114a2ddb",
+            "postSha256": "490358179a380ab537e3aebf3ce1faed22499313a9dc4d2f49f336bde45b5d14"
+          },
+          {
+            "path": "scripts/test262-worker.mjs",
+            "preSha256": "d22e2a50f2351bf6bab986dfd577704eb35e31d01b07d55481ddc23772c5cd4e",
+            "postSha256": "854dfca7f576905c7c49d334e0dd34d2fffafdcf5cd864c372ac66879f5e037e"
+          },
+          {
+            "path": "src/runtime.ts",
+            "preSha256": "ea32ee061a8cb7097768e5e8762ffe41417854b3db7926ab9417474162f7f64c",
+            "postSha256": "b7759d710bda8b7c921fcf869ab44c44dc824ad1b0f666190662c7fffea3c52f"
+          },
+          {
+            "path": "src/runtime/cross-module-struct-owners.ts",
+            "preSha256": "d787b63679001c35963918a3efaa7dfba6acddc50e388ae2f6d194359d1ec1cd",
+            "postSha256": "ba254026a2d0f8839fc0d7b3a1be00900029d062704d23cd2eb47cf7f5861dd7"
+          }
+        ],
+        "patchSha256": "56c04cec43e1be6a870833fd5b22d69c0e69da67e2d610d3072c9f0d2f4e519c",
+        "traceDirectory": "replay5807-traces",
+        "factoryObservation": "unavailable-without-extra-compiled-reads",
+        "harnessAndTestCompilerInputChanged": false,
+        "resetAdded": false,
+        "comparisonOrGateChanged": false,
+        "precedingLinkedMeaning": "most recent linked instantiation entry, not proof that instantiation completed"
+      },
+      "bundles": [
+        {
+          "path": "scripts/compiler-bundle.mjs",
+          "sha256": "f7296237dd33da31d9e8386aff2edad28457d34029c0feac3def0643062b7af1"
+        },
+        {
+          "path": "scripts/runtime-bundle.mjs",
+          "sha256": "00496d99109eb11b770ff0e41953f519fac6163b90546d9dbcb85781965d8d17"
+        }
+      ],
+      "providerStamp": {
+        "key": "372a41be9bdeb22ade63a811b4b26afce75694ee0d9b7cf928c24ddad739020b",
+        "namespace": "js2wasm:npm:@js-temporal/polyfill:1e277d9b4bc3e634",
+        "bytes": 1702133,
+        "buildMs": 29047,
+        "cacheHit": false,
+        "generatedAt": "2026-09-09T15:16:28.314Z"
+      }
+    },
+    "candidate": {
+      "root": "/private/tmp/js2-5807-controlled-history.Di6H7Q/candidate",
+      "head": "efa0908e09998c73da592fba32708c7ecca8d6e5",
+      "corpus": "b363f29d3c43c626dc852744ad64a0b48a003693",
+      "traceAdmission": {
+        "schema": "issue-5807-observation-install-v1",
+        "head": "efa0908e09998c73da592fba32708c7ecca8d6e5",
+        "installerSha256": "3d23c7d9ead75f8b6a5a388fbe2dcd5faff388f7426cc7858a006ee6b5fdd911",
+        "modifiedPaths": [
+          "scripts/compiler-pool.ts",
+          "scripts/test262-import-object.mjs",
+          "scripts/test262-worker.mjs",
+          "src/runtime.ts",
+          "src/runtime/cross-module-struct-owners.ts"
+        ],
+        "untrackedPaths": ["scripts/issue-5807-observation-runtime.mjs"],
+        "files": [
+          {
+            "path": "scripts/compiler-pool.ts",
+            "preSha256": "f3a2c4568025adec4f75de147632286f51193a594c75e5447bf87a760606b60e",
+            "postSha256": "abb856ce2e12af3bb85d81ba05051368c3e5e321b2b83f67eb32b47ea5136f8f"
+          },
+          {
+            "path": "scripts/issue-5807-observation-runtime.mjs",
+            "preSha256": null,
+            "postSha256": "d29aa063f342392d964fb89790cfd5f340c90bfd5fafd221f4305c77ea955699"
+          },
+          {
+            "path": "scripts/test262-import-object.mjs",
+            "preSha256": "95c1fdd5f5b9982b87951db68f6569ec2aab9b3fba9d32fcfc6a0975114a2ddb",
+            "postSha256": "490358179a380ab537e3aebf3ce1faed22499313a9dc4d2f49f336bde45b5d14"
+          },
+          {
+            "path": "scripts/test262-worker.mjs",
+            "preSha256": "d22e2a50f2351bf6bab986dfd577704eb35e31d01b07d55481ddc23772c5cd4e",
+            "postSha256": "854dfca7f576905c7c49d334e0dd34d2fffafdcf5cd864c372ac66879f5e037e"
+          },
+          {
+            "path": "src/runtime.ts",
+            "preSha256": "ea32ee061a8cb7097768e5e8762ffe41417854b3db7926ab9417474162f7f64c",
+            "postSha256": "b7759d710bda8b7c921fcf869ab44c44dc824ad1b0f666190662c7fffea3c52f"
+          },
+          {
+            "path": "src/runtime/cross-module-struct-owners.ts",
+            "preSha256": "d787b63679001c35963918a3efaa7dfba6acddc50e388ae2f6d194359d1ec1cd",
+            "postSha256": "ba254026a2d0f8839fc0d7b3a1be00900029d062704d23cd2eb47cf7f5861dd7"
+          }
+        ],
+        "patchSha256": "56c04cec43e1be6a870833fd5b22d69c0e69da67e2d610d3072c9f0d2f4e519c",
+        "traceDirectory": "replay5807-traces",
+        "factoryObservation": "unavailable-without-extra-compiled-reads",
+        "harnessAndTestCompilerInputChanged": false,
+        "resetAdded": false,
+        "comparisonOrGateChanged": false,
+        "precedingLinkedMeaning": "most recent linked instantiation entry, not proof that instantiation completed"
+      },
+      "bundles": [
+        {
+          "path": "scripts/compiler-bundle.mjs",
+          "sha256": "03c8b189e8ae36b76b581addfca7d31aa8a94661db391a4293bc525e7395690d"
+        },
+        {
+          "path": "scripts/runtime-bundle.mjs",
+          "sha256": "4346742834add975d28bd904823a96bc9b5359bbd6775da8ac71c637832f3bbc"
+        }
+      ],
+      "providerStamp": {
+        "key": "372a41be9bdeb22ade63a811b4b26afce75694ee0d9b7cf928c24ddad739020b",
+        "namespace": "js2wasm:npm:@js-temporal/polyfill:1e277d9b4bc3e634",
+        "bytes": 1702133,
+        "buildMs": 30889,
+        "cacheHit": false,
+        "generatedAt": "2026-09-09T16:07:19.939Z"
+      }
+    }
+  },
+  "fixtureExecutions": 0,
+  "notes": [
+    "New disposable roots; protected originals untouched",
+    "Original provider artifact copied; no package install",
+    "Four trials maximum, no added reset, no cloud run",
+    "Setup only; not runtime or conformance evidence"
+  ]
+}

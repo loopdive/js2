@@ -21,6 +21,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import { allocLocal } from "./context/locals.js";
 import type { FunctionContext } from "./context/types.js";
+export { defaultSpillInstr } from "../runtime/wasmgc/async/frame-defaults.js";
 
 // ── Frame ABI ──────────────────────────────────────────────────────────────
 // Fixed leading fields of every resumable frame's state struct, followed by the
@@ -77,26 +78,6 @@ export type FrameSpillCellMap = ReadonlyMap<number, { refCellTypeIdx: number; va
 
 export function sanitizeTypeName(name: string): string {
   return name.replace(/[^A-Za-z0-9_$]/g, "_");
-}
-
-/**
- * The inert default a spill field is constructed with, by ValType (#2864 F1b).
- * Overwritten by the body's declaration on first entry into the owning state, so
- * it only has to satisfy `struct.new`'s field type.
- */
-export function defaultSpillInstr(type: ValType): Instr {
-  switch (type.kind) {
-    case "f64":
-      return { op: "f64.const", value: NaN };
-    case "i32":
-      return { op: "i32.const", value: 0 };
-    case "i64":
-      return { op: "i64.const", value: 0n };
-    case "externref":
-      return { op: "ref.null.extern" };
-    default:
-      return { op: "ref.null", typeIdx: (type as { typeIdx: number }).typeIdx };
-  }
 }
 
 export function setStateInstrs(layout: FrameLayout, selfLocal: number, state: number): Instr[] {

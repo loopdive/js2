@@ -21,12 +21,13 @@
 //
 // The helper is pure WasmGC — no host import — so it works identically in
 // JS-host and standalone modes (the dual-mode rule).
-import type { Instr, ValType, WasmFunction } from "../ir/types.js";
+import type { ValType, WasmFunction } from "../ir/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import type { CodegenContext } from "./context/types.js";
 import { addFuncType, getOrRegisterHoleyArrayType, getOrRegisterVecType, isHoleyArrayType } from "./registry/types.js";
 import { ensureExnTag } from "./registry/imports.js";
-import { holeSentinelInstrs } from "./array-holes.js";
+import { ensureHoleType, holeSentinelInstrs } from "./array-holes.js";
+import { buildVectorGrowStoreBody, type VectorGrowStoreGapFill } from "../runtime/wasmgc/values/vector-grow-store.js";
 import { f64HolesActive } from "./vec-f64-hole-presence.js";
 import { HOLE_F64_BITS } from "./value-tags.js";
 
@@ -176,11 +177,11 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
   // encounter a sparse indexed write before it emits a f64 literal marker.
   const f64HoleCarrier = ctx.standalone && elem.kind === "f64" && f64HolesActive(ctx);
   if (f64HoleCarrier) ctx.f64HoleMarkerEmitted = true;
-  const gapFillInit: Instr[] = holeyCarrier
-    ? holeSentinelInstrs(ctx)
+  const gapFill: VectorGrowStoreGapFill = holeyCarrier
+    ? { kind: "hole-global", globalIndex: ensureHoleType(ctx) }
     : f64HoleCarrier
-      ? [{ op: "i64.const", value: HOLE_F64_BITS }, { op: "f64.reinterpret_i64" }]
-      : [];
+      ? { kind: "f64-hole", bits: HOLE_F64_BITS }
+      : { kind: "default" };
   // (#4430) The branded sparse carrier is a FINAL subtype of the ordinary
   // externref vec, and BOTH fields this helper touches (`length`, `data`) are
   // declared on that parent. The IR path types the receiving binding from the
@@ -201,163 +202,17 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
   const sigIdx = addFuncType(ctx, [vecParam, { kind: "i32" }, elem], [], `$${name}_type`);
   const funcIdx = mintDefinedFunc(ctx);
 
-  // Params: 0=vec, 1=idx, 2=val. Locals: 3=data, 4=newCap, 5=newData, 6=oldCap.
-  const VEC = 0;
-  const IDX = 1;
-  const VAL = 2;
-  const DATA = 3;
-  const NCAP = 4;
-  const NDATA = 5;
-  const OCAP = 6;
-  const OLEN = 7;
-
-  const body: Instr[] = [
-    // ── Null guard (#441 parity): if (vec == null) throw TypeError ─────────
-    { op: "local.get", index: VEC },
-    { op: "ref.is_null" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [{ op: "ref.null.extern" }, { op: "throw", tagIdx }],
-      else: [],
-    },
-    // ── data = vec.data ─────────────────────────────────────────────────────
-    { op: "local.get", index: VEC },
-    { op: "struct.get", typeIdx: carrierTypeIdx, fieldIdx: 1 },
-    { op: "local.set", index: DATA },
-    // ── Grow when idx >= capacity (legacy sequence) ─────────────────────────
-    { op: "local.get", index: IDX },
-    { op: "local.get", index: DATA },
-    { op: "array.len" },
-    { op: "i32.ge_s" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        // oldCap = array.len(data)
-        { op: "local.get", index: DATA },
-        { op: "array.len" },
-        { op: "local.set", index: OCAP },
-        // newCap = idx + 1
-        { op: "local.get", index: IDX },
-        { op: "i32.const", value: 1 },
-        { op: "i32.add" },
-        { op: "local.set", index: NCAP },
-        // if (oldCap * 2 > newCap) newCap = oldCap * 2
-        { op: "local.get", index: OCAP },
-        { op: "i32.const", value: 1 },
-        { op: "i32.shl" },
-        { op: "local.get", index: NCAP },
-        { op: "i32.gt_s" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            { op: "local.get", index: OCAP },
-            { op: "i32.const", value: 1 },
-            { op: "i32.shl" },
-            { op: "local.set", index: NCAP },
-          ],
-        },
-        // if (4 > newCap) newCap = 4
-        { op: "i32.const", value: 4 },
-        { op: "local.get", index: NCAP },
-        { op: "i32.gt_s" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            { op: "i32.const", value: 4 },
-            { op: "local.set", index: NCAP },
-          ],
-        },
-        // Branded externref sparse carriers and standalone f64 sparse carriers
-        // fill new capacity with their respective absence markers. Dense
-        // carriers retain the ordinary zero/null default.
-        ...gapFillInit,
-        { op: "local.get", index: NCAP },
-        ...(holeyCarrier || f64HoleCarrier
-          ? ([{ op: "array.new", typeIdx: arrTypeIdx }] satisfies Instr[])
-          : ([{ op: "array.new_default", typeIdx: arrTypeIdx }] satisfies Instr[])),
-        { op: "local.set", index: NDATA },
-        // array.copy newData[0..oldCap] = data[0..oldCap]
-        { op: "local.get", index: NDATA },
-        { op: "i32.const", value: 0 },
-        { op: "local.get", index: DATA },
-        { op: "i32.const", value: 0 },
-        { op: "local.get", index: OCAP },
-        { op: "array.copy", dstTypeIdx: arrTypeIdx, srcTypeIdx: arrTypeIdx },
-        // vec.data = newData
-        { op: "local.get", index: VEC },
-        { op: "local.get", index: NDATA },
-        { op: "ref.as_non_null" },
-        { op: "struct.set", typeIdx: carrierTypeIdx, fieldIdx: 1 },
-        // data = newData
-        { op: "local.get", index: NDATA },
-        { op: "local.set", index: DATA },
-      ],
-    },
-    ...(holeyCarrier || f64HoleCarrier
-      ? ([
-          // A write beyond logical length can land in already-allocated spare
-          // capacity. Preserve absence in the full [oldLength, idx) gap for
-          // both branded externref and standalone f64 sparse carriers.
-          { op: "local.get", index: VEC },
-          { op: "struct.get", typeIdx: carrierTypeIdx, fieldIdx: 0 },
-          { op: "local.set", index: OLEN },
-          { op: "local.get", index: IDX },
-          { op: "local.get", index: OLEN },
-          { op: "i32.gt_u" },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: DATA },
-              { op: "local.get", index: OLEN },
-              ...gapFillInit,
-              { op: "local.get", index: IDX },
-              { op: "local.get", index: OLEN },
-              { op: "i32.sub" },
-              { op: "array.fill", typeIdx: arrTypeIdx },
-            ],
-          },
-        ] satisfies Instr[])
-      : []),
-    // ── data[idx] = val ─────────────────────────────────────────────────────
-    { op: "local.get", index: DATA },
-    { op: "local.get", index: IDX },
-    { op: "local.get", index: VAL },
-    { op: "array.set", typeIdx: arrTypeIdx },
-    // ── if (idx + 1 > vec.length) vec.length = idx + 1 ─────────────────────
-    { op: "local.get", index: IDX },
-    { op: "i32.const", value: 1 },
-    { op: "i32.add" },
-    { op: "local.get", index: VEC },
-    { op: "struct.get", typeIdx: carrierTypeIdx, fieldIdx: 0 },
-    { op: "i32.gt_u" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: VEC },
-        { op: "local.get", index: IDX },
-        { op: "i32.const", value: 1 },
-        { op: "i32.add" },
-        { op: "struct.set", typeIdx: carrierTypeIdx, fieldIdx: 0 },
-      ],
-    },
-  ];
+  const { locals, body } = buildVectorGrowStoreBody({
+    carrierTypeIndex: carrierTypeIdx,
+    arrayTypeIndex: arrTypeIdx,
+    exceptionTagIndex: tagIdx,
+    gapFill,
+  });
 
   const fn: WasmFunction = {
     name,
     typeIdx: sigIdx,
-    locals: [
-      { name: "$data", type: { kind: "ref_null", typeIdx: arrTypeIdx } },
-      { name: "$ncap", type: { kind: "i32" } },
-      { name: "$ndata", type: { kind: "ref_null", typeIdx: arrTypeIdx } },
-      { name: "$ocap", type: { kind: "i32" } },
-      ...(holeyCarrier || f64HoleCarrier ? [{ name: "$oldlen", type: { kind: "i32" } as ValType }] : []),
-    ],
+    locals,
     body,
     exported: false,
   };

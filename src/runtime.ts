@@ -53,6 +53,7 @@ import {
 import { createLinkedProviderMirrorOwnership } from "./runtime/linked-provider-mirror-ownership.js";
 import { createCrossModuleStructOwners } from "./runtime/cross-module-struct-owners.js";
 import { decodeCompiledEntryPair } from "./runtime/compiled-entry-pair.js";
+import { rawExportsStructDecodeError } from "./runtime/raw-exports-struct-authority.js"; // (#6438)
 import { isHostStringSymbolDispatch, makeHostStringPredicateAdapter } from "./runtime/string-predicate-adapter.js";
 import { fixedExternMethodCallArity, makeFixedExternMethodCall } from "./runtime/fixed-extern-method-call.js";
 import { DATE_HOST_METHOD_UNHANDLED, tryCallWasmDateHostMethod, wasmDateHostView } from "./runtime/date-host-method.js";
@@ -65,7 +66,6 @@ export { buildStringConstants, buildStringConstants16 };
 export { _resetIteratorRuntimeIntrinsicsForRealmIsolation };
 import {
   compiledClosureNativeSource,
-  createNativeFunctionCallbackBridge,
   installNativeFunctionSourceFacade,
   invokeNativeFunctionCallback,
   normalizeModuleCallbackException,
@@ -104,7 +104,15 @@ import { createDynamicFunctionImport } from "./runtime/dynamic-function-import.j
 import { createBoundaryObjectAdapter } from "./runtime/boundary-object-adapter.js";
 import { createBoundaryCallbackAdapter } from "./runtime/boundary-callback-adapter.js";
 import { createBoundaryPromiseAdapter } from "./runtime/boundary-promise-adapter.js";
-import { createPromiseThenImport } from "./runtime/promise-then-reactions.js"; // (#5372)
+import {
+  createCaughtExceptionImport,
+  createHostAsyncCallbackMaker,
+  createHostNumberBoxImport,
+  createHostNumberUnboxImport,
+  createHostPromiseBuiltinImport,
+  createHostUndefinedImport,
+} from "./runtime/host-async-imports.js";
+import { createHostImportCallState } from "./runtime/host-import-call-state.js";
 import { createBoundaryValueAdapter, isBoundaryValueImportIntent } from "./runtime/boundary-value-adapter.js";
 import { createInstanceLifecycleAdapter } from "./runtime/instance-lifecycle-adapter.js";
 import {
@@ -662,8 +670,14 @@ function _compiledAbToHostBuffer(vec: any, exports: Record<string, Function> | u
   if (!exports || vec == null || typeof vec !== "object" || !_isWasmStruct(vec)) return undefined;
   const cached = _abHostBufferCache.get(vec);
   if (cached !== undefined) return cached;
-  const lenFn = exports.__dv_byte_len as ((v: any) => number) | undefined;
-  const getFn = exports.__dv_byte_get as ((v: any, i: number) => number) | undefined;
+  // (#6492) In a linked project the buffer may have been minted by the OTHER
+  // module, whose byte readers are the only ones that can see it; all three
+  // reads below must come from that one module. Why the #5225 registry could
+  // not already answer this, and why it is free single-module: see
+  // `bufferDecoderFor` in runtime/cross-module-struct-owners.ts.
+  const owner = _crossModuleStructs.bufferDecoderFor(vec, exports) ?? exports;
+  const lenFn = owner.__dv_byte_len as ((v: any) => number) | undefined;
+  const getFn = owner.__dv_byte_get as ((v: any, i: number) => number) | undefined;
   if (typeof lenFn !== "function" || typeof getFn !== "function") return undefined;
   let n: number;
   try {
@@ -677,7 +691,7 @@ function _compiledAbToHostBuffer(vec: any, exports: Record<string, Function> | u
   // TypedArray/DataView views built over it length-track a later
   // `rab.resize()` natively (the resize arm in __extern_method_call keeps the
   // canonical host buffer's byteLength in sync via hostAb.resize()).
-  const maxLenFn = exports.__ab_max_len as ((v: any) => number) | undefined;
+  const maxLenFn = owner.__ab_max_len as ((v: any) => number) | undefined;
   let maxLen = -1;
   if (typeof maxLenFn === "function") {
     try {
@@ -1868,13 +1882,27 @@ function _hostStrictEqual(a: any, b: any): boolean {
         : undefined;
   if (hostCtor) {
     const other = hostCtor === a ? b : a;
-    if (typeof other === "function") {
-      const closure = _wasmClosureWrapperTargets.get(other);
-      // sta.js installs the distinctive static `Test262Error.thrower` helper on
-      // the declaration. Closure function names are not stored in the sidecar,
-      // so this own static member is the stable harness identity marker.
-      if (closure && _wasmStructProps.get(closure)?.thrower !== undefined) return true;
-    }
+    // sta.js installs the distinctive static `Test262Error.thrower` helper on
+    // the declaration. Closure function names are not stored in the sidecar,
+    // so this own static member is the stable harness identity marker.
+    //
+    // (#3451) The `other` side may arrive in EITHER representation. A callable
+    // host mirror is what a single module produces; a LINKED consumer that
+    // passes its `Test262Error` to a provider's `assert.throws` unwraps the
+    // mirror to the raw closure struct on the way in (`_denseOwnWasmArgs` →
+    // `_unwrapForHost`), so inside the provider `other` is a plain object and
+    // the mirror-only lookup below found nothing — `assert.throws(Test262Error,
+    // …)` then reported "Expected a undefined but got a HostTest262Error" for
+    // every such row. Accept the struct directly; the `thrower` marker is what
+    // does the discriminating either way, so no previously-unequal pair
+    // becomes equal that was not already equal through its mirror.
+    const closure =
+      typeof other === "function"
+        ? _wasmClosureWrapperTargets.get(other)
+        : other != null && typeof other === "object"
+          ? other
+          : undefined;
+    if (closure && _wasmStructProps.get(closure)?.thrower !== undefined) return true;
   }
   return false;
 }
@@ -2803,7 +2831,32 @@ function _instanceofResult(
 
   // (#4394) `err instanceof Test262Error` against the MODULE's own carrier —
   // the prototype walk below can never reach a compiled closure.
-  if (test262Host.isModuleTest262ErrorInstance(v, rawTarget)) return 1;
+  // (#3451) Query with the CANONICAL carrier, matching the canonicalisation at
+  // the recording site (`__new_Test262Error_ctor`). In a single module
+  // `_unwrapForHost` is the identity here; in a linked graph `rawTarget` is the
+  // provider's host mirror while the carrier was recorded as the raw closure
+  // struct, and querying under the mirror missed every time.
+  {
+    const carrier = rawTarget == null ? rawTarget : _unwrapForHost(rawTarget);
+    if (test262Host.isModuleTest262ErrorInstance(v, carrier)) return 1;
+    // (#3451) The carrier registry only knows constructions that went through
+    // `__new_Test262Error_ctor`, which codegen emits for a module that DECLARES
+    // `function Test262Error`. A LINKED consumer declares no such function — it
+    // holds the provider's binding — so its `new Test262Error(msg)` takes the
+    // generic `extern_class` arm, which mints a `HostTest262Error` and records
+    // nothing. Fall back to the SAME `thrower` static marker `_hostStrictEqual`
+    // uses to recognise the harness's own constructor: sta.js installs
+    // `Test262Error.thrower` on the declaration, so a closure struct carrying
+    // it is the harness `Test262Error` and no other compiled value is.
+    if (
+      test262Host.isHostTest262Error(v) &&
+      carrier != null &&
+      typeof carrier === "object" &&
+      _wasmStructProps.get(carrier)?.thrower !== undefined
+    ) {
+      return 1;
+    }
+  }
 
   try {
     return v instanceof (target as { new (...a: unknown[]): unknown }) ? 1 : 0;
@@ -4392,7 +4445,7 @@ function _hostToPrimitive(
 // allocation is paid once per shape instead of per call. Callers of
 // `_structFieldNamesRaw` must treat the returned array as immutable — it is
 // shared across calls.
-const _csvSplitCache = new Map<string, readonly string[]>();
+const _csvSplitCache = new Map<string, readonly string[]>([["", []]]); // "" = known shape, no fields (#6430)
 
 function _structFieldNamesRaw(obj: any, exports: Record<string, Function> | undefined): readonly string[] | null {
   exports = _decoderExportsFor(obj, exports); // (#5225)
@@ -4400,7 +4453,7 @@ function _structFieldNamesRaw(obj: any, exports: Record<string, Function> | unde
   const fn = exports.__struct_field_names;
   if (typeof fn !== "function") return null;
   const csv = fn(obj);
-  if (csv == null || typeof csv !== "string" || csv === "") return null;
+  if (csv == null || typeof csv !== "string") return null;
   let names = _csvSplitCache.get(csv);
   if (!names) {
     // (#4616) Codegen escapes commas INSIDE a field name as U+0001 (see
@@ -6806,6 +6859,15 @@ function _readOwnDescriptor(
   prop: string | symbol,
   exports: Record<string, Function> | undefined,
 ): PropertyDescriptor | undefined {
+  // (#6477) Every export this function reaches (`__is_vec`, `__vec_len`,
+  // `__vec_get`, `__sget_<name>`, and the `_wasmStructHasOwn` gate) must come
+  // from the module that MINTED `obj`. Across a #5225 linked boundary the
+  // reader is frequently the other module, and its `ref.test` answers a miss —
+  // so the descriptor came back `undefined`, or with a `0`/`null` value.
+  // Redirecting here rather than at each caller covers the descriptor-value
+  // path AND `_wasmStructPropertyIsEnumerable`, which funnels into it.
+  // Idempotent, and a no-op when no linked project is live.
+  exports = _decoderExportsFor(obj, exports);
   if (prop === "length" && exports) {
     const nativeString = _nativeStringToHost(obj, exports);
     if (nativeString !== _MISS)
@@ -11050,7 +11112,7 @@ function resolveImport(
   if (compatibilitySemantic) return compatibilitySemantic;
   switch (intent.type) {
     case "caught_exception":
-      return () => getCaughtException?.();
+      return createCaughtExceptionImport(getCaughtException);
     case "string_method": {
       const method = intent.method;
       // Methods whose first argument participates in Symbol.* protocol
@@ -13409,7 +13471,7 @@ assert._isSameValue = isSameValue;
           }
           return 0;
         };
-      if (name === "__get_undefined") return () => undefined;
+      if (name === "__get_undefined") return createHostUndefinedImport();
       // (#1343) ToBoolean for externref values per ECMA-262 §7.1.2.
       // The pre-existing externref path for `Boolean(x)` only checked
       // `ref.is_null` — which returns false for JS `undefined` (since
@@ -13814,7 +13876,7 @@ assert._isSameValue = isSameValue;
           // ES §20.1.2.22 Object.values → ToObject (§7.1.18) throws on null/undefined.
           if (obj == null) throw new TypeError(`Cannot convert ${obj === null ? "null" : "undefined"} to object`);
           if (_isWasmStruct(obj)) {
-            const exports = callbackState?.getExports();
+            const exports = _decoderExportsFor(obj, callbackState?.getExports()); // (#5225/#6426)
             const fieldNames = _getStructFieldNames(obj, exports);
             if (fieldNames) {
               const descs = _wasmPropDescs.get(obj);
@@ -13839,7 +13901,7 @@ assert._isSameValue = isSameValue;
           // ES §20.1.2.5 Object.entries → ToObject (§7.1.18) throws on null/undefined.
           if (obj == null) throw new TypeError(`Cannot convert ${obj === null ? "null" : "undefined"} to object`);
           if (_isWasmStruct(obj)) {
-            const exports = callbackState?.getExports();
+            const exports = _decoderExportsFor(obj, callbackState?.getExports()); // (#5225/#6426)
             const fieldNames = _getStructFieldNames(obj, exports);
             if (fieldNames) {
               const descs = _wasmPropDescs.get(obj);
@@ -13868,7 +13930,7 @@ assert._isSameValue = isSameValue;
           if (typeof arr === "string") return Array.from(arr).slice(start);
           // Handle WasmGC structs (tuples) — extract fields from index onwards
           if (_isWasmStruct(arr)) {
-            const exports = callbackState?.getExports();
+            const exports = _decoderExportsFor(arr, callbackState?.getExports()); // (#5225/#6426)
             const fieldNames = _getStructFieldNames(arr, exports);
             if (fieldNames && exports) {
               const result: any[] = [];
@@ -13905,7 +13967,7 @@ assert._isSameValue = isSameValue;
           };
           // For WasmGC structs, use exported getters to read fields
           if (_isWasmStruct(obj)) {
-            const exports = callbackState?.getExports();
+            const exports = _decoderExportsFor(obj, callbackState?.getExports()); // (#5225/#6426)
             const fieldNames = _getStructFieldNames(obj, exports);
             if (fieldNames) {
               for (const key of fieldNames) {
@@ -14078,6 +14140,21 @@ assert._isSameValue = isSameValue;
           if (flags & (1 << 3)) desc.writable = !!(flags & 1);
           if (flags & (1 << 4)) desc.enumerable = !!(flags & (1 << 1));
           if (flags & (1 << 5)) desc.configurable = !!(flags & (1 << 2));
+          // (#6474) Bit 6 — "spec defaults on CREATION only". §9.1.1.4.16
+          // CreateGlobalVarBinding makes a script's top-level `var` binding
+          // `{writable: true, enumerable: true, configurable: false}`. The
+          // runtime-eval global mirror deliberately leaves writable/enumerable
+          // UNSPECIFIED so a program's own attribute change survives a later
+          // mirror refresh — but on the FIRST definition "unspecified" means
+          // `false`, so it minted a non-writable, non-enumerable binding. The
+          // next refresh then carried a new value into a non-writable property
+          // and threw `Cannot redefine property`. This bit says: apply the spec
+          // attributes when the property does not exist yet, and keep the
+          // unspecified-on-update behaviour otherwise.
+          if (flags & (1 << 6) && !_hasOwn(obj, prop)) {
+            if (!_hasOwn(desc, "writable")) desc.writable = true;
+            if (!_hasOwn(desc, "enumerable")) desc.enumerable = true;
+          }
           try {
             if (_vecDefineOwnProperty(obj, prop, desc, callbackState)) return obj;
             Object.defineProperty(obj, prop, desc);
@@ -14409,7 +14486,14 @@ assert._isSameValue = isSameValue;
           }
           // (#1629 S1) WasmGC struct: single canonical read-back path, shared
           // with Object.getOwnPropertyDescriptors.
-          const desc = _readOwnDescriptor(obj, prop, callbackState?.getExports());
+          // (#6477) Resolve against the exports that can DECODE this struct, not
+          // whichever module is reading. `_readOwnDescriptor` reaches
+          // `__is_vec` / `__vec_get` / `__sget_<name>` directly, so passing the
+          // reader's exports across a #5225 linked boundary reads a miss-default
+          // instead of the value. No-op single-module: `_decoderExportsFor`
+          // returns its argument when no linked project is live.
+          const descExports = _decoderExportsFor(obj, callbackState?.getExports());
+          const desc = _readOwnDescriptor(obj, prop, descExports);
           // (#4371) A declared class static is stored as its raw Wasm closure
           // so compiled reads/calls stay in the existing closure ABI. A
           // descriptor object, however, is an ordinary host object; expose its
@@ -14425,7 +14509,7 @@ assert._isSameValue = isSameValue;
               // `__call_<method>` bridge needed by modules whose only closure
               // value is this static and therefore do not export a generic
               // closure discriminator.
-              const wrapped = _wrapForHost(obj, callbackState?.getExports());
+              const wrapped = _wrapForHost(obj, descExports);
               const callable = wrapped?.[prop];
               desc.value = typeof callable === "function" ? callable : _getClassMethodBridge(obj, String(prop));
             } else {
@@ -14439,7 +14523,10 @@ assert._isSameValue = isSameValue;
           // ES §20.1.2.10 Object.getOwnPropertyNames → ToObject (§7.1.18) throws on null/undefined.
           if (obj == null) throw new TypeError(`Cannot convert ${obj === null ? "null" : "undefined"} to object`);
           if (!_isWasmStruct(obj)) return Object.getOwnPropertyNames(obj);
-          const exports = callbackState?.getExports();
+          // (#6477) Same cross-module decoder redirect as the descriptor read
+          // above — the tail of this import reads `__struct_field_names` /
+          // `__shas_*` through `exports` directly.
+          const exports = _decoderExportsFor(obj, callbackState?.getExports());
           // #1047 — registered class prototype: return only the allowlist
           // (filtered through the #1364b deletion set).
           const protoMethods = _prototypeMethodNames.get(obj);
@@ -15903,7 +15990,20 @@ assert._isSameValue = isSameValue;
       // object. `Symbol.prototype.description` already unwraps such wrappers.
       // (#4394) `new Test262Error(msg)` in a module that DECLARES its own
       // `function Test262Error` — see runtime/test262-harness-host.ts.
-      if (name === "__new_Test262Error_ctor") return test262Host.makeTest262ErrorWithModuleCtor;
+      // (#3451) CANONICALISE the carrier before recording it. In a single
+      // module `ctor` is already the raw closure struct, so this is the
+      // identity. In a LINKED graph (#2527) the harness lives in a provider
+      // module and the body's `Test262Error` is the provider's HOST MIRROR of
+      // that closure — so the carrier gets recorded under the mirror while
+      // `instanceof`'s `rawTarget` (line ~2807) and every argument the consumer
+      // hands a provider callable (`_denseOwnWasmArgs` → `_unwrapForHost`) are
+      // the RAW struct. Registering under one and querying under the other is
+      // why `e instanceof Test262Error` read false for an error that plainly
+      // is one. `_unwrapForHost` is the existing mirror→struct canonicaliser.
+      if (name === "__new_Test262Error_ctor") {
+        return (msg: unknown, ctor: unknown) =>
+          test262Host.makeTest262ErrorWithModuleCtor(msg, ctor == null ? ctor : _unwrapForHost(ctor));
+      }
       if (name === "__new_Symbol") {
         const symbolCache = _resolveSymbolCache(instanceState);
         const symbolDescRegistry =
@@ -16903,7 +17003,7 @@ assert._isSameValue = isSameValue;
       // (#4736) Promise.resolve has the same host boundary as the combinators:
       // a Wasm object-literal thenable must be mirrored before V8 performs
       // PromiseResolve, while ordinary objects remain raw for === identity.
-      if (name === "Promise_resolve") return (val: any) => Promise.resolve(_wrapThenable(val));
+      if (name === "Promise_resolve") return createHostPromiseBuiltinImport(name, _wrapThenable, _wrapPromiseReaction);
       if (name === "Promise_reject")
         return (val: any) => {
           // (#2978) Pre-mark the rejection as handled. Compiled code holds the
@@ -16923,26 +17023,8 @@ assert._isSameValue = isSameValue;
       // it from a continuation that runs as a microtask. We stash the
       // resolve/reject capabilities on the promise object so the settle
       // imports can fire them by reference.
-      if (name === "Promise_new_pending")
-        return () => {
-          let r: (v: any) => void = () => {};
-          let j: (e: any) => void = () => {};
-          const p: any = new Promise((res: any, rej: any) => {
-            r = res;
-            j = rej;
-          });
-          p.__r = r;
-          p.__j = j;
-          return p;
-        };
-      if (name === "Promise_settle_resolve")
-        return (p: any, val: any) => {
-          if (p && typeof p.__r === "function") p.__r(val);
-        };
-      if (name === "Promise_settle_reject")
-        return (p: any, reason: any) => {
-          if (p && typeof p.__j === "function") p.__j(reason);
-        };
+      if (name === "Promise_new_pending" || name === "Promise_settle_resolve" || name === "Promise_settle_reject")
+        return createHostPromiseBuiltinImport(name, _wrapThenable, _wrapPromiseReaction);
       // (#1382) `executor` is called as `executor(resolve, reject)` — arity 2.
       if (name === "Promise_new") {
         // Honor source-realm Promise[@@species]; product callers retain the intrinsic fallback.
@@ -16951,7 +17033,7 @@ assert._isSameValue = isSameValue;
       }
       // (#1382) `onFulfilled` / `onRejected` callbacks are arity-1 (the value or reason).
       if (name === "Promise_then" || name === "Promise_then2" || name === "Promise_then2_frame")
-        return createPromiseThenImport(name, _wrapPromiseReaction); // (#5372) the frame variant rejects the frame on a trap
+        return createHostPromiseBuiltinImport(name, _wrapThenable, _wrapPromiseReaction); // (#5372) the frame variant rejects the frame on a trap
       if (name === "Promise_catch") return (p: any, cb: any) => p.catch(_maybeWrapCallable(cb, 1, callbackState));
       // (#1382) `onFinally` is arity-0 (no arg per spec §27.2.5.3).
       if (name === "Promise_finally") return (p: any, cb: any) => p.finally(_maybeWrapCallable(cb, 0, callbackState));
@@ -18325,13 +18407,7 @@ assert._isSameValue = isSameValue;
     // maker the compiler picks for an ordinary function definition — the one
     // callable form with [[Construct]]. Everything else keeps the arrow bridge.
     case "callback_maker":
-      return (id: number, cap: any) => {
-        if (id === -2) return _wrapVoidHostCallback(cap, callbackState, false);
-        if (id === -1) return _wrapVoidHostCallback(cap, callbackState);
-        const policy = ASYNC_CALLBACK_EXCEPTION_POLICY;
-        const constructible = intent.constructible === true;
-        return createNativeFunctionCallbackBridge(id, cap, callbackState, policy, constructible);
-      };
+      return createHostAsyncCallbackMaker(callbackState, _wrapVoidHostCallback, () => intent.constructible === true);
     case "getter_callback_maker":
       return (id: number, cap: any) => {
         // Regular function (not arrow) so 'this' is bound to the receiver;
@@ -18387,7 +18463,7 @@ assert._isSameValue = isSameValue;
       // (#1644) __box_bigint: JS-BigInt-integration already delivers the wasm
       // i64 as a JS bigint at the boundary, so boxing is identity.
       if (intent.targetType === "bigint") return (v: bigint) => v;
-      return (v: number) => v;
+      return createHostNumberBoxImport();
     case "unbox":
       if (intent.targetType === "boolean") return (v: any) => (v ? 1 : 0);
       if (intent.targetType === "symbol") {
@@ -18412,32 +18488,7 @@ assert._isSameValue = isSameValue;
           return BigInt(v);
         };
       }
-      return (v: any) => {
-        // For objects, try our ToPrimitive first — Number() on WasmGC structs
-        // returns NaN without throwing (#866), and proxied structs may have
-        // WasmGC closures for Symbol.toPrimitive that V8 can't call (#1090).
-        if (v != null && typeof v === "object") {
-          const prim = _toPrimitive(v, "number", callbackState);
-          if (prim !== undefined) {
-            // #1434 — Number() throws TypeError on Symbol/BigInt primitives.
-            // Per ECMA-262 §7.1.4 ToNumber, Symbol MUST throw TypeError; the
-            // unbox/number intent is the centralized ToNumber funnel, so we
-            // let the exception propagate to Wasm catch_all instead of
-            // silently turning it into NaN.
-            return Number(prim);
-          }
-          // _toPrimitive returned undefined — try the full host ToPrimitive (#1090)
-          // which checks real JS properties, sidecar, and Wasm exports.
-          // Let TypeError propagate so Wasm catch_all can intercept it.
-          const prim2 = _hostToPrimitive(v, "number", callbackState);
-          return Number(prim2);
-        }
-        // #1434 — Symbol/BigInt primitives: Number() throws TypeError per
-        // §7.1.4. The previous try/catch swallowed this and returned NaN,
-        // letting `Number(Symbol())`, `+Symbol()`, `-Symbol()`, `~Symbol()`,
-        // `0 + Symbol()` etc. silently coerce. Let the exception propagate.
-        return Number(v);
-      };
+      return createHostNumberUnboxImport(callbackState, _toPrimitive, _hostToPrimitive);
     case "any_to_index":
       // #3511 — Symbol-safe array-index probe. The dynamic-`any`-index element
       // access (`obj[key]` get/set/delete) ToNumber-probes the key to decide
@@ -18909,28 +18960,6 @@ function wrapWithContainment(
 }
 
 /**
- * These intents resolve to leaf functions that cannot throw or call user code,
- * so they cannot re-enter Wasm. Their import wrappers therefore do not need the
- * recursion-depth or catch-all bookkeeping used by general host operations.
- * Keep this predicate intent-based: `buildImports` is public and must not trust
- * a caller-supplied import name to imply safe behaviour.
- */
-function isFastLeafHostImport(imp: ImportDescriptor): boolean {
-  switch (imp.intent.type) {
-    case "box":
-    case "typeof_check":
-    case "truthy_check":
-      return true;
-    case "unbox":
-      return imp.intent.targetType === "boolean";
-    case "builtin":
-      return imp.intent.name === "__get_undefined";
-    default:
-      return false;
-  }
-}
-
-/**
  * Build the WebAssembly import object from a closed manifest.
  *
  * After instantiation, prefer `setInstance(instance)`. It proves the
@@ -19042,25 +19071,12 @@ export function buildImports(
   const callbackState = lifecycle.callbackState;
   timerCallbackBridge.bindCallbackState(callbackState, (value, arity) => _wrapWasmClosure(value, arity, callbackState));
   domCapabilityRuntime?.bindCallbackState(callbackState);
-  let lastCaughtException: any = undefined;
-  const envImportNames: string[] = [];
-  let importCounts: Uint32Array | undefined;
+  const hostImportCallState = createHostImportCallState();
 
   // (#1467 / #1933) Each instantiated module gets its own symbol id space and
   // per-instance symbol cache/registry, RegExp legacy state, and subclass/
   // parent registries — initialized in `instanceState` above (was module-level,
   // which crossed and retained concurrently-live instances).
-
-  // Recursion depth guard: host imports can call back into Wasm exports
-  // (e.g. callback_maker, valueOf/toString coercion, iterator protocol),
-  // which can call back into host imports, creating infinite recursion.
-  // Track depth across ALL host imports sharing a single counter.
-  // Legitimate parser recursion can cross the generic host bridge once per
-  // nested expression/parser method. Acorn's valid async-generator Test262
-  // cases exceed 100 crossings before returning, so keep the cycle guard well
-  // below V8's native stack limit without rejecting ordinary source depth.
-  const MAX_HOST_RECURSION_DEPTH = 512;
-  let hostCallDepth = 0;
 
   for (const imp of manifest) {
     if (imp.module !== "env") continue;
@@ -19074,7 +19090,7 @@ export function buildImports(
         );
       }
     }
-    const importIndex = envImportNames.push(imp.name) - 1;
+    const importIndex = hostImportCallState.registerImport(imp.name);
     let fn: Function;
 
     const domBinding = domCapabilityRuntime?.bindImport(imp);
@@ -19091,7 +19107,7 @@ export function buildImports(
         imp.paramCount,
         options?.dynamicCode,
         options?.dynamicCodeEvaluator,
-        () => lastCaughtException,
+        hostImportCallState.getCaughtException,
       );
 
     // DOM containment wrapping
@@ -19104,144 +19120,11 @@ export function buildImports(
       }
     }
 
-    // Acorn executes millions of these leaf calls per parse. They cannot throw
-    // or re-enter Wasm, so avoid constructing and invoking the general guarded
-    // wrapper. Preserve import diagnostics and the Wasm signature's fixed
-    // arity. The switch provides rollout containment.
-    const fastLeaf = process.env.JS2WASM_FAST_LEAF_HOST_IMPORTS !== "0" && isFastLeafHostImport(imp);
-    if (fastLeaf && imp.paramCount === 0) {
-      const original = fn;
-      env[imp.name] = function () {
-        if (importCounts) importCounts[importIndex]++;
-        return original();
-      };
+    const wrappedImport = hostImportCallState.wrap(imp, fn, importIndex);
+    fn = wrappedImport.fn;
+    if (wrappedImport.fastLeaf) {
+      env[imp.name] = fn;
       continue;
-    }
-    if (fastLeaf && imp.paramCount === 1) {
-      const original = fn;
-      env[imp.name] = function (a: any) {
-        if (importCounts) importCounts[importIndex]++;
-        return original(a);
-      };
-      continue;
-    }
-
-    // Wrap host imports with recursion depth guard + exception capture for catch_all.
-    //
-    // (#4150) Arity-specialized. This wrapper sits on EVERY host import, so its
-    // cost is paid on every wasm->JS crossing in every program — 7,000 times in
-    // one `dom/set-attributes` call alone. The rest-parameter form allocated a
-    // fresh args array per crossing and dispatched through `Function.apply`,
-    // which V8 cannot inline as well as a fixed-arity direct call. Specializing
-    // on the callee's declared arity removes both. Semantics are identical: the
-    // counter, the depth check, `lastCaughtException` and the decrement are the
-    // same in every arm, and a variadic or higher-arity callee still gets the
-    // original rest form. Measured on dom/set-attributes: ~20-25% of the lane.
-    {
-      const original = fn;
-      const guardEnter = (): void => {
-        if (importCounts) importCounts[importIndex]++;
-        if (hostCallDepth >= MAX_HOST_RECURSION_DEPTH) {
-          const err = new RangeError("Maximum call stack size exceeded");
-          lastCaughtException = err;
-          throw err;
-        }
-        hostCallDepth++;
-      };
-      // The arity comes from the WASM IMPORT SIGNATURE (`paramCount`), not from
-      // `original.length`. The wasm side is what does the calling and its call
-      // sites are fixed-arity, so this count is exactly how many arguments the
-      // wrapper can ever receive. `original.length` would be wrong: it excludes
-      // rest and defaulted parameters, so a variadic callee under-reports
-      // (`Math.max.length` is 2) and a wrapper sized from it would silently
-      // drop arguments. Anything without a declared count keeps the rest form.
-      const arity = imp.paramCount ?? -1;
-      const variadic = arity < 0 || arity > 4;
-      if (variadic) {
-        fn = function (this: any, ...args: any[]) {
-          guardEnter();
-          try {
-            return original.apply(this, args);
-          } catch (e) {
-            lastCaughtException = e;
-            throw e;
-          } finally {
-            hostCallDepth--;
-          }
-        };
-      } else if (arity === 0) {
-        fn = function (this: any) {
-          guardEnter();
-          try {
-            return original();
-          } catch (e) {
-            lastCaughtException = e;
-            throw e;
-          } finally {
-            hostCallDepth--;
-          }
-        };
-      } else if (arity === 1) {
-        fn = function (this: any, a: any) {
-          guardEnter();
-          try {
-            return original(a);
-          } catch (e) {
-            lastCaughtException = e;
-            throw e;
-          } finally {
-            hostCallDepth--;
-          }
-        };
-      } else if (arity === 2) {
-        fn = function (this: any, a: any, b: any) {
-          guardEnter();
-          try {
-            return original(a, b);
-          } catch (e) {
-            lastCaughtException = e;
-            throw e;
-          } finally {
-            hostCallDepth--;
-          }
-        };
-      } else if (arity === 3) {
-        fn = function (this: any, a: any, b: any, c: any) {
-          guardEnter();
-          try {
-            return original(a, b, c);
-          } catch (e) {
-            lastCaughtException = e;
-            throw e;
-          } finally {
-            hostCallDepth--;
-          }
-        };
-      } else if (arity === 4) {
-        fn = function (this: any, a: any, b: any, c: any, d: any) {
-          guardEnter();
-          try {
-            return original(a, b, c, d);
-          } catch (e) {
-            lastCaughtException = e;
-            throw e;
-          } finally {
-            hostCallDepth--;
-          }
-        };
-      } else {
-        fn = function (this: any, ...args: any[]) {
-          guardEnter();
-          try {
-            return original.apply(this, args);
-          } catch (e) {
-            lastCaughtException = e;
-            throw e;
-          } finally {
-            hostCallDepth--;
-          }
-        };
-      }
     }
     domCapabilityRuntime?.recordWrappedImport(imp, domBinding, fn);
     env[imp.name] = fn;
@@ -19273,19 +19156,8 @@ export function buildImports(
   // first data-struct authority.
   result.setExports = lifecycle.setExports;
   result.setInstance = lifecycle.setInstance;
-  result.startImportCounting = () => {
-    importCounts = new Uint32Array(envImportNames.length);
-  };
-  result.takeImportCounts = () => {
-    const counts: Record<string, number> = Object.create(null);
-    if (importCounts) {
-      for (let index = 0; index < envImportNames.length; index++) {
-        if (importCounts[index] > 0) counts[envImportNames[index]] = importCounts[index];
-      }
-    }
-    importCounts = undefined;
-    return counts;
-  };
+  result.startImportCounting = hostImportCallState.startImportCounting;
+  result.takeImportCounts = hostImportCallState.takeImportCounts;
   return result;
 }
 
@@ -19384,7 +19256,11 @@ function marshalTypedArrayArgs(
  * arguments and return values marshal correctly across the JS↔Wasm boundary.
  *
  * Prefer passing the genuine `WebAssembly.Instance`. Passing its raw exports
- * record retains the historical API.
+ * record retains the historical API, but (#6438) that overload can only CONSUME
+ * a data-struct authority, never establish one: an export that returns an
+ * object decodes only after `importObject.__setInstance(instance)` (or an
+ * earlier `wrapExports(instance)` for the same module). Without that, a struct
+ * result throws a `TypeError` instead of silently marshalling to `{}`.
  *
  * Pass the per-export type metadata from {@link CompileResult.exportSignatures}
  * as `options.signatures`; without it the wrapper is a passthrough. Returns a
@@ -19425,6 +19301,11 @@ export function wrapExports(
     mayEstablishDataStructAuthority: brandedExports !== undefined,
     mayConsumeGlobalDataStructAuthority: true,
   });
+  // (#6438) The raw-exports overload may never ESTABLISH data-struct authority,
+  // so a module that ships a decoder can have it masked to `undefined` in the
+  // view above. Struct results would then marshal to `{}` in silence.
+  const dataStructDecoderMasked =
+    _hasOwn(rawExports, "__struct_field_names") && typeof exportsForMarshal.__struct_field_names !== "function";
   const callFn0 = exportsForMarshal.__call_fn_0 as ((closure: any) => any) | undefined;
   const callFn1 = exportsForMarshal.__call_fn_1 as ((closure: any, arg: any) => any) | undefined;
   // (#1700) Vec allocator + byte-writer for Uint8Array args. Either may be
@@ -19479,6 +19360,13 @@ export function wrapExports(
   // was not, so step 4 is written out explicitly and the behaviour is unchanged.
   const isClosureFn = exportsForMarshal.__is_closure as ((v: any) => number) | undefined;
   const hasVecLen = typeof exportsForMarshal.__vec_len === "function";
+  // (#6438) Predicates the fail-closed raw-record guard borrows from this module.
+  const structDecodeProbes = {
+    isStruct: _isWasmStruct,
+    isVec: _isWasmVec,
+    fieldNames: _structFieldNamesRaw,
+    isClosure: isClosureFn,
+  };
   const looksMarshalable = (val: any): boolean => {
     if (val == null || typeof val !== "object") return false;
     // No positively discovered compiler closure family means this module
@@ -19486,16 +19374,24 @@ export function wrapExports(
     // label or the historical old-module fallback turn class instances into
     // callable wrappers.
     if (typeof isClosureFn !== "function") return true;
-    if (typeof isClosureFn === "function") {
-      try {
-        if (isClosureFn(val) === 1) return false;
-      } catch {
-        /* fall through to next probe */
-      }
+    // `_hostBridgeExportView` maps `__is_closure` to the authenticated compiler
+    // classifier when a closure family was discovered, or to `undefined`
+    // otherwise (see the `typeof isClosureFn !== "function"` branch above for
+    // the latter). So a classifier that returns without throwing is
+    // authoritative — a `0` verdict means "not a closure", full stop; do not
+    // fall through to the `__vec_len` guess (#6441) just because this
+    // field-less/array-free module never exports `__vec_len`.
+    let closureVerdictKnown = false;
+    try {
+      if (isClosureFn(val) === 1) return false;
+      closureVerdictKnown = true;
+    } catch {
+      /* module too old to answer the classifier cleanly — fall through to
+       * the `__vec_len` guess below, same as the pre-#6441 behaviour. */
     }
     if (_structFieldNamesRaw(val, exportsForMarshal) != null) return true;
     if (_isWasmVec(val, exportsForMarshal)) return true;
-    return hasVecLen;
+    return closureVerdictKnown ? true : hasVecLen;
   };
 
   const wrapped: Record<string, any> = Object.create(null);
@@ -19581,6 +19477,16 @@ export function wrapExports(
       const resultMarshal = hasMarshalOverride
         ? marshal
         : (marshalModeForBoundaryPolicy(exportBoundaryPolicy?.result.policy) ?? marshal);
+      if (dataStructDecoderMasked && resultMarshal !== false) {
+        // (#6438) `marshal: false` still hands back the raw handle; every
+        // decoding mode refuses rather than answering `{}` / `[{}, …]`. The
+        // NOT-marshalable arm is covered too: with the decoder masked and no
+        // `__vec_len` export, `looksMarshalable` falls through and a plain
+        // struct would be handed to JS as a callable (#1308 fallback) — just as
+        // wrong, and just as silent. `__is_closure` still exempts real closures.
+        const undecodable = rawExportsStructDecodeError(result, exportsForMarshal, key, structDecodeProbes);
+        if (undecodable) throw undecodable;
+      }
       if (resultMarshal === "copy" && marshalable) {
         const plain = _wasmToPlain(result, exportsForMarshal);
         // (#1700) Uint8Array fidelity on the return side. The Wasm signature

@@ -47,6 +47,7 @@ export function emitPreparedAsyncAwait(
   if (
     !(
       actual.kind === "extern" ||
+      (actual.kind === "dynamic" && actual.tag === undefined) ||
       (actual.kind === "val" && (actual.val.kind === "externref" || actual.val.kind === "f64"))
     )
   ) {

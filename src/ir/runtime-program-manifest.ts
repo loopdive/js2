@@ -24,6 +24,16 @@ import type { PreparedIrProgramFailure, PreparedIrProgramProducerInput } from ".
 import { assertPreparedIrProgramPopulation } from "./program-population.js";
 import { irRuntimeCallableDeclaration } from "./runtime/callable-declarations.js";
 import {
+  collectNativeAsyncCallableDemands,
+  IrNativeAsyncCallableError,
+  type IrNativeAsyncCallableDemand,
+} from "./runtime/native-async-callables.js";
+import {
+  collectVectorCallableDemands,
+  IrVectorCallableError,
+  type IrVectorCallableDemand,
+} from "./runtime/vector-callables.js";
+import {
   FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURES,
   GENERATOR_NUMBER_BOX_RUNTIME_FEATURES,
   HOST_CALLBACK_WRAP_RUNTIME_FEATURES,
@@ -139,7 +149,16 @@ export function prepareWholeProgramRuntimeManifest(
   if (populationFailure) return populationFailure;
   const sourceLocationsByUnit = new Map<IrUnitId, IntrinsicSourceLocation>();
   const requestOwners = new Map<RuntimeFeature, IrUnitId>();
+  const builtinDemands: IrNativeAsyncCallableDemand[] = [];
+  const vectorDemands: IrVectorCallableDemand[] = [];
   for (const fn of input.ir.functions) {
+    try {
+      builtinDemands.push(collectNativeAsyncCallableDemands([fn])[0]!);
+      vectorDemands.push(collectVectorCallableDemands([fn])[0]!);
+    } catch (error) {
+      if (!(error instanceof IrNativeAsyncCallableError) && !(error instanceof IrVectorCallableError)) throw error;
+      return invariant(input, fn.unitId, error.message);
+    }
     const owner = preparedIrProgramOwner(input, fn.unitId)!;
     const demand = input.demands.get(fn.unitId);
     if (fn.funcKind === "async" && !fn.asyncPlan) {
@@ -189,6 +208,8 @@ export function prepareWholeProgramRuntimeManifest(
       sourceLocationsByUnit,
       policy: input.policy,
       includeEmpty: true,
+      builtinDemands: Object.freeze(builtinDemands),
+      vectorDemands: Object.freeze(vectorDemands),
       ...mergeDemands([...input.demands.values()]),
     });
     for (const fn of runtime.functions) {
