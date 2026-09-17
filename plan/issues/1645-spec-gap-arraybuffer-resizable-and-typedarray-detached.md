@@ -1,17 +1,18 @@
 ---
 id: 1645
 title: "spec gap: ArrayBuffer resizable + TypedArray detached-buffer guards (100 + 39 test262 fails)"
-status: ready
+status: in-progress
 created: 2026-05-08
-updated: 2026-06-17
-priority: medium
+updated: 2026-09-17
+priority: high
+horizon: m
 feasibility: medium
 reasoning_effort: medium
 task_type: bugfix
 area: runtime
 language_feature: typedarray
 goal: spec-completeness
-sprint: Backlog
+sprint: current
 renumbered_from: 1351
 parent: 1328
 ---
@@ -148,3 +149,130 @@ runtime-only:
 
 Leave #1645 `ready` as the umbrella; (a)/(b)/(c) can be filed as sub-issues when
 scheduled.
+
+---
+
+## Implementation Plan — S1: `%TypedArray%.prototype.buffer` returns the viewed buffer's IDENTITY (2026-09-17)
+
+### The premise above is wrong, and the correction is the whole slice
+
+This file has said since May 2026 that the gap is *missing detached-buffer
+guards on TypedArray methods*. **Measured on current `main` (68bcd9eb4d),
+`--target standalone`, `result.imports === []` on every probe: the guards are
+already there and they already work.** Mark the real buffer detached and the
+methods throw the §23.2.4.4 ValidateTypedArray TypeError, on every element type:
+
+| receiver | `ta.fill(0)` after the buffer is marked detached |
+| --- | --- |
+| Uint8Array · Int8Array · Uint16Array · Int32Array · Float32Array · Float64Array · Uint8ClampedArray | TypeError, all seven |
+
+`forEach`, `sort`, `slice`, `indexOf` and `join` behave the same. Detaching
+through a *function* (the shape `$262.detachArrayBuffer` uses — a parameter, not
+a literal receiver) also works.
+
+**What is actually broken is one line of identity.** test262 never detaches the
+buffer it constructed; `$DETACHBUFFER(sample.buffer)` detaches whatever the
+`.buffer` GETTER hands back. And under standalone that getter hands back a
+different object:
+
+| probe (standalone, imports `[]`) | result | expected |
+| --- | --- | --- |
+| `const b = new ArrayBuffer(8); b === b` | 1 | 1 |
+| plain-object and aliased-buffer identity controls | 1, 1 | 1, 1 — **reference equality itself is fine** |
+| `new Float64Array(b).buffer === b` | **0** | 1 |
+| `new DataView(b).buffer === b` | **0** | 1 |
+| `t.buffer === t.buffer` | 1 | 1 — stable, so it is ONE wrong object, not a fresh one per read |
+| `new Float64Array(new ArrayBuffer(64)).buffer.byteLength` | **0** | 64 |
+
+So `$DETACHBUFFER` marks the stand-in, the view keeps reading its live backing,
+and all 33 rows report *"Expected a TypeError to be thrown but no exception was
+thrown at all"*. The guard never fired because it was asked about the wrong
+object.
+
+### Where it comes from — the code says so itself
+
+`src/codegen/property-access-dispatch.ts`, the #2596 `propName === "buffer"`
+arm: for a TypedArray receiver under `noJsHost`, it **synthesizes a fresh,
+zero-filled `i32_byte` vec** sized to the view's byte length. Its own comment:
+
+> TRUE write-through aliasing (mutating `.buffer` mutates the view, and
+> `a.buffer === b.buffer` identity) is OUT OF SCOPE — it needs the unified
+> byte-storage representation … this slice is the non-trapping floor.
+
+That floor was the right call in #2596 (before it, the generic
+`__extern_get(view, "buffer")` read `ref.cast` to the buffer vec and trapped
+`illegal cast`, breaking every `.buffer`-touching test). It is not the right
+answer now, and **two other routes in this repo already give the right one**:
+
+- `src/codegen/ta-dyn-mop.ts:450` (the dynamic-MOP route) returns
+  `struct.get` field 1 of the view — the same backing ref — and its comment
+  states the intent exactly: *"the SAME backing byte-vec ref `new ArrayBuffer(n)`
+  produced … so `ta.buffer === buffer` holds and $DETACHBUFFER's len=-1 write is
+  observable through it."*
+- The **DataView** half of the #2596 arm was already converted by #3173:
+  *"a DataView's `.buffer` is its ACTUAL viewed buffer, identity included …
+  return it directly instead of synthesizing a fresh zero-filled copy."*
+
+This is the session's recurring shape: a correct implementation exists, and the
+route a plain test262 program actually takes is not the one that reaches it.
+
+### Change
+
+Give the **TypedArray** half of that arm the identity the DataView half already
+has, and the dynamic-MOP route already returns.
+
+1. In the #2596 arm (`property-access-dispatch.ts`), replace the synthesized
+   zero-filled vec for `bufIsTypedArr` with the view's real backing ref, the way
+   `ta-dyn-mop.ts:450` does. A view constructed **over an existing
+   ArrayBuffer** must return that buffer; a view constructed from a **length**
+   (`new Float64Array(8)`) must return the buffer it implicitly created, and
+   return the *same* one on every read.
+2. The representation question the #2596 comment flags is real and must be
+   answered, not assumed: a `new Float64Array(n)` view's backing is an `f64`
+   vec, while an ArrayBuffer is a bare `$__vec_i32_byte`. **Establish by
+   measurement which shape each construction path produces before writing the
+   arm** — `ta-dyn-mop.ts` returning field 1 unconditionally is evidence the
+   struct already carries a buffer ref, but evidence is not proof for every
+   construction path. If some path genuinely has no byte-vec to hand back, say
+   so with the probe that shows it and scope that path out **by name**; do not
+   silently keep synthesizing for it.
+3. **`byteLength` must come out right too.** `t.buffer.byteLength` measures 0
+   for a 64-byte buffer today — the #2596 comment claims this arm exists to make
+   exactly that "correct and non-trapping", so it is already not doing what it
+   says. Whatever the fix is, a 64-byte buffer reads 64, and a detached one
+   reads 0 (§25.1.3.3 maps detached to `length < 0`, and byte reads clamp
+   negatives to 0 in `property-access.ts`).
+4. **Re-check the DataView row.** `new DataView(b).buffer === b` measures **0**
+   here despite #3173. Either the `usesNativeDataViewProvider(ctx)` condition on
+   that arm did not hold for this probe, or #3173's identity is narrower than
+   its comment claims. Find out which and state it; if it is the former, the
+   probe is fine and the arm is simply not reached — say that rather than
+   "fixing" a working mechanism.
+
+### Acceptance
+
+- `new <TA>(b).buffer === b` is **1** for all seven element types, and for a
+  view constructed from a length the getter returns the same object twice.
+- `new Float64Array(new ArrayBuffer(64)).buffer.byteLength` is **64**.
+- The 33 ES2015 detached rows (list regenerated by `.tmp/detach-census.mjs`
+  against `.test262-cache/test262-standalone-current.jsonl`): measured on BOTH
+  a merge-base worktree and the branch, same `.test262-cache` symlinked into
+  both. **Zero rows lost** — the per-test edition ratchet fails on a single
+  pass→not-pass in ES2015 and there is no waiver (this is what is currently
+  blocking #6493; do not repeat it).
+- A control set over `built-ins/TypedArray`, `built-ins/TypedArrayConstructors`,
+  `built-ins/DataView` and `built-ins/ArrayBuffer` (162 ES2015 non-pass rows in
+  that area today, plus their passing neighbours) re-run on both trees.
+- `result.imports` stays `[]`.
+- gc / js-host output byte-identical: this arm is `noJsHost`-gated, so the host
+  lane must not move at all — sha256 a set of probes on both trees.
+
+### Recorded on the way, not part of this slice
+
+- **`ta.reverse()` on a detached buffer is a COMPILER CRASH**, not a wrong
+  answer: `Binary emit error: encodeValType: packed storage type "i8" is not
+  valid in a value position … a packed type leaked into a param/result/local/
+  global` (`src/emit/binary.ts:887`). Reproduced standalone with a five-line
+  program. `fill`/`forEach`/`sort`/`slice`/`indexOf`/`join` on the same detached
+  receiver all compile and throw correctly, so it is specific to `reverse`.
+  Needs its own issue.
