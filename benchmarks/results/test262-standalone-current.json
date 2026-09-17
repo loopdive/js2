@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-17T12:37:33.241Z",
-  "baseline_generated_at": "2026-09-17T12:37:33.241Z",
-  "baseline_sha": "6fa3eeace4cda855d3068e82a47f29c2a7c16283",
+  "timestamp": "2026-09-17T20:58:00.429Z",
+  "baseline_generated_at": "2026-09-17T20:58:00.430Z",
+  "baseline_sha": "b0dfc3bb2dff00ed823a8fa2c5ee619097634274",
   "oracle_version": 14,
   "mode": {
     "target": "standalone",
@@ -11,24 +11,24 @@
   },
   "summary": {
     "total": 48232,
-    "pass": 35594,
-    "fail": 9593,
+    "pass": 35596,
+    "fail": 9591,
     "compile_error": 3019,
     "compile_timeout": 8,
     "skip": 18,
     "compilable": 45187,
-    "host_free_pass": 35594,
+    "host_free_pass": 35596,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 47146,
-        "pass": 34565,
-        "fail": 9555,
+        "pass": 34567,
+        "fail": 9553,
         "compile_error": 3000,
         "compile_timeout": 8,
         "skip": 18,
         "compilable": 44120,
-        "host_free_pass": 34565,
+        "host_free_pass": 34567,
         "stale": 0,
         "label": "ECMAScript current standard"
       },
@@ -58,25 +58,25 @@
       },
       "official": {
         "total": 48232,
-        "pass": 35594,
-        "fail": 9593,
+        "pass": 35596,
+        "fail": 9591,
         "compile_error": 3019,
         "compile_timeout": 8,
         "skip": 18,
         "compilable": 45187,
-        "host_free_pass": 35594,
+        "host_free_pass": 35596,
         "stale": 0,
         "label": "standard + annex_b (default)"
       },
       "full": {
         "total": 48735,
-        "pass": 35829,
-        "fail": 9609,
+        "pass": 35831,
+        "fail": 9607,
         "compile_error": 3175,
         "compile_timeout": 8,
         "skip": 114,
         "compilable": 45438,
-        "host_free_pass": 35829,
+        "host_free_pass": 35831,
         "stale": 0,
         "label": "standard + annex_b + proposals"
       }
@@ -84,35 +84,35 @@
   },
   "official_summary": {
     "total": 48232,
-    "pass": 35594,
-    "fail": 9593,
+    "pass": 35596,
+    "fail": 9591,
     "compile_error": 3019,
     "compile_timeout": 8,
     "skip": 18,
     "compilable": 45187,
-    "host_free_pass": 35594,
+    "host_free_pass": 35596,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
-    "pass": 35829,
-    "fail": 9609,
+    "pass": 35831,
+    "fail": 9607,
     "compile_error": 3175,
     "compile_timeout": 8,
     "skip": 114,
     "compilable": 45438,
-    "host_free_pass": 35829,
+    "host_free_pass": 35831,
     "stale": 0
   },
   "strict_summary": {
     "total": 45721,
-    "pass": 33313,
-    "fail": 9454,
+    "pass": 33315,
+    "fail": 9452,
     "compile_error": 2928,
     "compile_timeout": 8,
     "skip": 18,
     "compilable": 42767,
-    "host_free_pass": 33313,
+    "host_free_pass": 33315,
     "stale": 0
   },
   "scope_summaries": {
@@ -140,13 +140,13 @@
     },
     "standard": {
       "total": 47146,
-      "pass": 34565,
-      "fail": 9555,
+      "pass": 34567,
+      "fail": 9553,
       "compile_error": 3000,
       "compile_timeout": 8,
       "skip": 18,
       "compilable": 44120,
-      "host_free_pass": 34565,
+      "host_free_pass": 34567,
       "stale": 0
     }
   },
@@ -550,13 +550,13 @@
     {
       "name": "built-ins/MapIteratorPrototype",
       "path": "built-ins/MapIteratorPrototype",
-      "pass": 10,
-      "fail": 1,
+      "pass": 11,
+      "fail": 0,
       "compile_error": 0,
       "compile_timeout": 0,
       "skip": 0,
       "total": 11,
-      "host_free_pass": 10
+      "host_free_pass": 11
     },
     {
       "name": "built-ins/Math",
@@ -704,13 +704,13 @@
     {
       "name": "built-ins/SetIteratorPrototype",
       "path": "built-ins/SetIteratorPrototype",
-      "pass": 10,
-      "fail": 1,
+      "pass": 11,
+      "fail": 0,
       "compile_error": 0,
       "compile_timeout": 0,
       "skip": 0,
       "total": 11,
-      "host_free_pass": 10
+      "host_free_pass": 11
     },
     {
       "name": "built-ins/ShadowRealm",
@@ -1210,7 +1210,7 @@
     "range_error": 14,
     "runtime_error": 165,
     "syntax_error": 20,
-    "type_error": 2296,
+    "type_error": 2294,
     "wasm_compile": 28
   },
   "hard_errors": {},
@@ -1220,8 +1220,8 @@
   },
   "root_cause_map": {
     "target": "standalone",
-    "total_non_pass_non_skip": 12792,
-    "classified": 12792,
+    "total_non_pass_non_skip": 12790,
+    "classified": 12790,
     "unclassified_threshold": null,
     "has_edition_breakdown": true,
     "buckets": [
@@ -1296,7 +1296,7 @@
           "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
           "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/with/disambiguation-wrong-type.js"
+          "test/built-ins/Temporal/Duration/prototype/round/subclassing-ignored.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: null Expected a RangeError but got a TypeError",
@@ -1335,8 +1335,8 @@
         "sample_files": [
           "test/built-ins/AsyncDisposableStack/prototype/move/not-a-constructor.js",
           "test/built-ins/AsyncDisposableStack/prototype/move/sets-state-to-disposed.js",
-          "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.asyncDispose-property-not-callable.js",
           "test/built-ins/AsyncDisposableStack/instance-extensible.js",
+          "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.asyncDispose-property-not-callable.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.dispose-property-not-callable.js"
         ],
         "sample_signatures": [
@@ -1537,8 +1537,8 @@
         "error_categories": {
           "other": 23,
           "host_import_leak": 15,
-          "assertion_fail": 112,
-          "type_error": 37,
+          "assertion_fail": 113,
+          "type_error": 36,
           "illegal_cast": 1
         },
         "by_edition": {
@@ -1764,21 +1764,21 @@
           "#1718"
         ],
         "label": "Generic iterator protocol still needs a pure-Wasm standalone path",
-        "count": 1395,
+        "count": 1393,
         "statuses": {
           "pass": 0,
-          "fail": 629,
+          "fail": 627,
           "compile_error": 766,
           "compile_timeout": 0,
           "skip": 0,
-          "total": 1395,
+          "total": 1393,
           "host_free_pass": 0
         },
         "error_categories": {
           "promise_error": 10,
           "host_import_leak": 739,
-          "type_error": 162,
-          "assertion_fail": 420,
+          "type_error": 161,
+          "assertion_fail": 419,
           "other": 40,
           "illegal_cast": 6,
           "runtime_error": 8,
@@ -1788,7 +1788,7 @@
         "by_edition": {
           "ES2018": 294,
           "ES2022": 385,
-          "ES2015": 226,
+          "ES2015": 224,
           "ES2027": 150,
           "ES2025": 284,
           "ES2019": 11,
@@ -2413,15 +2413,15 @@
           "test/built-ins/Symbol/species/subclassing.js",
           "test/built-ins/Symbol/desc-to-string.js",
           "test/built-ins/Symbol/prototype/Symbol.toPrimitive/removed-symbol-wrapper-ordinary-toprimitive.js",
-          "test/built-ins/Symbol/not-callable.js",
-          "test/built-ins/Symbol/for/to-string-err.js"
+          "test/built-ins/Symbol/for/to-string-err.js",
+          "test/built-ins/Symbol/not-callable.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected SameValue(«undefined», «function () { [native code] }») to be true",
           "assertion_fail:Test262Error: Expected SameValue(«\"\"», «\"toStringvalueOf\"») to be true",
           "assertion_fail:Test262Error: hint: default",
-          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
-          "null_deref:dereferencing a null pointer [in __closure_66() ← __closure_60 ← __call_fn_method_3 ← __apply_closure]"
+          "null_deref:dereferencing a null pointer [in __closure_66() ← __closure_60 ← __call_fn_method_3 ← __apply_closure]",
+          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all"
         ]
       },
       {
@@ -2809,7 +2809,7 @@
           "assertion_fail:Test262Error: Expected true but got false",
           "other:[object WebAssembly.Exception]",
           "type_error:TypeError: Cannot convert undefined or null to object",
-          "other:L#:## ':' expected.; L#:## '=>' expected.; L#:## Declaration or statement expected.; L#:## Declaration or statement expected.; L#:## Declaration or statement expected."
+          "other:L#:## Unexpected keyword or identifier.; L#:## Identifier expected.; L#:## Unexpected keyword or identifier.; L#:## Identifier expected.; L#:## Unexpected keyword or identifier.; L#:## Identifier expected.; L#:## Unexpected keyword or ident"
         ]
       },
       {

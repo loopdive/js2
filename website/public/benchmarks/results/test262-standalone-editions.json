@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10343,
-    "fail": 1069,
+    "pass": 10345,
+    "fail": 1067,
     "ce": 292,
     "skip": 0,
     "total": 11704,
@@ -93,8 +93,8 @@
       },
       {
         "name": "Symbol.iterator",
-        "pass": 652,
-        "fail": 77,
+        "pass": 654,
+        "fail": 75,
         "ce": 66,
         "skip": 0,
         "total": 795,
