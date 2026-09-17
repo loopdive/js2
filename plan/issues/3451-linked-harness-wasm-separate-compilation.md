@@ -4,7 +4,7 @@ title: "Test262: compile and statically link reusable Wasm harness objects in bo
 status: in-progress
 sprint: current
 created: 2026-07-19
-updated: 2026-07-26
+updated: 2026-09-17
 priority: high
 horizon: xl
 feasibility: hard
@@ -852,11 +852,16 @@ P3d in #6486 before opening the flip PR.
 
 ### Acceptance
 
-- [ ] First push-to-main run after the flip: `promote-baseline` seeds a v14,
+- [x] First push-to-main run after the flip: `promote-baseline` seeds a v14,
       `oracle_lane: linked-harness` baseline; the regression gate reports a
-      rebase within the declared ceiling; no auto-park.
+      rebase within the declared ceiling; no auto-park. **Done 2026-09-17** —
+      see "Slice 6 landed" below (run 35204055011 / 35205468943, baselines
+      commit 9d874c9774).
 - [ ] Next merge_group after that: same-lane diff, `SHARDS_RAN: true`, shard
-      wall median ≤ 170 s on the host matrix (P3: 152 s vs 326 s).
+      wall median ≤ 170 s on the host matrix (P3: 152 s vs 326 s). The flip's
+      own merge_group measured **median 209 s, max 269 s** over 52 host shards
+      (honest lane: 326 s) — the 170 s target is not met; the first same-lane
+      merge_group after the flip is still to be read.
 - [ ] Scheduled `test262-honest-audit` runs and its parity report agrees with
       the authoritative lane at ≥ 99 % (residual = #6491/#6482/#6492 leftovers).
       Measured at the flip: **98.15 %** (P3e) — the ≥ 99 % target is therefore
@@ -934,7 +939,46 @@ artifact if anyone wants it later.
 **Status stays `in-progress`.** Slice 6 is done when the first push-to-main run
 after this PR promotes a v14, `oracle_lane: linked-harness` baseline and the
 regression gate reports the rebase within the declared 422 ceiling with no
-auto-park. Until that run exists the flip is asserted, not demonstrated; flip
-this issue to `done` on that run, and if the gate reports a count above 422,
-read the reported number and re-declare it honestly rather than widening the
-ceiling by guess.
+auto-park. Until that run exists the flip is asserted, not demonstrated. (An
+earlier version of this paragraph said to flip the issue to `done` on that
+run; corrected 2026-09-17 — slice 6 is complete, but the original acceptance
+boxes for the standalone lane above are still unchecked, so the issue stays
+open on them.)
+
+## Slice 6 landed (2026-09-17, PR #5959 → main 83167164d3)
+
+Four merge-group attempts; all 52 host shards ran linked in every one.
+
+| park | run | cause | fix |
+| --- | --- | --- | --- |
+| 1 | 35184969204 | standalone shard 32 `setup-node` ECONNRESET (infra, no verdict) | hold removed |
+| 2 | 35197014849 | lane guard refused honest→linked although the v13→v14 bump printed the auto-rebase line: the linked arm read only `ORACLE_REBASE`, which CI never sets | `64dcc3961a` — the linked arm accepts `rebaseMode` (bump OR flag); PR dequeued once by close/reopen to push it |
+| 3 | 35198595615 | stale group built from the pre-fix head | hold removed |
+| 4 | 35200783992 | rebase path taken, `regressions-allow` excused 406 of 422, but the #3189 trap ratchet (which no regressions-allow excuses) saw category growth null_deref +7, illegal_cast +6, unreachable +1 | `2a3a852cce` — `trap-growth-allow: count: 7` (#3370 rebase-mode semantics, measured maximum); the 15 rows are #6492 "Trap residual" |
+
+Merge-group verdict (run 35204055011, gate exit 0, no park): honest v13
+38,555 → linked v14 38,498 pass (**−57**), 422 pass→fail (406 wasm-change,
+all excused under the 422 ceiling; 16 canary-quarantined), 359 stable
+improvements (365 raw), hard-error gate 0, aggregate compile −49.9 %
+(50.4 M → 25.3 M ms over 48,464 shared rows). Host shard wall: median 209 s,
+max 269 s (honest lane median 326 s).
+
+First push-to-main run (35205468943, 5 min via the #3467 per-SHA merge-group
+reuse): `promote merged report to main baseline` succeeded. Baselines commit
+`9d874c9774` (2026-09-17 09:31 UTC, `baseline_sha` 83167164d3): 48,735 rows,
+**all `oracle_version: 14`**, lanes `linked-harness` 39,489 +
+`linked-harness-fallback` 9,246 (no honest row). Landing-page summary
+38,174 / 48,232 (official scope; full scope 38,498 / 48,735).
+
+The 9,246 fallback rows, by `linked_fallback_reason`: 4,611 Temporal rows
+(always honest-compiled, by design — #6489), and ≈ 4,600 `linked compile
+failed: <SyntaxError text>` rows — these are the corpus's negative-parse
+tests, where the linked split fails to compile the body exactly as the
+honest assembly does, so the fallback reproduces the expected verdict. The
+fallback share is therefore structural, not degradation; a fallback row is
+never counted as linked-harness in the parity report.
+
+Still open after the flip: the ≥ 99 % audit agreement box (98.15 % at the
+flip; residual in #6492/#6491/#6482 plus the 15-row trap residual), the
+≤ 170 s shard-wall box, and the scheduled `test262-honest-audit` has not yet
+had its first run.

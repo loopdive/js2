@@ -401,3 +401,19 @@ not a lane bug), async-null 23, `import.defer/source` proposal rows 16 + 8
 **This is the slice-6 measurement.** Declared ceiling for the flip PR:
 `regressions-allow: count: 422` (the pass→fail count of this run, not a
 round-up); net effect on the published host number −57.
+
+## Outcome — the flip landed (2026-09-17, #3451 slice 6, PR #5959 → main 83167164d3)
+
+The P3e measurement above became the flip's declared ceiling and held exactly:
+the merge-group diff (run 35204055011) reported 422 pass→fail / net −57, the
+same signature (`454a1e4c311bcb08`) as the measurement. One thing P3e did not
+show: the #3189 trap ratchet counts `error_category` per row, not error-message
+buckets, and 15 rows change category across lanes (max +7 in `null_deref`),
+which needed a `trap-growth-allow: count: 7` in the flip PR. The first main
+push promoted an all-v14, all-linked baseline (baselines commit 9d874c9774;
+9,246 of 48,735 rows are `linked-harness-fallback`, of which 4,611 are Temporal
+and the rest negative-parse tests). The shadow job this issue added is now the
+scheduled `test262-honest-audit`; the parity report's roles are
+`--authoritative-label linked --audit-label honest`. Full record in #3451
+"Slice 6 landed".
+
