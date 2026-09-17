@@ -2163,8 +2163,34 @@ jobs:
       # high-water mark (benchmarks/results/test262-standalone-highwater.json),
       # which only ever ratchets UP. It lives inside the required
       # "merge shard reports" check so a breach blocks the merge queue.
+      # (#6461) The breach is recorded here but FAILED AT THE END OF THE JOB.
+      #
+      # This guard is a bare COUNT. The step that says WHICH tests moved is the
+      # #1897 standalone regression guard ~180 lines below, which diffs the
+      # merged standalone JSONL against the cached baseline per test. Until this
+      # change, a floor breach exited the job here, so that per-test diff never
+      # ran and neither did the per-edition `--compare` ratchet, the staleness
+      # annotation or the merged-report upload. Everyone who hit the breach got
+      # one line — "current pass=35577, mark=35742" — and no way to tell a real
+      # regression from a mark that had drifted.
+      #
+      # Cost, measured on 2026-09-13: main sat at −165 for ~4h and every PR
+      # reaching the queue was parked. The merged JSONLs were still uploaded
+      # (`Upload merged reports` is `always()`), so the evidence existed — but
+      # only as a 24 MB artifact nobody is told about. Recovering the actual
+      # cause (174 `for-await-of` tests turned compile_error by the #6412
+      # declaration/body agreement assertion) meant downloading that JSONL and
+      # a good-SHA one and diffing them by hand, reproducing offline exactly
+      # what the #1897 guard would have printed in the run.
+      #
+      # `continue-on-error` keeps the STEP non-fatal; the deferred step near the
+      # end of this job re-raises it, so the required check still blocks the
+      # merge queue exactly as before. Nothing about the floor's strictness
+      # changes — only when it exits.
       - name: Standalone pass-count high-water floor (#2097)
+        id: standalone_highwater
         if: env.STANDALONE_RAN == 'true'
+        continue-on-error: true
         run: |
           node scripts/check-standalone-highwater.mjs \
             --report merged-reports/test262-standalone-report-merged.json
@@ -2579,6 +2605,25 @@ jobs:
             echo "::error::STALE BASELINE: the js2wasm-baselines JSONL is ${BEHIND} test262-relevant commits behind main HEAD (baseline main-sha ${BSHA}). The promote-baseline pipeline is likely broken, so the regression gates are blind to new regressions. Fix baseline promotion before merging. See #1668."
             exit 1
           fi
+
+      # (#6461) Deferred failure for the #2097 standalone high-water floor.
+      #
+      # The floor itself ran near the top of this job under `continue-on-error`
+      # so that every per-test diagnostic below it — the per-edition `--compare`
+      # ratchet, the #3953 staleness annotation, the #1668 catastrophic guard
+      # and above all the #1897 standalone regression guard's per-test
+      # pass→other list — still produces evidence in the same run. This step
+      # re-raises the breach, so a required-check failure and the merge-queue
+      # block are unchanged; only the log is now diagnosable.
+      #
+      # `always()` so the re-raise is not skipped when an earlier diagnostic
+      # step has already failed (the job fails either way, but the annotation
+      # naming the floor must still appear).
+      - name: Fail on standalone high-water breach (deferred, #6461)
+        if: always() && env.STANDALONE_RAN == 'true' && steps.standalone_highwater.outcome == 'failure'
+        run: |
+          echo "::error::STANDALONE high-water floor (#2097) breached — see the 'Standalone pass-count high-water floor (#2097)' step above for the count, and the '#1897' standalone regression guard + per-edition ratchet steps for WHICH tests moved. Failing the required check here rather than at the floor step so those diagnostics run (#6461)."
+          exit 1
 
       - name: Upload merged reports
         if: always() && env.SHARDS_RAN == 'true'
