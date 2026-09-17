@@ -1045,3 +1045,183 @@ differences and must not be chased as such.
 | 8 | `for await` destructuring binds `null` | round 5, new; minimal repro in the mechanism table. |
 | 25 | descriptor reads | #6482's lane. |
 | ~30 | singles + small families | see the mechanism table above. |
+
+## Round 6 (2026-09-17, Opus lane) — working the narrowed mechanisms
+
+Same worktree and branch as round 5 (`issue-6492-r5`), continuing from its tip.
+Three mechanisms fixed, one attempted-and-reverted, two defects split out into
+their own issues.
+
+### Before / after on the same 138 rows (real runner, both lanes)
+
+| lane | round-5 tip | round-6 tip |
+| --- | ---: | ---: |
+| honest | 135 pass | **135 pass** — 0 verdict changes, row by row |
+| linked | 10 pass | **40 pass** — +30, 0 rows lost |
+
+Cumulative for the two rounds: linked 0 → 40 of 138; the honest-pass /
+linked-fail residual is **135 → 95**.
+
+### Mechanism 1 — `LIB_GLOBALS` missed the lib.es5 `declare function` globals (10 rows, 6 of them TRAPS)
+
+`LIB_GLOBALS` / `sourceUsesLibGlobals` is the gate that decides whether
+`collectDeclaredGlobals` runs **at all**, and it listed the ambient
+CONSTRUCTORS but not `eval` / `parseInt` / `parseFloat` / `isNaN` / `isFinite` /
+`decodeURI*` / `encodeURI*`. A compile unit whose only lib-global reference is
+one of those skipped the pass, `ctx.declaredGlobals` never learned the name,
+`calleeMayBeHostCallable` (via `isDeclaredHostGlobal`) answered false, and the
+`__call_function` host arm was never emitted at the call site — so a first-class
+read held a real host function while the dispatch had only the closure-struct
+path:
+
+```
+var s = eval; s("1+1");   →  guarded ref.test nulls → struct.get TRAPS
+```
+
+The honest lane never hits it because the harness prefix shares the unit and
+names `Array`/`Object`/`String` on its first lines; a body-only unit can
+genuinely reference nothing else. The `EvalError` note already in that set
+records the same failure for the constructors — this is its `declare function`
+half, and the two now sit together.
+
+Diagnosis took one instrumented compile of both lanes: honest
+`varMay=true declaredGlobals.has("eval")=true`, linked `varMay=false … =false`,
+and the registration loop **never ran** in the linked compile.
+
+| measurement | before | after |
+| --- | ---: | ---: |
+| the 6 trap rows + 2 `parseInt === null` + `isNaN` + `isFinite`, linked | 0/10 | **10/10** |
+| the same 10, honest | 10/10 | 10/10 |
+
+### Mechanism 2 — an UNDEF-SENTINEL f64 boxed to `null` instead of `undefined` (8 rows)
+
+`coerceType`'s f64→externref arm resolves the canonical `undefined` through
+`canonicalUndefinedExternInstrs`, which is READ-ONLY by design (registering an
+import mid-body shifts func indices under the emitter) and falls back to
+`ref.null.extern` — JS **`null`** — when `__get_undefined` is not registered
+yet. On the host lane that is not a fallback, it is a different VALUE.
+
+Found by diffing the two WATs at the sentinel site: honest emits
+`call $__get_undefined`, linked emitted `ref.null extern`.
+`ensureCanonicalUndefinedExtern` (#6419) already existed for exactly this; it
+simply was not called from the coercion engine. It must run BEFORE
+`__box_number`'s index is read — `flushLateImportShifts` remaps emitted
+instructions, not an index already captured in a local.
+
+| measurement | before | after |
+| --- | ---: | ---: |
+| the 8 `for-await-of/*dstr*` rows, linked | 0/8 | **8/8** |
+| the same 8, honest | 8/8 | 8/8 |
+
+### Mechanism 3 — a HOST-thrown error lost its value crossing wasm→wasm (12 of 13 rows)
+
+A wasm `catch_all` cannot see the thrown JS value; it recovers it through the
+`caught_exception` import, which reads the runtime's "last host exception"
+latch. That latch lived **inside `createHostImportCallState()`** — per IMPORT
+OBJECT, written only by the host import of the module whose call threw. One
+module, one object: correct for the compiler's entire single-module history.
+
+A linked graph has two. The provider calls a consumer closure, a throwing host
+import inside the CONSUMER raises a real JS error, it propagates wasm→wasm as a
+JS exception, and the provider's `catch_all` asked its OWN latch — which
+nothing had written — and got `undefined`. Hence
+`Thrown value was not an object!` for a throw the consumer itself catches
+perfectly (`typeof e === "object"`, `[object Error]`, `ReferenceError`).
+
+The asymmetry that identified it — three probes of one shape, differing only in
+how the error is raised:
+
+| probe | before |
+| --- | --- |
+| `var g = function () { undeclaredXyz; };` (host-thrown) | FAIL |
+| `var f; for (let x of (f = function(){typeof x;}, [])) ;` (TDZ, host-thrown) | FAIL |
+| `var h = function () { throw new ReferenceError("x"); };` (wasm-thrown) | pass |
+
+A wasm-thrown error rides the shared `env.__exn` tag (#5226) and the catching
+module reads the payload off the tag, never off the latch. Making the latch
+process-wide keeps the same last-write-wins discipline it already had.
+
+| measurement | before | after |
+| --- | ---: | ---: |
+| the 13 `Thrown value was not an object!` / `rethrowing null value` rows, linked | 0/13 | **12/13** |
+| the same 13, honest | 13/13 | 13/13 |
+
+Still failing: `const/global-closure-get-before-initialization.js`
+(`rethrowing null value`) — a trap-flavoured sibling at a different site.
+
+### Mechanism 4 — body-declared `$DONE` (5 rows): ATTEMPTED, MEASURED AT ZERO, REVERTED
+
+The prelude binds every referenced harness name with `var <name> = <getter>();`
+ahead of the body, and that assignment runs AFTER hoisting — so a body's
+`function $DONE(){}` is lifted above the prelude and then CLOBBERED by it.
+That is a real latent defect and the fix is four lines (exclude names the body
+declares in a hoisted form, the same "body-side declaration wins" rule round 4
+established for the `%Iterator%` stratum).
+
+It is **not** what these rows need. Implemented, measured on all 6
+`harness/asyncHelpers-asyncTest-*` rows with the real runner: **0 changed**, and
+reverted rather than shipped.
+
+What they actually need, for the next lane: the provider's `asyncTest` does
+`Object.prototype.hasOwnProperty.call(globalThis, "$DONE")` and then CALLS
+`$DONE`, so the BODY's top-level `function $DONE` must be a property of the
+**same global object the PROVIDER reads**. A body-only unit does publish its
+top-level `var`/`function` onto `globalThis` (verified: a probe asserting
+`typeof globalThis.probeFn === "function"` passes in the linked lane), so the
+open question is whose `globalThis` — the two modules resolve it through their
+own `__get_globalThis`, and the runner hands each a `globalSandbox`. This is
+cross-module global-object IDENTITY, the same family as round 5's realm
+finding, and it is the right next target for these rows.
+
+### Split out into their own issues
+
+- **#6496** — the two `language/expressions/in/private-field-*` rows emit an
+  **invalid** Wasm binary (`C_init` `local.tee` anyref/i32, `__cb_0` call
+  i32/externref). A validation failure is a compiler bug, not a parity bucket.
+- **#6497** — `typeof [7, undefined][1]` is `"number"` in **both** lanes. The
+  sentinel survives the store and the DESTRUCTURING read-back resurrects it
+  (mechanism 2); the INDEX read takes the generic box, which per #3315 must not
+  resurrect it. The fix belongs at the vec element read, which knows it is
+  reading a slot. Not a lane bug — filed so the parity work stops tripping on it.
+
+### The 95 rows still honest-pass / linked-fail
+
+| rows | mechanism | owner |
+| ---: | --- | --- |
+| 34 | descriptor reads (`defineProperty`/`defineProperties`/`Symbol.species`/`Symbol.toStringTag` prop-descs) | **#6482 lane** — untouched by instruction |
+| 12 | `harness/*` — 6 of them the `$DONE`/`asyncTest` family above, the rest `assert-throws-same-realm`, `detachArrayBuffer-host-detachArrayBuffer`, `proxytrapshelper-default`, `deepEqual-{array,deep}` | open |
+| 4 | `Promise.all{,Settled}Keyed` reject-vs-throw timing | open |
+| 4 | `$262.createRealm()` rows | open |
+| 4 | `built-ins/Iterator` boundary observation order (round 4 residual) | open |
+| 3 | `await` of a non-thenable (`reading 'then'`) | open |
+| 2 | invalid Wasm binary | **#6496** |
+| 2 each | `replaceAll` ToPrimitive · `Reflect.deleteProperty` · `Proxy` trap context · `RegExp/match-indices` · `TypedArray sort` undefined comparefn · `delete String.prototype.toString` | open |
+| ~26 | singles (see the round-5 table; its `parseInt`, `isNaN`/`isFinite` and `for-await` entries are now FIXED) | open |
+
+### Findings for the next lane (round 6)
+
+11. **A gate list is a mechanism, not a lookup table.** Both mechanism 1 and
+    mechanism 4's dead end were a NAME missing from a set — and in mechanism 1
+    the consequence was three modules away from the set (no registration → no
+    `declaredGlobals` entry → no host-call arm → an uncatchable trap). When a
+    linked-lane row fails and the honest twin passes, ask early whether some
+    whole PASS simply did not run; `LIB_GLOBALS`, `needsIteratorBinding` and
+    `referencedHarnessNames` are all of this shape, and the honest lane hides
+    every one of them because its harness prefix trips each gate incidentally.
+12. **Diff the two WATs at the exact site, not the two behaviours.** Mechanism 2
+    was 20 minutes once the sentinel `if` was on screen in both lanes
+    (`call $__get_undefined` vs `ref.null extern`) and had resisted a round of
+    behavioural probing before that. A scratch script that compiles ONE body
+    both ways with `emitWat: true` is worth writing on day one of a parity
+    round; it costs ~20 s per iteration against ~2 min for the runner.
+13. **Keep a third probe whose job is to FAIL to reproduce.** Mechanism 3's
+    wasm-thrown control is what turned "exceptions are broken across the
+    boundary" (false — ordinary throws cross fine) into "HOST-thrown exceptions
+    are", which is the sentence that names the latch. Round 5's note 8 said
+    bucket by realm; this is the same discipline one level down.
+14. **An in-process linked harness is not the runner, and the gap is the
+    SANDBOX.** The scratch lane runner reproduces mechanism 3 exactly but cannot
+    see mechanism 4 at all, because the runner gives each row a `globalSandbox`
+    and the in-process seam does not. Use the in-process lane to iterate (20 s)
+    and the real runner to decide (2 min) — and never let an in-process PASS
+    retire a row.
