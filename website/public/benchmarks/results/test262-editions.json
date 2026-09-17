@@ -48,12 +48,12 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10005,
-    "fail": 1648,
+    "pass": 10030,
+    "fail": 1623,
     "ce": 51,
     "skip": 0,
     "total": 11704,
-    "pct": 85,
+    "pct": 86,
     "features": [
       {
         "name": "destructuring-binding",
@@ -66,8 +66,8 @@
       },
       {
         "name": "generators",
-        "pass": 2079,
-        "fail": 395,
+        "pass": 2092,
+        "fail": 382,
         "ce": 12,
         "skip": 0,
         "total": 2486,
@@ -138,12 +138,12 @@
       },
       {
         "name": "class",
-        "pass": 317,
-        "fail": 89,
+        "pass": 331,
+        "fail": 75,
         "ce": 4,
         "skip": 0,
         "total": 410,
-        "pct": 77
+        "pct": 81
       },
       {
         "name": "Reflect",
@@ -246,12 +246,12 @@
       },
       {
         "name": "iterator-chunking",
-        "pass": 7,
-        "fail": 46,
+        "pass": 32,
+        "fail": 21,
         "ce": 0,
         "skip": 0,
         "total": 53,
-        "pct": 13
+        "pct": 60
       },
       {
         "name": "Symbol.toStringTag",
@@ -689,21 +689,21 @@
   },
   {
     "edition": "ES2016",
-    "pass": 115,
-    "fail": 9,
+    "pass": 116,
+    "fail": 8,
     "ce": 0,
     "skip": 0,
     "total": 124,
-    "pct": 93,
+    "pct": 94,
     "features": [
       {
         "name": "exponentiation",
-        "pass": 65,
-        "fail": 7,
+        "pass": 66,
+        "fail": 6,
         "ce": 0,
         "skip": 0,
         "total": 72,
-        "pct": 90
+        "pct": 92
       },
       {
         "name": "Array.prototype.includes",
@@ -770,21 +770,21 @@
       },
       {
         "name": "generators",
-        "pass": 0,
-        "fail": 1,
+        "pass": 1,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 1,
-        "pct": 0
+        "pct": 100
       },
       {
         "name": "iterator-chunking",
-        "pass": 0,
-        "fail": 1,
+        "pass": 1,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 1,
-        "pct": 0
+        "pct": 100
       },
       {
         "name": "Reflect.construct",
@@ -3789,12 +3789,12 @@
   },
   {
     "edition": "ES2027",
-    "pass": 396,
-    "fail": 496,
+    "pass": 412,
+    "fail": 480,
     "ce": 5,
     "skip": 0,
     "total": 897,
-    "pct": 44,
+    "pct": 46,
     "features": [
       {
         "name": "explicit-resource-management",
@@ -3897,12 +3897,12 @@
       },
       {
         "name": "iterator-chunking",
-        "pass": 2,
-        "fail": 22,
+        "pass": 18,
+        "fail": 6,
         "ce": 0,
         "skip": 0,
         "total": 24,
-        "pct": 8
+        "pct": 75
       },
       {
         "name": "Reflect",
