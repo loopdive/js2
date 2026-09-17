@@ -35,6 +35,36 @@ export function findInnermostNodeAtPosition(node: ts.Node, position: number): ts
 // backfill the whole visited chain, so repeated queries are O(1) amortized.
 const strictModeCache = new WeakMap<ts.Node, boolean>();
 
+/**
+ * (#6491 round 2) Source files the caller has told us are MODULE goal.
+ *
+ * §11.2.2: module code is always strict, so every strict-mode early error —
+ * `eval`/`arguments`/`let`/future-reserved words as binding identifiers,
+ * assignment to a reserved word, … — applies at a module's top level with no
+ * `"use strict"` directive present. `isStrictMode` could not see that: its
+ * SourceFile terminal deliberately refuses to infer module-ness from the
+ * syntactic indicator, because the compiler ADDS a synthetic `export {}` for
+ * TypeScript's benefit and a sloppy-mode test262 script would then read as
+ * strict.
+ *
+ * That reasoning is about the INFERRED indicator and does not apply to the
+ * EXPLICIT one. `moduleGoal` is passed by the runner exactly for
+ * `flags: [module]` rows (and is `false`, never absent, for script rows), so it
+ * is a fact rather than a guess. Registering the file here — rather than
+ * threading a context through `isStrictMode`'s four call sites and its
+ * memoisation — keeps the predicate a pure function of the node, which is what
+ * the #4431 cache depends on.
+ *
+ * Registration happens in `createEarlyErrorContext`, i.e. before any query on
+ * that file's nodes, so no cached answer can predate the mark.
+ */
+const moduleGoalSourceFiles = new WeakSet<ts.SourceFile>();
+
+/** Mark a source file as module goal for {@link isStrictMode}. */
+export function markModuleGoalSourceFile(sourceFile: ts.SourceFile): void {
+  moduleGoalSourceFiles.add(sourceFile);
+}
+
 /** Leading "use strict" directive scan (directives must be at the top). */
 function hasUseStrictDirective(stmts: readonly ts.Statement[]): boolean {
   for (const stmt of stmts) {
@@ -60,9 +90,11 @@ export function isStrictMode(node: ts.Node): boolean {
     }
     chain.push(current);
     if (ts.isSourceFile(current)) {
-      // Don't assume module = strict. We add export {} synthetically for TS,
-      // but the source may be a sloppy-mode script (test262 noStrict tests).
-      result = hasUseStrictDirective(current.statements);
+      // Don't assume module = strict from the SYNTACTIC indicator. We add
+      // export {} synthetically for TS, but the source may be a sloppy-mode
+      // script (test262 noStrict tests). An EXPLICIT module-goal mark is a
+      // different thing and does make the file strict (§11.2.2).
+      result = moduleGoalSourceFiles.has(current) || hasUseStrictDirective(current.statements);
       break;
     }
     if (ts.isClassDeclaration(current) || ts.isClassExpression(current)) {
@@ -73,7 +105,16 @@ export function isStrictMode(node: ts.Node): boolean {
       (ts.isFunctionDeclaration(current) ||
         ts.isFunctionExpression(current) ||
         ts.isArrowFunction(current) ||
-        ts.isMethodDeclaration(current)) &&
+        ts.isMethodDeclaration(current) ||
+        // (#6491 r2) An accessor has a FunctionBody like any other method, so
+        // its own `"use strict"` prologue makes its body strict code (§11.2.2,
+        // ContainsUseStrict of a FunctionBody). Omitting the two accessor kinds
+        // meant `({ get x() { "use strict"; public = 42; } })` was analysed as
+        // sloppy and every strict rule inside an accessor was unreachable
+        // (`expressions/object/{getter,setter}-body-strict-inside.js`).
+        ts.isGetAccessorDeclaration(current) ||
+        ts.isSetAccessorDeclaration(current) ||
+        ts.isConstructorDeclaration(current)) &&
       current.body &&
       ts.isBlock(current.body) &&
       hasUseStrictDirective(current.body.statements)

@@ -7,6 +7,7 @@
 // to the original closures.
 import { ts } from "../../ts-api.js";
 import type { CompileError } from "../../index.js";
+import { markModuleGoalSourceFile } from "./predicates.js";
 
 export interface EarlyErrorContext {
   /** The source file being validated. */
@@ -31,6 +32,9 @@ export interface EarlyErrorContext {
 /** Build an EarlyErrorContext for a source file, with a fresh error array. */
 export function createEarlyErrorContext(sourceFile: ts.SourceFile, opts?: { moduleGoal?: boolean }): EarlyErrorContext {
   const errors: CompileError[] = [];
+  // (#6491 r2) Module code is strict (§11.2.2). Registered BEFORE any rule
+  // runs, so `isStrictMode`'s memo cannot hold a pre-mark answer for this file.
+  if (opts?.moduleGoal === true) markModuleGoalSourceFile(sourceFile);
   const pos = (node: ts.Node): { line: number; column: number } => {
     const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
     return { line: line + 1, column: character + 1 };

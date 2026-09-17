@@ -160,4 +160,23 @@ export function validateAssignmentTarget(ctx: EarlyErrorContext, expr: ts.Expres
   if (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) {
     return;
   }
+  // (#6491 r2) A MetaProperty — `import.meta`, `new.target` — has
+  // AssignmentTargetType ~invalid~ in every goal and every dialect, so it can
+  // never be a DestructuringAssignmentTarget (§13.15.1). The four
+  // `import.meta/syntax/invalid-assignment-target-*` rows land here:
+  // `[import.meta] = []`, `({a: import.meta} = {})` and the two rest forms all
+  // reach this validator with the MetaProperty as the element target, and the
+  // permissive tail below accepted them.
+  //
+  // Deliberately the ONLY kind added to that tail. The tail is permissive on
+  // purpose — a general "every element must be a simple target" rule would also
+  // have to model TS-only wrappers (`as`, `satisfies`, type assertions) that
+  // erase at emit, and getting that wrong rejects valid product code. A
+  // MetaProperty needs no such judgement: there is no dialect in which it is
+  // assignable. The general element-validation gap (`[this] = []`,
+  // `[a + b] = []` are still accepted) is recorded in #6491 as not fixed.
+  if (ts.isMetaProperty(target)) {
+    const meta = target.keywordToken === ts.SyntaxKind.ImportKeyword ? "import.meta" : "new.target";
+    ctx.addError(expr, `Invalid destructuring assignment target '${meta}'`);
+  }
 }
