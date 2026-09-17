@@ -48,9 +48,9 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10306,
-    "fail": 1105,
-    "ce": 293,
+    "pass": 10334,
+    "fail": 1078,
+    "ce": 292,
     "skip": 0,
     "total": 11704,
     "pct": 88,
@@ -84,30 +84,30 @@
       },
       {
         "name": "TypedArray",
-        "pass": 895,
-        "fail": 154,
+        "pass": 904,
+        "fail": 145,
         "ce": 1,
         "skip": 0,
         "total": 1050,
-        "pct": 85
+        "pct": 86
       },
       {
         "name": "Symbol.iterator",
-        "pass": 624,
-        "fail": 104,
-        "ce": 67,
+        "pass": 652,
+        "fail": 77,
+        "ce": 66,
         "skip": 0,
         "total": 795,
-        "pct": 78
+        "pct": 82
       },
       {
         "name": "Symbol",
-        "pass": 495,
-        "fail": 111,
-        "ce": 3,
+        "pass": 503,
+        "fail": 104,
+        "ce": 2,
         "skip": 0,
         "total": 609,
-        "pct": 81
+        "pct": 83
       },
       {
         "name": "arrow-function",
@@ -121,8 +121,8 @@
       {
         "name": "Proxy",
         "pass": 289,
-        "fail": 137,
-        "ce": 5,
+        "fail": 138,
+        "ce": 4,
         "skip": 0,
         "total": 431,
         "pct": 67
@@ -3263,8 +3263,8 @@
   },
   {
     "edition": "ES2025",
-    "pass": 566,
-    "fail": 327,
+    "pass": 569,
+    "fail": 324,
     "ce": 108,
     "skip": 0,
     "total": 1001,
@@ -3272,12 +3272,12 @@
     "features": [
       {
         "name": "iterator-helpers",
-        "pass": 102,
-        "fail": 289,
+        "pass": 105,
+        "fail": 286,
         "ce": 2,
         "skip": 0,
         "total": 393,
-        "pct": 26
+        "pct": 27
       },
       {
         "name": "regexp-modifiers",
