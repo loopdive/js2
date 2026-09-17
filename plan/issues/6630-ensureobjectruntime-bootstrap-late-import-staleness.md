@@ -1,12 +1,13 @@
 ---
 id: 6630
 title: "ensureObjectRuntime's fctx=null bootstrap bakes stale funcIdx values when a native is registered after it"
-status: ready
+status: done
 sprint: current
 priority: medium
 horizon: m
 feasibility: hard
 owner: ""
+completed: 2026-09-17
 ---
 
 ## Problem
@@ -205,3 +206,123 @@ even when unused) and would need its own measurement pass.
 Repro scripts are in `.tmp/s43/repro-6630.mts`, `.tmp/s43/bisect.mts`,
 `.tmp/s43/bisect2.mts`, `.tmp/s43/dump-wat.mts` in the S43 worktree/branch
 (gitignored — copy them out if resuming this issue).
+
+## S44 findings (2026-09-17) — closed: the real gap was two glue members with no body, not a bootstrap-ordering defect
+
+**The mechanism S43 was looking for does not exist as a "state that differs
+between early and natural-order runs" — it is a genuine PRECEDENCE bug
+between two competing, independently-correct implementations of
+`call`/`apply`/`bind` for a closure receiver.**
+
+Traced the exact dispatch with WAT + funcIdx cross-reference (same method as
+S43's disproof of the stale-funcIdx hypothesis, extended one hop further):
+
+- `g.call(o)` on a closure `g` reaches `closure-call-fast.ts`'s
+  `wrapClosureCallFastArm` (the `__call_m_call_K` dispatcher's outermost arm,
+  `closed-method-dispatch.ts`). That arm's OWN gate is "no OWN `call`
+  property on `g`" — checked via `__extern_get(g, "call")` returning null —
+  which is the correct §10.2 `[[Get]]` precedence check (an own/inherited
+  override must win over the fast path).
+- Before `%Function.prototype%` is materialized, `__extern_get(g, "call")`
+  has no prototype chain to walk and correctly returns null → the fast arm
+  fires → correct `.call()` semantics.
+- Once anything (a direct `Function.prototype` read, or #6629's restored
+  `tryEmitDynamicCallableGetPrototypeOf`, or `ensureIterRecPrototypeHelper`'s
+  unconditional four-singleton build) materializes `%Function.prototype%`
+  AND wires it as `g`'s `[[Prototype]]` (closure-prototype-edge.ts),
+  `__extern_get(g, "call")` legitimately WALKS the chain and finds
+  `%Function.prototype%`'s own `"call"` property — which is real §10.2
+  behaviour, not a bug. The bug is what that property VALUE was: `makeGlue`
+  (array-object-proto.ts) wired NO body for `Function`'s `call`/`apply`/
+  `bind` members (only `toString` and `@@hasInstance` had real bodies; see
+  the `??` ladder before this fix), so the companion's seeded own-property
+  for all three was always the #2984 Phase-2 refusal closure — the exact
+  `"Function.prototype.call is not yet implemented in --target standalone"`
+  string S43 decoded. The fast arm's own-property-miss guard correctly sees
+  a HIT (the refusal closure IS a real, present own property) and correctly
+  defers to the "own property wins" path, which invokes that refusal.
+  `closure-props.ts`'s `__closure_method_call` route 1 (the fallback the fast
+  arm defers to) hits the identical refusal for the same reason.
+
+**So there was no state to "track for later shift correction" (suggested
+direction 1) and no ordering to fix (direction 3) — the fctx=null bootstrap's
+baked funcIdx values were never stale (S43 already proved this with WAT).
+The gap was simply that two of the three `Function.prototype` invoker
+members had never been implemented as callable VALUES**, only as direct
+call-site syntax (`closure-call-fast.ts`'s fast arm and
+`closure-props.ts`'s route 2 handle `g.call(...)`/`g.apply(...)` written
+literally at a call site; a syntactic `compileFunctionBind` provider
+similarly intercepts `g.bind(...)` written literally) — none of which apply
+once the member is read as a first-class value (`var b = g.call`, or the
+§10.2 own-property walk this issue is about) and then invoked.
+
+**Fix**: `src/codegen/function-proto-invokers.ts` gives `call`/`apply`/`bind`
+real, receiver-polymorphic bodies, wired into `makeGlue`'s `Function` arm
+(`array-object-proto.ts`). Each forwards to the SAME generic "invoke any
+callable value" primitives the rest of the runtime already uses for this
+exact question — `__apply_closure(target, thisArg, argsVec)` for `call`/
+`apply`, `__bind_dyn(target, argsVec)` for `bind` (the existing #3140 dynamic
+bind helper) — rather than special-casing WasmGC closures specifically. This
+is deliberately more general than "delay the trigger" (S43's tactical fix for
+one call site): it also fixes the SAME defect for any other receiver kind
+that legitimately reaches this glue (a bound function, a native builtin's
+singleton closure, …), and it means `Function.prototype.call`/`.apply`/
+`.bind` are now correct reflective values in standalone generally, not just
+for the one path this issue's repro exercised.
+
+- `call`: marked `memberIsVariadic` (packed `[thisArg, ...rest]` vec ABI,
+  matching `Math.max`'s existing variadic convention). Unpacks `thisArg` via
+  `__extern_get_idx(args, 0)` and repacks `args[1..]` into a fresh `$ObjVec`
+  (mirroring `__closure_method_call`'s own "call" route byte-for-byte), then
+  `__apply_closure(target, thisArg, restVec)`.
+- `apply`: fixed 2-slot ABI (spec arity). Forwards `(target, thisArg,
+  argArray)` straight to `__apply_closure` unchanged — it already reads
+  `argArray` generically via `__extern_length`/`__extern_get_idx`, so a
+  `null`/`undefined` `argArray` degrades to zero args exactly as the
+  existing "apply" call-site route does.
+- `bind`: marked `memberIsVariadic` too. Forwards `(target, argsVec)`
+  straight to `__bind_dyn`, which already reads its `args` param generically
+  (the packed vec and `$ObjVec` both subtype the shared `$__vec_base`
+  supertype `__extern_length`/`__extern_get_idx` dispatch on, confirmed by
+  reading `getOrRegisterVecType`'s own registration comment).
+- `IsCallable(this)` (§20.2.3 step 2) is enforced first via the same
+  `__typeof_function` predicate `emitFunctionProtoToStringBody` already uses
+  for its own step-4 check.
+
+**Verification**:
+- Minimal repro (`.tmp/s44/repro-6630.mts`, copied from S43's script) now
+  answers `test() => 1` instead of throwing.
+- `tests/issue-6484-iterator-prototypes.test.ts` — all 11 tests pass,
+  including `"%IteratorPrototype% is the shared parent, with an own
+  [Symbol.iterator]"` (the case this issue names in its acceptance
+  criteria).
+- New witness file
+  `tests/issue-6630-function-prototype-call-after-bootstrap.test.ts` (6
+  tests): the minimal repro, `g.apply(obj,[1])`, `g.bind(obj)()` (read as a
+  value then invoked via `.call(g, obj)` to preserve the receiver — a bare
+  `.bind(...)` call-site literal is NOT a distinguishing witness, since the
+  syntactic `compileFunctionBind` provider intercepts it before ever
+  reaching this glue), and the `Object.getPrototypeOf(<any-typed
+  iterator>)`-triggered variant — all verified to FAIL on base (file-copy
+  revert of `array-object-proto.ts` + `function-proto-invokers.ts` to their
+  pre-fix state) and PASS on fix, plus two controls (no-bootstrap-trigger;
+  `Function.prototype.toString` unaffected by the `makeGlue` ladder edit)
+  that pass on both trees.
+- `npx vitest run tests/issue-66*.test.ts tests/issue-6484-*.test.ts`: 33
+  files, 194 tests, 0 failed.
+- `npx vitest run tests/issue-64*.test.ts tests/issue-65*.test.ts`: 48
+  files, 441 passed / 1 skipped (442 total), 0 failed — S43's own
+  measurement on this same sweep was 47/48 files, 440/442 (the one red
+  being this issue's case); this run has 0 red.
+- Gates: `typecheck`, `check-loc-budget` (+base-diff), `check-func-budget`
+  (+base-diff), `check-coercion-sites`, `check:oracle-ratchet`,
+  `check:dead-exports`, `check:speculative-rollback`,
+  `check:issue-ids:against-main`, `update-issues.mjs --check`, `lint`,
+  `format` — all green, no diffs from `format`.
+- `npm run -s test:equivalence:gate`: 22 failing / 1720 passing / 22
+  known-failures in baseline — unchanged from the pre-merge stack's own
+  number (no new regressions), matching the handover's documented 22/1720/22.
+
+No existing witness moved. See `### S44 findings` in
+`plan/issues/5383-standalone-temporal-provider.md` for the stack-level
+summary.

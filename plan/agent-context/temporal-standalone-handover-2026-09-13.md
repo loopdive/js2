@@ -285,6 +285,43 @@ same lazy-materialisation treatment to `emitIteratorPrototypeSingleton`'s
 the stacked PR head. New candidate head for further work:
 `issue-5383-standalone-temporal-s43`'s tip (`e57ab2a0f9`).
 
+## Stack state 2026-09-17 (post-S44) — #6630 CLOSED, this head IS the failing-case fix
+
+S44 (branch `issue-5383-standalone-temporal-s44`, worktree
+`/home/user/js2/.claude/worktrees/agent-ae02d763b3f66aedb`, head `0c3316f9f1`
+on top of S43's `e57ab2a0f9`) found #6630's real gap was NOT a bootstrap
+ordering/staleness defect at all — S43's own WAT evidence already ruled out
+stale funcIdx values, and S44 traced the misdispatch one hop further: once
+`%Function.prototype%` is materialized and wired as a closure's
+`[[Prototype]]`, a `.call()`/`.apply()`/`.bind()` own-property lookup off
+that closure legitimately walks the chain (correct §10.2 `[[Get]]`
+precedence) and finds `%Function.prototype%`'s own `call`/`apply`/`bind`
+property — which `makeGlue` (`array-object-proto.ts`) had never given a real
+body for (only `toString`/`@@hasInstance` were wired), so it was always the
+#2984 refusal closure. `closure-call-fast.ts`'s fast arm and
+`closure-props.ts`'s `__closure_method_call` route 1 both correctly see that
+as an own-property HIT and correctly defer to it — which then throws. No
+ordering fix was needed; the fix was implementing the three missing glue
+bodies (`src/codegen/function-proto-invokers.ts`), each forwarding to the
+SAME generic "invoke any callable" primitives the runtime already has
+(`__apply_closure` for call/apply, `__bind_dyn` for bind) rather than
+special-casing WasmGC closures. Full trace, fix shape and verification in
+#6630's own `### S44 findings` section (`plan/issues/6630-ensureobjectruntime-bootstrap-late-import-staleness.md`) — not
+restated here.
+
+**This head IS the failing-case fix and is candidate PR-ready** (pending the
+criterion-5 re-baselined measurement battery, still S42's original gap, not
+run by S44 either — out of S44's stated scope, see its dispatch brief).
+`tests/issue-6484-iterator-prototypes.test.ts` is 11/11 green (previously
+10/11). `tests/issue-66*.test.ts tests/issue-6484-*.test.ts`: 33 files / 194
+tests, 0 failed. `tests/issue-64*.test.ts tests/issue-65*.test.ts`: 48 files
+/ 441 passed / 1 skipped (442 total), 0 failed (S43's own measurement on this
+sweep was 47/48 files, 440/442 — the one red being this issue's case; now 0
+red). `npm run -s test:equivalence:gate`: 22 failing / 1720 passing / 22
+known-failures — unchanged from S43's documented 22/1720/22, no new
+regressions. New candidate head for further work / the criterion-5 battery:
+`issue-5383-standalone-temporal-s44`'s tip (`0c3316f9f1`).
+
 ## Incidents worth knowing (all resolved unless stated)
 
 1. **`test262` submodule replaced by a symlink** (dfecafa7e9, S6 grounding

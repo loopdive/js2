@@ -9892,3 +9892,54 @@ scope) to defer that path's `ensureObjectRuntime` trigger too. The
 criterion-5 re-baselined measurement battery from S42 is STILL not run this
 session either (time-boxed by this investigation) — next agent must run both
 before the stacked PR opens.
+
+### S44 findings (2026-09-17) — #6630 CLOSED: the gap was never an ordering
+defect, it was two never-implemented glue members; `tests/issue-6484-*`'s one
+failing case is now green
+
+S44 (branch `issue-5383-standalone-temporal-s44`, worktree
+`/home/user/js2/.claude/worktrees/agent-ae02d763b3f66aedb`, head
+`0c3316f9f1` on top of S43's `e57ab2a0f9`) traced #6630 one hop further than
+S43's WAT-verified dispatch trace and found the mechanism S43 was searching
+for (bootstrap-ordering state that differs between early and natural-order
+`ensureObjectRuntime` runs) does not exist. The actual defect: once
+`%Function.prototype%` is materialized and wired as a closure's
+`[[Prototype]]` (by ANY trigger — S43 already established the trigger is
+broad, not specific to `Function.prototype` reads), a `.call()`/`.apply()`/
+`.bind()` own-property lookup off that closure correctly walks the §10.2
+chain and finds `%Function.prototype%`'s own property for that name — which
+`makeGlue` (`array-object-proto.ts`) had never wired a real body for (`call`/
+`apply`/`bind` were the ONLY three `Function`-family members still on the
+#2984 Phase-2 refusal path; `toString`/`@@hasInstance` already had real
+bodies). `closure-call-fast.ts`'s fast arm and `closure-props.ts`'s
+`__closure_method_call` own-property route both correctly see that as a HIT
+and correctly defer to it, which then throws the refusal. No bootstrap state
+needed tracking and no trigger needed delaying — the fix is implementing the
+three missing invoker bodies.
+
+Landed `src/codegen/function-proto-invokers.ts`: `call`/`apply`/`bind` now
+forward to the SAME generic "invoke any callable" primitives the rest of the
+runtime already uses for this question (`__apply_closure(target, thisArg,
+argsVec)` for call/apply, `__bind_dyn(target, argsVec)` for bind — the
+existing #3140 dynamic-bind helper), rather than special-casing the WasmGC
+closure struct family. This closes the defect for EVERY receiver kind that
+reaches this glue (bound functions, native builtin singleton closures, …),
+not just the one path #6630's repro exercised — and makes
+`Function.prototype.call`/`.apply`/`.bind` correct reflective values in
+standalone generally. Full trace, exact ABI/unpacking details and
+verification numbers are in #6630's own `### S44 findings` section
+(`plan/issues/6630-ensureobjectruntime-bootstrap-late-import-staleness.md`) and the handover's post-S44 stack-state entry —
+not restated here.
+
+**Stack state at S44's head (`0c3316f9f1`): the required green set closes.**
+`tests/issue-66*.test.ts tests/issue-6484-*.test.ts` (33 files, including the
+new `tests/issue-6630-function-prototype-call-after-bootstrap.test.ts`
+witness file) is 194/194, 0 failed — the `%IteratorPrototype%` case S43 left
+red is now green. `tests/issue-64*.test.ts tests/issue-65*.test.ts` (S43's
+own sweep) is 441/442 (1 pre-existing unrelated skip), 0 failed — S43
+measured 440/442 with one red on this same sweep. `npm run -s
+test:equivalence:gate`: 22/1720/22, unchanged from S43's documented number,
+no new regressions. **The criterion-5 re-baselined measurement battery from
+S42 is STILL not run** — S44's dispatch brief scoped that out explicitly
+("Do NOT run the family/must-not-move battery — that is the next measurement
+lane's job"). Next agent runs that battery before the stacked PR opens.
