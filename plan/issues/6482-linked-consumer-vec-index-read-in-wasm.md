@@ -15,7 +15,6 @@ language_feature: arrays
 goal: test262-conformance
 depends_on: [6477]
 related: [3451, 5225, 6477, 6491, 6495]
-blocked_by: [6495]
 # 2026-09-17 (round 2): +75 LOC in src/runtime.ts for the vec arms of
 # `__for_in_keys` (`_vecEnumerableIndexKeys`) and `_wasmStructHasOwn`. A vec
 # receiver previously enumerated as `[]` and reported no own index properties
@@ -23,8 +22,15 @@ blocked_by: [6495]
 # linked-module edge. Measured: linked descriptor bucket 49→68/114 (+19, 0
 # regressions); honest 818-row vec/for-in/own-property slice 692→699 (+7, 0
 # regressions).
+# 2026-09-17 (round 2, mechanism 2): +2 LOC in
+# src/codegen/property-access-dispatch.ts — the well-known-symbol arm now also
+# brands when this module is one side of a linked project (`linkBrandRoleOf`),
+# so `Symbol.iterator` stops crossing the link as the NUMBER 1. One import line
+# plus one local. Measured: linked descriptor bucket 68→98/114 (+30, 0
+# regressions); honest unchanged across 2,102 rows.
 loc-budget-allow:
   - src/runtime.ts
+  - src/codegen/property-access-dispatch.ts
 func-budget-allow:
   - src/runtime.ts
 ---
@@ -336,7 +342,7 @@ Guards: `tests/issue-6482-r2-linked-vec-for-in.test.ts` (four cases, including
 the `length`-must-not-enumerate one). Equivalence gate green
 (22 failing / 1720 passing, all 22 in baseline); `npm run -s typecheck` clean.
 
-### Mechanism 2 — still blocked, now on a filed issue: #6495
+### Mechanism 2 — FIXED (see the replacement section below; this heading is kept for the diagnosis)
 
 Unchanged diagnosis from round 1 (`Symbol.iterator` crosses the link as the
 number `1` because `src/codegen/property-access-dispatch.ts` ~L3777 brands
@@ -390,3 +396,33 @@ group — it defines all four attributes explicitly and still loses only
 rather than the define. Deliberately left out of this round: fixing it means
 finding a real hole-vs-element discriminator, with the whole vec-define
 validation matrix as blast radius.
+
+### Mechanism 2 — FIXED after #6495 landed (30 rows)
+
+#6495 (coherent builtin realm for every row) removed the hang, so the two-line
+brand could finally be applied: `src/codegen/property-access-dispatch.ts`'s
+well-known-symbol arm now returns `{ kind: "i32", symbol: true }` when
+`usesNativeSymbolProvider(ctx)` **or** `linkBrandRoleOf(ctx) !== undefined`,
+i.e. when this module is either side of a linked project. Single-module js-host
+compiles take the identical unbranded path they took before (#4626's
+index-shift reason is untouched).
+
+| lane | before (post-mechanism-3) | after | flips |
+| --- | --- | --- | --- |
+| linked, 114-row bucket | 68 / 114 | **98 / 114** | **+30, 0 regressions** |
+| honest, 114-row bucket | 105 / 114 | 105 / 114 | 0 |
+| honest, 818-row for-in/own-property slice | 699 / 818 | 699 / 818 | 0 |
+| honest, 1,170-row realm-sensitive slice | 933 / 1,170 | 933 / 1,170 | 0 |
+
+Guard: `tests/issue-6482-r2-linked-symbol-brand.test.ts`.
+
+### Final residual: 16 of 114, and only 8 are disagreements
+
+| count | message | status |
+| --- | --- | --- |
+| 8 | `Cannot convert undefined or null to object` (6) and `typeof descriptor.get is function` (2) | **NOT disagreements** — identical failure in the honest lane. Unimplemented globals: `DisposableStack`, `AsyncDisposableStack`, `SuppressedError`. |
+| 7 | `0 descriptor should be enumerable/writable/configurable` | vec `[[DefineOwnProperty]]` element defaults — a THIRD mechanism, described above. `Object/defineProperties/15.2.3.7-6-a-{206,208,247,249}`, `Object/defineProperty/15.2.3.6-4-{258,260}` |
+| 1 | `foo descriptor value should be abc` (`Object/defineProperty/15.2.3.6-4-60.js`) | not investigated |
+
+So the honest-pass/linked-fail residual is **8 rows**, down from 114 at the
+start of round 1 and 70 at the start of round 2.
