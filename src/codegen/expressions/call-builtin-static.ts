@@ -259,8 +259,34 @@ function emitBuiltinGetPrototypeOfFallback(
     // Compile the argument EXACTLY once: both arms read it back from a local,
     // so evaluation order and side effects are unchanged.
     const recvLocal = allocLocal(fctx, `__gpo_iter_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.tee", index: recvLocal });
+    // (#6625/#6629 S42 main-sync) A non-IterRec receiver used to fall straight
+    // to the generic `__getPrototypeOf` here, silently bypassing the
+    // #6609/#6625 CALLABLE-or-CLASS-OBJECT runtime check
+    // (`tryEmitDynamicCallableGetPrototypeOf`) — this arm's own ref.test guard
+    // runs FIRST for almost every module (any module that uses an iterator
+    // registers `$__IterRec`), so the dynamic-callable arm at line ~296 below
+    // could never fire in practice; #6609/#6625's own witnesses regressed
+    // silently once #6484 S1 landed this branch. Build the non-IterRec arm by
+    // delegating to the SAME helper the generic (non-IterRec-aware) path below
+    // uses, via the sanctioned body-swap so it can be embedded as an `else:`
+    // array (it emits directly into `fctx.body`, not a returned array).
+    const savedGpoIterBody = pushBody(fctx);
+    fctx.body.push({ op: "local.get", index: recvLocal });
+    const dynamicHandled = objectGetPrototypeOf.tryEmitDynamicCallableGetPrototypeOf(ctx, fctx, arg);
+    if (!dynamicHandled) {
+      // Declined (e.g. off the standalone/wasi lane): the pushed receiver is
+      // still on the stack, untouched — fall back to the generic import,
+      // re-read fresh since the helper may have registered/shifted imports.
+      const gptIdxFallback = ctx.funcMap.get("__getPrototypeOf") ?? gptIdx;
+      fctx.body.push({ op: "call", funcIdx: gptIdxFallback });
+    }
+    const nonIterRecArm = fctx.body;
+    popBody(fctx, savedGpoIterBody);
+    // Re-read the IterRec-arm's own funcIdx AFTER the helper above, which may
+    // have added/shifted late imports.
+    const iterProtoIdxFinal = ctx.funcMap.get("__iter_rec_proto") ?? iterProtoIdx;
     fctx.body.push(
-      { op: "local.tee", index: recvLocal },
       { op: "any.convert_extern" },
       { op: "ref.test", typeIdx: iterRecTypeIdx },
       {
@@ -268,12 +294,9 @@ function emitBuiltinGetPrototypeOfFallback(
         blockType: { kind: "val", type: { kind: "externref" } },
         then: [
           { op: "local.get", index: recvLocal },
-          { op: "call", funcIdx: iterProtoIdx },
+          { op: "call", funcIdx: iterProtoIdxFinal },
         ],
-        else: [
-          { op: "local.get", index: recvLocal },
-          { op: "call", funcIdx: gptIdx },
-        ],
+        else: nonIterRecArm,
       },
     );
     return { kind: "externref" };

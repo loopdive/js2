@@ -9803,3 +9803,36 @@ not) — requires either (a) real per-closure ownership tagging, or (b) a
 different signal at the Proxy-CONSTRUCTION site that lets `$ptraps` record
 "this trap is mine" for later `__proxy_get_dispatch` reads to consult instead
 of asking `__apply_closure` to guess.
+
+### S42 findings (2026-09-17) — merge sync onto origin/main (4a5d5c1dfb): a clean merge, one real regression from main's own #6484 S1 short-circuiting #6609/#6625's mechanism (found + fixed), one pre-existing dormant defect the fix exposed (found, filed as #6630, not fixed)
+
+Full detail: [#6629](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6629-standalone-temporal-stack-main-sync-2026-09-17).
+
+Merged `origin/main` (`4a5d5c1dfb`) onto S41b's accepted head (`b84898a96c`)
+— clean, zero conflicts (merge commit `527310b81f`). The merge broke the
+same 12 witnesses (`Object.getPrototypeOf` paths in `tests/issue-6609-*`,
+`tests/issue-6617-*`, `tests/issue-6625-*`) the earlier parked attempt
+(`s41-main-merge-attempt`) also hit — but the mechanism these witnesses pin
+(`tryEmitDynamicCallableGetPrototypeOf`, `object-get-prototype-of.ts`) is
+BYTE-IDENTICAL across the merge; the actual break is main's #6484 S1
+iterator-prototype branch in `call-builtin-static.ts` short-circuiting
+BEFORE the stack's arm is ever reached (an idiom collision, not a touched-line
+conflict — no conflict marker could have caught it). Fixed by delegating the
+new branch's non-`$__IterRec` arm to the stack's existing predicate via the
+project's `pushBody`/`popBody` swap. All 150 witnesses green post-fix.
+
+The fix's necessary side effect — `Function.prototype` now materialises in
+far more modules than before — exposed a second, PRE-EXISTING (proven
+independent of this merge, reproduced on unmodified `b84898a96c`) defect:
+`ensureObjectRuntime`'s `fctx=null` bootstrap bakes `__extern_method_call`'s
+body with whatever funcIdx values are live at that moment, and has no
+tracking to correct itself if a native gets registered afterward — any
+later, unrelated `.call()` in the same module then calls the wrong function.
+Filed as #6630 for a proper architecture-level fix; not attempted here
+(out of scope for a sync task, and one narrow mitigation attempt did not
+close it).
+
+**Not run this session** (time-boxed by the #6484 root-cause depth): the
+criterion-5 re-baselined measurement battery (four families × 120 files,
+must-not-move A–D, E-unlinked/E-linked, corpus byte diff, `test:equivalence:gate`).
+Next agent/tech lead must run it before the stacked PR (S13→S42) opens.

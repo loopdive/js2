@@ -231,6 +231,29 @@ stack — it breaks 12 stack witnesses in `tests/issue-6609-*`,
 and is parked on branch `s41-main-merge-attempt` for the S42 sync slice to
 resolve properly rather than merged blind.
 
+## Stack state 2026-09-17 (post-S42)
+
+S42 (branch `issue-5383-standalone-temporal-s42`, worktree
+`/home/user/js2/.claude/worktrees/agent-a25f7f5520f0cbb37`) merged
+`origin/main` (`4a5d5c1dfb`) onto S41b's `b84898a96c` head — **clean merge,
+zero conflicts** (merge commit `527310b81f`) — and fixed the 12-witness
+`Object.getPrototypeOf` regression the earlier parked attempt
+(`s41-main-merge-attempt`, `00f66676e9`) also hit: main's #6484 S1 iterator-
+prototype branch in `call-builtin-static.ts` was short-circuiting BEFORE
+reaching `tryEmitDynamicCallableGetPrototypeOf` (#6609/#6625's own
+mechanism, unchanged since S41b), not a conflict in the mechanism's own
+file. Fix + full root-cause chain: #6629. All 150 stack witnesses green
+post-fix. One NEW pre-existing (not merge-caused) defect surfaced by the fix
+— `ensureObjectRuntime`'s bootstrap bakes stale funcIdx values when a native
+gets registered after it fires, reproduced independent of the merge on
+`b84898a96c` itself — filed as #6630, not fixed (architecture-level, out of
+scope for a sync). **The criterion-5 re-baselined measurement battery (four
+families × 120 files, must-not-move A–D, E-unlinked/E-linked, corpus byte
+diff, `test:equivalence:gate`) was NOT run this session** (time-boxed out by
+the #6484 root-cause depth) — the next agent/tech lead must run it before
+the stacked PR opens. New accepted head for further work:
+`issue-5383-standalone-temporal-s42`'s tip (post #6629's commits).
+
 ## Incidents worth knowing (all resolved unless stated)
 
 1. **`test262` submodule replaced by a symlink** (dfecafa7e9, S6 grounding
