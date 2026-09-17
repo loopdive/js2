@@ -189,8 +189,8 @@ issue, land it, then re-apply the two-line brand and re-measure these 36 rows.
 | count | message shape | mechanism |
 | --- | --- | --- |
 | 36 | `N should be an own property` | mechanism 2 above (symbol key), blocked on realm isolation |
-| 19 | `N descriptor should be enumerable` | per-key flags the consumer wrote (`_wasmPropDescs`) vs the provider's `_readOwnDescriptor` — NOT investigated this round |
-| 6 | `N descriptor should be enumerable; … writable; … configurable` | same as above |
+| 19 | `N descriptor should be enumerable` | mechanism 3 below — NOT the descriptor sidecar |
+| 6 | `N descriptor should be enumerable; … writable; … configurable` | mechanism 3 below |
 | 6 | `Cannot convert undefined or null to object` (inside `verifyProperty`) | not investigated |
 | 2 | `typeof descriptor.get is function` | accessor descriptor crossing, not investigated |
 | 1 | `foo descriptor value should be abc` | not investigated |
@@ -203,3 +203,38 @@ text suggests.
 `build`: `scripts/compiler-bundle.mjs` / `runtime-bundle.mjs` must be rebuilt
 before any runner lane picks up a codegen change — the worker imports the
 bundle, not `src/`.
+
+### Mechanism 3 — LOCALIZED, not fixed: provider-side own-property PREDICATES on a consumer `arguments` object (25 rows)
+
+The 19 + 6 flag rows are **not** a `_wasmPropDescs` problem, which is what the
+2026-09-16 note assumed. Measured in-process against the real provider:
+
+| provider-side call on a consumer `arguments` object | verdict |
+| --- | --- |
+| `__getOwnPropertyDescriptor(arguments, "0").enumerable` | **true** (correct) |
+| `Object.getOwnPropertyDescriptor(...)` consumer-side | true (correct) |
+| `__hasOwnProperty(arguments, "0")` | **false** (wrong) |
+| `__propertyIsEnumerable(arguments, "0")` | **false** (wrong) |
+
+So the DESCRIPTOR path already crosses correctly; the two own-property
+PREDICATES do not, and `verifyProperty` reaches them through
+`isEnumerable(obj, name)`. The `Object.defineProperty(arguments, "0",
+{configurable:false})` in the row is incidental — the predicates answer false
+without it too. A plain object with an index property defined the same way
+answers correctly, so this is specific to the `arguments` vec.
+
+Minimal repro (linked lane, `includes: [propertyHelper.js]`):
+
+```js
+function f(a) { assert.sameValue(__propertyIsEnumerable(arguments, "0"), true, "pie"); }
+f(1);
+```
+
+Next concrete step: follow `__hasOwnProperty`'s arguments arm in
+`src/runtime.ts` — `_argumentsObjects.has(obj) && _argumentsHasOwn(obj, key)`,
+then the `_wasmStructHasOwn` fallback — and establish which of the two reads
+the READER's exports instead of the owner's (`_argumentsObjects` itself is a
+module-level WeakSet SHARED by both sides, since `linked-provider-runtime.ts`
+imports `./runtime.js`, so registration is not the gap). Route it through
+`_decoderExportsFor` the way `_readOwnDescriptor` already is (#6477 P2) — that
+is almost certainly why the descriptor path works and these two do not.
