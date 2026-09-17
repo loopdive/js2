@@ -830,3 +830,83 @@ Test: `tests/issue-6492-r5-sandbox-realm-instanceof.test.ts` (2 cases, 7
 assertions — sandbox promise, sandbox `Object`, host-realm control, no false
 positive, unknown name, and a no-sandbox no-op case). The first case fails on
 the pre-fix tree.
+
+### Before / after on the 138 rows (real runner, both lanes)
+
+| lane | before | after |
+| --- | ---: | ---: |
+| honest | 135 pass | **135 pass** — 0 verdict changes, row by row |
+| linked | 0 pass | **10 pass** — 0 rows lost |
+
+The 10 are exactly the `harness/asyncHelpers-throwsAsync-*` family
+(`custom`, `custom-typeerror`, `incorrect-ctor`, `native`, `no-arg`,
+`no-error`, `null`, `primitive`, `resolved-error`, `single-arg`).
+
+### The 125 rows still honest-pass / linked-fail, by MECHANISM
+
+Bucketed by mechanism, not by message (round 3's finding 3), each with the
+narrowest reproduction found. **Every "minimal repro" below was run through the
+real runner in BOTH lanes** — the ones marked `same in honest` are NOT lane
+differences and must not be chased as such.
+
+| rows | mechanism | evidence / minimal repro | owner |
+| ---: | --- | --- | --- |
+| 25 | **descriptor reads** (`Expected obj[N] to equal …` / `NOT to be writable` / `configurable:true` / `Getter must be a function`) — `Object.defineProperty|defineProperties`, `*/Symbol.species/*`, `Symbol.toStringTag/prop-desc` | untouched by this round, by instruction | **#6482 lane** (concurrent) |
+| 8 | **`for await (let {…} of …)` destructuring binds `null` where the honest lane binds `undefined`** | minimal: `async function fn(){ for await (let {w:[x,y,z]=[4,5,6]} of [{w:[7,undefined,]}]) { /* typeof y */ } } fn().then($DONE,$DONE);` → linked `typeof y === "object"`, honest `"undefined"`. NOT a boundary coercion: the CONSUMER itself sees `object`. A `var` head, or reading `y` in a `===` first, both PASS — so the shape is narrow. Separately found and **not** a lane difference: a top-level `var a = [7, undefined,]` makes `typeof a[1] === "number"` in BOTH lanes (an f64-vec coercion bug worth its own issue). | open |
+| 12 | **`Thrown value was not an object!` — a TDZ/`for-in`/`for-of` head-scope closure, and host `Symbol.species`/`this` type checks, whose throw reaches the provider's `assert.throws` as a non-object** | the CONSUMER catches it fine (`typeof e === "object"`, `[object Error]`); only the provider sees a non-object. Plain consumer throws cross correctly (`assert.throws(ReferenceError, function(){ throw new ReferenceError("x"); })` and a runtime `null.foo` TypeError both PASS in the linked lane), so this is NOT "exceptions lose their payload" in general. Same family: `const/global-closure-get-before-initialization.js` (`rethrowing null value`). | open |
+| 6 | **indirect `eval` traps — `dereferencing a null pointer`** (`variable/12.2.1-{9,10,20,21}-s.js`, `Function/15.3.5.4_2-14gs.js`, `eval-code/indirect/global-env-rec-fun.js`) | minimal, 1 minute: **`var s = eval; s("1+1");`** — linked traps, honest passes. DIRECT `eval("var q=1;")` passes in both. `typeof s` answers `"function"`, so the alias is bound; the CALL is what traps. Start at `emitHostEvalGlobalBindingSeed` / the `name === "eval"` arm of `src/codegen/expressions/identifiers.ts` (~L1570) and check `ctx.oracle.valueDeclarationOf(id)` in the linked graph — the generated `__js2wasm_linked_*.d.ts` stub is in the same program. **TRAP category — the #3189 ratchet can never excuse these**, so they outrank everything else in this table for the flip. | open |
+| 5 | **`$DONE` / `asyncTest` when the BODY defines its own `$DONE`** | `asyncTest` guards on `Object.prototype.hasOwnProperty.call(globalThis, "$DONE")` and then CALLS `$DONE`. A body-declared `function $DONE` is module-scoped in the linked lane, so the provider's own `$DONE` binding is what runs. A body that does NOT define `$DONE` is fine — verified: a one-line `flags:[async]` probe asserting `typeof $DONE === "function"` PASSES linked, as does a plain `asyncTest(async () => { await …; })`. Same shape as the #4626 `$262` stratum, opposite direction. | open |
+| 4 | **`Promise.all{,Settled}Keyed` reject-vs-throw timing** (`Expected a TypeError to be thrown asynchronously but the function threw synchronously`) | untouched. | open |
+| 4 | **`$262.createRealm()` rows** (`Proxy/*/trap-is-not-callable-realm`, `Array/length/define-own-prop-length-overflow-realm`, `expressions/new/non-ctor-err-realm`, `harness/assert-throws-same-realm`) | a THIRD realm on top of the sandbox one. Note these are adjacent to — but not the same as — the realm defect mechanism 1 fixed; `harness/asyncHelpers-throwsAsync-same-realm` now reports a sharper message than before but still fails. | open |
+| 4 | **`built-ins/Iterator` boundary observation order** (round 4's residual: `filter`/`map` parallel advance, `zipKeyed` own-keys + padding) | unchanged from round 4. | open |
+| 3 | **`await` of a non-thenable / rejection** (`Cannot read properties of null (reading 'then')`) | the residual half of round 1's await-erasure bucket. | open |
+| 2 | **invalid Wasm binary** (`private-field-{in-nested,rhs-await-present}.js`) — `C_init` / `__cb_0` type mismatch | a real codegen type error in the body-only unit; deserves its own issue. | open |
+| 2 | `String.prototype.replaceAll` — `Cannot convert object to primitive value` | open |
+| 2 | `Reflect.deleteProperty` returns `true` where `false` is expected | open |
+| 2 | `Proxy` handler is not the trap context | open |
+| 2 | `RegExp/match-indices` structural equality | open |
+| 2 | `TypedArray/prototype/sort` with `comparefn === undefined` | open |
+| 2 | `harness/deepEqual-{array,deep}` | open |
+| 2 | `delete String.prototype.toString` | open |
+| 2 | `#5: parseInt === null` | **NOT reproducible as a lane difference in the obvious form**: a probe reading `parseInt`/`parseFloat`/`isNaN`/`isFinite`/`decodeURI`/`encodeURI` as VALUES fails IDENTICALLY in both lanes. Whatever separates the two rows is narrower than "bare global read". | open |
+| 1 each | `isFinite`/`isNaN` property-on-null, `Array.from` mapFn, `Array.prototype.filter` ×2, `findLast{,Index}` ×3, `Object/fromEntries`, `String/indexOf` ToString, `String/replace` null, `tagged-template/tco-call`, `class/static-init-scope-lex-open`, `with/has-binding-idref-with-proxy-env`, `annexB` html-close-asi, `top-level-await/new-await-script-code`, `harness/proxytrapshelper-default`, `harness/detachArrayBuffer-host-detachArrayBuffer`, `Object/defineProperty/15.2.3.6-4-{91,95}` | singles | open |
+
+### Findings for the next lane (round 5)
+
+8. **Bucket by REALM as well as by thrown value.** Round 3 said the message text
+   lies; round 5 adds that the *intrinsic identity* lies too. The runner gives
+   every row a `globalSandbox` realm, and the runtime is inconsistent about
+   which realm it uses — construction sites prefer the sandbox, the name-keyed
+   `__instanceof` preferred the host. Any "identity is wrong across the
+   boundary" symptom is worth testing against BOTH realms before it is blamed on
+   the linked seam; the fix here also improved the HONEST lane by one row,
+   which is the tell that it was never a linked-lane bug at all.
+9. **Instrument the import, not the value.** Three probe generations tried to
+   characterise the bad promise from inside the test body
+   (`getPrototypeOf`, `.constructor`, `.then` identity) and produced a
+   self-contradictory picture, because `===` is lenient at the boundary while
+   `instanceof` is not. One `console.error` inside the `__instanceof` import,
+   printing `isStruct` / `revProxy` / `v instanceof globalSandbox[name]`,
+   settled it in a single run — and its FIRST line already falsified the
+   leading hypothesis (`isStruct=false`: the value was never a compiled struct,
+   so no #5225 decoder question applied).
+10. **`run.sh … | tail -20` silently eats your instrumentation.** The first
+    debug run printed nothing and read as "this import is never called", which
+    would have sent the next hour into the codegen lowering. Keep a raw,
+    untailed runner script next to the tailed one.
+
+### Residual table — updated after round 5
+
+| rows (CI table) | bucket | state |
+| ---: | --- | --- |
+| 128 | `Cannot convert 0 to a BigInt` | **FIXED** (round 2). |
+| 75 + 26 | `Expected a undefined …` / `Expected a X but got a Y` | **FIXED for the Iterator family** (round 4). Round 3's constructor-identity fix stands; its own residual (a FIELDLESS struct-backed class instance) is untouched. |
+| ~42 | `__module_init` null `.catch` / `.next` | async half fixed (round 1); the `.next` half was the binding stratum, fixed (round 4). |
+| 35 | extern class stubs | not reproduced as a lane difference in four independent local samples. Pull the row list from the CI parity artifact or drop the bucket. |
+| 12 | `AsyncTestFailure: Expected true but got false` (`harness/asyncHelpers-throwsAsync-*`) | **FIXED, 10 of 12** (round 5) — the realm-blind `__instanceof`. The 2 that remain are `same-realm` rows, which are a `$262.createRealm()` question, not this one. |
+| 4 | `Iterator` parallel-advance + `zipKeyed` observation order | round 4 residual, unchanged. |
+| 12 | `Thrown value was not an object!` | round 5 narrowed it: the consumer catches the value correctly, only the provider sees a non-object, and ORDINARY consumer throws cross fine. See the mechanism table above. |
+| 6 | indirect-`eval` null-pointer TRAP | round 5 reduced it to `var s = eval; s("1+1");`. Highest priority of the residual: the #3189 trap ratchet cannot be excused by a re-baseline. |
+| 8 | `for await` destructuring binds `null` | round 5, new; minimal repro in the mechanism table. |
+| 25 | descriptor reads | #6482's lane. |
+| ~30 | singles + small families | see the mechanism table above. |
