@@ -4,6 +4,7 @@ import { AllocSiteRegistry, copyIrPreparationData } from "../analysis/alloc-regi
 import { preparedIrDataMismatch } from "./data.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
 import type { TypedIrProgramInput, TypedIrProgramOptions } from "./input-contracts.js";
+import { assertIrRuntimeSupport } from "./runtime-support.js";
 
 function invalid(detail: string): never {
   throw new PreparedIrProgramInvariantError("invalid-prepared-data", detail);
@@ -76,7 +77,11 @@ export function ownTypedIrProgramInput(input: TypedIrProgramInput): {
 } {
   // Inspect descriptors before reading any caller-supplied field. No getters run.
   const captured = copyIrPreparationData(input);
-  fields(captured, ["inventory", "ir", "derivedUnits", "startup", "callables", "globals", "allocations"]);
+  fields(
+    captured,
+    ["inventory", "ir", "derivedUnits", "startup", "callables", "globals", "allocations"],
+    ["runtimeSupport"],
+  );
   fields(captured.inventory, ["sources", "classes", "allUnits", "terminalUnits"]);
   for (const values of [
     captured.inventory.sources,
@@ -103,6 +108,10 @@ export function ownTypedIrProgramInput(input: TypedIrProgramInput): {
       invalid("typed global lacks source/storage ownership");
   }
   assertGlobalStorage(captured);
+  if (Object.hasOwn(captured, "runtimeSupport")) {
+    if (captured.runtimeSupport === undefined) invalid("typed input must omit absent runtime support");
+    assertIrRuntimeSupport(captured, captured.runtimeSupport);
+  }
   // Joint restoration retains sharing between IR, sites, and metadata values.
   const restored = AllocSiteRegistry.restorePreparationData(captured.allocations, captured);
   return { input: restored.data, allocations: restored.allocations };

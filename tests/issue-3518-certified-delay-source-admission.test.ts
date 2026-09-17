@@ -203,23 +203,42 @@ describe("explicit certified native delay source admission", () => {
     expect(decoded.derivedUnits).toEqual([]);
     expect(Object.hasOwn(packet, "promiseDelayProjection")).toBe(false);
     expect(ownTypedIrProgramInput(decoded).input.inventory).toEqual(packet.inventory);
-    for (const candidate of [packet, decoded]) {
-      const outcome = prepareTypedIrProgram(candidate, typedOptions);
-      expect(outcome).toMatchObject({
-        kind: "invariant",
-        code: "unknown-function-ref",
-        stage: "resolve",
-        ...location(source.inventory),
-      });
-      if (outcome.kind === "prepared") throw new Error("missing canonical native delay provider was accepted");
-      expect(outcome.detail).toContain(IR_NATIVE_PROMISE_DELAY_FN);
+    const nativePolicy = { ...typedOptions.policy, stringConst: { storage: "native" as const } };
+    const nativeOptions = { ...typedOptions, policy: nativePolicy, runtimePolicies: [nativePolicy] };
+    // The canonical provider exists; transport still cannot supply its explicit storage policy.
+    for (const outcome of [
+      prepareTypedIrProgram(packet, nativeOptions),
+      prepareTypedIrProgram(decoded, nativeOptions),
+      prepareWholeIrProgram({ ...request, policy: nativePolicy, runtimePolicies: [nativePolicy] }),
+    ]) {
+      expect(outcome.kind, JSON.stringify(outcome.kind === "prepared" ? {} : outcome)).toBe("prepared");
+      if (outcome.kind !== "prepared") throw new Error(outcome.detail);
+      expect(outcome.program.inventory).toEqual(packet.inventory);
+      expect(outcome.program.derivedUnits).toEqual([]);
+      expect(outcome.program.ir.functions).toHaveLength(1);
+      expect(outcome.program.runtime).toHaveLength(1);
+      const manifest = outcome.program.runtime[0]!.prepared.manifest;
+      expect(manifest.policy).toMatchObject(nativePolicy);
+      expect(manifest.features).toContain("async.native.delay");
+      expect(manifest.providers.filter((provider) => provider.feature === "async.native.delay")).toEqual([
+        expect.objectContaining({
+          id: "native.async.delay",
+          implementation: { kind: "runtime-callable", symbol: IR_NATIVE_PROMISE_DELAY_FN },
+        }),
+      ]);
     }
-    expect(prepareWholeIrProgram(request)).toMatchObject({
-      kind: "invariant",
-      code: "unknown-function-ref",
-      stage: "resolve",
+    const refusal = {
+      kind: "unsupported",
+      code: "body-shape-rejected",
+      stage: "build",
+      detail: "async.native.delay requires explicit native string storage",
       ...location(source.inventory),
-    });
+    };
+    for (const candidate of [packet, decoded]) {
+      expect(prepareTypedIrProgram(candidate, typedOptions)).toEqual(refusal);
+      expect(encodeTypedPacket(candidate)).toBe(encoded);
+    }
+    expect(prepareWholeIrProgram(request)).toEqual(refusal);
   });
 
   it("resolves once, keeps same-name source owners distinct, and preserves input-order-independent capture", () => {

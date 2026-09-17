@@ -5,7 +5,22 @@
  * This module owns function-type caches plus reusable GC array/vec/ref-cell
  * registrations so leaf modules can depend on a narrow type-registry surface.
  */
-import type { ArrayTypeDef, FieldDef, FuncTypeDef, Instr, StructTypeDef, ValType } from "../../ir/types.js";
+import {
+  createErrorStructType,
+  createStringDataType,
+  createAnyStringType,
+  createNativeStringType,
+  createConsStringType,
+  createHashedStringType,
+  createUtf8StringDataType,
+  createUtf8StringType,
+} from "../../runtime/wasmgc/values/string-layouts.js";
+import type { FieldDef, FuncTypeDef, Instr, StructTypeDef, ValType } from "../../ir/types.js";
+import {
+  createVectorBaseType,
+  createVectorBackingArrayType,
+  createVectorCarrierType,
+} from "../../runtime/wasmgc/values/vector-grow-store.js";
 import type { CodegenContext } from "../context/types.js";
 import { internFunctionType } from "../../wasm/physical/function-types.js";
 import { getArgumentsVecTypeIdx } from "../arguments-carrier-brand.js";
@@ -61,12 +76,7 @@ export function getOrRegisterArrayType(ctx: CodegenContext, elemKind: string, el
     elemType = { kind: "ref_null", typeIdx: (elemType as { typeIdx: number }).typeIdx };
   }
   const idx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "array",
-    name: `__arr_${cacheKey}`,
-    element: elemType,
-    mutable: true,
-  } as ArrayTypeDef);
+  ctx.mod.types.push(createVectorBackingArrayType(`__arr_${cacheKey}`, elemType));
   ctx.arrayTypeMap.set(cacheKey, idx);
   return idx;
 }
@@ -82,12 +92,7 @@ export function getOrRegisterArrayType(ctx: CodegenContext, elemKind: string, el
 export function getOrRegisterVecBaseType(ctx: CodegenContext): number {
   if (ctx.vecBaseTypeIdx >= 0) return ctx.vecBaseTypeIdx;
   const idx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: "__vec_base",
-    superTypeIdx: -1, // open / non-final — concrete vecs subtype this
-    fields: [{ name: "length", type: { kind: "i32" }, mutable: true }],
-  });
+  ctx.mod.types.push(createVectorBaseType());
   ctx.vecBaseTypeIdx = idx;
   ctx.structMap.set("__vec_base", idx);
   ctx.typeIdxToStructName.set(idx, "__vec_base");
@@ -185,32 +190,26 @@ export function getOrRegisterVecType(ctx: CodegenContext, elemKind: string, elem
 
   const arrTypeIdx = getOrRegisterArrayType(ctx, elemKind, elemTypeOverride);
   const vecIdx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: `__vec_${cacheKey}`,
-    superTypeIdx: vecBaseIdx,
-    // (#5349) Brand the packed-byte TypedArray carrier. `$__vec_i8_byte` and
-    // the ArrayBuffer's `$__vec_i32_byte` declare the same two fields over
-    // structurally identical `(array (mut i8))` data, so once BOTH are marked
-    // `final` by `markLeafStructsFinal` Wasm GC canonicalizes them to ONE
-    // runtime type and no `ref.test` can separate a `Uint8Array` from an
-    // ArrayBuffer (the §25.1.5.3 step-16 slot check). Declaring `final` here,
-    // while `finalizeLeafStructTypes` keeps `i32_byte` open, makes the two
-    // distinct canonical types. Sound because the packed-byte vec has no
-    // subtype anywhere: every `superTypeIdx` in `src/codegen` names
-    // `$__vec_base`, the externref vec, `$__vec_i32_byte` (`$__resizable_ab`)
-    // or a class/brand struct. Declared, not post-seal mutated, so
-    // `programAbiSession.recordLeafTypeFinalization` is not involved.
-    ...(cacheKey === "i8_byte" ? { final: true } : {}),
-    fields: [
-      { name: "length", type: { kind: "i32" }, mutable: true },
-      {
-        name: "data",
-        type: { kind: "ref", typeIdx: arrTypeIdx },
-        mutable: true,
-      },
-    ],
-  });
+  ctx.mod.types.push(
+    createVectorCarrierType({
+      name: `__vec_${cacheKey}`,
+      baseTypeIndex: vecBaseIdx,
+      arrayTypeIndex: arrTypeIdx,
+      // (#5349) Brand the packed-byte TypedArray carrier. `$__vec_i8_byte` and
+      // the ArrayBuffer's `$__vec_i32_byte` declare the same two fields over
+      // structurally identical `(array (mut i8))` data, so once BOTH are marked
+      // `final` by `markLeafStructsFinal` Wasm GC canonicalizes them to ONE
+      // runtime type and no `ref.test` can separate a `Uint8Array` from an
+      // ArrayBuffer (the §25.1.5.3 step-16 slot check). Declaring `final` here,
+      // while `finalizeLeafStructTypes` keeps `i32_byte` open, makes the two
+      // distinct canonical types. Sound because the packed-byte vec has no
+      // subtype anywhere: every `superTypeIdx` in `src/codegen` names
+      // `$__vec_base`, the externref vec, `$__vec_i32_byte` (`$__resizable_ab`)
+      // or a class/brand struct. Declared, not post-seal mutated, so
+      // `programAbiSession.recordLeafTypeFinalization` is not involved.
+      ...(cacheKey === "i8_byte" ? { final: true } : {}),
+    }),
+  );
   ctx.vecTypeMap.set(cacheKey, vecIdx);
 
   const vecStructName = `__vec_${cacheKey}`;
@@ -831,54 +830,7 @@ export function getOrRegisterErrorStructType(ctx: CodegenContext): number {
   if (ctx.errorStructTypeIdx >= 0) return ctx.errorStructTypeIdx;
 
   const idx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: "$Error_struct",
-    fields: [
-      { name: "tag", type: { kind: "i32" }, mutable: false },
-      { name: "message", type: { kind: "externref" }, mutable: true },
-      // (#4485) Mutable since the §20.5.3.4 own-`name` slice: `err.name = "X"`
-      // is an ordinary writable own-property write (`Error.prototype.name` is
-      // `{writable:true}`), and the standalone `.name` READ is a hard
-      // `struct.get` of this field, so a write that landed anywhere else was
-      // simply invisible — `e.name = ""; e.name` read back `"Error"`. Same
-      // rationale as `stack` below; the field index is unchanged, so no other
-      // reader moves.
-      { name: "name", type: { kind: "externref" }, mutable: true },
-      // (#1536) $stack — fieldIdx 3, kept AFTER message(1)/name(2) so their
-      // indices stay stable. `error.stack` is non-standard (no normative
-      // test262 coverage); materializing a real stack trace needs no Wasm
-      // primitive, so standalone constructs it as `ref.null.extern` (reads
-      // back as `undefined`, not a trap). Mutable so a future `err.stack = …`
-      // write can land here without a struct-type change.
-      { name: "stack", type: { kind: "externref" }, mutable: true },
-      // (#2188) $userClassId — fieldIdx 4. Per-user-Error-subclass brand that
-      // distinguishes sibling `extends Error` classes which all share the SAME
-      // builtin parent `$tag` (field 0). `__new_<Parent>` writes the sentinel
-      // `-1` (a plain builtin Error / the shared parent ctor has no user-class
-      // brand); the subclass `super()` site overwrites it with the subclass's
-      // `classTagMap` id (see emitSetSubclassUserBrand in class-bodies.ts). The
-      // standalone `instanceof <UserSubclass>` path reads this field instead of
-      // the shared builtin tag, so `(new A) instanceof B` is false for distinct
-      // siblings A,B. Mutable: the brand is written AFTER struct.new at the
-      // per-subclass construction site, not baked into the shared parent ctor.
-      // Kept LAST so fields 0..3 stay stable.
-      { name: "userClassId", type: { kind: "i32" }, mutable: true },
-      // (#2101a R5) $props — fieldIdx 5. Backing store for user-declared OWN
-      // fields on an externref-backed Error subclass (`class A extends Error {
-      // code = 0 }`). Such an instance IS this `$Error_struct` (no per-subclass
-      // WasmGC struct), so own fields have nowhere to live — `this.code = …`
-      // previously cast `this` to the vestigial `$A` struct and trapped. Holds
-      // an externref to an open `$Object` (the LANDED object-runtime), lazily
-      // allocated via `__new_plain_object()` on the first own-field write;
-      // reads/writes route through `__extern_get`/`__extern_set`. `ref.null`
-      // until first written. Stored as externref (not `ref null $Object`) to
-      // avoid a forward type-reference to `$Object` here — `$Object` is
-      // registered lazily by the object-runtime, which may run AFTER this
-      // struct. Kept LAST so fields 0..4 stay stable.
-      { name: "props", type: { kind: "externref" }, mutable: true },
-    ],
-  });
+  ctx.mod.types.push(createErrorStructType());
   ctx.errorStructTypeIdx = idx;
   return idx;
 }
@@ -888,49 +840,16 @@ export function getOrRegisterErrorStructType(ctx: CodegenContext): number {
  */
 export function registerNativeStringTypes(ctx: CodegenContext): void {
   ctx.nativeStrDataTypeIdx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "array",
-    name: "__str_data",
-    element: { kind: "i16" },
-    mutable: true,
-  });
+  ctx.mod.types.push(createStringDataType());
 
   ctx.anyStrTypeIdx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: "AnyString",
-    fields: [{ name: "len", type: { kind: "i32" }, mutable: false }],
-    superTypeIdx: -1,
-  });
+  ctx.mod.types.push(createAnyStringType());
 
   ctx.nativeStrTypeIdx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: "NativeString",
-    fields: [
-      { name: "len", type: { kind: "i32" }, mutable: false },
-      { name: "off", type: { kind: "i32" }, mutable: false },
-      { name: "data", type: { kind: "ref", typeIdx: ctx.nativeStrDataTypeIdx }, mutable: false },
-    ],
-    superTypeIdx: ctx.anyStrTypeIdx,
-  });
+  ctx.mod.types.push(createNativeStringType(ctx));
 
   ctx.consStrTypeIdx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: "ConsString",
-    fields: [
-      { name: "len", type: { kind: "i32" }, mutable: false },
-      // (#3673) left/right are mutable so `__str_flatten` can memoize: after
-      // flattening a rope it rewrites the cons in place to (left=flat result,
-      // right=""), turning every later flatten of the same rope into a two-
-      // field fast path instead of an O(len) re-copy. `len` stays immutable —
-      // the rewrite preserves the total length.
-      { name: "left", type: { kind: "ref", typeIdx: ctx.anyStrTypeIdx }, mutable: true },
-      { name: "right", type: { kind: "ref", typeIdx: ctx.anyStrTypeIdx }, mutable: true },
-    ],
-    superTypeIdx: ctx.anyStrTypeIdx,
-  });
+  ctx.mod.types.push(createConsStringType(ctx));
 
   // (#3673 round 9) `$HashedString <: $NativeString` — a flat string that
   // CACHES its FNV-1a hash. `__obj_hash` re-hashed the probe key per $Object
@@ -957,53 +876,16 @@ export function registerNativeStringTypes(ctx: CodegenContext): void {
   // and stay visible through the cache. Fields are `anyref` (not typed refs)
   // because `$Object`/`$PropEntry` are registered later by the object runtime.
   ctx.hashedStrTypeIdx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: "HashedString",
-    fields: [
-      { name: "len", type: { kind: "i32" }, mutable: false },
-      { name: "off", type: { kind: "i32" }, mutable: false },
-      { name: "data", type: { kind: "ref", typeIdx: ctx.nativeStrDataTypeIdx }, mutable: false },
-      { name: "hash", type: { kind: "i32" }, mutable: true },
-      { name: "cacheGen", type: { kind: "i32" }, mutable: true },
-      { name: "cacheOwner", type: { kind: "anyref" }, mutable: true },
-      { name: "cacheEntry", type: { kind: "anyref" }, mutable: true },
-      // (#3673 round 21) the owner's props ARRAY at population time — a grow
-      // replaces the array, so `ref.eq` on it is a per-object staleness check
-      // (replaces the global `__obj_table_gen`, whose bump on ANY object's
-      // grow cold-started every cache twice per parse via acorn's options
-      // build). Field 4 degrades to a populated flag (0/1).
-      { name: "cacheProps", type: { kind: "anyref" }, mutable: true },
-    ],
-    superTypeIdx: ctx.nativeStrTypeIdx,
-  });
+  ctx.mod.types.push(createHashedStringType(ctx));
 
   // #1588 PR-B: dual i8/i16 storage. Only register the UTF-8 backing array +
   // `Utf8String` subtype when `--utf8-storage` is on. When off, the type table
   // is unchanged so emitted Wasm is byte-identical to today.
   if (ctx.utf8Storage) {
     ctx.utf8StrDataTypeIdx = ctx.mod.types.length;
-    ctx.mod.types.push({
-      kind: "array",
-      name: "__str_data_u8",
-      element: { kind: "i8" },
-      mutable: true,
-    });
+    ctx.mod.types.push(createUtf8StringDataType());
 
     ctx.utf8StrTypeIdx = ctx.mod.types.length;
-    ctx.mod.types.push({
-      kind: "struct",
-      name: "Utf8String",
-      fields: [
-        // JS-visible code-unit (UTF-16) length — preserves observable
-        // `.length` / indexing / comparison semantics (issue Non-goals).
-        { name: "len", type: { kind: "i32" }, mutable: false },
-        // Canonical-ABI byte length (>= len for multi-byte scalars; == len for ascii).
-        { name: "byteLen", type: { kind: "i32" }, mutable: false },
-        { name: "off", type: { kind: "i32" }, mutable: false },
-        { name: "data", type: { kind: "ref", typeIdx: ctx.utf8StrDataTypeIdx }, mutable: false },
-      ],
-      superTypeIdx: ctx.anyStrTypeIdx,
-    });
+    ctx.mod.types.push(createUtf8StringType(ctx));
   }
 }

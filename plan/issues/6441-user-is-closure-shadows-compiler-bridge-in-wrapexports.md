@@ -1,16 +1,24 @@
 ---
 id: 6441
 title: "A user-declared `__is_closure` turns a returned class instance into a callable FUNCTION through wrapExports"
-status: ready
+status: done
 sprint: current
 created: 2026-09-13
 updated: 2026-09-13
+completed: 2026-09-13
 priority: high
 horizon: m
 feasibility: medium
 task_type: bug
 area: runtime
 goal: correctness
+loc-budget-allow:
+  # 2026-09-13: #6441 fix — the `closureVerdictKnown` tracking added to
+  # `looksMarshalable` (src/runtime.ts) is +8 net lines: a `let`, a comment
+  # explaining why a non-throwing classifier verdict is now authoritative,
+  # and the ternary replacing a bare `return hasVecLen`. A single-function,
+  # one-branch correctness fix does not warrant splitting into a new module.
+  - src/runtime.ts
 ---
 
 ## Problem
@@ -43,6 +51,28 @@ this is not about the data-struct authority.
 
 ## Mechanism
 
+**Corrected 2026-09-13 — the original diagnosis below was wrong.**
+`_hostBridgeExportView` DOES override the logical `__is_closure` with the
+compiler's own physical alias (`$cf$` in this module) whenever a closure
+family is discovered: `_closureHostBridgeMetadata` authenticates the family
+(manifest bit 15 set, `$cu.get(15) === $cf$`), and `$cf$(makeEmpty())` answers
+`0` — the compiler classifier correctly says "not a closure".
+
+The real defect is one step later, in `looksMarshalable` itself
+(`src/runtime.ts`, then ~L19482–19500). After the classifier answers `0`
+("not a closure"), the function still falls through to step 2
+(`_structFieldNamesRaw` → `null`: a field-less class exports no
+`__struct_field_names`), step 3 (`_isWasmVec` → `false`: no array use, so no
+`__is_vec`/`__vec_len`), and step 4 `return hasVecLen` → **`false`**, because a
+module that never uses an array never exports `__vec_len` at all. So an
+authoritative "not a closure" verdict was being discarded in favor of a guess
+that only happens to work when the module also uses an array somewhere. Fixed
+by making a non-throwing classifier verdict authoritative for step 4, instead
+of falling back to the `__vec_len` guess whenever the classifier existed and
+answered.
+
+<details><summary>Original (incorrect) diagnosis, kept for context</summary>
+
 `looksMarshalable` in `wrapExports` consults `exportsForMarshal.__is_closure`
 and treats a `1` as "this is a closure, not marshalable", then falls through to
 `makeCallableClosureWrapper`. Its own comment states the intended protection —
@@ -58,6 +88,8 @@ It evidently does not, or the override resolves to something that still answers
 `1`. That resolution is where to look:
 `_hostBridgeExportView` → `_closureHostBridgeMetadata` →
 `_terminalHostBridgeAlias` / `sameExportedFunction`.
+
+</details>
 
 ## Why it matters
 
@@ -99,3 +131,48 @@ the assertions back into the main row then.
 ## Dispatch
 
 **sonnet** — one measured, line-scoped runtime change with a fully specified test matrix and a marker to fold; no design choices remain.
+
+## Resolution
+
+Fixed in `looksMarshalable` (`src/runtime.ts`). The trailing `return hasVecLen;`
+was discarding an authoritative "not a closure" verdict from the compiler's
+own classifier (`isClosureFn`, reached via `_hostBridgeExportView`) whenever
+the module's return value had no named fields and no array use — because a
+module that never touches an array never exports `__vec_len`, so `hasVecLen`
+was always `false` for exactly this shape. Replaced with
+`closureVerdictKnown ? true : hasVecLen`, where `closureVerdictKnown` is set
+when the classifier call returns without throwing (a throw — a module too old
+to export the classifier cleanly — still falls back to the `__vec_len` guess,
+unchanged). No other function touched.
+
+- **AC1/AC2**: verified via `.tmp/probe-6441b.mts` and the new regression test
+  — `wrapExports(instance).makeEmpty()` and `wrapExports(instance.exports).makeEmpty()`
+  both answer `{}` for the issue's forged-name fixture; the user's own
+  `__is_closure(null)` and `$cf()` keep answering `1`/`704` when called
+  directly.
+- **AC3**: the `it.fails` marker in `tests/issue-3520-closure-host-bridge-abi.test.ts`
+  is removed; its two assertions now run inside the "forged closure-free name
+  family" row.
+- New test: `tests/issue-6441-fieldless-instance-marshal-without-vec-len.test.ts`
+  (5 cases: fails on parent without forged names, fails on parent with them,
+  anti-vacuity with an array export present, anti-vacuity for a real closure,
+  and a `marshal:false` control that turns out to hit the same bug pre-fix).
+- Ran clean: `tests/issue-3520-closure-host-bridge-abi.test.ts`,
+  `tests/issue-6419-closure-area-red-on-main.test.ts`,
+  `tests/issue-6441-fieldless-instance-marshal-without-vec-len.test.ts`.
+  `tests/issue-3637-vec-len-discriminator-vacuity.test.ts`,
+  `tests/issue-1308.test.ts`, `tests/issue-1504.test.ts` were also run;
+  5 pre-existing failures in the #3637 file (unrelated JSON.stringify /
+  Array.prototype.concat/flat / strict-iterator behavior) reproduce
+  identically on unmodified `upstream/main` — confirmed by diffing
+  `src/runtime.ts` against `.tmp/runtime.orig.ts` — so they are not caused by
+  this change and are out of scope here.
+- Mechanism section above corrected: the original "Mechanism" diagnosis (that
+  `_hostBridgeExportView` fails to override `__is_closure`) was wrong — it
+  does override correctly; the defect was one function later, in step 4 of
+  `looksMarshalable`.
+- Dogfood/standalone: no source outside `src/runtime.ts`'s `wrapExports`
+  touched; `wrapExports` is JS-host-only glue with no effect on emitted Wasm
+  bytes, so no dogfood-suite or standalone-lane measurement was run (per the
+  plan's stated expectation of zero movement for every real package, since
+  every one of them uses arrays).

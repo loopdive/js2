@@ -85,6 +85,7 @@ export const MAP_LAYOUT = {
 // `collection-kind.js`. It used to be declared here, but this module sits in an
 // import cycle, so a module that entered the cycle from the other side could
 // read the binding while it was still in TDZ. Import it from the leaf.
+export { COLLECTION_KIND, type CollectionKind } from "./collection-kind.js";
 
 /**
  * Register the WasmGC struct/array types backing the native Map. Idempotent.

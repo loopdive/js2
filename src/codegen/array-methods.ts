@@ -109,7 +109,7 @@ import { isHostTypedArrayCarrierExpression } from "./expressions/typed-array-hos
 // (#4446) The §23.1.3.1 host-free concat loop for dynamic operands.
 import { compileArrayConcatNativeSpec } from "./array-concat-spec.js";
 // (#4655) Shared concat carrier/dispatch predicate — see array-concat-carrier.ts.
-import { concatMustConsultPrototypeChain } from "./array-concat-carrier.js";
+import { concatMustConsultIsConcatSpreadable, concatMustConsultPrototypeChain } from "./array-concat-carrier.js";
 import { ensureJoinProtoHoleLocal, joinProtoHoleFallbackInstrs } from "./array-join-proto-hole.js";
 // (#5317 r4) join/toLocaleString separator coercion (§23.1.3.15 step 3).
 import { buildJoinSeparatorToString } from "./join-separator.js";
@@ -5304,7 +5304,14 @@ function compileArrayConcat(
   // must take the spec loop (which carries the species prologue) — including
   // the 0-arg shallow-copy shortcut, which `concat/create-species*.js` exercises
   // with a bare `a.concat()`.
-  if (concatMustConsultPrototypeChain(ctx) || arraySpeciesActive(ctx)) {
+  // (#6485) Third gate, same argument, different observable: §23.1.3.1 step 5.b
+  // performs `Get(E, @@isConcatSpreadable)` on EVERY operand — receiver included
+  // — and every path below decides spreading statically, so a module that can
+  // reach that symbol must take the spec loop for every arity. Flag clear ⇒
+  // THIS gate is not reached (the spec loop's own step-1 fix is ungated and
+  // does move bytes for modules the two gates above already route there).
+  // See array-concat-carrier.ts.
+  if (concatMustConsultPrototypeChain(ctx) || arraySpeciesActive(ctx) || concatMustConsultIsConcatSpreadable(ctx)) {
     const spec = compileArrayConcatNativeSpec(ctx, fctx, propAccess, callExpr);
     if (spec !== undefined) return spec;
   }

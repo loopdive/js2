@@ -249,7 +249,16 @@ function valueTypesOf(fn: IrFunction): Map<IrValueId, IrType> {
 
 function isAwaitCarrier(type: IrType): boolean {
   const scalar = asVal(type);
-  return scalar?.kind === "externref" || scalar?.kind === "f64" || type.kind === "extern";
+  return (
+    scalar?.kind === "externref" ||
+    scalar?.kind === "f64" ||
+    type.kind === "extern" ||
+    (type.kind === "dynamic" && type.tag === undefined)
+  );
+}
+
+function isAwaitFulfillment(type: IrType): boolean {
+  return irTypeEquals(type, F64) || (type.kind === "dynamic" && type.tag === undefined);
 }
 
 function makeHelper(
@@ -388,7 +397,7 @@ export function prepareLinearSuspendingIrFunction(fn: IrFunction): PreparedLinea
   if (block.terminator.kind !== "return") return null;
   const terminator = block.terminator;
   if (terminator.values.length !== fn.resultTypes.length) return null;
-  if (fn.resultTypes.length === 1 && !irTypeEquals(fn.resultTypes[0]!, F64)) return null;
+  if (fn.resultTypes.length === 1 && !isAwaitFulfillment(fn.resultTypes[0]!)) return null;
 
   const valueTypes = valueTypesOf(fn);
   const slotDefs = new Map<number, IrSlotDef>();
@@ -441,7 +450,7 @@ export function prepareLinearSuspendingIrFunction(fn: IrFunction): PreparedLinea
     if (sourceInstr.kind === "await") {
       if (sourceInstr.result === null || sourceInstr.resultType === null || awaitResults.has(sourceInstr.result))
         return null;
-      if (!irTypeEquals(sourceInstr.resultType, F64)) return null;
+      if (!isAwaitFulfillment(sourceInstr.resultType)) return null;
       const awaited = resolve(sourceInstr.operand);
       const awaitedType = valueTypes.get(awaited);
       if (!awaitedType || !isAwaitCarrier(awaitedType)) return null;

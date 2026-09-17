@@ -11,6 +11,8 @@
   "src/codegen/fnctor-field-provenance.ts#fnctorFieldProvenanceRecords",
   "src/codegen/fnctor-field-provenance.ts#resetFnctorFieldProvenance",
   "src/codegen/generic-callback-result.ts#genericCallbackResultCall",
+  "src/codegen/lib-decl-index.ts#clearLibDeclIndexCacheForTests",
+  "src/codegen/lib-extern-scan-memo.ts#clearExternLibScanMemoForTests",
   "src/codegen/program-abi-callable-roles.ts#programAbiCallableRoleOrdinalsAreDistinct",
   "src/codegen/program-abi-module-callable-alias-planning.ts#assertPreparedModuleCallableAliasDescriptorCurrent",
   "src/codegen/program-abi-module-callable-alias-planning.ts#preparedModuleCallableAliasBindings",

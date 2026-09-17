@@ -126,6 +126,7 @@ interface ShadowedFuncBinding {
   hadNestedArtifacts: boolean;
   nestedArtifacts: { structTypeIdx: number; trampolineName: string } | undefined;
   usedArguments: boolean;
+  readOwnThis: boolean;
   wasAsync: boolean;
   wasGenerator: boolean;
   wasPreRegistered: boolean;
@@ -400,6 +401,7 @@ export function shadowNestedFuncName(ctx: CodegenContext, funcName: string): voi
     hadNestedArtifacts: ctx.nestedFnClosureArtifacts?.has(funcName) ?? false,
     nestedArtifacts: ctx.nestedFnClosureArtifacts?.get(funcName),
     usedArguments: ctx.funcUsesArguments.has(funcName),
+    readOwnThis: ctx.funcReadsOwnThis.has(funcName),
     wasAsync: ctx.asyncFunctions.has(funcName),
     wasGenerator: ctx.generatorFunctions.has(funcName),
     wasPreRegistered: ctx.preRegisteredBodyless?.has(funcName) ?? false,
@@ -419,6 +421,7 @@ export function shadowNestedFuncName(ctx: CodegenContext, funcName: string): voi
   // one's capture layout.
   ctx.nestedFnClosureArtifacts?.delete(funcName);
   ctx.funcUsesArguments.delete(funcName);
+  ctx.funcReadsOwnThis.delete(funcName);
   ctx.asyncFunctions.delete(funcName);
   ctx.generatorFunctions.delete(funcName);
   ctx.preRegisteredBodyless?.delete(funcName);
@@ -454,6 +457,7 @@ export function endNestedFunctionNameScope(ctx: CodegenContext, scope: NestedFun
     if (saved.hadNestedArtifacts) (ctx.nestedFnClosureArtifacts ??= new Map()).set(name, saved.nestedArtifacts!);
     else ctx.nestedFnClosureArtifacts?.delete(name);
     toggle(ctx.funcUsesArguments, name, saved.usedArguments);
+    toggle(ctx.funcReadsOwnThis, name, saved.readOwnThis);
     toggle(ctx.asyncFunctions, name, saved.wasAsync);
     toggle(ctx.generatorFunctions, name, saved.wasGenerator);
     if (saved.wasPreRegistered) (ctx.preRegisteredBodyless ??= new Set()).add(name);

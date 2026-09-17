@@ -130,6 +130,7 @@ import { paramUndefinedTypeIsDefaultArtifact } from "../destructuring-params.js"
 import {
   calleeIsCapabilityCtorParam,
   calleeIsPromiseExecutorParam,
+  calleeIsLinkedProviderParam,
   calleeMayBeHostCallable,
   appendForwardedOptionalArgcOverride,
   compileCallExpression,
@@ -150,6 +151,7 @@ import {
   buildArgcResetNoLazyExtras,
   saveArgumentLocalAsExtern,
 } from "./argc-extras.js";
+import { resolvePlainCallThisTrampoline } from "../named-this-call.js"; // (#6436)
 
 function tryEmitGenericStructFactoryResult(
   ctx: CodegenContext,
@@ -2918,6 +2920,12 @@ export function compileIdentifierCall(
             // params is preserved.
             (calleeMayBeHostCallable(ctx, expr.expression) ||
               calleeIsPromiseExecutorParam(ctx, expr.expression) ||
+              // (#6490) A callable param of a separately-linked PROVIDER can
+              // hold a consumer-module closure, whose struct belongs to the
+              // consumer's type group; the guarded cast here nulls and the
+              // dispatch traps un-catchably. Linker-only flag, so ordinary
+              // single-module compiles are byte-identical.
+              calleeIsLinkedProviderParam(ctx, expr.expression) ||
               // Captures explicitly marked as host-bound callback values stay
               // externref by design. They may be real JS functions after a
               // compiled method crosses the host boundary (Jest's Prompt
@@ -4255,7 +4263,10 @@ export function compileIdentifierCall(
 
     // Argument compilation may shift defined-function indices.
     const finalFuncIdx = ctx.funcMap.get(funcName) ?? funcIdx;
-    fctx.body.push({ op: "call", funcIdx: finalFuncIdx });
+    // (#6436) A plain call installs `undefined` as the receiver. Minted AFTER
+    // `maybeSetArgcForKnownCall`: the trampoline pushes no operand of its own.
+    const plainThis = resolvePlainCallThisTrampoline(ctx, funcName, finalFuncIdx);
+    fctx.body.push({ op: "call", funcIdx: plainThis ?? finalFuncIdx });
     // Foreign eval calls lack checker signatures; the resolved Wasm signature is authoritative.
     if (isForeignEvalNode(expr) && wasmFuncReturnsVoid(ctx, finalFuncIdx)) return VOID_RESULT;
     const sig = isForeignEvalNode(expr) ? undefined : ctx.checker.getResolvedSignature(expr);

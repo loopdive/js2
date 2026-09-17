@@ -365,6 +365,12 @@ export interface CompileResult {
    * r.importObject.__setInstance?.(instance);
    * ```
    *
+   * `__setInstance(instance)` is what establishes the data-struct authority the
+   * boundary needs to decode a returned object. (#6438) The legacy
+   * `__setExports(instance.exports)` wiring does not: after it, passing the raw
+   * exports record to `wrapExports` makes any struct-returning export throw
+   * rather than answer `{}`. Pass the instance to both.
+   *
    * Standalone / `wasi` mode is the zero-import portable default and needs no
    * import object; for those targets this is an empty object. Computed lazily —
    * accessing it builds the runtime once and caches the result.
@@ -640,6 +646,30 @@ export interface CompileOptions {
    * `"use strict"` prologue and class context still force strict regardless.
    */
   inferModuleStrictArguments?: boolean;
+  /**
+   * (#6474) Let the MULTI-FILE codegen path derive the entry's source goal from
+   * the entry file itself instead of forcing the module goal.
+   *
+   * `generateMultiModule` sets `ctx.sourceIsModule = true` unconditionally
+   * ("multi-file compilation is linked through import/export module records").
+   * For an ordinary package graph that is right. For the linked test262 harness
+   * lane it is not: the entry is a test262 **script**, and the module goal
+   * changes observable semantics — a top-level `var` becomes module-scoped
+   * instead of a global-object property (so a closure created before the
+   * declaration sees `undefined`, and a `with`-introduced `var` never reaches
+   * the global), top-level `this` becomes `undefined`, and an undeclared
+   * assignment stops creating a global.
+   *
+   * When `true`, `ctx.sourceIsModule` follows the entry file's own
+   * `externalModuleIndicator` — a genuine `import`/`export` in the entry still
+   * yields the module goal. Sibling files are unaffected; they keep their own
+   * per-file binding scoping.
+   *
+   * Opt-in and OFF by default, so every other `compileMulti` / `compileProject`
+   * caller is byte-identical. Today the only caller that sets it is
+   * `compileHarnessLinkedBody`.
+   */
+  entryScriptGoal?: boolean;
   /** Use WasmGC-native strings (array i16) instead of wasm:js-string imports.
    *  Enabled automatically when fast: true or target: "wasi".
    *  Required for non-browser runtimes (wasmtime, wasmer, etc.) */

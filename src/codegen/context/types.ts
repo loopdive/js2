@@ -327,6 +327,13 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
    * does not unmap sloppy (`noStrict`) arguments. See `CompileOptions`.
    */
   inferModuleStrictArguments?: boolean;
+  /**
+   * (#6474) Opt-in: `generateMultiModule` derives `ctx.sourceIsModule` from the
+   * entry file's own `externalModuleIndicator` instead of forcing `true`. Off
+   * by default ⇒ every existing multi-file caller is byte-identical. See
+   * `CompileOptions.entryScriptGoal`.
+   */
+  entryScriptGoal?: boolean;
 }
 
 /** Info about an externally declared class. */
@@ -1930,6 +1937,31 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   arraySpeciesDirty: boolean;
   /**
+   * (#6485) The module can make `@@isConcatSpreadable` OBSERVABLE — it mentions
+   * `isConcatSpreadable` anywhere (identifier, string literal, property name),
+   * lets the `Symbol` intrinsic escape as a VALUE (`var S = Symbol`,
+   * `f(Symbol)`, `Symbol[k]`, `Symbol(d)`), or contains dynamic code.
+   *
+   * Consumer: `concatMustConsultIsConcatSpreadable` in `array-concat-carrier.ts`,
+   * which is the third routing gate on `Array.prototype.concat`. §23.1.3.1 step
+   * 5.b performs `Get(E, @@isConcatSpreadable)` on every operand; the typed
+   * `array.copy` fast path spreads unconditionally and never performs it, so a
+   * module that can install the symbol must take the spec loop. Clear — the
+   * common case — ⇒ THIS GATE is never reached. (That is a statement about the
+   * gate, not about the commit: the §23.1.3.1.1 step-1 fix inside the spec loop
+   * is ungated, so a module already routed there by another gate does move.)
+   *
+   * Why the scan keys on the NAME and on the INTRINSIC rather than
+   * over-approximating every computed member write: in a single-module
+   * standalone program the global `Symbol` binding is the root of every route
+   * to the well-known symbol, so a module that neither names it nor lets that
+   * binding escape cannot install it. Arming on every `o[k] = v` instead would
+   * fire on ordinary loop code and turn a conformance fix into module-wide byte
+   * growth — the hazard this flag exists to avoid. `array-holes.ts` names the
+   * two routes the scan therefore misses.
+   */
+  isConcatSpreadableDirty: boolean;
+  /**
    * (#4230 L1) The module mentions a descriptor-defining or own-name-reading
    * `Object`/`Reflect` builtin — `defineProperty`, `defineProperties`, a
    * two-argument `create`, `getOwnPropertyNames`, `ownKeys`,
@@ -2715,6 +2747,22 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * runtime args beyond the formal param count (#1053).
    */
   funcUsesArguments: Set<string>;
+  /**
+   * (#6436) Named function declarations whose own `this` reads the ambient
+   * `__current_this` module global, minus the ones that take an explicit
+   * `this` parameter.
+   *
+   * A PLAIN `f(x)` call installs no receiver, so inside a window where some
+   * dispatcher has parked one in `__current_this` (a host-facing closure
+   * method call, an array-HOF `thisArg`) the callee read the DISPATCHER's
+   * receiver instead of the `undefined` §10.2.1.2 specifies. Callers consult
+   * this set to route such a call through a per-target trampoline that
+   * installs `undefined` for the duration.
+   *
+   * Populated at COLLECT time (alongside `funcUsesArguments`), because call
+   * sites compile before hoisted bodies do.
+   */
+  funcReadsOwnThis: Set<string>;
   /**
    * Object-literal method declaration → the function handle containing that
    * literal's body. Struct-shape deduplication can fork a method body while

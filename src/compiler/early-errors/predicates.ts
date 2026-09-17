@@ -300,6 +300,58 @@ export function isInsideFunction(node: ts.Node): boolean {
   return false;
 }
 
+/** Whether `node` occurs in the subtree evaluated by `container`. */
+function isWithinSubtree(node: ts.Node, container: ts.Node): boolean {
+  let current: ts.Node | undefined = node;
+  while (current) {
+    if (current === container) return true;
+    current = current.parent;
+  }
+  return false;
+}
+
+/**
+ * Check whether `new.target` has a lexical resolution environment.
+ *
+ * Arrow functions inherit an enclosing NewTarget environment, but do not
+ * create one themselves. A non-arrow function supplies one only to its
+ * parameter initializers and body: its computed name is evaluated outside the
+ * function. Likewise, a class field supplies one only to its initializer,
+ * while a class static block supplies one to its whole body.
+ */
+export function hasNewTargetEnvironment(node: ts.Node): boolean {
+  let current: ts.Node | undefined = node.parent;
+  while (current) {
+    if (ts.isArrowFunction(current)) {
+      current = current.parent;
+      continue;
+    }
+    if (ts.isClassStaticBlockDeclaration(current)) return true;
+    if (ts.isPropertyDeclaration(current)) {
+      if (current.initializer && isWithinSubtree(node, current.initializer)) return true;
+      current = current.parent;
+      continue;
+    }
+    if (
+      ts.isFunctionDeclaration(current) ||
+      ts.isFunctionExpression(current) ||
+      ts.isMethodDeclaration(current) ||
+      ts.isConstructorDeclaration(current) ||
+      ts.isGetAccessorDeclaration(current) ||
+      ts.isSetAccessorDeclaration(current)
+    ) {
+      if (
+        (current.body && isWithinSubtree(node, current.body)) ||
+        current.parameters.some((parameter) => isWithinSubtree(node, parameter))
+      ) {
+        return true;
+      }
+    }
+    current = current.parent;
+  }
+  return false;
+}
+
 /**
  * Check if a node is inside any function (sync or async, including arrow, method, etc.)
  * Used to detect AwaitExpression in non-async function (a SyntaxError in module context).

@@ -982,7 +982,7 @@ interface TestResult {
    * row and an honest row are both v8 but produced by different oracles and are
    * NOT comparable. Stamped by `recordResult` (tests/test262-shared.ts).
    */
-  oracle_lane?: "honest" | "fast-nativeharness";
+  oracle_lane?: "honest" | "fast-nativeharness" | "linked-harness" | "linked-harness-fallback";
   /**
    * #3462: revision of the FAST native-harness oracle, present ONLY on
    * `oracle_lane: "fast-nativeharness"` rows. Bumped independently of
@@ -1282,7 +1282,7 @@ export function evaluateDevacuificationAllowance(opts: {
 
 type StatusMap = Map<string, TestResult>;
 
-type OracleLane = "honest" | "fast-nativeharness";
+type OracleLane = "honest" | "fast-nativeharness" | "linked-harness";
 
 interface LoadedJsonl {
   map: StatusMap;
@@ -1325,7 +1325,17 @@ async function loadJsonl(path: string): Promise<LoadedJsonl> {
       // #3462: normalize absent oracle_lane ⇒ "honest" (backward-compatible),
       // then track a single file-level lane. A file mixing lanes is "mixed" and
       // is refused, exactly like a mixed oracle_version.
-      const lane: OracleLane = entry.oracle_lane === "fast-nativeharness" ? "fast-nativeharness" : "honest";
+      // (#3451) `linked-harness-fallback` rows are LINKED-lane rows: that lane
+      // produced them, it just could not link this particular body. Folding
+      // them into "honest" would let a linked file read as honest whenever
+      // enough rows fell back, and a linked run must never be comparable to an
+      // honest baseline no matter how much of it degraded.
+      const lane: OracleLane =
+        entry.oracle_lane === "fast-nativeharness"
+          ? "fast-nativeharness"
+          : entry.oracle_lane === "linked-harness" || entry.oracle_lane === "linked-harness-fallback"
+            ? "linked-harness"
+            : "honest";
       if (oracleLane !== "mixed") {
         if (oracleLane === undefined) oracleLane = lane;
         else if (oracleLane !== lane) oracleLane = "mixed";
@@ -1601,6 +1611,24 @@ async function run(
   }
 
   if (baseLane !== undefined && newLane !== undefined && baseLane !== newLane) {
+    // (#3451) The LINKED-harness shadow lane is refused UNCONDITIONALLY — not
+    // even `ORACLE_REBASE=1` excuses it. `ORACLE_REBASE` exists to SEED a lane's
+    // own baseline, and the linked lane has none by design: it is
+    // non-authoritative until slice 6 flips authority in its own reviewed PR.
+    // An escape hatch here is the exact mechanism by which a shadow lane
+    // silently becomes the published number.
+    if (baseLane === "linked-harness" || newLane === "linked-harness") {
+      console.error(
+        `\n\u2716 Oracle-lane guard (#3451): the linked-harness shadow lane is not comparable to any other lane.\n` +
+          `  baseline lane = ${fmtLane(baseLane)}, new lane = ${fmtLane(newLane)}.\n` +
+          `  It is a NON-AUTHORITATIVE measurement lane (TEST262_ORACLE_MODE=linked) and never promotes a\n` +
+          `  baseline. ORACLE_REBASE does NOT excuse this: seeding a linked baseline IS the authority flip,\n` +
+          `  which is #3451 slice 6 and a separate reviewed change.\n` +
+          `  To compare linked against honest, run both lanes at the same commit and diff the two RESULT\n` +
+          `  files by hand \u2014 that is the parity measurement, not a gate.\n`,
+      );
+      process.exit(2);
+    }
     // Cross-LANE diff (honest-vs-fast or fast-vs-honest). Excused only by the
     // explicit env flag — there is no forward-bump auto-rebase for the lane.
     if (!oracleRebase) {
