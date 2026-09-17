@@ -532,7 +532,11 @@ import {
   sourceParamCountFromExpanded,
   wasmParamIndexForSourceParam,
 } from "../linear-uint8-signatures.js";
-import { resolveNamedThisCallTarget, tryReshapeApplyToNamedThisCall } from "../named-this-call.js";
+import {
+  resolveNamedThisCallTarget,
+  resolveUndefinedReceiverTrampoline,
+  tryReshapeApplyToNamedThisCall,
+} from "../named-this-call.js";
 import {
   emitClosureReceiverInstall,
   finishClosureReceiverCall,
@@ -2731,6 +2735,41 @@ export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression
 }
 
 /**
+ * (#6490) Is `expr` an identifier resolving to a **callable parameter of a
+ * separately-linked provider module**?
+ *
+ * In a linked graph (`src/package-linker.ts`, #2527 — the Temporal provider and
+ * the #3451 test262 harness provider) the provider is compiled as its own Wasm
+ * module and its callers live in a DIFFERENT module. A callback the consumer
+ * passes in therefore arrives as an `externref` whose wasm closure struct
+ * belongs to the consumer's type group, so the provider's guarded
+ * `ref.test`/`ref.cast` to ITS wrapper root misses and yields `ref.null` — and
+ * the callable-param dispatch then `struct.get`s a null and TRAPS with
+ * "dereferencing a null pointer". A wasm trap is not catchable, so it takes the
+ * whole program down.
+ *
+ * This is exactly the #1941 invariant — "pure local closures / function params
+ * are always wrapped into the closure struct, so the host arm would be dead
+ * code" — and it is FALSE by construction for a provider: the value did not
+ * come from this module. Measured on the test262 linked lane, where every call
+ * of `testTypedArray.js`'s `testWithTypedArrayConstructors(f)` trapped inside
+ * the provider (~1,340 corpus rows). The same reasoning #4616 applied to
+ * host-reachable METHOD params applies here to every param, because a
+ * provider's exports are its whole reason to exist.
+ *
+ * Gated on `ctx.exportsConsumedByWasm` (set only by the linker, #5247), so a
+ * single-module compile — every ordinary and honest-lane build — is
+ * byte-identical.
+ */
+export function calleeIsLinkedProviderParam(ctx: CodegenContext, expr: ts.Expression): boolean {
+  if (ctx.exportsConsumedByWasm !== true) return false;
+  if (ctx.standalone || ctx.wasi) return false;
+  if (!ts.isIdentifier(expr)) return false;
+  const decl = ctx.oracle.valueDeclarationOf(expr);
+  return decl !== undefined && ts.isParameter(decl);
+}
+
+/**
  * (#2028) Is `expr` an identifier resolving to a parameter of a **Promise
  * executor** — the `(resolve, reject) => {…}` arrow/function-expression passed
  * directly to `new Promise(...)`?
@@ -3351,17 +3390,6 @@ export function emitClosureCallArgcExtras(
 ): void {
   if (args.length > paramCount) {
     emitSetExtrasArgv(ctx, fctx, args as unknown as ts.Expression[], paramCount);
-  } else if (ctx.extrasArgvGlobalIdx >= 0) {
-    // (#6416) This call has no extras — but `arguments.length` is
-    // `argc + extrasLen`, so a vec left parked in the global by an earlier
-    // over-applied call (one whose callee never materialised `arguments` and
-    // therefore never consumed it) would be counted here. Null it out. Uses
-    // the no-lazy-registration convention of `buildArgcResetNoLazyExtras`:
-    // with no global yet, nothing in the module has ever written a vec.
-    fctx.body.push(
-      { op: "ref.null", typeIdx: ctx.extrasArgvVecTypeIdx },
-      { op: "global.set", index: ctx.extrasArgvGlobalIdx },
-    );
   }
   emitSetArgc(ctx, fctx, args.length, paramCount);
   appendForwardedOptionalArgcOverride(ctx, fctx, fctx.body, args, paramCount);
@@ -8744,7 +8772,12 @@ function compileCallExpression(
               getFuncParamTypes(ctx, funcIdx!)?.length ?? remainingArgs.length,
             );
             const finalFuncIdx = ctx.funcMap.get(funcName) ?? funcIdx!;
-            fctx.body.push({ op: "call", funcIdx: namedThisCall?.trampolineFuncIdx ?? finalFuncIdx });
+            // (#6436) `.call(undefined, …)` dropped its receiver here.
+            const undefinedThis =
+              namedThisCall === undefined
+                ? resolveUndefinedReceiverTrampoline(ctx, funcName, finalFuncIdx, expr.arguments[0])
+                : undefined;
+            fctx.body.push({ op: "call", funcIdx: namedThisCall?.trampolineFuncIdx ?? undefinedThis ?? finalFuncIdx });
 
             // Use actual Wasm return type — TS checker reports `any` for .call()/.apply()
             // which resolves to externref, but the actual function may return f64/i32/ref.
@@ -8825,7 +8858,9 @@ function compileCallExpression(
                 elements.length,
                 getFuncParamTypes(ctx, finalFuncIdx)?.length ?? elements.length,
               );
-              fctx.body.push({ op: "call", funcIdx: finalFuncIdx });
+              // (#6436) Same as the `.call` arm: `.apply(undefined, [...])`.
+              const applyThis = resolveUndefinedReceiverTrampoline(ctx, funcName, finalFuncIdx, expr.arguments[0]);
+              fctx.body.push({ op: "call", funcIdx: applyThis ?? finalFuncIdx });
               // Use actual Wasm return type for .apply()
               if (wasmFuncReturnsVoid(ctx, finalFuncIdx)) return VOID_RESULT;
               return getWasmFuncReturnType(ctx, finalFuncIdx) ?? VOID_RESULT;

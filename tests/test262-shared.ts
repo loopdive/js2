@@ -52,7 +52,7 @@ import {
   TEST_CATEGORIES,
   type Test262Scope,
 } from "./test262-runner.js";
-import { assembleOriginalHarness, assembleNativeHarness } from "./test262-original-harness.js";
+import { assembleOriginalHarness, assembleNativeHarness, assembleLinkedHarness } from "./test262-original-harness.js";
 
 // Prevent unhandled Promise rejections from crashing the vitest fork.
 process.on("unhandledRejection", () => {});
@@ -180,8 +180,23 @@ const TEST262_SEMANTIC_PROVIDERS = parseTest262SemanticProviders(process.env.TES
 // worker's own rule (sr-3461): standalone target NEVER sets `nativeHarness`.
 const TEST262_ORACLE_MODE = process.env.TEST262_ORACLE_MODE;
 const IS_HOST_LANE = TEST262_TARGET === undefined;
-const ORACLE_LANE: "honest" | "fast-nativeharness" =
-  TEST262_ORACLE_MODE === "fast" && IS_HOST_LANE ? "fast-nativeharness" : "honest";
+const ORACLE_LANE: "honest" | "fast-nativeharness" | "linked-harness" =
+  TEST262_ORACLE_MODE === "fast" && IS_HOST_LANE
+    ? "fast-nativeharness"
+    : TEST262_ORACLE_MODE === "linked" && IS_HOST_LANE
+      ? "linked-harness"
+      : "honest";
+
+// (#3451 slice 3) Linked-harness shadow oracle — the harness prefix is compiled
+// ONCE per include-set into a separate provider module (#2527) and each body is
+// compiled against it, 30-96 ms instead of 600-1,400 ms. NON-AUTHORITATIVE: it
+// never promotes a baseline, and `diff-test262` refuses to compare it against an
+// honest one, exactly as for `fast-nativeharness`.
+//
+// Host lane only, for the same reason the native-harness oracle is: the provider
+// crosses its values through the JS host bridge, which a standalone/WASI binary
+// does not have. Absent flag ⇒ byte-identical honest behaviour.
+const LINKED_HARNESS_ORACLE = ORACLE_LANE === "linked-harness";
 
 // (#5383 S3) May this lane link the compiled `Temporal` provider (#4628)?
 // Read ONCE — it consults the pre-warm stamp on disk, and the answer is a
@@ -319,6 +334,14 @@ type RecordMetadata = {
   // callback never executed). Surfaced in the JSONL so the report tallies the
   // integrity correction separately from genuine fails.
   vacuous?: boolean;
+  // (#3451) Set by the worker when the LINKED shadow lane could not compile
+  // this body against the harness provider and fell back to the honest whole
+  // assembly for this row. Per-row, never per-run: a lane that silently
+  // degraded on some rows would report an unearned parity number.
+  linkedFallback?: boolean;
+  // (#6486) Why this row fell back, carried into the JSONL so the non-authoritative
+  // parity report can histogram the misses. Linked lane only; absent everywhere else.
+  linkedFallbackReason?: string;
 };
 
 function normalizeErrorSignature(status: string, errorCategory: string | undefined, error: string | undefined) {
@@ -378,6 +401,10 @@ function metadataFromWorkerResult(result: TestResult, reachedTestFallback = fals
     ...(result.imports && result.imports.length > 0 ? { imports: result.imports } : {}),
     ...(result.hostImportLeakClass ? { hostImportLeakClass: result.hostImportLeakClass } : {}),
     ...((result as { vacuous?: boolean }).vacuous ? { vacuous: true } : {}),
+    ...((result as { linkedFallback?: boolean }).linkedFallback ? { linkedFallback: true } : {}),
+    ...((result as { linkedFallbackReason?: string }).linkedFallbackReason
+      ? { linkedFallbackReason: (result as { linkedFallbackReason?: string }).linkedFallbackReason }
+      : {}),
     reachedTest: result.reachedTest ?? reachedTestFallback,
   };
 }
@@ -413,7 +440,11 @@ function recordResult(
     // are both v8 but produced by different oracles, so diff-test262 keys on the
     // (version, lane, fast_rev) tuple. Absent on pre-#3462 rows ⇒ treated as
     // "honest" (backward-compatible; existing honest baselines are unaffected).
-    oracle_lane: ORACLE_LANE,
+    // (#3451) A linked row that fell back to the honest assembly for THIS body
+    // (a link-shape compile error) is not a linked measurement and must not be
+    // counted as one — it is stamped separately rather than silently.
+    oracle_lane:
+      ORACLE_LANE === "linked-harness" && metadata?.linkedFallback === true ? "linked-harness-fallback" : ORACLE_LANE,
     semantic_providers: TEST262_SEMANTIC_PROVIDERS,
     oracle_fast_rev: ORACLE_LANE === "fast-nativeharness" ? ORACLE_FAST_REV : undefined,
     file,
@@ -427,6 +458,12 @@ function recordResult(
     reached_test: metadata?.reachedTest ?? false,
     // (#2939/#2940) vacuity correction marker (only on `fail` rows it applies to).
     vacuous: metadata?.vacuous || undefined,
+    // (#6486) Only ever present on a `linked-harness-fallback` row; truncated
+    // because a compile-error message can be kilobytes and this is a histogram key.
+    linked_fallback_reason:
+      metadata?.linkedFallback === true && metadata?.linkedFallbackReason
+        ? metadata.linkedFallbackReason.slice(0, 200)
+        : undefined,
     compile_ms: timing?.compileMs !== undefined ? Math.round(timing.compileMs) : undefined,
     exec_ms: timing?.execMs !== undefined ? Math.round(timing.execMs) : undefined,
     scope: scopeInfo?.scope ?? "standard",
@@ -739,6 +776,31 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
             // in a fast run. When the flag is off, `nativeAssembly` is null and
             // nothing below diverges from the honest path (AC#2).
             const nativeAssembly = NATIVE_HARNESS_ORACLE ? assembleNativeHarness(source, meta) : null;
+            // (#3451 slice 3) Linked-harness shadow oracle. The split is the
+            // slice-1 one — strict-neutral prefix + body-only unit — so the
+            // primary and strict-rerun variants reuse ONE provider artifact.
+            // `raw` tests carry no harness and bypass the provider entirely,
+            // exactly as the artifact model requires. The in-process FIXTURE
+            // path keeps the honest compile (it has no provider seam), so those
+            // rows stay honest even in a linked run.
+            const linkedAssembly = LINKED_HARNESS_ORACLE ? assembleLinkedHarness(source, meta) : null;
+            // The prefix is strict-neutral, so ONE descriptor serves the primary
+            // and the strict rerun; only `linkedHarnessBody`/`linkedHarnessStrict`
+            // are re-set per variant, at the run site.
+            const linkedHarnessOpts: {
+              linkedHarness?: boolean;
+              linkedHarnessPrefix?: string;
+              linkedHarnessBody?: string;
+              linkedHarnessStrict?: boolean;
+            } =
+              linkedAssembly && !linkedAssembly.raw
+                ? {
+                    linkedHarness: true,
+                    linkedHarnessPrefix: linkedAssembly.harnessPrefix,
+                    linkedHarnessBody: linkedAssembly.primary.body,
+                    linkedHarnessStrict: linkedAssembly.primary.strict,
+                  }
+                : {};
             const inferModuleStrictArguments = isModuleGoal(category, meta, source);
             const isNegative =
               meta.negative &&
@@ -1119,6 +1181,12 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
             if (nativeAssembly) {
               compileSource = nativeAssembly.primary.bindingShim + nativeAssembly.primary.body;
               lineAdjustOffset = nativeAssembly.primary.bodyLineOffset;
+            } else if (linkedAssembly && !linkedAssembly.raw) {
+              // Body-only unit. The worker prepends the getter prelude (whose
+              // length it alone knows) and can reconstruct the honest assembly
+              // from `linkedHarnessPrefix` for the per-row fallback.
+              compileSource = linkedAssembly.primary.bodySource;
+              lineAdjustOffset = linkedAssembly.primary.bodyLineOffset;
             }
             const runHarnessSource = (variantSource: string, label: string) =>
               pool!.runTest(
@@ -1137,6 +1205,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   inferModuleStrictArguments,
                   temporal: needsTemporal,
                   ...nativeHarnessOpts,
+                  ...linkedHarnessOpts,
                 },
                 30_000,
               );
@@ -1145,12 +1214,23 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
             if (r.status === "pass" && harnessAssembly.strictRerun) {
               const primaryCompileMs = r.compileMs ?? 0;
               const primaryExecMs = r.execMs ?? 0;
+              // (#3451) The strict rerun links the SAME provider artifact with
+              // the strict prelude — strictness belongs to the body unit, not
+              // to the harness object, so no second provider is built.
               compileSource = nativeAssembly?.strictRerun
                 ? nativeAssembly.strictRerun.bindingShim + nativeAssembly.strictRerun.body
-                : harnessAssembly.strictRerun.source;
+                : linkedAssembly?.strictRerun && !linkedAssembly.raw
+                  ? linkedAssembly.strictRerun.bodySource
+                  : harnessAssembly.strictRerun.source;
               lineAdjustOffset = nativeAssembly?.strictRerun
                 ? nativeAssembly.strictRerun.bodyLineOffset
-                : harnessAssembly.strictRerun.bodyLineOffset;
+                : linkedAssembly?.strictRerun && !linkedAssembly.raw
+                  ? linkedAssembly.strictRerun.bodyLineOffset
+                  : harnessAssembly.strictRerun.bodyLineOffset;
+              if (linkedAssembly?.strictRerun && !linkedAssembly.raw) {
+                linkedHarnessOpts.linkedHarnessBody = linkedAssembly.strictRerun.body;
+                linkedHarnessOpts.linkedHarnessStrict = linkedAssembly.strictRerun.strict;
+              }
               const strictResult = await runHarnessSource(compileSource, `${relPath} [strict rerun]`);
               r = {
                 ...strictResult,

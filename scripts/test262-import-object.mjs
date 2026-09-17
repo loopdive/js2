@@ -190,7 +190,9 @@ let inProcessLinkedRuntime;
  * @param {BufferSource} binary
  * @param {Record<string, unknown>} importObj
  * @param {{ target?: string, providerLabel?: string, linkedModules?: readonly unknown[],
- *          linkedRuntime?: { instantiateLinkedProviders: Function, wireCompiledInstance: Function } }} [options]
+ *          linkedRuntime?: { instantiateLinkedProviders: Function, wireCompiledInstance: Function },
+ *          linkedHost?: { deps?: Record<string, unknown>, options?: Record<string, unknown> },
+ *          runDeferredInit?: boolean }} [options]
  * @returns {Promise<WebAssembly.Instance>}
  */
 export async function instantiateTest262Module(binary, importObj, options = {}) {
@@ -256,9 +258,32 @@ export async function instantiateTest262Module(binary, importObj, options = {}) 
     resetTemporalRealmGlobals();
     const wasmModule = new WebAssembly.Module(binary);
     attachConditionalImportNamespaces(wasmModule, importObj, options);
-    instantiateLinkedProviders(linkedModules, importObj);
+    // (#6475) A provider's `env` is rebuilt, not inherited — so without the
+    // embedder's host context it resolves the AMBIENT realm's intrinsics and
+    // the real console, while the consumer's `importObj` was built against this
+    // row's sandbox + console proxy. Two `TypeError`s with the same name and
+    // different identity, and a `$DONE` marker printed where nobody is looking
+    // (#6476). `linkedHost` carries the same `{deps, options}` the lane passed
+    // to `buildImports` for the consumer; absent, behaviour is unchanged.
+    instantiateLinkedProviders(linkedModules, importObj, options.linkedHost);
     const instance = await WebAssembly.instantiate(wasmModule, importObj);
     wireCompiledInstance(importObj, instance, true);
+    // (#6477) A linked harness body is compiled with `deferTopLevelInit`
+    // (#2796), so its top-level code is an exported `__module_init` rather than
+    // a `start` section, and it must run AFTER `wireCompiledInstance` has
+    // registered this consumer in the #5225 decoder registry. Running it is
+    // the CALLER's job, opted in with `runDeferredInit: true`: the sharded
+    // worker already compiles every host-lane row with `deferTopLevelInit`
+    // (#3123) and invokes `__module_init` itself with its own throw
+    // classification, so an unconditional call here ran module init TWICE for
+    // every linked Temporal row (measured 2026-09-15: −401 test262 in the
+    // merge group, "wasm exception during module init"). Only the in-process
+    // lanes that never go through the worker (the linked-harness smoke and the
+    // #3451/#6475/#6476/#6477 suites) pass the flag.
+    if (options.runDeferredInit === true) {
+      const moduleInit = instance.exports?.__module_init;
+      if (typeof moduleInit === "function") moduleInit();
+    }
     return instance;
   }
   if (options.target !== "standalone") {

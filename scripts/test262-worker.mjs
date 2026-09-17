@@ -51,6 +51,7 @@ import {
   temporalProviderDisabled,
   test262TemporalLaneEnabled,
 } from "./test262-temporal.mjs";
+import { test262HarnessProviderCacheDir } from "./test262-harness-cache.mjs";
 
 // ── Bundle hash (#1521) ────────────────────────────────────────────────
 // Each cache entry written below carries a `bundle_hash` field. When the
@@ -1276,6 +1277,75 @@ async function getWorkerTemporalProvider(target) {
   return promise;
 }
 
+// ────────────────────────── (#3451) linked-harness provider ───────────
+//
+// The harness prefix is compiled ONCE per include-set into a separate provider
+// module and every body is compiled against it. There are 64 distinct prefixes
+// in the whole corpus (#3451 slice 1), so a fork sees a handful.
+//
+// The 30 s per-row fork budget is the constraint that shapes this, exactly as
+// it shapes the Temporal provider (#5353): a COLD provider build is 0.7-2.9 s,
+// affordable only if amortised — so the promise (including a rejection) is
+// memoised per prefix and per target for the fork's lifetime.
+// `scripts/prewarm-test262-harness-providers.mjs` fills the on-disk cache ahead
+// of a shard so even the first row of each include-set is a cache read.
+
+/** Memoised per (target, prefix) — including failures, so a bad prefix is asked once. */
+const harnessProviderPromises = new Map();
+let harnessProviderUnavailableAnnounced = false;
+
+function announceHarnessProviderUnavailable(reason) {
+  if (harnessProviderUnavailableAnnounced) return;
+  harnessProviderUnavailableAnnounced = true;
+  // Loud: a silent null here means every row quietly ran the honest lane while
+  // the run still claimed to be measuring the linked one.
+  console.error(`[test262-worker] linked harness provider NOT available (${reason}); rows fall back to honest`);
+}
+
+/** Are both halves of the wiring present in the bundles this worker loaded? */
+function harnessProviderWiringAvailable() {
+  return (
+    typeof compilerBundle.buildHarnessProvider === "function" &&
+    typeof compilerBundle.compileHarnessLinkedBody === "function" &&
+    typeof runtimeBundle.instantiateLinkedProviders === "function" &&
+    typeof runtimeBundle.wireCompiledInstance === "function"
+  );
+}
+
+function harnessProviderCompileOptions(target) {
+  // Must match `compileHarnessLinkedBody`'s option set on the consumer side, or
+  // the provider and the body disagree about the ABI they share.
+  return { allowJs: true, emitWat: false, skipSemanticDiagnostics: true, ...(target ? { target } : {}) };
+}
+
+async function getWorkerHarnessProvider(harnessPrefix, target) {
+  if (!harnessProviderWiringAvailable()) {
+    announceHarnessProviderUnavailable("bundles do not export the provider wiring — rebuild from the bundle entries");
+    return null;
+  }
+  const memoKey = `${target ?? "host"}\u0000${harnessPrefix.length}\u0000${harnessPrefix}`;
+  const memoised = harnessProviderPromises.get(memoKey);
+  if (memoised) return memoised;
+  const promise = (async () => {
+    const cacheDir = test262HarnessProviderCacheDir();
+    const provider = await compilerBundle.buildHarnessProvider({
+      harnessPrefix,
+      cacheDir,
+      compileOptions: harnessProviderCompileOptions(target),
+    });
+    console.error(
+      `[test262-worker] harness provider ${provider.namespace} (${provider.artifact.binary.length} B, ` +
+        `${provider.getters.size} getters) in ${provider.buildMs}ms cacheHit=${provider.cacheHit} from ${cacheDir}`,
+    );
+    return provider;
+  })().catch((error) => {
+    announceHarnessProviderUnavailable(String(error));
+    return null;
+  });
+  harnessProviderPromises.set(memoKey, promise);
+  return promise;
+}
+
 async function doCompile(
   source,
   sourceMapUrl,
@@ -1288,6 +1358,7 @@ async function doCompile(
   negativePhase,
   temporal,
   semanticProviders,
+  linkedHarness,
 ) {
   // Defence-in-depth: restore any poisoned builtins BEFORE each compile.
   // postCompileCleanup runs after the previous test, but under rare worker
@@ -1381,7 +1452,27 @@ async function doCompile(
     // This leaves the incremental Language Service (compileMulti builds its own
     // program), which is part of the per-row price #5248 measured; the
     // alternative — prepending the polyfill to each body — costs ~32 s a row.
-    return compilerBundle.compileWithTemporalGlobal(source, temporal, {
+    //
+    // (#6489) HONESTY STAMP. This branch is tested BEFORE the linked branch
+    // below, so inside a linked run a Temporal row is compiled by the honest
+    // path — it is not a linked measurement and must not be counted as linked
+    // agreement. Report it as a fallback with its own reason so the parity
+    // report attributes it correctly. (A real linked+Temporal co-link is a
+    // later slice; until then this is the accurate label, not a workaround.)
+    //
+    // In a linked run `source` is the BODY-ONLY unit (the provider carries the
+    // harness prefix), so the honest compile must reconstruct the honest
+    // assembly exactly as the linked fallback below does. Measured on the
+    // second full-corpus run (35144322208): without this, every Temporal row
+    // in the linked lane scored `assert is not defined` / `TemporalHelpers is
+    // not defined` (2,000 + 723 rows) — the harness was never in the unit.
+    let temporalSource = source;
+    if (linkedHarness) {
+      linkedHarness.fellBack = true;
+      linkedHarness.fallbackReason = "temporal row: honest compile (compileWithTemporalGlobal)";
+      temporalSource = linkedHarness.harnessPrefix + source;
+    }
+    return compilerBundle.compileWithTemporalGlobal(temporalSource, temporal, {
       allowJs: true,
       fileName: "test.js",
       sourceMap: true,
@@ -1393,6 +1484,56 @@ async function doCompile(
       inferModuleStrictArguments,
       ...deferOpt,
     });
+  }
+  if (linkedHarness && originalHarness && !hasFixtureGraph(fixtureFiles)) {
+    // (#3451 slice 3) LINKED shadow lane. `source` is the body-only unit; the
+    // provider carries the harness prefix. Same option set as the literal
+    // branch below, so the only deliberate difference is where the harness
+    // came from.
+    //
+    // PER-ROW HONEST FALLBACK. A body may redeclare a harness name, or the
+    // getter prelude may fail to type — link-shape problems that say nothing
+    // about the test. Falling back keeps the row scored; NOT reporting the
+    // fallback would let a partly-degraded run be read as a linked
+    // measurement, which is the one thing a shadow oracle must never do. So
+    // the caller is told, and the row is stamped `linked-harness-fallback`.
+    const bodyOptions = {
+      allowJs: true,
+      fileName: "test.js",
+      sourceMap: true,
+      sourceMapUrl: sourceMapUrl || "test.wasm.map",
+      emitWat: false,
+      skipSemanticDiagnostics: true,
+      target,
+      semanticProviders,
+      inferModuleStrictArguments,
+      // (#3451) A negative test's verdict IS the diagnostic, so the linked
+      // branch must ask for the same ones the honest branch gets. The honest
+      // single-file gate rejects syntax errors unconditionally and runs the JS
+      // early-error checks; `compileMulti` does neither unless asked, so
+      // without these a `negative: early` row compiles clean and scores
+      // "expected SyntaxError but compiled with no diagnostic".
+      strictJsSyntax: true,
+      enforceJsEarlyErrors: isNegative && negativePhase !== "resolution",
+      ...deferOpt,
+    };
+    const provider = await getWorkerHarnessProvider(linkedHarness.harnessPrefix, target);
+    if (provider) {
+      try {
+        const linked = await compilerBundle.compileHarnessLinkedBody(provider, linkedHarness.body, {
+          ...bodyOptions,
+          strict: linkedHarness.strict,
+        });
+        if (linked.success) return linked;
+        linkedHarness.fallbackReason = `linked compile failed: ${(linked.errors ?? [])[0]?.message ?? "unknown"}`;
+      } catch (error) {
+        linkedHarness.fallbackReason = `linked compile threw: ${error?.message ?? String(error)}`;
+      }
+    } else {
+      linkedHarness.fallbackReason = "no harness provider in this fork";
+    }
+    linkedHarness.fellBack = true;
+    return compileSingleSource(linkedHarness.harnessPrefix + source, bodyOptions);
   }
   if (originalHarness) {
     // The authoritative sharded-CI and test262.fyi lanes both compile literal
@@ -1712,6 +1853,8 @@ async function buildInvalidBinaryError(source, sourceMapUrl, result, target) {
 
 process.on("message", async (msg) => {
   runtimeIntrinsicCanarySnapshot = null;
+  currentLinkedFallback = false;
+  currentLinkedFallbackReason = undefined;
   const { id, source, execute, isNegative, isRuntimeNegative, expectedErrorType, originalHarness, asyncTest } = msg;
   // (#3461) Fast native-harness oracle (host lane). When set, `source` is the
   // body-only `bindingShim + body` unit (the harness was NOT concatenated into
@@ -1745,6 +1888,33 @@ process.on("message", async (msg) => {
     temporal = await getWorkerTemporalProvider(target);
   }
 
+  // (#3451) Linked shadow lane. The parent owns the split (it is the side that
+  // parsed the metadata) and sends the strict-neutral prefix beside the
+  // body-only `source`; the worker owns the provider and the fallback. The
+  // descriptor is MUTATED by `doCompile` to report a fallback, so the row can
+  // be stamped honestly. Never for a fixture graph — that path has no provider
+  // seam and stays honest, as the native-harness lane does.
+  //
+  // `source` stays the honest BODY UNIT (directive + body), so the fallback can
+  // reconstruct `prefix + source` and get the honest assembly byte-for-byte.
+  // The raw body and the strictness flag come separately because the prelude
+  // must put `"use strict"` ahead of its own `import`: a directive that follows
+  // an import is not a directive prologue, so reusing `source` here would run
+  // every strict rerun SLOPPY while reporting it as strict.
+  const linkedHarness =
+    originalHarness &&
+    msg.linkedHarness === true &&
+    typeof msg.linkedHarnessPrefix === "string" &&
+    typeof msg.linkedHarnessBody === "string"
+      ? {
+          harnessPrefix: msg.linkedHarnessPrefix,
+          body: msg.linkedHarnessBody,
+          strict: msg.linkedHarnessStrict === true,
+          fellBack: false,
+          fallbackReason: undefined,
+        }
+      : null;
+
   let result;
   try {
     result = await doCompile(
@@ -1759,8 +1929,11 @@ process.on("message", async (msg) => {
       msg.negativePhase,
       temporal,
       semanticProviders,
+      linkedHarness,
     );
+    if (linkedHarness?.fellBack) noteLinkedFallback(linkedHarness.fallbackReason);
   } catch (err) {
+    if (linkedHarness?.fellBack) noteLinkedFallback(linkedHarness.fallbackReason);
     // Thrown exception may have poisoned the incremental compiler's internal
     // state.  Recreate immediately so subsequent compilations don't cascade-fail.
     try {
@@ -2050,6 +2223,15 @@ process.on("message", async (msg) => {
         // scripts/test262-import-object.mjs.
         linkedModules: result.linkedModules ?? [],
         linkedRuntime: runtimeBundle,
+        // (#6475/#6476) Build the PROVIDER's adapter with this row's host
+        // context — the same two values the consumer's `buildImports` above
+        // received. Without them the provider resolves ambient intrinsics
+        // (so `assert.throws(TypeError, …)` sees a different constructor with
+        // the same name) and prints to the real console (so the `$DONE`
+        // completion marker never reaches `harnessOutput`).
+        linkedHost: originalHarness
+          ? { deps: { console: consoleProxy }, options: { globalSandbox: harnessSandbox } }
+          : undefined,
       });
     } catch (err) {
       const execMs = performance.now() - execStart;
@@ -2799,7 +2981,39 @@ function realmDriftRecycleReason(payload) {
   return undefined;
 }
 
+/**
+ * (#3451) Did THIS row's linked compile fall back to the honest assembly?
+ *
+ * Stamped in the one result funnel rather than at each `sendResult` call site:
+ * a row can exit through a dozen of them (compile error, poison retry, negative
+ * match, vacuity correction), and a fallback that is reported on only some of
+ * them is worse than none — the run would under-count its own degradation and
+ * over-state the linked lane's parity.
+ */
+let currentLinkedFallback = false;
+// (#6486) The REASON travels with the row, not just the fork log. The parity
+// report histograms it: a linked lane whose misses are all one link-shape bug
+// is a different finding from one whose misses are spread, and a per-fork
+// stderr line cannot be joined back to the rows it degraded.
+let currentLinkedFallbackReason;
+const linkedFallbackReasonsSeen = new Set();
+
+/** Mark the row, and log each distinct reason ONCE per fork. */
+function noteLinkedFallback(reason) {
+  currentLinkedFallback = true;
+  currentLinkedFallbackReason = reason ?? "unknown";
+  const key = reason ?? "unknown";
+  if (linkedFallbackReasonsSeen.has(key)) return;
+  linkedFallbackReasonsSeen.add(key);
+  // Per-reason, not per-row: a handful of link-shape cases are expected, and a
+  // per-row log would bury them. Silence is not an option — an unreported
+  // fallback is a row the linked lane did not actually measure.
+  console.error(`[test262-worker] linked-harness fallback: ${key}`);
+}
+
 function sendResult(payload, forceRecycleReason) {
+  if (currentLinkedFallback && payload && typeof payload === "object")
+    payload = { ...payload, linkedFallback: true, linkedFallbackReason: currentLinkedFallbackReason };
   const cleanup = postCompileCleanup();
   const driftReason = realmDriftRecycleReason(payload);
   const recycle = Boolean(forceRecycleReason || driftReason || cleanup.recycle);

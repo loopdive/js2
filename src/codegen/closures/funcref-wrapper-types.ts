@@ -15,7 +15,8 @@ import { funcSignatureOf } from "../func-space.js"; // (#1916 S2 read chokepoint
 import { addFuncType } from "../registry/types.js";
 import { closureArityField, closureBagField } from "./closure-header-layout.js";
 
-export type ClosureAllocationMode = "support" | "ordinary" | "host-one-shot";
+import { createSignatureWrapperType, type ClosureAllocationMode } from "../../runtime/wasmgc/values/closure-layouts.js";
+export type { ClosureAllocationMode } from "../../runtime/wasmgc/values/closure-layouts.js";
 
 function observeAllocation(info: ClosureInfo, mode: ClosureAllocationMode): void {
   if (mode === "ordinary") info.hostOneShotOnly = false;
@@ -104,19 +105,10 @@ export function getOrCreateFuncRefWrapperTypes(
   // Mark as non-final (superTypeIdx = -1) so closures with captures can be
   // subtypes of this wrapper struct, enabling ref.cast to succeed at call sites.
   const closureName = `__fn_wrap_${ctx.closureCounter++}`;
-  const structFields = [
-    { name: "func", type: { kind: "funcref" as const }, mutable: false },
-    closureArityField(),
-    closureBagField(),
-  ];
+
   const structTypeIdx = ctx.mod.types.length;
   const rootWrapperTypeIdx = (ctx as unknown as { __funcRefWrapperRootTypeIdx?: number }).__funcRefWrapperRootTypeIdx;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: `${closureName}_struct`,
-    fields: structFields,
-    superTypeIdx: rootWrapperTypeIdx ?? -1, // first wrapper is the root; later signatures subtype it
-  });
+  ctx.mod.types.push(createSignatureWrapperType(`${closureName}_struct`, rootWrapperTypeIdx ?? -1));
   const liftedSelfTypeIdx = rootWrapperTypeIdx ?? structTypeIdx;
   if (rootWrapperTypeIdx === undefined) {
     (ctx as unknown as { __funcRefWrapperRootTypeIdx?: number }).__funcRefWrapperRootTypeIdx = structTypeIdx;
