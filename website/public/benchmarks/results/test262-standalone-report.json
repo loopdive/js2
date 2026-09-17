@@ -1,8 +1,8 @@
 {
-  "timestamp": "2026-09-17T04:13:04.401Z",
-  "baseline_generated_at": "2026-09-17T04:13:04.401Z",
-  "baseline_sha": "70da7d7dca651052139726052523f5be62eeec27",
-  "oracle_version": 13,
+  "timestamp": "2026-09-17T09:31:47.569Z",
+  "baseline_generated_at": "2026-09-17T09:31:47.570Z",
+  "baseline_sha": "83167164d3abc659df36686d0b81faf3b7b9b332",
+  "oracle_version": 14,
   "mode": {
     "target": "standalone",
     "semantic_providers": "auto",
@@ -1296,14 +1296,14 @@
           "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
-          "test/built-ins/Temporal/PlainDate/prototype/toPlainDateTime/argument-string-unknown-annotation.js"
+          "test/built-ins/Temporal/ZonedDateTime/prototype/with/disambiguation-wrong-type.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: null Expected a RangeError but got a TypeError",
           "type_error:TypeError: Cannot read properties of undefined (reading 'round')",
           "type_error:TypeError: Cannot read properties of undefined (reading 'until')",
           "host_import_leak:standalone target emitted host imports: env::__temporal_plain_date_add_field, env::__temporal_plain_date_from_string_field (##)",
-          "type_error:TypeError: called value is not a function"
+          "other:ReferenceError: Temporal is not defined"
         ]
       },
       {
@@ -1333,15 +1333,15 @@
           "ES2027": 94
         },
         "sample_files": [
-          "test/built-ins/AsyncDisposableStack/prototype/move/sets-state-to-disposed.js",
           "test/built-ins/AsyncDisposableStack/prototype/move/not-a-constructor.js",
+          "test/built-ins/AsyncDisposableStack/prototype/move/sets-state-to-disposed.js",
           "test/built-ins/AsyncDisposableStack/instance-extensible.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.asyncDispose-property-not-callable.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.dispose-property-not-callable.js"
         ],
         "sample_signatures": [
-          "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_get_disposed, env::AsyncDisposableStack_move, env::AsyncDisposableStack_new (##)",
           "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_new (##)",
+          "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_get_disposed, env::AsyncDisposableStack_move, env::AsyncDisposableStack_new (##)",
           "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_new, env::AsyncDisposableStack_use (##)",
           "assertion_fail:Test262Error: Symbol() should be an own property",
           "type_error:TypeError: Cannot access property on null or undefined at #:#"
@@ -2413,15 +2413,15 @@
           "test/built-ins/Symbol/species/subclassing.js",
           "test/built-ins/Symbol/desc-to-string.js",
           "test/built-ins/Symbol/prototype/Symbol.toPrimitive/removed-symbol-wrapper-ordinary-toprimitive.js",
-          "test/built-ins/Symbol/not-callable.js",
-          "test/built-ins/Symbol/for/to-string-err.js"
+          "test/built-ins/Symbol/for/to-string-err.js",
+          "test/built-ins/Symbol/not-callable.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected SameValue(«undefined», «function () { [native code] }») to be true",
           "assertion_fail:Test262Error: Expected SameValue(«\"\"», «\"toStringvalueOf\"») to be true",
           "assertion_fail:Test262Error: hint: default",
-          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
-          "null_deref:dereferencing a null pointer [in __closure_66() ← __closure_60 ← __call_fn_method_3 ← __apply_closure]"
+          "null_deref:dereferencing a null pointer [in __closure_66() ← __closure_60 ← __call_fn_method_3 ← __apply_closure]",
+          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all"
         ]
       },
       {
@@ -2912,9 +2912,9 @@
         "sample_files": [
           "test/language/identifiers/part-unicode-16.0.0-escaped.js",
           "test/language/identifiers/start-unicode-17.0.0-class.js",
-          "test/language/identifiers/part-unicode-17.0.0-class.js",
           "test/language/identifiers/start-unicode-16.0.0-escaped.js",
-          "test/language/identifiers/part-unicode-17.0.0.js"
+          "test/language/identifiers/part-unicode-17.0.0-class.js",
+          "test/language/identifiers/start-unicode-17.0.0.js"
         ],
         "sample_signatures": [
           "runtime_error:L#:## Invalid character.; L#:## Invalid character.; L#:## ',' expected.; L#:## An identifier or keyword cannot immediately follow a numeric literal.; L#:## Invalid character.; L#:## ',' expected.; L#:## An identifier or keyword cannot immed",
@@ -3040,8 +3040,8 @@
           "ES2022": 20
         },
         "sample_files": [
-          "test/built-ins/Atomics/add/validate-arraytype-before-index-coercion.js",
           "test/built-ins/Atomics/xor/validate-arraytype-before-index-coercion.js",
+          "test/built-ins/Atomics/add/validate-arraytype-before-index-coercion.js",
           "test/built-ins/Atomics/or/non-views.js",
           "test/built-ins/Atomics/notify/notify-nan.js",
           "test/built-ins/Atomics/add/non-views.js"

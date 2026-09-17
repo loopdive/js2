@@ -595,3 +595,26 @@ Updated after round 2 (2026-09-17).
 | ~3 in 141 | `Expected a X but got a TypeError` in `Iterator/prototype/take` | **the actual dominant defect behind the `Expected a X but got a Y` string** (round 3). `class T extends Iterator` + helper; the provider's helper throws its own `TypeError` instead of propagating the consumer's error. Same intrinsic-subclassing substrate round 2 parked, and now the highest-value next target. |
 | 22 | `Thrown value was not an object!` | untouched. No longer expected to fall out with the BigInt fix (that one was narrower than the "brand loss" framing suggested); more likely the class-identity family. |
 | 59 | four small buckets | untouched. |
+
+### Trap residual (2026-09-17, #3451 slice-6 merge_group run 35200783992)
+
+The flip's first merge-group diff (honest v13 baseline vs linked v14) passed the
+422 `regressions-allow` ceiling (406 of 422 excused) but hit the #3189
+uncatchable-trap ratchet, which no regressions-allow can excuse. The parity
+script's "no trap bucket" (P3e) counted *error-message* buckets; the ratchet
+counts `error_category` per row, and 15 rows change category across lanes.
+The flip PR declares `trap-growth-allow: count: 7` (the measured per-category
+maximum, #3370 rebase-mode semantics). These rows are the follow-up:
+
+| category | growth | rows (baseline status) |
+| --- | ---: | --- |
+| `null_deref` | 47 → 54 (+7) | `built-ins/Function/15.3.5.4_2-14gs.js` (pass), `language/eval-code/indirect/global-env-rec-fun.js` (pass), `language/function-code/10.4.3-1-19gs.js` (fail), `language/function-code/10.4.3-1-20gs.js` (fail), `language/statements/variable/12.2.1-{9,10,20,21}-s.js` (pass) |
+| `illegal_cast` | 24 → 30 (+6) | `built-ins/ArrayBuffer/prototype/immutable/prop-desc.js` (fail), `built-ins/Error/prototype/stack/{instance-not-enumerable,prop-desc}.js` (fail), `built-ins/TypedArray/prototype/reverse/resizable-buffer.js` (fail), `built-ins/TypedArray/prototype/sort/{comparefn-resizable-buffer,resizable-buffer-default-comparator}.js` (fail) |
+| `unreachable` | 2 → 3 (+1) | `language/expressions/in/private-field-rhs-await-present.js` (pass) |
+
+Reading: the 8 honest-pass rows are already inside the 422 pass→fail residual
+(the `*gs.js` / `12.2.1-*-s.js` family is global-strict-mode code whose
+top-level binding differs once the harness is a separate module — same
+substrate as the `__module_init` null bucket above). The 7 honest-fail rows
+only change failure flavour (a thrown `TypeError` in the honest lane becomes a
+trap in the linked lane) and change no verdict.
