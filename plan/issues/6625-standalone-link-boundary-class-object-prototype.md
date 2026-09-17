@@ -159,15 +159,36 @@ Equivalence gate: **22 failing / 1,720 passing / 22 known-failures in
 baseline — 0 new regressions, exactly the S37 baseline**, run to completion
 (`npm run -s test:equivalence:gate`, ~161s).
 
-Must-not-move samples (groups A/B/C per the dispatch brief, 0 flips
-required): **RUN to completion this session — see table below.**
+Must-not-move samples (groups A/B/C per the dispatch brief,
+`.tmp/s38/mnm3.mts`, group A/B/C chunked into 200–250-file jobs — same
+file-copy-revert base/fix labels as the four-family sample above):
+
+| Group | Scope | base pass | fix pass | total | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | `Object/keys` + `expressions/object` + `Reflect/{get,has}` | 1125 | 1125 | 1250 | 0 | 0 |
+| B | `Object/{entries,values,getOwnPropertyNames}` + `statements/for-in` | 179 | 179 | 205 | 0 | 0 |
+| C | `Object/getPrototypeOf` + `Reflect/getPrototypeOf` + `Function/prototype` (first 100) + `class/subclass` (first 100) + `expressions/class` (first 100) | 272 | 273 | 349 | 0 | 1 |
+| **Total** | | **1576** | **1577** | **1804** | **0** | **1** |
+
+**0 pass→fail across all three groups — the acceptance criterion.** Groups A
+and B are exactly flat, 0 flips either direction (per-file diff, not count
+comparison). Group C has one `fail→pass`:
+`language/statements/class/subclass/class-definition-null-proto.js`
+(`class Foo extends null {}`, asserting `Object.getPrototypeOf(Foo.prototype.constructor)
+=== Function.prototype`) — a legitimate, expected side effect: per §15.7.14
+step 6.e, a null-extending class's constructor parent IS `%FunctionPrototype%`,
+identical to a no-heritage class, and `extends null` classes have no entry in
+`ctx.classParentMap` (there is no real parent), so the fix's class-object
+identity ladder correctly includes them as "base" classes. Not a MOP
+violation; a correct additional case the fix's own scope note did not call
+out by name.
 
 ### What did not get measured, and why
 
 **S38's original session left the four-family sample and must-not-move
 groups incomplete; a follow-up measurement pass (same branch tip, same fix,
 new worktree) completed both to the brief's full spec** — see the
-four-family table above and the must-not-move table below, both run on
+four-family table above and the must-not-move table above, both run on
 both labels (base = S37 tip via file-copy revert of the same 5 files,
 fix = this branch), fresh `JS2WASM_TEMPORAL_CACHE` per label,
 `cacheHit=false` on prewarm. 0 pass→fail across every group measured. The
