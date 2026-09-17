@@ -1925,6 +1925,30 @@ const LIB_GLOBALS = new Set([
   "queueMicrotask",
   "requestAnimationFrame",
   "cancelAnimationFrame",
+  // (#6492 round 6) The lib.es5 `declare function` globals — the SAME class as
+  // the three above, and the one this gate kept missing. A module whose only
+  // lib-global reference is one of these skipped `collectDeclaredGlobals`
+  // entirely, so `ctx.declaredGlobals` never learned the name and
+  // `calleeMayBeHostCallable` (via `isDeclaredHostGlobal`) answered false —
+  // which suppresses the `__call_function` host arm at the call site. A first
+  // class read then holds a real host function while the dispatch has only the
+  // closure-struct path, so `var s = eval; s("1+1")` NULLS the guarded cast and
+  // `struct.get` traps: `dereferencing a null pointer`, uncatchable.
+  //
+  // Invisible in the honest test262 lane because the harness prefix shares the
+  // compilation unit and mentions `Array`/`Object`/`String` on its first lines,
+  // so the gate always fired there; the linked lane compiles the BODY ALONE and
+  // a body-only unit can genuinely reference nothing else. Same failure the
+  // `EvalError` note below records, same fix.
+  "eval",
+  "parseInt",
+  "parseFloat",
+  "isNaN",
+  "isFinite",
+  "decodeURI",
+  "decodeURIComponent",
+  "encodeURI",
+  "encodeURIComponent",
   // #1065 — ambient builtin constructors that need host-global resolution
   // for bare-identifier uses (e.g. `x.constructor === Array`). Call-site
   // fast paths intercept before identifier resolution runs.

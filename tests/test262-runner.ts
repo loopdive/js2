@@ -165,24 +165,6 @@ export function createTestSandbox(consoleProxy?: Console, exposeDone = true): Re
   return _buildFreshSandbox(consoleProxy, exposeDone);
 }
 
-/**
- * Test262 property-descriptor rows are allowed to install a new intrinsic
- * property without specifying `configurable: true`. Such a property cannot be
- * removed by the in-process host snapshot, so the sloppy variant would poison
- * the strict rerun before it starts. Run those rows with one coherent fresh
- * VM realm for both the built-in globals and their constructed values.
- *
- * Keep this source classifier deliberately narrow: ordinary product/runtime
- * builds retain the host-realm design, and descriptor checks on user objects
- * do not need a separate intrinsic realm.
- */
-const HOST_INTRINSIC_DEFINE_RE =
-  /\b(?:Object|Reflect)\.(?:defineProperty|defineProperties)\s*\(\s*(?:Object|Array|String|Number|Boolean|Function|RegExp|Map|Set|WeakMap|WeakSet|Promise|Date|ArrayBuffer|DataView|Int8Array|Uint8Array|Uint8ClampedArray|Int16Array|Uint16Array|Int32Array|Uint32Array|Float32Array|Float64Array)(?:\.prototype)?\b/;
-
-function requiresCoherentBuiltinRealm(source: string): boolean {
-  return HOST_INTRINSIC_DEFINE_RE.test(source);
-}
-
 function _readSentinels(sandbox: Record<string, any>): unknown[] {
   return SENTINEL_KEYS.map((path) => {
     let cur: any = sandbox;
@@ -4487,8 +4469,20 @@ async function runOriginalHarnessVariant(
         consoleProxy,
         meta.flags?.includes("async") === true || declaresTopLevelDone(originalSource),
       );
-      const coherentBuiltinRealm = requiresCoherentBuiltinRealm(originalSource);
-      if (coherentBuiltinRealm) markCoherentBuiltinRealm(sandbox);
+      // (#6495) EVERY row gets a coherent builtin realm, so the intrinsics the
+      // compiled module is handed (`__get_builtin`) are the ROW's, not the
+      // worker process's. Until 2026-09-17 this was gated on a source regex
+      // that only matched a literal `Object.defineProperty(Array.prototype, …)`
+      // in the test body — so a row whose intrinsic mutation happens inside the
+      // HARNESS (`verifyProperty` → `isConfigurable` → `delete obj[name]`) was
+      // unprotected, and `__delete_property` removed array iteration from the
+      // test process. Measured before flipping: zero honest-lane rows changed
+      // across 2,102 rows (the 114-row #6482 descriptor bucket, an 818-row
+      // for-in/own-property slice, and a 1,170-row realm-sensitive slice —
+      // Symbol, Reflect, instanceof, bind, Object.prototype.toString,
+      // getPrototypeOf/setPrototypeOf/create, isArray, concat, NativeErrors,
+      // Error, RegExp exec).
+      markCoherentBuiltinRealm(sandbox);
       const imports = buildImports(result.imports, { console: consoleProxy }, result.stringPool, {
         globalSandbox: sandbox,
       }) as any;

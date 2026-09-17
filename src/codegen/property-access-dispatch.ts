@@ -218,6 +218,7 @@ import {
 import { tryEmitBuiltinStaticExpandoRead } from "./builtin-static-expando.js"; // (#4639 C2) ordinary [[Get]] tail
 import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } from "./global-environment.js";
 import { isInlineTaggedTemplateParameter } from "./tagged-template-parameter.js";
+import { linkBrandRoleOf } from "./shape-brand.js";
 import { emitDynamicTemplateRawRead, isDynamicTemplateRawRead } from "./template-raw-dynamic.js";
 
 /**
@@ -3774,7 +3775,8 @@ export function tryNamespaceConstantAndSymbolReads(
       // `__box_number`, so `new WeakSet([Symbol.hasInstance])` stores the
       // symbol rather than the NUMBER 2 (its well-known id). The js-host lane
       // stays unbranded for the #4626 index-shift reason recorded there.
-      return usesNativeSymbolProvider(ctx) ? { kind: "i32", symbol: true } : { kind: "i32" };
+      const branded = usesNativeSymbolProvider(ctx) || linkBrandRoleOf(ctx) !== undefined; // (#6482 r2)
+      return branded ? { kind: "i32", symbol: true } : { kind: "i32" };
     }
   }
 

@@ -4649,6 +4649,26 @@ function _wasmStructHasOwn(obj: any, key: any, exports: Record<string, Function>
     const prop = String(key);
     return staticMethods.includes(prop) && !_isDeletedClassProp(obj, prop);
   }
+  // (#6482 r2) Vec receiver: an in-bounds element index is an own property even
+  // with no sidecar/descriptor entry, and `length` always is. A vec has no
+  // struct field names, so the shape probe below answers false for both — which
+  // is what made propertyHelper's `__hasOwnProperty(arguments, "0")` false once
+  // the `for…in` gate above it started passing.
+  if (typeof key !== "symbol") {
+    const prop = String(key);
+    const idx = _asArrayIndex(prop);
+    if (prop === "length" || idx !== undefined) {
+      const lenFn = exports?.__vec_len as ((v: any) => number) | undefined;
+      const isVecFn = exports?.__is_vec as ((v: any) => number) | undefined;
+      if (typeof lenFn === "function" && typeof isVecFn === "function") {
+        try {
+          if (isVecFn(obj) === 1) return prop === "length" || (idx as number) < lenFn(obj);
+        } catch {
+          /* not a vec of this module */
+        }
+      }
+    }
+  }
   // Static struct field shape (the per-receiver oracle, A1 — NOT a module-global
   // `__sget_<key>` existence probe). Single-key check (#3673) — avoids the
   // full per-field presence sweep.
@@ -6893,6 +6913,59 @@ function _clampFrozenDescriptor(obj: any, d: PropertyDescriptor): PropertyDescri
   d.configurable = false;
   if (frozen && !d.get && !d.set) d.writable = false;
   return d;
+}
+
+/**
+ * (#6482 round 2) The own ENUMERABLE index keys of a vec receiver, in ascending
+ * order — the level-keys a `for…in` must yield for a compiled array or a
+ * registered `arguments` object.
+ *
+ * WHY THIS EXISTS. `__for_in_keys`' per-level walk collects struct FIELD names
+ * (`_getStructFieldNames`) and sidecar keys. A vec has neither: its elements
+ * live in the array carrier and their attributes in the `_wasmPropDescs`
+ * sidecar table, so the walk answered `[]` for `for (var k in arguments)`.
+ * Single-module that never showed, because the same-module `for…in` is lowered
+ * in-wasm and never reaches this import. Across a #5225 linked boundary the
+ * receiver is an opaque externref in the reader, so the import IS the only
+ * path — and propertyHelper's `isEnumerable` opens with exactly that `for…in`
+ * and short-circuits on the empty result, which is what reported the 25
+ * `N descriptor should be enumerable` rows (the two own-property predicates
+ * the 2026-09-17 note blamed are never reached: `stringCheck` fails first).
+ *
+ * `length` is deliberately NOT yielded — it is non-enumerable on both an Array
+ * (§23.1.4.1) and an arguments object (§10.4.4). A tombstoned or
+ * `defineProperty`-non-enumerable index is filtered the same way the sidecar
+ * arm filters its own keys.
+ */
+function _vecEnumerableIndexKeys(
+  obj: any,
+  exports: Record<string, Function> | undefined,
+  seen?: ReadonlySet<string>,
+): string[] {
+  exports = _decoderExportsFor(obj, exports); // (#5225/#6477) the MINTING module's exports
+  if (!exports) return [];
+  const isVecFn = exports.__is_vec as ((v: any) => number) | undefined;
+  const lenFn = exports.__vec_len as ((v: any) => number) | undefined;
+  if (typeof isVecFn !== "function" || typeof lenFn !== "function") return [];
+  let len = 0;
+  try {
+    if (isVecFn(obj) !== 1) return [];
+    len = lenFn(obj);
+  } catch {
+    return [];
+  }
+  if (!(len > 0)) return [];
+  const tomb = _wasmStructDeletedKeys.get(obj);
+  const descs = _wasmPropDescs.get(obj);
+  const keys: string[] = [];
+  for (let i = 0; i < len; i++) {
+    const k = String(i);
+    if (tomb?.has(k) || seen?.has(k)) continue;
+    const flags = descs?.get(k);
+    if (flags !== undefined && flags & _SC_DEFINED && !(flags & _SC_ENUMERABLE)) continue;
+    keys.push(k);
+  }
+  return keys;
 }
 
 function _readOwnDescriptor(
@@ -16620,7 +16693,7 @@ assert._isSameValue = isSameValue;
               // (#2131) Per spec, EnumerateObjectProperties visits each
               // chain level's own keys in OrdinaryOwnPropertyKeys order:
               // collect this level's keys first, order, then push.
-              const levelKeys: string[] = [];
+              const levelKeys: string[] = _vecEnumerableIndexKeys(current, exports, seen); // (#6482 r2)
               const fieldNames = _getStructFieldNames(current, exports) ?? [];
               // (#2731) A deleted-then-re-added struct-shape field is emitted from
               // the sidecar below (insertion-order END), not its fixed struct

@@ -14,7 +14,25 @@ area: codegen
 language_feature: arrays
 goal: test262-conformance
 depends_on: [6477]
-related: [3451, 5225, 6477]
+related: [3451, 5225, 6477, 6491, 6495]
+# 2026-09-17 (round 2): +75 LOC in src/runtime.ts for the vec arms of
+# `__for_in_keys` (`_vecEnumerableIndexKeys`) and `_wasmStructHasOwn`. A vec
+# receiver previously enumerated as `[]` and reported no own index properties
+# through the host imports, which is the only path once the receiver crosses a
+# linked-module edge. Measured: linked descriptor bucket 49→68/114 (+19, 0
+# regressions); honest 818-row vec/for-in/own-property slice 692→699 (+7, 0
+# regressions).
+# 2026-09-17 (round 2, mechanism 2): +2 LOC in
+# src/codegen/property-access-dispatch.ts — the well-known-symbol arm now also
+# brands when this module is one side of a linked project (`linkBrandRoleOf`),
+# so `Symbol.iterator` stops crossing the link as the NUMBER 1. One import line
+# plus one local. Measured: linked descriptor bucket 68→98/114 (+30, 0
+# regressions); honest unchanged across 2,102 rows.
+loc-budget-allow:
+  - src/runtime.ts
+  - src/codegen/property-access-dispatch.ts
+func-budget-allow:
+  - src/runtime.ts
 ---
 
 # #6482 — cross-module vec index read never reaches the host
@@ -238,3 +256,173 @@ module-level WeakSet SHARED by both sides, since `linked-provider-runtime.ts`
 imports `./runtime.js`, so registration is not the gap). Route it through
 `_decoderExportsFor` the way `_readOwnDescriptor` already is (#6477 P2) — that
 is almost certainly why the descriptor path works and these two do not.
+
+## Round 2 (2026-09-17, Opus lane)
+
+### Setup
+
+Worktree `/home/user/js2/.claude/worktrees/agent-a6d0fed89c03acce8`, branch
+`issue-6482-r2-linked-descriptor-residual`, based on `origin/main` with three
+not-yet-merged commits cherry-picked first so every number below is measured on
+top of them: #6491's under-application fix and round 1's two commits
+(shape-brand + notes). All three applied clean.
+
+Real runner, both lanes, path-filtered to the same 114 rows round 1 used
+(`.tmp/rows114.txt`, driver `.tmp/run-lane.sh`):
+`tests/test262-chunk-dynamic.test.ts`, one chunk, `TEST262_INCLUDE_PROPOSALS=1`.
+Linked lane adds `TEST262_ORACLE_MODE=linked`; honest leaves it unset. Bundles
+(`scripts/compiler-bundle.mjs`, `scripts/runtime-bundle.mjs`) rebuilt between
+edits; a per-tag `JS2WASM_TEST262_HARNESS_CACHE` (#6488). A/B by file copy
+(`.tmp/runtime.base.ts`), never `git stash`.
+
+### Before / after on the 114 rows
+
+| lane | round-1 end | r2 base (after cherry-picks) | after mechanism 3 | flips |
+| --- | --- | --- | --- | --- |
+| linked | 44 / 114 | **49 / 114** | **68 / 114** | **+19, 0 regressions** |
+| honest | 105 / 114 | 105 / 114 | 105 / 114 | **0 rows changed** |
+
+The r2 base is 5 above round 1's end; that delta is the #6491 cherry-pick, not
+this work.
+
+### Mechanism 3 — FIXED, and round 1's attribution was wrong
+
+Round 1 concluded the two own-property PREDICATES
+(`__hasOwnProperty` / `__propertyIsEnumerable`) answer false on a consumer
+`arguments` object and named "route them through `_decoderExportsFor`" as the
+next step. **Instrumented, neither predicate is ever reached.** propertyHelper's
+`isEnumerable` is
+
+```js
+return stringCheck && __hasOwnProperty(obj, name) && __propertyIsEnumerable(obj, name);
+```
+
+and `stringCheck` comes from a `for (var x in obj)` above it. On the linked
+lane that `for…in` reaches the host `__for_in_keys` import — and it returned
+`[]`:
+
+```
+[forin] args: true keys: [] redirect: false
+```
+
+(`redirect: false` = `_decoderExportsFor` returns the reader's own exports, so
+this was never a cross-module decoder problem.) `stringCheck` false ⇒ the `&&`
+short-circuits ⇒ `verifyProperty` reports `N descriptor should be enumerable`.
+The `__hasOwnProperty` import and `_wasmStructHasOwn` both logged **zero**
+calls on these rows.
+
+Root cause: `__for_in_keys`' per-level walk collects struct FIELD names
+(`_getStructFieldNames`) and sidecar keys. A **vec** — a compiled array or a
+registered `arguments` object — has neither: its elements live in the array
+carrier and their attributes in the `_wasmPropDescs` table. So a vec enumerated
+as nothing. Single-module this never showed, because a same-module `for…in` is
+lowered in-wasm and never reaches the import; across a #5225 linked boundary the
+receiver is an opaque externref in the reader, so the import is the only path.
+
+Fix (`src/runtime.ts`), two parts:
+
+1. `_vecEnumerableIndexKeys(obj, exports)` — the own enumerable index keys of a
+   vec, ascending, filtered by the tombstone set and the descriptor table's
+   enumerable bit; `length` deliberately excluded (non-enumerable on both an
+   Array §23.1.4.1 and an arguments object §10.4.4). Wired into
+   `__for_in_keys`' per-level walk before the field-name collection, so the
+   existing `_orderOwnKeysSpec` ordering and shadowing (`seen`) logic apply
+   unchanged.
+2. A vec arm in `_wasmStructHasOwn`: an in-bounds element index — and
+   `length` — is an own property even with no sidecar entry. Needed because
+   once the `for…in` gate starts passing, `__hasOwnProperty(arguments, "0")` is
+   reached for the first time and the struct-shape probe below it answers false
+   for a vec.
+
+The 19 rows fixed are the 11 `language/arguments-object/mapped/*` rows plus
+`Object/defineProperty/15.2.3.6-4-{258, 289, 289-1, 293-1, 293-3, 293-4, 295,
+295-1, 307}`.
+
+Guards: `tests/issue-6482-r2-linked-vec-for-in.test.ts` (four cases, including
+the `length`-must-not-enumerate one). Equivalence gate green
+(22 failing / 1720 passing, all 22 in baseline); `npm run -s typecheck` clean.
+
+### Mechanism 2 — FIXED (see the replacement section below; this heading is kept for the diagnosis)
+
+Unchanged diagnosis from round 1 (`Symbol.iterator` crosses the link as the
+number `1` because `src/codegen/property-access-dispatch.ts` ~L3777 brands
+`{i32, symbol:true}` only under `usesNativeSymbolProvider`), and the two-line
+link-role-gated brand still turns a fast fail into a worker HANG.
+
+Round 2 located the realm hole precisely, which round 1 had only characterised:
+the runner **does** build a per-row `vm.createContext` realm, but
+`src/runtime.ts`'s `builtin()` resolves through it only when the sandbox was
+registered via `markCoherentBuiltinRealm` — and `tests/test262-runner.ts` calls
+that only when `HOST_INTRINSIC_DEFINE_RE`, a deliberately narrow **source
+regex**, matches a literal `Object.defineProperty(Array.prototype, …)` in the
+test body. These rows' intrinsic mutation happens inside the HARNESS
+(`verifyProperty` → `isConfigurable` → `delete obj[name]`), which the regex
+cannot see, so `__get_builtin("Array")` falls back to `(globalThis as any).Array`
+— the worker's own realm. Filed as **#6495** with the three candidate fixes and
+the measurement each needs. #6482 mechanism 2 is blocked on it.
+
+### Exact residual after round 2
+
+Of the 46 linked non-passes, **8 also fail in the honest lane** and are
+therefore NOT disagreements — they are unimplemented globals
+(`DisposableStack`, `AsyncDisposableStack`, `SuppressedError`), identical
+message in both lanes. The real honest-pass/linked-fail residual is **38**:
+
+| count | message | mechanism |
+| --- | --- | --- |
+| 30 | `N should be an own property` | mechanism 2 — symbol key, **blocked on #6495** |
+| 7 | `0 descriptor should be enumerable/writable/configurable` | vec `[[DefineOwnProperty]]` element defaults, below |
+| 1 | `foo descriptor value should be abc` | not investigated |
+
+(The 31st `should be an own property` row,
+`built-ins/Iterator/prototype/Symbol.dispose/prop-desc.js`, fails honestly too.)
+
+**The 7 flag rows are a THIRD, separate mechanism — not the linked edge.**
+`_vecDefineOwnProperty` (`src/runtime.ts` ~L8233) deliberately treats an
+in-bounds element with no descriptor entry as a FIRST definition, so omitted
+attributes default **false**:
+`var arr = []; arr[0] = 101; Object.defineProperties(arr, {"0": {}})` leaves
+w/e/c all false, and §10.1.6.3 says an all-absent descriptor must make **no
+change at all**. The in-code comment states why it cannot simply seed
+`_SC_ELEM_DEFAULT`: codegen pre-grows the vec (`maybeEmitVecLengthGrowth`)
+before the runtime call, so `idx < oldLen` cannot distinguish a genuine element
+from a compiler-created hole, and seeding suppressed the non-configurable
+rejection matrix (15.2.3.6-4-252). `arguments` objects are already special-cased
+to seed the default, which is why they work. Rows:
+`Object/defineProperties/15.2.3.7-6-a-{206,208,247,249}`,
+`Object/defineProperty/15.2.3.6-4-{258,260}`. `-208` is anomalous within the
+group — it defines all four attributes explicitly and still loses only
+`configurable`, which points at `verifyProperty`'s own delete/restore cycle
+rather than the define. Deliberately left out of this round: fixing it means
+finding a real hole-vs-element discriminator, with the whole vec-define
+validation matrix as blast radius.
+
+### Mechanism 2 — FIXED after #6495 landed (30 rows)
+
+#6495 (coherent builtin realm for every row) removed the hang, so the two-line
+brand could finally be applied: `src/codegen/property-access-dispatch.ts`'s
+well-known-symbol arm now returns `{ kind: "i32", symbol: true }` when
+`usesNativeSymbolProvider(ctx)` **or** `linkBrandRoleOf(ctx) !== undefined`,
+i.e. when this module is either side of a linked project. Single-module js-host
+compiles take the identical unbranded path they took before (#4626's
+index-shift reason is untouched).
+
+| lane | before (post-mechanism-3) | after | flips |
+| --- | --- | --- | --- |
+| linked, 114-row bucket | 68 / 114 | **98 / 114** | **+30, 0 regressions** |
+| honest, 114-row bucket | 105 / 114 | 105 / 114 | 0 |
+| honest, 818-row for-in/own-property slice | 699 / 818 | 699 / 818 | 0 |
+| honest, 1,170-row realm-sensitive slice | 933 / 1,170 | 933 / 1,170 | 0 |
+
+Guard: `tests/issue-6482-r2-linked-symbol-brand.test.ts`.
+
+### Final residual: 16 of 114, and only 8 are disagreements
+
+| count | message | status |
+| --- | --- | --- |
+| 8 | `Cannot convert undefined or null to object` (6) and `typeof descriptor.get is function` (2) | **NOT disagreements** — identical failure in the honest lane. Unimplemented globals: `DisposableStack`, `AsyncDisposableStack`, `SuppressedError`. |
+| 7 | `0 descriptor should be enumerable/writable/configurable` | vec `[[DefineOwnProperty]]` element defaults — a THIRD mechanism, described above. `Object/defineProperties/15.2.3.7-6-a-{206,208,247,249}`, `Object/defineProperty/15.2.3.6-4-{258,260}` |
+| 1 | `foo descriptor value should be abc` (`Object/defineProperty/15.2.3.6-4-60.js`) | not investigated |
+
+So the honest-pass/linked-fail residual is **8 rows**, down from 114 at the
+start of round 1 and 70 at the start of round 2.

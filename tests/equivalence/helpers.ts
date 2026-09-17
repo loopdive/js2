@@ -65,6 +65,20 @@ export function buildImports(result: CompileResult): WebAssembly.Imports {
     __unbox_boolean: (v: unknown) => (v ? 1 : 0),
     __box_number: (v: number) => v,
     __box_boolean: (v: number) => Boolean(v),
+    // (#6492 round 6) The host lane's canonical `undefined` producer. Same
+    // one-liner the real provider serves (`createHostUndefinedImport` in
+    // src/runtime/host-async-imports.ts) — a null externref is JS `null`, so a
+    // module that needs the real `undefined` imports this rather than emitting
+    // `ref.null.extern`.
+    //
+    // This table is a hand-rolled stub list, so it drifts from the provider
+    // silently: a module that registers an import the list lacks fails with
+    // `LinkError: … requires a callable`, NOT with a wrong answer. It drifted
+    // here when the coercion engine started registering `__get_undefined` at
+    // the UNDEF-SENTINEL boxing site — legitimately, and the honest and linked
+    // runners both provide it; only this list did not. Keep new host imports
+    // in step with `resolveImport` or the next one fails the same way.
+    __get_undefined: () => undefined,
     // (#1644) bigint boxing: JS-BigInt-integration delivers the i64 as a JS
     // bigint already, so box is identity; __to_bigint is §7.1.13 ToBigInt.
     __box_bigint: (v: bigint) => v,
