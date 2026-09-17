@@ -2795,6 +2795,12 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   argcGlobalIdx: number;
   /**
+   * (#6491) Absolute Wasm global index for the `__host_argc` (mut i32) module
+   * global — the host's one-shot channel for the REAL call-site argument count
+   * of a widened under-applied closure call. -1 = not yet created.
+   */
+  hostArgcGlobalIdx: number;
+  /**
    * (#2933) Canonical VARIADIC builtin value-closure convention, set when a
    * genuinely-variadic builtin static method (`Math.max`/`Math.min`) is
    * reified as a first-class value under `--target standalone`. The closure's

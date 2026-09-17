@@ -22,7 +22,12 @@ import {
   collectTransferredNativeProtoReceivers,
   resolveClosureBaseWrapperTypeIdx,
 } from "./closures/transferred-native-proto.js";
-import { ensureArgcGlobal, ensureCurrentThisGlobal, ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
+import {
+  ensureArgcGlobal,
+  ensureCurrentThisGlobal,
+  ensureExtrasArgvGlobal,
+  ensureHostArgcGlobal,
+} from "./statements/nested-declarations.js";
 import { ensureAnyToExternHelper, isAnyValue, undefinedExternInstrs } from "./any-helpers.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
 import { buildVecFromExternMaterializer } from "./type-coercion.js";
@@ -41,7 +46,7 @@ import {
   PROGRAM_ABI_CALLABLE_ROLE,
   resolveProgramAbiSupportCallableHandle,
 } from "./program-abi-planning.js";
-import { recordClosureArgcDispatcher } from "./compiler-support-abi.js";
+import { recordClosureArgcDispatcher, recordClosureFreeArgcDispatcher } from "./compiler-support-abi.js";
 import { DATA_STRUCT_HOST_BRIDGE_ORDINAL, publishDataStructHostBridge } from "./data-struct-host-bridge.js";
 import { definedFuncAt, definedFuncHandleOf } from "./func-space.js";
 import {
@@ -708,6 +713,9 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   // arity + 2 is the unused `__struct` slot, kept so the local layout and
   // funcLocal stay stable after #1712 removed the representative cast.
   const funcLocal = arity + 3;
+  // (#6491) `__fallback_args` occupies arity + 4; the host-argc scratch is
+  // appended AFTER it so every existing local index is unchanged.
+  const hostArgcLocal = arity + 5;
 
   let baseWrapperIdx: number | undefined;
   const seenFuncTypeIdx = new Set<number>();
@@ -815,6 +823,7 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   // also returns the vec struct typeIdx whose `data` field is an externref
   // array (the same shape used by emitArgumentsVecBody on the receive side).
   const argcGlobalIdx = ensureArgcGlobal(ctx);
+  const hostArgcGlobalIdx = ensureHostArgcGlobal(ctx);
   const { globalIdx: extrasArgvGlobalIdx, vecTypeIdx: extrasVecTypeIdx } = ensureExtrasArgvGlobal(ctx);
   const extrasArrTypeIdx = getArrTypeIdxFromVec(ctx, extrasVecTypeIdx);
 
@@ -939,8 +948,39 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
     // closure called via `__call_fn_3` reported `arguments.length === 6`), which
     // broke bound-function over-arity forwarding (the bound `[[Call]]` prepends
     // partial args, so the target sees more args than its declared formals).
+    //
+    // (#6491) …unless the HOST told us the real count. The bridge widens an
+    // under-applied call to the closure's declared arity so this dispatcher can
+    // match it at all (`__call_fn_N` matches only arity-N closures), which makes
+    // `closureArity` the wrong answer for `arguments.length` — a
+    // `verifyProperty()` called with 0 arguments must still see
+    // `arguments.length === 0`. `__host_argc` carries that count, is written by
+    // exactly one producer (the argc wrapper below) and is consumed and cleared
+    // here, so a module the host never seeds keeps the historical answer.
+    // Clamped to formals, the convention `emitArgumentsVecBody` shares.
     const setupInstrs: Instr[] = [
-      { op: "i32.const", value: entry.closureArity },
+      { op: "global.get", index: hostArgcGlobalIdx },
+      { op: "i32.const", value: -1 },
+      { op: "global.set", index: hostArgcGlobalIdx },
+      { op: "local.tee", index: hostArgcLocal },
+      { op: "i32.const", value: 0 },
+      { op: "i32.ge_s" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: hostArgcLocal },
+          { op: "i32.const", value: entry.closureArity },
+          { op: "i32.lt_s" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [{ op: "local.get", index: hostArgcLocal }],
+            else: [{ op: "i32.const", value: entry.closureArity }],
+          },
+        ],
+        else: [{ op: "i32.const", value: entry.closureArity }],
+      },
       { op: "global.set", index: argcGlobalIdx },
     ];
     if (arity > entry.closureArity) {
@@ -1003,8 +1043,40 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
           { op: "local.get", index: funcLocal },
           { op: "ref.test", typeIdx: entry.funcTypeIdx },
         ];
+    // (#6491) A widened call pads the missing positions with the host's
+    // `undefined`. That is only representable for a formal whose Wasm type can
+    // HOLD it: an `externref`, a nullable ref (the `__extern_is_undefined`
+    // branch above turns it into `ref.null`), or an unconverted param. A
+    // NON-nullable ref formal has no such value, so casting the pad traps —
+    // `built-ins/Array/prototype/sort/comparefn-resizable-buffer.js` turned a
+    // thrown TypeError into an uncatchable `illegal cast` that way. Such an arm
+    // simply does not match an under-applied call: fall through to the next arm
+    // / the fallback, which is exactly what happened before the host learned to
+    // widen.
+    const padSafe = (padParamType: ValType | undefined): boolean =>
+      padParamType === undefined || padParamType.kind === "externref" || padParamType.kind === "ref_null";
+    let requiredArgs = 0;
+    for (let i = 0; i < entry.closureArity; i++) {
+      const padParamType =
+        funcTypeDef?.kind === "func" && funcTypeDef.params.length >= i + 2 ? funcTypeDef.params[i + 1] : undefined;
+      if (!padSafe(padParamType)) requiredArgs = i + 1;
+    }
+    const argcAdmits: Instr[] =
+      requiredArgs === 0
+        ? []
+        : [
+            { op: "global.get", index: hostArgcGlobalIdx },
+            { op: "i32.const", value: 0 },
+            { op: "i32.lt_s" },
+            { op: "global.get", index: hostArgcGlobalIdx },
+            { op: "i32.const", value: requiredArgs },
+            { op: "i32.ge_s" },
+            { op: "i32.or" },
+            { op: "i32.and" },
+          ];
     funcrefDispatch = [
       ...entryMatches,
+      ...argcAdmits,
       {
         op: "if",
         blockType: { kind: "val", type: { kind: "externref" } },
@@ -1024,7 +1096,7 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   body.push(...buildFuncrefExtraction(ctx, dispatchEntries, anyLocal, funcLocal));
   body.push(...funcrefDispatch);
 
-  publishClosureHostBridge(
+  const callFnFuncIdx = publishClosureHostBridge(
     ctx,
     {
       name: exportName,
@@ -1034,12 +1106,72 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
         { name: "__struct", type: { kind: "ref_null", typeIdx: bwIdx } },
         { name: "__funcref", type: { kind: "funcref" } },
         { name: "__fallback_args", type: { kind: "externref" } },
+        // (#6491) host-seeded call-site argc, read once per dispatch.
+        { name: "__host_argc", type: { kind: "i32" } },
       ],
       body,
       exported: true,
     } as WasmFunction,
     directClosureHostBridgeOrdinal(arity),
   );
+  emitClosureCallArgcWrapper(ctx, arity, callFnFuncIdx, hostArgcGlobalIdx);
+}
+
+/**
+ * (#6491) Emit `__\0js2_call_fn_argc_<arity>(argc, closure, …args)`: the
+ * free-function twin of `__\0js2_call_fn_method_argc_<arity>`.
+ *
+ * The host bridge widens an UNDER-applied call to the closure's declared arity
+ * so `__call_fn_<arity>` — which matches only arity-`arity` closures — can
+ * select it at all. Without this wrapper the callee's `arguments.length` would
+ * then report the declared arity instead of the real call-site count, which is
+ * exactly what `test/harness/verifyProperty-arguments.js` asserts against
+ * (`verifyProperty()` with 0 arguments must still throw).
+ *
+ * One host→Wasm call seeds `__host_argc`, invokes the ordinary dispatcher, and
+ * clears the protocol slot before returning, so an exceptional exit cannot
+ * leave a stale count behind for the next call. A NUL-containing export name
+ * cannot collide with a source-level JavaScript identifier.
+ */
+function emitClosureCallArgcWrapper(
+  ctx: CodegenContext,
+  arity: number,
+  callFnFuncIdx: number,
+  hostArgcGlobalIdx: number,
+): void {
+  const argcExportName = `__\0js2_call_fn_argc_${arity}`;
+  const argcParams: ValType[] = [{ kind: "i32" }];
+  for (let i = 0; i < arity + 1; i++) argcParams.push({ kind: "externref" });
+  const argcTypeIdx = addFuncType(ctx, argcParams, [{ kind: "externref" }], `$${argcExportName}_type`);
+  const argcFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  const resultLocal = arity + 2;
+  const argcBody: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "global.set", index: hostArgcGlobalIdx },
+  ];
+  for (let i = 0; i < arity + 1; i++) {
+    argcBody.push({ op: "local.get", index: i + 1 });
+  }
+  argcBody.push(
+    { op: "call", funcIdx: callFnFuncIdx },
+    { op: "local.set", index: resultLocal },
+    { op: "i32.const", value: -1 },
+    { op: "global.set", index: hostArgcGlobalIdx },
+    { op: "local.get", index: resultLocal },
+  );
+  const argcFunc = {
+    name: argcExportName,
+    typeIdx: argcTypeIdx,
+    locals: [{ name: "__result", type: { kind: "externref" } }],
+    body: argcBody,
+    exported: true,
+  } as WasmFunction;
+  ctx.mod.functions.push(argcFunc);
+  recordClosureFreeArgcDispatcher(ctx, arity, argcFunc);
+  ctx.mod.exports.push({
+    name: argcExportName,
+    desc: { kind: "func", index: argcFuncIdx },
+  });
 }
 
 /**
@@ -1582,8 +1714,59 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
           { op: "local.get", index: funcLocal },
           { op: "ref.test", typeIdx: entry.funcTypeIdx },
         ];
+    // (#6491) Same pad-safety gate as the free dispatcher, on the METHOD arm's
+    // own channel. This arm has widened an under-applied call since #2664, and
+    // has always had the same hole: the host's `undefined` pad cannot be cast
+    // to a NON-nullable ref formal, so the dispatch traps instead of declining.
+    // An arm that cannot represent the pad does not match; falling through
+    // reproduces the pre-widening outcome for that call.
+    let methodRequiredArgs = 0;
+    // A NON-nullable ref formal also cannot hold a REAL argument of the wrong
+    // shape, and the arm casts it unconditionally. `ref.test` is exactly the
+    // predicate `ref.cast` succeeds under, so testing the value first can never
+    // turn a working call into a declined one — it only replaces a TRAP with
+    // the same not-matched fall-through an unmatched arm already takes.
+    // (#6491: reached once an under-applied call stopped being a silent no-op,
+    // in `built-ins/Array/prototype/sort/comparefn-resizable-buffer.js`.)
+    const methodValueAdmits: Instr[] = [];
+    for (let i = 0; i < entry.closureArity; i++) {
+      const padParamType =
+        funcTypeDef?.kind === "func" && funcTypeDef.params.length >= i + 2 ? funcTypeDef.params[i + 1] : undefined;
+      const padIsSafe =
+        padParamType === undefined || padParamType.kind === "externref" || padParamType.kind === "ref_null";
+      if (!padIsSafe) methodRequiredArgs = i + 1;
+      // Mirror the conversion EXACTLY, or the gate declines an arm the cast
+      // would have accepted: the ref path runs only under
+      // `needsExternToAnyForClosureParam`, and the vec-materializer route
+      // (#4536) does its own `ref.test` internally and accepts host arrays.
+      if (padParamType?.kind !== "ref") continue;
+      if (!needsExternToAnyForClosureParam(padParamType)) continue;
+      if (buildVecFromExternMaterializer(ctx, padParamType.typeIdx) !== undefined) continue;
+      methodValueAdmits.push(
+        { op: "local.get", index: i + 2 },
+        ...(unwrapForWasmIdx === undefined ? [] : [{ op: "call", funcIdx: unwrapForWasmIdx } as Instr]),
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: padParamType.typeIdx },
+        { op: "i32.and" },
+      );
+    }
+    const methodArgcAdmits: Instr[] =
+      methodRequiredArgs === 0
+        ? []
+        : [
+            { op: "global.get", index: argcGlobalIdx },
+            { op: "i32.const", value: 0 },
+            { op: "i32.lt_s" },
+            { op: "global.get", index: argcGlobalIdx },
+            { op: "i32.const", value: methodRequiredArgs },
+            { op: "i32.ge_s" },
+            { op: "i32.or" },
+            { op: "i32.and" },
+          ];
     funcrefDispatch = [
       ...entryMatches,
+      ...methodArgcAdmits,
+      ...methodValueAdmits,
       {
         op: "if",
         blockType: { kind: "val", type: { kind: "externref" } },
