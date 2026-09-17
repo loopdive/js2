@@ -161,19 +161,52 @@ describe("#6484 S3 — TypedArray [Symbol.iterator]() steps under standalone", (
     expect(out.dataViewThrowsTypeError).toBe(1); // a standalone `boolean` export is an i32
   });
 
-  it("a plain-array receiver keeps the snapshot-vec carrier (S1/S2's to migrate)", async () => {
-    // Deliberate scope pin, NOT an endorsement: `[1,2][Symbol.iterator]().next()`
-    // still answers null because the plain-array arm was left byte-identical so
-    // the #3013 %ArrayIteratorPrototype% identity rows could not move. If a later
-    // slice gives the plain array a real cursor, this expectation FLIPS — update
-    // it there rather than here.
+  it("a plain-array receiver now carries a LIVE cursor (S1/S2's carrier migration)", async () => {
+    // FLIPPED, exactly as this pin's own earlier text instructed. It used to
+    // assert `[3,1,2][Symbol.iterator]().next()` was NULLISH — the snapshot-`$Vec`
+    // carrier had no cursor — and it pinned that only to fence S3's scope: "If a
+    // later slice gives the plain array a real cursor, this expectation FLIPS —
+    // update it there rather than here." S1+S2 IS that slice: it made the carrier
+    // migration general, so every array-typed `@@iterator` receiver answers a
+    // live `$__IterRec`.
+    //
+    // The replacement is STRICTLY STRONGER than the nullish pin it replaces. The
+    // old assertion is still recoverable — `firstIsNullish` is its exact
+    // inverse — and a nullish `next()` cannot satisfy any other line here.
+    // Stepping the whole sequence and asserting cursor INDEPENDENCE closes the
+    // two ways a nominally "live" cursor can still be broken: one that restarts
+    // from zero on every `next()`, and one shared across sites.
     const out = await runStandalone(`
       var arr = [3, 1, 2];
       var it = arr[Symbol.iterator]();
       var res: any = it.next();
-      export function plainNextIsNullish(): boolean { return res === null || res === undefined; }
+      export function firstIsNullish(): boolean { return res === null || res === undefined; }
+      export function firstValue(): number { return res.value as number; }
+      export function firstNotDone(): boolean { return res.done === false; }
+      export function stepsThenExhausts(): number {
+        const i: any = arr[Symbol.iterator]();
+        let r = 0;
+        if ((i.next().value as number) === 3) r += 1;
+        if ((i.next().value as number) === 1) r += 2;
+        if ((i.next().value as number) === 2) r += 4;
+        const end: any = i.next();
+        if (end.value === undefined && end.done === true) r += 8;
+        return r;
+      }
+      export function independentCursors(): number {
+        // Two cursors over ONE array. A cursor shared between the sites would
+        // make b.next() answer 1, and a restarting one would never let a reach 1.
+        const a: any = arr[Symbol.iterator]();
+        const b: any = arr[Symbol.iterator]();
+        a.next();
+        return (b.next().value as number) === 3 && (a.next().value as number) === 1 ? 1 : 0;
+      }
     `);
-    expect(out.plainNextIsNullish).toBe(1); // a standalone `boolean` export is an i32
+    expect(out.firstIsNullish).toBe(0); // the OLD assertion, now inverted
+    expect(out.firstValue).toBe(3);
+    expect(out.firstNotDone).toBe(1); // a standalone `boolean` export is an i32
+    expect(out.stepsThenExhausts).toBe(15);
+    expect(out.independentCursors).toBe(1);
   });
 
   // ── review round 1 ──────────────────────────────────────────────────────────
@@ -215,7 +248,7 @@ describe("#6484 S3 — TypedArray [Symbol.iterator]() steps under standalone", (
     expect(out.twice).toBe(2);
   });
 
-  it("Map/Set iterator prototypes do NOT collapse onto %ArrayIteratorPrototype%", async () => {
+  it("Map/Set/String/Array iterator prototypes are four DISTINCT non-null singletons", async () => {
     // The runtime arm is `kind == ITER_KIND_VEC` only, so a Map/Set record
     // (ITER_KIND_MAPSET) must not be dragged onto `%ArrayIteratorPrototype%`.
     // Asserted INSIDE a module that also iterates a TypedArray — the only module
@@ -233,12 +266,25 @@ describe("#6484 S3 — TypedArray [Symbol.iterator]() steps under standalone", (
     // mechanism answers and therefore which regression is reachable:
     //
     //   Shape A — Map/Set queried ONLY through `any`. The iterator stays a
-    //     `$__IterRec`, so `__getPrototypeOf` — and the new arm prepended to it —
-    //     is what answers. The answer today is `null`, and pinning it AT `null`
-    //     is what catches the collapse: widening the arm past
-    //     `kind == ITER_KIND_VEC` turns it into `%ArrayIteratorPrototype%` and
-    //     this assertion fails. VERIFIED by doing exactly that (forcing the kind
-    //     test to 1) and watching `dynIsNull` go 3 → 0.
+    //     `$__IterRec`, so the RUNTIME route (`__iter_rec_proto`) is what
+    //     answers.
+    //
+    //     UPDATED for S1 (this is the line the round-2 text predicted would
+    //     flip: "when S1 gives these a real singleton this line SHOULD fail and
+    //     be updated to match"). Shape A used to assert `dynIsNull === 3`,
+    //     i.e. BOTH prototypes are `null` — which was the honest reading of the
+    //     pre-S1 gap, but is a pin on a MISSING feature. S1's `family` field
+    //     gives every record its real intrinsic, so the answer is now four
+    //     genuine objects and the assertion below is object-vs-object.
+    //
+    //     It is STRONGER, not weaker, in the one way that matters here: two
+    //     nulls compare EQUAL, so a distinctness bitmask alone would score full
+    //     marks on a build that answered `null` for everything. Every identity
+    //     bit is therefore PAIRED with a non-null bit for both of its operands,
+    //     and the mask is only complete when all four families are present AND
+    //     mutually distinct. Collapsing any pair — the `kind == ITER_KIND_VEC`
+    //     widening the old comment described, or a regression to `null` — clears
+    //     bits and fails.
     //
     //   Shape B — the SAME question with the static type left visible:
     //     `Object.getPrototypeOf(m.keys())` directly, whose argument still has
@@ -254,32 +300,50 @@ describe("#6484 S3 — TypedArray [Symbol.iterator]() steps under standalone", (
       const ta = new Int8Array([1, 2]);
       const m = new Map<number, number>(); m.set(1, 2);
       const s = new Set<number>(); s.add(3);
+      const str = "ab";
       export function tipIsAip(): number {
         const aip: any = Object.getPrototypeOf([].values());
         const tip: any = Object.getPrototypeOf(ta[Symbol.iterator]());
         return tip === aip && aip !== null ? 1 : 0;
       }
-      export function dynIsNull(): number {
+      export function dynFourDistinct(): number {
         // The any-typed LOCAL is load-bearing. Passing m.keys() straight into
         // Object.getPrototypeOf keeps its static MapIterator type, which fires
         // the #3013 COMPILE-TIME arm and never reaches the runtime one. Binding
         // it to an any local first erases the type -- which is what every
         // test262 program does, and the whole subject of this issue.
+        const aip: any = Object.getPrototypeOf([].values());
         const mi: any = m.keys();
         const si: any = s.values();
+        const sti: any = str[Symbol.iterator]();
         const pm: any = Object.getPrototypeOf(mi);
         const ps: any = Object.getPrototypeOf(si);
+        const pst: any = Object.getPrototypeOf(sti);
         let r = 0;
-        if (pm === null) r += 1;
-        if (ps === null) r += 2;
+        // NON-NULLNESS FIRST. Every distinctness bit below is paired with these,
+        // because two nulls compare EQUAL: a build that answered null for all
+        // four would score every "!==" bit if they stood alone.
+        if (aip !== null) r += 1;
+        if (pm !== null) r += 2;
+        if (ps !== null) r += 4;
+        if (pst !== null) r += 8;
+        // ...THEN distinctness: four families, four different singletons. The
+        // ITER_KIND_VEC widening collapses Map/Set onto the AIP (clears 16/32);
+        // a family field that ignored STRING collapses it too (clears 64).
+        if (pm !== aip) r += 16;
+        if (ps !== aip) r += 32;
+        if (pst !== aip) r += 64;
+        if (pm !== ps) r += 128;
+        if (pm !== pst) r += 256;
+        if (ps !== pst) r += 512;
         return r;
       }
     `);
     expect(shapeA.tipIsAip).toBe(1);
-    // Both null: the arm did NOT drag the MAPSET records onto the AIP. This is
-    // the pre-existing S1 gap, not "their own singleton" -- when S1 gives these a
-    // real singleton this line SHOULD fail and be updated to match.
-    expect(shapeA.dynIsNull).toBe(3);
+    // All ten bits. Four real objects (Array / Map / Set / String iterator
+    // prototypes), pairwise distinct, reached through an `any` local -- i.e. via
+    // the RUNTIME route, which is the one an ordinary test262 program takes.
+    expect(shapeA.dynFourDistinct).toBe(1023);
 
     const shapeB = await runStandalone(`
       const ta = new Int8Array([1, 2]);
@@ -361,11 +425,24 @@ describe("#6484 S3 — TypedArray [Symbol.iterator]() steps under standalone", (
 
   it("the class-tag arm does not disturb neighbouring receivers", async () => {
     // The arm is spliced into a SHARED classifier body, so the controls matter
-    // more than the fix. Each of these is byte-for-byte the base answer,
-    // measured on 66405a1244: a plain-array iterator is still a snapshot vec
-    // ("[object Array]"), an ordinary object and an array are unchanged, and a
-    // Map/Set record still REFUSES exactly as it does on base (the arm is
-    // `kind == ITER_KIND_VEC` only).
+    // more than the fix: a NON-iterator receiver must keep its exact base answer.
+    //
+    // UPDATED for the S1+S2 merge and the family-driven arm that replaces S3's
+    // `kind == ITER_KIND_VEC` one. Two lines here pinned base answers that base
+    // only gave because the receiver was the WRONG OBJECT:
+    //
+    //   * a plain-array iterator read "[object Array]" on base because it WAS a
+    //     snapshot `$Vec` answering for itself. S1+S2 makes it a real
+    //     `$__IterRec`, and §23.1.3.36 makes `Array.prototype[@@iterator]` be
+    //     `.values` — an Array Iterator — so the tag is "[object Array Iterator]".
+    //     "[object Array]" would also contradict the `%ArrayIteratorPrototype%`
+    //     this same module hands out as that object's [[Prototype]].
+    //   * a Map iterator REFUSED (threw) on base. A throw where §20.1.3.6
+    //     specifies a string is a defect, not a contract; S1's `family` field
+    //     supplies "[object Map Iterator]" and the refusal is closed.
+    //
+    // The genuine neighbours — a plain object, a plain array — are asserted
+    // unchanged, and are what would catch the arm over-reaching.
     const out = await runStandalone(`
       const ta = new Int8Array([1, 2]);
       const arr = [1, 2, 3];
@@ -378,7 +455,7 @@ describe("#6484 S3 — TypedArray [Symbol.iterator]() steps under standalone", (
       export function plainArrayIteratorTag(): number {
         const it: any = arr[Symbol.iterator]();
         const s: any = Object.prototype.toString.call(it);
-        return s === "[object Array]" ? 1 : 0;
+        return s === "[object Array Iterator]" ? 1 : 0;
       }
       export function plainObjectTag(): number {
         const o: any = { a: 1 };
@@ -390,18 +467,29 @@ describe("#6484 S3 — TypedArray [Symbol.iterator]() steps under standalone", (
         const s: any = Object.prototype.toString.call(a);
         return s === "[object Array]" ? 1 : 0;
       }
-      export function mapIteratorStillRefuses(): number {
-        // ITER_KIND_MAPSET is outside the arm, so this keeps refusing as on base.
+      export function mapIteratorTag(): number {
+        // Was mapIteratorStillRefuses, pinning base's THROW. The family-driven
+        // arm answers instead — and answers Map, not Array, which is the bit
+        // that would catch a collapse onto %ArrayIteratorPrototype%'s tag.
         const it: any = m.keys();
-        try { const s: any = Object.prototype.toString.call(it); return (s as string).length > 0 ? 0 : 0; }
-        catch (e) { return 1; }
+        const s: any = Object.prototype.toString.call(it);
+        return s === "[object Map Iterator]" ? 1 : 0;
+      }
+      export function neitherIteratorTagIsPlain(): number {
+        // Cross-check: neither iterator may fall back to a non-iterator tag.
+        const ai: any = arr[Symbol.iterator]();
+        const mi: any = m.keys();
+        const sa: any = Object.prototype.toString.call(ai);
+        const sm: any = Object.prototype.toString.call(mi);
+        return sa !== "[object Array]" && sm !== "[object Array]" && sa !== sm ? 1 : 0;
       }
     `);
     expect(out.armed).toBe(1);
     expect(out.plainArrayIteratorTag).toBe(1);
     expect(out.plainObjectTag).toBe(1);
     expect(out.plainArrayTag).toBe(1);
-    expect(out.mapIteratorStillRefuses).toBe(1);
+    expect(out.mapIteratorTag).toBe(1);
+    expect(out.neitherIteratorTagIsPlain).toBe(1);
   });
 
   it("the static receiver also steps under --target wasi", async () => {

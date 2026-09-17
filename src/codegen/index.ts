@@ -577,7 +577,10 @@ import {
   irNativeNumberToStringAvailable,
 } from "./number-format-native.js"; // #4462/#4576
 import { emitJsonQuoteString } from "./json-runtime.js";
-import { fillStandaloneObjectProtoToStringFnctorArms } from "./object-proto-tostring-native.js";
+import {
+  fillStandaloneObjectProtoToStringFnctorArms,
+  fillIterRecObjectProtoToStringArms,
+} from "./object-proto-tostring-native.js";
 import { isSyntheticStructName, exportFunc } from "./emit-helpers.js"; // (#3272) DRY helpers
 import {
   hasExportModifier,
@@ -6780,6 +6783,7 @@ export function generateModule(
     // the late carrier reservation completed. Fill those ref.test arms in the
     // existing classifier/closure bodies without changing function indices.
     fillStandaloneObjectProtoToStringFnctorArms(ctx);
+    fillIterRecObjectProtoToStringArms(ctx);
 
     // Fill the reserve/fill identity probes used by the fully-dynamic
     // `instanceof` substrate after all builtin carrier globals and native
@@ -11587,6 +11591,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
 
     // Same late fnctor-carrier fill on the multi-source finalize path.
     profilePhase("fill-standalone-fnctor-to-string-arms", () => fillStandaloneObjectProtoToStringFnctorArms(ctx));
+    profilePhase("fill-iter-rec-to-string-arms", () => fillIterRecObjectProtoToStringArms(ctx));
 
     // Same reserve/fill identity probes as the single-source pipeline.
     profilePhase("fill-native-dynamic-instanceof", () => fillNativeDynamicInstanceOf(ctx));

@@ -69,6 +69,13 @@ import { BUILTIN_BRAND_TABLE } from "./builtin-brands.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { emitObjectProtoToStringClassifier } from "./object-proto-tostring.js";
+import {
+  ITER_FAMILY_ARRAY,
+  ITER_FAMILY_MAP,
+  ITER_FAMILY_SET,
+  ITER_FAMILY_STRING,
+  ITER_REC_FAMILY_FIELD,
+} from "./iterator-native.js";
 
 /** `ctx.funcMap` key for the minted classifier. */
 export const OBJECT_PROTO_TOSTRING_CLASSIFY_FN = "__opts_classify";
@@ -145,6 +152,146 @@ export function fillStandaloneObjectProtoToStringFnctorArms(ctx: CodegenContext)
         : -1;
     appendMissingArms(objectToString, 1, refusalStart);
   }
+}
+
+/**
+ * (#6484 S3 round 2, re-implemented on the S1+S2 merge) Give a `$__IterRec`
+ * receiver its §20.1.3.6 class tag instead of letting it reach the refusal tail.
+ *
+ * ## The regression this closes
+ *
+ * S1+S2's carrier migration made EVERY array-typed `@@iterator` receiver answer
+ * a live `$__IterRec` instead of a snapshot `$Vec`. The classifier recognises a
+ * snapshot vec (`ref.test $__vec_base` → `[object Array]`) but had no arm for the
+ * record, so control fell through to the refusal tail and a value turned into a
+ * throw. Measured standalone, `Object.prototype.toString.call(<any-typed it>)`:
+ *
+ * | receiver                  | base `66405a1244` | before this fn | here                      |
+ * | ------------------------- | ----------------- | -------------- | ------------------------- |
+ * | `new Int8Array([1,2])[@@iterator]()` | `[object Array]` | **THREW** | `[object Array Iterator]` |
+ * | `[1,2,3][@@iterator]()`   | `[object Array]`  | **THREW**      | `[object Array Iterator]` |
+ * | `"ab"[@@iterator]()`      | THREW             | THREW          | `[object String Iterator]`|
+ * | `m.keys()`                | THREW             | THREW          | `[object Map Iterator]`   |
+ *
+ * The first two rows are the regression (value → throw); the last two were
+ * already refusing on base and are closed here for free by the same field.
+ *
+ * ## Why `family`, not `kind`
+ *
+ * The tag is read off the record's [[Prototype]] intrinsic, and `ITER_KIND_*`
+ * names the CARRIER, not the family: an array iterator and a string iterator are
+ * both `ITER_KIND_VEC`. S1's `family` field is exactly the missing distinction,
+ * so this arm reports `String Iterator` for a string iterator rather than
+ * inheriting the documented kind-VEC residual. `ITER_FAMILY_UNKNOWN` emits no
+ * arm and DECLINES — a record whose family no site stamped (a generator frame, a
+ * user iterator) keeps the answer it has today, so nothing that passes can start
+ * refusing.
+ *
+ * ## Why a FINALIZE splice and not an inline arm
+ *
+ * `$__IterRec` is registered lazily at the first iteration site, which may be
+ * compiled AFTER the classifier body is baked — measured: in a module whose
+ * `Object.prototype.toString` site precedes its iteration,
+ * `ctx.structMap.get("__IterRec")` is `undefined` at classifier-emit time and an
+ * inline arm silently emits nothing. This is the same hazard the
+ * `reserveArgumentsLengthBrand` note above records. Splicing at finalize sees the
+ * final type space.
+ *
+ * ## THREE consumers carry the classifier chain, not two
+ *
+ * The one that actually answers `Object.prototype.toString.call(v)` for an `any`
+ * `v` — the whole test262 surface — is `__object_proto_to_string_runtime`, and in
+ * a module that only uses that spelling the other two are ABSENT. Patching only
+ * the pair {@link fillStandaloneObjectProtoToStringFnctorArms} knows about would
+ * change nothing observable.
+ *
+ * Idempotent per consumer (a body already carrying a `ref.test` on the record's
+ * type is skipped) and fresh `Instr` objects per consumer (#2169b).
+ */
+export function fillIterRecObjectProtoToStringArms(ctx: CodegenContext): void {
+  if (!ctx.nativeStrings) return;
+  // No registration here: a module that never built an iterator record cannot
+  // receive one, and minting the struct purely to emit dead arms would churn the
+  // type index space (the `$__vec_base` discipline in the classifier).
+  const iterRecTypeIdx = ctx.structMap.get("__IterRec");
+  if (iterRecTypeIdx === undefined) return;
+
+  // §20.1.3.6 step 15 reads @@toStringTag off the iterator's prototype
+  // intrinsic; these are those four values. UNKNOWN is deliberately absent.
+  const familyTags: ReadonlyArray<readonly [number, string]> = [
+    [ITER_FAMILY_ARRAY, "[object Array Iterator]"],
+    [ITER_FAMILY_MAP, "[object Map Iterator]"],
+    [ITER_FAMILY_SET, "[object Set Iterator]"],
+    [ITER_FAMILY_STRING, "[object String Iterator]"],
+  ];
+  for (const [, tag] of familyTags) addStringConstantGlobal(ctx, tag);
+
+  // Re-read the field per family rather than allocating a scratch local: these
+  // bodies are already minted, so appending a local would mean recomputing every
+  // index against each consumer's own param count. The classifier's own
+  // `typedArrayKindArms` ladder re-reads the same way.
+  const buildArms = (receiverIndex: number): Instr[] => {
+    const ladder: Instr[] = [];
+    for (const [family, tag] of familyTags) {
+      ladder.push(
+        { op: "local.get", index: receiverIndex },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: iterRecTypeIdx },
+        { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: ITER_REC_FAMILY_FIELD },
+        { op: "i32.const", value: family },
+        { op: "i32.eq" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [...stringConstantExternrefInstrs(ctx, tag), { op: "return" }],
+        },
+      );
+    }
+    return [
+      { op: "local.get", index: receiverIndex },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: iterRecTypeIdx },
+      { op: "if", blockType: { kind: "empty" }, then: ladder },
+    ];
+  };
+
+  const fnByName = (name: string): WasmFunction | undefined =>
+    ctx.mod.functions.find((f) => (f as { name?: string }).name === name) as WasmFunction | undefined;
+
+  /** Index of the terminal refusal/decline, or -1 when the tail is unrecognised. */
+  const tailStart = (fn: WasmFunction): number => {
+    const b = fn.body;
+    const n = b.length;
+    // `__opts_classify` declines with a bare `ref.null extern`.
+    if (b[n - 1]?.op === "ref.null.extern") return n - 1;
+    // The refusing consumers end in `buildThrowJsErrorInstrs`' terminal sequence.
+    if (
+      n >= 4 &&
+      b[n - 1]?.op === "throw" &&
+      b[n - 2]?.op === "call" &&
+      b[n - 3]?.op === "extern.convert_any" &&
+      b[n - 4]?.op === "global.get"
+    ) {
+      return n - 4;
+    }
+    return -1;
+  };
+
+  const splice = (fn: WasmFunction | undefined, receiverIndex: number): void => {
+    if (!fn) return;
+    const already = fn.body.some((instr) => instr.op === "ref.test" && instr.typeIdx === iterRecTypeIdx);
+    if (already) return;
+    const at = tailStart(fn);
+    if (at < 0) return;
+    fn.body.splice(at, 0, ...buildArms(receiverIndex));
+  };
+
+  // Receiver locals differ per ABI: the minted helper's only param IS the
+  // receiver (0); the reflective closure and the direct runtime helper both
+  // carry a leading self/unused param and read local 1.
+  splice(fnByName(OBJECT_PROTO_TOSTRING_CLASSIFY_FN), 0);
+  splice(fnByName("__object_proto_to_string_runtime"), 1);
+  splice(fnByName(`__proto_method_${BUILTIN_BRAND_TABLE.Object}_toString`), 1);
 }
 
 /**

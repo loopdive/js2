@@ -468,3 +468,117 @@ It was the restore, not the code: with the tree fully restored, the wasi test
 passes. Recorded because the same partial-restore mistake is easy to repeat — a
 file-copy A/B must restore EVERY file the branch touches, not only the ones the
 current edit touches.
+
+## Merge-repair round — record (2026-09-17)
+
+Four pins were red on the integration branch after S1+S2 and S3 were merged
+(`4ee3bf8ceb`, `480910ed5e`, `e44b83cd61`). They split two–two, and the split was
+established with probes rather than assumed.
+
+### The split
+
+| # | pin | verdict | evidence |
+| --- | --- | --- | --- |
+| 1 | plain-array receiver keeps the snapshot-vec carrier | **obsolete by design** | `[3,1,2][@@iterator]().next()` → `{value:3,done:false}`; the pin's own text said this expectation FLIPS when a slice gives the plain array a real cursor. S1+S2 is that slice. |
+| 2 | Map/Set iterator prototypes do NOT collapse onto `%ArrayIteratorPrototype%` | **obsolete by design** | the pin asserted BOTH are `null`; they are now four real, pairwise-distinct singletons (bitmask `1023`, all ten bits). The pin's own text said this line SHOULD fail once S1 lands. |
+| 3 | `Object.prototype.toString` on the diverted iterator returns a value | **REAL regression** | value → throw, reproduced below |
+| 4 | the class-tag arm does not disturb neighbouring receivers | **REAL regression** (same defect) + two obsolete control lines | same trap, reached through the PLAIN-array receiver |
+
+### Root cause of the real regression
+
+**S3's round-2 source fix was never committed.** `ccde587fcd` ("snapshot … before
+the container restart", *"not yet re-validated"*) committed the round-2 record
+and its pins but **no `src/` change** — `git log --all -S` for both
+`fillIterRecObjectProtoToStringArm` and `typedArrayIterRecDiverted` returns that
+one commit, and its diff touches only the issue file and the test file. The
+names existed in prose and in assertions, never in the compiler. So this is not
+a mechanism the merge broke; it is a mechanism that was lost, whose pins
+survived.
+
+S1+S2 then **widened the blast radius**. The §20.1.3.6 classifier recognises a
+snapshot vec (`ref.test $__vec_base` → `[object Array]`) but has no arm for
+`$__IterRec`, so the general carrier migration removed the PLAIN array's
+iterator from the classifier too and it reached the refusal tail. Measured
+standalone, `Object.prototype.toString.call(<any-typed iterator>)`:
+
+| receiver | base `66405a1244` | merged branch | here |
+| --- | --- | --- | --- |
+| `new Int8Array([1,2])[@@iterator]()` | `[object Array]` (14) | **THREW** | `[object Array Iterator]` (23) |
+| `[1,2,3][@@iterator]()` | `[object Array]` (14) | **THREW** | `[object Array Iterator]` (23) |
+| `"ab"[@@iterator]()` | THREW | THREW | `[object String Iterator]` (24) |
+| `m.keys()` | THREW | THREW | `[object Map Iterator]` (21) |
+| plain object / plain array | `[object Object]` / `[object Array]` | unchanged | unchanged |
+
+Rows 1–2 are the regression. Rows 3–4 were already refusing on base and close
+here for free, off the same field.
+
+### The fix
+
+`fillIterRecObjectProtoToStringArms` (`object-proto-tostring-native.ts`), a
+finalize splice giving a `$__IterRec` receiver its class tag from **S1's
+`family` field**. Three properties the lost round-2 design did not have:
+
+- **`family`, not `kind`.** `ITER_KIND_*` names the CARRIER — an array iterator
+  and a string iterator are both `ITER_KIND_VEC` — so S3's kind-VEC arm would
+  have had to report `Array Iterator` for a string iterator. That was the
+  documented round-1/round-2 residual, and S1's field deletes it rather than
+  inheriting it. `ITER_FAMILY_UNKNOWN` emits no arm and DECLINES, so a record no
+  site stamped (generator frame, user iterator) keeps today's answer and nothing
+  that passes can start refusing.
+- **No durable flag.** The lost design needed `typedArrayIterRecDiverted`
+  because it was armed from the divert site. Reading the record's own field
+  needs no module-level state at all.
+- **FINALIZE, not inline.** `$__IterRec` is registered lazily at the first
+  iteration site, which may compile AFTER the classifier body is baked —
+  measured: in a module whose `Object.prototype.toString` site precedes its
+  iteration, `ctx.structMap.get("__IterRec")` is `undefined` at classifier-emit
+  time and an inline arm silently emits nothing (`late` THREW → 23 after the
+  splice). Same hazard as the `reserveArgumentsLengthBrand` note in the
+  classifier.
+
+The round-2 record's **three-consumer** warning is preserved and was load-bearing:
+the consumer that answers `Object.prototype.toString.call(v)` for an `any` `v` is
+`__object_proto_to_string_runtime`, and in a module using only that spelling the
+other two are absent — instrumentation confirmed it is the ONLY consumer emitted.
+
+**Scoping, proven not asserted.** An 11-module sha256 corpus, `--target
+standalone`, branch-without-fix vs here: **exactly one module's bytes move** —
+the one that BOTH builds an iterator record AND calls `Object.prototype.toString`.
+Plain-object toString, array iteration, TypedArray iteration, Map/Set, string
+iteration, generators, ArrayBuffer/DataView, a no-iterator module, the
+toString matrix and a class prototype are all byte-identical.
+
+### Pin updates — stronger, not relaxed
+
+Two nulls compare EQUAL, so every identity assertion is paired with a
+non-nullness cross-check that a fully-broken build fails.
+
+- **Pin 1** now asserts a LIVE cursor: the old assertion survives inverted
+  (`firstIsNullish === 0`), plus first value/done, the full 3-step-then-exhaust
+  sequence, and CURSOR INDEPENDENCE across two sites — which rules out the two
+  ways a nominally live cursor is still broken (restarting, or shared).
+- **Pin 2** shape A now asserts **ten** bits: four non-null prototypes (Array,
+  Map, Set, String) *and* all six pairwise distinctions, reached through an
+  `any` local, i.e. the RUNTIME route an ordinary test262 program takes.
+  Discrimination measured: **base `66405a1244` scores 113, here 1023** — the
+  cleared bits are exactly the three null-ness bits and the three
+  null-vs-null pairwise bits.
+- **Pin 4** drops two control lines that pinned base answers base only gave
+  because the receiver was the wrong object (`[object Array]` for a plain-array
+  iterator — a snapshot vec answering for itself; a Map iterator THROWING). Both
+  now assert the spec answer, plus a `neitherIteratorTagIsPlain` cross-check
+  that the two tags are distinct and neither falls back to `[object Array]`.
+  Genuine neighbours (plain object, plain array) are still asserted unchanged.
+
+**Negative control:** collapsing the arm so every family reports
+`[object Array Iterator]` turns pin 4 red (1 failed / 26 passed); restored
+afterwards and the file is byte-identical to the validated fix.
+
+### Not closed here
+
+- S3's `prependIterRecPrototypeArm` (the round-1 kind-VEC → `%ArrayIteratorPrototype%`
+  prepend on `__getPrototypeOf`) is now **redundant**: S1's `__iter_rec_proto`
+  answers the same question per-family and correctly. Measured harmless — in a
+  module that arms the flag AND asks a string iterator's prototype, the string
+  iterator still reports `%StringIteratorPrototype%` (bitmask 63/63), so it is
+  not shadowing. Left in place rather than removed as out-of-scope cleanup.
