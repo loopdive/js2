@@ -106,6 +106,18 @@ export const LINK_BOUNDARY_EXPORTS = Object.freeze({
   // `__object_isExtensible` fell to its non-object terminal (`false`) for a
   // value that IS extensible. Same "ask the owner" shape as `getPrototypeOf`.
   isExtensible: "__js2wasm_link_is_extensible",
+  // (#6625) `Object.getPrototypeOf(<provider-owned CLASS VALUE>)` — a BOOLEAN
+  // "ask the owner", not a value. Unlike `getPrototypeOf`/`isExtensible`
+  // above, the correct answer (`Function.prototype`) must be produced by the
+  // CONSUMER's own read of it: a value handed back from the provider would
+  // carry the PROVIDER's own `%Function.prototype%` singleton, a DIFFERENT
+  // externref from the consumer's, so `=== Function.prototype` in the
+  // consumer's own test would fail by identity even though both sides are
+  // "correct" in isolation (the same reasoning #6609/S22 used for an ordinary
+  // function value, reusing `__is_callable` rather than asking the provider
+  // for the value). This terminal only tells the consumer WHICH answer to
+  // produce locally.
+  isClassObject: "__js2wasm_link_is_class_object",
 } as const);
 
 /** The internal terminal each boundary name wraps, and its signature. */
@@ -145,7 +157,19 @@ const TERMINALS: ReadonlyArray<{ export: string; internal: string; params: ValTy
     params: [EXTERNREF],
     results: [I32],
   },
+  {
+    export: LINK_BOUNDARY_EXPORTS.isClassObject,
+    internal: LINK_BOUNDARY_EXPORTS.isClassObject,
+    params: [EXTERNREF],
+    results: [I32],
+  },
 ];
+
+/** The heap type index `ref.test`/`ref.cast` use for the internal `eq` type —
+ * the SAME magic constant `typeof-natives-finalize.ts`'s `classObjectIdentityArms`
+ * uses, duplicated here rather than imported to avoid a cross-module cycle
+ * through `object-runtime.ts` (this module is itself an input to that one). */
+const EQ_HEAP_TYPE = -19;
 
 /** A module compiled as a linked provider whose consumer is wasm, not JS. */
 function isWasmConsumedStandaloneProvider(ctx: CodegenContext): boolean {
@@ -335,6 +359,14 @@ export function emitStandaloneLinkBoundaryTerminals(ctx: CodegenContext, registe
           ],
     );
   }
+  // (#6625) Reserved with the refusal body ("not one of mine"). Filled at
+  // finalize from `ctx.classObjectGlobals` — the SAME per-class singleton
+  // registry `STANDALONE_CLASS_INSTANCE_PROTO`'s own class-object arm reads —
+  // which is only complete once every class declaration in this module has
+  // been compiled.
+  if (!ctx.funcMap.has(LINK_BOUNDARY_EXPORTS.isClassObject)) {
+    registerNative(LINK_BOUNDARY_EXPORTS.isClassObject, [EXTERNREF], [I32], [], [{ op: "i32.const", value: 0 }]);
+  }
   if (!ctx.funcMap.has(LINK_BOUNDARY_EXPORTS.construct)) {
     registerNative(
       LINK_BOUNDARY_EXPORTS.construct,
@@ -376,6 +408,63 @@ function fillStandaloneLinkBoundaryLateTerminals(ctx: CodegenContext): void {
       { op: "i32.const", value: 1 },
       { op: "i32.shl" },
       { op: "i32.or" },
+    ];
+  }
+
+  // (#6625) The class-object identity ladder: ref.eq against every one of
+  // THIS module's own class-object singletons. Deliberately NOT a `ref.test`
+  // over the struct type — a class object and its instances share one struct
+  // type AND `__tag` (#3976), so only identity tells them apart, exactly the
+  // reasoning `classObjectIdentityArms` (`typeof-natives-finalize.ts`) and the
+  // class-object arm in `standalone-class-instance-proto.ts` already use. A
+  // singleton that has not been materialised yet holds a null global, which
+  // `ref.eq` against a non-null receiver is simply false — the arm degrades to
+  // "not one of mine" rather than a wrong match.
+  //
+  // BASE classes only (no `extends`): a derived class's [[Prototype]] is its
+  // PARENT's class-object value (§15.7.14 step 6), not %Function.prototype% —
+  // matching this predicate for one would make the CONSUMER answer
+  // %Function.prototype%, a NEW wrong answer (worse than today's `null`, which
+  // at least keeps `gPO(D) !== Function.prototype` true by accident). The
+  // parent-aware answer is an unreduced residual (plan/issues/6625-*.md).
+  const isClassObjectIdx = ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.isClassObject);
+  const isClassObjectFn = isClassObjectIdx === undefined ? undefined : definedFuncAt(ctx, isClassObjectIdx);
+  const classObjectGlobalIdxs = [...ctx.classObjectGlobals.entries()]
+    .filter(([className]) => !ctx.classParentMap.has(className))
+    .map(([, globalIdx]) => globalIdx)
+    .sort((a, b) => a - b);
+  if (isClassObjectFn && classObjectGlobalIdxs.length > 0) {
+    const anyLocalIdx = 1 + isClassObjectFn.locals.length;
+    isClassObjectFn.locals.push({ name: "__any", type: { kind: "anyref" } });
+    const arms: Instr[] = [];
+    for (const globalIdx of classObjectGlobalIdxs) {
+      arms.push(
+        { op: "global.get", index: globalIdx },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: anyLocalIdx },
+            { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+            { op: "global.get", index: globalIdx },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+            { op: "ref.eq" },
+            { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
+          ],
+        },
+      );
+    }
+    isClassObjectFn.body = [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "local.set", index: anyLocalIdx },
+      { op: "local.get", index: anyLocalIdx },
+      { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+      { op: "if", blockType: { kind: "empty" }, then: arms },
+      { op: "i32.const", value: 0 },
     ];
   }
 
@@ -558,7 +647,7 @@ export function standaloneLinkBoundaryPeerIndices(ctx: CodegenContext): {
  */
 export function standaloneLinkBoundaryPeerIndex(
   ctx: CodegenContext,
-  key: "apply" | "callableKind" | "construct",
+  key: "apply" | "callableKind" | "construct" | "isClassObject",
 ): number | undefined {
   if (peerNamespaces(ctx).length === 0) return undefined;
   return ctx.funcMap.get(LINK_BOUNDARY_EXPORTS[key]);

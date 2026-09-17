@@ -1857,6 +1857,13 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
   // only class-object singletons.
   registerNative("__is_callable", externrefToI32, [{ op: "i32.const", value: 0 }]);
 
+  // 14b. __is_class_object(externref) -> i32 — (#6625) true only for a
+  // class-object SINGLETON (`class C {}`'s own value, not an instance).
+  // Conservative placeholder; `fillStandaloneTypeofClosureArms` fills the real
+  // body at finalize from the class-object identity ladder plus (across a
+  // linked provider) the wasm→wasm boundary's own identity ladder.
+  registerNative("__is_class_object", externrefToI32, [{ op: "i32.const", value: 0 }]);
+
   // 15. __typeof(externref) -> externref — the MATERIALIZED typeof result.
   //     (#2965) This was a `ref.null.extern` stub ("defer until a wasi caller
   //     needs the typeof RESULT as a string"), which silently broke every

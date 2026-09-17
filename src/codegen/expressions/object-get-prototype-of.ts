@@ -433,9 +433,10 @@ export function tryCompileEs5GetPrototypeOfValue(
 }
 
 /**
- * (#6609) `Object.getPrototypeOf(<value that is callable only at RUNTIME>)` →
- * `%Function.prototype%` (§10.3.1: every built-in function object's
- * [[Prototype]] is %Function.prototype%).
+ * (#6609/#6625) `Object.getPrototypeOf(<value that is CALLABLE, or a CLASS
+ * OBJECT, only at RUNTIME>)` → `%Function.prototype%` (§10.3.1: every
+ * built-in function object's [[Prototype]] is %Function.prototype%; §15.7.14
+ * step 4: an ordinary class with no heritage clause is the same).
  *
  * The arm above answers `Function` whenever the CHECKER can prove the argument
  * callable (`signatureOf`, a function expression, an arrow). A value that
@@ -445,20 +446,35 @@ export function tryCompileEs5GetPrototypeOfValue(
  * receivers. A closure carrier is not one, so the walk answered `null`:
  * `Object.getPrototypeOf(Temporal.PlainDate.compare)` was `null` where the spec
  * (and the other three assertions of test262's `builtin.js` rows, which already
- * pass) say `Function.prototype`.
+ * pass) say `Function.prototype`. The class-VALUE case (`Object.getPrototypeOf
+ * (Temporal.PlainDate)`) has the identical gap and the identical answer, so it
+ * shares this arm rather than a separate one (#6625; originally split, folded
+ * back after measuring that `tryEmitDynamicCallableGetPrototypeOf`'s "return
+ * true whenever the runtime dispatch was emitted" contract means a SECOND,
+ * sequential all-or-nothing arm can never run — the first arm's `if/else`
+ * always wins the caller's early return, regardless of which side of it fires).
  *
- * The predicate is `__is_callable`, NOT `__typeof_function`, and the difference
- * is load-bearing across the link: the boundary's `callable_kind` terminal sets
- * bit 1 ([[Construct]]) for a provider-owned INSTANCE as well, which is why
- * `typeof <provider instance>` currently answers `"function"` (a documented
- * #5383 residual). `__is_callable` masks bit 0 only, so an instance keeps its
- * existing answer instead of acquiring a wrong one. A class object is likewise
- * excluded by design (`isCallableMode.includeClassObjects === false`) — its
- * [[Prototype]] is a separate, unfixed residual, not this arm's business.
+ * TWO predicates, ORed, not one relaxed predicate: `__is_callable`, NOT
+ * `__typeof_function`, and the difference is load-bearing across the link —
+ * the boundary's `callable_kind` terminal sets bit 1 ([[Construct]]) for a
+ * provider-owned INSTANCE as well, which is why `typeof <provider instance>`
+ * currently answers `"function"` (a documented #5383 residual); `__is_callable`
+ * masks bit 0 only, so an instance keeps its existing answer instead of
+ * acquiring a wrong one. `__is_class_object` is a SEPARATE identity ladder
+ * (never a `ref.test`: a class object and its own instances share one struct
+ * type AND `__tag`, #3976, so only identity tells "this IS the class C" apart
+ * from "this is merely an instance of C") — reusing `__is_callable`'s bit
+ * scheme would have required overloading a bit that a provider-owned INSTANCE
+ * already sets (same #5383 residual), silently claiming every foreign
+ * instance too. Across a linked standalone provider each predicate independently
+ * asks the owner (`standalone-link-boundary.ts`) for a BOOLEAN only — the VALUE
+ * this function answers is always produced by compiling `Function.prototype`
+ * HERE, on the caller's own side, so its identity matches the caller's own
+ * later read of it (S22's rule).
  *
- * The answer is produced by compiling the expression `Function.prototype`, the
- * same route the static arm takes, so the two agree by construction and
- * `ref.eq` identity against the test's own right-hand side holds.
+ * Class scope: base classes only (no `extends`). A class with a heritage
+ * clause keeps today's answer (typically `null`) — DOCUMENTED RESIDUAL, not
+ * reduced here; see plan/issues/6625-*.md.
  *
  * Standalone/WASI only; the JS-host lane's `__getPrototypeOf` import already
  * answers correctly and stays byte-identical. The argument is already compiled
@@ -472,6 +488,9 @@ export function tryEmitDynamicCallableGetPrototypeOf(
 ): boolean {
   if (!ctx.standalone && !ctx.wasi) return false;
   if (ensureLateImport(ctx, "__is_callable", [{ kind: "externref" }], [{ kind: "i32" }]) === undefined) return false;
+  if (ensureLateImport(ctx, "__is_class_object", [{ kind: "externref" }], [{ kind: "i32" }]) === undefined) {
+    return false;
+  }
   if (ensureLateImport(ctx, "__getPrototypeOf", [{ kind: "externref" }], [{ kind: "externref" }]) === undefined) {
     return false;
   }
@@ -491,11 +510,12 @@ export function tryEmitDynamicCallableGetPrototypeOf(
   const protoLocal = allocLocal(fctx, `__gpo_fnproto_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: protoLocal });
 
-  // Re-read both indices AFTER the singleton emit: compiling `Function.prototype`
+  // Re-read every index AFTER the singleton emit: compiling `Function.prototype`
   // may itself add a late import, which shifts everything above it.
   const isCallableIdx = ctx.funcMap.get("__is_callable");
+  const isClassObjectIdx = ctx.funcMap.get("__is_class_object");
   const getPrototypeIdx = ctx.funcMap.get("__getPrototypeOf");
-  if (isCallableIdx === undefined || getPrototypeIdx === undefined) {
+  if (isCallableIdx === undefined || isClassObjectIdx === undefined || getPrototypeIdx === undefined) {
     // Degrade to the pre-#6609 answer rather than to a broken call.
     fctx.body.push({ op: "local.get", index: valueLocal });
     return false;
@@ -503,6 +523,9 @@ export function tryEmitDynamicCallableGetPrototypeOf(
   fctx.body.push(
     { op: "local.get", index: valueLocal },
     { op: "call", funcIdx: isCallableIdx },
+    { op: "local.get", index: valueLocal },
+    { op: "call", funcIdx: isClassObjectIdx },
+    { op: "i32.or" },
     {
       op: "if",
       blockType: { kind: "val", type: { kind: "externref" } },

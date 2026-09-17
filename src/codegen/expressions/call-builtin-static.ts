@@ -236,7 +236,8 @@ function emitBuiltinGetPrototypeOfFallback(
   if (argType.kind !== "externref") {
     coerceType(ctx, fctx, argType, { kind: "externref" });
   }
-  // (#6609) A value that is CALLABLE only at runtime answers %Function.prototype%.
+  // (#6609/#6625) A value that is CALLABLE, or a CLASS OBJECT, only at
+  // runtime answers %Function.prototype%.
   if (objectGetPrototypeOf.tryEmitDynamicCallableGetPrototypeOf(ctx, fctx, arg)) {
     return { kind: "externref" };
   }
