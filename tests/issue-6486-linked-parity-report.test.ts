@@ -101,6 +101,76 @@ describe("#6486 linked-lane parity report", () => {
     expect(md).toContain("Linked-lane fallbacks: 1");
   });
 
+  // (#3451 slice 6) The two lanes swapped ROLES, not places. The positional
+  // arguments and every JSON field stay keyed by LANE — otherwise a report from
+  // before the flip and one from after would need different readers — and only
+  // the headings learn which lane is authoritative.
+  it("defaults to the pre-flip roles (honest authoritative, linked audit)", () => {
+    const md = renderMarkdown(buildParityReport(parseJsonl(HONEST).rows, parseJsonl(LINKED).rows));
+    expect(md).toContain("authoritative lane: honest, audit lane: linked");
+    expect(md).toContain("| status | honest (authoritative) | linked (audit) |");
+  });
+
+  it("labels the post-flip roles without moving any lane", () => {
+    const report = buildParityReport(parseJsonl(HONEST).rows, parseJsonl(LINKED).rows, {
+      roles: { authoritative: "linked", audit: "honest" },
+    });
+    const md = renderMarkdown(report);
+    expect(md).toContain("authoritative lane: linked, audit lane: honest");
+    expect(md).toContain("| status | honest (audit) | linked (authoritative) |");
+    expect(md).toContain("pass → fail (honest [audit] pass, linked [authoritative] not)");
+    // Schema is lane-keyed and UNCHANGED: same fields, same direction, same
+    // numbers as the default-role render above.
+    expect(report.status_totals.honest.total).toBe(3);
+    expect(report.status_totals.linked.total).toBe(3);
+    expect(report.pass_to_fail).toEqual([]);
+    expect(report.fail_to_pass).toHaveLength(1);
+  });
+
+  it("CLI: the role flags reach the summary, and a bad pair is a usage error", () => {
+    const dir = mkdtempSync(join(tmpdir(), "linked-parity-roles-"));
+    const honestPath = join(dir, "honest.jsonl");
+    const linkedPath = join(dir, "linked.jsonl");
+    const out = join(dir, "parity.json");
+    const summary = join(dir, "summary.md");
+    writeFileSync(honestPath, HONEST + "\n");
+    writeFileSync(linkedPath, LINKED + "\n");
+    writeFileSync(summary, "");
+    execFileSync(
+      process.execPath,
+      [
+        TOOL,
+        honestPath,
+        linkedPath,
+        "--out",
+        out,
+        "--summary",
+        summary,
+        "--authoritative-label",
+        "linked",
+        "--audit-label",
+        "honest",
+      ],
+      { stdio: "pipe" },
+    );
+    expect(JSON.parse(readFileSync(out, "utf8")).roles).toEqual({ authoritative: "linked", audit: "honest" });
+    expect(readFileSync(summary, "utf8")).toContain("authoritative lane: linked, audit lane: honest");
+
+    // Naming the SAME lane for both roles would silently produce a report whose
+    // headings claim something the data cannot support — refuse, don't render.
+    let status = 0;
+    try {
+      execFileSync(
+        process.execPath,
+        [TOOL, honestPath, linkedPath, "--out", out, "--authoritative-label", "linked", "--audit-label", "linked"],
+        { stdio: "pipe" },
+      );
+    } catch (error) {
+      status = (error as { status?: number }).status ?? 0;
+    }
+    expect(status).toBe(2);
+  });
+
   it("exits 0 on differences and writes the JSON report (it is a measurement, not a gate)", () => {
     const dir = mkdtempSync(join(tmpdir(), "linked-parity-"));
     const honestPath = join(dir, "honest.jsonl");

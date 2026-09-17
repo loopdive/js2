@@ -625,6 +625,62 @@ Fork-head alone and workflow-touching alone both auto-enqueue fine. The
 underlying cause is **not** established; do not act on a mechanism story.
 See #3584 and the follow-up experiment in #3906.
 
+### The authoritative host oracle is the LINKED harness (#3451 slice 6, oracle v14)
+
+Since 2026-09-17 the host (`gc`) cells of `test262-shard` / `test262-shard-mg`
+run with `TEST262_ORACLE_MODE: linked`, so **every published host verdict comes
+from the linked-harness oracle**: the literal upstream harness prefix is
+compiled once per include-set into a reusable provider module and each test body
+is compiled and statically linked against it, instead of re-compiling the whole
+assembly per row (2.1× faster shard median). Rows are stamped `oracle_lane:
+linked-harness` (or `linked-harness-fallback` when a body could not be linked
+and the honest assembly scored it). `TEST262_RESULT_PREFIX` is unchanged, so
+merge-report, the regression gate, `promote-baseline`, the edition ratchet and
+Pages are wired exactly as before.
+
+- **The honest whole-assembly lane is retained as the scheduled AUDIT lane** —
+  job `test262-honest-audit` (+ `merge honest-audit evidence`), nightly cron or
+  `workflow_dispatch` with `honest_audit=true`. It is never required, never
+  reachable from `merge_group`, and has no `needs:` path into any required check
+  or into `promote-baseline`. Its output is the parity report
+  (`scripts/test262-linked-parity.mjs`), which names which lane is authoritative
+  and which is the audit.
+- **Standalone / linear / wasi are untouched.** The linked oracle is host-only by
+  construction (`ORACLE_LANE === "linked-harness"` requires `IS_HOST_LANE`), so
+  the standalone floor (#1897), the high-water mark (#2097) and the per-edition
+  ratchet (#5314, standalone-only) score the same rows they always did.
+- **Measured before flipping**, five full-corpus two-lane runs (#6486 P3…P3e).
+  The flip is declared on P3e (run 35178155322): 98.15 % verdict agreement,
+  422 pass→fail and 365 fail→pass, **net −57** on the published host number,
+  no uncatchable-trap bucket. The 422 are declared as a #3303
+  `regressions-allow` ceiling in
+  `plan/issues/3451-linked-harness-wasm-separate-compilation.md`, readable only in
+  rebase mode, and still a hard failure if reality exceeds them.
+- **Oracle version 14** is what makes the first post-flip run on `main` a
+  forward re-baseline instead of a cross-lane refusal; `promote-baseline` then
+  re-seeds `loopdive/js2wasm-baselines` at v14 with `oracle_lane:
+  linked-harness`, and every run after that is an ordinary same-lane diff.
+  `scripts/diff-test262.ts` no longer refuses the linked lane unconditionally;
+  it applies the ordinary cross-lane rule (same lane compares; `honest ↔
+  linked-harness` needs a forward bump or `ORACLE_REBASE=1`).
+
+**Local runs stay HONEST.** `scripts/run-test262-vitest.sh` deliberately does
+not set `TEST262_ORACLE_MODE`, so `pnpm run test:262` measures the audit lane.
+To reproduce a CI verdict locally:
+
+```bash
+TEST262_ORACLE_MODE=linked pnpm run test:262        # host lane only; standalone ignores it
+```
+
+Two consequences worth knowing. A local honest verdict that disagrees with CI is
+expected on ~1.85 % of rows and is not automatically a bug — check the parity
+report's buckets (#6492 / #6491 / #6482) before filing. And
+`scripts/validate-test262-baseline.ts` (`pnpm run test:262:validate-baseline`)
+still re-runs sampled rows through the **in-process honest** lane, which has no
+linked mode, so after the flip it will report the flip rows as drift; it is a
+manual tool, not a required check, and closing that gap needs the in-process
+lane to learn the linked oracle.
+
 ### Both lanes are gated — host AND standalone (#1897)
 
 The 57-shard matrix runs **two** test262 targets per chunk: `js-host` (the

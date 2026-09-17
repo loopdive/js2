@@ -29,6 +29,22 @@
 //   SAMPLE_SIZE=50 FAIL_SAMPLE_SIZE=25 SEED=12345 npx tsx scripts/validate-test262-baseline.ts
 //   PR_NUMBER=109 npx tsx scripts/validate-test262-baseline.ts       # CI mode
 //
+// (#3451 slice 6, 2026-09-17) KNOWN GAP — this validator is HONEST-ONLY. The
+// published HOST baseline is now produced by the LINKED-harness oracle
+// (`TEST262_ORACLE_MODE=linked`, oracle v14), but that oracle lives in the
+// sharded worker path (tests/test262-shared.ts + scripts/test262-worker.mjs);
+// the in-process `runTest262File` lane this script samples through has no
+// linked mode to switch on. So a host `pass` row that only passes linked will
+// be reported here as drift. Measured scale before the flip (#6486 P3e, run
+// 35178155322): 422 of 48,735 rows pass honest and not linked, 365 the other
+// way — i.e. ~1.6 % of a 50-row sample in expectation. Do NOT "fix" this by
+// exporting the flag: it would be a no-op on this lane and would make the
+// report claim a comparison it did not perform. The real fix is teaching the
+// in-process lane the linked oracle; until then treat a lone host-lane
+// mismatch as suspect, and re-check it against the parity report before
+// concluding the baseline rotted. The STANDALONE half is unaffected — the
+// linked oracle is host-only.
+//
 // Exit codes:
 //   0 — every sampled row matches its baseline status; baselines are honest
 //   1 — at least one sampled row diverged (pass→non-pass, or fail→pass); drift suspected
