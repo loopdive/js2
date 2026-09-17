@@ -134,7 +134,7 @@ interruption; see "What did not get measured" below.
 - `PlainDate` (the one family with time to run to completion, both this
   slice's fix and a cross-reference against S37's own cited base): **fix
   112/120 pass** vs **S37's own base measurement, same commit, 111/120**
-  (attributed to S37 — `plan/issues/6624-*.md` §5 — not re-measured by this
+  (attributed to S37 — `plan/issues/6624-standalone-link-boundary-is-extensible.md` §5 — not re-measured by this
   slice). `+1`, exactly `PlainDate/builtin.js` — the one file this family's
   first 120 contains that the corpus-wide run (above) independently proved
   moves. No other row in the 120 changed sign either way (checked file-by-file
