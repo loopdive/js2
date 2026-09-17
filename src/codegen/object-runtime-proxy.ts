@@ -2517,6 +2517,41 @@ export function fillProxyDispatch(ctx: CodegenContext): void {
     if (driverIdx === undefined) return;
     const driverFn = definedFuncAt(ctx, driverIdx);
     if (!driverFn) return;
+    // (#5383 S41 / #6628) A trap is read via GetMethod(handler, trapName) at
+    // ProxyCreate/operation time and is, in every reachable case here, a
+    // closure THIS module's own source compiled — never a value that crossed
+    // the wasm-to-wasm link boundary as a foreign funcref. `__apply_closure`'s
+    // shared #6420 "route a positive peer-owned callable before the local
+    // dispatcher" front-guard cannot tell a local closure from a peer one:
+    // under `canonicalRuntimeTypes` their WASM struct shapes canonicalise to
+    // the SAME type, so the peer's `__is_callable` (a bare `ref.test`, no
+    // ownership check) answers "callable" for a trap it has never seen, and
+    // `__apply_closure` hijacks the call into the peer's own apply terminal,
+    // which silently returns null instead of running the real trap body —
+    // #5383's `Proxy get trap is not callable` bucket (S41, 9-line repro, no
+    // Reflect/Temporal needed). Routing THIS call directly to the fixed-arity
+    // `__call_fn_method_<argCount>` dispatcher — whose param convention
+    // (0=thisVal, 1=closure, 2..=args) is IDENTICAL to this driver's own
+    // (0=handler, 1=trap, 2..=trap args), so every arg forwards unchanged —
+    // sidesteps the peer guard entirely for the one caller (Proxy trap
+    // invocation) that never legitimately needs it, without touching
+    // `__apply_closure` itself (used by many other callers that DO need the
+    // peer route — #6605/#6616 regressed when the peer-ownership gate was
+    // added to the shared function instead). `emitClosureMethodCallExportN`
+    // always emits arities 0..5 (`index.ts`'s `maxClosureArity = 5` floor),
+    // which covers every fixed arity `fill()` is called with below, so this
+    // path is taken unconditionally once the closure bridge exists; the
+    // vec-based `__apply_closure` fallback below is kept only for the
+    // (currently unreachable, but not asserted-impossible) case where the
+    // dispatcher is absent.
+    const directIdx = ctx.funcMap.get(`__call_fn_method_${argCount}`);
+    if (directIdx !== undefined) {
+      const body: Instr[] = [];
+      for (let a = 0; a < argCount + 2; a++) body.push({ op: "local.get", index: a });
+      body.push({ op: "call", funcIdx: directIdx });
+      driverFn.body = body;
+      return;
+    }
     if (applyClosureIdx === undefined || objVecNewIdx === undefined || objVecPushIdx === undefined) {
       // Closure bridge / objvec builders absent (no standalone closure in the
       // module) → no trap could have been installed; keep a valid stub body.
