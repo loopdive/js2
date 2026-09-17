@@ -1225,3 +1225,144 @@ finding, and it is the right next target for these rows.
     and the in-process seam does not. Use the in-process lane to iterate (20 s)
     and the real runner to decide (2 min) — and never let an in-process PASS
     retire a row.
+
+## Round 7 (2026-09-17, Opus lane) — diagnosis round: no code landed, four rows retired anyway
+
+Same worktree and branch. **This round landed no compiler change**, and the
+138-row numbers are unchanged from round 6 (linked **40**, honest **135**). What
+it produced is a decisive diagnosis of the largest remaining mechanism, a
+correction to two hand-over items, and one more lane-independent bug split out.
+Stating that plainly up front because a round whose value is knowledge is easy
+to mis-read as a round that stalled.
+
+### Mechanism 1 — cross-module global-object identity: DIAGNOSED, too large to land here
+
+The brief asked whose `globalThis` a body-only unit publishes onto. Measured in
+the REAL runner (the in-process seam cannot see this — it has no per-row
+sandbox), by instrumenting `__throw_reference_error` to dump the sandbox:
+
+```
+[DBG refError] $DONE is not defined  hasSandbox=true  sandboxHasDONE=true
+               sandboxDONEtype=function  sandboxKeysSample=$DONE
+```
+
+Two facts, both new, and together they close the question:
+
+1. **The sandbox DOES have `$DONE`** (the runner's own
+   `buildOriginalHarnessSandbox` stub) and the module STILL threw
+   `$DONE is not defined`. So the thrower's bare-identifier read never consults
+   the sandbox at all. It is the PROVIDER: a consumer probe
+   (`undeclaredZzz;` at top level) does **not** throw in the linked lane, so the
+   consumer's free reads are already sandbox-routed. The provider is compiled as
+   a MODULE (`index.js` is the harness prefix PLUS `export const __h_x = x;`
+   aliases in the SAME file), so `moduleGoalIdentifierIsUndeclared` is true for
+   a symbol-less identifier and codegen emits an unconditional
+   `__throw_reference_error` instead of a global-object read.
+2. **The consumer's top-level bindings are NOT on the sandbox.** A body
+   declaring `function probeFn(){}` / `var probeVar = 1` leaves the sandbox's
+   own-property list unchanged (`sandboxKeysSample` shows only `$DONE`). The
+   round-6 observation that `typeof globalThis.probeFn === "function"` holds in
+   the linked lane is therefore NOT publication — it is a read-side fallback
+   (`__extern_get` resolving the module's own binding when the global object
+   lacks the property).
+
+So these rows need BOTH halves, and fixing only (1) makes it worse in a
+measurable way: the provider would then resolve the runner's no-op `$DONE`
+stub, the body's own `function $DONE` would still never run, and the rows would
+fail on `compareArray(doneValues, …)` instead of a ReferenceError.
+
+(2) is the real work: a linked graph has to agree on ONE realm global object for
+script top-level bindings, the way the honest whole-assembly does by
+construction. That is an architecture change to the linked seam, not a patch,
+and it is the right next slot — with the two facts above it no longer needs
+discovery, only design.
+
+### Hand-over item (a) — `new` on a non-constructible host function: ALREADY FIXED
+
+Measured on the current tip rather than assumed, real runner, linked lane:
+
+| row | verdict |
+| --- | --- |
+| `built-ins/Iterator/from/non-constructible.js` | **pass** |
+| `built-ins/Iterator/zipKeyed/non-constructible.js` | **pass** |
+| `built-ins/Iterator/concat/non-constructible.js` | **pass** |
+| `built-ins/Iterator/zip/non-constructible.js` | **pass** |
+
+All four already pass — round 4's `%Iterator%` binding stratum is what changed
+them. No `new`-lowering work is needed; the hand-over was written against an
+older tip.
+
+### Hand-over item (b) — `Iterator/prototype/{chunks,windows}`: the gap is OURS, not only the container's
+
+Both rows fail with `chunks is not a function` / `windows is not a function`.
+The container's Node is **v22.22.2**, which has `Iterator.prototype.drop`
+(`typeof === "function"`) but neither `chunks` nor `windows` — so the host
+oracle genuinely cannot answer them here.
+
+That is only half the answer, and the useful half is the other one:
+`src/runtime/iterator-polyfills.ts` **already polyfills** `take`, `drop` and
+`flatMap` onto `%IteratorPrototype%` exactly for hosts that lack them. It does
+not implement `chunks`/`windows`. So these two rows are reachable without a
+newer V8 — they need the two sequencing-proposal helpers added to that polyfill,
+which is a small scoped feature, not a host-capability blocker.
+
+### The trap row `const/global-closure-get-before-initialization.js` — narrowed, and it split in two
+
+Reduced from the corpus row to three lines in a 20-second loop:
+
+```js
+var got = "none";
+try { (function () { return x + 1; })(); } catch (e) { got = e && e.name; }
+assert.sameValue(got, "ReferenceError", "consumer-side catch");
+const x = 1;
+```
+
+Run through the real runner in BOTH lanes: **both fail identically** with
+`Expected SameValue(«null», «"ReferenceError"»)`. The TDZ check fires (control
+reaches the `catch`) but the bound value is `null`.
+
+So a lane-independent compiler bug was hiding under a linked-lane trap. Filed as
+**#6498**. The corpus row's own `rethrowing null value` — V8's message for
+`throw_ref` on a null `exnref` — is very likely the same missing payload seen
+from the rethrow side, and #6498 carries a follow-up box to re-check it. The
+block-lexical TDZ shape is unaffected (round 6's fix covers it), so this is
+specific to a GLOBAL lexical.
+
+### Per-row status of the 95 residual rows
+
+| rows | status after round 7 |
+| ---: | --- |
+| 34 | descriptor reads — **#6482's lane**, untouched by instruction |
+| 6 | `harness/asyncHelpers-asyncTest-*` ($DONE family) — **mechanism named and fully diagnosed above**; needs the one-realm-global change |
+| 4 | `$262.createRealm()` rows — same family (a THIRD realm on top of the sandbox); blocked behind the same design |
+| 6 | other `harness/*` (`assert-throws-same-realm`, `detachArrayBuffer-host-detachArrayBuffer`, `proxytrapshelper-default`, `deepEqual-{array,deep}`) — untouched |
+| 4 | `Promise.all{,Settled}Keyed` reject-vs-throw timing — untouched |
+| 3 | `await` of a non-thenable — **not reducible in-process**: the in-process seam has no sandbox, so `asyncTest` short-circuits on its `hasOwnProperty(globalThis,"$DONE")` guard before the await runs. Needs the runner loop |
+| 4 | `built-ins/Iterator` observation order — round 4 residual, untouched |
+| 1 | `const/global-closure-get-before-initialization.js` — narrowed; lane-independent half filed as **#6498** |
+| 2 | invalid Wasm binary — **#6496** |
+| 12 | the six 2-row families (`replaceAll` ToPrimitive, `Reflect.deleteProperty`, `Proxy` trap context, `RegExp/match-indices`, `TypedArray sort` undefined comparefn, `delete String.prototype.toString`) — untouched |
+| ~19 | singles — untouched |
+
+### Findings for the next lane (round 7)
+
+15. **Instrument the thing that THROWS, not the thing that fails.** One
+    `console.error` inside `__throw_reference_error`, printing the sandbox's own
+    keys, answered in a single 2-minute run two questions that three rounds of
+    behavioural probing had left open — including the one that overturned the
+    round-6 conclusion (a body's globals are *not* published; the read side just
+    makes it look that way).
+16. **A read-side fallback can impersonate a write.** Round 6 concluded "the
+    consumer publishes its top-level bindings onto `globalThis`" from a passing
+    `typeof globalThis.probeFn === "function"`. It does not; `__extern_get`
+    falls back to the module's own binding. Whenever a cross-module question is
+    answered by reading through the SAME module that would have written, the
+    answer proves nothing — read the object's own-property list instead.
+17. **Re-measure a hand-over before implementing it.** All four
+    `non-constructible.js` rows were already passing on the current tip; the
+    hand-over was written against an older one. One 2-minute runner call before
+    any code is written.
+18. **"The container can't do it" is usually half an answer.** The
+    `chunks`/`windows` rows really are unsupported by this Node — and by our own
+    polyfill, which already supplies `take`/`drop`/`flatMap` for exactly this
+    reason. The actionable sentence is the second one.
