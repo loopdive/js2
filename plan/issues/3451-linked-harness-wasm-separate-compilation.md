@@ -44,6 +44,16 @@ func-budget-allow:
 regressions-allow:
   count: 422
   reason: "2026-09-17 #3451 slice 6 authority flip — P3e run 35178155322 measured 422 honest-pass/linked-fail rows (365 the other way, net -57); the linked oracle is authoritative from ORACLE_VERSION 14"
+# (2026-09-17, slice 6, merge_group run 35200783992) The #3189 uncatchable-trap
+# ratchet is NOT superseded by regressions-allow, and the first merge-group run
+# of the flip measured category growth honest -> linked of null_deref 47->54
+# (+7), illegal_cast 24->30 (+6), unreachable 2->3 (+1). Rebase-mode-only
+# (#3370) per-category ceiling, set to the MEASURED maximum, not rounded up.
+# The 15 rows are listed in #6492 "Trap residual"; 8 of them were honest-pass
+# and are inside the 422 above, 7 were honest-fail (flavour change only).
+trap-growth-allow:
+  count: 7
+  reason: "2026-09-17 #3451 slice 6 authority flip — merge_group run 35200783992 measured per-category trap growth honest->linked of at most +7 (null_deref 47->54, illegal_cast 24->30, unreachable 2->3); rows recorded in #6492 Trap residual"
 ---
 
 # #3451 — reusable linked Test262 harness Wasm for both lanes
