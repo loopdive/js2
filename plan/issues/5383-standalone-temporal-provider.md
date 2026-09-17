@@ -9584,3 +9584,118 @@ collision-triggered and none of the measured corpora happens to land a
 receiver on a colliding `$__ta_ctor` tag; the 9 `tests/issue-6626-*.test.ts`
 tests remain the only positive evidence the fix does something, by design
 (synthetic reduction, not corpus-found).
+
+### S40 findings (2026-09-17) — a real oracle fixpoint bug found while chasing the `Proxy get trap is not callable` bucket, fixed, but confirmed NOT to close that bucket; the bucket's real mechanism named, not yet fixed
+
+Full write-up in
+[#6627](6627-reflect-namespace-numeric-inference-fixpoint.md). Branch
+`issue-5383-standalone-temporal-s40`, based on S39b's tip `9875b99735`.
+
+#### 1. The defect (fixed)
+
+S40's dispatch brief targeted `Proxy get trap is not callable` (6 rows in the
+four-family sample). Reducing
+`PlainDate/from/observable-get-overflow-argument-primitive.js`
+(`TemporalHelpers.propertyBagObserver`'s `get` trap:
+`const result = Reflect.get(target, key, receiver); … return result;`)
+surfaced an independently-reproducible defect: any object-literal method
+literally named `get` (the near-universal Proxy trap name) that stores a
+`Reflect.X(...)` result in a local before returning it gets that local
+narrowed to an **f64** slot by the whole-program `numericFunctions`
+name-keyed usage oracle (`src/codegen/numeric-property-analysis.ts`, #4122)
+— regardless of the value's actual type. Downstream this is either a
+silently wrong value or a hard Wasm validation trap
+(`struct.get[0] expected type (ref null 6), found local.get of type f64`).
+
+Root cause: `isNumeric`'s bare-identifier-receiver fallback,
+`sets.numericFunctions.has(callee.name.text)`, treats `Reflect` (a namespace
+object, not a user instance) the same as any user class. `Reflect.get`'s
+method name is `"get"` — the same string as the Proxy trap convention. The
+`numericFunctions` set starts seeded with every function/method name and is
+pruned by a fixpoint that removes a name once ANY of its declarations
+returns non-numeric; for a `get` method whose own return is `Reflect.get`'s
+result, deciding "is `get` numeric" recurses into `numericFunctions.has("get")`
+— the very fact the fixpoint hasn't yet decided — so it answers `true`, a
+self-reinforcing loop with no external anchor. Fixed by a new
+`NON_INSTANCE_GLOBAL_NAMESPACES` exclusion set (`Reflect`, `JSON`, `Object`,
+`Array`, `String`, `Number`, `Symbol`, `Promise`, `Proxy`, `Intl`) checked
+before the `numericFunctions` fallback — the same targeted narrowing
+`Math`/`Date` already have.
+
+#### 2. What it does NOT fix
+
+Measured directly: the real test262 row's compiled `wasm_sha` is
+**byte-for-byte identical** with and without the fix, and the row still
+fails identically with `TypeError: Proxy get trap is not callable`. The real
+`propertyBagObserver.get` trap has an early `return undefined;` branch,
+which is non-numeric and disqualifies `numericFunctions` for `"get"` on its
+own — the self-reinforcing fixpoint this issue fixes was never actually
+engaged by the real corpus row (the minimal reduction needed a SIMPLER trap
+body, with no early non-numeric return, to hit it).
+
+#### 3. The bucket's real mechanism (named, not fixed)
+
+Reduced to a 9-line linked-vs-unlinked repro:
+
+```js
+// consumer, LINKED to any provider (content irrelevant, not even called):
+var options = new Proxy({ overflow: "reject" }, {
+  get(target, key, receiver) {
+    return target[key]; // Reflect.get is NOT required to reproduce this
+  },
+});
+export function probeToString() {
+  var v = String(options.overflow);
+  return v === "reject" ? 1 : -2; // answers -2 when linked, 1 when not
+}
+```
+
+No `Reflect`, no `propertyBagObserver` wrapper, no `calls` array,
+module-scope OR function-scope `new Proxy(...)` — all irrelevant. The ONLY
+variable that flips the answer is whether the CONSUMER module has ANY
+package `link:`ed at all (`ctx.standalone && peerNamespace(ctx) !==
+undefined`, i.e. whether `emitStandaloneLinkReverseLocalTerminals`
+(`src/codegen/standalone-link-reverse-peer.ts`) runs for this module).
+
+Hypothesis, not yet verified: `ensureProxyRuntime` (`object-runtime-proxy.ts`,
+called from `ensureObjectRuntime` around `object-runtime.ts:6769`) "patches
+the `ref.test $Proxy` front-guard onto
+`__extern_get`/`__extern_set`/`__extern_has`" — and
+`emitStandaloneLinkReverseLocalTerminals` (called right after, `~6852`) also
+reads/wraps `ctx.funcMap.get("__extern_get")` to build the CONSUMER's
+`localGet`/`localKeys`/`localHas`/`localIsNull`/`localMethodCall` terminals
+installed into the PROVIDER at `__module_init`. Both touch `__extern_get`'s
+identity/body in the same narrow window; whether one observes a stale copy
+of the other, or whether the terminal-install `ref.func` captures shift
+something the Proxy dispatch relies on, was not pinned down within S40's own
+~2h budget. Next step: a WAT diff of
+`__extern_get`/`__proxy_get_dispatch`/`__module_init` between linked and
+unlinked builds of the 9-line repro above.
+
+#### 4. Corpus / acceptance
+
+`tests/issue-6627-reflect-namespace-numeric-inference.test.ts` (2
+fix-witnesses, 3 controls) plus the full `tests/issue-66*.test.ts` regression
+suite (28 files / 138 tests) pass together. The four-family/must-not-move/
+corpus-byte-A/B acceptance battery was deferred at S40's own tip and
+**completed in the S40b measurement-only slice** (branch
+`issue-5383-standalone-temporal-s40b`, same tip `66acff773f`, no `src/`
+changes): four-family sample **433/480 base → 433/480 fix, 0 pass→fail, 0
+fail→pass**; must-not-move groups A/B/C/D (S39b's own definitions, group C
+reusing S39b's own 0:249 slice) — **2,004 rows total, 0 pass→fail, 0
+fail→pass**; corpus byte A/B (42 files × {gc, standalone}) — **0 moved
+either target, 0 CE/status flips**, provider bytes unchanged at
+`3,313,801 B` (this fix touches only compile-time oracle inference, not
+codegen bytes emitted into the linked Temporal provider). Equivalence gate
+**22/1720/22**, unchanged. The assigned 6-row bucket reproduces
+byte-for-byte unchanged — every row still answers `TypeError: Proxy get trap
+is not callable`. Full per-group tables in #6627's "Criterion 4" section.
+Verdict: the fix is a pure no-op on every corpus slice measured, exactly as
+S40's own "THIS DOES NOT CLOSE #5383'S TARGET BUCKET" section predicted —
+the `NON_INSTANCE_GLOBAL_NAMESPACES` exclusion only fires for a
+bare-identifier receiver whose text is one of ten well-known global names
+calling a method also present in `numericFunctions`, and no corpus measured
+here lands on that intersection. The `Proxy get trap is not callable` bucket
+remains open, with the linked-vs-unlinked repro and `ensureProxyRuntime` /
+`emitStandaloneLinkReverseLocalTerminals` hypothesis above as its next
+slice's starting point.

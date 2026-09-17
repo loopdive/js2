@@ -179,6 +179,118 @@ diff of `__extern_get`/`__proxy_get_dispatch`/`__module_init` between the
 linked and unlinked builds of the 9-line repro above, which is the next
 slice's first step.
 
+## Criterion 4 — four-family sample, must-not-move groups, corpus byte A/B
+
+**Measured in the S40b measurement-only slice** (branch
+`issue-5383-standalone-temporal-s40b`, tip `66acff773f` = S40's own tip; no
+`src/` changes this slice — S40 deferred this battery at its own tip). Base
+tree obtained by file-copy revert of ONLY `src/codegen/numeric-property-analysis.ts`
+against S40's parent `9875b99735` (S39b's tip), restored after each base
+run. Scripts copied unchanged from `issue-5383-standalone-temporal-s39b`'s
+`.tmp/s39b/{famrun3,mnm3,corpus,diff_fam,diff_mnm2}` (paths repointed to this
+worktree): `--target standalone`, `@js-temporal/polyfill` provider linked
+(`hostBridge: "off"`), sequential, fresh `JS2WASM_TEMPORAL_CACHE` per label
+(both prewarms measured `cacheHit=false`), 60s/family row, 30s/must-not-move
+row, QuickJS eval provider rebuilt for this worktree
+(`scripts/build-quickjs-eval-provider.mjs`, artifact `073742801ba7`, adapter
+key `1113fed1fb30f901`).
+
+**Setup gap found and fixed**: this worktree had no `test262/` submodule, no
+`node_modules` (walks up to a shared parent by Node's resolution, so `tsx`
+scripts ran fine but `npm run test:equivalence:gate` failed with
+`MODULE_NOT_FOUND` until `pnpm install --frozen-lockfile`), and no
+`scripts/compiler-bundle.mjs`. `git submodule update --init test262`,
+`npm run build:compiler-bundle`, `pnpm install --frozen-lockfile`, and the
+prewarm/QuickJS-provider build steps resolved these.
+
+### Four-family sample (120 files/family)
+
+| Family | Base pass/120 | Fix pass/120 | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- |
+| `PlainDate/**` | 112 | 112 | 0 | 0 |
+| `Duration/**` | 105 | 105 | 0 | 0 |
+| `ZonedDateTime/prototype/**` | 103 | 103 | 0 | 0 |
+| `PlainDateTime/**` | 113 | 113 | 0 | 0 |
+| **Total** | **433/480** | **433/480** | **0** | **0** |
+
+Base reproduces S39b's own cited 112/105/113/103 exactly. Per-file diff
+(`.tmp/s40b/diff_fam.py`) confirms **0 files moved either direction** across
+all 480 rows.
+
+### Must-not-move groups A/B/C/D (S39b's definitions, reused unchanged)
+
+Group C uses S39b's own **0:249 slice** of its 349-file definition (the S39b
+issue-file table cites `249`/`196` for group C; the full 349-file group was
+also run this slice as a bonus check — `.tmp/s40b/mnm/C-base.EXTENDED-200-349.tsv`,
+not diffed against a fix counterpart, informational only).
+
+| Group | Files | Base pass | Fix pass | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| A (`Object/keys`, `expressions/object`, `Reflect/get`+`has`) | 1250 | 1125 | 1125 | 0 | 0 |
+| B (`Object/entries`+`values`+`getOwnPropertyNames`, `for-in`) | 205 | 179 | 179 | 0 | 0 |
+| C (`Object/getPrototypeOf`, `Reflect/getPrototypeOf`, `Function/prototype`/`class/subclass`/`expressions/class` ×100, 0:249 slice) | 249 | 196 | 196 | 0 | 0 |
+| D (`TypedArray`/`TypedArrayConstructors`/`DataView` ×100) | 300 | 219 | 219 | 0 | 0 |
+| **Total** | **2004** | **1719** | **1719** | **0** | **0** |
+
+Per-file diff (`.tmp/s40b/diff_mnm2.py`) over all 2004 rows: **0 pass→fail, 0
+fail→pass** — group A includes `Reflect/get`+`has`, the family this fix's
+`NON_INSTANCE_GLOBAL_NAMESPACES` exclusion directly touches, and it is
+unaffected.
+
+### Corpus byte A/B
+
+Same 42-file set (`website/playground/examples/**/*.ts` + `tests/fixtures/**/*.ts`),
+compiled on both `gc` and `standalone` targets, SHA-256 of the output binary
+compared (`.tmp/s40b/corpus-{base,fix}.jsonl`, diffed with
+`.tmp/s40b/diff_corpus_s39b.py`):
+
+| Target | Artifacts | Moved | CE/status flips |
+| --- | --- | --- | --- |
+| `gc` | 42 | 0 | 0 |
+| `standalone` | 42 | 0 | 0 |
+
+0 moved on either target — this fix's `NON_INSTANCE_GLOBAL_NAMESPACES`
+exclusion is not standalone-gated (the oracle runs identically for both
+targets), so `gc` moving was a live possibility this slice checked for and
+did not find; none of the 42 corpus files exercise a namespace-call
+receiver name colliding with a `numericFunctions` entry.
+
+### Equivalence gate
+
+`npm run -s test:equivalence:gate`: **22 failing, 1720 passing, 22
+known-failures in baseline** — matches the acceptance-criteria line already
+recorded above, unchanged.
+
+### The assigned bucket (6 rows) — reproduces unchanged on the fix tree
+
+Ran the exact 6 files from #5383's "Proxy get trap is not callable" bucket on
+the fix tree, `--target standalone`, provider linked:
+
+| File | Result |
+| --- | --- |
+| `Duration/from/order-of-operations.js` | `fail` — `TypeError: Proxy get trap is not callable` |
+| `PlainDate/from/order-of-operations.js` | `fail` — `TypeError: Proxy get trap is not callable` |
+| `PlainDate/from/observable-get-overflow-argument-primitive.js` | `fail` — `TypeError: Proxy get trap is not callable` |
+| `PlainDateTime/from/order-of-operations.js` | `fail` — `TypeError: Proxy get trap is not callable` |
+| `PlainDateTime/from/observable-get-overflow-argument-primitive.js` | `fail` — `TypeError: Proxy get trap is not callable` |
+| `ZonedDateTime/prototype/add/order-of-operations.js` | `fail` — `TypeError: Proxy get trap is not callable` |
+
+All 6 unchanged from the S40 write-up — confirms #6627's fix does not touch
+the bucket's real mechanism (see `## The bucket's REAL mechanism` above).
+
+### Verdict
+
+**Criterion 4 holds for this slice: 0 legitimate pass→fail across all three
+measurement axes (family sample, must-not-move A/B/C/D, corpus byte A/B), 0
+fail→pass, equivalence gate unchanged, and the target bucket reproduces
+byte-for-byte unchanged.** This closes S40's deferred acceptance battery for
+#6627 — the fix is a scoped, verified no-op everywhere except the two narrow
+fix-witness tests, exactly as its own root-cause analysis predicted (the
+`NON_INSTANCE_GLOBAL_NAMESPACES` exclusion only fires for a bare-identifier
+receiver whose text is one of ten well-known global names calling a method
+also present in `numericFunctions` — none of the corpora measured here land
+on that intersection).
+
 ## Acceptance criteria (this slice)
 
 - [x] `NON_INSTANCE_GLOBAL_NAMESPACES` fix in `numeric-property-analysis.ts`,
