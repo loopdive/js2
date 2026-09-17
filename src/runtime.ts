@@ -7333,8 +7333,35 @@ function _classObjectForInstance(v: any, exports: Record<string, Function> | und
  */
 function _classChainRead(v: any, key: any, exports: Record<string, Function> | undefined): any {
   if (typeof key !== "string") return _MISS;
+  // (#6492) `_classObjectOwnedBy` asks "was this class object registered by the
+  // module now READING it?", and in a #2527 linked graph the honest answer is
+  // routinely NO for a value that is nonetheless a perfectly ordinary compiled
+  // class instance: the test262 harness PROVIDER reads `e.constructor` off an
+  // instance whose class the test BODY declared. Bailing to `_MISS` there does
+  // not merely lose an optimisation — the read then falls through to the
+  // generic host arm, which answers a DIFFERENT object from the one the
+  // consumer's own `C` crossed as, so `assert.throws(C, fn)` rejected an error
+  // it had just caught correctly — "Expected a <X> but got a <Y>". Measured on
+  // a four-function micro-provider: `sameCtor` false in the linked lane and
+  // true as a single module, which is what the test beside this pins. A
+  // 141-row targeted real-runner sample (every corpus row that declares its own
+  // error constructor AND calls `assert.throws` with one) moved 0 rows in
+  // either lane, so this is a correctness/parity fix with no measured corpus
+  // delta of its own — the corpus rows in that bucket turn out to be dominated
+  // by a different defect (see the issue's round-3 notes).
+  //
+  // Re-asking with the OWNER's export view is the whole fix. It cannot touch
+  // the single-module lane: `_classObjectOwnedBy` is false only when some OTHER
+  // module registered the class, which needs two modules to exist. And the
+  // value it produces is the same cached `_wrapForHost` mirror the consumer's
+  // own crossing produced — that shared identity is what makes `===` hold.
   const classObj = _classObjectForInstance(v, exports);
-  if (classObj === undefined || !_classObjectOwnedBy(classObj, exports)) return _MISS;
+  if (classObj === undefined) return _MISS;
+  if (!_classObjectOwnedBy(classObj, exports)) {
+    const owner = _classCtorCallbackStates.get(classObj as object)?.getExports();
+    if (owner === undefined) return _MISS;
+    exports = owner;
+  }
   if (key === "constructor") return _wrapForHost(classObj, exports);
   return _classChainMethod(v, key, exports);
 }

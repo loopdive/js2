@@ -34,6 +34,16 @@ related: [3451, 6486, 6489, 6490, 6491, 6482]
 # that its `__dv_byte_len`/`__dv_byte_get`/`__ab_max_len` reads silently came
 # from three-ways-unrelated modules. Moving the call out would move the
 # decision away from the reads it constrains.
+# 2026-09-17 (round 3) — `_classChainRead` cross-module owner re-ask: +27 lines
+# in `src/runtime.ts`, of which 22 are the comment. The CODE is 5 lines and it
+# has to live exactly here: the thing being corrected is the meaning of the
+# `_classObjectOwnedBy` guard on the line above it, and the comment records the
+# one fact a reader cannot recover from the diff — that the identity `===`
+# depends on the re-ask returning the SAME cached `_wrapForHost` mirror the
+# consumer's own crossing produced, not merely "the right class object". Moving
+# either out of `_classChainRead` puts the correction one indirection away from
+# the guard it corrects. The function is 6 lines of dispatch; splitting it is
+# not a thing that exists to do.
 loc-budget-allow:
   - src/codegen/closures.ts
   - src/runtime.ts
@@ -395,6 +405,26 @@ re-measured AFTER that lands rather than fixed on their own.
    down the wrong path. Any bucket table built from linked-lane error strings
    should be treated as approximate until this is fixed.
 
+### Three more findings for the #3451 slice-6 flip plan (round 3)
+
+3. **Bucket the residual by the THROWN VALUE, not by the error string.** Round
+   2 already flagged that provider-closure `.name` corrupts failure messages;
+   round 3 shows the stronger version — two unrelated defects (a cross-module
+   constructor-identity miss and the intrinsic-`Iterator` subclassing gap) emit
+   the byte-identical shape `Expected a X but got a Y`, and the CI table's 26
+   rows turned out to be the second one. A bucket table built from message
+   text will keep mis-assigning effort.
+4. **`assert.throws`'s `.name` read is a MESSAGE-only path.** `C.name` is wrong
+   in the honest lane too (`undefined` for a plain class, the base's name for
+   an `Error` subclass), so every "Expected a **undefined** …" string in the
+   parity report is cosmetic; the verdict was decided by the identity check or
+   by no exception being thrown. Do not count those rows as a `.name` bug.
+5. **`harness/*` self-test rows are not a proxy for the corpus.** 17 of the 25
+   lane differences in the round-3 async sample are `harness/asyncHelpers-*`
+   rows that test the HARNESS, which the linked lane replaces wholesale. They
+   will move as a block when the provider publishes `$DONE`, and they say
+   nothing about the compiler buckets.
+
 ### Acceptance
 
 - [x] `illegal cast` bucket = 0 (no uncatchable traps in the linked lane) —
@@ -418,6 +448,140 @@ re-measured AFTER that lands rather than fixed on their own.
       `tests/issue-6492-linked-arraybuffer-brand.test.ts` (3 cases, 2 failing
       pre-fix); all fail on the pre-fix tree.
 
+## Round 3 (2026-09-17, Opus lane) — branch `issue-6492-r3`, based on round 2
+
+### Measurement setup
+
+Same instrument as round 2 — `tests/test262-chunk-dynamic.test.ts` over an
+explicit row list in BOTH lanes, fresh `JS2WASM_TEST262_HARNESS_CACHE` per run,
+both bundles rebuilt after every compiler edit, base verdicts captured before
+the first edit (`.tmp/p6492r3/basew-{honest,linked}.jsonl`). One local note:
+`npx tsx --experimental-wasm-custom-descriptors` is rejected by the Node 22
+in this container; the probes run with `--experimental-wasm-stringref` alone.
+
+### The class-value crossing — round 2's diagnosis is HALF right
+
+Round 2 concluded that a consumer class "crosses as the class's PROTOTYPE
+struct, not as its class OBJECT". Re-instrumenting `_wrapForHost` and the
+mirror handler says otherwise, and the correction matters for whoever picks
+this up:
+
+- **The class object DOES cross correctly.** In the provider it is the
+  constructible mirror: `Object.prototype.toString.call(C)` is
+  `[object Function]`, `new C()` works and returns `[object Error]` for an
+  `Error` subclass, and `C.prototype` is the real facade. The one
+  `protoStructOf=true` wrap round 2 saw is a *different* value crossing in the
+  same window, not the class binding.
+- **`.name` is wrong in BOTH lanes, so it is not a lane bug at all.** Measured
+  as a single module: `C.name` is `undefined` for `class Plain {}` and `"Error"`
+  for `class MyErr extends Error {}` — identical to the linked answer. Two
+  independent causes, both worth recording: (1) the `.name` sidecar stamp in
+  `emitLazyClassObjectGet` only fires when `__extern_set` is ALREADY in
+  `ctx.funcMap`, and a small consumer body that never needs it emits no such
+  import, so the stamp is silently skipped (confirmed: the linked consumer's
+  wasm imports `__register_class_object`/`__register_class_ctor` and NOT
+  `__extern_set`); (2) the class mirror's own handler is internally
+  inconsistent — `getOwnPropertyDescriptor` answers `name`/`length` from the
+  function target (which carries the correct registered class name) while `get`
+  delegates them to the property proxy, which has no own `name` and falls
+  through to `Error.prototype.name`. Either fix would work; **neither changes a
+  single pass/fail**, because `assert.throws` only reads `.name` to BUILD the
+  failure message on a path it has already decided to fail.
+- **The real lane difference is constructor IDENTITY**, and it is one guard:
+  `_classChainRead` bailed to `_MISS` whenever `_classObjectOwnedBy` said the
+  reading module did not register the class — which is the normal state of
+  affairs in a linked graph, where the harness provider reads instances the
+  test body's classes minted. FIXED by re-asking with the owner's export view.
+
+| micro-provider measurement (`e.constructor === C`) | single module | linked before | linked after |
+| --- | --- | --- | --- |
+| `class MyErr extends Error {}` | true | **false** | **true** |
+| native `TypeError` | true | true | true |
+| `class Plain {}` (struct-backed, fieldless) | true | false | false — see below |
+
+The fieldless struct-backed case is still open: `_classObjectForInstance`
+cannot resolve such an instance to its class object through the READER's
+`__class_instance_proto`, and the #5225 decoder registry cannot help either —
+its probe is `__struct_field_names`, which answers `""` for a fieldless struct
+in its own module too. A third owner probe keyed on `__class_instance_proto`
+was built and **measured not to fire** (the consumer's own export answers null
+for the instance), so it was removed rather than left in as plausible-looking
+dead code. Whoever resumes this should find out why that export declines its
+own module's instance before adding a registry arm.
+
+### What the corpus actually says — the honest number
+
+The fix is a real parity repair and its **measured corpus delta is zero**.
+
+Sample: every corpus row under `built-ins/` or `language/` that BOTH declares
+its own error constructor (`class X extends Error` / `function XError() {}`)
+AND calls `assert.throws` with one — 141 rows, real runner, both lanes, before
+and after.
+
+| measurement | before | after |
+| --- | ---: | ---: |
+| honest lane, before vs after | — | **0 differences** |
+| linked lane, before vs after | — | **0 differences** |
+| honest-pass / linked-fail in the sample | 3 | 3 |
+| linked-pass / honest-fail in the sample | 2 | 2 |
+
+All three honest-pass/linked-fail rows are `built-ins/Iterator/prototype/take/
+next-method-returns-throwing-{value,done,value-done}.js`, and every one reports
+`Expected a ReturnCalledError but got a TypeError`. That is **not** the
+class-identity family: the value the provider caught really is a `TypeError`,
+i.e. the intrinsic-`Iterator`-subclassing gap round 2 parked. So the CI
+table's `Expected a X but got a Y` bucket is dominated by that defect, not by
+the crossing — which is why a correct fix to the crossing moves nothing.
+
+**Read this as a warning about bucketing by error STRING.** Two unrelated
+defects produce the same message shape, and round 2's note 2 (function `.name`
+is wrong for a provider closure) already said the strings are unreliable. The
+next lane should bucket the residual by the *thrown value's* identity, not by
+the message.
+
+### Extern-class stubs (35) — re-measured, still not a lane difference
+
+Re-checked after the crossing fix, as the plan asked. The only
+`No dependency provided for extern class` row in the 141-row sample is
+`built-ins/DisposableStack/prototype/dispose/throws-error-as-is-…`, and it
+**fails the HONEST lane identically** (`DisposableStack` is unsupported, not
+shadowed). Third independent sample to say so (round 1: 3 rows, round 2: 3
+rows, round 3: 1 row, all honest-fail). The bucket should be re-derived from
+the CI parity artifact's row list before anyone spends more time on it; local
+sampling has now failed to produce a lane-differing row three times.
+
+### Provider-side async callbacks — tried, measured, REVERTED
+
+The plan's target 3 suggested routing provider-MINTED suspending callbacks the
+same way round 1 routed consumer-minted ones, i.e. widening the
+`compileArrowAsCallback` early bail from `ctx.linkedPackageBindings.size > 0` to
+`|| ctx.exportsConsumedByWasm === true`. Implemented (one disjunct), both
+bundles rebuilt, measured on a 116-row async sample (`harness/asyncHelpers-*`
+plus all of `built-ins/Array/fromAsync/`, real runner, linked lane):
+**0 of 116 rows changed.** Reverted rather than shipped — it rewrites the
+PROVIDER's bytes for no measured gain, which is risk without return.
+
+That sample is worth keeping for the next lane, because its lane gap is large
+and NONE of it is await-erasure:
+
+| rows | direction | signature |
+| ---: | --- | --- |
+| 17 | honest-pass / linked-fail | all `harness/asyncHelpers-*`; `$DONE is not defined` (4) and `Test262Error: Expected true but got false` (11) |
+| 8 | linked-pass / honest-fail | `built-ins/Array/fromAsync/*` — the linked lane is BETTER here |
+
+`$DONE is not defined` says the harness provider does not publish `$DONE` into
+the body's scope — a harness-assembly gap, not a compiler one. The 11
+`throwsAsync` rows are the harness testing ITSELF, so they are a poor proxy for
+the corpus-wide async buckets; do not size those buckets from this sample.
+
+### Not attempted this round
+
+`__module_init` null `.catch`/`.next` (24 + 9 + 9), the async-null residual 23,
+`Thrown value was not an object!` (22) and the typed-array bucket (18). No
+sample taken this round contained a row of those buckets, and finding one needs
+the CI parity artifact's row list rather than another local guess — which is
+the same conclusion round 2 reached about the extern-class bucket.
+
 ### Residual table (what a follow-up picks up, in value order)
 
 Updated after round 2 (2026-09-17).
@@ -425,8 +589,9 @@ Updated after round 2 (2026-09-17).
 | rows (CI table) | bucket | state |
 | ---: | --- | --- |
 | 128 | `Cannot convert 0 to a BigInt` | **FIXED** (round 2) — `bufferDecoderFor`. 40 → 0 in a 275-row real-runner sample; corpus confirmation needs the next `linked_lane` dispatch. |
-| 75 + 26 | `Expected a undefined …` / `Expected a X but got a Y` | **ROOT CAUSE FOUND, not fixed** — a consumer class crosses to the provider as its PROTOTYPE struct, so the class mirror never forms: `.name` reads `undefined` (plain class) or the extern base's name, and constructor identity breaks. Reproduces in seconds with `.tmp/p6492r2/probe-param.mts`. **Highest-value next target.** |
+| 75 + 26 | `Expected a undefined …` / `Expected a X but got a Y` | **PARTLY FIXED (round 3), and round 2's diagnosis CORRECTED.** The class object crosses fine; the lane difference was constructor IDENTITY (`_classChainRead` bailed on the owner guard) and is fixed for externref-backed instances. `.name` is wrong in BOTH lanes and changes no verdict. Measured corpus delta of the fix: **0 of 141 targeted rows**, because the bucket's corpus rows are dominated by the intrinsic-`Iterator` gap below, not by the crossing. Still open in the crossing: a FIELDLESS struct-backed class instance. |
 | ~42 | `__module_init` null `.catch` / `.next` | the async half is round 1's fix; the Iterator-helper half is 8 rows in a 327-row sample and is **only visible through the real runner** — the micro-provider cannot see it (intrinsic `Iterator` has no helpers there in either lane). |
-| 35 | extern class stubs (`badArrayType` / `OProxy`) | untouched; still not reproduced as a lane difference. Re-measure AFTER the class-value crossing lands — the evidence now points at that, not at a linker rule. |
+| 35 | extern class stubs (`badArrayType` / `OProxy`) | re-measured after the crossing fix (round 3): still NOT reproduced as a lane difference — three independent local samples, every hit fails the honest lane identically. Do not re-sample locally; pull the row list from the CI parity artifact or drop the bucket. |
+| ~3 in 141 | `Expected a X but got a TypeError` in `Iterator/prototype/take` | **the actual dominant defect behind the `Expected a X but got a Y` string** (round 3). `class T extends Iterator` + helper; the provider's helper throws its own `TypeError` instead of propagating the consumer's error. Same intrinsic-subclassing substrate round 2 parked, and now the highest-value next target. |
 | 22 | `Thrown value was not an object!` | untouched. No longer expected to fall out with the BigInt fix (that one was narrower than the "brand loss" framing suggested); more likely the class-identity family. |
 | 59 | four small buckets | untouched. |
