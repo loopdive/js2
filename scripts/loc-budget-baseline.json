@@ -1,7 +1,7 @@
 {
   "generated": "2026-09-17",
   "threshold": 1500,
-  "totalCeiling": 889462,
+  "totalCeiling": 889614,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -42,7 +42,7 @@
     "src/codegen/expressions/new-super.ts": 8147,
     "src/codegen/expressions/operator-assignment.ts": 3752,
     "src/codegen/expressions/unary-updates.ts": 1906,
-    "src/codegen/extern-declarations.ts": 2171,
+    "src/codegen/extern-declarations.ts": 2195,
     "src/codegen/fnctor-escape-gate.ts": 2350,
     "src/codegen/generators-native-consumer.ts": 1898,
     "src/codegen/generators-native.ts": 5702,
@@ -64,7 +64,7 @@
     "src/codegen/object-runtime.ts": 12646,
     "src/codegen/program-abi-session.ts": 3562,
     "src/codegen/promise-combinators.ts": 1667,
-    "src/codegen/property-access-dispatch.ts": 5384,
+    "src/codegen/property-access-dispatch.ts": 5386,
     "src/codegen/property-access.ts": 6737,
     "src/codegen/proto-index-store.ts": 1849,
     "src/codegen/regexp-standalone.ts": 6163,
@@ -78,7 +78,7 @@
     "src/codegen/statements/variables.ts": 2669,
     "src/codegen/string-ops.ts": 4196,
     "src/codegen/ta-dyn-mop.ts": 1769,
-    "src/codegen/type-coercion.ts": 5194,
+    "src/codegen/type-coercion.ts": 5213,
     "src/codegen/typed-this.ts": 2276,
     "src/codegen/typeof-delete.ts": 2533,
     "src/codegen/vec-access-exports.ts": 1578,
@@ -107,6 +107,6 @@
     "src/ir/select.ts": 11270,
     "src/ir/verify.ts": 2830,
     "src/package-linker.ts": 2120,
-    "src/runtime.ts": 19736
+    "src/runtime.ts": 19809
   }
 }
