@@ -135,6 +135,7 @@ import {
   getOrRegisterVecType,
   isTaViewTypeIdx,
   TA_CTOR_KINDS,
+  taCtorIdentityTestInstrs,
   taCtorKindOf,
 } from "./registry/types.js";
 import {
@@ -412,8 +413,11 @@ export function tryConstructorPrototypeIdentity(
           fctx.body = saved;
           if (ok) int8Proto = emitted;
         }
-        fctx.body.push({ op: "local.get", index: anyLocal });
-        fctx.body.push({ op: "ref.test", typeIdx: ctx.taCtorTypeIdx });
+        // (#5383 S39 R-other-bare-ref-test) See registry/types.ts's
+        // `taCtorIdentityTestInstrs` doc — a field-less class's compiled root
+        // shares `$__ta_ctor`'s shape (#6620), so a bare `ref.test` here
+        // misclassified it too.
+        fctx.body.push(...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: anyLocal }]));
         fctx.body.push({
           op: "if",
           blockType: { kind: "val", type: { kind: "externref" } },

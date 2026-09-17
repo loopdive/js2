@@ -9505,3 +9505,72 @@ Everything in S26–S37 still holds. Two additions:
   identity, so the boundary must answer a fact ("is this yours") and let the
   CONSUMER produce the value locally — the same reasoning #6609/S22 already
   established for the ordinary-function case, generalised.
+
+### S39 findings (2026-09-17) — the last batch of #6620/S33's own `R-other-bare-ref-test` list audited and fixed; 4 sites confirmed wrong, 4 fixed defensively with no reachable wrong answer found
+
+Full write-up in
+[#6626](6626-ta-ctor-identity-remaining-bare-tests.md). Branch
+`issue-5383-standalone-temporal-s39`, based on S38's FINAL tip `ea2277af98`.
+
+#### 1. The defect
+
+#6620 (S33) flagged 7 other bare `ref.test $__ta_ctor` / `taCtorTypeIdx`
+receiver sites, none reduced to a concrete failing row that slice.
+#6622 (S35) fixed 2 more (`reflect-construct-native.ts`), leaving 5 files /
+8 call sites unaudited: `dataview-native.ts` (5 sites), `property-access-dispatch.ts`
+(1 site), `ta-ctor-meta.ts` (2 call sites, one — `isTaCtor()` — shared across 5
+splice points into `__builtinfn_get_meta`/`__builtinfn_gopd`/`__builtinfn_delete`).
+Same collision shape every time: `$__ta_ctor` is `{kind: i32, brand: i32}`,
+WasmGC-identical to a field-less class's compiled root `{__tag: i32,
+__shape_brand: i32}` (#2158/#2009).
+
+#### 2. The fix
+
+All 8 sites now route through `taCtorIdentityTestInstrs` (#5194 r3 F1 / #5383
+S2f R11) — the same swap #6620/#6622/#6601 already applied at every other
+`$__ta_ctor` receiver test. Answer-preserving for a genuine `$__ta_ctor`
+value (both mint sites write the brand), can only ever REMOVE a false
+positive.
+
+#### 3. A cheaper reduction than #6620/#6622's
+
+#6620/#6622's collisions needed a LINKED cross-module provider (a class-object
+VALUE specifically gets the instance-sharing representation per #3976). Four
+of these sites — `emitTaCtorBytesPerElement` and all three `ta-ctor-meta.ts`
+`isTaCtor()`-guarded arms exercised — reproduce with a purely LOCAL,
+single-module field-less class **instance** cast through an `any` parameter,
+no linking required. Measured by file-copy revert of the ONE named file:
+
+| Expression (`x: any = new PD()`, `PD` at `__tag` 3) | Base (file reverted) | Fixed |
+| --- | --- | --- |
+| `x.BYTES_PER_ELEMENT` (`dataview-native.ts`) | `2` | `0` |
+| `typeof x.prototype` (`ta-ctor-meta.ts`) | `"object"` | `"undefined"` |
+| `Object.getOwnPropertyDescriptor(x, "BYTES_PER_ELEMENT")` (`ta-ctor-meta.ts`) | `{value:2,...}` | `null` |
+| `hasOwnProperty(x, "prototype")` (`ta-ctor-meta.ts`) | `true` | `false` |
+
+#### 4. Residual — 4 sites fixed defensively, not independently witnessed
+
+The 3 remaining `dataview-native.ts` dynamic-`new ctor(...)` construct sites
+(`emitDynamicTaViewConstruct`, `emitTaDynCtorConstructFromLocals` ×2) and
+`property-access-dispatch.ts`'s `$262.createRealm().global` receiver arm did
+NOT reproduce a wrong answer within this slice's budget. Two reduction
+attempts for the construct sites — a local field-less ctor value (declines to
+the correct `emitDynamicNewFallback` path before the vulnerable arm is even
+reached) and a LINKED cross-module provider ctor value (mirroring #6620's own
+harness) — both answered correctly on base AND fixed `dataview-native.ts`; the
+mechanism that resolves them correctly either way was not isolated. The Realm
+site needs the real test262 `$262` harness object, out of reach of a synthetic
+vitest probe. All 4 are fixed with the SAME answer-preserving pattern and
+covered by control tests instead of fix-witnesses.
+
+#### 5. Corpus / acceptance
+
+`tests/issue-6626-*.test.ts` (9 tests: 4 fix-witnesses, 5 controls) plus the
+full `tests/issue-66*.test.ts` regression suite (28 files / 138 tests) pass
+together. The four-family/must-not-move/corpus-byte-A/B acceptance battery
+was NOT run this slice — the confirmed bugs are collision-triggered on a
+field-less receiver landing on a colliding tag while a `$__ta_ctor` type is
+registered, and whether the real `@js-temporal/polyfill` provider's own
+classes land on a colliding tag in the 4-sample families specifically was not
+checked against the corpus within this slice's time budget. Flagged honestly
+rather than fabricated; deferred to the next slice's acceptance run.

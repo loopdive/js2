@@ -55,6 +55,7 @@ import {
   TA_CTOR_BRAND,
   TA_CTOR_BYTES,
   TA_CTOR_KINDS,
+  taCtorIdentityTestInstrs,
   taCtorKindOf,
 } from "./registry/types.js";
 import { funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#2872) __ta_dyn_fill minting
@@ -4988,8 +4989,11 @@ export function emitTaCtorBytesPerElement(
   const kindLocal = allocLocal(fctx, `__tac_kind_${fctx.locals.length}`, { kind: "i32" });
   fctx.body.push({ op: "i32.const", value: -1 });
   fctx.body.push({ op: "local.set", index: kindLocal });
-  fctx.body.push({ op: "local.get", index: anyLocal });
-  fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+  // (#5383 S39 R-other-bare-ref-test) `taCtorIdentityTestInstrs`, not a bare
+  // `ref.test` — a field-less class's compiled root (instance OR class-object
+  // value, #3976) shares `$__ta_ctor`'s exact `{i32, i32}` shape (#6620), so
+  // a bare structural test misclassifies it here too.
+  fctx.body.push(...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: anyLocal }]));
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
@@ -5618,8 +5622,9 @@ export function emitDynamicTaViewConstruct(
   const kindLocal = allocLocal(fctx, `__dtav_kind_${fctx.locals.length}`, { kind: "i32" });
   fctx.body.push({ op: "i32.const", value: -1 });
   fctx.body.push({ op: "local.set", index: kindLocal });
-  fctx.body.push({ op: "local.get", index: ctorAnyLocal });
-  fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+  // (#5383 S39 R-other-bare-ref-test) See emitTaCtorBytesPerElement's comment
+  // — the same brand-VALUE-checked identity test, not a bare `ref.test`.
+  fctx.body.push(...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: ctorAnyLocal }]));
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
@@ -5894,8 +5899,8 @@ export function emitTaDynCtorConstructFromLocals(
 
   fctx.body.push({ op: "i32.const", value: -1 });
   fctx.body.push({ op: "local.set", index: kindLocal });
-  fctx.body.push({ op: "local.get", index: descAnyLocal });
-  fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+  // (#5383 S39 R-other-bare-ref-test) See emitTaCtorBytesPerElement's comment.
+  fctx.body.push(...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: descAnyLocal }]));
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
@@ -6458,8 +6463,8 @@ export function emitTaDynCtorConstructFromLocals(
     for (const link of liveChains) ctx.liveBodies.delete(link);
   }
   fctx.body = savedTa;
-  fctx.body.push({ op: "local.get", index: descAnyLocal });
-  fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+  // (#5383 S39 R-other-bare-ref-test) See emitTaCtorBytesPerElement's comment.
+  fctx.body.push(...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: descAnyLocal }]));
   const int8Arm = buildInt8ArrayCarrierMatch(ctx, descAnyLocal, taArm);
   releaseSavedTa();
   releaseTaArm();
@@ -7236,8 +7241,8 @@ export function ensureTaFromArrayLikeHelper(ctx: CodegenContext): number | undef
   fctx.body.push({ op: "local.set", index: ctorAnyLocal });
   fctx.body.push({ op: "i32.const", value: -1 });
   fctx.body.push({ op: "local.set", index: kindLocal });
-  fctx.body.push({ op: "local.get", index: ctorAnyLocal });
-  fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+  // (#5383 S39 R-other-bare-ref-test) See emitTaCtorBytesPerElement's comment.
+  fctx.body.push(...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: ctorAnyLocal }]));
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
