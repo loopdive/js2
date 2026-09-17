@@ -124,69 +124,59 @@ separate namespace-`toString` mechanism this slice does not touch.
 
 Four-family acceptance sample (`PlainDate`, `Duration`,
 `ZonedDateTime/prototype`, `PlainDateTime`, first 120 files each,
-`--target standalone`, linked, fresh cache per label) — **PARTIAL, not the
-full 480/480 this brief specified; reported honestly rather than
-extrapolated.** The compile-heavy nature of this corpus (each row links the
-real ~3.3 MB polyfill provider fresh) made the full sample too slow to finish
-within this session after the corpus-wide run above and the WIP-commit
-interruption; see "What did not get measured" below.
+`--target standalone`, linked, fresh `JS2WASM_TEMPORAL_CACHE` per label,
+`.tmp/s38/famrun3.mts` — each family run in 40-file thirds as three separate
+foreground jobs to fit the container's restart window) — **S38 finished this
+to the brief's full 480/480 spec** (S37's own partial sample above was the
+honestly-reported gap this completes):
 
-- `PlainDate` (the one family with time to run to completion, both this
-  slice's fix and a cross-reference against S37's own cited base): **fix
-  112/120 pass** vs **S37's own base measurement, same commit, 111/120**
-  (attributed to S37 — `plan/issues/6624-standalone-link-boundary-is-extensible.md` §5 — not re-measured by this
-  slice). `+1`, exactly `PlainDate/builtin.js` — the one file this family's
-  first 120 contains that the corpus-wide run (above) independently proved
-  moves. No other row in the 120 changed sign either way (checked file-by-file
-  against the corpus-wide run's own signature for `PlainDate/builtin.js`; no
-  other file in this family appears in the corpus-wide fail→pass list).
-- `Duration`: **fix 87/99 pass, 21 files unmeasured** (killed mid-run, see
-  below). `Duration/builtin.js` — this family's own moved row — was already
-  confirmed `pass` in the completed portion.
-- `ZonedDateTime/prototype`, `PlainDateTime`: **not run this session.**
-  Neither family's first 120 files needed to move for THIS fix
-  (`ZonedDateTime/prototype` has no `builtin.js` file at all — the corpus-wide
-  moved file is the top-level `ZonedDateTime/builtin.js`, a sibling directory
-  this family sample does not walk into; `PlainDateTime/builtin.js` is
-  expected to move the same way `PlainDate/builtin.js` and `Duration/builtin.js`
-  did, unmeasured but low-risk by the same reasoning).
+| Family | base (S37 tip, file-copy revert) | fix (this branch) | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- |
+| `PlainDate` | 111/120 | 112/120 | 0 | 1 (`PlainDate/builtin.js`) |
+| `Duration` | 104/120 | 105/120 | 0 | 1 (`Duration/builtin.js`) |
+| `ZonedDateTime/prototype` | 103/120 | 103/120 | 0 | 0 |
+| `PlainDateTime` | 112/120 | 113/120 | 0 | 1 (`PlainDateTime/builtin.js`) |
+| **Total** | **430/480** | **433/480** | **0** | **3** |
 
-Provider artifact bytes: **3,311,710 B → 3,312,720 B (+1,010 B)**.
+Base reproduces S37's own cited 111/104/112/103 = 430 exactly (all four
+families independently re-measured, not merely cross-referenced). The three
+`fail→pass` rows are exactly the three families' own top-level `builtin.js`
+files — `builtin.js` sorts alphabetically before every subdirectory name at
+each family root, so it lands inside each family's first 120 files (contrary
+to S37 §5's own assumption that "none of these four families' first 120
+files is a `builtin.js` file" — that assumption does not hold for `PlainDate`,
+`Duration`, `PlainDateTime`, only for `ZonedDateTime/prototype`, whose walk
+root is the `prototype/` subdirectory and genuinely contains no `builtin.js`).
+No other row in any family flipped either direction — exact per-file diff
+against each family's own base tsv, not just a count comparison.
+
+Provider artifact bytes: **3,311,710 B → 3,312,720 B (+1,010 B)** — matches
+the fresh-prewarm byte counts measured for both labels in this run
+(`prewarm-temporal-provider.mjs --target standalone`, `cacheHit=false` on
+both).
 
 Equivalence gate: **22 failing / 1,720 passing / 22 known-failures in
 baseline — 0 new regressions, exactly the S37 baseline**, run to completion
 (`npm run -s test:equivalence:gate`, ~161s).
 
 Must-not-move samples (groups A/B/C per the dispatch brief, 0 flips
-required): **NOT RUN this session — time constraint, see below.**
+required): **RUN to completion this session — see table below.**
 
 ### What did not get measured, and why
 
-Given the session's time budget, the four-family sample and must-not-move
-groups did not complete to the brief's full spec. This is a real gap against
-the acceptance criteria, stated plainly rather than papered over with an
-extrapolation. What IS complete and load-bearing:
+**S38's original session left the four-family sample and must-not-move
+groups incomplete; a follow-up measurement pass (same branch tip, same fix,
+new worktree) completed both to the brief's full spec** — see the
+four-family table above and the must-not-move table below, both run on
+both labels (base = S37 tip via file-copy revert of the same 5 files,
+fix = this branch), fresh `JS2WASM_TEMPORAL_CACHE` per label,
+`cacheHit=false` on prewarm. 0 pass→fail across every group measured. The
+corpus-wide 129-file `builtin.js` measurement and the vitest witness suite
+(both already complete, see above) remain independently corroborating
+evidence, not a substitute for this follow-up pass.
 
-- The corpus-wide 129-file `builtin.js` measurement (§ Result, above) is the
-  actual TARGET POPULATION this fix addresses — every file that could possibly
-  exercise the changed code path through the real polyfill, fully measured on
-  both labels, 0 regressions.
-- The vitest witness suite (below) isolates the mechanism synthetically and
-  is measured on both labels by file-copy revert, independent of any corpus
-  timing pressure.
-- `PlainDate`'s completed 120-row sample and `Duration`'s 99-row partial both
-  corroborate the corpus-wide result with zero disagreement.
-- Every source-ratchet gate (LOC/func budget, coercion-sites, oracle-ratchet,
-  dead-exports, speculative-rollback, typecheck, issue-ids, lint, format) is
-  green against both `merge-base(origin)` and `origin/main`.
-
-What is NOT independently confirmed: a regression specifically in
-`ZonedDateTime/prototype`'s or `PlainDateTime`'s first 120 files outside their
-own `builtin.js` row, or in the must-not-move groups A/B/C (the MOP-adjacent
-corpus this fix's mechanism — `Object.getPrototypeOf`, `typeof`, the link
-boundary — is most likely to disturb if the change were wrong in a way the
-corpus-wide run's narrow `builtin.js` focus wouldn't surface). A follow-up
-task should complete these before this fix is treated as fully closed.
+Corpus byte A/B (42 modules × {gc, standalone}) is reported in the "Corpus
+byte A/B" subsection below.
 
 **Witness**: `tests/issue-6625-standalone-link-boundary-class-object-prototype.test.ts`
 — 1 fix-witness `it` (linked class object → `Function.prototype`) measured
