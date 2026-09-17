@@ -1092,7 +1092,7 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 959,
+      "passCount": 968,
       "totalCount": 1106
     },
     {
@@ -1240,7 +1240,7 @@
     {
       "name": "BigInt",
       "testCategories": ["built-ins/BigInt"],
-      "passCount": 549,
+      "passCount": 558,
       "totalCount": 1048
     },
     {
@@ -1312,7 +1312,7 @@
     {
       "name": "Array.findLast / findLastIndex",
       "testCategories": ["built-ins/Array/prototype/findLast", "built-ins/Array/prototype/findLastIndex"],
-      "passCount": 87,
+      "passCount": 91,
       "totalCount": 109
     },
     {

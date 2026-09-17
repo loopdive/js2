@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10334,
-    "fail": 1078,
+    "pass": 10343,
+    "fail": 1069,
     "ce": 292,
     "skip": 0,
     "total": 11704,
@@ -84,12 +84,12 @@
       },
       {
         "name": "TypedArray",
-        "pass": 904,
-        "fail": 145,
+        "pass": 913,
+        "fail": 136,
         "ce": 1,
         "skip": 0,
         "total": 1050,
-        "pct": 86
+        "pct": 87
       },
       {
         "name": "Symbol.iterator",
@@ -1507,8 +1507,8 @@
   },
   {
     "edition": "ES2020",
-    "pass": 953,
-    "fail": 562,
+    "pass": 962,
+    "fail": 553,
     "ce": 502,
     "skip": 18,
     "total": 2035,
@@ -1516,21 +1516,21 @@
     "features": [
       {
         "name": "BigInt",
-        "pass": 549,
-        "fail": 421,
+        "pass": 558,
+        "fail": 412,
         "ce": 78,
         "skip": 0,
         "total": 1048,
-        "pct": 52
+        "pct": 53
       },
       {
         "name": "TypedArray",
-        "pass": 351,
-        "fail": 282,
+        "pass": 360,
+        "fail": 273,
         "ce": 75,
         "skip": 0,
         "total": 708,
-        "pct": 50
+        "pct": 51
       },
       {
         "name": "dynamic-import",
@@ -2683,12 +2683,12 @@
   },
   {
     "edition": "ES2023",
-    "pass": 172,
-    "fail": 160,
+    "pass": 176,
+    "fail": 156,
     "ce": 2,
     "skip": 0,
     "total": 334,
-    "pct": 51,
+    "pct": 53,
     "features": [
       {
         "name": "change-array-by-copy",
@@ -2701,21 +2701,21 @@
       },
       {
         "name": "TypedArray",
-        "pass": 69,
-        "fail": 41,
+        "pass": 73,
+        "fail": 37,
         "ce": 0,
         "skip": 0,
         "total": 110,
-        "pct": 63
+        "pct": 66
       },
       {
         "name": "array-find-from-last",
-        "pass": 87,
-        "fail": 20,
+        "pass": 91,
+        "fail": 16,
         "ce": 2,
         "skip": 0,
         "total": 109,
-        "pct": 80
+        "pct": 83
       },
       {
         "name": "ShadowRealm",
@@ -2737,12 +2737,12 @@
       },
       {
         "name": "BigInt",
-        "pass": 15,
-        "fail": 12,
+        "pass": 17,
+        "fail": 10,
         "ce": 0,
         "skip": 0,
         "total": 27,
-        "pct": 56
+        "pct": 63
       },
       {
         "name": "Reflect.construct",
