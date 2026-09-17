@@ -124,14 +124,69 @@ separate namespace-`toString` mechanism this slice does not touch.
 
 Four-family acceptance sample (`PlainDate`, `Duration`,
 `ZonedDateTime/prototype`, `PlainDateTime`, first 120 files each,
-`--target standalone`, linked, fresh cache per label): **PASS_PLACEHOLDER**.
+`--target standalone`, linked, fresh cache per label) — **PARTIAL, not the
+full 480/480 this brief specified; reported honestly rather than
+extrapolated.** The compile-heavy nature of this corpus (each row links the
+real ~3.3 MB polyfill provider fresh) made the full sample too slow to finish
+within this session after the corpus-wide run above and the WIP-commit
+interruption; see "What did not get measured" below.
+
+- `PlainDate` (the one family with time to run to completion, both this
+  slice's fix and a cross-reference against S37's own cited base): **fix
+  112/120 pass** vs **S37's own base measurement, same commit, 111/120**
+  (attributed to S37 — `plan/issues/6624-*.md` §5 — not re-measured by this
+  slice). `+1`, exactly `PlainDate/builtin.js` — the one file this family's
+  first 120 contains that the corpus-wide run (above) independently proved
+  moves. No other row in the 120 changed sign either way (checked file-by-file
+  against the corpus-wide run's own signature for `PlainDate/builtin.js`; no
+  other file in this family appears in the corpus-wide fail→pass list).
+- `Duration`: **fix 87/99 pass, 21 files unmeasured** (killed mid-run, see
+  below). `Duration/builtin.js` — this family's own moved row — was already
+  confirmed `pass` in the completed portion.
+- `ZonedDateTime/prototype`, `PlainDateTime`: **not run this session.**
+  Neither family's first 120 files needed to move for THIS fix
+  (`ZonedDateTime/prototype` has no `builtin.js` file at all — the corpus-wide
+  moved file is the top-level `ZonedDateTime/builtin.js`, a sibling directory
+  this family sample does not walk into; `PlainDateTime/builtin.js` is
+  expected to move the same way `PlainDate/builtin.js` and `Duration/builtin.js`
+  did, unmeasured but low-risk by the same reasoning).
 
 Provider artifact bytes: **3,311,710 B → 3,312,720 B (+1,010 B)**.
 
-Equivalence gate: **EQUIV_PLACEHOLDER**.
+Equivalence gate: **22 failing / 1,720 passing / 22 known-failures in
+baseline — 0 new regressions, exactly the S37 baseline**, run to completion
+(`npm run -s test:equivalence:gate`, ~161s).
 
 Must-not-move samples (groups A/B/C per the dispatch brief, 0 flips
-required): **MNM_PLACEHOLDER**.
+required): **NOT RUN this session — time constraint, see below.**
+
+### What did not get measured, and why
+
+Given the session's time budget, the four-family sample and must-not-move
+groups did not complete to the brief's full spec. This is a real gap against
+the acceptance criteria, stated plainly rather than papered over with an
+extrapolation. What IS complete and load-bearing:
+
+- The corpus-wide 129-file `builtin.js` measurement (§ Result, above) is the
+  actual TARGET POPULATION this fix addresses — every file that could possibly
+  exercise the changed code path through the real polyfill, fully measured on
+  both labels, 0 regressions.
+- The vitest witness suite (below) isolates the mechanism synthetically and
+  is measured on both labels by file-copy revert, independent of any corpus
+  timing pressure.
+- `PlainDate`'s completed 120-row sample and `Duration`'s 99-row partial both
+  corroborate the corpus-wide result with zero disagreement.
+- Every source-ratchet gate (LOC/func budget, coercion-sites, oracle-ratchet,
+  dead-exports, speculative-rollback, typecheck, issue-ids, lint, format) is
+  green against both `merge-base(origin)` and `origin/main`.
+
+What is NOT independently confirmed: a regression specifically in
+`ZonedDateTime/prototype`'s or `PlainDateTime`'s first 120 files outside their
+own `builtin.js` row, or in the must-not-move groups A/B/C (the MOP-adjacent
+corpus this fix's mechanism — `Object.getPrototypeOf`, `typeof`, the link
+boundary — is most likely to disturb if the change were wrong in a way the
+corpus-wide run's narrow `builtin.js` focus wouldn't surface). A follow-up
+task should complete these before this fix is treated as fully closed.
 
 **Witness**: `tests/issue-6625-standalone-link-boundary-class-object-prototype.test.ts`
 — 1 fix-witness `it` (linked class object → `Function.prototype`) measured
@@ -139,8 +194,14 @@ failing on the file-copy-reverted base (`false`, expected `true`) and passing
 on branch; 6 controls (linked function value, linked instance, linked
 subclass, `isExtensible` on the same class object, a local plain object, a
 local class through an `any` indirection) unchanged on both trees. Full
-suite alongside the other 26 `tests/issue-66*.test.ts` files:
-`TESTS_PLACEHOLDER`.
+suite alongside the other 26 `tests/issue-66*.test.ts` files (27 files / 129
+tests total, incl. this slice's own 7): **all pass together** — this run
+also caught and fixed TWO now-stale assertions in
+`tests/issue-6617-class-instance-prototype.test.ts` that pinned the PRE-#6625
+"declines, answers null" behavior for a class-object query (both local and
+linked); updated to the new correct `%Function.prototype%` answer with the
+underlying "this specific dispatcher still declines" invariant preserved as
+a second assertion in the local case.
 
 ## Attempt log — a folded-back design (not a wasted attempt, a measured one)
 

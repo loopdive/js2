@@ -187,12 +187,24 @@ describe("#6617 — the prototype of a compiled class instance, standalone", () 
     ).resolves.toBe("same");
   });
 
-  it("DECLINES a class OBJECT — `getPrototypeOf(C)` is not `C.prototype`", async () => {
-    // CONTROL — "null" on both trees. The class object reuses its instances'
-    // struct type AND tag (#3976), so the identity compare against `__class_<C>`
-    // is the only thing separating them. Answering here would be a WRONG answer
-    // replacing a merely missing one.
-    await expect(runStandaloneString(CLASSES, `mark(Object.getPrototypeOf(dynv(3)))`)).resolves.toBe("null");
+  it("still does not answer `C.prototype` for a class OBJECT — `getPrototypeOf(C)` is not `C.prototype`", async () => {
+    // CONTROL, updated by #6625 (2026-09-17). Before #6625 this dispatcher
+    // DECLINED a class-object identity match outright (by design — see the
+    // next test) and the query fell through to `null`. #6625 gave
+    // `Object.getPrototypeOf(<base class>)` its own, separate, CORRECT arm
+    // (`%Function.prototype%`, §15.7.14 step 4) elsewhere in the pipeline
+    // (`tryEmitDynamicCallableGetPrototypeOf`'s new `__is_class_object` OR
+    // arm), so THIS assertion's answer is no longer `null` — it is
+    // `Function.prototype`, i.e. "val", not "C.prototype". What this test
+    // still pins, unchanged: the class object reuses its instances' struct
+    // type AND tag (#3976), so `C.prototype` is never the answer — THIS
+    // dispatcher (`STANDALONE_CLASS_INSTANCE_PROTO`) still declines a
+    // class-object identity match, exactly as before; a DIFFERENT arm now
+    // answers first.
+    await expect(runStandaloneString(CLASSES, `mark(Object.getPrototypeOf(dynv(3)))`)).resolves.toBe("val");
+    await expect(
+      runStandaloneString(CLASSES, `Object.getPrototypeOf(dynv(3)) === C.prototype ? "wrong" : "ok"`),
+    ).resolves.toBe("ok");
   });
 
   it("leaves the statically folded query byte-for-byte alone", async () => {
@@ -245,16 +257,27 @@ describe("#6617 — the prototype of a compiled class instance, standalone", () 
     ).resolves.toBe("same");
   });
 
-  it("DECLINES a provider class OBJECT across the link", async () => {
-    // CONTROL — "null" on both trees. The terminal wraps the class-instance
-    // dispatcher and NOT the provider's whole `__getPrototypeOf`, so it cannot
-    // publish a foreign `%Object.prototype%` either.
+  it("the #6617 link-boundary prototype terminal still declines a provider class OBJECT (a DIFFERENT terminal now answers it)", async () => {
+    // CONTROL, updated by #6625 (2026-09-17). Before #6625,
+    // `Object.getPrototypeOf(<provider-owned class object>)` answered `null`
+    // end to end: this terminal (`__js2wasm_link_get_prototype_of`, wrapping
+    // ONLY the class-INSTANCE dispatcher) declined, and nothing else in the
+    // pipeline had an arm for a class-object VALUE crossing the link. #6625
+    // added exactly that arm — `__is_class_object`, a SEPARATE boundary
+    // terminal (`__js2wasm_link_is_class_object`, a boolean, not a value) —
+    // so the query no longer reaches `null`; it answers `%Function.prototype%`
+    // (neither `null` nor `NS.PD.prototype`, hence "other"). What this test
+    // still pins, unchanged: THIS SPECIFIC terminal — the one wrapping the
+    // class-instance dispatcher — still cannot publish a foreign
+    // `%Object.prototype%` or the provider's own `%Function.prototype%`; the
+    // answer that resolves this query now comes from #6625's own terminal,
+    // not from this one being relaxed.
     await expect(
       runLinkedString(
         PROVIDER,
         `(function(){ const p = Object.getPrototypeOf(NS.PD); return p === null ? "null" : (p === NS.PD.prototype ? "OWN-PROTO" : "other"); })()`,
       ),
-    ).resolves.toBe("null");
+    ).resolves.toBe("other");
   });
 
   it("leaves the `constructor` back-link across the link untouched", async () => {

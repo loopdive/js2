@@ -9384,3 +9384,118 @@ Everything in S26–S36 still holds. One addition:
   (terminal stays a constant) or a foreign-but-real provider value (terminal
   should ask the peer) before assuming a constant answer is correct across a
   link.
+
+### S38 findings (2026-09-17) — `Object.getPrototypeOf(<class object>)` FIXED across the link boundary for base classes; 8 of the 9 S37-moved `builtin.js` files reach `pass`
+
+Full write-up in
+[#6625](6625-standalone-link-boundary-class-object-prototype.md). Branch
+`issue-5383-standalone-temporal-s38`, based on S37's FINAL tip `783aaa3cbb`.
+
+#### 1. The defect
+
+`Object.getPrototypeOf(Temporal.PlainDate)` — the THIRD assertion in every
+`built-ins/Temporal/*/builtin.js` file, and the exact residual S22/#6609
+named and S37/#6624 confirmed as the blocker for 8 of the 9 files it moved
+past `isExtensible` — answered `null` under `--target standalone` with a
+linked provider, where §15.7.14 step 4 requires `%Function.prototype%` for an
+ordinary (non-`extends`) class. Root cause: `Object.getPrototypeOf(v)` on an
+`any`-typed `v` falls to #6609's `tryEmitDynamicCallableGetPrototypeOf`,
+gated on `__is_callable` — which deliberately excludes class objects (a class
+has [[Construct]] but no [[Call]]). The value then reached the generic
+`__getPrototypeOf`, whose class-instance dispatcher (#6617's
+`STANDALONE_CLASS_INSTANCE_PROTO`) explicitly declines a class-object
+identity match by design (it answers only for instances).
+
+#### 2. The fix
+
+A new runtime predicate `__is_class_object` — an IDENTITY ladder (`ref.eq`
+against every class-object singleton, reusing `typeof-natives-finalize.ts`'s
+`classObjectIdentityArms` verbatim, now parameterised over an optional
+global-idx list) — ORed into #6609's existing `tryEmitDynamicCallableGetPrototypeOf`
+dynamic dispatch alongside `__is_callable`. Across a link, `__is_class_object`
+asks the owner for a BOOLEAN only (a new `__js2wasm_link_is_class_object`
+terminal), never a value — the value this arm answers is always
+`Function.prototype` compiled on the CALLER's own side (S22's identity rule),
+so it agrees with the caller's own later read of it. Both the local and
+boundary identity ladders are restricted to classes absent from
+`ctx.classParentMap` (base classes only) — a subclass's [[Prototype]] is its
+PARENT, not `Function.prototype`, and the naive unfiltered predicate was
+measured to introduce a NEW wrong answer for a subclass (verified: base
+answers `false` for `gPO(<subclass>) === Function.prototype`; an unfiltered
+predicate flips it to a wrong `true`; the parent-map filter keeps it `false`,
+matching base).
+
+First cut was a SEPARATE function mirroring #6624's two-terminal shape;
+measured (via `wasm-dis`) to be minted but never CALLED, because
+`tryEmitDynamicCallableGetPrototypeOf`'s contract is "return `true` once the
+runtime dispatch is emitted", not "return `true` only when callable" — its
+caller's early-return on the first arm's `true` pre-empts any second
+sequential arm regardless of which side of the first arm's internal `if/else`
+fired. Folded into ONE function instead; full account in #6625's "Attempt
+log".
+
+#### 3. The result
+
+Corpus-wide, all 129 `built-ins/Temporal/**/builtin.js` files, fresh cache
+per label: **base 120/129 pass** (reproduces S37 exactly on this tree) →
+**branch 128/129 pass, 0 pass→fail, 8 fail→pass** — exactly the 8 files S37
+§4 named (`Duration`, `Instant`, `PlainDate`, `PlainDateTime`,
+`PlainMonthDay`, `PlainTime`, `PlainYearMonth`, `ZonedDateTime` top-level
+`builtin.js`). The 9th, `Now/builtin.js`, is unchanged — its blocker is the
+separate namespace-`toString` mechanism S37 already named, untouched here.
+Provider bytes: 3,311,710 B → 3,312,720 B (+1,010 B).
+
+**Four-family acceptance sample: PARTIAL, not the full 480/480 the brief
+specified** — the compile-heavy corpus (each row re-links the ~3.3 MB real
+polyfill) outran this session's remaining time after the corpus-wide run.
+`PlainDate` ran to completion: fix 112/120 pass vs S37's own cited base
+111/120 (attributed, not re-measured), `+1` exactly `PlainDate/builtin.js`,
+0 other rows changed sign. `Duration` partial: fix 87/99 pass (21 rows
+unmeasured), `Duration/builtin.js` already confirmed `pass` in the completed
+portion. `ZonedDateTime/prototype` and `PlainDateTime` were not run this
+session — see #6625's "What did not get measured" section for the full
+accounting and the residual risk this leaves.
+
+Equivalence gate: 22 failing / 1,720 passing / 22 known-failures in
+baseline — 0 new regressions, exactly the S37 baseline.
+
+**Witness**: `tests/issue-6625-standalone-link-boundary-class-object-prototype.test.ts`,
+7 `it`s — 1 fix-witness (linked class object → `Function.prototype`) measured
+failing on the file-copy-reverted base (`false`, expected `true`) and passing
+on branch; 6 controls (linked function value, linked instance, linked
+subclass, `isExtensible` on the same class object, a local plain object, a
+local class through an `any` indirection) pass unchanged on both trees.
+Full suite alongside the other 26 `tests/issue-66*.test.ts` files (27
+files / 129 tests total): all pass together — this run also caught and fixed
+TWO now-stale assertions in `tests/issue-6617-class-instance-prototype.test.ts`
+that pinned the PRE-#6625 "declines, answers null" behavior for a
+class-object query.
+
+#### 4. Residual — the real next blocker, already named, not fixed here
+
+The `Now/builtin.js` namespace-`toString` mechanism (S37 §4) is untouched.
+The `extends`-parent case for `Object.getPrototypeOf(<subclass>)` is a NEW,
+narrower residual this slice names and declines to fix (§2 above) — no real
+Temporal top-level class currently uses `extends`, so it does not block this
+slice's corpus target.
+
+#### 5. Traps, carried forward and added to
+
+Everything in S26–S37 still holds. Two additions:
+
+- **A dynamic-dispatch function's "return `true` once emitted" contract can
+  silently swallow a second, sequential arm placed after it at the same call
+  site** — check the RETURN CONTRACT of a function you are extending before
+  assuming #6624's "just add a second independent terminal" pattern
+  transfers. `Object.isExtensible` had no such early-return arm ahead of its
+  second terminal; `Object.getPrototypeOf`'s dynamic dispatch did. Fold into
+  the SAME function instead when the contract doesn't allow sequencing.
+- **A boundary terminal answering a VALUE vs a BOOLEAN is a real design
+  choice, not a detail** — `getPrototypeOf`/`isExtensible` (#6617/#6624) hand
+  the PROVIDER's own answer back because the provider's value IS the answer
+  (an object identity, an integrity bit that has no realm-local competing
+  singleton). `Object.getPrototypeOf(<class object>)`'s correct answer
+  (`Function.prototype`) is a REALM-LOCAL singleton with no cross-module
+  identity, so the boundary must answer a fact ("is this yours") and let the
+  CONSUMER produce the value locally — the same reasoning #6609/S22 already
+  established for the ordinary-function case, generalised.
