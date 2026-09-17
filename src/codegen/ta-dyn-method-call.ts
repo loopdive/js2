@@ -43,6 +43,8 @@
  */
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { i32ByteVec } from "./dataview-native.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 
 /**
@@ -86,6 +88,157 @@ export const TA_DYN_METHOD_CALL_NAMES: readonly string[] = [
  */
 export function taDynMethodHelperName(method: string): string {
   return `__ta_dyn_${method === "copyWithin" ? "copywithin" : method}`;
+}
+
+/**
+ * (#1645 S1) `%TypedArray%.prototype` methods whose step 1 is ValidateTypedArray
+ * (§23.2.4.4), so a DETACHED viewed buffer must make them throw a TypeError
+ * before any other observable step runs.
+ *
+ * Deliberately WIDER than {@link TA_DYN_METHOD_CALL_NAMES}: that list names the
+ * methods with a native `__ta_dyn_<m>` helper, and most of the detached-buffer
+ * corpus calls methods that have none (`some`, `sort`, `keys`, `values`,
+ * `entries`, `find`, `findIndex`, …). Measured on 68bcd9eb4d, those fall through
+ * to the generic `$__vec_base` handling — which a `$__ta_dyn_view` subtypes —
+ * and answer from the view's post-detach length of 0, i.e. return NORMALLY
+ * where §23.2.4.4 requires a throw. That is the whole of "Expected a TypeError
+ * to be thrown but no exception was thrown at all", the reported error on 24 of
+ * the 33 ES2015 detached rows.
+ *
+ * `subarray` is deliberately ABSENT: §23.2.4.4 is not applied to it (it makes a
+ * new view over the same buffer and does not throw on a detached one), and
+ * `built-ins/TypedArray/prototype/subarray/detached-buffer.js` asserts exactly
+ * that. `buffer`/`byteLength`/`byteOffset`/`length`/`BYTES_PER_ELEMENT` are
+ * accessors, not methods, so they never reach a method dispatcher.
+ */
+const TA_DYN_VALIDATE_METHOD_NAMES: readonly string[] = [
+  "at",
+  "copyWithin",
+  "entries",
+  "every",
+  "fill",
+  "filter",
+  "find",
+  "findIndex",
+  "findLast",
+  "findLastIndex",
+  "forEach",
+  "includes",
+  "indexOf",
+  "join",
+  "keys",
+  "lastIndexOf",
+  "map",
+  "reduce",
+  "reduceRight",
+  "reverse",
+  "set",
+  "slice",
+  "some",
+  "sort",
+  "toLocaleString",
+  "toReversed",
+  "toSorted",
+  "toString",
+  "values",
+  "with",
+];
+
+/** Does `method` begin with §23.2.4.4 ValidateTypedArray on a dynamic view? */
+function taDynMethodValidatesTypedArray(method: string): boolean {
+  return TA_DYN_VALIDATE_METHOD_NAMES.includes(method);
+}
+
+/**
+ * (#1645 S1) Build the §23.2.4.4 step-5 detached-buffer prologue for a
+ * `$__ta_dyn_view` receiver already materialized into `anyLocalIdx`:
+ *
+ * ```
+ * if (ref.test $__ta_dyn_view recv && recv.expando == null && recv.buf.length < 0)
+ *   throw new TypeError(…)
+ * ```
+ *
+ * The detach marker IS the shared backing vec's `length` forced to `-1`
+ * (`tryCompileStandaloneDetachedWrite`, dataview-native.ts) — unreachable for a
+ * live buffer, so `< 0` is exact — and a dyn view's field 1 holds that very
+ * struct, which is why the state is observable at the dispatcher without any
+ * per-method helper.
+ *
+ * Callers are the per-method `__call_m_<name>_<arity>` / `_vararg` dispatchers,
+ * where the method name is a compile-time constant, so no runtime name ladder is
+ * needed. Returns `[]` — byte-identical output — when the module registered no
+ * dynamic view, when the native `TypeError` constructor is unavailable, or when
+ * `method` does not validate.
+ *
+ * The `expando == null` clause is §7.3.2 shadowing in its conservative form: a
+ * view carrying ANY own expando declines the throw and keeps its existing
+ * resolution, so `view.some = f; view.some()` can never be preempted.
+ * `__hasOwnProperty` is deliberately not used — it does not report a dyn view's
+ * own keys (see the search-trio arm's note in closed-method-dispatch.ts).
+ *
+ * `pushLocal` appends the scratch buffer local and returns its index; the caller
+ * owns the locals array, so it must be called before that array is frozen onto
+ * the function.
+ */
+export function taDynDetachedGuardInstrs(
+  ctx: CodegenContext,
+  method: string,
+  anyLocalIdx: number,
+  pushLocal: (name: string, type: ValType) => number,
+): Instr[] {
+  if (!ctx.standalone) return [];
+  const dynIdx = ctx.taDynViewTypeIdx;
+  if (dynIdx === undefined || dynIdx < 0) return [];
+  if (!taDynMethodValidatesTypedArray(method)) return [];
+  // `assert.throws(TypeError, …)` checks `instanceof`, so this needs a real
+  // TypeError INSTANCE, and the constructor has to ALREADY be in `funcMap`.
+  // Two things are deliberately not done at this seam:
+  //  - no `ensureLateImport` (hence `forceInModuleCtor`) — an import added here
+  //    would shift every funcIdx already emitted in the module;
+  //  - no MINTING either. `buildThrowJsErrorInstrs` would otherwise register the
+  //    `$Error_struct` type and define `__new_TypeError` on demand, and the
+  //    dispatcher fill runs late enough that introducing a new struct type is
+  //    not a cost worth paying for a guard. Declining costs nothing measurable:
+  //    with the check in place the 33-row detached list still scores 9 pass, so
+  //    no row depends on the mint.
+  if (ctx.funcMap.get("__new_TypeError") === undefined) return [];
+  const throwInstrs = buildThrowJsErrorInstrs(
+    ctx,
+    "TypeError",
+    "TypeError: Cannot perform operation on a detached ArrayBuffer",
+    { forceInModuleCtor: true },
+  );
+  const bufVecTypeIdx = i32ByteVec(ctx).vecTypeIdx;
+  const bufLocal = pushLocal("__tadyn_det_buf", { kind: "ref_null", typeIdx: bufVecTypeIdx });
+  const lengthIsNegative: Instr[] = [
+    { op: "local.get", index: bufLocal },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: bufVecTypeIdx, fieldIdx: 0 },
+    { op: "i32.const", value: 0 },
+    { op: "i32.lt_s" },
+    { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
+  ];
+  const bufIsPresent: Instr[] = [
+    { op: "local.get", index: anyLocalIdx },
+    { op: "ref.cast", typeIdx: dynIdx },
+    { op: "struct.get", typeIdx: dynIdx, fieldIdx: 1 },
+    { op: "local.tee", index: bufLocal },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: lengthIsNegative },
+  ];
+  const noOwnExpando: Instr[] = [
+    { op: "local.get", index: anyLocalIdx },
+    { op: "ref.cast", typeIdx: dynIdx },
+    { op: "struct.get", typeIdx: dynIdx, fieldIdx: 4 },
+    { op: "ref.is_null" },
+    { op: "if", blockType: { kind: "empty" }, then: bufIsPresent },
+  ];
+  return [
+    { op: "local.get", index: anyLocalIdx },
+    { op: "ref.test", typeIdx: dynIdx },
+    { op: "if", blockType: { kind: "empty" }, then: noOwnExpando },
+  ];
 }
 
 /**
