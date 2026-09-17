@@ -2218,20 +2218,32 @@ function _wrapWasmClosureUnknownArity(
     // Widen to the closure's own declared arity — never ABOVE it, so the
     // low-arity generator rule the comment above states is untouched — and let
     // `_denseOwnWasmArgs` pad the missing positions with real `undefined`.
-    // Residual: this free-function family has no argc-seeding wrapper (only
-    // `__call_fn_method_argc_N` exists), so a widened call reports
-    // `arguments.length` as the declared arity. That is a narrower wrong answer
-    // than not running the body at all, and it is confined to calls that
-    // previously produced nothing.
+    // A widened call must still present the REAL argument count, because
+    // `arguments.length` is observable and a guard may be reading it:
+    // `test/harness/verifyProperty-arguments.js` asserts that
+    // `verifyProperty()` with 0 arguments throws. So enter through the
+    // `__\0js2_call_fn_argc_N` wrapper (the free-function twin of the method
+    // family's argc wrapper), which seeds the count and clears it again. A
+    // module compiled before that wrapper existed keeps the plain dispatch.
+    let widenedFrom = -1;
     const freeRealArity = declaredArity();
     if (freeRealArity > args.length) {
       const widened = Math.min(freeRealArity, maxArity);
-      if (widened > arity && typeof exports[`__call_fn_${widened}`] === "function") arity = widened;
+      if (widened > arity && typeof exports[`__call_fn_${widened}`] === "function") {
+        widenedFrom = args.length;
+        arity = widened;
+      }
     }
     while (arity > 0 && typeof exports[`__call_fn_${arity}`] !== "function") arity--;
     const callFn = exports[`__call_fn_${arity}`];
     if (typeof callFn !== "function") return undefined;
     const padded = _denseOwnWasmArgs(args, arity);
+    if (widenedFrom >= 0) {
+      const argcCallFn = exports[`__\0js2_call_fn_argc_${arity}`];
+      if (typeof argcCallFn === "function") {
+        return marshalNew(_applyWithPrefix(argcCallFn, undefined, [widenedFrom, closure], padded));
+      }
+    }
     return marshalNew(_applyWithPrefix(callFn, undefined, [closure], padded));
   };
   const wrapped = function wasmClosureDynamicBridge(this: any, ...args: any[]): any {

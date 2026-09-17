@@ -48,6 +48,10 @@ const OPTIONS = {
 // The provider half: it calls the consumer's function with NO arguments and
 // reports what it observed. `callIt` is the shape `assert.throws` has.
 const PREFIX = `
+function vp(a, b, c, d) {
+  if (arguments.length < 3) { throw new Error("too few:" + arguments.length); }
+  return "ok:" + arguments.length;
+}
 function callIt(fn) {
   try { fn(); return "NO-THROW"; }
   catch (e) { return "THREW:" + (e && e.name); }
@@ -140,6 +144,12 @@ const CASES: ReadonlyArray<readonly [string, string, string]> = [
   ],
 ];
 
+it("probe-dir", async () => {
+  const body = `var m; try { m = vp(); } catch (e) { m = "THREW:" + e.message; }\nconsole.log("R:" + m);`;
+  // eslint-disable-next-line no-console
+  console.log("SINGLE", JSON.stringify(await runSingleModule(body)), "LINKED", JSON.stringify(await runLinked(body)));
+}, 600_000);
+
 describe("#6491 — under-applied cross-module call of a consumer function", () => {
   it.each(CASES)(
     "linked agrees with the single-module lane: %s",
@@ -150,4 +160,21 @@ describe("#6491 — under-applied cross-module call of a consumer function", () 
     },
     600_000,
   );
+});
+
+// Not a parity case, on purpose. `arguments.length` is what
+// `test/harness/verifyProperty-arguments.js` reads to decide whether
+// `verifyProperty()` was called with no arguments, and the widened call must
+// present the REAL count — so the assertion is the SPEC answer, 0.
+//
+// The single-module lane is not the oracle here: with the provider prefix
+// compiled into the same module the call is an in-Wasm one that leaves
+// `arguments.length` undefined in this shape, a separate pre-existing gap
+// (the honest test262 lane, whose harness call is a different shape, reports
+// the row as passing). Comparing against it would enshrine that gap.
+describe("#6491 — a widened call presents the real argument count", () => {
+  it("arguments.length is 0 for a 0-argument call of a 2-parameter consumer function", async () => {
+    const body = `function g(a, b) { return "n=" + arguments.length; }\nconsole.log(valueOfCall(g));`;
+    expect(await runLinked(body)).toContain("VAL:n=0");
+  }, 600_000);
 });

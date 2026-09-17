@@ -19,8 +19,23 @@ related: [3451, 6486, 3506]
 # executable change is 8; the rest records WHY widening is safe (never above the
 # closure's declared arity) and names the residual `arguments.length` answer, so
 # the next reader does not re-derive it from a 14-row test262 bucket.
+# (2026-09-17, follow-up) Closing the `arguments.length` residual and the
+# pad/value cast traps needs the argc-seeding wrapper family, the `__host_argc`
+# channel and the two dispatcher admission gates. They belong in the dispatcher
+# emitters they gate (closure-exports.ts) and beside `ensureArgcGlobal`
+# (nested-declarations.ts); splitting them out would separate a gate from the
+# arm it guards. Most of the growth is the reasoning for WHY an arm may decline.
+# The two admission gates are per-dispatch-ARM decisions computed from the arm's
+# own formal types, so they live inside the emitter loops that build those arms.
+func-budget-allow:
+  - src/codegen/closure-exports.ts::emitClosureCallExportN
+  - src/codegen/closure-exports.ts::emitClosureMethodCallExportN
+  - src/codegen/context/create-context.ts::createCodegenContext
 loc-budget-allow:
   - src/runtime.ts
+  - src/codegen/closure-exports.ts
+  - src/codegen/statements/nested-declarations.ts
+  - src/codegen/context/types.ts
 ---
 
 # #6491 — early errors not detected on the body-only unit
@@ -163,3 +178,76 @@ zero-parameter cases) and `tests/issue-6491-duplicate-imported-bindings.test.ts`
 #6474, #6492 ×2. `tests/issue-2623-p7b-observable-resolve.test.ts` fails
 `Promise.try is not a function` — verified failing on the BASE runtime too
 (this Node build), pre-existing and unrelated.
+
+## Follow-up (2026-09-17, Opus lane) — the two merge-group parks on PR #5963
+
+Run 35256162280 parked commit `376b9af9` with two findings. Both are the
+`arguments.length` residual that commit documented, and both are now closed.
+
+### 1. `test/harness/verifyProperty-arguments.js` (pass → fail) — CLOSED
+
+`verifyProperty()` guards on `arguments.length`, and the widened call reported
+the closure's DECLARED arity instead of the real count. Documenting that was
+not enough: it is observable, so the count has to be right.
+
+The method dispatcher already had an argc channel
+(`__\0js2_call_fn_method_argc_<N>` seeds `__argc`, the arm clamps it to
+formals, the wrapper clears it). The free-function family had none. Added:
+
+- `__host_argc` — a **new** global, not `__argc`. `__argc` is written by
+  in-Wasm callers (`maybeSetArgcForKnownCall`) and consumed only by callees
+  that read `arguments`, so when a host callback re-enters the module it can
+  hold a stale count from an unrelated call; a free dispatcher that consumed
+  `__argc` would publish THAT number as `arguments.length`. One producer, one
+  consumer, cleared on read ⇒ a module whose host never seeds it is bit-for-bit
+  unchanged.
+- `__\0js2_call_fn_argc_<N>` wrapper + ABI role `closureFreeArgcDispatcher`.
+- `PROVIDER_COMPILER_ABI_VERSION` → **v2**. This is load-bearing and cost a
+  full debug cycle: the provider cache key contains no compiler-source hash, so
+  the first fixed build still failed this row — the run reused a **cached v1
+  provider** that had no argc export, and the bridge silently took the
+  fallback. Any change to the provider's export surface must bump it.
+
+### 2. Trap ratchet `illegal_cast` 30 → 31 — MINE, and CLOSED
+
+A/B by file copy on `src/runtime.ts`, linked lane, real runner:
+
+| build | `sort/comparefn-resizable-buffer.js` |
+| ----- | ------------------------------------ |
+| origin/main | `fail` — *thrown* `The comparison function must be either a function or undefined: [object Object]` |
+| +widening | `fail` — **`illegal cast` trap** |
+| +widening, widening disabled again | back to the thrown message |
+
+So the widening is the trigger: it makes a call that used to be a silent no-op
+actually run, and execution reaches casts that were previously unreachable.
+Two admission rules now keep a dispatch arm from casting what it cannot hold —
+an arm that cannot represent a value simply **does not match**, which is the
+same fall-through an unmatched arm already takes (i.e. the pre-widening
+outcome), never a trap:
+
+- **pad safety** (both dispatchers): a padded position needs a formal that can
+  hold the host's `undefined` — `externref`, a nullable ref, or an unconverted
+  param. A non-nullable ref formal blocks the widened match.
+- **value safety** (method dispatcher): `ref.test` the REAL argument against a
+  non-nullable ref formal before the arm is selected. `ref.test` is exactly the
+  predicate `ref.cast` succeeds under, so this can never decline a call that
+  used to work — it only converts a trap into a decline. The test mirrors the
+  conversion exactly (same `needsExternToAnyForClosureParam` condition, same
+  unwrap, vec-materializer route excluded); mirroring it loosely declined arms
+  the cast would have accepted.
+
+The row still fails (now `ctors is not defined` — a separate linked-lane
+harness gap, and it failed on main too), but it no longer traps.
+
+### Measurements (real runner, this worktree, 2026-09-17)
+
+| lane | origin/main | with the full change |
+| ---- | ----------- | -------------------- |
+| linked, the 50 #6491 rows | 0 pass / 50 fail | **15 pass / 35 fail** (unchanged from the first commit) |
+| linked, `verifyProperty-arguments.js` | pass | **pass** (was `fail` on `376b9af9`) |
+| linked, `sort/comparefn-resizable-buffer.js` | fail, thrown | fail, thrown — **no trap** |
+| honest, `Array.prototype.{forEach,map,filter,reduce,sort}` + `Promise.prototype.then` (1,297 rows, run in two halves) | 723 + 574 rows | **0 flips** |
+
+`equivalence-gate`: 22 failing / 1,720 passing / 22 known — no new regressions.
+Guards re-run green: #1931, #2664 ×2, #2623 P-7, #3451 ×3, #6474, #6491 ×2,
+#6492 ×3.
