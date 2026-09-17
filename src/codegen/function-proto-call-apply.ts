@@ -47,12 +47,10 @@
  *
  * ## Known residual
  *
- * §20.2.3.1 step 3 defers to CreateListFromArrayLike, which throws a TypeError
- * when `argArray` is neither `undefined`/`null` nor an Object. The guard below
- * covers the primitive carriers the runtime can name (`__typeof_number` /
- * `_string` / `_boolean` / `_bigint`); a Symbol `argArray` has no runtime
- * predicate here and still degrades to a zero-argument call rather than a
- * throw.
+ * None known for `apply`'s argument list: §20.2.3.1 step 3's
+ * CreateListFromArrayLike rejection now covers every primitive carrier,
+ * including Symbol (via the native `$Symbol` carrier `ref.test`, since no
+ * `__typeof_symbol` exists). See {@link emitApplyArgList}.
  */
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -259,14 +257,30 @@ function emitApplyArgList(
   const { vecTypeIdx, arrTypeIdx } = carrier;
   const args = allocLocal(fctx, `__fpa_args_${fctx.locals.length}`, { kind: "externref" });
 
-  // Step 3's rejection set, restricted to the primitive carriers the runtime
-  // can actually name — see the module header's residual note.
+  // Step 3's rejection set: every primitive carrier. Symbol has no
+  // `__typeof_symbol` anywhere in the tree (it is looked up but never
+  // registered — see `reflect-target-guard.ts` and `object-runtime-proxy.ts`),
+  // so it is discriminated host-free by a `ref.test` on the native `$Symbol`
+  // carrier, exactly as those two modules do.
   const primitive: Instr[] = [];
+  const orTest = (test: Instr[]): void => {
+    primitive.push(...test);
+    if (primitive.length > test.length) primitive.push({ op: "i32.or" });
+  };
   for (const name of ["__typeof_number", "__typeof_string", "__typeof_boolean", "__typeof_bigint"]) {
     const idx = ctx.funcMap.get(name);
     if (idx === undefined) continue;
-    primitive.push({ op: "local.get", index: 3 }, { op: "call", funcIdx: idx });
-    if (primitive.length > 2) primitive.push({ op: "i32.or" });
+    orTest([
+      { op: "local.get", index: 3 },
+      { op: "call", funcIdx: idx },
+    ]);
+  }
+  if (ctx.symbolTypeIdx >= 0) {
+    orTest([
+      { op: "local.get", index: 3 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: ctx.symbolTypeIdx },
+    ]);
   }
 
   // `undefined` is a distinct non-null sentinel in standalone, so `ref.is_null`

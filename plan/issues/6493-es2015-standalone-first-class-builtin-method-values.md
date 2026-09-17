@@ -151,30 +151,71 @@ missing QuickJS artifact — symmetric, but it hides the real verdict).
 
 | | base | branch |
 | --- | --- | --- |
-| pass | 40 | 40 |
-| fail | 72 | 72 |
+| pass | 40 | **42** |
+| fail | 72 | **70** |
 | `Function.prototype.call is not yet implemented` | **27** | **0** |
 | `Object.prototype.toString is not yet implemented` | 5 | 12 |
 
-Net **0**: 3 rows fixed, 3 lost, 25 rows changed failure reason.
+Net **+2**: 3 rows fixed, 1 lost, 25 rows changed failure reason.
 
 **Fixed (+3)** — all three failed on base with the `Function.prototype.call`
 refusal: `Error/prototype/stack/setter-proxy-wrapping-prototype.js`,
 `Error/prototype/stack/setter-receiver-is-null-proto.js`,
 `Function/prototype/Symbol.hasInstance/this-val-not-callable.js`.
 
-**Lost (−3)**, and WHY, because it is not what it looks like:
-`Error/prototype/stack/{getter-this-not-object, setter-this-not-object,
-setter-proxy-trap-rejects}.js`. Each is an `assert.throws(TypeError, () =>
-get.call(badReceiver))`. On base the *refusal itself* was the TypeError, so the
-assertion passed without `Error.prototype.stack` ever running. With `call`
-working, the accessor's own step 1 runs — and `emitThisIsObjectCheck`
-(`src/codegen/error-stack-accessor.ts`, #5269 D-2) is **deliberately narrow**:
-it rejects only `null`/`undefined`, and its own comment says widening it needs a
-discriminator that lane does not have. The rows test `true`, `1`, `""`, a
-Symbol and a BigInt too. Covering everything except Symbol would still leave the
-rows red (there is no `__typeof_symbol`), so this was left alone rather than
-guessed at — it is a follow-up on `error-stack-accessor.ts`, not on this change.
+**Lost (−1)**: `Error/prototype/stack/setter-proxy-trap-rejects.js`.
+
+**Correction to this file's first draft.** It originally reported −3 and put
+all three lost rows under one heading, "the receiver check is too narrow". That
+grouping was wrong. Two of them — `getter-this-not-object.js` and
+`setter-this-not-object.js` — WERE receiver-check rows and are now FIXED (see
+below). The third never was: its receiver is a Proxy, which is an Object and
+correctly passes step 1.
+
+All three passed on base for the same accidental reason — each is an
+`assert.throws(TypeError, …)` and on base the `Function.prototype.call` refusal
+was itself the TypeError, so `Error.prototype.stack` never ran.
+
+*Fixed in round 2 (the two receiver rows).* `emitThisIsObjectCheck`
+(`src/codegen/error-stack-accessor.ts`) tested only `null`/`undefined`, on the
+stated reasoning that "a boxed primitive receiver reaches the closure as a
+wrapper object here". Measured: NOT true on the first-class `get.call(1)` path
+— the receiver arrives as the raw boxed primitive. It now rejects every
+primitive: `__typeof_{number,string,boolean,bigint}` plus a `ref.test` on the
+native `$Symbol` carrier.
+
+Two facts worth recording because both were asserted the other way during
+review:
+
+- **`__typeof_symbol` does not exist.** It is looked up in exactly two places
+  (`object-runtime-proxy.ts:1374`, `:1546`) and REGISTERED IN NONE; both sites
+  document that and fall back to the `$Symbol` carrier `ref.test`, as does
+  `reflect-target-guard.ts:185`. This file's first draft named "no
+  `__typeof_symbol`" as the blocker that made the rows unfixable — the predicate
+  is indeed absent, but the carrier test closes the case, so the conclusion was
+  wrong.
+- **`__extern_is_object` is a HOST IMPORT**, not a native. Every call site
+  registers it with `ensureLateImport` and `src/runtime.ts:14132` implements it
+  in JavaScript, so reaching for it would have put an entry in
+  `result.imports`, which this lane requires to stay `[]`.
+
+The widening is a UNION OF POSITIVE PRIMITIVE TESTS, never a "not an object"
+probe, so it cannot start rejecting genuine objects — the `__typeof_*`
+predicates answer FALSE for the corresponding wrapper object, which is exactly
+why `emitObjectProtoToStringClassifier` needs its own `[[PrimitiveValue]]` arm
+to tag `new String("x")`. Pinned with that control: `new Error()` still answers
+a string, `{}` and `new String("x")` still answer rather than throw.
+
+*Still lost, and why it is not in this slice.* `setter-proxy-trap-rejects.js`
+needs the Proxy's `defineProperty` trap returning `false` to surface as a
+TypeError (CreateDataPropertyOrThrow step 4), and its `set` trap likewise
+(Set with Throw=true step 4). `__defineProperty_value` is declared with **no
+result value at all** (`ensureLateImport(…, [EXTERNREF, EXTERNREF, EXTERNREF,
+F64], [])`), so there is no success bit for the setter to test. Giving it one
+changes a shared signature across four call-site families plus the host runtime
+implementation — a different subsystem, and not something to approximate with a
+re-read probe, which would add observable `getOwnPropertyDescriptor` trap calls
+purely to satisfy a test.
 
 **Reason changed (25)** — the biggest group is the nine
 `Object/prototype/toString/symbol-tag-*-builtin.js` rows, which now get past
@@ -241,15 +282,25 @@ sample signatures, and no per-row standalone JSONL exists to count against.
 
 ### Residuals, named
 
+0. **A Proxy receiver whose `defineProperty` / `set` trap returns `false`** does
+   not raise the TypeError §CreateDataPropertyOrThrow step 4 / §Set step 4
+   require — `built-ins/Error/prototype/stack/setter-proxy-trap-rejects.js`.
+   `__defineProperty_value` reports no success value at all, so the stack setter
+   has nothing to test; see the acceptance section for why that signature change
+   is a different subsystem. Out of this slice, deliberately.
+
 1. **A callee with more than 8 DECLARED parameters traps.** `__apply_closure`'s
    arity cap (#1888 / #3310) is `unreachable` above 8 declared formals, so
    `Function.prototype.call.call(f9, …)` now aborts the module where base
    answered a silent `null`. Argument COUNT above 8 is unaffected (it degrades
    to `undefined`, as on base). Fixing the cap needs the finalize-time closure
    inventory, which is not reachable from a member body.
-2. **`apply` with a Symbol `argArray`** calls with no arguments instead of the
-   §20.2.3.1 step 3 TypeError — no Symbol predicate at this site. Number,
-   String, Boolean and BigInt argArrays do throw.
+2. ~~**`apply` with a Symbol `argArray`**~~ — **FIXED in round 2.** It threw no
+   TypeError because there is no `__typeof_symbol`; it now uses the same
+   `$Symbol` carrier `ref.test` the receiver check does, so every primitive
+   `argArray` (Number, String, Boolean, BigInt, Symbol) raises the §20.2.3.1
+   step 3 CreateListFromArrayLike TypeError while a real array and a plain
+   array-LIKE still spread. Pinned with both controls.
 3. **`.length` through a variable** still folds from the lib.d.ts signature:
    `Function.prototype.apply.length` is 2 (correct) but `var a =
    Function.prototype.apply; a.length` is 1, because

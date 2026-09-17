@@ -61,19 +61,75 @@ const CREATE_DATA_PROPERTY_FLAGS = 0x01 | 0x02 | 0x04;
 const EQ_HEAP_TYPE = -19;
 
 /**
+ * The `(externref) -> i32` primitive predicates the §1 receiver check consults.
+ * Symbol is absent BY NECESSITY — see {@link emitThisIsObjectCheck}.
+ */
+const PRIMITIVE_TYPEOF_PREDICATES: readonly string[] = [
+  "__typeof_number",
+  "__typeof_string",
+  "__typeof_boolean",
+  "__typeof_bigint",
+];
+
+/**
  * Emit `[E is not an Object] → TypeError`, the step both halves share.
  *
- * NARROW ON PURPOSE: it rejects the null externref and the #2106 `$undefined`
- * singleton — `get.call()` and `get.call(undefined)`. A boxed primitive
- * receiver reaches the closure as a wrapper object here, so widening this to a
- * general "is it an Object" probe would need a discriminator this lane does not
- * yet have, and a wrong guess would turn working receivers into throws.
+ * (#6493 round 2) This used to test only the null externref and the #2106
+ * `$undefined` singleton, on the reasoning that "a boxed primitive receiver
+ * reaches the closure as a wrapper object here". That is NOT true on the
+ * first-class `get.call(1)` path: the receiver arrives as the raw boxed
+ * primitive, so `get.call(true)` / `(1)` / `("")` / `(0n)` / `(Symbol())`
+ * answered `undefined` instead of throwing — measured, and the reason
+ * `built-ins/Error/prototype/stack/{getter,setter}-this-not-object.js` passed
+ * only while `Function.prototype.call` itself still refused.
+ *
+ * The widening is a UNION OF POSITIVE PRIMITIVE TESTS, never a "not an object"
+ * probe, so it cannot start rejecting genuine objects:
+ *
+ *  - the four `__typeof_*` predicates answer FALSE for the corresponding
+ *    WRAPPER object — that is exactly why `emitObjectProtoToStringClassifier`
+ *    needs its separate `[[PrimitiveValue]]` arm to tag `new String("x")` as
+ *    `[object String]` (without it that receiver measured `[object Object]`).
+ *  - Symbol has **no** `__typeof_symbol` anywhere in the tree — it is only ever
+ *    looked up and never registered, which both `reflect-target-guard.ts` and
+ *    `object-runtime-proxy.ts` document. The host-free discriminator is a
+ *    `ref.test` against the native `$Symbol` carrier, which is what they fall
+ *    back to and what is used here.
+ *
+ * `__extern_is_object` is deliberately NOT used: every call site registers it
+ * through `ensureLateImport` and `src/runtime.ts` implements it in JavaScript,
+ * so it is a HOST IMPORT. Reaching for it would put an entry in
+ * `result.imports`, which the standalone lane must keep empty.
+ *
+ * Each arm is skipped when its predicate/carrier is absent from the module, so
+ * a module that never mints one stays byte-identical.
  */
 function emitThisIsObjectCheck(ctx: CodegenContext, fctx: FunctionContext, what: string): void {
-  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
   const guard: Instr[] = [{ op: "local.get", index: 1 }, { op: "ref.is_null" }];
+  const orTest = (test: Instr[]): void => {
+    guard.push(...test, { op: "i32.or" });
+  };
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
   if (isUndefinedIdx !== undefined) {
-    guard.push({ op: "local.get", index: 1 }, { op: "call", funcIdx: isUndefinedIdx }, { op: "i32.or" });
+    orTest([
+      { op: "local.get", index: 1 },
+      { op: "call", funcIdx: isUndefinedIdx },
+    ]);
+  }
+  for (const name of PRIMITIVE_TYPEOF_PREDICATES) {
+    const funcIdx = ctx.funcMap.get(name);
+    if (funcIdx === undefined) continue;
+    orTest([
+      { op: "local.get", index: 1 },
+      { op: "call", funcIdx },
+    ]);
+  }
+  if (ctx.symbolTypeIdx >= 0) {
+    orTest([
+      { op: "local.get", index: 1 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: ctx.symbolTypeIdx },
+    ]);
   }
   const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", what, { flush: fctx });
   fctx.body.push(...guard, { op: "if", blockType: { kind: "empty" }, then: throwInstrs });

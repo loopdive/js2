@@ -107,6 +107,91 @@ describe("#6493 first-class builtin method values (standalone)", () => {
     expect(lines).toEqual(["two=T/1/2", "none=g:U", "nullish=g:W"]);
   });
 
+  it("§20.2.3.1 step 3 — a PRIMITIVE argArray is a TypeError, Symbol included", async () => {
+    // CreateListFromArrayLike throws when `argArray` is not an Object. A silent
+    // zero-argument call instead would be the "wrong answer beats refusal"
+    // failure this campaign prices as negative value.
+    //
+    // Symbol is the interesting one: there is NO `__typeof_symbol` anywhere in
+    // the tree — it is looked up in two places and registered in none — so the
+    // discriminator is a `ref.test` on the native `$Symbol` carrier, the same
+    // fallback `reflect-target-guard.ts` and `object-runtime-proxy.ts` use.
+    // The last two lines are the CONTROL: a real array and a plain array-LIKE
+    // must still spread, i.e. the guard rejects primitives only.
+    const lines = await runLines(`
+      var ap = Function.prototype.apply;
+      function f(a, b) { return "" + a + b; }
+      function t(label, v) {
+        try { LOG(label + "=" + ap.call(f, null, v)); } catch (e) { LOG(label + "!" + e.message); }
+      }
+      t("sym", Symbol("s"));
+      t("bigint", BigInt(3));
+      t("num", 5);
+      t("str", "ab");
+      t("bool", true);
+      t("arr", [7, 8]);
+      var o = {}; o.length = 2; o[0] = 1; o[1] = 2;
+      t("arraylike", o);
+    `);
+    const refusal = "CreateListFromArrayLike called on a non-object";
+    expect(lines).toEqual([
+      `sym!${refusal}`,
+      `bigint!${refusal}`,
+      `num!${refusal}`,
+      `str!${refusal}`,
+      `bool!${refusal}`,
+      "arr=78",
+      "arraylike=12",
+    ]);
+  });
+
+  it("Error.prototype.stack step 1 throws for EVERY non-Object receiver", async () => {
+    // RED on base only in the sense that base never got here: the
+    // `Function.prototype.call` refusal fired first and was itself a TypeError,
+    // which is why `built-ins/Error/prototype/stack/{getter,setter}-this-not-
+    // object.js` passed by accident. With `call` working, the accessor's own
+    // §1 has to hold, and it now does for all seven bad receivers.
+    //
+    // The last three lines are the CONTROL that the widening did not overshoot:
+    // a genuine Error still answers a string, and an ordinary object and a
+    // String WRAPPER object (which is an Object, not a primitive) both still
+    // ANSWER rather than throw.
+    //
+    // Those two read `object`, not `undefined`: §20.1.3.6 step 2's "no
+    // [[ErrorData]] → undefined" is carried by `ref.null.extern` here, and a
+    // null externref's `typeof` is `object` in this runtime. That is unchanged
+    // by this issue — the arm was already there and is not touched — and it is
+    // asserted rather than glossed so the control stays a measurement.
+    const lines = await runLines(`
+      var get = Object.getOwnPropertyDescriptor(Error.prototype, "stack").get;
+      function t(label, v) {
+        try { LOG(label + "=" + (typeof get.call(v))); } catch (e) { LOG(label + "!throws"); }
+      }
+      t("undef", undefined);
+      t("null", null);
+      t("bool", true);
+      t("num", 1);
+      t("str", "");
+      t("bigint", BigInt(0));
+      t("sym", Symbol("s"));
+      t("err", new Error("x"));
+      t("obj", {});
+      t("strwrapper", new String("x"));
+    `);
+    expect(lines).toEqual([
+      "undef!throws",
+      "null!throws",
+      "bool!throws",
+      "num!throws",
+      "str!throws",
+      "bigint!throws",
+      "sym!throws",
+      "err=string",
+      "obj=object",
+      "strwrapper=object",
+    ]);
+  });
+
   it("a non-callable receiver is a catchable TypeError, never a trap", async () => {
     // §20.2.3.1/.3 step 1. GREEN on base as well — there the refusal itself was
     // a TypeError — so this is a guard, not a proof: it is the arm that must not
