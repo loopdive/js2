@@ -433,8 +433,9 @@ describe("#6484 S3 — TypedArray [Symbol.iterator]() steps under standalone", (
     //
     //   * a plain-array iterator read "[object Array]" on base because it WAS a
     //     snapshot `$Vec` answering for itself. S1+S2 makes it a real
-    //     `$__IterRec`, and §23.1.3.36 makes `Array.prototype[@@iterator]` be
-    //     `.values` — an Array Iterator — so the tag is "[object Array Iterator]".
+    //     `$__IterRec`, and `Array.prototype[@@iterator]` IS `.values`, i.e.
+    //     CreateArrayIterator (§23.1.5.1) — an Array Iterator — so the tag is
+    //     "[object Array Iterator]".
     //     "[object Array]" would also contradict the `%ArrayIteratorPrototype%`
     //     this same module hands out as that object's [[Prototype]].
     //   * a Map iterator REFUSED (threw) on base. A throw where §20.1.3.6
