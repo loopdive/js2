@@ -1845,3 +1845,119 @@ constant first or they will re-derive this same false negative.
     through `standalone-link-boundary.ts`, so "provider vs. non-provider
     byte-identity" is the wrong standalone guard; gate-level reasoning plus the
     #3451 per-row binary guard is the right one.
+
+## Round 10 (2026-09-17) — two root causes, no shippable mechanism
+
+**No code landed this round.** Both mechanisms worked turned out to be larger
+than a same-round fix, and both are now diagnosed to the instruction rather than
+to the symptom. Linked baseline re-measured on the merged tree
+(`origin/main` @ 78bd11c4c9 + round 9): **44 / 138**, honest **135 / 138** —
+unchanged, nothing regressed.
+
+### A. `Promise.all{,Settled}Keyed` (4 rows) — the lanes take different lowerings
+
+`Promise.allKeyed` does not exist in Node, is not polyfilled anywhere in this
+repo, and yet the **honest** lane passes these rows while the **linked** lane
+reports `"Expected a TypeError to be thrown asynchronously but the function threw
+synchronously"`.
+
+Measured with the runtime instrumented (the runner executes
+`scripts/runtime-bundle.mjs`, **not** `src/runtime.ts` — an unrebuilt bundle
+silently measures the old code, which cost one full probe cycle):
+
+| probe | honest | linked |
+| --- | --- | --- |
+| `__extern_method_call` entry, method `allKeyed` | never | **hit** |
+| `__extern_method_call` not-a-function tail | never | **hit** (`obj=Promise`) |
+| `__extern_method_call_N` fixed-arity wrapper | never | — |
+| `__extern_get` for key `allKeyed` | never | — |
+| `__proto_method_call` for `allKeyed` | never | — |
+
+So the linked body resolves the name **dynamically at runtime** and throws;
+the honest unit never asks the host for it at all. The honest module imports
+the `allKeyed` string constant but never references it in a body — consistent
+with a **static** lowering that keeps the name only for an error message, and
+with the honest-only `Promise_reject` import, i.e. an abrupt completion turned
+into a rejected promise (§27.2.4.x `IfAbruptRejectPromise`) rather than a throw.
+
+**Eliminated:** provider/consumer disagreement on `moduleHasHostPromiseSource`
+(its only consumer, `standaloneThenMissArmCanBeNative`, is standalone-only);
+`promise-static-call-typeerror.ts` (standalone-only, and `allKeyed` is not in
+its `PROMISE_STATIC_METHODS`); the native combinator table
+(`promise-combinators.ts` has no `Keyed` entry); `skipSemanticDiagnostics`
+(the runner sets it true — with it false the row is a compile error).
+
+**Next step:** identify the honest arm that emits `Promise_reject` for this call
+— the honest WAT references the `allKeyed` string global nowhere in a body, so
+it is reachable by index only; dump the honest module's function that imports
+`Promise_reject` and read its callers. Then find the gate that excludes the
+consumer-alone compile. Reproduce with `.tmp/r9/dump-source.js` (the exact
+honest source the runner compiles, captured by a temporary dump hook in
+`tests/test262-shared.ts`, since the linked assembler's prefix+body is **not**
+the honest source and does not reproduce the verdict).
+
+### B. `await` non-thenable (3 rows) — a cross-module closure call answers `null`
+
+`asyncTest(foo)` over an `async function foo` declaration fails with
+`Cannot read properties of null (reading 'then')`. The `.then` is the harness's
+own `testFunc().then(…)`, so **`foo()` returned `null`** to the provider.
+
+Instrumented on `await-awaits-thenable-not-callable.js`:
+
+```
+[DBG prom]     Promise_new_pending    -> object      (the consumer's async machinery works)
+[DBG prom]     Promise_settle_resolve -> undefined
+[DBG hostcall] wasmClosureDynamicBridge nargs=1 result=null out=null
+[DBG dispatch] args=1 dispatchArity=1 declared=1 maxArity=4 -> NULL
+```
+
+The closure is dispatched at its **own declared arity**, so this is neither
+#6491's under-application nor #2664's method-arity omission. `__closure_arity`
+recognises the closure (answers 1) while `__call_fn_1`'s `ref.test` ladder does
+not match it and falls through to `ref.null.extern`. Two exports of the same
+module disagree about the same closure: one can name its arity, the other has no
+dispatch arm for it — invisible in-module (the call is compiled directly) and
+fatal the moment a foreign module calls it.
+
+Filed as **#6502**, with the fix direction (emit a `__call_fn_N` arm for every
+closure that can ESCAPE the module, and make a ladder MISS distinguishable from
+a genuine `null` return).
+
+### Per-row status of the 94 non-passing (linked, r10 baseline)
+
+Grouped by error class, largest first:
+
+| n | class | lane/owner |
+| --- | --- | --- |
+| ~31 | property-descriptor family (`Expected obj[N] to equal N`, `NOT to be writable`, `configurable:true`, getter/setter must be a function, …) | #6482 |
+| 4 | `Promise.all{,Settled}Keyed` sync-throw | A above |
+| 4 | `Expected a undefined to be thrown but no exception was thrown` (`findLast`/`findLastIndex` return-abrupt-from-predicate, `deepEqual-deep`) | open |
+| 3 | `await` non-thenable | **#6502** |
+| ~8 | the `*-realm` cluster (`$262.createRealm()`, `Proxy/*/trap-is-not-callable-realm`, `non-ctor-err-realm`, `define-own-prop-length-overflow-realm`, `assert-throws-same-realm`, `asyncHelpers-throwsAsync-same-realm`) | open — round 5 fixed the `instanceof` half only |
+| 4 | `Iterator/zipKeyed` + helper observation order | Iterator lane |
+| 2 | `private-field` → `invalid Wasm binary` | #6496 |
+| 2 | `TypedArray/prototype/sort` comparefn | open |
+| 2 | `String/prototype/replaceAll` replaceValue | open |
+| 2 | `RegExp/match-indices` | open |
+| 2 | `Proxy/set` call-parameters | open |
+| 2 | `Reflect/deleteProperty` | open |
+| ~25 | singles (String.prototype deletions, `Array.from` mapfn, tagged-template TCO, `with`-proxy env, DisposableStack extern-class dependency, …) | open |
+
+### Findings for the next lane (round 10)
+
+25. **The runner executes the BUNDLES, not `src/`.** `tests/test262-shared.ts`
+    hashes `scripts/compiler-bundle.mjs`, and the import object is built from
+    `scripts/runtime-bundle.mjs`. An instrumentation probe in `src/runtime.ts`
+    measures nothing until `npm run -s build:runtime-bundle` runs — and the
+    silent version of that mistake is a probe that prints nothing, which reads
+    exactly like "this code path is not taken".
+26. **`assembleLinkedHarness`'s prefix + body is NOT the honest source.** The
+    honest lane compiles `harnessAssembly.primary.source`. Reproducing an
+    honest verdict from the linked assembler's parts gives a different verdict
+    and sends the investigation after a difference that is an artifact of the
+    probe.
+27. **A silent `null` is the linked lane's characteristic failure shape.** Both
+    root causes this round end in a `ref.null.extern` fall-through that the host
+    cannot distinguish from a real value — the r6 UNDEF-sentinel bug had the
+    same shape. When a linked row fails with "cannot read X of null", suspect a
+    ladder miss before suspecting the value.
