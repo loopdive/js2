@@ -281,6 +281,87 @@ describe("#6493 first-class builtin method values (standalone)", () => {
     ]);
   });
 
+  it("§CreateDataPropertyOrThrow / §Set step 4 — a Proxy trap that returns false throws TypeError", async () => {
+    // (#6493 S4) The two halves of
+    // `built-ins/Error/prototype/stack/setter-proxy-trap-rejects.js`, the one
+    // row rounds 1-2 lost. RED on base twice over: base refused
+    // `Function.prototype.call` outright, and after S1 landed BOTH halves
+    // completed silently.
+    //
+    // WHY THE RECEIVER IS SPELLED THIS WAY. A `$Proxy` stored in a `var` whose
+    // inferred type is the TARGET'S OBJECT SHAPE (lib.d.ts types
+    // `new Proxy<T>(t, h)` as `T`) is nulled on the way into the struct-typed
+    // local, so it reaches the setter as a null externref and dies at §1
+    // instead. That is a PRE-EXISTING defect unrelated to this arm — measured
+    // identically for a plain user function (`c.call(probe, p)` where `p` is
+    // such a var binds `this` to globalThis) — and it is why the second half is
+    // written over a `JSON.parse` (`any`-typed) target here: with a shape-typed
+    // var it would "pass" off the §1 TypeError without ever reaching §Set.
+    // See the issue file's S4 section.
+    //
+    // Lines 3-4 are the ORDER-PRESERVATION control: a trap that THROWS must
+    // propagate its own completion unchanged, never be converted into this
+    // arm's TypeError. Lines 5-6 pin that the trap runs EXACTLY ONCE — a
+    // success bit inferred by re-reading the property would show n=2 and add an
+    // observable `getOwnPropertyDescriptor` trap call.
+    const lines = await runLines(`
+      var set = Object.getOwnPropertyDescriptor(Error.prototype, "stack").set;
+      function verdict(label, recv) {
+        try { set.call(recv, "v"); LOG(label + "=no-throw"); }
+        catch (e) { LOG(label + "=" + (e instanceof TypeError ? "TypeError" : e.constructor.name + ":" + e.message)); }
+      }
+      verdict("defineFalse", new Proxy({}, { defineProperty: function () { return false; } }));
+      verdict("setFalse", new Proxy(JSON.parse('{"stack":"old"}'), { set: function () { return false; } }));
+      verdict("defineThrows", new Proxy({}, { defineProperty: function () { throw new RangeError("boom"); } }));
+      verdict("setThrows", new Proxy(JSON.parse('{"stack":"old"}'), { set: function () { throw new RangeError("boom"); } }));
+      var dn = 0;
+      var dt = JSON.parse('{}');
+      set.call(new Proxy(dt, { defineProperty: function (t, k, d) { dn++; t[k] = d.value; return true; } }), "v");
+      LOG("defineTrue=n" + dn + ":" + dt.stack);
+      var sn = 0;
+      var st = JSON.parse('{"stack":"old"}');
+      set.call(new Proxy(st, { set: function (t, k, v) { sn++; t[k] = v; return true; } }), "v");
+      LOG("setTrue=n" + sn + ":" + st.stack);
+    `);
+    expect(lines).toEqual([
+      "defineFalse=TypeError",
+      "setFalse=TypeError",
+      "defineThrows=RangeError:boom",
+      "setThrows=RangeError:boom",
+      "defineTrue=n1:v",
+      "setTrue=n1:v",
+    ]);
+  });
+
+  it("the Proxy arm does NOT fire for an ordinary receiver", async () => {
+    // (#6493 S4) The control that the new `ref.test $Proxy` split left the
+    // ordinary path alone. Every line below is GREEN on this branch before the
+    // S4 arm as well — that is the point: they are the "did not move" half of
+    // the claim, and the trap-ABSENT proxy lines are the ones that would break
+    // first if the arm believed `__proxy_set_dispatch`'s trap-absent
+    // `ref.null.extern` placeholder (which reads as ToBoolean false).
+    const lines = await runLines(`
+      var set = Object.getOwnPropertyDescriptor(Error.prototype, "stack").set;
+      var o = {}; set.call(o, "v"); LOG("create=" + o.stack);
+      var o2 = { stack: "old" }; set.call(o2, "w"); LOG("assign=" + o2.stack);
+      var e1 = new Error("x"); set.call(e1, "z");
+      LOG("error=" + Object.getOwnPropertyDescriptor(e1, "stack").value);
+      try { set.call(Error.prototype, "v"); LOG("home=no-throw"); } catch (e) { LOG("home=" + e.constructor.name); }
+      var ct = JSON.parse('{}');
+      set.call(new Proxy(ct, {}), "v"); LOG("proxy-no-trap-create=" + ct.stack);
+      var at = JSON.parse('{"stack":"old"}');
+      set.call(new Proxy(at, {}), "v"); LOG("proxy-no-trap-assign=" + at.stack);
+    `);
+    expect(lines).toEqual([
+      "create=v",
+      "assign=w",
+      "error=z",
+      "home=TypeError",
+      "proxy-no-trap-create=v",
+      "proxy-no-trap-assign=v",
+    ]);
+  });
+
   it("the generic refusal is still there for a builtin method with no body", async () => {
     // The safety net this issue must NOT widen away: an unwired first-class
     // builtin method value stays a CATCHABLE TypeError rather than a trap or a

@@ -1,7 +1,8 @@
 ---
 id: 6493
 title: "ES2015 standalone: a first-class builtin method value refuses instead of working (Function.prototype.call and friends)"
-status: in-review
+status: done
+completed: 2026-09-17
 sprint: current
 created: 2026-09-17
 updated: 2026-09-17
@@ -24,6 +25,17 @@ model: opus
 # arm immediately above.
 loc-budget-allow:
   - src/codegen/array-object-proto.ts
+# 2026-09-17 (#6493 S4): three `__is_truthy` tokens enter
+# `error-stack-accessor.ts`, which had none. This is NOT a hand-rolled
+# coercion matrix — it is the single sanctioned standalone ToBoolean native
+# (`registerNative` in `registry/imports.ts`), read on the result of a Proxy
+# trap. §CreateDataPropertyOrThrow step 4 and §Set step 4 are both defined on
+# ToBoolean(the trap's result), and EVERY existing proxy front guard in
+# `object-runtime-proxy.ts` coerces the same way with the same helper. The
+# alternative, `__to_boolean`, is a HOST IMPORT and would break this lane's
+# `result.imports === []` requirement.
+coercion-sites-allow:
+  - src/codegen/error-stack-accessor.ts
 ---
 
 # A first-class builtin method value refuses instead of working
@@ -411,3 +423,173 @@ unfixed. Giving `__defineProperty_value` a general success channel — the fix f
 an **ordinary** receiver whose define fails (non-extensible target, non-writable
 own property) — also stays out: it is the shared-signature change round 2
 described, and this Proxy arm does not approximate it or block it.
+
+## S4 implementation result (2026-09-17)
+
+**The regression is closed: 43 pass / 69 fail on the branch against 40 / 72 on
+the merge base, zero rows lost.** Same two-tree protocol as rounds 1-2 (a
+detached worktree at merge-base `747c0fee19`, `.test262-cache` and `test262`
+shared), same 112-row list file, same runner invocation
+(`COMPILER_POOL_SIZE=2 npx tsx scripts/run-test262-paths.mts --isolate <list>
+--standalone`).
+
+### The lost row, traced across all three trees
+
+Run one row, three trees, one command each:
+
+| tree | `setter-proxy-trap-rejects.js` | why |
+| --- | --- | --- |
+| merge base `747c0fee19` | **pass** | accidental — the `Function.prototype.call` refusal was itself the TypeError both `assert.throws` wanted |
+| round-2 tip `2358e2383b` | **fail** | `defineProperty returns false — Expected a TypeError to be thrown but no exception was thrown at all` |
+| this branch | **pass** | half (a) raises the real §CreateDataPropertyOrThrow step-4 TypeError |
+
+### What landed
+
+One arm in `emitErrorStackSetterBody` (`src/codegen/error-stack-accessor.ts`):
+steps 3-4 now split on `ref.test $Proxy` over the receiver. The `else` is the
+existing `__defineProperty_value` / `__extern_set_strict` pair, unchanged. The
+`then` reads the spec's SUCCESS BOOLEAN off the dispatcher that already carries
+it, and throws when ToBoolean of it is false.
+
+**Both halves were genuinely broken, for DIFFERENT reasons — round 2 named only
+one of them, and named it wrongly.**
+
+- `__defineProperty_value` is **not** "declared with no result value at all";
+  the standalone native is registered `[externref, externref, externref, f64] ->
+  [externref]` and returns the target object `O`
+  (`object-runtime-descriptors.ts`). The real blocker is different and larger:
+  it carries **no Proxy front guard at all** (only `__obj_define_from_desc`
+  does), so on a `$Proxy` receiver it `ref.cast $Object`-ed the proxy carrier
+  and stored into it. Measured on the round-2 tip: the `defineProperty` trap
+  ran **zero** times, so neither a `false` return nor a THROWING trap was
+  observable.
+- `__extern_set_strict` does reach the `set` trap, but on the #4504
+  result-channel build it drops `__reflect_set`'s boolean and reads the shared
+  channel, which the proxy front guard returns before ever writing. Measured: a
+  `set` trap returning `false` completed silently.
+
+### Correction to the S4 plan: the `set` half needs the 4-argument dispatcher
+
+The plan named `__proxy_set_dispatch`. **That one cannot be used**, and the
+measurement is in its own source: its trap-ABSENT arm pushes `ref.null.extern`
+as a deliberate placeholder for `__extern_set`'s front guard to DROP
+(`buildDispatch`, `object-runtime-proxy.ts`). `__is_truthy(null)` is 0, so
+believing that result throws on every trap-absent proxy — which would have
+taken out `setter-receiver-is-proxy.js` and re-broken
+`setter-proxy-wrapping-prototype.js`, the row round 1 had just fixed.
+
+`__proxy_set_receiver_dispatch(recv, "stack", v, recv)` is used instead. It owns
+its answer on both arms (trap present → the trap's booleanish result; trap
+absent → `__box_boolean` of `__reflect_set_receiver`), it is the spec's own
+shape — §Set(O, P, V, true) is `O.[[Set]](P, V, O)` — and it is exactly where
+`__extern_set_strict` was already routing this write, so the SIDE EFFECTS are
+unchanged and only the missing throw is added. Everything else in the plan held:
+`__proxy_define_dispatch`, `__create_descriptor` and `__is_truthy` all exist
+with the stated signatures and are all `registerNative` standalone natives.
+
+### Acceptance — 112 rows, both trees
+
+| | base `747c0fee19` | branch |
+| --- | --- | --- |
+| pass | 40 | **43** |
+| fail | 72 | **69** |
+
+Row-level, not count-level: the branch's 69-row non-pass set is a strict SUBSET
+of the base's 72-row set. **Lost: none.** Fixed (+3):
+`Error/prototype/stack/setter-proxy-wrapping-prototype.js`,
+`Error/prototype/stack/setter-receiver-is-null-proto.js`,
+`Function/prototype/Symbol.hasInstance/this-val-not-callable.js`.
+
+### Byte identity of the ordinary path — measured, not asserted
+
+Acceptance item 5 asked for a sha256 of a standalone probe that uses the stack
+setter on a plain object, before and after. **That probe's sha DOES change**
+(`7fc7dffe…` → `022d559c…`), and it must: the arm is emitted in every module
+that mints the setter body, because the proxy natives are present in every
+standalone module (verified — `__proxy_create`, `__proxy_define_dispatch` et al
+are in `funcMap` even for a program containing no `new Proxy`), so there is no
+sound "this module cannot make a Proxy" gate to hang it on.
+
+What item 5 was actually protecting is intact, and here is the measurement that
+shows it: compiling the SAME probe with the new arm suppressed by a temporary
+switch reproduces **`7fc7dffea5d15437` exactly** — the pre-change sha, bit for
+bit. So the whole byte delta is the new arm; the ordinary arm's instruction
+stream is untouched (it is literally the same `Instr[]`, handed to the new `if`
+as its `else`). Separately, a standalone probe that never reaches the setter is
+unchanged outright (`ca9b6842c74fcfca` on both trees).
+
+### Controls — 805 rows, 0 lost
+
+Rebuilt from the same six directories and the same deterministic samples
+(`built-ins/Reflect` every 2nd path, `built-ins/TypedArray/prototype` every
+14th); the per-directory row counts reproduce rounds 1-2 exactly (298 / 207 /
+30 / 92 / 77 / 101 = 805). Every chunk is IDENTICAL between the trees — same
+totals AND the same non-pass `status path` set, line for line.
+
+| chunk | set | rows | base = branch |
+| --- | --- | --- | --- |
+| cc1-00/01 | `built-ins/Function/prototype` (minus the acceptance overlap) | 298 | 250 pass / 45 fail / 3 CE |
+| cc2-02/03 | `built-ins/Object/prototype` (minus the overlap) | 207 | 190 pass / 17 fail |
+| cc3-04 | `built-ins/Error/prototype` (minus the overlap) | 30 | 28 pass / 2 fail |
+| cc4-05 | `language/expressions/call` | 92 | 72 pass / 20 fail |
+| cc5-06 | `built-ins/Reflect`, every 2nd path | 77 | 68 pass / 8 fail / 1 CE |
+| cc6-07 | `built-ins/TypedArray/prototype`, every 14th path | 101 | 69 pass / 32 fail |
+| **total** | | **805** | **677 pass / 124 fail / 4 CE** |
+
+The totals match round 1's recorded table line for line, which is the check
+that the control set was rebuilt correctly and not merely re-described. The
+sampling caveat from round 1 still applies and is not papered over: `Reflect`
+and `TypedArray/prototype` are samples, the three directories where this change
+can bite (`Function/prototype`, `Object/prototype`, `Error/prototype`) were run
+in full.
+
+Equivalence gate: exit 0 — 1720 passing, 22 known failures, no new regressions.
+
+### Zero host imports
+
+`result.imports` is `[]` on every probe that exercises the new arm, asserted in
+the pin file's shared `runLines` helper. All four natives it calls are
+`registerNative`, not `ensureLateImport` — the distinction that ruled
+`__extern_is_object` out in round 2.
+
+### Pins
+
+`tests/issue-6493-first-class-builtin-method-values.test.ts` — 11/11 green, two
+new `it`s. The first pins both halves plus two order-preservation properties a
+sloppier fix would break: a trap that THROWS propagates its own completion
+unchanged (`RangeError`, not this arm's TypeError), and the trap runs EXACTLY
+ONCE (`n === 1` — a success bit inferred by re-reading the property would show 2
+and add an observable `getOwnPropertyDescriptor` trap call). The second is the
+ordinary-receiver control, including the two trap-absent proxy lines that would
+be the first casualty of believing `__proxy_set_dispatch`'s placeholder.
+
+Both were run against the round-2 tip `2358e2383b` to confirm they are pins and
+not decoration. RED there on exactly four lines and no others: `defineFalse`
+NO-THROW, `setFalse` NO-THROW, `defineThrows` NO-THROW, and `defineTrue` with
+`n=0` (the trap never ran at all). Every line of the ordinary-receiver `it`,
+including both trap-absent proxies, reads the SAME on the round-2 tip as here —
+which is what makes it a control rather than a second copy of the first test.
+
+### New residual, measured here — a `$Proxy` in a shape-typed local is NULLED
+
+`lib.d.ts` types `new Proxy<T>(target, handler)` as `T`, so `var p = new
+Proxy({stack: 'old'}, …)` gives `p` the TARGET'S OBJECT SHAPE as its static
+type. The `$Proxy` carrier fails that struct's downcast on the way into the
+typed local, and the binding reaches every later use as a **null externref**.
+
+Measured three ways on this branch: `id(p)` sees `x === null`; `c.call(probe,
+p)` binds `this` to **globalThis** (the sloppy nullish-this substitution) rather
+than to `p`; and the stack setter dies at its own §1 receiver check. A proxy
+over an EMPTY object literal (`{}` → no struct shape), one built inline in the
+call, or one over an `any`-typed target (`JSON.parse(...)`) all survive intact —
+which is how the arm above was proved on a receiver that actually arrives.
+
+This is **pre-existing and unrelated** to #6493 (it reproduces for a plain user
+function with no accessor involved), but it has a specific consequence worth
+recording: in `setter-proxy-trap-rejects.js` the (b) receiver is spelled `new
+Proxy({ stack: 'old' }, …)` and is therefore nulled, so half (b) of that ROW
+passes off the §1 TypeError rather than off §Set step 4. Half (a)'s receiver is
+`new Proxy({}, …)` and is genuinely exercised. Both halves are pinned
+genuinely in the test file, where the (b) receiver is spelled so it survives.
+`setter-proxy-trap-throws.js` stays failing for the same reason — its (c) case
+uses the shape-typed spelling.

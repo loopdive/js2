@@ -28,12 +28,11 @@
  *   3. no own `stack` → CreateDataPropertyOrThrow(E, "stack", v).
  *   4. own `stack` → Set(E, "stack", v, true).
  *
- * Steps 3-4 go through `__getOwnPropertyDescriptor` / `__defineProperty_value`
- * / `__extern_set_strict` rather than touching the object directly, because
- * each of those carries the Proxy front guard: on a proxy receiver they run the
- * `getOwnPropertyDescriptor`, `defineProperty` and `set` traps, which is what
- * the three `setter-proxy-*` rows observe (including a trap that returns false
- * → TypeError, and a trap that throws → the completion propagates).
+ * Steps 3-4 go through `__getOwnPropertyDescriptor` (which DOES carry the Proxy
+ * front guard, so the `getOwnPropertyDescriptor` trap runs) and then split on
+ * the receiver — see {@link emitProxyReceiverArms} for why the define/assign
+ * halves cannot simply reuse `__defineProperty_value` / `__extern_set_strict`
+ * when the receiver is a `$Proxy`.
  *
  * Every entry point returns `null` — having emitted NOTHING — when its
  * substrate is missing, so the glue ladder falls through byte-identically.
@@ -135,6 +134,118 @@ function emitThisIsObjectCheck(ctx: CodegenContext, fctx: FunctionContext, what:
   fctx.body.push(...guard, { op: "if", blockType: { kind: "empty" }, then: throwInstrs });
 }
 
+/** The two arms {@link emitProxyReceiverArms} builds, or `undefined` to decline. */
+interface ProxyReceiverArms {
+  /** §CreateDataPropertyOrThrow steps 3-4 against a `$Proxy` receiver. */
+  create: Instr[];
+  /** §Set(O, P, V, true) steps 3-4 against a `$Proxy` receiver. */
+  assign: Instr[];
+}
+
+/**
+ * (#6493 S4) Steps 3-4 for a `$Proxy` receiver, where the ordinary helpers
+ * cannot report the spec's SUCCESS BOOLEAN.
+ *
+ * `setter-proxy-trap-rejects.js` asks for the two TypeErrors a falsy trap
+ * result owes: CreateDataPropertyOrThrow step 4 and Set step 4. Neither
+ * ordinary helper can answer them, and the reasons differ:
+ *
+ *  - `__defineProperty_value(o, k, v, flags)` returns `o`, not a boolean, and
+ *    carries NO Proxy front guard at all (only `__obj_define_from_desc` does).
+ *    Measured on this branch: `set.call(new Proxy({}, {defineProperty: () =>
+ *    false}), 'v')` ran the ordinary `$Object` store — the trap never fired
+ *    (`n === 0`), so neither a `false` return NOR a throwing trap was
+ *    observable. That is the whole of the lost row.
+ *  - `__extern_set_strict` DOES reach the `set` trap (through `__reflect_set`'s
+ *    front guard), but on the #4504 result-channel build it DROPS
+ *    `__reflect_set`'s boolean and reads the shared channel instead — which the
+ *    proxy front guard returns before ever writing. Measured: a `set` trap
+ *    returning `false` completed silently.
+ *
+ * The success bit exists already, on the dispatchers themselves. Both are
+ * `registerNative` STANDALONE natives (`object-runtime-proxy.ts`), as are
+ * `__create_descriptor` (`object-runtime-descriptors.ts`) and `__is_truthy`
+ * (`registry/imports.ts`), so this arm adds NOTHING to `result.imports` — the
+ * distinction that ruled `__extern_is_object` out in round 2.
+ *
+ * **`__proxy_set_receiver_dispatch`, not `__proxy_set_dispatch`.** The 3-param
+ * `__proxy_set_dispatch` answers `ref.null.extern` on its trap-ABSENT arm — a
+ * documented placeholder that `__extern_set`'s front guard drops rather than
+ * reads. `__is_truthy(null)` is 0, so believing that result would throw on
+ * every trap-absent proxy (`setter-receiver-is-proxy.js`,
+ * `setter-proxy-wrapping-prototype.js`). The 4-param
+ * `__proxy_set_receiver_dispatch` owns its answer on BOTH arms: trap present →
+ * the trap's booleanish result; trap absent → `__box_boolean` of
+ * `__reflect_set_receiver`. It is also the spec's own shape —
+ * §Set(O, P, V, true) is `O.[[Set]](P, V, O)`, receiver = the proxy — and it is
+ * exactly where `__extern_set_strict` was already routing this write, so the
+ * SIDE EFFECTS are unchanged and only the missing throw is added.
+ *
+ * The trap runs EXACTLY ONCE: the result is consumed straight from the
+ * dispatch, never inferred by re-reading the property (which would add an
+ * observable `getOwnPropertyDescriptor` trap call).
+ *
+ * Returns `undefined` — having built nothing and registered nothing — when any
+ * dependency is missing, so the setter keeps its current body verbatim.
+ */
+function emitProxyReceiverArms(ctx: CodegenContext, fctx: FunctionContext): ProxyReceiverArms | undefined {
+  // Probe first: `buildThrowJsErrorInstrs` interns a string constant, so it
+  // must not run on a module that will decline.
+  for (const name of [
+    "__proxy_define_dispatch",
+    "__proxy_set_receiver_dispatch",
+    "__create_descriptor",
+    "__is_truthy",
+  ]) {
+    if (ctx.funcMap.get(name) === undefined) return undefined;
+  }
+  const createRefused = buildThrowJsErrorInstrs(
+    ctx,
+    "TypeError",
+    "Cannot create property 'stack' on the Error.prototype.stack setter's receiver",
+    { flush: fctx },
+  );
+  const assignRefused = buildThrowJsErrorInstrs(
+    ctx,
+    "TypeError",
+    "Cannot assign to property 'stack' on the Error.prototype.stack setter's receiver",
+    { flush: fctx },
+  );
+  // Re-read AFTER both throws: either may register an error constructor as a
+  // late import, which renumbers every function index.
+  const defineDispatchIdx = ctx.funcMap.get("__proxy_define_dispatch")!;
+  const setDispatchIdx = ctx.funcMap.get("__proxy_set_receiver_dispatch")!;
+  const createDescriptorIdx = ctx.funcMap.get("__create_descriptor")!;
+  const isTruthyIdx = ctx.funcMap.get("__is_truthy")!;
+  /** `<booleanish externref on the stack>` → throw when ToBoolean is false. */
+  const throwUnless = (refused: Instr[]): Instr[] => [
+    { op: "call", funcIdx: isTruthyIdx },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: refused },
+  ];
+  return {
+    create: [
+      { op: "local.get", index: 1 },
+      ...stringConstantExternrefInstrs(ctx, "stack"),
+      // §CreateDataProperty builds the descriptor; `__create_descriptor` takes
+      // the SAME flag encoding `__defineProperty_value` decodes, as an i32.
+      { op: "local.get", index: 2 },
+      { op: "i32.const", value: CREATE_DATA_PROPERTY_FLAGS },
+      { op: "call", funcIdx: createDescriptorIdx },
+      { op: "call", funcIdx: defineDispatchIdx },
+      ...throwUnless(createRefused),
+    ],
+    assign: [
+      { op: "local.get", index: 1 },
+      ...stringConstantExternrefInstrs(ctx, "stack"),
+      { op: "local.get", index: 2 },
+      { op: "local.get", index: 1 }, // Receiver — §Set passes O itself.
+      { op: "call", funcIdx: setDispatchIdx },
+      ...throwUnless(assignRefused),
+    ],
+  };
+}
+
 /** `get Error.prototype.stack` (ABI: local 0 = self, local 1 = `this`). */
 export function emitErrorStackGetterBody(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
   if (!ctx.standalone) return null;
@@ -224,10 +335,9 @@ export function emitErrorStackSetterBody(ctx: CodegenContext, fctx: FunctionCont
 
   const descLocal = allocLocal(fctx, `__stackset_desc_${fctx.locals.length}`, { kind: "externref" });
 
-  // Steps 3-4. Both branches run through a Proxy-aware helper, so a trap that
-  // returns false throws and a trap that throws propagates — neither is
-  // special-cased here.
-  const create: Instr[] = [
+  // Steps 3-4 for an ORDINARY receiver. Unchanged, and reached byte-for-byte
+  // unchanged whenever the receiver is not a `$Proxy`.
+  const ordinaryCreate: Instr[] = [
     { op: "local.get", index: 1 },
     ...stringConstantExternrefInstrs(ctx, "stack"),
     { op: "local.get", index: 2 },
@@ -237,12 +347,28 @@ export function emitErrorStackSetterBody(ctx: CodegenContext, fctx: FunctionCont
     // returns nothing, so drop it or the two arms of the `if` disagree.
     { op: "drop" },
   ];
-  const assign: Instr[] = [
+  const ordinaryAssign: Instr[] = [
     { op: "local.get", index: 1 },
     ...stringConstantExternrefInstrs(ctx, "stack"),
     { op: "local.get", index: 2 },
     { op: "call", funcIdx: strictSetIdx },
   ];
+
+  // (#6493 S4) A `$Proxy` receiver takes the dispatcher arms, which carry the
+  // spec's success boolean; everything else keeps the arms above as the `else`.
+  const proxyTypeIdx = ctx.objectRuntimeTypes?.proxyTypeIdx ?? -1;
+  const proxyArms = proxyTypeIdx >= 0 ? emitProxyReceiverArms(ctx, fctx) : undefined;
+  const splitOnReceiver = (proxyArm: Instr[], ordinary: Instr[]): Instr[] =>
+    proxyArms === undefined
+      ? ordinary
+      : [
+          { op: "local.get", index: 1 },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: proxyTypeIdx },
+          { op: "if", blockType: { kind: "empty" }, then: proxyArm, else: ordinary },
+        ];
+  const create = splitOnReceiver(proxyArms?.create ?? [], ordinaryCreate);
+  const assign = splitOnReceiver(proxyArms?.assign ?? [], ordinaryAssign);
 
   fctx.body.push(
     { op: "local.get", index: 1 },
