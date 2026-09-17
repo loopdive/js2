@@ -134,35 +134,115 @@ corpus wherever the module composition triggers it," not a fixed subset).
 
 ## Criterion 4 — four-family sample, must-not-move groups, corpus byte A/B
 
-Base: S38's tip (`ea2277af98`), `.tmp/s38/famrun3.mts`/`mnm3.mts`/`corpus.mts`
-drivers reused unchanged. `--target standalone`, provider linked, sequential,
-fresh cache, 60s rows, QuickJS present.
+**Measured in the S39b slice** (branch `issue-5383-standalone-temporal-s39b`,
+tip `21d3178748` = S39's own tip; base tree obtained by file-copy revert of
+ONLY the 3 files S39 changed against S39's parent `ea2277af98`, restored after
+each base run). Scripts: `.tmp/s39b/famrun3.mts` (copied from S38b's
+`.tmp/s38/famrun3.mts`, `outDir` repointed), `.tmp/s39b/mnm3.mts` (same, plus a
+new group D — see below), `.tmp/s39b/corpus.mts` (same, `WT` repointed to this
+worktree). `--target standalone`, `@js-temporal/polyfill` 0.5.1 provider
+linked (`hostBridge: "off"`), sequential, fresh `JS2WASM_TEMPORAL_CACHE` per
+label (prewarmed via `scripts/prewarm-temporal-provider.mjs --target
+standalone`, both prewarms measured `cacheHit=false`), 60s per family row / 30s
+per must-not-move row, QuickJS eval provider present (rebuilt per label —
+`scripts/build-quickjs-eval-provider.mjs`, content-addressed on the compiler
+bundle hash, so the adapter key legitimately differs between base and fix; a
+stale adapter for the wrong label surfaces loudly as a `quickjs provider is
+not built` error, not a silent wrong answer — hit this once, rebuilt, verified
+clean before trusting any row).
+
+**Setup gap found and fixed before any row could run**: this worktree started
+with no `test262/` submodule checkout, no `.test262-cache` QuickJS artifacts,
+and no `scripts/compiler-bundle.mjs`. `git submodule update --init test262`
+(shares the object store with the other worktrees via `.git/modules`, so this
+was a local checkout, not a re-clone) and `npm run -s build:compiler-bundle`
+resolved those. A second gap surfaced only once the family sample ran: the
+standalone Temporal lane requires a `prewarm-<target>.json` stamp in the cache
+dir (`test262TemporalLaneEnabled`) — a fresh `JS2WASM_TEMPORAL_CACHE` with no
+stamp runs every Temporal-needing row UNLINKED (fail-soft to `ReferenceError:
+Temporal is not defined`), which is silent and reads as "everything regressed"
+if not caught. Running the prewarm script explicitly (not just setting the env
+var) is required before any family/Temporal row.
+
+### Four-family sample (120 files/family, alphabetical-walk first 120)
 
 | Family | Base pass/120 | Branch pass/120 | pass→fail | fail→pass |
 | --- | --- | --- | --- | --- |
-| `PlainDate/**` | 112 | (unmeasured this slice — see below) | | |
-| `Duration/**` | 105 | | | |
-| `ZonedDateTime/prototype/**` | 103 | | | |
-| `PlainDateTime/**` | 113 | | | |
+| `PlainDate/**` | 112 | 112 | 0 | 0 |
+| `Duration/**` | 105 | 105 | 0 | 0 |
+| `ZonedDateTime/prototype/**` | 103 | 103 | 0 | 0 |
+| `PlainDateTime/**` | 113 | 113 | 0 | 0 |
+| **Total** | **433/480** | **433/480** | **0** | **0** |
 
-**Not run this slice** — the confirmed-buggy sites (`.BYTES_PER_ELEMENT`
-dynamic reads, `.prototype`/gopd/hasOwnProperty via `ta-ctor-meta.ts`) are
-collision-triggered on a field-less class reaching a tag inside 0..10 while a
-`$__ta_ctor` type is registered; whether the REAL `@js-temporal/polyfill`
-provider's own classes land on a colliding tag in the 4-sample families (vs.
-`#6620`'s measured tag in the 30s, which the polyfill's `Temporal.Duration`
-itself uses) was not checked against the actual corpus within this slice's
-time budget. Given the fix is answer-preserving and zero-risk (same
-established `taCtorIdentityTestInstrs` contract every prior PR in this stack
-relied on for its own family-sample pass), and given `tests/issue-66*.test.ts`
-(138 tests, includes the full #6620/#6622/#6601/#6624/#6625 regression corpus)
-passes clean, the family sample is deferred to the next slice's acceptance
-run rather than blocking this one — flagged honestly rather than fabricated.
-Equivalence gate and `tests/issue-66*.test.ts` (138/138) are the acceptance
-evidence actually gathered this slice.
+Base reproduces S38b's own cited 112/105/113/103 exactly (`.tmp/s39b/fam/*-base.tsv`).
+Per-file diff (`.tmp/s39b/diff_fam.py`) confirms **0 files moved either
+direction** — not just an even aggregate, every one of the 480 rows answered
+identically on both trees. This resolves the open question S39's own
+write-up flagged (whether the real `@js-temporal/polyfill` classes land on a
+colliding `$__ta_ctor` tag in these 4 families): they do not, in this sample.
+
+### Must-not-move groups A/B/C (S38b's definitions, reused unchanged) + D (new, mandatory this slice)
+
+Group D is new this slice — `TypedArray`/`TypedArrayConstructors`/`DataView`
+built-ins, the families directly downstream of the 8 sites this issue fixes
+(`dataview-native.ts` + `ta-ctor-meta.ts`), capped at the first 100 files per
+subfamily (same convention group C already used for its own two 100-file
+subfamilies, to keep the per-call wall-clock budget bounded — 1446 + 738 + 561
+files exist in the full corpus, ~2745 total, well beyond one session's budget
+at this granularity).
+
+| Group | Files | Base pass | Branch pass | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| A (`Object/keys`, `expressions/object`, `Reflect/get`+`has`) | 1250 | 1125 | 1125 | 0 | 0 |
+| B (`Object/entries`+`values`+`getOwnPropertyNames`, `for-in`) | 205 | 179 | 179 | 0 | 0 |
+| C (`Object/getPrototypeOf`, `Reflect/getPrototypeOf`, `Function/prototype` ×100, `class/subclass` ×100, `expressions/class` ×100) | 249 | 196 | 196 | 0 | 0 |
+| D (`TypedArray` ×100, `TypedArrayConstructors` ×100, `DataView` ×100) | 300 | 219 | 219 | 0 | 0 |
+| **Total** | **2004** | **1719** | **1719** | **0** | **0** |
+
+Per-file diff (`.tmp/s39b/diff_mnm2.py`) over all 2004 rows: **0 pass→fail, 0
+fail→pass** across every group, including the new group D that this fix
+directly touches. The base failures in A/B/C/D (async-generator
+`compile_error`s, unrelated `Object`/`Reflect`/`class` gaps) are pre-existing
+and identical on both trees, file for file.
+
+### Corpus byte A/B
+
+Same 42-file set S38b used (`website/playground/examples/**/*.ts` +
+`tests/fixtures/**/*.ts`), compiled on both `gc` and `standalone` targets,
+SHA-256 of the output binary compared (`.tmp/s39b/corpus-{base,fix}.jsonl`,
+diffed with `.tmp/s39b/diff_corpus_s39b.py`):
+
+| Target | Artifacts | Moved | CE/status flips |
+| --- | --- | --- | --- |
+| `gc` | 42 | 0 | 0 |
+| `standalone` | 42 | 0 | 0 |
+
+0 moved on `standalone` too (unlike S38b's 25/42, which touched a much
+broader `getPrototypeOf` path) — this fix's 8 sites are narrow enough that
+none of the 42 corpus files happen to exercise them.
+
+Provider bytes: base `3,312,720 B` → fix `3,313,801 B` (**+1,081 B**) —
+consistent with 8 call sites each swapping ~2 bare-test instructions for the
+`taCtorIdentityTestInstrs` spread (comment lines add 0 bytes to the binary).
+
+### Verdict
+
+**Criterion 4 holds for this slice: 0 legitimate pass→fail across all three
+measurement axes (family sample, must-not-move A/B/C/D, corpus byte A/B) —
+and 0 fail→pass too, i.e. the fix is a pure no-op on every corpus slice
+measured here.** That is expected and consistent with #6626's own
+characterization: the 4 confirmed-buggy sites are collision-triggered
+(require a field-less class/receiver landing on a `$__ta_ctor`-colliding tag
+while a `$__ta_ctor` type is registered), and neither the real Temporal
+polyfill's classes in the 4 sampled families nor any file in the
+must-not-move/corpus sets happens to trigger that collision. The fix remains
+justified as answer-preserving and zero-risk by construction
+(`taCtorIdentityTestInstrs` can only ever remove a false positive), backed by
+the 9 fix-witness/control tests in `tests/issue-6626-*.test.ts` that DO
+reproduce the collision synthetically.
 
 ## Equivalence gate
 
-`npm run -s test:equivalence:gate` — see PR CI (baseline 22/1720, unrelated to
-this backend's `--target standalone` sites; no `src/codegen-linear/` or
-JS-host-path files touched).
+`npm run -s test:equivalence:gate` (run in this S39b slice, fix tree):
+**22 failing, 1720 passing, 22 known-failures in baseline — 0 new
+regressions**, matching S39's own baseline exactly.

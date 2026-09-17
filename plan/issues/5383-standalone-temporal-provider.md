@@ -9568,9 +9568,19 @@ covered by control tests instead of fix-witnesses.
 `tests/issue-6626-*.test.ts` (9 tests: 4 fix-witnesses, 5 controls) plus the
 full `tests/issue-66*.test.ts` regression suite (28 files / 138 tests) pass
 together. The four-family/must-not-move/corpus-byte-A/B acceptance battery
-was NOT run this slice — the confirmed bugs are collision-triggered on a
-field-less receiver landing on a colliding tag while a `$__ta_ctor` type is
-registered, and whether the real `@js-temporal/polyfill` provider's own
-classes land on a colliding tag in the 4-sample families specifically was not
-checked against the corpus within this slice's time budget. Flagged honestly
-rather than fabricated; deferred to the next slice's acceptance run.
+was deferred at S39's own tip and **completed in the S39b measurement-only
+slice** (branch `issue-5383-standalone-temporal-s39b`, same tip `21d3178748`,
+no `src/` changes): four-family sample **433/480 base → 433/480 fix, 0
+pass→fail, 0 fail→pass**; must-not-move groups A/B/C (S38b's own definitions)
+**plus a new group D** (`TypedArray`/`TypedArrayConstructors`/`DataView`,
+mandatory this slice since #6626 touches TA-constructor identity directly) —
+**2,004 rows total, 0 pass→fail, 0 fail→pass**; corpus byte A/B (42 files ×
+{gc, standalone}) — **0 moved either target, 0 CE/status flips**, provider
+bytes `3,312,720 B → 3,313,801 B` (+1,081 B). Equivalence gate **22/1720/22**,
+unchanged from S39's own baseline. Full per-group tables in #6626's
+"Criterion 4" section. Verdict: the fix is a pure no-op on every corpus slice
+measured — expected, since the 4 confirmed-buggy sites are
+collision-triggered and none of the measured corpora happens to land a
+receiver on a colliding `$__ta_ctor` tag; the 9 `tests/issue-6626-*.test.ts`
+tests remain the only positive evidence the fix does something, by design
+(synthetic reduction, not corpus-found).
