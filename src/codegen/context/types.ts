@@ -2551,6 +2551,16 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   /** (#5147) the `$__IterRec` identity arm was already prepended to `__iterator`. */
   iterRecIdentityArmDone?: boolean;
   /**
+   * (#6484 S3 review) A TYPED-ARRAY `[Symbol.iterator]()` in this module took the
+   * live-`$__IterRec` route instead of the snapshot vec. The record does not model
+   * `[[Prototype]]`, so `Object.getPrototypeOf` on an `any`-typed binding of it
+   * answered `null`; this flag arms the finalize step that teaches
+   * `__getPrototypeOf` to answer the `%ArrayIteratorPrototype%` singleton for a
+   * kind-VEC record. Compile-time scoped: a module with no typed-array iterator
+   * keeps its pre-change `__getPrototypeOf` byte-for-byte.
+   */
+  typedArrayIterRecProtoPending?: boolean;
+  /**
    * Static property initializer expressions to compile into __module_init.
    * `className` (#1395) is the owning class name — used to set
    * `enclosingClassName` + `isStaticContext` on the initFctx so `this`
