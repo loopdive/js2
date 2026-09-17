@@ -442,7 +442,7 @@ import { inlineExternGetCallSites } from "./extern-get-inline-ic.js"; // (#4157)
 import { inlineMemberSetCallSites } from "./member-set-inline-ic.js"; // (#4157) write-side member IC
 import { inlineCallDispatchSites } from "./call-dispatch-ic.js"; // (#4157) __call_m_* devirtualization
 import { inlineFlatStrCallSites } from "./flat-str-ic.js"; // (#4157) __str_flatten/__str_equals call-site fast paths
-import { brandCollidingShapeTypes } from "./shape-brand.js";
+import { brandCollidingShapeTypes, linkBrandRoleOf } from "./shape-brand.js";
 import {
   addImport,
   addStringConstantGlobal,
@@ -5092,7 +5092,7 @@ function resolveAndRecordShapeStamping(ctx: CodegenContext): void {
 }
 
 function resolveAndRecordShapeBranding(ctx: CodegenContext): void {
-  const affected = brandCollidingShapeTypes(ctx.mod, ctx.noBrandShapeTypes);
+  const affected = brandCollidingShapeTypes(ctx.mod, ctx.noBrandShapeTypes, linkBrandRoleOf(ctx));
   ctx.programAbiSession?.recordShapeBranding(affected);
 }
 
