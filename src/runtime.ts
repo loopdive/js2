@@ -670,8 +670,14 @@ function _compiledAbToHostBuffer(vec: any, exports: Record<string, Function> | u
   if (!exports || vec == null || typeof vec !== "object" || !_isWasmStruct(vec)) return undefined;
   const cached = _abHostBufferCache.get(vec);
   if (cached !== undefined) return cached;
-  const lenFn = exports.__dv_byte_len as ((v: any) => number) | undefined;
-  const getFn = exports.__dv_byte_get as ((v: any, i: number) => number) | undefined;
+  // (#6492) In a linked project the buffer may have been minted by the OTHER
+  // module, whose byte readers are the only ones that can see it; all three
+  // reads below must come from that one module. Why the #5225 registry could
+  // not already answer this, and why it is free single-module: see
+  // `bufferDecoderFor` in runtime/cross-module-struct-owners.ts.
+  const owner = _crossModuleStructs.bufferDecoderFor(vec, exports) ?? exports;
+  const lenFn = owner.__dv_byte_len as ((v: any) => number) | undefined;
+  const getFn = owner.__dv_byte_get as ((v: any, i: number) => number) | undefined;
   if (typeof lenFn !== "function" || typeof getFn !== "function") return undefined;
   let n: number;
   try {
@@ -685,7 +691,7 @@ function _compiledAbToHostBuffer(vec: any, exports: Record<string, Function> | u
   // TypedArray/DataView views built over it length-track a later
   // `rab.resize()` natively (the resize arm in __extern_method_call keeps the
   // canonical host buffer's byteLength in sync via hostAb.resize()).
-  const maxLenFn = exports.__ab_max_len as ((v: any) => number) | undefined;
+  const maxLenFn = owner.__ab_max_len as ((v: any) => number) | undefined;
   let maxLen = -1;
   if (typeof maxLenFn === "function") {
     try {

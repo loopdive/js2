@@ -24,8 +24,19 @@ related: [3451, 6486, 6489, 6490, 6491, 6482]
 # standalone arm 400 lines below, which is the thing a reader has to see next to
 # it. `compileArrowAsCallback` is the god-function that owns callback lowering;
 # splitting it is #3399's job, not this bug's.
+# 2026-09-17 — bucket `Cannot convert 0 to a BigInt`: +6 lines in `src/runtime.ts`.
+# The mechanism (a second, buffer-shaped owner probe for the #5225 registry) is
+# 60 lines and ALL of it went into the subsystem module
+# `src/runtime/cross-module-struct-owners.ts`, which is where the god-file gate
+# wants it. What stays in the barrel is the single line that consults it plus
+# the comment saying which module the three byte-reader exports must agree on —
+# and that has to sit AT `_compiledAbToHostBuffer`, because the bug was exactly
+# that its `__dv_byte_len`/`__dv_byte_get`/`__ab_max_len` reads silently came
+# from three-ways-unrelated modules. Moving the call out would move the
+# decision away from the reads it constrains.
 loc-budget-allow:
   - src/codegen/closures.ts
+  - src/runtime.ts
 func-budget-allow:
   - src/codegen/closures.ts::compileArrowAsCallback
 ---
