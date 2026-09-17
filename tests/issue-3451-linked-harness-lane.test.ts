@@ -108,14 +108,18 @@ describe("#3451 P3 — linked-harness shadow lane is opt-in", () => {
     expect(diff).toContain('entry.oracle_lane === "linked-harness" || entry.oracle_lane === "linked-harness-fallback"');
     // The unconditional special case is gone — and stays gone.
     expect(diff).not.toContain("the linked-harness shadow lane is not comparable to any other lane");
-    // What replaces it: the lane mismatch routes into the shared
-    // `if (!oracleRebase)` refusal, whose linked arm names the flip.
+    // What replaces it: the lane mismatch routes into a shared refusal whose
+    // linked arm accepts EITHER rebase signal — the forward oracle bump
+    // (`rebaseMode`) or ORACLE_REBASE=1. The first merge_group run of the flip
+    // (35197014849) refused the v13→v14 re-seed because the arm read only the
+    // env flag, which CI never sets; the bump is the reviewed signal.
     const mismatchAt = diff.indexOf("baseLane !== undefined && newLane !== undefined && baseLane !== newLane");
     expect(mismatchAt).toBeGreaterThan(0);
-    const refusalAt = diff.indexOf("if (!oracleRebase) {", mismatchAt);
+    const refusalAt = diff.indexOf("if (!laneRebaseSignal) {", mismatchAt);
     expect(refusalAt).toBeGreaterThan(mismatchAt);
     expect(diff.slice(mismatchAt, refusalAt)).not.toContain("process.exit(2)");
     expect(diff).toContain('const linkedInvolved = baseLane === "linked-harness" || newLane === "linked-harness"');
+    expect(diff).toContain("const laneRebaseSignal = linkedInvolved ? rebaseMode : oracleRebase;");
     // A MIXED-lane file is still refused outright, rebase or not — that guard
     // sits before the mismatch branch and is not part of the relaxation.
     expect(diff.indexOf("one side carries MIXED oracle lanes")).toBeLessThan(mismatchAt);

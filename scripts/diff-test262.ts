@@ -1641,8 +1641,15 @@ async function run(
     // never read as honest; a MIXED file is still refused above, regardless of
     // ORACLE_REBASE; and a cross-lane diff still needs an explicit, reviewed
     // rebase signal rather than happening by default.
-    if (!oracleRebase) {
-      const linkedInvolved = baseLane === "linked-harness" || newLane === "linked-harness";
+    const linkedInvolved = baseLane === "linked-harness" || newLane === "linked-harness";
+    // The linked arm accepts EITHER rebase signal — the forward oracle bump
+    // (`rebaseMode`) or the explicit flag — because the flip PR's first
+    // merge_group / main run carries the bump and nothing else: CI sets no
+    // ORACLE_REBASE (verified on run 35197014849, where this guard refused the
+    // v13→v14 re-seed with the bump already detected two lines earlier). The
+    // fast arm keeps its explicit-flag-only rule (#3462/#3465).
+    const laneRebaseSignal = linkedInvolved ? rebaseMode : oracleRebase;
+    if (!laneRebaseSignal) {
       console.error(
         `\n✖ Oracle-lane guard (${linkedInvolved ? "#3451" : "#3462"}): cross-lane diff refused.\n` +
           `  baseline lane = ${fmtLane(baseLane)}, new lane = ${fmtLane(newLane)}.\n` +
@@ -1665,7 +1672,7 @@ async function run(
       process.exit(2);
     }
     console.log(
-      `ORACLE_REBASE=1 — comparing across oracle LANES ` +
+      `${oracleRebase ? "ORACLE_REBASE=1" : "ORACLE forward-bump auto-rebase (#3086)"} — comparing across oracle LANES ` +
         `(baseline ${fmtLane(baseLane)} → new ${fmtLane(newLane)}). Deliberate re-seed: ` +
         (baseLane === "linked-harness" || newLane === "linked-harness"
           ? `the #3451 slice-6 authority flip bakes the ~1.85 % harness-provider boundary into the host baseline.`
