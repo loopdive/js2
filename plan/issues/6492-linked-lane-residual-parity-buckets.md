@@ -64,13 +64,25 @@ related: [3451, 6486, 6489, 6490, 6491, 6482]
 # into an uncatchable trap. The neighbouring `EvalError` note already records
 # the same failure for the ambient constructors; this is its `declare function`
 # half, and separating the two would hide that they are one rule.
+# 2026-09-17 (round 6) — the UNDEF-SENTINEL producer re-ask: +19 lines in
+# `src/codegen/type-coercion.ts`, of which 18 are the comment. The CODE is one
+# line, and it has to sit exactly between `addUnionImports` and the
+# `__box_number` lookup, because the ORDER is the correctness argument:
+# registering an import shifts func indices, and `flushLateImportShifts` remaps
+# already-EMITTED instructions but not an index already captured in a local. A
+# reader who moves the line two lines down reintroduces a stale-index bug that
+# no test names. The rest of the comment records the one fact the diff cannot
+# show — that `canonicalUndefinedExternInstrs` is read-only BY DESIGN and its
+# `ref.null.extern` fallback is not a fallback but a different VALUE.
 loc-budget-allow:
   - src/codegen/closures.ts
   - src/runtime.ts
   - src/codegen/extern-declarations.ts
+  - src/codegen/type-coercion.ts
 func-budget-allow:
   - src/codegen/closures.ts::compileArrowAsCallback
   - src/runtime.ts::resolveImport
+  - src/codegen/type-coercion.ts::coerceType
 ---
 
 # #6492 — linked lane residual after P3c
