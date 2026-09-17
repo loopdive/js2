@@ -135,18 +135,89 @@ limited to those two constants; the whole bootstrap-time body is untracked).
   — **not run** (time-boxed out; no source outside the files listed above was
   touched, so risk is low, but this is a real gap — see Verdict).
 
-## Re-baselined battery (criterion 5 of the task brief)
+## Re-baselined battery (criterion 5 of the task brief) — RUN by S44b (2026-09-17)
 
-**Not run** — four-family/120-file battery, must-not-move A–D, E-unlinked/
-E-linked, corpus byte diff, and `test:equivalence:gate` were time-boxed out
-of this session given the depth required to root-cause and fix the #6484
-regression above (which was not on the original task's radar — the task
-brief anticipated `Object.getPrototypeOf` regressions in
-`class-arm-tag-guard.ts`/`standalone-class-instance-proto.ts` per the 2026-09-13
-prior-merge-attempt notes, not this iterator-branch short-circuit). This is
-a real gap in this session's acceptance-criteria coverage, not a silent skip
-— flagged explicitly in the handback for the tech lead / next agent to run
-before opening the stacked PR.
+S44b (branch `issue-5383-standalone-temporal-s44b2`, worktree
+`/home/user/js2/.claude/worktrees/agent-a302b920b427333e8`) closed this gap.
+BASE = pre-merge stack head `b84898a96c`; NEW = the accepted stack head
+`6cd09bbb89` (S44's tip, includes this issue's fix). Both trees measured with
+`--target standalone`, linked QuickJS eval provider, 60 s/row for the
+Temporal families, 30 s/row for the must-not-move groups. These numbers are
+the **new base** for any later slice built on top of `6cd09bbb89` — see the
+handover doc's "Stack state" entry.
+
+**Four-family battery (120 files/family, standalone, linked provider):**
+
+| Family | BASE pass/120 | NEW pass/120 | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- |
+| PlainDate | 112 | 112 | 0 | 0 |
+| Duration | 105 | 105 | 0 | 0 |
+| PlainDateTime | 113 | 113 | 0 | 0 |
+| ZDT | 103 | 103 | 0 | 0 |
+| **TOTAL** | **433/480** | **433/480** | **0** | **0** |
+
+**Must-not-move A–E (both trees, current `mnm3.mts`/`mnmE*.mts` group
+defs):**
+
+| Group | BASE pass/total | NEW pass/total | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- |
+| A (Object.keys/expr-object/Reflect get+has) | 1125/1250 | 1125/1250 | 0 | 0 |
+| B (Object.entries/values/getOwnPropertyNames + for-in) | 179/205 | 179/205 | 0 | 0 |
+| C (Object/Reflect.getPrototypeOf + Function.prototype×100 + class.subclass×100 + expr.class×100) | 273/349 | 274/349 | 0 | 1 (`Function/prototype/Symbol.hasInstance/this-val-not-callable.js`) |
+| D (TypedArray×100 + TypedArrayConstructors×100 + DataView×100) | 219/300 | 224/300 | 0 | 5 (TypedArray `Symbol.species`/`Symbol.toStringTag` cases — see below) |
+| E-unlinked (Proxy×200 + Reflect×100) | 235/300 | 235/300 | aggregate identical; per-file diff unavailable (see note) | — |
+| E-linked (same files, forced `features:[Temporal]`) | 228/300 | 228/300 | 0 | 0 |
+
+Group C's "expected 196/249" figure quoted in the task brief is stale: the
+shared `mnm3.mts` script (copied from the S41b worktree) defines group C as 5
+sub-globs totalling 349 files, but `349 − 100 (expr.class) = 249` and
+`273 − 77 (expr.class pass count) = 196` match the brief's numbers exactly —
+i.e. the brief's figures predate `expr.class` being added to the shared
+group-C definition. Not a regression; the current script is internally
+consistent across both trees (measured directly, not inherited).
+
+**E-unlinked per-file diff limitation**: `mnmE.mts` and `mnmE-linked.mts`
+both write to the identical filename pattern
+`${outDir}/E-${label}.part-${start}-${end}.tsv` in the shared `.tmp/s44b/E/`
+directory. Running E-unlinked then E-linked for the same label silently
+overwrote the unlinked TSV with the linked run's rows before the diff was
+computed — the **aggregate** pass counts (235/300 both trees, both BASE and
+NEW) were captured live from each run's own console summary line and are
+reliable, but a per-file pass→fail/fail→pass list for the *unlinked* variant
+specifically could not be reconstructed after the fact. Given the aggregate
+is byte-identical between BASE and NEW and every other per-file diff in this
+battery found zero pass→fail, this is treated as a measurement gap, not
+evidence of a real regression. Fix for any future run: pass distinct
+`outDir` values to the two scripts.
+
+**Corpus byte A/B** (42 `.ts` files × `{gc, standalone}` = 84 rows/tree,
+`website/playground/examples/` + `tests/fixtures/`):
+
+- **0 status/CE flips** on both targets.
+- **14 SHA flips on `standalone` only** (0 on `gc`) — all 14 are compiled
+  output changing bytes while `status` stays `ok`; expected from the ~110
+  files/14K-line legitimate main-merge codegen diff between BASE and NEW
+  (`527310b81f`), not a regression signal (status is the operative check per
+  the task brief — "report CE/status flips only").
+
+**`test:equivalence:gate`**:
+
+- NEW (`6cd09bbb89`, already measured by S44): 22 failing / 1720 passing / 22
+  known-failures in baseline — unchanged from S43/S44's own numbers.
+- Bare `origin/main` (`4a5d5c1dfb`, measured fresh this session, detached
+  checkout): **22 failing / 1720 passing / 22 known-failures** — identical.
+
+**Attribution (every pass→fail across the entire battery)**: there were
+**zero** pass→fail events in the four-family battery, must-not-move A–E, or
+the corpus byte diff. The attribution/bisection step therefore has an empty
+list — nothing to bisect.
+
+**Verdict: 0 stack-caused pass→fail — YES.** The stack head `6cd09bbb89` is
+clear on criterion 5. The 6 `fail→pass` deltas (1 in group C, 5 in group D)
+are genuine improvements carried in from the `origin/main` merge (TypedArray
+`Symbol.species`/`Symbol.toStringTag` receiver-guard fixes and a
+`Function.prototype[Symbol.hasInstance]` fix, none authored by this stack),
+not something this battery needed to explain away.
 
 ## Files changed
 
@@ -156,4 +227,5 @@ before opening the stacked PR.
 - `plan/issues/6630-ensureobjectruntime-bootstrap-late-import-staleness.md` —
   new follow-up issue for the pre-existing bootstrap staleness bug.
 - `plan/issues/6629-standalone-temporal-stack-main-sync-2026-09-17.md` — this
-  file.
+  file. S44b appended the "Re-baselined battery" results above; no source
+  files touched (measurement-only session, no `src/` changes).

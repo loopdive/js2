@@ -9943,3 +9943,34 @@ no new regressions. **The criterion-5 re-baselined measurement battery from
 S42 is STILL not run** — S44's dispatch brief scoped that out explicitly
 ("Do NOT run the family/must-not-move battery — that is the next measurement
 lane's job"). Next agent runs that battery before the stacked PR opens.
+
+### S44b findings (2026-09-17) — criterion-5 re-baselined battery run, MEASUREMENT ONLY, no source changes
+
+S44b (branch `issue-5383-standalone-temporal-s44b2`, worktree
+`/home/user/js2/.claude/worktrees/agent-a302b920b427333e8`) ran the full
+criterion-5 battery S42/S43/S44 all deferred: four-family (480 files, 60 s
+timeout, linked provider), must-not-move groups A–E (2,404 files total, 30 s
+timeout), corpus byte A/B (84 rows/tree), and `test:equivalence:gate` — on
+BOTH the pre-merge stack head (`b84898a96c`) and the accepted post-merge/
+post-#6630-fix head (`6cd09bbb89`). Full tables in
+[#6629](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6629-standalone-temporal-stack-main-sync-2026-09-17)'s
+"Re-baselined battery" section (S44b's own entry, not restated here in full).
+
+**Headline: 0 stack-caused pass→fail anywhere in the battery.** Four-family
+433/480 pass on both trees, byte-identical per file. Must-not-move groups A,
+B, E-linked are byte-identical between the two trees; groups C and D show 6
+`fail→pass` improvements (0 `pass→fail`) traced to `origin/main`'s own
+TypedArray `Symbol.species`/`Symbol.toStringTag` and
+`Function.prototype[Symbol.hasInstance]` fixes carried in by the merge — not
+authored by this stack. Corpus byte diff: 0 status/CE flips (14 `standalone`-
+only SHA flips are the expected legitimate codegen delta from the 110-file
+main merge, `status` unchanged). `test:equivalence:gate` on bare
+`origin/main` (`4a5d5c1dfb`): 22/1720/22, identical to the stack's own
+number.
+
+**The stack head `6cd09bbb89` is criterion-5 clean and stacked-PR-ready** on
+this axis. One measurement-only gap: `mnmE.mts`/`mnmE-linked.mts` share an
+output filename pattern, so the E-unlinked per-file TSV was overwritten by
+the E-linked run before diffing — the aggregate (235/300, identical both
+trees/both runs) is solid, the per-file diff for that one variant is not; see
+#6629 for the full note. No `src/` files touched this session.

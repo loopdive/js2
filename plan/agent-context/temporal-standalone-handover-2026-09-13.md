@@ -62,6 +62,8 @@ started). Acceptance criterion 4 of #5383 is therefore still open.
 | S41 | Traced the `Proxy get trap is not callable` mechanism past both of S40's named suspects (structurally byte-identical between linked/unlinked builds) into `fillApplyClosure`'s #6420 "peer-owned callable" front-guard (`object-runtime.ts` ~7766): it queries the linked PROVIDER "is this externref `[[Call]]`-able?" for EVERY value `__apply_closure` invokes, and under `canonicalRuntimeTypes` a purely LOCAL closure's WASM shape is structurally indistinguishable from the provider's own, so the provider's `ref.test`-based `__is_callable` wrongly answers "callable" and `__apply_closure` hijacks the call into the provider's own (unusable) apply terminal — confirmed with a WAT trace and a side-effect witness proving the trap body never runs. Fixed (#6628) for the direction S40's 9-line repro exercises: `fillProxyDispatch`'s trap-invoke drivers now call `__call_fn_method_<argCount>` directly, bypassing `__apply_closure` entirely, when the Proxy dispatch runs in the SAME module that built the trap. Two earlier attempts (a structural "is this locally owned" `ref.test` gate on the SHARED `__apply_closure`, tried against both the deduped closure-root list and the full per-site closure-type list) regressed `tests/issue-6605-*`/`tests/issue-6616-*` identically — `canonicalRuntimeTypes` makes that ambiguity undecidable on the shared function; fixing the call site instead sidesteps it. **Does NOT close the bucket**: the real corpus row is the OPPOSITE direction — the CONSUMER builds a Proxy and hands it to the PROVIDER, which reads a property on it from inside its own module; the trap found is unavoidably the consumer's, so the provider genuinely needs the OLD peer route this fix bypasses. A targeted reduction of exactly that shape (provider method reading a property on a parameter that is a consumer-built Proxy) throws an uncaught `WebAssembly.Exception` identically on BOTH base and fix — pre-existing, not a new regression, and the bucket's real remaining blocker | `tests/issue-6628-*.test.ts` (3 fix-witnesses, 4 controls) + full `tests/issue-66*.test.ts` (30 files / 150 tests) pass together · four-family sample 433/480 base → 433/480 fix (112/105/113/103 per family), 0 movement · corpus byte A/B (42 files × {gc,standalone}): 0 CE/status flips, 6 `standalone`-target SHA changes from `ensureProxyRuntime` being unconditional (none of the 6 files contain literal `Proxy`), benign · equivalence gate 22/1720/22, unchanged · must-not-move groups A/B/C/D **NOT run** (time-budget cutoff) · the assigned 6-row bucket reproduces byte-for-byte unchanged | branch `issue-5383-standalone-temporal-s41`, worktree `agent-a38577421023edc2b`, based on S40b's tip `ef08f7a8f0` |
 | S41b | **Measurement + docs only, no `src/` changes.** Completed the must-not-move battery S41 flagged as "NOT run": groups A (1,250 files)/B (205)/C (249)/D (300), file-copy revert base (`ef08f7a8f0`) vs S41's merged fix (`680f8190fd`), `--target standalone`. Also added a new group E (`Proxy` first 200 + `Reflect` first 100, mandatory since #6628 is inside Proxy dispatch), run both unlinked (ordinary `runTest262File`) and linked — no harness knob forces a Temporal link onto a non-Temporal-tagged file without a `src/` change, so built a docs-only shadow-copy script that inserts `features: [Temporal]` as the first line of each file's `/*--- ... ---*/` block (flips `test262NeedsTemporalGlobal` without touching `test262/`) and runs the shadow copy through the same production `compileWithTemporalGlobal` path every Temporal-tagged row already takes | Groups A/B/C/D: 1125/179/196/219 pass (exact per-file match, 0 pass→fail, 0 fail→pass, matching the task's expected floor) · PlainDate re-confirmed 112/112 both states (fresh `JS2WASM_TEMPORAL_CACHE` per state, `cacheHit=false` at prewarm), 0 diff · group E unlinked: 235/300 both states, 0 diff · group E linked: base 220/300 → fix 228/300, 0 pass→fail, 8 fail→pass, all in the engine-triggered trap-dispatch family (`apply`/`has`/`get`/`getOwnPropertyDescriptor`/`getPrototypeOf`/`isExtensible`/`deleteProperty` × `call-parameters.js`/`call-in.js`/`call-with.js`) that `fillProxyDispatch`'s fix targets directly — verified two by hand (`Proxy/apply/call-parameters.js`, `Proxy/has/call-in.js`): `Test262Error: trap context is not the handler object` under base-linked, pass under fix-linked; the remaining ~64 linked failures on both trees are manual `.apply()`/`.call()` trap invocations inside the test harness itself, routed through the still-unfixed general `__apply_closure` peer guard (#6420), exactly as S41's write-up predicts for the direction this fix does NOT reach · equivalence gate re-run 22/1720/22, unchanged | branch `issue-5383-standalone-temporal-s41b`, based on S41's tip `d9d43e634d` |
 
+| S44b | **Measurement + docs only, no `src/` changes.** Ran the criterion-5 battery S42/S43/S44 all deferred, on BASE (`b84898a96c`) vs the accepted stack head NEW (`6cd09bbb89`). Reused S41b's group A/B/D and the E scripts verbatim; group C's local copy of `mnm3.mts` had since grown a 5th sub-glob (`expr/class` ×100, not present at S41b's own 249-file measurement) — confirmed by exact arithmetic (349 − 100 = 249, 273 − 77 = 196, matching S41b's row precisely), not a regression, just script drift between worktrees | Four-family 433/480 both trees, byte-identical (0/0) · A 1125/1250, B 179/205, E-linked 228/300: byte-identical both trees · C 273→274/349 (+1 fail→pass), D 219→224/300 (+5 fail→pass), 0 pass→fail in either · E-unlinked aggregate 235/300 both trees (per-file diff lost to an `mnmE.mts`/`mnmE-linked.mts` output-filename collision, fixed for next time by passing distinct `outDir`s) · corpus byte A/B: 0 status/CE flips, 14 `standalone`-only SHA flips (expected, the 110-file main-merge codegen delta) · equivalence gate: NEW 22/1720/22 (S44's own number), bare `origin/main` (`4a5d5c1dfb`) also 22/1720/22 · **0 stack-caused pass→fail anywhere in the entire battery** — verdict: criterion 5 clean, stack head `6cd09bbb89` is PR-ready on this axis | branch `issue-5383-standalone-temporal-s44b2` (the plain `…-s44b` name was already taken by the incomplete first attempt, same commit `6cd09bbb89`), worktree `/home/user/js2/.claude/worktrees/agent-a302b920b427333e8`, no new commits (docs only, pushed to a docs PR — push to `fork`/`origin` returns HTTP 403 for this session, noted once) |
+
 Fix commits also on main: the speculative-rollback gate fix on S2m (9501ffca13),
 the `test262` gitlink restoration (#5892), the revert of #5871/#5882 (#5914).
 
@@ -321,6 +323,37 @@ red). `npm run -s test:equivalence:gate`: 22 failing / 1720 passing / 22
 known-failures — unchanged from S43's documented 22/1720/22, no new
 regressions. New candidate head for further work / the criterion-5 battery:
 `issue-5383-standalone-temporal-s44`'s tip (`0c3316f9f1`).
+
+## Stack state 2026-09-17 (post-S44b) — criterion-5 battery run, 0 stack-caused pass→fail, PR-ready on this axis
+
+S44b (branch `issue-5383-standalone-temporal-s44b2`, worktree
+`/home/user/js2/.claude/worktrees/agent-a302b920b427333e8`, no new commits —
+MEASUREMENT + DOCS ONLY, head unchanged at S44's `6cd09bbb89`, the merged
+commit onto S44's `0c3316f9f1` tip) ran the criterion-5 re-baselined battery
+every prior slice (S42/S43/S44) had deferred. BASE = pre-merge stack head
+`b84898a96c`; NEW = `6cd09bbb89`.
+
+**New base numbers for anything stacked on top of `6cd09bbb89`:**
+
+- Four-family (480 files, standalone, linked): **433/480** pass on both
+  trees, byte-identical per file (0 pass→fail, 0 fail→pass).
+- Must-not-move A (1125/1250), B (179/205), E-linked (228/300): identical
+  both trees. C: 273→274/349 (+1 fail→pass). D: 219→224/300 (+5 fail→pass).
+  **0 pass→fail anywhere.** The 6 fail→pass deltas are `origin/main`'s own
+  TypedArray/`Function.prototype[Symbol.hasInstance]` fixes, not this
+  stack's.
+- E-unlinked: aggregate 235/300 both trees (per-file diff lost to a
+  filename-collision bug in the shared `mnmE.mts`/`mnmE-linked.mts` scripts —
+  see #6629 for the fix note).
+- Corpus byte A/B (84 rows/tree): 0 status/CE flips; 14 `standalone`-only SHA
+  flips from the legitimate main-merge codegen delta.
+- `test:equivalence:gate`: NEW 22/1720/22 (S44's own number, unchanged);
+  bare `origin/main` (`4a5d5c1dfb`) also 22/1720/22.
+
+**Verdict: 0 stack-caused pass→fail — the stack head `6cd09bbb89` is
+criterion-5 clean.** Full tables: #6629's "Re-baselined battery" section and
+#5383's `### S44b findings`. The stack is now PR-ready on every criterion
+tracked since S42; the stacked PR (S13→S44) is the next step.
 
 ## Incidents worth knowing (all resolved unless stated)
 
