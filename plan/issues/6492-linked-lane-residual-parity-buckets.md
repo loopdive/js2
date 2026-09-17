@@ -1,7 +1,7 @@
 ---
 id: 6492
 title: "Linked lane P3c residual: 705 pass→fail rows in ~12 provider-side buckets (BigInt convert, __module_init null, extern class stubs, illegal-cast trap)"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-09-16
 updated: 2026-09-16
@@ -15,6 +15,19 @@ language_feature: test262-harness
 goal: test262-conformance
 depends_on: [6490]
 related: [3451, 6486, 6489, 6490, 6491, 6482]
+# 2026-09-16 — bucket 2 (`__cb_<id>` erases `await`): the whole change is one
+# early bail at the TOP of `compileArrowAsCallback`, +30 lines of which 24 are
+# the comment recording WHY a suspending async callback must not reach the
+# host-callback bridge. The decision belongs where the bridge is entered — the
+# alternative (a predicate module) would put the condition one indirection away
+# from the `return compileArrowAsClosure(...)` escape it shares with the
+# standalone arm 400 lines below, which is the thing a reader has to see next to
+# it. `compileArrowAsCallback` is the god-function that owns callback lowering;
+# splitting it is #3399's job, not this bug's.
+loc-budget-allow:
+  - src/codegen/closures.ts
+func-budget-allow:
+  - src/codegen/closures.ts::compileArrowAsCallback
 ---
 
 # #6492 — linked lane residual after P3c
@@ -89,14 +102,199 @@ Order by rows × certainty; each step is one measured commit.
    commit. Budget allowances go in this file's frontmatter with a dated
    rationale.
 
+## Implementation notes (2026-09-16, Opus lane)
+
+Branch `issue-6492-linked-residual-buckets`, based on `0f69af09cb`.
+
+### Measurement setup (plan step 1)
+
+The CI artifact of run 35152748683 is not reachable from this container
+(`*.blob.core.windows.net` blocked) and `gh` is not installed here, so the
+sampled rows were derived locally instead of read off the report: the real
+runner (`tests/test262-chunk-dynamic.test.ts`) was run over **chunk 0 of 57 of
+the whole corpus in BOTH lanes** (850 rows, honest and `TEST262_ORACLE_MODE=linked`),
+and the pass→fail set diffed per row. That reproduces the parity report's method
+on a 1/57 sample and gave a live row for the `illegal cast` bucket; the buckets
+too small to appear in 850 rows were then hunted by their error string over a
+6,317-row linked run of the async/Promise/Iterator families, with the honest
+verdict fetched only for the matching rows.
+
+**Local hazard worth recording for the flip plan (#6488):** the provider cache
+(`/tmp/js2wasm-test262-harness-cache`, `JS2WASM_TEST262_HARNESS_CACHE`) is keyed
+on the harness prefix + ABI versions, **not on the compiler build**. The first
+survey here reported 4 `dereferencing a null pointer [in testWith…]` rows — the
+#6490 bucket, already fixed — purely because the cache still held day-old
+provider artifacts. Every measurement below uses a fresh cache dir. CI is not
+exposed (a runner's tmpdir is empty and the workflow does not restore that
+cache), but any local re-measurement is.
+
+### Bucket `illegal cast` (22 rows, the trap bucket) — FIXED
+
+Root cause: **the canonical method-closure trampoline is minted from a
+pre-final signature and its wrapper ABI is never repaired.**
+`ensureMethodClosureSingleton` mints `__obj_meth_tramp_<m>_cached` at the first
+access to the method as a value. In a MULTI-FILE graph — which is how the linked
+lane compiles a body — the member-get dispatcher reserves the singleton before
+the method body resolves its parameter ABI, so `class C { m([a]) {} }` captured
+a module-internal tuple struct `(ref $10)` while `C_method` finally accepted
+`externref`. `finalizeMethodTrampolines` rebuilds the trampoline BODY (#1602/
+#1669) but leaves the wrapper func type, and that type is what CALLERS dispatch
+on: the closure-call site matched the struct-param arm and emitted an unguarded
+`ref.cast (ref $10)` of the argument, so `C.prototype.m([1, 2])` trapped.
+
+Fix site: `finalizeMethodTrampolines` (`src/codegen/closures/method-trampolines.ts`)
+widens the trampoline's own func type back to the method's final ABI — narrowing
+direction only, and only to a wrapper that already exists
+(`peekFuncRefWrapperTypes`, new in `funcref-wrapper-types.ts`), so every
+already-emitted dispatch chain still knows the arm.
+
+Not lane-gated by a flag, and it does not need to be: the drift requires a
+multi-file graph, and the honest test262 lane compiles one file. Verified rather
+than assumed — honest chunk 0/57 before vs after: **850 rows, 0 verdict
+differences.**
+
+| measurement | before | after |
+| --- | --- | --- |
+| `language/statements/class/dstr/async-gen-meth-ary-ptrn-elision-step-err.js` (real runner, linked) | fail: illegal cast | **pass** |
+| linked chunk 0/57 vs honest, pass→fail | 11 | 10 |
+| `illegal cast` rows in that chunk | 1 | **0** |
+
+### Bucket `AsyncTestFailure … Cannot read properties of null (reading 'then')` (61) — FIXED
+
+Root cause: **the `__cb_<id>` host-callback bridge erases `await`.**
+`compileArrowAsCallback` compiles the callback body with no async activation, so
+a suspending async function literal became a plain synchronous function
+returning `undefined` (`__cb_0` drops the awaited call and returns
+`__get_undefined`). #4648 had already noticed the AWAIT-FREE half of this and
+added a Promise wrapper; the await-ful half was simply mis-lowered. Nothing
+caught it because the static call-site repair (`isAsyncCallExpression`) covers
+every call a single module makes ITSELF — and a separately compiled provider is
+precisely the case where the caller is another module:
+`asyncTest(async function () { await … })` → the provider's
+`testFunc().then(…)` reads `.then` of null.
+
+This is a **lane-independent compiler defect**, not a linked-lane artifact —
+`Promise.resolve(1).then(async function () { await Promise.all([]); })` in an
+ordinary single-file compile produces the same await-erased `__cb_0`. The fix
+here is deliberately scoped to the linked consumer (`ctx.linkedPackageBindings.size > 0`):
+such a callback routes to `compileArrowAsClosure`, which does activate the frame
+engine. Widening it to every host callback is a real fix worth doing and is NOT
+byte-neutral for the honest lane, so it is left for its own issue.
+
+| measurement | before | after |
+| --- | --- | --- |
+| 93 sampled null-read rows (linked), honest-pass/linked-fail | 32 | **17** |
+| … of which the `reading 'then'` family | 15 | **0** |
+| async/Promise/Iterator families, 6,317 linked rows | — | **+33 pass, 0 lost** |
+| linked chunk 0/57 vs honest, pass→fail | 10 | 9 |
+
+Residual in that sample: 17 rows of a DIFFERENT family —
+`Cannot read properties of null (reading 'next' / 'return')` in the
+`Iterator.prototype.{map,filter,take,drop,flatMap,chunks,windows}` helpers,
+where the consumer subclasses the harness/intrinsic `Iterator` and overrides
+`next` as a getter. Not the same substrate; see the residual table.
+
+### Bucket `Cannot convert 0 to a BigInt` (128) — NOT FIXED, root cause found
+
+**Both of the plan's hypotheses are wrong**, and they were measured rather than
+argued. It is not bigint boxing in `__call_function` argument marshalling, and
+it is not the provider's BigInt typed-array constructor path. The BigInt message
+is a symptom two steps downstream.
+
+What actually happens, narrowed with `testWithAllTypedArrayConstructors(f,
+[BigInt64Array], ["arraybuffer"])` (`.tmp/p6492/b7.js`): of the four
+arraybuffer-family arg factories, factory #2 — `makeResizableArrayBuffer`, i.e.
+`new ArrayBuffer(n, { maxByteLength: n * 2 })` — hands the consumer a value that
+`new BigInt64Array(arg)` rejects. The consumer sees
+`[object Array] isAB=false byteLength=16 resizable=true`, so the host
+constructor treats it as an array-like of NUMBERS and throws on converting
+element `0` to a BigInt. Factories #1, #3, #4 are fine.
+
+**The crossing, not the ArrayBuffer, is what is broken** — a micro-provider
+isolates it to four lines (`.tmp/p6492/seven.mts`):
+
+| value | where inspected | reads as |
+| --- | --- | --- |
+| provider-made resizable AB | inside the provider | `[object ArrayBuffer] isAB=true` |
+| provider-made resizable AB | in the consumer | `[object Array] isAB=false bl=16` |
+| provider-made plain AB | in the consumer | `[object Object] isAB=false bl=undefined` |
+| **consumer**-made resizable AB | handed to the provider | `[object Array] isAB=false bl=16` |
+| consumer-made resizable AB | in the consumer | `[object ArrayBuffer] isAB=true` |
+
+So a compiled ArrayBuffer is a wasm struct whose brand is consistent inside its
+OWN module and is lost in BOTH directions across the boundary: the #5225
+decoder registry has no ArrayBuffer discriminator, so `_wrapForHost` falls
+through to the generic `__is_vec` facade and the value arrives as an array of
+zeros. The plain-AB row is worse than the resizable one (`byteLength`
+`undefined`), which says this is not a resizable-specific gap.
+
+Fixing it means giving the cross-module mirror an ArrayBuffer brand the way
+`_compiledTypedArrayKinds` gives one to TypedArrays — a #5225-family change in
+`src/runtime.ts` plus a discriminator export from the owning module. That is a
+larger, separate piece of work than this issue's other buckets, so it is left
+here with the diagnosis rather than half-done. It is likely to also move part of
+the `Thrown value was not an object!` and descriptor-shape residual, since those
+have the same shape (a compiled object losing its brand at the boundary).
+
+### Buckets not reached
+
+- **`Expected a undefined …` (75)**, **extern class stubs (35)**,
+  **`Thrown value was not an object!` (22)** and the four small buckets: not
+  fixed. Two hours of sampling did not put a clean honest-pass/linked-fail row
+  of the extern-class bucket in front of the runner — every
+  `No dependency provided for extern class` row found locally (2 in chunk 0/57,
+  1 in a 892-row Proxy/Atomics/Reflect run) fails the HONEST lane identically,
+  so those particular rows are not lane differences at all. Whoever picks this
+  up should pull the row list from the parity report artifact rather than
+  re-sampling: the buckets are too thin for a 1/57 slice.
+- The **Iterator-helper `reading 'next' / 'return'` family** (17 rows in the
+  93-row sample) is a real, reproducible lane difference and the best-value next
+  target: the consumer subclasses the intrinsic `Iterator` and overrides `next`
+  as a GETTER, and the provider's helper reads `.next` off null.
+
+### Two findings for the #3451 slice-6 flip plan
+
+1. **The provider cache is not keyed on the compiler build (#6488) and this
+   silently fakes results.** Fine in CI today (fresh tmpdir per runner, no cache
+   restore step), but any local re-measurement — including the one that decides
+   the flip — must point `JS2WASM_TEST262_HARNESS_CACHE` at a fresh directory.
+   If the flip work ever adds a cache-restore step to speed the lane up, it must
+   key on the compiler build or it will publish stale verdicts.
+2. **Function `.name` is wrong for a provider closure read out of an array**:
+   `factories[1].name` answered `fa` for `fb`, and `typedArrayCtorArgFactories[0..2].name`
+   answered `undefined`. Harmless for pass/fail here, but it corrupts every
+   harness failure MESSAGE that names the factory ("Testing with … and
+   makePassthrough.") — which is exactly what sent the first pass of this triage
+   down the wrong path. Any bucket table built from linked-lane error strings
+   should be treated as approximate until this is fixed.
+
 ### Acceptance
 
-- [ ] `illegal cast` bucket = 0 (no uncatchable traps in the linked lane).
+- [x] `illegal cast` bucket = 0 (no uncatchable traps in the linked lane) —
+      locally: the sampled row passes and the bucket is 0 in chunk 0/57. Corpus
+      confirmation needs the next dispatch.
 - [ ] pass→fail residual ≤ 250 on the next `linked_lane=true` dispatch (record
-      as P3d in #6486 with the bucket table).
-- [ ] Honest lane byte-identical (every change gated on
-      `exportsConsumedByWasm` / provider-only code paths); equivalence gate: no
-      new regressions.
-- [ ] Each fixed bucket has a `tests/issue-6492-*.test.ts` case that compiles a
-      minimal provider + consumer pair through `compileHarnessLinkedBody` and
-      asserts the verdict (template: `tests/issue-6490-linked-callback-param.test.ts`).
+      as P3d in #6486 with the bucket table). **Not reached here**: two of the
+      705 rows' buckets are fixed (22 trap + 61 async-null ≈ 83 rows by the CI
+      table; the local 850-row sample moved 11 → 9), the 128-row BigInt bucket
+      is diagnosed but open, and ~200 rows of smaller buckets are untouched.
+- [x] Honest lane byte-identical / unaffected — the async fix is gated on
+      `ctx.linkedPackageBindings.size > 0`; the trampoline fix needs a
+      multi-file graph, which the honest lane is not, and that was verified
+      rather than assumed (honest chunk 0/57 before vs after: 850 rows, **0**
+      verdict differences). Equivalence gate: no new regressions.
+- [x] Each FIXED bucket has a test —
+      `tests/issue-6492-linked-method-trampoline-abi.test.ts` (4 cases) and
+      `tests/issue-6492-linked-async-callback-promise.test.ts` (5 cases); both
+      fail on the pre-fix tree.
+
+### Residual table (what a follow-up picks up, in value order)
+
+| rows (CI table) | bucket | state |
+| ---: | --- | --- |
+| 128 | `Cannot convert 0 to a BigInt` | **diagnosed** — compiled ArrayBuffer loses its brand across the module boundary (#5225 registry has no ArrayBuffer discriminator). Not started. |
+| ~42 | `__module_init` null `.catch` / `.next` | partly this issue's async fix; the **Iterator-helper** half (`next`/`return` off a getter-overridden subclass of the intrinsic `Iterator`) is untouched — 17 reproducible rows in the local sample. |
+| 75 | `Expected a undefined …` | untouched; likely #6482-adjacent. |
+| 35 | extern class stubs (`badArrayType` / `OProxy`) | untouched, and NOT reproduced locally — every local `No dependency provided for extern class` row fails honest identically. Pull the row list from the parity artifact. |
+| 22 | `Thrown value was not an object!` | untouched; same brand-loss shape as the BigInt bucket, may fall out with it. |
+| 59 | four small buckets | untouched. |
