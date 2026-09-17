@@ -4,7 +4,7 @@ title: "Linked lane P3c residual: 705 pass→fail rows in ~12 provider-side buck
 status: in-progress
 sprint: current
 created: 2026-09-16
-updated: 2026-09-16
+updated: 2026-09-17
 priority: high
 horizon: l
 feasibility: hard
@@ -618,3 +618,129 @@ top-level binding differs once the harness is a separate module — same
 substrate as the `__module_init` null bucket above). The 7 honest-fail rows
 only change failure flavour (a thrown `TypeError` in the honest lane becomes a
 trap in the linked lane) and change no verdict.
+
+## Round 4 (2026-09-17, Opus lane) — the `built-ins/Iterator` family
+
+Branch `issue-6492-r4`, based on `91e0fb35bd` (post-flip main).
+
+### Measurement setup
+
+The real runner (`tests/test262-chunk-dynamic.test.ts`), single chunk, over the
+WHOLE `built-ins/Iterator/` directory — 654 rows — in BOTH lanes, before and
+after, with a fresh `JS2WASM_TEST262_HARNESS_CACHE` per run (#6488) and both
+bundles rebuilt after every edit. Scoring the whole directory rather than the
+125-row bucket list is deliberate: a bucket list can only show improvement,
+while the directory also shows what a fix BREAKS. Artifacts:
+`benchmarks/results/test262-{honest,linked}-{base0,f1}-results-*.jsonl`
+(base0 = before, f1 = after; the runs are ~2 min linked / ~4-6 min honest).
+
+### Root cause — the linked assembler drops the `%Iterator%` binding stratum
+
+Not a compiler defect, and not the intrinsic-subclassing gap rounds 2 and 3
+assumed. **`assembleLinkedVariant` was missing a whole stratum of the
+authoritative assembly.**
+
+`assembleVariant` (the honest assembler, `tests/test262-original-harness.ts`)
+appends `ITERATOR_BINDING_PREAMBLE` (`scripts/test262-iterator-binding.mjs`) —
+
+```js
+function Iterator() {}
+Iterator.prototype = Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()));
+```
+
+— whenever the body mentions `Iterator` and does not declare it
+(`needsIteratorBinding`). js2 exposes **no global `Iterator` constructor**, so
+this local binding is the only `%Iterator%` a test ever sees. `assembleNativeHarness`
+carries it too. `assembleLinkedHarness` never did, so in the linked lane
+`typeof Iterator` was `"undefined"` — and everything downstream followed:
+`class T extends Iterator` extended `undefined` (→ `instanceof` false,
+`reading 'next' of null`), `Iterator.prototype.includes` was a read off
+`undefined` (→ `includes is not a function`), and a helper called on such an
+instance threw the provider's own `TypeError` instead of the consumer's error
+(→ `Expected a X but got a TypeError`, the shape round 3 correctly refused to
+attribute to the class-value crossing).
+
+That single missing stratum is **all four** of the sub-buckets the round-3
+residual table listed separately, which is why bucketing by message text kept
+splitting one defect into many.
+
+The fix puts the stratum in the **body** compile unit (`assembleLinkedVariant`),
+not the harness prefix, for a reason that is load-bearing: the prefix is the
+provider's cache key, so a per-test prefix would fork the provider per test and
+destroy the compile-once property the linked lane exists for. The honest
+assembler also emits it last, immediately before the body, so a body-side
+declaration still wins — the gate is the same predicate in both lanes.
+`bodyLineOffset` grows by the stratum's line count so body error lines still map.
+
+### Before / after — real runner, both lanes, 654 rows
+
+| measurement | before | after |
+| --- | ---: | ---: |
+| honest lane, passes | 342 | **342** (0 verdict differences, row by row) |
+| linked lane, passes | 240 | **341** |
+| honest-pass / linked-fail | **124** | **4** |
+| linked-pass / honest-fail | 22 | 3 |
+
+(The bucket list handed to this round had 125 rows; the directory run reproduces
+124 of them — one row's baseline verdict moved with the flip itself.)
+
+Honest-lane invariance is verified, not argued: `assembleLinkedVariant` is
+reachable only from `assembleLinkedHarness`, which only the linked lane calls,
+and the honest before/after run over the same 654 rows shows 0 differences.
+
+**No collateral outside the directory.** 616 corpus rows outside
+`built-ins/Iterator/` match `needsIteratorBinding` and therefore now receive the
+stratum in the linked lane as well. Sampled the largest clusters —
+`staging/sm/Iterator`, `language/statements/for-of/`,
+`language/statements/class/subclass/`, `built-ins/AsyncFromSyncIteratorPrototype/`
+— 901 scored rows, linked lane before vs after: **703 → 703, 0 rows changed in
+either direction**.
+
+### The 4 rows still honest-pass / linked-fail
+
+| row | linked error |
+| --- | --- |
+| `Iterator/prototype/{filter,map}/underlying-iterator-advanced-in-parallel.js` | `Expected SameValue(«0», «3»)` |
+| `Iterator/zipKeyed/iterables-iteration-after-reading-options.js` | own-keys missing from the observed operation list |
+| `Iterator/zipKeyed/padding-iteration.js` | `Actual [] and expected [a]` |
+
+Both families are boundary-crossing OBSERVATION order, not the binding: one
+underlying iterator advanced by two helper wrappers must be shared across the
+module boundary (the consumer's stepping is not observed by the provider's
+wrapper), and `zipKeyed` must observe the consumer object's own-keys/padding
+reads in spec order. Neither is worth a substrate change at 4 rows; they belong
+with the `Thrown value was not an object!` / descriptor-shape residual if that
+is ever picked up.
+
+### For the next lane
+
+6. **Check the ASSEMBLY before the compiler.** Three rounds attributed this
+   bucket to compiler substrate (intrinsic subclassing, provider-side helper
+   dispatch, cross-module `next` lookup) and none of it was. The honest and
+   linked assemblers are twins that must agree stratum for stratum, and the
+   only one that had drifted was the smallest. Whenever a whole DIRECTORY is
+   honest-pass/linked-fail, diff `assembleVariant` against
+   `assembleLinkedVariant` first — it costs a minute.
+7. **A one-line synthetic row through the real runner beats a micro-provider.**
+   Round 2 recorded that the micro-provider cannot see this bucket; that is
+   true, and it is also true that the in-process harness does not reproduce the
+   honest lane (its `[][Symbol.iterator]()` read fails without the runner's
+   sandbox realm). Dropping a scratch test into the corpus and running both
+   lanes on it isolated the difference to a single value in two 2-minute runs,
+   after hours of deduction from WAT and import manifests had not.
+
+### Residual table — updated after round 4
+
+| rows (CI table) | bucket | state |
+| ---: | --- | --- |
+| 128 | `Cannot convert 0 to a BigInt` | **FIXED** (round 2). |
+| 75 + 26 | `Expected a undefined …` / `Expected a X but got a Y` | **FIXED for the Iterator family** (round 4) — the dominant cause was the missing binding stratum, not the class-value crossing. Round 3's crossing fix stands; its own residual (a FIELDLESS struct-backed class instance) is untouched. |
+| ~42 | `__module_init` null `.catch` / `.next` | async half fixed (round 1); the `.next` half was the binding stratum and is **FIXED** (round 4). |
+| 35 | extern class stubs | not reproduced as a lane difference in four independent local samples. Pull the row list from the CI parity artifact or drop the bucket. |
+| 4 | `Iterator` parallel-advance + `zipKeyed` observation order | **round 4 residual**, see above. |
+| 22 | `Thrown value was not an object!` | untouched. |
+| 59 | four small buckets | untouched. |
+
+Test: `tests/issue-6492-r4-linked-iterator-binding.test.ts` (4 cases — the
+assembler gate in both directions, `bodyLineOffset` exactness, and two linked
+compile-and-run cases). All 4 fail on the pre-fix tree.
