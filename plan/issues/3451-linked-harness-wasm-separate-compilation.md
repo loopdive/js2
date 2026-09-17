@@ -36,6 +36,14 @@ loc-budget-allow:
 # comment. Splitting the 7.7k-line resolver is #3399's job, not this PR's.
 func-budget-allow:
   - src/runtime.ts::resolveImport
+# (2026-09-17, slice 6) The authority flip's declared ceiling. Rebase-mode only
+# (#3303): readable ONLY because this PR bumps ORACLE_VERSION 13 -> 14, and a
+# hard ceiling even then — exceed it and the gate fails rather than widening.
+# The count is the MEASURED pass->fail of the P3e full-corpus two-lane run, not
+# a round-up; see the per-run table in this file and #6486 P3e.
+regressions-allow:
+  count: 422
+  reason: "2026-09-17 #3451 slice 6 authority flip — P3e run 35178155322 measured 422 honest-pass/linked-fail rows (365 the other way, net -57); the linked oracle is authoritative from ORACLE_VERSION 14"
 ---
 
 # #3451 — reusable linked Test262 harness Wasm for both lanes
@@ -693,6 +701,12 @@ Two caveats, both recorded in #6474:
 authority flip (slice 6), and an escape hatch here is exactly how a shadow lane
 silently becomes the published number.
 
+> **Superseded 2026-09-17 by slice 6.** The flip is that reviewed change, so the
+> unconditional refusal is retired and the linked lane now uses the ordinary
+> cross-lane rule (forward oracle bump or `ORACLE_REBASE=1`). The property the
+> refusal protected still holds: nothing re-seeds a linked baseline by default,
+> and a `linked-harness-fallback`-heavy file still cannot read as honest.
+
 ### Full corpus (2026-09-16, #6486 P3, run 35116762391)
 
 57 shards each lane: linked median 152 s vs honest 326 s per shard (2.1×);
@@ -835,5 +849,82 @@ P3d in #6486 before opening the flip PR.
       wall median ≤ 170 s on the host matrix (P3: 152 s vs 326 s).
 - [ ] Scheduled `test262-honest-audit` runs and its parity report agrees with
       the authoritative lane at ≥ 99 % (residual = #6491/#6482/#6492 leftovers).
-- [ ] `test262-baseline-validate.yml` green on main HEAD.
-- [ ] `docs/ci-policy.md` + CLAUDE.md name the authoritative oracle.
+      Measured at the flip: **98.15 %** (P3e) — the ≥ 99 % target is therefore
+      an open follow-up, not something this PR achieves.
+- [ ] ~~`test262-baseline-validate.yml` green on main HEAD.~~ **There is no such
+      workflow** (see implementation notes below); the validator is a manual
+      script and is honest-only. Re-stated as: a host-lane mismatch reported by
+      `pnpm run test:262:validate-baseline` after the flip is expected on the
+      flip rows and is NOT evidence of a rotted baseline.
+- [x] `docs/ci-policy.md` + CLAUDE.md name the authoritative oracle.
+
+## Slice 6 implementation notes (2026-09-17, the flip PR)
+
+What landed, and the two places reality did not match the plan.
+
+**P1 — workflow.** `TEST262_ORACLE_MODE: linked` in the job `env:` of
+`test262-shard` and `test262-shard-mg` (host cells only in effect: `gc` parses
+to `undefined`, so `IS_HOST_LANE` holds; `standalone` short-circuits and its
+rows are byte-identical). `TEST262_RESULT_PREFIX` untouched. The shadow became
+the audit: `test262-linked` → `test262-honest-audit` (flag dropped, prefix
+`test262-honest`, `RUN_TIMESTAMP …-honest-chunk…`, artifacts
+`test262-honest-audit-shard-*`), `merge-linked-report` →
+`merge-honest-audit-report` (artifact `test262-honest-audit-<sha>`), dispatch
+input `linked_lane` → `honest_audit` with **no deprecated alias** — the alias
+would be an input that silently runs the wrong lane, and the only consumer was
+this repo's own tests. Verified by parsing the YAML and walking the transitive
+`needs` closure of `merge-report`, `regression-gate`, `gate` and
+`promote-baseline`: none reaches `test262-honest-audit` or
+`merge-honest-audit-report` (asserted in
+`tests/issue-3451-linked-harness-lane.test.ts`).
+
+`scripts/test262-linked-parity.mjs` gained `--authoritative-label` /
+`--audit-label`. They affect **headings only**. The positional arguments and
+every JSON field stay keyed by LANE (`honest_*` / `linked_*`, honest first),
+because a role-keyed schema would make a pre-flip and a post-flip report need
+different readers for the same numbers.
+
+**P1.3 could not be done as written: `test262-baseline-validate.yml` DOES NOT
+EXIST in this repo.** `grep` over `.github/workflows/` finds no baseline
+spot-check job at all; the validator is `scripts/validate-test262-baseline.ts`,
+run by hand via `pnpm run test:262:validate-baseline`. Setting the env there
+would also be a **no-op that lies**: it samples through the in-process
+`runTest262File` lane, and `TEST262_ORACLE_MODE` is read only by
+`tests/test262-shared.ts` (the sharded worker path). So the flag would be
+accepted, ignored, and the run would claim a linked verdict it never computed.
+Recorded instead as a header comment on the script and a paragraph in
+`docs/ci-policy.md`: the validator is honest-only, expect the ~422/365 flip rows
+to read as host-lane drift, and the real fix is teaching the in-process lane the
+linked oracle. **This is an open gap, owned by nobody yet.**
+
+**P2 — oracle and guards.** `ORACLE_VERSION` 13 → 14 with its history entry.
+`scripts/diff-test262.ts`: the unconditional linked-lane refusal is retired and
+the lane falls through to the ordinary cross-lane rule (same lane = ordinary
+diff; `honest ↔ linked-harness` refused unless `ORACLE_REBASE=1` or the forward
+bump already put the run in rebase mode). Unchanged on purpose: the
+`linked-harness-fallback` → `linked-harness` normalisation, and the MIXED-lane
+refusal that no rebase excuses. Ceiling declared in this file's frontmatter:
+`regressions-allow: count: 422` — the measured P3e pass→fail, not a round-up.
+
+**P2.4 — the edition ratchet needs NO floor change, and lowering one would have
+been wrong.** `scripts/test262-edition-ratchet-baseline.json` is
+`"target": "standalone"`, and the ratchet has exactly ONE call site in CI
+(`test262-sharded.yml`, the `merge shard reports` job) which passes
+`--results merged-reports/test262-standalone-results-merged.jsonl --target
+standalone`. The script refuses a cross-target comparison outright
+(`REFUSED: baseline was measured for target "…" but this run is "…"`), so **no
+host rows are ever scored by this gate**. The flip is host-only. Hand-editing
+those floors down by a host-lane delta would have lowered a standalone gate by
+an amount measured on a lane it does not watch — i.e. exactly the "a floor that
+is too low never fires" failure of #3953. No per-edition table is produced for
+the same reason: there is no per-edition host floor for the flip to move. The
+full-corpus per-edition **evidence** of the flip still lives in the P3e parity
+artifact if anyone wants it later.
+
+**Status stays `in-progress`.** Slice 6 is done when the first push-to-main run
+after this PR promotes a v14, `oracle_lane: linked-harness` baseline and the
+regression gate reports the rebase within the declared 422 ceiling with no
+auto-park. Until that run exists the flip is asserted, not demonstrated; flip
+this issue to `done` on that run, and if the gate reports a count above 422,
+read the reported number and re-declare it honestly rather than widening the
+ceiling by guess.

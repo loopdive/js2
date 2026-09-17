@@ -31,7 +31,7 @@
  * version or a date. Two runs with the same ORACLE_VERSION are guaranteed to
  * apply identical verdict logic, so their rows are directly comparable.
  */
-export const ORACLE_VERSION = 13;
+export const ORACLE_VERSION = 14;
 
 /**
  * Append-only log of what each oracle version means. Newest last.
@@ -347,6 +347,48 @@ export const ORACLE_VERSION_HISTORY: ReadonlyArray<{ version: number; note: stri
       "ceiling would widen the guard by exactly the amount nobody verified. If " +
       "the merge_group exceeds the rebase drift tolerance, read the count it " +
       "reports and declare THAT number in the #4162 issue file.",
+  },
+  {
+    version: 14,
+    note:
+      "#3451 slice 6 — the linked-harness AUTHORITY FLIP. The host (gc) lane's " +
+      "verdicts now come from the LINKED-harness oracle: the literal upstream " +
+      "harness prefix is compiled ONCE per include-set into a reusable provider " +
+      "module (#2527) and each test body is compiled and statically linked " +
+      "against it, instead of re-compiling the whole 6-18 KB assembly for every " +
+      "one of ~73k row-compiles. `linked-harness` and its per-row miss variant " +
+      "`linked-harness-fallback` are therefore the AUTHORITATIVE host lanes; the " +
+      "honest whole-assembly lane is retained as the SCHEDULED AUDIT " +
+      "(`test262-honest-audit` in test262-sharded.yml, cron + opt-in dispatch) " +
+      "with the same parity report, roles swapped. Standalone/linear/wasi are " +
+      "UNTOUCHED — the linked oracle is host-only by construction " +
+      '(`ORACLE_LANE === "linked-harness"` requires `IS_HOST_LANE`), so the ' +
+      "standalone floor (#1897), its high-water mark (#2097) and the per-edition " +
+      "ratchet (#5314, standalone-only) score exactly the same rows as before. " +
+      "MEASURED, not assumed: five full-corpus two-lane runs (#6486 P3..P3e); the " +
+      "flip is declared on P3e, run 35178155322 at main 9cc48e6b52 — agreement " +
+      "47,835/48,735 = 98.15 %, linked pass 38,498 vs honest 38,555, 422 pass->fail " +
+      "and 365 fail->pass, NET -57 on the published host number, row-summed compile " +
+      "24.8 M vs 52.0 M ms (2.1x). The 422 are NOT excused as skew: they are " +
+      "declared as a #3303 `regressions-allow` ceiling in the #3451 issue file, " +
+      "which is readable ONLY in rebase mode — i.e. only because of this bump — and " +
+      "still hard-fails if reality exceeds it. The precondition for flipping at all " +
+      "was that no bucket is an uncatchable trap: the `illegal cast` bucket (22 rows " +
+      "at P3c) went to zero in #6492 round 1 and no new trap category appeared at " +
+      "P3d or P3e, so the #3189 trap ratchet is NOT superseded by this bump and " +
+      "still applies in full. Remaining difference buckets are all <= 49 rows and " +
+      "tracked in #6492/#6491/#6482. NO classifyError change and NO negative-" +
+      "expectation change in v14: the verdict POLICY is byte-identical, what moves " +
+      "is WHICH compilation the policy is applied to — which is precisely why the " +
+      "flips are indistinguishable from oracle skew to diff-test262.ts and why the " +
+      "bump is required (without it the first push-to-main run is a cross-lane " +
+      "refusal, promote-baseline never runs and the queue wedges). The forward-" +
+      "monotonic bump auto-rebases, so that first main run re-seeds " +
+      "`loopdive/js2wasm-baselines` at v14 with `oracle_lane: linked-harness`; " +
+      "every run after it is an ordinary same-lane diff. LOCAL RUNS STAY HONEST: " +
+      "`scripts/run-test262-vitest.sh` does not set `TEST262_ORACLE_MODE`, so a " +
+      "local verdict is the AUDIT lane's, not CI's — export " +
+      "`TEST262_ORACLE_MODE=linked` to reproduce a CI verdict.",
   },
 ];
 

@@ -1592,6 +1592,12 @@ async function run(
   // seeded (#3465). Absent `oracle_lane` is normalized to "honest" in the loader
   // (backward-compatible with every pre-#3462 baseline), so an old honest
   // baseline vs a new honest candidate compares cleanly.
+  //
+  // (#3451 slice 6) There are now THREE lanes, and which one is authoritative
+  // is not a property of this guard: since oracle v14 the host lane publishes
+  // `linked-harness` rows and `honest` is the scheduled audit. The rule is the
+  // same for all three — same lane compares, different lanes need a reviewed
+  // rebase signal (a forward oracle bump, or ORACLE_REBASE=1).
   const baseLane = baselineLoaded.oracleLane;
   const newLane = newerLoaded.oracleLane;
   const fmtLane = (v: OracleLane | "mixed" | undefined) =>
@@ -1604,49 +1610,66 @@ async function run(
     console.error(
       `\n✖ Oracle-lane guard (#3462): one side carries MIXED oracle lanes ` +
         `(baseline=${fmtLane(baseLane)}, new=${fmtLane(newLane)}).\n` +
-        `  A result file that mixes the honest and fast-native-harness lanes cannot be diffed.\n` +
+        `  A result file that mixes oracle lanes (honest / fast-native-harness / linked-harness)\n` +
+        `  cannot be diffed, with or without ORACLE_REBASE.\n` +
         `  Split the run by lane (host-fast vs standalone/honest) and diff each against its own baseline.\n`,
     );
     process.exit(2);
   }
 
   if (baseLane !== undefined && newLane !== undefined && baseLane !== newLane) {
-    // (#3451) The LINKED-harness shadow lane is refused UNCONDITIONALLY — not
-    // even `ORACLE_REBASE=1` excuses it. `ORACLE_REBASE` exists to SEED a lane's
-    // own baseline, and the linked lane has none by design: it is
-    // non-authoritative until slice 6 flips authority in its own reviewed PR.
-    // An escape hatch here is the exact mechanism by which a shadow lane
-    // silently becomes the published number.
-    if (baseLane === "linked-harness" || newLane === "linked-harness") {
-      console.error(
-        `\n\u2716 Oracle-lane guard (#3451): the linked-harness shadow lane is not comparable to any other lane.\n` +
-          `  baseline lane = ${fmtLane(baseLane)}, new lane = ${fmtLane(newLane)}.\n` +
-          `  It is a NON-AUTHORITATIVE measurement lane (TEST262_ORACLE_MODE=linked) and never promotes a\n` +
-          `  baseline. ORACLE_REBASE does NOT excuse this: seeding a linked baseline IS the authority flip,\n` +
-          `  which is #3451 slice 6 and a separate reviewed change.\n` +
-          `  To compare linked against honest, run both lanes at the same commit and diff the two RESULT\n` +
-          `  files by hand \u2014 that is the parity measurement, not a gate.\n`,
-      );
-      process.exit(2);
-    }
-    // Cross-LANE diff (honest-vs-fast or fast-vs-honest). Excused only by the
-    // explicit env flag — there is no forward-bump auto-rebase for the lane.
+    // (#3451 slice 6, 2026-09-17) The linked-harness lane used to be refused
+    // here UNCONDITIONALLY — not even `ORACLE_REBASE=1` excused it — because it
+    // was a SHADOW lane with no baseline of its own, and an escape hatch would
+    // have been the exact mechanism by which a shadow lane silently becomes the
+    // published number. The authority flip is that reviewed change: the host
+    // matrix now runs `TEST262_ORACLE_MODE=linked`, linked-harness IS the
+    // published host lane, and it needs a baseline of its own. So the special
+    // case is retired and the linked lane falls through to the ORDINARY
+    // cross-lane rule below, which is what the fast lane has always used:
+    //
+    //   - same lane on both sides  → ordinary diff (the steady state after the
+    //     first main run re-seeds the baseline at oracle v14);
+    //   - honest ↔ linked-harness  → refused unless `ORACLE_REBASE=1` or the
+    //     forward oracle-version bump has already put this run in rebase mode
+    //     (that IS the flip PR's first main run, and its 422 pass→fail rows are
+    //     declared as a #3303 `regressions-allow` ceiling in the #3451 issue
+    //     file — measured, not rounded, on run 35178155322).
+    //
+    // What is NOT relaxed: `linked-harness-fallback` still normalises to
+    // `linked-harness` in the loader, so a heavily-degraded linked file can
+    // never read as honest; a MIXED file is still refused above, regardless of
+    // ORACLE_REBASE; and a cross-lane diff still needs an explicit, reviewed
+    // rebase signal rather than happening by default.
     if (!oracleRebase) {
+      const linkedInvolved = baseLane === "linked-harness" || newLane === "linked-harness";
       console.error(
-        `\n✖ Oracle-lane guard (#3462): cross-lane diff refused.\n` +
+        `\n✖ Oracle-lane guard (${linkedInvolved ? "#3451" : "#3462"}): cross-lane diff refused.\n` +
           `  baseline lane = ${fmtLane(baseLane)}, new lane = ${fmtLane(newLane)}.\n` +
-          `  The fast native-harness lane and the honest in-wasm v8 lane are both oracle ${fmtOracle(newOracle)}\n` +
-          `  but produce different verdicts at the native-harness boundary (~9,244 baked-in flips),\n` +
-          `  so diffing one against the other reads that boundary as regressions. This is the mechanism\n` +
-          `  that keeps a fast candidate from ever being gated against the honest baseline (and vice-versa).\n` +
-          `  If this is a deliberate fast-lane re-seed (#3465), re-run with ORACLE_REBASE=1.\n`,
+          (linkedInvolved
+            ? `  The linked-harness lane (TEST262_ORACLE_MODE=linked, authoritative for the host lane since\n` +
+              `  #3451 slice 6 / oracle v14) and the honest whole-assembly lane are both oracle ${fmtOracle(newOracle)}\n` +
+              `  but disagree on ~1.85 % of rows at the harness-provider boundary (measured 2026-09-17,\n` +
+              `  run 35178155322: 422 pass→fail, 365 fail→pass), so diffing one against the other reads that\n` +
+              `  boundary as regressions.\n` +
+              `  If this is the deliberate re-seed of the linked baseline, bump ORACLE_VERSION forward (which\n` +
+              `  auto-rebases) or re-run with ORACLE_REBASE=1. If it is not, you are comparing the published\n` +
+              `  lane against the scheduled AUDIT lane — use scripts/test262-linked-parity.mjs, which is the\n` +
+              `  place cross-lane comparison belongs and can never reach a gate.\n`
+            : `  The fast native-harness lane and the honest in-wasm v8 lane are both oracle ${fmtOracle(newOracle)}\n` +
+              `  but produce different verdicts at the native-harness boundary (~9,244 baked-in flips),\n` +
+              `  so diffing one against the other reads that boundary as regressions. This is the mechanism\n` +
+              `  that keeps a fast candidate from ever being gated against the honest baseline (and vice-versa).\n` +
+              `  If this is a deliberate fast-lane re-seed (#3465), re-run with ORACLE_REBASE=1.\n`),
       );
       process.exit(2);
     }
     console.log(
       `ORACLE_REBASE=1 — comparing across oracle LANES ` +
-        `(baseline ${fmtLane(baseLane)} → new ${fmtLane(newLane)}). Deliberate fast-lane re-seed (#3462/#3465): ` +
-        `the ~9,244 native-harness boundary flips are being baked into the fast baseline.`,
+        `(baseline ${fmtLane(baseLane)} → new ${fmtLane(newLane)}). Deliberate re-seed: ` +
+        (baseLane === "linked-harness" || newLane === "linked-harness"
+          ? `the #3451 slice-6 authority flip bakes the ~1.85 % harness-provider boundary into the host baseline.`
+          : `the ~9,244 native-harness boundary flips are being baked into the fast baseline (#3462/#3465).`),
     );
   } else if (baseLane === "fast-nativeharness" && newLane === "fast-nativeharness") {
     // Same lane (both FAST) — the fast-rev must ALSO match. A rev bump means the
