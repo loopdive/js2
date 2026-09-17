@@ -726,6 +726,15 @@ uncatchable-trap bucket is gone and no new trap category appears — the slice-6
 precondition (a) holds; (b) waits on #6492 rounds 2–3 (BigInt 128 landed in
 PR #5954; class-value crossing next).
 
+### Full corpus, fifth run (2026-09-17, #6486 P3e, run 35178155322) — the slice-6 measurement
+
+After #6492 rounds 1–3 (PRs #5953, #5954, #5956): agreement **98.15 %**, linked
+pass 38,498 vs honest 38,555 (**422 pass→fail, 365 fail→pass, net −57**),
+compile 24.8 M vs 52.0 M ms (2.1×). No uncatchable-trap bucket. Precondition
+(a) holds; (b) is declared honestly at the measured 422 (the ≤ 250 target was
+not reached — the remaining buckets are ≤ 49 rows each and are tracked in
+#6492/#6491/#6482). The flip PR proceeds on this measurement.
+
 ## Implementation Plan — slice 6, authority flip (written 2026-09-16, Fable lane; implementation: Opus, after #6492 lands)
 
 ### Decision

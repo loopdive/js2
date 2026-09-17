@@ -374,3 +374,30 @@ crossing 49 + 26 (#6492 round 3), #6491 36, #6482 descriptor family ≈ 130,
 extern-class stubs 35, `__module_init` null catch/next 33, async-null 23.
 Projection once #5954 lands: ≈ 473 pass→fail; after the class-value crossing
 ≈ 370.
+
+## P3e — fifth full-corpus measurement (2026-09-17, run 35178155322, main @ 9cc48e6b52, after #6492 rounds 1–3: PRs #5953, #5954, #5956)
+
+| metric | honest | linked |
+| --- | ---: | ---: |
+| pass | 38,555 | 38,498 |
+| fail | 9,546 | 9,755 |
+| compile_error | 507 | 362 |
+| compile_timeout | 13 | 6 |
+| row-summed compile_ms | 52.0 M | 24.8 M |
+| row-summed exec_ms | 2.14 M | 2.24 M |
+
+Agreement 47,835 / 48,735 (**98.15 %**); pass→fail **422** (P3 4,499 → P3c 705
+→ P3d 601 → P3e 422); fail→pass 365; other 113; **net −57 pass**. No
+uncatchable-trap bucket. The BigInt bucket (128) is gone (PR #5954).
+
+Remaining buckets (all ≤ 49 rows): class-identity / intrinsic-`Iterator`
+subclassing family 49 + 26 + 18 (#6492, bucketed by thrown value per round 3),
+#6491 early errors 36, #6482 descriptor family 35 + 27 + 24 + 19 + 18 + 10 + 10,
+`__module_init` null catch/next 24 + 9 + 9, extern-class stubs 23 + 12 (round 3:
+fails honest identically in every local sample — a message-shape difference,
+not a lane bug), async-null 23, `import.defer/source` proposal rows 16 + 8
+(honest CE vs linked fail), `this is not a typed array` 18, misc ≤ 15.
+
+**This is the slice-6 measurement.** Declared ceiling for the flip PR:
+`regressions-allow: count: 422` (the pass→fail count of this run, not a
+round-up); net effect on the published host number −57.
