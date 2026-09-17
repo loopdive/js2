@@ -1080,7 +1080,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1498,
+      "passCount": 1500,
       "totalCount": 1955
     },
     {
