@@ -29,4 +29,5 @@ The slider filters cumulatively through ES3, ES5, annual editions, and ESNext. U
 
 ## Validation
 
-Four focused jsdom tests pass: cumulative filtering, published-versus-ESNext handling, explicit unknown inclusion, summary/group counts, focus retention, retained performance settings, and empty states. Independent checks against the current 24-package report pass at every one of the 16 slider positions. JavaScript syntax and whitespace checks pass.
+The permanent repro is `tests/npm-compat-edition-slider.test.ts` (added by this
+change), which pins the slider end to end in jsdom: cumulative filtering, published-versus-ESNext handling, explicit unknown inclusion, summary/group counts, focus retention, retained performance settings, and empty states. Independent checks against the current 24-package report pass at every one of the 16 slider positions. JavaScript syntax and whitespace checks pass.
