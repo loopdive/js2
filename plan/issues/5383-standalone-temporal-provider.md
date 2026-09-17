@@ -9189,3 +9189,104 @@ Everything in S26–S34 still holds. Two additions:
   whichever slice touches this area next — `reflect-construct-native.ts` had
   TWO such sites in ONE file, found only by reading the whole file rather than
   stopping at the first.
+
+### S36 findings (2026-09-17) — a NEW cross-module `__tag` collision found and fixed (silent wrong prototype claims); the 45-file headline's REAL blocker traced to a third mechanism and filed, not fixed
+
+Full write-up in
+[#6623](6623-standalone-subclass-cross-module-tag-collision.md). Branch
+`issue-5383-standalone-temporal-s36`, based on S35's FINAL tip `2402502cae`;
+the fix is commit `0612e1a082`.
+
+#### 1. The defect
+
+`class S extends <heritage the compiler cannot statically resolve>` — a
+property-access into a linked provider namespace (`class S extends NS.PD
+{}`) or an identifier bound to a runtime PARAMETER (`class S extends
+construct {}`, test262's own `checkSubclassingIgnored(construct, ...)`
+shape) — compiles, under `--target standalone`/`wasi`, as an independent ROOT
+struct with no relationship to its true superclass
+(`class-bodies.ts`'s heritage-detection loop resolves only
+`Identifier`/`ClassExpression` bases; the property-access arm gets NO
+standalone/wasi handling at all, and an unresolved identifier falls back to a
+bogus `parentClassName = baseExpr.text`). When such a class is field-less
+(the common shape — a bare `super(...)`-forwarding constructor), its struct
+canonicalizes to the SAME WasmGC type as ANY other field-less class,
+including one a LINKED PROVIDER exports. `standalone-class-instance-proto.ts`'s
+`__std_class_instance_proto` dispatcher (#6617/S30) disambiguates same-shape
+classes ONLY by `__tag` — a small per-module counter starting at **0 in
+every module independently**. Two field-less classes in DIFFERENT modules
+can therefore share both shape AND tag by pure coincidence, and the
+dispatcher answers the CONSUMER's subclass's prototype for a value the
+PROVIDER genuinely minted — a silently WRONG non-null answer, worse than the
+`null` it would otherwise decline to. Reduced in THREE steps per the brief's
+required order: (1) single module, no link — does NOT reproduce (the static
+same-module fold already handles it); (2) synthetic linked pair,
+`.tmp/s36/link-probe6.mts`/`link-probe7.mts` — reproduces cleanly, both
+heritage shapes, confirmed by direct `classTagCounter` instrumentation
+(`PD` and `S`/`MySubclass` both land on `__tag = 0`, each the first class in
+its own module); (3) real provider, `.tmp/s35probe/debug2.js` — does NOT show
+this specific wrong-answer symptom (`Duration`'s real tag almost certainly
+doesn't collide with a lone `MySubclass` in that one test file), consistent
+with the mechanism rather than contradicting it, and pointing at a THIRD,
+separate, unreduced mechanism as the actual 45-file blocker (see §4).
+
+#### 2. The fix
+
+`ctx.classDynamicUnresolvedHeritageSet` (new, `context/types.ts`/
+`create-context.ts`) is populated at both heritage-detection sites in
+`class-bodies.ts::collectClassDeclaration` that leave a class unlinked under
+standalone/wasi. `standalone-class-instance-proto.ts`'s `collectEntries`
+excludes a flagged, field-less class from ever claiming a `getPrototypeOf`
+answer — declining (falling through toward `null`) rather than risking the
+false-positive match, the same "can only ever REMOVE a false positive"
+reasoning #6620/S33's `taCtorIdentityTestInstrs` used for a sibling
+collision. A class with genuine own (or inherited) fields is NOT excluded —
+verified directly (witness control #5) that such a class's own instances
+still answer correctly.
+
+#### 3. The result
+
+Four-family sample, full 120 files each, file-copy revert, fresh cache per
+label: **430/480 both labels, 0 flips** (111/104/112/103) — unchanged from
+S35's tip, as predicted (this fix targets a different mechanism). **45-file
+`subclassing-ignored.js` corpus-wide: 0/45 both labels, unchanged**, message
+set byte-identical (verified with a full per-file diff, not just counts).
+Must-not-move, 1,649 rows across three groups (A/B/C per the brief's exact
+spec), 0 flips, byte-identical `.tsv` diff on all three. Corpus byte A/B: 42
+modules × {gc, standalone} = 84 artifacts, **0 moved** — a genuine null
+control (nothing in that generic corpus declares an unresolved-heritage
+field-less class reaching a `getPrototypeOf` site). Equivalence gate: 22
+failing / 1,720 passing / 22 known-failures — baseline exactly. Targeted
+synthetic probes DO move: `plain.m()`'s prototype (a receiver that never
+touches the colliding class) flips from the WRONG `S.prototype`/
+`MySubclass.prototype` to a declined non-claim on both the property-access
+and identifier heritage shapes.
+
+#### 4. Residual — the real 45-file blocker, sized and filed, not fixed
+
+`Object.getPrototypeOf(result)` where `result` comes from a dynamic METHOD
+CALL (`instance.abs()`) on an unresolved-heritage subclass receiver does not
+fall through to the `__js2wasm_link_get_prototype_of` boundary terminal
+(#6617/S30) the way a direct `new NS.PD()`/`NS.PD.from()` construction
+already does (#6617's own witness covers exactly those two shapes and both
+pass). This is a THIRD mechanism, distinct from this slice's fix and from
+S35's Mechanisms A/B — filed in #6623 rather than chased, per the brief's
+explicit instruction to size and file when a reduction needs its own budget.
+A much smaller, purely diagnostic residual (`String(<linked class>.prototype)`
+renders the literal text `"null"` for a real, non-null object —
+`assert.js`'s `formatSimpleValue` falls back to `String()`) is also named in
+#6623 for a future slice, unfixed.
+
+#### 5. Traps, carried forward and added to
+
+Everything in S26–S35 still holds. One addition:
+
+- **A "field-less" check must exclude the compiler's OWN bookkeeping
+  fields.** `__tag`/`__shape_brand` are appended to EVERY class's
+  `structFields` entry AFTER the declared-field collection loop, so
+  `structFields.length === 0` is NEVER true for any class — a naive version
+  of this fix's guard silently never fired. The right test is
+  `structFields.every(f => f.name === "__tag" || f.name === "__shape_brand")`.
+  Caught only by re-running the targeted probe after the "fix" and seeing the
+  wrong answer persist unchanged, not by any type or compile error — worth a
+  re-check for any future "is this class field-less" query in this codebase.

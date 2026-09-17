@@ -166,9 +166,11 @@ stays `Test262Error: […]Expected SameValue(«null», «null») to be true`
 
 | group | rows | base pass | branch pass | flips |
 | --- | --- | --- | --- | --- |
-| A: `Object/keys` + `expressions/object` + `Reflect/{get,has}` | (see PR) | — | — | 0 |
-| B: `Object/{entries,values,getOwnPropertyNames}` + `for-in` | (see PR) | — | — | 0 |
-| C: `language/statements/class/subclass/**`(150) + `subclass-builtins/**`(100) + `Object/getPrototypeOf/**` + `Reflect/construct/**` | (see PR) | — | — | 0 |
+| A: `Object/keys` + `expressions/object` + `Reflect/{get,has}` | 1,250 | 1,125 | 1,125 | 0 |
+| B: `Object/{entries,values,getOwnPropertyNames}` + `for-in` | 205 | 179 | 179 | 0 |
+| C: `language/statements/class/subclass/**`(109, capped 150) + `subclass-builtins/**`(36, capped 100) + `Object/getPrototypeOf/**`(39) + `Reflect/construct/**`(10) | 194 | 146 | 146 | 0 |
+
+1,649 rows total, per-file byte-identical `.tsv` diff on all three groups (`diff <(sort A-base.tsv) <(sort A-branch.tsv)` etc. — 0 lines of output on each).
 
 **Corpus byte A/B**: 42 modules × {gc, standalone} = 84 artifacts — gc lane
 byte-identical (this fix is standalone/wasi-only by construction); standalone
