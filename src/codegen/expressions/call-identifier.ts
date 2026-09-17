@@ -130,6 +130,7 @@ import { paramUndefinedTypeIsDefaultArtifact } from "../destructuring-params.js"
 import {
   calleeIsCapabilityCtorParam,
   calleeIsPromiseExecutorParam,
+  calleeIsLinkedProviderParam,
   calleeMayBeHostCallable,
   appendForwardedOptionalArgcOverride,
   compileCallExpression,
@@ -2919,6 +2920,12 @@ export function compileIdentifierCall(
             // params is preserved.
             (calleeMayBeHostCallable(ctx, expr.expression) ||
               calleeIsPromiseExecutorParam(ctx, expr.expression) ||
+              // (#6490) A callable param of a separately-linked PROVIDER can
+              // hold a consumer-module closure, whose struct belongs to the
+              // consumer's type group; the guarded cast here nulls and the
+              // dispatch traps un-catchably. Linker-only flag, so ordinary
+              // single-module compiles are byte-identical.
+              calleeIsLinkedProviderParam(ctx, expr.expression) ||
               // Captures explicitly marked as host-bound callback values stay
               // externref by design. They may be real JS functions after a
               // compiled method crosses the host boundary (Jest's Prompt

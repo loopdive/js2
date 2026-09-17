@@ -339,6 +339,9 @@ type RecordMetadata = {
   // assembly for this row. Per-row, never per-run: a lane that silently
   // degraded on some rows would report an unearned parity number.
   linkedFallback?: boolean;
+  // (#6486) Why this row fell back, carried into the JSONL so the non-authoritative
+  // parity report can histogram the misses. Linked lane only; absent everywhere else.
+  linkedFallbackReason?: string;
 };
 
 function normalizeErrorSignature(status: string, errorCategory: string | undefined, error: string | undefined) {
@@ -399,6 +402,9 @@ function metadataFromWorkerResult(result: TestResult, reachedTestFallback = fals
     ...(result.hostImportLeakClass ? { hostImportLeakClass: result.hostImportLeakClass } : {}),
     ...((result as { vacuous?: boolean }).vacuous ? { vacuous: true } : {}),
     ...((result as { linkedFallback?: boolean }).linkedFallback ? { linkedFallback: true } : {}),
+    ...((result as { linkedFallbackReason?: string }).linkedFallbackReason
+      ? { linkedFallbackReason: (result as { linkedFallbackReason?: string }).linkedFallbackReason }
+      : {}),
     reachedTest: result.reachedTest ?? reachedTestFallback,
   };
 }
@@ -452,6 +458,12 @@ function recordResult(
     reached_test: metadata?.reachedTest ?? false,
     // (#2939/#2940) vacuity correction marker (only on `fail` rows it applies to).
     vacuous: metadata?.vacuous || undefined,
+    // (#6486) Only ever present on a `linked-harness-fallback` row; truncated
+    // because a compile-error message can be kilobytes and this is a histogram key.
+    linked_fallback_reason:
+      metadata?.linkedFallback === true && metadata?.linkedFallbackReason
+        ? metadata.linkedFallbackReason.slice(0, 200)
+        : undefined,
     compile_ms: timing?.compileMs !== undefined ? Math.round(timing.compileMs) : undefined,
     exec_ms: timing?.execMs !== undefined ? Math.round(timing.execMs) : undefined,
     scope: scopeInfo?.scope ?? "standard",

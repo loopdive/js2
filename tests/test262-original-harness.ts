@@ -602,10 +602,26 @@ export function assembleNativeHarness(source: string, meta: HarnessMeta): Native
 
 function assembleLinkedVariant(source: string, strict: boolean): LinkedHarnessVariant {
   const directive = strict ? '"use strict";\n' : "";
+  // (#6492 round 4) The honest assembler appends `ITERATOR_BINDING_PREAMBLE` —
+  // the "feature-gated local binding" stratum of `assembleVariant` — whenever
+  // the body mentions `Iterator` without declaring it. js2 has no global
+  // `Iterator` constructor, so WITHOUT this stratum `typeof Iterator` is
+  // `undefined` and every `class T extends Iterator` / `Iterator.prototype.*`
+  // row fails in a way the honest lane never sees (measured: 124 honest-pass /
+  // linked-fail rows under `built-ins/Iterator/`).
+  //
+  // It belongs to the BODY compile unit, not to the harness prefix, for two
+  // reasons that are the whole reason this is placed here: the honest
+  // assembler also emits it after the harness includes and immediately before
+  // the body (so a body-side declaration still wins — `needsIteratorBinding`
+  // declines then), and the harness prefix is the PROVIDER's cache key. Moving
+  // it into the prefix would fork the provider per-test and destroy the
+  // compile-once property the linked lane exists for.
+  const iteratorBinding = needsIteratorBinding(source) ? ITERATOR_BINDING_PREAMBLE : "";
   return {
-    bodySource: directive + source,
-    body: source,
-    bodyLineOffset: lineCount(directive),
+    bodySource: directive + iteratorBinding + source,
+    body: iteratorBinding + source,
+    bodyLineOffset: lineCount(directive + iteratorBinding),
     strict,
   };
 }

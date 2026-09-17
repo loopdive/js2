@@ -54,6 +54,7 @@ import {
   isDynArrayProducerForm,
 } from "./dyn-array-producers.js"; // (#6447)
 import { ensureNativeArrayHof, NATIVE_HOF_METHODS } from "./hof-native.js";
+import { taDynDetachedGuardInstrs } from "./ta-dyn-method-call.js"; // (#1645 S1) detached-view ValidateTypedArray prologue
 import { COLLECTION_KIND } from "./collection-kind.js"; // (#6419) import-free leaf — map-runtime.js is in an import cycle
 import { ensureMapHelpers, MAP_LAYOUT } from "./map-runtime.js"; // (#3309) $Map brand arm
 import { ensureSetHelpers } from "./set-runtime.js"; // (#3309) __set_add for the `add` arm
@@ -1028,7 +1029,14 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     // carrier through the fully-armed `__iterator_next` and materialize a REAL
     // §7.4.11 result object. Placed outermost: a user closed struct with its own
     // `next` is neither carrier, so the `ref.test` misses and precedence holds.
-    if (ctx.standalone && methodName === "next" && arity === 0) {
+    // (#6484 S3 review) `ctx.wasi` joined the gate. WASI is the other no-JS-host
+    // lane and builds the same `$IterRec` carriers, but this arm was
+    // `ctx.standalone`-only, so `it.next()` on a typed-array iterator fell to
+    // `__extern_method_call` and threw `next is not a function` under
+    // `--target wasi` while standalone answered correctly. Map/Set hid the gap:
+    // map-runtime.ts prepends its OWN `$__IterRec.next()` arm to
+    // `__extern_method_call`, so only the vec carriers were exposed.
+    if ((ctx.standalone || ctx.wasi) && methodName === "next" && arity === 0) {
       const stepResultIdx = ctx.funcMap.get("__iter_next_result");
       const carrierTypeIdxs = [ctx.structMap.get("__IterRec"), ctx.structMap.get("$LazyIterHelper")].filter(
         (t): t is number => t !== undefined,
@@ -1850,12 +1858,25 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
       for (const instr of mcPatchInstrs) (instr as { index: number }).index = mResLocal;
     }
 
+    // (#1645 S1) §23.2.4.4 step 5 — a detached dyn view throws TypeError before
+    // ANY arm below observes it. It has to sit here, not on one of the arms: a
+    // `$__ta_dyn_view` is a `$__vec_base` subtype, so the generic vec arm claims
+    // it for every method with no `__ta_dyn_<m>` helper (`some`, `forEach`,
+    // `sort`, `find`, …) and answers from the view's post-detach length of 0 —
+    // i.e. returns normally where the spec requires a throw.
+    const taDynDetached = taDynDetachedGuardInstrs(ctx, methodName, anyLocalIdx, (name, type) => {
+      const idx = arity + 1 + locals.length;
+      locals.push({ name, type });
+      return idx;
+    });
+
     dispFn.locals = locals;
     dispFn.body = [
       ...nullishReceiverGuardInstrs(ctx, methodName),
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.set", index: anyLocalIdx },
+      ...taDynDetached,
       ...current,
     ];
     void (dispFn as WasmFunction);
@@ -1943,12 +1964,20 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
       ];
     }
 
+    // (#1645 S1) Same §23.2.4.4 step-5 prologue as the fixed-arity fill above.
+    const taDynDetachedVararg = taDynDetachedGuardInstrs(ctx, methodName, anyLocalIdx, (name, type) => {
+      const idx = anyLocalIdx + varargLocals.length;
+      varargLocals.push({ name, type });
+      return idx;
+    });
+
     dispFn.locals = varargLocals;
     dispFn.body = [
       ...nullishReceiverGuardInstrs(ctx, methodName),
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.set", index: anyLocalIdx },
+      ...taDynDetachedVararg,
       ...current,
     ];
     void (dispFn as WasmFunction);

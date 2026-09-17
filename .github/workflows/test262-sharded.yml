@@ -74,6 +74,10 @@ on:
         description: "Also measure native-first semantics in the JS environment (separate artifacts, never promotes host baselines)"
         type: boolean
         default: false
+      honest_audit:
+        description: "(#3451 slice 6) Also run the HONEST whole-assembly oracle over the same host chunks as the AUDIT lane, plus a same-run parity report against the authoritative linked-harness rows. Separate artifacts; never promotes a baseline and is never a required check. (Was `linked_lane` until the slice-6 authority flip, when the two lanes swapped roles.)"
+        type: boolean
+        default: false
       include_proposals:
         description: "Include proposal tests"
         required: false
@@ -781,11 +785,23 @@ jobs:
     # Same arms as `runtime-eval-provider` directly above, for the same reason:
     # a host-only merge_group still needs this job to SUCCEED so the shard
     # matrix is not cascade-skipped through `needs`.
+    #
+    # (#6489) PLUS a `schedule` arm, which `runtime-eval-provider` does not
+    # need: the measurement lanes (`test262-native-first`,
+    # `test262-honest-audit`) are the only jobs that run on cron, they are
+    # host-lane (`gc`) only, and `test262-honest-audit` `needs:` this job for
+    # the provider artifact (it was `test262-linked` before the #3451 slice-6
+    # authority flip; the edge is the same one, on the renamed job). Without
+    # this arm the cron audit lane would cascade-skip through `needs`. On
+    # `schedule` the `changes` job is skipped, so its outputs read empty —
+    # `run_host != 'false'` holds and the host provider is built, which is the
+    # correct answer for a host-only lane.
     if: |
       always() &&
       (
         (github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'true') ||
         ((github.event_name == 'push' && github.actor != 'github-actions[bot]') && needs.mg-artifact-probe.outputs.hit != 'true') ||
+        github.event_name == 'schedule' ||
         github.event_name == 'workflow_dispatch'
       )
     runs-on: ubuntu-latest
@@ -1112,6 +1128,295 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  test262-honest-audit:
+    # (#3451 slice 6) The HONEST whole-assembly oracle, now the NON-BLOCKING
+    # AUDIT lane. Until the slice-6 authority flip this job was `test262-linked`
+    # and ran the *linked* oracle as the shadow; the flip swapped the roles:
+    # `test262-shard` / `test262-shard-mg` now run `TEST262_ORACLE_MODE=linked`
+    # and own the published verdicts, and the honest assembly is what gets
+    # audited against them on a schedule.
+    #
+    # Deliberately NOT a required check and deliberately NOT reachable from the
+    # merge queue: the `if:` admits only `schedule` and an opted-in
+    # `workflow_dispatch`, so `pull_request` / `merge_group` / `push` never
+    # schedule it. Nothing in `merge-report` ("merge shard reports"),
+    # `regression-gate` ("check for test262 regressions") or `promote-baseline`
+    # `needs:` these jobs, so a failure here cannot block or re-baseline
+    # anything. The audit is evidence, never a gate — the same isolation the
+    # linked lane had while IT was the shadow.
+    #
+    # Same chunk list as the required `test262 js-host shard` matrix (57), so
+    # the rows join 1:1 with that job's authoritative rows in the parity report
+    # below. `TEST262_TARGET: gc` because the comparison is host-lane only: the
+    # authoritative linked oracle is host-only by construction
+    # (tests/test262-shared.ts: `TEST262_ORACLE_MODE === "linked" && IS_HOST_LANE`),
+    # so standalone rows have nothing to audit against.
+    #
+    # `TEST262_ORACLE_MODE` is deliberately UNSET here — unset is honest, and
+    # the honest lane is exactly what this job measures.
+    #
+    # (#6489) `needs: [temporal-provider]` — a host lane without the provider
+    # download runs `msg.temporal` rows with no `Temporal` global and the parity
+    # report then attributes ~1,300 provider-absence rows to a lane difference
+    # that is really lane plumbing. The provider job admits `schedule` too (see
+    # its `if:`), so the implicit `success()` over `needs` holds on BOTH of this
+    # job's arms. Nothing required `needs:` this job, and this edge adds no path
+    # from it to a required check.
+    needs: [temporal-provider]
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.honest_audit)
+    name: test262 honest-audit shard ${{ matrix.chunk }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        chunk:
+          [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+          ]
+
+    env:
+      COMPILER_POOL_SIZE: ${{ inputs.compiler_pool_size || '4' }}
+      VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
+      TEST262_WORKER_MAX_OLD_SPACE_SIZE: "1024"
+      JS2WASM_IR_FIRST: ${{ github.event_name == 'workflow_dispatch' && inputs.ir_first && '1' || '' }}
+      JS2WASM_FNCTOR_LAYOUT_EMIT: ${{ github.event_name == 'workflow_dispatch' && inputs.layout_emit && '1' || '' }}
+      TEST262_INCLUDE_PROPOSALS: ${{ github.event_name != 'workflow_dispatch' && '1' || (inputs.include_proposals && '1' || '0') }}
+      RUN_TIMESTAMP: ${{ github.run_id }}-honest-chunk${{ matrix.chunk }}
+      TEST262_TARGET: gc
+      TEST262_RESULT_PREFIX: test262-honest
+      # (#6489) Copied verbatim from `test262-shard`. Without it the worker's
+      # `getWorkerTemporalProvider` found no cache and every `msg.temporal` row
+      # ran without `Temporal` — the single largest parity-report bucket in the
+      # first full-corpus linked run (`Temporal is not defined`, 713 rows).
+      JS2WASM_TEMPORAL_CACHE: .test262-cache/temporal
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Setup Node and pnpm (cached)
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build compiler bundles
+        run: |
+          pnpm run build:compiler-bundle
+          ./node_modules/.bin/esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm \
+            --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
+
+      # (#6489) The Temporal provider step of `test262-shard`, copied verbatim
+      # (same action, same artifact name). The runtime-eval provider steps are
+      # deliberately NOT copied: this job's `TEST262_TARGET` is fixed to `gc`,
+      # so they would be inert, and the #4242 wiring test counts their
+      # occurrences in this file.
+      - name: Download compiled Temporal provider (#5353)
+        uses: actions/download-artifact@v7
+        with:
+          name: temporal-provider-${{ github.run_id }}
+          path: .test262-cache/temporal
+
+      # No harness-provider prewarm: this lane is HONEST, so it builds no
+      # harness provider at all — it compiles the whole assembly per row, which
+      # is precisely the cost the authoritative linked lane no longer pays
+      # (2.1x shard median, #6486 P3e). That is why the audit runs on a
+      # schedule rather than per merge.
+      - name: Run shard
+        run: |
+          mkdir -p vitest-blob
+          set +e
+          node node_modules/vitest/dist/cli.js run tests/test262-chunk${{ matrix.chunk }}.test.ts \
+            --reporter=blob \
+            --outputFile=vitest-blob/blob-honest-audit-${{ matrix.chunk }}.json
+          exit_code=$?
+          set -e
+          if [ "$exit_code" -ne 0 ] && [ "$exit_code" -ne 1 ]; then
+            echo "Vitest exited with unexpected code $exit_code"
+            exit "$exit_code"
+          fi
+          completion_marker=$(find benchmarks/results -maxdepth 1 -name "${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.shard-*.complete.json" -print -quit)
+          if [ -z "$completion_marker" ] || [ ! -s "$completion_marker" ]; then
+            echo "::error::Test262 shard did not reach afterAll; refusing partial JSONL evidence"
+            exit 2
+          fi
+          node scripts/validate-test262-completeness.mjs \
+            --input "benchmarks/results/${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl" \
+            --manifest "$completion_marker" \
+            --expected-shards 1
+          echo "vitest_exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+
+      - name: Upload shard artifacts
+        id: upload_shard
+        uses: actions/upload-artifact@v6
+        if: always()
+        continue-on-error: true
+        with:
+          retention-days: 1
+          name: test262-honest-audit-shard-${{ matrix.chunk }}
+          path: |
+            benchmarks/results/test262-honest-results-${{ env.RUN_TIMESTAMP }}.jsonl
+            benchmarks/results/test262-honest-results-${{ env.RUN_TIMESTAMP }}.shard-*.complete.json
+          if-no-files-found: warn
+
+      - name: Retry shard artifact upload on transient flake (#3404)
+        if: always() && steps.upload_shard.outcome == 'failure'
+        uses: actions/upload-artifact@v6
+        with:
+          retention-days: 1
+          name: test262-honest-audit-shard-${{ matrix.chunk }}
+          overwrite: true
+          path: |
+            benchmarks/results/test262-honest-results-${{ env.RUN_TIMESTAMP }}.jsonl
+            benchmarks/results/test262-honest-results-${{ env.RUN_TIMESTAMP }}.shard-*.complete.json
+          if-no-files-found: warn
+
+  merge-honest-audit-report:
+    # (#6486 / #3451 slice 6) Merge the HONEST AUDIT shards, build an ISOLATED
+    # report artifact, and emit the same-run parity report against this run's
+    # AUTHORITATIVE js-host rows (which are linked-harness rows since the
+    # slice-6 flip). It never promotes anything and is not `needs:`-ed by any
+    # required job.
+    #
+    # `test262-shard` is in `needs` only to order this after the authoritative
+    # matrix when both ran; `always()` keeps the job alive when it was skipped
+    # (a `schedule` run has no authoritative host shards at all, since
+    # `test262-shard` admits only push/workflow_dispatch). In that case the
+    # parity step skips cleanly via `--allow-missing` and the audit report is
+    # still published.
+    name: merge honest-audit evidence
+    needs: [test262-honest-audit, test262-shard]
+    if: always() && needs.test262-honest-audit.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+      - uses: ./.github/actions/setup-node-pnpm
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: test262-honest-audit-shard-*
+          path: honest-audit-shards
+          merge-multiple: true
+      # The AUTHORITATIVE side of the join: the same `test262-js-host-shard-*`
+      # artifacts the published baseline is built from. `continue-on-error`
+      # because a run without that matrix (schedule) has no such artifacts, and
+      # an audit lane must not fail on that.
+      - id: authoritative_shards
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          pattern: test262-js-host-shard-*
+          path: authoritative-shards
+          merge-multiple: true
+      - name: Validate complete lane and build isolated honest-audit artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p honest-audit-results
+          rows=honest-audit-results/test262-honest-current.jsonl
+          cat honest-audit-shards/test262-honest-results-*.jsonl > "$rows"
+          manifests=()
+          for manifest in honest-audit-shards/*.complete.json; do
+            manifests+=(--manifest "$manifest")
+          done
+          node scripts/validate-test262-completeness.mjs --input "$rows" "${manifests[@]}" --expected-shards 57
+          proposals=()
+          if [ "${{ github.event_name }}" = schedule ] || [ "${{ inputs.include_proposals }}" = true ]; then
+            proposals+=(--include-proposals)
+          fi
+          node scripts/build-test262-report.mjs --input "$rows" \
+            --output honest-audit-results/test262-honest-current.json \
+            --target gc --baseline-sha "${{ github.sha }}" "${proposals[@]}"
+      - name: Same-run parity vs the authoritative host lane (measurement, never a gate)
+        shell: bash
+        run: |
+          set -euo pipefail
+          authoritative=honest-audit-results/test262-authoritative-current.jsonl
+          if compgen -G "authoritative-shards/test262-results-*.jsonl" > /dev/null; then
+            cat authoritative-shards/test262-results-*.jsonl > "$authoritative"
+          else
+            echo "No authoritative js-host shard artifacts in this run — parity will skip."
+          fi
+          # Exit 0 always: this is evidence for #3451/#6486, not a gate. The
+          # first positional is the HONEST (audit) side, the second the LINKED
+          # (authoritative) side — the script keys each side by oracle lane, so
+          # the order is fixed by lane, not by role; the labels below are what
+          # say which role each lane plays.
+          node scripts/test262-linked-parity.mjs \
+            honest-audit-results/test262-honest-current.jsonl \
+            "$authoritative" \
+            --authoritative-label linked \
+            --audit-label honest \
+            --out honest-audit-results/test262-honest-audit-parity.json \
+            --allow-missing
+      - uses: actions/upload-artifact@v6
+        with:
+          name: test262-honest-audit-${{ github.sha }}
+          path: honest-audit-results/
+          if-no-files-found: error
+          retention-days: 30
+
   test262-shard:
     # Heavy 57-shard test262 (#2519) fires ONLY for baseline/manual contexts
     # — NOT on every PR:
@@ -1281,6 +1586,23 @@ jobs:
       RUN_TIMESTAMP: ${{ github.run_id }}-${{ matrix.target.name }}-chunk${{ matrix.chunk }}
       TEST262_TARGET: ${{ matrix.target.test262_target }}
       TEST262_RESULT_PREFIX: ${{ matrix.target.result_prefix }}
+      # (#3451 slice 6) THE AUTHORITATIVE HOST ORACLE IS THE LINKED HARNESS.
+      # The harness prefix is compiled once per include-set into a provider
+      # module and each test body is compiled against it, instead of
+      # re-compiling the whole assembly per row. Host cells only: the flag is
+      # honoured exactly when `TEST262_TARGET` resolves to undefined
+      # (tests/test262-shared.ts, `ORACLE_MODE === "linked" && IS_HOST_LANE`),
+      # so the standalone cells of this same matrix are byte-identical to
+      # before. `TEST262_RESULT_PREFIX` is deliberately UNCHANGED, so every
+      # downstream path (merge-report, regression gate, promote-baseline,
+      # edition ratchet, Pages) is untouched and simply carries linked rows.
+      # Rows are stamped `oracle_lane: linked-harness` (or
+      # `linked-harness-fallback`), and ORACLE_VERSION 14 is what makes the
+      # first main run a forward re-baseline rather than a cross-lane refusal.
+      # Measured before the flip (#6486 P3e, run 35178155322): 98.15 % verdict
+      # agreement with the honest lane, 422 pass->fail / 365 fail->pass,
+      # net -57, no uncatchable-trap bucket.
+      TEST262_ORACLE_MODE: linked
       JS2WASM_EVAL_ENGINE: ${{ matrix.target.test262_target == 'standalone' && (inputs.eval_engine || 'quickjs') || '' }}
       # (#4654) The standalone lane's eval-heavy rows can legitimately exceed the
       # 90 s per-test default: a single test262 file that reconstructs a RegExp
@@ -1518,6 +1840,23 @@ jobs:
       RUN_TIMESTAMP: ${{ github.run_id }}-${{ matrix.target_name }}-mgchunk${{ matrix.chunk_label }}
       TEST262_TARGET: ${{ matrix.test262_target }}
       TEST262_RESULT_PREFIX: ${{ matrix.result_prefix }}
+      # (#3451 slice 6) THE AUTHORITATIVE HOST ORACLE IS THE LINKED HARNESS.
+      # The harness prefix is compiled once per include-set into a provider
+      # module and each test body is compiled against it, instead of
+      # re-compiling the whole assembly per row. Host cells only: the flag is
+      # honoured exactly when `TEST262_TARGET` resolves to undefined
+      # (tests/test262-shared.ts, `ORACLE_MODE === "linked" && IS_HOST_LANE`),
+      # so the standalone cells of this same matrix are byte-identical to
+      # before. `TEST262_RESULT_PREFIX` is deliberately UNCHANGED, so every
+      # downstream path (merge-report, regression gate, promote-baseline,
+      # edition ratchet, Pages) is untouched and simply carries linked rows.
+      # Rows are stamped `oracle_lane: linked-harness` (or
+      # `linked-harness-fallback`), and ORACLE_VERSION 14 is what makes the
+      # first main run a forward re-baseline rather than a cross-lane refusal.
+      # Measured before the flip (#6486 P3e, run 35178155322): 98.15 % verdict
+      # agreement with the honest lane, 422 pass->fail / 365 fail->pass,
+      # net -57, no uncatchable-trap bucket.
+      TEST262_ORACLE_MODE: linked
       JS2WASM_EVAL_ENGINE: ${{ matrix.test262_target == 'standalone' && 'quickjs' || '' }}
       # (#4654) The standalone lane's eval-heavy rows can legitimately exceed the
       # 90 s per-test default: a single test262 file that reconstructs a RegExp
@@ -1874,8 +2213,34 @@ jobs:
       # high-water mark (benchmarks/results/test262-standalone-highwater.json),
       # which only ever ratchets UP. It lives inside the required
       # "merge shard reports" check so a breach blocks the merge queue.
+      # (#6461) The breach is recorded here but FAILED AT THE END OF THE JOB.
+      #
+      # This guard is a bare COUNT. The step that says WHICH tests moved is the
+      # #1897 standalone regression guard ~180 lines below, which diffs the
+      # merged standalone JSONL against the cached baseline per test. Until this
+      # change, a floor breach exited the job here, so that per-test diff never
+      # ran and neither did the per-edition `--compare` ratchet, the staleness
+      # annotation or the merged-report upload. Everyone who hit the breach got
+      # one line — "current pass=35577, mark=35742" — and no way to tell a real
+      # regression from a mark that had drifted.
+      #
+      # Cost, measured on 2026-09-13: main sat at −165 for ~4h and every PR
+      # reaching the queue was parked. The merged JSONLs were still uploaded
+      # (`Upload merged reports` is `always()`), so the evidence existed — but
+      # only as a 24 MB artifact nobody is told about. Recovering the actual
+      # cause (174 `for-await-of` tests turned compile_error by the #6412
+      # declaration/body agreement assertion) meant downloading that JSONL and
+      # a good-SHA one and diffing them by hand, reproducing offline exactly
+      # what the #1897 guard would have printed in the run.
+      #
+      # `continue-on-error` keeps the STEP non-fatal; the deferred step near the
+      # end of this job re-raises it, so the required check still blocks the
+      # merge queue exactly as before. Nothing about the floor's strictness
+      # changes — only when it exits.
       - name: Standalone pass-count high-water floor (#2097)
+        id: standalone_highwater
         if: env.STANDALONE_RAN == 'true'
+        continue-on-error: true
         run: |
           node scripts/check-standalone-highwater.mjs \
             --report merged-reports/test262-standalone-report-merged.json
@@ -2290,6 +2655,25 @@ jobs:
             echo "::error::STALE BASELINE: the js2wasm-baselines JSONL is ${BEHIND} test262-relevant commits behind main HEAD (baseline main-sha ${BSHA}). The promote-baseline pipeline is likely broken, so the regression gates are blind to new regressions. Fix baseline promotion before merging. See #1668."
             exit 1
           fi
+
+      # (#6461) Deferred failure for the #2097 standalone high-water floor.
+      #
+      # The floor itself ran near the top of this job under `continue-on-error`
+      # so that every per-test diagnostic below it — the per-edition `--compare`
+      # ratchet, the #3953 staleness annotation, the #1668 catastrophic guard
+      # and above all the #1897 standalone regression guard's per-test
+      # pass→other list — still produces evidence in the same run. This step
+      # re-raises the breach, so a required-check failure and the merge-queue
+      # block are unchanged; only the log is now diagnosable.
+      #
+      # `always()` so the re-raise is not skipped when an earlier diagnostic
+      # step has already failed (the job fails either way, but the annotation
+      # naming the floor must still appear).
+      - name: Fail on standalone high-water breach (deferred, #6461)
+        if: always() && env.STANDALONE_RAN == 'true' && steps.standalone_highwater.outcome == 'failure'
+        run: |
+          echo "::error::STANDALONE high-water floor (#2097) breached — see the 'Standalone pass-count high-water floor (#2097)' step above for the count, and the '#1897' standalone regression guard + per-edition ratchet steps for WHICH tests moved. Failing the required check here rather than at the floor step so those diagnostics run (#6461)."
+          exit 1
 
       - name: Upload merged reports
         if: always() && env.SHARDS_RAN == 'true'

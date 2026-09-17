@@ -35,6 +35,12 @@ import { recordStandaloneRuntimeKeyClassMemberRead } from "./standalone-class-dy
 import { recordStandaloneDynamicPrototypeRead } from "./standalone-class-prototype-read.js"; // (#6457)
 import { emitOverlayRoutedElementGet, overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4159 S3)
 import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
+import {
+  ensureIterRecPrototypeHelper,
+  iteratorPrototypeKindOfSymbolName,
+  pushIteratorFamilyNextValue,
+  resolveIteratorFamilyNextClosure,
+} from "./iterator-proto-next.js"; // (#6484 S2)
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js"; // (#2580 M2 slice 1) (#2984)
 import { sidecarKeyCoversReceiver } from "./sidecar-owner-scope.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -3993,6 +3999,35 @@ export function compilePropertyAccess(
   // `__extern_get(recv, "prototype")` and needs the same per-class demand a
   // computed key raises. See `standalone-class-prototype-read.ts`.
   recordStandaloneDynamicPrototypeRead(ctx, resolveWasmType(ctx, objType), propName);
+
+  // (#6484 S2) `iterator.next` as a VALUE — the shape every
+  // `*IteratorPrototype/next/*` row uses (`iterator.next.call(false)`). The
+  // receiver's carrier is either an eager `$Vec` (`map.entries()`) or a live
+  // `$__IterRec`; neither carries own properties, and `__extern_get` answers
+  // the miss on both, so `iterator.next` read as `undefined`. Answer off the
+  // FAMILY the checker names instead — which is also the object identity
+  // `Object.getPrototypeOf(iterator).next` reports. Registering the helper
+  // BEFORE the receiver is compiled keeps any late import out of the middle of
+  // this body (the #2043 shift discipline).
+  if ((ctx.standalone || ctx.wasi) && propName === "next") {
+    const iterKind = iteratorPrototypeKindOfSymbolName(objType.getSymbol()?.name);
+    if (iterKind !== undefined) {
+      // Resolve BOTH helpers before a single instruction of the receiver is
+      // emitted: either can add a late import, and a shift under a
+      // half-written body is the #2043 hazard.
+      ensureIterRecPrototypeHelper(ctx);
+      const nextClosure = resolveIteratorFamilyNextClosure(ctx, iterKind);
+      flushLateImportShifts(ctx, fctx);
+      if (nextClosure) {
+        // `iterator` is still evaluated for its side effects and dropped; the
+        // VALUE of `.next` does not depend on the receiver.
+        const recvType = compileExpression(ctx, fctx, expr.expression);
+        if (recvType) fctx.body.push({ op: "drop" });
+        pushIteratorFamilyNextValue(ctx, fctx, nextClosure);
+        return { kind: "externref" };
+      }
+    }
+  }
 
   // A JavaScript binding initialized from `new RegExp(...)` is commonly
   // widened to `any`, so its `.constructor` read cannot reach the later

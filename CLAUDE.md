@@ -240,6 +240,20 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
 
 ## Test262
 
+**The authoritative host oracle is the LINKED harness (#3451 slice 6, oracle
+v14, 2026-09-17).** CI's host (`gc`) shards run `TEST262_ORACLE_MODE=linked`:
+the harness prefix is compiled once per include-set and each test body is
+linked against it, so published host verdicts carry `oracle_lane:
+linked-harness`. The honest whole-assembly lane is kept as the **scheduled
+audit** (`test262-honest-audit`, nightly cron / `honest_audit=true` dispatch) —
+never required, never in the merge queue. Standalone is untouched (the linked
+oracle is host-only). Measured before flipping: 98.15 % agreement, net −57
+passes (#6486 P3e, run 35178155322).
+
+- **Local runs stay honest** — `scripts/run-test262-vitest.sh` leaves the flag
+  unset, so `pnpm run test:262` measures the audit lane. Reproduce a CI verdict
+  with `TEST262_ORACLE_MODE=linked pnpm run test:262`; a local/CI disagreement
+  on ~1.85 % of rows is expected, not automatically a bug.
 - test262.test.ts has no assertions — all vitest tests pass; conformance is tracked via report
 - Skip filters — **verified against `tests/test262-runner.ts` on 2026-07-26 (#24); this is now the
   complete list, not a historical one.** `shouldSkip` skips exactly:
@@ -798,7 +812,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 38,315 / 48,232 (79.4 %)
+**test262 conformance**: 38,174 / 48,232 (79.1 %)
 
 <!-- AUTO:conformance-end -->
 

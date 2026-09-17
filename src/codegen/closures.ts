@@ -4121,6 +4121,36 @@ export function compileArrowAsCallback(
     forceExternrefParams?: boolean;
   },
 ): ValType | null {
+  // (#6492) A SUSPENDING async function expression must not reach this bridge
+  // in a linked graph — the bridge compiles the body with NO async activation,
+  // so every `await` is erased and the callback returns `undefined` instead of
+  // a promise. #4648 gave the AWAIT-FREE case a Promise wrapper here; the
+  // await-ful case was simply mis-lowered, and nothing noticed because the
+  // static call-site repair (`isAsyncCallExpression`) covers every call the
+  // module makes ITSELF.
+  //
+  // A separately compiled provider is the case where the call is NOT made by
+  // this module: `asyncTest(async function () { await … })` hands the harness
+  // provider a callback it invokes, and `testFunc().then(…)` then read `.then`
+  // of null — the whole `Array.fromAsync` / `asyncHelpers` population of the
+  // linked lane (`Test262:AsyncTestFailure:TypeError: Cannot read properties of
+  // null (reading 'then')`).
+  //
+  // `compileArrowAsClosure` is the path that DOES activate the frame engine
+  // (`asyncDecision` above), and the provider reaches a closure struct through
+  // the #3098 `__call_fn_N` substrate the same way it reaches a bridge export.
+  // Gated on this module being a linked-package CONSUMER so every single-module
+  // compile — the honest test262 lane, the CLI, the playground — is
+  // byte-identical; the standalone arm below already uses the same escape.
+  if (
+    ctx.linkedPackageBindings.size > 0 &&
+    (arrow.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false) &&
+    !(ts.isFunctionExpression(arrow) && arrow.asteriskToken !== undefined) &&
+    planAsyncClosureActivation(ctx, arrow, /*isAsync*/ true) !== null
+  ) {
+    return compileArrowAsClosure(ctx, fctx, arrow);
+  }
+
   const cbId = ctx.callbackCounter++;
   const cbName = `__cb_${cbId}`;
   const body = arrow.body;
