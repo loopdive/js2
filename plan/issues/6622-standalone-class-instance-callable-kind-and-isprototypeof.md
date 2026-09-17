@@ -274,14 +274,47 @@ slice; corpus footprint unmeasured. `Temporal.Duration.prototype.isPrototypeOf`
   predecessor already touched for adjacent mechanisms — start there.
 - **Must-not-move groups, per file, both labels, file-copy revert A/B**
   (base = `git show 0a66b22d9b:<path>` for both changed source files, applied
-  as a plain file copy, not a git checkout, then reverted back):
+  as a plain file copy, not a git checkout, then reverted back —
+  `.tmp/s35/reflect-construct-native.ts.{base,branch}` /
+  `.tmp/s35/object-runtime-prototype.ts.{base,branch}`; group A sharded across
+  3 concurrent processes for wall-clock speed, driver `.tmp/s35/mnm-shard.mts`,
+  combined before diffing):
 
   | group | rows | base pass | S35 pass | flips |
   | --- | --- | --- | --- | --- |
-  | A: `Object/keys` + `expressions/object` + `Reflect/{get,has}` | — | — | — | — |
-  | B: `Object/{entries,values,getOwnPropertyNames}` + `for-in` | — | — | — | — |
-  | C: `typeof`+`instanceof`+`isPrototypeOf`+`Reflect/construct`+`subclass`(first 100) | — | — | — | — |
+  | A: `Object/keys` (59) + `expressions/object` (1170) + `Reflect/{get,has}` (21) | 1250 | 1125 | 1125 | 0 |
+  | B: `Object/{entries,values,getOwnPropertyNames}` (86) + `for-in` (119) | 205 | 179 | 179 | 0 |
+  | C: `typeof` (16) + `instanceof` (43) + `isPrototypeOf` (10) + `Reflect/construct` (10) + `subclass` first 100 | 179 | 122 | 122 | 0 |
 
-  (filled in by the next commit in this session)
-- **Corpus byte A/B**: (filled in by the next commit in this session)
-- **Equivalence gate**: (filled in by the next commit in this session)
+  **1,634 rows total, 0 flips in either direction on any group.** Driver
+  `.tmp/s35/mnm.mts` (single-process, groups B/C) and `.tmp/s35/mnm-shard.mts`
+  (3-way sharded, group A only — same file list and per-file 30 s timeout,
+  split `i % 3 === shardIdx`); diffed with `.tmp/s35/diff_mnm.py`
+  (base-vs-branch per file, common-row pass/fail only).
+- **Corpus byte A/B** (42 modules under `website/playground/examples` +
+  `tests/fixtures`, × {`gc`, `standalone`} = 84 compiles per label,
+  `.tmp/s35/corpus.mts`, sha256[:16] of the compiled binary):
+
+  | lane | artifacts | moved | note |
+  | --- | --- | --- | --- |
+  | `gc` | 42 | 0 | byte-identical, expected — this fix is standalone-only |
+  | `standalone` | 42 | 14 | see below |
+
+  **0/42 `gc`-lane artifacts moved** (confirms the fix is gated correctly to
+  standalone). **14/42 `standalone`-lane artifacts moved** — every moved
+  artifact still compiles `ok` (no new `CE`/`THREW`; only the byte content
+  changed). This is NOT a null result and is not claimed as one: both touched
+  files (`reflect-construct-native.ts`, `object-runtime-prototype.ts`) are
+  shared standalone-runtime natives compiled into every module that reaches
+  the changed code paths, so any module touching `Reflect`/dynamic-class/
+  prototype machinery is expected to move. The other 28/42 modules don't
+  reach the changed natives (dead-code elimination trims them), hence 0 B
+  bytes moved there. Moved: `benchmarks.ts`, `benchmarks/helpers.ts`,
+  `js/algorithms.ts`, `js/async.ts`, `eslint-shims/{debug,espree,esquery}.ts`,
+  `ir-retirement/{class-closure,dynamic,entry,math}.ts`,
+  `issue-3521-r2-multi-entry.ts`, `npm-resolve/entry.ts`,
+  `strict-mode/needs-host.ts`.
+- **Equivalence gate**: `npm run -s test:equivalence:gate`, run to completion
+  this session (no timeout truncation) — **22 failing, 1720 passing, 22
+  known-failures in baseline. No new regressions.** Matches every prior
+  S-slice in this stack (S17 through S34) exactly.
