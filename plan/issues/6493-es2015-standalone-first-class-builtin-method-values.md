@@ -1,7 +1,7 @@
 ---
 id: 6493
 title: "ES2015 standalone: a first-class builtin method value refuses instead of working (Function.prototype.call and friends)"
-status: ready
+status: in-review
 sprint: current
 created: 2026-09-17
 updated: 2026-09-17
@@ -128,3 +128,132 @@ a value, its `length` and `name`, the non-callable receiver TypeError, and
 `Object.prototype.toString` through a value including the undefined and null
 receivers. Growth allowances go in this frontmatter with a dated rationale,
 never in `scripts/*-baseline.json`.
+
+## Implementation result (2026-09-17)
+
+Both measurements below were run with
+`COMPILER_POOL_SIZE=2 npx tsx scripts/run-test262-paths.mts --isolate <list> --standalone`
+on TWO trees: this branch, and a `git worktree add --detach` of the merge-base
+`747c0fee19` at `/home/user/js2/.claude/worktrees/lane6493-base`, with the same
+`.test262-cache` symlinked into both (without it ~7 rows per set abort on a
+missing QuickJS artifact — symmetric, but it hides the real verdict).
+
+### What landed
+
+- `src/codegen/function-proto-call-apply.ts` — §20.2.3.3 / §20.2.3.1 bodies,
+  wired into `makeGlue`'s `Function` arm ladder. `call` is registered variadic;
+  both route through the existing `__apply_closure` bridge.
+- `src/codegen/object-proto-tostring.ts` — §20.1.3.6 step 8 `[object Error]` arm
+  (`nominalCarrierArms`, which also now holds the pre-existing Date arm, emitted
+  byte-for-byte unchanged).
+
+### Acceptance — 112 rows (`Error/prototype/stack`, `Object/prototype/toString`, `ArrayIteratorPrototype/next`, `Function/prototype/Symbol.hasInstance`, `Promise/executor-function-prototype`)
+
+| | base | branch |
+| --- | --- | --- |
+| pass | 40 | 40 |
+| fail | 72 | 72 |
+| `Function.prototype.call is not yet implemented` | **27** | **0** |
+| `Object.prototype.toString is not yet implemented` | 5 | 12 |
+
+Net **0**: 3 rows fixed, 3 lost, 25 rows changed failure reason.
+
+**Fixed (+3)** — all three failed on base with the `Function.prototype.call`
+refusal: `Error/prototype/stack/setter-proxy-wrapping-prototype.js`,
+`Error/prototype/stack/setter-receiver-is-null-proto.js`,
+`Function/prototype/Symbol.hasInstance/this-val-not-callable.js`.
+
+**Lost (−3)**, and WHY, because it is not what it looks like:
+`Error/prototype/stack/{getter-this-not-object, setter-this-not-object,
+setter-proxy-trap-rejects}.js`. Each is an `assert.throws(TypeError, () =>
+get.call(badReceiver))`. On base the *refusal itself* was the TypeError, so the
+assertion passed without `Error.prototype.stack` ever running. With `call`
+working, the accessor's own step 1 runs — and `emitThisIsObjectCheck`
+(`src/codegen/error-stack-accessor.ts`, #5269 D-2) is **deliberately narrow**:
+it rejects only `null`/`undefined`, and its own comment says widening it needs a
+discriminator that lane does not have. The rows test `true`, `1`, `""`, a
+Symbol and a BigInt too. Covering everything except Symbol would still leave the
+rows red (there is no `__typeof_symbol`), so this was left alone rather than
+guessed at — it is a follow-up on `error-stack-accessor.ts`, not on this change.
+
+**Reason changed (25)** — the biggest group is the nine
+`Object/prototype/toString/symbol-tag-*-builtin.js` rows, which now get past
+`call` and fail on the real gap: §20.1.3.6 **step 14 `@@toStringTag` is not
+implemented in the classifier at all**. Seven of the nine now report the
+`Object.prototype.toString` refusal (an unclassifiable Map/Set/WeakMap/WeakSet/
+Promise/Symbol receiver), two report a wrong builtin tag
+(`[object Array]` for an Array Iterator, `[object Function]` for a
+GeneratorFunction). That is the whole S2 headline: the first-class VALUE already
+reached the classifier before this change — what is missing is classifier
+COVERAGE, not the value.
+
+### Controls — 805 rows, 0 lost
+
+Eight chunks of ≤150 paths, the same list file on both trees. Every chunk is
+IDENTICAL: same totals, and the same non-pass `status path` set line for line.
+
+| chunk | set | rows | base | branch |
+| --- | --- | --- | --- | --- |
+| cc1-00/01 | `built-ins/Function/prototype` (minus the acceptance overlap) | 298 | 250 pass / 45 fail / 3 CE | same |
+| cc2-00/01 | `built-ins/Object/prototype` (minus the overlap) | 207 | 190 pass / 17 fail | same |
+| cc3-00 | `built-ins/Error/prototype` (minus the overlap) | 30 | 28 pass / 2 fail | same |
+| cc4-00 | `language/expressions/call` | 92 | 72 pass / 20 fail | same |
+| cc5-00 | `built-ins/Reflect`, every 2nd path | 77 | 68 pass / 8 fail / 1 CE | same |
+| cc6-00 | `built-ins/TypedArray/prototype`, every 14th path | 101 | 69 pass / 32 fail | same |
+| **total** | | **805** | **677 pass / 124 fail / 4 CE** | **identical** |
+
+`built-ins/Reflect` and `built-ins/TypedArray/prototype` are DETERMINISTIC
+SAMPLES (every 2nd / every 14th path, sorted), not the full directories — 153
+and 1,404 rows respectively were out of reach for a two-tree isolate run on a
+shared box. That is a real limit on this control, stated rather than papered
+over; the three directories where this change can actually bite
+(`Function/prototype`, `Object/prototype`, `Error/prototype`) were run in full.
+
+### Other evidence
+
+- **gc / js-host byte-identity**: 34 sha256 pairs (13 `website/playground/examples`
+  sources + 4 synthetic call/apply/toString/Error programs, × `{gc, gc+nativeStrings}`),
+  zero diffs between the trees.
+- **standalone byte-identity**: of four standalone probes, only the one that
+  actually emits the §20.1.3.6 classifier differs; the Date-arm extraction is
+  byte-preserving.
+- **pin**: `tests/issue-6493-first-class-builtin-method-values.test.ts` — 7/7
+  green here, 4/7 RED on the merge base (the other three are guards).
+- **equivalence gate**: 1720 passing / 22 known failures, no new regressions.
+- **existing suites** `issue-4481`, `issue-4491-wave7`, `issue-4492`,
+  `issue-4492-wave5`, `issue-5406`, `arrow-call-apply`: 9 failed / 108 passed on
+  BOTH trees, identical down to the assertion message.
+
+### S3 audit — which `<builtin>.prototype.<m>` values still refuse
+
+Sampled 22 members through a first-class value on both trees; the two answers
+are IDENTICAL, because that spelling (`v.call(recv, …)` on a member value) is
+claimed syntactically by `calls.ts`'s reflective `.call` route and never
+materializes `Function.prototype.call`. Still refusing:
+`Function.prototype.bind`, `Object.prototype.{hasOwnProperty,
+propertyIsEnumerable, toLocaleString}`, `Map.prototype.get`,
+`Set.prototype.has`, `WeakRef.prototype.deref`, `ArrayBuffer.prototype.slice`,
+`%TypedArray%.prototype.subarray`, `BigInt.prototype.toString`; plus
+`Array.prototype.{indexOf,reduce,sort}` on the sibling "not yet callable as a
+value" message. Row counts are NOT given: the promoted standalone artifact
+(`benchmarks/results/test262-standalone-current.json`) carries only bucket
+sample signatures, and no per-row standalone JSONL exists to count against.
+
+### Residuals, named
+
+1. **A callee with more than 8 DECLARED parameters traps.** `__apply_closure`'s
+   arity cap (#1888 / #3310) is `unreachable` above 8 declared formals, so
+   `Function.prototype.call.call(f9, …)` now aborts the module where base
+   answered a silent `null`. Argument COUNT above 8 is unaffected (it degrades
+   to `undefined`, as on base). Fixing the cap needs the finalize-time closure
+   inventory, which is not reachable from a member body.
+2. **`apply` with a Symbol `argArray`** calls with no arguments instead of the
+   §20.2.3.1 step 3 TypeError — no Symbol predicate at this site. Number,
+   String, Boolean and BigInt argArrays do throw.
+3. **`.length` through a variable** still folds from the lib.d.ts signature:
+   `Function.prototype.apply.length` is 2 (correct) but `var a =
+   Function.prototype.apply; a.length` is 1, because
+   `expectedArgumentCountOfSignature` stops at `argArray?`. Pinned in the test
+   file so it fails loudly when fixed.
+4. **§20.1.3.6 step 14 `@@toStringTag`** is absent from the classifier — see the
+   25-row reason-change group above.
