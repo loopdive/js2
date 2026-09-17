@@ -196,8 +196,35 @@ corpus-wide 129-file `builtin.js` measurement and the vitest witness suite
 (both already complete, see above) remain independently corroborating
 evidence, not a substitute for this follow-up pass.
 
-Corpus byte A/B (42 modules × {gc, standalone}) is reported in the "Corpus
-byte A/B" subsection below.
+### Corpus byte A/B
+
+42 modules under `website/playground/examples` + `tests/fixtures` × {`gc`,
+`standalone`} = 84 compiles per label, `.tmp/s38/corpus.mts` (same corpus and
+driver shape as S35's `.tmp/s35/corpus.mts`), sha256[:16] of the compiled
+binary, same file-copy-revert base/fix labels:
+
+| lane | artifacts | moved | ce/status flips | note |
+| --- | --- | --- | --- | --- |
+| `gc` | 42 | 0 | 0 | byte-identical — confirms the fix is standalone-gated |
+| `standalone` | 42 | 25 | 0 | see below |
+
+**0/42 `gc`-lane artifacts moved** (this fix's runtime dispatch changes are
+gated on `ctx.standalone`, so the `gc` target's emitted bytes cannot see
+them). **25/42 `standalone`-lane artifacts moved, 0 CE/status flips** — every
+moved artifact still compiles `ok`; only the byte content changed. Not a
+null result: three of the five touched files
+(`typeof-natives-finalize.ts`, `object-get-prototype-of.ts`,
+`registry/imports.ts`) are shared standalone-runtime natives reached by
+`typeof`/`Object.getPrototypeOf` dispatch on almost any class- or
+object-using module, so a broad move (25/42, larger than S35's 14/42 for a
+narrower two-file fix) is the expected footprint, not a leak. The other
+17/42 modules don't reach the changed natives (dead-code elimination trims
+them), hence 0 B moved there. Moved: `eslint-shims/{debug,espree,esquery}.ts`,
+`ir-retirement/{class-closure,dynamic,entry,math,namespace,state}.ts`,
+`issue-3521-r2-multi-entry.ts`, `issue-4453-shadowed-block.ts`,
+`npm-resolve/entry.ts`, `strict-mode/needs-host.ts`,
+`benchmarks.ts`, `benchmarks/{array,dom,fib,helpers,loop,string,style}.ts`,
+`dom/calendar.ts`, `js/{algorithms,async,builtins}.ts`.
 
 **Witness**: `tests/issue-6625-standalone-link-boundary-class-object-prototype.test.ts`
 — 1 fix-witness `it` (linked class object → `Function.prototype`) measured

@@ -9445,16 +9445,22 @@ per label: **base 120/129 pass** (reproduces S37 exactly on this tree) →
 separate namespace-`toString` mechanism S37 already named, untouched here.
 Provider bytes: 3,311,710 B → 3,312,720 B (+1,010 B).
 
-**Four-family acceptance sample: PARTIAL, not the full 480/480 the brief
-specified** — the compile-heavy corpus (each row re-links the ~3.3 MB real
-polyfill) outran this session's remaining time after the corpus-wide run.
-`PlainDate` ran to completion: fix 112/120 pass vs S37's own cited base
-111/120 (attributed, not re-measured), `+1` exactly `PlainDate/builtin.js`,
-0 other rows changed sign. `Duration` partial: fix 87/99 pass (21 rows
-unmeasured), `Duration/builtin.js` already confirmed `pass` in the completed
-portion. `ZonedDateTime/prototype` and `PlainDateTime` were not run this
-session — see #6625's "What did not get measured" section for the full
-accounting and the residual risk this leaves.
+**Four-family acceptance sample: completed to the brief's full 480/480 spec
+in a follow-up measurement pass** (same branch tip, same fix, new
+worktree — the original session left this PARTIAL, see #6625's "What did
+not get measured" for the full accounting). All four families 120/120 rows
+each, both labels (base = file-copy revert of the same 5 files, fix = this
+branch): **430/480 base → 433/480 fix, 0 pass→fail, +1 each in
+`PlainDate/builtin.js`, `Duration/builtin.js`, `PlainDateTime/builtin.js`**
+(each sorts into its family's first-120 walk); `ZonedDateTime/prototype`
+unchanged (no `builtin.js` at that root). Base reproduces S37's own cited
+111/104/112/103 exactly. Must-not-move groups A/B/C also completed in the
+same pass: **0 pass→fail across 1,804 rows** (groups A and B exactly flat;
+group C has one legitimate `fail→pass`,
+`class-definition-null-proto.js`, a correct consequence of the fix's own
+`extends`-null handling — see #6625 for the full analysis). Corpus byte
+A/B (42 modules × {gc, standalone}): **0/42 `gc`-lane moved** (confirms
+standalone-gating), **25/42 `standalone`-lane moved, 0 CE/status flips**.
 
 Equivalence gate: 22 failing / 1,720 passing / 22 known-failures in
 baseline — 0 new regressions, exactly the S37 baseline.
