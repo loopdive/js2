@@ -54,9 +54,20 @@ related: [3451, 6486, 6489, 6490, 6491, 6482]
 # correction from `globalSandbox`, the parameter that makes it meaningful.
 # `resolveImport` is the import-name dispatch table; splitting it is #3399's
 # job, not this bug's.
+# 2026-09-17 (round 6) — `LIB_GLOBALS` gains the lib.es5 `declare function`
+# names: +24 lines in `src/codegen/extern-declarations.ts`, of which 9 are the
+# nine names and 15 are the comment. The set IS the gate, so the names have to
+# live in it, and the comment has to sit with them because the failure it
+# records is invisible from the diff: a name missing here means
+# `collectDeclaredGlobals` never RUNS, which silently suppresses the
+# `__call_function` host arm three modules away and turns an indirect `eval`
+# into an uncatchable trap. The neighbouring `EvalError` note already records
+# the same failure for the ambient constructors; this is its `declare function`
+# half, and separating the two would hide that they are one rule.
 loc-budget-allow:
   - src/codegen/closures.ts
   - src/runtime.ts
+  - src/codegen/extern-declarations.ts
 func-budget-allow:
   - src/codegen/closures.ts::compileArrowAsCallback
   - src/runtime.ts::resolveImport
