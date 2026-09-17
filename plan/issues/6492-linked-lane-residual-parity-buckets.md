@@ -405,6 +405,26 @@ re-measured AFTER that lands rather than fixed on their own.
    down the wrong path. Any bucket table built from linked-lane error strings
    should be treated as approximate until this is fixed.
 
+### Three more findings for the #3451 slice-6 flip plan (round 3)
+
+3. **Bucket the residual by the THROWN VALUE, not by the error string.** Round
+   2 already flagged that provider-closure `.name` corrupts failure messages;
+   round 3 shows the stronger version — two unrelated defects (a cross-module
+   constructor-identity miss and the intrinsic-`Iterator` subclassing gap) emit
+   the byte-identical shape `Expected a X but got a Y`, and the CI table's 26
+   rows turned out to be the second one. A bucket table built from message
+   text will keep mis-assigning effort.
+4. **`assert.throws`'s `.name` read is a MESSAGE-only path.** `C.name` is wrong
+   in the honest lane too (`undefined` for a plain class, the base's name for
+   an `Error` subclass), so every "Expected a **undefined** …" string in the
+   parity report is cosmetic; the verdict was decided by the identity check or
+   by no exception being thrown. Do not count those rows as a `.name` bug.
+5. **`harness/*` self-test rows are not a proxy for the corpus.** 17 of the 25
+   lane differences in the round-3 async sample are `harness/asyncHelpers-*`
+   rows that test the HARNESS, which the linked lane replaces wholesale. They
+   will move as a block when the provider publishes `$DONE`, and they say
+   nothing about the compiler buckets.
+
 ### Acceptance
 
 - [x] `illegal cast` bucket = 0 (no uncatchable traps in the linked lane) —
@@ -530,12 +550,37 @@ rows, round 3: 1 row, all honest-fail). The bucket should be re-derived from
 the CI parity artifact's row list before anyone spends more time on it; local
 sampling has now failed to produce a lane-differing row three times.
 
+### Provider-side async callbacks — tried, measured, REVERTED
+
+The plan's target 3 suggested routing provider-MINTED suspending callbacks the
+same way round 1 routed consumer-minted ones, i.e. widening the
+`compileArrowAsCallback` early bail from `ctx.linkedPackageBindings.size > 0` to
+`|| ctx.exportsConsumedByWasm === true`. Implemented (one disjunct), both
+bundles rebuilt, measured on a 116-row async sample (`harness/asyncHelpers-*`
+plus all of `built-ins/Array/fromAsync/`, real runner, linked lane):
+**0 of 116 rows changed.** Reverted rather than shipped — it rewrites the
+PROVIDER's bytes for no measured gain, which is risk without return.
+
+That sample is worth keeping for the next lane, because its lane gap is large
+and NONE of it is await-erasure:
+
+| rows | direction | signature |
+| ---: | --- | --- |
+| 17 | honest-pass / linked-fail | all `harness/asyncHelpers-*`; `$DONE is not defined` (4) and `Test262Error: Expected true but got false` (11) |
+| 8 | linked-pass / honest-fail | `built-ins/Array/fromAsync/*` — the linked lane is BETTER here |
+
+`$DONE is not defined` says the harness provider does not publish `$DONE` into
+the body's scope — a harness-assembly gap, not a compiler one. The 11
+`throwsAsync` rows are the harness testing ITSELF, so they are a poor proxy for
+the corpus-wide async buckets; do not size those buckets from this sample.
+
 ### Not attempted this round
 
 `__module_init` null `.catch`/`.next` (24 + 9 + 9), the async-null residual 23,
-`Thrown value was not an object!` (22) and the typed-array bucket (18). The
-round went into establishing — and correcting — the round-2 root cause and
-measuring it honestly, which consumed the window.
+`Thrown value was not an object!` (22) and the typed-array bucket (18). No
+sample taken this round contained a row of those buckets, and finding one needs
+the CI parity artifact's row list rather than another local guess — which is
+the same conclusion round 2 reached about the extern-class bucket.
 
 ### Residual table (what a follow-up picks up, in value order)
 
