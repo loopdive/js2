@@ -96,6 +96,16 @@ export const LINK_BOUNDARY_EXPORTS = Object.freeze({
   // which this module may not import (it would close a cycle through
   // `object-runtime`).
   toStringTag: LINK_BOUNDARY_TO_STRING_TAG,
+  // (#6624) `Object.isExtensible(<provider-owned value>)` — a class OBJECT
+  // (not an instance) the provider exports is a closed struct in the
+  // consumer's own carrier ladder (`__is_vec_prop_carrier` /
+  // `__is_closure_prop_carrier` / … in `object-integrity-carrier.ts`) only
+  // when the consumer happens to have registered a structurally identical
+  // type of its own; a genuinely foreign class-object shape (the common case
+  // across a real link) matches none of them, so the consumer's own
+  // `__object_isExtensible` fell to its non-object terminal (`false`) for a
+  // value that IS extensible. Same "ask the owner" shape as `getPrototypeOf`.
+  isExtensible: "__js2wasm_link_is_extensible",
 } as const);
 
 /** The internal terminal each boundary name wraps, and its signature. */
@@ -128,6 +138,12 @@ const TERMINALS: ReadonlyArray<{ export: string; internal: string; params: ValTy
     export: LINK_BOUNDARY_EXPORTS.getPrototypeOf,
     internal: LINK_BOUNDARY_EXPORTS.getPrototypeOf,
     params: [EXTERNREF],
+  },
+  {
+    export: LINK_BOUNDARY_EXPORTS.isExtensible,
+    internal: LINK_BOUNDARY_EXPORTS.isExtensible,
+    params: [EXTERNREF],
+    results: [I32],
   },
 ];
 
@@ -295,6 +311,29 @@ export function emitStandaloneLinkBoundaryTerminals(ctx: CodegenContext, registe
   // (null) answer — which is today's behaviour, unchanged.
   if (!ctx.funcMap.has(LINK_BOUNDARY_EXPORTS.getPrototypeOf)) {
     registerNative(LINK_BOUNDARY_EXPORTS.getPrototypeOf, [EXTERNREF], [EXTERNREF], [], [{ op: "ref.null.extern" }]);
+  }
+  // (#6624) `__object_isExtensible` (the general, non-`_obj` variant) already
+  // has a body by this point — `buildObjectDescriptorHelpers` runs earlier in
+  // `ensureObjectRuntime` — so this is a direct forward, not a reserve+fill
+  // pair like `callableKind`/`getPrototypeOf` above (which depend on helpers
+  // that only materialise at finalize). A module whose own `__object_isExtensible`
+  // is absent (host mode; never happens for a standalone provider, since
+  // `buildObjectIntegrityPredicates` is unconditional there) keeps the `0`
+  // refusal, matching the consumer's own pre-fix answer exactly.
+  if (!ctx.funcMap.has(LINK_BOUNDARY_EXPORTS.isExtensible)) {
+    const isExtensibleIdx = ctx.funcMap.get("__object_isExtensible");
+    registerNative(
+      LINK_BOUNDARY_EXPORTS.isExtensible,
+      [EXTERNREF],
+      [I32],
+      [],
+      isExtensibleIdx === undefined
+        ? [{ op: "i32.const", value: 0 }]
+        : [
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: isExtensibleIdx },
+          ],
+    );
   }
   if (!ctx.funcMap.has(LINK_BOUNDARY_EXPORTS.construct)) {
     registerNative(
@@ -476,6 +515,7 @@ export function standaloneLinkBoundaryPeerIndices(ctx: CodegenContext): {
   objectKeys?: number;
   methodCall?: number;
   getPrototypeOf?: number;
+  isExtensible?: number;
 } {
   const namespace = peerNamespaces(ctx)[0];
   if (namespace === undefined) return {};
@@ -502,6 +542,7 @@ export function standaloneLinkBoundaryPeerIndices(ctx: CodegenContext): {
     objectKeys: ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.objectKeys),
     methodCall: ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.methodCall),
     getPrototypeOf: ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.getPrototypeOf),
+    isExtensible: ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.isExtensible),
   };
 }
 

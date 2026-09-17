@@ -9290,3 +9290,97 @@ Everything in S26–S35 still holds. One addition:
   Caught only by re-running the targeted probe after the "fix" and seeing the
   wrong answer persist unchanged, not by any type or compile error — worth a
   re-check for any future "is this class field-less" query in this codebase.
+
+### S37 findings (2026-09-17) — `Object.isExtensible` FIXED across the link boundary for both a class object and an instance; a new boundary terminal generalises #6617's pattern to a second predicate
+
+Full write-up in
+[#6624](6624-standalone-link-boundary-is-extensible.md). Branch
+`issue-5383-standalone-temporal-s37`, based on S36's FINAL tip `0612e1a082`.
+
+#### 1. The defect
+
+`Object.isExtensible(Temporal.PlainDate)` — the FIRST assertion in every
+`built-ins/Temporal/*/builtin.js` test262 file — answered `false` under
+`--target standalone` with a linked provider, where the spec requires
+`true`. Root cause: `Object.isExtensible(v)` on an `any`-typed `v` compiles
+to the general (non-`_obj`) `__object_isExtensible` native
+(`object-integrity-carrier.ts`), whose carrier-bag lookup
+(`registerIntegrityBagResolver`) recognises only four carrier kinds — vec,
+closure, error, #4194 instance-expando — via `ref.test` chains built from
+types the CONSUMER module itself registered. A value the PROVIDER minted
+(its class-object struct, or an instance of one of its classes) is a closed
+struct in the provider's own type space; absent a structural accident, none
+of the consumer's four ladders recognise it, and the native falls to its
+non-object terminal (`false`) — wrong for a value that genuinely IS
+extensible. Reduced in the required order: (1) single module, no link —
+does NOT reproduce (the oracle proves `class C {}` callable, routing to the
+already-`true` `_obj` variant); (2) single module, `any`-typed indirection —
+still does NOT reproduce (the CONSUMER's own class is in its OWN carrier
+ladder regardless of static typing); (3) synthetic linked pair — reproduces
+cleanly for BOTH a class object and an instance; (4) real
+`@js-temporal/polyfill` — confirmed, 9 of 129 `builtin.js` files fail here
+corpus-wide (one per top-level class/namespace export reached directly).
+
+#### 2. The fix
+
+A new wasm<->wasm link-boundary terminal, `__js2wasm_link_is_extensible`
+(`standalone-link-boundary.ts`), the same shape as #6617's `getPrototypeOf`
+terminal: the provider forwards to its OWN (already-correct)
+`__object_isExtensible`; the consumer's `buildIntegrityPredicate`
+(`object-integrity-carrier.ts`) gains an optional `peerFallbackIdx`,
+consulted in place of the bare `terminalResult` constant on a carrier-bag
+miss — threaded through `buildObjectIntegrityPredicates` to exactly ONE
+predicate (`__object_isExtensible`; `isFrozen`/`isSealed` untouched, no
+reported defect). Simpler than `callableKind`/`getPrototypeOf`'s
+reserve-then-fill-at-finalize two-step: `__object_isExtensible` already has
+a body by the time the provider-side terminal is emitted
+(`buildObjectDescriptorHelpers` registers it earlier in
+`ensureObjectRuntime`), so this is a direct forward. The SAME terminal fixes
+a class-object miss AND an instance-carrier miss — a strict improvement
+beyond the assigned "class object" scope, verified with its own witness.
+
+#### 3. The result
+
+Corpus-wide, all 129 `built-ins/Temporal/**/builtin.js` files, fresh cache
+per label: **120/129 pass on BOTH labels, 0 flips.** All 9 failing files
+move PAST the `isExtensible` assertion to a later, already-documented
+residual (mostly #6609's `getPrototypeOf(<class value>)` gap; `Now`'s file
+moves to a DIFFERENT residual, `Object.prototype.toString`, since `Now` is a
+namespace object, not a class). Four-family acceptance sample (first 120
+files each, file-copy revert, fresh cache per label): **430/480 both
+labels** (111/104/112/103), 0 flips — an honest null, none of the moved
+rows live in these four families' first 120 files. Provider bytes:
+3,311,638 B → 3,311,710 B (+72 B). Equivalence gate: 22 failing / 1,720
+passing / 22 known-failures — baseline exactly.
+
+**Witness**: `tests/issue-6624-standalone-link-boundary-isextensible.test.ts`,
+5 `it`s — 2 fix-witnesses (class object, instance) measured failing on the
+file-copy-reverted base (`false`, expected `true`) and passing on branch; 3
+controls (linked function value, local plain object, local class through an
+`any` indirection) pass unchanged on both trees. Full suite alongside the
+other 25 `tests/issue-66*.test.ts` files: 26 files / 122 tests, all pass.
+
+#### 4. Residual — the real next blocker, already named, not fixed here
+
+8 of the 9 moved `builtin.js` files stop on `Object.getPrototypeOf(<linked
+class value>)` still answering `null`, not `Function.prototype` —
+S22/#6609's own table already names this exact case a residual. `Now`'s
+file stops on `Object.prototype.toString.call(Temporal.Now)` answering
+`"[object Object]"` instead of `"[object Temporal.Now]"` — a namespace
+object takes a different §20.1.3.6 classifier path than the class-shaped
+members this slice and its siblings target; a distinct, unreduced
+mechanism.
+
+#### 5. Traps, carried forward and added to
+
+Everything in S26–S36 still holds. One addition:
+
+- **The "ask the owner" boundary-terminal shape (#6617) generalises cleanly
+  to a SECOND predicate with no new architecture** — a new export name, a
+  `TERMINALS` entry, a reserve-or-forward block, and one new optional
+  parameter threaded through an existing predicate builder. When a
+  `__object_*` general (non-`_obj`) native's terminal is a bare constant on
+  a carrier-bag miss, check whether the miss is genuinely non-object
+  (terminal stays a constant) or a foreign-but-real provider value (terminal
+  should ask the peer) before assuming a constant answer is correct across a
+  link.

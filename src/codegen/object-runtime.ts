@@ -1048,6 +1048,11 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // provider minted is a closed struct in the provider's ladder and in no
     // other, so only its owner can say which class's prototype it reports.
     getPrototypeOf: peerGetPrototypeOfIdx,
+    // (#6624) …and the EXTENSIBILITY twin: a class OBJECT the provider
+    // exports is a closed struct in the consumer's own integrity-carrier
+    // ladder (`object-integrity-carrier.ts`) only by structural accident, so
+    // only the owning module can answer `Object.isExtensible` for it.
+    isExtensible: peerIsExtensibleIdx,
   } = standaloneLinkBoundaryPeerIndices(ctx);
   // (#5383 S17 / #6600) The same question asked from the other side: a PROVIDER
   // handed a carrier its consumer owns. Registered in this window, next to the
@@ -6355,6 +6360,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     OBJ_FLAG_SEALED,
     OBJ_FLAG_FROZEN,
     WRAPPER_PRIMITIVE_KEY,
+    // (#6624) Standalone-only; the host `native-first` lane's own boundary
+    // (`__boundary_object_is_extensible`) is routed separately, at the
+    // `Object.isExtensible` call site in `call-builtin-static.ts`.
+    peerIsExtensibleIdx,
   });
 
   // ── __extern_is_undefined(externref) -> i32 (#1472 Phase C) ───────────────
