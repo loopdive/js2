@@ -1009,15 +1009,46 @@ export function compileObjectDefineProperty(
     const isProxyReceiver = (() => {
       const isNewProxy = (e: ts.Expression): boolean =>
         ts.isNewExpression(e) && ts.isIdentifier(e.expression) && e.expression.text === "Proxy";
-      if (isNewProxy(objArg)) return true;
-      if (ts.isIdentifier(objArg)) {
-        const sym = ctx.checker.getSymbolAtLocation(objArg);
+      // (#6494 S2) `Proxy.revocable(t, h)` returns `{proxy, revoke}`, so a
+      // `<r>.proxy` READ is as provably a proxy as `new Proxy(...)` is — and it
+      // is the ONLY spelling the revocation tests use. Without it a revoked
+      // proxy reached through `Object.defineProperty(p.proxy, …)` took the
+      // inline `__defineProperty_value` fast path, which `ref.cast $Object`s
+      // the carrier and stores into it: the revoked check never ran and the
+      // define trap ran ZERO times (measured 2026-09-17 on `c698c755bb`, probes
+      // `probe_live_defineprop_member` = 0 trap calls,
+      // `probe_revoked_defineprop_member` = no throw). Widening to any
+      // `.proxy` read would be a guess; requiring the RECEIVER's declaration to
+      // be `Proxy.revocable(...)` keeps it a proof, so no non-proxy receiver is
+      // newly rerouted.
+      const isProxyRevocableCall = (raw: ts.Expression): boolean => {
+        const e = unwrapTransparentExpression(raw);
+        if (!ts.isCallExpression(e)) return false;
+        const callee = unwrapTransparentExpression(e.expression);
+        if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== "revocable") return false;
+        const ns = unwrapTransparentExpression(callee.expression);
+        return ts.isIdentifier(ns) && ns.text === "Proxy";
+      };
+      const declInitializerOf = (raw: ts.Expression): ts.Expression | undefined => {
+        const e = unwrapTransparentExpression(raw);
+        if (!ts.isIdentifier(e)) return undefined;
+        const sym = ctx.checker.getSymbolAtLocation(e);
         const decl = sym?.valueDeclaration;
-        if (decl && ts.isVariableDeclaration(decl) && decl.initializer && isNewProxy(decl.initializer)) {
-          return true;
-        }
-      }
-      return false;
+        return decl && ts.isVariableDeclaration(decl) ? decl.initializer : undefined;
+      };
+      const isRevocableProxyRead = (raw: ts.Expression): boolean => {
+        const e = unwrapTransparentExpression(raw);
+        if (!ts.isPropertyAccessExpression(e) || e.name.text !== "proxy") return false;
+        const recv = e.expression;
+        if (isProxyRevocableCall(recv)) return true;
+        const init = declInitializerOf(recv);
+        return init !== undefined && isProxyRevocableCall(init);
+      };
+      const isProxyExpr = (e: ts.Expression): boolean =>
+        isNewProxy(unwrapTransparentExpression(e)) || isRevocableProxyRead(e);
+      if (isProxyExpr(objArg)) return true;
+      const objInit = declInitializerOf(objArg);
+      return objInit !== undefined && isProxyExpr(objInit);
     })();
     const isAccessorLiteral =
       ts.isObjectLiteralExpression(descArg) &&
@@ -1041,7 +1072,16 @@ export function compileObjectDefineProperty(
       );
       // (#3177 slice 4) Object.defineProperty converts a null (rejection
       // sentinel / falsy-undefined trap result) into the §20.1.2.4 TypeError.
-      if (r !== null) emitDefinePropertyRejectionThrow(ctx, fctx);
+      //
+      // (#6494 S1) A `defineProperty` trap that RETURNS FALSE is not null — it
+      // is a boxed `false`, so the `ref.is_null` test above let it through and
+      // §DefinePropertyOrThrow step 4 never fired. On THIS arm (and only this
+      // arm) the result is either the trap's booleanish externref or, when the
+      // trap is absent, `__obj_define_from_desc`'s always-truthy object, so
+      // ToBoolean is the exact §20.1.2.4 test. `Reflect.defineProperty` already
+      // reads the same value through `__is_truthy` and answered `false`
+      // correctly — this makes the OrThrow wrapper agree with it.
+      if (r !== null) emitDefinePropertyRejectionThrow(ctx, fctx, { falsyIsRejection: true });
       return r;
     }
   }
@@ -2685,11 +2725,25 @@ function emitExternDefinePropertyValue(
  * Standalone-only: the host-lane import returns the JS object, never null.
  * Leaves the (non-null) result on the stack.
  */
-function emitDefinePropertyRejectionThrow(ctx: CodegenContext, fctx: FunctionContext): void {
+function emitDefinePropertyRejectionThrow(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  options: { falsyIsRejection?: boolean } = {},
+): void {
   if (!(ctx.standalone || ctx.wasi)) return;
   const resLocal = allocLocal(fctx, `__defprop_res_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.tee", index: resLocal });
-  fctx.body.push({ op: "ref.is_null" });
+  // (#6494 S1) ToBoolean instead of `is null` — opt-in, because the other four
+  // call sites hand this helper a NON-proxy applier result whose falsiness is
+  // not a [[DefineOwnProperty]] answer. `__is_truthy` reports 1 for any
+  // non-null non-primitive ref, so on the proxy arm the trap-absent object
+  // result is unaffected and only a genuine falsy trap return throws.
+  const isTruthyIdx = options.falsyIsRejection === true ? ctx.funcMap.get("__is_truthy") : undefined;
+  if (isTruthyIdx !== undefined) {
+    fctx.body.push({ op: "call", funcIdx: isTruthyIdx }, { op: "i32.eqz" });
+  } else {
+    fctx.body.push({ op: "ref.is_null" });
+  }
   const throwInstrs = buildThrowJsErrorInstrs(
     ctx,
     "TypeError",

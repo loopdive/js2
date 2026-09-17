@@ -10,6 +10,16 @@ export interface NativeReflectTargetGuardOptions {
   boundaryAdmissionFuncIdx?: number;
 }
 
+export interface NativeReflectNonObjectGuardOptions {
+  /**
+   * (#6494 S3) The call site proved from the ARGUMENT EXPRESSION — not from a
+   * runtime brand — that `target` is `null` / `undefined`. See the arm comment
+   * inside {@link emitNativeReflectNonObjectGuard} for why that distinction is
+   * what makes rejecting nullish safe here and unsafe at runtime.
+   */
+  staticallyNullish?: boolean;
+}
+
 /**
  * Reject a Reflect target unless it is one of the compiler's ECMAScript
  * Object carriers. The object runtime reserves the closure and instance
@@ -142,6 +152,7 @@ export function emitNativeReflectNonObjectGuard(
   fctx: FunctionContext,
   targetLocal: number,
   message: string,
+  options: NativeReflectNonObjectGuardOptions = {},
 ): void {
   ensureObjectRuntime(ctx);
 
@@ -160,7 +171,16 @@ export function emitNativeReflectNonObjectGuard(
   // answers a stable `undefined`. Base does not throw for a literal `null`
   // target either, so declining to brand null costs nothing against base and
   // buys back every nulled-but-real object.
-  fctx.body.push({ op: "i32.const", value: 0 });
+  //
+  // (#6494 S3) …UNLESS the CALL SITE proved the target is nullish from the
+  // expression itself. `staticallyNullish` is a compile-time fact about the
+  // syntax (`Reflect.get(null, 'p')`, `Reflect.has(undefined, 'p')`), not a
+  // runtime brand, so the widening defect above cannot reach it: an ordinary
+  // object nulled by the alias/element path is not a `null` LITERAL. Seeding
+  // the predicate with 1 makes the existing `if` throw unconditionally, which
+  // keeps the emitted shape (and every other arm) byte-identical rather than
+  // introducing a second throw site.
+  fctx.body.push({ op: "i32.const", value: options.staticallyNullish === true ? 1 : 0 });
 
   // The primitive box carriers. Each is a `ref.test` on the box struct, so a
   // WRAPPER object (`new Number(1)`) is a different carrier and stays admitted,
