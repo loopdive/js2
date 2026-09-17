@@ -718,6 +718,14 @@ compile 26.0 M vs 52.7 M ms (2.0×; Temporal rows now pay the honest price by
 design). Residual buckets are provider-side and tracked in #6492 / #6491 /
 #6482. Details in #6486.
 
+### Full corpus, fourth run (2026-09-17, #6486 P3d, run 35169442028)
+
+After #6492 round 1 (PR #5953): agreement **97.81 %**, linked pass 38,309 vs
+honest 38,555 (601 pass→fail, 355 fail→pass), compile 24.5 M vs 51.7 M ms. The
+uncatchable-trap bucket is gone and no new trap category appears — the slice-6
+precondition (a) holds; (b) waits on #6492 rounds 2–3 (BigInt 128 landed in
+PR #5954; class-value crossing next).
+
 ## Implementation Plan — slice 6, authority flip (written 2026-09-16, Fable lane; implementation: Opus, after #6492 lands)
 
 ### Decision

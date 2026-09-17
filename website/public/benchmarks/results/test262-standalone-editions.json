@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10303,
-    "fail": 1108,
+    "pass": 10306,
+    "fail": 1105,
     "ce": 293,
     "skip": 0,
     "total": 11704,
@@ -120,8 +120,8 @@
       },
       {
         "name": "Proxy",
-        "pass": 287,
-        "fail": 139,
+        "pass": 289,
+        "fail": 137,
         "ce": 5,
         "skip": 0,
         "total": 431,
@@ -327,12 +327,12 @@
       },
       {
         "name": "Symbol.isConcatSpreadable",
-        "pass": 17,
-        "fail": 16,
+        "pass": 20,
+        "fail": 13,
         "ce": 0,
         "skip": 0,
         "total": 33,
-        "pct": 52
+        "pct": 61
       },
       {
         "name": "tail-call-optimization",

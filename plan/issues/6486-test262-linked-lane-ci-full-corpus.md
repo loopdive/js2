@@ -347,3 +347,30 @@ named):
 The 353 fail→pass rows are mostly `dynamic-import/syntax/valid/*import-defer|source*` (honest CE, linked pass) and `Object.defineProperty`/`Proxy/*-realm` rows; they are not counted against the lane but are listed in the JSON artifact for the flip's rebase declaration.
 
 Slice 6 plan: `plan/issues/3451-linked-harness-wasm-separate-compilation.md`, "Implementation Plan — slice 6".
+
+## P3d — fourth full-corpus measurement (2026-09-17, run 35169442028, main @ 4602588c69, after #6492 round 1 PR #5953)
+
+| metric | honest | linked |
+| --- | ---: | ---: |
+| pass | 38,555 | 38,309 |
+| fail | 9,546 | 9,944 |
+| compile_error | 507 | 362 |
+| compile_timeout | 13 | 6 |
+| row-summed compile_ms | 51.7 M | 24.5 M |
+| row-summed exec_ms | 2.10 M | 2.22 M |
+
+Agreement 47,666 / 48,735 (**97.81 %**); pass→fail 601 (from 705); fail→pass
+355; other 113; net −246. Fallbacks unchanged (9,246). The `illegal cast`
+bucket is gone and **no new uncatchable-trap category appears** — the #3189
+ratchet precondition for the flip holds. `AsyncTestFailure … null (reading
+'then')` 61 → 23 (the scoped async-callback fix covers the linked consumer;
+the remaining 23 are rows whose callback is minted inside the provider — same
+lane-independent defect, see #6492). `Cannot convert 0 to a BigInt` 128 is
+unchanged here because round 2 (PR #5954) had not landed; its 275-row sample
+measured 40 → 0.
+
+Residual after P3d, top buckets: BigInt 128 (fixed in #5954), class-value
+crossing 49 + 26 (#6492 round 3), #6491 36, #6482 descriptor family ≈ 130,
+extern-class stubs 35, `__module_init` null catch/next 33, async-null 23.
+Projection once #5954 lands: ≈ 473 pass→fail; after the class-value crossing
+≈ 370.
