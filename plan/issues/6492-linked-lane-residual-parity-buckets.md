@@ -74,15 +74,33 @@ related: [3451, 6486, 6489, 6490, 6491, 6482]
 # no test names. The rest of the comment records the one fact the diff cannot
 # show — that `canonicalUndefinedExternInstrs` is read-only BY DESIGN and its
 # `ref.null.extern` fallback is not a fallback but a different VALUE.
+# 2026-09-17 (round 4c) — `Iterator.prototype.chunks` / `.windows`: +13 lines in
+# `src/runtime/iterator-polyfills.ts` (which crosses the 1500-line god-file
+# threshold) and +160 inside `_installIteratorHelperPolyfills`, plus +10 in
+# `src/runtime.ts` for two names and their comment in `_ITER_HELPER_NAMES`.
+# The two helpers cannot live anywhere else: they are written against four
+# bindings that are LOCAL to `_installIteratorHelperPolyfills` and exist only
+# once the host's `%Iterator%` has been resolved — `Iproto`,
+# `compilerIteratorProto`, `_makeHelperIterator` and `_closeIterator`. Every
+# one of the ten existing helpers (`map`/`filter`/`take`/`drop`/…) is written
+# there for exactly that reason, and hoisting two of the twelve out would put
+# them on the far side of the host/compiled prototype split whose handling is
+# the whole point of this change. The `_ITER_HELPER_NAMES` line is likewise
+# fixed: it is the #3049 list that decides whether a COMPILED receiver gets the
+# iterator-record bridge, and a helper absent from it is unreachable from a
+# generator however it is implemented. Splitting the god-function is #3399's
+# job; this is +2 entries in a 12-entry table.
 loc-budget-allow:
   - src/codegen/closures.ts
   - src/runtime.ts
   - src/codegen/extern-declarations.ts
   - src/codegen/type-coercion.ts
+  - src/runtime/iterator-polyfills.ts
 func-budget-allow:
   - src/codegen/closures.ts::compileArrowAsCallback
   - src/runtime.ts::resolveImport
   - src/codegen/type-coercion.ts::coerceType
+  - src/runtime/iterator-polyfills.ts::_installIteratorHelperPolyfills
 ---
 
 # #6492 — linked lane residual after P3c
@@ -1045,6 +1063,101 @@ differences and must not be chased as such.
 | 8 | `for await` destructuring binds `null` | round 5, new; minimal repro in the mechanism table. |
 | 25 | descriptor reads | #6482's lane. |
 | ~30 | singles + small families | see the mechanism table above. |
+
+## Round 4c (2026-09-17, Opus lane) — `chunks` / `windows`, and round 4b's wrong prediction
+
+Branch `issue-6492-r4c`, based on `f25fd4bcda` (main, containing round 4b).
+Round 4b landed with exactly 2 regressions in the merge-group diff (run
+35272197717): `Iterator/prototype/{chunks,windows}/next-method-returns-non-object.js`.
+
+### The 4b prediction was wrong, and the reason is worth keeping
+
+Round 4b said those two rows "are expected to pass for the real reason" on CI,
+because CI's Node 25 would supply `Iterator.prototype.chunks`. **It does not.**
+Checked directly with `npx -y node@25` (v25.9.0 — the version
+`.github/actions/setup-node-pnpm` pins by default): `Iterator.prototype.chunks`
+and `.windows` are `undefined`, and `Object.getOwnPropertyNames(Iterator)` is
+`length,name,prototype,from`. The container's Node 22.22 is identical on all
+four counts.
+
+Two corrections follow, and both were load-bearing for the earlier rounds'
+reasoning:
+
+1. **`concat`/`zip`/`zipKeyed` never came from the host at all** — they are
+   js2's own polyfill (`_installIteratorHelperPolyfills`). Round 4b's framing
+   ("the host engine's real global") was wrong about the source even though its
+   fix was right about the mechanism (the shim shadowed *something real*).
+2. **Node 22 and Node 25 are interchangeable for this family**, so a local
+   measurement IS representative of CI. 4b's prediction was not just wrong, it
+   was avoidable for the price of one `npx` invocation — which is what this
+   round spent first.
+
+The rows' pre-4b "pass" was accidental, and the mechanism is now pinned: with
+`chunks` absent, probing under the pre-shim assembler showed `new Sub().chunks`
+is `undefined` and **`new Sub().chunks(1)` returns `null`** rather than
+throwing, so the `TypeError` the test asserts came from the NEXT line
+(`iterator.next()` on null).
+
+### The fix — option (a), js2 implements them
+
+Two defects, both required:
+
+- **The implementation.** `chunks`/`windows` join the other ten helpers in
+  `_installIteratorHelperPolyfills`, with the proposal's argument handling:
+  receiver Object-ness first, then `chunkSize`/`windowSize` validated WITHOUT
+  coercion (non-Number or non-integral → TypeError; a valid Number outside
+  `[1, 2^32-1]` → RangeError), and only then GetIteratorDirect reading `next`
+  exactly once. `windows` takes the second `undersized` argument
+  (`"only-full"` default, `"allow-partial"`, anything else TypeError).
+- **The #3049 helper list.** `_ITER_HELPER_NAMES` in `src/runtime.ts` decides
+  whether a COMPILED receiver gets the iterator-record bridge. Until `chunks`
+  and `windows` were added, a generator's `.chunks(1)` reported "chunks is not
+  a function" even with the method installed on the prototype — **31 of the 78
+  rows in these two directories failed on that list alone**, not on the
+  implementation. Measured in isolation: adding the implementation took the
+  directories 0 → 47 passes; adding the two names took 47 → 49; the
+  `undersized` argument took the family's last regression to zero.
+
+### Before / after — real runner, `built-ins/Iterator/`, 654 rows, both lanes
+
+Artifacts: `benchmarks/results/test262-{linked,honest}-{m0,n0,m3,n3}-results-*.jsonl`
+(`m0`/`n0` = main, `m3`/`n3` = this branch), fresh harness cache per run, both
+bundles rebuilt. The A/B was file-copy based and the final pair was re-run
+AFTER the last edit, so the committed tree is the measured tree.
+
+| lane | before (main) | after |
+| --- | ---: | ---: |
+| linked passes | 352 | **394** (+42, **0 lost**) |
+| honest passes | 355 | **397** (+42, **0 lost**) |
+
+Both target rows: `fail: chunks is not a function` → **pass**, in the linked
+lane, for the asserted reason (the helper now steps the underlying iterator and
+throws `TypeError` on a non-object result).
+
+Collateral, same 901-row sample outside the directory (`staging/sm/Iterator`,
+`for-of`, `class/subclass`, `AsyncFromSyncIteratorPrototype`), linked lane,
+main vs this: **705 → 705, 0 rows changed either way.**
+
+29 rows under `{chunks,windows}/` still fail — `return`-forwarding order,
+`argument-validation-failure-*` close semantics, and two `assert is not
+defined` rows. All of them failed before this change too; none is a regression.
+
+Test: `tests/issue-6492-r4c-iterator-chunking.test.ts` (8 cases, host-side, so
+they run in a second). 6 of 8 fail on the pre-fix tree; the other 2 assert
+TypeErrors that the pre-fix tree throws for the WRONG reason (calling
+`undefined`), which is precisely the accidental pass this round removes.
+
+### For the next lane (continued)
+
+10. **Check the environment claim before predicting from it.** One `npx -y
+    node@25 -e 'typeof Iterator.prototype.chunks'` — seconds — would have
+    replaced round 4b's prediction with a fact and saved a merge-group cycle.
+    When a conclusion rests on "CI's runtime has X", go get that runtime.
+11. **A prototype method is not reachable until BOTH halves agree.** Installing
+    on `%IteratorPrototype%` is half the job; `_ITER_HELPER_NAMES` (#3049) is the
+    other, and a helper missing from it is invisible to every compiled
+    receiver while looking perfectly present in a host-side unit test. Any new
+    `Iterator.prototype.*` needs an entry in both places.
 
 ## Round 6 (2026-09-17, Opus lane) — working the narrowed mechanisms
 
