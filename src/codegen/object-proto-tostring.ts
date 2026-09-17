@@ -220,6 +220,57 @@ const NATIVE_PROTO_BRAND_FIELD = 0;
 const NATIVE_PROTO_IS_CLASS_FIELD = 1;
 
 /**
+ * The two NOMINAL-struct carriers that hide from every other arm, emitted after
+ * the primitive predicates and before the `$Object` family.
+ *
+ * `Date`: instances are native `__Date` carriers, not `$Object`s. The
+ * standalone runtime classifier must brand them before its `$Object` fallback,
+ * otherwise an any-typed value such as the result of a bound constructor is
+ * silently reported as `[object Object]`.
+ *
+ * `Error` (#6493 S2): §20.1.3.6 step 8 — an [[ErrorData]] receiver is
+ * `[object Error]`, not the step-13 default. The standalone carrier is the
+ * nominal `$Error_struct`, so it matched NONE of the other arms and fell to the
+ * loud refusal. `built-ins/Object/prototype/toString/
+ * Object.prototype.toString.call-error.js` asks the question through a
+ * first-class value, where the #4491 wave-7 compile-time fold — which DOES know
+ * the `Error` tag from a static type — never runs.
+ *
+ * Each arm is gated on its carrier ALREADY existing in the module (the Error
+ * one never registers the struct itself), so a module without it stays
+ * byte-identical.
+ */
+function nominalCarrierArms(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiverIndex: number,
+  returnTag: (tag: string) => Instr[],
+): Instr[] {
+  const arms: Instr[] = [];
+  if (ctx.builtinObjectGlobals.has("ctor:Date")) {
+    const dateTypeIdx = ensureDateStruct(ctx);
+    const dateAnyLocal = allocLocal(fctx, `__opts_date_${fctx.locals.length}`, { kind: "anyref" });
+    arms.push(
+      { op: "local.get", index: receiverIndex },
+      { op: "any.convert_extern" },
+      { op: "local.set", index: dateAnyLocal },
+      { op: "local.get", index: dateAnyLocal },
+      { op: "ref.test", typeIdx: dateTypeIdx },
+      { op: "if", blockType: { kind: "empty" }, then: returnTag("Date") },
+    );
+  }
+  if (ctx.errorStructTypeIdx >= 0) {
+    arms.push(
+      { op: "local.get", index: receiverIndex },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: ctx.errorStructTypeIdx },
+      { op: "if", blockType: { kind: "empty" }, then: returnTag("Error") },
+    );
+  }
+  return arms;
+}
+
+/**
  * Emit the §20.1.3.6 runtime classifier for a reflective
  * `Object.prototype.toString` closure body. `this` is closure param 1 (an
  * externref); the result is the uniform closure-call result type (externref
@@ -415,22 +466,7 @@ export function emitObjectProtoToStringClassifier(
     );
   }
 
-  // Date instances are native `__Date` carriers, not `$Object`s.  The
-  // standalone runtime classifier must brand them before its `$Object`
-  // fallback, otherwise an any-typed value such as the result of a bound
-  // constructor is silently reported as `[object Object]`.
-  if (ctx.builtinObjectGlobals.has("ctor:Date")) {
-    const dateTypeIdx = ensureDateStruct(ctx);
-    const dateAnyLocal = allocLocal(fctx, `__opts_date_${fctx.locals.length}`, { kind: "anyref" });
-    fctx.body.push(
-      { op: "local.get", index: receiverIndex },
-      { op: "any.convert_extern" },
-      { op: "local.set", index: dateAnyLocal },
-      { op: "local.get", index: dateAnyLocal },
-      { op: "ref.test", typeIdx: dateTypeIdx },
-      { op: "if", blockType: { kind: "empty" }, then: returnTag("Date") },
-    );
-  }
+  fctx.body.push(...nominalCarrierArms(ctx, fctx, receiverIndex, returnTag));
 
   // ── §21.1.3 / §22.1.3 / §20.3.3 / §23.1.3: a builtin PROTOTYPE object that
   // carries its instances' exotic slot. See NATIVE_PROTO_BRAND_TAGS for the
