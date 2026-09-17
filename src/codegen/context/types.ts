@@ -3237,6 +3237,23 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   classExternrefBackedSet: Set<string>;
   /**
+   * (#6623, #5383 S36) Classes whose `extends` heritage expression could NOT be
+   * resolved to a known local class — a property-access into a linked/foreign
+   * namespace (`class S extends NS.PD {}`) or an identifier bound to a runtime
+   * value (`class S extends someParam {}`) under `--target standalone`/`wasi`.
+   * Such a class is registered as an independent ROOT struct (no genuine
+   * ancestor relationship), and when it declares no own fields its struct
+   * canonicalizes to the SAME WasmGC type as any other field-less class —
+   * including one exported by a LINKED PROVIDER module, whose `__tag` values
+   * are assigned independently (both start counting from 0). The dispatchers
+   * that disambiguate same-shape classes by `__tag` alone
+   * (`standalone-class-instance-proto.ts`) have no cross-module uniqueness
+   * guarantee to lean on, so a class in this set is excluded from claiming
+   * getPrototypeOf answers entirely rather than risk a false-positive match on
+   * an unrelated provider instance. See #6623.
+   */
+  classDynamicUnresolvedHeritageSet: Set<string>;
+  /**
    * (#5242) Classes whose singleton reached `__register_class_ctor`, i.e. whose
    * class OBJECT can cross to the host and be constructed there. Exactly the
    * set that needs a `__class_construct_<Class>_<arity>` bridge; every other

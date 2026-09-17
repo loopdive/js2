@@ -113,6 +113,30 @@ function collectEntries(ctx: CodegenContext): InstanceProtoEntry[] {
     // (#802) A dynamically re-prototyped hierarchy is `__struct_proto_read`'s,
     // and its answer comes from the MUTATED field, not from this singleton.
     if (dynamicProtoRootFor(ctx, className) !== undefined) continue;
+    // (#6623, #5383 S36) A class whose `extends` heritage never resolved to a
+    // known local class (`class S extends NS.PD {}` / `class S extends
+    // someParam {}`) is an independent ROOT struct wearing a heritage clause.
+    // When such a class declares no own fields, its struct canonicalizes to
+    // the SAME WasmGC type as any other field-less class — including one a
+    // LINKED PROVIDER module exports, whose `__tag` values are assigned from
+    // an independent per-module counter with no cross-module uniqueness
+    // guarantee. `ref.test` + `__tag` (this dispatcher's only discriminator)
+    // cannot tell the two apart when the small-integer tags coincide, so a
+    // genuine provider instance can be WRONGLY answered with THIS class's
+    // prototype. Declining (falling through, eventually to `null`) is
+    // strictly safer than a silently wrong non-null answer — the same
+    // reasoning #6620/S33 used for `taCtorIdentityTestInstrs`. A class with
+    // own (or inherited) fields is unaffected: its struct shape is unique
+    // enough that this collision cannot occur.
+    if (
+      ctx.classDynamicUnresolvedHeritageSet.has(className) &&
+      // `__tag`/`__shape_brand` are internal bookkeeping fields present on
+      // every class's struct (added AFTER field collection, see
+      // class-bodies.ts) — count only genuinely DECLARED fields, or every
+      // unresolved-heritage class would wrongly look "field-having" here.
+      (ctx.structFields.get(className) ?? []).every((field) => field.name === "__tag" || field.name === "__shape_brand")
+    )
+      continue;
     const protoGlobalIdx = ctx.protoGlobals.get(className);
     const classObjectGlobalIdx = ctx.classObjectGlobals.get(className);
     const structTypeIdx = ctx.structMap.get(className);
