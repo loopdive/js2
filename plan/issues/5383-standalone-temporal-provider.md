@@ -9836,3 +9836,59 @@ close it).
 criterion-5 re-baselined measurement battery (four families × 120 files,
 must-not-move A–D, E-unlinked/E-linked, corpus byte diff, `test:equivalence:gate`).
 Next agent/tech lead must run it before the stacked PR (S13→S42) opens.
+
+### S43 findings (2026-09-17) — #6630's root cause found to be BROADER than filed (any early `ensureObjectRuntime` trigger, not just `Function.prototype`); one real, regression-free narrowing fix landed; `tests/issue-6484-iterator-prototypes.test.ts`'s one failing case still NOT green — a second, unrelated trigger path exists that this fix does not reach
+
+Full detail with WAT/debug evidence: [#6630](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6630-ensureobjectruntime-bootstrap-late-import-staleness).
+
+Decoded the S42 repro's opaque `WebAssembly.Exception` (it read as
+`[Object: null prototype] {}` when printed directly — decoding via
+`e.getArg(tag, 0)` gives the real payload). The message is
+`"Function.prototype.call is not yet implemented in --target standalone"` —
+a native-proto glue member-miss refusal, NOT a stale-funcIdx crash. WAT
+evidence (func-index-order cross-reference) confirms `buildResolvedCalleeGuard`'s
+captured `isCallableIdx`/`typeofFunctionIdx`/`__new_TypeError` funcIdx values
+are all CORRECT in the final module — the mechanism #6630 originally named is
+not what is happening. Compile-time dispatch tracing shows `g.call(o)` takes
+the identical STATIC codegen path in both the working and failing case; the
+divergence is purely a runtime effect of something `ensureObjectRuntime`'s
+bootstrap does differently depending on WHEN it first runs.
+
+Fixed the one call site S42/#6609/#6625 own:
+`tryEmitDynamicCallableGetPrototypeOf` (`object-get-prototype-of.ts`) used to
+eagerly materialise `%Function.prototype%` for EVERY dynamic
+`Object.getPrototypeOf(<any-typed value>)`, regardless of whether the value
+turned out callable at runtime. Restructured to check
+`__is_callable`/`__is_class_object` first and only materialise
+`%Function.prototype%` inside the `then:` arm (via `pushBody`/`popBody`) —
+same result for the #6609/#6625 witnesses, but a non-callable receiver (the
+common case) no longer triggers `ensureObjectRuntime`'s bootstrap through this
+path. Verified regression-free: `tests/issue-66*.test.ts tests/issue-6484-*
+.test.ts` (32 files / 188 tests) — same 187 pass / 1 fail before and after.
+
+**That one remaining fail is NOT fixed by this change.** Bisected
+(`.tmp/s43/bisect2.mts` case `I1`) to a THIRD, unrelated trigger:
+`ensureIterRecPrototypeHelper` (`iterator-proto-next.ts`, main-authored,
+untouched by S42/S43) unconditionally builds all four iterator-prototype
+singletons — which itself calls `ensureObjectRuntime` — on the FIRST
+`Object.getPrototypeOf(<any-typed iterator>)` in a module, regardless of
+which family is actually used. A module doing nothing more than
+`Object.getPrototypeOf(someIterator)` once, then an ordinary `fn.call(...)`,
+reproduces the same failure with zero involvement from either S42's or S43's
+diffs. This confirms #6630's real shape: `ensureObjectRuntime`'s bootstrap has
+an ordering hazard that fires whenever ANYTHING triggers it early/mid-
+expression, not specifically when `Function.prototype` is read — so a
+call-site-local fix closes that one caller's exposure but not the underlying
+class of bug. Filed the corrected analysis in #6630 (kept `status: ready`,
+NOT closed) with the two remaining architecture-level directions.
+
+**Stack state at S43's head (`e57ab2a0f9`): NOT yet PR-ready.** The required
+green set (`tests/issue-66*.test.ts tests/issue-6484-*.test.ts`, 32 files) is
+187/188 — the one pre-existing #6484 failure is still red. Closing it needs
+either (a) #6630's architecture-level fix, or (b) accepting a narrower
+mitigation that also touches `ensureIterRecPrototypeHelper`/
+`emitIteratorPrototypeSingleton` (main-authored; out of this sync's stated
+scope) to defer that path's `ensureObjectRuntime` trigger too. The
+criterion-5 re-baselined measurement battery from S42 is STILL not run this
+session either (time-boxed by this investigation) — next agent must run both
+before the stacked PR opens.

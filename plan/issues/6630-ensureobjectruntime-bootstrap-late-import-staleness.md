@@ -107,3 +107,101 @@ findings.
   no class — just `Function.prototype` + an unrelated `.call()`).
 - No existing witness (#5383 stack's 150, or `tests/issue-6484-*`,
   `tests/issue-6609-*`, `tests/issue-6625-*`) regresses.
+
+## S43 findings (2026-09-17) — the true shape, and why the two "what was tried" narrower fixes could not close it
+
+**The decoded runtime error is NOT a stale-funcIdx crash — it is a
+misdispatch through the native-proto glue "member not wired" refusal.**
+Decoded via `WebAssembly.Exception.getArg` (the S42 repro threw an opaque
+externref object that read as `[Object: null prototype] {}` when printed
+directly — decoding it gives the real message):
+
+```
+Function.prototype.call is not yet implemented in --target standalone
+```
+
+That string is minted by `native-proto.ts`'s generic glue-member VALUE-READ
+fallback (`emitMemberBody` declined, `refusalBodyFallback: true`), not by
+anything in `resolved-callee-guard.ts`. This means `g.call(o)` is NOT reaching
+`__extern_method_call`'s dynamic dispatch (which I verified, with WAT
+evidence below, dispatches correctly) — it is instead resolving `g.call` as
+if it were a READ of `%Function.prototype%.call` as a VALUE off some
+native-proto-glue-modeled object, and then invoking that unwired stub.
+
+**WAT evidence that the originally-filed hypothesis (stale `isCallableIdx`/
+`typeofFunctionIdx` baked by `buildResolvedCalleeGuard`) does not hold.**
+Compiled the minimal repro with `emitWat: true`, dumped
+`__extern_method_call`'s body, and cross-referenced against the func-index
+order (`grep -n '^  (func \$' *.wat` — the Nth `(func $name ...)` entry is
+absolute func index N-1, since this module has zero host imports). Debug
+instrumentation in `buildResolvedCalleeGuard` printed
+`isCallableIdx=83 typeofFunctionIdx=82` at capture time; the WAT func-order
+dump independently confirms `$__typeof_function` is the 83rd func entry
+(index 82) and `$__is_callable` is the 84th (index 83) — **the captured
+indices are exactly correct**, and the guard's own emitted `call 82`/`call 83`
+inside `__extern_method_call` target the right functions. `__new_TypeError`
+(the guard's throw target, `call 70`) also resolves to the correct function
+(70th entry). None of the funcIdx values baked by `buildResolvedCalleeGuard`
+are stale. The "moved capture into `buildClassNotCallableCheck`, still threw"
+attempt recorded above was chasing a symptom that was never the cause.
+
+**Compile-time dispatch tracing (debug prints in `expressions/calls.ts`)
+shows `g.call(o)` takes the SAME static path whether or not
+`Function.prototype` was read earlier** — it falls through every static arm
+(no explicit-this-param match since the checker doesn't see through the
+`as any` cast; `innerExpr` is an `AsExpression`, not a bare identifier, so
+Case 1's `ts.isIdentifier` gate never fires either) all the way to the
+generic dynamic `__extern_method_call` dispatch, in BOTH the working and
+failing case. The divergence is therefore purely a RUNTIME difference in
+what `__extern_method_call` (or something it calls) does for the identical
+receiver — not a different compile-time decision.
+
+**The real trigger: `ensureObjectRuntime`'s bootstrap running EARLY/
+mid-expression, from ANY caller — not specifically `Function.prototype`.**
+Bisected with `.tmp/s43/bisect.mts` / `bisect2.mts` (both copied into the
+issue for reproducibility — see the PR): a module that reads
+`Function.prototype` (directly, or via `tryEmitDynamicCallableGetPrototypeOf`)
+before an ordinary closure's `.call()`/`.apply()` breaks that call. S43 fixed
+the `tryEmitDynamicCallableGetPrototypeOf` call site (see the S43 commit,
+`object-get-prototype-of.ts`) to only materialise `%Function.prototype%`
+*after* `__is_callable`/`__is_class_object` have proven it is needed, which
+is a real, regression-free improvement (verified against the 150-witness
+family + `tests/issue-6484-*`/`6609-*`/`6625-*`, no change). But it did NOT
+close `tests/issue-6484-iterator-prototypes.test.ts`'s failing case, because
+that test's trigger is a THIRD, unrelated path:
+`ensureIterRecPrototypeHelper` (`src/codegen/iterator-proto-next.ts`)
+unconditionally builds **all four** iterator-prototype singletons
+(`emitIteratorPrototypeSingleton`, which itself calls `ensureObjectRuntime`
+at its own top) on the FIRST `Object.getPrototypeOf(<any-typed iterator>)` in
+a module, regardless of which family the program actually uses — this
+function is unrelated to S42/S43's own diffs (main-authored, unmodified by
+either), and it alone is enough to trigger the same failure
+(`.tmp/s43/bisect2.mts` case `I1`: `Object.getPrototypeOf(iter)` once,
+nothing else, still breaks a later `g.call(o)`).
+
+**So the true shape of #6630 is: `ensureObjectRuntime`'s bootstrap has an
+ordering hazard that fires whenever ANYTHING triggers it early/mid-expression
+— not "whenever `Function.prototype` is read".** Every caller that reaches
+`ensureObjectRuntime(ctx)` for the first time from inside a nested expression
+(rather than at a stable, well-known point) is a candidate trigger; a
+call-site-local fix (make one caller lazy) closes that ONE caller's exposure
+but not the class of bug. I did not find, within the S43 budget, the specific
+piece of state inside `ensureObjectRuntime`'s bootstrap that differs between
+an "early" and "natural-order" run and causes the closure `.call`/`.apply`
+misdispatch — `CLOSURE_METHOD_CALL` is reserved unconditionally near the top
+of the bootstrap (before `__extern_method_call`'s body bakes) and its BODY is
+filled generically at FINALIZE (`fillClosureMethodCall`, independent of
+materialisation order), so the mechanism the original filing named
+(`buildResolvedCalleeGuard`'s captured indices) is ruled out, and the
+`CLOSURE_METHOD_CALL` reservation/fill split I checked next did not explain
+it either. The suggested directions below (registering the bootstrap's
+emitted body in `ctx.liveBodies`, or forcing `ensureObjectRuntime` to run at
+a single well-known early point for every standalone/wasi module regardless
+of whether the module ends up using it) remain the two most promising
+architecture-level fixes; the second is a bigger behavioural change (it would
+make every standalone module pay `ensureObjectRuntime`'s registration cost
+even when unused) and would need its own measurement pass.
+
+Repro scripts are in `.tmp/s43/repro-6630.mts`, `.tmp/s43/bisect.mts`,
+`.tmp/s43/bisect2.mts`, `.tmp/s43/dump-wat.mts` in the S43 worktree/branch
+(gitignored — copy them out if resuming this issue).

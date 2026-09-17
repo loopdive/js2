@@ -254,6 +254,37 @@ the #6484 root-cause depth) — the next agent/tech lead must run it before
 the stacked PR opens. New accepted head for further work:
 `issue-5383-standalone-temporal-s42`'s tip (post #6629's commits).
 
+## Stack state 2026-09-17 (post-S43) — NOT yet PR-ready
+
+S43 (branch `issue-5383-standalone-temporal-s43`, worktree
+`/home/user/js2/.claude/worktrees/agent-a9f7773b894731967`, head `e57ab2a0f9`
+on top of S42's `16d8087885`) investigated #6630 and found its real shape is
+BROADER than filed: `ensureObjectRuntime`'s bootstrap misdispatches later
+`.call()`/`.apply()` calls whenever ANYTHING triggers it early/mid-expression
+— not specifically `Function.prototype` reads (WAT evidence rules out the
+originally-filed stale-funcIdx hypothesis; see #6630's S43 findings section).
+Landed one real, regression-free fix: `tryEmitDynamicCallableGetPrototypeOf`
+(`object-get-prototype-of.ts`) now only materialises `%Function.prototype%`
+after proving the receiver is actually callable/class-object (was eager,
+unconditional). Verified against `tests/issue-66*.test.ts tests/issue-6484-*
+.test.ts` (32 files / 188 tests): 187 pass / 1 fail, unchanged before and
+after — **no regression, but also does not close the one pre-existing
+failure**, because that test's trigger is a THIRD, unrelated,
+main-authored path (`ensureIterRecPrototypeHelper` /
+`emitIteratorPrototypeSingleton`, `iterator-proto-next.ts`) that S43 did not
+touch (out of the stated sync scope). #6630 stays `status: ready`, not
+closed, with the corrected root-cause writeup and two remaining
+architecture-level directions.
+
+**This head is NOT PR-ready**: `tests/issue-6484-iterator-prototypes
+.test.ts`'s `"%IteratorPrototype% is the shared parent"` case is still red.
+The criterion-5 re-baselined measurement battery (S42's gap) is STILL not
+run. Next agent must either land #6630's architecture-level fix or extend the
+same lazy-materialisation treatment to `emitIteratorPrototypeSingleton`'s
+`ensureObjectRuntime` trigger, then run the full battery, before this can be
+the stacked PR head. New candidate head for further work:
+`issue-5383-standalone-temporal-s43`'s tip (`e57ab2a0f9`).
+
 ## Incidents worth knowing (all resolved unless stated)
 
 1. **`test262` submodule replaced by a symlink** (dfecafa7e9, S6 grounding
