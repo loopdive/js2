@@ -6,7 +6,7 @@ and a goal being "ready" doesn't mean it should be worked on immediately.
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 38,319 / 48,232 (79.4 %)
+**test262 conformance**: 38,174 / 48,232 (79.1 %)
 
 <!-- AUTO:conformance-end -->
 

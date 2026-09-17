@@ -1,10 +1,26 @@
 ---
 id: 6421
 title: "A spread argument to a STATIC BUILTIN method contributes exactly ONE element — `String.fromCharCode(...bytes)` yields one char, which is why hono signs every cookie as `AA==`"
-status: ready
+status: done
 sprint: current
 created: 2026-09-12
-updated: 2026-09-12
+updated: 2026-09-13
+completed: 2026-09-13
+loc-budget-allow:
+  # 2026-09-17 (#6421): re-measured after merging main, which had independently
+  # landed the fromCharCode/fromCodePoint half as #6430. Only the `Array.of`
+  # arm remains here: a spread branch plus a shared-builder branch in the host
+  # arg loop, +29 LOC against main 770455e4a8. The runtime-length vec build
+  # lives in `src/codegen/array-of-spread.ts`, not in this file. (The earlier
+  # 2026-09-13 rationale also cited a ~60-line shrink in `calls.ts`; that was
+  # this branch's own fromCharCode module, now dropped in favour of main's, so
+  # `calls.ts` is byte-identical to main and contributes nothing here.)
+  - src/codegen/expressions/call-builtin-static.ts
+func-budget-allow:
+  # 2026-09-17 (#6421): the same +29 lines seen through the enclosing
+  # dispatcher, measured +26 against main 770455e4a8. Only the `Array.of` arm
+  # now lands inside it — the fromCharCode arm is main's #6430 code.
+  - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
 priority: high
 horizon: m
 feasibility: medium
@@ -129,3 +145,150 @@ Controls are correct on the same build (`fromCharCode(65,66,67)`, `.apply`, `Mat
 ## Dispatch
 
 Model: **opus**. Both defects are located to exact lines with a working sibling (`compileMathMinMaxSpread`, #6411's `tryEmitSpreadHostArgs`) to copy from; the care is re-resolving function indices after the late-import flush and keeping the no-spread path byte-identical.
+
+## Resolution
+
+Fixed on `issue-6421` (branched from `699df289e1`). Three sites, one idiom.
+The measurements below are that branch's; see **Superseded half** at the end of
+this section for what survived the 2026-09-17 merge of main.
+
+**1. `String.fromCharCode` / `String.fromCodePoint`** — SUPERSEDED by #6430,
+which landed on main independently while this branch sat unmerged and fixes the
+same defect. `compileFromCharCodeFamily` (`src/codegen/expressions/calls.ts`)
+built one string PART per argument AST node and folded the parts at compile
+time, so a spread compiled its SOURCE as one code unit (`NaN` → ToUint16 →
+`"\0"`). Main's `src/codegen/expressions/from-char-code-spread.ts`
+(`needsFromCharCodeSpread` / `compileFromCharCodeFamilySpread`) is the version
+that ships; this branch's twin `src/codegen/from-char-code-spread.ts` and its
+shared `emitCodeUnitPart` tail were deleted in the merge, and `calls.ts` is
+byte-identical to main.
+
+**2. `Array.of`** — the host path's `__js_array_new` + one `__js_array_push`
+per node is now `tryEmitSpreadHostArgs` (the exact #6411 edit) with the
+unrolled loop kept as the no-spread branch; the standalone path's
+`noJsHost && !hasSpreadArg` gate is gone, and a runtime-length list is sized
+and filled by the new `src/codegen/array-of-spread.ts`. The `allNumeric`
+element-type scan can never see a spread's elements, so a spread-containing
+list boxes to `externref` rather than guessing `f64` (#5361's `splice` choice).
+
+**3. `emitStores` handed out SHARED instruction objects** — the defect that
+made the first two fixes wrong in standalone, and a latent hazard for every
+existing caller. `SpreadArgSink.pre`/`post` were spliced into the body once per
+slot, so the same `Instr` objects sat at several points of one array; the
+late-import shifter (`shiftFuncIndices`, `src/codegen/registry/imports.ts`)
+dedups by ARRAY identity and never by instruction identity, so it added the
+shift delta to a repeated `call` index once per occurrence. Measured on
+`String.fromCharCode(48, ...[65,66,67])` standalone, where all four slots are
+static values: the accumulating `__str_concat` was shifted four times and the
+call answered `"0"`. `emitStores` now clones the sink per use.
+
+### Measured
+
+Probe (untyped two-file `.js`), parent → fix:
+
+| form | gc parent | gc fix | standalone parent | standalone fix |
+| --- | --- | --- | --- | --- |
+| `fromCharCode(...[65,66,67])` | `"\0"` | `"ABC"` | len 1 | len 3 |
+| `fromCharCode(48, ...[65,66,67])` | `"0\0"` | `"0ABC"` | len 1 | len 4 |
+| `...new Uint8Array([72,73,74])` | `"\0"` | `"HIJ"` | len 3 | len 3 |
+| `...new Uint8Array(new ArrayBuffer(n))` | `"\0"` | `"XY"` | — | — |
+| host `ArrayBuffer` handed in | `"\0"` | `"PQR"` | — | — |
+| `...s.split(",").map(Number)` | `"\0"` | `"ABC"` | len 3 | len 3 |
+| `fromCodePoint(...[0x1F600, 65])` | threw `RangeError: Invalid code point NaN` | len 3 | len 2 | len 3 |
+| `Array.of(...[1,2,3])` | len 1, joins `"NaN"` | len 3, `"1\|2\|3"` | module would not instantiate | len 3 |
+| hono shape, 4 zero bytes | `"AA=="` | `"AAAAAA=="` | — | — |
+
+Controls correct on both: `fromCharCode(65,66,67)`, `.apply`,
+`Math.max(...xs)`, `Array.of(1,2,3)`, `fromCodePoint(0x1F600,65)`.
+
+The standalone `Array.of` residual is WORSE than this issue predicted: not a
+length-0 vec but an unbindable module — the spread fell onto the host path and
+imported `__js_array_new` / `__array_of`, which the native-first adapter
+refuses ("legacy-semantic import owned by #4397"), so nothing in the module
+runs.
+
+### Regression test
+
+`tests/issue-6421-static-builtin-spread-args.test.ts` — 20 failed / 8 passed
+of 28 on the parent, 28 passed with the fix. The 8 `control…` rows pass on
+both. Across the 31 spread / charCode / `Array.of` test files, base 47 failed /
+238 passed → fix 27 failed / 258 passed, with the failing SET unchanged apart
+from this file's 20 rows.
+
+### Dogfood A/B (17 suites, one HEAD, base = `699df289e1`)
+
+16 suites flat. One mover:
+
+| suite | base | fix |
+| --- | --- | --- |
+| hono | 261/324 | **262/324** |
+| webpack 16/16 · three 17/18 · clsx 32/32 · cookie 63740/63740 · lodash 59/62 · redux 67/82 · axios 208/231 · stylelint 108/108 · tailwindcss 13/13 · jsdom 6/6 · styled-components 9/9 · uuid 75/75 · marked 16/30 · moment 10/10 · prettier 108/151 · jest 335/356 | | unchanged |
+
+hono `src/utils/cookie.test.ts` 24/35 → 25/35. Exactly one row flipped, and no
+row regressed: **"Should serialize signed cookie with all options"**, which on
+base emitted `great_cookie=banana.AA%3D%3D` — the literal symptom this issue is
+named for.
+
+**The predicted 24/35 → 33/35 did NOT happen, and the issue's attribution of
+the other eight rows was wrong.** Signing is now provably correct: "Should
+serialize a signed cookie" emits the real 44-character digest
+`macha.diubJPY8O7hI1pLa42QSfkPiyDWQ0I4DnlACH%2FN2HaA%3D` and fails only on the
+spurious `Max-Age=0` that #6423 owns. The eight "Should parse signed
+cookies…" rows still answer `false` even though the signature they are handed
+is now correct, so verification has a defect of its own rather than being
+downstream of this one — filed as
+[#6449](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6449-hono-signed-cookie-verify-returns-false).
+Expected total once #6423 and #6449 land: 33/35 as predicted, but from three
+issues, not one.
+
+### Not in scope
+
+- **A spread into a USER rest function throws `illegal cast`** in an untyped
+  `.js` project — on the parent AND with this fix, for every source shape
+  (inline literal, variable, `.split()`, TypedArray; same- and cross-module).
+  This issue listed that form as already correct; it is not. Filed as
+  [#6443](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6443-spread-into-user-rest-function-illegal-cast).
+- Other static builtins that unroll `expr.arguments` — `Object.assign`,
+  `Math.hypot` — were not measured. Filed as
+  [#6444](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6444-static-builtin-spread-audit-remaining-arms).
+- The hono signed-cookie VERIFY side, per the A/B above:
+  [#6449](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6449-hono-signed-cookie-verify-returns-false).
+
+### Superseded half (merge of main, 2026-09-17)
+
+Main landed **#6430** while this branch was unmerged; it fixes the
+`String.fromCharCode` / `String.fromCodePoint` spread with its own module at
+`src/codegen/expressions/from-char-code-spread.ts`. The merge takes main's
+version wholesale:
+
+| item | outcome |
+| --- | --- |
+| `src/codegen/from-char-code-spread.ts` (this branch, 233 lines) | deleted |
+| `emitCodeUnitPart` shared tail in `compileFromCharCodeFamily` | reverted to main's inline ToUint16 + #2601 range guard + helper call |
+| widened `addStringImports` guards in `call-builtin-static.ts` | reverted — main's module calls `addStringImports` itself |
+| `src/codegen/expressions/calls.ts` | byte-identical to main |
+| `scripts/compiler-boundaries.json` entry for the deleted module | removed |
+
+What this branch still contributes, because #6430 does not cover it:
+
+- **`Array.of` spread** (`src/codegen/array-of-spread.ts` + the `Array.of` arm
+  of `call-builtin-static.ts`). Main's gate is still
+  `if (noJsHost(ctx) && !hasSpreadArg)`, which drops `Array.of(...xs)` onto the
+  host fallback and its `__js_array_new` / `__js_array_push` / `__array_of`
+  imports — unsatisfiable standalone, so the module does not instantiate at
+  all. The host half separately pushes one element per AST node, so
+  `Array.of(...[1,2,3])` has length 1.
+- **The `emitStores` shared-`Instr` clone** in `src/codegen/spread-arg-list.ts`.
+  Re-measured against main `770455e4a8` on 2026-09-17, compiling
+  `String.fromCharCode(48, ...[65, 66, 67])` at `target: "standalone"`:
+
+  | tree | `result.imports` | answer |
+  | --- | --- | --- |
+  | main as-is | `[]` | `"0"` (length 1) |
+  | main + this clone fix only | `[]` | `"0ABC"` (length 4) |
+
+  So #6430 does **not** subsume it: main's `emitStores` splices the caller's
+  sink arrays uncloned, and `shiftFuncIndices`
+  (`src/codegen/registry/imports.ts`) dedups by ARRAY identity while mutating
+  the `Instr` OBJECT, so one object reachable from two arrays is shifted twice.
+  The fix is kept.

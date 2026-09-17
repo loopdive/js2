@@ -15,6 +15,7 @@ import { planAsyncClosureActivation } from "../async-activation.js";
 import { isNumberType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, resolveArrayInfo } from "../array-methods.js";
+import { emitArrayIteratorPrototypeSingleton } from "../array-object-proto.js"; // (#6484 S3 review)
 import {
   compileArrowAsClosure,
   compileArrowFunction,
@@ -26,12 +27,14 @@ import { reportError } from "../context/errors.js";
 import { allocLocal } from "../context/locals.js";
 import { rollbackSpeculative, snapshotSpeculative } from "../context/speculative.js";
 import { emitLiveCollectionIterRec } from "../map-runtime.js"; // (#5267 R3-1a)
+import { ensureNativeIteratorRuntime } from "../iterator-native.js"; // (#6484 S2) array @@iterator carrier
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import { collectDirectEvalBindingNames, functionMayReachDirectEval } from "../direct-eval-environment.js";
 import {
   destructureParamArray,
   destructureParamObject,
   getArrTypeIdxFromVec,
+  TYPED_ARRAY_NAMES,
   getOrRegisterVecType,
   hoistLetConstWithTdz,
   hoistVarDeclarations,
@@ -756,16 +759,71 @@ export function compileTailDispatch(
             }
           }
         }
+        // (#6484 S3, kept through the S1+S2 merge) Whether this receiver is a
+        // TypedArray. S1+S2's general carrier migration routes every array-typed
+        // receiver through `__iterator`, so this no longer gates the dispatch —
+        // it only selects the prototype-materialisation arm further down, which
+        // arms the finalize step S3 added for the diverted carrier.
+        const iterRecvSymName = receiverType.getSymbol()?.name;
+        const typedArrayIterRecv = iterRecvSymName !== undefined && TYPED_ARRAY_NAMES.has(iterRecvSymName);
         if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && resolveArrayInfo(ctx, receiverType)) {
-          // (#5147 note) This SNAPSHOT-vec result is why `.next()` on
-          // `[1,2][Symbol.iterator]()` still answers null: a vec has no cursor.
-          // Switching it to `__iterator(recv)` (a real `$__IterRec`) was tried
-          // and is NOT a drop-in — the array-iterator prototype/metadata rows
-          // key off the vec carrier — so the carrier migration is left to the
-          // follow-up that also moves `%ArrayIteratorPrototype%`.
+          // (#6484 S2) THE CARRIER MIGRATION the #5147 note deferred. This arm
+          // used to answer a SNAPSHOT `$Vec`, which is why `.next()` on
+          // `[1,2][Symbol.iterator]()` answered null — a vec has no cursor. The
+          // migration was blocked on the prototype/metadata rows keying off the
+          // vec carrier; S1 moved those onto the record's `family` tag, so the
+          // blocker is gone and `__iterator(recv)` is now a drop-in: it adopts a
+          // canonical `$Vec` into a LIVE `$IterRec{VEC, vec, 0, …}` cursor over
+          // the same vec, normalizes the other vec-family carriers, and stamps
+          // `ITER_FAMILY_ARRAY` so `getPrototypeOf` still answers
+          // `%ArrayIteratorPrototype%`. Registering the runtime here (rather
+          // than reaching for `ensureLateImport`) is what keeps the module
+          // host-import-free: `__iterator` must be the DEFINED native, never
+          // `env::__iterator`.
+          ensureNativeIteratorRuntime(ctx);
+          const nativeIterIdx = ctx.funcMap.get("__iterator");
+          if (nativeIterIdx !== undefined) {
+            flushLateImportShifts(ctx, fctx);
+            const snap = snapshotSpeculative(ctx, fctx);
+            const recvType = compileExpression(ctx, fctx, elemAccess.expression);
+            if (recvType !== null) {
+              if (recvType.kind === "ref" || recvType.kind === "ref_null") {
+                fctx.body.push({ op: "extern.convert_any" });
+              } else if (recvType.kind !== "externref") {
+                coerceType(ctx, fctx, recvType, { kind: "externref" });
+              }
+              // Iterator methods take no arguments; extras are evaluated for
+              // side effects only, exactly as the host bridge below does.
+              for (const arg of expr.arguments) {
+                const argType = compileExpression(ctx, fctx, arg);
+                if (argType) fctx.body.push({ op: "drop" });
+              }
+              fctx.body.push({ op: "call", funcIdx: nativeIterIdx });
+              return { kind: "externref" };
+            }
+            rollbackSpeculative(ctx, fctx, snap);
+          }
           const nativeResult = compileArrayMethodCall(ctx, fctx, elemAccess, expr, receiverType, "values");
           if (nativeResult !== undefined && nativeResult !== null) return nativeResult as ValType;
           // Fall through to the host bridge if the native path declined.
+        }
+        // (#6484 S3 review) The diverted TypedArray receiver hands back a
+        // `$__IterRec`, which models no `[[Prototype]]` — so
+        // `Object.getPrototypeOf(<any-typed binding of it>)` answered `null`,
+        // where the snapshot vec it replaced answered `%Array.prototype%` (the
+        // vec's own, ALSO wrong, answer — it is not `%ArrayIteratorPrototype%`;
+        // see the measurement in the issue file). §23.2.3.36 makes a TypedArray
+        // iterator an Array Iterator, so the spec answer is the #3013
+        // `%ArrayIteratorPrototype%` singleton. Materialize it here — the
+        // singleton is lazy, and the finalize arm below reads its global — and
+        // arm the finalize step. The statically-typed `ArrayIterator` binding
+        // already routes through the #3013 compile-time arm and is untouched.
+        if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && typedArrayIterRecv) {
+          const protoType = emitArrayIteratorPrototypeSingleton(ctx, fctx);
+          if (protoType) {
+            fctx.body.push({ op: "drop" });
+            ctx.typedArrayIterRecProtoPending = true;
+          }
         }
         const importName = methodName === "@@iterator" ? "__iterator" : "__async_iterator";
         // `%String.prototype%` is the empty String value (§22.1.3). Its
