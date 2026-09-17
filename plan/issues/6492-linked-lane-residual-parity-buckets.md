@@ -1824,7 +1824,7 @@ that frozen seed — not, as assumed at the time, a second seeder.
 The correct encoding is `0xbb` (value-present, writable=true, enumerable=true,
 configurable specified-false). It is **not** in this change: the flag constant
 is on the standalone path as well, so correcting it is its own measured change
-with its own standalone A/B. Anyone re-enabling the write side must fix the
+with its own standalone A/B — filed as **#6499**. Anyone re-enabling the write side must fix the
 constant first or they will re-derive this same false negative.
 
 ### Findings for the next lane (round 9)
