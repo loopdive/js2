@@ -9699,3 +9699,88 @@ here lands on that intersection. The `Proxy get trap is not callable` bucket
 remains open, with the linked-vs-unlinked repro and `ensureProxyRuntime` /
 `emitStandaloneLinkReverseLocalTerminals` hypothesis above as its next
 slice's starting point.
+
+### S41 findings (2026-09-17) — the `Proxy get trap is not callable` bucket's mechanism found and PARTIALLY fixed: a real, independently-verified `__apply_closure` misrouting bug for LOCAL Proxy trap invocation, but the bucket's actual blocker is a second, deeper CROSS-MODULE trap-invocation problem, named but not fixed
+
+Full write-up in [#6628](6628-standalone-proxy-trap-peer-callable-kind-misclassification.md).
+Branch `issue-5383-standalone-temporal-s41`, based on S40b's tip `ef08f7a8f0`.
+
+#### 1. Root cause (found, not what S40 suspected)
+
+S40's own two named suspects (`ensureProxyRuntime` /
+`emitStandaloneLinkReverseLocalTerminals`) were a dead end: a ctx-level Instr
+dump of every function in the dispatch chain (`__extern_get`'s Proxy
+front-guard, `__proxy_get_dispatch`, `__proxy_call_get`, `__call_fn_method_3`,
+`__typeof_function`) showed them structurally identical between linked and
+unlinked builds. The real mechanism is `fillApplyClosure`'s #6420
+"peer-owned callable" front-guard (`src/codegen/object-runtime.ts` ~line
+7766): it asks the linked PROVIDER "is this externref callable?" for EVERY
+value `__apply_closure` invokes, including ones that never crossed the link
+boundary. Under `canonicalRuntimeTypes` a purely LOCAL closure's WASM shape
+canonicalises to the SAME type as the provider's own shapes, so the
+provider's structural `__is_callable` check answers "yes" for a closure it
+has never seen, and `__apply_closure` hijacks the call into the provider's
+own apply terminal — which cannot run it and silently returns null. Confirmed
+via a WAT trace (`.tmp/s41/apply_closure_linked.txt`) and a side-effect
+witness (a trap that increments a counter regardless of its arguments proved
+the trap body NEVER RUNS in the linked build).
+
+#### 2. Fix (real, narrow, verified — does not close the bucket)
+
+`fillProxyDispatch`'s trap-invoke drivers now call `__call_fn_method_<N>`
+directly (bypassing `__apply_closure` and its peer-callable-kind guard
+entirely) when the Proxy dispatch is running in the SAME module that
+constructed the trap. Two earlier attempts that tried to fix this on the
+SHARED `__apply_closure` (a structural "is this locally owned" `ref.test`
+gate, tried against both the deduped closure-root type list and the full
+per-site closure-type list) both regressed `tests/issue-6605-*` and
+`tests/issue-6616-*`: `canonicalRuntimeTypes` makes "my closure" vs
+"identically-shaped foreign closure" fundamentally undecidable by `ref.test`
+on the SHARED function — fixing the CALL SITE instead (Proxy's own
+fixed-arity invocation) sidesteps the ambiguity. 7 new tests
+(`tests/issue-6628-*.test.ts`, 3 fix-witnesses base-fail/fix-pass + 4
+controls), full `tests/issue-66*.test.ts` regression suite green
+(30 files / 150 tests).
+
+#### 3. Why it does NOT close #5383's bucket
+
+The real corpus row is not "a consumer builds and reads its own local
+Proxy" — it is `Temporal.PlainDate.from(date, options)`, where the CONSUMER
+builds `options = TemporalHelpers.propertyBagObserver(...)` (a Proxy) and
+hands it to the PROVIDER, which reads `options.overflow` FROM INSIDE ITS OWN
+COMPILED MODULE. The trap the provider's own `__proxy_get_dispatch` finds is
+unavoidably the CONSUMER's — this fix's direct-`__call_fn_method_N` dispatch
+is WRONG for that direction (the trap can never be local to the provider, so
+it needed the OLD peer route). Built and ran a minimal reduction of exactly
+this shape (`.tmp/s41/crossmodule.mts`): a provider `readOverflow(o){ return
+o.overflow; }` called with a consumer-owned Proxy — **throws an uncaught
+`WebAssembly.Exception` identically on BOTH base and fix**, proving this is a
+PRE-EXISTING, separate mechanism, not a regression introduced here, and not
+what this fix reaches. `__apply_closure`'s #6420 peer bridge is therefore
+load-bearing for THIS direction even though it is wrong for the opposite
+one — no single front-guard using structural `ref.test` alone can get both
+right under canonical types; a correct general fix needs real per-instance
+ownership (a module-origin tag set at `struct.new` time), out of scope here.
+
+#### 4. Criterion 4 acceptance
+
+6-row bucket: unchanged, all 6 still `TypeError: Proxy get trap is not
+callable` (fresh provider cache, rebuilt bundle, `cacheHit=false` confirmed
+at prewarm). Four-family sample (first 120 × 4 families): **433/480**,
+exactly matching S40b's base measurement per-family (112/105/113/103) — 0
+movement. Corpus byte A/B (42 files × {gc, standalone}): 0 CE/status flips;
+6 `standalone`-target rows changed SHA despite containing no literal `Proxy`
+text — `ensureProxyRuntime` runs unconditionally for every standalone module
+reaching the object runtime, so this fix's smaller dead-code Proxy drivers
+shift bytes even where Proxy is never constructed; benign. Equivalence gate
+**22/1720/22**, unchanged. **Must-not-move groups A/B/C/D were NOT run this
+slice** (time-budget cutoff) — flagged as an open verification gap.
+
+The bucket remains open. Next slice's starting point: fix the FORWARD
+direction correctly (provider invoking a genuinely foreign/consumer-owned
+trap must still route to `__apply_closure`'s peer bridge) while keeping the
+BACKWARD direction fixed here (a module invoking its own local trap must
+not) — requires either (a) real per-closure ownership tagging, or (b) a
+different signal at the Proxy-CONSTRUCTION site that lets `$ptraps` record
+"this trap is mine" for later `__proxy_get_dispatch` reads to consult instead
+of asking `__apply_closure` to guess.

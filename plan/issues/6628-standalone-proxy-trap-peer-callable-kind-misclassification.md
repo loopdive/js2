@@ -1,6 +1,6 @@
 ---
 id: 6628
-title: "standalone: `__apply_closure`'s #6420 peer-callable-kind front-guard misclassifies a LOCAL closure as peer-owned under `canonicalRuntimeTypes`, hijacking every dynamically-invoked closure (Proxy traps included) through a linked provider's own apply terminal — closes #5383's `Proxy get trap is not callable` bucket"
+title: "standalone: `__apply_closure`'s #6420 peer-callable-kind front-guard misclassifies a LOCAL closure as peer-owned under `canonicalRuntimeTypes`, hijacking a purely local Proxy trap invocation through a linked provider's own apply terminal — real, independently-verified fix, but does NOT close #5383's `Proxy get trap is not callable` bucket (a second, deeper cross-module mechanism blocks it)"
 status: done
 sprint: current
 priority: medium
@@ -97,11 +97,12 @@ exposed (Proxy traps just happen to be #5383's bucket that surfaced it).
 
 ## Fix
 
-`src/codegen/object-runtime-proxy.ts`, `fillProxyDispatch`'s `fill()`: a Proxy
-trap is always obtained via `GetMethod(handler, trapName)` on a handler THIS
-module's own source built (or received structurally, per the residual risk
-noted below) — it never legitimately needs `__apply_closure`'s cross-module
-routing. `__call_fn_method_<argCount>` (already registered by
+`src/codegen/object-runtime-proxy.ts`, `fillProxyDispatch`'s `fill()`: when
+the module dispatching the trap is the SAME module that constructed the
+`new Proxy(...)` — S41's own target repro's shape, and the common single-module
+case — the trap is always obtained via `GetMethod(handler, trapName)` on a
+LOCALLY-built handler and never legitimately needs `__apply_closure`'s
+cross-module routing. `__call_fn_method_<argCount>` (already registered by
 `emitClosureMethodCallExportN`, which the finalize order guarantees runs
 before `fillProxyDispatch`) has a param convention (`0=thisVal, 1=closure,
 2..=args`) IDENTICAL to each trap driver's own (`0=handler, 1=trap,
@@ -128,21 +129,67 @@ out of scope here. Fixing the CALL SITE (Proxy's own fixed-arity trap
 invocation, which never needs the peer route) sidesteps the ambiguity
 entirely and is narrow enough to verify in full within this slice's budget.
 
-**Residual risk (not covered by this fix or its tests):** a trap whose value
-was ITSELF obtained from the peer (e.g. `new Proxy(peerTarget,
-NS.makeHandler())` where `NS.makeHandler()` returns a provider-owned
-closure) would now go straight to the local `__call_fn_method_N` ladder,
-miss (the provider's closure type is not in this module's
-`closureInfoByTypeIdx`), and answer the "legacy null sentinel" instead of
-correctly routing to the peer — the exact failure #6420 was written to close,
-now reintroduced for this one narrow shape. No test in the corpus or the
-30-file `tests/issue-66*.test.ts` regression suite exercises a peer-supplied
-Proxy trap; #5383's measured corpus (Temporal `propertyBagObserver`-style
-traps) always defines traps locally. Filed as a residual, not fixed.
+**This does NOT close #5383's target bucket — confirmed by a SECOND, DEEPER
+mechanism, present identically on base and fix.** The real corpus row is not
+"a consumer builds and reads its own local Proxy" (my repro's shape) — it is
+`Temporal.PlainDate.from("2021-05-17", options)`, where the CONSUMER builds
+`options = TemporalHelpers.propertyBagObserver(...)` (a Proxy) and hands it
+to the PROVIDER, which then reads `options.overflow` **from inside its own
+compiled module**. The trap closure the PROVIDER's own `__proxy_get_dispatch`
+finds in `$ptraps.$get` is genuinely, unavoidably the CONSUMER's — it was
+built by whichever module executed `new Proxy(...)`, never the module doing
+the later read. `fillProxyDispatch`'s direct-dispatch fix (this issue) is
+therefore WRONG for that direction: it always tries the local
+`__call_fn_method_N` ladder first, but here the trap can NEVER be local to
+the provider, so it should always have gone through `__apply_closure`'s peer
+route.
 
-## Criterion 4 acceptance
+Built and ran a minimal reduction of exactly this shape
+(`.tmp/s41/crossmodule.mts`: a provider with `readOverflow(o) { return
+o.overflow; }`, a consumer building a local Proxy and passing it to
+`NS.readOverflow(options)`) against BOTH the base tree and this fix — **both
+throw an uncaught `WebAssembly.Exception` identically**, proving this
+specific failure mode was already broken before this fix and is unaffected
+by it (not a new regression, but also not what this fix closes). The
+`__apply_closure` peer-callable-kind bridge (#6420) is therefore load-bearing
+for the FORWARD direction (provider invoking a consumer-supplied trap) even
+though it is WRONG for the backward direction (a module invoking its own
+local trap) — the SAME structural-typing ambiguity noted above (canonical
+types make "mine" vs "theirs" undecidable by `ref.test`) applies to BOTH
+directions and there is no single front-guard that gets both right. A correct
+general fix needs real per-instance ownership (a module-origin tag on every
+closure struct, set at `struct.new` time) — out of scope for this slice.
 
-Real-corpus proof (6-row bucket, fresh provider cache, `cacheHit=false`):
-per-row before/after results below. Four-family sample, must-not-move
-groups, corpus byte A/B, and equivalence gate all documented in `### S41
-findings` on #5383.
+**Net effect of this fix**: real, independently-verified, does not regress
+anything measured (150/150 existing tests, equivalence gate unchanged,
+four-family sample unchanged 433/480 — see below), but does not move #5383's
+6-row bucket, whose actual blocker is this second, deeper cross-module
+mechanism. Filed as the next slice's starting point below.
+
+## Criterion 4 acceptance (S41, measured)
+
+- **6-row bucket** (fresh provider cache, `cacheHit=false`, rebuilt bundle):
+  all 6 rows answer `TypeError: Proxy get trap is not callable` identically
+  before and after — UNCHANGED. Bucket not closed by this fix (see above).
+- **Four-family sample** (first 120 files × 4 families, `--target
+  standalone`, fresh cache): PlainDate 112/120, Duration 105/120,
+  PlainDateTime 113/120, ZDT 103/120 = **433/480**, matching the S40b base
+  measurement EXACTLY, per-family and in total. 0 movement.
+- **Corpus byte A/B** (42 files × {gc, standalone}, `tests/fixtures` +
+  `website/playground/examples`): 84/84 rows kept `status: "ok"` — 0
+  CE/status flips. 6 `standalone`-target rows changed SHA (bytes, not
+  behavior): `benchmarks.ts`, `benchmarks/helpers.ts`, `js/async.ts`,
+  `eslint-shims/debug.ts`, `ir-retirement/class-closure.ts`,
+  `ir-retirement/entry.ts` — NONE of these six contain the literal text
+  `Proxy`; the byte delta comes from `ensureProxyRuntime` being invoked
+  UNCONDITIONALLY inside `ensureObjectRuntime` (not gated on the source
+  actually constructing a `Proxy`) — every standalone module that reaches the
+  object runtime bakes in the (now slightly smaller, direct-dispatch) Proxy
+  trap-invoke drivers as dead code. Expected, benign, no behavior change.
+- **Equivalence gate**: `22 failing, 1720 passing, 22 known-failures` —
+  unchanged from the pre-fix baseline.
+- **Must-not-move groups A/B/C/D** (S39b's 2,004-row definitions): NOT run in
+  this slice — time-budget cutoff. Flagged as an open verification gap for
+  whoever picks up the cross-module trap-invocation mechanism next; the
+  four-family sample and the 150-test regression suite are the strongest
+  signal collected so far that this fix is contained.
