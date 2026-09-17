@@ -545,6 +545,27 @@ in full.
 
 Equivalence gate: exit 0 — 1720 passing, 22 known failures, no new regressions.
 
+### After the catch-up merge with `origin/main` — re-measured, not assumed
+
+The two tables above isolate the S4 delta (same base, ±S4). The branch was then
+merged with `origin/main` @ `603ce3a4b2` (no conflicts), which brings #6484's
+iterator-prototype work — that moves a lot of this acceptance set on its own, so
+the pre-merge numbers cannot be carried forward. Both sides re-run, same 112-row
+list, same invocation:
+
+| | `origin/main` `603ce3a4b2` | merged branch |
+| --- | --- | --- |
+| pass | 56 | **59** |
+| fail | 56 | **53** |
+
+Row-level again: the merged branch's 53-row non-pass set is a strict SUBSET of
+main's 56-row set. **Lost: none**; the same +3. So the whole branch is net
++3 / −0 against CURRENT main, not only against its own fork point, and
+`setter-proxy-trap-rejects.js` passes on the merged tree.
+
+Post-merge re-validation: pin file 11/11 green, the behavioural control probe
+identical line for line to the pre-merge run, TS7 typecheck clean.
+
 ### Zero host imports
 
 `result.imports` is `[]` on every probe that exercises the new arm, asserted in
