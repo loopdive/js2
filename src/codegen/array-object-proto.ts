@@ -119,6 +119,11 @@ import {
 import { moduleReadsBareFunctionValue } from "./function-intrinsic-carrier.js";
 import { emitFunctionProtoHasInstanceBody, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "./function-proto-has-instance.js";
 import {
+  emitFunctionProtoApplyBody,
+  emitFunctionProtoBindBody,
+  emitFunctionProtoCallBody,
+} from "./function-proto-invokers.js"; // (#6630)
+import {
   ERROR_STACK_GETTER_MEMBER,
   ERROR_STACK_SETTER_MEMBER,
   emitErrorStackGetterBody,
@@ -2436,7 +2441,12 @@ function makeGlue(
     memberIsVariadic: (member) =>
       name === "Array" && (member === "join" || member === "push" || member === "unshift" || member === "concat")
         ? true
-        : name === "String" && member === "concat",
+        : name === "String" && member === "concat"
+          ? true
+          : // (#6630) `call`/`bind` both take `(thisArg, ...rest)` — the packed
+            // vec ABI the invoker bodies below unpack themselves. `apply` stays
+            // fixed at its 2-slot spec arity (thisArg, argArray).
+            name === "Function" && (member === "call" || member === "bind"),
     // (#4485) §B.2.4.3 — `Date.prototype.toGMTString` IS `Date.prototype.
     // toUTCString` (one function object, asserted by test262 annexB
     // .../toGMTString/value.js). The Annex B String aliases have the same
@@ -2507,6 +2517,13 @@ function makeGlue(
       (name === "Function" && member === FUNCTION_PROTO_HAS_INSTANCE_MEMBER
         ? emitFunctionProtoHasInstanceBody(c, fctx)
         : null) ??
+      // (#6630) `call`/`apply`/`bind` as reflective VALUES — forward to the
+      // generic "invoke any callable" primitives (`__apply_closure`/
+      // `__bind_dyn`) the rest of the runtime already uses for this question.
+      // See function-proto-invokers.ts's header for the full defect trace.
+      (name === "Function" && member === "call" ? emitFunctionProtoCallBody(c, fctx) : null) ??
+      (name === "Function" && member === "apply" ? emitFunctionProtoApplyBody(c, fctx) : null) ??
+      (name === "Function" && member === "bind" ? emitFunctionProtoBindBody(c, fctx) : null) ??
       (name === "Array"
         ? emitArrayProtoMemberBody(c, fctx, member)
         : name === "Promise"
