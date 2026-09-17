@@ -1256,3 +1256,51 @@ mergeable non-draft upstream PR from `ttraenkler/js2`; a genuinely incomplete
 or non-mergeable checkpoint alone may remain draft. The dedicated PR shepherd
 owns exact head/body/repository/readiness/check/conflict/queue verification.
 No GitHub issue is created.
+
+## Cross-realm is 103 of the remaining 1,401 rows — and the shim is the reason (2026-09-16)
+
+Measured on the standalone baseline fetched 2026-09-16 10:46 UTC
+(ES2015 `10,303 / 11,704 = 88.0 %`, 1,401 non-pass):
+
+| slice of the remaining 1,401 | rows |
+| --- | --- |
+| path or body mentions a realm | 103 |
+| of those, satisfiable if `$262.createRealm().global` aliased the current global | 91 |
+| of those, genuinely need two DISTINCT realms (`notSameValue`, or two realms in one test) | 12 |
+
+**Why they fail today is a harness fact, not an engine fact.**
+`tests/test262-runner.ts:2331` returns `const realm = {}; realm.global = realm`
+— an empty object. So `$262.createRealm().global.Symbol` is `undefined` and the
+row dies in the harness prologue ("Cannot access property on null or undefined
+at 330:38"), before it tests anything about the compiler.
+
+Meanwhile the COMPILER already assumes the opposite shim: the #3371 arm in
+`src/codegen/property-access-dispatch.ts:327` says in so many words that "the
+original Test262 realm shim deliberately aliases `$262.createRealm().global` to
+the current native global", and `proxy-value-provenance.ts:200` carries a
+matching alias resolver. Two narrow shapes are special-cased there; the general
+property read off a realm global is not.
+
+**Do not "fix" this by aliasing the shim.** Pointing `realm.global` at
+`globalThis` would flip ~91 rows to pass without the engine gaining any realm
+support at all — the rows exist precisely to check that a second realm has its
+OWN intrinsics, and the 12 that check distinctness would keep failing while
+their 91 siblings passed vacuously. That is the "a floor that is too low never
+fires" failure mode this file already warns about, pointed at the pass rate
+instead of at a gate.
+
+The honest options, in order of cost:
+
+1. **Genuine realm support**: `createRealm()` instantiates a SECOND instance of
+   the compiled module and hands back a `global` backed by that instance's
+   intrinsics. Two instances of one standalone module are independent by
+   construction, so the distinctness assertions would be true rather than
+   arranged. This is the only option that earns the 103 rows.
+2. **Quarantine**: count the realm rows as unsupported-by-design and report the
+   ES2015 rate with and without them, so the number stops implying a capability
+   that is not there.
+3. **Leave them failing** (the status quo): honest, and the 103 stay as a known
+   7.3 % ceiling on the remaining work.
+
+This is a stakeholder decision, not an implementation detail — it changes what
+"100 % ES2015 standalone" can mean. Recorded rather than decided.
