@@ -8,6 +8,7 @@
 import { ts, forEachChild } from "../../ts-api.js";
 import type { EarlyErrorContext } from "./context.js";
 import {
+  collectBindingNames,
   collectBindingNamesWithDuplicateCheck,
   collectSwitchClauseLexicalNames,
   collectStatementListBoundNames,
@@ -54,6 +55,43 @@ export function checkDuplicateParams(
 }
 
 /**
+ * (#6491 r2) VarDeclaredNames of a statement list: every `var` binding reachable
+ * without entering a new var scope.
+ *
+ * Recurses through blocks, `if`, loops, `try`, `switch` and labels — a `var` is
+ * hoisted out of all of them — and stops at functions and classes, which start
+ * their own var scope. Destructuring patterns contribute every bound name.
+ */
+function collectVarDeclaredNames(stmts: readonly ts.Statement[]): Set<string> {
+  const names = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isFunctionDeclaration(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isClassDeclaration(node) ||
+      ts.isClassExpression(node) ||
+      ts.isMethodDeclaration(node) ||
+      ts.isGetAccessorDeclaration(node) ||
+      ts.isSetAccessorDeclaration(node) ||
+      ts.isConstructorDeclaration(node)
+    ) {
+      return;
+    }
+    if (ts.isVariableStatement(node) || ts.isVariableDeclarationList(node)) {
+      const list = ts.isVariableStatement(node) ? node.declarationList : node;
+      if ((list.flags & ts.NodeFlags.Let) === 0 && (list.flags & ts.NodeFlags.Const) === 0) {
+        for (const decl of list.declarations) collectBindingNames(decl.name, names);
+      }
+      return;
+    }
+    node.forEachChild(visit);
+  };
+  for (const stmt of stmts) visit(stmt);
+  return names;
+}
+
+/**
  * Check for duplicate lexical declarations (let, const, class, function) in a
  * block or at the top level of a SourceFile.
  *
@@ -91,6 +129,17 @@ export function checkDuplicateLexicalDeclarations(
   // Annex B §B.3.2.1 applies only to Blocks (never module/script top level).
   const annexBEligible = ts.isBlock(block);
   const lexNames = new Map<string, ts.Node>();
+  // (#6491 r2) VarDeclaredNames of the statement list. Collected up front
+  // because §16.2.1.1's "LexicallyDeclaredNames ∩ VarDeclaredNames is empty" is
+  // order-independent: `var f; function* f() {}` and the reverse are equally
+  // errors, and only the lexical side was tracked before — the `var` half was
+  // never collected at all, so the two
+  // `module-code/parse-err-hoist-lex-{fun,gen}.js` rows compiled clean.
+  //
+  // Only consulted when `functionsAreLexical`, i.e. exactly where a top-level
+  // function declaration IS a lexical declaration (Module goal, or a Block).
+  // In a Script `var f; function f(){}` is legal and must stay legal.
+  const varNames = functionsAreLexical ? collectVarDeclaredNames(stmts) : new Set<string>();
   /** Lexical names bound (so far) ONLY by plain FunctionDeclarations (Annex B). */
   const fnOnlyLexNames = new Set<string>();
   /** Var-scoped top-level FunctionDeclaration names (script / function-body). */
@@ -109,6 +158,12 @@ export function checkDuplicateLexicalDeclarations(
     if (varFnNames.has(name)) {
       // A lexical declaration colliding with a var-scoped function name
       // (§16.1.1 LexicallyDeclaredNames ∩ VarDeclaredNames).
+      ctx.addError(errorNode, `Duplicate identifier '${name}'`);
+      return;
+    }
+    if (varNames.has(name)) {
+      // (#6491 r2) The other half of the same intersection: a `var` of the
+      // same name anywhere in this statement list.
       ctx.addError(errorNode, `Duplicate identifier '${name}'`);
       return;
     }

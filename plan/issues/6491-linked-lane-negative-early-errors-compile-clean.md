@@ -31,11 +31,23 @@ func-budget-allow:
   - src/codegen/closure-exports.ts::emitClosureCallExportN
   - src/codegen/closure-exports.ts::emitClosureMethodCallExportN
   - src/codegen/context/create-context.ts::createCodegenContext
+# (2026-09-17, round 2) +46 lines in `src/compiler/early-errors/node-checks.ts`,
+# of which ~34 are comment. `node-checks.ts` IS the subsystem module the god-file
+# gate wants — it is the per-node rule table the #1931 decomposition created, and
+# a rule that fires on an Identifier/AwaitExpression has to be registered in that
+# table's `on([...])` dispatch to run at all. Two of the three edits are ONE line
+# each inside an existing rule (`"let"` added to STRICT_RESERVED_WORDS; the
+# module-goal arm of the await-position condition); the third is the 12-line
+# `isImportedBindingName` predicate, placed beside the two strict-binding rules
+# that are its only callers because it encodes WHICH of an import's identifiers
+# is the BindingIdentifier — a fact those two rules' parent-kind lists are
+# otherwise silent about. Splitting the god-function is #3399's job.
 loc-budget-allow:
   - src/runtime.ts
   - src/codegen/closure-exports.ts
   - src/codegen/statements/nested-declarations.ts
   - src/codegen/context/types.ts
+  - src/compiler/early-errors/node-checks.ts
 ---
 
 # #6491 — early errors not detected on the body-only unit
@@ -251,3 +263,84 @@ harness gap, and it failed on main too), but it no longer traps.
 `equivalence-gate`: 22 failing / 1,720 passing / 22 known — no new regressions.
 Guards re-run green: #1931, #2664 ×2, #2623 P-7, #3451 ×3, #6474, #6491 ×2,
 #6492 ×3.
+
+## Round 2 (2026-09-17, Opus lane) — real early errors
+
+Branch `issue-6491-r2`, based on `f25fd4bcda`. Round 1 established that the 36
+`early error not detected` rows are honest-lane FALSE PASSES: the compiler
+detects none of them and the honest verdict rides on an IR-fallback WARNING
+about `$DONOTEVALUATE`. This round makes the compiler actually detect them, so
+both lanes pass for the right reason. The worker's lenient arm is untouched.
+
+### Where the misses came from
+
+The early-error pass was not missing a plumbing hook — `enforceJsEarlyErrors`
+and `moduleGoal` both reach `detectEarlyErrors` correctly. It was missing
+RULES, and one predicate gap accounted for a third of them.
+
+| # | rule (ECMA-262) | mechanism that hid it | rows |
+| - | --- | --- | ---: |
+| 1 | §11.2.2 module code is strict | `isStrictMode`'s SourceFile terminal deliberately refuses to infer module-ness from the syntactic indicator (the compiler ADDS `export {}` for TS, so a sloppy script would read as strict). That reasoning is about the INFERRED indicator; the EXPLICIT `moduleGoal` the runner passes for `flags: [module]` is a fact. A `WeakSet` of module-goal files, registered in `createEarlyErrorContext` before any rule runs, keeps `isStrictMode` a pure function of the node (which the #4431 memo depends on). | 5 |
+| 2 | §16.2.2 ImportedBinding is a BindingIdentifier | The two strict-binding rules enumerate their parent kinds, and no import kind was on either list. `isImportedBindingName` adds ImportSpecifier/ImportClause/NamespaceImport — and deliberately NOT `ImportSpecifier.propertyName`, which is the other module's export name. | (of the 5) |
+| 3 | §13.1.1 `let` is strict-reserved | `let` was the only member missing from `STRICT_RESERVED_WORDS`. Safe by construction: a `let` DECLARATION parses as a keyword, never an Identifier node. | 4 |
+| 4 | §11.2.2 ContainsUseStrict of a FunctionBody | `isStrictMode` listed FunctionDeclaration/Expression/Arrow/Method but **not the two accessor kinds**, so a `"use strict"` prologue inside a getter/setter was invisible and every strict rule in an accessor body was unreachable. | 2 |
+| 5 | §15.8 `await` in a non-async function | The rule existed but was gated on `isInsideNestedFunction` (depth ≥ 2) to tolerate a synthetic `export function test() { … }` wrapper. The corpus rows are ONE function deep. Under an explicit module goal that wrapper is not in play, so the goal selects the accurate predicate; top-level `await` with no enclosing function stays legal. | 4 |
+| 6 | §13.15.1 AssignmentTargetType | `validateAssignmentTarget`'s tail is deliberately permissive, so destructuring ELEMENTS were never validated. Added the one kind that needs no judgement: a MetaProperty (`import.meta`, `new.target`) is not assignable in any goal or dialect. | 4 |
+| 7 | §16.2.1.1 LexicallyDeclaredNames ∩ VarDeclaredNames | `checkDuplicateLexicalDeclarations` tracked only the LEXICAL side — plain `var` names were never collected at all. Added `collectVarDeclaredNames` (recurses through blocks/if/loops/try/switch, stops at functions and classes), consulted only where a top-level function IS lexical, so the Script rule is untouched. | 2 |
+
+### Before / after — real runner, the 36 rows, both lanes
+
+Artifacts: `benchmarks/results/test262-{linked,honest}-{lb,nb,la,na}-results-*.jsonl`
+(`lb`/`nb` = base, `la`/`na` = this branch), fresh harness cache per run,
+`scripts/compiler-bundle.mjs` rebuilt on each side of the A/B.
+
+| lane | before | after |
+| --- | ---: | ---: |
+| linked, the 36 rows | 1 pass / 35 fail | **21 pass / 15 fail** |
+| honest, the 36 rows | 36 pass | **36 pass** (unchanged) |
+
+The honest column is the point: those rows were passing on a warning and now
+pass on a diagnostic. Evidence — the honest whole-assembly's `result.errors`
+after the change (`success=false`, no IR-fallback warning involved):
+
+```
+module-code/early-strict-mode.js          error: 'public' is a reserved word in strict mode …
+statements/class/class-name-ident-let.js  error: 'let' is a reserved word in strict mode …
+import.meta/…/invalid-assignment-target-array-destructuring-expr.js
+                                          error: Invalid destructuring assignment target 'import.meta'
+module-code/top-level-await/…-fn-declaration-body.js
+                                          error: 'await' expressions are only allowed in async functions
+module-code/parse-err-hoist-lex-fun.js    error: Duplicate identifier 'f'
+```
+
+### No false positives
+
+- **Honest slice**, the directories these rules touch
+  (`language/{module-code,expressions/import.meta,expressions/object,statements/class,statements/using,expressions/generators,expressions/async-generator}/`),
+  deterministic quarter-chunk so both sides score the SAME subset — **924 rows,
+  749 pass → 749 pass, 0 flips in either direction.** (A quarter rather than all
+  7,309: an honest run of the full slice is ~60 min a side.)
+- **`node scripts/equivalence-gate.mjs`** (what CI runs): 22 failing / 1,720
+  passing / 22 known — **no new regressions**, identical to round 1's numbers.
+- `tests/issue-4417-early-error-false-positives.test.ts`, `issue-1931`,
+  `issue-3419`, `issue-2929` — 71 tests, all pass.
+- `tests/issue-3632-eval-early-errors.test.ts` has 2 failures; **verified
+  pre-existing** by A/B (same 2 fail with these changes reverted) — a runtime
+  value and a standalone import error, unrelated to early errors.
+
+### The 15 rows NOT fixed, with mechanism
+
+| rows | rule | why not |
+| ---: | --- | --- |
+| 3 | `export` / `import` / `import.meta` in a **Script** (`global-code/{export,import}.js`, `import.meta/syntax/goal-script.js`) | Needs an explicit SCRIPT-goal signal. `moduleGoal === false` is ambiguous — it is also what every product `.ts` compile passes, and those legitimately contain `export`. Flagging on it would reject ordinary code. A separate `scriptGoal` option plumbed from the runner would fix all three. |
+| 2 | import-attributes `json-{invalid,named-bindings}.js` | `negative.phase: resolution`, and the worker passes `enforceJsEarlyErrors: isNegative && negativePhase !== "resolution"` — the early-error pass is not asked to run at all. These need JSON-module resolution semantics, not a syntax rule. |
+| 3 | class static block: `await` as a binding / reference, `arguments` reference (`static-init-{await-binding-invalid,await-reference,invalid-arguments}.js`) | §15.7.1 makes `await` and `arguments` illegal in a ClassStaticBlock. `isInsideClassStaticBlock` already exists and the AwaitExpression rule uses it; what is missing is the IDENTIFIER-shaped cases (`function await() {}`, `(x = await) => 0`, a bare `arguments` reference). Contained follow-up. |
+| 2 | `yield` as a generator/async-generator FunctionExpression's own name | §15.5.1: the BindingIdentifier of a GeneratorExpression is in the generator's own scope, where `yield` is reserved. Needs a rule keyed on `FunctionExpression.asteriskToken` + `name.text`. Contained follow-up. |
+| 2 | `module-code/early-export-{global,unresolvable}.js` | §16.2.3.1: every ExportedBinding must be declared in the module. Needs a module-goal pass collecting declared top-level names (var/let/const/function/class/import) and checking local `export { x }` clauses, skipping re-exports (`export { x } from …`), where the name is the other module's. |
+| 1 | `module-code/export-expname-string-binding.js` | `export { "foo" as "bar" }` — a string ModuleExportName is only legal as the LOCAL name in a re-export. |
+| 1 | `statements/let/syntax/identifier-let-allowed-as-lefthandside-expression-strict.js` | `for (let in o)` in strict code: `let` as an IdentifierReference in a for-in LHS, not a BindingIdentifier, so rule 3 above does not reach it. |
+| 1 | `statements/using/redeclaration-error-from-within-strict-mode-function-using.js` | `{ using f = null; var f; }` — `using` declarations are not modelled as lexical names by the duplicate rules. |
+
+Acceptance stays open: 21 of the 36 agree. The rows above are ordinary
+follow-up work except the Script-goal three, which need a signal the runner does
+not currently send.

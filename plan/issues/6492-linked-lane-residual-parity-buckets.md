@@ -96,11 +96,27 @@ loc-budget-allow:
   - src/codegen/extern-declarations.ts
   - src/codegen/type-coercion.ts
   - src/runtime/iterator-polyfills.ts
+  # 2026-09-17 (round 9) — the free-global-call MECHANISM is a new subsystem
+  # module, `src/codegen/expressions/linked-free-global-call.ts` (170 lines,
+  # 60 of them the rationale). What lands in the god-file is +13 lines: the
+  # import plus one guarded dispatch. It has to sit in `call-identifier.ts`
+  # and nowhere else, because the thing being corrected is the REACHABILITY of
+  # `tryEmitUndeclaredCalleeReferenceError` on the next line — the arm is
+  # meaningful only as "before that unconditional throw", and the declared/
+  # implicit-callee/runtime-eval conditions it must not shadow are local
+  # variables of that dispatch chain. Splitting the chain is #3399's job.
+  - src/codegen/expressions/call-identifier.ts
 func-budget-allow:
   - src/codegen/closures.ts::compileArrowAsCallback
   - src/runtime.ts::resolveImport
   - src/codegen/type-coercion.ts::coerceType
   - src/runtime/iterator-polyfills.ts::_installIteratorHelperPolyfills
+  # 2026-09-17 (round 9) — same +12 lines as the LOC grant above, counted
+  # against the enclosing dispatcher. The guard cannot move out of
+  # `compileIdentifierCall` without carrying `declaration`, `implicitCallee`
+  # and `isRuntimeEvalGlobal` with it; the emission it guards already lives in
+  # its own module.
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
 ---
 
 # #6492 — linked lane residual after P3c
@@ -1760,3 +1776,72 @@ singles.
     written later — by another module in the same linked graph, or by the body
     itself — has to be a live lookup, and no amount of declaring the name more
     convincingly changes that.
+
+## Round 9 (2026-09-17) — provider-side free-global CALL
+
+**Shipped: one mechanism.** `src/codegen/expressions/linked-free-global-call.ts`
+— a `__extern_has(globalThis, name)`-guarded live lookup for a CALL of an
+undeclared free identifier inside a linked PROVIDER, dispatched from
+`compileIdentifierCall` immediately before `tryEmitUndeclaredCalleeReferenceError`.
+The absent arm keeps the ReferenceError, and arguments are compiled inside the
+present arm so §13.3.6.1's "resolve the callee reference first" is preserved.
+
+Measured on the real runner (138-row #6492 set):
+
+| lane | before | after | flips |
+| --- | --- | --- | --- |
+| linked | 40 / 138 | **44 / 138** | +4, 0 losses |
+| honest | 135 / 138 | 135 / 138 | 0 |
+
+Honest control slice `harness/**` + `language/global-code/**` +
+`language/eval-code/**` (505 rows, base vs. change): **0 flips**.
+`tests/issue-3451-linked-harness-lane.test.ts`: 8/8.
+
+Rows gained: `harness/asyncHelpers-asyncTest-func-throws-sync.js`,
+`…-rejects-non-callable.js`, `…-return-not-thenable.js`,
+`harness/proxytrapshelper-default.js`.
+
+### Not shipped: the write side, and why the round-8 measurement was misleading
+
+Round 8's write side (seed the consumer's script-goal bindings onto the realm
+object via `emitScriptGlobalFunctionBindings`) was re-measured this round with
+its flag defect fixed, and it is **redundant with the read side, not
+complementary**: read-side-only, write-side-only and both-together each give
+exactly the same 4 rows (22 harness rows: base 10 → 14 in all three arms).
+Only the read side ships — it is gated to the provider role and to CALL sites,
+where the write side changes every script-goal consumer binding.
+
+That redundancy also explains round 8's "read side alone: 0 rows". It was not
+0; it was measured against a tree whose write side was *actively poisoning* the
+read side. `SCRIPT_FUNCTION_BINDING_FLAGS = 0x03` carries **no presence bits**
+in `__defineProperty_value`'s encoding (`1<<7` value, `1<<3/4/5` writable/
+enumerable/configurable-specified), so it decodes to the EMPTY descriptor: the
+seed created a **frozen `undefined`** property. `__extern_has` then answered
+true and the provider called `undefined`. The round-8 verdict
+`Cannot redefine property: test` was the body's own later write colliding with
+that frozen seed — not, as assumed at the time, a second seeder.
+
+The correct encoding is `0xbb` (value-present, writable=true, enumerable=true,
+configurable specified-false). It is **not** in this change: the flag constant
+is on the standalone path as well, so correcting it is its own measured change
+with its own standalone A/B — filed as **#6499**. Anyone re-enabling the write side must fix the
+constant first or they will re-derive this same false negative.
+
+### Findings for the next lane (round 9)
+
+22. **A redundant mechanism can read as a broken one.** Two independent fixes
+    for the same rows will each measure as "+0" when the other is already
+    present — and if one of them is *wrong*, it measures the other as +0 too,
+    which is indistinguishable from "does not work". Measure each mechanism
+    against the BASE tree alone before concluding anything about it.
+23. **The in-process linked seam is not the runner and cannot witness this
+    class of bug.** A behavioural test built on `buildHarnessProvider` +
+    `compileHarnessLinkedBody` passed all three cases ON THE PRE-FIX TREE,
+    because that seam never seeds the realm the provider reads. The shipped
+    test asserts the WAT instead, with a non-provider control compiled from
+    identical source — see the header of
+    `tests/issue-6492-r9-linked-provider-free-global-call.test.ts`.
+24. **`exportsConsumedByWasm` is not inert on standalone.** It changes codegen
+    through `standalone-link-boundary.ts`, so "provider vs. non-provider
+    byte-identity" is the wrong standalone guard; gate-level reasoning plus the
+    #3451 per-row binary guard is the right one.
