@@ -14,6 +14,7 @@ import { checkDuplicateLabels } from "./labels.js";
 import {
   checkDuplicateConstructors,
   checkDuplicateExportNames,
+  checkDuplicateImportedBindings,
   checkExportDefaultDeclaration,
   checkHtmlCloseComment,
   checkModuleItemPosition,
@@ -40,6 +41,7 @@ export function detectEarlyErrors(sourceFile: ts.SourceFile, opts?: { moduleGoal
   checkExportDefaultDeclaration(ctx);
   checkDuplicateLabels(ctx, sourceFile, new Set());
   checkDuplicateExportNames(ctx);
+  checkDuplicateImportedBindings(ctx);
   checkModuleItemPosition(ctx);
   checkReservedIdentifiers(ctx);
   checkHtmlCloseComment(ctx);

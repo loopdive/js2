@@ -2130,6 +2130,22 @@ function _wrapWasmClosureUnknownArity(
   // probed, -1 = unknown (no export / not a closure). Cached per wrapper — the
   // arity of a given closure struct never changes.
   let realArityCache = -2;
+  /** The closure's declared formal count, or -1 when the module cannot say. */
+  const declaredArity = (): number => {
+    if (realArityCache === -2) {
+      realArityCache = -1;
+      const arityFn = exports.__closure_arity as ((v: any) => number) | undefined;
+      if (typeof arityFn === "function") {
+        try {
+          const a = arityFn(closure);
+          if (typeof a === "number" && a >= 0) realArityCache = a;
+        } catch {
+          realArityCache = -1;
+        }
+      }
+    }
+    return realArityCache;
+  };
   const dispatch = function wasmClosureDynamicDispatch(this: any, ...args: any[]): any {
     // (#3051 Slice 3) Host-side [[Construct]] (`new bridge(...)` — e.g. V8's
     // `Construct(C_species, «rx, flags»)` in the RegExp @@split protocol): a
@@ -2157,20 +2173,9 @@ function _wrapWasmClosureUnknownArity(
       // export or the exact-arity dispatcher isn't emitted — never dispatches
       // BELOW the closure's declared arity (the #2664 acorn omission hazard).
       let dispatchArity = methodMaxArity;
-      if (realArityCache === -2) {
-        realArityCache = -1;
-        const arityFn = exports.__closure_arity as ((v: any) => number) | undefined;
-        if (typeof arityFn === "function") {
-          try {
-            const a = arityFn(closure);
-            if (typeof a === "number" && a >= 0) realArityCache = a;
-          } catch {
-            realArityCache = -1;
-          }
-        }
-      }
-      if (realArityCache >= 0) {
-        const exact = Math.max(args.length, realArityCache);
+      const methodRealArity = declaredArity();
+      if (methodRealArity >= 0) {
+        const exact = Math.max(args.length, methodRealArity);
         if (exact < methodMaxArity && typeof exports[`__call_fn_method_${exact}`] === "function") {
           dispatchArity = exact;
         }
@@ -2199,6 +2204,30 @@ function _wrapWasmClosureUnknownArity(
     // caller's arg count so unbound-`this` + low-arity generator semantics hold
     // (a 0-arg generator invoked via `__call_fn_1` yields a non-iterator).
     let arity = Math.min(args.length, maxArity);
+    // (#6491) UNDER-APPLICATION must still run the body. `__call_fn_N` matches
+    // only closures whose declared arity is N (the #2664 omission the METHOD
+    // arm above already handles), so a 0-arg call of a 1-param closure selected
+    // `__call_fn_0`, matched nothing, and returned `undefined` — the body never
+    // ran, default parameters never evaluated, and a throw the callee owed its
+    // caller never happened. In-module that call is compiled in Wasm and never
+    // reaches this bridge, so the divergence is invisible until a caller and a
+    // callee live in DIFFERENT modules: the #3451 linked test262 lane, where the
+    // harness calls the test body's functions. Measured there: every
+    // `assert.throws(SyntaxError, f)` over an under-applied `f` scored "no
+    // exception was thrown at all" (14 `language/eval-code/direct` rows).
+    // Widen to the closure's own declared arity — never ABOVE it, so the
+    // low-arity generator rule the comment above states is untouched — and let
+    // `_denseOwnWasmArgs` pad the missing positions with real `undefined`.
+    // Residual: this free-function family has no argc-seeding wrapper (only
+    // `__call_fn_method_argc_N` exists), so a widened call reports
+    // `arguments.length` as the declared arity. That is a narrower wrong answer
+    // than not running the body at all, and it is confined to calls that
+    // previously produced nothing.
+    const freeRealArity = declaredArity();
+    if (freeRealArity > args.length) {
+      const widened = Math.min(freeRealArity, maxArity);
+      if (widened > arity && typeof exports[`__call_fn_${widened}`] === "function") arity = widened;
+    }
     while (arity > 0 && typeof exports[`__call_fn_${arity}`] !== "function") arity--;
     const callFn = exports[`__call_fn_${arity}`];
     if (typeof callFn !== "function") return undefined;

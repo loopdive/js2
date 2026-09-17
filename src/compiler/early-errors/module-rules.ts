@@ -33,6 +33,48 @@ export function checkExportDefaultDeclaration(ctx: EarlyErrorContext): void {
 }
 
 /**
+ * Duplicate IMPORTED bound names (source-file level check).
+ *
+ * §16.2.1.1: ModuleItemList's LexicallyDeclaredNames include ImportedBindings,
+ * and it is a Syntax Error if they contain duplicate entries — so
+ * `import { x } from "a"; import { y as x } from "b";` is an early error even
+ * though neither declaration is duplicated on its own.
+ *
+ * (#6491) Nothing enforced this rule. The single-source path only APPEARED to:
+ * its import preprocessing rewrites unresolvable imports into declarations, and
+ * `checkDuplicateLexicalDeclarations` then reported the rewritten pair. The
+ * multi-file path resolves imports through the TS program and never rewrites,
+ * so the SAME source compiled clean there (`language/import/dup-bound-names.js`
+ * in the linked test262 lane). The rule belongs in the early-error pass, where
+ * it holds for every path.
+ *
+ * Deliberately narrow: import-vs-import only. The import-vs-top-level-lexical
+ * half of §16.2.1.1 needs the module-goal scoping rules
+ * `checkDuplicateLexicalDeclarations` owns and is not folded in here.
+ */
+export function checkDuplicateImportedBindings(ctx: EarlyErrorContext): void {
+  const seen = new Map<string, ts.Node>();
+  const add = (name: string, node: ts.Node): void => {
+    if (seen.has(name)) {
+      ctx.addError(node, `Duplicate identifier '${name}'`);
+      return;
+    }
+    seen.set(name, node);
+  };
+  for (const stmt of ctx.sourceFile.statements) {
+    if (!ts.isImportDeclaration(stmt) || !stmt.importClause) continue;
+    const clause = stmt.importClause;
+    if (clause.name) add(clause.name.text, clause.name);
+    if (!clause.namedBindings) continue;
+    if (ts.isNamespaceImport(clause.namedBindings)) {
+      add(clause.namedBindings.name.text, clause.namedBindings.name);
+    } else {
+      for (const element of clause.namedBindings.elements) add(element.name.text, element.name);
+    }
+  }
+}
+
+/**
  * Duplicate export names (source-file level check).
  * ES spec: It is a Syntax Error if ExportedNames contains any duplicate entries.
  */
