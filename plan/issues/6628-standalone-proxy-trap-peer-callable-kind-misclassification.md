@@ -276,3 +276,19 @@ unlinked and linked variants, with the 8 linked-mode improvements fully
 explained by the fix's own mechanism. No regression found anywhere in this
 battery; #6628's fix is now measured-contained across group A–E plus the
 family sample and the equivalence gate.
+
+## Pointer — #6637 (S52c, 2026-09-18): the empty-handler Proxy repro is NOT
+## this bucket, and NOT cross-module at all
+
+#6637 (dispatched as S52/S52b/S52c against the "second, deeper cross-module
+mechanism" this file's title names) turned out to be a DIFFERENT, more
+general defect: `emitNullGuardedStructGet`'s guarded-cast-then-throw path
+misfires for ANY untyped ("any"-receiver) dot-access on a Proxy, reproducible
+in a single standalone module with zero linking — see #6637's own issue file
+("The corrected diagnosis: this is NOT a cross-module or struct-layout bug")
+for the full evidence chain. This does not change anything in THIS issue's
+own fix or verification above (#6628's `__apply_closure` peer-callable-kind
+fix remains correct and measured-contained); it only retires the framing that
+#6637 is "this bucket's second mechanism, still cross-module." Anyone landing
+here from #5383's bucket tracking should route to #6637, not re-open this
+file.

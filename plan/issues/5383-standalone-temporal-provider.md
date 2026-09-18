@@ -10830,3 +10830,80 @@ E-unlinked 235/300; E-linked 235/300; F-class 136/250; F-methoddef 68/100;
 F-objproto 136/150; corpus byte A/B 0/84 flips; equivalence gate 22/1720/22)
 — unchanged because nothing was changed.
 
+### S52c findings (2026-09-18) — the "cross-module Proxy" framing is WRONG: the empty-handler repro is a single-module, non-Proxy-specific "any"-typed dynamic-property-access defect; S52's/S52b's reverse-peer classification fix reverted as not applicable
+
+Dispatched to fix S52b's empty-handler-Proxy repro under a "cross-module
+`$Proxy`/`$ProxyTraps` field-layout mismatch" hypothesis. That hypothesis is
+falsified — decompiled both binaries (`wasm-dis -all`) and confirmed field
+count/type/order identical between provider and consumer; the failing
+`ref.cast $Proxy` narrative from S52b was also never actually true for the
+empty-handler case (never verified there — that message string was S52's,
+for the *real*-trap `readViaProxy` case, and was assumed to carry over
+without re-checking).
+
+Direct bisection (three gitignored probes preserved at
+`.tmp/s52c/probe-6637-{repro,direct,single-module}.test.ts` in this branch's
+worktree) found the actual cause: **`export function readOverflowDirect(o) {
+return o.overflow; }`, called with a `new Proxy({overflow:1}, {})` value,
+throws `TypeError: Cannot access property on null or undefined` even in a
+SINGLE STANDALONE MODULE with no link, no provider/consumer split, no
+`__apply_closure`/methodCall bridge at all** — confirmed by
+`diagNullCheck(o)` (`o === null` answers `1` for the live, non-null Proxy)
+and by `emitNullGuardedStructGet`/`emitGuardedRefCast`
+(`src/codegen/property-access.ts` / `type-coercion.ts`): an UNTYPED ("any")
+receiver's dot-access takes a static guarded-cast-to-some-struct-type fast
+path, finds no static struct with a field literally named `overflow` (a
+Proxy's properties are never static struct fields), and
+`emitNullCheckThrow` treats the resulting failed-cast null as "receiver is
+null" instead of falling through to the dynamic `__extern_get` path — which
+DOES correctly `ref.test $Proxy` and would dispatch correctly. Every
+provider function parameter is necessarily untyped (the link stub declares
+`any`), which is why this looked cross-module-specific in S52/S52b/#6628 —
+it is not; the SAME throw reproduces with `readOverflow` defined and called
+in one module, on one instance, with zero linking.
+
+Full detail, evidence chain, and the corrected recommendation (retire the
+"cross-module Proxy" framing; the next slice needs an architect pass on
+`emitNullGuardedStructGet`'s blast radius, not another link-harness repro)
+are in `#6637`'s own issue file, rewritten this session.
+
+**S52b's WIP reverted** (`git revert --no-edit HEAD` on
+`9f7e38ac1e`) — the reverse-peer `localCallableKind`/`reverseCallableKind`
+terminals and `__typeof_function`'s reverse fallback arm target a
+callable-classification gap that this session's evidence shows is not
+implicated in the empty-handler repro (no trap closure exists to
+misclassify — confirmed by the single-module, zero-linking repro above).
+They may still be useful for the REAL-trap case (`readViaProxy`, which has
+an actual `get(t,k,r){...}` closure and threw "Proxy get trap is not
+callable" per S52/S52b's own original finding — this session did not
+re-examine that case) but should be re-implemented against whatever #6637's
+eventual fix changes in `__typeof_function`'s arm ladder, not resurrected
+as-is.
+
+A second, smaller, INDEPENDENT defect was also found and left unfixed:
+`("overflow" in proxy)`, `Object.isExtensible(proxy)`, and
+`Object.keys(proxy).length` on the same empty-handler cross-module Proxy
+answer `0`/`0`/`0` (should be `1`/`1`/`1`) with NO throw — these compile
+through the generic dynamic helpers (`__extern_has`/`__object_isExtensible`/
+`__object_keys`), which DO correctly recognize `$Proxy` and correctly detect
+the trap-absent case, but then answer wrong when forwarding to the target
+(`p.ptarget`). Not traced further this session; noted as a candidate
+follow-up in #6637's "What's still open".
+
+**No fix attempted, no witness test suite added.** The real defect's fix
+touches `emitNullGuardedStructGet`/`emitGuardedRefCast` — the generic
+"any"-typed member-access fast path used by every struct-shaped runtime
+value in the compiler, not a Proxy-specific function — which is a
+different, larger-blast-radius change than what was scoped for a "fix the
+cross-module Proxy struct layout" slice, and needs its own architect design
+pass on which guarded-cast call sites are meant to throw on a genuine shape
+miss vs. fall through to the dynamic path. Base-vs-fix comparison, the
+four-family battery, the must-not-move A–F battery, byte-flip tables, and
+equivalence-gate numbers were not run — there is no fix on this branch to
+measure; HEAD is `d2d0072b5c` on branch
+`issue-5383-standalone-temporal-s52c` (S52b's `9f7e38ac1e` plus a clean
+revert of it), worktree
+`/home/user/js2/.claude/worktrees/agent-ad93bfa729a45909f`. The four-family
+and A–F numbers are unchanged from S51's figures (the revert restores
+exactly S52b's pre-diff source; no other `src/` file touched).
+

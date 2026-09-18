@@ -702,3 +702,79 @@ lane's A/B ruled out.
 
 **Next lane**: Task 2 (the `SameValue(null, undefined)` reduction) remains
 the only open thread from this stack; the E-linked thread is closed.
+
+## Stack state 2026-09-18 (post-S52c) — the "cross-module Proxy" framing for
+#6637/#6628's parked bucket is WRONG; real defect found (single-module,
+"any"-typed dot-access on a Proxy), no fix attempted, S52b's WIP reverted
+
+S50/S51/S52/S52b ran between S49c and this entry (see each issue's own
+findings sections — #6635 fixed in S50; S51 found the 4 target `RangeError`
+rows all decompose to #6628's parked bucket, no fix; S52 diagnosed a
+provider-side callable-classification gap in that bucket; S52b implemented
+S52's prescribed fix — a reverse-peer callable-kind channel — confirmed it
+does NOT unblock the empty-handler repro, and narrowed the finding to "no
+trap exists to misclassify here", correctly flagging its own diagnosis as
+insufficient).
+
+S52c (branch `issue-5383-standalone-temporal-s52c`, worktree
+`/home/user/js2/.claude/worktrees/agent-ad93bfa729a45909f`, started at
+S52b's tip `9f7e38ac1e`) was dispatched to find the real cause under a
+"cross-module `$Proxy`/`$ProxyTraps` struct-layout mismatch" hypothesis.
+**That hypothesis is falsified — direct WAT diffing confirms both modules'
+struct shapes are byte-identical.** Bisection instead found: the exact same
+throw (`TypeError: Cannot access property on null or undefined`) reproduces
+in a SINGLE STANDALONE MODULE with NO link at all, for
+`function f(o) { return o.overflow; }` (untyped param) called with
+`new Proxy({overflow:1}, {})`. Root cause traced to
+`emitNullGuardedStructGet`/`emitGuardedRefCast`
+(`src/codegen/property-access.ts` / `type-coercion.ts`): an untyped ("any")
+receiver's dot-access takes a static guarded-cast-to-some-struct fast path,
+finds no static struct with a field literally named `overflow` (Proxy
+properties are dynamic, never static struct fields), and treats the failed
+cast as "receiver is null" instead of falling through to the dynamic
+`__extern_get` path (which DOES correctly recognize `$Proxy`). The
+cross-module framing throughout #5383's S52/S52b/#6628 was a coincidence —
+every provider function parameter is necessarily untyped, which is what
+actually triggers this, not the module boundary. Full evidence chain (byte
+diffs, the direct-import bisection ruling out `__apply_closure`, the
+decisive single-module repro, the `charCodeAt`-decoded thrown message, and
+the `=== null` confirmation) is in `#6637`'s rewritten issue file; summary
+in `#5383`'s own "### S52c findings" section; a pointer added to `#6628`'s
+issue file so future readers of that bucket route to #6637 instead of
+re-opening #6628.
+
+**S52b's WIP reverted** (`git revert --no-edit HEAD` on `9f7e38ac1e`,
+clean — `git diff 0bb08d20a0..HEAD -- src/codegen/standalone-link-reverse-peer.ts
+src/codegen/typeof-natives-finalize.ts` is empty) since it targets a
+classification gap this session's evidence shows is not implicated in the
+empty-handler repro. It may still be useful for the REAL-trap case
+(`readViaProxy`, an actual `get(t,k,r){...}` closure, which threw "Proxy get
+trap is not callable" per S52/S52b's own finding — not re-examined this
+session) but should be re-implemented once #6637's fix lands, not
+resurrected as-is.
+
+**No fix attempted, no witness suite committed.** The real fix touches the
+generic "any"-typed member-access fast path used by every struct-shaped
+runtime value (not Proxy-specific) — a different, larger-blast-radius change
+than scoped for this slice, needing an architect pass on which guarded-cast
+call sites should fall through to the dynamic path vs. genuinely throw. HEAD
+is `d2d0072b5c` (S52b's `9f7e38ac1e` plus a clean revert). Four-family/A–F/
+equivalence numbers unchanged from S51 (the revert restores exactly S52b's
+pre-diff source; no other `src/` file touched; base-vs-fix comparison
+doesn't apply — there is no fix to compare).
+
+A second, smaller, independent defect was found and left open: `in`/
+`Object.isExtensible`/`Object.keys` on the same empty-handler cross-module
+Proxy answer wrong (`0`/`0`/`0` instead of `1`/`1`/`1`) with no throw — these
+route through the generic dynamic helpers, which DO recognize `$Proxy`
+correctly but then forward to the wrong target value. Noted as a follow-up
+candidate in #6637's "What's still open", not traced further.
+
+**Next lane**: retire the "cross-module Proxy" framing entirely for any
+future #6637/#6628-adjacent dispatch — the next slice should be scoped
+"standalone: dynamic property access on a Proxy through an untyped
+receiver" and verified with a single-module repro, no link/provider/consumer
+harness required. Route through an architect pass on
+`emitNullGuardedStructGet`'s blast radius before implementation. Task 2 (the
+`SameValue(null, undefined)` reduction, open since S49) remains a separate,
+still-open thread from this stack.
