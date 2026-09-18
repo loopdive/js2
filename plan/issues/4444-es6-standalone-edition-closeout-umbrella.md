@@ -1304,3 +1304,88 @@ The honest options, in order of cost:
 
 This is a stakeholder decision, not an implementation detail — it changes what
 "100 % ES2015 standalone" can mean. Recorded rather than decided.
+
+## 2026-09-18 — the remaining ES2015 gap, ranked by whether HOST already solves it
+
+The whole remaining gap has been treated as one undifferentiated pile. It is
+not. Splitting it against the host lane separates work that is a **port** from
+work that is **new engineering in both lanes**, and the two cost wildly
+different amounts. This is the ranking to dispatch from.
+
+**Provenance, so nobody restates this as fresh later:** standalone side is the
+`baseline-pre-wave.jsonl` full standalone run of 2026-09-17; host side is the
+authoritative PR-gate baseline fetched to `.test262-cache/test262-current.jsonl`,
+internal timestamp 2026-09-17 11:17, `oracle_lane: linked-harness`,
+`oracle_version: 14`, 38,498 pass. Both same-day, so they are comparable.
+Taken **before** the three PRs that merged on 2026-09-18 (#5968/#6493,
+#5969/#6494, #5970/#6500+#6501), so the counts are a low-water mark by roughly
+a dozen rows. Edition classification is `scripts/generate-editions.ts`.
+
+| ES2015 standalone | rows |
+| --- | --- |
+| non-pass | **1,401** |
+| — host **passes** → MIRRORABLE (standalone-only gap) | **559** |
+| — host **also fails** → dual-lane, new work in both | **842** |
+| — absent from the host baseline | 0 |
+
+### Top clusters by mirrorable rows
+
+| mirror | dual | cluster |
+| ---: | ---: | --- |
+| **86** | 24 | `built-ins/RegExp/prototype` |
+| 38 | 41 | `built-ins/TypedArray/prototype` |
+| 32 | 79 | `language/statements/class` |
+| 26 | 24 | `language/expressions/generators` |
+| 19 | 28 | `language/expressions/class` |
+| 17 | 39 | `language/expressions/object` |
+| 16 | 35 | `built-ins/Array/prototype` |
+| 14 | 10 | `built-ins/String/prototype` |
+| 13 | 11 | `built-ins/Function/prototype` |
+| 13 | 4 | `built-ins/Proxy/construct` |
+| 12 | 4 | `built-ins/TypedArrayConstructors/internals` |
+| 12 | 7 | `built-ins/ArrayIteratorPrototype/next` |
+| 12 | 19 | `language/statements/generators` |
+| 9 | 0 | `annexB/built-ins/RegExp` |
+| 9 | 3 | `built-ins/Proxy/defineProperty` |
+| 8 | 36 | `built-ins/Promise/all` |
+| 8 | 23 | `built-ins/Promise/race` |
+| 6 | 53 | `language/statements/for-of` |
+| 5 | 0 | `built-ins/{Set,Map}IteratorPrototype/next` |
+
+### How to read this, and how NOT to
+
+- **A high `mirror` count is the cheap work.** Host already performs the
+  behaviour correctly, so the standalone fix is "find what the host path does
+  that the standalone path skips" rather than "derive the spec from scratch".
+  `annexB/built-ins/RegExp` (9/0) and the two iterator-prototype clusters
+  (5/0 each) are pure ports with no dual-lane residue at all.
+- **A high `dual` count is NOT a reason to avoid a cluster** — it is a reason
+  to plan it as real engineering and size it accordingly.
+  `language/statements/for-of` (6 mirror / 53 dual) and
+  `built-ins/Promise/all` (8/36) are mostly genuine missing semantics.
+- **`mirror` is an upper bound on the port, not a promise.** A row can pass in
+  host for a reason standalone cannot reuse (a host object, a host import).
+  Confirm per cluster before committing, the way #5198 did below.
+- **Do not read the totals as current.** They predate 2026-09-18's merges.
+  Re-derive with the two baselines above rather than quoting these numbers
+  forward.
+
+### Worked example — this ranking was validated on `RegExp/prototype` first
+
+The 190 rows under `built-ins/RegExp/prototype/Symbol.{match,replace,search,split}`
+were run on both lanes on `origin/main` `a8b8dfc180`:
+
+| lane | pass | non-pass |
+| --- | --- | --- |
+| host (gc) | 149 | 41 |
+| standalone | 86 | 104 |
+
+Of the 104 standalone non-pass, **64 pass in host** and 40 fail in both — the
+same shape this table predicts for the cluster. That split then changed the
+plan materially: the `exec`-override mechanism carries 43 standalone rows, but
+only **17** of them pass in host, so 26 are dual-lane and not portable. The
+first slice's honest target fell from 43 to **9**. See #5198.
+
+The lesson worth keeping: **measure the host side before sizing a standalone
+slice.** Without it, a mechanism's standalone row count reads as the
+deliverable, and it is not.
