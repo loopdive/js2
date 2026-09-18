@@ -11079,8 +11079,13 @@ first"): confirmed NO, it does not move any of the 10 sampled rows.**
 | --- | --- | --- | --- | --- |
 | Duration | 106/120 | 106/120 | 0 | 0 |
 | PlainDate | 113/120 | 113/120 | 0 | 0 |
-| PlainDateTime | (running) | | | |
-| ZonedDateTime | (running) | | | |
+| PlainDateTime | 113/120 | 113/120 | 0 | 0 |
+| ZonedDateTime | 103/120 | 103/120 | 0 | 0 |
+| **Total** | **435/480** | **435/480** | **0** | **0** |
+
+Four-family battery is COMPLETE and unchanged from S50's baseline: 435/480,
+byte-for-byte identical pass/fail assignment per file. S53's fix moves
+nothing in this battery either.
 
 **A–F must-not-move and corpus-byte batteries: in progress, not yet complete
 at time of this partial commit** — 3204 files split into ≤250-file chunks,
