@@ -189,6 +189,275 @@ function isWrapTestSource(sourceFile: ts.SourceFile): boolean {
  * ImportDeclaration / ExportDeclaration / ExportAssignment are ModuleItems —
  * they may only appear at the top level of a Module.
  */
+/**
+ * (#6491 round 3) ModuleItems in a **Script**.
+ *
+ * `import` / `export` declarations are ModuleItems (§16.2.1) and `import.meta`
+ * is a MetaProperty whose production is only reachable from a Module
+ * (§13.3.12.1: "It is a Syntax Error if the syntactic goal symbol is not
+ * Module"). In a Script all three are SyntaxErrors — which is what
+ * `global-code/{export,import}.js` and `import.meta/syntax/goal-script.js`
+ * assert.
+ *
+ * Gated on `ctx.scriptGoal`, never on `!ctx.moduleGoal`. That distinction is
+ * the whole reason these three rows were left unfixed in round 2: every
+ * ordinary product compile leaves the module-goal flag absent, and product
+ * `.ts` files are full of legitimate `export`s. Only a caller that KNOWS the
+ * goal — the test262 runner, reading `flags: [module]` — sets the flag, so the
+ * rule cannot reach code whose goal is merely unstated.
+ */
+export function checkScriptGoalModuleItems(ctx: EarlyErrorContext): void {
+  if (!ctx.scriptGoal) return;
+  const { sourceFile } = ctx;
+  if (isWrapTestSource(sourceFile)) return;
+  for (const stmt of sourceFile.statements) {
+    if (ts.isImportDeclaration(stmt) || ts.isImportEqualsDeclaration(stmt)) {
+      ctx.addError(stmt, "'import' declarations are only allowed in a module");
+    } else if (ts.isExportDeclaration(stmt) || ts.isExportAssignment(stmt)) {
+      ctx.addError(stmt, "'export' declarations are only allowed in a module");
+    } else if (
+      ts.canHaveModifiers(stmt) &&
+      ts.getModifiers(stmt)?.some((m: ts.Modifier) => m.kind === ts.SyntaxKind.ExportKeyword)
+    ) {
+      // `export function f() {}` / `export class C {}` / `export var x` — the
+      // export is a MODIFIER on the declaration rather than its own statement.
+      ctx.addError(stmt, "'export' declarations are only allowed in a module");
+    }
+  }
+  const walk = (node: ts.Node): void => {
+    if (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword) {
+      ctx.addError(node, "'import.meta' is only allowed in a module");
+      return;
+    }
+    forEachChild(node, walk);
+  };
+  walk(sourceFile);
+}
+
+/**
+ * (#6491 round 3) `await` / `arguments` inside a ClassStaticBlock (§15.7.1).
+ *
+ * "It is a Syntax Error if ClassStaticBlockStatementList Contains `arguments`"
+ * and likewise for `await`. The AwaitExpression half is already handled in
+ * node-checks; what was missing is the IDENTIFIER-shaped half, which is how all
+ * three corpus rows are written:
+ *
+ *   static { function await() {} }          — BindingIdentifier
+ *   static { ((x = await) => 0); }          — IdentifierReference in an arrow's
+ *                                             parameter default
+ *   static { (class { [arguments]() {} }); } — a computed key, evaluated in the
+ *                                             static block's own scope
+ *
+ * The walk descends through ARROW functions — `Contains` is transparent for
+ * them, which is exactly what the second row depends on — and stops at ordinary
+ * functions, methods and accessors, which introduce their own `arguments` and
+ * their own [Await] parameterisation. A function's own NAME is stepped past
+ * rather than skipped: `function await() {}` declares `await` IN the static
+ * block, which is the first row.
+ */
+export function checkClassStaticBlockReservedNames(ctx: EarlyErrorContext): void {
+  const RESERVED = new Set(["await", "arguments"]);
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && RESERVED.has(node.text)) {
+      const parent = node.parent;
+      // A property/member NAME is not a reference (`o.arguments`, `{arguments: 1}`).
+      const isMemberName =
+        parent &&
+        ((ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+          (ts.isPropertyAssignment(parent) && parent.name === node) ||
+          (ts.isMethodDeclaration(parent) && parent.name === node) ||
+          (ts.isPropertyDeclaration(parent) && parent.name === node));
+      if (!isMemberName) {
+        ctx.addError(node, `'${node.text}' is not allowed in a class static initialization block`);
+        return;
+      }
+    }
+    if (ts.isFunctionDeclaration(node)) {
+      // A DECLARATION's BindingIdentifier is declared in the enclosing scope —
+      // the static block — so `static { function await() {} }` is an error even
+      // though the body is not inspected.
+      if (node.name) visit(node.name);
+      return;
+    }
+    if (
+      ts.isFunctionExpression(node) ||
+      ts.isMethodDeclaration(node) ||
+      ts.isGetAccessorDeclaration(node) ||
+      ts.isSetAccessorDeclaration(node) ||
+      ts.isConstructorDeclaration(node)
+    ) {
+      // A function EXPRESSION's name is bound INSIDE the function, and its
+      // parameters belong to the function too, so neither is "contained" by the
+      // static block. Measured, not assumed: flagging the name here broke
+      // `expressions/generators/static-init-await-binding.js`, whose whole
+      // point is that `static { (function * await (await) {}); }` is LEGAL.
+      // A computed method key is still inspected below via its own node.
+      if (node.name && ts.isComputedPropertyName(node.name)) visit(node.name);
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  const walk = (node: ts.Node): void => {
+    if (ts.isClassStaticBlockDeclaration(node)) {
+      forEachChild(node.body, visit);
+      return;
+    }
+    forEachChild(node, walk);
+  };
+  walk(ctx.sourceFile);
+}
+
+/**
+ * (#6491 round 3) A generator/async FunctionExpression may not be named `yield`
+ * or `await` (§15.5.1 / §15.6.1).
+ *
+ * A function EXPRESSION's BindingIdentifier is bound inside the function's own
+ * scope — that is the whole point of a named function expression — and inside a
+ * generator `yield` is reserved, inside an async function `await` is. So
+ * `var g = function* yield() {};` and `(async function* yield() {})` are
+ * SyntaxErrors.
+ *
+ * Deliberately NOT extended to generator DECLARATIONS: there the name is bound
+ * in the ENCLOSING scope, where the reservation does not apply, and flagging it
+ * would reject code the corpus does not call an error.
+ */
+export function checkGeneratorExpressionName(ctx: EarlyErrorContext): void {
+  const walk = (node: ts.Node): void => {
+    if (ts.isFunctionExpression(node) && node.name) {
+      const isGenerator = node.asteriskToken !== undefined;
+      const isAsync = node.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) === true;
+      const name = node.name.text;
+      if ((isGenerator && name === "yield") || (isAsync && name === "await")) {
+        ctx.addError(node.name, `'${name}' is not a valid name for this function expression`);
+      }
+    }
+    forEachChild(node, walk);
+  };
+  walk(ctx.sourceFile);
+}
+
+/**
+ * (#6491 round 3) Module export clauses (§16.2.3.1).
+ *
+ * Two rules, both on an `export { … }` clause with NO `from` (a LOCAL export
+ * clause — a re-export names the OTHER module's bindings and neither rule
+ * applies):
+ *
+ * 1. Every ReferencedBindings entry must be declared in the module. `export {
+ *    Number }` and `export { unresolvable }` are SyntaxErrors even though the
+ *    names resolve (or don't) at run time — being a global is not being a
+ *    module-level declaration.
+ * 2. A string ModuleExportName may only appear as the local side of a
+ *    RE-export; `export { "foo" as "bar" }` has no binding to name.
+ *
+ * Gated on `ctx.moduleGoal` rather than the syntactic module indicator: this
+ * needs the complete set of declared names, and a product compile reaches here
+ * with TypeScript's own (stronger) resolution already applied.
+ */
+export function checkExportedBindingsDeclared(ctx: EarlyErrorContext): void {
+  if (!ctx.moduleGoal) return;
+  const { sourceFile } = ctx;
+  if (isWrapTestSource(sourceFile)) return;
+  const declared = new Set<string>();
+  const addBindingName = (name: ts.BindingName): void => {
+    if (ts.isIdentifier(name)) {
+      declared.add(name.text);
+      return;
+    }
+    for (const el of name.elements) {
+      if (ts.isBindingElement(el)) addBindingName(el.name);
+    }
+  };
+  const collect = (node: ts.Node): void => {
+    if (ts.isVariableStatement(node)) {
+      for (const d of node.declarationList.declarations) addBindingName(d.name);
+      return;
+    }
+    if (
+      (ts.isFunctionDeclaration(node) ||
+        ts.isClassDeclaration(node) ||
+        ts.isInterfaceDeclaration(node) ||
+        ts.isTypeAliasDeclaration(node) ||
+        ts.isEnumDeclaration(node) ||
+        ts.isModuleDeclaration(node)) &&
+      node.name &&
+      ts.isIdentifier(node.name)
+    ) {
+      declared.add(node.name.text);
+      return;
+    }
+    if (ts.isImportDeclaration(node) && node.importClause) {
+      const clause = node.importClause;
+      if (clause.name) declared.add(clause.name.text);
+      const bindings = clause.namedBindings;
+      if (bindings) {
+        if (ts.isNamespaceImport(bindings)) declared.add(bindings.name.text);
+        else for (const spec of bindings.elements) declared.add(spec.name.text);
+      }
+      return;
+    }
+    if (ts.isImportEqualsDeclaration(node)) {
+      declared.add(node.name.text);
+      return;
+    }
+    // `var` hoists out of blocks/loops, so keep descending through statements
+    // while stopping at anything that starts its own scope.
+    if (
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isClassExpression(node) ||
+      ts.isMethodDeclaration(node)
+    ) {
+      return;
+    }
+    forEachChild(node, collect);
+  };
+  for (const stmt of sourceFile.statements) collect(stmt);
+
+  for (const stmt of sourceFile.statements) {
+    if (!ts.isExportDeclaration(stmt) || stmt.moduleSpecifier) continue;
+    if (stmt.isTypeOnly) continue;
+    const clause = stmt.exportClause;
+    if (!clause || !ts.isNamedExports(clause)) continue;
+    for (const spec of clause.elements) {
+      if (spec.isTypeOnly) continue;
+      const local = spec.propertyName ?? spec.name;
+      if (ts.isStringLiteral(local)) {
+        ctx.addError(spec, "A string module export name requires a 'from' clause");
+        continue;
+      }
+      if (!declared.has(local.text)) {
+        ctx.addError(spec, `Export '${local.text}' is not declared in this module`);
+      }
+    }
+  }
+}
+
+/**
+ * (#6491 round 3) `for (let in o)` in strict code (§14.7.5.1).
+ *
+ * Here `let` is an IdentifierReference used as the for-in LeftHandSideExpression
+ * — sloppy-legal, and a SyntaxError in strict code, where `let` is reserved.
+ * The strict-reserved-word rule in node-checks cannot see it because that rule
+ * only fires on BindingIdentifier positions, and this `let` binds nothing.
+ *
+ * TypeScript parses this one shape as a VariableDeclarationList with ZERO
+ * declarations (the whole initializer is the bare word `let`), which is not
+ * reachable from any other syntax — so the empty list IS the discriminator.
+ */
+export function checkForInLetReference(ctx: EarlyErrorContext): void {
+  const walk = (node: ts.Node): void => {
+    if (ts.isForInStatement(node)) {
+      const init = node.initializer;
+      if (ts.isVariableDeclarationList(init) && init.declarations.length === 0 && isStrictMode(node)) {
+        ctx.addError(init, "'let' is not allowed as an identifier in strict mode");
+      }
+    }
+    forEachChild(node, walk);
+  };
+  walk(ctx.sourceFile);
+}
+
 export function checkModuleItemPosition(ctx: EarlyErrorContext): void {
   const { sourceFile } = ctx;
   if (isWrapTestSource(sourceFile)) return;

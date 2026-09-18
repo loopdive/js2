@@ -1845,3 +1845,561 @@ constant first or they will re-derive this same false negative.
     through `standalone-link-boundary.ts`, so "provider vs. non-provider
     byte-identity" is the wrong standalone guard; gate-level reasoning plus the
     #3451 per-row binary guard is the right one.
+
+## Round 10 (2026-09-17) — two root causes, no shippable mechanism
+
+**No code landed this round.** Both mechanisms worked turned out to be larger
+than a same-round fix, and both are now diagnosed to the instruction rather than
+to the symptom. Linked baseline re-measured on the merged tree
+(`origin/main` @ 78bd11c4c9 + round 9): **44 / 138**, honest **135 / 138** —
+unchanged, nothing regressed.
+
+### A. `Promise.all{,Settled}Keyed` (4 rows) — the lanes take different lowerings
+
+`Promise.allKeyed` does not exist in Node, is not polyfilled anywhere in this
+repo, and yet the **honest** lane passes these rows while the **linked** lane
+reports `"Expected a TypeError to be thrown asynchronously but the function threw
+synchronously"`.
+
+Measured with the runtime instrumented (the runner executes
+`scripts/runtime-bundle.mjs`, **not** `src/runtime.ts` — an unrebuilt bundle
+silently measures the old code, which cost one full probe cycle):
+
+| probe | honest | linked |
+| --- | --- | --- |
+| `__extern_method_call` entry, method `allKeyed` | never | **hit** |
+| `__extern_method_call` not-a-function tail | never | **hit** (`obj=Promise`) |
+| `__extern_method_call_N` fixed-arity wrapper | never | — |
+| `__extern_get` for key `allKeyed` | never | — |
+| `__proto_method_call` for `allKeyed` | never | — |
+
+So the linked body resolves the name **dynamically at runtime** and throws;
+the honest unit never asks the host for it at all. The honest module imports
+the `allKeyed` string constant but never references it in a body — consistent
+with a **static** lowering that keeps the name only for an error message, and
+with the honest-only `Promise_reject` import, i.e. an abrupt completion turned
+into a rejected promise (§27.2.4.x `IfAbruptRejectPromise`) rather than a throw.
+
+**Eliminated:** provider/consumer disagreement on `moduleHasHostPromiseSource`
+(its only consumer, `standaloneThenMissArmCanBeNative`, is standalone-only);
+`promise-static-call-typeerror.ts` (standalone-only, and `allKeyed` is not in
+its `PROMISE_STATIC_METHODS`); the native combinator table
+(`promise-combinators.ts` has no `Keyed` entry); `skipSemanticDiagnostics`
+(the runner sets it true — with it false the row is a compile error).
+
+**Next step:** identify the honest arm that emits `Promise_reject` for this call
+— the honest WAT references the `allKeyed` string global nowhere in a body, so
+it is reachable by index only; dump the honest module's function that imports
+`Promise_reject` and read its callers. Then find the gate that excludes the
+consumer-alone compile. Reproduce with `.tmp/r9/dump-source.js` (the exact
+honest source the runner compiles, captured by a temporary dump hook in
+`tests/test262-shared.ts`, since the linked assembler's prefix+body is **not**
+the honest source and does not reproduce the verdict).
+
+### B. `await` non-thenable (3 rows) — a cross-module closure call answers `null`
+
+`asyncTest(foo)` over an `async function foo` declaration fails with
+`Cannot read properties of null (reading 'then')`. The `.then` is the harness's
+own `testFunc().then(…)`, so **`foo()` returned `null`** to the provider.
+
+Instrumented on `await-awaits-thenable-not-callable.js`:
+
+```
+[DBG prom]     Promise_new_pending    -> object      (the consumer's async machinery works)
+[DBG prom]     Promise_settle_resolve -> undefined
+[DBG hostcall] wasmClosureDynamicBridge nargs=1 result=null out=null
+[DBG dispatch] args=1 dispatchArity=1 declared=1 maxArity=4 -> NULL
+```
+
+The closure is dispatched at its **own declared arity**, so this is neither
+#6491's under-application nor #2664's method-arity omission. `__closure_arity`
+recognises the closure (answers 1) while `__call_fn_1`'s `ref.test` ladder does
+not match it and falls through to `ref.null.extern`. Two exports of the same
+module disagree about the same closure: one can name its arity, the other has no
+dispatch arm for it — invisible in-module (the call is compiled directly) and
+fatal the moment a foreign module calls it.
+
+Filed as **#6502**, with the fix direction (emit a `__call_fn_N` arm for every
+closure that can ESCAPE the module, and make a ladder MISS distinguishable from
+a genuine `null` return).
+
+### Per-row status of the 94 non-passing (linked, r10 baseline)
+
+Grouped by error class, largest first:
+
+| n | class | lane/owner |
+| --- | --- | --- |
+| ~31 | property-descriptor family (`Expected obj[N] to equal N`, `NOT to be writable`, `configurable:true`, getter/setter must be a function, …) | #6482 |
+| 4 | `Promise.all{,Settled}Keyed` sync-throw | A above |
+| 4 | `Expected a undefined to be thrown but no exception was thrown` (`findLast`/`findLastIndex` return-abrupt-from-predicate, `deepEqual-deep`) | open |
+| 3 | `await` non-thenable | **#6502** |
+| ~8 | the `*-realm` cluster (`$262.createRealm()`, `Proxy/*/trap-is-not-callable-realm`, `non-ctor-err-realm`, `define-own-prop-length-overflow-realm`, `assert-throws-same-realm`, `asyncHelpers-throwsAsync-same-realm`) | open — round 5 fixed the `instanceof` half only |
+| 4 | `Iterator/zipKeyed` + helper observation order | Iterator lane |
+| 2 | `private-field` → `invalid Wasm binary` | #6496 |
+| 2 | `TypedArray/prototype/sort` comparefn | open |
+| 2 | `String/prototype/replaceAll` replaceValue | open |
+| 2 | `RegExp/match-indices` | open |
+| 2 | `Proxy/set` call-parameters | open |
+| 2 | `Reflect/deleteProperty` | open |
+| ~25 | singles (String.prototype deletions, `Array.from` mapfn, tagged-template TCO, `with`-proxy env, DisposableStack extern-class dependency, …) | open |
+
+### Findings for the next lane (round 10)
+
+25. **The runner executes the BUNDLES, not `src/`.** `tests/test262-shared.ts`
+    hashes `scripts/compiler-bundle.mjs`, and the import object is built from
+    `scripts/runtime-bundle.mjs`. An instrumentation probe in `src/runtime.ts`
+    measures nothing until `npm run -s build:runtime-bundle` runs — and the
+    silent version of that mistake is a probe that prints nothing, which reads
+    exactly like "this code path is not taken".
+26. **`assembleLinkedHarness`'s prefix + body is NOT the honest source.** The
+    honest lane compiles `harnessAssembly.primary.source`. Reproducing an
+    honest verdict from the linked assembler's parts gives a different verdict
+    and sends the investigation after a difference that is an artifact of the
+    probe.
+27. **A silent `null` is the linked lane's characteristic failure shape.** Both
+    root causes this round end in a `ref.null.extern` fall-through that the host
+    cannot distinguish from a real value — the r6 UNDEF-sentinel bug had the
+    same shape. When a linked row fails with "cannot read X of null", suspect a
+    ladder miss before suspecting the value.
+
+## Round 11 (2026-09-18) — #6502's loudness half measured and deliberately not shipped
+
+**No code landed.** Linked baseline re-verified on the merged tree: **44 / 138**
+(honest 135 / 138), unchanged.
+
+The round-10 hand-off said finding 27 — a silent `null` from the `__call_fn_N`
+ladder is this lane's characteristic failure — was the thread to pull. It was
+pulled, in four measured variants, and the answer is that the **two halves of
+#6502 cannot be shipped in the given order**: making the miss loud is +9 / −4 on
+its own, because at least four call sites read the null as a protocol answer
+("not my closure", "no trap here"). Full table, the ruled-out alternatives and
+the instrumentation are recorded in **#6502**; the short version:
+
+- terminal-throws: 44 → 49, **+9 −4**; and the same +9/−4 with a `ref.test`
+  gate, with a runtime peer re-dispatch, and restricted to `__call_fn_0`.
+- **+9** is the whole `Symbol.species` / `Symbol.toStringTag` descriptor family
+  in this set — so the silent null is corrupting descriptor reads well beyond
+  the three `await` rows #6502 was filed for.
+- **−4** are `harness/asyncHelpers-asyncTest-*` ×3 and
+  `harness/proxytrapshelper-default` — three of them this issue's own round-9
+  gains.
+- A peer re-dispatch recovers none of the 4, and the reason is decisive:
+  instrumented, **every `__call_fn_0..4` in both modules returns null** for the
+  failing closure while both modules' `__is_closure` answer 1 and both
+  `__closure_arity` answer 1. No module in the project has an arm for it.
+
+So #6502(a) — widen the arm set to every closure that can ESCAPE — is the
+blocking half, and it is worth more than the 3 rows it was filed for. #6502(b)
+is a free follow-on once (a) lands.
+
+### Per-row status
+
+Unchanged from the round-10 table (94 non-passing, same classes). Items 2
+(`Promise.all{,Settled}Keyed`) and 3 (the `*-realm` cluster) of the round-11
+brief were not reached.
+
+### Findings for the next lane (round 11)
+
+28. **A silent sentinel is often a PROTOCOL, not an oversight.** Before making
+    one loud, find its readers: here the same `ref.null.extern` means "no arm
+    for this closure" to one caller and "this value is not mine" to another, and
+    no static property (`ref.test`, arity, module identity) separates them —
+    only fixing the underlying gap does.
+29. **Measure the fix halves in the order that can actually ship.** A two-part
+    plan whose second half is independently measurable is worth measuring FIRST
+    when it is the cheap one — the +9/−4 here took four runs and settled the
+    sequencing question for the expensive half before a line of (a) was written.
+
+## Round 12 (2026-09-18) — #6502 step 1 answered: the type is not in the census
+
+**No code landed** (step 1 was a measurement task). Linked **44 / 138**, honest
+**135 / 138**, unchanged.
+
+The escaping closure's struct type is **absent from
+`ctx.closureInfoByTypeIdx`** — the census every `__call_fn_N` arm set is built
+from. Proof, full table and the two temporary probes are in **#6502**; the
+decisive four facts:
+
+1. `__is_closure` says 1 (base-wrapper `ref.test`).
+2. `__closure_arity` says 1 — a **field** read, so authoritative about the value.
+3. A census `ref.test` ladder answers **type 41 / 3 params** in the consumer and
+   **type 17 / 0 params** in the provider: two answers, neither matching (2),
+   i.e. structural neighbours rather than the value's type.
+4. **Every `__call_fn_0..4` in both modules returns null**, including the arity
+   where the neighbour's func type IS admitted.
+
+A runtime-only fix is therefore ruled out — no module has an arm at any arity,
+so no owner lookup or arity retry can reach it. Step 2 is emitter work: register
+the missing closure kind into the census at mint time (or build the arm set from
+the same registry the base test and the arity field come from). The prime
+suspect is the async-function / trampoline family — every failing row is
+`asyncTest(foo)` over an `async function` declaration, and that lowering exports
+its `__cb_N` continuations directly rather than through the closure registry.
+
+### Finding for the next lane (round 12)
+
+30. **When several `ref.test` ladders disagree about one value, the value's type
+    is in none of them.** Here three ladders gave three answers (yes / 3 params
+    / 0 params) while the one non-ladder helper — an arity FIELD read — gave the
+    true one. A ladder cannot report "absent"; it reports its nearest
+    structural neighbour, which reads exactly like a wrong answer instead of a
+    missing entry. Cross-check any ladder answer against a field read before
+    believing it.
+
+## Round 13 (2026-09-18) — #6502 step 2 blocked, and round 12's finding CORRECTED
+
+**No code landed.** Linked **44 / 138**, honest **135 / 138**, unchanged.
+
+Round 12 concluded the escaping closure's struct type was absent from
+`ctx.closureInfoByTypeIdx`. **That conclusion is withdrawn.** It came from a
+probe that laddered only over census types, which cannot tell "absent" from
+"present but mis-described". Laddering over the module's ENTIRE type section
+gives the same answer — type 41 — which is in the census (ft 40, host arity 3).
+
+The real inconsistency is narrower: the value's **struct** is type 41 (census:
+funcref should be ft 40, host arity 3) while `__closure_arity` answers **1**,
+and that helper decides its answer by `ref.test`ing the **extracted funcref**
+over func types using the very same `closureHostArity` the arm admission uses.
+Struct and funcref disagree about what the value is, so the arity chosen from
+`__closure_arity` lands in a ladder where ft 40 is not admitted, and the ladders
+that do admit ft 40 fail their funcref test.
+
+One measurement remains unexplained and is flagged as such in #6502: every
+`__call_fn_0..4` in both modules returns null, including arity 3. The next probe
+is to export the extracted funcref's own type and null-ness for the value rather
+than inferring it from `__closure_arity`. Ruled out this round: a census
+overwrite at either `createSignatureWrapperType` writer (instrumented, zero hits).
+
+Step 2's edit is deliberately not started — this round already withdrew one
+conclusion drawn from a too-narrow probe, and the remaining unknown is one probe
+away.
+
+### Finding for the next lane (round 13)
+
+31. **A `ref.test` ladder answers about the SET IT ENUMERATES, so it cannot
+    distinguish "absent" from "present but wrong".** Round 12 read a
+    census-only ladder as proof of absence; the whole-type-section ladder gave
+    the identical answer, and the identity of those two answers is what showed
+    the first reading was wrong. When a probe's domain is a subset of the
+    question's domain, widen the probe BEFORE concluding — and treat "the wider
+    probe agrees" as the falsification test, not as confirmation.
+
+## Round 14 (2026-09-18) — #6502's null is a VOID RETURN, not a dispatch miss
+
+**No code landed.** Linked **44 / 138**, honest **135 / 138**, unchanged.
+
+The funcref probe answers state (ii) and reframes the issue. Struct type 41 is
+`__constructible_fn_wrap_4_struct` (census ft 40); the funcref it actually
+carries is **ft 43 = `func(ref, externref) -> ` — a VOID closure**. So
+`__closure_arity`'s answer of 1 was correct all along (it reads the funcref),
+and the `null` this chain has been chasing since round 10 is most likely **not a
+miss**: the arm matched, the closure ran, and a void return surfaced as null
+because `buildClosureResultBoxing`'s canonical-`undefined` producer
+(`__get_undefined`) is not registered in this unit — the #6419 fallback, in a
+second emitter (the first was `coerceType`'s f64 arm, round 6).
+
+That single fact explains three earlier puzzles: why every `__call_fn_0..4`
+"missed" (a void function answers nothing at any arity), why round 11's loud
+terminal broke exactly four rows, and why the arity retries never helped.
+
+**Measured:** registering the producer in `emitClosureCallExportN` gives
+**44 → 49: +9, −4 — the same nine gains and four losses as round 11's loud
+terminal**, with verbatim-identical errors, from a completely different change.
+Two independent ways of stopping a void closure from answering `null` produce
+one delta, so the +9 and the −4 share a cause: four call sites read a void
+closure's `null` as load-bearing; nine read it as a corrupt value.
+
+Not shipped — same refused trade as round 11. Full detail, the probe output and
+the narrow next target (instrument the four readers on
+`harness/proxytrapshelper-default.js`) are in **#6502**, whose framing is
+revised there: the bridge cannot distinguish a ladder MISS, a VOID return, and a
+genuine `null`, and (2) is the common case in this corpus.
+
+### Finding for the next lane (round 14)
+
+32. **Two independent fixes producing an IDENTICAL delta means one shared
+    cause, and it is upstream of both.** Round 11 (throw at the terminal) and
+    round 14 (return `undefined` for void) touch different files and different
+    mechanisms, yet moved exactly the same 13 rows with the same messages. That
+    identity is the evidence — it located the real subject (what a void closure
+    answers) faster than either change's own reasoning did, and it says the four
+    losses are one bug, not four.
+
+### Round 14 addendum — `Promise.all{,Settled}Keyed`: the honest lane wraps the callback, the consumer does not
+
+Picking up round 10's open thread (item 3 of the round-14 brief). Round 10 left
+it at "the honest unit carries a `Promise_reject` the linked body lacks"; the
+caller is now named.
+
+Both `Promise_reject` call sites in the honest module sit inside a closure of
+this exact shape (`$__closure_36`, `$__closure_54` in the honest WAT):
+
+```wat
+(try (result externref)
+  (do    … body …  call 47)      ;; 47 = Promise_resolve
+  (catch 0     call 48)          ;; 48 = Promise_reject
+  (catch_all   call 26  call 48))
+```
+
+— a synchronous throw converted into a REJECTED promise. That is exactly what
+`assert.throwsAsync` needs: `res = func()` returns a thenable that rejects with
+the TypeError instead of throwing out of the call.
+
+Compiling the same test BODY alone (the consumer's shape) emits **no
+`Promise_reject` at all** — zero occurrences, and the only Promise-related
+import is the `global_Promise` capability. So the wrapper is present in the
+honest whole-assembly unit and absent from the linked consumer, and the
+verdict follows mechanically: the throw escapes `func()` synchronously and
+`asyncHelpers` reports *"Expected a TypeError to be thrown asynchronously but
+the function threw synchronously"*.
+
+**Next step for this bucket:** identify which emitter mints that wrapper —
+`async-closure-promise.ts` (#4648, the `__cb_<id>` host-callback-bridge
+wrapper) and the `isAsyncCallExpression` call-site repair in `expressions.ts`
+are the two candidates — and why its gate does not fire for the consumer.
+The likely shape is the same seam problem as everywhere else in this issue: the
+gate needs to see the CALL SITE (`assert.throwsAsync(…)`), which now lives in
+the provider, while the callback it must wrap lives in the consumer.
+
+## Round 15 (2026-09-18) — the +9/−4 was an INDEX-SHIFT artifact; rounds 11 and 14 withdrawn
+
+**No code landed.** Linked **44 / 138**, honest **135 / 138**, unchanged.
+
+Round 15 set out to fix the four readers of a void closure's `null`. Before
+touching them it tested the premise, and the premise is false.
+
+Registering **one late import that nothing reads** at the exact point rounds 11
+and 14 registered theirs — inside `emitClosureCallExportN`, just before its
+funcIdx snapshots — reproduces the delta **exactly**: 44 → 49, the same nine
+gains, the same four losses.
+
+```ts
+ensureLateImport(ctx, "__throw_type_error", [{ kind: "externref" }], []);
+flushLateImportShifts(ctx, null);   // nothing reads the index
+```
+
+So the +9/−4 published in rounds 11 and 14 measured neither the loud terminal
+nor the canonical-`undefined` producer. It measured the **index shift** those
+changes caused by registering an import there. Filed as **#6503**.
+
+Both readings are withdrawn:
+
+- **Round 11**: "the loud miss is +9/−4, so (a) must land before (b)" — the
+  trade-off it described does not exist. The sequencing conclusion may still be
+  right, but it has no measurement behind it any more.
+- **Round 14**: "registering the `undefined` producer gives the same +9/−4, so
+  the 13 rows share one cause" — they do share one cause, and it is #6503, not
+  what a void closure answers.
+
+Round 14's *diagnostic* half stands on its own evidence (the probe output): the
+value's funcref is ft 43, `func(ref, externref) -> void`, so `__closure_arity`'s
+answer of 1 is correct and the null is a void return rather than a dispatch
+miss. What is withdrawn is the claim that fixing it was worth +9/−4.
+
+### Findings
+
+32. ~~Two independent fixes producing an IDENTICAL delta means one shared cause,
+    and it is upstream of both.~~ CORRECTED. The premise held — there was a
+    shared cause — but the inference was wrong, and the sharper rule is: **an
+    identical delta from two unrelated mechanisms is first evidence of a shared
+    ARTIFACT, not shared semantics.** Before interpreting it, run the null
+    change that carries only the mechanism's incidental side-effect (here:
+    register the import, use nothing). One run; it would have saved two rounds.
+33. **In this emitter, adding an import is not behaviour-neutral.** Until #6503
+    is fixed, any `emitClosureCallExportN` change that registers an import is
+    measured against a corrupted baseline — subtract #6503's delta, or fix it
+    first.
+
+## Round 4d — the four `built-ins/Iterator` observation-order rows
+
+Measured with the real single-row runner, fresh harness cache, rebuilt bundles,
+A/B against this branch's own base (`git show HEAD:` copies of the two files):
+
+| row | linked before | linked after |
+| --- | --- | --- |
+| `Iterator/prototype/map/underlying-iterator-advanced-in-parallel.js` | fail `Expected SameValue(«0», «3»)` | **pass** |
+| `Iterator/prototype/filter/underlying-iterator-advanced-in-parallel.js` | fail `Expected SameValue(«0», «3»)` | **pass** |
+| `Iterator/zipKeyed/iterables-iteration-after-reading-options.js` | fail `Actual [get mode, get padding] and expected [get mode, get padding, own-keys]` | **pass** |
+| `Iterator/zipKeyed/padding-iteration.js` | fail `Actual [] and expected [a]` | **pass** |
+
+Wider, same A/B:
+
+| slice | lane | before | after | lost |
+| --- | --- | --- | --- | --- |
+| `built-ins/Iterator/` (654) | linked | 394 | 398 | 0 |
+| `Proxy + Reflect + assignment + destructuring + Iterator` (1,624) | linked | 1,165 | 1,172 | 0 |
+| same 1,624 | honest | 1,152 | 1,155 | 0 |
+
+The three extra linked rows are `Proxy/has/call-in-prototype.js` and
+`Proxy/set/call-parameters-prototype{,-dunder-proto}.js` (they assert the
+handler is the trap's `this`); the three extra honest rows are
+`Iterator/prototype/{every,find,some}/iterator-has-no-return.js`.
+
+### They were not one bug, and neither one is about iterators
+
+**Lead 1 — which implementation does `Iterator.zipKeyed` resolve to?**
+`src/codegen/expressions/calls.ts:6554` is `tryIteratorStaticsIntrinsicCall`,
+whose first line is `if (!ctx.standalone && !ctx.wasi) return undefined;` — it
+is **dead in the host linked lane**. The call resolves to the host polyfill in
+`src/runtime/iterator-polyfills.ts`, reached through the #3049
+`_iteratorRecordForHost` shim; evidence is the emitted import list, which
+carries `env.__extern_method_call_2` and no `__j2w_iter_*` (a standalone build's
+prelude intrinsics). The polyfill's `zipKeyed` was already correct: it does
+`Reflect.ownKeys(iterables)` and then `paddingOption[key]` per key, exactly what
+the two tests observe.
+
+What was wrong is that the tests observe it **through a Proxy whose handler the
+harness built**. `_buildProxyBridgeHandler` read the handler's trap fields with
+the READER module's `__sget_<trap>` getters; a handler minted by the linked
+harness provider (`allowProxyTraps(...)` from `proxyTrapsHelper.js`) is a struct
+of the PROVIDER module, so every getter `ref.test`-missed, every trap resolved
+ABSENT, and §7.3.10's "missing trap ⇒ the target's own internal method" kicked
+in. No trap fired, nothing threw, `own-keys` and the padding `Get`s simply never
+appeared in the log. Every other struct read in the runtime already performs the
+#5225 cross-module decoder selection (`_decoderExportsFor`); the proxy bridge was
+the one reader that skipped it. Fixed in both the eager and the lazy builder.
+
+One asymmetry the fix has to respect, and the first cut got wrong: the
+**handler's** owning module decides how to READ the trap fields, but each **trap
+closure's** own owning module decides how to DISPATCH it — a provider-minted
+handler routinely holds a consumer-minted closure (`allowProxyTraps({ get })`
+with a body-defined `get` is precisely that shape). Using the handler's module
+for both sends the dispatch back through the wrong `__call_fn_*` family and
+recurses until `Maximum call stack size exceeded`. So: `_decoderExportsFor(handler, …)`
+for the field read, `_crossModuleCallbackState(rawTrap, …)` for the dispatch.
+
+**Lead 2 — `_iteratorRecordForHost` snapshot vs `_GeneratorState`.** Neither.
+Instrumenting the shim showed it returning `{value: 3}` and `{value: 4}`
+correctly while the test still read `0`, so the ordering was never wrong. The
+defect is in codegen and has nothing to do with iterators: in a module-init
+chunk, a top-level destructuring **assignment** `({ value, done } = …)` stored
+ONLY to the `$__mod_<name>` global, while every read resolved the mirrored LOCAL
+that the `let { value, done } = …` **declaration** had established.
+`emitResolvedIdentifierWriteFromStack` already mirrors the durable global store
+into a shadow local — but only via `fctx.moduleBindingShadowLocals`, which is
+populated solely by the closure-global arm of `statements/variables.ts`. A
+destructuring declaration registers nothing there, so the mirror was skipped and
+the assignment was silently lost. The fix falls back to the same-named local
+when its ValType matches the global's (a `local.tee` of a mismatched type is
+invalid wasm; those bindings keep the old global-only store).
+
+### Findings for the next lane (round 10)
+
+25. **The failure that looks shape-dependent is usually a missing mirror, not a
+    heisenbug.** The lost-assignment bug reproduced only in bodies that also
+    contained an `assert.sameValue(a, b)` call, and not in an otherwise
+    identical body that used `console.log`. That is not randomness: whether the
+    reader takes the local path or the global path is decided by what else the
+    body compiles. Bisecting the *source shape* cost far more than reading the
+    emitted WAT for the two variants, which showed `global.set 12` with no
+    matching `local.set 10` in about a minute.
+26. **Instrument the layer you suspect before narrowing the input.** Four
+    rounds of source bisection pointed at iterators. One `console.error` inside
+    `_iteratorRecordForHost` showed it answering `3` and `4` correctly and moved
+    the search to the consumer in a single run.
+27. **"Trap absent" and "trap unreadable" are indistinguishable at the call
+    site, and the spec makes the first one silent.** A cross-module read that
+    misses degrades into correct-looking default behaviour with no throw and no
+    log. Any `__sget_*` read in the runtime that does not go through
+    `_decoderExportsFor` is a candidate for the same class of silent wrong
+    answer — this was the last one in the proxy path, not necessarily the last
+    one in the runtime.
+
+## Round 5 — `Promise.all{,Settled}Keyed` implemented; the `*-realm` cluster handed back
+
+Two long-tail clusters were assigned. One turned out not to be a parity problem
+at all and is fixed at the source; the other is the global-object/realm lane's
+and is handed back with the measurements that localise it.
+
+### Cluster A — `Promise.all{,Settled}Keyed`: the honest passes were ACCIDENTAL
+
+**Do not "fix" this cluster by making the linked lane agree.** `allKeyed` is
+routed to the HOST `Promise` object (`HOST_PROMISE_SOURCE_METHOD_NAMES` in
+`src/codegen/declarations/import-collector.ts`), and the container's Node does
+not have it — so `Promise.allKeyed({…})` throws
+`TypeError: allKeyed is not a function` **synchronously in both lanes**. The
+honest lane "passed" only because its whole-assembly lowering wraps the test's
+callback in the try→`Promise_resolve` / catch→`Promise_reject` closure round 14
+identified, which converts that *unrelated* TypeError into exactly the rejection
+`assert.throwsAsync(TypeError, …)` is looking for. Round 14's addendum read the
+missing wrapper as the bug; it is the thing that produced the false positive.
+
+Measured over the whole 89-row family on the round-5 base: **linked 2/89,
+honest 6/89**. The four "honest-pass/linked-fail" rows are four of those six.
+
+So js2 implements the proposal (same posture as round 4c's `chunks`/`windows`:
+no engine ships it, so the polyfill is the implementation) in a new
+`src/runtime/promise-keyed-combinators.ts`, installed from
+`installAmbientCompatibility` next to the iterator-helper polyfills and gated on
+`typeof PromiseCtor[name] === "function"` so a future native one always wins.
+
+| slice | lane | before | after | lost |
+| --- | --- | --- | --- | --- |
+| `Promise/{allKeyed,allSettledKeyed}/` (89) | linked | 2 | **52** | 0 |
+| same 89 | honest | 6 | **56** | 0 |
+| whole `built-ins/Promise/` (729) | linked | 439 | **489** | 0 |
+
+**The four assigned rows are still failing, and now for a DIFFERENT, named
+reason.** All four mutate `Promise.resolve` from compiled code
+(`Promise.resolve = function () { return {}; }`) and then require the combinator
+to observe that mutation. It does not: instrumenting the polyfill's receiver in
+the real runner prints `C=function resolve=function native=true` — the compiled
+write landed on the compiled `Promise` mirror, while the host combinator still
+sees the native `Promise.resolve`. That is builtin-static **write visibility**
+across the compiled/host boundary (#4120 / #2623 territory), not the
+combinator's semantics, and it accounts for most of the 37 residual rows too
+(every `invoke-resolve-*`, `resolve-*`, `invoke-then-*` file mutates
+`Promise.resolve` or supplies a custom `Constructor`). The remaining residuals
+split into: `not-a-constructor` / `prop-desc` (a polyfill installed as an
+ordinary function IS constructible — needs the non-constructor shape), the
+Proxy-argument rows (`arg-is-function`, `getownproperty-returns-undefined`,
+`prototype-keys-ignored`), and the `ctx-ctor-*` capability rows.
+
+### Cluster B — `*-realm`: not taken, and here is why plus what is known
+
+Six rows, one idiom (`$262.createRealm()`), five unrelated mechanisms. Handing
+it back to the global-object/realm lane rather than half-fixing it. What was
+established, so the next lane does not repeat it:
+
+1. **The in-process linked seam cannot witness these rows** — finding 23,
+   confirmed again. `probe.mts` built on `buildHarnessProvider` +
+   `compileHarnessLinkedBody` **passes**
+   `language/expressions/new/non-ctor-err-realm.js` in both lanes, with a fresh
+   provider cache, with the worker's exact `bodyOptions`, and with the worker's
+   exact provider `compileOptions`. The real runner fails the same row. Any
+   round-6 work on this cluster must be measured in the runner.
+2. **The failure is a value, not a throw.** Tracing `__typeof` inside the runner
+   prints `v=undefined` for `otherParseInt`, i.e.
+   `$262.createRealm().global.parseInt` evaluated to `undefined` — the honest
+   lane and the probe both get the host `parseInt`.
+3. **The chain IS emitted.** Dumping the runner's own linked WAT (temporarily
+   flipping the worker's `emitWat`) shows
+   `global.get $__mod_$262 → __extern_method_call_0("createRealm") →
+   __extern_get("global") → __extern_get("parseInt") → global.set $__mod_otherParseInt`,
+   with null-checks around each hop. So this is not a folded or missing read.
+4. **Unresolved, and the next thing to chase:** a trace inside `__extern_get`'s
+   own arm in `src/runtime.ts` never fires for that row, while a trace in
+   `__typeof`'s arm (same `resolveImport` switch, same `buildImports` call,
+   same module) fires every time. Either the consumer's `env.__extern_get` is
+   not the one `buildImports` returns, or the func-index reading above is
+   wrong. Settle that first — it is one trace away and it decides whether this
+   is a realm bug or an import-wiring bug.
+
+### Findings for the next lane (round 6)
+
+28. **A cluster that is honest-pass/linked-fail is not automatically a parity
+    bug — check whether the honest pass is EARNED.** Here the honest lane was
+    passing on an unrelated TypeError that its own async wrapper laundered into
+    a rejection. The cheapest check is the one that settled it: run the feature
+    directly and look at what the engine actually has
+    (`typeof Promise.allKeyed` → `undefined` in both lanes). A parity patch
+    would have locked in a wrong answer and closed the row forever.
+29. **When the feature is simply absent, count the whole family before
+    choosing a fix size.** The brief named four rows; the family is 89 and was
+    at 2/89. Implementing the proposal was barely more work than a parity patch
+    and returned +50 instead of +4.
+30. **A polyfill that fixes the mechanism can still leave the ORIGINALLY
+    ASSIGNED rows red, and that is a result, not a failure — provided the new
+    reason is measured and named.** All four assigned rows now fail on
+    compiled-write visibility of `Promise.resolve`, which is a different issue's
+    subject; saying so is worth more than forcing them green.

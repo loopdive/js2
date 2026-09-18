@@ -85,6 +85,24 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
         }
       }
     }
+    // (#6482 r4) A plain `x.length = n` arms the marker too, for the same
+    // reason `isDescriptorDefineReference` does: §10.4.2.1 ArraySetLength makes
+    // a shrink DELETE the dropped elements, so the store now writes the f64
+    // absence marker over the region it orphans. A module whose literals are
+    // all dense would otherwise emit hole-UNAWARE reads against a store that
+    // can produce holes, and `arr[1]` after `[0,1]; length = 1; length = 10`
+    // read the raw marker back as NaN instead of `undefined`. Reads and stores
+    // have to be armed by the SAME pre-pass — function compilation order is not
+    // source order, so a lazy per-site flag desyncs them (see the header).
+    if (
+      !ctx.usesArrayHoles &&
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(node.left) &&
+      node.left.name.text === "length"
+    ) {
+      ctx.usesArrayHoles = true;
+    }
     if (!ctx.protoIndexDirty && isProtoIndexWrite(node)) {
       ctx.protoIndexDirty = true;
     }

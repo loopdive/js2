@@ -9050,6 +9050,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/vec-length-hole-fill.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/vec-elem-set.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -11936,6 +11944,11 @@
     },
     {
       "path": "src/runtime/iterator-polyfills.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
+      "path": "src/runtime/promise-keyed-combinators.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
     },

@@ -64,6 +64,12 @@ import { getWasmVecPrototypeMember as vecProtoGet, WASM_VEC_PROTOTYPE_MISS } fro
 import { fnctorInstanceofResult, fnctorOrNative, type FnctorIoHooks } from "./runtime/fnctor-instanceof.js";
 export { buildStringConstants, buildStringConstants16 };
 export { _resetIteratorRuntimeIntrinsicsForRealmIsolation };
+// (#6492 r5 / #5967) The test262 worker primes the await-dictionary statics
+// BEFORE its realm-canary snapshot, so the one-time install onto `Promise` is
+// part of the baseline instead of drift that recycles the worker after every
+// test (measured: 922 drift lines and 868 provider re-loads in one shard,
+// aggregate compile time +345 % — merge-group run 35313398232).
+export { _installPromiseKeyedCombinators } from "./runtime/promise-keyed-combinators.js";
 import {
   compiledClosureNativeSource,
   installNativeFunctionSourceFacade,
@@ -3433,6 +3439,16 @@ function _convertIterableForHost(
         const arr: any[] = new Array(len);
         memo.set(obj, arr);
         for (let i = 0; i < len; i++) {
+          // (#6482 r4) A HOLE is not an own property, so it must not
+          // become a present `undefined` element in the host mirror:
+          // `__vec_get` collapses the hole marker and an explicit
+          // `undefined` element to the same value (#4491 T11), and a
+          // dense mirror is what made `Object.keys([1,2,,4,,6])` report
+          // "2" (`Object/keys/15.2.3.14-6-2`). Ask the MINTING module
+          // and leave the slot ABSENT when it says hole; an index it
+          // cannot confirm is still materialized, so a module without
+          // the export behaves exactly as before.
+          if (_vecOverlayOwnIndex(obj, i, exports) === false) continue;
           arr[i] = _convertIterableForHost(vecGet(obj, i), exports, memo);
         }
         return arr;
@@ -4654,7 +4670,14 @@ function _wasmStructHasOwn(obj: any, key: any, exports: Record<string, Function>
   // struct field names, so the shape probe below answers false for both — which
   // is what made propertyHelper's `__hasOwnProperty(arguments, "0")` false once
   // the `for…in` gate above it started passing.
-  if (typeof key !== "symbol") {
+  //
+  // (#6482 r3/r4) An ordinary array can be SPARSE, so `idx < length` reports
+  // its HOLES as own. A registered `arguments` object is dense by construction
+  // (§10.4.4 maps exactly `0 .. length-1`) and keeps the length test; every
+  // other vec asks the MINTING module via `__vec_has_own_index`. A module that
+  // cannot answer leaves the key to the struct-shape probe below, which is the
+  // pre-r2 behaviour.
+  if (typeof key !== "symbol" && _canBeWeakKey(obj)) {
     const prop = String(key);
     const idx = _asArrayIndex(prop);
     if (prop === "length" || idx !== undefined) {
@@ -4662,7 +4685,12 @@ function _wasmStructHasOwn(obj: any, key: any, exports: Record<string, Function>
       const isVecFn = exports?.__is_vec as ((v: any) => number) | undefined;
       if (typeof lenFn === "function" && typeof isVecFn === "function") {
         try {
-          if (isVecFn(obj) === 1) return prop === "length" || (idx as number) < lenFn(obj);
+          if (isVecFn(obj) === 1) {
+            if (_argumentsObjects.has(obj)) return prop === "length" || (idx as number) < lenFn(obj);
+            if (prop === "length") return true;
+            const own = _vecOverlayOwnIndex(obj, idx as number, exports);
+            if (own !== undefined) return own;
+          }
         } catch {
           /* not a vec of this module */
         }
@@ -6937,11 +6965,45 @@ function _clampFrozenDescriptor(obj: any, d: PropertyDescriptor): PropertyDescri
  * `defineProperty`-non-enumerable index is filtered the same way the sidecar
  * arm filters its own keys.
  */
+/** (#6482 r4) Is `obj` a vec of the module that minted it? */
+function _isVecReceiver(obj: any, exports: Record<string, Function> | undefined): boolean {
+  const resolved = _decoderExportsFor(obj, exports);
+  const isVecFn = resolved?.__is_vec as ((v: any) => number) | undefined;
+  if (typeof isVecFn !== "function") return false;
+  try {
+    return isVecFn(obj) === 1;
+  } catch {
+    return false;
+  }
+}
+
 function _vecEnumerableIndexKeys(
   obj: any,
   exports: Record<string, Function> | undefined,
   seen?: ReadonlySet<string>,
 ): string[] {
+  // (#6482 r3) ARGUMENTS ONLY, and the restriction is load-bearing. A
+  // registered arguments object is DENSE by construction (§10.4.4 maps exactly
+  // `0 .. length-1`), so `idx < __vec_len` is a sound own-ness test for it. An
+  // ordinary array is NOT: `[0, , 2]` has a HOLE at index 1 that is in bounds
+  // and is not an own property. The host cannot tell the two apart — the
+  // sparseness lives in the in-wasm #3251 overlay and `__vec_gopd` is not an
+  // export — so answering from length alone reported holes as own and as
+  // enumerable. That over-generalisation cost 7 rows in the merge-group
+  // re-validation of PR #5964 (`15.2.3.6-4-159/160`,
+  // `15.2.3.7-6-a-155/156/161/162`, `copyWithin/fill-holes`), each of which
+  // asserts `hasOwnProperty("1") === false` for a hole.
+  //
+  // (#6482 r4) For an ordinary vec the host now ASKS instead of guessing:
+  // `__vec_has_own_index` reads the raw element against the hole marker in the
+  // module that MINTED the vec, resolved through `_decoderExportsFor` so a
+  // consumer-minted vec answers across a linked edge too. A module compiled
+  // before that export keeps the previous conservative rule — only indices the
+  // host positively knows about (a `_wasmPropDescs` entry or a sidecar value,
+  // both written by `Object.defineProperty` or a host write, neither of which
+  // can be a hole).
+  if (!_canBeWeakKey(obj)) return [];
+  const argumentsReceiver = _argumentsObjects.has(obj);
   exports = _decoderExportsFor(obj, exports); // (#5225/#6477) the MINTING module's exports
   if (!exports) return [];
   const isVecFn = exports.__is_vec as ((v: any) => number) | undefined;
@@ -6957,15 +7019,49 @@ function _vecEnumerableIndexKeys(
   if (!(len > 0)) return [];
   const tomb = _wasmStructDeletedKeys.get(obj);
   const descs = _wasmPropDescs.get(obj);
+  const sidecar = _wasmStructProps.get(obj);
   const keys: string[] = [];
   for (let i = 0; i < len; i++) {
     const k = String(i);
     if (tomb?.has(k) || seen?.has(k)) continue;
     const flags = descs?.get(k);
     if (flags !== undefined && flags & _SC_DEFINED && !(flags & _SC_ENUMERABLE)) continue;
-    keys.push(k);
+    if (argumentsReceiver || flags !== undefined || (sidecar && k in sidecar)) {
+      keys.push(k);
+      continue;
+    }
+    // (#6482 r4) Ask the minting module; decline when it cannot answer.
+    if (_vecOverlayOwnIndex(obj, i, exports) === true) keys.push(k);
   }
   return keys;
+}
+
+/**
+ * (#6482 r4) Does the MINTING module consider index `idx` an own property of
+ * this vec? `undefined` when it cannot say — the module predates the
+ * `__vec_has_own_index` export, or the probe threw — and every caller then
+ * falls back to its own conservative rule rather than guessing.
+ *
+ * The export answers from the RAW element, before `__vec_get`'s boxing maps a
+ * hole and an explicit `undefined` element to the same `undefined` (#4491 T11).
+ * That collapse is exactly why no pre-existing export could serve here.
+ */
+function _vecOverlayOwnIndex(
+  obj: any,
+  idx: number,
+  exports: Record<string, Function> | undefined,
+): boolean | undefined {
+  const resolved = _decoderExportsFor(obj, exports); // (#5225/#6477) the MINTING module
+  const hasOwnIdx = resolved?.__vec_has_own_index as ((v: any, i: number) => number) | undefined;
+  if (typeof hasOwnIdx !== "function") return undefined;
+  try {
+    const answer = hasOwnIdx(obj, idx);
+    // 1 = own, 0 = hole, anything else (-1) = the module does not recognize this
+    // receiver and is not entitled to an opinion.
+    return answer === 1 ? true : answer === 0 ? false : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function _readOwnDescriptor(
@@ -10043,7 +10139,17 @@ function _buildProxyBridgeHandler(
     return rawTarget === undefined ? handler : _wrapPlainHandlerForRawTarget(handler, rawTarget);
   }
 
-  const exports = callbackState?.getExports();
+  // (#6492 round 4d) Read the handler's trap fields with the exports of the
+  // module that MINTED it, not the reader's. In the #3451 linked test262 lane a
+  // handler built by the harness provider (`allowProxyTraps(...)` from
+  // `proxyTrapsHelper.js`) is a struct of the PROVIDER module, so the body
+  // module's `__sget_<trap>` getter `ref.test`-misses and every trap read as
+  // ABSENT — the host then used its default internal method and the user's
+  // traps silently never fired (`new Proxy(t, allowProxyTraps({get}))` returned
+  // the target's value and logged nothing). This is the same cross-module
+  // decoder selection every other struct read already performs (#5225); the
+  // proxy bridge was the one reader that skipped it.
+  const exports = _decoderExportsFor(handler, callbackState?.getExports());
 
   // (#2618) START-timing: a TOP-LEVEL `new Proxy(target, handler)` — the
   // dominant test262 shape (`var p = new Proxy(...)` at module scope; every
@@ -10085,7 +10191,10 @@ function _buildProxyBridgeHandler(
       }
       continue;
     }
-    const callable = _maybeWrapCallableUnknownArity(rawTrap, callbackState);
+    // The TRAP's own module decides how to dispatch it — which is not
+    // necessarily the handler's (the handler object can be minted by the
+    // provider while the trap closure stored in it came from the consumer).
+    const callable = _maybeWrapCallableUnknownArity(rawTrap, _crossModuleCallbackState(rawTrap, callbackState));
     if (typeof callable !== "function") {
       // (#2616) §7.3.10 GetMethod: a present-but-non-callable trap value (`{}`,
       // `1`, `"x"`, …) is NOT absence — it must throw a TypeError when the owning
@@ -10174,7 +10283,12 @@ function _buildLazyProxyBridgeHandler(
     const substituteTarget = rawTarget !== undefined && (name === "apply" || name === "construct");
     bridge[name] = function (this: any, ...args: any[]): any {
       const nativeTarget = args[0];
-      const lateExports = callbackState?.getExports();
+      // (#6492 round 4d) Same cross-module decoder selection as the eager
+      // builder: in a linked project the handler struct may belong to another
+      // module, whose `__sget_<trap>` getters are the only ones that can read
+      // it. Without this every trap resolves ABSENT and the host silently uses
+      // its default internal method.
+      const lateExports = _decoderExportsFor(handler, callbackState?.getExports());
       const rawTrap = _structFieldRaw(handler, name, lateExports);
       if (rawTrap == null) {
         // Trap genuinely absent → forward to the target's default internal
@@ -10196,7 +10310,7 @@ function _buildLazyProxyBridgeHandler(
       // is identity-equal to what the program passed to `new Proxy`.
       if (args.length > 0 && trapTarget !== undefined) args[0] = trapTarget;
       else if (substituteTarget && args.length > 0) args[0] = rawTarget;
-      const callable = _maybeWrapCallableUnknownArity(rawTrap, callbackState);
+      const callable = _maybeWrapCallableUnknownArity(rawTrap, _crossModuleCallbackState(rawTrap, callbackState));
       if (typeof callable !== "function") {
         throw new TypeError(`'${name}' on proxy: trap is not a function`);
       }
@@ -14020,6 +14134,34 @@ assert._isSameValue = isSameValue;
               return _orderOwnKeysSpec(result); // (#2131)
             }
           }
+          // (#6482 r4) A VEC is not a `_isWasmStruct` receiver, so it reached the
+          // native `Object.keys` below — which answers from the materialized
+          // dense view and reports a HOLE as an own key (`[1,2,,4,,6]` yielded
+          // "2" between "1" and "3", `Object/keys/15.2.3.14-6-2`, while the
+          // `for…in` surface correctly skipped it). Answer from the same index
+          // oracle `__for_in_keys` uses so the two surfaces agree:
+          // `_vecEnumerableIndexKeys` asks the MINTING module's
+          // `__vec_has_own_index` and declines an index it cannot confirm.
+          {
+            const vecExports = callbackState?.getExports();
+            if (_isVecReceiver(obj, vecExports)) {
+              const result = [..._vecEnumerableIndexKeys(obj, vecExports)];
+              const vecSc = _wasmStructProps.get(obj);
+              if (vecSc) {
+                const vecDescs = _wasmPropDescs.get(obj);
+                const vecTomb = _wasmStructDeletedKeys.get(obj);
+                for (const k of Object.getOwnPropertyNames(vecSc)) {
+                  if (k.startsWith("__get_") || k.startsWith("__set_")) continue;
+                  if (result.includes(k)) continue;
+                  if (vecTomb && vecTomb.has(k)) continue;
+                  const flags = vecDescs?.get(_normalizeDescKey(k));
+                  if (flags !== undefined && !(flags & _SC_ENUMERABLE)) continue;
+                  result.push(k);
+                }
+              }
+              return _orderOwnKeysSpec(result); // (#2131)
+            }
+          }
           return Object.keys(obj);
         };
       if (name === "__object_values")
@@ -14322,6 +14464,25 @@ assert._isSameValue = isSameValue;
                 const nProp = _normalizeDescKey(prop);
                 const existingDesc = _readOwnDescriptor(obj, nProp, callbackState?.getExports());
                 const existingVal = _sidecarGet(obj, prop);
+                // (#6482 r3) `_validatePropertyDescriptor` reads "no entry in the
+                // descriptor table" as FIRST DEFINITION, where §10.1.6.3 defaults
+                // every omitted attribute to false. For a property that ALREADY
+                // EXISTS — `obj.foo = 101` gives a declared struct field, a
+                // default data property with w/e/c true — the correct reading is
+                // a REDEFINE, which keeps the attributes the descriptor omits.
+                // Seeding the defaults here is what makes `defineProperty(obj,
+                // "foo", {value: …})` preserve them (15.2.3.6-4-60).
+                //
+                // Only when the property is genuinely present and unflagged: a
+                // struct field or a sidecar value. A key the receiver does not
+                // have is still a first definition and still defaults to false.
+                if (
+                  !sDescs.has(nProp) &&
+                  existingDesc !== undefined &&
+                  !("get" in existingDesc || "set" in existingDesc)
+                ) {
+                  sDescs.set(nProp, _SC_ELEM_DEFAULT);
+                }
                 const newFlags = _validatePropertyDescriptor(sDescs, nProp, desc, existingVal, existingDesc);
                 sDescs.set(nProp, newFlags);
                 if (_hasOwn(desc, "value")) {
@@ -17785,6 +17946,16 @@ assert._isSameValue = isSameValue;
                 registerVecMirror(arr, obj);
                 arr.length = len;
                 for (let i = 0; i < len; i++) {
+                  // (#6482 r4) A HOLE is not an own property, so it must not
+                  // become a present `undefined` element in the host mirror:
+                  // `__vec_get` collapses the hole marker and an explicit
+                  // `undefined` element to the same value (#4491 T11), and a
+                  // dense mirror is what made `Object.keys([1,2,,4,,6])` report
+                  // "2" (`Object/keys/15.2.3.14-6-2`). Ask the MINTING module
+                  // and leave the slot ABSENT when it says hole; an index it
+                  // cannot confirm is still materialized, so a module without
+                  // the export behaves exactly as before.
+                  if (_vecOverlayOwnIndex(obj, i, exports) === false) continue;
                   arr[i] = convertToJS(vecGet(obj, i));
                 }
                 // (#2761 B) Surface set-like own props (`arr.size/has/keys`).

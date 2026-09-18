@@ -42,7 +42,18 @@ func-budget-allow:
 # that are its only callers because it encodes WHICH of an import's identifiers
 # is the BindingIdentifier — a fact those two rules' parent-kind lists are
 # otherwise silent about. Splitting the god-function is #3399's job.
+# (2026-09-18, round 3) +17 lines in `src/index.ts` and +3 in `src/compiler.ts`
+# for the `scriptGoal` compile option. Both are the declaration and the single
+# read of ONE boolean, and neither can live anywhere else: `CompileOptions` is
+# the public option type (src/index.ts IS where an option is declared), and the
+# read sits on the line that builds `detectEarlyErrors`' opts next to the
+# `moduleGoal` it must never be confused with. 15 of the 17 lines are the doc
+# comment explaining why this flag is not `!moduleGoal` — the one fact that
+# stops the next reader from "simplifying" it into a rule that rejects every
+# product `export`.
 loc-budget-allow:
+  - src/index.ts
+  - src/compiler.ts
   - src/runtime.ts
   - src/codegen/closure-exports.ts
   - src/codegen/statements/nested-declarations.ts
@@ -344,3 +355,106 @@ module-code/parse-err-hoist-lex-fun.js    error: Duplicate identifier 'f'
 Acceptance stays open: 21 of the 36 agree. The rows above are ordinary
 follow-up work except the Script-goal three, which need a signal the runner does
 not currently send.
+
+## Round 3 (2026-09-18, Opus lane) — the Script goal, and the last contained rules
+
+Branch `issue-6491-r3` (round 2 + `origin/main`). Round 2 left 15 rows; 13 of
+them fall here. The other 2 are established below as honest-lane accidents and
+are deliberately NOT "fixed".
+
+### 1. `scriptGoal` — a new compile option, because the negation is unsafe
+
+Round 2 could not implement the three Script-goal rules (`export`, `import`,
+`import.meta` in a Script) because `moduleGoal === false` is also the state of
+every product compile, and product `.ts` files legitimately export. So the goal
+is now stated positively: `CompileOptions.scriptGoal`, set ONLY by a caller that
+knows the goal.
+
+The signal itself needed care. `isScriptGoal` (new, in
+`scripts/test262-module-goal.mjs`) is **not** `!isModuleGoal(...)`:
+`isModuleGoal` falls back to SYNTAX when the metadata is silent, so for
+`global-code/export.js` — a Script test whose body is `export default null;`
+*because that is illegal in a Script* — the fallback answers "module" and its
+negation answers "not a Script", backwards for the very row the rule exists to
+catch. `isScriptGoal` reads metadata only: no `flags: [module]`, not under a
+module-only path, not `raw`.
+
+Plumbing, both lanes, all six compile branches: `tests/test262-shared.ts` →
+`scripts/compiler-pool.ts` → `scripts/test262-worker.mjs` → `src/compiler.ts` →
+`detectEarlyErrors`. **The pool was the trap**: it forwards an explicit
+ALLOW-LIST rather than spreading its options, so the flag was silently dropped
+and the rule fired in a unit probe while doing nothing in the runner. Verified
+no product path sets it (`grep` over `src/`, `scripts/`, `tests/`: the only
+setters are the runner files above).
+
+Positive controls, real runner, linked lane: `import.meta/syntax/goal-module.js`
+and `goal-module-nested-function.js` — **both still pass**.
+
+### 2. The contained rules
+
+| rule | rows | note |
+| --- | ---: | --- |
+| §15.7.1 `await`/`arguments` in a class static block — the IDENTIFIER-shaped cases | 3 | The walk descends through ARROW functions (`Contains` is transparent for them) and stops at ordinary functions. A function DECLARATION's name is still inspected (it is declared in the block); a function EXPRESSION's name and parameters are not — see the correction below. |
+| §15.5.1 a generator/async FunctionExpression may not be named `yield`/`await` | 2 | Expression form only: a DECLARATION binds its name in the enclosing scope, where the reservation does not apply. |
+| §16.2.3.1 exported bindings must be declared | 2 | Local `export { … }` clauses only; a re-export names the other module's bindings. Collector covers var/let/const/function/class/interface/type/enum/namespace and every import form. |
+| §16.2.3.1 a string ModuleExportName needs a `from` | 1 | |
+| §14.7.5.1 `for (let in o)` in strict code | 1 | TypeScript parses this one shape as a VariableDeclarationList with ZERO declarations, which nothing else produces — that emptiness IS the discriminator. |
+| §14.3.1 `using` is a lexical declaration | 1 | Every flag test asked only about Let/Const, so a `using` binding was invisible as a lexical name AND miscounted as a VAR by the negated form. `NodeFlags.AwaitUsing` is `Using \| Const`, so the `Using` bit covers both spellings — and is why the Const bit alone must never be read as "this is a const". |
+
+**One over-fire, caught by the honest slice and fixed.** The first cut of the
+static-block rule inspected a function EXPRESSION's own name, which broke
+`expressions/generators/static-init-await-binding.js` — whose entire point is
+that `static { (function * await (await) {}); }` is LEGAL, because a function
+expression's BindingIdentifier and parameters belong to the function, not to the
+block. The slice reported it as a single pass→fail row; the rule now steps past
+expressions entirely. `tests/issue-6491-r3-…` carries it as a named guard.
+
+### 3. import-attributes (2 rows) — ACCIDENTAL, recorded, not manufactured
+
+Established by printing the honest compile result for both rows:
+
+```
+import/import-attributes/json-invalid.js         success=true
+   warning: IR path failed for $DONOTEVALUATE … [IR-FALLBACK]
+import/import-attributes/json-named-bindings.js  success=true
+   warning: IR path failed for $DONOTEVALUATE … [IR-FALLBACK]
+```
+
+Plus a compiler notice on stderr: *"Import attributes on `…_FIXTURE.json` are
+accepted but not yet acted on (#1288); the import is processed as if no
+attributes were present."* So there is **no resolution error to mirror** — the
+honest lane passes these on the same `$DONOTEVALUATE` lenient-arm accident as
+the rest of the bucket, and the linked lane's `fail` is the honest verdict. Left
+failing deliberately; closing them needs JSON-module resolution (#1288), not a
+syntax rule.
+
+### Before / after — real runner, the 36 rows, both lanes
+
+| lane | round-2 base | round 2 | **round 3** |
+| --- | ---: | ---: | ---: |
+| linked | 1 pass / 35 fail | 21 / 15 | **34 pass / 2 fail** |
+| honest | 36 pass | 36 pass | **36 pass** (unchanged) |
+
+Per-row: all 36 agree except `import/import-attributes/json-invalid.js` and
+`json-named-bindings.js`, both of which are §3 above.
+
+### No false positives
+
+- **Honest slice** over the seven directories these rules touch, deterministic
+  quarter-chunk, **full chunk this time — 1,792 rows: 1,404 pass → 1,404 pass,
+  0 flips in either direction.**
+  *Correction to round 2's record:* that section reported "924 rows"; the chunk
+  is 1,792 and the two runs happened to share 924 scored rows because one was
+  truncated. The 0-flip result stood for the rows compared, but the count was
+  not the chunk. Round 3's numbers are from two complete runs.
+- **`node scripts/equivalence-gate.mjs`**: 22 failing / 1,720 passing / 22 known
+  — no new regressions.
+- `issue-6491-r2`, `issue-4417-early-error-false-positives`, `#1931`, `#3419`:
+  56 pass. `issue-3489-test262-module-goal` fails on an uninitialized
+  `test262-fyi/data` submodule — environmental, unrelated.
+
+### Acceptance
+
+34 of 36 agree; 48 of the 50 bucket rows overall. The 2 remaining are the
+import-attributes pair and are not an early-error problem, so `status` stays
+`in-progress` pending #1288 rather than being closed on a manufactured pass.
