@@ -647,6 +647,23 @@ export interface CompileOptions {
    */
   inferModuleStrictArguments?: boolean;
   /**
+   * (#6491 round 3) The compilation unit is explicitly **Script** goal.
+   *
+   * The positive counterpart of `inferModuleStrictArguments`, and it has to be
+   * its own flag rather than its negation: `inferModuleStrictArguments === false`
+   * is ALSO what every ordinary product compile leaves behind (the option is
+   * simply absent), and a product `.ts` file legitimately contains `export` and
+   * `import`. So "not module goal" cannot be read as "Script goal" — doing that
+   * would reject valid code with a SyntaxError.
+   *
+   * Only a caller that KNOWS the goal may set it. Today that is exactly the
+   * test262 runner, which reads it off the test's own `flags: [module]`
+   * metadata. It gates the three Script-goal rules — `import`/`export`
+   * declarations (§16.1.1) and `import.meta` (§13.3.12.1) are ModuleItems and
+   * are SyntaxErrors in a Script — and nothing else.
+   */
+  scriptGoal?: boolean;
+  /**
    * (#6474) Let the MULTI-FILE codegen path derive the entry's source goal from
    * the entry file itself instead of forcing the module goal.
    *

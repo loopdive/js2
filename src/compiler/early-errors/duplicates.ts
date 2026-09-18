@@ -55,6 +55,27 @@ export function checkDuplicateParams(
 }
 
 /**
+ * (#6491 round 3) Is this declaration list LEXICAL (block-scoped)?
+ *
+ * `using` / `await using` (explicit resource management) are lexical
+ * declarations exactly like `let`/`const` — §14.3.1 gives them the same
+ * "LexicallyDeclaredNames ∩ VarDeclaredNames is empty" rule — but every
+ * flag test here asked only about Let and Const, so a `using` binding was
+ * (a) invisible as a lexical name, which is why
+ * `using/redeclaration-error-from-within-strict-mode-function-using.js`
+ * (`{ using f = null; var f; }`) compiled clean, and (b) miscounted as a VAR
+ * name by the negated form of the same test.
+ *
+ * `ts.NodeFlags.AwaitUsing` is `Using | Const`, so testing the `Using` bit
+ * covers both spellings — and is why the Const bit alone must never be read as
+ * "this is a const".
+ */
+function isLexicalDeclarationList(flags: number): boolean {
+  const using = (ts.NodeFlags as unknown as Record<string, number>).Using ?? 0;
+  return (flags & ts.NodeFlags.Let) !== 0 || (flags & ts.NodeFlags.Const) !== 0 || (flags & using) !== 0;
+}
+
+/**
  * (#6491 r2) VarDeclaredNames of a statement list: every `var` binding reachable
  * without entering a new var scope.
  *
@@ -80,7 +101,7 @@ function collectVarDeclaredNames(stmts: readonly ts.Statement[]): Set<string> {
     }
     if (ts.isVariableStatement(node) || ts.isVariableDeclarationList(node)) {
       const list = ts.isVariableStatement(node) ? node.declarationList : node;
-      if ((list.flags & ts.NodeFlags.Let) === 0 && (list.flags & ts.NodeFlags.Const) === 0) {
+      if (!isLexicalDeclarationList(list.flags)) {
         for (const decl of list.declarations) collectBindingNames(decl.name, names);
       }
       return;
@@ -197,7 +218,7 @@ export function checkDuplicateLexicalDeclarations(
     }
     if (ts.isVariableStatement(stmt)) {
       const flags = stmt.declarationList.flags;
-      if ((flags & ts.NodeFlags.Let) !== 0 || (flags & ts.NodeFlags.Const) !== 0) {
+      if (isLexicalDeclarationList(flags)) {
         for (const decl of stmt.declarationList.declarations) {
           if (ts.isIdentifier(decl.name)) {
             addLexName(decl.name.text, decl.name);

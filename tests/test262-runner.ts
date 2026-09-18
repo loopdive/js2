@@ -29,7 +29,7 @@ import {
   safeStringifyThrown as sharedSafeStringifyThrown,
   tryNativeExnRender as sharedTryNativeExnRender,
 } from "../scripts/lib/wasm-exn-render.mjs";
-import { isModuleGoal } from "../scripts/test262-module-goal.mjs";
+import { isModuleGoal, isScriptGoal } from "../scripts/test262-module-goal.mjs";
 // (#5353) ONE Temporal gate + ONE cache-dir rule, shared with the sharded lane.
 import {
   temporalCacheDir,
@@ -3704,7 +3704,7 @@ export function standaloneHostImportError(target: string | undefined, imports: r
 /** Default per-test timeout in milliseconds (prevents infinite-loop hangs) */
 const TEST_TIMEOUT_MS = 15000;
 
-export { isModuleGoal };
+export { isModuleGoal, isScriptGoal };
 
 export function buildNegativeCompileSource(source: string, meta: Test262Meta, category: string): string {
   const strippedSource = source.replace(/\/\*---[\s\S]*?---\*\//, "");

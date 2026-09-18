@@ -1359,6 +1359,10 @@ async function doCompile(
   temporal,
   semanticProviders,
   linkedHarness,
+  // (#6491 r3) Explicit SCRIPT goal, computed from METADATA by `isScriptGoal`
+  // in the caller. Threaded to EVERY compile branch below so the honest
+  // whole-assembly and the linked body-only unit are given the same goal.
+  scriptGoal,
 ) {
   // Defence-in-depth: restore any poisoned builtins BEFORE each compile.
   // postCompileCleanup runs after the previous test, but under rare worker
@@ -1439,6 +1443,7 @@ async function doCompile(
       target,
       semanticProviders,
       inferModuleStrictArguments,
+      scriptGoal,
       ...deferOpt,
     });
   }
@@ -1482,6 +1487,7 @@ async function doCompile(
       target,
       semanticProviders,
       inferModuleStrictArguments,
+      scriptGoal,
       ...deferOpt,
     });
   }
@@ -1507,6 +1513,7 @@ async function doCompile(
       target,
       semanticProviders,
       inferModuleStrictArguments,
+      scriptGoal,
       // (#3451) A negative test's verdict IS the diagnostic, so the linked
       // branch must ask for the same ones the honest branch gets. The honest
       // single-file gate rejects syntax errors unconditionally and runs the JS
@@ -1551,6 +1558,7 @@ async function doCompile(
       target,
       semanticProviders,
       inferModuleStrictArguments,
+      scriptGoal,
       ...deferOpt,
     });
   }
@@ -1563,6 +1571,7 @@ async function doCompile(
     target,
     semanticProviders,
     inferModuleStrictArguments,
+    scriptGoal,
     ...deferOpt,
   });
 }
@@ -1930,6 +1939,7 @@ process.on("message", async (msg) => {
       temporal,
       semanticProviders,
       linkedHarness,
+      msg.scriptGoal === true,
     );
     if (linkedHarness?.fellBack) noteLinkedFallback(linkedHarness.fallbackReason);
   } catch (err) {

@@ -18,6 +18,11 @@ import {
   checkExportDefaultDeclaration,
   checkHtmlCloseComment,
   checkModuleItemPosition,
+  checkScriptGoalModuleItems,
+  checkClassStaticBlockReservedNames,
+  checkExportedBindingsDeclared,
+  checkForInLetReference,
+  checkGeneratorExpressionName,
   checkReservedIdentifiers,
 } from "./module-rules.js";
 
@@ -29,7 +34,10 @@ import {
  * The order of the passes below is preserved exactly from the original
  * monolithic implementation.
  */
-export function detectEarlyErrors(sourceFile: ts.SourceFile, opts?: { moduleGoal?: boolean }): CompileError[] {
+export function detectEarlyErrors(
+  sourceFile: ts.SourceFile,
+  opts?: { moduleGoal?: boolean; scriptGoal?: boolean },
+): CompileError[] {
   const ctx = createEarlyErrorContext(sourceFile, opts);
 
   // Per-node walk: update/assignment targets, strict-mode rules, duplicate
@@ -43,6 +51,11 @@ export function detectEarlyErrors(sourceFile: ts.SourceFile, opts?: { moduleGoal
   checkDuplicateExportNames(ctx);
   checkDuplicateImportedBindings(ctx);
   checkModuleItemPosition(ctx);
+  checkScriptGoalModuleItems(ctx);
+  checkClassStaticBlockReservedNames(ctx);
+  checkExportedBindingsDeclared(ctx);
+  checkForInLetReference(ctx);
+  checkGeneratorExpressionName(ctx);
   checkReservedIdentifiers(ctx);
   checkHtmlCloseComment(ctx);
   checkDuplicateConstructors(ctx);
@@ -78,7 +91,7 @@ export function detectEarlyErrors(sourceFile: ts.SourceFile, opts?: { moduleGoal
 export function subtreeHasEarlyError(
   sourceFile: ts.SourceFile,
   node: ts.Node,
-  opts?: { moduleGoal?: boolean },
+  opts?: { moduleGoal?: boolean; scriptGoal?: boolean },
 ): boolean {
   const ctx = createEarlyErrorContext(sourceFile, opts);
   runNodeChecks(ctx, node);
