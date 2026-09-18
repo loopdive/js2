@@ -399,3 +399,45 @@ base by file-copy revert on the same tree, byte A/B with the `gc` lane
 identical, full gate chain before every commit, PR stacked on the previous
 slice, coordinator validates the head and opens the PR, queue shepherded
 every 40 minutes.
+
+## Stack state 2026-09-18 (post-S46) — two real `T | undefined` resurrection
+bugs fixed (#6632); the two named Temporal rows are STILL RED
+
+S46 (branch `issue-5383-standalone-temporal-s46`, worktree
+`/home/user/js2/.claude/worktrees/agent-a219eb61329d8c17e`, base
+`214afd09cc` = S44b `973a746655` + #6631 fix `c88e797703` + docs
+`214afd09cc`) found and fixed two real bugs in the `T | undefined` → wasm
+`ref_null $AnyString` representation (the same carrier a `T | null` field
+uses — a `ref.null` cannot distinguish the two, only the static declared type
+at the read site can): `compileTypeofExpression` (typeof-delete.ts) and the
+generic dynamic member-get dispatcher (`member-get-dispatch.ts`, the
+`obj[computedKey]` route) each bypassed the existing #4741 `coerceType`
+resurrection arm. Full writeup: #6632.
+
+**Neither fix closes the two named rows**
+(`Temporal/PlainDate/from/argument-object-valid.js`, `…/argument-string.js`).
+Re-ran both against a freshly rebuilt provider: still `Expected
+SameValue(«null», «undefined»)`. WAT reduction of the real provider traced
+the read to a THIRD site: `PlainDate.prototype.get era` → `Qt(this)` resolves
+a **polymorphic `Calendar` interface reference**, so `.isoToDate(...)`'s
+return is statically `any`, and the subsequent computed-key read
+(`result["era"]`) goes through the fully dynamic `$Object` property store
+(`$__extern_get`/`$__extern_set`), not either of the two sites fixed here.
+Two attempted minimal reductions of that shape each hit unrelated crashes
+instead of the target mismatch. Not fixed; see #6632 for the full account and
+next-step options.
+
+**No battery run** — the two named rows are still red, so a battery run at
+this head would validate #6631 alone (S45b's un-run obligation), not this
+PR's own fix. Regression evidence for THIS PR is scoped to
+`tests/issue-66*.test.ts` + `tests/issue-6484-*.test.ts` (35 files / 211
+tests, 0 failed) plus the new `tests/issue-6632-*.test.ts` (8 cases,
+fail-on-base/pass-on-fix confirmed).
+
+**For the next lane**: the `$__extern_get`/`$__extern_set` dynamic property
+store (`object-runtime.ts`) is the next place to look for the SAME
+`ref_null $AnyString`-collapse pattern — check whether the VALUE argument to
+`$__extern_set` (when storing a `string | undefined`-typed local into a
+dynamically-typed object property) goes through `coerceType` with an `fctx`
+available, and whether the GET side has an equivalent gap to the one just
+fixed in `member-get-dispatch.ts`.

@@ -11,6 +11,14 @@ reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-07
 loc-budget-allow:
+  # 2026-09-18 (S46, #6632) — `compileTypeofExpression`'s ref/ref_null operand
+  #   arm now routes through `coerceType` (like the f64/undefSentinel arm
+  #   immediately above it, #5378) instead of a bare `extern.convert_any`, so a
+  #   nullable `$AnyString` slot (a `string | undefined` field) resurrects as
+  #   the canonical `undefined` extern instead of host `null` — see the #6632
+  #   comment at the call site. +14 lines is the comment explaining why the
+  #   ref/ref_null branch needed the same treatment as the f64 branch.
+  - src/codegen/typeof-delete.ts
   # 2026-09-12 (S2p) — outlining the standalone realm-global lazy-init seed.
   #   The mechanism itself lives in the NEW module
   #   `src/codegen/native-globalthis-outline.ts`, deliberately not in the
@@ -184,6 +192,23 @@ loc-budget-allow:
     lines: 20
     reason: "#5383 S2 R4 — pre-register the `Math.<fn>` value-read substrate before the closure is built (#2704 forbids a first registration mid-body), which is why every Math value read kept the refusal body."
 func-budget-allow:
+  # 2026-09-18 (S46, #6632) — `compileTypeofExpression` +14: the ref/ref_null
+  #   operand arm now calls `coerceType` (routing through the #4741
+  #   $AnyString-null resurrection) instead of a bare `extern.convert_any`,
+  #   with a comment explaining why — mirrors the f64/undefSentinel arm
+  #   immediately above it (#5378), which already does this.
+  - src/codegen/typeof-delete.ts::compileTypeofExpression
+  # 2026-09-18 (S46, #6632) — `fillMemberGetDispatch` +1: one extra line in
+  #   the box-selection ternary (`nullableAnyStringResurrectionBox(...) ??
+  #   coercionInstrs(...)`) for the same resurrection, applied to the generic
+  #   dynamic member-get dispatcher's per-candidate field box (the
+  #   computed-key read route `obj[key]` takes, as opposed to a statically
+  #   typed direct member access) — that call site has no `FunctionContext`
+  #   available (it is a finalize-time, hand-tracked-locals fill, not the
+  #   push-style `coerceType` engine), so it could not reach the #4741 arm at
+  #   all before this change; see `nullableAnyStringResurrectionBox`'s own
+  #   docstring for why local 1 (`__any`) is safe to reuse as scratch.
+  - src/codegen/member-get-dispatch.ts::fillMemberGetDispatch
   # 2026-09-12 (S2o) — `ensureStructForType` +30. The CODE is a two-line guard
   # ("never register a struct for `typeof globalThis`"); the other 28 lines are
   # the rationale, and they are load-bearing because the guard looks redundant
@@ -9974,3 +9999,49 @@ output filename pattern, so the E-unlinked per-file TSV was overwritten by
 the E-linked run before diffing — the aggregate (235/300, identical both
 trees/both runs) is solid, the per-file diff for that one variant is not; see
 #6629 for the full note. No `src/` files touched this session.
+
+### S45 / S45b findings — NOT RECORDED HERE
+
+Per the S46 dispatch brief: "S45/S45b did not write theirs." Their work is
+summarized secondhand in that brief (S45 reduced the two named Temporal rows
+to `TemporalHelpers.canonicalizeCalendarEra`'s `assert.sameValue(eraName,
+undefined)`, ruled out the link boundary and the #6631 array-tag bug as the
+cause; S45b landed the real #6631 fix and left probe11.mts isolating the
+class-field-union mechanism) but this section is a placeholder, not a
+verified record — a follow-up agent with access to those sessions' actual
+work should backfill it from source.
+
+### S46 findings (2026-09-18) — two real, verified `T | undefined`
+resurrection bugs found and fixed (typeof + the generic dynamic member-get
+dispatcher); the two named Temporal rows are STILL RED — the actual read
+routes through a third, unfixed site
+
+Full writeup: `plan/issues/6632-class-field-undefined-union-typeof-nullish.md`.
+Summary: `resolveWasmType` collapses `T | undefined` to the same wasm carrier
+(`ref_null $AnyString`) as `T | null`; #4741 already resurrects a null
+`$AnyString` correctly in the generic `coerceType` engine, but
+`compileTypeofExpression` (typeof-delete.ts) and the dynamic member-get
+dispatcher (member-get-dispatch.ts, the `obj[computedKey]` route) each boxed
+to externref via a bare `extern.convert_any` that bypassed that arm. Both
+fixed (#6632), witnessed (`tests/issue-6632-class-field-undefined-union.test.ts`,
+8 cases, fail-on-base/pass-on-fix confirmed by file-copy revert), and
+regression-checked (`tests/issue-66*.test.ts` + `tests/issue-6484-*.test.ts`:
+35 files / 211 tests, 0 failed).
+
+**Re-ran both named rows against a freshly rebuilt provider — both still
+fail with the identical `Expected SameValue(«null», «undefined»)`.** WAT
+reduction of the real (unminified) provider traced the actual call:
+`PlainDate.prototype.get era` → `$Ni(this,"era")` → `Qt(this).isoToDate(n,
+{[t]:true})[t]`. `Qt(e)` resolves the date's `Calendar` through a
+**polymorphic interface reference**, so `.isoToDate(...)`'s return is
+statically `any`, and `[t]` (a runtime string) reads through the fully
+dynamic `$Object` property store (`$__extern_get`/`$__extern_set`,
+object-runtime.ts) — a THIRD site with the same `ref_null $AnyString`
+ambiguity, not covered by either fix landed here. Two attempted minimal
+reductions of that exact shape (a polymorphic-interface method building a
+dynamic object with a `string | undefined` field, read back via a computed
+key) each hit a DIFFERENT, unrelated pre-existing crash instead of
+reproducing the SameValue mismatch — see #6632's "S46 findings" for both
+probes. Time-boxed at ~2.5h; battery not run (the two named rows are still
+red, so it would validate only #6631, not this PR's own fix — see #6632 for
+the full accounting of what WAS run).

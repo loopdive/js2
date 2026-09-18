@@ -80,6 +80,56 @@ function dispatcherName(propName: string): string {
   return `__get_member_${propName}`;
 }
 
+/**
+ * (#6632) Box a field's already-on-the-stack value to externref, resurrecting
+ * a null `$AnyString` slot as the canonical `undefined` extern instead of
+ * host `null`. Mirrors the #4741 arm in `coerceType` (type-coercion.ts), which
+ * this dispatcher's box step could not reach: `coercionInstrs(ctx, from, to)`
+ * is called here with NO `FunctionContext` (this fill runs once at finalize
+ * over hand-tracked locals, not through the push-style engine that owns the
+ * #4741 arm), so the generic ref/ref_null → externref row's bare
+ * `extern.convert_any` ran instead and republished the slot's "absent" null as
+ * JS `null`. A `string | undefined` field read through this GENERIC dynamic
+ * dispatcher (the route a computed-key read like `obj[key]` takes, as
+ * opposed to a statically-typed direct member access) therefore observed
+ * `null` where the static field-access route (already fixed) observes
+ * `undefined` — this is the `TemporalHelpers.canonicalizeCalendarEra`
+ * reduction: the polyfill's `isoToDate(date, {[key]: true})` reads `era` via
+ * exactly this computed-key path.
+ *
+ * `scratchLocalIdx` must name a local that (a) already holds an `anyref`-or-
+ * wider value at this point in THIS arm's instruction sequence and (b) is
+ * dead for the rest of the arm once its held value has been consumed (true of
+ * the shared `__any` cast-receiver local 1 in every dispatcher arm here: by
+ * the time `box` runs, the receiver has already been `ref.cast`/`struct.get`
+ * past, and each arm is a mutually-exclusive `if`/`else` leaf, so no sibling
+ * arm can observe the overwrite). Returns `undefined` (never emits) for any
+ * other field type — this box is deliberately scoped to the ONE representation
+ * that is ambiguous at the value level (see `resolveWasmType`'s single-kind
+ * nullable-union collapse: `T | undefined` and `T | null` both lower to a
+ * bare `ref_null $T`, and only the STATIC declared type at the read site can
+ * tell them apart).
+ */
+function nullableAnyStringResurrectionBox(
+  ctx: CodegenContext,
+  fieldType: ValType,
+  scratchLocalIdx: number,
+): Instr[] | undefined {
+  if (fieldType.kind !== "ref_null" || !ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return undefined;
+  if (fieldType.typeIdx !== ctx.anyStrTypeIdx) return undefined;
+  return [
+    { op: "local.set", index: scratchLocalIdx },
+    { op: "local.get", index: scratchLocalIdx },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: canonicalUndefinedExternInstrs(ctx),
+      else: [{ op: "local.get", index: scratchLocalIdx }, { op: "extern.convert_any" }],
+    },
+  ];
+}
+
 /** (#3673) Mangle a property name into the TYPED f64 dispatcher name. */
 function typedF64DispatcherName(propName: string): string {
   return `__get_member_${propName}__f64`;
@@ -715,7 +765,8 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
         ? sentinelAwareF64BoxInstrs(f64ScratchIdx, boxNumIdx, sentinelUndefInstrs)
         : boxBoolIdx !== undefined
           ? [{ op: "call", funcIdx: boxBoolIdx }]
-          : coercionInstrs(ctx, cand.fieldType, { kind: "externref" });
+          : (nullableAnyStringResurrectionBox(ctx, cand.fieldType, 1) ??
+            coercionInstrs(ctx, cand.fieldType, { kind: "externref" }));
       const readValueInstrs: Instr[] = [
         { op: "local.get", index: 1 }, // __any
         { op: "ref.cast", typeIdx: cand.structTypeIdx },
