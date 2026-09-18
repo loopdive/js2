@@ -12044,6 +12044,11 @@
       "layer": "legacy-host"
     },
     {
+      "path": "src/runtime/promise-intrinsics.ts",
+      "state": "unmigrated",
+      "layer": "legacy-host"
+    },
+    {
       "path": "src/runtime/promise-keyed-combinators.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
