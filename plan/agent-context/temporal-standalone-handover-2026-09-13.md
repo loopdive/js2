@@ -898,3 +898,64 @@ S53b's or S53b2's worktree (both `.tmp/` scratch dirs, gitignored, never
 carried it forward from whatever S13-era session originally wrote it), so
 there was nothing to refresh — a fresh PR body should be written from
 scratch by whoever next opens or updates #5383's/#6637's PR.
+
+## Stack state 2026-09-18 (post-S54) — main synced, PR #5978's head is now a
+merge of `origin/main`; 0 stack-caused pass→fail across the full re-baseline
+
+S54 (branch `issue-5383-standalone-temporal-s54`, off S53b2's head
+`d1803a8bd2`, worktree `/home/user/js2/.claude/worktrees/agent-a035f428ff305a563`)
+merged `origin/main` (~112 commits ahead) into the stack, per dispatch (PR
+#5978 needed the sync to pass CI). Two commits: `abc4c6dc79` (the merge,
+resolving one real conflict in `src/codegen/array-object-proto.ts` — kept the
+stack's `function-proto-invokers.ts` over main's `function-proto-call-apply.ts`,
+since the stack's covers `bind` and main's does not) and `7bee4f3268` (a
+follow-up fix porting main's §20.2.3.1 step 3 `CreateListFromArrayLike`
+TypeError, which the kept implementation was missing, found by re-running
+main's own witness immediately after the merge). Full writeup in
+[#6638](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6638-standalone-temporal-stack-main-sync-2026-09-18)
+and #5383's "### S54 findings".
+
+**New base numbers for the next lane** (superseding the post-S53b2 numbers
+above — these are what to diff against next, not the pre-merge ones):
+
+| Family | pass/total | Family | pass/total |
+| --- | --- | --- | --- |
+| Duration | 106/120 | E-unlinked | 238/300 |
+| PlainDate | 113/120 | E-linked | 238/300 |
+| PlainDateTime | 113/120 | F-class | 136/250 |
+| ZonedDateTime | 103/120 | F-methoddef | 68/100 |
+| A | 1129/1250 | F-objproto | 136/150 |
+| B | 179/205 | | |
+| C | 274/349 | | |
+| D | 224/300 | | |
+
+(E-unlinked/E-linked pass counts are the S53b2 base's 235 + the 3 `fail→pass`
+moves found this lane; A is 1125 − 1 `pass→fail` + 5 `fail→pass` = 1129.)
+`.tmp/s54/*-cur.tsv` in this worktree hold the full per-file re-run; the base
+TSVs a future lane should diff against are the SAME `.tmp/s54-baseline/`
+files this lane used PLUS these deltas — or, more simply, re-copy this
+lane's `.tmp/s54/*-cur.tsv` files as the new base, since they already
+reflect the corrected state.
+
+**The one `pass→fail`** (family A:
+`test/language/expressions/object/identifier-shorthand-static-init-await-valid.js`,
+`pass` → `compile_error`) is **main's own pre-existing bug**
+(`checkClassStaticBlockReservedNames` in `src/compiler/early-errors/module-rules.ts`,
+from main's commit `06dbc8d88f`/#6491 — a file the stack never touches),
+not caused by this sync or by anything in the stack. Left unfixed per this
+lane's scope (sync only, no new feature work); worth its own issue if a
+future lane wants to fix main's early-error over-generalization (the walk
+should stop descending at a NESTED function body for the bare
+`await`/`arguments`-identifier restriction, not just at the FunctionExpression
+kinds it already special-cases).
+
+Equivalence gate unchanged: 22 failing / 1720 passing / 22 known-failures.
+Corpus-byte: 0 status flips (40 sha flips, expected from 112 commits of
+unrelated main codegen changes — not a regression signal).
+
+**Verdict: this head IS acceptable as PR #5978's new head.** Every witness
+green, every gate green, and the only regression in 3,684 measured
+real-provider test262 rows (1,250 A + 205 B + 349 C + 300 D + 300
+E-unlinked + 300 E-linked + 250 F-class + 100 F-methoddef + 150 F-objproto +
+480 four-family) is attributable to a main commit in a file the stack never
+touches.

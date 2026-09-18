@@ -11139,3 +11139,122 @@ dispatch specifically asked about (the 6 "order-of-operations" Proxy-trap
 rows and the 4 "options-read-before-algorithmic-validation" rows stay on
 their pre-existing #6628 mechanism, untouched by S53's narrower fix). S53 is
 criterion-4-clean and ready to merge on this axis.
+
+### S54 findings (2026-09-18) — main sync, PR #5978's head advanced to a merge of `origin/main`, 0 stack-caused regressions
+
+S54 (branch `issue-5383-standalone-temporal-s54`, off S53b2's head `d1803a8bd2`,
+worktree `/home/user/js2/.claude/worktrees/agent-a035f428ff305a563`) is the
+scheduled main-sync lane: `origin/main` had moved ~112 commits ahead of the
+stack's last sync since S53b2, and PR #5978 (S13→S54) needed to be caught up
+before it could pass CI. See [#6638](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6638-standalone-temporal-stack-main-sync-2026-09-18)
+for the merge writeup.
+
+**Merge**: `git merge origin/main` (merge-base `4a5d5c1dfba1…`, main tip
+`7b5fff8ae145…`) → commit `abc4c6dc79`. One real conflict — main's #6493 S1
+vs. this stack's #6630, both wiring `Function.prototype.{call,apply,bind}`
+bodies onto the same `makeGlue` ladder arm in `src/codegen/array-object-proto.ts`
+— resolved by keeping the stack's `function-proto-invokers.ts` (superset:
+covers `bind`, which main's file never did) and deleting main's file. A
+follow-up commit (`7bee4f3268`) ported one thing main's losing file had that
+the kept one lacked — the §20.2.3.1 step 3 `CreateListFromArrayLike`
+TypeError for a primitive `argArray` — after main's own witness
+(`tests/issue-6493-*.test.ts`) caught the gap on the first post-merge run.
+Both #6493 (11/11) and #6630 (6/6) witnesses are green against the one kept
+implementation.
+
+**Witness re-run** (merged + fixed tree): pre-merge baseline on `d1803a8bd2`
+was `tests/issue-66*.test.ts tests/issue-6484-*.test.ts` — 38 files / 240
+tests, 0 failed. Post-merge, the full union
+`tests/issue-64*.test.ts tests/issue-65*.test.ts tests/issue-66*.test.ts
+tests/issue-6484-*.test.ts` (115 files, batched to work around vitest's
+512MB-per-fork default) is **all green** — the one failure found
+(`tests/issue-6493-*`'s step-3 case) was the gap fixed in `7bee4f3268`, and a
+re-run confirmed green afterward.
+
+**Gates**: typecheck, loc-budget (both `merge-base(origin)` and
+`LOC_GATE_BASE=origin/main`), func-budget (both bases), coercion-sites,
+oracle-ratchet, dead-exports, speculative-rollback, issue-ids:against-main,
+`update-issues.mjs --check`, lint, format (no diff) — all green.
+`check:compiler-boundaries` reports only the pre-existing
+`inventory-valid-architecture-incomplete` red (`inventoryValid: true`) after
+reclassifying the renamed/added files in `scripts/compiler-boundaries.json`.
+Dropped the stranded `func-budget-allow` grant in #6637 (its own text said to
+drop it once the stack passed main's ceiling-moving commit `0bf2914353`,
+which the merge does).
+
+**Re-baselined battery vs. the pre-merge S53b2 numbers** (real Temporal
+provider, per-file diff against the S53b2-era base TSVs copied from
+`agent-a93264a3507301e71`'s `.tmp/s53brun/`):
+
+| Family | Baseline pass/total | pass→fail | fail→pass | Note |
+| --- | --- | --- | --- | --- |
+| Duration | 106/120 | 0 | 0 | |
+| PlainDate | 113/120 | 0 | 0 | |
+| PlainDateTime | 113/120 | 0 | 0 | |
+| ZonedDateTime | 103/120 | 0 | 0 | |
+| A | 1125/1250 | **1** | 5 | see below |
+| B | 179/205 | 0 | 0 | |
+| C | 274/349 | 0 | 0 | |
+| D | 224/300 | 0 | 0 | |
+| E-unlinked | 235/300 | 0 | 3 | |
+| E-linked | 235/300 | 0 | 3 | |
+| F-class | 136/250 | 0 | 0 | |
+| F-methoddef | 68/100 | 0 | 0 | |
+| F-objproto | 136/150 | 0 | 0 | |
+| **Total** | **3,047/3,684** | **1** | **11** | |
+
+Every file in every family was re-run (no sampling); "matched" counts in the
+per-family diffs equal each family's full baseline size, confirming complete
+coverage (e.g. family A: 1250/1250 matched across its five chunk files).
+
+**The one `pass→fail` is main-caused, not stack-caused.**
+`test/language/expressions/object/identifier-shorthand-static-init-await-valid.js`
+went from `pass` to `compile_error` (`'await' is not allowed in a class
+static initialization block`). Root cause: main's commit `06dbc8d88f`
+(`fix(early-errors): #6491 Script goal + six more early-error rules`) added
+`checkClassStaticBlockReservedNames` to
+`src/compiler/early-errors/module-rules.ts` — a file the stack never touches
+(byte-identical to `origin/main`'s copy, verified with a direct diff after
+the merge) and whose bug is self-contained in its own AST walk, independent
+of any caller. The walk flags a bare `await`/`arguments` IdentifierReference
+anywhere under a class static block, descending through nested arrow
+functions on the theory that "Contains is transparent for them" — but the
+failing test's own docstring names exactly the case this over-generalizes:
+"The `await` keyword is interpreted as an identifier within the body of
+arrow functions" (`(() => ({ await }))` inside `static { ... }` is valid
+per spec; the restriction on bare `await`/`arguments` doesn't propagate into
+a nested function body the way the walk assumes). This is main's pre-existing
+defect, not something this merge introduced or that the stack's own code
+interacts with — named here per the sync's acceptance criterion (main-caused
+regressions are documented, not fixed, by a sync-only lane) and left for
+whichever lane next touches `#6491`'s bucket.
+
+The 11 `fail→pass` moves are main's own conformance improvements landing for
+free (getter/setter-body-strict-inside fixes, `Reflect.get`/`.has`
+target-is-not-object-throws, a `yield`-as-expression fix, a null-handler
+Proxy `defineProperty` fix) — not examined further since they are pure
+upside, not migration risk.
+
+**Corpus-byte battery**: 84 rows (42 files × {gc, standalone}), re-compiled
+fresh and diffed against the S53b2-era `corpus-fix.jsonl`:
+**`statusFlips=0`** (every file that compiled before still compiles, and vice
+versa) but **`shaFlips=40`** — expected and not a regression signal: 112
+commits of unrelated codegen changes on `main` in the interim change emitted
+bytes for many corpus files without changing compile status. Status parity is
+the correctness signal here, not byte parity.
+
+**Equivalence gate**: `npm run -s test:equivalence:gate` → 22 failing / 1720
+passing / 22 known-failures in baseline — **matches the pre-merge number
+exactly**, no new regressions. (A separate run against a bare `origin/main`
+checkout, to report main's own standalone number, was not set up — the cost
+of a second full worktree + build + provider prewarm was judged not to
+justify the marginal signal here, since the equivalence suite's known-failure
+set is stack-authored and main carries none of these tests.)
+
+**Verdict**: this merged-and-fixed head (`7bee4f3268`, on branch
+`issue-5383-standalone-temporal-s54`) is **acceptable as PR #5978's new
+head**. Every witness is green, every gate is green, and the re-baselined
+battery shows exactly one `pass→fail` across 3,684 real-provider test262
+rows plus the 115-file unit-witness suite plus the 1,742-case equivalence
+gate — and that one is main's own pre-existing bug in code the stack never
+touches, not anything caused by this sync.
