@@ -73,6 +73,7 @@ import {
   usesNativeDataViewProvider,
 } from "../dataview-native.js";
 import { ensureTaDynProtoMethodHelper, hasTaDynProtoMethodHelper } from "../ta-dyn-proto-methods.js"; // (#5194 r3-1.3) dyn-view read-side helpers
+import { taDynDetachedGuardPrologue } from "../ta-dyn-method-call.js"; // (#6501) §23.2.4.4 prologue for the helper-routed mutators
 import { ensureNativeArrayFromIterN, ensureNativeArrayFromMapped, reserveAnyIterNext } from "../iterator-native.js";
 import { tryCompileNativeGeneratorMethodCall } from "../generators-native.js";
 import { NATIVE_HOF_METHODS } from "../hof-native.js";
@@ -4128,7 +4129,11 @@ export function compileReceiverMethodCall(
             fctx.body.push({ op: "local.set", index: aLocal });
             argLocals.push(aLocal);
           }
-          const thenArm: Instr[] = [{ op: "local.get", index: recvLocal }];
+          // (#6501) §23.2.4.4 ValidateTypedArray — these four never reach the
+          // #5961 dispatcher prologue; see `taDynDetachedGuardPrologue` for why
+          // it must sit after the args are in locals and before the helper.
+          const taDetGuard = taDynDetachedGuardPrologue(ctx, fctx, methodName, recvLocal);
+          const thenArm: Instr[] = [...taDetGuard, { op: "local.get", index: recvLocal }];
           // `set` consumes only source + offset, but all supplied arguments
           // have already been evaluated into locals above. Keep the same
           // five-parameter native helper ABI as the other dyn-view mutators;
