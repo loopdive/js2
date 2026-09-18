@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-18T18:56:48.480Z",
-  "baseline_generated_at": "2026-09-18T18:56:48.480Z",
-  "baseline_sha": "925e7edbb2a14f5b86431ae15ef979a465bafcb4",
+  "timestamp": "2026-09-18T20:36:31.276Z",
+  "baseline_generated_at": "2026-09-18T20:36:31.276Z",
+  "baseline_sha": "0372709ad09b4e5281cb8bd99044d02bb0e899e8",
   "oracle_version": 14,
   "mode": {
     "target": "standalone",
@@ -12,22 +12,22 @@
   "summary": {
     "total": 48232,
     "pass": 35635,
-    "fail": 9545,
+    "fail": 9543,
     "compile_error": 3026,
-    "compile_timeout": 8,
+    "compile_timeout": 10,
     "skip": 18,
-    "compilable": 45180,
+    "compilable": 45178,
     "host_free_pass": 35635,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 47146,
         "pass": 34606,
-        "fail": 9507,
+        "fail": 9505,
         "compile_error": 3007,
-        "compile_timeout": 8,
+        "compile_timeout": 10,
         "skip": 18,
-        "compilable": 44113,
+        "compilable": 44111,
         "host_free_pass": 34606,
         "stale": 0,
         "label": "ECMAScript current standard"
@@ -59,11 +59,11 @@
       "official": {
         "total": 48232,
         "pass": 35635,
-        "fail": 9545,
+        "fail": 9543,
         "compile_error": 3026,
-        "compile_timeout": 8,
+        "compile_timeout": 10,
         "skip": 18,
-        "compilable": 45180,
+        "compilable": 45178,
         "host_free_pass": 35635,
         "stale": 0,
         "label": "standard + annex_b (default)"
@@ -71,11 +71,11 @@
       "full": {
         "total": 48735,
         "pass": 35870,
-        "fail": 9561,
+        "fail": 9559,
         "compile_error": 3182,
-        "compile_timeout": 8,
+        "compile_timeout": 10,
         "skip": 114,
-        "compilable": 45431,
+        "compilable": 45429,
         "host_free_pass": 35870,
         "stale": 0,
         "label": "standard + annex_b + proposals"
@@ -85,33 +85,33 @@
   "official_summary": {
     "total": 48232,
     "pass": 35635,
-    "fail": 9545,
+    "fail": 9543,
     "compile_error": 3026,
-    "compile_timeout": 8,
+    "compile_timeout": 10,
     "skip": 18,
-    "compilable": 45180,
+    "compilable": 45178,
     "host_free_pass": 35635,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
     "pass": 35870,
-    "fail": 9561,
+    "fail": 9559,
     "compile_error": 3182,
-    "compile_timeout": 8,
+    "compile_timeout": 10,
     "skip": 114,
-    "compilable": 45431,
+    "compilable": 45429,
     "host_free_pass": 35870,
     "stale": 0
   },
   "strict_summary": {
     "total": 45721,
     "pass": 33354,
-    "fail": 9406,
+    "fail": 9404,
     "compile_error": 2935,
-    "compile_timeout": 8,
+    "compile_timeout": 10,
     "skip": 18,
-    "compilable": 42760,
+    "compilable": 42758,
     "host_free_pass": 33354,
     "stale": 0
   },
@@ -141,11 +141,11 @@
     "standard": {
       "total": 47146,
       "pass": 34606,
-      "fail": 9507,
+      "fail": 9505,
       "compile_error": 3007,
-      "compile_timeout": 8,
+      "compile_timeout": 10,
       "skip": 18,
-      "compilable": 44113,
+      "compilable": 44111,
       "host_free_pass": 34606,
       "stale": 0
     }
@@ -199,9 +199,9 @@
       "name": "built-ins/Array",
       "path": "built-ins/Array",
       "pass": 2192,
-      "fail": 772,
+      "fail": 770,
       "compile_error": 110,
-      "compile_timeout": 8,
+      "compile_timeout": 10,
       "skip": 0,
       "total": 3082,
       "host_free_pass": 2192
@@ -1198,7 +1198,7 @@
     }
   ],
   "error_categories": {
-    "assertion_fail": 4760,
+    "assertion_fail": 4758,
     "host_import_leak": 1931,
     "illegal_cast": 235,
     "missing_builtin": 2,
@@ -1302,7 +1302,7 @@
           "type_error:TypeError: Cannot read properties of undefined (reading 'until')",
           "type_error:TypeError: Cannot read properties of undefined (reading 'round')",
           "host_import_leak:standalone target emitted host imports: env::__temporal_plain_date_add_field, env::__temporal_plain_date_from_string_field (##)",
-          "other:ReferenceError: Temporal is not defined"
+          "type_error:TypeError: called value is not a function"
         ]
       },
       {
@@ -1976,15 +1976,15 @@
         "count": 1769,
         "statuses": {
           "pass": 0,
-          "fail": 1551,
+          "fail": 1549,
           "compile_error": 210,
-          "compile_timeout": 8,
+          "compile_timeout": 10,
           "skip": 0,
           "total": 1769,
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 1109,
+          "assertion_fail": 1107,
           "null_deref": 4,
           "illegal_cast": 174,
           "type_error": 250,
@@ -2808,7 +2808,7 @@
           "assertion_fail:Test262Error: Expected true but got false",
           "other:[object WebAssembly.Exception]",
           "type_error:TypeError: Cannot convert undefined or null to object",
-          "other:L#:## Unexpected keyword or identifier.; L#:## Identifier expected.; L#:## Unexpected keyword or identifier.; L#:## Identifier expected.; L#:## Unexpected keyword or identifier.; L#:## Identifier expected.; L#:## Unexpected keyword or ident"
+          "other:L#:## ':' expected.; L#:## '=>' expected.; L#:## Declaration or statement expected.; L#:## Declaration or statement expected.; L#:## Declaration or statement expected."
         ]
       },
       {
