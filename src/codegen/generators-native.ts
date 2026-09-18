@@ -756,6 +756,14 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         if (continuation === "lowered") continue;
         if (continuation === "failed") return false;
       }
+      // 2d) (#2864 S2) The same continuation for a single-declarator
+      // declaration whose initializer suspends (`const a = [yield 1];`). Same
+      // direct-body-only / no-state-lowered-finally scope as 2b.
+      if (ts.isVariableStatement(stmt) && allowExpressionContinuations && stateFinallyDepth === 0) {
+        const continuation = lowerDeclarationContinuation(stmt, unwind);
+        if (continuation === "lowered") continue;
+        if (continuation === "failed") return false;
+      }
 
       // 3) try statements wrapping yields.
       if (ts.isTryStatement(stmt)) {
@@ -1258,8 +1266,9 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   /**
    * The statement a continuation re-runs in its successor state, paired with the
    * expression inside it whose yields / captured operands are replaced by spills.
-   * For an `ExpressionStatement` the two coincide today; the pair exists so a
-   * statement whose root is a sub-expression can reuse the same lowering.
+   * For an `ExpressionStatement` the two coincide; for a `VariableStatement`
+   * (#2864 S2) the root is the single declarator's initializer, while the whole
+   * declaration — binding included — is what the successor recompiles.
    */
   interface ContinuationHost {
     statement: ts.Statement;
@@ -1790,6 +1799,36 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       ? continuationYieldOf(assignedValueRoot)
       : parenthesizedContinuationYield(stmt.expression);
     return lowerContinuationRoot({ statement: stmt, root: stmt.expression }, root, singleYield, unwind);
+  }
+
+  /**
+   * (#2864 S2) `var/let/const <id> = <expr containing a yield>;`. The #680
+   * machinery is statement-shaped already — a successor state recompiles the
+   * ORIGINAL statement with the yield and its captured prefix read from spills —
+   * so a declaration needs no new lowering, only a root: the single declarator's
+   * initializer. The BINDING therefore happens entirely in the successor, which
+   * is where the spec puts it (the value must exist first).
+   *
+   * Identifier names only. A binding PATTERN (`const [a] = [yield 1]`) binds
+   * names that `collectSpillsIn` does not register, so a later suspension would
+   * read a stale frame; that widening needs the spill-typing work the
+   * destructuring-PARAM path does and is deliberately not folded in here.
+   */
+  function lowerDeclarationContinuation(
+    stmt: ts.VariableStatement,
+    unwind: readonly UnwindEntry[],
+  ): ExpressionContinuationAttempt {
+    if (!continuationYieldsMayCarryOperands) return "not-applicable";
+    if (stmt.declarationList.declarations.length !== 1) return "not-applicable";
+    const declarator = stmt.declarationList.declarations[0]!;
+    if (!ts.isIdentifier(declarator.name) || !declarator.initializer) return "not-applicable";
+    const root = unwrapContinuationWrapper(declarator.initializer);
+    return lowerContinuationRoot(
+      { statement: stmt, root: declarator.initializer },
+      root,
+      continuationYieldOf(root),
+      unwind,
+    );
   }
 
   function lowerContinuationRoot(

@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * #2864 S1 — a `yield` in EXPRESSION POSITION inside a standalone generator.
+ * #2864 S1/S2 — a `yield` in EXPRESSION POSITION inside a standalone generator.
  *
  * A general Wasm-native generator carrier already existed; what still fell out
  * of `buildNativeGeneratorPlan` (and therefore leaked the whole
@@ -8,9 +8,10 @@
  * #680 diagnostic in standalone) was a yield that is not the WHOLE statement
  * and not the WHOLE initializer of an identifier declaration:
  *
- *   [a] = [yield 1];          // assignment with a destructuring target
- *   ({ a } = { a: yield 1 }); // ditto, object pattern
- *   x = yield 1;              // assignment with an identifier target
+ *   [a] = [yield 1];          // assignment with a destructuring target  (S1)
+ *   ({ a } = { a: yield 1 }); // ditto, object pattern                   (S1)
+ *   x = yield 1;              // assignment with an identifier target    (S1)
+ *   const arr = [yield 1];    // declaration whose initializer suspends  (S2)
  *
  * #680 already had the mechanism — capture the operands evaluated BEFORE the
  * suspension into frame spills, then recompile the original statement in the
@@ -82,6 +83,32 @@ function* g(): Generator<number, void, number> {
 }
 ${DRIVE}`),
     ).toBe(8);
+  });
+
+  it("S2: declaration whose array-literal initializer suspends", async () => {
+    expect(
+      await runStandalone(`function* g(): Generator<number, void, number> {
+  const arr = [yield 1];
+  yield arr[0];
+}
+${DRIVE}`),
+    ).toBe(7);
+  });
+
+  it("S2: a continuation binding survives a LATER suspension", async () => {
+    expect(
+      await runStandalone(`function* g(): Generator<number, void, number> {
+  const arr = [yield 1];
+  yield 9;
+  yield arr[0];
+}
+export function test(): number {
+  const it = g();
+  it.next(0);
+  it.next(7);
+  return it.next(0).value as number;
+}`),
+    ).toBe(7);
   });
 
   // The reason the statement is SPLIT across the resume boundary rather than
