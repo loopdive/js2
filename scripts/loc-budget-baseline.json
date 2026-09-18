@@ -1,7 +1,7 @@
 {
   "generated": "2026-09-17",
   "threshold": 1500,
-  "totalCeiling": 889614,
+  "totalCeiling": 889784,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -107,6 +107,7 @@
     "src/ir/select.ts": 11270,
     "src/ir/verify.ts": 2830,
     "src/package-linker.ts": 2120,
-    "src/runtime.ts": 19809
+    "src/runtime.ts": 19819,
+    "src/runtime/iterator-polyfills.ts": 1513
   }
 }

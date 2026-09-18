@@ -47842,7 +47842,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 2079,
+      "passCount": 2092,
       "totalCount": 2486,
       "tests": [
         {
@@ -50866,7 +50866,7 @@
         "language/expressions/new",
         "language/expressions/new.target"
       ],
-      "passCount": 353,
+      "passCount": 367,
       "totalCount": 461,
       "tests": [
         {
@@ -81356,7 +81356,7 @@
       "jsHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#C792EA\">function</span><span style=\"color:#82AAFF\"> power</span><span style=\"color:#89DDFF\">(</span><span style=\"color:#BABED8;font-style:italic\">base</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\">,</span><span style=\"color:#BABED8;font-style:italic\"> exp</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\">):</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\"> {</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">  return</span><span style=\"color:#BABED8\"> base</span><span style=\"color:#89DDFF\"> **</span><span style=\"color:#BABED8\"> exp</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF\">}</span></span></code></pre>",
       "watHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#BABED8\">(</span><span style=\"color:#FFCB6B\">func</span><span style=\"color:#82AAFF\"> $power</span><span style=\"color:#BABED8\"> (</span><span style=\"color:#FFCB6B\">type</span><span style=\"color:#F78C6C\"> 1</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    local</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    local</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">    return_call</span><span style=\"color:#F78C6C\"> 2</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">  )</span></span></code></pre>",
       "testCategories": ["language/expressions/exponentiation"],
-      "passCount": 65,
+      "passCount": 66,
       "totalCount": 72,
       "tests": [
         {
