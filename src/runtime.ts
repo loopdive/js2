@@ -14458,6 +14458,25 @@ assert._isSameValue = isSameValue;
                 const nProp = _normalizeDescKey(prop);
                 const existingDesc = _readOwnDescriptor(obj, nProp, callbackState?.getExports());
                 const existingVal = _sidecarGet(obj, prop);
+                // (#6482 r3) `_validatePropertyDescriptor` reads "no entry in the
+                // descriptor table" as FIRST DEFINITION, where §10.1.6.3 defaults
+                // every omitted attribute to false. For a property that ALREADY
+                // EXISTS — `obj.foo = 101` gives a declared struct field, a
+                // default data property with w/e/c true — the correct reading is
+                // a REDEFINE, which keeps the attributes the descriptor omits.
+                // Seeding the defaults here is what makes `defineProperty(obj,
+                // "foo", {value: …})` preserve them (15.2.3.6-4-60).
+                //
+                // Only when the property is genuinely present and unflagged: a
+                // struct field or a sidecar value. A key the receiver does not
+                // have is still a first definition and still defaults to false.
+                if (
+                  !sDescs.has(nProp) &&
+                  existingDesc !== undefined &&
+                  !("get" in existingDesc || "set" in existingDesc)
+                ) {
+                  sDescs.set(nProp, _SC_ELEM_DEFAULT);
+                }
                 const newFlags = _validatePropertyDescriptor(sDescs, nProp, desc, existingVal, existingDesc);
                 sDescs.set(nProp, newFlags);
                 if (_hasOwn(desc, "value")) {

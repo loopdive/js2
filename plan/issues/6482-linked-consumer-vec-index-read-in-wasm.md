@@ -36,6 +36,12 @@ related: [3451, 5225, 6477, 6491, 6495]
 # 10 dense-literal rows in PR #5967. The new export answers from the RAW element
 # before that boxing; `vec-define-writeback.ts` gains the matching
 # absence-marker fill for a `length` change (§10.4.2.1).
+# 2026-09-18 (round 3 iii): +51 LOC in src/codegen/object-ops.ts for the
+# representability veto — `defineProperty(obj, "foo", {value: "abc"})` on a
+# struct field typed `f64` silently lost the value in the struct fast path, and
+# the runtime route (which stores into the sidecar every reader consults) is the
+# correct destination for a value the field cannot hold. Measured on the
+# 2,570-row vec-define matrix: +1 (`15.2.3.6-4-60`), 0 regressed.
 # 2026-09-18 (round 4b): the WRITE side of the same rule. `__vec_has_own_index`
 # can only be as honest as the backing store, and §10.4.2.1 ArraySetLength makes
 # a shrink DELETE the dropped elements — so every `length` store must mark the
@@ -55,10 +61,12 @@ loc-budget-allow:
   - src/codegen/expressions/assignment.ts
   - src/codegen/array-length-define.ts
   - src/codegen/array-holes.ts
+  - src/codegen/object-ops.ts
 func-budget-allow:
   - src/runtime.ts
   - src/runtime.ts::resolveImport
   - src/codegen/expressions/assignment.ts::compilePropertyAssignment
+  - src/codegen/object-ops.ts::compileObjectDefineProperty
   - src/codegen/vec-access-exports.ts::_emitVecAccessExportsInner
   - src/codegen/vec-define-writeback.ts::emitVecDefineWritebackExports
 ---

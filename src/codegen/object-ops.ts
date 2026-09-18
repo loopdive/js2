@@ -899,6 +899,36 @@ function emitInheritedTrueDescriptorDefineProperty(
   );
 }
 
+/**
+ * (#6482 r3) Can this descriptor `value` expression be stored in a struct field
+ * of `fieldType` without losing it?
+ *
+ * Only a PROVABLE mismatch answers false — everything unresolved stays on the
+ * existing fast path, so this narrows nothing that used to work. The mismatch
+ * that matters is a non-numeric value against a numeric field: the store
+ * coerces (a string becomes `NaN`, or the slot keeps its miss-default), and
+ * the result is indistinguishable from a real value at every later read.
+ */
+function valueRepresentableInField(ctx: CodegenContext, valueExpr: ts.Expression, fieldType: ValType): boolean {
+  if (fieldType.kind !== "f64" && fieldType.kind !== "f32" && fieldType.kind !== "i32" && fieldType.kind !== "i64") {
+    return true; // a ref/externref slot holds anything
+  }
+  switch (ctx.oracle.typeFactOf(unwrapTransparentExpression(valueExpr)).kind) {
+    case "string":
+    case "symbol":
+    case "array":
+    case "tuple":
+    case "object":
+    case "function":
+    case "class":
+      return false;
+    default:
+      // number / boolean / bigint / null / undefined / union / any / unknown /
+      // unresolvable — either it fits, or we cannot prove it does not.
+      return true;
+  }
+}
+
 export function compileObjectDefineProperty(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1540,8 +1570,29 @@ export function compileObjectDefineProperty(
     propName !== undefined &&
     ts.isIdentifier(objArg) &&
     ctx.sidecarDefinedPropertyKeys.has(`${objArg.text}:${propName}`);
+  // (#6482 r3) The struct fast path below `struct.set`s the descriptor's
+  // `value` straight into the typed field. When the value provably cannot be
+  // REPRESENTED there — a string into an `f64` slot, which is the
+  // `15.2.3.6-4-60` shape `obj.foo = 101; defineProperty(obj, "foo", {value:
+  // "abc"})` — the store silently loses it: the field reads back as the type's
+  // miss-default and BOTH `obj.foo` and the gOPD value answer wrong, with no
+  // sidecar entry for `_readOwnDescriptor` to prefer (instrumented:
+  // `[dp-struct] foo struct: __anon_0 fieldType: {"kind":"f64"}`). Decline, so
+  // the define falls through to the runtime route, which stores into the
+  // sidecar every reader consults and mirrors what it can into the field via
+  // `_structFieldWriteback`.
+  const valueFitsField =
+    valueExpr === undefined || fields === undefined || fieldIdx < 0
+      ? true
+      : valueRepresentableInField(ctx, valueExpr, fields[fieldIdx]!.type);
   const useStruct =
-    !_anyFlagDynamic && !priorRuntimeDefine && structTypeIdx !== undefined && fields && fieldIdx >= 0 && valueExpr;
+    !_anyFlagDynamic &&
+    !priorRuntimeDefine &&
+    structTypeIdx !== undefined &&
+    fields &&
+    fieldIdx >= 0 &&
+    valueExpr &&
+    valueFitsField;
   const anyFlagSpecified =
     _anyFlagDynamic || descWritable !== undefined || descEnumerable !== undefined || descConfigurable !== undefined;
 
