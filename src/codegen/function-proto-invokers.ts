@@ -109,15 +109,76 @@ function pushIsCallableGuard(ctx: CodegenContext, fctx: FunctionContext, member:
 }
 
 /**
+ * §20.2.3.1 step 3 (merged in from #6493 2026-09-18) — CreateListFromArrayLike
+ * throws a TypeError when `argArray` is present, non-nullish, and NOT an
+ * Object. A silent zero-argument call instead (what `__apply_closure` alone
+ * would do for a primitive, since it reads length/indexed-get generically)
+ * would trade the old loud refusal for a wrong answer. `null`/`undefined`
+ * stay the step-2 empty-list case and are left for `__apply_closure`'s
+ * existing generic handling. Symbol has no `__typeof_symbol` anywhere in the
+ * tree (see `reflect-target-guard.ts`/`object-runtime-proxy.ts`), so it is
+ * discriminated by a `ref.test` on the native `$Symbol` carrier instead.
+ */
+function pushApplyArgArrayGuard(ctx: CodegenContext, fctx: FunctionContext): void {
+  const primitive: Instr[] = [];
+  const orTest = (test: Instr[]): void => {
+    primitive.push(...test);
+    if (primitive.length > test.length) primitive.push({ op: "i32.or" });
+  };
+  for (const name of ["__typeof_number", "__typeof_string", "__typeof_boolean", "__typeof_bigint"]) {
+    const idx = ctx.funcMap.get(name);
+    if (idx === undefined) continue;
+    orTest([
+      { op: "local.get", index: 3 },
+      { op: "call", funcIdx: idx },
+    ]);
+  }
+  if (ctx.symbolTypeIdx >= 0) {
+    orTest([
+      { op: "local.get", index: 3 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: ctx.symbolTypeIdx },
+    ]);
+  }
+  if (primitive.length === 0) return;
+
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+  const nullish: Instr[] = [{ op: "local.get", index: 3 }, { op: "ref.is_null" }];
+  if (isUndefinedIdx !== undefined) {
+    nullish.push({ op: "local.get", index: 3 }, { op: "call", funcIdx: isUndefinedIdx }, { op: "i32.or" });
+  }
+  fctx.body.push(
+    ...nullish,
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...primitive,
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: buildThrowJsErrorInstrs(ctx, "TypeError", "CreateListFromArrayLike called on a non-object", {
+            flush: fctx,
+          }),
+        },
+      ],
+    },
+  );
+}
+
+/**
  * `%Function.prototype%.apply(thisArg, argArray)` — fixed 2-slot ABI (params
- * 0=self, 1=this/target, 2=thisArg, 3=argArray). No unpacking needed:
- * `__apply_closure` already reads `argArray` generically.
+ * 0=self, 1=this/target, 2=thisArg, 3=argArray). No unpacking needed beyond
+ * the primitive-argArray guard: `__apply_closure` already reads a genuine
+ * array-like `argArray` generically.
  */
 export function emitFunctionProtoApplyBody(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
   if (!ctx.standalone && !ctx.wasi) return null;
   ensureObjectRuntime(ctx);
   const applyClosureIdx = reserveApplyClosure(ctx);
   if (!pushIsCallableGuard(ctx, fctx, "apply")) return null;
+  pushApplyArgArrayGuard(ctx, fctx);
   fctx.body.push(
     { op: "local.get", index: 1 }, // target — invoked as itself
     { op: "local.get", index: 2 }, // thisArg
