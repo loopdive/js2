@@ -10227,3 +10227,109 @@ verification above. Recommend the next lane: (1) rebuild the Temporal
 provider against this fix, (2) re-run the two target rows, (3) if still red,
 report the next error string per row; if green, run the full criterion-4
 battery before opening the PR.
+
+### S48b findings (2026-09-18) — real rows STILL RED with the #6634 fix
+rebuilt in; one reduction step names a NEW `illegal cast` trap the fix
+introduces for destructured-parameter interface-literal methods, worse than
+the silent misdispatch it replaced
+
+Setup: fresh worktree off S48's tip `190d5336d8`, branch
+`issue-5383-standalone-temporal-s48b`. Temporal provider rebuilt from scratch
+(`JS2WASM_TEMPORAL_CACHE=s48b`, `cacheHit=false`, provider namespace
+`js2wasm:npm:@js-temporal/polyfill:2ac1f8feccf61bdb`); QuickJS eval adapter
+also rebuilt (new key `d12704e68b66379d`, bundle hash changed as expected).
+**Caveat for future lanes: the Temporal provider's own cache key
+(`temporalProviderCacheKey` in `scripts/prewarm-temporal-provider.mjs`) hashes
+only the polyfill source + compile options, NOT the compiler bundle — it does
+NOT change across a `src/codegen` fix.** A same-named cache dir would have
+silently served a stale (pre-fix) provider; using a fresh `JS2WASM_TEMPORAL_CACHE`
+label per session (as the dispatch brief specified) is the only thing that
+forced a genuine rebuild here. This is a real gap in the prewarm script worth
+its own issue.
+
+**Real rows, still red, byte-identical error to every prior session (S45
+through S48):**
+```
+test262/test/built-ins/Temporal/PlainDate/from/argument-object-valid.js => fail
+  "Test262Error: Expected SameValue(«null», «undefined») to be true"
+test262/test/built-ins/Temporal/PlainDate/from/argument-string.js => fail
+  "Test262Error: Expected SameValue(«null», «undefined») to be true"
+```
+So #6634 did not close #5383's target gap — consistent with S48's own
+"necessary reduction step, not a confirmed mover" framing.
+
+**Why #6634 doesn't touch these two rows at all: the default calendar
+(`iso8601`) never reaches the class-implementer branch.** Disassembly of the
+real (unminified) `@js-temporal/polyfill` bundle traces the call chain
+`date.era` → `Ni(this,"era")` → `Qt(this).isoToDate(n,{[t]:true})[t]`, where
+`Qt(e) = ce("%calendarImpl%")(re(e,E))` resolves the calendar through a
+registry `Xo` populated as `Xo.iso8601 = {isoToDate({year,month,day}, r){
+const o = {era:void 0, eraYear:void 0, year, month, day, daysInWeek:7,
+monthsInYear:12}; ...; return o; }, ...}` (object literal) alongside
+`Xo[helper.id] = new NonIsoCalendar(helper)` for the non-ISO calendars (class
+instances). For these two test files the calendar is always `"iso8601"`, so
+the read only ever touches the object-literal branch — #6634's fix (which
+changes what happens when a class implementer of the SAME interface exists
+ANYWHERE in the program) is a no-op for this call, confirmed by the byte-
+identical error text pre- and post-fix.
+
+**One reduction step, per the dispatch brief.** Built `.tmp/s48b/repro17.ts`,
+matching the real shape closely: an interface `Calc` with ONE method whose
+parameter is object-DESTRUCTURED (`compute({year,month,day})`), a
+`Record<string,Calc>` holding an object-literal implementer plus a class
+implementer that is constructed but never called (`keepAlive()`, matching
+`iso8601`'s registry sharing a `Record`/dict type with the NonIsoCalendar
+instances without ever routing to them for the ISO path). File-copy A/B on
+the three #6634-touched `src/codegen` files (`call-receiver-method.ts`,
+`index.ts`, `property-access.ts`; the fourth file
+`interface-class-implementer.ts` need not be reverted — with the other three
+reverted it is simply unreferenced dead code, confirmed by `git status`
+showing zero diff after restoring the current versions):
+
+| Build | Result |
+| --- | --- |
+| BASE (afe573638b, pre-#6634) | `result=197600` — **silently misdispatches to the class** (`fields.year*100` with `fields.year=1976` → `197600`), even though the call went through the object-literal-holding variable. This is exactly #6634's documented bug (repro13's "both keys answer the class"). |
+| FIX (190d5336d8, #6634 applied) | `COMPILE/RUN ERROR: illegal cast` — a hard Wasm trap. |
+
+Narrowed further (`.tmp/s48b/repro16.ts`, the same destructured-parameter
+literal-only method with NO class implementer anywhere in the program):
+passes cleanly on the fix (`result=2005`), proving the trap needs BOTH
+ingredients together — `interfaceHasClassImplementer` flipping the carrier to
+externref (triggered by the class's mere existence, never by being called)
+AND the literal method's parameter being object-destructured.
+
+**Verdict: #6634 traded a silent wrong-answer defect for a hard crash in this
+specific shape (destructured-parameter interface method + literal/class
+carrier collapse), and neither is the `SameValue(null, undefined)` defect
+blocking #5383's two target rows — that defect lives entirely within the
+`iso8601`-literal-only, no-class-in-the-call-path branch, which #6634 never
+touches.** The real `Xo.iso8601.isoToDate` uses exactly this destructured-
+parameter shape (`({year,month,day}, r)`), so the NEW `illegal cast` trap is
+a plausible latent risk for any calendar codepath that happens to also
+reference a class-implemented calendar elsewhere in the same compiled
+program — worth its own issue before #6634 is considered closed-out, even
+though it does not reproduce inside the two target rows (which only ever
+touch the ISO calendar, so no class-implementer reference is live in that
+compiled unit). Filed as a follow-up candidate; not yet its own issue number
+(next lane or PO to decide whether repro17 is severe enough to block #6634's
+merge or ship as tracked debt).
+
+**Four-family battery (re-run with the freshly-rebuilt provider, same 480
+files as S46b/S47/S48's baseline TSVs):**
+
+| Family | Base pass/120 | Fix pass/120 | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- |
+| PlainDate | 113 | 113 | 0 | 0 |
+| Duration | 106 | 106 | 0 | 0 |
+| PlainDateTime | 113 | 113 | 0 | 0 |
+| ZonedDateTime | 103 | 103 | 0 | 0 |
+| **Total** | **435/480** | **435/480** | **0** | **0** |
+
+Zero movement in either direction — consistent with #6634 being a no-op for
+every file in this 480-file sample (none of them appear to hit the
+class-implementer branch either).
+
+**Remaining criterion-4 battery (must-not-move A–F, corpus byte flips,
+equivalence gate) is IN PROGRESS as this section is being written — see the
+next commit on this branch for completion, or the "Scope NOT completed"
+note below if the box restarted before it finished.**
