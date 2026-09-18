@@ -35,7 +35,12 @@ import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "./
 // runner that was missing the tryNativeExnRender step.
 import { safeStringifyThrown, tryNativeExnRender } from "./lib/wasm-exn-render.mjs";
 import { SANDBOX_GLOBAL_NAMES, applySandboxGlobalFunctionAttributes } from "./test262-sandbox-globals.mjs";
-import { restoreOwnKeyOrder, snapshotOwnKeyOrder } from "./test262-own-key-order.mjs";
+import {
+  restoreOwnKeyOrder,
+  restoreSymbolAndAccessorMeta,
+  snapshotOwnKeyOrder,
+  snapshotSymbolAndAccessorMeta,
+} from "./test262-own-key-order.mjs";
 // (#4162) ONE import-object finaliser, shared with tests/test262-runner.ts and
 // tests/test262-shared.ts. It owns the #2928 E6 standalone runtime-eval
 // provider attachment (cached-binary loading + a fresh per-test namespace for
@@ -622,6 +627,21 @@ const _staticOrig = _STATIC_SNAPSHOTS.map(([name, obj, keys]) => ({
   ...snapshotOwnKeyOrder(obj),
 }));
 
+// (#6492 r20) Symbol-keyed own properties and getter metadata, for the SAME
+// shared intrinsics plus their prototypes. Two canary drift lines survived
+// every list above — `Promise.prototype[Symbol.toStringTag]:deleted` and
+// `Promise[Symbol.species]<get>.length:deleted` — because the string-keyed
+// lists cannot see a symbol key and the #3470 function-metadata restore walks
+// methods, not accessor `get`/`set` functions.
+const _symbolMetaOrig = _STATIC_SNAPSHOTS.flatMap(([name, obj]) => {
+  const targets = [[name, obj]];
+  const proto = obj?.prototype;
+  if (proto != null && (typeof proto === "object" || typeof proto === "function")) {
+    targets.push([`${name}.prototype`, proto]);
+  }
+  return targets.map(([label, target]) => ({ name: label, obj: target, snapshot: snapshotSymbolAndAccessorMeta(target) }));
+});
+
 const _accessorOrig = _ACCESSOR_SNAPSHOTS.map(([name, obj, keys]) => ({
   name,
   obj,
@@ -835,6 +855,23 @@ function cleanCleanup() {
 // making subsequent compiler internals like `Array.from(nodeArray)` throw
 // `%Array%.from requires that the property of the first argument,
 // items[Symbol.iterator], when exists, be a function`.
+/** Do `obj[key]`'s writable/enumerable/configurable still match the snapshot? */
+function _descriptorAttributesMatch(obj, key, origDesc) {
+  if (!origDesc) return true;
+  let cur;
+  try {
+    cur = Object.getOwnPropertyDescriptor(obj, key);
+  } catch {
+    return true;
+  }
+  if (!cur) return false;
+  return (
+    cur.writable === origDesc.writable &&
+    cur.enumerable === origDesc.enumerable &&
+    cur.configurable === origDesc.configurable
+  );
+}
+
 function _restoreMethodProp(obj, key, orig, origDesc) {
   if (orig === undefined) return;
   let cur;
@@ -843,7 +880,15 @@ function _restoreMethodProp(obj, key, orig, origDesc) {
   } catch {
     cur = undefined;
   }
-  if (cur === orig) return;
+  // (#6492 r20) The value being back is NOT the same as the property being
+  // back. A row that deletes a method and re-assigns it recreates the property
+  // `enumerable: true`, and a `defineProperty` row can leave `writable` /
+  // `configurable` wrong while the value matches — the #4758 shape, which the
+  // `Array.prototype[Symbol.iterator]` arm above already handles by hand. This
+  // was the residue behind the last three permanent realm-canary lines
+  // (`Promise.prototype.{then,catch,finally}:changed`): value-equal, attributes
+  // drifted, restore returning early.
+  if (cur === orig && _descriptorAttributesMatch(obj, key, origDesc)) return;
 
   // Hot path: plain assignment. Succeeds when the descriptor is still
   // writable. Silently no-ops (or throws in strict mode) when the test
@@ -852,11 +897,11 @@ function _restoreMethodProp(obj, key, orig, origDesc) {
     obj[key] = orig;
   } catch {}
 
-  // Re-check and fall back to defineProperty if the value is still wrong
-  // AND we have the original descriptor to re-apply. Only reached on the
-  // cold "test poisoned via defineProperty" path.
+  // Re-check and fall back to defineProperty if the value is still wrong, or
+  // the ATTRIBUTES are, and we have the original descriptor to re-apply. Only
+  // reached on the cold "test poisoned / deleted-and-reassigned" path.
   try {
-    if (obj[key] === orig) return;
+    if (obj[key] === orig && _descriptorAttributesMatch(obj, key, origDesc)) return;
   } catch {
     // accessor threw — try defineProperty anyway
   }
@@ -1056,6 +1101,12 @@ function restoreBuiltins() {
   // corpus that delete them.
   for (const { obj, order, descriptors } of _staticOrig) {
     restoreOwnKeyOrder(obj, order, descriptors);
+  }
+
+  // (#6492 r20) …and the symbol-keyed properties + getter metadata those lists
+  // cannot express.
+  for (const { obj, snapshot } of _symbolMetaOrig) {
+    restoreSymbolAndAccessorMeta(obj, snapshot);
   }
 
   // Restore accessor properties (getters) via Object.defineProperty when
@@ -3024,7 +3075,15 @@ function diffRealmSurface(snap) {
 // provider for (nearly) every row and quadrupled shard wall-clock (merge-group
 // run 35313398232, +345 % aggregate compile time). Older bundles without the
 // export are unaffected.
-runtimeBundle._installPromiseKeyedCombinators?.(Promise);
+// (#6492 r20) The prime must hand over the SAME thenable mirror `buildImports`
+// would have passed. The install is first-wins (it skips a `Promise` that
+// already has the method), so priming with the identity default permanently
+// pinned the combinators to a mirror-less closure — seven rows of the family
+// return a COMPILED object literal from their `resolve`, and the polyfill then
+// threw `nextPromise.then is not a function` no matter what `buildImports`
+// passed later. Optional-chained on both arguments: an older bundle without
+// the export simply primes as before.
+runtimeBundle._installPromiseKeyedCombinators?.(Promise, runtimeBundle._mirrorPolyfillThenable);
 let realmCanarySnapshot = REALM_CANARY_MODE ? snapshotRealmSurface() : null;
 let realmCanaryChecks = 0;
 let realmCanaryCheckMsTotal = 0;
