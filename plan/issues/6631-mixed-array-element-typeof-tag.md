@@ -139,12 +139,45 @@ npx vitest run --maxWorkers=2 tests/issue-6631-mixed-array-element-typeof-tag.te
 # 9 passed (9) on fix; 5 failed / 4 passed on base revert
 ```
 
-## Real-corpus proof
+## Real-corpus proof — this fix does NOT close the two named Temporal rows
 
-Two named Temporal rows, base vs fix:
+Two rows S45 named as explained by this defect:
 
 - `test/built-ins/Temporal/PlainDate/from/argument-object-valid.js`
 - `test/built-ins/Temporal/PlainDate/from/argument-string.js`
 
-(see `## S45/S45b findings` on #5383 for the run output and the criterion-4
-four-family / must-not-move battery against the S44b NEW-base TSVs.)
+Both still fail identically on the fix, with the SAME error string as on base:
+
+```
+Test262Error: Expected SameValue(«null», «undefined») to be true
+```
+
+(prewarm: `JS2WASM_TEMPORAL_CACHE=s45b-fix node scripts/prewarm-temporal-provider.mjs
+--target standalone` → `cacheHit=false key=a11c84e556193459`, confirming a fresh
+provider build against this branch's compiler; both rows re-run via
+`runTest262File(file, "Temporal", 30000, "standalone")` after the quickjs eval
+adapter was rebuilt to match the fresh compiler bundle.)
+
+**Root-cause correction**: the SameValue(null, undefined) failure traces to
+`TemporalHelpers.canonicalizeCalendarEra(date.calendarId, date.era)` —
+`date.era` is a **class-instance field read** (`era: string | undefined`),
+NOT an array-element read. `isHeterogeneousPrimitiveUnion` (the gate this
+fix's `emitVecToVecBody` substitution — and `resolveWasmType`'s union arm
+that feeds it — depend on) requires **≥ 2 distinct non-nullish primitive
+kinds**; `string | undefined` has exactly ONE non-nullish kind (`string`), so
+it never reaches the `$AnyValue`-vec / `boxToAny` path this fix touches at
+all. A follow-up probe (`.tmp/s45b/probe11.mts`, "class field union") isolates
+a DIFFERENT, adjacent defect on this same branch: a class field typed
+`string | undefined`, assigned the value `undefined` in the constructor, reads
+back `typeof d.era === "object"` (should be `"undefined"`) — a null/undefined
+CONFLATION at a field-storage coercion site this fix never touches. That is
+the more likely proximate cause of the two Temporal rows' `SameValue(null,
+undefined)` mismatch and needs its own S46-generation investigation (own
+coercion site, not `emitVecToVecBody`).
+
+**This PR is filed anyway** because #6631 (the array-literal `typeof`-tag
+corruption) is independently real, independently witnessed (base-fail /
+fix-pass, file-copy A/B confirmed), and independently fixed — it does not
+depend on resolving the Temporal rows to be worth landing. The Temporal rows
+remain open; see `## S45/S45b findings` on #5383 for the fuller writeup and
+the next probe's exact findings.
