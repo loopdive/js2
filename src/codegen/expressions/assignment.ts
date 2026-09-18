@@ -6373,7 +6373,17 @@ function compileExternSetFallback(
       fctx.body.push({ op: "drop" });
       fctx.body.push({ op: "ref.null.extern" });
     }
-  } else if (objType.kind === "ref" || objType.kind === "ref_null") {
+  } else if (objType.kind === "ref" || objType.kind === "ref_null" || objType.kind === "anyref") {
+    // (#6635) `anyref` reaches here the same way it reaches
+    // `compileElementAccessBody`'s read-side twin — e.g. the un-annotated
+    // return of `Map`/`WeakMap.prototype.get()` used directly as a WRITE
+    // target with no intervening local (`someMap.get(k)[computedKey] = v`).
+    // `extern.convert_any` accepts anyref (and its struct-ref subtypes)
+    // identically, so this is the same conversion the `ref`/`ref_null` arm
+    // already performs — not a new code path, just widening its guard to
+    // stop anyref falling to the `reportError` below, which the #1919
+    // speculative wrapper turns into a SILENT no-op write (the RHS value is
+    // dropped instead of ever reaching `__extern_set`).
     fctx.body.push({ op: "extern.convert_any" });
   } else {
     reportError(ctx, target, "Unsupported element assignment target type");

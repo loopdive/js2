@@ -1036,7 +1036,8 @@ export function collectClassDeclaration(
           // as `HonoBase`, and imported through that alias. Resolve the exact
           // class-expression declaration so the derived struct is registered
           // as a subtype of the synthetic base struct whose bodies actually run.
-          parentClassName = resolveClassHeritageAlias(ctx, baseExpr, new Set(), decl) ?? baseExpr.text;
+          const resolvedParentClassName = resolveClassHeritageAlias(ctx, baseExpr, new Set(), decl);
+          parentClassName = resolvedParentClassName ?? baseExpr.text;
           // Guard against circular inheritance (e.g., class X extends X)
           if (parentClassName === className) {
             parentClassName = undefined;
@@ -1046,6 +1047,19 @@ export function collectClassDeclaration(
           parentFields = ctx.structFields.get(parentClassName) ?? [];
           // Record parent-child relationship
           ctx.classParentMap.set(className, parentClassName);
+          // (#6623, #5383 S36) `resolveClassHeritageAlias` returning `undefined`
+          // means the identifier could not be tied to any known local class
+          // declaration (a function PARAMETER is the test262
+          // `checkSubclassingIgnored(construct, ...)` shape: `class MySubclass
+          // extends construct {}}`). The `?? baseExpr.text` fallback above keeps
+          // `classParentMap` populated with a name that resolves to nothing
+          // (`parentStructTypeIdx` stays `undefined`), so this class is really an
+          // independent ROOT struct wearing a heritage clause it has no compiled
+          // relationship to. See the field-collision note on
+          // `classDynamicUnresolvedHeritageSet`.
+          if ((ctx.standalone || ctx.wasi) && resolvedParentClassName === undefined) {
+            ctx.classDynamicUnresolvedHeritageSet.add(className);
+          }
           // (#2620) A subclass of a native-collection builtin (Set/Map/WeakMap/
           // WeakSet) under nativeStrings (`--target standalone`/`wasi`) cannot
           // take the host-constructible path below: there is no JS host, so
@@ -1150,6 +1164,15 @@ export function collectClassDeclaration(
             parentFields = ctx.structFields.get(parentClassName) ?? [];
             ctx.classParentMap.set(className, parentClassName);
           }
+        } else if (ctx.standalone || ctx.wasi) {
+          // (#6623, #5383 S36) A property/element-access heritage expression
+          // (`class S extends NS.PD {}`, the shape a LINKED provider namespace
+          // produces) is resolved at runtime on the host lane
+          // (`hasDynamicHostParent` above) but has NO standalone/wasi handling
+          // at all — `parentClassName` stays `undefined` and this class is
+          // silently registered as an independent ROOT struct. Same collision
+          // risk as the unresolved-identifier case just above.
+          ctx.classDynamicUnresolvedHeritageSet.add(className);
         }
       }
     }

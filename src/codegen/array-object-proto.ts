@@ -91,7 +91,6 @@ import { ANNEX_B_ACCESSOR_ARITY, emitObjectProtoAnnexBAccessorBody } from "./obj
 import { emitWrapperProtoValueOfBody, isWrapperBrandName } from "./wrapper-proto-value-of.js";
 import { emitWrapperProtoToStringBody } from "./wrapper-proto-to-string.js"; // (#4619)
 import { emitFunctionProtoToStringBody } from "./function-proto-to-string.js"; // (#4492 wave-5)
-import { emitFunctionProtoCallApplyBody } from "./function-proto-call-apply.js"; // (#6493 S1)
 import { emitObjectProtoValueOfBody } from "./object-proto-value-of.js"; // (#4492 wave-5)
 import { emitStringConcatMemberBody } from "./string-proto-concat.js";
 import { emitStringSubstringMemberBody } from "./string-proto-substring.js";
@@ -119,6 +118,11 @@ import {
 } from "./builtin-static-globals.js";
 import { moduleReadsBareFunctionValue } from "./function-intrinsic-carrier.js";
 import { emitFunctionProtoHasInstanceBody, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "./function-proto-has-instance.js";
+import {
+  emitFunctionProtoApplyBody,
+  emitFunctionProtoBindBody,
+  emitFunctionProtoCallBody,
+} from "./function-proto-invokers.js"; // (#6630)
 import {
   ERROR_STACK_GETTER_MEMBER,
   ERROR_STACK_SETTER_MEMBER,
@@ -2437,13 +2441,13 @@ function makeGlue(
     memberIsVariadic: (member) =>
       name === "Array" && (member === "join" || member === "push" || member === "unshift" || member === "concat")
         ? true
-        : // (#6493 S1) §20.2.3.3 `call ( thisArg, ...args )` — the trailing rest
-          // is the whole point of the member, so a fixed slot count would
-          // silently DROP every argument past the declared arity. `apply` is
-          // fixed-arity (thisArg, argArray) and stays on the ordinary slots.
-          name === "Function" && member === "call"
+        : name === "String" && member === "concat"
           ? true
-          : name === "String" && member === "concat",
+          : // (#6630, merged with #6493 S1 2026-09-18) `call`/`bind` both take
+            // `(thisArg, ...rest)` — the packed vec ABI the invoker bodies below
+            // unpack themselves. `apply` stays fixed at its 2-slot spec arity
+            // (thisArg, argArray).
+            name === "Function" && (member === "call" || member === "bind"),
     // (#4485) §B.2.4.3 — `Date.prototype.toGMTString` IS `Date.prototype.
     // toUTCString` (one function object, asserted by test262 annexB
     // .../toGMTString/value.js). The Annex B String aliases have the same
@@ -2507,11 +2511,6 @@ function makeGlue(
       // VALUE. Same "ask first, emit second" contract as the two arms above, so a
       // decline leaves the ladder byte-identical.
       (name === "Function" && member === "toString" ? emitFunctionProtoToStringBody(c, fctx) : null) ??
-      // (#6493 S1) §20.2.3.3 / §20.2.3.1 `Function.prototype.{call,apply}` as
-      // reflective VALUES. Same "ask first, emit second" contract, so a decline
-      // leaves the ladder byte-identical. `call` is registered variadic just
-      // below, so its body reads an argument VECTOR rather than fixed slots.
-      (name === "Function" ? emitFunctionProtoCallApplyBody(c, fctx, member) : null) ??
       // ES2015 §19.2.3.6 — the inherited `@@hasInstance` method. Its body is
       // shared with the standalone dynamic-instanceof substrate so ordinary
       // function receivers and direct `Function.prototype` reads use the same
@@ -2519,6 +2518,13 @@ function makeGlue(
       (name === "Function" && member === FUNCTION_PROTO_HAS_INSTANCE_MEMBER
         ? emitFunctionProtoHasInstanceBody(c, fctx)
         : null) ??
+      // (#6630) `call`/`apply`/`bind` as reflective VALUES — forward to the
+      // generic "invoke any callable" primitives (`__apply_closure`/
+      // `__bind_dyn`) the rest of the runtime already uses for this question.
+      // See function-proto-invokers.ts's header for the full defect trace.
+      (name === "Function" && member === "call" ? emitFunctionProtoCallBody(c, fctx) : null) ??
+      (name === "Function" && member === "apply" ? emitFunctionProtoApplyBody(c, fctx) : null) ??
+      (name === "Function" && member === "bind" ? emitFunctionProtoBindBody(c, fctx) : null) ??
       (name === "Array"
         ? emitArrayProtoMemberBody(c, fctx, member)
         : name === "Promise"

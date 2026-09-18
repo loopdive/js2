@@ -2119,7 +2119,21 @@ export function compileTypeofExpression(
     const boxIdx = ctx.funcMap.get(operandType.symbol === true ? "__box_symbol" : "__box_boolean");
     if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
   } else if (operandType.kind === "ref" || operandType.kind === "ref_null") {
-    fctx.body.push({ op: "extern.convert_any" });
+    // (#6632) A nullable `$AnyString` slot (the wasm carrier for a
+    // `string | undefined` field/local — `resolveWasmType`'s single-kind
+    // nullable-union collapse) uses `ref.null` to mean "absent" (the value is
+    // `undefined`), while a genuinely-`string | null` slot uses the SAME
+    // `ref.null` bit pattern to mean the JS value `null`. The two are
+    // representationally identical at this point — there is no way to tell
+    // them apart from the raw ref alone — so distinguishing them requires the
+    // #4741 resurrection arm in `coerceType` (ref_null $AnyString → externref:
+    // null becomes the canonical `undefined` extern, not host `null`). A raw
+    // `extern.convert_any` here (as for every other ref kind) skips that arm
+    // and republishes the null as host `null`, so `typeof (v: string |
+    // undefined)` on an absent value answered "object" instead of
+    // "undefined" — mirrors the #5378 f64/undefSentinel fix immediately
+    // above; `coerceType` owns the resurrection arm for both carriers.
+    coerceType(ctx, fctx, operandType, { kind: "externref" });
   }
 
   fctx.body.push({ op: "call", funcIdx });

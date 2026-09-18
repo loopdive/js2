@@ -24,6 +24,7 @@ import type {
 import type { IrModuleBindingRefusal } from "../../ir/module-bindings.js";
 import type { IrObservedOutcome } from "../../ir/outcomes.js";
 import type { IrR2Withdrawal } from "../../ir/r2-withdrawal.js";
+import type { NullableElemParamOverride } from "../array-hof-nullable-elem-param.js"; // (#6602)
 import type { StandaloneRegExpEngineConfig } from "../regexp-standalone.js";
 import type { ObjectRuntimeTypes } from "../object-runtime.js";
 import type { FallbackCounts } from "../fallback-telemetry.js";
@@ -2676,6 +2677,24 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   arrayMapCallbackFirstParamOverride?: ValType;
   /**
+   * (#6602 / #5383 S15) Transient carrier for the receiver's REAL element type
+   * — and WHICH callback parameter receives it — while an array-HOF callback
+   * closure is compiled (`setupArrayCallback` window:
+   * `every`/`some`/`filter`/`forEach`/`find*`/`reduce`/`reduceRight`, i.e. the
+   * whole family except `map`, which has the unconditional override above).
+   *
+   * Only ever set for a `ref_null` element type, and only consulted through
+   * `applyNullableElemParamOverride`, which replaces the checker's answer when
+   * it is the exact NON-NULL twin. `RegExpExecArray extends Array<string>` is
+   * that lie: an unmatched capture group is a null native string, so the
+   * checker's `ref $anyStr` parameter made `buildClosureCallInstrs` emit a
+   * `ref.as_non_null` that trapped on the first `undefined` group.
+   *
+   * The parameter index travels with the type because `reduce`/`reduceRight`
+   * pass the element as parameter **1** (parameter 0 is the accumulator).
+   */
+  arrayHofNullableElemParamOverride?: NullableElemParamOverride;
+  /**
    * (#3137) True while compiling a native `.then`/`.catch` callback closure
    * (`compileStandalonePromiseThenCallback` window). TUPLE-typed callback
    * params widen to externref in `computeClosureWrapperSig`: the native
@@ -3266,6 +3285,23 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * for subclasses of host-constructible builtins.
    */
   classExternrefBackedSet: Set<string>;
+  /**
+   * (#6623, #5383 S36) Classes whose `extends` heritage expression could NOT be
+   * resolved to a known local class — a property-access into a linked/foreign
+   * namespace (`class S extends NS.PD {}`) or an identifier bound to a runtime
+   * value (`class S extends someParam {}`) under `--target standalone`/`wasi`.
+   * Such a class is registered as an independent ROOT struct (no genuine
+   * ancestor relationship), and when it declares no own fields its struct
+   * canonicalizes to the SAME WasmGC type as any other field-less class —
+   * including one exported by a LINKED PROVIDER module, whose `__tag` values
+   * are assigned independently (both start counting from 0). The dispatchers
+   * that disambiguate same-shape classes by `__tag` alone
+   * (`standalone-class-instance-proto.ts`) have no cross-module uniqueness
+   * guarantee to lean on, so a class in this set is excluded from claiming
+   * getPrototypeOf answers entirely rather than risk a false-positive match on
+   * an unrelated provider instance. See #6623.
+   */
+  classDynamicUnresolvedHeritageSet: Set<string>;
   /**
    * (#5242) Classes whose singleton reached `__register_class_ctor`, i.e. whose
    * class OBJECT can cross to the host and be constructed there. Exactly the
@@ -4232,6 +4268,22 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * recorded indices together with every emitted `global.get`.
    */
   nativeProtoGlobals?: Map<number, number>;
+  /**
+   * (#5383 S23 / #6610) Some source file in the realm CALLS a
+   * `Number.prototype` numeric-format method by name, so
+   * `unshiftExternMethodCallNumberPrimitiveArm` may pay for the
+   * `%Number.prototype%` singleton. Set by the early AST scan
+   * (`noteNumberPrimitiveMethodDemand`); read at finalize. Absent ⇒ the arm is
+   * not emitted and the module is byte-identical.
+   */
+  numberPrimitiveMethodCallDemand?: boolean;
+  /**
+   * (#5383 S23 / #6610) The stashed `%Number.prototype%` singleton read, built
+   * by `prepareNumberPrimitiveMethodCallArm` BEFORE `__extern_get`'s per-brand
+   * member ladder is assembled, and consumed by the `__extern_method_call` arm
+   * unshifted after it.
+   */
+  numberPrimitiveMethodProtoInstrs?: Instr[];
   /** (#2175 S0) Builtin-brand id table — a reserved high-negative i32 band
    *  disjoint from `classTagMap`'s range, so a `$NativeProto.$brand` (or the
    *  `$ClassMeta.$parentTag` externref-backed-subclass slot from #2101) is a

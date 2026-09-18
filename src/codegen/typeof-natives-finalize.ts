@@ -126,10 +126,18 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
   // null, and `ref.eq` against a non-null value is false — so the arm degrades
   // to today's answer rather than to a wrong one.
   const EQ_HEAP_TYPE = -19;
-  const classObjectIdentityArms = (anyLocalIdx: number, onMatch: Instr[]): Instr[] => {
-    if (classObjectGlobalIdxs.length === 0) return [];
+  // (#6625) `globalIdxs` defaults to EVERY class object (the `typeof` use);
+  // `__is_class_object` passes a BASE-classes-only subset, since a subclass's
+  // [[Prototype]] is its parent, not %Function.prototype% — see that call
+  // site's own comment.
+  const classObjectIdentityArms = (
+    anyLocalIdx: number,
+    onMatch: Instr[],
+    globalIdxs: number[] = classObjectGlobalIdxs,
+  ): Instr[] => {
+    if (globalIdxs.length === 0) return [];
     const inner: Instr[] = [];
-    for (const globalIdx of classObjectGlobalIdxs) {
+    for (const globalIdx of globalIdxs) {
       // The singleton global is lazy: before its first materialisation it holds
       // a null externref, which is not eq-castable — hence the per-global test
       // rather than a bare cast, which would TRAP on an unmaterialised class.
@@ -280,6 +288,58 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
       { op: "any.convert_extern" },
       { op: "local.set", index: 1 },
       ...callableI32Arms(1, 1, isCallableMode),
+      { op: "i32.const", value: 0 },
+    ];
+  }
+
+  // --- (#6625) __is_class_object: true only for a class-object SINGLETON —
+  // never an instance, a closure, or any other carrier. Reuses
+  // `classObjectIdentityArms` verbatim (the SAME ladder `typeof`'s
+  // includeClassObjects arm above uses) so the two predicates can never
+  // disagree about which values are class objects. The boundary half asks the
+  // linked PROVIDER's own identity ladder for a value this module cannot
+  // decode locally — the "ask the owner" shape #6617/#6624 established, but a
+  // BOOLEAN answer rather than a value: the correct VALUE (`Function.prototype`)
+  // has to be read on THIS side for `ref.eq` identity to hold against the
+  // caller's own read of it (S22's rule, `object-get-prototype-of.ts`).
+  const ico = fnByName("__is_class_object");
+  const boundaryIsClassObjectIdx = standaloneLinkBoundaryPeerIndex(ctx, "isClassObject");
+  // (#6625) BASE classes only (no `extends`). A derived class's [[Prototype]]
+  // is its PARENT's class-object value (§15.7.14 step 6), not
+  // %Function.prototype% — answering %Function.prototype% for one would be a
+  // NEW wrong answer (worse than the pre-#6625 `null`, which at least made
+  // `gPO(D) !== Function.prototype` true by accident for every subclass D).
+  // Excluding a class with a registered parent here is what keeps that
+  // comparison correct; the parent-aware answer itself is an unreduced
+  // residual (plan/issues/6625-*.md).
+  const baseClassObjectGlobalIdxs = [...ctx.classObjectGlobals.entries()]
+    .filter(([className]) => !ctx.classParentMap.has(className))
+    .map(([, globalIdx]) => globalIdx)
+    .sort((a, b) => a - b);
+  if (ico && (baseClassObjectGlobalIdxs.length > 0 || boundaryIsClassObjectIdx !== undefined)) {
+    if (ico.locals.length === 0) {
+      ico.locals.push({ name: "$any_temp", type: { kind: "anyref" } });
+    }
+    const classMatch: Instr[] = [{ op: "i32.const", value: 1 }, { op: "return" }];
+    ico.body = [
+      { op: "local.get", index: 0 },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+      },
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "local.set", index: 1 },
+      ...classObjectIdentityArms(1, classMatch, baseClassObjectGlobalIdxs),
+      ...(boundaryIsClassObjectIdx !== undefined
+        ? ([
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: boundaryIsClassObjectIdx },
+            { op: "return" },
+          ] satisfies Instr[])
+        : []),
       { op: "i32.const", value: 0 },
     ];
   }

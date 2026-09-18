@@ -22,6 +22,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { emitBoundsCheckedArrayGet } from "./array-methods.js";
 import { emitHoleToUndefined } from "./array-holes.js"; // (#2001 S1)
 import { emitF64HoleToUndef } from "./vec-f64-hole-presence.js"; // (#4491 T11)
+import { interfaceHasClassImplementer } from "./interface-class-implementer.js"; // (#6634)
 import type { PresenceSlot } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
 import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js"; // (#1983) collision-free class-member funcMap keys; (#2963) method-owner chain
@@ -1004,6 +1005,18 @@ export function resolveStructName(ctx: CodegenContext, tsType: ts.Type): string 
   const exactClassExpression = exactClassExpressionTypeName(ctx, tsType);
   if (exactClassExpression) return exactClassExpression;
   const name = tsType.symbol?.name;
+  // (#6634) A named interface with a known CLASS implementer has no single
+  // valid struct carrier — see `interface-class-implementer.ts`. Decline
+  // struct resolution entirely so callers (the call-site devirtualization
+  // guesses in `call-receiver-method.ts` chief among them) fall through to
+  // the dynamic/externref dispatch paths instead of hardcoding to whichever
+  // OTHER implementer's struct happens to be registered under this name or
+  // under `tsType`'s anonTypeMap entry (the literal-vs-class confusion this
+  // guards against never applies to a class's OWN type, hence
+  // `!ctx.classSet.has(name)`).
+  if (name && !ctx.classSet.has(name) && interfaceHasClassImplementer(ctx, name)) {
+    return undefined;
+  }
   if (name && name !== "__type" && name !== "__object" && ctx.structMap.has(name)) {
     return name;
   }
@@ -5546,6 +5559,34 @@ export function compileElementAccessBody(
   // its args). Keeping the unboxed f64/i32 in numeric context avoids that.
   expectedType?: ValType,
 ): ValType | null {
+  // (#6635) A bare `anyref` receiver — e.g. the return value of `Map`/
+  // `WeakMap.prototype.get()` (`tryCompileNativeMapMethodCall` reports
+  // `{kind:"anyref"}`), used directly as the object of a COMPUTED member
+  // read with no intervening local (`someMap.get(k)[computedKey]`). Unlike
+  // the dot-property twin (`compilePropertyAccess`), `compileElementAccess`
+  // compiles the object sub-expression with no expected-type hint (see its
+  // `compileExpression(ctx, fctx, expr.expression)` call), so the value never
+  // gets coerced to externref and no arm below matched `anyref` — it fell to
+  // the generic non-ref/non-externref fallback's `reportError` + `return
+  // null`. That `null` is NOT a compile failure: the #1919 speculative
+  // wrapper in `expressions.ts` treats a `null` inner result as a probe miss,
+  // silently rolls back the diagnostic + partial body, and substitutes a
+  // TS-static-type-derived DEFAULT value instead — which for an `any`/
+  // unresolvable computed-member type is a bare `ref.null`, observably JS
+  // `null`, not `undefined`. This is the exact mechanism behind test262's
+  // `Temporal/PlainDate/from` `SameValue(«null», «undefined»)` failures
+  // (#5383): the real polyfill bundle's calendar dispatch chain
+  // (`Qt(this).isoToDate(n, {[t]:true})[t]`) resolves `Qt` through a
+  // Map-backed registry, so the final `[t]` read is exactly this shape.
+  // Converting the already-on-stack anyref to externref here (matching the
+  // conversion the dot-property path gets for free via its expectedType
+  // hint) lets the existing, already-correct externref element-read pipeline
+  // below handle it — including its own `undefined`-vs-`null` semantics,
+  // which is what `__extern_get` on a genuine JS dictionary value produces.
+  if (objType.kind === "anyref") {
+    fctx.body.push({ op: "extern.convert_any" });
+    objType = { kind: "externref" };
+  }
   // Externref element access: obj[key] → host import __extern_get(obj, externref) → externref
   if (objType.kind === "externref") {
     // (#5223) The bracket twin of the dot-read registration. `a["g"]` reaches

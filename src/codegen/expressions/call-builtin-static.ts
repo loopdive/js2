@@ -128,6 +128,10 @@ import { ensureStringRawHelper } from "../string-raw.js";
 import { defaultValueInstrs, pushDefaultValue } from "../type-coercion.js";
 import { compileMathCall } from "./builtins.js";
 import { tryCompileObjectCreateStaticPrototype } from "./call-object-builtins.js";
+import {
+  emitStandaloneObjectCreateClassInstance,
+  reserveStandaloneObjectCreateClassInstance,
+} from "../standalone-object-create-class-instance.js"; // (#6464)
 import { emitLazyProtoGet } from "./extern.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./helpers.js";
 import {
@@ -143,6 +147,7 @@ import { emitUndefined, ensureGetUndefined, ensureLateImport, flushLateImportShi
 import { resolveStructName } from "./misc.js";
 import * as objectGetPrototypeOf from "./object-get-prototype-of.js";
 import { tryCompileFnctorInstanceGetPrototypeOf } from "../fnctor-instance-prototype.js";
+import { recordStandaloneRuntimeKeyClassMemberRead } from "../standalone-class-dyn-member.js"; // (#6617)
 import {
   BUILTIN_CLASS_NAMES,
   compileCallExpression,
@@ -254,8 +259,34 @@ function emitBuiltinGetPrototypeOfFallback(
     // Compile the argument EXACTLY once: both arms read it back from a local,
     // so evaluation order and side effects are unchanged.
     const recvLocal = allocLocal(fctx, `__gpo_iter_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.tee", index: recvLocal });
+    // (#6625/#6629 S42 main-sync) A non-IterRec receiver used to fall straight
+    // to the generic `__getPrototypeOf` here, silently bypassing the
+    // #6609/#6625 CALLABLE-or-CLASS-OBJECT runtime check
+    // (`tryEmitDynamicCallableGetPrototypeOf`) — this arm's own ref.test guard
+    // runs FIRST for almost every module (any module that uses an iterator
+    // registers `$__IterRec`), so the dynamic-callable arm at line ~296 below
+    // could never fire in practice; #6609/#6625's own witnesses regressed
+    // silently once #6484 S1 landed this branch. Build the non-IterRec arm by
+    // delegating to the SAME helper the generic (non-IterRec-aware) path below
+    // uses, via the sanctioned body-swap so it can be embedded as an `else:`
+    // array (it emits directly into `fctx.body`, not a returned array).
+    const savedGpoIterBody = pushBody(fctx);
+    fctx.body.push({ op: "local.get", index: recvLocal });
+    const dynamicHandled = objectGetPrototypeOf.tryEmitDynamicCallableGetPrototypeOf(ctx, fctx, arg);
+    if (!dynamicHandled) {
+      // Declined (e.g. off the standalone/wasi lane): the pushed receiver is
+      // still on the stack, untouched — fall back to the generic import,
+      // re-read fresh since the helper may have registered/shifted imports.
+      const gptIdxFallback = ctx.funcMap.get("__getPrototypeOf") ?? gptIdx;
+      fctx.body.push({ op: "call", funcIdx: gptIdxFallback });
+    }
+    const nonIterRecArm = fctx.body;
+    popBody(fctx, savedGpoIterBody);
+    // Re-read the IterRec-arm's own funcIdx AFTER the helper above, which may
+    // have added/shifted late imports.
+    const iterProtoIdxFinal = ctx.funcMap.get("__iter_rec_proto") ?? iterProtoIdx;
     fctx.body.push(
-      { op: "local.tee", index: recvLocal },
       { op: "any.convert_extern" },
       { op: "ref.test", typeIdx: iterRecTypeIdx },
       {
@@ -263,12 +294,9 @@ function emitBuiltinGetPrototypeOfFallback(
         blockType: { kind: "val", type: { kind: "externref" } },
         then: [
           { op: "local.get", index: recvLocal },
-          { op: "call", funcIdx: iterProtoIdx },
+          { op: "call", funcIdx: iterProtoIdxFinal },
         ],
-        else: [
-          { op: "local.get", index: recvLocal },
-          { op: "call", funcIdx: gptIdx },
-        ],
+        else: nonIterRecArm,
       },
     );
     return { kind: "externref" };
@@ -285,6 +313,19 @@ function emitBuiltinGetPrototypeOfFallback(
   if (argType.kind !== "externref") {
     coerceType(ctx, fctx, argType, { kind: "externref" });
   }
+  // (#6609/#6625) A value that is CALLABLE, or a CLASS OBJECT, only at
+  // runtime answers %Function.prototype%.
+  if (objectGetPrototypeOf.tryEmitDynamicCallableGetPrototypeOf(ctx, fctx, arg)) {
+    return { kind: "externref" };
+  }
+  // (#6617) Every static arm has declined, so the argument's class — if it has
+  // one — is not knowable here. The native helper's #6617 arm resolves it at
+  // RUNTIME from the instance's `__tag`, but only for classes whose prototype
+  // singleton exists, and in an ordinary module that set is demand-driven. This
+  // is the arming site for the generic question, the twin of #6457's for the
+  // dynamic `.prototype` read; in a linked PROVIDER the demand is already
+  // total (#5383 S2h), which is why the provider half needs no site of its own.
+  recordStandaloneRuntimeKeyClassMemberRead(ctx, undefined);
   const getPrototypeIdx = ensureLateImport(ctx, "__getPrototypeOf", [{ kind: "externref" }], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
   if (getPrototypeIdx !== undefined) {
@@ -2631,6 +2672,12 @@ export function compileBuiltinStaticCall(
     flushLateImportShifts(ctx, fctx);
 
     if (hostIdx !== undefined) {
+      // (#6464) The standalone twin of #5239: a dynamic `<value>.prototype`
+      // misses the syntactic fast path above and would become a plain `$Object`
+      // whose members can never bind a compiled receiver. Reserved here (the
+      // body needs `ctx.protoGlobals`, complete only at finalize) and filled by
+      // `fillStandaloneObjectCreateClassInstance`.
+      let classInstanceIdx: number | undefined;
       // Compile the proto argument
       if (arg0.kind === ts.SyntaxKind.NullKeyword) {
         fctx.body.push({ op: "ref.null.extern" });
@@ -2642,6 +2689,7 @@ export function compileBuiltinStaticCall(
         // (identifiers, calls, Foo.prototype) keep the ordinary path inside
         // compileProtoArg.
         compileProtoArg(ctx, fctx, arg0);
+        classInstanceIdx = reserveStandaloneObjectCreateClassInstance(ctx);
       } else {
         const argType = compileExpression(ctx, fctx, arg0);
         if (!argType) {
@@ -2654,7 +2702,11 @@ export function compileBuiltinStaticCall(
           coerceType(ctx, fctx, argType, { kind: "externref" });
         }
       }
-      fctx.body.push({ op: "call", funcIdx: hostIdx });
+      if (classInstanceIdx !== undefined) {
+        emitStandaloneObjectCreateClassInstance(fctx, classInstanceIdx, hostIdx);
+      } else {
+        fctx.body.push({ op: "call", funcIdx: hostIdx });
+      }
 
       // Second argument (property descriptors): expand at compile time, but only
       // for descriptors this expansion can FULLY model. The admission test and

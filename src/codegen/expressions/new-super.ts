@@ -27,7 +27,7 @@ import {
 } from "./non-constructable.js"; // (#4017)
 import { emitSymbolOperandCoercionThrow } from "../tonumber-symbol-throw.js"; // (#3481)
 import * as newConstructors from "./new-non-constructable-value.js"; // (#4246)
-import { getOrRegisterTaCtorType } from "../registry/types.js"; // (#4626) runtime $__ta_ctor gate in the ordinary-[[Construct]] arm
+import { getOrRegisterTaCtorType, taCtorIdentityTestInstrs } from "../registry/types.js"; // (#4626) runtime $__ta_ctor gate in the ordinary-[[Construct]] arm; (#5383 S14) its brand-checked identity twin
 import { tryNewBuiltinStaticAlias } from "./new-builtin-static-alias.js"; // (#4491 wave-5 T6)
 import { reportError } from "../context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
@@ -79,11 +79,19 @@ import {
 } from "../literals.js";
 import { stringConstantExternrefInstrs, ensureAnyToStringHelper } from "../native-strings.js";
 import {
+  MAX_DYNAMIC_CONSTRUCT_ARITY,
   MAX_NATIVE_CONSTRUCT_ARITY,
   reserveNativeConstructDriver,
+  reserveNativeConstructDriverArgv, // (#5383 S34)
   reserveTypedNativeConstructDriver,
 } from "../native-construct.js"; // (#3981 / #1058)
-import { markClassValueConstructSite } from "../standalone-class-construct.js"; // (#5383 S2g)
+import {
+  markClassValueConstructSite,
+  moduleHasF64TypedConstructFormal,
+  moduleHasRefTypedConstructFormal,
+} from "../standalone-class-construct.js"; // (#5383 S2g, #6615, #6619)
+import { armExternF64ArgTypeGuard, armExternRefArgTypeGuard } from "../extern-arg-marshal.js"; // (#6615 / #5383 S28, #6619 / #5383 S32)
+import { armConstructIsConstructorGuard } from "../construct-is-constructor-guard.js"; // (#6612 / #5383 S25)
 import { linkCompatibleDeclaredStructAncestor } from "../struct-hierarchy-layout.js";
 import { emitBoundConstructOnNull } from "../construct-bound.js"; // (#4196) §10.4.1.2
 import { emitRuntimeEvalConstructOnNull } from "../runtime-eval-construct.js"; // (#4438) §10.2.2
@@ -721,6 +729,29 @@ function linkLateAssignedConstructResultAncestor(
  *  - it is NOT a known compiled class, registered extern class, or function
  *    constructor.
  */
+/**
+ * (#6607) Standalone-lane companion to `resolvesToDynamicAnyCtorValue` for a
+ * CALL-expression callee: `new (ce("%Temporal.Duration%"))(y, mo, w, d, …)`, the
+ * intrinsic-registry spelling `@js-temporal/polyfill` emits at three sites —
+ * including the string branch of `Duration.from`.
+ *
+ * `resolvesToDynamicAnyCtorValue` understands identifier and member callees
+ * only, so a call callee matched no dynamic-new arm at all and the site fell
+ * through to the `__new___unknown` host import. That import does not exist in
+ * any lane, and in standalone it cannot exist, so the emitted body was a bare
+ * `ref.null.extern`: the `new` evaluated to **null** and, because the legacy
+ * arm returns before the argument loop, **its arguments were never evaluated**.
+ *
+ * Deliberately narrower than the member lane: a call callee only, and only when
+ * the call's static result is genuinely dynamic. Anything with a concrete
+ * static result type still resolves through the static `new` paths above.
+ */
+function resolvesToDynamicCallCtorValue(ctx: CodegenContext, calleeExpr: ts.Expression): boolean {
+  if (!ts.isCallExpression(calleeExpr)) return false;
+  const fact = ctx.oracle.typeFactOf(calleeExpr);
+  return fact.kind === "any" || fact.kind === "unknown" || (fact.kind === "builtin" && fact.name === "Function");
+}
+
 function resolvesToDynamicAnyCtorValue(ctx: CodegenContext, calleeExpr: ts.Expression): boolean {
   // (#4616) Inline member-access ctor values: `new (Object.getPrototypeOf(arr)
   // .constructor)(n)` (jest-util deepCyclicCopyArray's keepPrototype lane) keeps
@@ -3934,8 +3965,39 @@ function tryCompileNativeConstructFromValue(
   const args =
     flattenCallArgs(rawArgs) ??
     (ctx.standalone || ctx.wasi ? (resolveStaticSpreadArgs(ctx, rawArgs) ?? rawArgs) : rawArgs);
-  if (args.some((a) => ts.isSpreadElement(a))) return undefined;
-  if (args.length > MAX_NATIVE_CONSTRUCT_ARITY) return undefined;
+  if (args.some((a) => ts.isSpreadElement(a))) {
+    // (#5383 S34) A genuinely runtime-length spread (`new construct(...args)`
+    // where `args` is a parameter, not a literal or a resolvable local) used to
+    // decline HERE unconditionally — for a callee this module does not own
+    // (every linked-provider class, reached either as a bare identifier or a
+    // member access), no other arm ever attempts the construct, so `new`
+    // silently evaluated to null with its arguments never run
+    // (test262 `built-ins/Temporal/**/subclassing-ignored.js`'s
+    // `checkSubclassConstructorNotObject`, `new construct(...constructArgs)`).
+    // Standalone/WASI route through the arity-generic argv driver instead; the
+    // JS-host lane is unaffected (it constructs through `__construct_closure`,
+    // which already accepts a JS array built from an arbitrary spread).
+    if (!noJsHost(ctx)) return undefined;
+    return compileNativeConstructRuntimeArgv(ctx, fctx, calleeExpr, rawArgs);
+  }
+  // (#5383 S24) The ceiling used to be `MAX_NATIVE_CONSTRUCT_ARITY` (8) because
+  // the driver's ordinary tail dispatches through `__call_fn_method_<N>`, which
+  // only exists for 0…8. But declining here is not a fallback: for a callee the
+  // module does not own — every linked-provider class — the no-match base is
+  // `ref.null.extern`, and the argument expressions are never evaluated at all.
+  // `new Temporal.Duration(0, 0, 0, 5, 5, 5, 5, 5, 5, 5)` (ten arguments, the
+  // spelling most of the Temporal corpus uses) therefore answered null. The
+  // driver's other arms — class, boundary, proxy, runtime-marker — already pack
+  // an argument VECTOR and are arity-generic; only the ordinary tail was bound
+  // to 8, and above 8 it now uses `__apply_closure` instead.
+  if (args.length > MAX_DYNAMIC_CONSTRUCT_ARITY) return undefined;
+  if (args.length > MAX_NATIVE_CONSTRUCT_ARITY) {
+    // The above-8 tail needs the argv builders and the generic apply bridge.
+    // No driver of that arity could exist before this change, so arming them
+    // here cannot alter a module that compiled previously.
+    ensureObjVecBuilders(ctx);
+    reserveApplyClosure(ctx);
+  }
 
   // Register the object-model helpers the driver body calls and flush ONCE,
   // before any emission — the driver bakes `call <funcIdx>` values that a later
@@ -3947,6 +4009,23 @@ function tryCompileNativeConstructFromValue(
   // (#5383 S2g) This is a construct from a runtime VALUE, so the callee may be
   // a class-object singleton — arm the class trampolines for this module.
   markClassValueConstructSite(ctx);
+  // (#6612 / #5383 S25) Arm §13.3.5.1 step 5 (IsConstructor) for this module's
+  // construct drivers. Built HERE, mid-compile, for the same reason
+  // `protoKeyInstrs` is: the throw materialises a TypeError instance and a
+  // string constant, neither of which may be created at fill time.
+  armConstructIsConstructorGuard(ctx, fctx);
+  // (#6615 / #5383 S28) Arm the lenient ref-argument marshal for the class
+  // construct trampolines this site turns on. Same reserve-then-fill reason as
+  // the two lines above: the TypeError instance and its message string-constant
+  // cannot be created at fill time. Gated on a REF-typed construct formal
+  // existing at all — a module whose classes take only `f64`/`i32` has no hard
+  // `ref.cast` to make lenient and must keep its previous bytes.
+  if (moduleHasRefTypedConstructFormal(ctx)) armExternRefArgTypeGuard(ctx, fctx);
+  // (#6619) Same arming, f64 twin: a Symbol/BigInt argument into an f64
+  // construct formal must throw TypeError (§7.1.4 ToNumber) rather than
+  // silently unbox to NaN. Gated the same way — no f64 construct formal, no
+  // bytes.
+  if (moduleHasF64TypedConstructFormal(ctx)) armExternF64ArgTypeGuard(ctx, fctx);
   const driverIdx = reserveNativeConstructDriver(ctx, args.length, stringConstantExternrefInstrs(ctx, "prototype"));
 
   // Evaluate the callee, then each argument, exactly once and in source order.
@@ -4032,8 +4111,12 @@ function tryCompileNativeConstructFromValue(
       // identity into one i32 condition.  The native construct driver remains
       // the fallback for all other values.
       const taMatch = allocLocal(fctx, `__nc_tamatch_${fctx.locals.length}`, { kind: "i32" });
-      fctx.body.push({ op: "local.get", index: descLocal });
-      fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+      // (#5383 S14) IDENTITY, not a bare `ref.test` — see the same substitution
+      // in `call-receiver-method.ts`. `$__ta_ctor` is structurally the shape a
+      // field-less class ROOT gets, so in a module that links the standalone
+      // Temporal provider every provider class OBJECT passes the bare test and
+      // `new <ProviderClass>(…)` builds a typed array instead of an instance.
+      fctx.body.push(...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: descLocal }]));
       fctx.body.push({ op: "local.set", index: taMatch });
       fctx.body.push(
         ...buildInt8ArrayCarrierMatch(ctx, descLocal, [
@@ -4043,8 +4126,8 @@ function tryCompileNativeConstructFromValue(
       );
       fctx.body.push({ op: "local.get", index: taMatch });
     } else {
-      fctx.body.push({ op: "local.get", index: descLocal });
-      fctx.body.push({ op: "ref.test", typeIdx: taCtorTypeIdx });
+      // (#5383 S14) IDENTITY, not a bare `ref.test` — see above.
+      fctx.body.push(...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: descLocal }]));
     }
     fctx.body.push({
       op: "if",
@@ -4055,6 +4138,160 @@ function tryCompileNativeConstructFromValue(
   } else {
     fctx.body.push(...nativeDriverCall);
   }
+  return { kind: "externref" };
+}
+
+/**
+ * (#5383 S34) Build a runtime `$ObjVec` (the SAME externref carrier
+ * `buildArgsVec()` builds for the fixed-arity drivers in `native-construct.ts`
+ * — `__extern_length`/`__extern_get_idx`-readable, which is what
+ * `__class_construct_dispatch`/`__js2wasm_link_construct` already expect) from
+ * a call site's RAW arguments, evaluating each exactly once in source order.
+ * A positional argument is pushed directly; a `SpreadElement`'s source is
+ * compiled once, then copied element-by-element via the generic
+ * `__extern_length`/`__extern_get_idx` reader pair — the same protocol
+ * `Object.groupBy`'s native helper uses for an arbitrary array-like source, so
+ * this also accepts an untyped JS array PARAMETER (the test262 harness's
+ * `constructArgs`/`methodArgs` shape), not only a compile-time-typed vec.
+ */
+function buildRuntimeConstructArgvVec(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  rawArgs: readonly ts.Expression[],
+): { argvLocal: number; argcLocal: number } {
+  const { newIdx: objVecNewIdx, pushIdx: objVecPushIdx } = ensureObjVecBuilders(ctx);
+  const externLengthIdx = ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
+  const externGetIdxIdx = ensureLateImport(
+    ctx,
+    "__extern_get_idx",
+    [{ kind: "externref" }, { kind: "f64" }],
+    [{ kind: "externref" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+
+  const argvLocal = allocLocal(fctx, `__ncargv_${fctx.locals.length}`, { kind: "externref" });
+  const argcLocal = allocLocal(fctx, `__ncargc_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__objvec_new") ?? objVecNewIdx });
+  fctx.body.push({ op: "local.set", index: argvLocal });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "local.set", index: argcLocal });
+
+  const bumpArgc = (): void => {
+    fctx.body.push({ op: "local.get", index: argcLocal });
+    fctx.body.push({ op: "i32.const", value: 1 });
+    fctx.body.push({ op: "i32.add" });
+    fctx.body.push({ op: "local.set", index: argcLocal });
+  };
+
+  for (const arg of rawArgs) {
+    if (!ts.isSpreadElement(arg)) {
+      fctx.body.push({ op: "local.get", index: argvLocal });
+      const aTy = compileExpression(ctx, fctx, arg, { kind: "externref" });
+      if (aTy && aTy.kind !== "externref") coerceType(ctx, fctx, aTy, { kind: "externref" });
+      else if (aTy === null) fctx.body.push({ op: "ref.null.extern" });
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__objvec_push") ?? objVecPushIdx });
+      bumpArgc();
+      continue;
+    }
+    const srcTy = compileExpression(ctx, fctx, arg.expression, { kind: "externref" });
+    if (srcTy && srcTy.kind !== "externref") coerceType(ctx, fctx, srcTy, { kind: "externref" });
+    else if (srcTy === null) fctx.body.push({ op: "ref.null.extern" });
+    const srcLocal = allocLocal(fctx, `__ncsrc_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: srcLocal });
+
+    const lenLocal = allocLocal(fctx, `__nclen_${fctx.locals.length}`, { kind: "i32" });
+    fctx.body.push({ op: "local.get", index: srcLocal });
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_length") ?? externLengthIdx! });
+    fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+    fctx.body.push({ op: "local.set", index: lenLocal });
+
+    const jLocal = allocLocal(fctx, `__ncj_${fctx.locals.length}`, { kind: "i32" });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "local.set", index: jLocal });
+
+    // Loop body: `j >= len` breaks out (br_if depth 1, out of the enclosing
+    // `block`); otherwise push `srcLocal[j]`, bump argc, bump j, loop again
+    // (`br` depth 0, back to the `loop`'s own top).
+    const loopBody: Instr[] = [];
+    const savedBody = fctx.body;
+    fctx.body = loopBody;
+    fctx.body.push({ op: "local.get", index: jLocal });
+    fctx.body.push({ op: "local.get", index: lenLocal });
+    fctx.body.push({ op: "i32.ge_s" });
+    fctx.body.push({ op: "br_if", depth: 1 });
+    fctx.body.push({ op: "local.get", index: argvLocal });
+    fctx.body.push({ op: "local.get", index: srcLocal });
+    fctx.body.push({ op: "local.get", index: jLocal });
+    fctx.body.push({ op: "f64.convert_i32_s" });
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get_idx") ?? externGetIdxIdx! });
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__objvec_push") ?? objVecPushIdx });
+    bumpArgc();
+    fctx.body.push({ op: "local.get", index: jLocal });
+    fctx.body.push({ op: "i32.const", value: 1 });
+    fctx.body.push({ op: "i32.add" });
+    fctx.body.push({ op: "local.set", index: jLocal });
+    fctx.body.push({ op: "br", depth: 0 });
+    fctx.body = savedBody;
+
+    fctx.body.push({
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
+    });
+  }
+  return { argvLocal, argcLocal };
+}
+
+/**
+ * (#5383 S34) The runtime-argv twin of `tryCompileNativeConstructFromValue`'s
+ * fixed-arity body, for a call site whose spread length cannot be resolved at
+ * compile time. Reused prelude (imports, arming, `markClassValueConstructSite`)
+ * is IDENTICAL to the fixed-arity path — only the argument marshal and the
+ * driver differ.
+ */
+function compileNativeConstructRuntimeArgv(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  calleeExpr: ts.Expression,
+  rawArgs: readonly ts.Expression[],
+): ValType {
+  ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
+  ensureLateImport(ctx, "__object_create", [{ kind: "externref" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  addStringConstantGlobal(ctx, "prototype");
+  markClassValueConstructSite(ctx);
+  armConstructIsConstructorGuard(ctx, fctx);
+  if (moduleHasRefTypedConstructFormal(ctx)) armExternRefArgTypeGuard(ctx, fctx);
+  if (moduleHasF64TypedConstructFormal(ctx)) armExternF64ArgTypeGuard(ctx, fctx);
+  ensureObjVecBuilders(ctx);
+  reserveApplyClosure(ctx);
+  const driverIdx = reserveNativeConstructDriverArgv(ctx, stringConstantExternrefInstrs(ctx, "prototype"));
+
+  const calleeTy = compileExpression(ctx, fctx, calleeExpr, { kind: "externref" });
+  if (calleeTy && calleeTy.kind !== "externref") {
+    coerceType(ctx, fctx, calleeTy, { kind: "externref" });
+  } else if (calleeTy === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+  const calleeLocal = allocLocal(fctx, `__ncv_callee_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: calleeLocal });
+
+  const fnctorName = resolveUserFnctorName(ctx, calleeExpr);
+  if (fnctorName === undefined || !emitFnctorProtoGet(ctx, fctx, fnctorName)) {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+  const protoLocal = allocLocal(fctx, `__ncv_proto_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: protoLocal });
+
+  const { argvLocal, argcLocal } = buildRuntimeConstructArgvVec(ctx, fctx, rawArgs);
+
+  fctx.body.push(
+    { op: "local.get", index: calleeLocal },
+    { op: "local.get", index: protoLocal },
+    { op: "local.get", index: argvLocal },
+    { op: "local.get", index: argcLocal },
+    { op: "call", funcIdx: ctx.funcMap.get("__native_construct_argv") ?? driverIdx },
+  );
   return { kind: "externref" };
 }
 
@@ -4122,6 +4359,12 @@ function emitDynamicNewFallback(
   expr: ts.NewExpression,
   calleeExpr: ts.Expression,
   ctorName: string,
+  /**
+   * (#6607) Keep the pre-existing `ref.null.extern` no-match outcome instead of
+   * the standalone TypedArray-construct base. Set only by the call-callee arm —
+   * see the base selection below for why the size matters.
+   */
+  plainNullNoMatchBase = false,
 ): boolean {
   // (#1058) A construct-signature-only binding exposes its declared RESULT
   // type at the NewExpression. When that result is a structural interface,
@@ -4742,6 +4985,23 @@ function emitDynamicNewFallback(
     fctx.body.push({ op: "call", funcIdx: hostFuncIdx });
     fctx.body = savedBody2;
     noMatchBase = base;
+  } else if (plainNullNoMatchBase) {
+    // (#6607) The call-callee arm keeps the PRE-EXISTING no-match outcome
+    // verbatim. Two reasons, and the second is the load-bearing one:
+    //  - a value fetched from an intrinsic registry is never a `$__ta_ctor`, so
+    //    the TA arm below could only ever decline for this shape; and
+    //  - it is not free. Inlining the TA construct + IsConstructor guard at
+    //    each site is the bulk of this arm's code size, and the Temporal
+    //    provider links into EVERY consumer compile. Three prewarm builds of
+    //    the real provider on 2026-09-14, fresh `JS2WASM_TEMPORAL_CACHE` and
+    //    `cacheHit=false` on each: 3,277,842 B without this arm at all,
+    //    3,291,080 B with it and the pinned null base (+0.40 %), and
+    //    3,435,885 B with it and the TA base (+4.8 %). The TA base costs
+    //    ~145 KB in the artifact every consumer links, to serve a shape that
+    //    cannot reach it.
+    // Emitting null here means a non-constructor callee behaves exactly as it
+    // did before this change — no new throw, no new outcome to regress.
+    noMatchBase = [{ op: "ref.null.extern" }];
   } else if (noJsHost(ctx) && !useRuntimeArgv) {
     // (#2872) Standalone/WASI unknown-ctor base: the runtime value may be a
     // first-class `$__ta_ctor` (the TypedArray-harness `function (TA) { new
@@ -7577,7 +7837,16 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       // exactly this case). Standalone keeps the pre-existing member handling.
       const dynMemberCallee =
         !ts.isIdentifier(dynCallee) && !noJsHost(ctx) && resolvesToDynamicAnyCtorValue(ctx, dynCallee);
-      if ((ts.isIdentifier(dynCallee) && !ctx.classSet.has(dynCallee.text)) || dynMemberCallee) {
+      // (#6607) …and, in the HOST-FREE lane only, a CALL-expression callee —
+      // `new (ce("%Temporal.Duration%"))(…)`. It matched no arm before and fell
+      // through to `__new___unknown` → `ref.null.extern` (a silent null, with
+      // the arguments never evaluated). The tag dispatch below is callee-shape
+      // agnostic: it compiles `calleeExpr` once into an anyref descriptor and
+      // `ref.test`s it, so a call callee needs no new machinery. Gated to
+      // `noJsHost` so the JS-host lane's byte output is untouched — there the
+      // legacy `__new_` path still reaches a real host global.
+      const dynCallCallee = noJsHost(ctx) && resolvesToDynamicCallCtorValue(ctx, dynCallee);
+      if ((ts.isIdentifier(dynCallee) && !ctx.classSet.has(dynCallee.text)) || dynMemberCallee || dynCallCallee) {
         // (#3054 D) Dynamic `new <ctorVal>(buffer[, off[, len]])` where `ctorVal`
         // is a first-class `$__ta_ctor` value (a TA constructor held in a var /
         // array element — test262 `CreateRabForTest`, `for (ctor of ctors) new
@@ -7602,7 +7871,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
             if (dtav) return dtav;
           }
         }
-        if (emitDynamicNewFallback(ctx, fctx, expr, dynCallee, ctorName)) {
+        if (emitDynamicNewFallback(ctx, fctx, expr, dynCallee, ctorName, dynCallCallee)) {
           return { kind: "externref" };
         }
         // (#2872) Standalone/WASI class-free module: emitDynamicNewFallback

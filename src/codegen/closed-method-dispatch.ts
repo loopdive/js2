@@ -79,6 +79,7 @@ import { defaultValueInstrs } from "./type-coercion.js";
 // `standalone-class-construct.ts` is the second caller.
 import { buildCoerceIdxs, type CoerceIdxs, externArgCoercionInstrs, resultBoxingInstrs } from "./extern-arg-marshal.js";
 import { closedDispatchGuardsOwnSlot } from "./expressions/own-property-method-shadow.js";
+import { classArmClaimInstrs } from "./class-arm-tag-guard.js"; // (#6608) nominal `__tag` arm guard
 
 /**
  * (#2583) The callback-free, argument-taking array search/predicate methods
@@ -677,6 +678,13 @@ function buildEntryArm(
   entry: MethodEntry,
   pushArg: (a: number) => Instr[],
   providedArity: number | null = null,
+  // (#6634 S49) True only for a (methodName, arity) dispatcher whose
+  // candidate entries mix a CLASS implementer with a NON-class one — see
+  // `ensureStructFromObjectCoercionHelper`'s doc comment for why that mix is
+  // exactly the shape whose call-site argument may arrive as an open
+  // `$Object` no arm's plain `ref.cast` can inhabit. Every other dispatcher
+  // keeps its previous bytes exactly.
+  allowObjectCoercion = false,
 ): Instr[] {
   const arm: Instr[] = [
     { op: "local.get", index: anyLocalIdx },
@@ -721,6 +729,7 @@ function buildEntryArm(
         ci,
         want,
         entry.optionalParams.some((candidate) => candidate.index === a),
+        allowObjectCoercion,
       ),
     );
   }
@@ -760,6 +769,13 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     // local (arity+1) = the `any` temp.
     const anyLocalIdx = arity + 1;
     const entries = collectMethodEntries(ctx, methodName, arity);
+    // (#6634 S49) See `buildEntryArm`'s `allowObjectCoercion` param and
+    // `ensureStructFromObjectCoercionHelper`'s doc comment: only a dispatcher
+    // whose candidates mix a CLASS implementer with a non-class one can
+    // receive an argument the call site had no single struct to target, so
+    // only THAT dispatcher's arms opt into the object-to-struct fallback.
+    const mixedClassAndLiteralEntries =
+      entries.some((e) => ctx.classSet.has(e.structName)) && entries.some((e) => !ctx.classSet.has(e.structName));
 
     // Bottom arm: open-$Object fallback — build a $ObjVec of the fixed args.
     let current: Instr[];
@@ -1795,7 +1811,14 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     }
 
     for (const entry of entries) {
-      const callAndCoerce = buildEntryArm(ci, anyLocalIdx, entry, (a) => [{ op: "local.get", index: 1 + a }], arity);
+      const callAndCoerce = buildEntryArm(
+        ci,
+        anyLocalIdx,
+        entry,
+        (a) => [{ op: "local.get", index: 1 + a }],
+        arity,
+        mixedClassAndLiteralEntries,
+      );
       // An own property installed at runtime beats this class's prototype
       // method for THIS receiver (marked's `use()` hooks). Only user classes,
       // only names the reserve saw a callable member write for; object-literal
@@ -1826,8 +1849,10 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
             ] satisfies Instr[])
           : callAndCoerce;
       current = [
-        { op: "local.get", index: anyLocalIdx },
-        { op: "ref.test", typeIdx: entry.typeIdx },
+        // (#6608) NOMINAL claim: `ref.test` alone is structural, and every
+        // same-shaped class in the ladder passes it — so the outermost arm ran
+        // for every receiver. Byte-identical when no layout collides.
+        ...classArmClaimInstrs(ctx, entry.structName, entry.typeIdx, anyLocalIdx),
         { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: armBodyForEntry, else: current },
       ];
     }
@@ -1955,8 +1980,8 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
             ])
           : current;
       current = [
-        { op: "local.get", index: anyLocalIdx },
-        { op: "ref.test", typeIdx: entry.typeIdx },
+        // (#6608) Same nominal claim as the fixed-arity ladder above.
+        ...classArmClaimInstrs(ctx, entry.structName, entry.typeIdx, anyLocalIdx),
         { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: callAndCoerce, else: current },
       ];
     }
