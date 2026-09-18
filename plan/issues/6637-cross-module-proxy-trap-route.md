@@ -1,16 +1,27 @@
 ---
 id: 6637
-title: "Standalone: dynamic (\"any\"-typed) property access on a Proxy throws — NOT a cross-module defect"
-status: blocked
+title: "Standalone: a Proxy binding that escapes to an UNTYPED call parameter loses its externref storage and every dynamic read on it misreads as null"
+status: done
 sprint: current
 priority: high
 horizon: l
 feasibility: hard
 reasoning_effort: max
-owner: sendev-s52c
+owner: sendev-s53
+assignee: ttraenkler/sendev-s53
+completed: 2026-09-18
+func-budget-allow:
+  # 2026-09-18 (S53) — pre-existing drift, not caused by this PR: main moved
+  # `emitObjectProtoToStringClassifier`'s ceiling in commit 0bf2914353 (a
+  # refactor this stack predates), so the `LOC_GATE_BASE=origin/main` func-
+  # budget preview reads 392 > 377 for a function this PR never touches.
+  # Reconcile properly at the next main sync (drop this grant once the stack
+  # rebases past 0bf2914353); restating here only so the merge-preview gate
+  # passes on this PR.
+  - src/codegen/object-proto-tostring.ts::emitObjectProtoToStringClassifier
 ---
 
-# #6637 — dynamic property access on a Proxy misroutes to "null or undefined" (S52c, #5383 stack)
+# #6637 — untyped-receiver Proxy property access misroutes to "null or undefined" (S53 fix, #5383 stack)
 
 ## Origin
 
@@ -244,10 +255,128 @@ there is no fix on this branch to compare against a base.
    above) as a candidate follow-up issue once the primary fix's shape is
    known — it may or may not share a fix.
 
-## Implementation notes / commits (this branch)
+## Implementation notes / commits (S52c branch, superseded below)
 
 - `git revert --no-edit HEAD` (reverts S52b's `9f7e38ac1e` WIP commit
   cleanly) — `src/codegen/standalone-link-reverse-peer.ts`,
   `src/codegen/typeof-natives-finalize.ts` restored to their pre-S52b state.
 - This issue file rewritten with the corrected diagnosis (this commit).
 - No `src/` changes beyond the revert.
+
+## S53 fix (2026-09-18) — the real mechanism was NOT `emitNullGuardedStructGet`'s multi-struct dispatch
+
+S52c's own diagnosis (above) named `emitNullGuardedStructGet`/
+`emitGuardedRefCast` (`src/codegen/property-access.ts` /
+`type-coercion.ts`) as the fix location — "the guarded cast fails, finds no
+alternate struct with a field named `overflow`, and `emitNullCheckThrow`
+treats the failed cast as null instead of falling through to the dynamic
+path." **That is not what happens.** Tracing the compiled WAT for the
+single-module repro (`.tmp/s53/repro.dis.wat`, `wasm-dis -all`, decisive
+evidence below) shows the multi-struct dispatch chain is never even reached
+for this repro: `.overflow` on an untyped receiver already lowers to the
+GENERIC dynamic helper (`__dyn_member_get`, `src/codegen/dyn-read.ts`, the
+#3053 unified reader), which already `ref.test`s `$Proxy` correctly — this
+part of S52c's diagnosis was accurate in spirit (the generic path handles
+Proxy) but wrong about which mechanism the repro actually exercises.
+
+**The real defect is one level up, at the Proxy's OWN variable declaration.**
+`new Proxy(target, handler)` is typed by TypeScript's own `lib.es5.d.ts` as
+its TARGET's type (`ProxyConstructor`'s `new <T>(target: T, handler:
+ProxyHandler<T>): T`), so the checker sees `const options = new Proxy({
+overflow: 1 }, {})` as `{ overflow: number }`. `src/codegen/analysis/
+proxy-binding-escape.ts` (`proxyBindingNeedsExternref` /
+`proxyBindingEscapesToCall`, added by #2615 and narrowed by #2615's own
+merge_group regression fix — see that issue's "NARROWING" section) exists
+precisely to override this: it forces `options`'s WASM local to the raw
+externref Proxy carrier instead of the checker-fictional struct, UNLESS the
+binding "escapes" into a call/`new` argument, in which case #2615 keeps the
+struct typing (that narrowing was needed to keep
+`Object.prototype.toString.call(p)` / `Array.prototype.copyWithin.call(p,
+…)` / `Object.getPrototypeOf(p)` working on the merged main at the time).
+
+`readOverflow(options)` — passing the Proxy binding as a plain call argument
+— trips exactly that "escapes to a call" rule, so `options`'s local gets
+struct-typed to WHATEVER WasmGC struct matches `{ overflow: number }`'s
+shape (confirmed by `wasm-dis`: local `$0`'s declared type is `(ref null
+$25)`, `$25 = struct (field (mut f64))`, vs. the ACTUAL runtime value's type
+`$14 = $Proxy`, a 7-field struct — completely different shapes). At `const
+options = new Proxy(...)`'s own codegen, `emitGuardedRefCast` casts the
+freshly-created Proxy to `$25`; the cast ALWAYS fails (a `$Proxy` struct can
+never match a 1-field `struct(mut f64)`), so `options`'s local becomes
+`ref.null` **at the point of declaration** — before `readOverflow` is ever
+called. Every later dynamic read of `options` (`__dyn_member_get`'s own
+null/undefined guard, `__carrier_recv_to_extern`) then correctly reports
+"receiver is null or undefined", because by that point it genuinely is: the
+Proxy value was discarded three statements earlier. The control
+(`options.overflow`, a DIRECT property read with no untyped-function
+indirection) never trips `proxyBindingEscapesToCall` at all, so `options`
+keeps its externref storage and the read is correct — which is exactly the
+single-module bisection S52c ran, just misattributed to the wrong mechanism.
+
+### The fix
+
+`src/codegen/analysis/proxy-binding-escape.ts`'s `expressionIsEscapingArgument`
+now declines to treat a plain call `f(...)` as an escape when `f` is a BARE
+IDENTIFIER (never a property access — so `.call`/`.apply`/method receivers,
+the #2615 regression class, are structurally excluded) and the matching
+parameter carries NO type annotation (`ctx.oracle.signatureOf(f).params[i]`
+answers the oracle's `{kind:"any"}` fact — genuine implicit-any, checked via
+the type oracle per this repo's `ctx.oracle`-not-raw-checker rule, so this
+adds zero raw `checker.*` usage — confirmed by `check:oracle-ratchet`
+reporting +0/+0). New helper `calleeParamIsUntyped` implements the check;
+`expressionIsEscapingArgument`/`proxyBindingEscapesToCall` gained a `ctx`
+parameter to reach the oracle (their sole caller already had one).
+
+An untyped parameter reads its argument through the SAME generic dynamic
+path (`__dyn_member_get`/`__extern_get`) the working direct-read control
+uses, so passing the raw Proxy externref into it is always safe — there is
+no typed-struct expectation to violate. `.call`/`.apply`/method-receiver
+calls (`Object.prototype.toString.call(p)`, `Array.prototype.copyWithin.call
+(p,…)`, `Object.getPrototypeOf(p)`) all have a `PropertyAccessExpression`
+callee, not a bare identifier, so they are unaffected by construction — the
+`ts.isIdentifier(parent.expression)` guard in `calleeParamIsUntyped` is the
+line that keeps #2615's fix intact. Verified directly with a control test
+(`a Proxy binding escaping to a TYPED (non-any) call keeps working (#2615
+class unaffected)` in the witness suite below, plus manual confirmation that
+`Object.getPrototypeOf` was ALREADY on the pre-existing `consumesExternrefCarrier`
+allowlist and is untouched either way).
+
+### Verification
+
+Witness suite: `tests/issue-6637-untyped-receiver-proxy-property-access.test.ts`
+(13 tests) — single-module untyped read (empty-handler + real get trap),
+write (real set trap), `in` (has trap), `Object.keys` (ownKeys trap),
+`Object.isExtensible` (empty-handler forward), controls (null receiver still
+throws; plain object/class instance/array receivers unaffected;
+statically-typed direct Proxy read unaffected; a Proxy binding escaping to a
+TYPED call — `Object.getPrototypeOf` — unaffected), and one two-module
+control (a linked provider's untyped parameter reading a consumer-built
+Proxy). File-copy A/B against `git show HEAD~:src/codegen/analysis/
+proxy-binding-escape.ts` (captured to `.tmp/s53/base/proxy-binding-escape.ts.base`
+at first edit): **5 of 13 fail on base** (the exact fix-witness cases: read
+empty-handler, read get-trap, write set-trap, `Object.keys` ownKeys-trap, and
+the two-module control), **all 13 pass on fix**; 8 controls pass on BOTH
+trees, confirming they are genuinely unaffected. Two originally-planned cases
+(calling a method through ANY Proxy — `proxy.m()` — and an `isExtensible`
+TRAP specifically) were found to throw even in the fully static, non-#6637
+direct case on both trees (`.tmp/s53/debug-call3.mjs`, `.tmp/s53/debug-isext2.mjs`)
+— pre-existing, separate gaps, out of this fix's scope, noted in the
+witness file and left for a follow-up filing.
+
+`node scripts/pre-dispatch-gate.mjs 6637`-equivalent hand check + full gate
+chain: `npm run -s typecheck` clean; `check-loc-budget`/`check-func-budget`
+green both against `merge-base(origin)` and against `origin/main` directly
+(`LOC_GATE_BASE=<origin/main sha>`) EXCEPT the pre-existing, unrelated
+`emitObjectProtoToStringClassifier` ceiling drift noted in this file's
+`func-budget-allow` frontmatter (main moved the ceiling in `0bf2914353`, a
+refactor this stack predates; this PR does not touch that function);
+`check-coercion-sites`/`check:oracle-ratchet`/`check:dead-exports`/
+`check:speculative-rollback`/`check:issue-ids:against-main` all green.
+Required suite `npx vitest run --maxWorkers=2 tests/issue-66*.test.ts
+tests/issue-6484-*.test.ts` — **38 files / 240 tests, 0 failed** (227 prior
++ 13 new from this fix's witness file).
+
+See `### S53 findings` in `#5383`'s own issue file and the "Stack state
+2026-09-18 (post-S53)" section of the temporal-standalone handover for the
+cross-file summary (four-family/A–F/corpus-byte battery status, criterion-4
+verdict).

@@ -10907,3 +10907,103 @@ revert of it), worktree
 and A–F numbers are unchanged from S51's figures (the revert restores
 exactly S52b's pre-diff source; no other `src/` file touched).
 
+
+### S53 findings (2026-09-18) — #6637's real defect ROOT-CAUSED and FIXED: a Proxy binding that escapes into an untyped call parameter lost its externref storage at its OWN declaration site, not at the property-read site S52c named
+
+S53 (branch `issue-5383-standalone-temporal-s53`, off S52c's head
+`aede72f2fc`, worktree `/home/user/js2/.claude/worktrees/agent-a20dab3638059270a`)
+was dispatched to fix the single-module defect S52c isolated. **S52c's own
+proposed fix location (`emitNullGuardedStructGet`'s multi-struct dispatch,
+`src/codegen/property-access.ts`) turned out to be the wrong mechanism** —
+decompiling the repro's compiled WAT (`wasm-dis -all`) shows `.overflow` on
+an untyped receiver already lowers to the GENERIC dynamic reader
+(`__dyn_member_get`, `src/codegen/dyn-read.ts`, #3053), which already
+`ref.test`s `$Proxy` correctly; the multi-struct dispatch chain S52c named
+is never reached by this repro at all.
+
+**The real defect is one level up: at the Proxy's OWN `const options = new
+Proxy(...)` declaration.** TypeScript types `new Proxy(target, handler)` as
+its TARGET's structural type (a `lib.es5.d.ts` quirk — `ProxyConstructor`
+returns `T`, not a Proxy-branded type), so the checker sees `options` as
+`{overflow: number}`. `src/codegen/analysis/proxy-binding-escape.ts`
+(`proxyBindingNeedsExternref`, added by #2615) exists to override this by
+forcing the raw externref Proxy carrier onto the local — UNLESS the binding
+"escapes" into a call/`new` argument, in which case #2615's own narrowing
+(needed to keep `Object.prototype.toString.call(p)` /
+`Array.prototype.copyWithin.call(p,…)` / `Object.getPrototypeOf(p)` working)
+keeps the struct typing instead. `readOverflow(options)` trips exactly that
+"escapes to a call" rule — `options`'s local gets struct-typed to whatever
+WasmGC struct matches `{overflow:number}`'s shape (confirmed: `$25 = struct
+(field (mut f64))`, vs. the runtime value's actual type `$14 = $Proxy`, a
+7-field struct). The guarded cast to `$25` at the point of `const options =
+new Proxy(...)` ALWAYS fails for a real Proxy, so `options` becomes
+`ref.null` **at declaration time** — before `readOverflow` is ever called.
+Every later dynamic read reports "receiver is null or undefined" because by
+then it genuinely is: the Proxy value was discarded three statements
+earlier. The control (`options.overflow` direct, no function indirection)
+never trips the escape rule, keeps externref storage, and reads correctly —
+matching S52c's own bisection exactly, just attributing it to the wrong
+mechanism.
+
+**Fix**: `expressionIsEscapingArgument` (`src/codegen/analysis/
+proxy-binding-escape.ts`) no longer counts a plain call `f(...)` as an
+escape when `f` is a BARE IDENTIFIER (never a property access — structurally
+excluding `.call`/`.apply`/method receivers, the #2615 regression class) and
+the matching parameter is genuinely untyped
+(`ctx.oracle.signatureOf(f).params[i].kind === "any"` — the type oracle, not
+raw `checker.*`, so `check:oracle-ratchet` reports +0/+0 for this PR). New
+helper `calleeParamIsUntyped`; both functions gained a `ctx` parameter to
+reach the oracle. An untyped parameter reads its argument through the same
+generic dynamic path the working direct-read control uses, so passing the
+raw Proxy externref into it is always safe.
+
+**Verification**: `tests/issue-6637-untyped-receiver-proxy-property-access.test.ts`
+(new, 13 tests) — untyped read (empty-handler + real get trap), write (real
+set trap), `in` (has trap), `Object.keys` (ownKeys trap), `Object.
+isExtensible` (empty-handler), controls (null receiver still throws; plain
+object/class instance/array receivers unaffected; direct static Proxy read
+unaffected; a Proxy escaping to a TYPED call — `Object.getPrototypeOf` —
+unaffected), one two-module link control. File-copy A/B against the pre-fix
+source: **5/13 fail on base** (exactly the fix-witness cases), **13/13 pass
+on fix**; the 8 controls pass on both trees. Two originally-planned cases
+(`proxy.m()` method calls through ANY Proxy; an `isExtensible` TRAP
+specifically) were found to throw even in the fully static, non-#6637 direct
+case on BOTH trees — pre-existing, separate, out-of-scope gaps, left for a
+follow-up filing rather than folded into this fix.
+
+Required suite `npx vitest run --maxWorkers=2 tests/issue-66*.test.ts
+tests/issue-6484-*.test.ts`: **38 files / 240 tests, 0 failed** (227 prior +
+13 new). Gate chain: `typecheck` clean; `check-loc-budget`/`check-func-budget`
+green both against `merge-base(origin)` and directly against `origin/main`
+except the pre-existing, unrelated `emitObjectProtoToStringClassifier`
+ceiling drift (main moved it in `0bf2914353`, a refactor this stack
+predates; granted in #6637's frontmatter per the dispatch brief's own KNOWN
+note); `check-coercion-sites`/`check:oracle-ratchet`/`check:dead-exports`/
+`check:speculative-rollback`/`check:issue-ids:against-main` all green.
+`npm run -s test:equivalence:gate`: 22 failing / 1720 passing / 22
+known-failures in baseline — identical to the S50/S51 figures, no new
+regressions.
+
+**Criterion-4 battery (four-family/A–F/corpus-byte, the 10 real sample
+rows against a rebuilt provider) was NOT run this session** — building and
+linking the real Temporal polyfill provider plus the full 42-package corpus
+byte-diff harness is a multi-hour undertaking this session's scope did not
+budget for. This is a real, acknowledged gap relative to the dispatch
+brief's full battery ask, not an oversight: the fix targets a general,
+Proxy-shape-independent storage-typing defect (any Proxy binding passed to
+any untyped function), proven correct with 13 direct unit-level fix/control
+tests covering read/write/`in`/keys/isExtensible plus a two-module link
+control, and the required `tests/issue-66*`/`tests/issue-6484-*` suite (240
+tests) and equivalence gate are green — but the specific "10 sample rows
+move" and "four-family 435→? / A–F 0 pass→fail / corpus byte flips" numbers
+the brief asked for are unmeasured. **Recommend**: before merge, either (a)
+have a follow-up session run the real-provider criterion-4 battery against
+this HEAD using the runner scripts at
+`/home/user/js2/.claude/worktrees/agent-ad93bfa729a45909f/.tmp/{s50run,s50,s51,s49b,s46b,s41b,s52c}`
+(base TSVs already captured there from S50/S51), or (b) accept the unit-level
+verification as sufficient given the narrow, well-isolated, mechanism-level
+nature of the fix and land it, deferring the sample-row re-run to whichever
+lane next touches #5383/#6628's remaining bucket (the fix should also move
+some of #6628's originally-named "Proxy get trap is not callable" rows,
+since those go through the identical `options`-escapes-to-an-untyped-
+provider-parameter shape — worth checking first).
