@@ -2083,3 +2083,44 @@ away.
     the first reading was wrong. When a probe's domain is a subset of the
     question's domain, widen the probe BEFORE concluding — and treat "the wider
     probe agrees" as the falsification test, not as confirmation.
+
+## Round 14 (2026-09-18) — #6502's null is a VOID RETURN, not a dispatch miss
+
+**No code landed.** Linked **44 / 138**, honest **135 / 138**, unchanged.
+
+The funcref probe answers state (ii) and reframes the issue. Struct type 41 is
+`__constructible_fn_wrap_4_struct` (census ft 40); the funcref it actually
+carries is **ft 43 = `func(ref, externref) -> ` — a VOID closure**. So
+`__closure_arity`'s answer of 1 was correct all along (it reads the funcref),
+and the `null` this chain has been chasing since round 10 is most likely **not a
+miss**: the arm matched, the closure ran, and a void return surfaced as null
+because `buildClosureResultBoxing`'s canonical-`undefined` producer
+(`__get_undefined`) is not registered in this unit — the #6419 fallback, in a
+second emitter (the first was `coerceType`'s f64 arm, round 6).
+
+That single fact explains three earlier puzzles: why every `__call_fn_0..4`
+"missed" (a void function answers nothing at any arity), why round 11's loud
+terminal broke exactly four rows, and why the arity retries never helped.
+
+**Measured:** registering the producer in `emitClosureCallExportN` gives
+**44 → 49: +9, −4 — the same nine gains and four losses as round 11's loud
+terminal**, with verbatim-identical errors, from a completely different change.
+Two independent ways of stopping a void closure from answering `null` produce
+one delta, so the +9 and the −4 share a cause: four call sites read a void
+closure's `null` as load-bearing; nine read it as a corrupt value.
+
+Not shipped — same refused trade as round 11. Full detail, the probe output and
+the narrow next target (instrument the four readers on
+`harness/proxytrapshelper-default.js`) are in **#6502**, whose framing is
+revised there: the bridge cannot distinguish a ladder MISS, a VOID return, and a
+genuine `null`, and (2) is the common case in this corpus.
+
+### Finding for the next lane (round 14)
+
+32. **Two independent fixes producing an IDENTICAL delta means one shared
+    cause, and it is upstream of both.** Round 11 (throw at the terminal) and
+    round 14 (return `undefined` for void) touch different files and different
+    mechanisms, yet moved exactly the same 13 rows with the same messages. That
+    identity is the evidence — it located the real subject (what a void closure
+    answers) faster than either change's own reasoning did, and it says the four
+    losses are one bug, not four.

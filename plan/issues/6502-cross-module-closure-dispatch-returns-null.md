@@ -271,3 +271,82 @@ agree — or make the arms dispatch on the funcref's own type rather than on a
 struct-type-derived expectation. Until the funcref's real type is named (next
 probe above), do not start the edit: this round already withdrew one conclusion
 that was drawn from a probe too narrow to see the alternative.
+
+## Round 14 (2026-09-18) — the probe answers state (ii), and the null is a VOID RETURN
+
+The two debug exports asked for — deepest matching STRUCT type over the whole
+type section, and the extracted funcref's own FUNC type plus null-ness, the
+extraction copied from `buildFuncrefExtraction`'s root-collapse arm — answer:
+
+```
+[TYPEPROBE] root: 36 | 36:__fn_wrap_0_struct(super=-1,CENSUS ft=37,np=2)
+                     | 39:__fn_wrap_3_struct(super=36,CENSUS ft=40,np=3)
+                     | 40:func(ref,externref,externref,externref)->externref
+                     | 41:__constructible_fn_wrap_4_struct(super=39,CENSUS ft=40,np=3)
+                     | 42:__fn_wrap_6_struct(super=36,CENSUS ft=43,np=1)
+                     | 43:func(ref,externref)->            <-- NO RESULT
+[TYPEPROBE miss] args=1 arity=1 declared=1
+   | mod0:struct=41,funcref=43 | mod1:struct=17,funcref=-1
+```
+
+**State (ii), with a twist that changes the diagnosis.** The funcref is not
+null, and it is **ft 43**, not the ft 40 the census records for struct type 41.
+`__closure_arity` answering 1 is therefore *correct* — it reads the funcref, and
+ft 43 takes one argument.
+
+The twist: **ft 43 returns NOTHING.** `func(ref, externref) -> ` is a void
+closure. A void arm cannot answer the ABI's externref with a value, so
+`buildClosureResultBoxing` gives it the canonical `undefined` — and, when
+`__get_undefined` is not registered, its documented fallback
+`ref.null.extern`, i.e. JS **`null`**.
+
+So the `null` this issue was opened about is very likely **not a dispatch miss
+at all**: the arm matched, the closure ran, and a void return surfaced as null.
+That also explains, for the first time, why every `__call_fn_0..4` in both
+modules "missed" (a void function answers nothing at any arity) and why round
+11's loud terminal broke exactly four rows (their nulls were legitimate void
+returns, not misses).
+
+### Measured fix attempt — and it reproduces round 11's +9 / −4 exactly
+
+Nothing in `emitClosureCallExportN` registers `__get_undefined`, so a unit that
+never needs one on its own — the linked CONSUMER being the ordinary case, its
+body a bare test fragment — emits `ref.null.extern` for every void closure. This
+is the #6419 fallback in a second emitter (the first was `coerceType`'s f64 arm,
+#6492 round 6). Registering the producer with this emitter's other late imports:
+
+| | result |
+| --- | --- |
+| `ensureCanonicalUndefinedExtern(ctx, null)` in `emitClosureCallExportN` | 44 → **49: +9, −4** |
+
+**The same nine gains and the same four losses as round 11's loud terminal**, a
+completely different change. Same errors, verbatim
+(`trap getPrototypeOf is not a function`; `asyncTest called $DONE with a
+synchronously thrown error`; two rows collapsing to `Actual []`). Two
+independent changes that both stop a void closure answering `null` produce an
+identical delta, which says the +9 and the −4 share one cause: **four call sites
+read a void closure's `null` as load-bearing**, and nine read it as a corrupt
+value.
+
+Not shipped: the trade is the same one refused in round 11, and the correct
+change (a void closure MUST answer `undefined` — `buildClosureResultBoxing`'s
+own comment says so) should not regress four rows. The next lane's target is
+therefore narrow and concrete: **find the four readers.** Instrument the runtime
+for a void-closure result being compared against `null`
+(`_wrapWasmClosureUnknownArity`'s callers, the proxy trap reader, the
+`asyncTest`/`$DONE` path) on `harness/proxytrapshelper-default.js` — one row,
+one call site, and the whole +9 lands for free.
+
+### Revised framing for this issue
+
+The title's "returns null" is right; "dispatch" is not. The defect is that the
+host bridge cannot distinguish three states that all arrive as `null`:
+
+1. a ladder MISS,
+2. a VOID closure's return,
+3. a closure that genuinely returned `null`.
+
+Round 11 tried to separate (1); this round shows (2) is the more common one in
+this corpus. Separating them is still the fix — but by giving (2) the
+`undefined` it is owed, then (1) the loud terminal, and only after the four
+readers of (2)'s null are corrected.
