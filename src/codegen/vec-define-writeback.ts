@@ -18,6 +18,7 @@
 // caller in `_emitVecAccessExportsInner`) on a defineProperty import being
 // present so modules that never define properties stay byte-identical.
 import type { FuncHandle, Instr, LocalDef, ValType, WasmFunction } from "../ir/types.js";
+import { HOLE_F64_BITS } from "./value-tags.js"; // (#6482 r4)
 import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { PROGRAM_ABI_CALLABLE_ROLE } from "./program-abi-planning.js";
@@ -261,6 +262,58 @@ export function emitVecDefineWritebackExports(
     defineWritebackHelper(ctx, "setElem", "__vec_set_elem", setElemTypeIdx, locals, body);
   }
 
+  // (#6482 r4) The f64 absence-marker fill for a length change. Returns
+  // undefined for a carrier that has no marker (ref/packed/i32 kinds), which
+  // leaves those arms byte-identical.
+  //
+  // SHRINK ONLY, and that restriction is load-bearing. This export is also the
+  // replay path for a host mirror (`registerVecMirror`): an append arrives as
+  // `__vec_set_elem(i, v)` followed by `__vec_set_len(i + 1)`, so the element
+  // is ALREADY in the slot when the length store runs. Filling the grown tail
+  // here erased it — a plain `[0, 1]` literal came back with index 1 absent.
+  // A grow needs no fill anyway: the shrink that orphaned those slots marked
+  // them on its way down.
+  const holeFillArm = (
+    vecTypeIdx: number,
+    arrTypeIdx: number,
+    vecL: number,
+    dataL: number,
+    lenL: number,
+  ): Instr[] | undefined => {
+    const arrDef = ctx.mod.types[arrTypeIdx];
+    if (arrDef === undefined || arrDef.kind !== "array") return undefined;
+    if ((arrDef.element as ValType).kind !== "f64") return undefined;
+    return [
+      // oldLen > newLen? Only then does this store orphan anything.
+      { op: "local.get", index: lenL },
+      { op: "local.get", index: 1 },
+      { op: "i32.gt_s" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          // data (re-read: the grow above may have replaced it)
+          { op: "local.get", index: vecL },
+          { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+          { op: "local.set", index: dataL },
+          // fill [newLen, array.len) with the absence marker
+          { op: "local.get", index: 1 },
+          { op: "local.set", index: lenL },
+          { op: "local.get", index: dataL },
+          { op: "local.get", index: lenL },
+          { op: "i64.const", value: HOLE_F64_BITS },
+          { op: "f64.reinterpret_i64" },
+          // count = arrayLen - start, clamped by the array itself
+          { op: "local.get", index: dataL },
+          { op: "array.len" },
+          { op: "local.get", index: lenL },
+          { op: "i32.sub" },
+          { op: "array.fill", typeIdx: arrTypeIdx },
+        ],
+      },
+    ];
+  };
+
   // __vec_set_len(externref vec, i32 newLen) -> i32 (1 = ok, -1 = unsupported)
   {
     const setLenTypeIdx = addFuncType(
@@ -322,6 +375,25 @@ export function emitVecDefineWritebackExports(
             { op: "struct.set", typeIdx: vecTypeIdx, fieldIdx: 1 },
           ],
         },
+        // (#6482 r4) Maintain the ABSENCE marker across a length change, for
+        // the f64 carrier that can hold one.
+        //
+        // §10.4.2.1 ArraySetLength: shrinking DELETES the dropped elements and
+        // growing creates HOLES — neither leaves a value behind. The backing
+        // store did not agree: a shrink left the old element in its slot and a
+        // grow `array.new_default`-ed to 0.0, so after `[0,1]; length = 1;
+        // length = 10` the host read slot 1 back as the original `1`, and after
+        // `[0, , 2]; length = 5` it read slots 3-4 as `0`. Both then answered
+        // `hasOwnProperty` TRUE for an index that is not an own property
+        // (15.2.3.7-6-a-161/162, 15.2.3.6-4-159).
+        //
+        // The fill is SHRINK-ONLY — see `holeFillArm`: this export is also the
+        // host-mirror replay path, where an append arrives as `set_elem(i)` then
+        // `set_len(i + 1)`, so filling a grown tail would erase the element just
+        // written. A grow needs no fill: the shrink that orphaned those slots
+        // marked them on its way down. `__vec_get` already maps the marker to
+        // `undefined`, so reads are unchanged; only own-ness stops lying.
+        ...(holeFillArm(vecTypeIdx, arrTypeIdx, vecL, dataL, lenL) ?? []),
         // vec.length = newLen
         { op: "local.get", index: vecL },
         { op: "local.get", index: 1 },

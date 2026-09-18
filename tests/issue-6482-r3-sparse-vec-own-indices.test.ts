@@ -137,6 +137,89 @@ describe("#6482 r3 — vec own-index answers must not invent holes", () => {
     ).toBe("pass");
   }, 300_000);
 
+  // ── round 4 ─────────────────────────────────────────────────────────────
+  //
+  // Round 3 answered "no" to every index the host had not positively seen,
+  // which reported a DENSE literal's elements as absent and cost 10 rows in the
+  // merge group of PR #5967. Round 4 gives the host a real oracle instead of a
+  // guess: `__vec_has_own_index(vec, i)` reads the RAW element, before
+  // `__vec_get`'s boxing collapses the hole marker and an explicit `undefined`
+  // element to the same value (#4491 T11).
+  //
+  // The cases below pin the three things that oracle needs from the WRITE side,
+  // because it can only be as honest as the backing store: every `length` store
+  // must leave the region it orphans marked as absent, or the oracle reads a
+  // stale element and answers "present" for an index that is not an own
+  // property.
+
+  // `arr.length = n` writes ONLY field 0 (through the `$__vec_base` supertype),
+  // so a shrink used to leave the dropped element in its slot and a later grow
+  // handed it back.
+  //
+  // The keys are COMPUTED (`String(i)`), deliberately. A literal
+  // `arr.hasOwnProperty("1")` is answered by a constant-key path that never
+  // leaves wasm, so it exercises none of this — and it is independently wrong
+  // about `[0, 1]` today, on `main` as much as here (measured: index 1 reads as
+  // absent). Asserting through it would pin a DIFFERENT defect and fail for a
+  // reason that has nothing to do with the rule under test.
+  it("does not resurrect a shrunk-away element when the length grows again", async () => {
+    expect(
+      await runLinked(
+        `${HEADER}var arr = [0, 1];\n` +
+          `arr.length = 1;\n` +
+          `arr.length = 10;\n` +
+          `assert.sameValue(arr.length, 10, "length");\n` +
+          `assert.sameValue(arr.hasOwnProperty(String(0)), true, "index 0 survives");\n` +
+          `assert.sameValue(arr.hasOwnProperty(String(1)), false, "index 1 was dropped");\n` +
+          `assert.sameValue(arr.hasOwnProperty(String(2)), false, "index 2 was never there");\n` +
+          `assert.sameValue(arr[1], undefined, "arr[1]");`,
+      ),
+    ).toBe("pass");
+  }, 300_000);
+
+  // The `Object.defineProperty(arr, "length", …)` twin reallocates with
+  // `array.new_default`, which ZERO-fills the new tail — and a grow creates
+  // holes, not zeros.
+  it("treats a defineProperty length grow as holes, not zeros", async () => {
+    expect(
+      await runLinked(
+        `${HEADER}var arr = [0, 1];\n` +
+          `Object.defineProperty(arr, "length", { value: 5 });\n` +
+          `assert.sameValue(arr.length, 5, "length");\n` +
+          `assert.sameValue(arr.hasOwnProperty("1"), true, 'hasOwnProperty("1")');\n` +
+          `assert.sameValue(arr.hasOwnProperty("3"), false, 'hasOwnProperty("3")');\n` +
+          `assert.sameValue(arr[3], undefined, "arr[3]");`,
+      ),
+    ).toBe("pass");
+  }, 300_000);
+
+  // A DENSE literal is the other half of the same rule — the r3 arguments-only
+  // narrowing answered "no" here, which is what the 10 merge-group rows caught.
+  it("reports every element of a dense literal as own and enumerable", async () => {
+    expect(
+      await runLinked(
+        `${HEADER}var dense = [1, 2, 3];\n` +
+          `var seen = [];\n` +
+          `for (var p in dense) { if (dense.hasOwnProperty(p)) seen.push(p); }\n` +
+          `assert.sameValue(seen.length, 3, "seen.length " + seen.length);\n` +
+          `assert.sameValue(seen.join(","), "0,1,2", "seen " + seen.join(","));`,
+      ),
+    ).toBe("pass");
+  }, 300_000);
+
+  // `Object.keys` reaches the vec through the host MIRROR, not through
+  // `__for_in_keys`. The mirror used to be dense — every hole materialized as a
+  // present `undefined` — so the two enumeration surfaces disagreed
+  // (`Object/keys/15.2.3.14-6-2`).
+  it("agrees between for-in and Object.keys on a sparse array", async () => {
+    expect(
+      await runLinked(
+        `${HEADER}var sparse = [1, 2, , 4, , 6];\n` +
+          `assert.sameValue(Object.keys(sparse).join(","), "0,1,3,5", "keys " + Object.keys(sparse).join(","));`,
+      ),
+    ).toBe("pass");
+  }, 300_000);
+
   // The round-2 gain that must survive: an arguments vec is dense, so every
   // in-bounds index is own and enumerable.
   it("keeps an arguments object dense", async () => {

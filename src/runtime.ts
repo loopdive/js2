@@ -3433,6 +3433,16 @@ function _convertIterableForHost(
         const arr: any[] = new Array(len);
         memo.set(obj, arr);
         for (let i = 0; i < len; i++) {
+          // (#6482 r4) A HOLE is not an own property, so it must not
+          // become a present `undefined` element in the host mirror:
+          // `__vec_get` collapses the hole marker and an explicit
+          // `undefined` element to the same value (#4491 T11), and a
+          // dense mirror is what made `Object.keys([1,2,,4,,6])` report
+          // "2" (`Object/keys/15.2.3.14-6-2`). Ask the MINTING module
+          // and leave the slot ABSENT when it says hole; an index it
+          // cannot confirm is still materialized, so a module without
+          // the export behaves exactly as before.
+          if (_vecOverlayOwnIndex(obj, i, exports) === false) continue;
           arr[i] = _convertIterableForHost(vecGet(obj, i), exports, memo);
         }
         return arr;
@@ -4655,10 +4665,13 @@ function _wasmStructHasOwn(obj: any, key: any, exports: Record<string, Function>
   // is what made propertyHelper's `__hasOwnProperty(arguments, "0")` false once
   // the `for…in` gate above it started passing.
   //
-  // (#6482 r3) Restricted to a registered ARGUMENTS object — see
-  // `_vecEnumerableIndexKeys` for why. An ordinary array can be SPARSE, and
-  // `idx < length` reports its holes as own.
-  if (typeof key !== "symbol" && _canBeWeakKey(obj) && _argumentsObjects.has(obj)) {
+  // (#6482 r3/r4) An ordinary array can be SPARSE, so `idx < length` reports
+  // its HOLES as own. A registered `arguments` object is dense by construction
+  // (§10.4.4 maps exactly `0 .. length-1`) and keeps the length test; every
+  // other vec asks the MINTING module via `__vec_has_own_index`. A module that
+  // cannot answer leaves the key to the struct-shape probe below, which is the
+  // pre-r2 behaviour.
+  if (typeof key !== "symbol" && _canBeWeakKey(obj)) {
     const prop = String(key);
     const idx = _asArrayIndex(prop);
     if (prop === "length" || idx !== undefined) {
@@ -4666,7 +4679,12 @@ function _wasmStructHasOwn(obj: any, key: any, exports: Record<string, Function>
       const isVecFn = exports?.__is_vec as ((v: any) => number) | undefined;
       if (typeof lenFn === "function" && typeof isVecFn === "function") {
         try {
-          if (isVecFn(obj) === 1) return prop === "length" || (idx as number) < lenFn(obj);
+          if (isVecFn(obj) === 1) {
+            if (_argumentsObjects.has(obj)) return prop === "length" || (idx as number) < lenFn(obj);
+            if (prop === "length") return true;
+            const own = _vecOverlayOwnIndex(obj, idx as number, exports);
+            if (own !== undefined) return own;
+          }
         } catch {
           /* not a vec of this module */
         }
@@ -6941,6 +6959,18 @@ function _clampFrozenDescriptor(obj: any, d: PropertyDescriptor): PropertyDescri
  * `defineProperty`-non-enumerable index is filtered the same way the sidecar
  * arm filters its own keys.
  */
+/** (#6482 r4) Is `obj` a vec of the module that minted it? */
+function _isVecReceiver(obj: any, exports: Record<string, Function> | undefined): boolean {
+  const resolved = _decoderExportsFor(obj, exports);
+  const isVecFn = resolved?.__is_vec as ((v: any) => number) | undefined;
+  if (typeof isVecFn !== "function") return false;
+  try {
+    return isVecFn(obj) === 1;
+  } catch {
+    return false;
+  }
+}
+
 function _vecEnumerableIndexKeys(
   obj: any,
   exports: Record<string, Function> | undefined,
@@ -6958,11 +6988,14 @@ function _vecEnumerableIndexKeys(
   // `15.2.3.7-6-a-155/156/161/162`, `copyWithin/fill-holes`), each of which
   // asserts `hasOwnProperty("1") === false` for a hole.
   //
-  // For an ordinary vec the answer is not "nothing", it is "only what the HOST
-  // positively knows about": an index carrying a `_wasmPropDescs` entry or a
-  // sidecar value was put there by `Object.defineProperty` / a host write, so
-  // it is an own property with no hole ambiguity. An in-bounds index the host
-  // has never seen stays declined, because it may be a hole.
+  // (#6482 r4) For an ordinary vec the host now ASKS instead of guessing:
+  // `__vec_has_own_index` reads the raw element against the hole marker in the
+  // module that MINTED the vec, resolved through `_decoderExportsFor` so a
+  // consumer-minted vec answers across a linked edge too. A module compiled
+  // before that export keeps the previous conservative rule — only indices the
+  // host positively knows about (a `_wasmPropDescs` entry or a sidecar value,
+  // both written by `Object.defineProperty` or a host write, neither of which
+  // can be a hole).
   if (!_canBeWeakKey(obj)) return [];
   const argumentsReceiver = _argumentsObjects.has(obj);
   exports = _decoderExportsFor(obj, exports); // (#5225/#6477) the MINTING module's exports
@@ -6987,11 +7020,42 @@ function _vecEnumerableIndexKeys(
     if (tomb?.has(k) || seen?.has(k)) continue;
     const flags = descs?.get(k);
     if (flags !== undefined && flags & _SC_DEFINED && !(flags & _SC_ENUMERABLE)) continue;
-    // A non-arguments vec yields ONLY host-known indices (see above).
-    if (!argumentsReceiver && flags === undefined && !(sidecar && k in sidecar)) continue;
-    keys.push(k);
+    if (argumentsReceiver || flags !== undefined || (sidecar && k in sidecar)) {
+      keys.push(k);
+      continue;
+    }
+    // (#6482 r4) Ask the minting module; decline when it cannot answer.
+    if (_vecOverlayOwnIndex(obj, i, exports) === true) keys.push(k);
   }
   return keys;
+}
+
+/**
+ * (#6482 r4) Does the MINTING module consider index `idx` an own property of
+ * this vec? `undefined` when it cannot say — the module predates the
+ * `__vec_has_own_index` export, or the probe threw — and every caller then
+ * falls back to its own conservative rule rather than guessing.
+ *
+ * The export answers from the RAW element, before `__vec_get`'s boxing maps a
+ * hole and an explicit `undefined` element to the same `undefined` (#4491 T11).
+ * That collapse is exactly why no pre-existing export could serve here.
+ */
+function _vecOverlayOwnIndex(
+  obj: any,
+  idx: number,
+  exports: Record<string, Function> | undefined,
+): boolean | undefined {
+  const resolved = _decoderExportsFor(obj, exports); // (#5225/#6477) the MINTING module
+  const hasOwnIdx = resolved?.__vec_has_own_index as ((v: any, i: number) => number) | undefined;
+  if (typeof hasOwnIdx !== "function") return undefined;
+  try {
+    const answer = hasOwnIdx(obj, idx);
+    // 1 = own, 0 = hole, anything else (-1) = the module does not recognize this
+    // receiver and is not entitled to an opinion.
+    return answer === 1 ? true : answer === 0 ? false : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function _readOwnDescriptor(
@@ -14064,6 +14128,34 @@ assert._isSameValue = isSameValue;
               return _orderOwnKeysSpec(result); // (#2131)
             }
           }
+          // (#6482 r4) A VEC is not a `_isWasmStruct` receiver, so it reached the
+          // native `Object.keys` below — which answers from the materialized
+          // dense view and reports a HOLE as an own key (`[1,2,,4,,6]` yielded
+          // "2" between "1" and "3", `Object/keys/15.2.3.14-6-2`, while the
+          // `for…in` surface correctly skipped it). Answer from the same index
+          // oracle `__for_in_keys` uses so the two surfaces agree:
+          // `_vecEnumerableIndexKeys` asks the MINTING module's
+          // `__vec_has_own_index` and declines an index it cannot confirm.
+          {
+            const vecExports = callbackState?.getExports();
+            if (_isVecReceiver(obj, vecExports)) {
+              const result = [..._vecEnumerableIndexKeys(obj, vecExports)];
+              const vecSc = _wasmStructProps.get(obj);
+              if (vecSc) {
+                const vecDescs = _wasmPropDescs.get(obj);
+                const vecTomb = _wasmStructDeletedKeys.get(obj);
+                for (const k of Object.getOwnPropertyNames(vecSc)) {
+                  if (k.startsWith("__get_") || k.startsWith("__set_")) continue;
+                  if (result.includes(k)) continue;
+                  if (vecTomb && vecTomb.has(k)) continue;
+                  const flags = vecDescs?.get(_normalizeDescKey(k));
+                  if (flags !== undefined && !(flags & _SC_ENUMERABLE)) continue;
+                  result.push(k);
+                }
+              }
+              return _orderOwnKeysSpec(result); // (#2131)
+            }
+          }
           return Object.keys(obj);
         };
       if (name === "__object_values")
@@ -17829,6 +17921,16 @@ assert._isSameValue = isSameValue;
                 registerVecMirror(arr, obj);
                 arr.length = len;
                 for (let i = 0; i < len; i++) {
+                  // (#6482 r4) A HOLE is not an own property, so it must not
+                  // become a present `undefined` element in the host mirror:
+                  // `__vec_get` collapses the hole marker and an explicit
+                  // `undefined` element to the same value (#4491 T11), and a
+                  // dense mirror is what made `Object.keys([1,2,,4,,6])` report
+                  // "2" (`Object/keys/15.2.3.14-6-2`). Ask the MINTING module
+                  // and leave the slot ABSENT when it says hole; an index it
+                  // cannot confirm is still materialized, so a module without
+                  // the export behaves exactly as before.
+                  if (_vecOverlayOwnIndex(obj, i, exports) === false) continue;
                   arr[i] = convertToJS(vecGet(obj, i));
                 }
                 // (#2761 B) Surface set-like own props (`arr.size/has/keys`).

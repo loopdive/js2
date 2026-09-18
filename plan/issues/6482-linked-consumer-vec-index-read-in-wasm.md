@@ -28,11 +28,39 @@ related: [3451, 5225, 6477, 6491, 6495]
 # so `Symbol.iterator` stops crossing the link as the NUMBER 1. One import line
 # plus one local. Measured: linked descriptor bucket 68→98/114 (+30, 0
 # regressions); honest unchanged across 2,102 rows.
+# 2026-09-18 (round 4): the `__vec_has_own_index` export. `idx < __vec_len` is
+# not own-ness for a sparse array, and no pre-existing export can supply the
+# difference — `__vec_get` deliberately maps BOTH the hole marker and an
+# explicit `undefined` element to `undefined` (#4491 T11), so the distinction is
+# erased at the boundary by design. Guessing it cost 7 hole rows in PR #5964 and
+# 10 dense-literal rows in PR #5967. The new export answers from the RAW element
+# before that boxing; `vec-define-writeback.ts` gains the matching
+# absence-marker fill for a `length` change (§10.4.2.1).
+# 2026-09-18 (round 4b): the WRITE side of the same rule. `__vec_has_own_index`
+# can only be as honest as the backing store, and §10.4.2.1 ArraySetLength makes
+# a shrink DELETE the dropped elements — so every `length` store must mark the
+# region it orphans. `vec-length-hole-fill.ts` is the one ladder the two
+# `$__vec_base`-typed sites share (`expressions/assignment.ts` +9,
+# `array-length-define.ts` +11); `array-holes.ts` (+18) arms the READ-side
+# marker for a plain `x.length = n`, because a store that can now produce holes
+# needs hole-aware reads emitted by the same pre-pass (reads and stores must be
+# armed together — function compilation order is not source order). `runtime.ts`
+# gains the `Object.keys` vec arm and the hole-aware host mirror, without which
+# `Object.keys` and `for…in` disagree on a sparse array (`15.2.3.14-6-2`).
 loc-budget-allow:
   - src/runtime.ts
   - src/codegen/property-access-dispatch.ts
+  - src/codegen/vec-access-exports.ts
+  - src/codegen/vec-define-writeback.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/array-length-define.ts
+  - src/codegen/array-holes.ts
 func-budget-allow:
   - src/runtime.ts
+  - src/runtime.ts::resolveImport
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
+  - src/codegen/vec-access-exports.ts::_emitVecAccessExportsInner
+  - src/codegen/vec-define-writeback.ts::emitVecDefineWritebackExports
 ---
 
 # #6482 — cross-module vec index read never reaches the host
@@ -534,3 +562,150 @@ family and `15.2.3.6-4-60` were investigated before this interrupt and are
   cost 684 host-free passes and was auto-parked (#4017), so the fix belongs on
   the delete/overlay side — make the host delete clear the overlay entry — not
   on the predicate.
+
+## Round 4 — the hole oracle, and the write side that makes it honest
+
+Measured 2026-09-18, real runner, linked lane, **fresh provider cache per run**
+(see the methodology note below — this is load-bearing).
+
+| slice | before (`origin/main` 278b5d1aa5) | after | delta |
+| --- | --- | --- | --- |
+| the 17 contested rows, linked | 10 dense pass / 7 hole fail | **17 pass** | +7, 0 regressed |
+| 2,570-row vec-define matrix, linked | 2,108 pass | 2,114 pass | **+6, 0 regressed** |
+| 818-row for-in / keys / assign slice, linked | 699 pass | 699 pass | 0, **0 regressed** |
+| 114-row #6482 descriptor bucket, linked | 98 pass | 98 pass | unchanged |
+| the 17 rows, honest | 10 pass | 17 pass | +7, 0 regressed |
+| 114-row bucket, honest | 105 pass | 105 pass | unchanged |
+
+Equivalence gate: 22 failing / 1720 passing, all 22 in baseline.
+
+### The rule
+
+`idx < __vec_len(v)` is not own-ness. `[0, , 2]` has a hole at index 1 that is
+in bounds and is not an own property, and **no pre-existing export can supply
+the difference**: `__vec_get` deliberately maps BOTH the hole marker and an
+explicit `undefined` element to `undefined` (#4491 T11), so the boundary erases
+it by design. Guessing cost rows in both directions across two merge groups —
+claiming every in-bounds index lost 7 hole rows (PR #5964), declining every
+unconfirmed one lost 10 dense-literal rows (PR #5967).
+
+`__vec_has_own_index(vec, i32) -> i32` answers from the RAW element, before that
+boxing: `1` own · `0` hole · **`-1` I-do-not-know**. The third value matters —
+the export is reachable with a vec minted by ANOTHER module, where every
+`ref.test` fails; answering `0` there reported a perfectly dense foreign array
+as all holes. A caller that receives `-1` falls back to its own rule.
+
+### The write side (round 4b) — three stores, one ladder
+
+The oracle can only be as honest as the backing store, and the store did not
+agree with §10.4.2.1 (a shrink DELETES, a grow creates HOLES — neither leaves a
+value behind):
+
+- `arr.length = n` (`expressions/assignment.ts`) writes ONLY field 0, through
+  the `$__vec_base` supertype, so a shrink left the dropped element in its slot;
+- `Object.defineProperty(arr, "length", …)` (`array-length-define.ts`)
+  reallocates with `array.new_default`, which ZERO-fills the new tail;
+- `__vec_set_len` (`vec-define-writeback.ts`) is the host-mirror replay path.
+
+`vec-length-hole-fill.ts` is the single ladder the two `$__vec_base`-typed sites
+share — the receiver there has only a `length` field, so reaching the data array
+needs a per-vec-type `ref.test` chain, and writing that chain twice more is how
+three copies of a rule drift apart.
+
+**The fill is SHRINK-ONLY at two of the three sites, and that restriction is the
+non-obvious part.** Both `arr.length = n` and `__vec_set_len` also carry the
+APPEND shape — `arr[len] = v` (or `set_elem(i)`) immediately followed by the
+length store — so the element is already in the slot when the store runs.
+Filling a grown tail there erased it: a plain `[0, 1]` literal came back with
+index 1 absent. Only the `defineProperty` site, which has no pending element
+write, fills a grow. Both failure directions were measured, not reasoned about.
+
+`array-holes.ts` then arms `usesArrayHoles` for a plain `x.length = n` for the
+same reason it already does for a descriptor-define reference: a module whose
+literals are all dense would otherwise emit hole-UNAWARE reads against a store
+that can now produce holes, and `arr[1]` after `[0,1]; length = 1; length = 10`
+read the raw marker back as **NaN** instead of `undefined`. Reads and stores
+must be armed by the same pre-pass — function compilation order is not source
+order.
+
+### `Object.keys` reaches the vec through the host MIRROR, not `__for_in_keys`
+
+`15.2.3.14-6-2` (`[1,2,,4,,6]`) failed after everything above, with `for…in`
+and `Object.keys` disagreeing by one index. A vec is not a `_isWasmStruct`
+receiver, so `__object_keys` fell through to the native `Object.keys` on the
+materialized mirror — and the mirror was DENSE, every hole present as
+`undefined`. The materializers now leave a hole slot ABSENT (asking the same
+oracle, so a module that cannot answer behaves exactly as before), and
+`__object_keys` gained a vec arm. The 818-row for-in/keys/assign slice moved 0
+rows in either direction, which is the evidence that making the mirror sparse
+did not disturb the surrounding surface.
+
+### Methodology — the local lane inverts without a fresh provider cache
+
+Every measurement above uses a **per-run** `JS2WASM_TEST262_HARNESS_CACHE`
+(`mktemp -d`) and rebuilds BOTH `scripts/compiler-bundle.mjs` and
+`scripts/runtime-bundle.mjs` from the tree under test.
+
+Without that, this box reproduces the exact INVERSE of CI on unmodified
+`origin/main`: the 10 dense rows fail and the 7 hole rows pass. The default
+cache dir is `$TMPDIR/js2wasm-test262-harness-cache`, shared across every
+compiler build on the machine, and its key carries only
+`PROVIDER_COMPILER_ABI_VERSION` — not a compiler hash (#6488) — so a run links
+today's body units against a harness prefix compiled by some earlier compiler.
+`scripts/run-test262-vitest.sh` leaves the variable unset, so the official
+entry point agrees with the stale rig and the divergence looks like a code
+difference. It cost most of a round to find, and it invalidates any local linked
+measurement on this family taken without the override. Never reuse a provider
+cache dir across trees.
+
+### Known limitation, NOT introduced here
+
+`arr.hasOwnProperty("1")` with a LITERAL key is answered by a constant-key path
+that never leaves wasm, and it is wrong about `[0, 1]` (index 1 reads as absent)
+— identically on `origin/main` and on this branch, verified by A/B. The guard
+test therefore asserts through COMPUTED keys, which is also what the test262
+rows use. That in-wasm path deserves its own issue.
+
+## Round 3 — deferred (2026-09-18, Opus lane)
+
+Measured and working, parked while round 4 (the hole oracle) is built. Working
+files preserved at `.tmp/rt.r3v.ts` / `.tmp/oo.r3v.ts` on branch
+`issue-6482-r3-vec-define-matrix` (base: `origin/main` + the round-3 sparse-hole
+commit cherry-picked).
+
+**(iii) `15.2.3.6-4-60` — FIXED, +1 row, 0 regressed across 2,570.** Two parts:
+a representability veto on `compileObjectDefineProperty`'s `useStruct` fast path
+(it was `struct.set`ting a string into an `f64` field — instrumented
+`[dp-struct] foo struct: __anon_0 fieldType: {"kind":"f64"}` — losing the value
+with no sidecar entry to fall back on), plus default-seeding in
+`__defineProperty_value`'s opaque-TypeError arm so a property that ALREADY
+exists is validated as a REDEFINE (§10.1.6.3 keeps omitted attributes) rather
+than a first definition. Linked vec-define matrix: 2114 → **2115**, 0 regressed.
+
+**(i) The pre-grow discriminator works but flips 0 rows on its own.** The
+discriminator is NOT `.length`: it is the pre-grow's own `idx >= vec.length`
+guard in `maybeEmitVecLengthGrowth`, the only place that knows the slot is new.
+Mark there, consume at the define; `15.2.3.6-4-252` stays passing (verified
+in-process).
+
+**(ii) is NOT tombstone visibility — that diagnosis was wrong.** Probed on the
+linked lane against the real provider:
+
+| provider-side call on a consumer-minted vec | verdict |
+| --- | --- |
+| `isConfigurable(arr, "0")` on `var arr = [101]` | **false** (wrong) |
+| `isWritable(arr, "0")` on the same | **false** (wrong) |
+| `delete arr[0]` then `__hasOwnProperty` — CONSUMER side | pass |
+| `isConfigurable(obj, "foo")` on a struct | pass |
+
+Both predicates fail on a plain literal array **with no `defineProperty` at
+all**, while the identical delete works consumer-side. So the blocker is
+**cross-module vec MUTATION** — a provider-side write or delete to a
+consumer-minted vec is not visible to the provider's own subsequent reads — not
+tombstone plumbing. The 6 remaining element-default rows
+(`15.2.3.7-6-a-{206,208,247,249}`, `15.2.3.6-4-{258,260}`) are gated on it, so
+(i) and the element-default seeding cannot flip them until it is fixed.
+
+Note for whoever takes it: `carrier-bag-hasown.ts` records that widening
+`__hasOwnProperty` generally cost 684 host-free passes and was auto-parked
+(#4017). The fix belongs on the mutation/overlay side.
