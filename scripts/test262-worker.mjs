@@ -35,6 +35,7 @@ import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "./
 // runner that was missing the tryNativeExnRender step.
 import { safeStringifyThrown, tryNativeExnRender } from "./lib/wasm-exn-render.mjs";
 import { SANDBOX_GLOBAL_NAMES, applySandboxGlobalFunctionAttributes } from "./test262-sandbox-globals.mjs";
+import { restoreOwnKeyOrder, snapshotOwnKeyOrder } from "./test262-own-key-order.mjs";
 // (#4162) ONE import-object finaliser, shared with tests/test262-runner.ts and
 // tests/test262-shared.ts. It owns the #2928 E6 standalone runtime-eval
 // provider attachment (cached-binary loading + a fresh per-test namespace for
@@ -608,7 +609,19 @@ const _staticOrig = _STATIC_SNAPSHOTS.map(([name, obj, keys]) => ({
   name,
   obj,
   values: keys.map((k) => [k, _snapshotValue(obj, k), _snapshotDescriptor(obj, k)]),
+  // (#6492 r19) The pristine own-key ORDER, plus every own descriptor, so
+  // `restoreOwnKeyOrder` can rebuild it. Value-restore alone cannot: a row
+  // that `delete`s a static (test262's `verifyProperty` deletes
+  // `length`/`name` to probe configurable and does NOT put them back) and a
+  // later re-definition append the key at the END of the insertion order.
+  // `built-ins/Promise/property-order.js` measures exactly that — it asserts
+  // `name` comes directly after `length` in `Object.getOwnPropertyNames`.
+  // Harmless before r18, when the sandbox owned a private `Promise`; since the
+  // sandbox SHARES the host object, one earlier row now reorders it for every
+  // later row in the fork.
+  ...snapshotOwnKeyOrder(obj),
 }));
+
 const _accessorOrig = _ACCESSOR_SNAPSHOTS.map(([name, obj, keys]) => ({
   name,
   obj,
@@ -1035,6 +1048,14 @@ function restoreBuiltins() {
     for (const [key, orig, origDesc] of values) {
       _restoreMethodProp(obj, key, orig, origDesc);
     }
+  }
+
+  // (#6492 r19) …then the own-key ORDER, which the value restore above cannot
+  // repair. Runs for every snapshotted intrinsic, not just `Promise`: each one
+  // is now shared with the sandbox and each has `length`/`name` rows in the
+  // corpus that delete them.
+  for (const { obj, order, descriptors } of _staticOrig) {
+    restoreOwnKeyOrder(obj, order, descriptors);
   }
 
   // Restore accessor properties (getters) via Object.defineProperty when

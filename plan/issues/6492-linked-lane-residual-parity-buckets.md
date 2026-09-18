@@ -15,6 +15,15 @@ language_feature: test262-harness
 goal: test262-conformance
 depends_on: [6490]
 related: [3451, 6486, 6489, 6490, 6491, 6482]
+# 2026-09-18 (r19) — +36 comment lines in `src/runtime/host-async-imports.ts`
+# and a new 80-line `scripts/test262-own-key-order.mjs`. The runtime growth is
+# ONE statement (`_intrinsicPromiseResolve`) plus the note recording why it may
+# never be a late `Promise.resolve` property read again; the recursion it fixes
+# was invisible for months and re-derivable only from a depth-6 stack dump, so
+# the reason lives at the site. The worker helper is its own module because
+# `scripts/test262-worker.mjs` calls `process.send` at load and therefore cannot
+# be imported by a unit test — the same reason `test262-sandbox-globals.mjs`
+# was split out. Both files are fixture/runtime-adapter, not `src/runtime.ts`.
 # 2026-09-16 — bucket 2 (`__cb_<id>` erases `await`): the whole change is one
 # early bail at the TOP of `compileArrowAsCallback`, +30 lines of which 24 are
 # the comment recording WHY a suspending async callback must not reach the
@@ -4186,3 +4195,140 @@ speculatively:
     bug, not a missing corpus. Two lanes lost about an hour each to it on
     2026-09-18. Check `ls -la test262/test` first; repoint the dangling entries
     at the real checkout (`/home/user/js2/test262/*`) before any measurement.
+
+## Round 19 (2026-09-18, Opus lane) — round 18's two losses, both mislabelled, both fixed
+
+**Round 18's design stands and now ships at 0 lost.** `built-ins/Promise/`
+(729 rows), measured against the **round-17 tip** in this worktree:
+
+| lane | r17 tip | r18 (reproduced here) | **r19** | flips vs r17 |
+| --- | ---: | ---: | ---: | --- |
+| linked | 491 | 542 | **551** | +60 / **0** |
+| honest | 486 | 528 | **543** | +57 / **0** |
+| keyed family (89) | 54 | 68 linked / 64 honest | **68 / 68** | — |
+
+Realm canary (`TEST262_REALM_CANARY=log`, full 729-row linked slice): **zero
+`:added` lines of any kind** — the five remaining drift lines are
+`Promise.prototype.{then,catch,finally}:changed` from the rows whose subject is
+patching them, plus two `:deleted` the value-restore does not own.
+
+### Loss 1 — `any/invoke-resolve.js` was NOT harness residue. The import recursed.
+
+Round 18 recorded this row as "fails deterministically, had been passing
+vacuously". Both halves were true and neither was the cause. The cause is a
+**product-runtime** defect that r18's sharing merely exposed:
+
+```
+Promise_resolve import (src/runtime/host-async-imports.ts)
+  → Promise.resolve  ← re-read off the global, now the test's override
+  → the override's compiled body: `boundPromiseResolve(...args)`
+  → the const-alias fold routes that BACK to the Promise_resolve import
+  → …
+```
+
+captured as a depth-6 stack dump from the real runner:
+
+```
+at r  (runtime-bundle.mjs:435221)        ← Promise_resolve import
+at fn2 (runtime-bundle.mjs:435338)       ← host-call guard wrapper
+at __closure_53 (wasm-function[135])     ← the test's `Promise.resolve` override
+at __call_fn_method_1 / _applyWithPrefix / wasmClosureDynamicDispatch
+at r  (runtime-bundle.mjs:435223)        ← and round again
+```
+
+The import is the compiler's **intrinsic** `PromiseResolve(%Promise%, x)` — it
+serves `await` assimilation (§27.7.5.3 Await reads *nothing* off the `Promise`
+object), the async-closure wrapper and the CPS driver. Reading the property
+there was never spec'd; it was merely invisible while the sandbox owned a
+private `Promise`. It now uses a value captured at module load.
+
+Isolating probes that produced this, each a one-row corpus file (all removed):
+
+| probe | result | what it excluded |
+| --- | --- | --- |
+| `Promise.any([1]).then(() => $DONE(), $DONE)` | **pass** | not `any`, not the arrow, not `$DONE`-as-a-value |
+| same + a `Promise.resolve` override | fail | the override is the trigger |
+| override without `.bind`, calling a captured `orig` | **pass** | the override alone is fine |
+| `Promise.resolve` value read vs `getOwnPropertyDescriptor(…).value` | `===`, and calling the captured value does not re-enter | the VALUE read is correct |
+| `Promise.resolve.bind(Promise)` | `name` = `bound resolve`, `[native code]` | the bound function is genuinely native |
+| bound alias called from inside the override, counter-capped | re-entered every time | **the import re-read is the cycle** |
+
+The nine rows this flips on both lanes are `any/invoke-resolve.js` plus the
+eight `invoke-resolve-on-{values,promises}-every-iteration-of-promise.js` rows
+across `all`/`race`/`any`/`allSettled` — all the same idiom.
+
+**Blast radius measured, not assumed.** A file-copy A/B over 890 async rows
+(`language/expressions/await`, `language/statements/async-function`,
+`language/expressions/async-{function,arrow-function,generator}`,
+`built-ins/AsyncFunction`), linked: **669 before, 669 after, zero rows moved.**
+A user-visible `Promise.resolve(x)` call site is unaffected — it reads the
+property through the ordinary member path, so an override is still observed
+(`all/invoke-resolve.js` and its 24 siblings stay green in the same run).
+
+### Loss 2 — `property-order.js` WAS residue, of a kind value-restore cannot repair
+
+`restoreBuiltins()` restores a static's VALUE. test262's `verifyProperty`
+probes configurability with `delete obj[key]` and does not put the key back, so
+the re-definition appends it at the END of the own-key order — and this row
+asserts `name` comes directly after `length`. `restoreBuiltins()` now also
+restores ORDER, for **every** `_STATIC_SNAPSHOTS` intrinsic, not only `Promise`:
+each is shared with the sandbox and each has `length`/`name` rows in the corpus.
+
+The helper (`scripts/test262-own-key-order.mjs`) rebuilds the SUFFIX from the
+first divergence. What it guarantees, exactly: **the configurable keys come back
+in pristine relative order.** A non-configurable key (`Promise.prototype`)
+cannot be deleted, so it is a fixed point and may end up ahead of keys that
+originally preceded it. That is a limit of the mechanism, not an oversight — no
+sequence of deletes and defines moves a non-configurable key — and it covers
+this row, whose assertion is between two configurable keys. The unit test states
+the guarantee in exactly those terms rather than asserting an equality the
+helper cannot deliver.
+
+The four honest-lane keyed rows r18 grouped into this "same residue class" were
+**not** the same class: they were the recursion, and they came back with Loss 1
+(plus two `resolve-missing-reject-with-typeerror.js` rows that r18 never listed).
+
+### Findings
+
+39. **"Passes alone, fails in the slice" and "fails deterministically" are
+    different diagnoses, and grouping them cost a round.** Round 18 put five
+    honest-lane rows in the residue bucket on the strength of the two they sat
+    next to. Four of them were a runtime recursion with a completely different
+    fix; a single-row re-run of each — one minute — separates the two classes.
+40. **A recursion can present as a missing global.** The linked lane reported
+    `$DONE is not defined` for a stack that had blown inside the runtime; the
+    honest lane reported the `RangeError`. A row whose error names the harness
+    is not evidence about the harness until the same row has been run on the
+    other lane.
+41. **An intrinsic operation must never be spelled as a property read.** The
+    `Promise_resolve` import re-read `Promise.resolve` and was correct only
+    while nothing could patch what it read. The moment r18 removed that
+    accident it became a self-call. Grep the runtime for the same shape:
+    `Promise_reject` (`Promise.reject`) and the `Promise_all*`/`Promise_any`
+    adapters (`Promise.allSettled.call`, `Promise.any.call`) all still read
+    late — measured as harmless today, left alone deliberately, because the
+    combinators' receivers are exactly where the observable-resolve contract
+    LIVES; see "measured but not fixed".
+
+### Measured but NOT fixed (round 19)
+
+- **`Promise_reject` and the combinator adapters still read late.**
+  `src/runtime.ts` `Promise_reject` calls `Promise.reject(val)`, and the
+  `Promise_all/allSettled/any/race` adapters call `Promise.<name>.call(C, …)`,
+  each a live property read on the now-shared object. The same recursion is
+  constructible for them in principle (`let b = Promise.reject.bind(Promise);
+  Promise.reject = (...a) => b(...a)`), but no corpus row does it and the
+  729-row slice is 0-lost as it stands. They are also NOT mechanically the same
+  as `Promise_resolve`: the combinators' receiver is precisely where the
+  observable `Get(C, "resolve")` contract lives (r18 variants B/C/E), so
+  freezing them to an intrinsic would need its own measurement, not a symmetry
+  argument.
+- **The keyed family is 68/89 on both lanes, not ≥80.** The remaining 21 rows
+  were not investigated this round; they are unchanged from r18 and are not
+  residue (they fail identically alone).
+- **Two canary `:deleted` lines persist** —
+  `Promise.prototype[Symbol.toStringTag]` and
+  `Promise[Symbol.species]<get>.length`. The restore lists cover neither
+  symbol-keyed prototype keys nor a getter's own sub-properties. No row in the
+  slice observes them today; extending the restore to symbol keys on shared
+  prototypes is a separate, wider change.
