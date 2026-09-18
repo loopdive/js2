@@ -62,7 +62,21 @@ loc-budget-allow:
   - src/codegen/array-length-define.ts
   - src/codegen/array-holes.ts
   - src/codegen/object-ops.ts
+# 2026-09-18 (round 7): +25 LOC in src/runtime.ts (the round-5 element-default
+# seeding and its two tombstone consults) and +58 in src/codegen/object-ops.ts /
+# vec-length-hole-fill.ts for the pre-grow absence-marker fill — §10.4.2.1's
+# "a grow creates HOLES, not zeros", the same rule round 4b applied at the
+# `defineProperty(arr, "length", …)` site. Measured: linked 114-row bucket
+# 100 -> 103 (+3, 0 lost); linked 368-row `15.2.3.6-4-*` control 289 -> 290
+# (+1, 0 lost); honest `harness/**` unchanged.
+# 2026-09-18 (round 7, INHERITED): `emitObjectProtoToStringClassifier` is a
+# STRANDED GRANT — it grew on `claude/compiler-performance-bn5g3l` before this
+# branch started, and the CI-base (`LOC_GATE_BASE=origin/main`) run of
+# check-func-budget attributes it here because this PR is the one being diffed
+# against `origin/main`. Restated in a file this change-set touches, per the
+# stranded-grant rule in CLAUDE.md; nothing in round 7 goes near that file.
 func-budget-allow:
+  - src/codegen/object-proto-tostring.ts::emitObjectProtoToStringClassifier
   - src/runtime.ts
   - src/runtime.ts::resolveImport
   - src/codegen/expressions/assignment.ts::compilePropertyAssignment
@@ -981,3 +995,106 @@ Two traps cost time this round and belong with the harness-cache one above:
   `Chunk 1/1: N tests` line reports the N you expect.
 - The honest lane is memory-hungry on this box: two 114-row honest runs were
   OOM-killed (exit 137) while other runners were live. Run one lane at a time.
+
+## Round 7 (2026-09-18, Opus lane) — a pre-grow creates holes, and the round-5 WIP finally ships (minus one piece)
+
+Same worktree and rig, base `887e87650a` + round 6 (`ab95b7f81b`). Real runner,
+fresh `JS2WASM_TEST262_HARNESS_CACHE` per run, both bundles rebuilt with
+**`pnpm run -s build:{compiler,runtime}-bundle`** between every arm.
+
+### (1) `maybeEmitVecLengthGrowth` zero-filled the slot it invented
+
+`Object.defineProperty(arr, "<index>", desc)` at or past the length pre-grows
+the vec BEFORE the runtime define runs, and `array.new_default` ZERO-fills the
+tail. `__vec_has_own_index` reads the RAW element, so it answered "own" for an
+index that did not exist a moment earlier, and `_vecDefineOwnProperty` read the
+define as a REDEFINE (§10.1.6.3 keeps omitted attributes) instead of a FIRST
+definition. That is exactly the 10-row §10.1.6.3 loss round 6 measured, and the
+fix is the rule round 4b already applied at the `defineProperty(arr, "length", …)`
+site: **a grow creates HOLES, not zeros.** The pre-grow now calls the shared
+`vec-length-hole-fill.ts` emitter over `[oldLen, array.len(data))`.
+
+Two restrictions are load-bearing, both measured rather than reasoned:
+
+- **The fill must cover the EXTERNREF carrier, not just f64.** An EMPTY array
+  literal (`var arr = []`) has no element-type evidence and is minted on the
+  externref carrier, where a default slot reads back as `null` — which the
+  oracle does not recognise as a hole. f64-only left **all ten** rows still
+  failing; the carrier check took one instrumented compile
+  (`[vlhf] f64Vecs: 1 allVecs: externref,f64`). Externref is opt-in
+  (`includeExternref`) and only sound because `ctx.usesArrayHoles` is already
+  armed here (`isDescriptorDefineReference`); minting `$Hole` in a module
+  without it would shift every type index (#2043).
+- **Only for a statically recognisable DATA descriptor.** An accessor define
+  writes no element, so the marker would survive with nothing to overwrite it.
+
+### (2) The round-5 WIP ships — WITHOUT its host vec `delete` arm
+
+Round 6 parked `ae5802f99f` wholesale. With the fill in place it was re-measured
+piece by piece, and **one piece is responsible for the only regression**:
+
+| arm, 368-row `15.2.3.6-4-*` control (linked) | result |
+| --- | --- |
+| round 6 (shipped) | 289 |
+| + pre-grow fill + the FULL round-5 WIP | 295 (**+7, −1**) |
+| + pre-grow fill + WIP **minus the host vec `delete` arm** (shipped) | **290 (+1, 0 lost)** |
+
+The `−1` is `15.2.3.6-4-538-6`, and five separate single-piece reverts did NOT
+clear it (the marker write, the `_readOwnDescriptor` tombstone read, the
+`_vecOverlayOwnIndex` tombstone read, the element-default seeding, the
+tombstone clear); removing the whole `__delete_property` vec-index arm did.
+Instrumented, the receiver there is an `arguments` exotic object that the host
+does **not** recognise as one at that moment (`_argumentsObjects.has(obj)` is
+`false`), so the arm treats a vec §10.4.4 requires to stay dense as an ordinary
+array. `__vec_mark_hole` and the `delete a[i]` hole-arming in `array-holes.ts`
+went with it (both existed only to serve that arm; leaving them would ship an
+unreferenced export).
+
+**The forfeited six** — `15.2.3.6-4-{191,199,229,234,236,244}` — are real and
+recoverable: they need that delete arm with a correct arguments discriminator.
+The host has none today; the wasm side has the #4658 `$__arguments_vec` brand,
+so the missing piece is an export that answers "is this receiver an arguments
+exotic object" from the MINTING module. That is the next concrete step, and it
+is worth +6 against the one row it currently costs.
+
+### Measured (shipped state)
+
+| lane / slice | rows | round 6 | shipped | flips |
+| --- | --- | --- | --- | --- |
+| linked, 114-row #6482 bucket | 114 | 100 | **103** | **+3, 0 lost** |
+| linked, `Object/defineProperty/15.2.3.6-4-*` control (every other file) | 368 | 289 | **290** | **+1, 0 lost** |
+| honest, `harness/**` | 116 | 113 | 113 | **0 either way** |
+
+Rows gained: `Object/defineProperties/15.2.3.7-6-a-{206,249}` and
+`Object/defineProperty/15.2.3.6-4-260`. Equivalence gate green (22 failing /
+1720 passing, all in baseline). The honest 114-row control was **skipped** —
+the honest lane compiles the whole harness per test and this box OOM-killed it
+(exit 137) twice while other runners were live.
+
+Guard: `tests/issue-6482-r7-pregrow-holes.test.ts` (4 linked-lane cases; 2 fail
+with the codegen reverted). A case body must use the ROW's own literal:
+`[12]` mints the f64 carrier and fails on the unrelated round-6 `isWritable`
+residual, while `15.2.3.6-4-260`'s actual `[undefined]` mints externref.
+
+### The last two rows are NOT a linked-lane problem — the brief's premise is wrong again
+
+`15.2.3.7-6-a-247` / `15.2.3.6-4-258` fail `0 descriptor should be writable`.
+The brief attributed this to "a provider-side write of a non-number into a
+consumer f64 vec" needing `_decoderExportsFor` + the writeback veto. Measured,
+none of that applies:
+
+```
+var arr = [100]; arr[0] = "s"; String(arr[0])  →  "NaN"     (CONSUMER side, in-wasm, single module)
+[vset] 0 val: unlikelyValue result: 1                        (the host setter ACCEPTS it)
+```
+
+`__vec_set_elem`'s f64 arm is **lossy, not rejecting**: it coerces the string to
+`NaN` and reports success, so the sidecar fallback both writers already have
+never fires and there is nothing for a read-side override to prefer. The defect
+reproduces in one module with no boundary involved, and the fix is a
+**representability veto on the f64 carrier's setter** — reject a non-number
+instead of coercing — whose blast radius is every host-driven vec write in the
+project (host `Object.assign`, mirror writeback, dynamic `this.x[i] = …`), not
+the linked edge. A `_decoderExportsFor` + read-override prototype was written
+and measured: it flips **0** rows, because the write never fails. Reverted
+unshipped; recorded here so the next lane does not rebuild it.
