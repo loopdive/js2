@@ -22,6 +22,14 @@
 // Host-free: `hostBridge: "off"` and an EMPTY import object. Every probe answers
 // a NUMBER — a standalone module's string is a WasmGC array the host cannot
 // decode, so every comparison happens INSIDE the module.
+//
+// UPDATE (#6641, 2026-09-18): `callsThroughComputedKey` was left THROUGH the
+// reverse-peer fix above at `null` — this file's own #6605 slice fixed the
+// LITERAL-key call but left the computed-key call site unreached, a
+// documented residual. #6641 closed that (a DIFFERENT code path: the
+// computed-call SITE in `call-tail-dispatch.ts`, not this file's
+// `object-runtime.ts` reverse-hop arm), so `callsThroughComputedKey` now
+// answers 7 — see that assertion below for the detail.
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -130,11 +138,17 @@ describe("#6605 a consumer-owned receiver whose method is CALLED inside a linked
     // without it the call dispatched and `this.v` read `undefined` — a silent
     // wrong value where the base tree threw.
     expect(ex.receiverIsBound()).toBe(42);
-    // CONTROLS — measured identical on base and branch. Asserted rather than
-    // omitted: each is a residual this slice deliberately did NOT fix, and a
-    // change in any of them is a real event (#6605 "Deliberately NOT fixed").
-    //  · a computed-key call already answered null before this slice;
-    expect(ex.callsThroughComputedKey()).toBe(null);
+    // (#6641, 2026-09-18) `callsThroughComputedKey` is a computed-key method
+    // call — `var k = "m"; o[k]()` — evaluated inside the STANDALONE PROVIDER
+    // (`noJsHost(ctx)` true there too). #6641 added the generic
+    // `any`/externref computed-call arm the provider's own compile was
+    // missing (`tryEmitGenericComputedMethodCall`); that arm now reaches
+    // `__extern_method_call` for THIS call site too, which was already wired
+    // for the reverse-peer hop this test exercises. So the documented
+    // residual below is resolved as an intended side effect, not a
+    // regression: the computed-key call now matches its literal-key twin
+    // (`callsConsumerMethod`, asserted 7 above) instead of silently missing.
+    expect(ex.callsThroughComputedKey()).toBe(7);
     //  · arguments do not cross the boundary, so the call still declines;
     expect(ex.callsWithArguments()).toBe(-1);
     //  · a method legitimately returning null is still indistinguishable from

@@ -83,6 +83,7 @@ import { matchClosureInfoBySignature } from "./closure-sig-match.js"; // (#4394)
 import { emitPlainObjectDynamicCallWithReceiver } from "./plain-object-dynamic-receiver-call.js";
 import { tryEmitClassDynamicMemberCall } from "./class-dynamic-member-call.js"; // (#5195 F1/F3)
 import { tryEmitDynamicElementHostMethodCall } from "./dynamic-element-host-call.js";
+import { tryEmitGenericComputedMethodCall } from "./dynamic-element-generic-call.js";
 import { tryNormalizeStaticStringElementCallee } from "./element-access-callee-normalization.js"; // (#4625)
 import { tryDetachedBuiltinPrototypeNullishThisThrow } from "../builtin-prototype-brand.js";
 import {
@@ -1551,6 +1552,10 @@ export function compileTailDispatch(
       const dynamicHostCall = tryEmitDynamicElementHostMethodCall(ctx, fctx, expr, elemAccess);
       if (dynamicHostCall !== undefined) return dynamicHostCall;
 
+      // (#6641) standalone/wasi twin of the arm just above.
+      const genericComputedCall = tryEmitGenericComputedMethodCall(ctx, fctx, expr, elemAccess);
+      if (genericComputedCall !== undefined) return genericComputedCall;
+
       // (#4482) `o["m"](…)` where the module stored a closure in `o.m` — the
       // bracket twin of the dot-access shape `compileCallDispatchTail` already
       // narrows. Placed immediately before the local graceful fallback below,
@@ -1620,6 +1625,10 @@ export function compileTailDispatch(
 
     const dynamicHostCall = tryEmitDynamicElementHostMethodCall(ctx, fctx, expr, elemAccess);
     if (dynamicHostCall !== undefined) return dynamicHostCall;
+
+    // (#6641) standalone/wasi twin of the arm just above.
+    const genericComputedCallUnresolved = tryEmitGenericComputedMethodCall(ctx, fctx, expr, elemAccess);
+    if (genericComputedCallUnresolved !== undefined) return genericComputedCallUnresolved;
 
     {
       const recvType = compileExpression(ctx, fctx, elemAccess.expression);
