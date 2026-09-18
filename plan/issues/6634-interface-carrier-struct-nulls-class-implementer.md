@@ -469,3 +469,51 @@ the E-linked result, since E-linked's files are Proxy/Reflect tests with no
 `allowObjectCoercion` call site in their own compile — the regression must
 be indirect (shared closed-dispatch infrastructure touched by S49's second
 file, `closed-method-dispatch.ts`).
+
+**S49c attribution (2026-09-18): NOT S49-caused — environmental, same
+pattern as S46b's proven-environmental E-linked drift.** Branch
+`issue-5383-standalone-temporal-s49c`, HEAD `ba31f49531` (S49b's tip,
+`3df9b3f8eb` unchanged). Same-worktree file-copy A/B on the 27 flipped
+files (17 pass→fail + 10 fail→pass from S49b's table above):
+
+1. **FIX tree** (`3df9b3f8eb` files as-is, fresh bundle, fresh
+   `JS2WASM_TEMPORAL_CACHE=s49c-fix` prewarm, `cacheHit=false`): ran the
+   27-file E-linked-forced battery via `.tmp/s49b/e-linked-errs.mts` →
+   reproduced S49b's split exactly — 17 fail (byte-identical error
+   strings), 10 pass.
+2. **BASE tree**: file-copy reverted ONLY `src/codegen/extern-arg-marshal.ts`
+   and `src/codegen/closed-method-dispatch.ts` to their `4f68804bc9`
+   versions (kept `.fix` copies in `.tmp/s49c/fix-files/`), rebuilt the
+   bundle (hash changed: `c435442009304b83` → `94325b4b322716fe`,
+   confirming the revert took), rebuilt/re-linked the QuickJS adapter
+   against it (cache HIT on adapter `d12704e68b66379d` — a hash already
+   present as a cached artifact in the **live S48b worktree**
+   `/home/user/js2/.claude/worktrees/agent-a53f97edbb470bcc4` at its own
+   tip `4f68804bc9`, confirming this is genuinely S48b's environment, not
+   a fresh unrelated build), prewarmed a fresh `s49c-base` Temporal label
+   (`cacheHit=false`), reran the same 27 files.
+3. **Result: BASE and FIX produced IDENTICAL per-file status on all 27
+   rows** (17 fail / 10 pass, same split, same error strings on the fail
+   rows). Restored the fix files immediately after (`git status` clean,
+   `git diff` empty); bundle/adapter rebuilt back to the fix hash
+   (`c435442009304b83` / `b08634d600e87acc`) before continuing.
+
+**Verdict: none of the 27 rows are S49-caused.** Reverting S49's entire
+diff (both touched files) does not change a single outcome, so
+`extern-arg-marshal.ts`'s `ensureStructFromObjectCoercionHelper` and
+`closed-method-dispatch.ts`'s opt-in dispatcher flag are not the source —
+the E-linked drift versus S48b's *committed* base TSVs
+(`.tmp/s48b/*.tsv`, carried into `.tmp/s49b/`) predates S49's diff. It sits
+somewhere in what changed between whatever state produced those committed
+TSVs and this worktree's environment (candidates not root-caused within
+this lane's budget: a QuickJS in-process session/heap-reuse effect across
+a differently-ordered/differently-sized batch — the `ReferenceError: assert
+is not defined` and `with`-statement failures are consistent with stale
+global state carried across sequential file compiles in one process — or a
+test262 corpus/harness revision between when S48b's baseline TSVs were
+captured and now). This is the same shape as S46b's prior E-linked drift,
+which was also proven environmental by an identical same-worktree revert.
+**No code fix applied — none is warranted.** `3df9b3f8eb` stands as-is;
+#6634's trap fix is not implicated in the E-linked battery. See #5383's
+"S49c findings" for the full re-run of the wider must-not-move groups
+against this cleared verdict.

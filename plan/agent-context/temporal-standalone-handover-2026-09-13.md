@@ -667,3 +667,38 @@ under `closed-method-dispatch.ts`'s change, force-linked-provider path only.
 Do not treat `#6634`'s "criterion 4: SATISFIED" verdict as settled; S49b's
 issue-file edit already flags it as NOT fully satisfied pending this
 investigation.
+
+## Stack state 2026-09-18 (post-S49c) — E-linked regression ATTRIBUTED:
+NOT S49-caused, environmental; no code change; stack tip unchanged
+
+S49c (branch `issue-5383-standalone-temporal-s49c`, worktree off S49b's tip
+`ba31f49531`, HEAD unchanged at `3df9b3f8eb`) closed thread (2) above as an
+attribution-only task. Same-worktree file-copy A/B on S49b's 27 flipped
+E-linked files (17 pass→fail + 10 fail→pass): reverted ONLY
+`extern-arg-marshal.ts` + `closed-method-dispatch.ts` to their pre-S49
+`4f68804bc9` content (bundle hash changed, confirming the revert took),
+fresh Temporal-cache prewarm on both trees (`cacheHit=false` each), reran
+the 27 files on both. **Identical status on all 27 rows, both trees** — S49's
+diff makes no difference to a single one of them. Restored the fix files
+immediately after; `git status`/`git diff` clean.
+
+**Verdict: the E-linked regression predates S49's diff — it is
+environmental, matching S46b's prior proven-environmental E-linked drift.**
+No fix applied (none was warranted: nothing in S49's diff causes it).
+`3df9b3f8eb` stands as-is. `#6634`'s criterion 4 is no longer blocked by
+this specific finding (the 17 pass→fail is real and reproducible against
+S48b's committed baseline, but it is not attributable to `#6634`'s own fix).
+Full 27-row table and method in `#6634`'s issue file "S49c attribution"
+section; summary in `#5383`'s "### S49c findings" section.
+
+**Not investigated further within this lane's budget**: the actual root
+cause of the drift vs S48b's committed TSVs (candidates: QuickJS
+in-process session/heap-reuse effects across a differently-sized/ordered
+batch, or a test262-corpus/harness revision between when S48b's baseline
+was captured and now). Whoever next touches E-linked should treat S48b's
+committed base TSVs as suspect, not S49's diff, and consider re-baselining
+E-linked's committed numbers rather than chasing a code cause that this
+lane's A/B ruled out.
+
+**Next lane**: Task 2 (the `SameValue(null, undefined)` reduction) remains
+the only open thread from this stack; the E-linked thread is closed.

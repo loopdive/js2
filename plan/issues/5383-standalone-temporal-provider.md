@@ -10490,3 +10490,36 @@ measurement error); F-class 136/250; F-methoddef 68/100; F-objproto
 136/150; corpus byte A/B 0/84 flips vs S48b; equivalence gate 22/1720/22
 unchanged.
 
+### S49c findings (2026-09-18) — ATTRIBUTION only: the E-linked 17 pass→fail
+is NOT S49-caused, it is environmental
+
+S49c (branch `issue-5383-standalone-temporal-s49c`, worktree off S49b's tip
+`ba31f49531`, no code changes retained) ran the same-worktree file-copy A/B
+S49b's own writeup called for. Reverted ONLY the two files S49 touched
+(`src/codegen/extern-arg-marshal.ts`, `src/codegen/closed-method-dispatch.ts`)
+to their pre-S49 `4f68804bc9` content, rebuilt the bundle (hash changed,
+confirming the revert took: `c435442009304b83` → `94325b4b322716fe`),
+rebuilt/re-linked the QuickJS adapter, prewarmed a fresh Temporal cache label
+(`cacheHit=false`), and reran the exact 27 files from S49b's E-linked table
+(17 pass→fail + 10 fail→pass) against this BASE tree, then again against the
+FIX tree (S49's diff intact, also freshly rebuilt/prewarmed).
+
+**Result: byte-identical per-file status on all 27 rows on both trees** — 17
+fail (same error strings) / 10 pass, whether or not S49's diff is present.
+Reverting S49's entire change does not move a single one of these 27 tests.
+**Verdict: none of the 27 rows are S49-caused — the E-linked drift versus
+S48b's committed base TSVs predates S49's diff.** This matches S46b's prior
+E-linked drift, which was also proven environmental by the identical
+same-worktree-revert method. Full 27-row table, method, and candidate
+environmental causes (not root-caused within this lane's budget) are in
+`#6634`'s issue file, "S49c attribution" section.
+
+**Consequence for #6634's criterion 4 and for this stack**: the E-linked
+regression S49b flagged for the owning lane to investigate is cleared — it
+is not a side effect of S49's `illegal cast` trap fix, and no revert of
+`3df9b3f8eb` is warranted on these grounds. `3df9b3f8eb` stands as the stack
+tip. This does not re-open or re-close any other open item in this
+document (the two `era` target rows, the four-family/A–F/corpus/equivalence
+numbers) — those are unchanged from S49b's measurement and are not
+re-verified here since no code changed.
+
