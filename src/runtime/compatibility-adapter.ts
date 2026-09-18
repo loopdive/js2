@@ -2,7 +2,7 @@
 
 import { _installIteratorHelperPolyfills } from "./iterator-polyfills.js";
 import { _installLegacyRegExpAccessors, type LegacyRegExpState } from "./legacy-regexp.js";
-import { _installPromiseKeyedCombinators } from "./promise-keyed-combinators.js";
+import { _installPromiseKeyedCombinators, type ThenableMirror } from "./promise-keyed-combinators.js";
 
 export interface AmbientCompatibilityOptions {
   enabled: boolean;
@@ -15,6 +15,14 @@ export interface AmbientCompatibilityOptions {
    * live on. See {@link resolvePromiseCompatibilityTarget}.
    */
   globalSandbox?: Record<string, any>;
+  /**
+   * (#6492 r20) Mirror for a COMPILED thenable, supplied by `src/runtime.ts`
+   * (the only place that can resolve the owning module's exports). The keyed
+   * combinators must `Invoke(nextPromise, "then", …)` on whatever the user's
+   * `resolve` returned, and that is a WasmGC struct for seven rows of the
+   * family. Omitted ⇒ identity, which is correct for a pure-host embedder.
+   */
+  mirrorThenable?: ThenableMirror;
 }
 
 /**
@@ -105,7 +113,7 @@ export function installAmbientCompatibility(options: AmbientCompatibilityOptions
   // (#6492 round 5) await-dictionary: no engine ships these, so js2 owns them.
   // (#6492 r17) …on the REALM the compiled code reads `Promise` from.
   const PromiseConstructor = resolvePromiseCompatibilityTarget(options);
-  if (PromiseConstructor) _installPromiseKeyedCombinators(PromiseConstructor);
+  if (PromiseConstructor) _installPromiseKeyedCombinators(PromiseConstructor, options.mirrorThenable);
   const RegExpConstructor = options.deps?.RegExp ?? (typeof RegExp !== "undefined" ? RegExp : undefined);
   if (RegExpConstructor) _installLegacyRegExpAccessors(RegExpConstructor, options.legacyRegExpState);
 }

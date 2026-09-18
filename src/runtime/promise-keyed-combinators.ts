@@ -45,6 +45,18 @@ interface RemainingCount {
 
 type AnyFn = (...args: any[]) => any;
 
+/**
+ * Mirrors a compiled (WasmGC) thenable into something the host can `Invoke`
+ * `then` on, and returns every other value unchanged. Injected because the
+ * mirror needs the owning module's exports, which only `src/runtime.ts` can
+ * resolve; the identity function is the correct no-op for a pure-host embedder.
+ */
+export type ThenableMirror = (value: any) => any;
+
+type MirrorSlot = { current: WeakRef<ThenableMirror> | undefined };
+const MIRROR_SLOT: unique symbol = Symbol.for("js2wasm.promiseKeyed.mirrorSlot");
+const identityMirror: ThenableMirror = (value: any) => value;
+
 /** §7.3.x GetPromiseResolve(C) — `Get(C, "resolve")`, must be callable. */
 function getPromiseResolve(C: any): AnyFn {
   const promiseResolve = C.resolve;
@@ -119,6 +131,7 @@ function performPromiseAllKeyed(
   C: any,
   capability: { promise: any; resolve: AnyFn; reject: AnyFn },
   promiseResolve: AnyFn,
+  mirrorThenable: ThenableMirror,
 ): any {
   // Step 1 — a non-object argument throws here, and the caller turns that into
   // a rejection. `Reflect.ownKeys` is the [[OwnPropertyKeys]] spelling that
@@ -139,7 +152,17 @@ function performPromiseAllKeyed(
     keys.push(key);
     values.push(undefined);
 
-    const nextPromise = promiseResolve.call(C, value);
+    // §: `nextPromise` is whatever the user's `resolve` returned — very often a
+    // COMPILED object literal (`return { then(onFulfilled) { … } }`, which is
+    // what `invoke-resolve-custom.js` and six sibling rows hand back). Such a
+    // value reaches this host polyfill as an opaque WasmGC struct whose `then`
+    // is not a host function, and the bare `nextPromise.then(…)` below threw
+    // `TypeError: nextPromise.then is not a function` for all of them.
+    // `mirrorThenable` is the runtime's existing #2671/#4736 mirror — the same
+    // one `Promise_resolve` applies before V8 performs PromiseResolve — and it
+    // returns non-Wasm values untouched, so ordinary host thenables keep their
+    // identity (`invoke-resolve-return.js` observes exactly that object).
+    const nextPromise = mirrorThenable(promiseResolve.call(C, value));
     remaining.value += 1;
 
     let alreadyCalled = false;
@@ -175,54 +198,91 @@ function performPromiseAllKeyed(
  * Install `allKeyed` / `allSettledKeyed` on `PromiseCtor` when the host does
  * not already provide them. Never overwrites a native implementation.
  */
-export function _installPromiseKeyedCombinators(PromiseCtor: any): void {
+export function _installPromiseKeyedCombinators(PromiseCtor: any, mirrorThenable?: ThenableMirror): void {
   if (PromiseCtor == null || typeof PromiseCtor !== "function") return;
   for (const [name, settled] of [
     ["allKeyed", false],
     ["allSettledKeyed", true],
   ] as const) {
-    if (typeof PromiseCtor[name] === "function") continue;
-    const method = function (this: any, promises: any): any {
-      // `this` IS the spec's `C`. Half the family calls
-      // `Promise.allKeyed.call(Constructor, …)`, so the receiver must stay
-      // dynamic rather than closing over `PromiseCtor`, and the nested element
-      // functions capture this alias — it is not a useless one.
-      // biome-ignore lint/complexity/noUselessThisAlias: the nested element functions capture it.
-      const C: any = this;
-      if (C == null || (typeof C !== "object" && typeof C !== "function")) {
-        throw new TypeError(`Promise.${name} called on a non-object`);
-      }
-      // NewPromiseCapability(C) — abrupt here propagates (it is NOT inside the
-      // IfAbruptRejectPromise window): `capability-executor-not-callable.js`
-      // and `ctx-ctor-throws.js` both expect a synchronous throw.
-      let resolveFn: AnyFn | undefined;
-      let rejectFn: AnyFn | undefined;
-      const promise = new C((res: AnyFn, rej: AnyFn) => {
-        if (resolveFn !== undefined || rejectFn !== undefined) {
-          throw new TypeError("Promise capability already settled");
+    const existing = PromiseCtor[name];
+    if (typeof existing === "function") {
+      // Ours from an earlier install (first-wins keeps the method's identity):
+      // point its mirror slot at the CURRENT runtime module. Weakly — see the
+      // slot's comment. A native or user-provided function is left alone.
+      const slot = existing[MIRROR_SLOT] as MirrorSlot | undefined;
+      if (slot !== undefined && mirrorThenable !== undefined) slot.current = new WeakRef(mirrorThenable);
+      continue;
+    }
+    // (#5983) The mirror is held through a WeakRef, never captured directly.
+    // The installed method lives on the GLOBAL `Promise` for the life of the
+    // process, while `mirrorThenable` is a function of `src/runtime.ts`'s
+    // module scope — the #5225 decoder registry, the instance callback
+    // states, every struct they reach. A strong capture pinned the whole
+    // module graph of the FIRST test file that instantiated a program, so a
+    // single-fork vitest run (the pinned `issue-tests` job, the guard-suite)
+    // could never reclaim it: 486 MB after file 1, 493 MB after file 2, OOM on
+    // file 3; on main file 2 dropped to 207 MB. A dead mirror derefs to
+    // identity, which is exactly the pure-host default.
+    const slot: MirrorSlot = { current: mirrorThenable === undefined ? undefined : new WeakRef(mirrorThenable) };
+    // (#6492 r20) A METHOD SHORTHAND, deliberately — a `function` expression is
+    // constructible, and `not-a-constructor.js` asserts
+    // `isConstructor(Promise.allKeyed) === false` (the harness probes with
+    // `Reflect.construct`). A shorthand method has no [[Construct]], keeps a
+    // dynamic `this` (which an arrow would lose, and half the family calls
+    // `Promise.allKeyed.call(Ctor, …)`), and already carries the right
+    // `name`/`length`; the `defineProperty` pair below still pins their
+    // ATTRIBUTES, which `prop-desc.js` checks.
+    const holder = {
+      [name](this: any, promises: any): any {
+        // `this` IS the spec's `C`. Half the family calls
+        // `Promise.allKeyed.call(Constructor, …)`, so the receiver must stay
+        // dynamic rather than closing over `PromiseCtor`, and the nested element
+        // functions capture this alias — it is not a useless one.
+        // biome-ignore lint/complexity/noUselessThisAlias: the nested element functions capture it.
+        const C: any = this;
+        if (C == null || (typeof C !== "object" && typeof C !== "function")) {
+          throw new TypeError(`Promise.${name} called on a non-object`);
         }
-        resolveFn = res;
-        rejectFn = rej;
-      });
-      if (typeof resolveFn !== "function" || typeof rejectFn !== "function") {
-        throw new TypeError("Promise capability functions are not callable");
-      }
-      const capability = {
-        promise,
-        resolve: (_t: any, v: any) => (resolveFn as AnyFn)(v),
-        reject: (r: any) => (rejectFn as AnyFn)(r),
-      };
-      // From here on every abrupt completion REJECTS instead of throwing
-      // (IfAbruptRejectPromise), which is the whole point of the
-      // `*-reject.js` half of the family.
-      try {
-        const promiseResolve = getPromiseResolve(C);
-        return performPromiseAllKeyed(settled, promises, C, capability, promiseResolve);
-      } catch (error) {
-        capability.reject(error);
-        return promise;
-      }
+        // NewPromiseCapability(C) — abrupt here propagates (it is NOT inside the
+        // IfAbruptRejectPromise window): `capability-executor-not-callable.js`
+        // and `ctx-ctor-throws.js` both expect a synchronous throw.
+        let resolveFn: AnyFn | undefined;
+        let rejectFn: AnyFn | undefined;
+        const promise = new C((res: AnyFn, rej: AnyFn) => {
+          if (resolveFn !== undefined || rejectFn !== undefined) {
+            throw new TypeError("Promise capability already settled");
+          }
+          resolveFn = res;
+          rejectFn = rej;
+        });
+        if (typeof resolveFn !== "function" || typeof rejectFn !== "function") {
+          throw new TypeError("Promise capability functions are not callable");
+        }
+        const capability = {
+          promise,
+          resolve: (_t: any, v: any) => (resolveFn as AnyFn)(v),
+          reject: (r: any) => (rejectFn as AnyFn)(r),
+        };
+        // From here on every abrupt completion REJECTS instead of throwing
+        // (IfAbruptRejectPromise), which is the whole point of the
+        // `*-reject.js` half of the family.
+        try {
+          const promiseResolve = getPromiseResolve(C);
+          const mirror = slot.current?.deref() ?? identityMirror;
+          return performPromiseAllKeyed(settled, promises, C, capability, promiseResolve, mirror);
+        } catch (error) {
+          capability.reject(error);
+          return promise;
+        }
+      },
     };
+    const method = holder[name];
+    Object.defineProperty(method, MIRROR_SLOT, {
+      value: slot,
+      writable: false,
+      enumerable: false,
+      configurable: false,
+    });
     Object.defineProperty(method, "length", {
       value: 1,
       writable: false,

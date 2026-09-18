@@ -118,6 +118,7 @@ import {
   createHostPromiseBuiltinImport,
   createHostUndefinedImport,
 } from "./runtime/host-async-imports.js";
+import { PROMISE_INTRINSICS } from "./runtime/promise-intrinsics.js";
 import { createHostImportCallState } from "./runtime/host-import-call-state.js";
 import { createBoundaryValueAdapter, isBoundaryValueImportIntent } from "./runtime/boundary-value-adapter.js";
 import { createInstanceLifecycleAdapter } from "./runtime/instance-lifecycle-adapter.js";
@@ -6364,6 +6365,54 @@ const _hostProxyExportSlots = new WeakMap<object, { current: Record<string, Func
 const _linkedProviderMirrors = createLinkedProviderMirrorOwnership(_canBeWeakKey);
 // (#5225) Inbound twin: which module of a linked project can DECODE a struct.
 const _crossModuleStructs = createCrossModuleStructOwners(_canBeWeakKey);
+
+/**
+ * (#6492 r20) Mirror a COMPILED thenable for the keyed-combinator polyfill.
+ *
+ * `Promise.allKeyed` must `Invoke(nextPromise, "then", …)` on whatever the
+ * user's `resolve` returned, and seven rows of the family return a compiled
+ * object literal — an opaque WasmGC struct whose `then` is not a host function
+ * (`TypeError: nextPromise.then is not a function`). This is the #2671/#4736
+ * mirror the Promise boundary already applies, reached from MODULE scope: the
+ * owning module's exports come from the #5225 decoder registry rather than from
+ * a per-instance `callbackState`, because the polyfill is installed before one
+ * exists. Non-Wasm values are returned untouched, so a host thenable keeps its
+ * identity.
+ */
+export function _mirrorPolyfillThenable(value: any): any {
+  if (value == null || typeof value !== "object" || !_isWasmStruct(value)) return value;
+  // The #5225 registry answers only for a LINKED project (it disables itself at
+  // one module, since there every value is already local). The honest
+  // whole-assembly lane is exactly that single-module case, so fall back to the
+  // live instance's own exports — gated on a decode probe, never assumed, so a
+  // multi-instance embedder cannot hand a struct to a stranger's decoder.
+  const local = _latestInstance?.deref()?.getExports();
+  const exports = _crossModuleStructs.decoderFor(value, local) ?? (_decodes(local, value) ? local : undefined);
+  return exports ? _wrapForHost(value, exports) : value;
+}
+
+/** Whether `exports` can name this struct's fields (the #5225 `decodes` probe). */
+function _decodes(exports: Record<string, Function> | undefined, obj: object): boolean {
+  const fn = exports?.__struct_field_names;
+  if (typeof fn !== "function") return false;
+  try {
+    const csv = fn(obj);
+    return typeof csv === "string" && csv !== "";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The live instance's exports, for module-scope helpers that run during a call
+ * but are installed before any instance exists (the keyed-combinator mirror).
+ */
+// (#6492 r20 → #5983) A WeakRef, never a strong closure: a module-level strong
+// reference to the latest instance's callbackState kept every instance graph
+// reachable across a single-fork vitest run (the pinned `issue-tests` and the
+// guard-suite OOMed at ~510 MB after two files). The mirror only needs the
+// exports while that instance is alive anyway.
+let _latestInstance: WeakRef<{ getExports: () => Record<string, Function> | undefined }> | undefined;
 
 /** (#5225) Record a linked provider's exports as a decoder for the project. */
 export function registerLinkedProviderModule(exports: Record<string, Function>): void {
@@ -17450,22 +17499,22 @@ assert._isSameValue = isSameValue;
       if (name === "Promise_all")
         return (thisArg: any, arr: any, directCall: number) => {
           const C = _resolveCtor(thisArg, directCall);
-          return Promise.all.call(C, _toIterable(arr));
+          return PROMISE_INTRINSICS.all?.call(C, _toIterable(arr));
         };
       if (name === "Promise_race")
         return (thisArg: any, arr: any, directCall: number) => {
           const C = _resolveCtor(thisArg, directCall);
-          return Promise.race.call(C, _toIterable(arr));
+          return PROMISE_INTRINSICS.race?.call(C, _toIterable(arr));
         };
       if (name === "Promise_allSettled")
         return (thisArg: any, arr: any, directCall: number) => {
           const C = _resolveCtor(thisArg, directCall);
-          return Promise.allSettled.call(C, _toIterable(arr));
+          return PROMISE_INTRINSICS.allSettled?.call(C, _toIterable(arr));
         };
       if (name === "Promise_any")
         return (thisArg: any, arr: any, directCall: number) => {
           const C = _resolveCtor(thisArg, directCall);
-          return (Promise as any).any.call(C, _toIterable(arr));
+          return PROMISE_INTRINSICS.any?.call(C, _toIterable(arr));
         };
       // (#2623 P-7b) HOST-realm minting on purpose: minting and the capability
       // lane (`_resolveCtor`) MUST share one realm — a split breaks the
@@ -17487,7 +17536,7 @@ assert._isSameValue = isSameValue;
           // capped loop emits a 100k-event storm that vitest/CI runners count
           // as errors. The no-op catch derives a separate promise; consumers of
           // the returned promise observe the rejection unchanged.
-          const p = Promise.reject(val);
+          const p = PROMISE_INTRINSICS.reject(val);
           p.catch(() => {});
           return p;
         };
@@ -19555,6 +19604,7 @@ export function buildImports(
     // polyfilled static has to be installed there or its receiver can never be
     // the object the test wrote to.
     globalSandbox: options?.globalSandbox,
+    mirrorThenable: _mirrorPolyfillThenable,
   });
 
   const env: Record<string, Function> = {};
@@ -19583,6 +19633,7 @@ export function buildImports(
       }),
   });
   const callbackState = lifecycle.callbackState;
+  _latestInstance = new WeakRef(callbackState);
   timerCallbackBridge.bindCallbackState(callbackState, (value, arity) => _wrapWasmClosure(value, arity, callbackState));
   domCapabilityRuntime?.bindCallbackState(callbackState);
   const hostImportCallState = createHostImportCallState();

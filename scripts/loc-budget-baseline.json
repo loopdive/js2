@@ -1,7 +1,7 @@
 {
   "generated": "2026-09-18",
   "threshold": 1500,
-  "totalCeiling": 898694,
+  "totalCeiling": 899000,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -33,7 +33,7 @@
     "src/codegen/expressions/call-identifier.ts": 4303,
     "src/codegen/expressions/call-namespace-static.ts": 4012,
     "src/codegen/expressions/call-receiver-method.ts": 4785,
-    "src/codegen/expressions/call-tail-dispatch.ts": 2263,
+    "src/codegen/expressions/call-tail-dispatch.ts": 2272,
     "src/codegen/expressions/calls-closures.ts": 2699,
     "src/codegen/expressions/calls.ts": 10645,
     "src/codegen/expressions/eval-inline.ts": 2516,
@@ -107,7 +107,7 @@
     "src/ir/select.ts": 11270,
     "src/ir/verify.ts": 2830,
     "src/package-linker.ts": 2120,
-    "src/runtime.ts": 20155,
+    "src/runtime.ts": 20206,
     "src/runtime/iterator-polyfills.ts": 1513
   }
 }

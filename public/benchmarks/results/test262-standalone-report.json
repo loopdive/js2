@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-18T21:13:05.346Z",
-  "baseline_generated_at": "2026-09-18T21:13:05.346Z",
-  "baseline_sha": "fe40ada5a2ef9822c0c11492e552f8a4d10774d1",
+  "timestamp": "2026-09-18T23:10:12.493Z",
+  "baseline_generated_at": "2026-09-18T23:10:12.493Z",
+  "baseline_sha": "fe6ffbc6cea4aaa9afe1b73502a372ffb3690add",
   "oracle_version": 14,
   "mode": {
     "target": "standalone",
@@ -1198,7 +1198,7 @@
     }
   ],
   "error_categories": {
-    "assertion_fail": 4758,
+    "assertion_fail": 4755,
     "host_import_leak": 1931,
     "illegal_cast": 235,
     "missing_builtin": 2,
@@ -1210,7 +1210,7 @@
     "range_error": 15,
     "runtime_error": 165,
     "syntax_error": 20,
-    "type_error": 2266,
+    "type_error": 2269,
     "wasm_compile": 28
   },
   "hard_errors": {},
@@ -1282,8 +1282,8 @@
           "host_free_pass": 0
         },
         "error_categories": {
-          "type_error": 1212,
           "assertion_fail": 1259,
+          "type_error": 1212,
           "host_import_leak": 451,
           "other": 1511
         },
@@ -1291,16 +1291,16 @@
           "ES2026": 4433
         },
         "sample_files": [
+          "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
           "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/with/disambiguation-wrong-type.js"
+          "test/built-ins/Temporal/Duration/prototype/round/subclassing-ignored.js"
         ],
         "sample_signatures": [
+          "assertion_fail:Test262Error: null Expected a RangeError but got a TypeError",
           "type_error:TypeError: Cannot read properties of undefined (reading 'round')",
           "type_error:TypeError: Cannot read properties of undefined (reading 'until')",
-          "assertion_fail:Test262Error: null Expected a RangeError but got a TypeError",
           "host_import_leak:standalone target emitted host imports: env::__temporal_plain_date_add_field, env::__temporal_plain_date_from_string_field (##)",
           "other:ReferenceError: Temporal is not defined"
         ]
@@ -1776,8 +1776,8 @@
         "error_categories": {
           "promise_error": 10,
           "host_import_leak": 737,
-          "type_error": 160,
-          "assertion_fail": 423,
+          "type_error": 162,
+          "assertion_fail": 421,
           "other": 40,
           "illegal_cast": 6,
           "runtime_error": 8,
@@ -2401,9 +2401,9 @@
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 9,
+          "assertion_fail": 8,
           "null_deref": 2,
-          "type_error": 2
+          "type_error": 3
         },
         "by_edition": {
           "ES2015": 11,
@@ -2413,15 +2413,15 @@
           "test/built-ins/Symbol/species/subclassing.js",
           "test/built-ins/Symbol/desc-to-string.js",
           "test/built-ins/Symbol/prototype/Symbol.toPrimitive/removed-symbol-wrapper-ordinary-toprimitive.js",
-          "test/built-ins/Symbol/not-callable.js",
-          "test/built-ins/Symbol/for/to-string-err.js"
+          "test/built-ins/Symbol/for/to-string-err.js",
+          "test/built-ins/Symbol/not-callable.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected SameValue(«undefined», «function () { [native code] }») to be true",
           "assertion_fail:Test262Error: Expected SameValue(«\"\"», «\"toStringvalueOf\"») to be true",
           "assertion_fail:Test262Error: hint: default",
-          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
-          "null_deref:dereferencing a null pointer [in __closure_66() ← __closure_60 ← __call_fn_method_3 ← __apply_closure]"
+          "null_deref:dereferencing a null pointer [in __closure_66() ← __closure_60 ← __call_fn_method_3 ← __apply_closure]",
+          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all"
         ]
       },
       {
@@ -2808,7 +2808,7 @@
           "assertion_fail:Test262Error: Expected true but got false",
           "other:[object WebAssembly.Exception]",
           "type_error:TypeError: Cannot convert undefined or null to object",
-          "other:L#:## Unexpected keyword or identifier.; L#:## Identifier expected.; L#:## Unexpected keyword or identifier.; L#:## Identifier expected.; L#:## Unexpected keyword or identifier.; L#:## Identifier expected.; L#:## Unexpected keyword or ident"
+          "other:L#:## ':' expected.; L#:## '=>' expected.; L#:## Declaration or statement expected.; L#:## Declaration or statement expected.; L#:## Declaration or statement expected."
         ]
       },
       {

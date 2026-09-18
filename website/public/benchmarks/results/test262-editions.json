@@ -3789,12 +3789,12 @@
   },
   {
     "edition": "ES2027",
-    "pass": 484,
-    "fail": 408,
+    "pass": 496,
+    "fail": 396,
     "ce": 5,
     "skip": 0,
     "total": 897,
-    "pct": 54,
+    "pct": 55,
     "features": [
       {
         "name": "explicit-resource-management",
@@ -3807,12 +3807,12 @@
       },
       {
         "name": "await-dictionary",
-        "pass": 70,
-        "fail": 19,
+        "pass": 82,
+        "fail": 7,
         "ce": 0,
         "skip": 0,
         "total": 89,
-        "pct": 79
+        "pct": 92
       },
       {
         "name": "joint-iteration",
@@ -3870,12 +3870,12 @@
       },
       {
         "name": "Reflect.construct",
-        "pass": 11,
-        "fail": 16,
+        "pass": 15,
+        "fail": 12,
         "ce": 0,
         "skip": 0,
         "total": 27,
-        "pct": 41
+        "pct": 56
       },
       {
         "name": "legacy-regexp",
@@ -3906,12 +3906,12 @@
       },
       {
         "name": "Reflect",
-        "pass": 6,
-        "fail": 13,
+        "pass": 8,
+        "fail": 11,
         "ce": 0,
         "skip": 0,
         "total": 19,
-        "pct": 32
+        "pct": 42
       },
       {
         "name": "Iterator.prototype.join",
@@ -3969,12 +3969,12 @@
       },
       {
         "name": "arrow-function",
-        "pass": 10,
-        "fail": 2,
+        "pass": 12,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 12,
-        "pct": 83
+        "pct": 100
       },
       {
         "name": "ArrayBuffer",
