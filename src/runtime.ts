@@ -7046,6 +7046,59 @@ function _vecEnumerableIndexKeys(
  * hole and an explicit `undefined` element to the same `undefined` (#4491 T11).
  * That collapse is exactly why no pre-existing export could serve here.
  */
+/**
+ * (#6482 r8) Is `obj` an `arguments` exotic object? Ask the module that MINTED
+ * it, not the host's WeakSet.
+ *
+ * `_argumentsObjects` is populated at the arguments MATERIALIZATION sites, and
+ * round 7 measured it answering `false` for a receiver that genuinely is one —
+ * `(function(){ return arguments; }())` arriving at `__delete_property` across a
+ * #5225 linked edge. Acting on that wrong answer put an absence marker into a
+ * vec §10.4.4 requires to stay DENSE (`15.2.3.6-4-538-6`); declining to act at
+ * all cost the six rows that need the host delete arm.
+ *
+ * `__vec_is_arguments` answers off the #4658 `$__arguments_vec` brand — the fact
+ * the host does not have — with the same three-valued convention as
+ * `__vec_has_own_index`: `1` yes · `0` a vec of that module that is not
+ * arguments · `-1` I-do-not-know (no `ref.test` matched). `undefined` here
+ * means the module could not answer, and the caller falls back to the WeakSet.
+ */
+function _vecIsArgumentsByExport(obj: any, exports: Record<string, Function> | undefined): boolean | undefined {
+  const resolved = _decoderExportsFor(obj, exports);
+  const fn = resolved?.__vec_is_arguments as ((v: any) => number) | undefined;
+  if (typeof fn !== "function") return undefined;
+  try {
+    const verdict = fn(obj);
+    return verdict === 1 ? true : verdict === 0 ? false : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * (#6482 r8) The arguments question every VEC arm should ask: the minting
+ * module first, the host WeakSet only when the module cannot answer.
+ */
+function _isArgumentsReceiver(obj: any, exports: Record<string, Function> | undefined): boolean {
+  return _vecIsArgumentsByExport(obj, exports) ?? _argumentsObjects.has(obj);
+}
+
+/**
+ * (#6482 r5/r8) Ask the MINTING module to write the f64 absence marker at `idx`.
+ * `false` when it cannot — a non-f64 carrier, an out-of-range index, a module
+ * without the export — and the caller then keeps host-tombstone-only behaviour.
+ */
+function _vecMarkHole(obj: any, idx: number, exports: Record<string, Function> | undefined): boolean {
+  const resolved = _decoderExportsFor(obj, exports);
+  const markFn = resolved?.__vec_mark_hole as ((v: any, i: number) => number) | undefined;
+  if (typeof markFn !== "function") return false;
+  try {
+    return markFn(obj, idx) === 1;
+  } catch {
+    return false;
+  }
+}
+
 function _vecOverlayOwnIndex(
   obj: any,
   idx: number,
@@ -16724,6 +16777,58 @@ assert._isSameValue = isSameValue;
       if (name === "__delete_property")
         return (obj: any, key: any): number => {
           if (obj == null) return 1; // delete on null/undefined: vacuously true (no real property)
+          // (#6482 r5/r8) A VEC is not a `_isWasmStruct` receiver, so an index
+          // delete fell to the native `delete` below — which removes the slot
+          // from the materialized host MIRROR and leaves the vec untouched.
+          // Every later presence question then still answered "own", and
+          // `propertyHelper`'s configurable check (a delete followed by a
+          // presence question) reported `0 descriptor should be configurable`
+          // for a perfectly ordinary element.
+          //
+          // The in-wasm path records absence as a `FLAG_DELETED_INDEX` entry in
+          // the #3251 overlay companion, which the host cannot write. It
+          // records a tombstone instead, and asks the MINTING module to write
+          // the absence marker so in-wasm reads agree.
+          //
+          // NEVER on an `arguments` exotic object (§10.4.4 maps exactly
+          // `0 .. length-1`, so it is DENSE and a marker there is a lie). Round
+          // 7 had to drop this whole arm because the host could not tell:
+          // `_argumentsObjects.has(obj)` answers `false` for a linked-edge
+          // arguments receiver. `_isArgumentsReceiver` asks the minting module
+          // first (#6482 r8), which is what lets the arm come back.
+          {
+            const vecExports = callbackState?.getExports();
+            const idxKey = typeof key === "symbol" ? undefined : _asArrayIndex(String(key));
+            // The receiver may arrive as the host MIRROR of the vec rather than
+            // the vec itself (the materializers hand the mirror out, and
+            // `registerVecMirror` is the only thing that remembers the pairing).
+            // Deleting from the mirror leaves the vec — which every presence
+            // question actually consults — untouched.
+            const vecTarget = _isVecReceiver(obj, vecExports)
+              ? obj
+              : (() => {
+                  const source = vecForMirror(obj);
+                  return source !== undefined && _isVecReceiver(source, vecExports) ? source : undefined;
+                })();
+            if (idxKey !== undefined && vecTarget !== undefined && !_isArgumentsReceiver(vecTarget, vecExports)) {
+              const kStr = String(key);
+              const vecDescs = _wasmPropDescs.get(vecTarget);
+              const flags = vecDescs?.get(kStr);
+              // §10.5.7: a non-configurable own property refuses the delete.
+              if (flags !== undefined && flags & _SC_DEFINED && !(flags & _SC_CONFIGURABLE)) return 0;
+              _sidecarDelete(vecTarget, kStr);
+              vecDescs?.delete(kStr);
+              let vecTomb = _wasmStructDeletedKeys.get(vecTarget);
+              if (!vecTomb) {
+                vecTomb = new Set<string | symbol>();
+                _wasmStructDeletedKeys.set(vecTarget, vecTomb);
+              }
+              vecTomb.add(kStr);
+              const marked = _vecMarkHole(vecTarget, idxKey, vecExports);
+              if (marked && Array.isArray(obj)) delete obj[idxKey]; // keep the mirror in step
+              return 1;
+            }
+          }
           // (#6482 r6) §10.4.2.1: an Array's `length` is non-configurable, so
           // `delete arr.length` must REFUSE. Without this the generic WasmGC
           // arm below tombstones it, and `isConfigurable` — which IS a delete
@@ -16732,10 +16837,16 @@ assert._isSameValue = isSameValue;
           // routed propertyHelper's uncurried alias at the host predicate. An
           // `arguments` object's `length` IS configurable (§10.4.4 step 4) and
           // keeps the ordinary path.
-          if (typeof key !== "symbol" && String(key) === "length" && !_argumentsObjects.has(obj)) {
-            const vecExports = callbackState?.getExports();
-            const vecSource = _isVecReceiver(obj, vecExports) ? obj : vecForMirror(obj);
-            if (vecSource !== undefined && _isVecReceiver(vecSource, vecExports) && !_argumentsObjects.has(vecSource)) {
+          if (typeof key !== "symbol" && String(key) === "length") {
+            const lenExports = callbackState?.getExports();
+            const vecSource = _isVecReceiver(obj, lenExports) ? obj : vecForMirror(obj);
+            if (
+              vecSource !== undefined &&
+              _isVecReceiver(vecSource, lenExports) &&
+              // (#6482 r8) via the minting module, not the WeakSet — see
+              // `_isArgumentsReceiver`.
+              !_isArgumentsReceiver(vecSource, lenExports)
+            ) {
               return 0;
             }
           }

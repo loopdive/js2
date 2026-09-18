@@ -1,10 +1,11 @@
 ---
 id: 6505
 title: "Linked body: `arr.hasOwnProperty(\"1\")` with a CONSTANT key answers false for every index but 0"
-status: ready
+status: done
 sprint: current
 created: 2026-09-18
 updated: 2026-09-18
+completed: 2026-09-18
 priority: medium
 horizon: s
 feasibility: medium
@@ -14,6 +15,17 @@ area: codegen
 language_feature: arrays
 goal: test262-conformance
 related: [6482, 3451, 5225, 4491]
+# 2026-09-18 (round 9): +8 COMMENT lines in
+# `compilePropertyIntrospection` (583 -> 591). The code change is a single
+# condition — the `elemIsRef &&` gate is deleted from the runtime-delegating
+# arm. The eight lines record WHY that gate was sound before #6482 round 4's
+# `__vec_has_own_index` and is not sound after it; a bare deletion of a
+# restriction whose original justification is still written three lines above
+# it is the kind of edit a later reader re-adds. No statements added.
+func-budget-allow:
+  - src/codegen/object-ops.ts::compilePropertyIntrospection
+loc-budget-allow:
+  - src/codegen/object-ops.ts
 ---
 
 # #6505 — a constant index key is answered by a path that only knows index 0
@@ -113,3 +125,59 @@ shared across compiler builds and keyed only by `PROVIDER_COMPILER_ABI_VERSION`
   (`[0, , 2]` → `"1"` is not own) — the #6482 round-4 rule must not be undone.
 - Computed-key and single-module behaviour unchanged.
 - A guard test in the linked rig covering both directions.
+
+## Resolution (2026-09-18, round 9)
+
+**The index is not the discriminator — the query ORDER is.** `arr.hasOwnProperty("1")`
+does not fail because the key is `"1"`; it fails because it is not the FIRST
+such query in the program. Reversing the calls moves the single `true` with
+them:
+
+```
+var arr = [0,1,2]; arr.hasOwnProperty("2"), arr.hasOwnProperty("0")  ->  true,false
+```
+
+`provesDenseLiteralOwnIndex` (`src/codegen/object-ops.ts`) proves own-ness from
+the dense array literal, and it is deliberately local: it refuses as soon as ANY
+identifier reference to the receiver sits between the declaration and the call.
+The first query therefore proves and folds to `1`; every later one sees the
+earlier query as an intervening reference and the proof fails. Nothing below it
+caught the fall-through for an f64-carrier vec — the runtime-delegating arm was
+gated on `elemIsRef`, so a NUMERIC vec dropped through to the named-key fold at
+the bottom of `compilePropertyIntrospection`, whose key set is
+`["length", "data"]`. That fold emits a constant `false`.
+
+**Fix (1 condition, +16 comment lines):** drop the `elemIsRef` gate on the
+runtime-delegating arm, so any statically-resolvable canonical index on a vec
+receiver is answered by `__hasOwnProperty`. The restriction was correct when
+written — the native could not distinguish an f64 hole from a stored `0`/`NaN`
+— but #6482 round 4's `__vec_has_own_index` answers from the RAW element before
+that boxing, so the native is exact for the numeric carrier now too. The
+affirmative fold above it is untouched, so nothing that answers `true` today
+changes.
+
+### Measured — correct behaviour, 0 rows moved either way
+
+| lane / slice | rows | before | after | flips |
+| --- | --- | --- | --- | --- |
+| linked: `Object/prototype/hasOwnProperty/**` + `Array/prototype/**` (`hasOwn`) + the 735-file `defineProperty/15.2.3.6-4-*` control + the 114-row #6482 bucket | 947 | 749 | 749 | **0 / 0** |
+| linked: every other corpus file calling `hasOwnProperty` with a LITERAL index | 86 (83 ran) | 53 | 53 | **0 / 0** |
+| honest: the same literal-index rows + the two `hasOwn` families | 196 (193 ran) | 122 | 122 | **0 / 0** |
+
+Real runner, fresh `JS2WASM_TEST262_HARNESS_CACHE` per arm, both bundles
+rebuilt with `pnpm run -s build:{compiler,runtime}-bundle` between arms.
+
+**0 rows is the honest result, and it was predicted.** #6505 said up front that
+"the rows that would show it are currently masked by other failures" and did not
+claim a count. It is a correctness fix whose value is cumulative with the rest
+of the descriptor family, not a conformance win on its own — and the 0-lost
+column is what makes it safe to bank now.
+
+### Acceptance
+
+- [x] Dense array, constant key, lengths 1..5 — `true` at every index.
+- [x] Sparse `[0, , 2]` — `"1"` still `false`, `"0"`/`"2"` still `true`
+      (the #6482 round-4 rule is not undone).
+- [x] Computed-key and single-module behaviour unchanged (0 flips in both lanes).
+- [x] Guard: `tests/issue-6505-constant-index-key-presence.test.ts`, 9 linked-lane
+      cases; **6 fail** with the codegen reverted.
