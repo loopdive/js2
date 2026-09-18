@@ -5522,6 +5522,34 @@ export function compileElementAccessBody(
   // its args). Keeping the unboxed f64/i32 in numeric context avoids that.
   expectedType?: ValType,
 ): ValType | null {
+  // (#6635) A bare `anyref` receiver — e.g. the return value of `Map`/
+  // `WeakMap.prototype.get()` (`tryCompileNativeMapMethodCall` reports
+  // `{kind:"anyref"}`), used directly as the object of a COMPUTED member
+  // read with no intervening local (`someMap.get(k)[computedKey]`). Unlike
+  // the dot-property twin (`compilePropertyAccess`), `compileElementAccess`
+  // compiles the object sub-expression with no expected-type hint (see its
+  // `compileExpression(ctx, fctx, expr.expression)` call), so the value never
+  // gets coerced to externref and no arm below matched `anyref` — it fell to
+  // the generic non-ref/non-externref fallback's `reportError` + `return
+  // null`. That `null` is NOT a compile failure: the #1919 speculative
+  // wrapper in `expressions.ts` treats a `null` inner result as a probe miss,
+  // silently rolls back the diagnostic + partial body, and substitutes a
+  // TS-static-type-derived DEFAULT value instead — which for an `any`/
+  // unresolvable computed-member type is a bare `ref.null`, observably JS
+  // `null`, not `undefined`. This is the exact mechanism behind test262's
+  // `Temporal/PlainDate/from` `SameValue(«null», «undefined»)` failures
+  // (#5383): the real polyfill bundle's calendar dispatch chain
+  // (`Qt(this).isoToDate(n, {[t]:true})[t]`) resolves `Qt` through a
+  // Map-backed registry, so the final `[t]` read is exactly this shape.
+  // Converting the already-on-stack anyref to externref here (matching the
+  // conversion the dot-property path gets for free via its expectedType
+  // hint) lets the existing, already-correct externref element-read pipeline
+  // below handle it — including its own `undefined`-vs-`null` semantics,
+  // which is what `__extern_get` on a genuine JS dictionary value produces.
+  if (objType.kind === "anyref") {
+    fctx.body.push({ op: "extern.convert_any" });
+    objType = { kind: "externref" };
+  }
   // Externref element access: obj[key] → host import __extern_get(obj, externref) → externref
   if (objType.kind === "externref") {
     // (#5223) The bracket twin of the dot-read registration. `a["g"]` reaches
