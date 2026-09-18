@@ -2,7 +2,7 @@
 id: 6642
 title: "standalone: a BigInt value does not survive a consumer↔provider link (typeof/===/Object.is/String/arithmetic all answer as if it were not a BigInt)"
 status: blocked
-assignee: ttraenkler/senior-dev-s59
+assignee: ttraenkler/senior-dev-s60
 sprint: current
 priority: high
 horizon: m
@@ -29,15 +29,31 @@ loc-budget-allow:
   #   with a ~17-line comment explaining why a bare `{ kind: "i64" }` hint is
   #   a silent data-loss bug; the comment is the whole value of the change
   #   and belongs next to the constant, not in a new file.
+  # 2026-09-18 (S60, #6642) — STRANDED-GRANT RESTATEMENT, not new growth.
+  #   `typeof-delete.ts`'s +17 is S59's Fix 1 (re-read the `__typeof*` helper
+  #   funcIdx AFTER compiling the operand, so a link-boundary import shift
+  #   cannot bake a stale `call` immediate). Its grant was written in
+  #   plan/issues/5383-standalone-temporal-provider.md, which this change-set
+  #   does not modify — so against CI's merge preview the allowance is
+  #   invisible and the gate fails on growth that is already reviewed. Restated
+  #   here, in a file this PR does touch.
   - src/codegen/binary-ops.ts
+  - src/codegen/typeof-delete.ts
 func-budget-allow:
   # 2026-09-18 (S59, #6642) — same new branch lands inside
   # `compileBinaryExpression`, and `compileTypeofComparison` (typeof-delete.ts)
   # grows for the funcIdx re-read fix (see Root Cause). Both are the single
   # function each defect's fix belongs next to; splitting either purely to
   # dodge the gate was rejected for the same reason as the LOC grant above.
+  # 2026-09-18 (S60, #6642) — STRANDED-GRANT RESTATEMENT (see the LOC note
+  #   above): `compileTypeofExpression` is the OTHER half of S59's Fix 1 (the
+  #   bare `typeof x` cascade has the same stale-funcIdx capture as the
+  #   comparison form). Granted in plan/issues/5383-standalone-temporal-provider.md,
+  #   which this change-set does not modify; restated here so CI's merge-preview
+  #   base can see it.
   - src/codegen/binary-ops.ts::compileBinaryExpression
   - src/codegen/typeof-delete.ts::compileTypeofComparison
+  - src/codegen/typeof-delete.ts::compileTypeofExpression
 ---
 
 ## Problem
@@ -239,25 +255,122 @@ where `v` is `any` — String() of a dynamically-classified BigInt) and
 fixed here; neither is on the 12 target rows' critical path (see the row table
 below) and both are left open.
 
-## Next step for whoever picks this up
+### The 12 target rows do NOT move — and the reason is a DIFFERENT defect chain
 
-1. Add `toBigIntIdx: number | null` to `coercion-plan.ts`'s
-   `CoercionHelpers`, and add bigint-aware rows to the `externref → i64` (and,
-   for symmetry, `i64 → externref`) branches, gated on `to.bigint`/`from.bigint`
-   — mirror the shape of `type-coercion.ts`'s `coerceType` arms at (search)
-   `if (to.bigint) { const toBigIdx = ctx.funcMap.get("__to_bigint"); ... }`.
-2. In `stack-balance.ts`, resolve `toBigIntIdx` once alongside
-   `boxNumberIdx`/`unboxNumberIdx` (same `findFuncByName` call site, ~line
-   3019-3020) and thread it through the SAME ~16-function chain those two
-   already travel (`fixBranchType`, `fixBody`, `fixBranch`,
-   `plannedCallArgCoercionInstrs`, `callArgCoercionInstrs`) — purely
-   mechanical (add one parameter next to the existing pair everywhere), with
-   TypeScript's own compiler as the safety net for any missed call site.
-3. Re-run `tests/issue-6642-link-bigint-value.test.ts`'s `samemod`/`propcheck`-
-   style reduction (not yet committed as a test — see Implementation Notes)
-   and confirm `NS.giveBigInt() === 217175010123456789n` answers `1`; then
-   re-run the S59 battery (`.tmp/s59/battery`, if still present in a sibling
-   worktree) against the 12 ZonedDateTime rows.
+Measured on the S60 tree (fresh `build:compiler-bundle` → fresh provider under
+`.test262-cache/s60-4`, `cacheHit=false` → fresh quickjs adapter → the 15
+non-passing `ZonedDateTime` rows): **status identical to base on all 15.**
+Fixes A and B are correct and witnessed, but they are NOT on these rows' hit
+path. The blocker is upstream of them, and S59's `coercionPlan` attribution was
+not the only thing pointing the wrong way — the whole "the value loses its
+brand in codegen" framing was.
+
+**What actually happens.** `@js-temporal/polyfill` ships **JSBI** (`class JSBI
+extends Array`) as its BigInt carrier, and converts back to a real BigInt only
+here:
+
+```js
+function ko(e){ const t = Lo(e);
+  return void 0 !== globalThis.BigInt ? globalThis.BigInt(t.toString(10)) : t; }
+get epochNanoseconds(){ … return ko(…) }
+```
+
+In standalone, `globalThis.BigInt` is **`undefined`**, so `ko` returns the raw
+JSBI array. That is the `«977899425,408899357,1»` in every failure message: not
+a mangled BigInt, an `Array` subclass printed by `Array.prototype.toString`
+(and `977899425 * 1e9 + 408899357` is exactly the expected value, which is what
+makes it look like a corrupted number). `typeof` on it is `"object"`, so the
+harness's `===` correctly answers false. No codegen coercion is involved.
+
+Probed directly (`.tmp/s60/probe/globalctors2.mjs`, single standalone module,
+boolean-returning exports — a STRING-returning export does not marshal out of a
+standalone instance, which is why an earlier `typeof`-string probe read
+`undefined` for every builtin and was not evidence):
+
+| probe | answer |
+| --- | --- |
+| `typeof BigInt === "function"` (bare identifier) | **1** |
+| `globalThis.Number !== undefined` | **1** |
+| `globalThis.BigInt !== undefined` | **0** ← the blocker |
+| `globalThis.Symbol !== undefined` | **0** (same gap, not chased) |
+| `(1n).toString() === "1"` | 1 |
+| `String(1n) === "1"` | **0** (separate gap; only affects failure *messages*) |
+
+**The chain, each link measured, none of it landed:**
+
+1. `STANDALONE_GLOBAL_CONSTRUCTOR_NAMES`
+   (`codegen/standalone-global-object-carriers.ts`) has no `"BigInt"`, so the
+   realm object never gets the property. Adding it flips
+   `globalThis.BigInt !== undefined` to 1 — one line, verified.
+2. The seeded carrier is a plain `$Object` with no `[[Call]]`, so all 12 rows
+   then fail with `TypeError: called value is not a function` instead. Adding
+   `"BigInt"` to `CALLABLE_WRAPPER_CTORS` (`codegen/builtin-ctor-callable.ts`,
+   #4394's `__apply_closure` front-guard) makes `globalThis.BigInt(x)` callable
+   **in a single module** — verified for both `g.BigInt(o)` and an extracted
+   `const fn = g.BigInt; fn(o)`.
+3. It still does NOT reach the polyfill, because that arm is **per-module and
+   identity-based**: it `ref.eq`s the callee against *this* module's
+   `__builtin_ctor_BigInt` global. The Temporal provider is a separately
+   compiled LINKED module reading a shared realm object, so its own
+   `__apply_closure` has no matching carrier. #4394's design predates the
+   linked realm; extending it there is its own slice.
+4. Even past that, `__bigint_ctor`'s native standalone body ends in
+   `throwNativeError("SyntaxError", "Cannot convert string to a BigInt in
+   standalone mode")` — measured: `BigInt(<string variable>)` traps, only
+   `BigInt(<number>)` works, and the literal cases that "pass" are compile-time
+   folds in `call-identifier.ts`, not the runtime helper. The polyfill passes a
+   STRING (`t.toString(10)`), so a native StringToBigInt (the i64 twin of
+   `parse-number-native.ts`'s ~900-line `__str_to_number`) is required.
+
+Links 1 and 2 were built and measured, then **reverted, deliberately**: alone
+they make the 12 rows fail *worse* (a thrown TypeError where there was a wrong
+value), and a thrown `globalThis.BigInt(…)` can break code that today takes the
+`typeof`-guarded fallback path. They must land together with 3 and 4 or not at
+all. Nothing from this investigation is in the commit; the diff is exactly
+Fixes A and B plus the witness test.
+
+## Next step for whoever picks this up (S60 — supersedes S59's list below)
+
+The remaining work is **not** in the coercion tables. It is
+"standalone has no realm-level `BigInt` constructor", and it is four links,
+in this order — each is a hard prerequisite for the next, and links 1–2 must
+NOT land alone (they turn a wrong answer into a thrown TypeError):
+
+1. **Native StringToBigInt.** Replace `__bigint_ctor`'s terminal
+   `throwNativeError("SyntaxError", "Cannot convert string to a BigInt in
+   standalone mode")` (`codegen/registry/imports.ts`) with a real parse.
+   Model it on `codegen/parse-number-native.ts` (`externToFlat` → `$NativeString`
+   → i16 data array → code-unit scan), but accumulating i64 instead of f64:
+   trim, optional sign, `0x`/`0o`/`0b` prefixes, digit loop, SyntaxError on
+   anything else, `""` → `0n`. Precision is the whole point — a
+   `__str_to_number` + `i64.trunc_sat_f64_s` shortcut loses the low digits of a
+   nanosecond count and was measured to be useless here. A new `src/` file
+   needs a `scripts/compiler-boundaries.json` entry.
+2. **Make `__apply_closure`'s wrapper-ctor front-guard work across a LINK.**
+   `builtin-ctor-callable.ts` identifies the callee by `ref.eq` against the
+   compiling module's own `__builtin_ctor_<Name>` global, which no linked
+   provider shares. This is the link that actually stops the Temporal rows, and
+   it is a design question (#4394 predates the linked realm), not a table entry.
+3. Add `"BigInt"` to `CALLABLE_WRAPPER_CTORS` with a
+   `argOf(0) → __bigint_ctor → __box_bigint` conversion (§21.2.1.1;
+   deliberately NOT `__to_bigint`, which TypeErrors on a Number). Verified
+   working single-module.
+4. Add `"BigInt"` to `STANDALONE_GLOBAL_CONSTRUCTOR_NAMES`
+   (`standalone-global-object-carriers.ts`). One line; verified. `"Symbol"` has
+   the identical gap and is presumably the same fix.
+
+Then re-run `.tmp/s60/battery/run-family.mts` over the 15 non-passing
+`ZonedDateTime` rows. `String(<bigint>)` is separately broken (`String(1n)`
+answers `0` against `"1"`, and traps for a large literal); it changes only the
+TEXT of a failure message, so it does not gate these rows — but it is worth its
+own issue.
+
+### S59's superseded list (kept for the record — do NOT follow it)
+
+1. ~~Add `toBigIntIdx` to `coercion-plan.ts`'s `CoercionHelpers`~~ —
+   `coercionPlan` is never reached for this shape (traced in S60).
+2. ~~Thread it through `stack-balance.ts`'s ~16-function chain~~ — not needed.
+3. Re-run the reduction — done; it now answers `1` (see the witness table).
 
 ## Implementation Notes
 
@@ -291,3 +404,23 @@ below) and both are left open.
   crash fix), but the residual documented above is the actual blocker for the
   battery. Re-open to `ready` once the coercion-plan threading (Next step
   above) lands.
+
+### S60 additions to these notes
+
+- Witness test: `tests/issue-6642-coercion-plan-bigint.test.ts` (5 cases,
+  revert-and-measured against `8a95c4dace`: `3 failed | 2 passed` → `5 passed`).
+- Files touched by S60: `src/codegen/binary-ops.ts` (`BIGINT_I64`, Fix A) and
+  `src/codegen/closures/result-boxing.ts` (`boxI64ClosureResult`, Fix B).
+  Deliberately NOT touched: `coercion-plan.ts`, `stack-balance.ts` (S59's
+  proposed threading is unnecessary — traced), `type-coercion.ts`.
+- Probe scripts (ephemeral, `.tmp/s60/probe/`): `samemod.mjs` / `propcheck.mjs`
+  (S59's, repointed), `globalctors2.mjs` (the boolean-returning realm-builtin
+  probe table above — note that a STRING-returning standalone export does not
+  marshal out, so string probes are not evidence), `globalcall.mjs` /
+  `gcall2.mjs` (carrier callability, direct vs extracted-function form),
+  `bigintctor.mjs` (isolates the `__bigint_ctor` string trap from the
+  compile-time literal fold).
+- `status` stays `blocked`. S60 narrowed the blocker from "a coercion table has
+  no bigint column" (wrong) to "standalone has no realm-level `BigInt`
+  constructor, and the wrapper-ctor `[[Call]]` guard does not cross a link"
+  (measured, four links listed above).
