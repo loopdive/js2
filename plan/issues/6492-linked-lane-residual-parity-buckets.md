@@ -2124,3 +2124,39 @@ genuine `null`, and (2) is the common case in this corpus.
     identity is the evidence — it located the real subject (what a void closure
     answers) faster than either change's own reasoning did, and it says the four
     losses are one bug, not four.
+
+### Round 14 addendum — `Promise.all{,Settled}Keyed`: the honest lane wraps the callback, the consumer does not
+
+Picking up round 10's open thread (item 3 of the round-14 brief). Round 10 left
+it at "the honest unit carries a `Promise_reject` the linked body lacks"; the
+caller is now named.
+
+Both `Promise_reject` call sites in the honest module sit inside a closure of
+this exact shape (`$__closure_36`, `$__closure_54` in the honest WAT):
+
+```wat
+(try (result externref)
+  (do    … body …  call 47)      ;; 47 = Promise_resolve
+  (catch 0     call 48)          ;; 48 = Promise_reject
+  (catch_all   call 26  call 48))
+```
+
+— a synchronous throw converted into a REJECTED promise. That is exactly what
+`assert.throwsAsync` needs: `res = func()` returns a thenable that rejects with
+the TypeError instead of throwing out of the call.
+
+Compiling the same test BODY alone (the consumer's shape) emits **no
+`Promise_reject` at all** — zero occurrences, and the only Promise-related
+import is the `global_Promise` capability. So the wrapper is present in the
+honest whole-assembly unit and absent from the linked consumer, and the
+verdict follows mechanically: the throw escapes `func()` synchronously and
+`asyncHelpers` reports *"Expected a TypeError to be thrown asynchronously but
+the function threw synchronously"*.
+
+**Next step for this bucket:** identify which emitter mints that wrapper —
+`async-closure-promise.ts` (#4648, the `__cb_<id>` host-callback-bridge
+wrapper) and the `isAsyncCallExpression` call-site repair in `expressions.ts`
+are the two candidates — and why its gate does not fire for the consumer.
+The likely shape is the same seam problem as everywhere else in this issue: the
+gate needs to see the CALL SITE (`assert.throwsAsync(…)`), which now lives in
+the provider, while the callback it must wrap lives in the consumer.
