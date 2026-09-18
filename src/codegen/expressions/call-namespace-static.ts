@@ -987,6 +987,47 @@ export function compileNamespaceStaticCall(
     const guardReflectTargetIsObject = (targetLocal: number, message: string): void => {
       emitNativeReflectNonObjectGuard(ctx, fctx, targetLocal, message);
     };
+    // (#6494 S3) §28.1.6 / §28.1.9 step 1 for the two spellings the runtime
+    // guard deliberately declines: a target that is LITERALLY `null` or
+    // `undefined`. `emitNativeReflectNonObjectGuard` refuses to brand those at
+    // runtime because this compiler's alias/element widening nulls ordinary
+    // objects (see its comment) — but that hazard is about VALUES, and this is
+    // a question about the expression. `Reflect.get(null, 'p')` cannot be a
+    // nulled real object; it is the spec's step-1 TypeError, and it is what
+    // `Reflect/{get,has}/target-is-not-object-throws.js` spend half their
+    // assertions on (the number/string spellings already throw).
+    //
+    // Deliberately NOT extended to the other Reflect arms: their guards are
+    // pre-existing and widening them is not this slice's to do.
+    const targetIsStaticallyNullish = (argument: ts.Expression | undefined): boolean => {
+      if (argument === undefined) return false;
+      let inner: ts.Expression = argument;
+      while (
+        ts.isParenthesizedExpression(inner) ||
+        ts.isAsExpression(inner) ||
+        ts.isTypeAssertionExpression(inner) ||
+        ts.isNonNullExpression(inner)
+      ) {
+        inner = inner.expression;
+      }
+      // `null` and `void <expr>` are unambiguous in the grammar.
+      if (inner.kind === ts.SyntaxKind.NullKeyword) return true;
+      if (ts.isVoidExpression(inner)) return true;
+      // `undefined` is an ordinary identifier and CAN be shadowed, so the
+      // oracle — not the spelling — owns the decision. A shadowing
+      // `var undefined = {}` reports `object` and keeps its previous lowering.
+      const fact = ctx.oracle.typeFactOf(inner);
+      return fact.kind === "null" || fact.kind === "undefined" || fact.kind === "void";
+    };
+    const guardReflectTargetIsObjectOrNullish = (
+      targetLocal: number,
+      message: string,
+      argument: ts.Expression | undefined,
+    ): void => {
+      emitNativeReflectNonObjectGuard(ctx, fctx, targetLocal, message, {
+        staticallyNullish: targetIsStaticallyNullish(argument),
+      });
+    };
     // (#5196 R3-2 C5) §7.1.19 ToPropertyKey on the Reflect key argument, in
     // place, AFTER the target guard and BEFORE the native call. An object key
     // with a throwing `toString`/`valueOf` must propagate that abrupt
@@ -1055,7 +1096,8 @@ export function compileNamespaceStaticCall(
         }
         // (#5196 R3-2 C4) §28.1.6 step 1 for EVERY non-Object target — same
         // guard the `deleteProperty`/`ownKeys`/`isExtensible` arms use.
-        guardReflectTargetIsObject(targetLocal, "Reflect.get called on non-object");
+        // (#6494 S3) …plus a statically-nullish target.
+        guardReflectTargetIsObjectOrNullish(targetLocal, "Reflect.get called on non-object", expr.arguments[0]);
         coerceReflectPropertyKey(argLocals[1]);
 
         // (#2046/#4397) Preserve the optional receiver in Wasm. A native
@@ -1261,7 +1303,8 @@ export function compileNamespaceStaticCall(
         // the Symbol carrier — the same guard `deleteProperty`/`ownKeys`/
         // `isExtensible` already use (it admits closure and expando carriers
         // positively, so an ordinary callable/instance target is unaffected).
-        guardReflectTargetIsObject(targetLocal, "Reflect.has called on non-object");
+        // (#6494 S3) …plus a statically-nullish target.
+        guardReflectTargetIsObjectOrNullish(targetLocal, "Reflect.has called on non-object", expr.arguments[0]);
         fctx.body.push({ op: "local.get", index: argLocals[0]! });
         fctx.body.push({ op: "local.get", index: argLocals[1]! });
         const funcIdx = ensureLateImport(ctx, "__extern_has", [externRef, externRef], [i32Ty]);
