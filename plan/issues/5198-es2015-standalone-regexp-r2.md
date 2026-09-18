@@ -4,7 +4,7 @@ title: "ES2015 standalone regexp — r2 residual pass"
 status: in-progress
 sprint: current
 created: 2026-08-29
-updated: 2026-09-13
+updated: 2026-09-18
 priority: high
 horizon: m
 feasibility: hard
@@ -708,6 +708,223 @@ transition and allow no host or previously-passing loss. The standalone result
 must have zero host imports, compile errors, timeouts, and skips for the
 claimed cohort. Full TypeScript, formatting, ratchet, issue-integrity, and
 repository-hook evidence remains required before publication.
+
+## 2026-09-18 mechanism-level plan — RegExpExec dispatch (Fable lane, supersedes the row-by-row split for this cohort)
+
+### Why this section exists
+
+The 2026-09-13 continuation plan above is **row-by-row**: it claims 5 named
+rows and splits them across 3 PRs. Those 5 rows are real and the analysis in
+them stands. But a fresh full-cluster measurement says they are 5 of **104**,
+and the other 99 are not 99 separate defects — they are **one** mechanism that
+the row-by-row split never names. This section plans that mechanism. It does
+not retract anything above; the sticky-cursor and identity work remain valid
+and independent.
+
+### Measurement (mine, run 2026-09-18, not inherited)
+
+Base: `origin/main` @ `a8b8dfc180`, fresh worktree, `.test262-cache` symlinked,
+`COMPILER_POOL_SIZE=2 npx tsx scripts/run-test262-paths.mts --isolate <list> --standalone`.
+Corpus: every non-`_FIXTURE` file under
+`built-ins/RegExp/prototype/Symbol.{match,replace,search,split}` — **190 rows**.
+
+| | rows |
+| --- | --- |
+| pass | 86 |
+| fail | 95 |
+| compile_error | 9 |
+| **non-pass** | **104** |
+
+That reproduces the Sep-17 standalone baseline for the same cluster exactly, so
+the cohort is stable, not drifting.
+
+Breakdown of the 104 by which observable spec step the test poisons (classified
+by reading each test's source, not by its name):
+
+| poisoned step | rows |
+| --- | --- |
+| `exec` override — §22.2.7.1 RegExpExec steps 3–6 | **43** |
+| `lastIndex` get/set observability | 22 |
+| `@@species` constructor lookup (mostly `@@split`) | 21 |
+| `flags` / `global` / `unicode` getters | 11 |
+| argument / result coercion (`ToString`, `ToLength`) | 8 |
+| other | 7 |
+
+Every one of those is the **same root cause**, which is why they are planned
+together: for a receiver the compiler can type as `RegExp`, the standalone
+`@@*` lowering runs the native engine directly and performs **no** observable
+spec step at all.
+
+### Root cause, confirmed by probe and not by code-reading alone
+
+`src/codegen/expressions/call-tail-dispatch.ts` (the `@@match`/`@@replace`/
+`@@search`/`@@split`/`@@matchAll` arm, ~L869–L960) routes standalone calls to
+`tryCompileStandaloneRegExpSymbolCall`
+(`src/codegen/regexp-standalone.ts:4872`). That function gates on
+`isGlobalRegExpType(recvType) || isKnownBackendCreatedRegExpReceiver(...)` and
+then goes straight to `emitStandaloneRegExpMatchCore` /
+`…SearchCore` / `…ReplaceCore` / `…SplitCore`. There is no `Get(R, "exec")`,
+no `Call`, no `Get(result, "0"/"index"/"length"/"groups")`, no
+`Get`/`Set` of `lastIndex`, and no `@@species` lookup anywhere on that path.
+
+Probed on `a8b8dfc180` with the **exact test262 receiver spelling** — `var r = /./;`,
+which TypeScript infers as `RegExp`, *not* an `any` annotation — standalone,
+`result.imports` asserted `[]` on every probe:
+
+| probe | standalone | Node |
+| --- | --- | --- |
+| pristine `r.exec("abc")` | 1 | 1 |
+| assigned `r.exec` observed by `@@match` | **0** | 1 |
+| `Object.defineProperty(r,"exec",{get})` poison observed by `@@match` | **0** | 1 |
+| `@@replace` reads a poisoned `result[0]` via `Get` | **0** | 1 |
+| pristine `@@match` control | 1 | 1 |
+
+**The receiver spelling is load-bearing and an earlier probe of mine got it
+wrong.** Writing `const r: any = /./` takes a *different* dispatch path and
+answers differently — on that path `r.exec("abc")` returns `null` where Node
+returns a match. That is a **separate defect** (recorded below, deliberately
+NOT folded into this plan), and measuring the cluster through it would have
+produced a wrong diagnosis. Probe with `var r = /./;`.
+
+### The substrate already exists — this is wiring, not new runtime
+
+Probed the same way, all standalone, `imports: []`:
+
+| capability the fix needs | works today? |
+| --- | --- |
+| assign `r.exec = fn` on a RegExp and call it back | **yes** (returns 42) |
+| read `r.exec` back and see a function | **yes** |
+| generic `Get` on an arbitrary result object (`o[0]`, `o.index`) | **yes** |
+| a poisoned accessor on an object property throws | **yes** |
+
+So the slow path can be built out of machinery that is already correct. What is
+missing is only the decision to consult it.
+
+### Design — follow #802 `src/codegen/dynamic-proto.ts`, which solved the same shape
+
+#802 faced the identical problem for `__proto__`: a fast closed-shape path that
+silently ignored a runtime mutation. Its answer is the pattern to copy, and it
+is already proven in this codebase:
+
+**prescan → mark → conditional slow path → byte-identical when unmarked → kill switch.**
+
+1. **Prescan** (`scanForRegExpProtocolEscape`, mirroring `scanForDynamicProto`).
+   Walk the module once. Mark the compilation unit when it contains any of:
+   - an assignment whose target is a property access named `exec` on a value
+     `ctx.oracle` resolves to `RegExp`;
+   - `Object.defineProperty` / `Reflect.defineProperty` / `Object.defineProperties`
+     whose key is `"exec"`, `"lastIndex"`, `"flags"`, `"global"`, `"unicode"`,
+     or `"sticky"` and whose target resolves to `RegExp`;
+   - a class whose `extends` clause resolves to `RegExp` (subclass overrides);
+   - a write to `RegExp.prototype.<any of those keys>`;
+   - a `constructor` / `@@species` write on a RegExp-resolving value.
+
+   Record in `ctx.regexpProtocolEscaped` (a boolean is enough for slice 1; a
+   per-receiver `Set` is a later refinement and MUST NOT be attempted first —
+   see "Order" below).
+
+2. **Gate.** `tryCompileStandaloneRegExpSymbolCall` returns `undefined` when the
+   mark is set, so the call falls out of the native fast path.
+
+3. **Slow path.** A new `src/codegen/regexp-protocol-slow.ts` emitting the
+   spec sequence out of existing natives:
+   - `RegExpExec(R, S)` §22.2.7.1: `Get(R,"exec")` → `IsCallable` → `Call(exec, R, «S»)`
+     → if the result is neither Object nor Null, throw TypeError → else return it.
+     Falls back to the existing native core as `RegExpBuiltinExec` when `exec`
+     is the untouched builtin.
+   - `@@match` §22.2.6.8, `@@replace` §22.2.6.11, `@@search` §22.2.6.12,
+     `@@split` §22.2.6.14 driven off that, reading the result generically
+     (`Get(result,"0")`+ToString, `"index"`+ToIntegerOrInfinity,
+     `"length"`+ToLength, `"groups"`), and doing the real
+     `Get`/`Set` of `lastIndex` with the §22.2.6.8 write guard that
+     `standaloneRegExpLastIndexSetGuardInstrs` already provides.
+
+4. **Byte-inertness is an acceptance criterion, not a hope.** A module that
+   never escapes a RegExp must emit a **byte-identical** binary before and
+   after. Prove it by hashing the standalone and gc binaries for at least 12
+   RegExp programs on base and on branch and diffing the hashes. This is the
+   single most important control: the fast path is what 86 of the 190 rows and
+   a great deal of non-test262 code depend on.
+
+5. **Kill switch**: `JS2WASM_NO_REGEXP_PROTOCOL=1` disables the prescan marks,
+   which disables the whole slow path wholesale — same posture as
+   `JS2WASM_NO_DYNPROTO`.
+
+### Order — slice 1 is `exec` only, and stops there
+
+Slice 1 implements the prescan, the gate, `RegExpExec`, and `@@match` +
+`@@search` on top of it. It claims **only** the `exec`-override rows and only
+in those two methods. `@@replace` and `@@split` are slice 2; `lastIndex`,
+`@@species` and the flag getters are slices 3–5.
+
+Rationale, stated plainly: the row-by-row plan above under-delivered because it
+never named the mechanism; the opposite failure — planning all five sub-clusters
+at once — would produce an unreviewable diff across a 6,163-line god file.
+Slice 1 is the smallest change that proves the architecture, and its row count
+is measured (43 available; slice 1 targets the `@@match`/`@@search` subset of
+them, which must be counted, not assumed, before the PR claims a number).
+
+### Do NOT do these
+
+- **Do not make the slow path unconditional.** It would cost the fast path on
+  every ordinary regex program for 104 rows.
+- **Do not reuse `ctx.nonWritableExternKeys` for the `lastIndex` rows.** The
+  2026-09-13 section above records a measured A/B showing that guard is
+  compile-time rather than branch-aware and is unsound here. That finding
+  stands; do not re-derive it.
+- **Do not fold in the `any`-receiver `exec` defect** (below). Different path,
+  different fix, separate id.
+- **Do not delete or "fix" the red pins in draft PR #5393.** They are a
+  legitimate record of the gap. See "Relationship to PR #5393".
+
+### Separate defect found while measuring this, deliberately not in scope
+
+`RegExp.prototype.exec` through an **`any`-typed** receiver returns `null` in
+standalone where Node returns a match:
+
+```ts
+const r: any = /b/;
+r.exec("abc");        // standalone: null · Node: ["b"]
+r.test("abc");        // standalone: true · Node: true  ← same receiver, correct
+```
+
+A typed receiver (`const re = /b/`) is correct, and `test` is correct on the
+`any` receiver, so this is narrow. It needs its own issue id. It has **no**
+ES2015 rows behind it that this measurement identified (test262 writes
+`var r = /./`, which infers `RegExp`), so it is a correctness gap, not a
+conformance lever — measure before committing to it.
+
+### Relationship to PR #5393
+
+Draft PR #5393 (`codex/5198-regexp-exec-slice-b-checkpoint-20260901`) is a
+**tests-only** checkpoint: its own description says "production source remains
+unchanged", its standalone expectations are "intentionally red", and it
+declares itself "incomplete and non-mergeable". It is `dirty` and last moved
+2026-09-05. It documented an 11-row hand-picked custom-`exec` matrix; the full
+cohort measured here is 43 rows for that mechanism.
+
+The implementing lane should **read** #5393's pins for prior art and keep any
+that still assert correct behaviour, but must not depend on that branch, and
+must not close it. Whether #5393 is superseded or rebased is a call for
+whoever owns it once slice 1 lands.
+
+### Acceptance criteria for slice 1
+
+- A measured before/after row run over the **whole 190-row cluster**, both
+  trees frozen, same corpus and cache, compared **per test path** so a
+  one-in/one-out swap cannot hide. Report gained and lost separately.
+- **Zero rows lost**, cluster-wide and in a control set outside it.
+- Byte-identical standalone **and** gc binaries for >=12 non-escaping RegExp
+  programs (the byte-inertness proof above).
+- `result.imports` is `[]` on every standalone probe.
+- A pin test file that is **red on the unfixed merge-base** and green on the
+  branch, with the pass-either-way cases labelled as deliberate controls.
+- Every source-ratchet gate run bare (never piped), exit 0, including
+  `LOC_GATE_BASE=<upstream main tip>`; growth allowances in this issue's
+  frontmatter with a dated rationale; `scripts/*-baseline.json` untouched.
+- The claimed row number is the one measured, not the one planned. If slice 1
+  lands fewer rows than this plan projects, the PR says so in its first
+  paragraph and explains the shortfall rather than padding it.
 
 ## Acceptance criteria
 
