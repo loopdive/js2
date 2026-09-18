@@ -611,3 +611,59 @@ o; }`), returned as `any`, read back by a runtime computed key. Use a FRESH
 `JS2WASM_TEMPORAL_CACHE` label when re-running the two target rows — the
 provider cache key does not hash the compiler bundle, so a reused label
 silently serves a stale (pre-fix) provider (documented since S48b).
+
+## Stack state 2026-09-18 (post-S49b) — full must-not-move battery run;
+every group clean except a real, reproducible E-linked regression S49's own
+sample missed
+
+S49b (branch `issue-5383-standalone-temporal-s49b`, worktree off S49's tip
+`3df9b3f8eb`, MEASUREMENT ONLY, no source changes) ran the full battery S49
+had only sampled 770 of ≈3,204 files for: four Temporal families (480),
+A–F (3,014), corpus byte A/B (84 rows), equivalence gate, and the two named
+`#5383` target rows with a fresh provider. Fresh `JS2WASM_TEMPORAL_CACHE=s49b`
+(`cacheHit=false` confirmed), fresh quickjs-eval-adapter recompiled against
+S49's bundle (key `b08634d600e87acc`).
+
+**Result: every group is clean (0 pass→fail) except E-linked**, which S49's
+60-of-300 sample missed entirely: 17 real, reproducible pass→fail
+(Proxy/Reflect tests, provider force-linked; net −7, 235→228/300). Confirmed
+reproducible on rerun (byte-identical batch result, and isolated per-file
+rerun of the 17). E-unlinked (identical 300 files, provider not
+force-linked) stayed clean, narrowing the cause to the linked-provider code
+path — consistent with the #6628 "linking hijacks any closure call"
+mechanism the E-linked probe script exists to test, and with S49 having
+touched `closed-method-dispatch.ts` (shared dispatch infrastructure, not
+just the narrowly-scoped `allowObjectCoercion` marshal). Full per-file error
+strings in `#6634`'s issue file "Criterion-4 battery — FULL RUN, S49b"
+section; `#5383`'s own "### S49b findings" section has the summary.
+
+**New base numbers for the next lane to diff against** (all vs S48b's prior
+baseline, which is now stale for E-linked specifically):
+
+| Group | Base (pre-S49) | S49b measured (post-S49) | Flip |
+| --- | --- | --- | --- |
+| Temporal PlainDate/Duration/PlainDateTime/ZDT | 435/480 | 435/480 | 0 |
+| A | 1125/1250 | 1125/1250 | 0 |
+| B | 179/205 | 179/205 | 0 |
+| C | 274/349 | 274/349 | 0 |
+| D | 224/300 | 224/300 | 0 |
+| E-unlinked | 235/300 | 235/300 | 0 |
+| **E-linked** | **235/300** | **228/300** | **−7 (17 pass→fail, 10 fail→pass)** |
+| F-class | 136/250 | 136/250 | 0 |
+| F-methoddef | 68/100 | 68/100 | 0 |
+| F-objproto | 136/150 | 136/150 | 0 |
+| corpus byte A/B | — | 0/84 flips | 0 |
+| equivalence gate | 22/1720/22 | 22/1720/22 | 0 |
+
+**#5383's target gap is UNCHANGED** — both named rows still fail with the
+byte-identical `Expected SameValue(«null», «undefined»)` error, confirmed
+with the fresh S49b provider. Task 2 (the `SameValue(null, undefined)`
+reduction) remains not attempted.
+
+**Next lane**: two independent threads now open. (1) Task 2 as before — see
+the S49 entry above for the suggested composed repro. (2) NEW — investigate
+or fix the E-linked regression S49b found: 17 real Proxy/Reflect pass→fail
+under `closed-method-dispatch.ts`'s change, force-linked-provider path only.
+Do not treat `#6634`'s "criterion 4: SATISFIED" verdict as settled; S49b's
+issue-file edit already flags it as NOT fully satisfied pending this
+investigation.

@@ -374,40 +374,98 @@ fix-witnesses trap with `illegal cast` on base, all pass on the fix.
 `npx vitest run --maxWorkers=2 tests/issue-66*.test.ts tests/issue-6484-*.test.ts`
 — 36 files / 221 tests (217 base + 4 new), 0 failed.
 
-**Criterion-4 battery (representative samples vs S48b's own baseline TSVs,
-`.tmp/s48b/*.tsv` copied from S48b's worktree)** — full multi-thousand-file
-families were infeasible in this session's time budget; sampled the first N
-files of each family/group instead and diffed PASS/FAIL status against
-S48b's committed baseline for the exact same files:
+**Criterion-4 battery — FULL RUN, S49b (2026-09-18).** S49 above sampled 770
+of ~3,204 must-not-move files plus skipped the four-family Temporal battery
+and the corpus byte check for time. S49b (a separate measurement-only lane,
+branch `issue-5383-standalone-temporal-s49b`, HEAD `3df9b3f8eb` — S49's own
+tip, no code changes) ran every file, both targets where applicable, and the
+equivalence gate, against S48b's committed base TSVs
+(`.tmp/s48b/*.tsv` copied into `.tmp/s49b/`):
 
-| Group | Files sampled | Baseline source | Status flips |
-| --- | --- | --- | --- |
-| A (general JS corpus) | 150 (of 1250) | `A-cur-p1.tsv` | 0 |
-| B | 100 (of 205) | `B-cur.tsv` | 0 |
-| C | 100 (of 349) | `C-cur-p1.tsv` | 0 |
-| D | 100 (of 300) | `D-cur-p1.tsv` | 0 |
-| E-unlinked | 60 (of 300) | `E-unlinked/E-cur-p0.tsv` | 0 |
-| E-linked | 60 (of 300) | `E-linked/E-cur-p0.tsv` | 0 |
-| F-class | 80 (of 250) | `F-class-fix.tsv` | 0 |
-| F-methoddef | 60 (of 100) | `F-methoddef-fix.tsv` | 0 |
-| F-objproto | 60 (of 150) | `F-objproto-fix.tsv` | 0 |
-| **Total** | **770** | | **0** |
+| Group | Files run | Base pass | New pass | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| Temporal PlainDate | 120 | 113 | 113 | 0 | 0 |
+| Temporal Duration | 120 | 106 | 106 | 0 | 0 |
+| Temporal PlainDateTime | 120 | 113 | 113 | 0 | 0 |
+| Temporal ZonedDateTime | 120 | 103 | 103 | 0 | 0 |
+| A (general JS corpus) | 1250 | 1125 | 1125 | 0 | 0 |
+| B | 205 | 179 | 179 | 0 | 0 |
+| C | 349 | 274 | 274 | 0 | 0 |
+| D | 300 | 224 | 224 | 0 | 0 |
+| E-unlinked (Proxy+Reflect, provider not linked) | 300 | 235 | 235 | 0 | 0 |
+| **E-linked (Proxy+Reflect, provider force-linked)** | 300 | 235 | 228 | **17** | 10 |
+| F-class | 250 | 136 | 136 | 0 | 0 |
+| F-methoddef | 100 | 68 | 68 | 0 | 0 |
+| F-objproto | 150 | 136 | 136 | 0 | 0 |
 
-0 status flips (pass↔fail, or any other status transition) across all 770
-sampled files. The Temporal four-family battery (PlainDate/Duration/
-PlainDateTime/ZonedDateTime, 480 files) and the full corpus byte A/B (42
-files × {gc, standalone}) were NOT re-run this session — S49's change is
-scoped to a narrow, newly-added coercion path (`allowObjectCoercion`
-opt-in, only live for mixed class+literal interface dispatchers) that these
-files are not expected to exercise differently than S48b already measured
-(S48b found 0 movement in both), but this is an inference, not a
-measurement, and is flagged here for the next lane to close if a stricter
-audit is wanted.
+Corpus byte A/B: 42 files × {gc, standalone} = 84 rows vs S48b's
+`corpus-cur.jsonl` — **0 status flips, 0 sha movers on either target.** (The
+playground/fixtures corpus does not happen to contain a file that exercises
+the mixed class+literal dispatcher shape S49 touches, so this check is
+clean but inconclusive about the fix's blast radius specifically — it is not
+evidence *for* the fix, only evidence that ordinary compiles are
+unaffected.)
 
 `npm run -s test:equivalence:gate`: `22 failing, 1720 passing, 22
 known-failures in baseline` — `✓ No new equivalence regressions.` Matches
-S48b's figure exactly (logged in `.tmp/s49/equiv.log` in this worktree).
+S48b's and S49's own figures exactly.
 
-**Verdict on criterion 4: SATISFIED for S49's own diff**, on the sampled
-evidence above (0/770 flips) plus the narrow, opt-in-gated blast radius of
-the change (every un-opted-in call site is byte-identical to S48b's tip).
+The two `era` rows
+(`test/built-ins/Temporal/PlainDate/from/argument-object-valid.js`,
+`…/argument-string.js`) still fail identically with a fresh provider:
+`Test262Error: Expected SameValue(«null», «undefined») to be true` on both —
+unchanged from S48b, not a new failure.
+
+**Finding: E-linked has a real, reproducible regression — 17 pass→fail (and
+10 fail→pass, net −7).** This is NOT rationalized away. Confirmed
+reproducible: reran the full E-linked[0:150] part under a second label and
+got byte-identical results (97 pass / 53 fail both times, same file set).
+Also reran the 17 flipped files in isolation via a fresh QuickJS session and
+got the same fail status for all 17. The 17 pass→fail files and their error
+strings:
+
+| File | Error |
+| --- | --- |
+| `Proxy/apply/call-result.js` | `Test262Error: Expected SameValue(«null», «[object Object]») to be true \| at L17: throw new Test262Error('target should not be called');` |
+| `Proxy/apply/return-abrupt.js` | `Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all \| at L15: throw new Test262Error();` |
+| `Proxy/apply/trap-is-null.js` | `TypeError: Proxy trap is not callable \| at L44: assert.sameValue(calls, 1, "apply is null: [[Call]] is invoked once");` |
+| `Proxy/apply/trap-is-undefined-no-property.js` | `TypeError: Proxy trap is not callable \| at L41: assert.sameValue(calls, 1, "apply is missing: [[Call]] is invoked once");` |
+| `Proxy/apply/trap-is-undefined.js` | `TypeError: Proxy trap is not callable \| at L44: assert.sameValue(calls, 1, "apply is undefined: [[Call]] is invoked once");` |
+| `Proxy/construct/call-parameters.js` | `TypeError: Proxy target is not a constructor \| at L35: assert.sameValue(_handler, handler, "trap context is the handler object");` |
+| `Proxy/construct/call-result.js` | `TypeError: Proxy construct trap must return an object \| at L16: throw new Test262Error('target should not be called');` |
+| `Proxy/construct/return-is-abrupt.js` | `Test262Error: Expected a Test262Error but got a undefined \| at L19: throw new Test262Error();` |
+| `Proxy/create-target-is-not-a-constructor.js` | `undefined \| at L29: assert.sameValue(isConstructor(proxy), false, 'isConstructor(proxy) must return false');` |
+| `Proxy/deleteProperty/return-false-not-strict.js` | `TypeError: Cannot delete non-configurable property in strict mode \| at L20: assert.sameValue(delete p.attr, false);` |
+| `Proxy/getOwnPropertyDescriptor/resultdesc-is-not-configurable-not-writable-targetdesc-is-writable.js` | `Test262Error: Expected a TypeError to be thrown but no exception was thrown at all \| at L38: assert.throws(TypeError, function() {` |
+| `Proxy/getPrototypeOf/extensible-target-return-handlerproto.js` | `Test262Error: Expected SameValue(«null», «[object Object]») to be true \| at L36: assert.sameValue(Object.getPrototypeOf(p), prot);` |
+| `Proxy/has/return-false-target-prop-exists-using-with.js` | `ReferenceError: assert is not defined \| at L29: assert.sameValue(attr, 0);` |
+| `Proxy/has/return-true-target-prop-exists-using-with.js` | `ReferenceError: assert is not defined \| at L26: assert.sameValue(attr, 1);` |
+| `Reflect/apply/arguments-list-is-not-array-like-but-still-valid.js` | `TypeError: Array.prototype.map called on null or undefined \| at L49: assert.compareArray(Reflect.apply(fn, null, f_unction), [undefined]);` |
+| `Reflect/apply/call-target.js` | `Test262Error: Called target with \`o\` as \`this\` object Expected SameValue(«[object Object]», «[object Object]») to be true \| at L31: assert.sameValue(count, 1, 'Called target once');` |
+| `Reflect/construct/return-with-newtarget-argument.js` | `compile_error: Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).` |
+
+Reproduces on re-run: **yes**, both at the batch level (identical
+pass/fail split across two independent runs) and per-file (isolated
+re-execution of just these 17 files reproduces the same failures). This is
+measurement only — root-causing whether this is a genuine S49 side effect
+on Proxy/Reflect trap dispatch (plausible, since E-linked specifically
+forces every file through the same closed-method-dispatch/production
+temporal-link path #6628 already showed can hijack closures, and S49
+touches `closed-method-dispatch.ts`) versus some other cause is out of
+scope for this measurement-only lane; flagged for the owning lane to
+investigate before treating #6634 as fully clean against the E-linked
+battery. E-unlinked (same files, provider not force-linked) is clean
+(0/0 flips), which narrows the suspect to the linked-provider code path
+specifically, consistent with the #6628 hijack mechanism the E-linked
+script's own comment describes.
+
+**Verdict on criterion 4: NOT fully satisfied.** 0/3,014 flips across every
+must-not-move group except E-linked, where S49b found 17 real, reproducible
+pass→fail (net −7 vs S48b's baseline). Every other check (four Temporal
+families 435/480 unchanged, corpus byte A/B 0/84 flips, equivalence gate
+22/1720/22 unchanged, both era rows unchanged) is clean. The narrow,
+opt-in-gated blast radius argument from S49's own writeup does not explain
+the E-linked result, since E-linked's files are Proxy/Reflect tests with no
+`allowObjectCoercion` call site in their own compile — the regression must
+be indirect (shared closed-dispatch infrastructure touched by S49's second
+file, `closed-method-dispatch.ts`).

@@ -10448,3 +10448,45 @@ flips against S48b's own baseline TSVs for the same files. Full detail,
 including why the four-family Temporal battery and full corpus byte A/B were
 NOT re-measured this session (inferred-safe but unmeasured), in `#6634`'s
 issue file "## S49 fix" section.
+
+### S49b findings (2026-09-18) — measurement-only, full must-not-move battery
+against S49's tip; every group clean except a real, reproducible E-linked
+regression S49's own sample missed
+
+S49b (branch `issue-5383-standalone-temporal-s49b`, worktree off S49's tip
+`3df9b3f8eb`, no code changes) closed S49's own sampling gap: ran the FULL
+must-not-move battery (~3,014 files across A–F, four Temporal families,
+corpus byte A/B, equivalence gate) that S49 had only sampled 770-of ≈3,204
+files for, in full detail. Fresh temporal-provider cache confirmed
+(`cacheHit=false`), fresh quickjs-eval-adapter (recompiled against S49's
+bundle, key `b08634d600e87acc`).
+
+**Every group is clean (0 pass→fail) except E-linked**, which S49's sample
+(60 of 300) missed: 17 real, reproducible pass→fail (Proxy/Reflect tests,
+provider force-linked), net −7 vs S48b's baseline of 235/300. E-unlinked
+(same 300 files, provider NOT force-linked) is clean — narrowing the
+regression to the linked-provider code path specifically. Reproduced twice
+(full-batch rerun: byte-identical 97/53 split; isolated rerun of just the 17
+files: same 17 fail). Full per-file error strings and the four-family/A–F/
+corpus/equivalence tables are in `#6634`'s issue file, "Criterion-4 battery —
+FULL RUN, S49b" section (this lane wrote the tables there rather than
+duplicating them here, since #6634 is the PR whose criterion-4 claim this
+battery validates).
+
+**This does not change #5383's target-gap status** — the two named test262
+rows are untouched, still `SameValue(«null», «undefined»)`, confirmed with
+the S49b fresh provider. It DOES mean #6634's own "criterion 4: SATISFIED"
+verdict needs revisiting: the E-linked regression is real and was not caught
+by S49's sample. Flagged for the owning lane (`#6634`) to decide whether to
+accept, investigate, or revert the `closed-method-dispatch.ts` change's
+effect on Proxy/Reflect trap dispatch under the linked-provider path.
+
+Stack state 2026-09-18 (post-S49b), new base numbers for the next lane to
+diff against: Temporal PlainDate 113/120, Duration 106/120, PlainDateTime
+113/120, ZDT 103/120 (435/480 total, unchanged from S48b); A 1125/1250; B
+179/205; C 274/349; D 224/300; E-unlinked 235/300; **E-linked 228/300** (was
+235/300 pre-S49 — this is the new true baseline for `main`/S49's tip, not a
+measurement error); F-class 136/250; F-methoddef 68/100; F-objproto
+136/150; corpus byte A/B 0/84 flips vs S48b; equivalence gate 22/1720/22
+unchanged.
+
