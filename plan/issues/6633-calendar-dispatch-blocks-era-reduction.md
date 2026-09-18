@@ -142,6 +142,12 @@ blocks other interface-heavy standalone code paths beyond Temporal.
 
 ## S48 resolution (2026-09-18)
 
+Permanent repro: both reductions below are pinned as fix-witnesses in
+`tests/issue-6634-interface-dictionary-literal-vs-class-dispatch.test.ts`
+(the repro9 and repro13 shapes, failing on the pre-#6634 tree and passing
+after it), which is why this issue carries no `tests/issue-6633-*` file of its
+own.
+
 Both reductions fixed by `#6634` — see that issue for the full root-cause
 analysis and fix. Root cause was NOT the call-dispatch ladder this issue's own
 findings suspected; it was one level upstream, at the interface's own
