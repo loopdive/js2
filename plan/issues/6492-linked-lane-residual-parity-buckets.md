@@ -2009,3 +2009,39 @@ brief were not reached.
     plan whose second half is independently measurable is worth measuring FIRST
     when it is the cheap one — the +9/−4 here took four runs and settled the
     sequencing question for the expensive half before a line of (a) was written.
+
+## Round 12 (2026-09-18) — #6502 step 1 answered: the type is not in the census
+
+**No code landed** (step 1 was a measurement task). Linked **44 / 138**, honest
+**135 / 138**, unchanged.
+
+The escaping closure's struct type is **absent from
+`ctx.closureInfoByTypeIdx`** — the census every `__call_fn_N` arm set is built
+from. Proof, full table and the two temporary probes are in **#6502**; the
+decisive four facts:
+
+1. `__is_closure` says 1 (base-wrapper `ref.test`).
+2. `__closure_arity` says 1 — a **field** read, so authoritative about the value.
+3. A census `ref.test` ladder answers **type 41 / 3 params** in the consumer and
+   **type 17 / 0 params** in the provider: two answers, neither matching (2),
+   i.e. structural neighbours rather than the value's type.
+4. **Every `__call_fn_0..4` in both modules returns null**, including the arity
+   where the neighbour's func type IS admitted.
+
+A runtime-only fix is therefore ruled out — no module has an arm at any arity,
+so no owner lookup or arity retry can reach it. Step 2 is emitter work: register
+the missing closure kind into the census at mint time (or build the arm set from
+the same registry the base test and the arity field come from). The prime
+suspect is the async-function / trampoline family — every failing row is
+`asyncTest(foo)` over an `async function` declaration, and that lowering exports
+its `__cb_N` continuations directly rather than through the closure registry.
+
+### Finding for the next lane (round 12)
+
+30. **When several `ref.test` ladders disagree about one value, the value's type
+    is in none of them.** Here three ladders gave three answers (yes / 3 params
+    / 0 params) while the one non-ladder helper — an arity FIELD read — gave the
+    true one. A ladder cannot report "absent"; it reports its nearest
+    structural neighbour, which reads exactly like a wrong answer instead of a
+    missing entry. Cross-check any ladder answer against a field read before
+    believing it.

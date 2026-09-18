@@ -137,3 +137,75 @@ today (three of them #6492 round 9's own gains) for nine, and leaves the real
 defect in place. The +9 is, separately, evidence that the silent null is
 corrupting descriptor reads elsewhere in the corpus — so (a) is worth more than
 the three `await` rows it was filed for.
+
+## Round 12 (2026-09-18) — step 1: the escaping closure's type is NOT IN THE CENSUS
+
+Measured with two temporary probes, both reverted: a debug export
+`__closure_type_probe(externref) -> i32` emitted under `JS2WASM_DBG_TYPEPROBE=1`
+(a `ref.test` ladder over every entry of `ctx.closureInfoByTypeIdx`,
+most-derived first, answering `typeIdx*1000 + paramTypes.length`), and an
+`[ARMS] admit` trace inside `emitClosureCallExportN`.
+
+### The admitted arm set (consumer module, `await-awaits-thenable-not-callable.js`)
+
+| `__call_fn_N` | admitted `funcTypeIdx` |
+| --- | --- |
+| 0 | 18, 56, 58, 74 |
+| 1 | 18, 43, 47, 54, 56, 58, 74 |
+| 2 | 18, 37, 43, 47, 50, 52, 54, 56, 58, 63, 74 |
+| 3 | 18, 37, 40, 43, 47, 50, 52, 54, 56, 58, 60, 63, 74 |
+| 4 | same as 3 |
+
+The consumer registers 31 closure types; the provider registers exactly one
+(`17`, ft 18, 0 params).
+
+### What the runtime says about the value that misses
+
+```
+[TYPEPROBE miss] args=1 arity=1 declared=1
+  | mod0:type=41,nparams=3,arms=[01234]
+  | mod1:type=17,nparams=0,arms=[01234]
+```
+
+Four facts, and together they identify the defect:
+
+1. `__is_closure` answers **1** in both modules (a base-wrapper `ref.test`).
+2. `__closure_arity` answers **1** — and that is a **field read**
+   (`CLOSURE_ARITY_FIELD_IDX`), not a type property, so it is authoritative
+   about the value: this closure really does take one argument.
+3. The census probe answers **type 41, 3 params** in the consumer and **type 17,
+   0 params** in the provider — two different answers for one value, neither
+   consistent with (2). A `ref.test` ladder returns the first *structurally
+   compatible* type it tests, so these are **structural neighbours**, not the
+   value's type.
+4. Exhaustive re-dispatch — **every `__call_fn_0..4` in BOTH modules**, with
+   arguments padded per arity — returns `null`. Including `__call_fn_3`, which
+   does admit ft 40, the func type the probe's neighbour (type 41) is
+   registered under.
+
+So the value's own struct type is **absent from `ctx.closureInfoByTypeIdx`** in
+both modules. Every consumer of the census misses it; the two helpers that do
+not consult the census (the base-type test and the arity FIELD read) answer
+correctly. The census probe cannot name the real type for exactly the same
+reason the arms cannot dispatch it — which is why its answer disagrees with the
+arity field, and that disagreement is the signature to look for.
+
+This confirms the predicted shape: a closure kind minted by an emitter path that
+never registers into `closureInfoByTypeIdx` (the async-function / trampoline
+family is the prime suspect — the failing rows are all `asyncTest(foo)` over an
+`async function` declaration, and the module's async lowering exports `__cb_0`/
+`__cb_1` continuations directly rather than through the closure registry).
+
+### Step 2, unchanged but now targeted
+
+Enumerate the arm set from the registry that `__is_closure` / `__closure_arity`
+are built from, not from the call-site census — or register the missing kind
+into `closureInfoByTypeIdx` at mint time so all five ladders see it. The next
+lane should first confirm WHICH emitter mints it (instrument the closure
+allocation sites for the async/trampoline path and print the struct typeIdx),
+because the type is currently unnamed — the probe above can only prove it is not
+in the census, never what it is.
+
+**A runtime-only fix is ruled out** by fact 4: no module has an arm at any
+arity, so no amount of owner lookup or arity retry can help. It has to be the
+emitter.
