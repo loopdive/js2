@@ -6386,7 +6386,7 @@ export function _mirrorPolyfillThenable(value: any): any {
   // whole-assembly lane is exactly that single-module case, so fall back to the
   // live instance's own exports — gated on a decode probe, never assumed, so a
   // multi-instance embedder cannot hand a struct to a stranger's decoder.
-  const local = _latestInstanceExports?.();
+  const local = _latestInstance?.deref()?.getExports();
   const exports = _crossModuleStructs.decoderFor(value, local) ?? (_decodes(local, value) ? local : undefined);
   return exports ? _wrapForHost(value, exports) : value;
 }
@@ -6407,7 +6407,12 @@ function _decodes(exports: Record<string, Function> | undefined, obj: object): b
  * The live instance's exports, for module-scope helpers that run during a call
  * but are installed before any instance exists (the keyed-combinator mirror).
  */
-let _latestInstanceExports: (() => Record<string, Function> | undefined) | undefined;
+// (#6492 r20 → #5983) A WeakRef, never a strong closure: a module-level strong
+// reference to the latest instance's callbackState kept every instance graph
+// reachable across a single-fork vitest run (the pinned `issue-tests` and the
+// guard-suite OOMed at ~510 MB after two files). The mirror only needs the
+// exports while that instance is alive anyway.
+let _latestInstance: WeakRef<{ getExports: () => Record<string, Function> | undefined }> | undefined;
 
 /** (#5225) Record a linked provider's exports as a decoder for the project. */
 export function registerLinkedProviderModule(exports: Record<string, Function>): void {
@@ -19628,7 +19633,7 @@ export function buildImports(
       }),
   });
   const callbackState = lifecycle.callbackState;
-  _latestInstanceExports = () => callbackState.getExports();
+  _latestInstance = new WeakRef(callbackState);
   timerCallbackBridge.bindCallbackState(callbackState, (value, arity) => _wrapWasmClosure(value, arity, callbackState));
   domCapabilityRuntime?.bindCallbackState(callbackState);
   const hostImportCallState = createHostImportCallState();

@@ -53,6 +53,10 @@ type AnyFn = (...args: any[]) => any;
  */
 export type ThenableMirror = (value: any) => any;
 
+type MirrorSlot = { current: WeakRef<ThenableMirror> | undefined };
+const MIRROR_SLOT: unique symbol = Symbol.for("js2wasm.promiseKeyed.mirrorSlot");
+const identityMirror: ThenableMirror = (value: any) => value;
+
 /** §7.3.x GetPromiseResolve(C) — `Get(C, "resolve")`, must be callable. */
 function getPromiseResolve(C: any): AnyFn {
   const promiseResolve = C.resolve;
@@ -194,16 +198,32 @@ function performPromiseAllKeyed(
  * Install `allKeyed` / `allSettledKeyed` on `PromiseCtor` when the host does
  * not already provide them. Never overwrites a native implementation.
  */
-export function _installPromiseKeyedCombinators(
-  PromiseCtor: any,
-  mirrorThenable: ThenableMirror = (value: any) => value,
-): void {
+export function _installPromiseKeyedCombinators(PromiseCtor: any, mirrorThenable?: ThenableMirror): void {
   if (PromiseCtor == null || typeof PromiseCtor !== "function") return;
   for (const [name, settled] of [
     ["allKeyed", false],
     ["allSettledKeyed", true],
   ] as const) {
-    if (typeof PromiseCtor[name] === "function") continue;
+    const existing = PromiseCtor[name];
+    if (typeof existing === "function") {
+      // Ours from an earlier install (first-wins keeps the method's identity):
+      // point its mirror slot at the CURRENT runtime module. Weakly — see the
+      // slot's comment. A native or user-provided function is left alone.
+      const slot = existing[MIRROR_SLOT] as MirrorSlot | undefined;
+      if (slot !== undefined && mirrorThenable !== undefined) slot.current = new WeakRef(mirrorThenable);
+      continue;
+    }
+    // (#5983) The mirror is held through a WeakRef, never captured directly.
+    // The installed method lives on the GLOBAL `Promise` for the life of the
+    // process, while `mirrorThenable` is a function of `src/runtime.ts`'s
+    // module scope — the #5225 decoder registry, the instance callback
+    // states, every struct they reach. A strong capture pinned the whole
+    // module graph of the FIRST test file that instantiated a program, so a
+    // single-fork vitest run (the pinned `issue-tests` job, the guard-suite)
+    // could never reclaim it: 486 MB after file 1, 493 MB after file 2, OOM on
+    // file 3; on main file 2 dropped to 207 MB. A dead mirror derefs to
+    // identity, which is exactly the pure-host default.
+    const slot: MirrorSlot = { current: mirrorThenable === undefined ? undefined : new WeakRef(mirrorThenable) };
     // (#6492 r20) A METHOD SHORTHAND, deliberately — a `function` expression is
     // constructible, and `not-a-constructor.js` asserts
     // `isConstructor(Promise.allKeyed) === false` (the harness probes with
@@ -248,7 +268,8 @@ export function _installPromiseKeyedCombinators(
         // `*-reject.js` half of the family.
         try {
           const promiseResolve = getPromiseResolve(C);
-          return performPromiseAllKeyed(settled, promises, C, capability, promiseResolve, mirrorThenable);
+          const mirror = slot.current?.deref() ?? identityMirror;
+          return performPromiseAllKeyed(settled, promises, C, capability, promiseResolve, mirror);
         } catch (error) {
           capability.reject(error);
           return promise;
@@ -256,6 +277,12 @@ export function _installPromiseKeyedCombinators(
       },
     };
     const method = holder[name];
+    Object.defineProperty(method, MIRROR_SLOT, {
+      value: slot,
+      writable: false,
+      enumerable: false,
+      configurable: false,
+    });
     Object.defineProperty(method, "length", {
       value: 1,
       writable: false,
