@@ -2209,3 +2209,98 @@ miss. What is withdrawn is the claim that fixing it was worth +9/−4.
     is fixed, any `emitClosureCallExportN` change that registers an import is
     measured against a corrupted baseline — subtract #6503's delta, or fix it
     first.
+
+## Round 4d — the four `built-ins/Iterator` observation-order rows
+
+Measured with the real single-row runner, fresh harness cache, rebuilt bundles,
+A/B against this branch's own base (`git show HEAD:` copies of the two files):
+
+| row | linked before | linked after |
+| --- | --- | --- |
+| `Iterator/prototype/map/underlying-iterator-advanced-in-parallel.js` | fail `Expected SameValue(«0», «3»)` | **pass** |
+| `Iterator/prototype/filter/underlying-iterator-advanced-in-parallel.js` | fail `Expected SameValue(«0», «3»)` | **pass** |
+| `Iterator/zipKeyed/iterables-iteration-after-reading-options.js` | fail `Actual [get mode, get padding] and expected [get mode, get padding, own-keys]` | **pass** |
+| `Iterator/zipKeyed/padding-iteration.js` | fail `Actual [] and expected [a]` | **pass** |
+
+Wider, same A/B:
+
+| slice | lane | before | after | lost |
+| --- | --- | --- | --- | --- |
+| `built-ins/Iterator/` (654) | linked | 394 | 398 | 0 |
+| `Proxy + Reflect + assignment + destructuring + Iterator` (1,624) | linked | 1,165 | 1,172 | 0 |
+| same 1,624 | honest | 1,152 | 1,155 | 0 |
+
+The three extra linked rows are `Proxy/has/call-in-prototype.js` and
+`Proxy/set/call-parameters-prototype{,-dunder-proto}.js` (they assert the
+handler is the trap's `this`); the three extra honest rows are
+`Iterator/prototype/{every,find,some}/iterator-has-no-return.js`.
+
+### They were not one bug, and neither one is about iterators
+
+**Lead 1 — which implementation does `Iterator.zipKeyed` resolve to?**
+`src/codegen/expressions/calls.ts:6554` is `tryIteratorStaticsIntrinsicCall`,
+whose first line is `if (!ctx.standalone && !ctx.wasi) return undefined;` — it
+is **dead in the host linked lane**. The call resolves to the host polyfill in
+`src/runtime/iterator-polyfills.ts`, reached through the #3049
+`_iteratorRecordForHost` shim; evidence is the emitted import list, which
+carries `env.__extern_method_call_2` and no `__j2w_iter_*` (a standalone build's
+prelude intrinsics). The polyfill's `zipKeyed` was already correct: it does
+`Reflect.ownKeys(iterables)` and then `paddingOption[key]` per key, exactly what
+the two tests observe.
+
+What was wrong is that the tests observe it **through a Proxy whose handler the
+harness built**. `_buildProxyBridgeHandler` read the handler's trap fields with
+the READER module's `__sget_<trap>` getters; a handler minted by the linked
+harness provider (`allowProxyTraps(...)` from `proxyTrapsHelper.js`) is a struct
+of the PROVIDER module, so every getter `ref.test`-missed, every trap resolved
+ABSENT, and §7.3.10's "missing trap ⇒ the target's own internal method" kicked
+in. No trap fired, nothing threw, `own-keys` and the padding `Get`s simply never
+appeared in the log. Every other struct read in the runtime already performs the
+#5225 cross-module decoder selection (`_decoderExportsFor`); the proxy bridge was
+the one reader that skipped it. Fixed in both the eager and the lazy builder.
+
+One asymmetry the fix has to respect, and the first cut got wrong: the
+**handler's** owning module decides how to READ the trap fields, but each **trap
+closure's** own owning module decides how to DISPATCH it — a provider-minted
+handler routinely holds a consumer-minted closure (`allowProxyTraps({ get })`
+with a body-defined `get` is precisely that shape). Using the handler's module
+for both sends the dispatch back through the wrong `__call_fn_*` family and
+recurses until `Maximum call stack size exceeded`. So: `_decoderExportsFor(handler, …)`
+for the field read, `_crossModuleCallbackState(rawTrap, …)` for the dispatch.
+
+**Lead 2 — `_iteratorRecordForHost` snapshot vs `_GeneratorState`.** Neither.
+Instrumenting the shim showed it returning `{value: 3}` and `{value: 4}`
+correctly while the test still read `0`, so the ordering was never wrong. The
+defect is in codegen and has nothing to do with iterators: in a module-init
+chunk, a top-level destructuring **assignment** `({ value, done } = …)` stored
+ONLY to the `$__mod_<name>` global, while every read resolved the mirrored LOCAL
+that the `let { value, done } = …` **declaration** had established.
+`emitResolvedIdentifierWriteFromStack` already mirrors the durable global store
+into a shadow local — but only via `fctx.moduleBindingShadowLocals`, which is
+populated solely by the closure-global arm of `statements/variables.ts`. A
+destructuring declaration registers nothing there, so the mirror was skipped and
+the assignment was silently lost. The fix falls back to the same-named local
+when its ValType matches the global's (a `local.tee` of a mismatched type is
+invalid wasm; those bindings keep the old global-only store).
+
+### Findings for the next lane (round 10)
+
+25. **The failure that looks shape-dependent is usually a missing mirror, not a
+    heisenbug.** The lost-assignment bug reproduced only in bodies that also
+    contained an `assert.sameValue(a, b)` call, and not in an otherwise
+    identical body that used `console.log`. That is not randomness: whether the
+    reader takes the local path or the global path is decided by what else the
+    body compiles. Bisecting the *source shape* cost far more than reading the
+    emitted WAT for the two variants, which showed `global.set 12` with no
+    matching `local.set 10` in about a minute.
+26. **Instrument the layer you suspect before narrowing the input.** Four
+    rounds of source bisection pointed at iterators. One `console.error` inside
+    `_iteratorRecordForHost` showed it answering `3` and `4` correctly and moved
+    the search to the consumer in a single run.
+27. **"Trap absent" and "trap unreadable" are indistinguishable at the call
+    site, and the spec makes the first one silent.** A cross-module read that
+    misses degrades into correct-looking default behaviour with no throw and no
+    log. Any `__sget_*` read in the runtime that does not go through
+    `_decoderExportsFor` is a candidate for the same class of silent wrong
+    answer — this was the last one in the proxy path, not necessarily the last
+    one in the runtime.

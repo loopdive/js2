@@ -10069,7 +10069,17 @@ function _buildProxyBridgeHandler(
     return rawTarget === undefined ? handler : _wrapPlainHandlerForRawTarget(handler, rawTarget);
   }
 
-  const exports = callbackState?.getExports();
+  // (#6492 round 4d) Read the handler's trap fields with the exports of the
+  // module that MINTED it, not the reader's. In the #3451 linked test262 lane a
+  // handler built by the harness provider (`allowProxyTraps(...)` from
+  // `proxyTrapsHelper.js`) is a struct of the PROVIDER module, so the body
+  // module's `__sget_<trap>` getter `ref.test`-misses and every trap read as
+  // ABSENT — the host then used its default internal method and the user's
+  // traps silently never fired (`new Proxy(t, allowProxyTraps({get}))` returned
+  // the target's value and logged nothing). This is the same cross-module
+  // decoder selection every other struct read already performs (#5225); the
+  // proxy bridge was the one reader that skipped it.
+  const exports = _decoderExportsFor(handler, callbackState?.getExports());
 
   // (#2618) START-timing: a TOP-LEVEL `new Proxy(target, handler)` — the
   // dominant test262 shape (`var p = new Proxy(...)` at module scope; every
@@ -10111,7 +10121,10 @@ function _buildProxyBridgeHandler(
       }
       continue;
     }
-    const callable = _maybeWrapCallableUnknownArity(rawTrap, callbackState);
+    // The TRAP's own module decides how to dispatch it — which is not
+    // necessarily the handler's (the handler object can be minted by the
+    // provider while the trap closure stored in it came from the consumer).
+    const callable = _maybeWrapCallableUnknownArity(rawTrap, _crossModuleCallbackState(rawTrap, callbackState));
     if (typeof callable !== "function") {
       // (#2616) §7.3.10 GetMethod: a present-but-non-callable trap value (`{}`,
       // `1`, `"x"`, …) is NOT absence — it must throw a TypeError when the owning
@@ -10200,7 +10213,12 @@ function _buildLazyProxyBridgeHandler(
     const substituteTarget = rawTarget !== undefined && (name === "apply" || name === "construct");
     bridge[name] = function (this: any, ...args: any[]): any {
       const nativeTarget = args[0];
-      const lateExports = callbackState?.getExports();
+      // (#6492 round 4d) Same cross-module decoder selection as the eager
+      // builder: in a linked project the handler struct may belong to another
+      // module, whose `__sget_<trap>` getters are the only ones that can read
+      // it. Without this every trap resolves ABSENT and the host silently uses
+      // its default internal method.
+      const lateExports = _decoderExportsFor(handler, callbackState?.getExports());
       const rawTrap = _structFieldRaw(handler, name, lateExports);
       if (rawTrap == null) {
         // Trap genuinely absent → forward to the target's default internal
@@ -10222,7 +10240,7 @@ function _buildLazyProxyBridgeHandler(
       // is identity-equal to what the program passed to `new Proxy`.
       if (args.length > 0 && trapTarget !== undefined) args[0] = trapTarget;
       else if (substituteTarget && args.length > 0) args[0] = rawTarget;
-      const callable = _maybeWrapCallableUnknownArity(rawTrap, callbackState);
+      const callable = _maybeWrapCallableUnknownArity(rawTrap, _crossModuleCallbackState(rawTrap, callbackState));
       if (typeof callable !== "function") {
         throw new TypeError(`'${name}' on proxy: trap is not a function`);
       }
