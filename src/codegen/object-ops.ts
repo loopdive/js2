@@ -576,25 +576,27 @@ function maybeEmitVecLengthGrowth(
   // hole-aware — the invariant round 4b records: reads and stores must be
   // armed by the same pre-pass, because function compilation order is not
   // source order.
-  // Only a DATA descriptor. An ACCESSOR define writes no element, so the marker
-  // the fill leaves behind would survive and the index would read back as
-  // ABSENT — `15.2.3.6-4-538-6` defines a getter/setter on an `arguments`
-  // object and then redefines it with a value, and the stale marker made the
-  // result read non-configurable. A data descriptor's value is written by
-  // `_vecDefineOwnProperty` immediately after this, which overwrites the
-  // marker; a marker only survives where the define genuinely leaves the slot
-  // with no value, which is exactly what §10.1.6.3 calls absent. A
-  // non-literal descriptor is unknowable here and is treated as "not a data
-  // descriptor" — that is the pre-#6482-r7 behaviour, so it can lose nothing.
+  // Everything EXCEPT a statically recognisable ACCESSOR descriptor.
+  //
+  // An accessor define writes no element, and its index must stay readable
+  // through the accessor — `15.2.3.6-4-538-6` defines a getter/setter on a
+  // fresh index and then redefines it with a value, and a marker left by the
+  // first define made the result read non-configurable.
+  //
+  // Everything else fills, INCLUDING a descriptor with no `value` at all
+  // (`{}`, or attributes-only). That is not an omission: on a FRESH index
+  // §10.1.6.3 says the absent `value` is `undefined`, and
+  // `15.2.3.6-4-{191,199,229,234,236,244}` assert exactly that — requiring a
+  // literal `value` property left all six reading back the stale slot
+  // (`0 descriptor value should be undefined`). A `value` that IS present is
+  // written by `_vecDefineOwnProperty` right after this and overwrites the
+  // marker, so filling costs it nothing.
+  //
+  // A NON-literal descriptor is unknowable here and does not fill — the
+  // pre-#6482-r7 behaviour, so it can lose nothing.
   const descIsStaticDataDescriptor =
     descArg !== undefined &&
     ts.isObjectLiteralExpression(descArg) &&
-    descArg.properties.some(
-      (prop) =>
-        (ts.isPropertyAssignment(prop) || ts.isShorthandPropertyAssignment(prop)) &&
-        ts.isIdentifier(prop.name) &&
-        prop.name.text === "value",
-    ) &&
     !descArg.properties.some(
       (prop) =>
         (ts.isPropertyAssignment(prop) || ts.isMethodDeclaration(prop)) &&

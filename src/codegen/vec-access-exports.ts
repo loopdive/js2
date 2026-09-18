@@ -12,7 +12,7 @@ import { STABLE_FUNC_BASE } from "../emit/resolve-layout.js";
 import type { FuncHandle, Instr, ValType, WasmExport, WasmFunction } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import { undefinedExternInstrs } from "./any-helpers.js"; // (#3315)
-import { ensureHoleType } from "./array-holes.js";
+import { ensureHoleType, holeSentinelInstrs } from "./array-holes.js";
 import type { CodegenContext } from "./context/types.js";
 import { exportFunc } from "./emit-helpers.js";
 import { ensureGetUndefined } from "./expressions/late-imports.js";
@@ -1039,6 +1039,187 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
         exported: true,
       } as never);
       exportFunc(ctx.mod, "__vec_has_own_index", funcIdx);
+    }
+  }
+
+  // __vec_mark_hole(externref, i32) -> i32 — the WRITE twin of
+  // `__vec_has_own_index` (#6482 r5).
+  //
+  // WHY THIS EXPORT EXISTS. A host-side `delete arr[i]` — which is what
+  // propertyHelper's `isConfigurable` performs, and the only path once the
+  // receiver crosses a linked-module edge — cannot reach the in-wasm #3251
+  // overlay where the compiled `delete a[0]` records its `FLAG_DELETED_INDEX`
+  // companion entry. The host can record a tombstone for its OWN surfaces, but
+  // every in-wasm presence read still sees the element sitting in the backing
+  // array and answers "own", so the delete looks like it did nothing
+  // (`0 descriptor should be configurable`, 15.2.3.7-6-a-206/247/249,
+  // 15.2.3.6-4-258/260).
+  //
+  // Writing the f64 ABSENCE MARKER is the one mutation that BOTH sides already
+  // understand: the hole-aware read path maps it to `undefined`
+  // (`vec-f64-hole-presence.ts`), the presence prologues answer absent, and
+  // `__vec_has_own_index` reads it as a hole. No new representation.
+  //
+  // Returns 1 when the slot was marked, 0 when this receiver cannot carry a
+  // marker (non-f64 carrier, out of bounds, unrecognized vec) — the host then
+  // keeps its tombstone-only behaviour, which is what it did before.
+  {
+    // local 0 = vec (externref), local 1 = idx (i32), local 2 = anyref scratch
+    const body: Instr[] = [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 2 }];
+    let current: Instr[] = [{ op: "i32.const", value: 0 }, { op: "return" }];
+    for (let i = vecEntries.length - 1; i >= 0; i--) {
+      const [elemKey, vecTypeIdx] = vecEntries[i]!;
+      const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+      if (arrTypeIdx < 0) continue;
+      const arrDefMark = ctx.mod.types[arrTypeIdx];
+      const markElemIsExternref =
+        arrDefMark !== undefined &&
+        arrDefMark.kind === "array" &&
+        ((arrDefMark.element as ValType).kind === "externref" || (arrDefMark.element as ValType).kind === "ref_extern");
+      // The two carriers that HAVE an absence representation. The externref arm
+      // is gated on `ctx.usesArrayHoles` exactly like the read side: `$Hole` is
+      // minted on demand, and minting it in a module that has no holes would
+      // shift every type index there.
+      const markPayload: Instr[] | undefined =
+        elemKey === "f64"
+          ? [{ op: "i64.const", value: HOLE_F64_BITS }, { op: "f64.reinterpret_i64" }]
+          : markElemIsExternref && ctx.usesArrayHoles
+            ? holeSentinelInstrs(ctx)
+            : undefined;
+      if (markPayload === undefined) continue;
+      const thenBranch: Instr[] = [
+        // idx < 0 -> 0
+        { op: "local.get", index: 1 },
+        { op: "i32.const", value: 0 },
+        { op: "i32.lt_s" },
+        { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+        // idx >= array.len(data) -> 0 (`array.set` would trap)
+        { op: "local.get", index: 1 },
+        { op: "local.get", index: 2 },
+        { op: "ref.cast", typeIdx: vecTypeIdx },
+        { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+        { op: "array.len" },
+        { op: "i32.ge_u" },
+        { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+        // data[idx] = the absence marker for this carrier
+        { op: "local.get", index: 2 },
+        { op: "ref.cast", typeIdx: vecTypeIdx },
+        { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+        { op: "local.get", index: 1 },
+        ...markPayload,
+        { op: "array.set", typeIdx: arrTypeIdx },
+        { op: "i32.const", value: 1 },
+        { op: "return" },
+      ];
+      current = [
+        { op: "local.get", index: 2 },
+        { op: "ref.test", typeIdx: vecTypeIdx },
+        { op: "if", blockType: { kind: "empty" }, then: thenBranch, else: current },
+      ];
+    }
+    // Same impossible-fallthrough marker as `__vec_has_own_index` above.
+    body.push(...current, { op: "unreachable" });
+
+    if (!ctx.mod.exports.some((e) => e.name === "__vec_mark_hole")) {
+      const typeIdx = addFuncType(
+        ctx,
+        [{ kind: "externref" }, { kind: "i32" }],
+        [{ kind: "i32" }],
+        "$__vec_mark_hole_type",
+      );
+      const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+      ctx.mod.functions.push({
+        name: "__vec_mark_hole",
+        typeIdx,
+        locals: [{ name: "__any", type: { kind: "anyref" } as ValType }],
+        body,
+        exported: true,
+      } as never);
+      exportFunc(ctx.mod, "__vec_mark_hole", funcIdx);
+    }
+  }
+
+  // __vec_is_arguments(externref) -> i32 — the ARGUMENTS discriminator the host
+  // does not have (#6482 r8).
+  //
+  // WHY THIS EXPORT EXISTS. The host's only way to ask "is this receiver an
+  // `arguments` exotic object" is `_argumentsObjects`, a WeakSet populated at
+  // the materialization sites — and round 7 measured it FALSE for a receiver
+  // that genuinely is one (`(function(){ return arguments; }())` reaching
+  // `__delete_property` across a linked edge). Acting on that wrong answer put
+  // an absence marker into a vec §10.4.4 requires to stay DENSE, which cost
+  // `15.2.3.6-4-538-6`; declining to act cost the six rows
+  // `15.2.3.6-4-{191,199,229,234,236,244}` that need the host delete arm.
+  //
+  // The wasm side has the fact the host lacks: #4658 brands the arguments
+  // carrier with its own type identity (`$__arguments_vec`), so this is an O(1)
+  // `ref.test` in the module that MINTED the value.
+  //
+  //   1  — an arguments exotic object
+  //   0  — a vec of this module, and NOT arguments
+  //  -1  — I DO NOT KNOW (no vec type matched), same convention as
+  //        `__vec_has_own_index`: a caller that receives it falls back to
+  //        whatever it did before, which is the WeakSet.
+  //
+  // The third value is not decoration. This export is reachable with a vec
+  // minted by ANOTHER module, where every `ref.test` misses; answering `0`
+  // there would assert "definitely not arguments" about a value this module
+  // cannot see at all.
+  {
+    const argVecTypeIdx = ctx.structMap.get("__arguments_vec");
+    // local 0 = vec (externref), local 1 = anyref scratch
+    const body: Instr[] = [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 1 }];
+    // Default: no vec type matched → -1 (don't know).
+    let current: Instr[] = [{ op: "i32.const", value: -1 }, { op: "return" }];
+    for (let i = vecEntries.length - 1; i >= 0; i--) {
+      const [, vecTypeIdx] = vecEntries[i]!;
+      current = [
+        { op: "local.get", index: 1 },
+        { op: "ref.test", typeIdx: vecTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+          else: current,
+        },
+      ];
+    }
+    // The arguments test comes FIRST: `$__arguments_vec` may also ref.test as
+    // one of the carriers above (it is a vec), so a later arm would shadow it.
+    //
+    // WITHOUT the brand this module answers `-1` to EVERYTHING, never `0`.
+    // Measured: with no brand registered the ladder falls through to an
+    // ordinary carrier and reports `0` — "definitely not arguments" — for a
+    // genuine arguments object, which then OVERRIDES the host WeakSet that had
+    // it right (`[argq] export: false weakset: true`). A module that does not
+    // carry the brand has no opinion, and saying so is what lets the caller
+    // keep the answer it already had.
+    const withArguments: Instr[] =
+      argVecTypeIdx === undefined
+        ? [{ op: "i32.const", value: -1 }, { op: "return" }]
+        : [
+            { op: "local.get", index: 1 },
+            { op: "ref.test", typeIdx: argVecTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+              else: current,
+            },
+          ];
+    body.push(...withArguments, { op: "unreachable" });
+
+    if (!ctx.mod.exports.some((e) => e.name === "__vec_is_arguments")) {
+      const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], "$__vec_is_arguments_type");
+      const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+      ctx.mod.functions.push({
+        name: "__vec_is_arguments",
+        typeIdx,
+        locals: [{ name: "__any", type: { kind: "anyref" } as ValType }],
+        body,
+        exported: true,
+      } as never);
+      exportFunc(ctx.mod, "__vec_is_arguments", funcIdx);
     }
   }
 

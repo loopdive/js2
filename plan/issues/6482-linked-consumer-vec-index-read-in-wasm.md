@@ -1098,3 +1098,95 @@ project (host `Object.assign`, mirror writeback, dynamic `this.x[i] = …`), not
 the linked edge. A `_decoderExportsFor` + read-override prototype was written
 and measured: it flips **0** rows, because the write never fails. Reverted
 unshipped; recorded here so the next lane does not rebuild it.
+
+## Round 8 (2026-09-18, Opus lane) — the arguments discriminator, and the delete arm it brings back
+
+Same rig, base `887e87650a` + rounds 6–7 (`ab95b7f81b`, `61b005828e`).
+
+### The missing fact, and where it lives
+
+Round 7 dropped the host `__delete_property` vec-index arm because the host
+could not tell an `arguments` exotic object from an ordinary array:
+`_argumentsObjects` is a WeakSet populated at the arguments MATERIALIZATION
+sites, and it answered **false** for a receiver that genuinely is one. Acting on
+that wrong answer put an absence marker into a vec §10.4.4 requires to stay
+DENSE (`15.2.3.6-4-538-6`); declining to act cost six rows.
+
+`__vec_is_arguments(externref) -> i32` supplies the fact the host lacks, off the
+#4658 `$__arguments_vec` brand, resolved through `_decoderExportsFor` so a
+consumer-minted value is classified by **its own** module.
+
+**The three-valued contract is the whole fix, and the middle value had to be
+measured.** The first cut answered `0` ("definitely not arguments") whenever the
+`ref.test` ladder reached an ordinary carrier — and in a module that does not
+register the brand at all, that is every receiver:
+
+```
+[argq] export: false      weakset: true    ← first cut: the module overrules, wrongly
+[argq] export: undefined  weakset: true    ← shipped:  the module abstains, the host wins
+```
+
+A module WITHOUT the brand now answers `-1` to everything, never `0`, so the
+caller keeps the answer it already had. Same convention as
+`__vec_has_own_index`, and for the same reason.
+
+`_isArgumentsReceiver(obj, exports)` = the export's answer, falling back to the
+WeakSet. It is used at the two sites where the wrong answer did damage — the
+restored delete arm and round 6's `delete arr.length` refusal. The other 13
+`_argumentsObjects.has` sites are deliberately untouched: they are accessor,
+prototype-lookup and GOPN arms this round did not measure.
+
+### The pre-grow gate had to widen at the same time
+
+Round 7 filled only for a descriptor with a literal `value`. That is too narrow:
+`15.2.3.6-4-{191,199,229,234,236,244}` define a fresh index with a GENERIC or
+attributes-only descriptor (`{enumerable: true}`, `{writable: false,
+configurable: false}`), and §10.1.6.3 says the absent `value` is `undefined` —
+so those must fill too. Requiring `value` left all six reading the stale slot
+(`0 descriptor value should be undefined`). The gate is now
+"everything EXCEPT a statically recognisable accessor descriptor".
+
+### Measured
+
+| lane / slice | rows | round 7 | shipped | flips |
+| --- | --- | --- | --- | --- |
+| linked, `Object/defineProperty/15.2.3.6-4-*` control (every other file) | 368 | 290 | **296** | **+6, 0 lost** |
+| linked, 114-row #6482 bucket | 114 | 103 | 103 | **0 either way** |
+| honest, `harness/**` | 116 | 113 | 113 | **0 either way** |
+
+Rows gained: exactly `15.2.3.6-4-{191,199,229,234,236,244}`, and
+`15.2.3.6-4-538-6` stays green. Equivalence gate green (22 failing / 1720
+passing, all in baseline). The honest 114-row control was skipped again — the
+honest lane OOM-kills on this box while another runner is live.
+
+### The 114-row bucket is at its ceiling for this issue: 103, not 109
+
+The six rows are in the `15.2.3.6-4-*` control, not in the bucket, so the bucket
+does not move. Its 11 non-passes are now fully accounted for:
+
+- **9 are not disagreements** — they fail identically in the honest lane
+  (`DisposableStack`, `AsyncDisposableStack`, `SuppressedError`,
+  `Iterator/prototype/Symbol.dispose`: unimplemented globals).
+- **2 are #6509** — `Object/defineProperties/15.2.3.7-6-a-247` and
+  `Object/defineProperty/15.2.3.6-4-258`, `0 descriptor should be writable`.
+
+So **103 / 114 is 103 / 105 of the reachable rows**, and the remaining two move
+only when #6509 lands.
+
+### Guard
+
+`tests/issue-6482-r8-arguments-discriminator.test.ts`. Four linked-lane
+behaviour cases **plus** a direct contract case, and the split is deliberate:
+measured, all four end-to-end cases also pass on the round-7 tree, because the
+in-process rig builds its provider differently from the sharded runner and the
+delete arm is not reached the same way there. The contract case — a module with
+no arguments brand must answer `-1`, never `0` — is the one that actually fails
+without this round.
+
+### Methodology (carried forward from round 7, and it bit again)
+
+**A guard body must use the ROW's own literal and the ROW's own shape.** Round 7
+lost a cycle to `[12]` (f64 carrier) where the row used `[undefined]`
+(externref); round 8 lost one to a hand-written `15.2.3.6-4-191` that also poked
+`Array.prototype[0]` and failed on that unrelated concern. Copy the body, or
+assert the rule without the row's incidental setup — do not paraphrase.
