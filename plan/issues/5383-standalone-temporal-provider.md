@@ -11258,3 +11258,63 @@ battery shows exactly one `pass→fail` across 3,684 real-provider test262
 rows plus the 115-file unit-witness suite plus the 1,742-case equivalence
 gate — and that one is main's own pre-existing bug in code the stack never
 touches, not anything caused by this sync.
+
+### S56 findings (2026-09-18) — root-caused but NOT fixed: `class extends <linked provider class>` has no real cross-module inheritance under standalone at all; parked as [#6640](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6640-standalone-extends-linked-provider-class-unimplemented)
+
+S56 (branch `issue-5383-standalone-temporal-s56`, off S54's head `aec4fe5ba2`,
+worktree `/home/user/js2/.claude/worktrees/agent-a24b58cdffe2bd3d2`) targeted
+`test/built-ins/Temporal/{PlainDate,PlainDateTime}/compare/use-internal-slots.js`
+— both `fail` with an uncaught non-`Error` value rendering `[object Object]`.
+
+**Root cause, fully reduced against the real `@js-temporal/polyfill`
+provider** (fresh `JS2WASM_TEMPORAL_CACHE=s56-1`, `cacheHit=false` on first
+build): `class AvoidGettersDate extends Temporal.PlainDate {}` — a
+property-access heritage into a linked provider namespace — compiles under
+`--target standalone` as a **fully independent root struct with zero
+compiled relationship to `Temporal.PlainDate`**:
+
+- `.tmp/s56/repro3.js`: `one.toString()` returns `"[object Object]"` (not the
+  inherited `PlainDate.prototype.toString`); `one.year` is `undefined` (a
+  plain property miss, not even a getter invocation).
+- `.tmp/s56/repro2.js`: `Object.getPrototypeOf(one) === AvoidGettersDate.prototype`
+  is `true` (the single-module half of construction works) but
+  `Object.getPrototypeOf(AvoidGettersDate.prototype) === Temporal.PlainDate.prototype`
+  and `Object.getPrototypeOf(AvoidGettersDate) === Temporal.PlainDate` are
+  both `false` — the cross-module `[[Prototype]]` link is simply absent.
+- `.tmp/s56/repro1.js`: `one instanceof Temporal.PlainDate` is `false`.
+
+Site: `src/codegen/class-bodies.ts::collectClassDeclaration`, the
+property-access/`else` heritage arm (~L1160, comment "(#6623, #5383 S36)")
+only marks `ctx.classDynamicUnresolvedHeritageSet` — the comment there says
+outright there is "NO standalone/wasi handling at all" for this shape. The
+polyfill's `compare()` finds `one` unrecognized (no real internal date slot
+was ever installed, since `super(...)` never threads through to the
+provider's actual constructor) and falls back to property-bag coercion,
+reading `.year`/`.month`/`.day` — the test's overridden getters throw a
+plain-object `CustomError`, which propagates uncaught and stringifies as
+`[object Object]`. `compileInstanceOf`/`collectInstanceOfTags`
+(`typeof-delete.ts`) are confirmed NOT the bug — they correctly report no
+tag/no match for a class that genuinely has no compiled link.
+
+**Why not fixed here**: a real fix needs a standalone analogue of the
+JS-host-only extern-class-parent construction path (real `super()` →
+provider constructor, a genuine cross-module `[[Prototype]]` chain for both
+the constructor and its `.prototype`, inherited method dispatch that falls
+through to the provider) — the same heritage arm #6623/S36 already flagged a
+third, unreduced residual mechanism in (a `getPrototypeOf` boundary-terminal
+gap for method-call results on this shape). A narrow `instanceof`-only patch
+was considered and rejected: it would make `compare()` take its "already a
+PlainDate" fast path against an object with no real internal slots, very
+plausibly trading today's clean, informative `fail` for a WasmGC trap or
+`compile_error` — a larger blast radius than the two target rows, given
+Temporal's dozens of `extends Temporal.PlainXxx {}` test262 files
+(`subclassing-ignored.js`, other `compare`/`equals` siblings, …).
+
+**Filed and parked**: [#6640](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6640-standalone-extends-linked-provider-class-unimplemented)
+(`status: blocked`, `horizon: xl`) documents the full reduction and scopes
+the follow-up (implement real cross-module `extends` construction +
+dispatch for a linked-provider heritage). No code changed; no witness test
+added (there is no fix to witness). Target rows unchanged: both still `fail`
+with the `[object Object]` signature, confirmed on `aec4fe5ba2` — same as
+before this slice. No criterion-4 battery run (no code touched, nothing to
+regress-check).
