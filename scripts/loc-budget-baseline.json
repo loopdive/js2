@@ -1,7 +1,7 @@
 {
-  "generated": "2026-09-17",
+  "generated": "2026-09-18",
   "threshold": 1500,
-  "totalCeiling": 889784,
+  "totalCeiling": 890131,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -30,7 +30,7 @@
     "src/codegen/expressions/assignment.ts": 6435,
     "src/codegen/expressions/builtins.ts": 3874,
     "src/codegen/expressions/call-builtin-static.ts": 4641,
-    "src/codegen/expressions/call-identifier.ts": 4290,
+    "src/codegen/expressions/call-identifier.ts": 4303,
     "src/codegen/expressions/call-namespace-static.ts": 3937,
     "src/codegen/expressions/call-receiver-method.ts": 4700,
     "src/codegen/expressions/call-tail-dispatch.ts": 2263,
@@ -85,7 +85,7 @@
     "src/codegen/vec-overlay.ts": 2853,
     "src/codegen/wasi.ts": 2268,
     "src/compiler.ts": 2050,
-    "src/compiler/early-errors/node-checks.ts": 2297,
+    "src/compiler/early-errors/node-checks.ts": 2343,
     "src/emit/binary.ts": 2245,
     "src/import-resolver.ts": 1550,
     "src/index.ts": 1543,

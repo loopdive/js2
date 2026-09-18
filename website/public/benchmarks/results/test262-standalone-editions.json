@@ -2186,9 +2186,9 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4127,
+    "pass": 4123,
     "fail": 1245,
-    "ce": 420,
+    "ce": 424,
     "skip": 0,
     "total": 5792,
     "pct": 71,
@@ -2303,12 +2303,12 @@
       },
       {
         "name": "top-level-await",
-        "pass": 184,
+        "pass": 180,
         "fail": 30,
-        "ce": 43,
+        "ce": 47,
         "skip": 0,
         "total": 257,
-        "pct": 72
+        "pct": 70
       },
       {
         "name": "async-functions",
@@ -2321,12 +2321,12 @@
       },
       {
         "name": "computed-property-names",
-        "pass": 87,
+        "pass": 83,
         "fail": 132,
-        "ce": 12,
+        "ce": 16,
         "skip": 0,
         "total": 231,
-        "pct": 38
+        "pct": 36
       },
       {
         "name": "class-static-fields-public",
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4454,
-    "fail": 915,
+    "pass": 4456,
+    "fail": 913,
     "ce": 76,
     "skip": 0,
     "total": 5445,
