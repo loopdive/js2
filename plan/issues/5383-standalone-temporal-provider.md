@@ -10154,3 +10154,76 @@ singleton).
 only PR). Real rows: not re-verified with a fresh provider build, for the
 same reason (S46b already confirmed both still-red on the immediately-prior
 commit; re-running without a fix adds no new evidence).
+
+### S48 findings (2026-09-18) — both S47 defects fixed; root cause was ONE
+level upstream of the call-dispatch ladder S47 suspected
+
+Full writeup: `plan/issues/6634-interface-carrier-struct-nulls-class-implementer.md`
+(fix), `plan/issues/6633-calendar-dispatch-blocks-era-reduction.md` (`## S48
+resolution` section). Setup: worktree off S47's tip `afe573638b`.
+
+**Root cause, confirmed by WAT/binary disassembly (`wasm-dis -all`), not by
+call-site tracing.** S47's own hypothesis — a call-dispatch ladder devirtualizing
+wrong — is real but is not where the defect lives. The actual defect is one
+level upstream: `collectInterface` synthesizes a method-only interface's OWN
+Wasm struct as an object-literal-compatible shape (each method becomes a
+mutable externref "closure slot" field). A CLASS instance implementing the
+same interface can NEVER physically match that struct (it dispatches through
+real class methods, not a per-instance closure field). Direct evidence:
+`getCalendar(id): CalImpl`'s compiled return type was `(ref null $26)` where
+`$26 = (struct (field $isoToDate (mut externref)))` — the LITERAL's struct,
+not any general interface representation. `impl["gregory"]` (an actual
+`NonIsoCalendar` instance) failed `ref.test $26` inside `getCalendar`'s own
+return-coercion and became `ref.null` — silently for repro13 (the literal's
+method never reads `this`, so a null receiver doesn't trap, it just runs the
+WRONG body), and via `ref.as_non_null` for repro9 (the null-pointer trap, even
+with a SINGLE class implementer and NO literal anywhere in the program).
+
+**THREE independent call sites resolve a value's Wasm type/method FROM an
+interface's name, and all three needed the same fix** (`resolveWasmType` in
+`index.ts`, `resolveStructName` in `property-access.ts`, and
+`call-receiver-method.ts`'s own "final fallback: scan all known classes"
+block that S47 suspected) — file-copy A/B on just the first two, with the
+third reverted, re-broke repro13, confirming the third site independently
+devirtualizes and is unreachable through the other two. New leaf module
+`src/codegen/interface-class-implementer.ts` provides one memoized predicate
+(`interfaceHasClassImplementer`) all three now consult: once ANY known class
+declares `implements <interfaceName>`, that interface's Wasm carrier is
+externref, never the object-literal-shaped struct — the EXISTING
+dynamic-receiver dispatch machinery (already used for genuinely-`any`
+receivers) then correctly discriminates literal-vs-class at each call by
+runtime identity.
+
+**Both S47 defects fixed and verified** (`.tmp/s48/repro13.ts`,
+`.tmp/s48/repro9.ts`, copies of S47's repros):
+- repro13: `A.year=999 A.era typeof=undefined B.year=1 B.era typeof=string`
+  (was: both answer the class). A = literal, B = class — each answers its OWN
+  receiver.
+- repro9: `42` (was: `dereferencing a null pointer` trap).
+
+Witness test `tests/issue-6634-interface-dictionary-literal-vs-class-dispatch.test.ts`
+(6 cases — both repro shapes, a 3-implementer variant, and controls): 4/6 FAIL
+on base / 6/6 PASS on fix. `npx vitest run --maxWorkers=2
+tests/issue-66*.test.ts tests/issue-6484-*.test.ts` — 35 files / 211 tests,
+0 failed (with the fix applied). `npm run -s typecheck`,
+`check-loc-budget.mjs`, `check-func-budget.mjs` (with a `resolveWasmType`
+grant), `check-coercion-sites.mjs`, `check:oracle-ratchet` all green.
+
+**Scope NOT completed in this slice** (time-boxed): the criterion-4 battery
+(four-family vs 435, must-not-move A–F, byte-flip corpus, `test:equivalence:gate`,
+`tests/equivalence.test.ts`) and real-row re-verification with a freshly
+rebuilt Temporal provider (`argument-object-valid.js`/`argument-string.js`)
+were not run — the root-cause investigation (which required disassembling
+compiled Wasm to trace the defect past the call-dispatch layer S47 correctly
+identified as involved but which turned out not to be the root) consumed the
+assigned tool-call budget. **This fix is a necessary reduction step, not a
+confirmed mover of the two target test262 rows** — the next lane should
+rebuild the Temporal provider, prewarm it, and re-run those two specific
+rows first, before attempting the full battery, to establish whether this
+closes #5383's target gap or only removes an intermediate blocker.
+
+**Stack state 2026-09-18 (S48 tip):** NOT yet PR-ready without the follow-up
+verification above. Recommend the next lane: (1) rebuild the Temporal
+provider against this fix, (2) re-run the two target rows, (3) if still red,
+report the next error string per row; if green, run the full criterion-4
+battery before opening the PR.

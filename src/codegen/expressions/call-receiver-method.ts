@@ -36,6 +36,7 @@ import {
 } from "../async-scheduler.js";
 import { isSupportedBuiltinStaticProperty, resolveBuiltinNamespaceValueName } from "../builtin-static-globals.js";
 import { classMemberFuncKey, fnctorAncestorOfClass } from "../class-member-keys.js";
+import { interfaceHasClassImplementer } from "../interface-class-implementer.js"; // (#6634)
 import { collectOpenReceiverCandidates } from "./virtual-candidate-set.js"; // (#5249)
 import {
   buildCallSiteNullishReceiverGuard, // (#4656) callee-reference-before-arguments
@@ -1697,13 +1698,30 @@ export function compileReceiverMethodCall(
     if (!receiverClassName || !ctx.classSet.has(receiverClassName)) {
       const recvProps = receiverType.getProperties?.() ?? [];
       const recvPropNames = new Set(recvProps.map((p) => p.name));
+      // (#6634) A NAMED interface with a KNOWN class implementer already has
+      // its OWN Wasm carrier resolved to externref by `resolveWasmType`
+      // (`interface-class-implementer.ts`) — precisely because a class
+      // instance can never physically match the object-literal-shaped struct
+      // this scan is about to guess. Hardcoding a static call to that class
+      // here would be equally wrong for the SAME reason whenever the runtime
+      // value is actually some OTHER implementer (a literal, or another
+      // class) — see #6634 repro13 (a `Record<string, Iface>` holding both a
+      // literal and a class instance always answered the class) and its
+      // single-class-implementer sibling. Reuse the identical predicate so
+      // this fallback and the interface's own carrier choice always agree:
+      // no new checker queries, just the same class/interface name lookup.
+      const ifaceName = receiverType.symbol?.name;
+      const interfaceForcesDynamic =
+        ifaceName !== undefined && !ctx.classSet.has(ifaceName) && interfaceHasClassImplementer(ctx, ifaceName);
       // An `any`/`unknown` receiver (or another property-less structural type)
       // provides no evidence for a nominal class. Picking the first class that
       // happens to define the same method name is order-dependent and can run a
       // private-field body against an unrelated object. Leave those receivers
       // dynamic so their runtime identity selects the method.
       const canInferClass =
-        recvProps.length > 0 && (receiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) === 0;
+        !interfaceForcesDynamic &&
+        recvProps.length > 0 &&
+        (receiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) === 0;
       const canonicalClasses = canInferClass
         ? new Set([...ctx.classSet].map((name) => canonicalClassExpressionName(ctx, name) ?? name))
         : [];

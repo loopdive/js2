@@ -1,8 +1,8 @@
 ---
 id: 6633
 title: "standalone: interface-typed Calendar dispatch (any-return method, mixed object-literal/class-instance impls) blocks reduction of the era undefined→null mismatch"
-status: blocked
-assignee: ttraenkler/sendev-s47
+status: done
+assignee: ttraenkler/sendev-s48
 sprint: current
 priority: high
 horizon: m
@@ -139,3 +139,33 @@ real Temporal provider, is a plausible root cause for the `era`
 `any`-return call trapping) should be filed/triaged separately regardless —
 it is a harder correctness bug (a trap, not a value mismatch) and likely
 blocks other interface-heavy standalone code paths beyond Temporal.
+
+## S48 resolution (2026-09-18)
+
+Both reductions fixed by `#6634` — see that issue for the full root-cause
+analysis and fix. Root cause was NOT the call-dispatch ladder this issue's own
+findings suspected; it was one level upstream, at the interface's own
+Wasm-carrier TYPE choice (`resolveWasmType`/`resolveStructName` in
+`src/codegen/index.ts`/`property-access.ts`, plus a third, independent guess
+in `call-receiver-method.ts`'s "final fallback: scan all known classes"
+block): a method-only interface's own struct is synthesized as an
+object-literal-compatible shape, which a class instance can never physically
+match, so any class-instance value flowing through an interface-typed slot
+silently nulls out. `interfaceHasClassImplementer` (new leaf module
+`src/codegen/interface-class-implementer.ts`) makes the interface's carrier
+externref whenever ANY known class implements it, letting the EXISTING
+dynamic-receiver dispatch machinery discriminate correctly at runtime.
+
+**Reduction #1** (bare interface-typed `any`-return call trapping,
+`.tmp/s47/repro9.ts`): fixed — `42` instead of "dereferencing a null pointer".
+**Reduction #2** (`Record<string, Interface>` mixed literal/class,
+`.tmp/s47/repro13.ts`, matching the polyfill's exact `calendar.ts`
+registration shape): fixed — each key now answers its OWN implementer.
+
+Real-row re-verification (`argument-object-valid.js`/`argument-string.js`
+against a freshly rebuilt Temporal provider) and the full criterion-4 battery
+were **not completed** in the S48 slice (time-boxed) — see `#6634`'s "Scope
+not completed" section and the handover note in `#5383`. This issue is marked
+`done` because its own scope (identify and fix the two interface-dispatch
+defects blocking the reduction) is complete; whether the fix actually moves
+the two target test262 rows is `#5383`'s open question for the next slice.

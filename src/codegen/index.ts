@@ -4,6 +4,7 @@ import { propertyValueIsAccessorObjectLiteral } from "./accessor-value-field.js"
 import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { emitToBoolean } from "./coercion-engine.js";
+import { interfaceHasClassImplementer } from "./interface-class-implementer.js";
 import {
   emitNativeErrorBoundaryBridge,
   emitWasiErrorConstructor,
@@ -12922,6 +12923,26 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
       if (ctx.classExternrefBackedSet.has(name)) {
         return { kind: "externref" };
       }
+      // (#6634) A NAMED INTERFACE (not a class itself) that also has at least
+      // one CLASS implementer cannot be represented by a single struct type.
+      // `collectInterface` synthesizes the interface's own struct from an
+      // OBJECT-LITERAL-compatible shape (method members become mutable
+      // externref "closure slot" fields) — a class instance never physically
+      // matches that layout (it carries a real vtable-dispatched method, not a
+      // per-instance closure field), so a value flowing through this
+      // interface-typed slot (parameter/return/variable/Record value) that is
+      // ACTUALLY a class instance fails the struct's own `ref.test`/`ref.cast`
+      // guard and silently becomes null — either a wrong answer when the
+      // struct arm happens not to read `this` (#6634 repro13: a
+      // `Record<string, Iface>` holding both a literal and a class instance
+      // always answered the literal) or a null-pointer trap when it does
+      // (#6634 repro9: a SOLE class implementer, `ref.as_non_null` on the
+      // nulled cast). Only a class's OWN type reaches this branch too — guard
+      // with `!ctx.classSet.has(name)` so an actual class instance's type
+      // keeps its real struct carrier unchanged.
+      if (!ctx.classSet.has(name) && interfaceHasClassImplementer(ctx, name)) {
+        return { kind: "externref" };
+      }
       return { kind: "ref", typeIdx: ctx.structMap.get(name)! };
     }
     // (#4149) EMPTY anonymous object shape (`{}` — zero properties, zero call
@@ -12953,6 +12974,25 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // Check anonymous type registry
     const anonName = ctx.anonTypeMap.get(tsType);
     if (anonName && ctx.structMap.has(anonName)) {
+      // (#6634) The checker can hand back the SAME `ts.Type` object for a
+      // named interface reference (`CalImpl`) and an object literal that
+      // structurally realizes it with no extra members (contextual typing
+      // collapses the two) — so `tsType` here may be keyed in `anonTypeMap`
+      // under the LITERAL's registered struct even though `name` is the
+      // interface's own spelled-out name. Apply the same class-implementer
+      // guard as the named-struct branch above using `name` (not `anonName`):
+      // a class implementer's instances never physically match the literal's
+      // "closure slot" struct, so this interface-typed slot must be
+      // externref whenever some known class also implements it.
+      if (
+        name &&
+        name !== "__type" &&
+        name !== "__object" &&
+        !ctx.classSet.has(name) &&
+        interfaceHasClassImplementer(ctx, name)
+      ) {
+        return { kind: "externref" };
+      }
       return { kind: "ref", typeIdx: ctx.structMap.get(anonName)! };
     }
 

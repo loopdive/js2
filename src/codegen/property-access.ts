@@ -22,6 +22,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { emitBoundsCheckedArrayGet } from "./array-methods.js";
 import { emitHoleToUndefined } from "./array-holes.js"; // (#2001 S1)
 import { emitF64HoleToUndef } from "./vec-f64-hole-presence.js"; // (#4491 T11)
+import { interfaceHasClassImplementer } from "./interface-class-implementer.js"; // (#6634)
 import type { PresenceSlot } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
 import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js"; // (#1983) collision-free class-member funcMap keys; (#2963) method-owner chain
@@ -1004,6 +1005,18 @@ export function resolveStructName(ctx: CodegenContext, tsType: ts.Type): string 
   const exactClassExpression = exactClassExpressionTypeName(ctx, tsType);
   if (exactClassExpression) return exactClassExpression;
   const name = tsType.symbol?.name;
+  // (#6634) A named interface with a known CLASS implementer has no single
+  // valid struct carrier — see `interface-class-implementer.ts`. Decline
+  // struct resolution entirely so callers (the call-site devirtualization
+  // guesses in `call-receiver-method.ts` chief among them) fall through to
+  // the dynamic/externref dispatch paths instead of hardcoding to whichever
+  // OTHER implementer's struct happens to be registered under this name or
+  // under `tsType`'s anonTypeMap entry (the literal-vs-class confusion this
+  // guards against never applies to a class's OWN type, hence
+  // `!ctx.classSet.has(name)`).
+  if (name && !ctx.classSet.has(name) && interfaceHasClassImplementer(ctx, name)) {
+    return undefined;
+  }
   if (name && name !== "__type" && name !== "__object" && ctx.structMap.has(name)) {
     return name;
   }
