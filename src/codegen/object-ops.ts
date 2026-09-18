@@ -31,6 +31,7 @@ import { resolveStructName } from "./expressions/misc.js";
 import { widenedStructNameForUse, integrityVarKey } from "./widened-var-key.js";
 import { addUnionImports, cacheStringLiterals, getOrRegisterTupleType, resolveWasmType } from "./index.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
+import { emitVecLengthHoleFill } from "./vec-length-hole-fill.js"; // (#6482 r7) a pre-grow creates holes
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterRefCellType, getOrRegisterVecType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
@@ -452,6 +453,10 @@ function maybeEmitVecLengthGrowth(
   fctx: FunctionContext,
   objArg: ts.Expression,
   propArg: ts.Expression,
+  // (#6482 r7) The descriptor this grow is making room for, when it is a plain
+  // object literal. Only a DATA descriptor lets the absence-marker fill below
+  // run — see the comment at the fill.
+  descArg?: ts.Expression,
 ): void {
   if (!ts.isStringLiteral(propArg)) return;
   const idx = parseCanonicalArrayIndex(propArg.text);
@@ -492,9 +497,16 @@ function maybeEmitVecLengthGrowth(
     typeIdx: arrTypeIdx,
   });
 
-  fctx.body.push({ op: "i32.const", value: idx });
+  // (#6482 r7) The length this pre-grow is about to leave behind. Captured
+  // BEFORE the guard because the absence-marker fill below needs to know which
+  // region the grow invents, and by then field 0 already reads `idx + 1`.
+  const oldLenLocal = allocLocal(fctx, `__defprop_grow_olen_${fctx.locals.length}`, { kind: "i32" });
   fctx.body.push({ op: "local.get", index: vecLocal });
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.set", index: oldLenLocal });
+
+  fctx.body.push({ op: "i32.const", value: idx });
+  fctx.body.push({ op: "local.get", index: oldLenLocal });
   fctx.body.push({ op: "i32.ge_s" }); // idx >= vec.length?
   fctx.body.push({
     op: "if",
@@ -540,6 +552,70 @@ function maybeEmitVecLengthGrowth(
       { op: "struct.set", typeIdx: vecTypeIdx, fieldIdx: 0 },
     ],
   });
+
+  // (#6482 r7) A PRE-GROW CREATES HOLES, NOT ZEROS — the same §10.4.2.1 rule
+  // round 4b applied to the `Object.defineProperty(arr, "length", …)` site,
+  // owed by this site for exactly the same reason.
+  //
+  // `array.new_default` zero-fills the tail it allocates (and an already-large
+  // enough capacity keeps whatever sat in `[oldLen, cap)`), so after the grow
+  // the slot at `idx` holds a legal-looking `0.0`. `__vec_has_own_index` reads
+  // the RAW element to tell a hole from a present one, so it answers "own" for
+  // an index that did not exist a moment ago — and `_vecDefineOwnProperty` then
+  // treats the define as a REDEFINE (§10.1.6.3 keeps omitted attributes)
+  // instead of a FIRST definition (omitted attributes default false). Measured
+  // before this fill existed, that cost 10 rows on the `15.2.3.6-4-*` slice
+  // (`{201,203,216,218,238,241,246,248,251,538-6}` — `0 descriptor should not
+  // be {writable,enumerable,configurable}` / `Expected TypeError, got …`).
+  //
+  // Gated on the grow actually happening: when `idx < oldLen` the element is a
+  // real, pre-existing one and nothing here may touch the backing store.
+  // `ctx.usesArrayHoles` is already armed in any module that reaches this site
+  // (`isDescriptorDefineReference` in `array-holes.ts` arms it for every
+  // descriptor builtin), so the reads that observe these markers are
+  // hole-aware — the invariant round 4b records: reads and stores must be
+  // armed by the same pre-pass, because function compilation order is not
+  // source order.
+  // Only a DATA descriptor. An ACCESSOR define writes no element, so the marker
+  // the fill leaves behind would survive and the index would read back as
+  // ABSENT — `15.2.3.6-4-538-6` defines a getter/setter on an `arguments`
+  // object and then redefines it with a value, and the stale marker made the
+  // result read non-configurable. A data descriptor's value is written by
+  // `_vecDefineOwnProperty` immediately after this, which overwrites the
+  // marker; a marker only survives where the define genuinely leaves the slot
+  // with no value, which is exactly what §10.1.6.3 calls absent. A
+  // non-literal descriptor is unknowable here and is treated as "not a data
+  // descriptor" — that is the pre-#6482-r7 behaviour, so it can lose nothing.
+  const descIsStaticDataDescriptor =
+    descArg !== undefined &&
+    ts.isObjectLiteralExpression(descArg) &&
+    descArg.properties.some(
+      (prop) =>
+        (ts.isPropertyAssignment(prop) || ts.isShorthandPropertyAssignment(prop)) &&
+        ts.isIdentifier(prop.name) &&
+        prop.name.text === "value",
+    ) &&
+    !descArg.properties.some(
+      (prop) =>
+        (ts.isPropertyAssignment(prop) || ts.isMethodDeclaration(prop)) &&
+        ts.isIdentifier(prop.name) &&
+        (prop.name.text === "get" || prop.name.text === "set"),
+    );
+  if (descIsStaticDataDescriptor) {
+    const savedBody = fctx.body;
+    fctx.body = [];
+    // `newLen = oldLen` makes the shared emitter's `min(vec.length, newLen)`
+    // resolve to `oldLen`, i.e. fill exactly `[oldLen, array.len(data))`.
+    emitVecLengthHoleFill(ctx, fctx, vecLocal, oldLenLocal, "both", true);
+    const fillInstrs = fctx.body;
+    fctx.body = savedBody;
+    if (fillInstrs.length > 0) {
+      fctx.body.push({ op: "i32.const", value: idx });
+      fctx.body.push({ op: "local.get", index: oldLenLocal });
+      fctx.body.push({ op: "i32.ge_s" });
+      fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: fillInstrs });
+    }
+  }
 }
 
 // ── Compile-time primitive type check for Object methods ─────────────
@@ -1144,7 +1220,7 @@ export function compileObjectDefineProperty(
   // hazard: a pre-grown hole at idx<length is indistinguishable from a real
   // element, so a FRESH index define would seed w/e/c=true instead of the
   // CompletePropertyDescriptor false defaults). Host mode is unchanged.
-  if (!ctx.standalone) maybeEmitVecLengthGrowth(ctx, fctx, objArg, propArg);
+  if (!ctx.standalone) maybeEmitVecLengthGrowth(ctx, fctx, objArg, propArg, descArg);
 
   // (#2668 Slice A) Host-mode DYNAMIC-DESCRIPTOR route. The inline fast paths
   // below only fire when the descriptor is a *syntactic* object literal at the

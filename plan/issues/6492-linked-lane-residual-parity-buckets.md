@@ -3829,3 +3829,118 @@ what it is, and it belongs next to the rule).
     `__extern_get`, or the provider's host context. That turns an open-ended
     hunt into a single codegen question, and it is the reason this round stops
     where it does instead of guessing at a fix.
+## Round 31 (2026-09-18, Opus long-tail lane) — the nested-operand spill lands; the target row is blocked by a THIRD defect
+
+The partial-operand spill is implemented and unit-verified. It moves **no corpus
+rows**, because the row it was aimed at never reaches the planner: a separate
+defect elides its awaits first. That defect is the round's most actionable
+output.
+
+### `await Promise.resolve(1)` written INLINE is elided, and the elided value is wrong
+
+Reduced to a two-line A/B on the linked lane, identical except for hoisting:
+
+| body | verdict |
+| --- | --- |
+| `assert.sameValue(await Promise.resolve(1), 1)` | **silent — body never completes** |
+| `var p = Promise.resolve(1); assert.sameValue(await p, 1)` | **passes** |
+
+The inline form is classified as a statically-resolved await
+(`awaitedStaticallyResolved` / `awaitProvablyCannotSuspend`), so
+`anyRealSuspension` is false, the engine declines the whole function, and the
+legacy pass-through compiles the `await` as identity — yielding the PROMISE
+OBJECT instead of its value. Single-module compiles show it plainly: the inline
+version emits a 10 KB module with no async machinery; the hoisted one emits 33 KB
+with the frame.
+
+This is the same class as #6504's original erasure but reached by a different
+route — the **elision** path rather than the shape-decline path — and it is
+silent for the same defect-B reason. It is why
+`optional-chain-async-square-brackets.js` cannot pass this round: three of its
+four lines await an inline `Promise.resolve(…)` / `Promise.reject(…)`.
+
+**This is the next thing to fix in #6504**, and it is likely cheap next to the
+ABI work: either the elision must not fire when the operand is a real promise, or
+the elided path must unwrap it.
+
+### What the round DID build
+
+`planSpilledCallAwait` now admits an await nested inside ONE argument, not just
+an await that IS an argument. The pre-await sub-expressions of that argument are
+spilled in source order by the same round-29 carrier; on resume the argument is
+RECOMPILED with two substitutions installed, so the only work it repeats is the
+re-combination source order puts after the await.
+
+The substitution is the async twin of the #680 native-generator mechanism that
+already sits at the top of `compileExpressionInner` — same problem (a
+continuation recompiles the original expression), same solution, separate map so
+neither lane can read the other's stale entries.
+
+Admitted operand structures, each because its post-await remainder is a pure
+re-combination of computed values: element/property access, arithmetic and
+relational operators, array literals, and the transparent wrappers. Refused, by
+name: `&&`/`||`/`??`/`?:`/comma (conditional evaluation), assignment, and a
+nested CALL containing the await.
+
+Verified on the probe (all reach the sentinel, i.e. every assertion held and the
+body ran to its last line):
+
+| shape | result |
+| --- | --- |
+| `[22, 33]?.[await p]` — index operand | passes |
+| `[src.first, await p]?.[1]` — array element, earlier element evaluated once, before the await | passes |
+| `f(src.n + await p)` — binary operand, left side evaluated exactly once | passes |
+| `[9]?.[await p]` — optional base, non-nullish | passes |
+
+### The optional-chain short-circuit: correct, and deliberately narrowed
+
+`b?.[await x]` must not evaluate the awaited operand when `b` is nullish. The
+nullish test is decided **before** the suspension from the spilled base, and the
+awaited operand sits in the else arm, so it is never reached. Measured with a
+runtime-nullish base: the operand function was **not** called and the result was
+`undefined`.
+
+But with a base whose static TYPE is `undefined` (`var b = undefined;
+b?.[await x]`) the chain is constant-folded ahead of the operand substitution and
+the result lowers as f64 **`0`** — a wrong VALUE where the pre-round-31
+behaviour was a (differently wrong) silent decline. Shipping that would trade one
+silent bug for a loud one.
+
+So the optional link is admitted only when the base is non-nullish **by syntax**
+(array/object literal, `new`, `this`, a primitive literal) — which covers the
+corpus shape `[22, 33]?.[await p]` — and refused otherwise. Refused shapes keep
+exactly their pre-round-31 behaviour. The pure AST planner has no type
+information to do better; deciding it properly needs the base's type, and the
+fold itself is upstream of this plan.
+
+**Known deviation, taken deliberately:** on the short-circuit path the machine
+still suspends (on `undefined`), costing one microtask tick the spec does not
+have. Removing it means splitting the segment into two CFG states so the
+suspension can be branched around — a state-graph change, not an operand change.
+
+### Measured
+
+| slice | lane | before | after | delta |
+| --- | --- | --- | --- | --- |
+| six async slices (2,212 rows) | linked | 1,533 | 1,533 | **+0 / −0** |
+| six async slices (2,212 rows) | honest | 1,530 | 1,530 | **+0 / −0** |
+| 138-row #6492 set | linked | 49 | 49 | +0 / −0 |
+
+`tests/issue-6504-spilled-call-await.test.ts` — 13 cases, all green, including
+the five new round-31 shapes and the refusal case (which asserts the SILENCE, so
+it flips and must be rewritten when the constant-fold is fixed).
+
+**A capability that moves zero rows is a real but partial result.** The
+mechanism is exercised only by unit tests today; the corpus shapes that would
+exercise it are behind the elision defect above. That is worth saying plainly
+rather than presenting +0 as a neutral refactor.
+
+### Finding
+
+52. **When the target row does not move, check whether your change was ever
+    reached.** Three rounds of #6504 work aimed at
+    `optional-chain-async-square-brackets.js`. The planner arm built for it was
+    never invoked on that row — instrumenting the arm showed zero calls — because
+    an earlier, unrelated decision (static await elision) had already taken the
+    body off the path. One trace print at the new code, before any corpus run,
+    is what turned "the fix does not work" into "the fix is not reached".

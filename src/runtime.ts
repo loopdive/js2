@@ -7051,6 +7051,11 @@ function _vecOverlayOwnIndex(
   idx: number,
   exports: Record<string, Function> | undefined,
 ): boolean | undefined {
+  // (#6482 r5) A host-side `delete arr[i]` cannot reach the in-wasm #3251
+  // overlay, so it records a tombstone here instead. It has to be consulted
+  // BEFORE the module is asked: the element is still physically in the backing
+  // array, so `__vec_has_own_index` would honestly answer "present".
+  if (_wasmStructDeletedKeys.get(obj)?.has(String(idx)) === true) return false;
   const resolved = _decoderExportsFor(obj, exports); // (#5225/#6477) the MINTING module
   const hasOwnIdx = resolved?.__vec_has_own_index as ((v: any, i: number) => number) | undefined;
   if (typeof hasOwnIdx !== "function") return undefined;
@@ -7126,6 +7131,8 @@ function _readOwnDescriptor(
         };
       }
       const idx = _asArrayIndex(prop);
+      // (#6482 r5) A tombstoned index has no descriptor — see `__delete_property`.
+      if (idx !== undefined && _wasmStructDeletedKeys.get(obj)?.has(prop) === true) return undefined;
       if (idx !== undefined && typeof lenFn === "function" && typeof getVE === "function") {
         let vlen = 0;
         try {
@@ -8361,21 +8368,32 @@ function _vecDefineOwnProperty(
   if (idx === undefined) return false; // named prop → generic struct arm
   if (idx >= oldLen && idx + 1 > _VEC_DEFINE_GROW_LIMIT) return false; // allocation guard
 
-  // NOTE on existing-element synthesis: an in-bounds element with no explicit
-  // descriptor entry is treated as a FIRST definition (omitted attributes
-  // default false), not a redefinition of a default data property. The codegen
+  // Existing-element synthesis: `arr[0] = 101` creates a data property whose
+  // attributes are all TRUE, so a later `defineProperty(arr, "0", {})` is a
+  // REDEFINE that keeps them — not a first definition, where §10.1.6.3 defaults
+  // every omitted attribute to false.
+  //
+  // This used to be arguments-only, for a concrete reason: the codegen
   // pre-grows the vec to idx+1 (`maybeEmitVecLengthGrowth`) BEFORE the runtime
-  // call, so `idx < oldLen` cannot distinguish a genuine element from a
-  // compiler-created hole — seeding default (configurable) flags for a hole
-  // suppressed the §10.1.6.3 non-configurable rejection matrix for
-  // fresh-index defines (15.2.3.6-4-252 regression). Read-side descriptor
-  // synthesis (_readOwnDescriptor) still reports w/e/c=true for untouched
-  // in-bounds elements, which matches §10.4.2 defaults for literal elements.
+  // call, so `idx < oldLen` cannot tell a genuine element from a
+  // compiler-created HOLE, and seeding configurable flags for a hole suppressed
+  // the non-configurable rejection matrix for fresh-index defines
+  // (15.2.3.6-4-252). The missing piece was a discriminator, and #6482 round 4
+  // built one: `__vec_has_own_index` reads the RAW element, so it separates a
+  // present element from a hole the pre-grow invented.
+  //
+  // Seed only on a POSITIVE answer. `undefined` — the module predates the
+  // export, or does not recognize the receiver — keeps the old first-definition
+  // reading, so a module that cannot answer behaves exactly as before. An
+  // arguments object is dense by construction (§10.4.4) and needs no oracle.
   const nKey = _normalizeDescKey(keyStr);
   let hadEntry = sDescs.has(nKey);
-  if (!hadEntry && _argumentsObjects.has(obj) && idx < oldLen) {
-    sDescs.set(nKey, _SC_ELEM_DEFAULT);
-    hadEntry = true;
+  if (!hadEntry && idx < oldLen) {
+    const elementIsOwn = _argumentsObjects.has(obj) ? true : _vecOverlayOwnIndex(obj, idx, exports);
+    if (elementIsOwn === true) {
+      sDescs.set(nKey, _SC_ELEM_DEFAULT);
+      hadEntry = true;
+    }
   }
 
   let existingVal: any;
@@ -8401,6 +8419,13 @@ function _vecDefineOwnProperty(
 
   const newFlags = _validatePropertyDescriptor(sDescs, nKey, desc, existingVal, existingDesc);
   sDescs.set(nKey, newFlags);
+  // (#6482 r5) A define RE-CREATES the property, so it clears the delete
+  // tombstone `__delete_property` left behind — without this, `delete
+  // arguments[0]` followed by `defineProperty(arguments, "0", …)` reported the
+  // freshly defined index as absent (15.2.3.6-4-289/-289-1). The element value
+  // written below overwrites any absence marker in the backing array, so the
+  // in-wasm view recovers on its own.
+  _wasmStructDeletedKeys.get(obj)?.delete(keyStr);
 
   // Apply the value into the vec itself so element reads observe it.
   if (hasValue) {

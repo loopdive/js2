@@ -45,6 +45,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { getArrTypeIdxFromVec } from "./registry/types.js";
 import { HOLE_F64_BITS } from "./value-tags.js";
+import { holeSentinelInstrs } from "./array-holes.js";
 
 /**
  * Emit, for every f64-backed vec type, a guarded fill of
@@ -60,22 +61,42 @@ export function emitVecLengthHoleFill(
   vecLocal: number,
   newLenLocal: number,
   mode: "shrink-only" | "both" = "both",
+  // (#6482 r7) Also fill EXTERNREF-backed carriers with the `$Hole` singleton.
+  //
+  // Opt-in, and only sound when `ctx.usesArrayHoles` is already true: `$Hole`
+  // is minted on demand, so asking for it in a module that has none would mint
+  // a type and shift every type index after it (the #2043 hazard). The two
+  // pre-existing callers keep the f64-only behaviour they were measured with;
+  // the `defineProperty(arr, "<index>", …)` pre-grow needs the wider set
+  // because an EMPTY array literal (`var arr = []`, the receiver shape of
+  // `15.2.3.6-4-{201,203,216,…}`) has no element-type evidence and is minted on
+  // the externref carrier, where a default slot reads back as `null` — which
+  // `__vec_has_own_index` does NOT recognise as a hole, so it answered "own"
+  // for an index the pre-grow had just invented.
+  includeExternref = false,
 ): void {
   const f64Vecs: number[] = [];
+  const externrefVecs: number[] = [];
   for (const vecTypeIdx of ctx.vecTypeMap.values()) {
     const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
     if (arrTypeIdx < 0) continue;
     const arrDef = ctx.mod.types[arrTypeIdx];
     if (arrDef === undefined || arrDef.kind !== "array") continue;
-    if ((arrDef.element as ValType).kind !== "f64") continue;
-    f64Vecs.push(vecTypeIdx);
+    const elem = (arrDef.element as ValType).kind;
+    if (elem === "f64") f64Vecs.push(vecTypeIdx);
+    else if (elem === "externref" || elem === "ref_extern") externrefVecs.push(vecTypeIdx);
   }
-  if (f64Vecs.length === 0) return;
+  const holeVecs = includeExternref && ctx.usesArrayHoles ? [...f64Vecs, ...externrefVecs] : f64Vecs;
+  if (holeVecs.length === 0) return;
 
   const startLocal = allocLocal(fctx, `__vlhf_start_${fctx.locals.length}`, { kind: "i32" });
 
-  for (const vecTypeIdx of f64Vecs) {
+  for (const vecTypeIdx of holeVecs) {
     const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+    const isExternrefCarrier = externrefVecs.includes(vecTypeIdx);
+    const markerInstrs: Instr[] = isExternrefCarrier
+      ? holeSentinelInstrs(ctx)
+      : [{ op: "i64.const", value: HOLE_F64_BITS }, { op: "f64.reinterpret_i64" }];
     const dataLocal = allocLocal(fctx, `__vlhf_data_${fctx.locals.length}`, {
       kind: "ref_null",
       typeIdx: arrTypeIdx,
@@ -102,8 +123,7 @@ export function emitVecLengthHoleFill(
             then: [
               { op: "local.get", index: dataLocal },
               { op: "local.get", index: startLocal },
-              { op: "i64.const", value: HOLE_F64_BITS },
-              { op: "f64.reinterpret_i64" },
+              ...markerInstrs,
               { op: "local.get", index: dataLocal },
               { op: "array.len" },
               { op: "local.get", index: startLocal },
