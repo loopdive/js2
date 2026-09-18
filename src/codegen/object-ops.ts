@@ -4938,7 +4938,15 @@ export function compilePropertyIntrospection(
         return { kind: "i32", boolean: true };
       }
     }
-    if (elemIsRef && keyArg && staticKey !== null && _isCanonicalArrayIndexString(staticKey)) {
+    // (#6505) No `elemIsRef` gate: a NUMERIC vec whose dense-literal proof above
+    // did not fire used to fall through to the named-key fold at the bottom of
+    // this function, whose key set is `["length","data"]`, and answer a constant
+    // `false` — so only the FIRST literal-index query in a program proved (the
+    // proof refuses on any intervening reference to the receiver). The gate was
+    // sound until #6482 round 4: `__vec_has_own_index` reads the RAW element, so
+    // the native now tells an f64 hole from a stored `0`/`NaN`. Full write-up in
+    // plan/issues/6505-linked-body-constant-key-hasownproperty-index.md.
+    if (keyArg && staticKey !== null && _isCanonicalArrayIndexString(staticKey)) {
       // (#4491) The runtime native is now the WHOLE answer. This arm used to
       // compute `present := index < length AND data[index] != null` inline and OR
       // it with the native, because at the time `__hasOwnProperty` could not see a
