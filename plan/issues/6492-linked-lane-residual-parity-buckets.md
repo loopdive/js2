@@ -4332,3 +4332,47 @@ The four honest-lane keyed rows r18 grouped into this "same residue class" were
   symbol-keyed prototype keys nor a getter's own sub-properties. No row in the
   slice observes them today; extending the restore to symbol keys on shared
   prototypes is a separate, wider change.
+
+### Round 19b — the five remaining `*-realm` rows: three are NOT realm bugs, two are unreachable by construction
+
+Measured, then reverted; **no code landed for this half.** The 284-file
+`createRealm` corpus (195 rows actually run, linked) sat at **58 pass before and
+58 after** the change tried below — zero rows moved in either direction.
+
+| row | what it is actually blocked on |
+| --- | --- |
+| `Proxy/getPrototypeOf/trap-is-not-callable-realm.js` | the PLAIN `trap-is-not-callable.js` fails too — a Proxy trap-callability check we do not perform. No realm involved. |
+| `Proxy/deleteProperty/trap-is-not-callable-realm.js` | same |
+| `Array/length/define-own-prop-length-overflow-realm.js` | `array.length = 2**32` does not throw `RangeError` at all; the sibling `-order.js` row (no realm) fails identically |
+| `harness/assert-throws-same-realm.js` | the `assert_throws` SHIM matches on `.name` |
+| `harness/asyncHelpers-throwsAsync-same-realm.js` | same |
+
+**The harness pair is the interesting one, and it is a deliberate trade the
+project already made.** `assert.throws(Ctor, fn)` is lowered to the #3285/#3104
+**name-string side channel** — `__expected_throw_name = "TypeError";
+assert_throws(fn)` — and the shim passes when the caught error's `.name` equals
+that string. These two rows assert the exact opposite: an error thrown from
+ANOTHER realm, whose `.name` is also `"TypeError"`, must NOT satisfy the
+assertion. Under a name match that is unreachable — no fixture change can make
+it fail — so they can only be won by restoring **constructor-identity** matching,
+which is the shape #3285 rejected because a class-as-value in the method body
+triggers #3315 in standalone (silent corruption of sibling destructured
+bindings). Two rows against a live miscompile: that needs a decision, not a
+patch.
+
+What was tried and reverted: realm-DISTINCT error constructors on the
+`$262.createRealm()` stub (`realm.TypeError = class …`, seven of them). A probe
+shows why it cannot help even before the shim question —
+`typeof realm.global.TypeError` is `"object"`, not `"function"`: a compiled class
+read back through a dynamic `any` property is not constructible at that
+boundary, so `new realmGlobal.TypeError()` throws a **host** TypeError, which is
+precisely what makes the assertion succeed today.
+
+42. **A `*-realm` suffix names the test's SCENARIO, not its defect.** Three of
+    these five fail identically with no realm in play; the tell is one run of
+    the sibling row with the suffix removed, and it costs a minute. Grouping by
+    filename kept them queued as "realm work" across several rounds.
+43. **When a fixture shim decides an assertion, check the SHIM before the
+    engine.** `assert.throws` here is a name-string compare, so every
+    cross-realm identity row in the corpus is decided by a design choice made
+    for an unrelated standalone miscompile — not by anything the compiler does.
