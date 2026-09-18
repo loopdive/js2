@@ -11007,3 +11007,84 @@ lane next touches #5383/#6628's remaining bucket (the fix should also move
 some of #6628's originally-named "Proxy get trap is not callable" rows,
 since those go through the identical `options`-escapes-to-an-untyped-
 provider-parameter shape — worth checking first).
+
+### S53b findings (2026-09-18, IN PROGRESS) — measurement-only run of the criterion-4 battery S53 left unmeasured; 10 target rows re-checked, none moved
+
+S53b (branch `issue-5383-standalone-temporal-s53b`, off S53's head
+`4d0136d9a1`, worktree
+`/home/user/js2/.claude/worktrees/agent-a99a85629df15dea9`) is the
+measurement-only follow-up S53 itself recommended: run the real-provider
+criterion-4 battery (10 target rows, four-family, A–F must-not-move,
+corpus-byte, equivalence gate) against S53's fix. **No `src/` changes in this
+lane.**
+
+**Setup**: fresh worktree; `pnpm install --frozen-lockfile`; `test262`
+submodule initialized fresh (`b363f29d3c`); `npm run build:compiler-bundle`;
+QuickJS artifact `quickjs-artifact-2e2d7736713beeda` copied from
+`agent-a07c5e7da05114ff6`'s `.test262-cache/`, but its adapter hash
+(`4b00fe809e6f55b2`) did not match what this bundle wants
+(`71952061b375de45`) — rebuilt with `node
+scripts/build-quickjs-eval-provider.mjs` (adapter cache MISS, artifact cache
+HIT, 3.6s). Temporal provider prewarmed FRESH:
+`JS2WASM_TEMPORAL_CACHE=s53b node scripts/prewarm-temporal-provider.mjs
+--target standalone` → `cacheHit=false key=a11c84e556193459 dir=s53b`
+(37.5s build). Runner scripts + S50 base TSVs copied from
+`agent-ad93bfa729a45909f`'s `.tmp/{s50run,s50,s51,s52c,s49b,s46b,s41b}` into
+`.tmp/s53b/`; working copies (adjusted import depth, `WT` path, batch runner
+for resumability) live in `.tmp/s53brun/` (gitignored, not part of this PR).
+
+**Base-file correction found before running anything**: for the A/C/D/
+E-unlinked/E-linked must-not-move families, `.tmp/s53b/s50run/` carries BOTH
+a `*-base-merged.tsv` (pre-S50) and a `*-fix-merged.tsv` (post-S50) file.
+Diffed them against each other first — `passToFail=0 failToPass=0` for all
+five, byte-for-byte identical outcome sets — confirming S50's own fix caused
+zero net movement in these families and that either file is a valid
+comparison point. Used `*-fix-merged.tsv` (or `B-fix.tsv`,
+`F-*-fix.tsv` — B/F never had a separate base variant) throughout, since it
+is the more recent, and the four-family files (`Duration/PlainDate/
+PlainDateTime/ZDT-fix.tsv`) only ever existed in this one form.
+
+**10 target rows (real provider, current HEAD)** — none moved; all still
+fail, with the SAME error strings S51/S53 already recorded:
+
+| Row | Result |
+| --- | --- |
+| `Duration/from/order-of-operations.js` | fail — `TypeError: Proxy get trap is not callable` |
+| `PlainDate/from/order-of-operations.js` | fail — `TypeError: Proxy get trap is not callable` |
+| `PlainDate/from/observable-get-overflow-argument-primitive.js` | fail — `TypeError: Proxy get trap is not callable` |
+| `PlainDateTime/from/order-of-operations.js` | fail — `TypeError: Proxy get trap is not callable` |
+| `PlainDateTime/from/observable-get-overflow-argument-primitive.js` | fail — `TypeError: Proxy get trap is not callable` |
+| `ZonedDateTime/prototype/add/order-of-operations.js` | fail — `TypeError: Proxy get trap is not callable` |
+| `Duration/compare/options-read-before-algorithmic-validation.js` | fail — `Test262Error: … Expected a RangeError but got a undefined` |
+| `PlainDate/from/options-read-before-algorithmic-validation.js` | fail — `Test262Error: … Expected a RangeError but got a undefined` |
+| `PlainDateTime/from/options-read-before-algorithmic-validation.js` | fail — `Test262Error: … Expected a RangeError but got a undefined` |
+| `ZonedDateTime/prototype/add/options-read-before-algorithmic-validation.js` | fail — `Test262Error: … Expected a RangeError but got a undefined` |
+
+The 6 "order-of-operations" rows fail on the SAME `Proxy get trap is not
+callable` `TypeError` S51/S52c named for #6628's still-open deeper
+mechanism — S53's fix (a Proxy binding escaping into a call whose parameter
+is untyped) does not touch this; these order-of-operations tests apparently
+hit a REAL-trap Proxy path, not the single-module empty-handler/no-link
+shape S53 fixed. The 4 "options-read-before-algorithmic-validation" rows
+fail identically to S51's own finding (bug 1 of that session: the caught
+value genuinely is a `TypeError` from #6628's mechanism, correctly failing
+`assert.throws(RangeError, …)`). **Answering S53's own follow-up
+question ("the fix should also move some of #6628's rows — worth checking
+first"): confirmed NO, it does not move any of the 10 sampled rows.**
+
+**Four-family battery** (real provider, per-file diff vs `.tmp/s53b/s50run/
+{Duration,PlainDate,PlainDateTime,ZDT}-fix.tsv`):
+
+| Family | Base | New | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- |
+| Duration | 106/120 | 106/120 | 0 | 0 |
+| PlainDate | 113/120 | 113/120 | 0 | 0 |
+| PlainDateTime | (running) | | | |
+| ZonedDateTime | (running) | | | |
+
+**A–F must-not-move and corpus-byte batteries: in progress, not yet complete
+at time of this partial commit** — 3204 files split into ≤250-file chunks,
+running via a resumable batch script (`.tmp/s53brun/run-batch.mts`) that
+skips chunks whose output already exists, so a restart after this box's
+periodic reset picks up where it left off. This section will be updated
+with the full A–F/corpus-byte/equivalence-gate tables once those complete.
