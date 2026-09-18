@@ -1332,7 +1332,7 @@ export function planAsyncCfg(
   });
   if (linear !== null) return linearPlanToCfg(linear);
   if (opts.allowLoops) {
-    const whileCfg = planWhileLoopCfg(fn, plan);
+    const whileCfg = planWhileLoopCfg(fn, plan, ctx.checker);
     if (whileCfg !== null) return whileCfg;
     // (#2906 slice 3d-ii) `for await (const x of g())` where `g` is a host-free
     // async GENERATOR — the async-iterator CONSUMER, tried before the 3b array
@@ -1347,7 +1347,7 @@ export function planAsyncCfg(
   }
   // (#2906 3c) Bounded try/catch-around-await — catch region as states.
   if (opts.allowTryCatch) {
-    const tryCatchCfg = planTryCatchCfg(fn, plan, isHostAsyncLane(ctx));
+    const tryCatchCfg = planTryCatchCfg(fn, plan, isHostAsyncLane(ctx), ctx.checker);
     if (tryCatchCfg !== null) return tryCatchCfg;
   }
   return null;
@@ -1372,6 +1372,7 @@ export function planAsyncCfg(
 function analyzeWhileAsync(
   fn: ts.FunctionLikeDeclaration,
   plan: AsyncCpsPlan,
+  checker?: ts.TypeChecker,
 ): {
   pre: ts.Statement[];
   cond: ts.Expression;
@@ -1415,6 +1416,10 @@ function analyzeWhileAsync(
     usedFinally: false,
     sawReturnAwait: false,
     allowReturnInTry: false,
+    // (#6492 round 28) Same threading gap the try/catch analysis had: this
+    // `LowerState` is the THIRD builder, and without the checker every shape
+    // predicate keyed on it is dead for `while`-with-await bodies too.
+    checker,
   };
   if (!lowerLinearStatements(bodyStmts, st, awaitSet)) return null;
   if (st.segments.length === 0) return null; // no canonical await in the body
@@ -1469,8 +1474,12 @@ function loopBodyHasUnsupportedControl(loopBody: ts.Statement): boolean {
  *    cont    tail leads     → goto(head)                    (the back-edge)
  *    exit    post leads     → settleUndefined
  */
-function planWhileLoopCfg(fn: ts.FunctionLikeDeclaration, plan: AsyncCpsPlan): AsyncCfgPlan | null {
-  const shape = analyzeWhileAsync(fn, plan);
+function planWhileLoopCfg(
+  fn: ts.FunctionLikeDeclaration,
+  plan: AsyncCpsPlan,
+  checker?: ts.TypeChecker,
+): AsyncCfgPlan | null {
+  const shape = analyzeWhileAsync(fn, plan, checker);
   if (shape === null) return null;
   const { pre, cond, segments, tail, post } = shape;
   const m = segments.length;
@@ -1539,8 +1548,12 @@ function planWhileLoopCfg(fn: ts.FunctionLikeDeclaration, plan: AsyncCpsPlan): A
 export function loopAsyncSpillInfo(
   fn: ts.FunctionLikeDeclaration,
   plan: AsyncCpsPlan,
+  checker?: ts.TypeChecker,
 ): { names: string[]; segments: readonly LinearAwaitSegment[] } | null {
-  const shape = analyzeWhileAsync(fn, plan);
+  // The checker MUST match `planWhileLoopCfg`'s: this function computes the
+  // spill set for the plan that one builds, and a shape admitted by one but not
+  // the other is a frame whose live values have no field.
+  const shape = analyzeWhileAsync(fn, plan, checker);
   if (shape === null) return null;
   const ownLocals = new Set<string>();
   collectAllDeclaredNames(fn, ownLocals);
@@ -1592,6 +1605,7 @@ export interface TryCatchChunk {
 function lowerChunk(
   statements: readonly ts.Statement[],
   awaitSet: ReadonlySet<ts.AwaitExpression>,
+  checker?: ts.TypeChecker,
 ): TryCatchChunk | null {
   const st: LowerState = {
     segments: [],
@@ -1602,6 +1616,14 @@ function lowerChunk(
     usedFinally: false,
     sawReturnAwait: false,
     allowReturnInTry: false,
+    // (#6492 round 28 / #6503) Thread the checker into the TRY/CATCH analysis's
+    // own `LowerState`. Without it `replaySafeNestedCallAwait`'s first line
+    // (`checker === undefined`) rejected every candidate in this path — the
+    // largest single decline bucket (31 of 71 events over 2,212 async rows),
+    // and not a shape rejection at all. `planLinearAwaits` already receives
+    // `ctx.checker` at all four of its call sites; this path is the SECOND
+    // chance `asyncFnNeedsHostDrive` gives a body and simply never carried it.
+    checker,
   };
   if (!lowerLinearStatements(statements, st, awaitSet)) return null;
   // A try/finally INSIDE a chunk would claim a colliding handler id — bounded
@@ -1748,6 +1770,7 @@ function lowerRegionBody(
   awaitSet: ReadonlySet<ts.AwaitExpression>,
   depth: number,
   hoist: boolean,
+  checker?: ts.TypeChecker,
 ): RegionBody | null {
   const items: Array<RegionBody["items"][number]> = [];
   let cursor = 0;
@@ -1765,7 +1788,7 @@ function lowerRegionBody(
       // before. Non-host lanes keep the multi-declarator-only arm.
       const hoistedBody = lowerAwaitingStatementByHoisting(stmt, awaitSet, hoist);
       if (hoistedBody === null) continue;
-      const pre = lowerChunk(statements.slice(cursor, i), awaitSet);
+      const pre = lowerChunk(statements.slice(cursor, i), awaitSet, checker);
       if (pre === null || pre.sawReturnAwait) return null;
       items.push({ kind: "chunk", chunk: pre }, ...hoistedBody.items);
       if (hoistedBody.hoisted === true) hoisted = true;
@@ -1786,10 +1809,10 @@ function lowerRegionBody(
       if (!ts.isIdentifier(binding) && !ts.isObjectBindingPattern(binding) && !ts.isArrayBindingPattern(binding)) {
         return null;
       }
-      const pre = lowerChunk(statements.slice(cursor, i), awaitSet);
+      const pre = lowerChunk(statements.slice(cursor, i), awaitSet, checker);
       if (pre === null || pre.sawReturnAwait) return null;
       const bodyStatements = ts.isBlock(stmt.statement) ? stmt.statement.statements : [stmt.statement];
-      const loopBody = lowerRegionBody(bodyStatements, awaitSet, depth, hoist);
+      const loopBody = lowerRegionBody(bodyStatements, awaitSet, depth, hoist, checker);
       if (loopBody === null || bodySegCount(loopBody) === 0) return null;
       if (loopBody.hoisted === true) hoisted = true;
       items.push(
@@ -1808,7 +1831,7 @@ function lowerRegionBody(
 
     if (ts.isIfStatement(stmt)) {
       if (countAwaitsInStatement(stmt.expression, awaitSet) > 0) return null;
-      const pre = lowerChunk(statements.slice(cursor, i), awaitSet);
+      const pre = lowerChunk(statements.slice(cursor, i), awaitSet, checker);
       if (pre === null || pre.sawReturnAwait) return null;
       const thenStatements = ts.isBlock(stmt.thenStatement) ? stmt.thenStatement.statements : [stmt.thenStatement];
       const elseStatements =
@@ -1817,8 +1840,8 @@ function lowerRegionBody(
           : ts.isBlock(stmt.elseStatement)
             ? stmt.elseStatement.statements
             : [stmt.elseStatement];
-      const whenTrue = lowerRegionBody(thenStatements, awaitSet, depth, hoist);
-      const whenFalse = lowerRegionBody(elseStatements, awaitSet, depth, hoist);
+      const whenTrue = lowerRegionBody(thenStatements, awaitSet, depth, hoist, checker);
+      const whenFalse = lowerRegionBody(elseStatements, awaitSet, depth, hoist, checker);
       if (whenTrue === null || whenFalse === null) return null;
       if (whenTrue.hoisted === true || whenFalse.hoisted === true) hoisted = true;
       items.push(
@@ -1845,17 +1868,17 @@ function lowerRegionBody(
     const catchParamSpillName =
       decl !== undefined ? `__async_catch_${decl.pos >= 0 ? decl.pos : decl.getStart()}_${catchParamName}` : null;
 
-    const pre = lowerChunk(statements.slice(cursor, i), awaitSet);
+    const pre = lowerChunk(statements.slice(cursor, i), awaitSet, checker);
     if (pre === null || pre.sawReturnAwait) return null; // `return await` → the try is unreachable
     items.push({ kind: "chunk", chunk: pre });
-    const tryBody = lowerRegionBody(stmt.tryBlock.statements, awaitSet, depth + 1, hoist);
+    const tryBody = lowerRegionBody(stmt.tryBlock.statements, awaitSet, depth + 1, hoist, checker);
     if (tryBody === null || bodySegCount(tryBody) === 0) return null;
     if (tryBody.hoisted === true) hoisted = true;
     if (finallyStmts !== null && bodyHasGroup(tryBody)) return null; // combined + nested — bounded out
     // A `return await` inside the try body may only be its FINAL item, and only
     // when nothing follows this group in the SOURCE body (checked by the
     // caller's non-final sawReturnAwait rejections below via the pre rule).
-    const catchChunk = lowerChunk(stmt.catchClause.block.statements, awaitSet);
+    const catchChunk = lowerChunk(stmt.catchClause.block.statements, awaitSet, checker);
     if (catchChunk === null) return null;
     items.push({
       kind: "group",
@@ -1863,7 +1886,7 @@ function lowerRegionBody(
     });
     cursor = i + 1;
   }
-  const tail = lowerChunk(statements.slice(cursor), awaitSet);
+  const tail = lowerChunk(statements.slice(cursor), awaitSet, checker);
   if (tail === null) return null;
   items.push({ kind: "chunk", chunk: tail });
   return hoisted ? { items, hoisted: true } : { items };
@@ -1881,13 +1904,14 @@ export function analyzeTryCatchAsync(
   fn: ts.FunctionLikeDeclaration,
   plan: AsyncCpsPlan,
   hoist = false,
+  checker?: ts.TypeChecker,
 ): { body: RegionBody } | null {
   if (plan.awaitPoints.length === 0) return null;
   const body = fn.body;
   if (body === undefined || !ts.isBlock(body)) return null;
   const awaitSet = new Set<ts.AwaitExpression>(plan.awaitPoints);
 
-  const region = lowerRegionBody(body.statements, awaitSet, 0, hoist);
+  const region = lowerRegionBody(body.statements, awaitSet, 0, hoist, checker);
   if (region === null) return null;
   // At least one non-linear construct (else the linear path owns the body), and
   // every await accounted for by the region's chunks (no stray positions).
@@ -1913,8 +1937,9 @@ export function planTryCatchCfg(
   fn: ts.FunctionLikeDeclaration,
   plan: AsyncCpsPlan,
   hoist = false,
+  checker?: ts.TypeChecker,
 ): AsyncCfgPlan | null {
-  const shape = analyzeTryCatchAsync(fn, plan, hoist);
+  const shape = analyzeTryCatchAsync(fn, plan, hoist, checker);
   if (shape === null) return null;
 
   const asLead = (stmts: readonly ts.Statement[], handler: number): AsyncCfgStmt[] =>
@@ -2296,6 +2321,7 @@ export function tryCatchAsyncSpillInfo(
   fn: ts.FunctionLikeDeclaration,
   plan: AsyncCpsPlan,
   hoist = false,
+  checker?: ts.TypeChecker,
 ): {
   segments: readonly LinearAwaitSegment[];
   catchParamNames: string[];
@@ -2305,7 +2331,7 @@ export function tryCatchAsyncSpillInfo(
     source: ts.Expression;
   }>;
 } | null {
-  const shape = analyzeTryCatchAsync(fn, plan, hoist);
+  const shape = analyzeTryCatchAsync(fn, plan, hoist, checker);
   if (shape === null) return null;
   const segments: LinearAwaitSegment[] = [];
   const catchParamNames: string[] = [];

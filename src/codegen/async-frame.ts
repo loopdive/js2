@@ -1032,7 +1032,7 @@ function computeLoopSpills(
   decl: ts.FunctionLikeDeclaration,
   plan: AsyncCpsPlan,
 ): { spillNames: string[]; spillTypes: ValType[] } | null {
-  const loop = loopAsyncSpillInfo(decl, plan);
+  const loop = loopAsyncSpillInfo(decl, plan, ctx.checker);
   if (loop === null) return null;
   const rbTypeByName = new Map<string, ValType>();
   for (const seg of loop.segments) {
@@ -1102,7 +1102,7 @@ function computeTryCatchSpills(
   decl: ts.FunctionLikeDeclaration,
   plan: AsyncCpsPlan,
 ): { spillNames: string[]; spillTypes: ValType[] } | null {
-  const info = tryCatchAsyncSpillInfo(decl, plan, isHostAsyncLane(ctx));
+  const info = tryCatchAsyncSpillInfo(decl, plan, isHostAsyncLane(ctx), ctx.checker);
   if (info === null) return null;
   const declByName = collectVarDeclsByName(decl);
   // `collectVarDeclsByName` also picks up a CATCH clause's own

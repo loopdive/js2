@@ -90,12 +90,24 @@ related: [3451, 6486, 6489, 6490, 6491, 6482]
 # iterator-record bridge, and a helper absent from it is unreachable from a
 # generator however it is implemented. Splitting the god-function is #3399's
 # job; this is +2 entries in a 12-entry table.
+# 2026-09-18 (round 28) — the two added `ctx.checker` reads FORWARD an already
+# threaded checker to an EXISTING raw-checker consumer; they add no new query.
+# `replaySafeNestedCallAwait` (src/codegen/async-cps.ts) has always called
+# `getResolvedSignature` / `getTypeOfSymbolAtLocation` / `getSymbolAtLocation`
+# directly — it asks for `ts.Signature` and declaration IDENTITY (is this callee
+# bound by exactly one `const` declaration?), which `ctx.oracle` does not
+# express. Round 28 only makes the try/catch analysis pass the checker its
+# caller already holds, so the same predicate can run on that path at all.
+# Migrating that predicate to the oracle is a separate change with its own
+# measurement.
+oracle-ratchet-allow:
+  - src/codegen/async-cps.ts
+  - src/codegen/async-frame.ts
 loc-budget-allow:
   - src/codegen/closures.ts
   - src/runtime.ts
   - src/codegen/extern-declarations.ts
   - src/codegen/type-coercion.ts
-  - src/runtime/iterator-polyfills.ts
   # 2026-09-17 (round 9) — the free-global-call MECHANISM is a new subsystem
   # module, `src/codegen/expressions/linked-free-global-call.ts` (170 lines,
   # 60 of them the rationale). What lands in the god-file is +13 lines: the
@@ -106,17 +118,35 @@ loc-budget-allow:
   # implicit-callee/runtime-eval conditions it must not shadow are local
   # variables of that dispatch chain. Splitting the chain is #3399's job.
   - src/codegen/expressions/call-identifier.ts
+  - src/runtime/iterator-polyfills.ts
+  # 2026-09-18 (round 28) — +26 lines in `src/codegen/async-cps.ts`, all of them
+  # one threading gap across the THREE `LowerState` builders: `lowerChunk` /
+  # `lowerRegionBody` / `analyzeTryCatchAsync` (try/catch) and
+  # `analyzeWhileAsync` (while-with-await), plus the four exported entry points
+  # that reach them (`planTryCatchCfg` + `tryCatchAsyncSpillInfo`,
+  # `planWhileLoopCfg` + `loopAsyncSpillInfo` — each planner paired with its
+  # spill-info twin, which must make the same shape decision). About half the
+  # lines are the three rationale comments; the rest are parameter declarations
+  # and their forwarding at the recursive call sites. It cannot move to a
+  # subsystem module: the parameter must travel through these exact private
+  # recursive functions, which is the whole of the change.
+  - src/codegen/async-cps.ts
 func-budget-allow:
   - src/codegen/closures.ts::compileArrowAsCallback
   - src/runtime.ts::resolveImport
   - src/codegen/type-coercion.ts::coerceType
-  - src/runtime/iterator-polyfills.ts::_installIteratorHelperPolyfills
   # 2026-09-17 (round 9) — same +12 lines as the LOC grant above, counted
   # against the enclosing dispatcher. The guard cannot move out of
   # `compileIdentifierCall` without carrying `declaration`, `implicitCallee`
   # and `isRuntimeEvalGlobal` with it; the emission it guards already lives in
   # its own module.
   - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/runtime/iterator-polyfills.ts::_installIteratorHelperPolyfills
+  # 2026-09-18 (round 28) — +1 line: `planTryCatchCfg` gains the optional
+  # `checker` parameter it must forward to `analyzeTryCatchAsync`. The function
+  # is a 375-line CFG builder that #3399 will split; this change adds a
+  # parameter declaration to its signature and nothing to its body.
+  - src/codegen/async-cps.ts::planTryCatchCfg
 ---
 
 # #6492 — linked lane residual after P3c
@@ -2403,3 +2433,897 @@ established, so the next lane does not repeat it:
     reason is measured and named.** All four assigned rows now fail on
     compiled-write visibility of `Promise.resolve`, which is a different issue's
     subject; saying so is worth more than forcing them green.
+## Round 16 (2026-09-18) — the `lastCaughtException` regressions: two shapes measured, and the phantom-read premise does not hold on the repro
+
+**No code landed.** Linked **44 / 138**, honest **135 / 138**, unchanged.
+
+Both states reproduce on this branch (which carries round 6's module-scope
+latch, upstream `ea9bb68887`): the descriptor lane's 5-row filter is **5 failed
+(5)**, and its r6 filter is **55 passed / 26 failed (81)**.
+
+### Two invalidation shapes measured, both ineffective
+
+The endorsed direction was to give the latch a lifetime so a `catch_all` can
+tell "mine" from "someone's old one". Two shapes narrower than the four the
+descriptor lane already rejected:
+
+| shape | 5-row result |
+| --- | --- |
+| clear the latch when a host import returns **normally at depth 0** (narrower than their rejected "clear on every normal host return" — the depth-0 condition keeps a nested call made between the throw and its `catch_all` from clearing a live latch) | **5 failed** (no change) |
+| clear on the next host import **ENTRY at depth 0, excluding the caught-exception getter** (entry proves the program is running forward, not unwinding; the getter must be excluded because the legitimate read IS itself a depth-0 host call) | **5 failed** (no change) |
+
+### The measurement that matters — the premise does not hold here
+
+Instrumenting every read of the latch on
+`language/expressions/await/await-awaits-thenables.js` (there is exactly one
+reader, `getCaughtException`, and every import object's closure reads the same
+module variable, so the instrumentation is complete):
+
+```
+[LATCH read] [object Error] Expected SameValue(«[object Object]», «42») to be true
+```
+
+**One read, and it carries the row's OWN assertion failure** — it happens
+*after* the test has already gone wrong, not before. There is no spurious
+pre-failure read of another module's handled throw on this row. The failure
+itself (`[object Object]` where 42 was expected) is upstream of any latch read.
+
+So on this repro the "async state machine's `catch_all` reads a phantom
+exception" diagnosis is not what is happening, which also explains why two
+plausible lifetime fixes moved nothing. Since a 3×-stable A/B says reverting
+*only* that binding fixes the row, the effect of the module-scope move must
+reach the row through something other than a spurious read — the write path, or
+something else in the cherry-picked commit — and that is where the next attempt
+should start rather than on latch lifetimes.
+
+**Handoff note for the descriptor lane:** worth re-running their A/B with the
+same instrumentation to see whether a pre-failure read appears in *their*
+worktree. If it does not there either, the shared premise behind all six
+measured shapes (theirs and mine) is the thing to retire.
+
+### Finding for the next lane (round 16)
+
+34. **Instrument the reader before designing the lifetime.** Six invalidation
+    shapes were designed against "a stale value is read too early"; the first
+    instrumented read showed the only read on the repro is post-failure. One
+    `console.error` in the accessor would have ordered the work differently —
+    the same lesson as round 15, one level up: check that the mechanism you are
+    fixing is the mechanism that fires.
+
+## Round 17 (2026-09-18) — the bisect is one line, and the A/B pins the whole delta to ONE read
+
+**No code landed.** Linked **44 / 138**, honest **135 / 138**, unchanged.
+
+### Hunk bisect
+
+`ea9bb68887` (this branch: `3b7d1e3c5d`) has **one code hunk**. The whole commit
+is:
+
+| file | change |
+| --- | --- |
+| `src/runtime/host-import-call-state.ts` | `let lastCaughtException: any = undefined;` moved from inside `createHostImportCallState()` to module scope — **one line**, plus the rationale comment |
+| `tests/issue-6492-r6-cross-module-host-throw.test.ts` | new test, +111 |
+
+There is nothing else to bisect: no import-object construction order, no change
+to where the value is written, nothing touching `__await` / thenable resolution
+or how a `then` callback's argument is boxed. So the 5 rows flip on the single
+line, and the question is only *how*.
+
+### The A/B that answers it
+
+`language/expressions/await/await-awaits-thenables.js`, run **solo** (so this is
+not cross-row contamination — it fails alone), with every latch read
+instrumented, on both trees:
+
+| tree | reads | the read answers | row |
+| --- | --- | --- | --- |
+| **pre-fix** (latch inside the factory, per import object) | **1** | `undefined` | **pass** |
+| **post-fix** (latch at module scope, shared) | **1** | `[object Error] Expected SameValue(«[object Object]», «42»)` | **fail** |
+
+Same program point, same single read, opposite answers. So the entire regression
+is: **one `catch_all` read that used to answer `undefined` now answers a stale
+foreign error**, and the async state machine treats any non-`undefined` answer as
+a pending exception and takes the abrupt-completion path — which is what makes
+the `await` yield an object where 42 was expected.
+
+This also corrects round 16's conclusion. The read IS the mechanism after all;
+what was wrong there was reading the post-fix log alone, where the latched
+message *looks* like the row's own assertion failure and therefore reads as
+"post-hoc". The pre-fix arm is what disambiguates it — a single-arm
+instrumentation of a two-arm question cannot.
+
+### What this specifies for the fix
+
+The discriminator is now exact, and it is a property of **that one read**:
+
+- it must answer **`undefined`** here (a foreign, already-handled throw), and
+- it must answer **the value** in r6's case (a consumer host throw whose unwind
+  is being caught by the provider).
+
+Both my round-16 lifetime shapes fail this because the pollution is written with
+no intervening quiescence before the read — there is no "nothing is unwinding"
+moment between them. "Local latch with shared fallback" also fails it, because
+the reader's own latch is empty at that point in BOTH cases, so the fallback
+fires in both. What is left is to tag the entry with the unwind it belongs to
+(the shared `env.__exn` route #5226 already gives wasm-thrown errors), so the
+reader can ask "was this written by the throw that is currently unwinding
+through ME" rather than "is anything latched".
+
+### Finding for the next lane (round 17)
+
+35. **Instrument BOTH arms of an A/B, not the failing one.** Round 16 read the
+    post-fix log alone, saw a latched message that matched the row's own
+    assertion text, and concluded the read was post-hoc and the premise dead.
+    The pre-fix arm — one more run — showed the same single read answering
+    `undefined` and the row passing, which reinstates the premise and pins the
+    delta exactly. A one-arm measurement of a two-arm question can only tell you
+    what happens, never what *differs*.
+
+## Round 18 (2026-09-18) — the shared-tag route works and fixes nothing: the failure is UPSTREAM of exception handling
+
+**No code landed.** Linked **44 / 138**, honest **135 / 138**, unchanged.
+
+### Preflight — all three checks pass
+
+| check | result |
+| --- | --- |
+| (1) do provider and consumer share ONE tag object? | **yes** — `installSharedExceptionTag` (`src/linked-provider-runtime.ts`) creates one process-wide `WebAssembly.Tag({parameters:["externref"]})` and puts the same object on both import objects |
+| (2) can this Node rethrow `new WebAssembly.Exception(tag, [value])`? | **yes** — constructs, throws, `is(tag)` true; a `null` payload is accepted; the `traps` option is accepted and not needed |
+| (3) does the payload round-trip by IDENTITY? | **yes** — `getArg(tag, 0) === obj` |
+
+The catch sites already have the arm, too: the honest WAT's async wrapper is
+`(try (do … call Promise_resolve) (catch 0 …) (catch_all …))`, and `catch 0` is
+the `__exn` tag arm — so no codegen change was needed to receive it.
+
+### Implemented, and it engages
+
+The tag moved to a leaf (`src/runtime/shared-exception-tag.ts`) so the host
+import wrapper can reach it without a cycle; all 7 wrapper arms rethrow on the
+tag after latching, gated on `peekSharedExceptionTag()` so a single-module
+program (which never installs a tag) stays byte-identical.
+
+**5-row filter: still 5 failed.** Instrumented, the rethrow fires exactly once
+per row, and the value it carries is
+`Expected SameValue(«[object Object]», «42») to be true` — the row's OWN
+assertion failure. Same single position as the latch read.
+
+### What that proves, and it retires the whole line of attack
+
+Put together with round 17's two-arm A/B:
+
+- post-r6: `await thenable` yields an **object**, `assert.sameValue(v, 42)`
+  fails, the Test262Error is thrown → latched → (now also) tagged → read by the
+  reporting `catch`. The read/tag is the row REPORTING its failure.
+- pre-r6: the same single read answers `undefined` and the row passes — because
+  the assertion never failed, i.e. the await yielded **42**.
+
+So the latch read is downstream in BOTH arms, and the module-scope latch changes
+**the value the `await` produces**, before any exception exists. Neither the
+latch's lifetime nor the exception's carrier can reach that: rounds 16 and 18
+were both aimed at a mechanism that only reports the failure.
+
+Round 17's reading is corrected accordingly: the delta between the arms is real
+and is exactly at that read, but the read is an EFFECT — pre-fix there is
+nothing to report, post-fix there is.
+
+### Where the next attempt should look
+
+Something in the await/thenable resolution path is sensitive to the latch being
+process-wide. The single-line diff has no other content, so the coupling has to
+be through a READ of `getCaughtException` on the resolution path that does not
+go through the instrumented accessor, or through a consumer of
+`hostImportCallState` that captures it (`src/runtime.ts:19288` hands
+`hostImportCallState.getCaughtException` to the async-import adapters —
+`src/runtime/host-async-imports.ts`). Instrument THERE, not in the wrapper: the
+question is what the async adapter does differently when that function answers
+non-`undefined` while a promise is being resolved.
+
+### Finding for the next lane (round 18)
+
+36. **A carrier fix cannot repair a value bug.** Three rounds (16, 17, 18)
+    treated "the wrong thing is reported" as the defect; the reporting channel
+    was faithful the whole time and the wrong VALUE was produced upstream. The
+    tell was available early and was read past twice: the failure message names
+    a value (`[object Object]` where 42 was expected), not an exception. When a
+    row's message is about a VALUE, the exception plumbing is downstream of the
+    bug however suspicious it looks.
+
+## Round 19 (2026-09-18) — r6 did not regress the 5 rows: it UNMASKED them
+
+**No code landed.** Linked **44 / 138**, honest **135 / 138**, unchanged.
+
+Both arms instrumented on `await-awaits-thenables.js`, run solo, logging every
+host-import throw (import name, depth, import-object id) and every latch read.
+The full trace is three lines per arm and diverges on exactly one:
+
+```
+pre-fix  [R19 throw] obj=0 import=__extern_method_call_2 depth=2 [object Error] Expected SameValue(«[object Object]», «42») to be true
+         [R19 read]  obj=1 -> undefined                                    → 1 pass, 0 fail
+post-fix [R19 throw] obj=0 import=__extern_method_call_2 depth=2 [object Error] Expected SameValue(«[object Object]», «42») to be true
+         [R19 read]  obj=1 -> [object Error] Expected SameValue(…)         → 0 pass, 1 fail
+```
+
+**Line 1 is identical in both arms.** The assertion fails either way — `await
+thenable` yields the thenable where 42 is expected. The only difference is
+whether the OTHER import object's single read surfaces that failure.
+
+So `ea9bb68887` did not regress these five rows; it **unmasked** them. Pre-r6
+the cross-module rejection reason was lost and a failing async row reported as
+**passing** — a false PASS, which is the worse defect of the two and the one r6
+fixed.
+
+**Recommendation: do NOT revert `ea9bb68887`.** Reverting re-hides five real
+failures and loses r6's seven genuine gains. The linked lane's headline was 5
+too high before r6; the residual is now honest.
+
+Both defects are filed as **#6504** (the `await`-of-a-cross-module-thenable
+value bug, with `_wrapThenable`'s module-scoped `exports` probes as the starting
+point, plus the false-pass accounting).
+
+This also closes out rounds 16–18, all three of which were aimed at a reporting
+channel that was working: the channel became MORE correct in r6, and what it
+started reporting was a pre-existing bug.
+
+### Finding for the next lane (round 19)
+
+37. **A "regression" that a revert fixes may be an unmasking — check whether the
+    failure exists in the passing arm too.** Four rounds and a 3×-stable A/B all
+    pointed at one line; the line was innocent. What settled it was logging the
+    *failing assertion* in the arm that PASSES. A revert-fixes-it A/B proves
+    causation of the VERDICT, never of the defect — and a verdict can flip
+    because a real failure stopped being swallowed. Corollary for conformance:
+    a row that passes because a reason was lost is worse than a red row, and no
+    row-count gate can see it.
+
+## Round 20 (2026-09-18) — #6504's named site is not on the path
+
+**No code landed.** Linked **44 / 138**, honest **135 / 138**, unchanged.
+
+The brief's fix was implemented exactly as specified: `_wrapThenable`
+(`src/runtime.ts`) now decodes through `_decoderExportsFor(v, …)` — the #5225
+owner-exports helper already used by `_classChainRead`, the `__shas_` probes and
+the Date carrier — so a consumer-minted thenable is recognised when it reaches
+the provider's Promise machinery.
+
+**5-row filter: still 5 failed.** Instrumented, the reason is categorical:
+
+| probe, on `await-awaits-thenables.js` (solo) | fired? |
+| --- | --- |
+| `_wrapThenable` entry (both the struct and the not-a-struct arm) | **never** |
+| `Promise_resolve` import lambda | **never** |
+| `Promise_then2_frame` import lambda | **never** |
+
+The linked consumer's `await` reaches **none** of the host Promise imports. A
+single-module compile of the same body imports `Promise_resolve`,
+`Promise_new_pending`, `Promise_settle_{resolve,reject}` and
+`Promise_then2_frame`; the linked consumer uses none of them on this row, so the
+await is being driven somewhere else entirely (the wasm-side frame engine is the
+obvious candidate — `src/runtime/wasmgc/async/frame-engine.ts`).
+
+So `_wrapThenable` cannot be the fix, and the #5225 owner-exports idea is right
+in kind but aimed at the wrong reader. #6504 has been updated with this
+elimination and now points the next attempt at finding which mechanism actually
+resolves the awaited value in the linked consumer — dump the consumer's import
+list and its `__async_*` locals for this row, and compare against the
+single-module compile whose imports are listed above.
+
+### Finding for the next lane (round 20)
+
+38. **Before fixing a named site, prove the site RUNS.** One `console.error` at
+    the entry of `_wrapThenable` would have shown it is never called on this row
+    and saved implementing, building and measuring a correct-looking fix. The
+    round-16 lesson ("instrument the reader") generalises: instrument the site
+    you are about to change, not only the value you expect it to produce.
+
+## Round 21 (2026-09-18) — ROOT CAUSE: the linked consumer erases `await` entirely
+
+**No code landed** (localization round). Linked **44 / 138**, honest **135 / 138**.
+
+Neither branch of the brief is right, because the linked consumer takes *no*
+async path at all. Dumping the real linked-seam compile of
+`await-awaits-thenables.js` (`compileHarnessLinkedBody`, `emitWat: true`) and
+reading `$foo`:
+
+```wat
+(func $foo (type 10)                  ;; <- no result
+  global.get 9    local.set 0         ;; assert
+  global.get 10   extern.convert_any  ;; the THENABLE, read directly
+  local.set 1
+  global.get 17   local.set 2         ;; 42
+  local.get 0  global.get 4  local.get 1  local.get 2
+  call 7                              ;; __extern_method_call_2 -> assert.sameValue(thenable, 42)
+  drop)
+```
+
+**The `await` is not lowered at all.** Its operand is read and handed straight to
+`assert.sameValue`, so `await thenable` evaluates to the thenable by
+construction. Corroborating, across the whole consumer module:
+
+| evidence | count |
+| --- | --- |
+| host Promise imports (`Promise_resolve`, `Promise_new_pending`, `Promise_settle_*`, `Promise_then2_frame`) | **0** |
+| native thenable substrate (`__promise_has_callable_then`, `__promise_thenable_job`, #3125) | **0** |
+| any `__async_*` local or frame-engine artefact | **0** |
+| `$foo`'s result type | **none — it returns void** |
+
+So the host-free-floor verdict is not choosing the native path and the native
+path is not missing thenable unwrapping: the async machinery is **absent**, and
+`async function foo` compiled as an ordinary void function with its `await`
+erased.
+
+### This unifies two issues
+
+`$foo` returning **void** is the same fact rounds 12–14 chased from the other
+end: the closure whose funcref is `func(ref, externref) -> ` with no result, and
+`foo()` answering `null` so `asyncTest`'s `testFunc().then` threw. #6502's three
+`await` rows and #6504's five rows are **one defect** — the linked consumer
+drops async lowering — approached from the reporting side and the value side.
+
+That also retires the remaining #6502 framing: there is no dispatch miss and no
+void-return ABI question to fix; the callee should never have been void.
+
+### Where the fix belongs
+
+Find the predicate that decides a body unit gets no async lowering and make the
+linked consumer unit take the same path the single-module compile of the same
+body takes (that one imports `Promise_resolve`, `Promise_new_pending`,
+`Promise_settle_{resolve,reject}` and `Promise_then2_frame`). Suspects, in the
+order worth checking: the `entryScriptGoal` consumer compile (#6474), the
+`deferTopLevelInit` window (#6477), and `asyncFnNeedsHostDrive`'s pre-body
+verdict running without the harness prefix in view. The A/B is cheap and
+already scripted — `.tmp/r9/linkedwat.mts` dumps the consumer WAT for any row.
+
+### Finding for the next lane (round 21)
+
+39. **Read the emitted code for the construct, not the machinery around it.**
+    Rounds 16–20 asked which mechanism mishandled the awaited value; the answer
+    was that no mechanism ran, because the `await` was not emitted. Thirty
+    seconds of `grep` in the consumer's own WAT — `$foo` has no result type and
+    no suspension — outranked four rounds of runtime instrumentation. When a
+    value is wrong, disassemble the function that should produce it before
+    instrumenting anything that consumes it.
+
+## Round 22 (2026-09-18) — round 21's A/B compared two different sources; the real discriminator is the CALL TARGET
+
+**No code landed.** Linked **44 / 138**, honest **135 / 138**.
+
+### Correction to round 21
+
+Round 21 concluded "the linked consumer erases `await`, the single-module
+compile does not". The consumer observation is right; the comparison was not.
+The single-module probe used `var r = await thenable; return r;` while the row's
+actual body is `assert.sameValue(await thenable, 42)`. Compiling the **row's**
+shape single-module reproduces the erasure exactly — **no Promise imports** — so
+the erasure is NOT a property of the linked seam.
+
+### What actually decides it
+
+| source | Promise imports |
+| --- | --- |
+| `var r = await thenable; return r;` (single module) | **yes** — all four |
+| `assert.sameValue(await thenable, 42)` with `assert` UNDECLARED (single module) | **none** |
+| same, with `assert` defined locally in the unit | **yes** (`Promise_resolve`, `Promise_reject`) |
+| same, linked consumer (`assert` is a PROVIDER import) | **none** |
+
+So the async engine's verdict turns on **whether the awaited expression's
+enclosing call target is resolvable in this unit** — not on the await's
+position, and not on the link seam per se. The linked lane is hit because
+`assert` is a provider import there, which puts it in the same class as an
+undeclared identifier as far as the verdict is concerned.
+
+That is also why the honest lane passes these rows: in the whole-assembly
+compile `assert` is a compiled harness function in the SAME unit, the engine
+claims the async function, and `await` is lowered normally.
+
+### Where the fix belongs (refined)
+
+`asyncFnNeedsHostDrive` (`src/codegen/async-frame.ts` ~L231) declines, and a
+decline means the "legacy synchronous pass-through", which compiles `await` as a
+no-op (`async-closure-promise.ts` header states this). Its early exits are ruled
+out — `awaitIsStaticallyResolved` returns false for a bare identifier, so
+`anyRealSuspension` is true — which leaves `planLinearAwaits(...) === null`
+followed by `computeTryCatchSpills(...) === null`. **Next step: instrument those
+two on the three sources above** and find which one needs the call target's
+type; then make an unresolvable / cross-unit call target not force a decline.
+
+A decline that silently erases `await` is the deeper problem: the same shape
+that says "this function suspends" is being compiled as if it does not. Worth
+considering whether a decline should refuse loudly (the #3587 hazard guard
+already exists for rejection-observing shapes) rather than emit a no-op await.
+
+### Findings
+
+40. **An A/B is only an A/B if the two arms differ in ONE thing.** Round 21's
+    arms differed in the link seam AND the source shape; the conclusion named
+    the wrong one, and it took a third compile (the row's real shape,
+    single-module) to see it. When constructing the comparison, copy the exact
+    source from the failing row rather than writing a "minimal equivalent".
+
+## Round 23 (2026-09-18) — the decline is LANE-INDEPENDENT: `planLinearAwaits` returns null for an await in a call ARGUMENT
+
+**No code landed.** Linked **44 / 138**, honest **135 / 138**.
+
+Instrumented `asyncFnNeedsHostDrive`'s three decision points and ran the row's
+exact body on both round-22 sources:
+
+| source | `awaits` | `anyRealSuspension` | `planLinearAwaits` | `computeTryCatchSpills` | verdict |
+| --- | --- | --- | --- | --- | --- |
+| `assert.sameValue(await thenable, 42)`, `assert` **undeclared** | 1 | true | **NULL** | **NULL** | **DECLINE** |
+| same, `assert` **defined locally** | 1 | true | **NULL** | **NULL** | **DECLINE** |
+
+**Identical.** So round 22's discriminator is wrong too: the async engine
+declines this shape either way, and the Promise imports I used as the signal in
+round 22 come from the #4648 closure-promise wrapper / call-site repair, not
+from the frame engine. I was reading a different mechanism's fingerprint.
+
+### The actual defect
+
+`planLinearAwaits` returns `null` for an `await` nested as an **argument of a
+call**, `computeTryCatchSpills` returns `null` (there is no try/catch), so
+`asyncFnNeedsHostDrive` declines — and a decline means the legacy synchronous
+pass-through, which compiles `await` as a **no-op**. It is lane-independent and
+has nothing to do with the link seam, the call target's resolvability, or
+thenables.
+
+`await thenable` is merely the shape that makes the erasure *visible*: with a
+real promise the pass-through's wrong value is often indistinguishable from the
+right one in a synchronous harness, but a thenable is returned unchanged and the
+assertion catches it.
+
+### Open question for the honest lane
+
+If the decline is lane-independent, the honest lane erases the `await` too — yet
+it reports these rows as PASSING. Given round 19 established that a lost
+rejection reason turns a failing async row green, the likely explanation is that
+**the honest lane is false-passing these rows for the same reason the pre-r6
+linked lane was**. That is worth confirming before the honest 135/138 number is
+relied on: instrument the assertion throw on the honest arm of one row.
+
+### Where the fix belongs
+
+`planLinearAwaits` must plan an `await` in a call-argument position (spill the
+already-evaluated callee/receiver and the preceding arguments across the
+suspension), rather than answering `null`. That is a real planner extension, not
+a gate flip, and it is the whole of #6504 plus #6502's three rows.
+
+The loud-refusal half of the round-23 brief now looks more important, not less:
+this decline is reachable from ordinary source on every lane, and it silently
+produces a wrong value.
+
+### Findings
+
+41. **Two arms agreeing is as informative as two arms differing — instrument
+    the decision, not a downstream artefact.** Rounds 21 and 22 each named a
+    discriminator (the link seam; the call target) from an artefact that
+    correlated with it (which Promise imports appeared). Logging the predicate's
+    own branches took one edit and showed both arms decline identically, which
+    no amount of comparing emitted imports could have.
+
+## Round 24 item 1 (2026-09-18) — the honest lane is NOT false-passing these rows
+
+**No code landed.** Linked **44 / 138**, honest **135 / 138**.
+
+Round 23 suspected the honest 135/138 was overstated, because a lane-independent
+decline should erase the `await` on the honest lane too. Measured, and it is
+not:
+
+```
+HONEST, await-awaits-thenables.js, solo, instrumented:
+  [R24 throw] import=__extern_method_call_2 depth=1 [object Error] Expected SameValue(«[object Object]», «42») to be true
+  [R24 read]  [object Error] Expected SameValue(«[object Object]», «42») to be true
+  → 0 pass, 1 fail
+```
+
+Two facts follow:
+
+1. **The honest lane FAILS this row**, and reports it correctly — the assertion
+   throws, the reason survives, the verdict is red. No false pass.
+2. **The row is not in the 138-row set at all** (`grep` of `.tmp/r5/rows138.txt`
+   — that set is the #6492 honest-pass/linked-fail bucket, and this row is
+   honest-FAIL). So the honest 135/138 I have reported every round never
+   included these five rows and is not overstated by them.
+
+So the picture from round 19 stands unamended: the honest lane has always
+reported these rows honestly; the pre-r6 LINKED lane was false-passing them; r6
+made the linked lane agree with honest. The decline is lane-independent (round
+23) and both lanes produce the wrong value — only the pre-r6 linked lane hid it.
+
+**No baseline correction is needed.** The comparison baseline for this bucket is
+unchanged.
+
+### Item 2 not started
+
+The planner extension (`planLinearAwaits` for awaits in call-argument position,
+with the five shapes and evaluation-order constraints) is a scoped codegen piece
+and is left for its own round. Item 3's residual-decline census depends on it.
+
+## Round 25 (2026-09-18) — the planner already has a call-argument arm; our rows miss it BY DESIGN, and widening it needs spills
+
+**No code landed.** Linked **44 / 138**, honest **135 / 138**.
+
+`planLinearAwaits` is not missing call-argument support — it has a bounded arm,
+`replaySafeNestedCallAwait` (`src/codegen/async-cps.ts` ~L594), and reading its
+conditions explains every measurement in rounds 21–23 and settles what shape (a)
+actually requires.
+
+### The existing arm's conditions
+
+For `EXPR_STATEMENT` containing the await, it admits the await only when:
+
+| condition | our row `assert.sameValue(await thenable, 42)` |
+| --- | --- |
+| statement is an `ExpressionStatement` | ok |
+| await is **`arguments[0]`** of the call | ok |
+| callee is an **`ts.isIdentifier`** | **NO** — it is `assert.sameValue`, a property access |
+| the first parameter's type is `any`/`unknown` | n/a |
+| callee symbol has exactly ONE declaration, a **`const` variable** | **NO** |
+
+So the decline is deliberate, and the module's own doc says why: *"Mutable/global
+callees, earlier arguments, and an awaited call embedded as an argument/operand
+of another expression are rejected. Those shapes need explicit pre-await operand
+spills rather than continuation recompilation."*
+
+### Why the mechanism cannot simply be widened
+
+The arm works by **recompiling the containing statement after resume**, with the
+delivered value substituted for the `AwaitExpression`. That is sound only when
+everything evaluated *before* the suspension is replay-equivalent — which is why
+it is restricted to reading one `const` binding.
+
+`assert.sameValue` is a **property access**: §13.3.6 evaluates the callee before
+the arguments, so re-reading `assert.sameValue` after the suspension is
+observably wrong — the awaited thenable's `then` runs arbitrary user code in
+between and may replace it. Relaxing the `const`-identifier rule to admit a
+member expression would trade a silently-erased `await` for a silently-re-read
+callee: a different wrong answer, not a fix.
+
+**So shape (a) as our rows need it is not a gate widening; it is the spill path
+the doc names.** Concretely it needs:
+
+1. a second synthetic frame binding for the **callee value** (and, for `o.m(...)`,
+   the receiver) evaluated BEFORE the suspension and spilled;
+2. spills for every **preceding argument** already evaluated, in order;
+3. a resume path that **calls the spilled callee** with the spilled arguments
+   plus the delivered value, instead of recompiling the statement;
+4. the same for `new C(await x)` (spilled constructor) and for an await nested
+   inside an argument expression (`f(1 + await x)`), where the partial operand
+   must be spilled too.
+
+Today's `resumeBinding` / `asyncAwaitValueLocals` machinery delivers exactly ONE
+value into a recompiled statement; (1)–(4) are a different continuation ABI.
+
+### Why I did not land a partial version
+
+A partial widening here is the same failure mode this whole arc has been
+chasing: the subsystem's declines exist because each one was a measured
+regression (#2967, #2906, #3134, #5367 are all carve-outs in this file), and an
+unsound admission produces a **wrong value silently** rather than a red row. The
+one widening that IS sound without new spills — accepting the await at a later
+argument index when every preceding argument is itself a literal/const read —
+does not cover any of the 5 + 3 rows, because all of them have a property-access
+callee.
+
+### What the next lane should do
+
+Implement the spill-based continuation ABI above as its own piece, shape by
+shape, with the WAT A/B (`.tmp/r9/wat2.mts` single-module, `.tmp/r9/linkedwat.mts`
+linked) checking for a result type + the four Promise imports before each runner
+pass. Item 3's census (declines with `anyRealSuspension` true across the async
+slices) is worth running FIRST and independently: it sizes the loud-refusal
+decision and will also show how much of the corpus rides on this one arm.
+
+### Finding
+
+42. **Read the decline's own documentation before designing around it.** The
+    module states exactly which shapes it rejects and that they "need explicit
+    pre-await operand spills rather than continuation recompilation" — the
+    design answer to four rounds of investigation was a comment above the
+    predicate. Rounds 21–23 measured their way to the same sentence.
+
+## Round 26 (2026-09-18) — the decline census, and a bucket nobody predicted
+
+**No code landed.** Linked **44 / 138**, honest **135 / 138**.
+
+`replaySafeNestedCallAwait` was instrumented to report WHICH condition rejects,
+and the six async slices were run on the linked lane
+(`expressions/await/**`, `built-ins/Promise/**`, `expressions/async-function/**`,
+`expressions/async-arrow-function/**`, `statements/async-function/**`,
+`statements/for-await-of/**`) — **2,212 rows, 1,532 pass / 671 fail / 9 CE**
+(this is also the pre-round state for the regression comparison).
+
+### Declines with `anyRealSuspension` true, by rejecting condition
+
+| bucket | events | what it means |
+| --- | --- | --- |
+| `no-checker` | **31** | `checker === undefined` — the planner was called without a checker, so the shape was never examined |
+| `member-callee` | **27** | `o.m(await x)` — the 5 + 3 rows' shape |
+| `nested-operand` | **12** | the await is not the direct argument of a call (`f(1 + await x)`, operand positions) |
+| `not-expression-statement` | **1** | the containing statement is not an `ExpressionStatement` |
+| **total** | **71** | |
+
+Buckets that did **not** appear at all in these slices: `preceding-argument`,
+`new-expression`, `mutable-or-global-callee`, `typed-first-parameter`,
+`no-first-parameter`. So of the five shapes the round-25 design enumerated, only
+**two** are actually exercised here — member callee and nested operand — and the
+`new C(await x)` / preceding-argument work has no corpus evidence behind it yet.
+
+### The unpredicted bucket: 31 of 71 declines are not about shape
+
+`no-checker` is the largest bucket and is not a shape rejection at all:
+`planLinearAwaits` is invoked without `opts.checker`, so
+`replaySafeNestedCallAwait` returns false on its first line regardless of what
+the code looks like. That is a threading gap, and it is plausibly far cheaper to
+fix than the continuation ABI — it may also move rows that the ABI would
+otherwise have to cover. **It should be checked before any ABI work starts.**
+
+### The ≤ 20 rule: indeterminate, deliberately not resolved
+
+These are decline EVENTS, not rows: the same function is planned more than once
+per compile (a sample body logged 3 events for 1 function), so the distinct-row
+count is bounded above by 71 and is plausibly ~24. That straddles the threshold,
+which is exactly the case the rule exists to catch, so **the loud refusal is not
+landed**. Resolving it needs one more run that attributes each event to its row
+(print the row path alongside the reason); that is a bounded measurement and
+should precede the decision.
+
+### Finding
+
+43. **Census the decline reasons before designing for them.** The round-25
+    design enumerated five shapes from reading the predicate; the corpus
+    exercises two of them, and the single largest cause — a missing checker —
+    was not one of the five and is not a shape at all. One instrumented run over
+    2,212 rows reordered the whole workplan.
+
+## Round 27 (2026-09-18) — the `no-checker` bucket is real and its fix is NEUTRAL; #6503 blocks the measurement
+
+**No code landed.** Linked **44 / 138**, honest **135 / 138**.
+
+### Step 1: what `no-checker` actually is
+
+Not a call-site omission — all four `planLinearAwaits` call sites already pass
+`ctx.checker`, and `ctx.checker` is non-optional. A stack trace names the real
+path:
+
+```
+replaySafeNestedCallAwait <- lowerLinearStatements <- lowerChunk
+  <- lowerRegionBody <- analyzeTryCatchAsync <- tryCatchAsyncSpillInfo
+```
+
+That is the **try/catch analysis** — the SECOND chance `asyncFnNeedsHostDrive`
+gives a body after `planLinearAwaits` declines. It builds its `LowerState` with
+no checker, so the shape arm's first line (`checker === undefined` → false)
+fires regardless of the code. The caller (`computeTryCatchSpills`) has `ctx` and
+therefore `ctx.checker` already, so it is a pure threading gap.
+
+Implemented the threading (`ctx.checker` → `tryCatchAsyncSpillInfo` →
+`analyzeTryCatchAsync` → `lowerRegionBody` → `lowerChunk` → `LowerState`;
+`planTryCatchCfg` given the same optional parameter). Typecheck clean.
+
+### Step 1 measurement: neutral where it matters, #6503 noise where it does not
+
+| measurement | before | after |
+| --- | --- | --- |
+| six async slices, linked (2,212 rows) | 1,532 pass / 680 fail | **1,532 / 680 — identical** |
+| 138-row set, honest | 135 | 135 |
+| 138-row set, linked | 44 | **49: +9 / −4** |
+
+The 138-row delta is **#6503's signature, exactly**: the same nine
+`Symbol.species` / `toStringTag` gains and the same four `harness/*` losses that
+an *unused* late import reproduced in round 15. The change alters which
+functions the async engine claims, hence codegen, hence function indices — and
+#6503 says any index perturbation in this area moves precisely those 13 rows.
+
+So the honest reading is: **the threading fix is semantically neutral** (0 gains
+on the 2,212 async rows, which is where it could possibly matter), and its only
+visible effect is to trip a known unrelated bug.
+
+**Not committed.** Landing it would import a +9/−4 churn whose cause is #6503,
+against a baseline #6503 has already corrupted. It is a correct change with no
+measured benefit and a known-noisy footprint.
+
+### This is a second, independent confirmation of #6503
+
+Round 15 produced the signature with an unused import; round 27 produces it with
+an unrelated planner-threading change. Two different perturbations, one identical
+13-row delta. **#6503 should be fixed before any further work in this area** —
+it is now demonstrably taxing every measurement, and finding 33 has been paid
+twice.
+
+### Steps 2 and 3 not run
+
+The attribution run and the spill ABI both measure into the same corrupted
+baseline. Running them before #6503 would produce numbers that need re-doing.
+
+### Finding
+
+44. **A neutral change that trips a known bug is still not shippable.** The
+    temptation is to land it because it is "correct anyway" and explain the
+    delta; but the delta is real churn for reviewers and for the next
+    measurement, and the fix costs nothing to defer. Fix the measurement
+    substrate first — the second time you pay the same tax, stop and fix it.
+
+## Round 28 (2026-09-18, Opus long-tail lane) — #6503 does not reproduce on this base; the round-27 threading fix is shippable
+
+Base: `claude/compiler-performance-bn5g3l` @ 887e87650a (+ `278b5d1aa5`), which is
+**not** the base rounds 10-27 measured on (`issue-6492-r8`). That difference is
+the whole of this round's first finding.
+
+### The 138-row baseline is already 49, not 44
+
+| set | lane | r8 base (rounds 10-27) | this base |
+| --- | --- | --- | --- |
+| 138-row | linked | 44 | **49** |
+| 138-row | honest | 135 | 135 |
+
+The nine `Symbol.species` / `Symbol.toStringTag` rows all **pass** here and the
+four `harness/*` rows all **fail** here — i.e. this base already sits on the far
+side of the exact 13-row block that rounds 11, 14, 15 and 27 each moved. So the
++9/−4 signature is a property of the TREE, not of any perturbation applied to it.
+
+### #6503's probe is vacuous as published, and null once made effective
+
+The published probe registers `__throw_type_error`. That name is **already in
+`ctx.funcMap`** at this point in every module measured here, so `ensureLateImport`
+returns the existing index and **no import is added** — the probe changes nothing
+by construction. Re-running it is what surfaced this: the harness provider binary
+for `built-ins/Array/Symbol.species/symbol-species.js` is **byte-identical** with
+and without it (195,777 bytes, `cmp` clean), and the consumer WAT is identical too.
+
+Re-probed with a name that is genuinely absent (`__object_is`, a real host import
+so the module still instantiates). Instrumented, it does add one import at each
+of the five `emitClosureCallExportN` arities (`155 -> 156`, then funcMap hits).
+Measured:
+
+| measurement | base | + unused late import |
+| --- | --- | --- |
+| harness provider binary (symbol-species include-set) | 195,777 B | **byte-identical** |
+| 138-row set, linked | 49 | **49 — +0 / −0 per test** |
+| 900-row honest control (`built-ins/Object`, first 900) | 703 | **703 — +0 / −0 per test** |
+
+`storeSpills`-class side channels, `funcMap`, the trampoline/scheduler/generator
+caches and the export/element/start-index walks all remap correctly here, and the
+now-unused import is pruned before emission — hence byte-identical output rather
+than merely equal row counts.
+
+**#6503's acceptance criterion ("registering an unused import at this site leaves
+all 138 rows unchanged") is therefore MET on this base, with no code change.**
+What is not established is why the r8 base behaved differently; the honest reading
+is that the r8 delta was never demonstrated to be an index shift — the probe that
+"reproduced" it added no import at all.
+
+### The round-27 threading fix: THREE builders, one silently dropped argument
+
+Re-applied, and it is bigger than round 27 described. `LowerState` — the record
+`replaySafeNestedCallAwait` reads its checker from — is built in **three**
+places, not one:
+
+| builder | reached via | had a checker before |
+| --- | --- | --- |
+| `planLinearAwaits` | the primary claim | yes |
+| `lowerChunk` | `tryCatchAsyncSpillInfo` / `planTryCatchCfg` -> `analyzeTryCatchAsync` -> `lowerRegionBody` | **no** |
+| `analyzeWhileAsync` | `planWhileLoopCfg` / `loopAsyncSpillInfo` | **no** |
+
+Round 27 found the second. The third is the `while`-with-await plan, and it has
+the same property. Both plan builders are now threaded **together with their
+spill-info twins** (`loopAsyncSpillInfo`, `tryCatchAsyncSpillInfo`): those two
+pairs must make the SAME shape decision, because one computes the frame fields
+for the plan the other builds — a shape admitted by one and not the other is a
+frame whose live values have no field.
+
+**The first cut of this fix did not work, and nothing said so.**
+`tryCatchAsyncSpillInfo` got the parameter in its signature while its body kept
+calling `analyzeTryCatchAsync(fn, plan, hoist)` — three arguments, checker
+dropped on the floor. Typecheck passed (the parameter is optional), the plan
+still came back, and no row count moved. The only thing that changed was the
+decline reason, which no gate reads. Instrumenting the reject reasons on one
+row's linked-consumer compile is what caught it:
+
+| repro (`await-awaits-thenables.js`, linked consumer) | `no-checker` | `member-callee` |
+| --- | --- | --- |
+| before | 3 | 6 |
+| after the signature-only "fix" | 3 | 6 |
+| after the body actually forwards | **0** | **9** |
+
+All nine declines are now the real shape gate. `tests/issue-6492-r28-trycatch-planner-checker.test.ts`
+asserts the FORWARDING, not just the signature, for exactly this reason.
+
+### Measurement
+
+| measurement | before | after |
+| --- | --- | --- |
+| six async slices, linked (2,212 rows) | 1,532 / 680 | 1,532 / 680 — +0 / −0 per test |
+| 138-row set, linked | 49 | 49 — +0 / −0 per test |
+| equivalence-gate | 22 failing / 1,720 passing | unchanged, no new |
+
+Both diffs are per-TEST, not per-count. Round 27 declined to land this because
+its only visible effect was a +9/−4 it attributed to #6503; on this base that
+delta does not occur, so the change is what it is — correct, and with no
+measured behaviour change.
+
+Closing the largest decline bucket while moving **zero** rows is itself the
+result: the `no-checker` declines were not rows the shape gate would have
+admitted. The remaining buckets — `member-callee` 27, `nested-operand` 12 — are
+the real work, and they need the spill continuation ABI (#6504), not a
+parameter.
+
+### #6504: the defect reproduces here, and there is now a seconds-long repro
+
+`.tmp/r28/linkedwat.mts <row> <out.wat>` compiles a row's body through the real
+linked seam and dumps the consumer WAT. On
+`language/expressions/await/await-awaits-thenables.js` the consumer contains
+**zero** matches for `Promise_resolve` / `Promise_then2_frame` / `__async_` —
+round 21's "the consumer erases `await`" observation holds on this base, and the
+row still fails the linked lane with `SameValue(«[object Object]», «42»)`.
+
+That replaces the corpus run as the inner loop for #6504: a fix's first
+acceptance signal is async artefacts appearing in this one WAT, in seconds,
+instead of 11-45 minutes.
+
+**Note for round 22's table:** the single-module arm no longer reproduces. With
+`assert` undeclared, `async function foo() { … assert.sameValue(await thenable,
+42); }` compiled as ONE module DOES import `Promise_resolve` / `Promise_reject`
+on this base. Only the linked consumer erases the await. So the repro is
+lane-specific now, and round 22's "compiling the ROW's shape single-module
+reproduces the erasure" no longer holds — use the linked dumper.
+
+### What was NOT done
+
+The `member-callee` spill ABI (#6504's real fix) is **not implemented**. The
+design is unchanged from round 25 and the carrier for it now looks concrete —
+`AsyncCfgState` already has the two hooks it needs (`emit`, which runs after the
+lead and before the terminator, is the pre-suspension spill slot; `postDeliverEmit`,
+which runs after delivery, is the resume-side call slot), `storeSpills` /
+`restoreSpills` already move any name bound in `fctx.localMap`, and
+`buildHostCallFallbackArm` (`src/codegen/expressions/host-call-fallback.ts`)
+already emits `__call_function_N(fn, thisArg, args…)`. What is missing is the
+plan-side carry (the callee/receiver/argument nodes per segment), the synthetic
+spill names in `computeAsyncSpills`, and a host-lane gate on the dynamic call.
+
+**There is no cheap sound shortcut, and this was checked rather than assumed.**
+Admitting the shape through the existing replay path re-reads `o.m` AFTER the
+suspension, and the awaited thenable's `then` runs arbitrary code in between.
+The existing identifier arm is sound only because re-reading a single-`const`
+binding is provably the same value; a property read is not. The trade on offer
+is "silently erased await" for "silently re-read callee", and round 25 already
+declined it.
+
+### The loud-refusal decision is still open
+
+Round 26 left the ≤ 20 rule indeterminate because it counted decline EVENTS, not
+rows. Round 28 tried to attribute events to rows from the runner's stderr and
+that does not work — vitest batches worker stderr and attributes it to whichever
+test it flushes under, so a 12-event sample mapped to ONE (wrong) row.
+
+The measurement that actually answers it needs no attribution at all: gate the
+loud refusal behind a flag, run the six slices with it on, and diff against the
+base run — the rows that flip pass -> fail ARE the set, by definition. That run
+was not completed here (the box was running three other agents' vitest suites
+and the corpus runs were taking 3-4x their normal wall time). The refusal
+channel to widen is `reportDeclinedAsyncRejectionHazard`
+(`src/codegen/async-activation.ts`): today it fires only when the suspension sits
+inside a `try`; the candidate change is to drop that condition for declines with
+`anyRealSuspension` true.
+
+### Findings
+
+45. **A null-change probe is only a control if it actually changes something.**
+    Round 15's probe was `ensureLateImport(ctx, "__throw_type_error", …)` at a
+    site where that name is already registered — an early `funcMap` return. The
+    control that was supposed to prove "the import alone moves 13 rows" added no
+    import. Verify the perturbation landed (here: one `cmp` of the emitted
+    binary, or one `numImportFuncs` print) before reading its delta.
+46. **Re-measure the baseline on YOUR base before inheriting a delta.** The
+    13-row block was already flipped here, so any change measured against the
+    inherited "44" would have shown a phantom +5. One 150-second run replaced
+    two rounds of inherited premise.
+47. **An optional parameter that is accepted but not forwarded fails silently,
+    and no gate in this repo can see it.** Typecheck passes, the plan still
+    returns, row counts do not move; only the decline reason changes. Any fix
+    whose success criterion is "a predicate now RUNS" needs a direct observation
+    that it runs — an instrumented reject-reason count on one repro — and a test
+    that asserts the forwarding, not the signature.
+48. **Build the seconds-long repro before the corpus run, not after.** #6504 had
+    18 rounds of corpus-scale measurement behind it; the single-compile linked
+    dumper that shows the same defect takes about four seconds and immediately
+    invalidated one inherited premise (the single-module arm) and confirmed
+    another (the erased await).
