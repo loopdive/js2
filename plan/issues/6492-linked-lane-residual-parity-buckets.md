@@ -2160,3 +2160,52 @@ are the two candidates — and why its gate does not fire for the consumer.
 The likely shape is the same seam problem as everywhere else in this issue: the
 gate needs to see the CALL SITE (`assert.throwsAsync(…)`), which now lives in
 the provider, while the callback it must wrap lives in the consumer.
+
+## Round 15 (2026-09-18) — the +9/−4 was an INDEX-SHIFT artifact; rounds 11 and 14 withdrawn
+
+**No code landed.** Linked **44 / 138**, honest **135 / 138**, unchanged.
+
+Round 15 set out to fix the four readers of a void closure's `null`. Before
+touching them it tested the premise, and the premise is false.
+
+Registering **one late import that nothing reads** at the exact point rounds 11
+and 14 registered theirs — inside `emitClosureCallExportN`, just before its
+funcIdx snapshots — reproduces the delta **exactly**: 44 → 49, the same nine
+gains, the same four losses.
+
+```ts
+ensureLateImport(ctx, "__throw_type_error", [{ kind: "externref" }], []);
+flushLateImportShifts(ctx, null);   // nothing reads the index
+```
+
+So the +9/−4 published in rounds 11 and 14 measured neither the loud terminal
+nor the canonical-`undefined` producer. It measured the **index shift** those
+changes caused by registering an import there. Filed as **#6503**.
+
+Both readings are withdrawn:
+
+- **Round 11**: "the loud miss is +9/−4, so (a) must land before (b)" — the
+  trade-off it described does not exist. The sequencing conclusion may still be
+  right, but it has no measurement behind it any more.
+- **Round 14**: "registering the `undefined` producer gives the same +9/−4, so
+  the 13 rows share one cause" — they do share one cause, and it is #6503, not
+  what a void closure answers.
+
+Round 14's *diagnostic* half stands on its own evidence (the probe output): the
+value's funcref is ft 43, `func(ref, externref) -> void`, so `__closure_arity`'s
+answer of 1 is correct and the null is a void return rather than a dispatch
+miss. What is withdrawn is the claim that fixing it was worth +9/−4.
+
+### Findings
+
+32. ~~Two independent fixes producing an IDENTICAL delta means one shared cause,
+    and it is upstream of both.~~ CORRECTED. The premise held — there was a
+    shared cause — but the inference was wrong, and the sharper rule is: **an
+    identical delta from two unrelated mechanisms is first evidence of a shared
+    ARTIFACT, not shared semantics.** Before interpreting it, run the null
+    change that carries only the mechanism's incidental side-effect (here:
+    register the import, use nothing). One run; it would have saved two rounds.
+33. **In this emitter, adding an import is not behaviour-neutral.** Until #6503
+    is fixed, any `emitClosureCallExportN` change that registers an import is
+    measured against a corrupted baseline — subtract #6503's delta, or fix it
+    first.
