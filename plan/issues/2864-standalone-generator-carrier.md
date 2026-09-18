@@ -2,9 +2,9 @@
 id: 2864
 title: "Standalone: no Wasm-native generator carrier — sync generators leak __create_generator/__gen_* host imports"
 status: in-progress
-assignee: ttraenkler/codex-es6-closeout
+assignee: ttraenkler/fable-es2015
 created: 2026-06-30
-updated: 2026-08-27
+updated: 2026-09-18
 priority: high
 feasibility: hard
 model: gpt-5.6-luna
@@ -1887,3 +1887,120 @@ registration is removed in `finally` without leaking a live body. After the
 latest upstream merge, the focused suite is again 10/10, including both
 JS-host validation failures and all standalone controls. PR #5035 remains
 draft until the refreshed upstream quality run passes.
+
+---
+
+## RE-MEASURED 2026-09-18 — the premise above is stale, and the gap is far narrower
+
+Everything above was measured 2026-06-30. Re-measured on `origin/main`
+`278b5d1aa5`, `--target standalone`, `result.imports === []` asserted on every
+probe. **A general native carrier now exists.** All of these lower natively with
+zero host imports:
+
+| shape | result |
+| --- | --- |
+| named generator declaration | works |
+| anonymous generator expression `function*(){}` | works |
+| named generator expression | works |
+| class generator method | works |
+| string yields | works |
+| `for` loop containing a yield | works |
+| sent values — `const a = yield 1; …` then `it.next(5)` | works |
+| `yield*` delegation | works |
+| array / object / nested / rest destructuring **inside** a generator body | works |
+| a ref-typed local (array, object, string) live **across** a yield | works |
+
+So "only sequential numeric yields" is no longer the boundary, and the
+architecture-scale framing above (CPS transform / stack-switching) is **not**
+what this issue needs. Do not start there.
+
+### The measured boundary
+
+These leak `__gen_create_buffer` / `__gen_push_f64` / `__gen_push_ref` /
+`__create_generator`:
+
+```ts
+function* g() { let a;  [a] = [yield 1];            yield a; }   // yield in an array-dstr RHS
+function* g() { let a;  ({a} = {a: yield 1});       yield a; }   // yield in an obj-dstr RHS
+function* g() { const [a = yield 1] = [];           yield a; }   // yield as a dstr DEFAULT
+function* g() { const v = yield 1; const [a] = [v]; yield a; }   // dstr anywhere + a sent-value yield
+function* g() { const arr = [yield 1];              yield arr[0]; } // yield inside an ARRAY LITERAL — no dstr at all
+```
+
+These do not:
+
+```ts
+function* g() { const a = yield 1;   yield a + 1; }   // sent value, plain identifier binding
+function* g() { const [a] = [5];     yield a; }       // destructuring, no sent-value yield
+```
+
+**The last leaking case is the important one: it contains no destructuring.**
+An earlier reading of these rows as "destructuring inside a generator" is
+therefore wrong — destructuring on its own is fine, and a bare array literal
+holding a yield is not. Whatever the real predicate is, it is a property of the
+**statement walker's supported grammar**, not of destructuring.
+
+### Where the predicate actually lives
+
+`src/codegen/generators-native.ts`. The plan builder walks statements and
+returns false on any shape it cannot lower; `src/codegen/function-body.ts:688`
+turns that into the `#680` diagnostic, and `nativeGeneratorInfoForDecl` (the
+#3505 decl-aware lookup) is what the refusal consults. A visible clue at
+`generators-native.ts:626-630` — the variable-statement lowering accepts a
+declaration list of length 1 whose name is an **Identifier** and whose
+initializer is a **YieldExpression**, and nothing else. That is consistent with
+every leaking case above, but **read the walker and enumerate the real grammar
+rather than trusting this paragraph.**
+
+### Why it matters
+
+130 of the 309 ES2015 non-pass rows that mention a generator report
+`standalone target emitted host imports: env::__create_generator`; a further 57
+report the `#680` diagnostic. The failing rows are overwhelmingly `dstr/` paths
+(`obj-prop-nested-array-yield-expr.js`, `array-rest-nested-array-yield-expr.js`
+…) — i.e. destructuring tests whose RHS carries a `yield`, which is exactly the
+intersection above.
+
+## Implementation Plan (supersedes the architect-spec plan above)
+
+**S1 — enumerate, then extend.** Read the plan builder's statement/expression
+walk and write down every shape it rejects. Extend it so a `yield` is
+supported in **expression position** wherever the surrounding statement is
+already lowerable: inside an array literal, an object literal, a destructuring
+RHS, and a destructuring default. The yield must remain a state-machine
+suspension point — the surrounding expression has to be split across the
+resume boundary, with the partially-built value spilled to the frame, not
+re-evaluated (re-evaluating would repeat observable side effects).
+
+**S2 — the sent-value binding.** Generalise the length-1 / Identifier /
+YieldExpression variable-statement rule so a binding pattern is allowed on the
+left and a yield may appear anywhere in the initializer.
+
+Keep the slices separate: S1 is the 5-case boundary above, S2 is the
+declaration rule. If S1 alone moves the rows, stop and say so.
+
+### Acceptance
+
+1. All five leaking shapes above compile with `result.imports === []` and
+   produce the right values, and both working shapes stay working.
+2. **Order preservation**: a yield inside a literal must not re-run the
+   sibling elements after resume. Pin with a counter — `[f(), yield 1, g()]`
+   calls `f` once and `g` once, in that order, across the suspension.
+3. Measured on **both** a merge-base tree and the branch, same `.test262-cache`
+   symlinked into both: the `language/expressions/assignment/dstr` and
+   `language/statements/**/dstr` directories, plus a generator control set.
+   **Zero rows lost** — the per-test edition ratchet fails the required check
+   on a single pass→not-pass in ES2015, with no waiver.
+4. gc/host lane byte-identical (this path is standalone-gated).
+5. All gates exit 0, run bare.
+
+### Dead ends — do not re-run these
+
+- **Generator NAME collisions** genuinely break compilation: two `function* g`
+  in different scopes give `Internal error: Missing native generator factory
+  identity` (and a top-level `g` shadowed by a nested `g` does too). It is a
+  real bug worth its own id, but it carries **~0 test262 rows** — the 6 corpus
+  matches are the `BindingIdentifier` template placeholder, not real duplicates.
+- **Anonymous generator expressions** were ranked the top blocker at 113 rows
+  by a regex census. They work fine; the count was matching test262 *template*
+  text, not the failing construct.
