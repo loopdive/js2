@@ -2151,27 +2151,6 @@ export function ensureProxyRuntime(
   //
   // Standalone-gated for the same reason as the strict-set arm above: wasi
   // keeps its pre-existing bytes.
-  for (const arrayLikeTerminal of ctx.standalone ? ["__extern_length"] : []) {
-    const body = findBody(arrayLikeTerminal);
-    if (!body) continue;
-    body.unshift(
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "ref.test", typeIdx: proxyTypeIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: 0 },
-          { op: "any.convert_extern" },
-          { op: "ref.cast", typeIdx: proxyTypeIdx },
-          { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_REVOKED },
-          { op: "if", blockType: { kind: "empty" }, then: throwRevoked() },
-        ],
-      },
-    );
-  }
-
   // __extern_has(obj, key) -> i32 : if proxy → ToBoolean(has_dispatch(obj,key,obj))
   // The dispatch returns the trap's booleanish result as an externref; coerce to
   // i32 via `__is_truthy` (reliably present in the standalone runtime — same
