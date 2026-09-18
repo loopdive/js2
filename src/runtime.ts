@@ -19415,6 +19415,10 @@ export function buildImports(
     enabled: options?.ambientCompatibility !== false,
     deps,
     legacyRegExpState: instanceState.legacyRegExpState,
+    // (#6492 r17) Compiled code reads `Promise` through the sandbox, so a
+    // polyfilled static has to be installed there or its receiver can never be
+    // the object the test wrote to.
+    globalSandbox: options?.globalSandbox,
   });
 
   const env: Record<string, Function> = {};

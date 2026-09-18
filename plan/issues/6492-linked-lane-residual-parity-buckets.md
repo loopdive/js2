@@ -3636,3 +3636,196 @@ exemptions).
     +29/−6; the six losses were entirely `propertyIsEnumerable` assertions, and
     they had been passing on ABSENCE. Any fix that makes a missing thing present
     must be measured against the rows that were asserting it missing.
+## Round 30 (2026-09-18, Opus long-tail lane) — the loud refusal costs 402 rows, and #6504's "optional-chaining rows" are three different bugs
+
+**No behaviour change landed.** The round's two results are a measurement that
+closes a long-open question and a diagnosis that invalidates the round's own
+premise.
+
+### The loud refusal: −402 / 2,212. Not 20. Not a tuning question.
+
+Rounds 26-29 kept deferring this because the ≤ 20-row rule was indeterminate.
+Round 29 wrote the plan that needs no event-to-row attribution; round 30 ran it.
+
+The widening (drop `findSuspensionInsideTry` in
+`reportDeclinedAsyncRejectionHazard`, refuse loudly for every decline with
+`anyRealSuspension` true) was put behind a temporary env flag and measured
+against round 29's baseline:
+
+| | linked, six async slices (2,212 rows) |
+| --- | --- |
+| round 29 baseline | 1,533 pass |
+| loud refusal ON | **1,131 pass** |
+| delta | **+0 / −402** |
+
+Where the 402 live:
+
+| bucket | rows |
+| --- | --- |
+| `language/statements/for-await-of` | **396** |
+| `language/{expressions,statements}/async-function`, `async-arrow-function` | 6 |
+
+Every one becomes `compile_error: async shape not supported…`.
+
+**The conclusion is not "the budget was slightly too small".** It is that the
+declined-with-real-suspension population IS most of the for-await-of corpus —
+destructuring heads the engine does not claim and the synchronous fallback runs
+acceptably today. The `try`-scoped condition is therefore load-bearing: it is
+what makes the guard a residue rather than the whole population. The rationale
+now lives at the condition itself in `src/codegen/async-activation.ts`, so the
+next reader does not re-derive it.
+
+**Any future widening must name a SUBSET** — by decline reason, most plausibly
+the `member-callee` / `nested-operand` shapes, whose sync fallback is a known
+silent miscompile — never the whole declined set. The env flag was removed
+rather than left in the tree: an env var that turns 402 passing rows into
+compile errors is a hazard, and the one-line change is described in the issue.
+
+### #6504's four residual rows are THREE defects, none of them the erasure
+
+The dispatch brief for this round asked for "the optional-chaining rows"
+(3) plus the dynamic-`import()` row (1), on the premise that `?.` is declined by
+name in the planner. Reduced individually with the single-compile probe, that
+premise does not hold and the four rows do not share a cause. Filed as **#6508**;
+summary:
+
+| row | actual cause | evidence |
+| --- | --- | --- |
+| `optional-chain-async-square-brackets.js` | await NESTED in an operand (`[22,33]?.[await P]`) — the round-26 `nested-operand` bucket | line-by-line reduction: `await [11]?.[0]` PASSES; the index-operand line is the one that declines |
+| `member-expression-async-identifier.js` | **#6502** null closure dispatch | fails at `asyncTest`'s `testFunc().then` on null; all of the body's own await statements pass when reduced |
+| `iteration-statement-for-await-of.js` | `Symbol.asyncIterator` not selected by the for-await head | `[object Object] is not iterable`; the optional chain resolves fine |
+| `dynamic-import/assignment-expression/await-expr.js` | dynamic `import()` resolves to `undefined` | unrelated to all of the above |
+
+So the round's stated acceptance ("the 3 rows pass linked") was **not
+achievable as scoped**: two of the three are not optional-chaining defects and
+one of those is not an async defect at all. The one that IS in the spill ABI's
+family is an instance of a bucket #6504 already tracks (`nested-operand`), whose
+fix is the partial-operand spill — deliberately not started here rather than
+begun late in the async engine on a premise that had just been falsified.
+
+The optional-chain-specific constraint IS real and is recorded with that work:
+`undefined?.[await Promise.reject(…)]` must short-circuit **without awaiting**,
+so the suspension has to be skipped entirely, not merely ordered.
+
+### Findings
+
+50. **Co-occurrence in a failure list is not shared causation.** Five rows were
+    one issue from round 6 to round 29 because they failed together in one run.
+    They were three defects plus one already-fixed. The mis-grouping survived 23
+    rounds and propagated into a dispatch brief. Reducing each row took under a
+    minute with the probe that already existed.
+51. **When a guard's scope looks conservative, measure the cost of widening it
+    BEFORE calling it conservative.** "Refuse loudly everywhere a rejection could
+    be dropped" reads like strictly better engineering. It costs 402 rows,
+    because the silent fallback is not a rare degradation — it is how most of the
+    for-await-of corpus currently passes.
+
+## Round 17 (2026-09-18, Opus lane) — `Promise.allKeyed` runs in the WRONG REALM; half of it fixed
+
+**Shipped: the install target.** `installAmbientCompatibility` put `allKeyed` /
+`allSettledKeyed` on `options.deps?.Promise ?? Promise` — the ambient intrinsic
+— and never consulted `globalSandbox`. It now resolves the target through
+`resolvePromiseCompatibilityTarget`: injected `deps.Promise`, else the
+**sandbox's** `Promise`, else the intrinsic (the ordinary product embedding,
+unchanged).
+
+**Not shipped, because it is a second realm split one hop upstream: the ~37
+`invoke-resolve-*` / `resolve-*` / `invoke-then-*` rows are still red.** Stating
+that first because the round's numeric bars are met and the assigned rows are
+not, and those are different things.
+
+### What was actually measured (real runner, linked, single row `allKeyed/invoke-resolve-get-once.js`)
+
+Two sites instrumented at once. Before the change:
+
+```
+[DBG dpa] prop=resolve  isWorkerPromise=false isSandboxPromise=true   ← the test's Object.defineProperty target
+[DBG gpr] typeofC=function isWorkerPromise=true resolveIsNative=true  ← C inside the combinator
+```
+
+The test writes to the **sandbox's** `Promise`; the combinator was reached
+through the **worker's**. The combinator itself was never wrong — it already
+reads `C = this` and `Get(C,"resolve")` per §7.3.x.
+
+After the change the install lands correctly (`[DBG install] isWorkerPromise=false`)
+— and `[DBG gpr]` STILL reports the worker's `Promise`. So the receiver that
+reaches `__extern_method_call(obj, "allKeyed", …)` is *already* the worker's
+intrinsic:
+
+```
+[DBG emc] allKeyed isWorkerPromise=true isSandboxPromise=false sandboxPromiseIsWorker=false hasSandbox=true
+```
+
+Four facts that bound where that value can come from, each from its own probe:
+
+1. The module's ONLY `Promise`-shaped import intent is
+   `{"type":"declared_global","name":"Promise"}` — dumped by stringifying every
+   intent through `resolveImport`.
+2. That intent resolves to the **sandbox's** Promise:
+   `[DBG dg] Promise hasSandbox=true depHit=false ambientIsWorker=false`.
+   `platform-capability-adapter.ts` already prefers `context.globalSandbox`.
+3. There is **no** `__extern_get(_, "Promise")` in the row at all — the
+   harness-binding shim's `var Promise = globalThis.Promise` does not reach the
+   boundary; the read folds to (1).
+4. The provider is NOT the divergence: `scripts/test262-worker.mjs` hands the
+   linked provider the same `globalSandbox` (#6475/#6476), and the consumer's
+   own import object reports `hasSandbox=true` with
+   `globalSandbox.Promise !== Promise`.
+
+So a third producer puts the worker's intrinsic in the callee position, and it
+is not any Promise-shaped import intent. **That is the next lane's first
+question, and it is one probe deep**: instrument the callee operand at the
+`Promise.<static>` call lowering (`src/codegen`), not the runtime — the runtime
+has been excluded from above.
+
+### Numbers (real runner, `built-ins/Promise/` = 729 rows, both lanes, fresh cache per run, bundles rebuilt per arm)
+
+| slice | lane | base | after | lost |
+| --- | --- | ---: | ---: | ---: |
+| `built-ins/Promise/` (729) | linked | 488 | **491** | **0** |
+| `built-ins/Promise/` (729) | honest | 483 | **486** | 0 (the one flip, `Promise/all/prop-desc.js`, was a 10 s **timeout** under load and passes on a single-row re-run) |
+| keyed family (89) | linked | 51 | **54** | 0 |
+| keyed family (89) | honest | 56 | **58** | 0 |
+
+Gained, linked: `allKeyed/prop-desc.js`, `allSettledKeyed/prop-desc.js`,
+`allKeyed/result-property-descriptors.js` — i.e. exactly the rows that ask
+whether the static is an own property **of the realm they read `Promise`
+from**. That is the change's own mechanism, measured.
+
+Realm canary, `TEST262_REALM_CANARY=log`, 168-row linked slice
+(`allKeyed|allSettledKeyed|resolve|reject`): **zero `Promise.*:added` drift**.
+Four `Promise.allKeyed.{name,length}:deleted` lines remain — tests deleting
+those props off the PRIMED worker copy, which is a consequence of the unfixed
+receiver hop above, not of this change.
+
+The #6492-r5 canary prime in `scripts/test262-worker.mjs` is **kept
+deliberately**: a no-sandbox embedding still installs onto the intrinsic, and
+the prime is what keeps that one-time install inside the baseline snapshot.
+
+Tests: `tests/issue-6492-r17-promise-keyed-realm-target.test.ts` (5 cases —
+sandbox preferred, intrinsic fallback with and without a sandbox lacking
+`Promise`, `deps` wins, install leaves the intrinsic unchanged, and a
+sandbox-side `Promise.resolve` accessor observed once per enumerable key by
+`allKeyed`). `tests/issue-6492-r5-promise-keyed-combinators.test.ts` 13/13.
+
+Host-import policy ceilings moved in the same commit:
+`maximumRuntimeTsLines` 19990 → 19994 (the four-line `globalSandbox` pass-through
+at the `installAmbientCompatibility` call) and `maximumOwnedAdapterLines`
+823 → 874 (`resolvePromiseCompatibilityTarget` plus the doc block recording the
+two instrumented identities above — the measurement is the reason the rule is
+what it is, and it belongs next to the rule).
+
+### Findings for the next lane (round 17)
+
+33. **"Same name, two realms" can happen twice in one expression.** `Promise`
+    in `Object.defineProperty(Promise, …)` and `Promise` in
+    `Promise.allKeyed(…)` — same identifier, same module, same statement
+    sequence — resolved to two different host objects. Fixing the install
+    target aligned the polyfill with the first one and left the second
+    untouched. When a realm bug is suspected, probe every occurrence
+    separately; one identity check is not a result.
+34. **Excluding the runtime is a result worth writing down.** Four probes here
+    prove the worker-realm `Promise` is NOT produced by any import intent, any
+    `__extern_get`, or the provider's host context. That turns an open-ended
+    hunt into a single codegen question, and it is the reason this round stops
+    where it does instead of guessing at a fix.
