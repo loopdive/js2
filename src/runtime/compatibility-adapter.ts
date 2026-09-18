@@ -8,6 +8,56 @@ export interface AmbientCompatibilityOptions {
   enabled: boolean;
   deps?: Record<string, any>;
   legacyRegExpState: LegacyRegExpState;
+  /**
+   * (#6492 r17) The embedder's realm object, when there is one — the test262
+   * runner's per-test `globalSandbox`. Compiled code reads `Promise` THROUGH
+   * this object, so it is the realm whose `Promise` a polyfilled static has to
+   * live on. See {@link resolvePromiseCompatibilityTarget}.
+   */
+  globalSandbox?: Record<string, any>;
+}
+
+/**
+ * Which `Promise` object the keyed combinators are installed on.
+ *
+ * ## Why this is not simply the host intrinsic (#6492 r17)
+ *
+ * `allKeyed` reads its `resolve` off the RECEIVER (`C = this`, §7.3.x
+ * GetPromiseResolve) — which is correct, and was never the bug. The bug was
+ * that the receiver could not be the object the test had written to, because
+ * the method only existed on ANOTHER realm's `Promise`.
+ *
+ * Measured in the real runner on
+ * `built-ins/Promise/allKeyed/invoke-resolve-get-once.js`, linked lane, with
+ * the two sites instrumented:
+ *
+ * ```
+ * [DBG dpa] prop=resolve  isNativePromise=false name=Promise   ← the test's defineProperty target
+ * [DBG gpr] typeofC=function isNativePromise=true  resolveIsNative=true   ← C inside the combinator
+ * ```
+ *
+ * Two different host `Promise` objects. The compiled
+ * `Object.defineProperty(Promise, "resolve", …)` lands on the SANDBOX's
+ * `Promise` (correct — that is the realm compiled code reads `Promise` from);
+ * the combinator was reached through the worker's intrinsic and saw a pristine
+ * native `resolve`. Every `invoke-resolve-*` / `resolve-*` / `invoke-then-*`
+ * row in the family depends on exactly that write being visible.
+ *
+ * So: prefer an explicitly injected `deps.Promise`, then the sandbox's, and
+ * only fall back to the ambient intrinsic when there is no sandbox at all —
+ * which is the ordinary product embedding. As a side effect the host intrinsic
+ * stops being mutated per instantiate in the runner lane, which is the drift
+ * the #6492-r5 canary prime in `scripts/test262-worker.mjs` works around; that
+ * prime is kept deliberately, because a no-sandbox embedding still reaches the
+ * intrinsic and the prime is what keeps its one-time install inside the
+ * baseline snapshot.
+ */
+export function resolvePromiseCompatibilityTarget(options: AmbientCompatibilityOptions): any {
+  const injected = options.deps?.Promise;
+  if (typeof injected === "function") return injected;
+  const sandboxPromise = options.globalSandbox?.Promise;
+  if (typeof sandboxPromise === "function") return sandboxPromise;
+  return typeof Promise !== "undefined" ? Promise : undefined;
 }
 
 /**
@@ -18,7 +68,8 @@ export function installAmbientCompatibility(options: AmbientCompatibilityOptions
   if (!options.enabled) return;
   _installIteratorHelperPolyfills();
   // (#6492 round 5) await-dictionary: no engine ships these, so js2 owns them.
-  const PromiseConstructor = options.deps?.Promise ?? (typeof Promise !== "undefined" ? Promise : undefined);
+  // (#6492 r17) …on the REALM the compiled code reads `Promise` from.
+  const PromiseConstructor = resolvePromiseCompatibilityTarget(options);
   if (PromiseConstructor) _installPromiseKeyedCombinators(PromiseConstructor);
   const RegExpConstructor = options.deps?.RegExp ?? (typeof RegExp !== "undefined" ? RegExp : undefined);
   if (RegExpConstructor) _installLegacyRegExpAccessors(RegExpConstructor, options.legacyRegExpState);
