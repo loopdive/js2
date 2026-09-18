@@ -10716,3 +10716,117 @@ A/B 0/84 flips; equivalence gate 22/1720/22 unchanged. HEAD of this lane:
 `78ceb4569b` on branch `issue-5383-standalone-temporal-s50`, worktree
 `/home/user/js2/.claude/worktrees/agent-a12589fac4b1ec3ac`.
 
+### S51 findings (2026-09-18) — all four `Expected a RangeError but got a undefined` target rows decompose to #6628's parked "Proxy get trap is not callable" mechanism; no fix landed, no rows moved
+
+S51 (branch `issue-5383-standalone-temporal-s51`, off S50's head `a3b09cc41e`)
+was dispatched to reduce the 4-row `Expected a RangeError but got a undefined`
+bucket named in the brief (`Duration/compare`, `PlainDate/from`,
+`PlainDateTime/from`, `ZonedDateTime/prototype/add`, all
+`options-read-before-algorithmic-validation.js`), distinct from #6628's 6-row
+`Proxy get trap is not callable` bucket per the brief's own framing.
+
+**Reduction found the opposite of the framing: all four rows are #6628, one
+layer down.** #6628 (`status: done`, completed 2026-09-17) landed a real,
+independently-verified fix for the peer-callable-kind misclassification it
+targeted, but its own title says it explicitly did NOT close the bucket — "a
+second, deeper cross-module mechanism blocks it." That deeper mechanism is
+still live on this HEAD and is exactly what all four of THIS bucket's rows hit
+underneath their outer "got a undefined" symptom.
+
+**Method — the outer message was previously undiagnosed because the failure
+is entirely internal to the compiled program.** `assert.throws` runs 100% in
+Wasm (harness + test body are one compiled unit under
+`compileWithTemporalGlobal`), so nothing about `thrown.constructor`/`.name`
+is host-visible without instrumentation. Patched a COPY of `assert.js`
+(`.tmp/s51/assert-patched.js`, never touching `test262/`) so the
+`thrown.constructor !== expectedErrorConstructor` mismatch arm throws a
+diagnostic `Test262Error` instead of building the normal message, then
+compiled `sta.js + assert-patched.js + compareArray.js + temporalHelpers.js +
+<real test body>` via `assembleOriginalHarness` (the SAME assembly function
+`runTest262File` uses — not a hand-reduced approximation) + the real linked
+Temporal provider (`.tmp/s51/probe11.mts`), and decoded the escaping
+exception with the runner's own `extractWasmExceptionMessage`. All four rows
+produced the byte-identical diagnostic:
+
+```
+Test262Error: DIAG: ctor=function ctorIsUndef=false ctorIsNull=false
+ctorName=string:undefined ctorEqRangeError=false ctorEqTypeError=true
+ctorEqError=false ctorLen=NaN thrownInstanceofRangeError=false
+thrownInstanceofError=true thrownMessage=Proxy get trap is not callable
+thrownName=TypeError thrownProtoCtorEqRangeErrorProto=false
+```
+
+Two separate, real bugs are visible in that one line, and only the first is
+in #6628's territory:
+
+1. **`thrownMessage=Proxy get trap is not callable`, `ctorEqTypeError=true`
+   — the caught value genuinely IS a `TypeError` from #6628's still-open
+   mechanism**, not a marshalled/lost RangeError. The polyfill never reaches
+   its RangeError-throwing validation at all: reading `options.overflow`
+   through `TemporalHelpers.propertyBagObserver`'s Proxy `get` trap throws
+   before validation runs, same signature #6628 named and left open.
+2. **A second, genuinely new finding: `.name` read off a builtin error
+   constructor recovered DYNAMICALLY (via `caught.constructor`, not a
+   syntactic `TypeError`/`RangeError` identifier mention) returns the
+   *literal four-character string* `"undefined"`, not the JS value
+   `undefined`.** `ctorName=string:undefined` proves this —
+   `typeof ctor.name === "string"` (rules out a JS-`undefined` `.name`,
+   which would report `typeof` as `"undefined"`). This is why the SURFACE
+   message reads "Expected a RangeError but got a **undefined**" instead of
+   "…but got a **TypeError**" — `assert.js`'s
+   `message += 'but got a ' + actualName` is concatenating the wrong
+   *string content*, not coping with a missing value. Traced (not fixed) to
+   an asymmetry between the two builtin-ctor-carrier materialization paths
+   that share one lazy global slot (`ctx.builtinObjectGlobals`):
+   `emitBuiltinConstructorIdentity` (`src/codegen/builtin-static-globals.ts`,
+   fired for a SYNTACTIC bare-identifier read of a known builtin) seeds the
+   carrier's own `length`/`name`/`prototype` data properties via
+   `pushBuiltinCtorOwnPropSeed` (`src/codegen/builtin-ctor-own-props.ts`)
+   before publishing the global; `ensureErrorCtorCarrierGlobal`
+   (`src/codegen/registry/error-types.ts`, fired from
+   `fillExternGetErrorProps`'s `.constructor` runtime-recovery arm — the path
+   a caught value's `.constructor` actually takes) only allocates the global
+   and materializes an EMPTY `$Object` via `__new_plain_object`, with no call
+   to the own-prop seeder. Confirmed this asymmetry is real by reading both
+   functions directly (not by a repro — a repro that reliably reproduces
+   whichever-path-wins-first ordering was not built this session; two earlier
+   hand probes each got a *different* answer for the identical snippet
+   depending on unrelated sibling-function order in the same test module,
+   consistent with "whichever materialization path runs first for a given
+   builtin name wins for the process/module lifetime," but that ordering
+   sensitivity was not pinned down to a single deterministic cause). Did NOT
+   trace where the literal string `"undefined"` specifically comes from on
+   the miss path (a `$Object` own-prop miss might fall through to some
+   generic "stringify the missing value" helper that renders JS `undefined`
+   as the four-character string rather than propagating it) — that is the
+   next concrete step for whoever picks this up, separately from #6628.
+
+**Why no fix was attempted**: fixing bug 2 (the `.name`-reads-as-string-
+`"undefined"` defect) would not move any of these four rows to pass — the
+underlying thrown value is genuinely a `TypeError` (bug 1, #6628's open
+mechanism), not a `RangeError`, so `assert.throws(RangeError, …)` is
+correctly failing regardless; fixing bug 2 would only change the failure
+message from "…but got a undefined" to "…but got a TypeError" for these four
+rows specifically, a wording improvement with zero criterion-4 pass delta.
+Per the dispatch brief's own routing instruction ("if a row here fails with
+that message instead, say so and move to the next row"), and since ALL FOUR
+target rows hit it, there was no row left in scope to fix. Filing bug 2
+separately is left to the tech lead/PO to prioritize — it is a real, traced,
+narrow defect (own-prop seeding is asymmetric across the two carrier-
+materialization call sites) but is orthogonal to and does not depend on
+resolving #6628 first, and fixing it would very likely turn other
+`Expected a X but got a undefined`-shaped rows elsewhere in the corpus into
+their genuinely-correct failure message (still failing, but no longer
+mis-attributed to this bucket's framing) — a documentation/triage value, not
+a pass-count value, until #6628's deeper mechanism is separately closed.
+
+**No code changed. No witness tests added (nothing to witness — no fix).
+Criterion-4 battery not run (no diff to measure).** HEAD unchanged from S50:
+`a3b09cc41e` on branch `issue-5383-standalone-temporal-s51`, worktree
+`/home/user/js2/.claude/worktrees/agent-a7a7c12866ddac01b`. Four-family and
+A–F numbers are therefore identical to the post-S50 figures immediately
+above (435/480 four-family; A 1125/1250; B 179/205; C 274/349; D 224/300;
+E-unlinked 235/300; E-linked 235/300; F-class 136/250; F-methoddef 68/100;
+F-objproto 136/150; corpus byte A/B 0/84 flips; equivalence gate 22/1720/22)
+— unchanged because nothing was changed.
+
