@@ -989,3 +989,36 @@ next probe: call the provider's `__typeof_function` directly on the trap
 value as the guard extracts it), `extends <provider class>` (#6640 +
 #6623 residual, 4+2 rows), the two `era` rows (#6633, S50 WAT pointer),
 and the one-offs listed in #5383 S58 findings.
+
+## Stack state 2026-09-18 (post-S60) — PR #5981 (S58) MERGED; S59+S60 on `issue-5383-standalone-temporal-s59` at `98fe5e42fa`, four real BigInt codegen fixes, 12 ZDT rows still blocked on a realm-level `BigInt`
+
+PR #5981 landed on `main` 22:12 UTC (after two CI fixes on the branch: the
+new module's `scripts/compiler-boundaries.json` classification, and the
+reverse-peer terminals' legacy `try … catch_all rethrow` → `try_table` —
+CI runs Node 25, whose V8 rejects a module mixing both exception-handling
+flavours; #6641's arm made that terminal live next to a user `try`). Any
+new legacy `op: "try"` emitter that becomes live under standalone will hit
+the same CompileError; use `buildStandardTryTable` (`src/ir/try-table.ts`).
+
+S59 (Sonnet) + S60 (Opus) on #6642, see #5383 "### S59/S60 findings": four
+fixed defects (stale helper funcIdx crash in `typeof-delete.ts`; `bigint ===
+any` static fold; unbranded i64 hint for BigInt operands; i64 closure
+results boxed as numbers), all revert-and-measured, 0 flips everywhere,
+gc lane byte-identical. The 12 `ZonedDateTime` BigInt rows need the
+four-link "realm BigInt" work specified in #6642 "Next step" (native
+StringToBigInt; cross-link wrapper-ctor front-guard in
+`builtin-ctor-callable.ts`; `CALLABLE_WRAPPER_CTORS`; standalone global
+carrier) — an Opus-sized slice, links 1–2 must not land alone.
+
+**Base numbers for the next lane**: unchanged from post-S58 (four-family
+437/480: 113/106/113/105; A–F as in the post-S54 table). TSVs:
+`.tmp/s60/battery/*-cur.tsv` in worktree `agent-af6e32dc2de7b3b76` (S60
+head) — copy those as the base. Provider prewarm sequence per src change:
+`pnpm run build:compiler-bundle && JS2WASM_TEMPORAL_CACHE=$PWD/.test262-cache/<label> node scripts/prewarm-temporal-provider.mjs --target standalone`;
+first run in a fresh worktree also needs the QuickJS artifact copied from a
+sibling `.test262-cache/` plus `node scripts/build-quickjs-eval-provider.mjs`.
+
+**Next lanes** (one at a time, Opus): #6642 realm BigInt (12+3 rows);
+Proxy trap invocation (10 rows; S55 WIP `751ceea68e` in worktree
+`agent-a38808bf4e81ef147`); `extends <provider class>` (#6640 + #6623
+residual); the two `era` rows (#6633).

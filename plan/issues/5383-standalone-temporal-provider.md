@@ -11387,3 +11387,98 @@ class>` #6640/#6623; the two `era` rows #6633; one-offs
 `throw-when-intermediate-datetime-outside-valid-limits.js`,
 `PlainDateTime/from/argument-string-offset.js`,
 `ZonedDateTime/prototype/add/blank-duration.js`).
+
+### S59/S60 findings (2026-09-18) — BigInt across the link (#6642): four real codegen defects fixed, the 12 `ZonedDateTime` rows still red, blocker re-identified as "standalone has no realm-level `BigInt`"
+
+Both slices live on `issue-5383-standalone-temporal-s59` (S60 head
+`98fe5e42fa`, stacked on the merged S58 PR #5981 + `origin/main`). Issue file:
+[#6642](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6642-link-bigint-value-survival)
+(`status: blocked`, full reductions and the ordered next-step list).
+
+**S59** (Sonnet, worktree `agent-acf70162165009d42`, `ceb8ff3b39`, merged
+with the S58 tip → `8a95c4dace`): reduced the 12 rows to a link-free
+single-module repro and fixed two independent defects on the way — (1)
+`typeof-delete.ts` captured the `__typeof`/`__typeof_bigint` helper index
+BEFORE compiling the operand; a link-boundary read inside the operand
+registers late imports and shifts every defined-function index, so the
+stale local baked a `call` into the wrong function and
+`WebAssembly.Module()` rejected the module (`call[0] expected type i32,
+found block of type externref`) — a crash fix; (2) `binary-ops.ts` folded
+`<bigint> === <any>` to a compile-time `false`, never asking whether the
+`any` side could dynamically be a BigInt — now routed through the native
+`__extern_strict_eq` (its `bigintArm` already classifies dynamically).
+Witness `tests/issue-6642-link-bigint-value.test.ts` (fails 2/3 on
+`d8642a8e06`, passes with the fixes; the third case is a documented
+regression guard that passes on both). S59's diagnosis of the residual
+(a missing bigint column in `coercion-plan.ts`) was **wrong at the
+mechanism** — see S60.
+
+**S60** (Opus, worktree `agent-af6e32dc2de7b3b76`, `c49bdefb6c` +
+docs): traced that `coercionPlan` is never reached for this shape; the real
+site is `coerceType`, which already has the `__to_bigint` arm but received
+an i64 hint with **no bigint brand**. Two brand drops fixed: (3) the
+both-operands-BigInt arm in `binary-ops.ts` handed each operand a bare
+`{ kind: "i64" }` hint (now `BIGINT_I64`), so the unbox took the number row
+and compared against `0`; (4) `closures/result-boxing.ts` boxed every i64
+closure result as a NUMBER (`f64.convert_i64_s; __box_number` — rounds
+above 2^53 and erases bigint-ness) although the i32 arm beside it already
+preserved the `boolean`/`symbol` brands; new `boxI64ClosureResult` picks
+`__box_bigint` for a branded i64. Witness
+`tests/issue-6642-coercion-plan-bigint.test.ts` — lead-run on the base
+`8a95c4dace`: 3 failed / 2 passed (the two are guards); on `98fe5e42fa`:
+5 passed.
+
+**Why the 12 rows still do not move (S60, measured end-to-end):**
+`@js-temporal/polyfill` bundles JSBI (`class JSBI extends Array`) and
+converts back only via `globalThis.BigInt !== undefined ?
+globalThis.BigInt(x.toString(10)) : x`. Under standalone `globalThis.BigInt`
+is `undefined`, so `epochNanoseconds` returns the raw JSBI limb array —
+`«977899425,408899357,1»` IS `Array.prototype.toString` of base-1e9 limbs
+(977899425·1e9 + 408899357 is exactly the expected value), not a mangled
+BigInt. Four prerequisite links, in the order they must land (1–2 must not
+land alone: they turn a wrong answer into a thrown TypeError): a native
+StringToBigInt for `__bigint_ctor` (today it throws SyntaxError for any
+string; the polyfill passes a string; an f64 shortcut loses nanosecond
+digits); `__apply_closure`'s wrapper-ctor front-guard (`builtin-ctor-callable.ts`,
+#4394) identifies the callee by `ref.eq` against the compiling module's own
+`__builtin_ctor_BigInt` global, which a linked provider never shares — the
+actual blocker and a design question; `"BigInt"` in `CALLABLE_WRAPPER_CTORS`
+(§21.2.1.1 conversion via `__bigint_ctor → __box_bigint`, verified
+single-module); `"BigInt"` (and `"Symbol"`, same gap) in
+`STANDALONE_GLOBAL_CONSTRUCTOR_NAMES`. Details in #6642 "Next step".
+
+**Lead verification** (S59 head `8a95c4dace` and S60 head `98fe5e42fa`,
+each with a fresh compiler bundle + fresh provider cache + the QuickJS
+adapter rebuilt for the merged tree, base = S58 head TSVs):
+
+| Head | four-family | A / B / C / D | E-unlinked / E-linked | F-class / F-methoddef / F-objproto |
+| --- | --- | --- | --- | --- |
+| `8a95c4dace` (S59) | 437/480, 0 flips | 0 / 0 / 0 / 0 flips | 0 / 0 | 0 / 0 / 0 |
+| `98fe5e42fa` (S60) | 437/480, 0 flips | 0 / 0 / 0 / 0 flips | 0 / 0 | 0 / 0 / 0 |
+
+Corpus byte A/B: against the S58 jsonl both heads show 0 status flips and
+30 sha flips (15 gc-lane); against a corpus run on `6bc1786904` (= S58 +
+`origin/main`, no S59/S60 code) both heads show **0 status / 0 sha flips**,
+so every byte movement is the `origin/main` merge and the gc lane is
+byte-identical for S59+S60. Equivalence gate 22 / 1720 / 22 on both heads.
+Witness sweep under Node 22 AND Node 25 (CI's version): 41 files / 255 tests
+(S59), 42 / 260 (S60), 0 failed. Gates (typecheck, loc/func budgets incl.
+`LOC_GATE_BASE=origin/main` — S59's `typeof-delete.ts` grant restated in
+#6642's frontmatter so it is not stranded, coercion-sites, oracle-ratchet,
+speculative-rollback, issue-ids:against-main, update-issues, spec-coverage,
+lint, prettier, compiler-boundaries inventory) all green.
+
+**Environment traps recorded this lane** (each cost a full false battery):
+`scripts/prewarm-temporal-provider.mjs` builds the provider through the
+gitignored `scripts/compiler-bundle.mjs`, so `pnpm run build:compiler-bundle`
+must precede every prewarm or the provider is pre-fix/absent; a fresh
+worktree has no QuickJS artifact and the runner fails EVERY row with
+"quickjs provider is not built" (looks like 100 % pass→fail); after a
+`main` merge the eval-adapter key changes and
+`node scripts/build-quickjs-eval-provider.mjs` must run again.
+
+Criterion 4 holds for S59 and S60 (0 legitimate pass→fail; buckets do not
+move yet because the blocker is upstream of the fixes). Residual after S60:
+43 rows of the 480 — the 12+3 BigInt-realm rows (#6642, specified above),
+Proxy trap invocation (10, S55 WIP), `extends <provider class>`
+(#6640/#6623), the two `era` rows (#6633), and the one-offs.
