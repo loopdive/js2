@@ -4,7 +4,7 @@ title: "Linked test262 harness: a provider reading a consumer array by index is 
 status: in-progress
 sprint: current
 created: 2026-09-15
-updated: 2026-09-17
+updated: 2026-09-18
 priority: medium
 horizon: m
 feasibility: hard
@@ -426,3 +426,111 @@ Guard: `tests/issue-6482-r2-linked-symbol-brand.test.ts`.
 
 So the honest-pass/linked-fail residual is **8 rows**, down from 114 at the
 start of round 1 and 70 at the start of round 2.
+
+## Round 3 (2026-09-18, Opus lane) — fixing the 7 regressions round 2 shipped
+
+PR #5964 merged with +95 net and **12 regressions** against the promoted linked
+baseline. Seven of them were mine.
+
+### Attribution (A/B, real runner, linked lane, the 12 rows path-filtered)
+
+Each of the three round-2 commits was reverted one at a time by file copy
+(`git show <sha>^:<file>`), rebuilding both bundles between arms:
+
+| reverted | 12-row result | verdict |
+| --- | --- | --- |
+| `a056ac355e` (vec enumerates its own element indices, `src/runtime.ts`) | 12 → 5 | **the 7 array rows are MINE** |
+| `73799237cf` (#6495 coherent builtin realm, `tests/test262-runner.ts`) | 12 → 12 | exonerated |
+| `a72468b98c` (symbol brand, `property-access-dispatch.ts`) | 12 → 12 | exonerated |
+
+The 5 async rows (`await/await-awaits-thenables`,
+`dynamic-import/.../await-expr`, three `optional-chaining/*`) are **not** from
+any of the three. They fail identically in the HONEST lane on the same commit,
+so they are not a linked-lane effect either — they belong to the #6492 lane's
+round-6/7 work.
+
+### The defect: `idx < length` is not own-ness for a SPARSE array
+
+Round 2 read own-ness off `idx < __vec_len(obj)`. That is sound for a
+registered `arguments` object — §10.4.4 maps exactly `0 .. length-1`, so an
+arguments vec is DENSE — and wrong for an ordinary array: `[0, , 2]` has a hole
+at index 1 that is in bounds and is **not** an own property. The host cannot
+tell them apart: sparseness lives in the in-wasm #3251 overlay and `__vec_gopd`
+is not an export, so length is the only signal it has. All 7 rows assert
+`hasOwnProperty("1") === false` for a hole.
+
+Round 2's honest "+7" (`Object/keys/*`, `getOwnPropertyNames/15.2.3.4-3-1`) was
+**the same defect seen from its flattering side** — the over-broad rule happened
+to give the right answer on dense arrays while giving the wrong one on sparse
+ones. It was never a gain, and this round gives it back.
+
+### The rule now
+
+- a registered **arguments** vec yields every in-bounds index (dense by
+  construction);
+- **any other vec** yields only indices the HOST positively knows about — a
+  `_wasmPropDescs` entry or a sidecar value, both written by
+  `Object.defineProperty` or a host write, neither of which can be a hole;
+- an in-bounds index the host has never seen is declined, because it may be one.
+
+Arguments-only alone was measured first and lost 2 further rows
+(`15.2.3.6-4-201/203`, `0 descriptor should be enumerable`) — a
+`defineProperty`-created index on an empty array, which is exactly the
+unambiguous case the second clause restores. `_wasmStructHasOwn` needs no such
+widening: its sidecar and descriptor-table checks already run before the vec
+arm.
+
+### Measured
+
+| lane / slice | rows | before (main `e9e7a968c6`) | after | flips |
+| --- | --- | --- | --- | --- |
+| linked, the 12 regression rows | 12 | 0 pass | 7 pass | **+7**, the 5 async untouched |
+| linked, `defineProperty/** defineProperties/** copyWithin/** await/** optional-chaining/**` | 1,862 | 1,451 | **1,458** | +7, **0 regressed** |
+| honest, same slice | 1,862 | 1,415 | **1,422** | +7, **0 regressed** |
+| linked, 114-row #6482 bucket | 114 | 98 | **98** | 0 |
+| honest, 114-row bucket | 114 | 105 | 105 | 0 |
+| honest, 818-row for-in/own-property control vs its PRE-round-2 baseline | 818 | 692 | 692 | **0** |
+
+Equivalence gate green (22 failing / 1720 passing, all 22 in baseline).
+
+Guard: `tests/issue-6482-r3-sparse-vec-own-indices.test.ts` — and it is a
+**linked-lane** test on purpose. A single-module `compile()` lowers all of these
+expressions in-wasm and never reaches the host arms, so a plain test asserts
+nothing about this fix; the first draft of this guard was written that way and
+disagreed with both the old and the new rule. Verified to FAIL on the pre-fix
+runtime (1 of 4) and pass after.
+
+### Still open from round 3's own scope (not attempted after the interrupt)
+
+The `15.2.3.7-6-a-{206,208,247,249}` / `15.2.3.6-4-{258,260}` element-default
+family and `15.2.3.6-4-60` were investigated before this interrupt and are
+**not** fixed. Findings worth keeping:
+
+- `15.2.3.6-4-60` is a VALUE-REPRESENTATION bug, not a flags bug: `obj.foo = 101`
+  types the struct field `f64`, and `defineProperty(obj, "foo", {value: "abc"})`
+  takes the `useStruct` fast path in `compileObjectDefineProperty`
+  (`src/codegen/object-ops.ts`), which `struct.set`s a string into an f64 slot.
+  The value is lost with no sidecar entry for `_readOwnDescriptor` to prefer.
+  Instrumented: `[dp-struct] foo struct: __anon_0 fieldType: {"kind":"f64"}`.
+  A representability veto on that fast path fixes the value.
+- The 6 element-default rows need `_vecDefineOwnProperty` to treat an in-bounds
+  element with no descriptor entry as a PRE-EXISTING default data property
+  (§10.1.6.3 keeps omitted attributes) rather than a first definition. The
+  blocker the in-code comment describes — codegen pre-grows the vec before the
+  runtime call, so `idx < oldLen` cannot distinguish a real element from a slot
+  this define just created — is solvable: the pre-grow's own `idx >= vec.length`
+  guard is the only place that knows, so it can mark the index and the define
+  consume the mark. That keeps `15.2.3.6-4-252` (the row an earlier attempt at
+  this regressed) passing, verified in-process.
+- **Both are gated on a THIRD bug and flip 0 rows without it.** `verifyProperty`
+  reaches `isConfigurable` → `delete obj[name]` → `!__hasOwnProperty(obj, name)`,
+  and for a vec receiver `__hasOwnProperty` never reaches the host import at
+  all: `fillVecHasOwnHelpers` (`src/codegen/vec-bag-seed.ts`) unshifts a
+  prologue that answers from the in-wasm `__vec_gopd` overlay and returns.
+  The host `__delete_property` tombstones in `_wasmStructDeletedKeys`; the
+  in-wasm prologue never sees it, so the delete looks like it failed and every
+  one of these rows fails `descriptor should be configurable`. Note the recorded
+  precedent in `carrier-bag-hasown.ts`: widening `__hasOwnProperty` *generally*
+  cost 684 host-free passes and was auto-parked (#4017), so the fix belongs on
+  the delete/overlay side — make the host delete clear the overlay entry — not
+  on the predicate.

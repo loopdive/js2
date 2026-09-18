@@ -4654,7 +4654,11 @@ function _wasmStructHasOwn(obj: any, key: any, exports: Record<string, Function>
   // struct field names, so the shape probe below answers false for both — which
   // is what made propertyHelper's `__hasOwnProperty(arguments, "0")` false once
   // the `for…in` gate above it started passing.
-  if (typeof key !== "symbol") {
+  //
+  // (#6482 r3) Restricted to a registered ARGUMENTS object — see
+  // `_vecEnumerableIndexKeys` for why. An ordinary array can be SPARSE, and
+  // `idx < length` reports its holes as own.
+  if (typeof key !== "symbol" && _canBeWeakKey(obj) && _argumentsObjects.has(obj)) {
     const prop = String(key);
     const idx = _asArrayIndex(prop);
     if (prop === "length" || idx !== undefined) {
@@ -6942,6 +6946,25 @@ function _vecEnumerableIndexKeys(
   exports: Record<string, Function> | undefined,
   seen?: ReadonlySet<string>,
 ): string[] {
+  // (#6482 r3) ARGUMENTS ONLY, and the restriction is load-bearing. A
+  // registered arguments object is DENSE by construction (§10.4.4 maps exactly
+  // `0 .. length-1`), so `idx < __vec_len` is a sound own-ness test for it. An
+  // ordinary array is NOT: `[0, , 2]` has a HOLE at index 1 that is in bounds
+  // and is not an own property. The host cannot tell the two apart — the
+  // sparseness lives in the in-wasm #3251 overlay and `__vec_gopd` is not an
+  // export — so answering from length alone reported holes as own and as
+  // enumerable. That over-generalisation cost 7 rows in the merge-group
+  // re-validation of PR #5964 (`15.2.3.6-4-159/160`,
+  // `15.2.3.7-6-a-155/156/161/162`, `copyWithin/fill-holes`), each of which
+  // asserts `hasOwnProperty("1") === false` for a hole.
+  //
+  // For an ordinary vec the answer is not "nothing", it is "only what the HOST
+  // positively knows about": an index carrying a `_wasmPropDescs` entry or a
+  // sidecar value was put there by `Object.defineProperty` / a host write, so
+  // it is an own property with no hole ambiguity. An in-bounds index the host
+  // has never seen stays declined, because it may be a hole.
+  if (!_canBeWeakKey(obj)) return [];
+  const argumentsReceiver = _argumentsObjects.has(obj);
   exports = _decoderExportsFor(obj, exports); // (#5225/#6477) the MINTING module's exports
   if (!exports) return [];
   const isVecFn = exports.__is_vec as ((v: any) => number) | undefined;
@@ -6957,12 +6980,15 @@ function _vecEnumerableIndexKeys(
   if (!(len > 0)) return [];
   const tomb = _wasmStructDeletedKeys.get(obj);
   const descs = _wasmPropDescs.get(obj);
+  const sidecar = _wasmStructProps.get(obj);
   const keys: string[] = [];
   for (let i = 0; i < len; i++) {
     const k = String(i);
     if (tomb?.has(k) || seen?.has(k)) continue;
     const flags = descs?.get(k);
     if (flags !== undefined && flags & _SC_DEFINED && !(flags & _SC_ENUMERABLE)) continue;
+    // A non-arguments vec yields ONLY host-known indices (see above).
+    if (!argumentsReceiver && flags === undefined && !(sidecar && k in sidecar)) continue;
     keys.push(k);
   }
   return keys;
