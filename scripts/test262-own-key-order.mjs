@@ -87,3 +87,83 @@ export function snapshotOwnKeyOrder(obj) {
   const descriptors = new Map(order.map((k) => [k, Object.getOwnPropertyDescriptor(obj, k)]));
   return { order, descriptors };
 }
+
+// ---------------------------------------------------------------------------
+// (#6492 r20) Symbol-keyed own properties and getter METADATA.
+//
+// Two restore gaps the value/order lists above do not cover, both visible as
+// permanent `#1957` realm-canary drift on a full `built-ins/Promise/` slice:
+//
+//   Promise.prototype.Symbol(Symbol.toStringTag):deleted
+//   Promise.Symbol(Symbol.species)<get>.length:deleted
+//
+// The first is a SYMBOL-keyed own property — `_METHOD_SNAPSHOTS` and
+// `_STATIC_SNAPSHOTS` list string keys only. The second is a sub-property of a
+// GETTER FUNCTION: test262's `verifyProperty` deletes `length`/`name` to probe
+// configurability and does not put them back, and the #3470 function-metadata
+// restore walks methods, not accessor `get`/`set` functions. Both matter only
+// because the sandbox now SHARES these objects with the host (#6492 r18).
+
+/**
+ * Capture every own symbol-keyed descriptor, plus the `name`/`length`
+ * sub-properties of every own function on the object — accessor `get`/`set`
+ * AND plain method values. The method half closes the three
+ * `Promise.prototype.{then,catch,finally}:changed` canary lines, which are
+ * metadata drift on an UNCHANGED function identity (a `verifyProperty` row
+ * deleted the function's own `name`), not a replaced method.
+ */
+export function snapshotSymbolAndAccessorMeta(obj) {
+  const symbols = new Map();
+  const accessorMeta = [];
+  if (obj == null || (typeof obj !== "object" && typeof obj !== "function")) return { symbols, accessorMeta };
+  for (const sym of Object.getOwnPropertySymbols(obj)) {
+    symbols.set(sym, Object.getOwnPropertyDescriptor(obj, sym));
+  }
+  for (const key of Reflect.ownKeys(obj)) {
+    let desc;
+    try {
+      desc = Object.getOwnPropertyDescriptor(obj, key);
+    } catch {
+      continue;
+    }
+    for (const role of ["get", "set", "value"]) {
+      const fn = desc?.[role];
+      if (typeof fn !== "function") continue;
+      for (const meta of ["name", "length"]) {
+        const metaDesc = Object.getOwnPropertyDescriptor(fn, meta);
+        if (metaDesc) accessorMeta.push([fn, meta, metaDesc]);
+      }
+    }
+  }
+  return { symbols, accessorMeta };
+}
+
+/**
+ * Put both back, best effort. A symbol key is re-defined when it is missing or
+ * its descriptor no longer matches; accessor metadata is re-defined only when
+ * the sub-property is GONE (a test that legitimately redefines `name` on its
+ * own function is not this snapshot's business — these are the host's own
+ * functions).
+ */
+export function restoreSymbolAndAccessorMeta(obj, snapshot) {
+  if (!snapshot) return;
+  for (const [sym, desc] of snapshot.symbols) {
+    if (!desc) continue;
+    let cur;
+    try {
+      cur = Object.getOwnPropertyDescriptor(obj, sym);
+    } catch {
+      continue;
+    }
+    if (cur && cur.value === desc.value && cur.get === desc.get && cur.set === desc.set) continue;
+    try {
+      Object.defineProperty(obj, sym, desc);
+    } catch {}
+  }
+  for (const [fn, meta, desc] of snapshot.accessorMeta) {
+    if (Object.prototype.hasOwnProperty.call(fn, meta)) continue;
+    try {
+      Object.defineProperty(fn, meta, desc);
+    } catch {}
+  }
+}

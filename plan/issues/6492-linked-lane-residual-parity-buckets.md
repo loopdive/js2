@@ -15,6 +15,13 @@ language_feature: test262-harness
 goal: test262-conformance
 depends_on: [6490]
 related: [3451, 6486, 6489, 6490, 6491, 6482]
+# 2026-09-18 (r20) — `src/runtime.ts` 20155 -> 20201 (+46) and ownedAdapterLines
+# 909 -> 917. The runtime growth is ONE helper (`_mirrorPolyfillThenable` + its
+# decode probe + the live-exports slot) plus the note recording why the #5225
+# registry alone cannot answer in the single-module honest lane; it is the only
+# place that can resolve a compiled struct's owning module, so it cannot move to
+# a subsystem file. The adapter growth is the `mirrorThenable` option and its
+# doc comment in `compatibility-adapter.ts`. Ceilings bumped in the same commit.
 # 2026-09-18 (r19) — +36 comment lines in `src/runtime/host-async-imports.ts`
 # and a new 80-line `scripts/test262-own-key-order.mjs`. The runtime growth is
 # ONE statement (`_intrinsicPromiseResolve`) plus the note recording why it may
@@ -4376,3 +4383,129 @@ precisely what makes the assertion succeed today.
     engine.** `assert.throws` here is a name-string compare, so every
     cross-realm identity row in the corpus is decided by a design choice made
     for an unrelated standalone miscompile — not by anything the compiler does.
+
+## Round 20 (2026-09-18, Opus lane) — the rest of the late reads, the keyed residue, and a CLEAN canary
+
+`built-ins/Promise/` (729 rows), base = the round-19 tip:
+
+| lane | r19 | **r20** | flips | keyed (89) |
+| --- | ---: | ---: | --- | --- |
+| linked | 551 | **563** | +12 / **0** | 68 → **80** |
+| honest | 543 | **555** | +12 / **0** | 68 → **80** |
+
+Realm canary, `TEST262_REALM_CANARY=log` over the full linked slice: **zero
+drift lines of any kind** (r19 still printed five).
+
+### 1. The remaining late property reads — frozen, with one thing deliberately NOT frozen
+
+`Promise_reject` and the four combinator adapters read `Promise.<name>` at call
+time, the same shape r19 removed from `Promise_resolve`. All six now come from
+`src/runtime/promise-intrinsics.ts`, captured at module load.
+
+**What is NOT frozen is what those methods READ.** The combinators are invoked
+as `PROMISE_INTRINSICS.all.call(C, iterable)`, so §27.2.4.1.1 step 5's
+`GetPromiseResolve(C)` still happens inside the engine, on the receiver the
+compiled program chose — `Promise.resolve = fn` remains observable, which is
+what the whole `invoke-resolve*` family asserts. Freezing the method **called**
+and freezing what that method **reads** are different questions; only the first
+is answered here.
+
+Measured on its own before anything else landed: **+0 / −0 on both lanes.** No
+corpus row constructs the alias recursion for `reject` or a combinator, so this
+is hardening with a test (`tests/issue-6492-r20-…`, the `bound`-alias shape for
+`reject` and for `all`, plus a case pinning that `Get(C,"resolve")` still
+fires), not a row win. Stated plainly because a round that reports only its
+wins teaches the next lane to skip the controls.
+
+### 2. The 21 keyed rows, bucketed — and the first-wins install that hid the fix
+
+One run, bucketed by error message (identical on both lanes):
+
+| rows | bucket |
+| ---: | --- |
+| 9 | `TypeError: nextPromise.then is not a function` |
+| 4 | host Proxy invariant (`'ownKeys' on proxy: trap result did not include 'prototype'`, `'getOwnPropertyDescriptor' … neither object nor undefined`) |
+| 2 | `prototype-keys-ignored` — `Actual [] and expected [own]` |
+| 2 | `not-a-constructor` |
+| 2 | `ctx-ctor-constructed` — `unknown failure` |
+| 2 | `invoke-resolve-return` — returned thenable not invoked |
+
+**The largest bucket is one defect.** Seven rows hand back a COMPILED object
+literal from their `resolve` (`return { then(onFulfilled) { … } }`); that value
+reaches the host polyfill as an opaque WasmGC struct whose `then` is not a host
+function. The runtime already owns the mirror for exactly this (#2671/#4736,
+applied by `Promise_resolve` before V8 performs PromiseResolve); it is now
+injected into the polyfill as `mirrorThenable`, because only `src/runtime.ts`
+can resolve the owning module's exports.
+
+Two traps on the way, both worth the next lane's time:
+
+- **The fix appeared to do nothing until BOTH bundles were rebuilt.** The
+  worker imports `scripts/runtime-bundle.mjs`, but `scripts/compiler-bundle.mjs`
+  carries its own copy of the same runtime. Rebuilding one is a measurement of a
+  half-patched tree.
+- **Then it still did nothing, because the install is FIRST-WINS.** The #6492-r5
+  canary prime in `scripts/test262-worker.mjs` calls
+  `_installPromiseKeyedCombinators(Promise)` at worker load — with the identity
+  default — and `buildImports`' later, mirror-carrying install skips a `Promise`
+  that already has the method. A stack trace at the install site was what named
+  it; three identity installs preceded the real one. The prime now hands over
+  the same mirror (`runtimeBundle._mirrorPolyfillThenable`, optional-chained so
+  an older bundle still primes).
+- **And the honest lane needed one more step.** The #5225 decoder registry
+  disables itself at one module — which is precisely the honest whole-assembly
+  lane — so the mirror fell back to the live instance's own exports, gated on a
+  decode probe so a multi-instance embedder can never hand a struct to a
+  stranger's decoder. Linked 80/89 with honest still at 70/89 was the tell.
+
+`not-a-constructor` (2 rows) was a one-line shape change: the polyfill is now
+installed as a **method shorthand**, which has no `[[Construct]]` while keeping
+the dynamic `this` that `Promise.allKeyed.call(Ctor, …)` needs (an arrow would
+lose it) and the right `name`/`length`.
+
+**Still failing, 9 of 89**, none of them residue (each fails identically alone):
+the 4 host-Proxy-invariant rows (a compiled Proxy whose traps return values V8
+rejects — not a keyed-combinator question), the 2 `prototype-keys-ignored`, the
+2 `ctx-ctor-constructed` (`unknown failure`), and
+`allSettledKeyed/invoke-resolve-custom` (`result.first.status` undefined).
+
+### 3. The canary is clean, and the last three lines were an ATTRIBUTE bug
+
+`Promise.prototype[Symbol.toStringTag]:deleted` and
+`Promise[Symbol.species]<get>.length:deleted` are now restored: the snapshot
+lists gained symbol-keyed own properties and the `name`/`length` sub-properties
+of every own function (accessor `get`/`set` **and** plain method values) for
+each shared intrinsic and its prototype.
+
+That left three `Promise.prototype.{then,catch,finally}:changed`, and they were
+not what they looked like. The value WAS restored; the **attributes** were not —
+a row that deletes a method and re-assigns it recreates the property
+`enumerable: true`, and `_restoreMethodProp` returned early on a value match.
+It now compares `writable`/`enumerable`/`configurable` against the snapshot as
+well (the same #4758 shape the `Array.prototype[Symbol.iterator]` arm already
+handled by hand). Canary: 5 lines → **0**.
+
+**Control for that change, since it touches the restore path for every
+intrinsic:** `harness/` + `built-ins/Object/`, 3,528 rows, linked — **2,978 pass
+before, 2,978 after, zero rows moved.**
+
+### Findings
+
+44. **Rebuild BOTH bundles, or your measurement is of a half-patched tree.**
+    `compiler-bundle.mjs` embeds its own copy of `src/runtime.ts`; the worker
+    loads both. A runtime-only rebuild produced a clean, plausible, WRONG result
+    twice in this round before the duplication was noticed.
+45. **A first-wins installer makes a correct fix invisible.** The polyfill skips
+    a `Promise` that already has the method, so the earliest caller — a canary
+    prime at worker load, whose whole job is to be early — pinned the mirror-less
+    closure for the process. When a fix "does not fire", instrument the INSTALL,
+    not the call.
+46. **A registry that disables itself in the trivial case is a silent
+    single-module gap.** `decoderFor` short-circuits at one module (there,
+    everything is local) — which is exactly the honest lane. A cross-module
+    helper reused for a single-module question needs its own fallback, and the
+    two-lane split is what exposes it: 80/89 linked against 70/89 honest.
+47. **"Value restored" is not "property restored".** Three permanent canary
+    lines were attribute drift on an identical function value. Any restore that
+    compares values only will report itself successful and leave the realm
+    dirty.
