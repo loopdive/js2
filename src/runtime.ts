@@ -7246,6 +7246,16 @@ function _wasmStructPropertyIsEnumerable(obj: any, key: any, exports: Record<str
   const flags = descs?.get(_normalizeDescKey(prop));
   if (flags !== undefined) return flags & _SC_ENUMERABLE ? 1 : 0;
 
+  // (#6482 r6) A vec's `length` is NON-enumerable — on an Array (§23.1.4.1) and
+  // on an arguments object (§10.4.4) alike — and that has to be decided BEFORE
+  // the raw sidecar shortcut below. `Object.defineProperties(arr, {length: {}})`
+  // leaves a `length` entry in `_wasmStructProps`, and `prop in sc` then answers
+  // 1 for it. Single-module this never showed: the same question is lowered
+  // in-wasm and never reaches the import. Across a #5225 linked edge the import
+  // IS the only path, and once round 6 routed propertyHelper's uncurried alias
+  // here it reported `15.2.3.7-6-a-114-b`'s `length` as enumerable.
+  if (prop === "length" && _isVecReceiver(obj, exports)) return 0;
+
   const sc = _wasmStructProps.get(obj);
   if (sc && prop in sc) return 1;
 
@@ -16689,6 +16699,21 @@ assert._isSameValue = isSameValue;
       if (name === "__delete_property")
         return (obj: any, key: any): number => {
           if (obj == null) return 1; // delete on null/undefined: vacuously true (no real property)
+          // (#6482 r6) §10.4.2.1: an Array's `length` is non-configurable, so
+          // `delete arr.length` must REFUSE. Without this the generic WasmGC
+          // arm below tombstones it, and `isConfigurable` — which IS a delete
+          // followed by a presence question — then reads `length` as
+          // configurable (`15.2.3.7-6-a-114-b`). Only reachable once round 6
+          // routed propertyHelper's uncurried alias at the host predicate. An
+          // `arguments` object's `length` IS configurable (§10.4.4 step 4) and
+          // keeps the ordinary path.
+          if (typeof key !== "symbol" && String(key) === "length" && !_argumentsObjects.has(obj)) {
+            const vecExports = callbackState?.getExports();
+            const vecSource = _isVecReceiver(obj, vecExports) ? obj : vecForMirror(obj);
+            if (vecSource !== undefined && _isVecReceiver(vecSource, vecExports) && !_argumentsObjects.has(vecSource)) {
+              return 0;
+            }
+          }
           // Plain JS object — defer to native delete.
           if (!_isWasmStruct(obj)) {
             try {

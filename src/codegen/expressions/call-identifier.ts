@@ -102,7 +102,7 @@ import { URI_DECODE_MASK, URI_ENCODE_MASK } from "../uri-encoding-native.js";
 import { ensureWasiWriteFileStringsHelper } from "../wasi.js";
 import { wasiAllocStringData } from "./builtins.js";
 import { compileClosureCall, runtimeSignatureParameters } from "./calls-closures.js";
-import { tryCompileStoredObjectBuiltinCall } from "./call-object-builtins.js";
+import { tryCompileStoredObjectBuiltinCall, uncurriedBuiltinAliasArmActive } from "./call-object-builtins.js";
 import { compileSpreadCallArgs } from "./extern.js";
 import { compileSpreadCallArgsWithArguments } from "./spread-arguments-call.js";
 import {
@@ -522,7 +522,7 @@ function tryCompileStoredStandaloneCarrierCall(
   expr: ts.CallExpression,
   isKnownVariable: boolean,
 ): InnerResult | undefined {
-  if (!isKnownVariable || (!ctx.standalone && !noJsHost(ctx))) return undefined;
+  if (!isKnownVariable || !uncurriedBuiltinAliasArmActive(ctx)) return undefined;
   const storedObjectCall = tryCompileStoredObjectBuiltinCall(ctx, fctx, expr);
   if (storedObjectCall !== undefined) return storedObjectCall;
   if (!calleeIsBoundFunctionVar(ctx.oracle, expr.expression)) return undefined;
@@ -1759,7 +1759,7 @@ export function compileIdentifierCall(
     // bind provider otherwise routes the `$__bound_fn` through the stored
     // `Function.prototype.call` VALUE, whose standalone body is the #2984
     // degrade throw. The resolver only matches the immutable harness idiom.
-    if (!isLocallyShadowed && (ctx.standalone || noJsHost(ctx))) {
+    if (!isLocallyShadowed && uncurriedBuiltinAliasArmActive(ctx)) {
       // Deno's `uncurryThis = bind.bind(call)` has the exact native spelling
       // `call.bind(...args)`. Construct that bound-function carrier directly;
       // invoking the generic Function.prototype.bind method-value body would
