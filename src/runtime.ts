@@ -64,6 +64,12 @@ import { getWasmVecPrototypeMember as vecProtoGet, WASM_VEC_PROTOTYPE_MISS } fro
 import { fnctorInstanceofResult, fnctorOrNative, type FnctorIoHooks } from "./runtime/fnctor-instanceof.js";
 export { buildStringConstants, buildStringConstants16 };
 export { _resetIteratorRuntimeIntrinsicsForRealmIsolation };
+// (#6492 r5 / #5967) The test262 worker primes the await-dictionary statics
+// BEFORE its realm-canary snapshot, so the one-time install onto `Promise` is
+// part of the baseline instead of drift that recycles the worker after every
+// test (measured: 922 drift lines and 868 provider re-loads in one shard,
+// aggregate compile time +345 % — merge-group run 35313398232).
+export { _installPromiseKeyedCombinators } from "./runtime/promise-keyed-combinators.js";
 import {
   compiledClosureNativeSource,
   installNativeFunctionSourceFacade,

@@ -2956,6 +2956,15 @@ function diffRealmSurface(snap) {
   return drift;
 }
 
+// (#6492 r5) Prime the runtime-owned `Promise.allKeyed` / `allSettledKeyed`
+// install BEFORE the baseline snapshot. `installAmbientCompatibility` writes
+// them onto the host `Promise` on every instantiate; a fresh worker that
+// snapshots first sees that write as drift, recycles, and the next fresh
+// worker does it again — a recycle-per-test loop that re-loaded the harness
+// provider for (nearly) every row and quadrupled shard wall-clock (merge-group
+// run 35313398232, +345 % aggregate compile time). Older bundles without the
+// export are unaffected.
+runtimeBundle._installPromiseKeyedCombinators?.(Promise);
 let realmCanarySnapshot = REALM_CANARY_MODE ? snapshotRealmSurface() : null;
 let realmCanaryChecks = 0;
 let realmCanaryCheckMsTotal = 0;
