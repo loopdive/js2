@@ -20,7 +20,12 @@ import {
 } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { emitWasmInt32Coercion } from "../ir/backend/wasm-int32-coercion.js";
-import { ensureAnyFromExternHelper, isAnyValue, undefinedSingletonActive } from "./any-helpers.js";
+import {
+  ensureAnyFromExternHelper,
+  ensureExternStrictEqHelper,
+  isAnyValue,
+  undefinedSingletonActive,
+} from "./any-helpers.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -1790,8 +1795,47 @@ export function compileBinaryExpression(
       const isStrictEq = op === ts.SyntaxKind.EqualsEqualsEqualsToken;
       const isStrictNeq = op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
 
-      // Strict equality: BigInt and Number/String are different types → always false/true
+      // Strict equality: BigInt and a PROVABLY non-bigint Number/String/Boolean
+      // are different types → always false/true, decidable at compile time.
+      //
+      // (#6642) That fold is WRONG when the non-bigint side's static type is
+      // `any`/`unknown` — which is exactly what a value read across a
+      // standalone link boundary is typed as (the consumer's checker sees the
+      // provider through an `any`-returning stub; it cannot know the runtime
+      // value is a BigInt even when the provider's own source says so). The
+      // fold still ran because `isBigIntType`/`leftIsBigInt` reads the STATIC
+      // TS type, and `any` is never bigint statically — so `zdt.epochNanoseconds
+      // === 217175010123456789n` (both operands genuinely bigint at runtime)
+      // compiled its RHS, compiled its LHS (correctly reaching the provider
+      // across the link), dropped both, and answered a hardcoded `false`. Route
+      // an any/unknown non-bigint side through the native standalone strict-
+      // equality helper instead, which classifies BOTH operands dynamically
+      // (`extern-eq-fast.ts` already has a bigint×bigint `i64.eq` arm — it
+      // could not fire before because this fold never reached it). Gated to
+      // native-first/standalone (`ensureExternStrictEqHelper` returns
+      // undefined off that lane) so JS-host mode is untouched.
       if (isStrictEq || isStrictNeq) {
+        const nonBigIntTsType0 = leftIsBigInt ? rightTsType : leftTsType;
+        const nonBigIntIsAnyish0 = (nonBigIntTsType0.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+        // `ensureExternStrictEqHelper` needs `ctx.nativeBoxNumberTypeIdx` /
+        // `ctx.nativeBoxBooleanTypeIdx`, which are only set once
+        // `addUnionImports` has registered the native-first boxing helpers —
+        // this comparison can be the FIRST bigint-adjacent construct compiled
+        // in a module, before anything else triggers that registration.
+        if (nonBigIntIsAnyish0) addUnionImports(ctx);
+        const dynStrictEqIdx = nonBigIntIsAnyish0 ? ensureExternStrictEqHelper(ctx) : undefined;
+        if (dynStrictEqIdx !== undefined) {
+          const externref: ValType = { kind: "externref" };
+          const lt = compileExpression(ctx, fctx, expr.left, externref);
+          if (!lt) return null;
+          if (lt.kind !== "externref") coerceType(ctx, fctx, lt, externref);
+          const rt = compileExpression(ctx, fctx, expr.right, externref);
+          if (!rt) return null;
+          if (rt.kind !== "externref") coerceType(ctx, fctx, rt, externref);
+          fctx.body.push({ op: "call", funcIdx: dynStrictEqIdx });
+          if (isStrictNeq) fctx.body.push({ op: "i32.eqz" });
+          return { kind: "i32" };
+        }
         // Compile both sides for side effects, then drop them
         const lt = compileExpression(ctx, fctx, expr.left);
         if (lt) fctx.body.push({ op: "drop" });
