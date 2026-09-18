@@ -295,3 +295,36 @@ cause. They need their own diagnosis.
      round, so no earlier run can be reused);
   4. ≤ 20 distinct rows flipping pass → fail ⇒ land it and list them here;
      > 20 ⇒ list them for follow-up and land nothing.
+
+## Round 30 — the loud-refusal half is CLOSED (not landing), and Defect A is split out
+
+**Loud refusal: measured, rejected.** Dropping `findSuspensionInsideTry` in
+`reportDeclinedAsyncRejectionHazard` costs **402 of 2,212 rows** on the linked
+six async slices (1,533 -> 1,131, +0 / -402), 396 of them
+`statements/for-await-of` destructuring shapes. That is 20x the >= 20-row budget,
+so the rule's answer is a clear NO and the question is closed rather than
+deferred again. The `try`-scoped condition is load-bearing; the rationale is now
+recorded at the condition in `src/codegen/async-activation.ts`.
+
+A future widening must name a SUBSET by decline reason — most plausibly
+`member-callee` / `nested-operand`, where the sync fallback is a known silent
+miscompile — never the whole declined population. The one-line change is:
+replace `findSuspensionInsideTry(decl)` with the first real await point, gated on
+whatever subset predicate is chosen.
+
+**Defect A is split into #6508.** The four rows left after round 29 are three
+unrelated defects; only one of them (`optional-chain-async-square-brackets.js`)
+belongs to this issue, as an instance of the `nested-operand` bucket already
+listed below.
+
+### This issue now carries exactly
+
+- `f(1 + await x)` / `[22,33]?.[await P]` — the await nested INSIDE an argument
+  or operand (the round-26 census's 12-event `nested-operand` bucket). Same spill
+  ABI, plus spilling the partial operand. Includes the optional-chain ordering
+  constraint: `undefined?.[await Promise.reject(...)]` must short-circuit WITHOUT
+  awaiting, so the suspension is skipped entirely rather than reordered.
+- `new C(await x)` — needs a `[[Construct]]` resume op; `__call_function_<n>`
+  performs a `[[Call]]` and would silently build the wrong thing.
+- try/catch ACROSS the await — that planner's states carry no spill hooks;
+  `lowerChunk` deliberately does not admit the shape.

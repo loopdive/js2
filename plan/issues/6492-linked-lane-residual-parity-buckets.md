@@ -3636,3 +3636,86 @@ exemptions).
     +29/−6; the six losses were entirely `propertyIsEnumerable` assertions, and
     they had been passing on ABSENCE. Any fix that makes a missing thing present
     must be measured against the rows that were asserting it missing.
+## Round 30 (2026-09-18, Opus long-tail lane) — the loud refusal costs 402 rows, and #6504's "optional-chaining rows" are three different bugs
+
+**No behaviour change landed.** The round's two results are a measurement that
+closes a long-open question and a diagnosis that invalidates the round's own
+premise.
+
+### The loud refusal: −402 / 2,212. Not 20. Not a tuning question.
+
+Rounds 26-29 kept deferring this because the ≤ 20-row rule was indeterminate.
+Round 29 wrote the plan that needs no event-to-row attribution; round 30 ran it.
+
+The widening (drop `findSuspensionInsideTry` in
+`reportDeclinedAsyncRejectionHazard`, refuse loudly for every decline with
+`anyRealSuspension` true) was put behind a temporary env flag and measured
+against round 29's baseline:
+
+| | linked, six async slices (2,212 rows) |
+| --- | --- |
+| round 29 baseline | 1,533 pass |
+| loud refusal ON | **1,131 pass** |
+| delta | **+0 / −402** |
+
+Where the 402 live:
+
+| bucket | rows |
+| --- | --- |
+| `language/statements/for-await-of` | **396** |
+| `language/{expressions,statements}/async-function`, `async-arrow-function` | 6 |
+
+Every one becomes `compile_error: async shape not supported…`.
+
+**The conclusion is not "the budget was slightly too small".** It is that the
+declined-with-real-suspension population IS most of the for-await-of corpus —
+destructuring heads the engine does not claim and the synchronous fallback runs
+acceptably today. The `try`-scoped condition is therefore load-bearing: it is
+what makes the guard a residue rather than the whole population. The rationale
+now lives at the condition itself in `src/codegen/async-activation.ts`, so the
+next reader does not re-derive it.
+
+**Any future widening must name a SUBSET** — by decline reason, most plausibly
+the `member-callee` / `nested-operand` shapes, whose sync fallback is a known
+silent miscompile — never the whole declined set. The env flag was removed
+rather than left in the tree: an env var that turns 402 passing rows into
+compile errors is a hazard, and the one-line change is described in the issue.
+
+### #6504's four residual rows are THREE defects, none of them the erasure
+
+The dispatch brief for this round asked for "the optional-chaining rows"
+(3) plus the dynamic-`import()` row (1), on the premise that `?.` is declined by
+name in the planner. Reduced individually with the single-compile probe, that
+premise does not hold and the four rows do not share a cause. Filed as **#6508**;
+summary:
+
+| row | actual cause | evidence |
+| --- | --- | --- |
+| `optional-chain-async-square-brackets.js` | await NESTED in an operand (`[22,33]?.[await P]`) — the round-26 `nested-operand` bucket | line-by-line reduction: `await [11]?.[0]` PASSES; the index-operand line is the one that declines |
+| `member-expression-async-identifier.js` | **#6502** null closure dispatch | fails at `asyncTest`'s `testFunc().then` on null; all of the body's own await statements pass when reduced |
+| `iteration-statement-for-await-of.js` | `Symbol.asyncIterator` not selected by the for-await head | `[object Object] is not iterable`; the optional chain resolves fine |
+| `dynamic-import/assignment-expression/await-expr.js` | dynamic `import()` resolves to `undefined` | unrelated to all of the above |
+
+So the round's stated acceptance ("the 3 rows pass linked") was **not
+achievable as scoped**: two of the three are not optional-chaining defects and
+one of those is not an async defect at all. The one that IS in the spill ABI's
+family is an instance of a bucket #6504 already tracks (`nested-operand`), whose
+fix is the partial-operand spill — deliberately not started here rather than
+begun late in the async engine on a premise that had just been falsified.
+
+The optional-chain-specific constraint IS real and is recorded with that work:
+`undefined?.[await Promise.reject(…)]` must short-circuit **without awaiting**,
+so the suspension has to be skipped entirely, not merely ordered.
+
+### Findings
+
+50. **Co-occurrence in a failure list is not shared causation.** Five rows were
+    one issue from round 6 to round 29 because they failed together in one run.
+    They were three defects plus one already-fixed. The mis-grouping survived 23
+    rounds and propagated into a dispatch brief. Reducing each row took under a
+    minute with the probe that already existed.
+51. **When a guard's scope looks conservative, measure the cost of widening it
+    BEFORE calling it conservative.** "Refuse loudly everywhere a rejection could
+    be dropped" reads like strictly better engineering. It costs 402 rows,
+    because the silent fallback is not a rare degradation — it is how most of the
+    for-await-of corpus currently passes.
