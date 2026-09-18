@@ -1,10 +1,10 @@
 {
   "id": "2864",
-  "assignee": "claude/es6-team-generators",
-  "requested_by": "claude/es6-team-generators",
+  "assignee": "ttraenkler/fable-es2015",
+  "requested_by": "ttraenkler/fable-es2015",
   "status": "in-progress",
-  "branch": "claude/es6-100-percent-pass-rate-wedr55",
-  "claimed_at": "2026-08-15T16:47:49Z",
-  "updated_at": "2026-08-15T16:47:49Z",
-  "write_id": "11814-4gnbsubk"
+  "branch": "claude/es6-2864-generator-carrier",
+  "claimed_at": "2026-09-18T07:08:34Z",
+  "updated_at": "2026-09-18T07:08:34Z",
+  "write_id": "5230-tknq0syo"
 }
