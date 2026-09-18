@@ -85,13 +85,47 @@ the same cluster made earlier in the session, on a different tree — so the two
 sides agree on the starting point. +7 against a projected 9 is also the honest
 direction: it declined 2 global-`@@match` rows deliberately.
 
-**Before opening or merging a PR from this branch, get from the lane (or
-re-derive):** the 7 gained rows by path, the 2 declined rows and why, the
-prescan-shape deviation from the plan, the list of what the lane itself flagged
-as still unproven, and which gates were run bare with their exit codes —
-specifically `LOC_GATE_BASE=$(git rev-parse origin/main) node
-scripts/check-loc-budget.mjs` and `npm run -s test:equivalence:gate`. No PR was
-opened for this branch during the session.
+**All of that detail is ALREADY RECORDED on the branch** — read the
+`## 2026-09-18 slice-1 implementation record (Opus lane)` section of
+`plan/issues/5198-es2015-standalone-regexp-r2.md` at `3b41aeec28`. Do NOT
+re-derive it. It names the 7 gained rows by path, the 2 it declined and why,
+the design deviation, the gates, and its own unproven list. In summary:
+
+- **Gained (7):** `Symbol.match/{exec-err, exec-invocation,
+  exec-return-type-invalid, exec-return-type-valid, get-exec-err}`,
+  `Symbol.search/{set-lastindex-init-samevalue, set-lastindex-restore-samevalue}`.
+  Lost 0.
+- **Declined (2):** both the GLOBAL `@@match` form
+  (`g-get-result-err`, `builtin-success-g-set-lastindex-err`) — they need the
+  §22.2.6.8 result-array + `lastIndex` advance loop, and the second also a
+  runtime non-writable `lastIndex` (slice 3). The global form keeps today's
+  lowering rather than half-implementing it.
+- **Design deviation from the plan:** instead of a `ctx.regexpProtocolEscaped`
+  prescan mark set from `index.ts`, it ships a memoized whole-file syntactic
+  scan (`sourceEscapesRegExpExecProtocol`, the #4556
+  `builtin-proto-member-override.ts` idiom). Same byte-inertness, same
+  `JS2WASM_NO_REGEXP_PROTOCOL=1` kill switch, no context-type change. The shape
+  is a two-arm runtime branch: `IsCallable(Get(R,"exec")) ? <spec sequence> :
+  <today's native lowering re-dispatched verbatim>`, built only from natives
+  standalone already has — so the missing `RegExpBuiltinExec` half costs nothing.
+- **Gates run bare, exit 0:** loc/func/coercion budgets, oracle-ratchet
+  (`getTypeAtLocation +0, ctx.checker +0`), dead-exports. Three allowances in
+  this issue's frontmatter with dated rationales; no `scripts/*-baseline.json`
+  touched.
+
+**STILL UNPROVEN — this is what a PR must close first**, in the lane's own words:
+
+1. No pin test file `tests/issue-5198-regexp-exec-protocol.test.ts` exists yet.
+2. `LOC_GATE_BASE=$(git rev-parse origin/main)` (CI's base) and
+   `npm run -s test:equivalence:gate` were NOT run.
+3. The two global-`@@match` residuals are unfixed and unpinned.
+4. A deliberate ordering deviation: `Get(R,"exec")` runs BEFORE
+   `S = ToString(string)`, because the branch decides which arm evaluates the
+   argument. That is an observable-order question against §22.2.6.8 and needs a
+   spec read before it ships.
+
+No PR was opened for this branch during the session, deliberately, because of
+items 1-4.
 
 **The diagnosis is solid and does not need redoing** (probe-verified, with
 controls, on `origin/main` `a8b8dfc180`):
