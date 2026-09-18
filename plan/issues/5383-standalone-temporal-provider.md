@@ -10523,3 +10523,196 @@ document (the two `era` target rows, the four-family/A–F/corpus/equivalence
 numbers) — those are unchanged from S49b's measurement and are not
 re-verified here since no code changed.
 
+### S50 findings (2026-09-18) — a real, root-caused, fixed defect (#6635:
+`Map`/`WeakMap.get()` chained into a computed member access loses the
+value); NOT sufficient to close #5383's two target rows — WAT evidence names
+the actual remaining site
+
+S50 (branch `issue-5383-standalone-temporal-s50`, worktree off S49c's tip
+`76e5697eb20bca4d0dd3dae823bd694607a24182`) was dispatched to reduce the
+`SameValue(«null», «undefined»)` defect per the dispatch brief's exact method:
+build the JS-bundle-shape reduction (`Xo.iso8601 = {isoToDate({year,month,day},
+r){...}}` + `Xo[helper.id] = new NonIsoCalendar(helper)`), bisect, then WAT
+the real provider.
+
+**Bisection found and fixed a real defect, but it is NOT the one causing the
+two named rows.** Reducing `Ni(e,t){const n=re(e,D); return
+Qt(e).isoToDate(n,{[t]:true})[t]}` in the exact `.js`-shaped bundle syntax
+(`compileMulti({"/__main.js": body}, ..., {allowJs:true, target:"standalone"}
+)`) did not reproduce the null/undefined mismatch directly — but stepping
+through the real minified bundle's helper chain (`Qt(e) =
+ce("%calendarImpl%")(re(e,E))`, `re(e,t){const n=Q(e)?.[t]; if(void
+0===n)throw...}`, `Q(e){return V.get(e)}`, `V = new WeakMap()`) exposed a
+genuinely broken pattern: `someMap.get(k)[computedKey]` (read) and
+`someMap.get(k)[computedKey] = v` (write), used DIRECTLY with no intervening
+local variable, silently lose/drop the value.
+
+**Root cause**: `tryCompileNativeMapMethodCall` (`map-runtime.ts`) reports
+`Map`/`WeakMap.prototype.get()` as a bare `{kind:"anyref"}` — deliberately
+untyped. Two call sites compile the object sub-expression with **no
+expected-type hint** (`compileElementAccess`'s
+`compileExpression(ctx,fctx,expr.expression)`; `compileElementAssignment`'s
+same-shaped call), so the `anyref` never gets coerced to `externref` the way
+the dot-property twins get for free (they route through the checker with an
+explicit `externref` expected-type hint). Neither `compileElementAccessBody`
+(read) nor `compileExternSetFallback` (write) had an `anyref` arm — both fell
+to their generic `reportError(...); return null;` fallback, and the `#1919`
+speculative-rollback wrapper in `expressions.ts` treats a `null` inner result
+as a probe miss: it silently discards the diagnostic and the partial body,
+then substitutes a `pushDefaultValue` fallback derived from the TS-static
+type. For an unresolvable/`any` computed-member type that default is a bare
+`ref.null` — observably JS `null`, not `undefined`, exactly matching the
+target rows' error signature. The write side's fallback simply dropped the
+RHS.
+
+**Fix** (`src/codegen/property-access.ts` `compileElementAccessBody`,
+`src/codegen/expressions/assignment.ts` `compileExternSetFallback`): both now
+treat `anyref` the same as `ref`/`ref_null` — one `extern.convert_any` widens
+it onto the already-correct `externref` pipeline (`__extern_get`/
+`__extern_set`). Filed and merged as its own issue: `#6635`.
+
+**Real-row proof the fix works for THIS mechanism in isolation, and via the
+REAL linked provider**: reduction probes (`.tmp/s50run/probe9.mts` through
+`probe19.mts`, `probe15.mts`–`probe17.mts`) covering write-then-read,
+read-then-write, two-separate-`.get()`-calls, optional-chained `Q(e)?.[t]`,
+the exact `se`/`ce`-registry indirect-function-call pattern, and a
+NO-Map/WeakMap plain-method-call-chained-bracket variant — ALL pass after the
+fix (were 2/2 or 3/3 correct-value cases; several returned `undefined` or a
+corrupted third value pre-fix). `realprobe1.mts`/`realprobe3.mts` (real
+`@js-temporal/polyfill` bundle, `buildTemporalProvider` +
+`compileWithTemporalGlobal`, both via raw `src/` AND via the built
+`scripts/compiler-bundle.mjs`): `Temporal.PlainDate.from({year:1976,
+month:11, day:18}).era === undefined` now reads `true` (was `false`
+pre-fix) — a DIRECT, real-provider confirmation the fixed mechanism is
+exercised and correct for the simple case.
+
+**Yet the two target test262 rows remain byte-identically red** (confirmed
+post-fix, fresh provider/adapter/bundle rebuild, cache label `s50-fix1`,
+`cacheHit=false` then reused `cacheHit=true`):
+```
+test/built-ins/Temporal/PlainDate/from/argument-object-valid.js => fail
+  "Test262Error: Expected SameValue(«null», «undefined») to be true"
+test/built-ins/Temporal/PlainDate/from/argument-string.js => fail
+  "Test262Error: Expected SameValue(«null», «undefined») to be true"
+```
+
+**WAT evidence naming the actual remaining site.** Disassembled the real
+provider (`emitWat` not exposed on `buildTemporalProvider`'s return; dumped
+`provider.artifact.binary` to `.tmp/s50run/provider.wasm`, `wasm-dis -all` to
+`.tmp/s50run/provider.wat`, 2.16M lines — the name section is intact, so
+every function carries its original bundle identifier). `$Ni`'s body:
+```
+(call $vt (local.get $0) ...)                          ; RequireInternalSlot brand check
+(local.set $2 (call $re (local.get $0) ...))            ; n = re(e, D)  [the ISO date fields]
+(local.tee $3 (call $__call_m_isoToDate_2               ; Qt(e).isoToDate(n, {[t]:true})
+  (local.tee $3 (call $Qt (local.get $0)))
+  (block (result externref) ... __new_plain_object / __extern_set / __box_boolean ...)))
+...
+(local.set $5 (local.get $3))                           ; recv = isoToDate(...)'s return (ALREADY externref)
+(local.set $6 (extern.convert_any (local.get $1)))      ; key = t, converted to externref
+(local.tee $7 (call $__extern_get (local.get $5) (local.get $6)))   ; the FINAL [t] read
+```
+Two things this rules out: (1) `Qt(e).isoToDate(...)` is NOT a generic
+dynamic call — it goes through `$__call_m_isoToDate_2`, a DEVIRTUALIZED
+closed-method-dispatch call (`src/codegen/closed-method-dispatch.ts`, the
+same mechanism #6634/#6633 (S47–S49) already worked on), which returns
+`externref` directly. (2) The final `[t]` bracket read is therefore NEVER an
+`anyref` receiver at all — it goes straight to `__extern_get(externref,
+externref)`, the SAME native property-read helper every other object read
+uses, `#6635`'s fix never in the picture for this specific line. So the
+`null` must originate from `$__extern_get`'s OWN internal struct/field
+dispatch for whichever concrete struct type the compiler chose to represent
+`{era: void 0, eraYear: void 0, year, month, day, daysInWeek: 7,
+monthsInYear: 12}` — a question this session did not have budget left to
+answer (`__extern_get`'s implementation in the standalone build is itself a
+multi-thousand-line native dispatcher, `.tmp/s50run/provider.wat:1474475`
+onward, discriminating by `ref.test` across every struct shape known to the
+whole ~3300-line polyfill bundle).
+
+**Standing hypothesis for the next lane, narrowed from S46/S46b/S47/S48/
+S48b/S49's "generic __extern_get read" framing to something concrete and
+falsifiable**: `__extern_get`'s struct dispatch likely resolves the "era"
+FIELD across every struct shape in the WHOLE PROGRAM that has an "era"
+property (a name-keyed / canonical-ordinal scheme, the same class of
+carrier-collapse #6634 fixed for the METHOD-DISPATCH side) — and since the
+real bundle's `NonIsoCalendar.isoToDate` ALSO returns an object with an
+`era` field (always a non-undefined string, per `GregoryHelper`/
+`JapaneseHelper` etc.), the field's UNIFIED representation across the whole
+program may not be able to hold a genuine `undefined` for the `iso8601`
+literal's own `era: void 0` initializer — collapsing to `null` instead. This
+is a hypothesis, not a confirmed root cause: it was not reduced to a minimal
+repro this session (a repro needs the WHOLE real bundle's struct-shape
+diversity to trigger — my hand-built repros with 1–2 calendar shapes never
+reproduced it, consistent with this theory). The next lane should start from
+`.tmp/s50run/provider.wat` (kept only in this session's worktree; regenerate
+via `.tmp/s50run/dumpwat.mjs`, pattern: `buildTemporalProvider(...)` then
+`wasm-dis -all` the returned `artifact.binary`) and trace `$__extern_get`'s
+own dispatch for a `struct.get`/`ref.test` keyed on "era" across the whole
+polyfill's compiled struct table, OR build a repro with 2+ DISTINCT
+`isoToDate`-returning shapes (one `era: void 0`, one `era: "string"`) reached
+through the SAME `$__call_m_isoToDate_2` devirtualized dispatcher (not a
+plain Map/registry lookup) to see if that combination — not the Map.get()
+chain — is what collapses the field.
+
+**Criterion-4 battery vs the S49c/post-S49b base, fresh provider (cache label
+`s50-battery`, `cacheHit=false`)**:
+
+| Group | Files | Base pass | Fix pass | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| PlainDate | 120 | 113 | 113 | 0 | 0 |
+| Duration | 120 | 106 | 106 | 0 | 0 |
+| PlainDateTime | 120 | 113 | 113 | 0 | 0 |
+| ZonedDateTime | 120 | 103 | 103 | 0 | 0 |
+| **Four-family total** | **480** | **435** | **435** | **0** | **0** |
+| A (general JS corpus) | 1250 | (per-file match) | (per-file match) | 0 | 0 |
+| B | 205 | (per-file match) | (per-file match) | 0 | 0 |
+| C | 349 | (per-file match) | (per-file match) | 0 | 0 |
+| D | 300 | (per-file match) | (per-file match) | 0 | 0 |
+| E-unlinked (Proxy/Reflect, standalone) | 300 | (per-file match) | (per-file match) | 0 | 0 |
+| E-linked (`TEST262_ORACLE_MODE=linked`) | 300 | 235/300 (see note) | 235/300 | 0 | 0 |
+| F-class | 250 | (per-file match) | (per-file match) | 0 | 0 |
+| F-methoddef | 100 | (per-file match) | (per-file match) | 0 | 0 |
+| F-objproto | 150 | (per-file match) | (per-file match) | 0 | 0 |
+
+All 3,204 A–F files plus the 480 four-family files diffed PER-FILE (not just
+by count) against the S49c worktree's own committed base TSVs
+(`.tmp/s50/s49c/*`, copied from `/home/user/js2/.claude/worktrees/
+agent-a15ccd92764a093d7/.tmp/s49c`): **zero pass→fail in every group.**
+**E-linked note**: the base file used for this diff
+(`.tmp/s50/s49c/E-linked/E-cur-p{0,1}.tsv`) reads 235/300, not the 228/300
+S49b's own writeup names as "the new true baseline" — S49c's own conclusion
+was that this 235-vs-228 drift is environmental/non-deterministic, not
+caused by any lane's diff, so this session's 235/300 (an EXACT per-file match
+against the 235-count file, 0 flips) is consistent with, not contradictory
+to, S49c's finding; it was not re-investigated further here.
+
+**Corpus byte-flip A/B** (`.tmp/s50run/corpus.mts`, 42 files ×
+{gc,standalone} = 84 entries, diffed against S46b's committed
+`.tmp/s46b/corpus-cur.jsonl`): **0 status flips, 0 sha flips** on either
+target.
+
+**`npm run -s test:equivalence:gate`**: `22 failing, 1720 passing, 22
+known-failures in baseline` — `✓ No new equivalence regressions.` Matches
+every prior lane's figure exactly.
+
+**Verdict on criterion 4 (0 legitimate pass→fail): SATISFIED for #6635's own
+diff**, across the full A–F/four-family/corpus/equivalence measurement this
+session had budget for.
+
+**Bottom line for #5383**: #6635 is a real, useful, independently-verified
+fix, but the two named target rows are unchanged. The next lane's starting
+point is the WAT evidence above — `$__extern_get`'s own struct/field
+dispatch after the `$__call_m_isoToDate_2` devirtualized call, not a generic
+dynamic-member-get on a Map/WeakMap chain (that hypothesis, standing since
+S46, is now RULED OUT by direct WAT inspection of the real provider).
+
+Stack state 2026-09-18 (post-S50), unchanged from S49b/S49c's numbers except
+where noted: Temporal PlainDate 113/120, Duration 106/120, PlainDateTime
+113/120, ZDT 103/120 (435/480 total); A 1125/1250 (per-file identical); B
+179/205; C 274/349; D 224/300; E-unlinked 235/300; E-linked 235/300 (see the
+235-vs-228 environmental-drift note above — unresolved, not this session's
+to fix); F-class 136/250; F-methoddef 68/100; F-objproto 136/150; corpus byte
+A/B 0/84 flips; equivalence gate 22/1720/22 unchanged. HEAD of this lane:
+`78ceb4569b` on branch `issue-5383-standalone-temporal-s50`, worktree
+`/home/user/js2/.claude/worktrees/agent-a12589fac4b1ec3ac`.
+
