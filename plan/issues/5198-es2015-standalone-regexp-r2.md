@@ -956,3 +956,94 @@ whoever owns it once slice 1 lands.
 ## References
 
 - #5142 (wave-1 plan), PRs #5179, #5213; #5200 (strict-rerun isolation).
+
+## 2026-09-18 slice-1 implementation record (Opus lane) — measured, not projected
+
+Branch `claude/es6-5198-regexp-exec-protocol`, commit on top of the plan commit
+`0b107a88d0`. **Unvalidated in CI; no PR opened.** Everything below is a run I
+executed, with the artifact named.
+
+### What landed
+
+`src/codegen/regexp-protocol-slow.ts` (new) + one 8-line hook in
+`src/codegen/expressions/call-tail-dispatch.ts` + `staticRegExpFlags` exported
+from `regexp-standalone.ts`. §22.2.7.1 RegExpExec as a **two-arm runtime
+branch**:
+
+```
+IsCallable(Get(R,"exec")) ? <spec sequence> : <the existing native lowering, re-dispatched verbatim>
+```
+
+The ELSE arm is why the missing `RegExpBuiltinExec` half costs nothing: when
+`exec` is not an own callable, control lands on today's code. Built entirely
+out of natives that already exist in standalone (`__extern_get`,
+`__is_callable`, `__objvec_new`/`__objvec_push`, `__apply_closure`,
+`__extern_toString`, `__typeof_object`/`__typeof_function`,
+`__extern_is_nullish`/`__extern_is_undefined`) — no new runtime.
+
+### Deviation from the plan, and why
+
+The plan specified a `ctx.regexpProtocolEscaped` prescan mark set from
+`index.ts` next to `scanForDynamicProto`. This ships the same mechanism as a
+**memoized whole-file syntactic scan** (`sourceEscapesRegExpExecProtocol`,
+one `WeakMap<SourceFile,boolean>`), the `builtin-proto-member-override.ts`
+(#4556) idiom. Same byte-inertness property, same `JS2WASM_NO_REGEXP_PROTOCOL=1`
+kill switch, no context-type change and no second `index.ts` call site.
+
+### Measured yield — 7 rows, not 43 and not 9
+
+The coordinator's host-lane split corrected the target to the 9 rows that are
+`exec`-override ∩ host-passes ∩ `{@@match,@@search}`. Slice 1 lands **7** of
+those 9. The 2 it does not land are both the GLOBAL `@@match` form:
+
+| row | why not |
+| --- | --- |
+| `Symbol.match/g-get-result-err.js` | needs the §22.2.6.8 step-5 result ARRAY + `lastIndex` advance loop; standalone has no array-construction native reachable from this lowering, so the global form declines and keeps today's lowering |
+| `Symbol.match/builtin-success-g-set-lastindex-err.js` | same, plus a runtime NON-WRITABLE `lastIndex` (slice 3). `ctx.nonWritableExternKeys` is compile-time and unsound here — not re-derived, per the plan |
+
+### Whole-cluster before/after, per test path
+
+Two frozen trees, same corpus and `.test262-cache` symlinked into both.
+Base tree = worktree at `0b107a88d0` (docs-only above `a8b8dfc180`).
+`COMPILER_POOL_SIZE=2 npx tsx scripts/run-test262-paths.mts --isolate <chunk> --standalone`,
+190 rows in 2 chunks of 95.
+
+| tree | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| base `0b107a88d0` | 86 | 95 | 9 |
+| branch | **93** | 88 | 9 |
+
+The base reproduces the plan's 86/95/9 exactly. Compared **per path** (non-pass
+path sets diffed, so a one-in/one-out swap cannot hide):
+
+- **gained 7** — `Symbol.match/{exec-err, exec-invocation, exec-return-type-invalid, exec-return-type-valid, get-exec-err}`, `Symbol.search/{set-lastindex-init-samevalue, set-lastindex-restore-samevalue}`
+- **lost 0**
+
+### Byte-inertness
+
+15 RegExp programs that never escape the protocol × `{standalone, gc}` = 30
+binaries, sha256 on base and branch: **identical, 0 differences, 0 compile
+errors** (`.tmp/5198/byte-inert.mts`). The set includes `@@match`, `@@match` with
+`g`, `@@search`, `@@replace`, `@@split`, the `String.prototype.*` duals, sticky
+`lastIndex`, named groups, and a negative control that writes a *different*
+key (`o["run"]`) to confirm the scan is keyed on `exec` and not on "any
+property write". Standalone binaries reported `imports=0` throughout.
+
+### Gates run bare (never piped), exit 0
+
+`check-loc-budget` · `check-func-budget` · `check-coercion-sites` ·
+`check:oracle-ratchet` (getTypeAtLocation +0, ctx.checker +0) ·
+`check:dead-exports`. Three allowances added to this file's frontmatter above,
+each with a dated rationale; no `scripts/*-baseline.json` touched.
+
+### Known-incomplete at hand-off
+
+- No pin test file `tests/issue-5198-regexp-exec-protocol.test.ts` yet.
+- `LOC_GATE_BASE=$(git rev-parse origin/main)` simulation and
+  `test:equivalence:gate` not run.
+- The two global-`@@match` residuals are unfixed and unpinned.
+- One deliberate ordering deviation: `Get(R,"exec")` runs before
+  `S = ToString(string)`, because the branch decides which arm evaluates the
+  argument and computing `S` in the outer body would evaluate it twice at
+  runtime. No row in the 190-row cluster distinguishes the two orders; the
+  module header records it.
