@@ -852,6 +852,14 @@ export interface FunctionContext {
    */
   nativeGeneratorExpressionValueLocals?: Map<ts.Expression, number>;
   /**
+   * (#6504 round 31) The async twin of the field above: one-time PRE-AWAIT
+   * operand values for original expression AST nodes, consulted while an async
+   * resume state recompiles the argument expression that contained the await.
+   * Kept separate from the generator map rather than shared, so each lane owns
+   * its own lifetime and a stale entry from one can never be read by the other.
+   */
+  asyncOperandValueLocals?: Map<ts.Expression, number>;
+  /**
    * (#2865) The `__self` capture-struct layout of a LIFTED CLOSURE body
    * (closures.ts materializes each capture from `__self` field `i+1` into a
    * named local in the body prologue). The async drive lane compiles the body
@@ -2813,6 +2821,12 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * to functions that use `arguments`. -1 = not yet created.
    */
   argcGlobalIdx: number;
+  /**
+   * (#6491) Absolute Wasm global index for the `__host_argc` (mut i32) module
+   * global — the host's one-shot channel for the REAL call-site argument count
+   * of a widened under-applied closure call. -1 = not yet created.
+   */
+  hostArgcGlobalIdx: number;
   /**
    * (#2933) Canonical VARIADIC builtin value-closure convention, set when a
    * genuinely-variadic builtin static method (`Math.max`/`Math.min`) is

@@ -5,6 +5,7 @@
 import { ts, forEachChild } from "../../ts-api.js";
 import { receiverIsRealmGlobalObject } from "../helpers/sloppy-this-global.js"; // (#4500 Slice A) realm-global receiver
 import { tryEmitRealmGlobalElementWrite } from "../realm-global-element-write.js"; // (#4491 T4) its bracket twin
+import { emitVecLengthHoleFill } from "../vec-length-hole-fill.js"; // (#6482 r4) shared length-store hole fill
 import { isBooleanType, isExternalDeclaredClass, isStringType } from "../../checker/type-mapper.js";
 import { integrityVarKey } from "../widened-var-key.js";
 import { classMemberFuncKey } from "../class-member-keys.js"; // (#5195 Step 9 H) static setter key
@@ -4789,6 +4790,14 @@ function compilePropertyAssignment(
         { op: "local.get", index: newLenTmp },
         { op: "struct.set", typeIdx: vecBaseIdx, fieldIdx: 0 },
       ];
+      // (#6482 r4) This store touches ONLY field 0, so a shrink leaves the
+      // dropped elements sitting in the backing array and a later grow exposes
+      // them again (`[0,1]; length = 1; length = 10` → index 1 read back as
+      // `1`). Mark the orphaned region before the length moves. Shared emitter —
+      // the receiver here is `$__vec_base`, whose only field is `length`, so
+      // reaching the data array needs the per-vec-type ladder that
+      // `vec-length-hole-fill.ts` owns for all three length-store sites.
+      emitVecLengthHoleFill(ctx, fctx, vecTmp, newLenTmp, "shrink-only");
       const selectedStore = buildOverlayArrayLengthSet(ctx, fctx, vecTmp, newLenTmp, target) ?? lengthStore;
       if (receiverProvenVec) {
         for (const instr of selectedStore) fctx.body.push(instr);

@@ -10,15 +10,6 @@ reasoning_effort: max
 owner: sendev-s53
 assignee: ttraenkler/sendev-s53
 completed: 2026-09-18
-func-budget-allow:
-  # 2026-09-18 (S53) — pre-existing drift, not caused by this PR: main moved
-  # `emitObjectProtoToStringClassifier`'s ceiling in commit 0bf2914353 (a
-  # refactor this stack predates), so the `LOC_GATE_BASE=origin/main` func-
-  # budget preview reads 392 > 377 for a function this PR never touches.
-  # Reconcile properly at the next main sync (drop this grant once the stack
-  # rebases past 0bf2914353); restating here only so the merge-preview gate
-  # passes on this PR.
-  - src/codegen/object-proto-tostring.ts::emitObjectProtoToStringClassifier
 ---
 
 # #6637 — untyped-receiver Proxy property access misroutes to "null or undefined" (S53 fix, #5383 stack)

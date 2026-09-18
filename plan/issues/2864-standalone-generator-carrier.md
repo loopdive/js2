@@ -2,9 +2,9 @@
 id: 2864
 title: "Standalone: no Wasm-native generator carrier — sync generators leak __create_generator/__gen_* host imports"
 status: in-progress
-assignee: ttraenkler/codex-es6-closeout
+assignee: ttraenkler/fable-es2015
 created: 2026-06-30
-updated: 2026-08-27
+updated: 2026-09-18
 priority: high
 feasibility: hard
 model: gpt-5.6-luna
@@ -18,6 +18,16 @@ related: [2860, 680, 2865]
 umbrella: 2860
 architect_spec: candidate
 loc-budget-allow:
+  # (#2864 S1/S2, 2026-09-18) +140 LOC in generators-native.ts /
+  # buildNativeGeneratorPlan for the yield-in-expression-position widening.
+  # The executable change is ~55 lines (an operand-carrying yield predicate, an
+  # assignment re-root, a declaration entry point, a ContinuationHost record);
+  # the rest is the §13.15.2 evaluation-order argument for why each admitted
+  # target may be deferred past the suspension and each refused one may not.
+  # That argument is the load-bearing part — the refusals here are not
+  # conservatism, they are cases where deferring would move an observable
+  # effect across the resume boundary, and a reader who deletes the note will
+  # widen exactly those.
   - src/codegen/generators-native.ts
   # (#2864 C02) NativeGeneratorInfo carries the optional frame-arguments
   # metadata consumed by the generator factory/resume pair.
@@ -50,6 +60,12 @@ func-budget-allow:
   # lower id. Deriving it correctly is inherently a few lines inside the planner;
   # extracting it would split the state-reservation invariant across two units.
   # Same rationale as the D2 loc-budget-allow grant (#2662 precedent).
+  #
+  # S1/S2 (+140 LOC, 2026-09-18): the continuation grammar lives inside this
+  # function because it closes over the plan's live cursor (`curId`,
+  # `curStatements`), the spill set and `elemValType`. It cannot be lifted out
+  # without exporting that mutable state; see the loc-budget-allow note above
+  # for why the comment mass is deliberate.
   - src/codegen/generators-native.ts::buildNativeGeneratorPlan
   # (#2864 wave-2 S1) All three grow by their root-cause notes, and all three
   # notes have to live INSIDE the function because each corrects a decision
@@ -1887,3 +1903,315 @@ registration is removed in `finally` without leaking a live body. After the
 latest upstream merge, the focused suite is again 10/10, including both
 JS-host validation failures and all standalone controls. PR #5035 remains
 draft until the refreshed upstream quality run passes.
+
+---
+
+## RE-MEASURED 2026-09-18 — the premise above is stale, and the gap is far narrower
+
+Everything above was measured 2026-06-30. Re-measured on `origin/main`
+`278b5d1aa5`, `--target standalone`, `result.imports === []` asserted on every
+probe. **A general native carrier now exists.** All of these lower natively with
+zero host imports:
+
+| shape | result |
+| --- | --- |
+| named generator declaration | works |
+| anonymous generator expression `function*(){}` | works |
+| named generator expression | works |
+| class generator method | works |
+| string yields | works |
+| `for` loop containing a yield | works |
+| sent values — `const a = yield 1; …` then `it.next(5)` | works |
+| `yield*` delegation | works |
+| array / object / nested / rest destructuring **inside** a generator body | works |
+| a ref-typed local (array, object, string) live **across** a yield | works |
+
+So "only sequential numeric yields" is no longer the boundary, and the
+architecture-scale framing above (CPS transform / stack-switching) is **not**
+what this issue needs. Do not start there.
+
+### The measured boundary
+
+These leak `__gen_create_buffer` / `__gen_push_f64` / `__gen_push_ref` /
+`__create_generator`:
+
+```ts
+function* g() { let a;  [a] = [yield 1];            yield a; }   // yield in an array-dstr RHS
+function* g() { let a;  ({a} = {a: yield 1});       yield a; }   // yield in an obj-dstr RHS
+function* g() { const [a = yield 1] = [];           yield a; }   // yield as a dstr DEFAULT
+function* g() { const v = yield 1; const [a] = [v]; yield a; }   // dstr anywhere + a sent-value yield
+function* g() { const arr = [yield 1];              yield arr[0]; } // yield inside an ARRAY LITERAL — no dstr at all
+```
+
+These do not:
+
+```ts
+function* g() { const a = yield 1;   yield a + 1; }   // sent value, plain identifier binding
+function* g() { const [a] = [5];     yield a; }       // destructuring, no sent-value yield
+```
+
+**The last leaking case is the important one: it contains no destructuring.**
+An earlier reading of these rows as "destructuring inside a generator" is
+therefore wrong — destructuring on its own is fine, and a bare array literal
+holding a yield is not. Whatever the real predicate is, it is a property of the
+**statement walker's supported grammar**, not of destructuring.
+
+### Where the predicate actually lives
+
+`src/codegen/generators-native.ts`. The plan builder walks statements and
+returns false on any shape it cannot lower; `src/codegen/function-body.ts:688`
+turns that into the `#680` diagnostic, and `nativeGeneratorInfoForDecl` (the
+#3505 decl-aware lookup) is what the refusal consults. A visible clue at
+`generators-native.ts:626-630` — the variable-statement lowering accepts a
+declaration list of length 1 whose name is an **Identifier** and whose
+initializer is a **YieldExpression**, and nothing else. That is consistent with
+every leaking case above, but **read the walker and enumerate the real grammar
+rather than trusting this paragraph.**
+
+### Why it matters
+
+130 of the 309 ES2015 non-pass rows that mention a generator report
+`standalone target emitted host imports: env::__create_generator`; a further 57
+report the `#680` diagnostic. The failing rows are overwhelmingly `dstr/` paths
+(`obj-prop-nested-array-yield-expr.js`, `array-rest-nested-array-yield-expr.js`
+…) — i.e. destructuring tests whose RHS carries a `yield`, which is exactly the
+intersection above.
+
+## Implementation Plan (supersedes the architect-spec plan above)
+
+**S1 — enumerate, then extend.** Read the plan builder's statement/expression
+walk and write down every shape it rejects. Extend it so a `yield` is
+supported in **expression position** wherever the surrounding statement is
+already lowerable: inside an array literal, an object literal, a destructuring
+RHS, and a destructuring default. The yield must remain a state-machine
+suspension point — the surrounding expression has to be split across the
+resume boundary, with the partially-built value spilled to the frame, not
+re-evaluated (re-evaluating would repeat observable side effects).
+
+**S2 — the sent-value binding.** Generalise the length-1 / Identifier /
+YieldExpression variable-statement rule so a binding pattern is allowed on the
+left and a yield may appear anywhere in the initializer.
+
+Keep the slices separate: S1 is the 5-case boundary above, S2 is the
+declaration rule. If S1 alone moves the rows, stop and say so.
+
+### Acceptance
+
+1. All five leaking shapes above compile with `result.imports === []` and
+   produce the right values, and both working shapes stay working.
+2. **Order preservation**: a yield inside a literal must not re-run the
+   sibling elements after resume. Pin with a counter — `[f(), yield 1, g()]`
+   calls `f` once and `g` once, in that order, across the suspension.
+3. Measured on **both** a merge-base tree and the branch, same `.test262-cache`
+   symlinked into both: the `language/expressions/assignment/dstr` and
+   `language/statements/**/dstr` directories, plus a generator control set.
+   **Zero rows lost** — the per-test edition ratchet fails the required check
+   on a single pass→not-pass in ES2015, with no waiver.
+4. gc/host lane byte-identical (this path is standalone-gated).
+5. All gates exit 0, run bare.
+
+### Dead ends — do not re-run these
+
+- **Generator NAME collisions** genuinely break compilation: two `function* g`
+  in different scopes give `Internal error: Missing native generator factory
+  identity` (and a top-level `g` shadowed by a nested `g` does too). It is a
+  real bug worth its own id, but it carries **~0 test262 rows** — the 6 corpus
+  matches are the `BindingIdentifier` template placeholder, not real duplicates.
+- **Anonymous generator expressions** were ranked the top blocker at 113 rows
+  by a regex census. They work fine; the count was matching test262 *template*
+  text, not the failing construct.
+
+---
+
+## S1 + S2 IMPLEMENTED 2026-09-18 — and the corpus family is NOT the one the plan aimed at
+
+Branch `claude/es6-2864-generator-carrier`. Everything below is measured on that
+branch against a frozen copy of the merge-base tree, both with the same
+`test262` submodule and `.test262-cache` symlinked in.
+
+### What the plan builder actually rejects (enumerated, not inferred)
+
+The suggestive spot the re-measurement pointed at (`generators-native.ts`
+~L626-630, `tryYieldDeclaration`) is real but is **one of four** refusal sites,
+and it is not the one that carries the leaking rows. `lowerStatements` is the
+whole grammar. For a statement that CONTAINS a yield it accepts exactly:
+
+1. `return <yield* …>;` (outside a state-lowered finally);
+2. `return <yield-free expr>;` when the value matches the carrier and no
+   enclosing `finally` is state-lowered;
+3. `yield …;` / `yield* …;` as the WHOLE expression statement;
+4. `<Identifier> = yield* …;`;
+5. `<var|let|const> <Identifier> = <YieldExpression>;` — exactly one declarator,
+   an Identifier name, and the initializer must be the yield ITSELF;
+6. an `ExpressionStatement`, **only in the direct body statement list**, only
+   with an empty unwind chain and an f64 carrier, whose expression is an array
+   literal / object literal / comma chain / `cond ? … : …` / `( yield )`
+   containing an **operand-less** `yield` (#680);
+7. `try` (two regimes), `if`, `while`, `do`, `for`, and a bare block.
+
+Everything else is `fail()`. The consequences worth naming, because each is a
+separate piece of work and only the last two were in this slice's scope:
+
+- **no `for-of` / `for-in` branch at all** — a yield anywhere in one bails;
+- **no `switch` branch**;
+- a yield in **any assignment** (`[a] = [yield]`, `x = yield`, `o.p = yield`,
+  `f(yield)`);
+- a yield **carrying an operand** anywhere except as a whole statement or a
+  whole identifier initializer;
+- a declaration whose initializer merely **contains** a yield, or whose name is
+  a binding pattern, or which has more than one declarator.
+
+### What landed
+
+`buildNativeGeneratorPlan` only — one file, one function, gated on
+`noJsHostTarget(ctx)` so the **gc lane is byte-identical** (see the sha table).
+
+- **S1** — the #680 continuation grammar now admits (a) a `yield` that carries
+  an operand, (b) an **assignment** root whose right-hand side suspends, with
+  either a destructuring target or a plain identifier target, and (c) a **call**
+  as a captured prefix operand.
+- **S2** — `lowerDeclarationContinuation`: a single-declarator, identifier-named
+  declaration whose initializer suspends. #680's machinery was already
+  statement-shaped (a successor state recompiles the ORIGINAL statement with the
+  yield and its captured prefix read back from frame spills), so a declaration
+  needed a *root*, not a new lowering.
+
+**Why standalone-only.** The host lane keeps a WORKING eager-buffer fallback for
+every shape the plan refuses, so admitting more shapes there moves passing rows
+onto a different lowering for no conformance gain — pure regression risk.
+Standalone has no fallback: a refusal there IS the `#680` diagnostic / the
+`env::__gen_*` leak. (The re-measurement's acceptance criterion said "this path
+is standalone-gated". It is **not** — since #3032 W6 the host lane routes free
+generator declarations through the same planner. The gate had to be added
+deliberately; it is what makes criterion 4 true rather than assumed.)
+
+**Why a call is now a safe prefix operand.** #680's comment ("values before a
+suspension must not require observable Get/call/spread/key work") reads as a
+soundness rule but is a proof-scope one. A captured operand is compiled exactly
+once, in the suspending state, and every later state reads its spill through the
+planner-validated replacement map. That single evaluation is the property the
+order pin needs.
+
+### The five shapes, before → after (standalone, `imports` asserted `[]`)
+
+| shape | base | branch |
+| --- | --- | --- |
+| `let a; [a] = [yield 1]; yield a;` | #680 refusal | `imports=[]`, value 7 |
+| `let a; ({a} = {a: yield 1}); yield a;` | #680 refusal | `imports=[]`, value 7 |
+| `const [a = yield 1] = []; yield a;` | #680 refusal | **still refused** |
+| `const v = yield 1; const [a] = [v]; yield a;` | **already worked** | unchanged |
+| `const arr = [yield 1]; yield arr[0];` | #680 refusal | `imports=[]`, value 7 |
+| control `const a = yield 1; yield a+1;` | worked | unchanged, byte-identical |
+| control `const [a] = [5]; yield a;` | worked | unchanged, byte-identical |
+
+Two corrections to the re-measurement:
+
+- **Shape 4 does not reproduce as written.** `const v = yield 1; const [a] = [v];`
+  compiles host-free on the BASE tree when the generator is typed. What fails is
+  the UNTYPED form — and so does the control `const a = yield 1; yield a+1;`,
+  for the same reason: with no annotation the sent value is not `number`, the
+  carrier becomes the boxed-any `externref`, and the `carrierIsAny(elemValType)`
+  bail on any resume binding (generators-native.ts, the F1 spill-typing loop)
+  refuses the generator. That is a different, larger gap than yield-position and
+  it is the one that dominates untyped test262 generator code.
+- **`const [a = yield 1] = []` is a CONDITIONAL suspension** — the default is
+  evaluated only when the element is `undefined`. The continuation model
+  suspends UNCONDITIONALLY, so admitting it would yield where the spec does not.
+  It is refused on purpose and pinned as such.
+
+### Order preservation
+
+`arr = [f(), yield 1, h()]` — `f` is called exactly once BEFORE the suspension,
+`h` exactly once AFTER it, in that order, and the result is `[10, sent, 20]`.
+Measured against Node running the same source, and pinned in
+`tests/issue-2864-yield-in-expression-position.test.ts` (ORDER cases, plus the
+object-literal twin). The pin is not vacuous: on the merge-base tree the file is
+**7 failed / 4 passed**; on the branch **11 passed**. The 4 that pass on both are
+the three deliberate-refusal cases and the gc-gating case.
+
+### The row finding — S1+S2 move ZERO rows, and the reason is structural
+
+The `dstr` family the re-measurement pointed at is **yield in the destructuring
+TARGET**, not in the value:
+
+```
+result = [ x = yield ] = vals;      result = [ x[yield] ] = vals;
+result = { x = yield } = vals;      result = { x: x[yield] } = vals;
+result = [...{ x = yield }] = vals; result = [ {} = yield ] = vals;   …
+```
+
+Every one of the 12 `language/expressions/assignment/dstr/*yield-expr.js` files
+has this shape, and so does every match of `= [… yield …]` / `= {… yield …}`
+across `expressions/assignment/dstr`, `statements/generators`,
+`expressions/generators` and `built-ins/GeneratorPrototype` (38 lines, all of
+them `result = <pattern-with-yield> = vals`). A corpus-wide scan for the
+statement form S1 newly admits — `<identifier> = yield …;` — finds **4 files**,
+all of them `yield *` delegations or string operands.
+
+So the two classes are disjoint:
+
+- **value position** (`[a] = [yield 1]`) — what S1/S2 fix, ~0 corpus rows;
+- **target position** (`[a = yield] = vals`) — where the ~130 leaking rows are,
+  and it needs a *destructuring-aware* lowering: the suspension is either
+  conditional (an element default, which only runs when the element is
+  `undefined`) or sits inside a member target whose reference is evaluated
+  before the iterator step. Neither is expressible by "capture the prefix,
+  suspend unconditionally, recompile the statement". Doing it means driving
+  `GetIterator` / `IteratorStepValue` explicitly in the state graph and
+  branching on the element's undefined-ness — a separate slice, and the honest
+  next step for this issue.
+
+`for-of` / `for-in` with a yield in the loop head (the 39 + 14
+`statements/*/dstr/*yield*` rows) needs a `for-of` branch in `lowerStatements`
+first; there is none today.
+
+### Measured row delta — both trees, identical
+
+Row runner: `COMPILER_POOL_SIZE=2 npx tsx scripts/run-test262-paths.mts <list>
+--isolate --standalone`, 969 paths = every `dstr` file mentioning `yield` under
+`language/expressions/assignment/dstr` + `language/statements/**/dstr` (337),
+plus the whole generator control set (`language/statements/generators`,
+`language/expressions/generators`, `built-ins/GeneratorPrototype`,
+`built-ins/GeneratorFunction`, 632). Base tree = a frozen copy of the merge-base
+(`0d2ef8633f`) with `node_modules` / `test262` / `.test262-cache` symlinked;
+branch tree = the same, frozen at the commit measured.
+
+| | base | branch |
+| --- | --- | --- |
+| pass | 762 | 762 |
+| fail | 76 | 76 |
+| compile_error | 131 | 131 |
+
+The comparison is per-TEST, not per-count: `diff` of the two reports' entire
+tails — counts, the 207-row non-pass list, and every failure REASON string — is
+**empty**. Zero rows lost, zero rows gained.
+
+Zero-lost is also structural, not just observed. The only standalone generators
+whose lowering changes are ones the plan previously REFUSED, and a refusal is a
+whole-file compile error, so no previously-passing row can change lowering; and
+the gc lane is byte-identical, so the host shards cannot move either. The run is
+the confirmation, not the argument.
+
+Of the 131 base compile errors, 94 are `standalone target emitted host imports`
+and 37 are the `#680` refusal — the two faces of the same bail. None of them is
+a shape S1/S2 admit, for the structural reason above: they are yield-in-TARGET,
+`for-of`-with-a-yield, or the untyped boxed-any-carrier resume-binding bail.
+
+### gc/host byte-identity
+
+`sha256` of the emitted binary for 18 generator probes compiled on both trees:
+
+- **gc lane — all 18 identical**, including every newly-admitted shape.
+- **standalone lane — identical for all 11 probes the change does not admit**
+  (`const a = yield 1`, `const [a] = [5]`, the destructuring default, the
+  member-assignment target, the nested yield operand, the in-`if` continuation,
+  the loop/try/`yield*` generator, the existing #680 bare-yield literal/comma
+  shapes, and the two `.return()` / undefined-sent-value controls). Differs
+  exactly for the 9 newly-admitted shapes.
+
+### Status
+
+Not done. S1 and S2 landed and are pinned; the row-carrying family
+(yield in a destructuring TARGET) and `for-of`/`for-in` with a yield in the loop
+head are untouched, and so is the untyped boxed-any-carrier resume-binding bail
+that dominates real test262 generator code. Left at `in-progress` on purpose.

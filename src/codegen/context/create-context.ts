@@ -231,6 +231,7 @@ export function createCodegenContext(
     extrasArgvGlobalIdx: -1,
     extrasArgvVecTypeIdx: -1,
     argcGlobalIdx: -1,
+    hostArgcGlobalIdx: -1,
     currentThisGlobalIdx: -1,
     callerStrictGlobalIdx: -1,
     sourceFunctionStrictness: new Map(),

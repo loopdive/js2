@@ -236,6 +236,12 @@ export class CompilerPool {
       // (#2119) false ⇒ do not infer module-strictness (→ keep mapped
       // arguments) despite the synthetic `export function test()` wrapper.
       inferModuleStrictArguments?: boolean;
+      // (#6491 r3) Explicit SCRIPT goal (metadata-derived, see `isScriptGoal`).
+      // The pool forwards an explicit ALLOW-LIST rather than spreading `opts`,
+      // so a new option that is not named here is silently dropped — which is
+      // exactly what happened to this flag first time round: the rule fired in
+      // a unit probe and did nothing in the runner.
+      scriptGoal?: boolean;
       // (#3461) Fast native-harness oracle (host lane): when set, `source` is
       // the body-only `bindingShim + body` unit and `harnessPrefix` is run
       // NATIVELY in the per-test sandbox before instantiation. Absent ⇒ honest
@@ -277,6 +283,7 @@ export class CompilerPool {
         target: opts.target,
         semanticProviders: opts.semanticProviders,
         inferModuleStrictArguments: opts.inferModuleStrictArguments,
+        scriptGoal: opts.scriptGoal,
         // (#3461) forwarded only in fast native-harness mode; undefined ⇒ the
         // worker takes its unchanged honest path.
         nativeHarness: opts.nativeHarness || false,

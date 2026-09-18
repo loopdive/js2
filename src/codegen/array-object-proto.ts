@@ -2443,9 +2443,10 @@ function makeGlue(
         ? true
         : name === "String" && member === "concat"
           ? true
-          : // (#6630) `call`/`bind` both take `(thisArg, ...rest)` — the packed
-            // vec ABI the invoker bodies below unpack themselves. `apply` stays
-            // fixed at its 2-slot spec arity (thisArg, argArray).
+          : // (#6630, merged with #6493 S1 2026-09-18) `call`/`bind` both take
+            // `(thisArg, ...rest)` — the packed vec ABI the invoker bodies below
+            // unpack themselves. `apply` stays fixed at its 2-slot spec arity
+            // (thisArg, argArray).
             name === "Function" && (member === "call" || member === "bind"),
     // (#4485) §B.2.4.3 — `Date.prototype.toGMTString` IS `Date.prototype.
     // toUTCString` (one function object, asserted by test262 annexB

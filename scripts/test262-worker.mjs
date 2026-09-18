@@ -34,7 +34,7 @@ import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "./
 // behaviour is unchanged — these bodies moved here verbatim; it is the LOCAL
 // runner that was missing the tryNativeExnRender step.
 import { safeStringifyThrown, tryNativeExnRender } from "./lib/wasm-exn-render.mjs";
-import { SANDBOX_GLOBAL_NAMES } from "./test262-sandbox-globals.mjs";
+import { SANDBOX_GLOBAL_NAMES, applySandboxGlobalFunctionAttributes } from "./test262-sandbox-globals.mjs";
 // (#4162) ONE import-object finaliser, shared with tests/test262-runner.ts and
 // tests/test262-shared.ts. It owns the #2928 E6 standalone runtime-eval
 // provider attachment (cached-binary loading + a fresh per-test namespace for
@@ -106,6 +106,10 @@ function buildOriginalHarnessSandbox(consoleProxy) {
       sandbox[name] = runInContext(name, context);
     } catch {}
   }
+  // (#6492 r16) The copy loop assigns, which creates ENUMERABLE properties;
+  // §19.2's function-valued globals are non-enumerable and the corpus checks it
+  // (`S15.1.2.2_A9.5` &c.).
+  applySandboxGlobalFunctionAttributes(sandbox);
   Object.defineProperties(sandbox, {
     eval: { value: runInContext("eval", context), writable: true, enumerable: false, configurable: true },
     undefined: { value: undefined, writable: false, enumerable: false, configurable: false },
@@ -1359,6 +1363,10 @@ async function doCompile(
   temporal,
   semanticProviders,
   linkedHarness,
+  // (#6491 r3) Explicit SCRIPT goal, computed from METADATA by `isScriptGoal`
+  // in the caller. Threaded to EVERY compile branch below so the honest
+  // whole-assembly and the linked body-only unit are given the same goal.
+  scriptGoal,
 ) {
   // Defence-in-depth: restore any poisoned builtins BEFORE each compile.
   // postCompileCleanup runs after the previous test, but under rare worker
@@ -1439,6 +1447,7 @@ async function doCompile(
       target,
       semanticProviders,
       inferModuleStrictArguments,
+      scriptGoal,
       ...deferOpt,
     });
   }
@@ -1482,6 +1491,7 @@ async function doCompile(
       target,
       semanticProviders,
       inferModuleStrictArguments,
+      scriptGoal,
       ...deferOpt,
     });
   }
@@ -1507,6 +1517,7 @@ async function doCompile(
       target,
       semanticProviders,
       inferModuleStrictArguments,
+      scriptGoal,
       // (#3451) A negative test's verdict IS the diagnostic, so the linked
       // branch must ask for the same ones the honest branch gets. The honest
       // single-file gate rejects syntax errors unconditionally and runs the JS
@@ -1551,6 +1562,7 @@ async function doCompile(
       target,
       semanticProviders,
       inferModuleStrictArguments,
+      scriptGoal,
       ...deferOpt,
     });
   }
@@ -1563,6 +1575,7 @@ async function doCompile(
     target,
     semanticProviders,
     inferModuleStrictArguments,
+    scriptGoal,
     ...deferOpt,
   });
 }
@@ -1930,6 +1943,7 @@ process.on("message", async (msg) => {
       temporal,
       semanticProviders,
       linkedHarness,
+      msg.scriptGoal === true,
     );
     if (linkedHarness?.fellBack) noteLinkedFallback(linkedHarness.fallbackReason);
   } catch (err) {
@@ -2946,6 +2960,15 @@ function diffRealmSurface(snap) {
   return drift;
 }
 
+// (#6492 r5) Prime the runtime-owned `Promise.allKeyed` / `allSettledKeyed`
+// install BEFORE the baseline snapshot. `installAmbientCompatibility` writes
+// them onto the host `Promise` on every instantiate; a fresh worker that
+// snapshots first sees that write as drift, recycles, and the next fresh
+// worker does it again — a recycle-per-test loop that re-loaded the harness
+// provider for (nearly) every row and quadrupled shard wall-clock (merge-group
+// run 35313398232, +345 % aggregate compile time). Older bundles without the
+// export are unaffected.
+runtimeBundle._installPromiseKeyedCombinators?.(Promise);
 let realmCanarySnapshot = REALM_CANARY_MODE ? snapshotRealmSurface() : null;
 let realmCanaryChecks = 0;
 let realmCanaryCheckMsTotal = 0;

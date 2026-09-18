@@ -45,6 +45,7 @@ import {
   extractWasmExceptionMessage,
   findTestFiles,
   isModuleGoal,
+  isScriptGoal,
   matchesPathFilter,
   parseMeta,
   shouldSkip,
@@ -802,6 +803,11 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   }
                 : {};
             const inferModuleStrictArguments = isModuleGoal(category, meta, source);
+            // (#6491 r3) Explicit SCRIPT goal, from METADATA only — see
+            // `isScriptGoal`. Passed to BOTH lanes' compile options below so the
+            // honest whole-assembly and the linked body-only unit see the same
+            // goal; the three Script-goal early-error rules fire on it alone.
+            const scriptGoal = isScriptGoal(category, meta);
             const isNegative =
               meta.negative &&
               (meta.negative.phase === "parse" ||
@@ -844,6 +850,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   target: TEST262_TARGET,
                   semanticProviders: TEST262_SEMANTIC_PROVIDERS,
                   inferModuleStrictArguments,
+                  scriptGoal,
                   // (#3049 C1 / #3123 / #2900) The FIXTURE compile defers
                   // top-level init, exactly like the worker's single-file path
                   // and the worker's own fixture-graph branch
@@ -1203,6 +1210,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   target: TEST262_TARGET,
                   semanticProviders: TEST262_SEMANTIC_PROVIDERS,
                   inferModuleStrictArguments,
+                  scriptGoal,
                   temporal: needsTemporal,
                   ...nativeHarnessOpts,
                   ...linkedHarnessOpts,
@@ -1290,6 +1298,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                       target: TEST262_TARGET,
                       semanticProviders: TEST262_SEMANTIC_PROVIDERS,
                       inferModuleStrictArguments,
+                      scriptGoal,
                       temporal: needsTemporal,
                       ...nativeHarnessOpts,
                     },
@@ -1364,6 +1373,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                       target: TEST262_TARGET,
                       semanticProviders: TEST262_SEMANTIC_PROVIDERS,
                       inferModuleStrictArguments,
+                      scriptGoal,
                       temporal: needsTemporal,
                       ...nativeHarnessOpts,
                     },

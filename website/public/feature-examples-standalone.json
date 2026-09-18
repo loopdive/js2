@@ -385,7 +385,7 @@
         "language/statements/variable",
         "language/block-scope"
       ],
-      "passCount": 595,
+      "passCount": 590,
       "totalCount": 604,
       "editionSpread": [
         {
@@ -410,7 +410,7 @@
         },
         {
           "edition": "ES2022",
-          "pass": 10,
+          "pass": 5,
           "total": 10
         },
         {
@@ -433,7 +433,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 220,
+          "pass": 221,
           "total": 262
         },
         {
@@ -458,7 +458,7 @@
         },
         {
           "edition": "ES2022",
-          "pass": 8,
+          "pass": 7,
           "total": 12
         },
         {
@@ -523,7 +523,7 @@
     {
       "name": "try / catch / finally",
       "testCategories": ["language/statements/try"],
-      "passCount": 196,
+      "passCount": 195,
       "totalCount": 201,
       "editionSpread": [
         {
@@ -548,7 +548,7 @@
         },
         {
           "edition": "ES2022",
-          "pass": 2,
+          "pass": 1,
           "total": 2
         },
         {
@@ -584,7 +584,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 645,
+          "pass": 646,
           "total": 752
         },
         {
@@ -619,7 +619,7 @@
         },
         {
           "edition": "ES2022",
-          "pass": 81,
+          "pass": 80,
           "total": 89
         },
         {
@@ -796,7 +796,7 @@
         "built-ins/AggregateError",
         "built-ins/SuppressedError"
       ],
-      "passCount": 143,
+      "passCount": 145,
       "totalCount": 234,
       "editionSpread": [
         {
@@ -806,7 +806,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 88,
+          "pass": 89,
           "total": 106
         },
         {
@@ -826,7 +826,7 @@
         },
         {
           "edition": "ES2027",
-          "pass": 13,
+          "pass": 14,
           "total": 46
         },
         {
@@ -839,7 +839,7 @@
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 2262,
+      "passCount": 2266,
       "totalCount": 3161,
       "editionSpread": [
         {
@@ -889,7 +889,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 1688,
+          "pass": 1692,
           "total": 2250
         }
       ]
@@ -1049,7 +1049,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 2172,
+      "passCount": 2175,
       "totalCount": 2486
     },
     {
@@ -1080,7 +1080,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1498,
+      "passCount": 1505,
       "totalCount": 1955
     },
     {
@@ -1092,13 +1092,13 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 968,
+      "passCount": 974,
       "totalCount": 1106
     },
     {
       "name": "Modules (import / export)",
       "testCategories": ["language/module-code", "language/import", "language/export"],
-      "passCount": 389,
+      "passCount": 391,
       "totalCount": 731,
       "editionSpread": [
         {
@@ -1143,7 +1143,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 137,
+          "pass": 139,
           "total": 225
         }
       ]
@@ -1151,7 +1151,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 830,
+      "passCount": 834,
       "totalCount": 1072
     },
     {
@@ -1222,7 +1222,7 @@
     {
       "name": "Optional chaining (?.)",
       "testCategories": ["language/expressions/optional-chaining"],
-      "passCount": 39,
+      "passCount": 41,
       "totalCount": 52
     },
     {
@@ -1240,7 +1240,7 @@
     {
       "name": "BigInt",
       "testCategories": ["built-ins/BigInt"],
-      "passCount": 558,
+      "passCount": 563,
       "totalCount": 1048
     },
     {
@@ -1258,7 +1258,7 @@
     {
       "name": "Class fields (public, private, static)",
       "testCategories": ["language/statements/class/fields"],
-      "passCount": 3730,
+      "passCount": 3721,
       "totalCount": 4979
     },
     {
@@ -1276,7 +1276,7 @@
     {
       "name": "Top-level await",
       "testCategories": ["language/module-code/top-level-await"],
-      "passCount": 184,
+      "passCount": 180,
       "totalCount": 257
     },
     {
@@ -1420,7 +1420,7 @@
     {
       "name": "var hoisting",
       "testCategories": ["language/statements/variable", "language/statements/var"],
-      "passCount": 176,
+      "passCount": 173,
       "totalCount": 178,
       "editionSpread": [
         {
@@ -1440,7 +1440,7 @@
         },
         {
           "edition": "ES2022",
-          "pass": 6,
+          "pass": 3,
           "total": 6
         },
         {

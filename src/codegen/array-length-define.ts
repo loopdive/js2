@@ -14,6 +14,7 @@
  * the god-file shrinking rather than growing.
  */
 import { ts } from "../ts-api.js";
+import { emitVecLengthHoleFill } from "./vec-length-hole-fill.js"; // (#6482 r4)
 import type { Instr, ValType } from "../ir/types.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -326,6 +327,14 @@ export function maybeEmitVecLengthDefine(
         { op: "struct.set", typeIdx: vecTypeIdx, fieldIdx: 1 },
       ],
     });
+
+    // (#6482 r4) The reallocation above `array.new_default`s, which zero-fills
+    // the new tail — but a GROW creates holes, not zeros, and a SHRINK orphans
+    // the dropped slots. Mark the affected region before the length moves, so
+    // `__vec_has_own_index` does not read a stale/default value as a present
+    // element (`15.2.3.6-4-159`). Runs BEFORE the store: it needs the old
+    // length to know which region this store is about to orphan.
+    emitVecLengthHoleFill(ctx, fctx, vecLocal, newLenLocal);
 
     // vec.length = newLen
     fctx.body.push({ op: "local.get", index: vecLocal });

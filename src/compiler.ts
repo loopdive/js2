@@ -1014,8 +1014,11 @@ function runPipeline(input: PipelineInput): CompileResult {
     // for script tests. Product compiles leave it undefined and are covered by
     // the real `ts.isExternalModule` indicator inside the rule.
     const moduleGoal = options.inferModuleStrictArguments === true;
+    // (#6491 r3) Script goal is an EXPLICIT opt-in, never `!moduleGoal` — see
+    // the `scriptGoal` doc comment in index.ts for why the negation is unsafe.
+    const scriptGoal = options.scriptGoal === true;
     for (const sf of userSourceFiles) {
-      earlyErrors.push(...detectEarlyErrors(sf, { moduleGoal }));
+      earlyErrors.push(...detectEarlyErrors(sf, { moduleGoal, scriptGoal }));
     }
     errors.push(...earlyErrors);
     if (hasNewError(earlyErrors)) {
