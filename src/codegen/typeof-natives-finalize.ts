@@ -16,6 +16,7 @@ import { installCompiledClosureToStringArm } from "./coercion-engine.js";
 import { unshiftCarrierToPrimitiveArms, unshiftDateToStringArm } from "./carrier-to-primitive.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { standaloneLinkBoundaryPeerIndex } from "./standalone-link-boundary.js"; // (#5383 S2f R12)
+import { LINK_REVERSE_PEER } from "./standalone-link-reverse-peer.js"; // (#6637 S52b)
 
 /**
  * #1896 — teach the standalone/WASI native `__typeof_function` and
@@ -71,6 +72,15 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
   // consumer could never see `typeof Temporal.PlainDate === "function"`.
   const boundaryCallableKindIdx =
     ctx.funcMap.get("__boundary_object_callable_kind") ?? standaloneLinkBoundaryPeerIndex(ctx, "callableKind");
+  // (#6637 S52b) …and the REVERSE direction: a PROVIDER classifying a
+  // CONSUMER-owned closure it was handed (e.g. a Proxy trap read off a
+  // consumer-built handler). The forward arm above only fires for a CONSUMER
+  // (`peerNamespace` is non-empty there); this fires for a PROVIDER, whose own
+  // local `ref.test` ladder has no arm for a base-wrapper shape it never
+  // compiled locally. `reverseCallableKind` is undefined on every other module
+  // shape (JS-host lane, non-provider, or a provider whose consumer installed
+  // nothing), so this stays a no-op there.
+  const reverseCallableKindIdx = ctx.funcMap.get(LINK_REVERSE_PEER.reverseCallableKind);
   // (#4120) A reified builtin CONSTRUCTOR carrier (`Set`, `TypeError`, `Array`,
   // …) is a `$Object` branded `OBJ_FLAG_CALLABLE`, not a closure wrapper — and a
   // module can reify one without ever compiling a closure, so it must keep this
@@ -99,6 +109,7 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
     !hasBrandedBuiltinCarrier(ctx) &&
     proxyTypeIdx === undefined &&
     boundaryCallableKindIdx === undefined &&
+    reverseCallableKindIdx === undefined &&
     taCtorTypeIdx === undefined &&
     symbolTypeIdx === undefined &&
     revokerTypeIdx === undefined &&
@@ -236,6 +247,17 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
           ? ([{ op: "i32.eqz" }] satisfies Instr[])
           : ([{ op: "i32.eqz" }, { op: "i32.eqz" }] satisfies Instr[])),
         { op: "return" },
+      );
+    }
+    // (#6637 S52b) The reverse hop answers a plain 0/1 (it delegates to the
+    // CONSUMER's own `__typeof_function`, not a bitmask like the forward
+    // boundary channel), so no masking is needed — mirrors the
+    // `revokerTypeIdx` arm's shape above.
+    if (reverseCallableKindIdx !== undefined) {
+      arms.push(
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: reverseCallableKindIdx },
+        { op: "if", blockType: { kind: "empty" }, then: [...onMatch] },
       );
     }
     return arms;
