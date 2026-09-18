@@ -1507,8 +1507,8 @@
   },
   {
     "edition": "ES2020",
-    "pass": 967,
-    "fail": 548,
+    "pass": 969,
+    "fail": 546,
     "ce": 502,
     "skip": 18,
     "total": 2035,
@@ -1642,12 +1642,12 @@
       },
       {
         "name": "optional-chaining",
-        "pass": 39,
-        "fail": 10,
+        "pass": 41,
+        "fail": 8,
         "ce": 3,
         "skip": 0,
         "total": 52,
-        "pct": 75
+        "pct": 79
       },
       {
         "name": "Symbol.iterator",
@@ -4305,8 +4305,8 @@
   {
     "edition": "Unclassified (untagged)",
     "pass": 4460,
-    "fail": 907,
-    "ce": 78,
+    "fail": 909,
+    "ce": 76,
     "skip": 0,
     "total": 5445,
     "pct": 82

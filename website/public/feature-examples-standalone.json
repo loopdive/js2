@@ -1222,7 +1222,7 @@
     {
       "name": "Optional chaining (?.)",
       "testCategories": ["language/expressions/optional-chaining"],
-      "passCount": 39,
+      "passCount": 41,
       "totalCount": 52
     },
     {
