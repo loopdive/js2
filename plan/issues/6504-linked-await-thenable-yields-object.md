@@ -40,6 +40,17 @@ loc-budget-allow:
   # shared one, so each continuation lane owns its own lifetime and a stale
   # entry from one can never be read by the other; that costs one field.
   - src/codegen/context/types.ts
+  # 2026-09-18 (round 32) — +37 in `src/codegen/property-access.ts`, all inside
+  # `compileOptionalElementAccess`: the `__extern_is_undefined` half of the
+  # nullish test (a host `undefined` externref is not wasm-null, so `ref.is_null`
+  # alone never short-circuited it) and the result-type widening for a chain
+  # typed exactly `undefined`. About two thirds of the lines are the two
+  # rationale comments — both defects are the kind that reads as correct until
+  # someone compares `undefined?.[0]` against `undefined`, so the reasoning is
+  # worth more than the code. It cannot move to a subsystem module: it is the
+  # short-circuit arm of that one function, and splitting the test from the arm
+  # it guards is what allowed the two halves to disagree in the first place.
+  - src/codegen/property-access.ts
 func-budget-allow:
   # Same +15 counted against the enclosing dispatcher; see the LOC note above.
   - src/codegen/expressions.ts::compileExpressionInner
@@ -395,6 +406,53 @@ the ABI work, and it gates the remaining optional-chaining row.
   the result is `undefined`) but a statically-`undefined` base is constant-folded
   ahead of the substitution and lowers as f64 `0`, so those shapes are refused.
   Fixing the fold re-opens them.
+- The extra microtask tick on the short-circuit path (the spec skips the await
+  entirely); removing it needs the segment split into two CFG states.
+- try/catch ACROSS the await.
+
+## Round 32 — round 31's elision finding is WITHDRAWN; the defect was optional-chain short-circuit
+
+**The static-await elision is correct and always was.** Round 31's "inline
+`await Promise.resolve(1)` is elided and yields the promise object" was an
+artifact of its own probe: the `unhandledRejection` channel cannot see a
+function compiled synchronously, and an async function with no real suspension
+is exactly that. Control: `(async function () { assert(false, "M"); })();` — no
+await at all — is equally silent. Re-measured at module top level,
+`await Promise.resolve(1)` yields **1**. `staticPromiseResolveSettledExpr`
+(#3227 S2) folds it correctly and is wired in at four call sites.
+
+**The real defect was `undefined?.[0]` evaluating to `0`**, with no async
+involved (`null?.[0]` too; the optional PROPERTY form `undefined?.x` was always
+correct). Two independent causes in `compileOptionalElementAccess`, both fixed:
+the result type was never widened for a chain typed exactly `undefined` (which
+`isNullablePrimitiveType` rejects), so the short-circuit arm emitted
+`f64.const 0`; and the nullish test was `ref.is_null` alone, which does not see
+a host `undefined` externref.
+
+| slice | lane | before | after |
+| --- | --- | --- | --- |
+| `expressions/optional-chaining/` (38) | linked | 24 | **25** (+1 / −0) |
+| `expressions/optional-chaining/` (38) | honest | 26 | **27** (+1 / −0) |
+| six async slices (2,212) | linked | 1,533 | 1,533 (+0 / −0) |
+| six async slices (2,212) | honest | 1,530 | 1,530 (+0 / −0) |
+| 138-row #6492 set | linked | 49 | 49 (+0 / −0) |
+
+`tests/issue-6504-optional-chain-shortcircuit.test.ts` — 7 cases, 4 of which
+fail without the fix.
+
+`optional-chain-async-square-brackets.js` now fails at `TypeError: Cannot read
+properties of null (reading 'then')` instead of `SameValue(«0», «undefined»)`:
+its value assertions pass and it reaches the `asyncTest` seam, where
+`testFunc()` answers null. **Its remaining blocker is #6502**, already routed in
+#6508.
+
+### Still open in this issue
+
+- `new C(await x)` — needs a `[[Construct]]` resume op.
+- Optional-chain base whose nullishness is not syntactically settled: the
+  round-31 planner refuses it because the statically-`undefined` base lowered as
+  f64 `0`. **That fold is fixed now**, so the refusal should be re-tested and
+  probably narrowed further — a bounded follow-up with a ready-made probe.
 - The extra microtask tick on the short-circuit path (the spec skips the await
   entirely); removing it needs the segment split into two CFG states.
 - try/catch ACROSS the await.

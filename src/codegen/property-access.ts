@@ -4961,8 +4961,19 @@ export function compileOptionalElementAccess(
   // unlike the optional-CALL arm (#2051 call-arm, deferred) — there is no
   // late-import index-shift hazard from pulling in the box helper after the read.
   // Boxes into a plain externref, NOT AnyValue, so the #1888 tag-5 ABI is intact.
+  // (#6504 round 32) …and the same widening when the chain's static type IS
+  // `undefined` (or a union containing it) rather than a NULLABLE PRIMITIVE.
+  // `undefined?.[0]` types as exactly `undefined`, which `isNullablePrimitiveType`
+  // rejects because it is not a union of a primitive with null/undefined — so
+  // `resultType` stayed f64 and the short-circuit arm emitted `f64.const 0`.
+  // Measured: `assert.sameValue(undefined?.[0], undefined)` failed with
+  // `SameValue(«0», «undefined»)`, and so did `null?.[0]`. A short-circuit
+  // always produces `undefined` (§13.3.9), so any result representation that
+  // cannot hold `undefined` has to widen.
+  const resultTypeAdmitsUndefined = (tsResultType.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0;
   const widenToUndefinedExternref =
-    (resultType.kind === "f64" || resultType.kind === "i32") && isNullablePrimitiveType(tsResultType);
+    (resultType.kind === "f64" || resultType.kind === "i32") &&
+    (isNullablePrimitiveType(tsResultType) || resultTypeAdmitsUndefined);
   if (widenToUndefinedExternref) {
     resultType = { kind: "externref" };
   }
@@ -4973,21 +4984,47 @@ export function compileOptionalElementAccess(
   // index expression.
   if (objType.kind !== "ref" && objType.kind !== "ref_null" && objType.kind !== "externref") {
     fctx.body.push({ op: "drop" });
-    if (resultType.kind === "f64") {
-      fctx.body.push({ op: "f64.const", value: 0 });
-    } else if (resultType.kind === "i32") {
-      fctx.body.push({ op: "i32.const", value: 0 });
-    } else {
-      // (#2051) externref result (incl. the nullable-primitive widening above) →
-      // host `undefined` so `=== undefined` / `typeof` / `+` read it correctly.
-      emitUndefined(ctx, fctx);
-    }
-    return resultType;
+    // (#6504 round 32) This branch ALWAYS short-circuits — there is no non-null
+    // path whose type it has to agree with — so the value is `undefined` by
+    // §13.3.9, full stop. It used to emit `f64.const 0` / `i32.const 0` whenever
+    // the chain's static type collapsed to a number, which made
+    // `undefined?.[0]` compare EQUAL TO ZERO:
+    // `assert.sameValue(undefined?.[0], undefined)` failed with
+    // `SameValue(«0», «undefined»)`. The nullable-primitive widening above does
+    // not catch it, because a chain typed exactly `undefined` is not a NULLABLE
+    // primitive — it is not a union at all.
+    //
+    // Returning externref is also strictly better for a numeric consumer:
+    // `undefined?.[0] + 1` now coerces undefined -> NaN (spec) instead of
+    // reading 0 and computing 1.
+    emitUndefined(ctx, fctx);
+    return { kind: "externref" };
   }
 
   const tmp = allocLocal(fctx, `__optelem_${fctx.locals.length}`, objType);
+  // (#6504 round 32) The nullish test must catch BOTH representations. `?.`
+  // short-circuits on `null` OR `undefined` (§13.3.9), but `ref.is_null` only
+  // sees a wasm null — a host `undefined` externref is NOT null, so
+  // `undefined?.[0]` fell through to the else arm and performed a real element
+  // read on `undefined`, yielding `0`. Measured:
+  // `assert.sameValue(undefined?.[0], undefined)` failed with
+  // `SameValue(«0», «undefined»)`, and so did `null?.[0]`.
+  //
+  // The import is registered BEFORE the else arm is built, so its index cannot
+  // shift a call the else arm has already baked (the #2051 note above).
+  const externIsUndefinedIdx =
+    objType.kind === "externref"
+      ? ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }])
+      : undefined;
+  if (externIsUndefinedIdx !== undefined) flushLateImportShifts(ctx, fctx);
+
   fctx.body.push({ op: "local.tee", index: tmp });
   fctx.body.push({ op: "ref.is_null" });
+  if (externIsUndefinedIdx !== undefined) {
+    fctx.body.push({ op: "local.get", index: tmp });
+    fctx.body.push({ op: "call", funcIdx: externIsUndefinedIdx });
+    fctx.body.push({ op: "i32.or" });
+  }
 
   const savedBody = fctx.body;
   fctx.savedBodies.push(savedBody);

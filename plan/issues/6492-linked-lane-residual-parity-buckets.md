@@ -3944,3 +3944,118 @@ rather than presenting +0 as a neutral refactor.
     an earlier, unrelated decision (static await elision) had already taken the
     body off the path. One trace print at the new code, before any corpus run,
     is what turned "the fix does not work" into "the fix is not reached".
+
+## Round 32 (2026-09-18, Opus long-tail lane) — round 31's elision finding was WRONG; the real defect is an optional-chain short-circuit
+
+**Round 31's headline is withdrawn.** The static-await elision is correct and
+always was. What round 31 measured was its own probe's blind spot. The actual
+defect behind the row is in optional ELEMENT access and has nothing to do with
+async.
+
+### The withdrawal, and how the false finding was produced
+
+Round 31 reported this A/B as proof that an inline `await Promise.resolve(1)`
+is elided and yields the promise object:
+
+| body | round 31 read it as |
+| --- | --- |
+| `assert.sameValue(await Promise.resolve(1), 1)` | silent ⇒ broken |
+| `var p = Promise.resolve(1); assert.sameValue(await p, 1)` | passes ⇒ correct |
+
+The verdict channel was `unhandledRejection`. But an async function with **no
+real suspension** compiles synchronously and never produces a rejected promise,
+so its assertion failures cannot reach that channel **at all**. The control that
+proves it takes one line:
+
+```js
+(async function () { assert(false, "MARKER"); })();   // no await anywhere
+```
+
+— also silent. So "silent" meant "this function was compiled synchronously", not
+"this function computed the wrong value". Re-measured with the assertion at
+module TOP LEVEL, where failures do propagate out of instantiation:
+
+```js
+var v = "UNSET";
+(async function () { v = await Promise.resolve(1); })();
+assert.sameValue(v, 1, "ELIDED_VALUE");     // PASSES
+```
+
+`await Promise.resolve(1)` yields **1**. `staticPromiseResolveSettledExpr`
+(#3227 S2) folds it correctly at `expressions.ts` and is wired in at four call
+sites. There was never anything to fix, and round 32's brief — narrow the
+predicate, or make the fold happen — was aimed at a working mechanism.
+
+### The real defect: `undefined?.[0]` was `0`
+
+With an observable probe the row's four lines separate cleanly:
+
+| line | verdict |
+| --- | --- |
+| `await [11]?.[0]` | passed before round 31 |
+| `[22, 33]?.[await p]` | **passes** — round 31's nested-operand spill |
+| `[44, await p]?.[1]` | **passes** — round 31's array-element operand |
+| `undefined?.[await …]` | **failed**: `SameValue(«0», «undefined»)` |
+
+And the last one has nothing to do with `await`:
+
+```js
+assert.sameValue(undefined?.[0], undefined);   // FAILED: «0» vs «undefined»
+assert.sameValue(null?.[0], undefined);        // FAILED: «0» vs «undefined»
+assert.sameValue(undefined?.x, undefined);     // passed — the PROPERTY form was fine
+```
+
+Two independent causes in `compileOptionalElementAccess`, both fixed:
+
+1. **The result type.** `undefined?.[0]` types as exactly `undefined`, which
+   `isNullablePrimitiveType` rejects — it is not a union of a primitive with
+   null/undefined — so the f64 result was never widened to externref and the
+   short-circuit arm emitted `f64.const 0`. A short-circuit always yields
+   `undefined` (§13.3.9), so any representation that cannot hold it must widen.
+2. **The nullish test.** `?.` short-circuits on `null` OR `undefined`, but the
+   test was `ref.is_null` alone. A host `undefined` externref is not wasm-null,
+   so a chain on one fell through and performed a real element read.
+
+The optional PROPERTY form was already correct, which is exactly why this
+survived: the two forms disagreed, and only one of them had ever been reduced.
+
+### Measured
+
+| slice | lane | before | after | delta |
+| --- | --- | --- | --- | --- |
+| `expressions/optional-chaining/` (38 rows) | linked | 24 | **25** | **+1 / −0** |
+| `expressions/optional-chaining/` (38 rows) | honest | 26 | **27** | **+1 / −0** |
+| six async slices (2,212 rows) | linked | 1,533 | 1,533 | +0 / −0 |
+| six async slices (2,212 rows) | honest | 1,530 | 1,530 | +0 / −0 |
+| 138-row #6492 set | linked | 49 | 49 | +0 / −0 |
+
+The gained row is `optional-chain-expression-optional-expression.js`, in both
+lanes — not the row this was aimed at.
+
+`tests/issue-6504-optional-chain-shortcircuit.test.ts` — 7 cases; **4 fail
+without the fix**. They cover both causes, the numeric consumer
+(`undefined?.[0] + 1` must be NaN, not 1 — the old lowering read 0 and computed
+a plausible wrong answer), the live-chain control, and that the short-circuit
+does not evaluate the index expression.
+
+### The target row still fails — now at the #6502 seam
+
+`optional-chain-async-square-brackets.js` moved from
+`SameValue(«0», «undefined»)` to `TypeError: Cannot read properties of null
+(reading 'then')` — i.e. its value assertions now pass and it reaches
+`asyncTest`, where `testFunc()` answers **null**. That is #6502's signature and
+the same wall its sibling row hits. Its remaining blocker is therefore #6502,
+already routed in #6508.
+
+### Findings
+
+53. **A verdict channel has a domain; state it before trusting a silence.** The
+    `unhandledRejection` probe can only see functions that actually produce a
+    promise. Round 31 read "silent" as "wrong value" and filed a compiler defect
+    that did not exist, then a whole round was briefed on it. The one-line
+    control — an async function with no await at all — costs nothing and would
+    have caught it immediately.
+54. **When two syntactic forms of one operation disagree, the tested one hides
+    the broken one.** `undefined?.x` was right and `undefined?.[0]` was wrong for
+    as long as both have existed. Any reduction that happened to use the dot form
+    concluded optional chaining was fine. Check the sibling form.
