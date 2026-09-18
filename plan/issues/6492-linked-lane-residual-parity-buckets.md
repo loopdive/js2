@@ -4,7 +4,7 @@ title: "Linked lane P3c residual: 705 pass→fail rows in ~12 provider-side buck
 status: in-progress
 sprint: current
 created: 2026-09-16
-updated: 2026-09-17
+updated: 2026-09-18
 priority: high
 horizon: l
 feasibility: hard
@@ -153,6 +153,13 @@ func-budget-allow:
   # is a 375-line CFG builder that #3399 will split; this change adds a
   # parameter declaration to its signature and nothing to its body.
   - src/codegen/async-cps.ts::planTryCatchCfg
+  # 2026-09-18 (round 16) — RESTATED STRANDED GRANT, not this round's growth.
+  # `223ed4474a fix(#5406)` on this shared branch grew the classifier by +15
+  # (392 > 377) and its own issue file carries no allowance, so the func gate
+  # fails only against CI's base (`LOC_GATE_BASE=origin/main`) and would block
+  # every later commit on the branch. Restated here per the stranded-grant rule
+  # so the PR can go green; the growth belongs to #5406, not to #6492.
+  - src/codegen/object-proto-tostring.ts::emitObjectProtoToStringClassifier
 ---
 
 # #6492 — linked lane residual after P3c
@@ -3508,3 +3515,124 @@ Note the baseline moved this round, so an older run cannot be reused for step 3.
     known last line — rather than that it reported nothing — is what makes the
     difference observable. Always run the suite once with the mechanism disabled
     and count how many cases actually fail.
+
+## Round 16 (2026-09-18, Opus lane) — the `*-realm` cluster: the SANDBOX had no global functions
+
+**Shipped: one mechanism, entirely in the runner's harness sandbox.** No
+compiler change. `SANDBOX_GLOBAL_NAMES` (`scripts/test262-sandbox-globals.mjs`)
+listed constructors and namespace objects but **none of the ES §19.2 global
+FUNCTIONS** — no `parseInt`, `parseFloat`, `isNaN`, `isFinite`, `decodeURI*`,
+`encodeURI*`, `escape`, `unescape`. A compiled `globalThis.parseInt` therefore
+resolved to `undefined` through the `globalSandbox` bridge, silently.
+
+That is the `$262.createRealm()` cluster's failure, one level below where the
+previous rounds were looking: `scripts/test262-fyi-runtime.js` **builds** the
+foreign realm's global by copying those names off `globalThis`
+(`parseInt: globalThis.parseInt`), so `createRealm().global.parseInt` was
+`undefined` while every hop of the chain ran exactly as round 5 described it.
+
+### Round 5's open question, answered: it is not import wiring
+
+Round 5 note 4 left "a trace inside `__extern_get`'s arm never fires for that
+row, while `__typeof`'s arm fires every time" as the thing to settle first.
+There are **two `extern_get` implementations in `src/runtime.ts`** and they sit
+~1,100 lines apart:
+
+| arm | where | reached by |
+| --- | --- | --- |
+| `if (name === "__extern_get")` | ~L12780, the by-NAME builtin switch | modules importing it by spelling |
+| `case "extern_get":` | ~L18883, the typed-INTENT switch | the linked consumer — `import-manifest.ts` maps `__extern_get` → `{type:"extern_get"}` |
+
+The previous lane instrumented the first; the row uses the second. Nothing was
+mis-wired. (Worker `console.error` is also invisible through this vitest entry —
+the traces here were written to a file via an env-named path.)
+
+With the right arm instrumented the whole chain reads out in one run:
+
+```
+[DBG emc]   createRealm typeof=object isStruct=false
+[DBG eget2] key=parseInt typeof=object isStruct=false has=false val=undefined   ← inside the shim, off the SANDBOX
+[DBG eget2] key=global   typeof=object isStruct=true  ...
+[DBG eget2] key=parseInt typeof=object isStruct=true  ...
+```
+
+`has=false` on the second line is the whole bug: the property is **absent**, not
+shadowed and not mis-decoded.
+
+### The first cut was net-negative, and the reason is the attributes
+
+Adding the names alone measured **+29 / −6 linked and +32 / −6 honest**. The six
+losses were the same rows in both lanes — `S15.1.2.2_A9.5`, `S15.1.3.x_A5.5`,
+`S15.1.2.3_A7.5` — all asserting `propertyIsEnumerable(<name>) === false`. The
+sandbox builders populate with `sandbox[name] = …`, which creates an
+**enumerable** property; §19.2 defines these as
+`{ writable: true, enumerable: false, configurable: true }`. Those rows had been
+passing only because the property was absent altogether.
+
+So the shipped change is two parts, not one: the names, **and**
+`applySandboxGlobalFunctionAttributes(sandbox)` — one shared helper called from
+both sandbox builders (`scripts/test262-worker.mjs`, `tests/test262-runner.ts`),
+for the #3441 reason that two hand-kept twins drift. The pre-existing
+constructors are deliberately left enumerable: same latent defect, but their
+attributes are baked into the committed baseline, so that is its own measured
+change.
+
+### Measurements (real runner, fresh harness cache per run, both bundles rebuilt)
+
+Slice: `realm|parseInt|parseFloat|isNaN|isFinite|encodeURI|decodeURI|global-code|built-ins/escape|built-ins/unescape` — **768 rows**.
+
+| lane | base | names only | names + attributes (shipped) |
+| --- | ---: | ---: | ---: |
+| linked | 500 | 523 (+29 / **−6**) | **539 (+39 / −0)** |
+| honest | 483 | 509 (+32 / **−6**) | **525 (+42 / −0)** |
+
+Per-row, the six honest-pass/linked-fail `*-realm` rows this round was given:
+
+| row | linked before | linked after |
+| --- | --- | --- |
+| `language/expressions/new/non-ctor-err-realm.js` | fail `SameValue("undefined","function")` | **pass** |
+| `harness/assert-throws-same-realm.js` | fail `Expected a Test262Error, but no error was thrown` | unchanged |
+| `harness/asyncHelpers-throwsAsync-same-realm.js` | fail (same, async) | unchanged |
+| `built-ins/Proxy/getPrototypeOf/trap-is-not-callable-realm.js` | fail `Expected a TypeError … no exception` | unchanged |
+| `built-ins/Proxy/deleteProperty/trap-is-not-callable-realm.js` | fail (same) | unchanged |
+| `built-ins/Array/length/define-own-prop-length-overflow-realm.js` | fail `Expected a RangeError` | unchanged |
+
+Control slices, base vs. shipped, row by row:
+
+| slice | lane | base | after | flips |
+| --- | --- | ---: | ---: | ---: |
+| `harness/` (116) | honest | 113 | 113 | **0** |
+| `harness/` (116) | linked | 101 | 101 | **0** |
+
+`equivalence-gate`: 1,720 passing / 22 known failures = baseline, 0 new
+regressions.
+
+The other five share the idiom and not the mechanism — they depend on the
+realm's **distinct error constructors** (`mkerr()` closures minted inside the
+PROVIDER) and on a Proxy trap read across the module boundary, i.e. round 4d's
+`_decoderExportsFor` family, not the sandbox. Naming that is the result; forcing
+them green is not available from here.
+
+Test: `tests/issue-6492-r16-sandbox-global-functions.test.ts` (4 cases). All
+four fail on the pre-fix tree — the list, the callables, the ATTRIBUTES, and a
+scan that ties the list to its consumer (every `globalThis.<name>` the realm
+shim reads must be on the list; `Iterator` and `eval` are the two documented
+exemptions).
+
+### Findings for the next lane (round 16)
+
+30. **When a whole cluster answers `undefined` with no throw, suspect the
+    FIXTURE before the compiler.** Three rounds treated this as a linked-seam
+    defect. The chain was correct at every hop; the runner's sandbox simply did
+    not have the property, and a `has=false` in one trace line settled it. The
+    sandbox is the test262 lane's model of the global object — it is as much a
+    source of wrong answers as codegen is, and far cheaper to check.
+31. **A duplicated runtime arm makes a trace lie.** `__extern_get` exists twice
+    in `src/runtime.ts` (by-name builtin vs typed intent) and only one is live
+    for a linked consumer. "My instrumentation never fires" is evidence about
+    the INSTRUMENTATION until you have confirmed which arm the module's import
+    manifest actually selects.
+32. **Adding a property is also choosing its attributes.** The names alone were
+    +29/−6; the six losses were entirely `propertyIsEnumerable` assertions, and
+    they had been passing on ABSENCE. Any fix that makes a missing thing present
+    must be measured against the rows that were asserting it missing.

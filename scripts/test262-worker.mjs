@@ -34,7 +34,7 @@ import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "./
 // behaviour is unchanged — these bodies moved here verbatim; it is the LOCAL
 // runner that was missing the tryNativeExnRender step.
 import { safeStringifyThrown, tryNativeExnRender } from "./lib/wasm-exn-render.mjs";
-import { SANDBOX_GLOBAL_NAMES } from "./test262-sandbox-globals.mjs";
+import { SANDBOX_GLOBAL_NAMES, applySandboxGlobalFunctionAttributes } from "./test262-sandbox-globals.mjs";
 // (#4162) ONE import-object finaliser, shared with tests/test262-runner.ts and
 // tests/test262-shared.ts. It owns the #2928 E6 standalone runtime-eval
 // provider attachment (cached-binary loading + a fresh per-test namespace for
@@ -106,6 +106,10 @@ function buildOriginalHarnessSandbox(consoleProxy) {
       sandbox[name] = runInContext(name, context);
     } catch {}
   }
+  // (#6492 r16) The copy loop assigns, which creates ENUMERABLE properties;
+  // §19.2's function-valued globals are non-enumerable and the corpus checks it
+  // (`S15.1.2.2_A9.5` &c.).
+  applySandboxGlobalFunctionAttributes(sandbox);
   Object.defineProperties(sandbox, {
     eval: { value: runInContext("eval", context), writable: true, enumerable: false, configurable: true },
     undefined: { value: undefined, writable: false, enumerable: false, configurable: false },

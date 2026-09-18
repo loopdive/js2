@@ -79,4 +79,67 @@ export const SANDBOX_GLOBAL_NAMES = Object.freeze([
   // `built-ins/Atomics/*` harness reads it the same way. It was on NEITHER twin
   // list, so those ~90 tests trapped identically at module init.
   "Atomics",
+  // (#6492 round 16) The ES §19.2 global FUNCTIONS (+ the Annex B §B.2.1 pair).
+  // They were on NEITHER list, so a compiled `globalThis.parseInt` read
+  // answered `undefined` from the sandbox — silently, with no throw. That is
+  // what broke the `$262.createRealm()` cluster: the realm shim
+  // (`scripts/test262-fyi-runtime.js`) BUILDS the foreign realm's global by
+  // copying these off `globalThis`, so `createRealm().global.parseInt` was
+  // `undefined` while every hop of the chain ran correctly.
+  "parseInt",
+  "parseFloat",
+  "isNaN",
+  "isFinite",
+  "decodeURI",
+  "decodeURIComponent",
+  "encodeURI",
+  "encodeURIComponent",
+  "escape",
+  "unescape",
 ]);
+
+/**
+ * The subset above that §19.2 / §B.2.1 define as `{ [[Writable]]: true,
+ * [[Enumerable]]: false, [[Configurable]]: true }` function-valued properties
+ * of the global object.
+ *
+ * The copy loop in both sandbox builders assigns with `=`, which creates an
+ * ENUMERABLE own property. For the constructors that predate this list that is
+ * pre-existing behaviour; for the names added in #6492 round 16 it is a new
+ * wrong answer, and the corpus checks it directly — `S15.1.2.2_A9.5` &c. assert
+ * `this.propertyIsEnumerable('parseInt') === false`. Measured: those six rows
+ * flipped pass→fail in BOTH lanes on the enumerable spelling (they had been
+ * passing only because the property was absent altogether).
+ *
+ * The constructors are deliberately NOT re-attributed here: same latent defect,
+ * but their current attributes are baked into the committed baseline, so that
+ * is its own measured change.
+ */
+export const SANDBOX_NON_ENUMERABLE_GLOBAL_NAMES = Object.freeze([
+  "parseInt",
+  "parseFloat",
+  "isNaN",
+  "isFinite",
+  "decodeURI",
+  "decodeURIComponent",
+  "encodeURI",
+  "encodeURIComponent",
+  "escape",
+  "unescape",
+]);
+
+/**
+ * Re-define the §19.2 function-valued globals a sandbox already carries with
+ * their spec attributes. Call right after the `runInContext` copy loop; a name
+ * the host realm lacks is skipped, never defined as `undefined`.
+ *
+ * Shared by both sandbox builders (`scripts/test262-worker.mjs`,
+ * `tests/test262-runner.ts`) for the #3441 reason: two hand-kept twins drift.
+ */
+export function applySandboxGlobalFunctionAttributes(sandbox) {
+  for (const name of SANDBOX_NON_ENUMERABLE_GLOBAL_NAMES) {
+    const value = sandbox[name];
+    if (value === undefined) continue;
+    Object.defineProperty(sandbox, name, { value, writable: true, enumerable: false, configurable: true });
+  }
+}
