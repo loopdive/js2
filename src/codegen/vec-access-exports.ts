@@ -1014,7 +1014,14 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
         { op: "if", blockType: { kind: "empty" }, then: thenBranch, else: current },
       ];
     }
-    body.push(...current);
+    // Every arm of the chain above `return`s, but the fallthrough after the
+    // outermost (empty-result) `if` is still reachable to the verifier, and the
+    // function's declared result is i32. Without this the stack-balance safety
+    // net filled that slot with a typed `i32.const 0` default — one
+    // `default-value-lossy` fixup per module, and a DEFAULT OF 0 here reads as
+    // "not an own property", i.e. exactly the wrong answer. Mark the
+    // impossible fallthrough explicitly, as `__vec_set_len` already does.
+    body.push(...current, { op: "unreachable" });
 
     if (!ctx.mod.exports.some((e) => e.name === "__vec_has_own_index")) {
       const typeIdx = addFuncType(
