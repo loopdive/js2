@@ -14,7 +14,7 @@ import { popBody, pushBody } from "./context/bodies.js";
 import type { ClosureInfo, CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addUnionImports, ensureAnyHelpers, ensureAnyToExternHelper, isAnyValue } from "./index.js";
-import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "./any-helpers.js"; // (#2106 S1 / #2864 wave-2 S1)
+import { canonicalUndefinedExternInstrs, ensureAnyFromExternHelper, undefinedExternInstrs } from "./any-helpers.js"; // (#2106 S1 / #2864 wave-2 S1 / #6631)
 import { ensureAnyToStringHelper, stringConstantExternrefInstrs } from "./native-strings.js";
 import { buildThrowJsErrorInstrs } from "./expressions/helpers.js";
 import { ensureWrapperStringValueHelper } from "./object-runtime.js";
@@ -2148,6 +2148,32 @@ function emitVecToVecBody(
       },
     );
     releaseTempLocal(fctx, elemLocal);
+  } else if (
+    needsCoerce &&
+    srcKind === "externref" &&
+    isAnyValue(dstVec.elemType, ctx) &&
+    ensureAnyFromExternHelper(ctx) !== undefined
+  ) {
+    // (#6631) A heterogeneous-primitive-union vec (e.g. `(string | number)[]`
+    // from `["x", 1976]`) widens its raw-externref elements (each boxed by its
+    // OWN static type — `__box_number`/`__box_boolean`/native-string — never a
+    // tagged `$AnyValue`) into this vec's `$AnyValue` element slot. The generic
+    // `coerceType` path below routes through `boxToAny`'s externref arm, whose
+    // `undefinedSingleton` default (`__any_box_extern_s1`) only recovers NULL
+    // and the UNDEF_F64-sentinel `$BoxedNumber`; every other externref —
+    // including a perfectly ordinary boxed number or boolean — falls to the
+    // #1888 tag-5 "string" lie. That made `typeof row[1]` report "string" for
+    // the NUMBER `1976` (and `typeof` on ANY element of such a literal, since
+    // the corruption happens once, at construction, not per-read).
+    //
+    // `ensureAnyFromExternHelper` (the #3055 fix for the `===`/`==` operand
+    // seam) classifies `$BoxedNumber`/i31/`$BoxedBoolean` BEFORE falling back
+    // to tag-5, so it recovers the correct tag for every element this literal
+    // can produce. Scoped to exactly this call site (mirrors #3055's own
+    // per-site substitution) — `boxToAny`'s shared default is untouched, so
+    // the −788/−794 standalone regression that flipping it globally caused
+    // cannot recur here.
+    fctx.body.push({ op: "call", funcIdx: ensureAnyFromExternHelper(ctx)! });
   } else if (needsCoerce) {
     coerceType(ctx, fctx, readElemType, dstVec.elemType);
   }
