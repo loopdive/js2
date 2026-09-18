@@ -3957,7 +3957,12 @@ function compileArrayReverse(
   const dataTmp = allocLocal(fctx, `__arr_rev_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
   const iTmp = allocLocal(fctx, `__arr_rev_i_${fctx.locals.length}`, { kind: "i32" });
   const jTmp = allocLocal(fctx, `__arr_rev_j_${fctx.locals.length}`, { kind: "i32" });
-  const swapTmp = allocLocal(fctx, `__arr_rev_sw_${fctx.locals.length}`, elemType);
+  // (#6500) The swap slot must match what `getOp` below LOADS, not what the array
+  // STORES: `array.get_u`/`array.get_s` widen a packed element to i32, and a packed
+  // type is illegal in a value position anyway, so `elemType` here failed binary
+  // emit for every Uint8/Int8/Uint8Clamped/Uint16/Int16 receiver.
+  const swapSlotType: ValType = elemType.kind === "i8" || elemType.kind === "i16" ? { kind: "i32" } : elemType;
+  const swapTmp = allocLocal(fctx, `__arr_rev_sw_${fctx.locals.length}`, swapSlotType);
 
   // Compile receiver -> vec ref
   compileExpression(ctx, fctx, propAccess.expression);
