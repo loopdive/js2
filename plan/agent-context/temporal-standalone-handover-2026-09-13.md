@@ -959,3 +959,33 @@ real-provider test262 rows (1,250 A + 205 B + 349 C + 300 D + 300
 E-unlinked + 300 E-linked + 250 F-class + 100 F-methoddef + 150 F-objproto +
 480 four-family) is attributable to a main commit in a file the stack never
 touches.
+
+## Stack state 2026-09-18 (post-S58) — PR #5978 MERGED into main; S58 (#6641) is the first slice on top of merged main, four-family 437/480
+
+PR #5978 (S13→S56 docs) landed on `main` at `9116ee2db3` (merge queue,
+18:08 UTC); main is at `717d8d1de7` after the baseline refresh. The
+`issue-5383-standalone-temporal-s13-s52` branch is merged and must not be
+reused — every further slice goes out as a NEW branch + NEW PR off
+`origin/main`.
+
+S58 (branch `issue-5383-standalone-temporal-s58`, head `7e5056f77e`, off
+`9116ee2db3`, worktree `/home/user/js2/.claude/worktrees/agent-a21090746acd50203`)
+fixed [#6641](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6641-link-forward-computed-method-call):
+a computed-key method call (`recv[k](…)`) on an `any`/externref receiver had
+no generic dispatch arm under standalone/wasi and silently returned `null`.
+New `src/codegen/expressions/dynamic-element-generic-call.ts`, wired in
+`call-tail-dispatch.ts`. Full writeup in #5383 "### S58 findings".
+
+**New base numbers** (lead-measured on `7e5056f77e`, fresh provider cache,
+TSVs in `.tmp/s58/battery/*-cur.tsv` in the S58 worktree, S54 base copies
+in `.tmp/s58/battery/base/`): identical to the post-S54 table except
+ZonedDateTime 103 → **105/120** (four-family **437/480**). Every
+must-not-move group A–F: 0 pass→fail, 0 fail→pass. Equivalence 22/1720/22.
+Corpus byte A/B 0 status / 0 sha flips.
+
+**Next lanes** (remaining 43 red rows): provider-side Proxy trap invocation
+(10 rows; S55 WIP on `751ceea68e` in worktree `agent-a38808bf4e81ef147` —
+next probe: call the provider's `__typeof_function` directly on the trap
+value as the guard extracts it), `extends <provider class>` (#6640 +
+#6623 residual, 4+2 rows), the two `era` rows (#6633, S50 WAT pointer),
+and the one-offs listed in #5383 S58 findings.

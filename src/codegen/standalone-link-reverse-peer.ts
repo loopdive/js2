@@ -79,6 +79,8 @@ import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
+import { ensureExnTag } from "./registry/physical-imports.js";
+import { buildStandardTryTable } from "../ir/try-table.js";
 import type { CodegenContext } from "./context/types.js";
 import type { Instr, ValType } from "../ir/types.js";
 
@@ -217,26 +219,41 @@ function define(
  * ```
  * if (peer == null || inReverse) return null;   // nothing installed, or a bounce
  * inReverse = 1;
- * try { result = peer(args…) } catch_all { inReverse = 0; rethrow }
+ * try { result = peer(args…) } catch (e) { inReverse = 0; throw e }
  * inReverse = 0;
  * return result;
  * ```
+ *
+ * (#6641 follow-up) The guard is a standardized `try_table` catching the
+ * module's exception tag, never a legacy `try … catch_all rethrow`: every
+ * module this runs in is `--target standalone`/`wasi`, whose user-level
+ * `try`/`catch` already lowers to `try_table`, and V8 (Node ≥ 24) refuses a
+ * module that mixes the two flavours — measured on CI as
+ * `CompileError: module uses a mix of legacy and new exception handling
+ * instructions` the moment #6641 made this terminal live next to a user
+ * `try` block. Catching the tag (a JS throw) is the case the legacy
+ * `catch_all` could observe anyway: a wasm trap is not catchable by either.
  *
  * `null` means "not mine either", which is the answer every caller of this arm
  * already handles — it is the same contract the provider's own normalising
  * wrappers give the consumer in the forward direction.
  */
-function reverseHopBody(args: {
-  peerGlobalIdx: number;
-  flagGlobalIdx: number;
-  typeIdx: number;
-  arity: number;
-  resultLocal: number;
-  /** What "not mine" looks like for this terminal: a null ref, or `0`. */
-  miss: Instr;
-  /** Extra work inside the guarded window, after the peer answered. */
-  after?: Instr[];
-}): Instr[] {
+function reverseHopBody(
+  ctx: CodegenContext,
+  args: {
+    peerGlobalIdx: number;
+    flagGlobalIdx: number;
+    typeIdx: number;
+    arity: number;
+    resultLocal: number;
+    /** Scratch externref local that parks the caught exception before the rethrow. */
+    exceptionLocal: number;
+    /** What "not mine" looks like for this terminal: a null ref, or `0`. */
+    miss: Instr;
+    /** Extra work inside the guarded window, after the peer answered. */
+    after?: Instr[];
+  },
+): Instr[] {
   const call: Instr[] = [];
   for (let i = 0; i < args.arity; i++) call.push({ op: "local.get", index: i });
   call.push({ op: "global.get", index: args.peerGlobalIdx });
@@ -259,13 +276,19 @@ function reverseHopBody(args: {
     },
     { op: "i32.const", value: 1 },
     { op: "global.set", index: args.flagGlobalIdx },
-    {
-      op: "try",
-      blockType: { kind: "empty" },
-      body: call,
-      catches: [],
-      catchAll: [...clear, { op: "rethrow", depth: 0 }],
-    },
+    buildStandardTryTable({ kind: "empty" }, call, [
+      {
+        kind: "catch",
+        tagIdx: ensureExnTag(ctx),
+        payloadType: EXTERNREF,
+        body: [
+          { op: "local.set", index: args.exceptionLocal },
+          ...clear,
+          { op: "local.get", index: args.exceptionLocal },
+          { op: "throw", tagIdx: ensureExnTag(ctx) },
+        ],
+      },
+    ]),
     ...clear,
     { op: "local.get", index: args.resultLocal },
   ];
@@ -326,16 +349,20 @@ export function reserveStandaloneLinkReversePeer(ctx: CodegenContext): ReversePe
     LINK_REVERSE_PEER.reverseGet,
     [EXTERNREF, EXTERNREF],
     [EXTERNREF],
-    [{ name: "r", type: EXTERNREF }],
+    [
+      { name: "r", type: EXTERNREF },
+      { name: "exc", type: EXTERNREF },
+    ],
     [
       { op: "i32.const", value: 0 },
       { op: "global.set", index: ownedIdx },
-      ...reverseHopBody({
+      ...reverseHopBody(ctx, {
         peerGlobalIdx: peerGetIdx,
         flagGlobalIdx: flagIdx,
         typeIdx: types.getTypeIdx,
         arity: 2,
         resultLocal: 2,
+        exceptionLocal: 3,
         miss: { op: "ref.null.extern" },
         after: [
           { op: "local.get", index: 2 },
@@ -369,13 +396,17 @@ export function reserveStandaloneLinkReversePeer(ctx: CodegenContext): ReversePe
     LINK_REVERSE_PEER.reverseKeys,
     [EXTERNREF],
     [EXTERNREF],
-    [{ name: "r", type: EXTERNREF }],
-    reverseHopBody({
+    [
+      { name: "r", type: EXTERNREF },
+      { name: "exc", type: EXTERNREF },
+    ],
+    reverseHopBody(ctx, {
       peerGlobalIdx: peerKeysIdx,
       flagGlobalIdx: flagIdx,
       typeIdx: types.keysTypeIdx,
       arity: 1,
       resultLocal: 1,
+      exceptionLocal: 2,
       miss: { op: "ref.null.extern" },
     }),
   );
@@ -389,13 +420,17 @@ export function reserveStandaloneLinkReversePeer(ctx: CodegenContext): ReversePe
     LINK_REVERSE_PEER.reverseHas,
     [EXTERNREF, EXTERNREF],
     [I32],
-    [{ name: "r", type: I32 }],
-    reverseHopBody({
+    [
+      { name: "r", type: I32 },
+      { name: "exc", type: EXTERNREF },
+    ],
+    reverseHopBody(ctx, {
       peerGlobalIdx: peerHasIdx,
       flagGlobalIdx: flagIdx,
       typeIdx: types.hasTypeIdx,
       arity: 2,
       resultLocal: 2,
+      exceptionLocal: 3,
       miss: { op: "i32.const", value: 0 },
     }),
   );
@@ -425,13 +460,17 @@ export function reserveStandaloneLinkReversePeer(ctx: CodegenContext): ReversePe
     LINK_REVERSE_PEER.reverseMethodCall,
     [EXTERNREF, EXTERNREF, EXTERNREF],
     [EXTERNREF],
-    [{ name: "r", type: EXTERNREF }],
-    reverseHopBody({
+    [
+      { name: "r", type: EXTERNREF },
+      { name: "exc", type: EXTERNREF },
+    ],
+    reverseHopBody(ctx, {
       peerGlobalIdx: peerMethodCallIdx,
       flagGlobalIdx: flagIdx,
       typeIdx: types.methodCallTypeIdx,
       arity: 3,
       resultLocal: 3,
+      exceptionLocal: 4,
       miss: { op: "ref.null.extern" },
     }),
   );
@@ -611,6 +650,7 @@ export function emitStandaloneLinkReverseLocalTerminals(ctx: CodegenContext): vo
         { name: "m", type: EXTERNREF },
         { name: "prevThis", type: EXTERNREF },
         { name: "result", type: EXTERNREF },
+        { name: "exc", type: EXTERNREF },
       ],
       [
         { op: "local.get", index: 0 },
@@ -634,23 +674,33 @@ export function emitStandaloneLinkReverseLocalTerminals(ctx: CodegenContext): vo
         { op: "local.set", index: 4 },
         { op: "local.get", index: 0 },
         { op: "global.set", index: thisGlobalIdx },
-        {
-          op: "try",
-          blockType: { kind: "empty" },
-          body: [
+        // Standardized `try_table` for the same reason `reverseHopBody` uses
+        // one: this module's own `try`/`catch` is `try_table`, and V8 rejects a
+        // module mixing that with a legacy `try`.
+        buildStandardTryTable(
+          { kind: "empty" },
+          [
             { op: "local.get", index: 3 },
             { op: "local.get", index: 0 },
             { op: "local.get", index: 2 },
             { op: "call", funcIdx: applyClosure },
             { op: "local.set", index: 5 },
           ],
-          catches: [],
-          catchAll: [
-            { op: "local.get", index: 4 },
-            { op: "global.set", index: thisGlobalIdx },
-            { op: "rethrow", depth: 0 },
+          [
+            {
+              kind: "catch",
+              tagIdx: ensureExnTag(ctx),
+              payloadType: EXTERNREF,
+              body: [
+                { op: "local.set", index: 6 },
+                { op: "local.get", index: 4 },
+                { op: "global.set", index: thisGlobalIdx },
+                { op: "local.get", index: 6 },
+                { op: "throw", tagIdx: ensureExnTag(ctx) },
+              ],
+            },
           ],
-        },
+        ),
         { op: "local.get", index: 4 },
         { op: "global.set", index: thisGlobalIdx },
         { op: "local.get", index: 5 },

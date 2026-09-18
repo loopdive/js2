@@ -11318,3 +11318,72 @@ added (there is no fix to witness). Target rows unchanged: both still `fail`
 with the `[object Object]` signature, confirmed on `aec4fe5ba2` — same as
 before this slice. No criterion-4 battery run (no code touched, nothing to
 regress-check).
+
+### S58 findings (2026-09-18) — #6641 FIXED: a computed-key method call on a linked-provider receiver reached no dispatch arm under standalone and answered `null`; the two blocked `ZonedDateTime/prototype/add/math-order-of-operations-add-*` rows now pass
+
+S58 (branch `issue-5383-standalone-temporal-s58`, off main's merge of PR
+#5978 `9116ee2db3`, worktree
+`/home/user/js2/.claude/worktrees/agent-a21090746acd50203`, head
+`7e5056f77e`) took the S57 reduction (`api[k](3, 4)` on a provider value
+returns `null` while `api.add(3, 4)` returns `7`).
+
+**Root cause (instrumented, not the S57 "args-carrier" candidate):** a call
+counter placed inside the provider's `__js2wasm_link_method_call` wrapper
+incremented once per literal-key call and never for a computed-key call —
+the forward terminal was never reached. The computed-call site in
+`src/codegen/expressions/call-tail-dispatch.ts` has arms for a user-class
+receiver, a TS-known plain-object-literal receiver and (JS-host only,
+`!noJsHost`) `tryEmitDynamicElementHostMethodCall`; nothing covered the
+generic `any`/externref receiver under `--target standalone`/`wasi`, so a
+linked-provider value (statically `any`, it crosses a `field(): any` getter
+stub) fell through to the silent drop-everything-return-`ref.null.extern`
+fallback. The literal-key twin already had the generic
+`__extern_method_call(recv, name, args)` arm (`call-receiver-method.ts`,
+#799 WI3), not standalone-gated.
+
+**Fix:** new `src/codegen/expressions/dynamic-element-generic-call.ts`
+(`tryEmitGenericComputedMethodCall`) — the `noJsHost` twin of the host arm:
+the key is compiled at runtime to externref (same marshaling as the working
+`__extern_get(recv, key)` read path), args go through the native ObjVec
+builders, then `__extern_method_call` generically. Wired into both branches
+of the computed-call dispatch directly after the host arm. Side effect,
+documented: the reverse-direction computed-key call (#6605's
+`callsThroughComputedKey`, previously a documented residual answering
+`null`) now answers `7`; that assertion was updated with a dated comment.
+
+**Witness:** `tests/issue-6641-link-forward-computed-method-call.test.ts`
+(0/1/2/3-arg computed calls, provider class-instance method, chained
+`x[k]()[k]()`, computed key naming a non-function → same TypeError as the
+literal path, literal-key and in-module-computed controls). Lead-run
+reverted-base check on `717d8d1de7` (main, no fix): the test FAILS with
+`expected null to be 7`; on `7e5056f77e` it passes.
+
+**Lead verification on `7e5056f77e`** (fresh provider cache `s58-lead`,
+`cacheHit=false`, built at that head; base = S54 TSVs):
+
+| Family | S54 base | S58 | Δ |
+| --- | --- | --- | --- |
+| PlainDate | 113/120 | 113/120 | 0 |
+| Duration | 106/120 | 106/120 | 0 |
+| PlainDateTime | 113/120 | 113/120 | 0 |
+| ZonedDateTime | 103/120 | 105/120 | +2 (`add/math-order-of-operations-add-{none,constrain}.js` fail→pass) |
+| **four-family total** | **435/480** | **437/480** | **+2, 0 pass→fail** |
+| A (1250) / B (205) / C (349) / D (300) | — | — | 0 pass→fail, 0 fail→pass each |
+| E-unlinked (300) / E-linked (300) | — | — | 0 / 0 |
+| F-class (250) / F-methoddef (100) / F-objproto (150) | — | — | 0 / 0 / 0 |
+
+Witness sweep `tests/issue-66*.test.ts` + `issue-6484-*` + `issue-6493-*`:
+40 files / 252 tests, 0 failed. Equivalence gate: 22 failing / 1720 passing
+/ 22 known-failures, unchanged. Corpus byte A/B (42 files × {gc,standalone}):
+0 status flips, **0 sha flips** — the new arm is standalone-only and the gc
+corpus is byte-identical. Gates: typecheck, loc/func budgets (merge-base and
+`LOC_GATE_BASE=origin/main`), coercion-sites, oracle-ratchet,
+speculative-rollback, issue-ids:against-main, update-issues `--check`,
+issue-spec-coverage, biome lint, prettier — all green.
+
+Criterion 4 holds for this slice. Residual after S58: 43 rows of the 480
+(provider-side Proxy trap invocation 10 rows — S55 WIP; `extends <provider
+class>` #6640/#6623; the two `era` rows #6633; one-offs
+`throw-when-intermediate-datetime-outside-valid-limits.js`,
+`PlainDateTime/from/argument-string-offset.js`,
+`ZonedDateTime/prototype/add/blank-duration.js`).
