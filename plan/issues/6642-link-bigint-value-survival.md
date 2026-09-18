@@ -37,8 +37,21 @@ loc-budget-allow:
   #   does not modify — so against CI's merge preview the allowance is
   #   invisible and the gate fails on growth that is already reviewed. Restated
   #   here, in a file this PR does touch.
+  # 2026-09-18 (S61, #6642) — `src/codegen/registry/imports.ts` gains the native
+  #   StringToBigInt arm on `__bigint_ctor`'s terminal. The §7.1.14 scan itself
+  #   is spliced INLINE, and its ~370-line body lives in the new leaf file
+  #   `src/runtime/wasmgc/values/string-to-bigint-body.ts` rather than being
+  #   minted as its own wasm function — deliberately: a new defined function
+  #   shifts every already-registered function index, which is exactly the
+  #   stale-`funcIdx` hazard S59's Fix 1 had to repair. The cost of that choice
+  #   is ~56 lines of wiring (layout resolve, `ref.test $AnyString` guard,
+  #   extra locals) in the file that owns `__bigint_ctor`. Restated here
+  #   because the pre-existing allowance for this same file lives in
+  #   plan/issues/5383-standalone-temporal-provider.md, which this change-set
+  #   does not modify — so it is invisible to CI's merge-preview base.
   - src/codegen/binary-ops.ts
   - src/codegen/typeof-delete.ts
+  - src/codegen/registry/imports.ts
 func-budget-allow:
   # 2026-09-18 (S59, #6642) — same new branch lands inside
   # `compileBinaryExpression`, and `compileTypeofComparison` (typeof-delete.ts)
@@ -54,6 +67,15 @@ func-budget-allow:
   - src/codegen/binary-ops.ts::compileBinaryExpression
   - src/codegen/typeof-delete.ts::compileTypeofComparison
   - src/codegen/typeof-delete.ts::compileTypeofExpression
+  # 2026-09-18 (S61, #6642) — `addUnionImportsAsNativeFuncs` is the single
+  #   function that registers EVERY union native, `__bigint_ctor` included, so
+  #   the new string arm has to be built where that body is built: it needs the
+  #   local `throwNativeError` closure and the same `bigIntStructIdx`/
+  #   `registerNative` scope. +52 lines, of which the parser itself is ZERO —
+  #   the scan was deliberately factored out into its own leaf module; what
+  #   remains here is the layout resolve, the `ref.test $AnyString` guard and
+  #   the extra locals.
+  - src/codegen/registry/imports.ts::addUnionImportsAsNativeFuncs
 ---
 
 ## Problem
