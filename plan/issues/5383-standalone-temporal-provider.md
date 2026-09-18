@@ -10000,16 +10000,46 @@ the E-linked run before diffing — the aggregate (235/300, identical both
 trees/both runs) is solid, the per-file diff for that one variant is not; see
 #6629 for the full note. No `src/` files touched this session.
 
-### S45 / S45b findings — NOT RECORDED HERE
+### S45 / S45b findings (backfilled 2026-09-18 by S46b from #6631's issue
+file and `plan/agent-context/temporal-standalone-handover-2026-09-13.md`,
+since neither session wrote its own section here)
 
-Per the S46 dispatch brief: "S45/S45b did not write theirs." Their work is
-summarized secondhand in that brief (S45 reduced the two named Temporal rows
-to `TemporalHelpers.canonicalizeCalendarEra`'s `assert.sameValue(eraName,
-undefined)`, ruled out the link boundary and the #6631 array-tag bug as the
-cause; S45b landed the real #6631 fix and left probe11.mts isolating the
-class-field-union mechanism) but this section is a placeholder, not a
-verified record — a follow-up agent with access to those sessions' actual
-work should backfill it from source.
+**S45** reduced the two named Temporal test262 rows
+(`test/built-ins/Temporal/PlainDate/from/argument-object-valid.js`,
+`…/argument-string.js`) to a single failure inside
+`TemporalHelpers.canonicalizeCalendarEra`: `assert.sameValue(SameValue(«null»,
+«undefined»))`. S45's probe10 (carried into S45b's branch as
+`.tmp/s45b/probe10.mts`) named a mixed-primitive-array `typeof`-tag
+corruption (filed as #6631) as the apparent proximate cause — an array
+literal mixing a string with a non-string primitive corrupted the `$AnyValue`
+tag of every element, not just the mismatched one.
+
+**S45b** landed #6631's real fix (`emitVecToVecBody` in
+`src/codegen/type-coercion.ts`, routing the externref → `$AnyValue`
+vec-element widen through the existing `ensureAnyFromExternHelper` classifier
+instead of the generic `coerceType` default, scoped to the
+heterogeneous-primitive-union array-literal widen), witnessed by
+`tests/issue-6631-mixed-array-element-typeof-tag.test.ts` (9 cases,
+base-fail/fix-pass confirmed by file-copy A/B on `type-coercion.ts`).
+
+**S45b then re-ran both named Temporal rows against the #6631 fix and found
+they did NOT close** — identical `Expected SameValue(«null», «undefined»)`
+on both base and fix. Root-cause correction: `date.era` (the actual failing
+read, inside `canonicalizeCalendarEra(date.calendarId, date.era)`) is a
+**class-instance field read** (`era: string | undefined`), not an
+array-element read — `isHeterogeneousPrimitiveUnion` (the gate #6631's fix
+depends on) requires ≥2 distinct non-nullish primitive kinds, and `string |
+undefined` has exactly one, so the #6631 code path is never reached for this
+field at all. S45b's follow-up probe (`.tmp/s45b/probe11.mts`, "class field
+union") isolated a DIFFERENT, adjacent defect on the same `T | undefined`
+wasm carrier: `class D { era: string | undefined }`, assigned `undefined` in
+the constructor, read back `typeof d.era === "object"` instead of
+`"undefined"` — the null/undefined conflation later confirmed and fixed
+(partially) by S46 as #6632. #6631 was filed and merged anyway (the
+array-tag bug is real and independently witnessed), with its issue file's
+"Real-corpus proof" section explicitly recording the non-closure and
+pointing at probe11 as the next lead. Full accounting:
+`plan/issues/6631-mixed-array-element-typeof-tag.md`.
 
 ### S46 findings (2026-09-18) — two real, verified `T | undefined`
 resurrection bugs found and fixed (typeof + the generic dynamic member-get
