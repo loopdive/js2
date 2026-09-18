@@ -209,3 +209,65 @@ in the census, never what it is.
 **A runtime-only fix is ruled out** by fact 4: no module has an arm at any
 arity, so no amount of owner lookup or arity retry can help. It has to be the
 emitter.
+
+## Round 13 (2026-09-18) — correction: the type IS in the census; the STRUCT and its FUNCREF disagree
+
+Round 12's conclusion ("the struct type is absent from
+`ctx.closureInfoByTypeIdx`") was drawn from a probe that laddered only over
+census types, so it could not distinguish "absent" from "present but
+mis-described". Widening the probe to ladder over **every struct type in the
+module** (same debug export, all of `mod.types` instead of the census, most
+derived first) answers **type 41 again** — the same answer as the census-only
+ladder. So:
+
+**The value's struct type is present, and it IS in the census** (type 41,
+`funcTypeIdx` 40, host arity 3). Round 12's strong form is withdrawn.
+
+What is actually inconsistent is narrower and more interesting:
+
+| question | answer | derived from |
+| --- | --- | --- |
+| struct type of the value | **41** | full-type-section `ref.test` ladder |
+| census entry for type 41 | ft **40**, host arity **3** | `ctx.closureInfoByTypeIdx` |
+| `__closure_arity(value)` | **1** | `ref.test` chain over **FUNC** types, `closureHostArity` |
+| `__call_fn_1` admits | ft 18, 43, 47, 54, 56, 58, 74 — **not 40** | `emitClosureCallExportN` |
+| `__call_fn_3` admits | ft 18, 37, **40**, 43, … | same |
+
+`__closure_arity` and the arm admission are built from the *same* helper
+(`collectClosureArityEntries` calls `closureHostArity(info)`, dedups by
+`funcTypeIdx`, and `ref.test`s the extracted FUNCREF exactly as the arms do), so
+their disagreement is not a units mismatch. `__closure_arity` answering 1 means
+the value's **funcref** matched a host-arity-1 func type, while its **struct**
+is type 41, whose census entry says its funcref should be ft 40 (host arity 3).
+
+So the struct and the funcref it carries do not agree with the registry. A
+closure struct of type 41 is holding a funcref of some other signature. Every
+`__call_fn_N` arm tests the self type and then `ref.test`s the extracted funcref
+against that arm's `funcTypeIdx`; with the struct saying one thing and the
+funcref another, the arity chosen from `__closure_arity` (1) lands in a ladder
+where ft 40 is not admitted, and the arms that DO admit ft 40 (arity 3/4) fail
+their funcref test.
+
+Also measured, and NOT explained by the above — worth re-checking before
+building on this: dispatching the same value through **every** `__call_fn_0..4`
+in **both** modules still returns null (round 12, re-confirmed in round 13),
+including arity 3 where ft 40 is admitted. If the funcref were simply a
+host-arity-1 signature, one of the arity-1 arms should have matched it. Either
+the per-shape funcref extraction (`buildFuncrefExtraction`, keyed on the arm's
+self type) reads the wrong field for this struct's layout, or the funcref slot
+is null. **That is the next probe**: export the extracted funcref's own type
+(and null-ness) for the value, rather than inferring it from `__closure_arity`.
+
+Ruled out this round: a census **overwrite** at the two
+`createSignatureWrapperType` writers in `closures/funcref-wrapper-types.ts` —
+instrumented for a later `set` replacing an entry with a different
+`funcTypeIdx`, zero hits on the repro.
+
+### Consequence for step 2
+
+The fix is still emitter-side, but it is **not** "register a missing kind". It
+is: make the struct type, its census entry and the funcref actually stored in it
+agree — or make the arms dispatch on the funcref's own type rather than on a
+struct-type-derived expectation. Until the funcref's real type is named (next
+probe above), do not start the edit: this round already withdrew one conclusion
+that was drawn from a probe too narrow to see the alternative.

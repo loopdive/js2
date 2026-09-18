@@ -2045,3 +2045,41 @@ its `__cb_N` continuations directly rather than through the closure registry.
     structural neighbour, which reads exactly like a wrong answer instead of a
     missing entry. Cross-check any ladder answer against a field read before
     believing it.
+
+## Round 13 (2026-09-18) — #6502 step 2 blocked, and round 12's finding CORRECTED
+
+**No code landed.** Linked **44 / 138**, honest **135 / 138**, unchanged.
+
+Round 12 concluded the escaping closure's struct type was absent from
+`ctx.closureInfoByTypeIdx`. **That conclusion is withdrawn.** It came from a
+probe that laddered only over census types, which cannot tell "absent" from
+"present but mis-described". Laddering over the module's ENTIRE type section
+gives the same answer — type 41 — which is in the census (ft 40, host arity 3).
+
+The real inconsistency is narrower: the value's **struct** is type 41 (census:
+funcref should be ft 40, host arity 3) while `__closure_arity` answers **1**,
+and that helper decides its answer by `ref.test`ing the **extracted funcref**
+over func types using the very same `closureHostArity` the arm admission uses.
+Struct and funcref disagree about what the value is, so the arity chosen from
+`__closure_arity` lands in a ladder where ft 40 is not admitted, and the ladders
+that do admit ft 40 fail their funcref test.
+
+One measurement remains unexplained and is flagged as such in #6502: every
+`__call_fn_0..4` in both modules returns null, including arity 3. The next probe
+is to export the extracted funcref's own type and null-ness for the value rather
+than inferring it from `__closure_arity`. Ruled out this round: a census
+overwrite at either `createSignatureWrapperType` writer (instrumented, zero hits).
+
+Step 2's edit is deliberately not started — this round already withdrew one
+conclusion drawn from a too-narrow probe, and the remaining unknown is one probe
+away.
+
+### Finding for the next lane (round 13)
+
+31. **A `ref.test` ladder answers about the SET IT ENUMERATES, so it cannot
+    distinguish "absent" from "present but wrong".** Round 12 read a
+    census-only ladder as proof of absence; the whole-type-section ladder gave
+    the identical answer, and the identity of those two answers is what showed
+    the first reading was wrong. When a probe's domain is a subset of the
+    question's domain, widen the probe BEFORE concluding — and treat "the wider
+    probe agrees" as the falsification test, not as confirmation.
