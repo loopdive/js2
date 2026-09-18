@@ -53,7 +53,7 @@ import {
 } from "../scripts/test262-iterator-binding.mjs";
 import { restoreHostBuiltins } from "./test262-restore-builtins.js";
 import { assembleOriginalHarness, type OriginalHarnessVariant } from "./test262-original-harness.js";
-import { SANDBOX_GLOBAL_NAMES } from "../scripts/test262-sandbox-globals.mjs";
+import { SANDBOX_GLOBAL_NAMES, applySandboxGlobalFunctionAttributes } from "../scripts/test262-sandbox-globals.mjs";
 
 // #1310: per-shard global isolation for test262.
 //
@@ -114,6 +114,10 @@ function _buildFreshSandbox(consoleProxy?: Console, exposeDone = true): Record<s
       // Some globals may not be present in this vm realm — leave undefined.
     }
   }
+  // (#6492 r16) The copy loop assigns, which creates ENUMERABLE properties;
+  // §19.2's function-valued globals are non-enumerable and the corpus checks it
+  // (`S15.1.2.2_A9.5` &c.).
+  applySandboxGlobalFunctionAttributes(sandbox);
   // Script global value properties have immutable data descriptors. A plain
   // object sandbox otherwise lets strict writes create `undefined`/`Infinity`
   // and turns Test262's required TypeErrors into false negatives (#3367).

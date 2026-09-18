@@ -717,3 +717,267 @@ tombstone plumbing. The 6 remaining element-default rows
 Note for whoever takes it: `carrier-bag-hasown.ts` records that widening
 `__hasOwnProperty` generally cost 684 host-free passes and was auto-parked
 (#4017). The fix belongs on the mutation/overlay side.
+
+## Round 5 (2026-09-18, Opus lane) — round 3 (ii)'s diagnosis is WRONG, and the real blocker is one hardcoded answer
+
+Worktree `/home/user/js2/.claude/worktrees/agent-a33c2f05cad4f2d7d`, branch
+`issue-6482-r5-xmod-vec-mutation`, base `887e87650a` (the
+`claude/compiler-performance-bn5g3l` tip, i.e. rounds 3 (iii) + 4 + 4b
+included). Real runner, one chunk, `TEST262_INCLUDE_PROPOSALS=1`, a **fresh**
+`JS2WASM_TEST262_HARNESS_CACHE` per run, both bundles rebuilt between arms.
+
+### The 114-row bucket's true residual is SIX rows, not fifteen
+
+| linked, base `887e87650a` | 99 / 114 |
+| --- | --- |
+
+Of the 15 non-passes, **9 are not disagreements** — they fail identically in
+the honest lane (`DisposableStack`, `AsyncDisposableStack`, `SuppressedError`
+are unimplemented globals; `Iterator/prototype/Symbol.dispose/prop-desc`).
+The honest-pass/linked-fail set is exactly the six element-default rows:
+`Object/defineProperties/15.2.3.7-6-a-{206,208,247,249}` and
+`Object/defineProperty/15.2.3.6-4-{258,260}`.
+
+### Round 3 (ii) said "cross-module vec MUTATION". It is not. Measured.
+
+An in-process linked probe (`runLinked`, the same rig
+`tests/issue-6482-r3-sparse-vec-own-indices.test.ts` uses; ~36 s per cycle)
+against the REAL provider, consumer bodies with `includes: [propertyHelper.js]`:
+
+| provider-side call on a consumer-minted receiver | verdict |
+| --- | --- |
+| `__hasOwnProperty([101], "0")` — **no delete anywhere** | **false (wrong)** |
+| `__hasOwnProperty([101], "length")` | **false (wrong)** |
+| `__hasOwnProperty(["a"], "0")` | **false (wrong)** |
+| `__hasOwnProperty({a: 1}, "a")` — **a plain object, not a vec** | **false (wrong)** |
+| `[101].hasOwnProperty("0")` (consumer-side, in-wasm) | true |
+| `Object.hasOwn([101], "0")` (consumer-side) | true |
+| `Object.prototype.propertyIsEnumerable.call([101], "0")` | true |
+
+`__hasOwnProperty` is propertyHelper's
+`Function.prototype.call.bind(Object.prototype.hasOwnProperty)` alias, and
+`isConfigurable` / `isWritable` are each **a probe plus that call**. The call
+answers `false` for every consumer-minted receiver with no mutation involved at
+all — so the failure is not a lost delete, not a tombstone, and **not specific
+to vecs**. Round 3 (ii) inferred "mutation" from `isConfigurable` being false
+without checking the no-mutation control; that control is the whole finding.
+
+### It never reaches the host, so no `_decoderExportsFor` redirect can fix it
+
+Three independent instrumentations, all zero calls on these rows:
+
+- the `__hasOwnProperty` / `__propertyIsEnumerable` closures in `resolveImport`;
+- a catch-all print at `resolveImport`'s entry (77 distinct intents observed,
+  none own-property-shaped);
+- `createHostCallImport`'s `invoke` in `src/runtime/host-call-abi.ts`
+  (`__call_function_*`), which is the arm that WOULD wrap a foreign receiver
+  through `_wrapForHost` → `_decoderExportsFor`.
+
+So the brief's premise — "find which host arm handles it and route it through
+the minting module's exports" — is falsified: there is no host arm. The answer
+is produced entirely in the provider's own wasm.
+
+### Where it is produced, and the next concrete step
+
+In the provider, `ctx.funcMap` has **no** `__hasOwnProperty` entry and
+`ctx.mod.functions` has **no** such function (dumped at finalize: the only
+matching names are the `__js2wasm_get___h___hasOwnProperty_*` getters and
+`__fn_tramp_*` trampolines). `tryCompileStoredObjectBuiltinCall`'s uncurried
+arm — `src/codegen/expressions/call-object-builtins.ts` ~L190, the site that
+lowers this exact alias to `__hasOwnProperty` — is **never reached** for the
+provider's call (instrumented: no print). So
+`resolveUncurriedBuiltinPrototypeMethod` does not match there, almost certainly
+because #6474 moved the harness's top-level `var` to a global-object property
+and `oracle.variableInitializerOf` can no longer see the
+`Function.prototype.call.bind(...)` initializer.
+
+Note the shape of that lowering's miss arm, because it is the likeliest
+producer of a hardcoded `false` once the alias DOES resolve in a module with no
+`__hasOwnProperty` provider:
+
+```ts
+const finalHelperIdx = ctx.funcMap.get(helperName) ?? helperIdx;
+if (finalHelperIdx !== undefined) fctx.body.push({ op: "call", funcIdx: finalHelperIdx });
+else fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "i32.const", value: 0 }); // always false
+```
+
+**Next step (one probe, not a round):** print the lowering actually taken for
+`__hasOwnProperty(obj, key)` inside the provider — start at
+`resolveBoundFunctionInitializer` / `oracle.variableInitializerOf` on a
+#6474-hoisted global, then follow the generic dynamic-call path it falls back
+to. Fixing the alias resolution (or giving the provider a real
+`__hasOwnProperty`) is what unblocks the six rows; the element-default work
+below is already correct and waiting on it.
+
+### The element-default seeding is CORRECT and currently invisible
+
+The preserved WIP (`__vec_mark_hole` + a host-side vec arm in
+`__delete_property` + `_vecDefineOwnProperty` seeding an in-bounds element as a
+pre-existing default data property when `__vec_has_own_index` says so) was
+measured on the 114-row bucket: **99 → 99, zero flips either way**. But the
+failure MESSAGES shrink, which is the evidence it works:
+
+| row | base message | with the WIP |
+| --- | --- | --- |
+| `15.2.3.7-6-a-206`, `-249`, `15.2.3.6-4-260` | `0 descriptor should be enumerable; … writable; … configurable` | `0 descriptor should be configurable` |
+| `15.2.3.7-6-a-247`, `15.2.3.6-4-258` | same three | `0 descriptor should be writable; … configurable` |
+
+`enumerable` (and for two rows `writable`) become correct cross-module;
+`configurable` cannot, because `isConfigurable` bottoms out in the broken
+`__hasOwnProperty` above. **Nothing from this round is shipped** — a
+codegen+runtime change that flips zero rows is exactly the shape that cost rows
+in PR #5964 and PR #5967, and it should land together with the alias fix that
+makes it observable, in the same measured commit.
+
+### Methodology note that saved a round
+
+`tests/test262-chunk-dynamic.test.ts` filters on a path RELATIVE TO THE
+TEST262 ROOT — `test/built-ins/…`, WITH the `test/` prefix — and
+`TEST262_PATH_FILTER` is a pipe-separated SUBSTRING list, not a regex
+(`parsePathFilter`, `tests/test262-runner.ts` ~L495). A newline-joined filter
+file passed through `TEST262_PATH_FILTER` matches nothing and the run reports
+`No test suite found`, which reads like a broken harness. Use
+`TEST262_PATH_FILTER_FILE` (exact paths, one per line, `test/`-prefixed).
+
+### Where the unshipped work lives
+
+Commit `ae5802f99f` on branch `issue-6482-r3-fix-regressions` (worktree
+`/home/user/js2/.claude/worktrees/agent-a6d0fed89c03acce8`) — 3 files,
++211/−13: `__vec_mark_hole` in `src/codegen/vec-access-exports.ts`, the
+`delete a[i]` hole-marker arming in `src/codegen/array-holes.ts`, and the host
+vec delete arm + tombstone consults + element-default seeding in
+`src/runtime.ts`. It cherry-picks clean onto `887e87650a` and typechecks. Do
+not merge it on its own.
+
+## Round 6 (2026-09-18, Opus lane) — the alias arm was gated on `standalone`, and a linked module needs it too
+
+Same worktree and rig as round 5, branch `issue-6482-r5-xmod-vec-mutation`, base
+`887e87650a`. Real runner, fresh `JS2WASM_TEST262_HARNESS_CACHE` per run, both
+bundles rebuilt from the tree under test between every arm.
+
+### The lowering site round 5 could only point at
+
+Round 5 found the answer was produced entirely in wasm and named
+`call-object-builtins.ts`'s uncurried-alias arm as never reached. Probed this
+round, `resolveUncurriedBuiltinPrototypeMethod` resolves the alias in the
+provider perfectly well (`[rbfi] __hasOwnProperty init: CallExpression
+Function.prototype.call.bind(Object.prototype.hasOwnProperty)`). The arm is
+never *called*: both call sites in `call-identifier.ts` — L~526
+(`tryCompileStoredStandaloneCarrierCall`) and L~1794 — are behind
+`ctx.standalone || noJsHost(ctx)`. **The linked harness provider is a js-host
+module, so neither held.** The #6474 hoist theory in round 5's note is wrong;
+the initializer is visible.
+
+That gate was right when it was written: in a single module the alias's generic
+`$__bound_fn` dispatch runs the ENGINE's `Object.prototype.hasOwnProperty`
+against a receiver the host wraps through `_wrapForHost`, which is correct for
+anything this module minted. Across a #5225 edge the receiver is foreign and
+that wrap cannot see it, so the engine answers `false`.
+
+The gate is now `uncurriedBuiltinAliasArmActive` (`call-object-builtins.ts`):
+`ctx.standalone || noJsHost(ctx) || linkBrandRoleOf(ctx) !== undefined`. A
+single-module js-host compile keeps the identical pre-#6482 path, which is what
+leaves #4017's 684 host-free passes and #4626's index-shift reasoning untouched.
+
+### Two `length` rules ship with it, and they are consequences of it
+
+Routing the alias to the host predicate exposed two arms that had never been
+asked about a vec's `length`, and the intermediate measurement (gate alone,
+below) LOST `Object/defineProperties/15.2.3.7-6-a-114-b` to exactly them:
+
+- `_wasmStructPropertyIsEnumerable`'s raw sidecar shortcut (`prop in sc`) read
+  the `length` entry that `Object.defineProperties(arr, {length: {}})` leaves in
+  `_wasmStructProps` as ENUMERABLE. A vec's `length` is non-enumerable on an
+  Array (§23.1.4.1) and on an arguments object (§10.4.4) alike, so that is
+  decided before the shortcut now.
+- `__delete_property`'s generic WasmGC arm TOMBSTONED `length`. §10.4.2.1 makes
+  an Array's `length` non-configurable, so the delete must refuse; an
+  `arguments` object's `length` IS configurable (§10.4.4 step 4) and keeps the
+  ordinary path. Without this, `isConfigurable` — a delete plus a presence
+  question — read `length` as configurable.
+
+### Measured
+
+| lane / slice | rows | base `887e87650a` | shipped | flips |
+| --- | --- | --- | --- | --- |
+| linked, 114-row #6482 bucket | 114 | 99 | **100** | **+1, 0 lost** |
+| linked, `Object/defineProperty/15.2.3.6-4-*` control (every other file) | 368 | 285 | **289** | **+4, 0 lost** |
+| honest, `harness/**` | 116 | 113 | 113 | **0 in either direction** |
+
+Rows gained: `defineProperties/15.2.3.7-6-a-208` (the bucket row) and
+`defineProperty/15.2.3.6-4-{303, 309, 310, 354-2}` on the control. Equivalence
+gate green (22 failing / 1720 passing, all 22 in baseline).
+
+Guard: `tests/issue-6482-r6-linked-uncurried-hasown.test.ts`, linked-lane for
+the reason the round-3 guard documents. Each half is independently pinned —
+with the gate reverted the `isConfigurable` case fails; with only the runtime
+rules reverted the `length` case fails.
+
+### The intermediate arm, and why the round-5 WIP is parked again — with a sharper reason
+
+Three arms were measured on the 368-row control, not two:
+
+| arm | 368-row control | verdict |
+| --- | --- | --- |
+| base | 285 | — |
+| gate + `length` rules (shipped) | **289** | +4, 0 lost |
+| gate + `length` rules + the round-5 WIP | 279 | +4, **−10** |
+
+The WIP (`__vec_mark_hole`, the host vec `delete` arm, and
+`_vecDefineOwnProperty` seeding an in-bounds element as a pre-existing default
+data property) costs ten rows: `15.2.3.6-4-{201, 203, 216, 218, 238, 241, 246,
+248, 251, 538-6}`, failing as `0 descriptor should not be
+{writable,enumerable,configurable}` and `Expected TypeError, got …`. That is the
+§10.1.6.3 first-definition matrix the in-code comment has warned about since
+round 2, and the reason is now specific rather than suspected:
+`maybeEmitVecLengthGrowth` pre-grows the vec BEFORE the runtime call and
+ZERO-fills the slot it creates, so `__vec_has_own_index` reads a real `0.0`
+there and answers "own" for an index that did not exist a moment ago.
+
+**That is a fixable, named next step, and it is the same rule round 4b already
+applied elsewhere**: a grow creates HOLES, not zeros. Make the define pre-grow
+fill its new tail with the absence marker (as `vec-length-hole-fill.ts` does for
+the `defineProperty(arr, "length", …)` site) and the oracle answers 0, the
+seeding correctly does not fire, and the six element-default rows become
+reachable again. Until then the WIP stays parked at `ae5802f99f` on branch
+`issue-6482-r3-fix-regressions`.
+
+### Residual on the six rows
+
+With the WIP applied, four of the six passed (`15.2.3.7-6-a-{206, 208, 249}`,
+`15.2.3.6-4-260`) and two did not: `15.2.3.7-6-a-247` and `15.2.3.6-4-258`, both
+`0 descriptor should be writable`. Those are a DIFFERENT mechanism —
+`isWritable` stores propertyHelper's `unlikelyValue` STRING into a consumer f64
+vec from the provider and reads the old number back, i.e. cross-module vec-WRITE
+representability. Shipped, only `-208` flips, because it is the one of the six
+whose failure was purely the `configurable` probe.
+
+### Not done, deliberately: the hardcoded-false miss arm
+
+`call-object-builtins.ts` ends its uncurried arm with
+`drop, drop, i32.const 0` when no `__hasOwnProperty` provider resolves — a
+silent `false`. It is unreachable in every configuration measured (a
+standalone/`noJsHost` module registers the import even when
+`refuseStandaloneObjectImport` refuses it; a linked js-host module resolves it),
+and replacing it with an `__extern_method_call` that may itself be unregistered
+would swap one unmeasured answer for another. Left as-is and recorded here.
+
+### Methodology note (extends round 4's)
+
+Two traps cost time this round and belong with the harness-cache one above:
+
+- **`node scripts/compiler-bundle.mjs` does NOT rebuild anything.** Those files
+  are the esbuild OUTPUTS; running them is a no-op (here it exits
+  `MODULE_NOT_FOUND`, which is the lucky case — a stale bundle that merely runs
+  is the dangerous one). Rebuild with
+  `pnpm run -s build:compiler-bundle && pnpm run -s build:runtime-bundle`, and
+  check `ls -la scripts/runtime-bundle.mjs` against your last edit's mtime.
+- **`TEST262_PATH_FILTER` is a pipe-separated SUBSTRING list, not a regex, and
+  its paths are TEST262-ROOT-relative — `test/built-ins/…`, WITH the `test/`
+  prefix** (`parsePathFilter`, `tests/test262-runner.ts` ~L495). A newline-joined
+  filter file matches nothing and the run reports `No test suite found`, which
+  reads like a broken harness rather than an empty filter. Use
+  `TEST262_PATH_FILTER_FILE` — one exact path per line — and confirm the
+  `Chunk 1/1: N tests` line reports the N you expect.
+- The honest lane is memory-hungry on this box: two 114-row honest runs were
+  OOM-killed (exit 137) while other runners were live. Run one lane at a time.

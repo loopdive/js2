@@ -1,7 +1,7 @@
 ---
 id: 6503
 title: "Registering ANY late import in emitClosureCallExportN silently moves 13 test262 rows — the shift is not fully remapped"
-status: ready
+status: wont-fix
 sprint: current
 created: 2026-09-18
 updated: 2026-09-18
@@ -100,3 +100,31 @@ bash .tmp/r5/run.sh <tag> linked .tmp/r5/rows138.txt     # 49 with, 44 without
   target is unchanged, rather than only asserting a row count).
 - #6502's round 11 and round 14 candidates are then re-measured against the
   repaired baseline, since both of their published deltas are void.
+
+## RESOLVED — does not reproduce (2026-09-18, #6492 round 28)
+
+Re-measured on `claude/compiler-performance-bn5g3l` @ 887e87650a. Two things:
+
+1. **The published probe adds no import.** `__throw_type_error` is already in
+   `ctx.funcMap` when `emitClosureCallExportN` runs, so `ensureLateImport`
+   returns the existing index and returns early. The harness provider binary is
+   **byte-identical** with and without the probe (195,777 B, `cmp` clean), as is
+   the consumer WAT. Whatever moved 13 rows on the r8 base, it was not this.
+2. **An EFFECTIVE probe is null.** Re-run with `__object_is` (genuinely absent,
+   and a real host import so the module still instantiates); instrumented, it
+   adds one import at each `emitClosureCallExportN` arity (`155 -> 156`).
+   Results: provider binary byte-identical, 138-row linked set **49 -> 49
+   (+0 / −0 per test)**, 900-row honest control **703 -> 703 (+0 / −0 per
+   test)**.
+
+The acceptance criterion is met with no code change: the shift walker, the
+`funcMap` / `nativeStrHelpers` / `mapHelpers` / trampoline / scheduler /
+generator side channels and the export/element/start walks all remap correctly,
+and the unused import is pruned before emission.
+
+Note for the two withdrawn readings: on THIS base the 138-row baseline is
+already **49**, with all nine `Symbol.species`/`toStringTag` rows passing and all
+four `harness/*` rows failing — the far side of the same 13-row block. So the
+block is bistable across trees. That is worth a separate issue if it recurs, but
+it is not an index-shift bug in this emitter, and rounds 11/14 stay withdrawn on
+the independent grounds that their probe was vacuous.
