@@ -4059,3 +4059,130 @@ already routed in #6508.
     the broken one.** `undefined?.x` was right and `undefined?.[0]` was wrong for
     as long as both have existed. Any reduction that happened to use the dot form
     concluded optional chaining was fine. Check the sibling form.
+
+## Round 18 (2026-09-18, Opus lane) — the third producer, and the direction the measurements chose
+
+**Shipped: the sandbox shares the host `%Promise%`** (two lines in the two
+sandbox builders), plus the two book-keeping entries that makes necessary in
+`scripts/test262-worker.mjs`. **No product-runtime change** — `src/runtime.ts` is
+untouched by this round.
+
+### The producer, named
+
+Round 17 excluded the runtime's import intents; the missing site was
+`__get_builtin` (`src/runtime.ts` ~L15611), which resolves through the
+`builtin()` helper and therefore answers the **host** realm, because the worker
+never calls `markCoherentBuiltinRealm`:
+
+```
+[DBG getb] Promise isWorker=true isSandbox=false coherent=false
+```
+
+So the compiled `Promise` identifier had two lowerings answering two realms —
+`declared_global` (sandbox, where the test's `Promise.resolve = fn` landed) and
+`__get_builtin` (host, which supplied the receiver of `Promise.allKeyed(…)`).
+
+### Five variants measured before choosing one — `built-ins/Promise/` (729 rows), linked, base = round-17 tip (491 pass, keyed 54/89)
+
+| # | variant | linked | keyed | lost |
+| --- | --- | ---: | ---: | ---: |
+| A | `__get_builtin("Promise")` sandbox-first | 501 | 68 | 4 |
+| B | A + `_resolveCtor(directCall)` sandbox-first | 536 | 68 | 10 |
+| C | B + all Promise MINTING + combinator method source sandbox-first | **338** | — | ~200 |
+| E | A + minting only (`Promise_new_pending`/`_resolve`/`_reject`) | **336** | — | ~200 |
+| **F** | **sandbox SHARES the host `Promise`** (shipped) | **541** | **68** | **2** |
+
+C and E are the round's most useful negative result, and they are independent
+of each other: **Promise minting cannot move into the sandbox.** Minting, the
+capability `C` and the value read must sit in ONE realm — §27.2.4.7's
+`nextPromise.constructor === C` fast path and every
+`Object.getPrototypeOf(p) === Promise.prototype` assertion depend on it. #2623
+P-7b said exactly this in 2026-07-12; what this round adds is the number
+(536 → 336, twice) and the direction it forces: if minting cannot come to the
+sandbox, the sandbox must go to the host.
+
+### The premise that expired
+
+`_resolveCtor`'s comment still justifies host-realm C with:
+
+> The CI sharded worker calls `buildImports(...)` with NO `globalSandbox` — the
+> CI lane is single-realm by construction.
+
+**That is no longer true.** CI's host shards run `TEST262_ORACLE_MODE=linked`
+(#3451 slice 6) and the worker hands BOTH the consumer and the linked provider a
+per-test `globalSandbox` (#6475/#6476). "Single realm by construction" became
+"two realms, silently" — and the decision that rested on it was never revisited.
+Sharing the host `Promise` restores the premise instead of arguing with the
+conclusion.
+
+### Numbers (real runner, fresh harness cache per run, bundles rebuilt per arm)
+
+| slice | lane | round-17 tip | round 18 | flips |
+| --- | --- | ---: | ---: | --- |
+| `built-ins/Promise/` (729) | linked | 491 | **541** | +52 / **−2** |
+| `built-ins/Promise/` (729) | honest | 486 | **528** | +47 / −5 |
+| keyed family (89) | linked | 54 | **68** | — |
+| the assigned `invoke-resolve-*` / `resolve-*` / `invoke-then-*` rows (25) | linked | 2 | **16** | — |
+
+**Acceptance, honestly scored: two of five criteria are NOT met.**
+
+- target ≥ 80/89 keyed — **not met**, 68/89.
+- `built-ins/Promise/` 0 lost both lanes — **not met**: linked −2, honest −5.
+- canary `log` mode, zero `Promise.*:added` — **met** (see below).
+- unit test for a sandbox-side `Promise.resolve` override through the compiled
+  call path — met (`tests/issue-6492-r18-promise-realm-sharing.test.ts`, 6 cases).
+- gates + ceilings in-commit — met.
+
+The losses, each with its mechanism rather than a label:
+
+- `Promise/any/invoke-resolve.js` (both lanes) — fails deterministically,
+  re-checked as a single row. Round 5 already recorded this row as vacuous
+  (#2940 runner drain); it now fails LOUDLY (`$DONE is not defined` linked,
+  stack overflow honest) instead of passing vacuously.
+- `Promise/property-order.js` (both lanes) — **passes on a single-row re-run**
+  and fails in the slice. That is residue, not a flake: `restoreBuiltins()`
+  restores a static's VALUE, and a row that deletes one moves it to the END of
+  the own-key order, which is precisely what this row measures. Sharing the host
+  object is what makes a prior row's deletion visible.
+- four honest-lane keyed rows (`{allKeyed,allSettledKeyed}/{invoke-then-not-callable,resolve-not-callable}-reject`)
+  — same residue class, honest lane only.
+
+Two book-keeping entries in `scripts/test262-worker.mjs` follow directly from
+sharing the object, and both were driven by a measurement rather than added
+speculatively:
+
+1. `_STATIC_SNAPSHOTS`' Promise entry gained `allKeyed` / `allSettledKeyed`.
+   Before it, `Promise/property-order.js` **and**
+   `allKeyed/result-property-descriptors.js` failed in the slice and passed
+   alone; after it, the second one stops failing. (The first does not — see
+   above.)
+2. `REALM_CANARY_IGNORE` gained the same two keys. `TEST262_REALM_CANARY=log`
+   over a 168-row Promise slice went from **12 drift lines including one
+   `Promise.allSettledKeyed:added`** to **6, with zero `:added`** — the six are
+   `Promise.{resolve,reject}:changed` from the rows whose whole subject is
+   patching them, which `_STATIC_SNAPSHOTS` restores. Those are deliberately NOT
+   ignored: they are real contamination that the restore path owns.
+
+### Findings for the next lane (round 18)
+
+35. **A "design decision" is only as good as the premise it names — so name it,
+    and re-check it.** #2623 P-7b chose host-realm Promise because "the CI lane
+    is single-realm by construction". Writing the premise down is what made it
+    falsifiable two oracle changes later; the conclusion had been re-quoted for
+    months while its reason quietly expired.
+36. **Two measured collapses are worth more than one measured win.** C and E
+    both landed at ~336/729 from different directions, which is what turned "the
+    realms disagree" into "minting is immovable, so the sandbox must move". A
+    round that only tries the variants it expects to work cannot produce that
+    constraint.
+37. **"Passes alone, fails in the slice" is residue, not flakiness — and the
+    distinction is actionable.** It sent one row to a fixable restore-list gap
+    and left the other (`property-order`) correctly unfixed, because
+    value-restore cannot restore key ORDER. Re-running a single row costs a
+    minute and tells you which of the two you have.
+38. **A fresh worktree's `test262/` can be a symlink farm pointing at a DEAD
+    worktree.** Every link dangles, `findTestFiles` returns nothing, and the
+    runner reports `No test suite found in file …` — which reads like a harness
+    bug, not a missing corpus. Two lanes lost about an hour each to it on
+    2026-09-18. Check `ls -la test262/test` first; repoint the dangling entries
+    at the real checkout (`/home/user/js2/test262/*`) before any measurement.

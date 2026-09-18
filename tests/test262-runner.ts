@@ -127,6 +127,21 @@ function _buildFreshSandbox(consoleProxy?: Console, exposeDone = true): Record<s
     Infinity: { value: Number.POSITIVE_INFINITY, writable: false, enumerable: false, configurable: false },
     NaN: { value: Number.NaN, writable: false, enumerable: false, configurable: false },
   });
+  // (#6492 r18) `Promise` is the ONE builtin the sandbox must NOT own a
+  // separate copy of. The runtime mints every promise in the HOST realm
+  // (`Promise_new_pending` / `Promise_resolve` / `_wrapThenable`), and moving
+  // that minting into the sandbox was measured at 536 -> 336 on
+  // `built-ins/Promise/` — §27.2.4.7's `nextPromise.constructor === C` fast
+  // path and every `Object.getPrototypeOf(p) === Promise.prototype` assertion
+  // need minting, the capability `C` and the value read to sit in ONE realm.
+  // Meanwhile the compiled `Promise` identifier resolves through the sandbox
+  // (`declared_global`), so a test's `Promise.resolve = fn` landed on a
+  // `Promise` nothing else in the pipeline ever looked at. Sharing the host
+  // intrinsic collapses that split at its source, in the fixture, instead of
+  // threading a realm through the product runtime. Cross-test pollution is
+  // already owned by `_STATIC_SNAPSHOTS` (#1220, which snapshots `Promise` +
+  // its statics for exactly these rows) and by the #1957 realm canary.
+  sandbox.Promise = Promise;
   if (consoleProxy) sandbox.console = consoleProxy;
   // Provide globalThis as the sandbox itself so `ctx.globalThis === ctx`.
   sandbox.globalThis = sandbox;
