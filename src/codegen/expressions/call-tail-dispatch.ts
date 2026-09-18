@@ -43,6 +43,7 @@ import {
 import { objectLiteralTakesStandaloneAnyObjectPath, resolveComputedKeyExpression } from "../literals.js";
 import { emitNullCheckThrow, typeErrorThrowInstrs } from "../property-access.js";
 import { tryCompileStandaloneRegExpSymbolCall, usesNativeRegExpProvider } from "../regexp-standalone.js";
+import { tryCompileRegExpProtocolTwoArm } from "../regexp-protocol-slow.js"; // (#5198) RegExpExec dispatch
 import type { InnerResult } from "../shared.js";
 import { brandExternMethodResult, coerceType, compileExpression, VOID_RESULT } from "../shared.js";
 import { compileStatement, hoistFunctionDeclarations } from "../statements.js";
@@ -929,6 +930,13 @@ export function compileTailDispatch(
               if (wasiReplaceRefusal !== undefined) return wasiReplaceRefusal;
             }
             if (usesNativeRegExpProvider(ctx)) {
+              // (#5198 slice 1) §22.2.7.1 RegExpExec — a module whose source
+              // installs its own `exec` gets a two-arm branch whose ELSE arm is
+              // the native lowering below, verbatim. Declines (returns
+              // undefined) for every module that does not escape the protocol,
+              // so the fast path is byte-identical there.
+              const protoResult = tryCompileRegExpProtocolTwoArm(ctx, fctx, expr, elemAccess.expression, methodName);
+              if (protoResult !== undefined) return protoResult;
               // (#2161) Route the well-known-symbol protocol READ forms
               // (`re[Symbol.match/matchAll/search](str)`) to the native engine
               // for static / backend-created RegExp receivers — the

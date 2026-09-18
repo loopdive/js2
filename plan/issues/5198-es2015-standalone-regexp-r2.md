@@ -15,12 +15,29 @@ goal: standalone-mode
 requested_by: claude/fable-es2015
 pr: 5296
 loc-budget-allow:
+  # 2026-09-18 (slice 1, RegExpExec dispatch): +8 lines in the dispatch arm —
+  # the single hook that tries the §22.2.7.1 two-arm before the native fast
+  # path, plus its import and the comment naming why it declines. The mechanism
+  # itself is a NEW module (src/codegen/regexp-protocol-slow.ts), not god-file
+  # growth; the driver only needs the one route.
+  - src/codegen/expressions/call-tail-dispatch.ts
   - src/codegen/regexp-standalone.ts
   - src/codegen/native-regex.ts
   - src/codegen/string-proto-match-search.ts
   - src/codegen/context/types.ts
   - src/codegen/type-coercion.ts
+coercion-sites-allow:
+  # 2026-09-18 (slice 1): ONE __extern_toString call — §22.2.6.8 step 2 /
+  # §22.2.6.12 step 2 `S = ToString(string)`, which the native fast path skips
+  # entirely. It routes through the existing engine helper (named once via a
+  # TO_STRING constant, the array-tolocalestring.ts discipline); no new
+  # ToString/ToNumber matrix is hand-rolled here.
+  - src/codegen/regexp-protocol-slow.ts
 func-budget-allow:
+  # 2026-09-18 (slice 1): +7 lines in compileTailDispatch — the one hook that
+  # tries the §22.2.7.1 two-arm before the native RegExp symbol-call route.
+  # The mechanism lives in src/codegen/regexp-protocol-slow.ts.
+  - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
   - src/codegen/native-regex.ts::ensureRegexSearch
   - src/codegen/native-regex.ts::ensureRegexReplace
   - src/codegen/native-regex.ts::ensureRegexMatchAll

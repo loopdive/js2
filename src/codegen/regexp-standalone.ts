@@ -4057,7 +4057,7 @@ function emitStandaloneRegExpSearchCore(
  * (`/…/flags`, `new RegExp(p, "flags")`, or a `const re = /…/flags` binding).
  * Returns `null` when the flags can't be statically determined.
  */
-function staticRegExpFlags(
+export function staticRegExpFlags(
   ctx: CodegenContext,
   expr: ts.Expression,
   depth = 0,
