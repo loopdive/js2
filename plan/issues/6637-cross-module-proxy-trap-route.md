@@ -380,3 +380,73 @@ See `### S53 findings` in `#5383`'s own issue file and the "Stack state
 2026-09-18 (post-S53)" section of the temporal-standalone handover for the
 cross-file summary (four-family/A–F/corpus-byte battery status, criterion-4
 verdict).
+
+### S53b/S53b2 follow-up — criterion-4 battery run against the real Temporal
+provider (2026-09-18)
+
+S53 above left the criterion-4 battery (10 named sample rows, four-family,
+A–F must-not-move, corpus-byte) unmeasured. S53b/S53b2 (measurement-only,
+`#5383`'s issue file, no `src/` changes) ran it against this fix's HEAD.
+**Answering S53's own follow-up question** ("the fix should also move some
+of #6628's rows — worth checking first"): confirmed it does **not** — none
+of the 10 sampled rows move, and the fix's escape-narrowing shape (Proxy
+binding passed to an untyped function parameter) simply does not occur
+anywhere in the four-family or A–F corpora.
+
+**10 target rows** — all still fail with the same error strings as S51/S53:
+
+| Row | Result |
+| --- | --- |
+| `Duration/from/order-of-operations.js` | fail — `TypeError: Proxy get trap is not callable` |
+| `PlainDate/from/order-of-operations.js` | fail — `TypeError: Proxy get trap is not callable` |
+| `PlainDate/from/observable-get-overflow-argument-primitive.js` | fail — `TypeError: Proxy get trap is not callable` |
+| `PlainDateTime/from/order-of-operations.js` | fail — `TypeError: Proxy get trap is not callable` |
+| `PlainDateTime/from/observable-get-overflow-argument-primitive.js` | fail — `TypeError: Proxy get trap is not callable` |
+| `ZonedDateTime/prototype/add/order-of-operations.js` | fail — `TypeError: Proxy get trap is not callable` |
+| `Duration/compare/options-read-before-algorithmic-validation.js` | fail — `Test262Error: … Expected a RangeError but got a undefined` |
+| `PlainDate/from/options-read-before-algorithmic-validation.js` | fail — `Test262Error: … Expected a RangeError but got a undefined` |
+| `PlainDateTime/from/options-read-before-algorithmic-validation.js` | fail — `Test262Error: … Expected a RangeError but got a undefined` |
+| `ZonedDateTime/prototype/add/options-read-before-algorithmic-validation.js` | fail — `Test262Error: … Expected a RangeError but got a undefined` |
+
+The 6 "order-of-operations" rows hit a REAL-trap Proxy path (a still-open,
+deeper #6628 mechanism this fix does not touch). The 4 "options-read-before-
+algorithmic-validation" rows fail identically to S51's own finding: the
+caught value genuinely is a `TypeError` from #6628's mechanism, correctly
+failing `assert.throws(RangeError, …)`.
+
+**Four-family battery** (real provider, per-file diff vs the post-S50 base):
+
+| Family | Base | New | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- |
+| Duration | 106/120 | 106/120 | 0 | 0 |
+| PlainDate | 113/120 | 113/120 | 0 | 0 |
+| PlainDateTime | 113/120 | 113/120 | 0 | 0 |
+| ZonedDateTime | 103/120 | 103/120 | 0 | 0 |
+| **Total** | **435/480** | **435/480** | **0** | **0** |
+
+**A–F must-not-move battery** (3,204 files, per-file diff vs the post-S50
+base — byte-for-byte identical pass/fail assignment per file, not just an
+equal total):
+
+| Family | Base | New | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- |
+| A | 1125/1250 | 1125/1250 | 0 | 0 |
+| B | 179/205 | 179/205 | 0 | 0 |
+| C | 274/349 | 274/349 | 0 | 0 |
+| D | 224/300 | 224/300 | 0 | 0 |
+| E-unlinked | 235/300 | 235/300 | 0 | 0 |
+| E-linked | 235/300 | 235/300 | 0 | 0 |
+| F-class | 136/250 | 136/250 | 0 | 0 |
+| F-methoddef | 68/100 | 68/100 | 0 | 0 |
+| F-objproto | 136/150 | 136/150 | 0 | 0 |
+
+**Corpus-byte battery**: 42 files × {gc, standalone} = 84 rows, `statusFlips=0
+shaFlips=0` — not even a byte changed in any compiled binary (S53b, complete
+before the restart).
+
+**Equivalence gate**: 22 failing / 1720 passing / 22 known-failures, no new
+regressions — unchanged from S50/S51/S53 (S53b2, re-run against the final
+HEAD after the A–F battery completed).
+
+**Criterion-4 verdict**: all four sub-batteries measured, zero movement in
+every one. S53's fix is criterion-4-clean.

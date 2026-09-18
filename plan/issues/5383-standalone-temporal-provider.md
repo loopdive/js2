@@ -11008,7 +11008,7 @@ some of #6628's originally-named "Proxy get trap is not callable" rows,
 since those go through the identical `options`-escapes-to-an-untyped-
 provider-parameter shape — worth checking first).
 
-### S53b findings (2026-09-18, IN PROGRESS) — measurement-only run of the criterion-4 battery S53 left unmeasured; 10 target rows re-checked, none moved
+### S53b findings (2026-09-18, COMPLETE) — measurement-only run of the criterion-4 battery S53 left unmeasured; 10 target rows re-checked, none moved
 
 S53b (branch `issue-5383-standalone-temporal-s53b`, off S53's head
 `4d0136d9a1`, worktree
@@ -11087,13 +11087,35 @@ Four-family battery is COMPLETE and unchanged from S50's baseline: 435/480,
 byte-for-byte identical pass/fail assignment per file. S53's fix moves
 nothing in this battery either.
 
-**A–F must-not-move and corpus-byte batteries: in progress, not yet complete
-at time of this partial commit** — 3204 files split into ≤250-file chunks,
-running via a resumable batch script (`.tmp/s53brun/run-batch.mts`) that
-skips chunks whose output already exists, so a restart after this box's
-periodic reset picks up where it left off. A-partial (first 280 A files):
-0 pass→fail, 0 fail→pass so far. This section will be updated with the
-full A–F table once it completes.
+**A–F must-not-move battery: COMPLETE (finished by S53b2 after a container
+restart killed S53b mid-run).** S53b2 (same branch lineage, HEAD `8add8d7efa`,
+worktree `/home/user/js2/.claude/worktrees/agent-a93264a3507301e71`) resumed
+the resumable batch script (`.tmp/s53brun/run-batch.mts`, which skips any
+chunk whose output file already exists) and ran the four remaining A parts
+(730-1180, 1180-1250), B, and all of C/D/E-unlinked/E-linked/F-class/
+F-methoddef/F-objproto — 3204 files total, matching S53b's partial count.
+Every family diffs at **0 pass→fail, 0 fail→pass** against
+`.tmp/s53b/s50run/`'s post-S50 base TSVs (`diff-tsv.mjs`, per-file
+comparison):
+
+| Family | Base | New | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- |
+| A | 1125/1250 | 1125/1250 | 0 | 0 |
+| B | 179/205 | 179/205 | 0 | 0 |
+| C | 274/349 | 274/349 | 0 | 0 |
+| D | 224/300 | 224/300 | 0 | 0 |
+| E-unlinked | 235/300 | 235/300 | 0 | 0 |
+| E-linked | 235/300 | 235/300 | 0 | 0 |
+| F-class | 136/250 | 136/250 | 0 | 0 |
+| F-methoddef | 68/100 | 68/100 | 0 | 0 |
+| F-objproto | 136/150 | 136/150 | 0 | 0 |
+
+The pass counts are byte-for-byte identical to the S50 base, not just equal
+in total — every file's per-test outcome is unchanged. S53's fix moves
+nothing in the must-not-move battery either, consistent with the four-family
+and 10-target-row findings above and the corpus-byte battery below: the
+fix's trigger shape (a Proxy binding escaping into an untyped call
+parameter) does not occur anywhere in this battery's 3,204 files.
 
 **Corpus-byte battery: COMPLETE.** 42 files × {gc, standalone} = 84 rows,
 compiled fresh via `.tmp/s53brun/corpus.mts` (same harness as S50's,
@@ -11104,6 +11126,16 @@ changed in any of the 84 compiled binaries. Expected: none of the 42
 Proxy binding escaping into an untyped call parameter (S53's fix's exact
 trigger shape), so zero movers here is consistent, not surprising.
 
-**Equivalence gate: not yet run** — will run after the A–F battery
-completes to avoid CPU contention (this box has 4 cores; A–F is already
-running at ~4 cores' worth of load).
+**Equivalence gate: COMPLETE — 22 failing, 1720 passing, 22 known-failures
+in baseline, no new regressions.** Matches the number S51/S53 already
+recorded; unchanged by this measurement-only lane.
+
+**Criterion-4 verdict for S53**: all four sub-batteries (10 target rows,
+four-family, A–F must-not-move, corpus-byte) are now measured and every one
+reports zero movement. S53's `expressionIsEscapingArgument` fix is confirmed
+correct-and-inert against the real Temporal provider: it does not regress
+anything in this battery, and it also does not move any of the rows this
+dispatch specifically asked about (the 6 "order-of-operations" Proxy-trap
+rows and the 4 "options-read-before-algorithmic-validation" rows stay on
+their pre-existing #6628 mechanism, untouched by S53's narrower fix). S53 is
+criterion-4-clean and ready to merge on this axis.

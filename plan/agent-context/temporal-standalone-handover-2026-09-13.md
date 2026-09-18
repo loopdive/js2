@@ -854,3 +854,47 @@ binding passed to any untyped function) is exactly the shape #6628's
 originally-named "Proxy get trap is not callable" bucket hits too, so it
 may move rows there as well as in the 4-row `options-read-before-
 algorithmic-validation.js` bucket this dispatch named.
+
+## Stack state 2026-09-18 (post-S53b2) — the S53 criterion-4 battery is now
+COMPLETE, zero movement across all four sub-batteries; S53 is criterion-4-clean
+
+S53b (branch `issue-5383-standalone-temporal-s53b`, worktree
+`/home/user/js2/.claude/worktrees/agent-a99a85629df15dea9`) ran the
+measurement-only follow-up S53 asked for but was killed mid-run by a
+container restart, having completed the 10-target-row check (none moved),
+the four-family battery (435/480, 0 flips), and the corpus-byte battery
+(0 status/sha flips across 84 rows), with the A–F must-not-move battery
+(3,204 files) roughly a quarter done. S53b2 (same lineage, HEAD
+`8add8d7efa`, worktree `/home/user/js2/.claude/worktrees/agent-a93264a3507301e71`)
+resumed from S53b's saved `.tmp/s53brun/` artifacts and finished the
+remaining A/B/C/D/E-unlinked/E-linked/F-class/F-methoddef/F-objproto parts
+using the same resumable batch runner.
+
+**Result: every sub-battery reports zero movement.**
+
+- 10 target rows: unchanged (6 still fail on #6628's real-trap Proxy
+  mechanism, 4 still fail on #6628's `TypeError`-not-`RangeError` mechanism —
+  S53's fix does not touch either).
+- Four-family: 435/480, 0 pass→fail, 0 fail→pass.
+- A–F must-not-move (3,204 files): 0 pass→fail, 0 fail→pass in every one of
+  A/B/C/D/E-unlinked/E-linked/F-class/F-methoddef/F-objproto — byte-for-byte
+  identical per-file outcomes vs the post-S50 base, not just equal totals.
+- Corpus-byte (84 rows, 42 files × {gc, standalone}): 0 status flips, 0 sha
+  flips.
+- Equivalence gate: 22 failing / 1720 passing / 22 known-failures, no new
+  regressions.
+
+Full per-family tables are in `#5383`'s own issue file ("### S53b findings")
+and in `#6637`'s issue file (new "S53b/S53b2 follow-up" section). **Verdict:
+S53 is criterion-4-clean and ready to merge on this axis** — the fix's
+narrow trigger shape (a Proxy binding escaping into an untyped call
+parameter) simply does not occur anywhere in this battery's corpus, so zero
+movement is the correct, expected outcome, not a sign the fix did nothing:
+the 13-test unit-level witness suite (S53/#6637) already proves the
+mechanism fires correctly when the shape IS present.
+
+One gap this lane did not close: `.tmp/pr-body.md` did not exist in either
+S53b's or S53b2's worktree (both `.tmp/` scratch dirs, gitignored, never
+carried it forward from whatever S13-era session originally wrote it), so
+there was nothing to refresh — a fresh PR body should be written from
+scratch by whoever next opens or updates #5383's/#6637's PR.
