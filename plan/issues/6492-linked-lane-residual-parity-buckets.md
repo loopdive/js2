@@ -1961,3 +1961,51 @@ Grouped by error class, largest first:
     cannot distinguish from a real value — the r6 UNDEF-sentinel bug had the
     same shape. When a linked row fails with "cannot read X of null", suspect a
     ladder miss before suspecting the value.
+
+## Round 11 (2026-09-18) — #6502's loudness half measured and deliberately not shipped
+
+**No code landed.** Linked baseline re-verified on the merged tree: **44 / 138**
+(honest 135 / 138), unchanged.
+
+The round-10 hand-off said finding 27 — a silent `null` from the `__call_fn_N`
+ladder is this lane's characteristic failure — was the thread to pull. It was
+pulled, in four measured variants, and the answer is that the **two halves of
+#6502 cannot be shipped in the given order**: making the miss loud is +9 / −4 on
+its own, because at least four call sites read the null as a protocol answer
+("not my closure", "no trap here"). Full table, the ruled-out alternatives and
+the instrumentation are recorded in **#6502**; the short version:
+
+- terminal-throws: 44 → 49, **+9 −4**; and the same +9/−4 with a `ref.test`
+  gate, with a runtime peer re-dispatch, and restricted to `__call_fn_0`.
+- **+9** is the whole `Symbol.species` / `Symbol.toStringTag` descriptor family
+  in this set — so the silent null is corrupting descriptor reads well beyond
+  the three `await` rows #6502 was filed for.
+- **−4** are `harness/asyncHelpers-asyncTest-*` ×3 and
+  `harness/proxytrapshelper-default` — three of them this issue's own round-9
+  gains.
+- A peer re-dispatch recovers none of the 4, and the reason is decisive:
+  instrumented, **every `__call_fn_0..4` in both modules returns null** for the
+  failing closure while both modules' `__is_closure` answer 1 and both
+  `__closure_arity` answer 1. No module in the project has an arm for it.
+
+So #6502(a) — widen the arm set to every closure that can ESCAPE — is the
+blocking half, and it is worth more than the 3 rows it was filed for. #6502(b)
+is a free follow-on once (a) lands.
+
+### Per-row status
+
+Unchanged from the round-10 table (94 non-passing, same classes). Items 2
+(`Promise.all{,Settled}Keyed`) and 3 (the `*-realm` cluster) of the round-11
+brief were not reached.
+
+### Findings for the next lane (round 11)
+
+28. **A silent sentinel is often a PROTOCOL, not an oversight.** Before making
+    one loud, find its readers: here the same `ref.null.extern` means "no arm
+    for this closure" to one caller and "this value is not mine" to another, and
+    no static property (`ref.test`, arity, module identity) separates them —
+    only fixing the underlying gap does.
+29. **Measure the fix halves in the order that can actually ship.** A two-part
+    plan whose second half is independently measurable is worth measuring FIRST
+    when it is the cheap one — the +9/−4 here took four runs and settled the
+    sequencing question for the expensive half before a line of (a) was written.

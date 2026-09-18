@@ -91,3 +91,49 @@ when nobody emitted one.
 - A ladder MISS is distinguishable from a genuine `null` return.
 - A test asserts a closure passed out of a module and called back at its
   declared arity runs its body (not merely that it returns non-null).
+
+## Measured attempt (2026-09-18, round 11) — loudness alone is +9 / −4, do not ship it first
+
+The "make a MISS loud" half of the fix direction above was implemented and
+measured end to end on the linked 138-row #6492 set (baseline 44 / 138). Three
+variants, all reverted:
+
+| variant | result |
+| --- | --- |
+| terminal throws `__throw_type_error` instead of `ref.null.extern` (host lane only) | 44 → **49**: **+9, −4** |
+| same, gated on `ref.test` of this module's base wrapper (only OUR closure shape is loud) | identical, **+9 −4** |
+| same, plus a runtime peer-module re-dispatch on the miss marker (`peerDispatch`) | identical, **+9 −4** |
+| loud for `__call_fn_0` only | identical, **+9 −4** |
+
+**Gained (9)** — every `Symbol.species` / `Symbol.toStringTag` descriptor row in
+the set: `{RegExp,Map,Array,Set,ArrayBuffer,Promise}/Symbol.species/*`,
+`TypedArray/prototype/Symbol.toStringTag/{,BigInt/}prop-desc.js`,
+`Promise/Symbol.species/prop-desc.js`. A silent miss was being read as a
+legitimate descriptor value there.
+
+**Lost (4)** — `harness/asyncHelpers-asyncTest-{func-throws-sync,
+rejects-non-callable,return-not-thenable}.js` and
+`harness/proxytrapshelper-default.js`. Their call sites **depend** on the null:
+the runtime dispatches speculatively and reads `null` as "this value is not my
+closure / there is no trap here". Made loud, `proxytrapshelper-default` reports
+`trap getPrototypeOf is not a function` and two asyncHelpers rows collapse to
+`Actual [] and expected [true,true,true,true,true,true]`.
+
+Three things this rules out, each with a run behind it:
+
+1. **`ref.test` cannot separate the two groups.** Both modules' base wrapper
+   types are structurally identical, so each module's `__is_closure` claims the
+   other's closures; the gate measured identically to no gate.
+2. **A peer re-dispatch does not recover the 4.** Instrumented directly: for the
+   failing closure **every** `__call_fn_0..4` in **both** modules answers null,
+   while both modules' `__is_closure` answer 1 and both `__closure_arity` answer
+   1. Nothing in the project has an arm for it — which is the arm-set gap this
+   issue is about, not an ownership question.
+3. **It is not an arity band.** The +9 and the −4 are both arity 0.
+
+**Conclusion: (b) must land after (a), not before.** Closing the arm-set gap
+makes the loudness free; shipping loudness first trades four rows that are green
+today (three of them #6492 round 9's own gains) for nine, and leaves the real
+defect in place. The +9 is, separately, evidence that the silent null is
+corrupting descriptor reads elsewhere in the corpus — so (a) is worth more than
+the three `await` rows it was filed for.
