@@ -35,6 +35,7 @@ import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "./
 // runner that was missing the tryNativeExnRender step.
 import { safeStringifyThrown, tryNativeExnRender } from "./lib/wasm-exn-render.mjs";
 import { SANDBOX_GLOBAL_NAMES, applySandboxGlobalFunctionAttributes } from "./test262-sandbox-globals.mjs";
+import { restoreOwnKeyOrder, snapshotOwnKeyOrder } from "./test262-own-key-order.mjs";
 // (#4162) ONE import-object finaliser, shared with tests/test262-runner.ts and
 // tests/test262-shared.ts. It owns the #2928 E6 standalone runtime-eval
 // provider attachment (cached-binary loading + a fresh per-test namespace for
@@ -116,6 +117,21 @@ function buildOriginalHarnessSandbox(consoleProxy) {
     Infinity: { value: Number.POSITIVE_INFINITY, writable: false, enumerable: false, configurable: false },
     NaN: { value: Number.NaN, writable: false, enumerable: false, configurable: false },
   });
+  // (#6492 r18) `Promise` is the ONE builtin the sandbox must NOT own a
+  // separate copy of. The runtime mints every promise in the HOST realm
+  // (`Promise_new_pending` / `Promise_resolve` / `_wrapThenable`), and moving
+  // that minting into the sandbox was measured at 536 -> 336 on
+  // `built-ins/Promise/` — §27.2.4.7's `nextPromise.constructor === C` fast
+  // path and every `Object.getPrototypeOf(p) === Promise.prototype` assertion
+  // need minting, the capability `C` and the value read to sit in ONE realm.
+  // Meanwhile the compiled `Promise` identifier resolves through the sandbox
+  // (`declared_global`), so a test's `Promise.resolve = fn` landed on a
+  // `Promise` nothing else in the pipeline ever looked at. Sharing the host
+  // intrinsic collapses that split at its source, in the fixture, instead of
+  // threading a realm through the product runtime. Cross-test pollution is
+  // already owned by `_STATIC_SNAPSHOTS` (#1220, which snapshots `Promise` +
+  // its statics for exactly these rows) and by the #1957 realm canary.
+  sandbox.Promise = Promise;
   sandbox.console = consoleProxy;
   sandbox.globalThis = sandbox;
   // (#3428) asyncHelpers.js guards `asyncTest` with
@@ -528,7 +544,14 @@ const _STATIC_SNAPSHOTS = [
   // close over the global `Promise` constructor, so the poisoned static methods are
   // also reached directly by compiled `Promise.resolve(x)` / `Promise.all(arr)`.
   // Symmetric with the existing Array/Object/String/etc. entries.
-  ["Promise", Promise, ["resolve", "reject", "all", "allSettled", "any", "race"]],
+  // (#6492 r18) `allKeyed` / `allSettledKeyed` joined this list when the
+  // sandbox started SHARING the host `Promise`: a row that patches or deletes
+  // one of them now mutates the object every later row reads, and the sub-key
+  // list is what `restoreBuiltins()` re-applies. Measured before adding them:
+  // `Promise/property-order.js` and `allKeyed/result-property-descriptors.js`
+  // failed in a full-slice run and PASSED in a single-row run — the signature
+  // of residue from a preceding row, not of a flake.
+  ["Promise", Promise, ["resolve", "reject", "all", "allSettled", "any", "race", "allKeyed", "allSettledKeyed"]],
 ];
 
 // --- Category 4: accessor properties on RegExp.prototype (getters).
@@ -586,7 +609,19 @@ const _staticOrig = _STATIC_SNAPSHOTS.map(([name, obj, keys]) => ({
   name,
   obj,
   values: keys.map((k) => [k, _snapshotValue(obj, k), _snapshotDescriptor(obj, k)]),
+  // (#6492 r19) The pristine own-key ORDER, plus every own descriptor, so
+  // `restoreOwnKeyOrder` can rebuild it. Value-restore alone cannot: a row
+  // that `delete`s a static (test262's `verifyProperty` deletes
+  // `length`/`name` to probe configurable and does NOT put them back) and a
+  // later re-definition append the key at the END of the insertion order.
+  // `built-ins/Promise/property-order.js` measures exactly that — it asserts
+  // `name` comes directly after `length` in `Object.getOwnPropertyNames`.
+  // Harmless before r18, when the sandbox owned a private `Promise`; since the
+  // sandbox SHARES the host object, one earlier row now reorders it for every
+  // later row in the fork.
+  ...snapshotOwnKeyOrder(obj),
 }));
+
 const _accessorOrig = _ACCESSOR_SNAPSHOTS.map(([name, obj, keys]) => ({
   name,
   obj,
@@ -1013,6 +1048,14 @@ function restoreBuiltins() {
     for (const [key, orig, origDesc] of values) {
       _restoreMethodProp(obj, key, orig, origDesc);
     }
+  }
+
+  // (#6492 r19) …then the own-key ORDER, which the value restore above cannot
+  // repair. Runs for every snapshotted intrinsic, not just `Promise`: each one
+  // is now shared with the sandbox and each has `length`/`name` rows in the
+  // corpus that delete them.
+  for (const { obj, order, descriptors } of _staticOrig) {
+    restoreOwnKeyOrder(obj, order, descriptors);
   }
 
   // Restore accessor properties (getters) via Object.defineProperty when
@@ -2677,6 +2720,19 @@ const REALM_CANARY_IGNORE = [
   // contamination — a fresh worker would just re-install them and recycle
   // forever.
   "globalThis.Symbol(",
+  // (#6492 r18) The two keyed combinators are a RUNTIME-OWNED surface: no
+  // engine ships them, `installAmbientCompatibility` installs them on every
+  // `buildImports`, and since r18 the sandbox shares the host `Promise`, so a
+  // row that deletes or patches one of them makes the re-install visible as
+  // drift. Evidence from a `TEST262_REALM_CANARY=log` run over a 168-row
+  // Promise slice (the discipline this list's header asks for): the only
+  // Promise lines are `allKeyed`/`allSettledKeyed` `:deleted` from the rows
+  // that delete them, followed by `:added` from the next instantiate's
+  // re-install — the same "lazy runtime install" class as the iterator
+  // helpers, not contamination. The VALUES are restored between rows by the
+  // `_STATIC_SNAPSHOTS` entry below, which now lists both keys.
+  "Promise.allKeyed",
+  "Promise.allSettledKeyed",
 ];
 
 function realmCanaryIgnored(label) {

@@ -53,7 +53,7 @@
   "codegen/expressions/runtime-eval-provider.ts": 2,
   "codegen/expressions/unary-updates.ts": 2,
   "codegen/expressions.ts": 1,
-  "codegen/extern-arg-marshal.ts": 1,
+  "codegen/extern-arg-marshal.ts": 2,
   "codegen/fixups.ts": 1,
   "codegen/fnctor-ctor-arguments.ts": 1,
   "codegen/function-body.ts": 1,

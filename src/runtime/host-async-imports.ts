@@ -106,13 +106,49 @@ export function createHostNumberUnboxImport(
   };
 }
 
+/**
+ * `PromiseResolve(%Promise%, x)` — the INTRINSIC operation, captured once at
+ * module load (before any user or test262 code can run), deliberately NOT a
+ * late `Promise.resolve` property read.
+ *
+ * ## Why this is not `Promise.resolve(x)` (#6492 r19)
+ *
+ * The `Promise_resolve` import is what the compiler emits for its own async
+ * plumbing — `await` assimilation (§27.7.5.3 Await performs
+ * `PromiseResolve(%Promise%, value)`, which reads NOTHING off the `Promise`
+ * object), the async-closure wrapper, the CPS driver — and for a folded
+ * `Promise.resolve`-alias call site. None of those are a `Get(Promise,
+ * "resolve")`, so re-reading the property here is both unspec'd and, since
+ * r18 made the harness sandbox share the host `%Promise%`, actively
+ * RECURSIVE:
+ *
+ *   let bound = Promise.resolve.bind(Promise);        // real native bound fn
+ *   Promise.resolve = function (...a) { return bound(...a); };
+ *   Promise.any([1]);                                 // built-ins/Promise/any/invoke-resolve.js
+ *
+ * The compiled body of that override folds `bound(...)` back onto this import
+ * (the const-alias fold in `codegen/object-builtin-effects.ts`); the import
+ * then re-read the patched property and called the override again. Measured
+ * 2026-09-18 on the honest lane: `RangeError: Maximum call stack size
+ * exceeded`, and on the linked lane the unwind surfaced as `$DONE is not
+ * defined`. A depth-6 stack dump showed the exact cycle
+ * `Promise_resolve → override closure → __call_fn_method_1 → Promise_resolve`.
+ *
+ * A user-visible `Promise.resolve(x)` call site is unaffected: it reads the
+ * property through the ordinary member-call path, so an override is still
+ * observed there (`all/invoke-resolve.js` and the 24 sibling rows stay green —
+ * re-measured in the same run).
+ */
+const _intrinsicPromiseResolve: (value: any) => any =
+  typeof Promise !== "undefined" ? Promise.resolve.bind(Promise) : (v: any) => v;
+
 /** Host-realm Promise allocation and the existing live `then`/capability dispatch. */
 export function createHostPromiseBuiltinImport(
   name: HostAsyncPromiseBuiltinName,
   _wrapThenable: HostAsyncValueOperations["wrapThenable"],
   _wrapPromiseReaction: HostAsyncValueOperations["wrapPromiseReaction"],
 ): Function {
-  if (name === "Promise_resolve") return (val: any) => Promise.resolve(_wrapThenable(val));
+  if (name === "Promise_resolve") return (val: any) => _intrinsicPromiseResolve(_wrapThenable(val));
   if (name === "Promise_new_pending")
     return () => {
       let r: (v: any) => void = () => {};
