@@ -10358,9 +10358,20 @@ one of these sampled groups — the interface+class+destructured-parameter
 shape is narrow enough that none of A–F, the four Temporal families, or the
 corpus below happen to exercise it).
 
-**Corpus byte-flip A/B and `test:equivalence:gate`: pending, running next on
-this branch — see the following commit for their own numbers before treating
-this section as final.**
+**Corpus byte-flip A/B** (42 files × {gc, standalone} = 84 entries,
+`website/playground/examples/**/*.ts` + `tests/fixtures/**/*.ts`, compiled
+and sha256-hashed on both targets, base from S46b's committed
+`.tmp/s46b/corpus-cur.jsonl`): **0 status flips, 0 sha flips, on EITHER
+target** — the corpus is byte-identical, not just status-identical, across
+this fix. 0 gc movers (none expected to move at all, since 0 flips occurred).
+
+**`npm run -s test:equivalence:gate`**: `22 failing, 1720 passing, 22
+known-failures in baseline` — `✓ No new equivalence regressions.` Matches
+S46b's figure exactly. (`tests/equivalence.test.ts` named in the dispatch
+brief does not exist as a single file — the suite lives as ~1700 individual
+files under `tests/equivalence/*.test.ts`; the gate script above is the
+authoritative aggregate check and is what S46b's own battery used for this
+same figure, so no separate chunked run was needed.)
 
 **Verdict on criterion 4 (0 legitimate pass→fail): SATISFIED for #6634's own
 diff.** The one crash this session found (`illegal cast`,

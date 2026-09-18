@@ -475,3 +475,79 @@ legitimate pass→fail). The two named real Temporal rows are STILL RED — the
 `$__extern_get`/`$__extern_set` third site named by S46 remains the next
 lead. Full tables: #6631 and #6632's issue files' "## S46b" sections, and
 #5383's "### S46b findings".
+
+## Stack state 2026-09-18 (post-S47) — the `$__extern_get`/`$__extern_set`
+hypothesis REFUTED; two new interface-dispatch defects found, neither fixed
+
+S47 (branch `issue-5383-standalone-temporal-s47`, worktree off S46b's tip
+`3b82884459`, findings-only — no `src/` change) refuted S46's leading
+hypothesis for the non-polymorphic case, then hit two orthogonal defects
+trying to reduce the polymorphic (real Calendar dispatch) shape: (1) a bare
+interface-typed method call through a function-returned interface value
+TRAPS unconditionally, even with a body as simple as `return 42`; (2) a
+`Record<string, Interface>` holding both an object-literal AND a
+class-instance implementer of the same interface (the polyfill's exact
+`impl['iso8601']`/`NonIsoCalendar` registration shape) dispatches BOTH keys
+to the class instance, ignoring the literal — a genuine devirtualization
+bug. Full writeup: `#6633`'s "S47 findings" section.
+
+## Stack state 2026-09-18 (post-S48) — S47's finding #2 root-caused and
+fixed as `#6634`; NOT yet proven to close #5383's target gap
+
+S48 (branch off S47's tip `afe573638b`) traced S47's finding #2 one level
+upstream of the call-dispatch ladder it suspected: `collectInterface`
+synthesizes a method-only interface's own struct as an object-literal shape,
+so a class instance can never physically match it and silently resolves to
+`ref.null`. Fixed in three call sites via a new memoized predicate
+`interfaceHasClassImplementer` (`src/codegen/interface-class-implementer.ts`).
+Both S47 repro shapes fixed and witnessed (6 cases, 4/6 fail on base, 6/6
+pass on fix). **Did not run the criterion-4 battery or re-verify the two
+real target rows** — time-boxed after the root-cause investigation. Full
+writeup: `#6634`'s issue file (the fix itself).
+
+## Stack state 2026-09-18 (post-S48b) — real rows STILL RED; #6634 does not
+touch the target gap; one reduction step finds a NEW `illegal cast` trap
+`#6634` introduces; full criterion-4 battery all clean
+
+S48b (branch `issue-5383-standalone-temporal-s48b`, worktree off S48's tip
+`190d5336d8`) rebuilt the Temporal provider from scratch against `#6634`'s
+fix (`cacheHit=false`, confirmed genuine rebuild — **note the provider's own
+cache key does NOT include the compiler bundle hash, only the polyfill
+source + compile options, so re-using a cache-dir label across a `src/`
+change silently serves a stale provider; this is a real gap in
+`scripts/prewarm-temporal-provider.mjs` worth its own issue**) and re-ran
+both named rows: **still red, byte-identical `Expected SameValue(«null»,
+«undefined»)` error, unchanged since S45.** Root cause of the non-closure:
+disassembly of the real polyfill bundle shows the default `iso8601` calendar
+is a pure object literal (`Xo.iso8601 = {isoToDate({year,month,day}, r){...}}`)
+that never routes through the class-implementer branch `#6634` changes — the
+fix is provably a no-op for this specific call.
+
+One reduction step (file-copy A/B on the three `#6634`-touched src files)
+names a NEW defect the fix introduces: a destructured-parameter method
+(`compute({year,month,day})`, exactly the real `isoToDate`'s own parameter
+shape) on an object-literal interface implementer now hard-traps
+(`illegal cast`) whenever ANY class implements the same interface anywhere
+in the compiled program — even if that class is never called. BASE
+silently misdispatched to the class instead of trapping (wrong answer, not a
+crash). Neither ingredient alone reproduces it. Filed as latent debt in
+`#6634`'s issue file, not yet its own issue number.
+
+Full criterion-4 battery, all clean (0 pass→fail everywhere): four-family
+435/480 (unchanged), must-not-move A–F all exact matches to base (A 1125/1250,
+B 179/205, C 274/349, D 224/300, E-unlinked 235/300, E-linked 235/300,
+F-class 136/250, F-methoddef 68/100, F-objproto 136/150 — F's base produced
+via file-copy revert since no prior baseline existed), corpus byte A/B 0
+status/sha flips on 84 entries, equivalence gate 22/1720/22 unchanged.
+
+**Verdict: `#6634` is criterion-4-clean and a real, independently-valuable
+fix (documented interface/class devirtualization bug), but it does NOT close
+`#5383`'s target gap.** The standing next lead is unchanged from S46/S46b:
+the `SameValue(null, undefined)` defect lives entirely inside the
+`iso8601`-object-literal-only branch of the real calendar dispatch, with no
+class implementer reachable from that call at all — the generic dynamic
+member-get read (`$__extern_get`, a computed key `[t]` on an object
+literal's OWN return value) remains the standing hypothesis nobody has yet
+reduced to a minimal repro that reproduces the exact `null` vs `undefined`
+mismatch. Full writeup: `#5383`'s "S48b findings" section,
+`#6634`'s "Criterion-4 battery" section.

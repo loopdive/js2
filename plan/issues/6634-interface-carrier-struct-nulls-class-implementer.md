@@ -201,20 +201,65 @@ disassembly (`wasm-dis -all`) before/after:
   of whether a literal implementer coexists. Only the "literal-only interface"
   and "direct `new C().m()`" cases were genuinely unaffected controls.
 
-### Scope not completed in this slice (time-boxed to the assigned window)
+### Criterion-4 battery (completed 2026-09-18 by the S48b lane — see `#5383`'s
+"S48b findings" section for the full writeup)
 
-The full S48 dispatch brief's criterion-4 battery (four-family table vs 435,
-must-not-move A–F, byte-flip corpus, `test:equivalence:gate`,
-`tests/equivalence.test.ts`) and the real-provider Temporal row re-proof
-(`argument-object-valid.js`/`argument-string.js`) were **not** run to
-completion in this session — the root-cause investigation (tracing the defect
-from the call-dispatch layer, S47's leading hypothesis, down to the actual
-type-carrier layer) consumed the bulk of the assigned tool-call budget. The
-synthetic witness test below and the local `tests/issue-66*`/`issue-6484-*`
-suite (35 files) were run instead as the fastest available regression check
-given the remaining budget. A follow-up slice should run the full battery
-before this is considered `#5383`-ready for the Temporal provider specifically
-— see the handover note in `#5383`.
+**Real Temporal rows**: re-verified with a freshly rebuilt Temporal provider
+(`JS2WASM_TEMPORAL_CACHE=s48b`, `cacheHit=false`, forced fresh build against
+this fix). Both target rows (`PlainDate/from/argument-object-valid.js`,
+`…/argument-string.js`) remain red, byte-identical error
+(`Expected SameValue(«null», «undefined») to be true`) — **this fix does not
+close #5383's target gap**. Root cause: the default `iso8601` calendar path
+never reaches the class-implementer branch this fix changes (confirmed by
+disassembling the real polyfill bundle — `Xo.iso8601` is a pure object
+literal, `Xo[nonIsoId] = new NonIsoCalendar(...)` is never touched by a call
+using the ISO calendar).
+
+**One reduction step names a NEW defect this fix introduces**: a
+destructured-parameter method on an object-literal interface implementer now
+hard-traps (`illegal cast`) when ANY class also implements the interface
+anywhere in the program (even if never called) — where BASE silently
+misdispatched to the class instead (`.tmp/s48b/repro17.ts`, file-copy A/B
+confirmed): base gives a wrong answer (`197600` instead of `2005`), fix traps.
+Narrowing (`.tmp/s48b/repro16.ts`, no class implementer at all) shows the trap
+needs BOTH the class-implementer-anywhere trigger AND the destructured
+parameter — neither alone reproduces it. The real `Xo.iso8601.isoToDate` uses
+exactly this destructured-parameter shape, so this is a plausible latent risk
+worth its own follow-up issue, though it does not reproduce inside any batch
+measured below (needs the specific shape a purpose-built repro created).
+
+**Four-family** (`PlainDate`/`Duration`/`PlainDateTime`/`ZonedDateTime`, 120
+files each, same file lists as S46b's baseline): 435/480 base == 435/480 fix,
+0 pass→fail, 0 fail→pass in every family.
+
+**Must-not-move A–F** (A–E: same file lists as S46b's committed baseline
+TSVs; F has no prior baseline — base produced via file-copy-reverting the
+three touched `src/codegen` files to `afe573638b` and re-running, confirmed
+clean restore afterward):
+
+| Group | Files | Base pass | Fix pass | pass→fail |
+| --- | --- | --- | --- | --- |
+| A | 1250 | 1125 | 1125 | 0 |
+| B | 205 | 179 | 179 | 0 |
+| C | 349 | 274 | 274 | 0 |
+| D | 300 | 224 | 224 | 0 |
+| E-unlinked | 300 | 235 | 235 | 0 |
+| E-linked | 300 | 235 | 235 | 0 |
+| F-class | 250 | 136 | 136 | 0 |
+| F-methoddef | 100 | 68 | 68 | 0 |
+| F-objproto | 150 | 136 | 136 | 0 |
+
+**Corpus byte-flip A/B**: 84 entries (42 files × {gc, standalone}), 0 status
+flips, 0 sha flips on either target — byte-identical to S46b's baseline.
+
+**`npm run -s test:equivalence:gate`**: `22 failing, 1720 passing, 22
+known-failures` — no new regressions, matches S46b's figure exactly.
+
+**Verdict: criterion 4 (0 legitimate pass→fail) is SATISFIED for this fix's
+own diff.** Nothing in the measured battery regresses. The `illegal cast`
+defect found above is real but is not a measured regression against any
+group run here or in S46b's prior battery — it is documented latent debt for
+the next lane/PO to triage.
 
 ## Witness test
 
