@@ -2304,3 +2304,102 @@ invalid wasm; those bindings keep the old global-only store).
     `_decoderExportsFor` is a candidate for the same class of silent wrong
     answer — this was the last one in the proxy path, not necessarily the last
     one in the runtime.
+
+## Round 5 — `Promise.all{,Settled}Keyed` implemented; the `*-realm` cluster handed back
+
+Two long-tail clusters were assigned. One turned out not to be a parity problem
+at all and is fixed at the source; the other is the global-object/realm lane's
+and is handed back with the measurements that localise it.
+
+### Cluster A — `Promise.all{,Settled}Keyed`: the honest passes were ACCIDENTAL
+
+**Do not "fix" this cluster by making the linked lane agree.** `allKeyed` is
+routed to the HOST `Promise` object (`HOST_PROMISE_SOURCE_METHOD_NAMES` in
+`src/codegen/declarations/import-collector.ts`), and the container's Node does
+not have it — so `Promise.allKeyed({…})` throws
+`TypeError: allKeyed is not a function` **synchronously in both lanes**. The
+honest lane "passed" only because its whole-assembly lowering wraps the test's
+callback in the try→`Promise_resolve` / catch→`Promise_reject` closure round 14
+identified, which converts that *unrelated* TypeError into exactly the rejection
+`assert.throwsAsync(TypeError, …)` is looking for. Round 14's addendum read the
+missing wrapper as the bug; it is the thing that produced the false positive.
+
+Measured over the whole 89-row family on the round-5 base: **linked 2/89,
+honest 6/89**. The four "honest-pass/linked-fail" rows are four of those six.
+
+So js2 implements the proposal (same posture as round 4c's `chunks`/`windows`:
+no engine ships it, so the polyfill is the implementation) in a new
+`src/runtime/promise-keyed-combinators.ts`, installed from
+`installAmbientCompatibility` next to the iterator-helper polyfills and gated on
+`typeof PromiseCtor[name] === "function"` so a future native one always wins.
+
+| slice | lane | before | after | lost |
+| --- | --- | --- | --- | --- |
+| `Promise/{allKeyed,allSettledKeyed}/` (89) | linked | 2 | **52** | 0 |
+| same 89 | honest | 6 | **56** | 0 |
+| whole `built-ins/Promise/` (729) | linked | 439 | **489** | 0 |
+
+**The four assigned rows are still failing, and now for a DIFFERENT, named
+reason.** All four mutate `Promise.resolve` from compiled code
+(`Promise.resolve = function () { return {}; }`) and then require the combinator
+to observe that mutation. It does not: instrumenting the polyfill's receiver in
+the real runner prints `C=function resolve=function native=true` — the compiled
+write landed on the compiled `Promise` mirror, while the host combinator still
+sees the native `Promise.resolve`. That is builtin-static **write visibility**
+across the compiled/host boundary (#4120 / #2623 territory), not the
+combinator's semantics, and it accounts for most of the 37 residual rows too
+(every `invoke-resolve-*`, `resolve-*`, `invoke-then-*` file mutates
+`Promise.resolve` or supplies a custom `Constructor`). The remaining residuals
+split into: `not-a-constructor` / `prop-desc` (a polyfill installed as an
+ordinary function IS constructible — needs the non-constructor shape), the
+Proxy-argument rows (`arg-is-function`, `getownproperty-returns-undefined`,
+`prototype-keys-ignored`), and the `ctx-ctor-*` capability rows.
+
+### Cluster B — `*-realm`: not taken, and here is why plus what is known
+
+Six rows, one idiom (`$262.createRealm()`), five unrelated mechanisms. Handing
+it back to the global-object/realm lane rather than half-fixing it. What was
+established, so the next lane does not repeat it:
+
+1. **The in-process linked seam cannot witness these rows** — finding 23,
+   confirmed again. `probe.mts` built on `buildHarnessProvider` +
+   `compileHarnessLinkedBody` **passes**
+   `language/expressions/new/non-ctor-err-realm.js` in both lanes, with a fresh
+   provider cache, with the worker's exact `bodyOptions`, and with the worker's
+   exact provider `compileOptions`. The real runner fails the same row. Any
+   round-6 work on this cluster must be measured in the runner.
+2. **The failure is a value, not a throw.** Tracing `__typeof` inside the runner
+   prints `v=undefined` for `otherParseInt`, i.e.
+   `$262.createRealm().global.parseInt` evaluated to `undefined` — the honest
+   lane and the probe both get the host `parseInt`.
+3. **The chain IS emitted.** Dumping the runner's own linked WAT (temporarily
+   flipping the worker's `emitWat`) shows
+   `global.get $__mod_$262 → __extern_method_call_0("createRealm") →
+   __extern_get("global") → __extern_get("parseInt") → global.set $__mod_otherParseInt`,
+   with null-checks around each hop. So this is not a folded or missing read.
+4. **Unresolved, and the next thing to chase:** a trace inside `__extern_get`'s
+   own arm in `src/runtime.ts` never fires for that row, while a trace in
+   `__typeof`'s arm (same `resolveImport` switch, same `buildImports` call,
+   same module) fires every time. Either the consumer's `env.__extern_get` is
+   not the one `buildImports` returns, or the func-index reading above is
+   wrong. Settle that first — it is one trace away and it decides whether this
+   is a realm bug or an import-wiring bug.
+
+### Findings for the next lane (round 6)
+
+28. **A cluster that is honest-pass/linked-fail is not automatically a parity
+    bug — check whether the honest pass is EARNED.** Here the honest lane was
+    passing on an unrelated TypeError that its own async wrapper laundered into
+    a rejection. The cheapest check is the one that settled it: run the feature
+    directly and look at what the engine actually has
+    (`typeof Promise.allKeyed` → `undefined` in both lanes). A parity patch
+    would have locked in a wrong answer and closed the row forever.
+29. **When the feature is simply absent, count the whole family before
+    choosing a fix size.** The brief named four rows; the family is 89 and was
+    at 2/89. Implementing the proposal was barely more work than a parity patch
+    and returned +50 instead of +4.
+30. **A polyfill that fixes the mechanism can still leave the ORIGINALLY
+    ASSIGNED rows red, and that is a result, not a failure — provided the new
+    reason is measured and named.** All four assigned rows now fail on
+    compiled-write visibility of `Promise.resolve`, which is a different issue's
+    subject; saying so is worth more than forcing them green.
