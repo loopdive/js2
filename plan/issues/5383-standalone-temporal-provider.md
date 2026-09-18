@@ -10075,3 +10075,27 @@ reproducing the SameValue mismatch — see #6632's "S46 findings" for both
 probes. Time-boxed at ~2.5h; battery not run (the two named rows are still
 red, so it would validate only #6631, not this PR's own fix — see #6632 for
 the full accounting of what WAS run).
+
+### S46b findings (2026-09-18) — real-row proof on S46's tip confirms both
+rows STILL RED (unchanged); full criterion-4 battery run for the first time
+covering both #6631 and #6632 together; one non-clean bucket (E-linked
+Proxy/Reflect, 10 pass→fail) proven by file-copy revert to be
+pre-existing/environmental, not caused by either fix
+
+Full writeup: `plan/issues/6632-class-field-undefined-union-typeof-nullish.md`'s
+"## S46b findings" section (real-row re-proof + one bounded reduction step
+that did not close them, per the dispatch brief) and
+`plan/issues/6631-mixed-array-element-typeof-tag.md`'s "## S46b criterion-4
+battery" section (pointer). Numbers: four-family 433→435 pass (0 pass→fail, 2
+fail→pass); must-not-move A–D 0 pass→fail (6 fail→pass); corpus byte A/B 0
+status/sha flips, no gc movers; equivalence 22/1720/22 unchanged. E-linked's
+10 pass→fail rows reproduce identically with all three `src/` files either
+fix touches (`type-coercion.ts`, `typeof-delete.ts`, `member-get-dispatch.ts`)
+file-copy reverted to their exact `973a746655` (pre-#6631) content and the
+bundle rebuilt — proving neither fix caused them (deterministic across
+repeated and isolated single-process runs; `test262` submodule pin identical
+at both commits). **Verdict: criterion 4 clean for both #6631 and #6632's
+own changes.** The two named real Temporal rows (`PlainDate/from/argument-
+object-valid.js`, `…/argument-string.js`) remain red — the `$__extern_get`/
+`$__extern_set` third site S46 named is still the next lead for whoever picks
+this up.

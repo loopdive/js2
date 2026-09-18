@@ -441,3 +441,37 @@ store (`object-runtime.ts`) is the next place to look for the SAME
 dynamically-typed object property) goes through `coerceType` with an `fctx`
 available, and whether the GET side has an equivalent gap to the one just
 fixed in `member-get-dispatch.ts`.
+
+## Stack state 2026-09-18 (post-S46b) — real-row re-proof + first full
+criterion-4 battery for #6631+#6632; two rows still red
+
+S46b (branch `issue-5383-standalone-temporal-s46b`, worktree
+`/home/user/js2/.claude/worktrees/agent-a204999dabd0fafd7`, base = S46's tip
+`0ed8016645`, no further source changes) re-confirmed the real-row result on
+a fresh provider build and ran the full battery S46 skipped:
+
+- Witness sweep: 35 files / 211 tests, 0 failed (matches S46).
+- Real rows: both `PlainDate/from/argument-object-valid.js` and
+  `…/argument-string.js` still `Expected SameValue(«null», «undefined»)` —
+  unchanged from S45b/S46.
+- One bounded reduction step (re-running S46's own `probe-dynset.mts` /
+  `probe-objlit.mts`): still hits unrelated crashes, not the target mismatch.
+  No further fix attempted, per the brief.
+- Four-family: base 433 → cur 435 pass (0 pass→fail, 2 fail→pass).
+- Must-not-move A–D: 0 pass→fail (6 fail→pass total).
+- E-unlinked: 235/300 (first-ever unlinked measurement, no prior baseline).
+- E-linked: base 228 → cur 235/300, but 17 fail→pass / **10 pass→fail**.
+  Proven via exact file-copy revert of all three files #6631+#6632 touch
+  (rebuilt, re-ran) to be **NOT caused by this stack** — identical failures
+  persist with the code at its pre-#6631 (`973a746655`) state. Flagged as a
+  pre-existing/environmental gap (likely QuickJS provider/adapter build
+  drift between worktrees, not a source regression) for whoever next touches
+  `object-runtime-proxy.ts` / standalone `Object.prototype.hasOwnProperty`.
+- Corpus byte A/B: 0 status/sha flips, no gc movers.
+- Equivalence: 22/1720/22, unchanged.
+
+**Verdict: criterion 4 is clean for #6631 and #6632's own changes** (0
+legitimate pass→fail). The two named real Temporal rows are STILL RED — the
+`$__extern_get`/`$__extern_set` third site named by S46 remains the next
+lead. Full tables: #6631 and #6632's issue files' "## S46b" sections, and
+#5383's "### S46b findings".

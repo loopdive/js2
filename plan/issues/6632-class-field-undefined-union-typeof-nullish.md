@@ -153,6 +153,123 @@ applied to the dynamic-object property store) and re-attempt both rows, or
 store turns out not to be the culprit after all — the WAT evidence above
 points there but was not confirmed by a passing minimal repro.
 
+## S46b findings (2026-09-18) — real-row proof, criterion-4 battery, no
+further fix attempted (S46's own reduction step stands)
+
+**Setup verified**: witness sweep on `0ed8016645` (S46's tip) —
+`npx vitest run --maxWorkers=2 tests/issue-66*.test.ts tests/issue-6484-*.test.ts`
+— 35 files / 211 tests, 0 failed, matching S46's own report exactly.
+
+**Real rows, real provider, fresh cache** (`JS2WASM_TEMPORAL_CACHE=s46b`,
+`cacheHit=false key=a11c84e556193459`, quickjs adapter rebuilt to a fresh
+hash `d3f75cc19b405617` to match this tree's compiler bundle): **both rows
+still fail**, identical error to S46's report:
+
+```
+test262/test/built-ins/Temporal/PlainDate/from/argument-object-valid.js => fail
+  Test262Error: Expected SameValue(«null», «undefined») to be true
+test262/test/built-ins/Temporal/PlainDate/from/argument-string.js => fail
+  Test262Error: Expected SameValue(«null», «undefined») to be true
+```
+
+**One reduction step attempted** (per the S46b dispatch brief): re-ran S46's
+own `.tmp/s46/probe-dynset.mts` and `.tmp/s46/probe-objlit.mts` reductions of
+the named third site (a polymorphic-interface method building a dynamic
+object with a `string | undefined` field, read back via a computed key) on
+this tree. Same outcome as S46 recorded: each reduction attempt hits a
+DIFFERENT, unrelated crash — `TRAP dereferencing a null pointer` (probe-dynset,
+the interface-method-any-return-dynamic-set case) and
+`!Cannot access property on null or undefined` /
+`TRAP dereferencing a null pointer` (probe-objlit's spread-conditional
+variants) — not the target `SameValue` mismatch. A plain `{ era: undefined }`
+literal read back through a computed key (no spread, no conditional) DOES
+resurrect correctly (`"eq"`), so the gap is specifically in the
+spread/conditional-object-literal or interface-dispatch path, not the
+resurrection primitive itself. Per the brief's "otherwise name the exact next
+error and stop chasing," no further fix attempted — the real rows stay red on
+this tree, unchanged from S46.
+
+**Criterion-4 battery vs the NEW (post-S44b) base, run on `0ed8016645`
+(S46's tip)** — the acceptance signal is normally "the two real rows go
+green," which did not happen; the battery was run anyway per the S46b brief's
+explicit instruction (covering both #6631 and #6632) to leave a complete
+regression record for the next lane:
+
+| Family | base pass/120 | cur pass/120 | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- |
+| PlainDate | 112 | 113 | 0 | 1 (`from/with-year-month-day-need-constrain.js`) |
+| Duration | 105 | 106 | 0 | 1 (`compare/relativeto-string.js`) |
+| PlainDateTime | 113 | 113 | 0 | 0 |
+| ZDT | 103 | 103 | 0 | 0 |
+| **Total** | **433** | **435** | **0** | **2** |
+
+| Must-not-move group | base pass | cur pass | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- |
+| A (Object.keys/Reflect.get,has + expr/object) — 1250 files | 1125 | 1125 | 0 | 0 |
+| B (Object.entries/values/getOwnPropertyNames + for-in) — 205 files | 179 | 179 | 0 | 0 |
+| C (Object.getPrototypeOf/Reflect.getPrototypeOf/Function.prototype/subclass/class-expr) — 349 files | 273 | 274 | 0 | 1 (`Function/prototype/Symbol.hasInstance/this-val-not-callable.js`) |
+| D (TypedArray/TypedArrayConstructors/DataView) — 300 files | 219 | 224 | 0 | 5 (`TypedArray/Symbol.species/result.js`, 4× `Symbol.toStringTag/{this-has-no-typedarrayname-internal,this-is-not-object}.js` ×{plain,BigInt}) |
+
+E group (Proxy first-200 + Reflect first-100, 300 files), **two axes, kept in
+separate output dirs** (`.tmp/s46b/E/` unlinked, `.tmp/s46b/E-linked/`
+linked with a fresh `JS2WASM_TEMPORAL_CACHE=s46b-elinked`):
+
+- **E-unlinked**: 235/300 pass (6 compile_error, 59 fail). No prior unlinked
+  baseline exists to diff against (S44b only ever measured the linked
+  variant) — this number stands as the first unlinked E measurement.
+- **E-linked**: base (S44b's own `E-new.part-0-300.tsv`, itself 0 diffs vs
+  its own `E-base`) 228/300 pass → cur 235/300 pass. **Net +7, but the
+  per-file diff shows BOTH directions: 17 fail→pass and 10 pass→fail**, not a
+  clean improvement:
+
+  ```
+  PASS->FAIL (10): Proxy/apply/trap-is-missing-target-is-proxy.js,
+    Proxy/get/trap-is-undefined-{receiver,target-is-proxy}.js,
+    Proxy/getOwnPropertyDescriptor/trap-is-{missing,null,undefined}-target-is-proxy.js,
+    Proxy/getOwnPropertyDescriptor/trap-is-undefined.js,
+    Proxy/has/trap-is-{missing,null,undefined}-target-is-proxy.js
+  ```
+
+  **This is NOT caused by this stack's code.** File-copy reverted all three
+  files this stack touches (`type-coercion.ts`, `typeof-delete.ts`,
+  `member-get-dispatch.ts`) to their exact `973a746655` (S44b) content,
+  rebuilt the compiler bundle, and re-ran the 10 regressed rows: **identical
+  failures, identical error strings**, e.g.
+  `Object.prototype.hasOwnProperty is not yet implemented in --target standalone`
+  for `apply/trap-is-missing-target-is-proxy.js`. `git diff --stat 973a746655
+  0ed8016645 -- src/` confirms those are the ONLY three `src/` files that
+  differ between the two commits, so a byte-identical revert of all three is
+  a byte-identical revert of everything this stack changed. The failures are
+  also fully deterministic (re-run twice, in-process and as an isolated
+  single-file process, identical output each time) — not load-related
+  flakiness per the #5383 handover's box-rule-6 caveat (which is about CE
+  flips under concurrent load, not this). The `test262` submodule pin is
+  identical at both commits (`b363f29d3c43…`). The most likely explanation is
+  environment drift between the worktree S44b's own measurement ran in
+  (`agent-a302b920b427333e8`) and this one — e.g. a different QuickJS
+  adapter/provider build — not a source regression. **Verdict: not a
+  legitimate pass→fail for criterion 4's "caused by this PR" test; flagged
+  here for whoever next touches `object-runtime-proxy.ts` /
+  `__extern_get`/`Object.prototype.hasOwnProperty` in standalone mode.**
+
+**Corpus byte A/B** (84 rows = 42 files × {gc, standalone}, vs
+`.tmp/s44b/corpus-new.jsonl`): 0 status flips, 0 sha flips. No gc movers —
+confirms #6631/#6632 are standalone-only changes with zero effect on the gc
+lane, as expected (both fixes are standalone-mode `ref_null $AnyString`
+resurrection sites; gc mode uses a different string representation).
+
+**Equivalence gate**: `npm run -s test:equivalence:gate` → `22 failing, 1720
+passing, 22 known-failures in baseline` — no new regressions, matches the
+committed baseline exactly.
+
+**Verdict on criterion 4**: four-family and must-not-move A–D batteries are
+clean (0 pass→fail, all flips are improvements). The one non-clean bucket
+(E-linked, 10 pass→fail) is proven — by exact file-copy revert of every
+`src/` line this stack touches — to be pre-existing/environmental, not
+introduced by #6631 or #6632. The two named real Temporal rows remain red,
+unchanged from S46's own finding; no further reduction closed them within
+this session's time-box.
+
 ## Implementation Plan
 
 See "S46 findings" above — this IS the implementation plan and its own

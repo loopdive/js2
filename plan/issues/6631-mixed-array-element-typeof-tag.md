@@ -181,3 +181,17 @@ fix-pass, file-copy A/B confirmed), and independently fixed — it does not
 depend on resolving the Temporal rows to be worth landing. The Temporal rows
 remain open; see `## S45/S45b findings` on #5383 for the fuller writeup and
 the next probe's exact findings.
+
+## S46b criterion-4 battery (2026-09-18)
+
+S46b ran the full four-family / must-not-move / corpus-byte / equivalence
+battery on top of both this fix AND #6632's fix together (S46's tip,
+`0ed8016645`) — the battery cannot isolate #6631 alone since #6632 is stacked
+directly on top of it and both are needed to attempt the real rows. Full
+tables in `plan/issues/6632-class-field-undefined-union-typeof-nullish.md`'s
+"## S46b findings" section. Summary: four-family 433→435 pass (0 pass→fail, 2
+fail→pass), must-not-move A–D 0 pass→fail (6 fail→pass total), corpus byte
+A/B 0 flips, equivalence 22/1720/22 unchanged. One non-clean bucket
+(E-linked, Proxy/Reflect first-300, 10 pass→fail) was proven via file-copy
+revert of every file either fix touches to be pre-existing/environmental, not
+caused by this fix or #6632's.
