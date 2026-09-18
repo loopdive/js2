@@ -551,3 +551,63 @@ literal's OWN return value) remains the standing hypothesis nobody has yet
 reduced to a minimal repro that reproduces the exact `null` vs `undefined`
 mismatch. Full writeup: `#5383`'s "S48b findings" section,
 `#6634`'s "Criterion-4 battery" section.
+
+## Stack state 2026-09-18 (post-S49) — the `illegal cast` trap CLOSED;
+target gap still untouched; task 2 (reduction) not reached
+
+S49 (branch `issue-5383-standalone-temporal-s49`, worktree off S48b's tip
+`4f68804bc9`) closed the `illegal cast` trap S48b's own reduction step
+found: a destructured-parameter interface method implemented by an object
+literal, plus an uncalled class implementer of the same interface anywhere
+in the program, traps on the fix tree (base tree silently misdispatched to
+the class). Root cause: the closed-method-dispatch cascade that
+`#6634`'s carrier guard forces for a mixed class+literal interface builds
+the destructured-parameter argument as the open `$Object` carrier (by
+design — the call site cannot know statically which candidate to target),
+but every arm hard-`ref.cast`s that value to its own candidate's CLOSED
+struct, which it never inhabits. Fix: a new, narrowly opt-in marshal
+(`ensureStructFromObjectCoercionHelper`, `extern-arg-marshal.ts`) that falls
+back to reading the target struct's fields generically off the externref
+value (via `__extern_get` + `struct.new`) instead of assuming the value
+already IS that struct — gated to fire only for a dispatcher whose
+candidates mix a class implementer with a non-class one, so every other
+closed-method-dispatch call site keeps its previous bytes exactly.
+
+**#5383's target gap is UNCHANGED.** The two named rows
+(`Temporal/PlainDate/from/argument-object-valid.js`, `…/argument-string.js`)
+still fail with the byte-identical `Expected SameValue(«null», «undefined»)`
+error — the default `iso8601` calendar's `isoToDate` never reaches a mixed
+class+literal dispatcher, so neither `#6634` nor this fix touches it.
+**Task 2 (continuing the `SameValue(null, undefined)` reduction in the
+polyfill's own JS bundle shape) was NOT attempted this session** — no time
+remained after the mandatory task. The standing hypothesis is unchanged
+from S46 through S48b: a generic dynamic member-get read (`$__extern_get`,
+a computed key `[t]` on an object literal's OWN return value, no
+interface/class dispatch involved at all) inside the real bundle's composed
+property-bag shape.
+
+Verification: 3 new fix-witnesses + 1 new control in
+`tests/issue-6634-interface-dictionary-literal-vs-class-dispatch.test.ts`
+(10 tests total). File-copy A/B on the two touched files
+(`extern-arg-marshal.ts`, `closed-method-dispatch.ts`) against S48b's tip:
+all 3 new witnesses trap with `illegal cast` on base, pass on the fix.
+`npx vitest run --maxWorkers=2 tests/issue-66*.test.ts tests/issue-6484-*.test.ts`:
+36 files / 221 tests, 0 failed. Criterion-4: 770 sampled test262 files across
+groups A–F (representative samples, not the full multi-thousand-file
+families — out of session time budget), 0 status flips against S48b's own
+baseline TSVs. The four-family Temporal battery and full corpus byte A/B
+were NOT re-measured this session (inferred-safe given the narrow opt-in
+gate, but not directly measured — flagged for the next lane). Full writeup:
+`#6634`'s issue file, "## S49 fix" section; `#5383`'s "### S49 findings"
+section.
+
+**Next lane**: pick up task 2 — reduce the `SameValue(null, undefined)`
+defect in the polyfill's OWN bundle JS shape (no TypeScript interfaces/class
+heritage in it, so TS-interface-shaped reductions like S48b's repro17 are
+off-shape for this specific defect). Per the dispatch brief's suggested
+composed repro: a property-bag object built inside a method
+(`isoToDate({year,month,day}, r) { const o = {era: void 0, ...}; ...; return
+o; }`), returned as `any`, read back by a runtime computed key. Use a FRESH
+`JS2WASM_TEMPORAL_CACHE` label when re-running the two target rows — the
+provider cache key does not hash the compiler bundle, so a reused label
+silently serves a stale (pre-fix) provider (documented since S48b).

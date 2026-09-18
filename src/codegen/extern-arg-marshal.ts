@@ -20,6 +20,8 @@ import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { buildThrowJsErrorInstrs, usesNativeJsErrors } from "./js-errors.js";
+import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { addStringConstantGlobals } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 
 /** Coerce helper funcIdxs, read once per fill pass (registered at reserve). */
@@ -51,6 +53,14 @@ export type CoerceIdxs = {
    * `any.convert_extern` + hard `ref.cast` bytes exactly.
    */
   lenientRefArg?: (want: ValType, optionalHere: boolean) => number | undefined;
+  /**
+   * (#6634 S49) Lazy accessor for the OBJECT-TO-STRUCT ref-argument marshal —
+   * see {@link ensureStructFromObjectCoercionHelper}. Only consulted when the
+   * caller explicitly opts in (`externArgCoercionInstrs`'s `allowObjectCoercion`
+   * flag) — an unarmed call site keeps its previous unconditional `ref.cast`
+   * bytes exactly.
+   */
+  structFromObject?: (want: ValType) => number | undefined;
 };
 
 const EXTERNREF_VT: ValType = { kind: "externref" };
@@ -307,6 +317,106 @@ function ensureLenientRefArgHelper(ctx: CodegenContext, want: ValType, optionalH
 }
 
 /**
+ * (#6634 S49) Mint (once per struct typeIdx) `__extern_arg_obj_<typeIdx>
+ * (externref) -> (ref [null] $T)`: an OBJECT-TO-STRUCT ref-argument marshal,
+ * for the specific closed-method-dispatch arms that opt in via
+ * `externArgCoercionInstrs`'s `allowObjectCoercion` flag.
+ *
+ * ## Why the unconditional `ref.cast` is unsound for a MIXED class+literal
+ * dispatcher arm
+ *
+ * `c.compute({year, month, day})` on an interface `Calc` with BOTH an
+ * object-literal implementer and a CLASS implementer (#6634) routes the
+ * call through the closed-method dispatcher's runtime `ref.test` cascade —
+ * the call site cannot know statically which implementer will answer, so
+ * the argument is compiled generically (`compileInternalCallArgument`
+ * deliberately widens an object-literal argument to the open `$Object`
+ * carrier whenever the parameter's expected type is `externref`, see that
+ * file's #4383/native-first note). Every dispatcher arm then receives the
+ * SAME `$Object` value and unconditionally `ref.cast`s it to its own
+ * candidate's closed struct — which the `$Object` value never inhabits,
+ * regardless of which arm runs. That is a Wasm TRAP, not a JS `TypeError`,
+ * on a call that is otherwise perfectly well-typed (#6634 repro17).
+ *
+ * The mismatch is representational, not semantic: the `$Object` genuinely
+ * has the right fields (`year`/`month`/`day`), just not the closed struct's
+ * physical layout. This helper closes that gap generically — the same way
+ * `resolveStructNameForExpr`'s #5187 fallback reaches a field the checker
+ * could not name — by reading each declared field off the externref value
+ * through the ordinary `[[Get]]` implementation (`__extern_get`) and
+ * `struct.new`-ing the target shape, INSTEAD OF assuming the value already
+ * IS that struct.
+ *
+ * Two arms:
+ * 1. **The value already inhabits `$T`** (the common case — an already-closed
+ *    struct crossing a dispatcher unchanged) → the same `ref.cast` as before,
+ *    byte for byte.
+ * 2. **Anything else** → read each field the target struct declares via
+ *    `__extern_get(value, "<fieldName>")`, coerce to the field's own type,
+ *    and `struct.new`. Scoped to structs whose every field is `f64` or
+ *    `externref` (#6634's exact repro shape, plus the common case of a
+ *    destructured numeric-fields object) — a struct with any other field
+ *    kind (nested ref, i32, i64) declines (returns `undefined`), so the
+ *    caller keeps the unconditional cast for shapes this helper cannot yet
+ *    express safely.
+ *
+ * Declining (returning `undefined`) is always safe: the caller's fallback is
+ * the EXACT bytes this helper replaces, so an unsupported shape is no worse
+ * off than before #6634 exposed this gap.
+ */
+function ensureStructFromObjectCoercionHelper(ctx: CodegenContext, want: ValType): number | undefined {
+  if (want.kind !== "ref" && want.kind !== "ref_null") return undefined;
+  const typeIdx = (want as { typeIdx?: number }).typeIdx;
+  if (typeIdx === undefined || typeIdx < 0) return undefined;
+  const name = `__extern_arg_obj_${typeIdx}`;
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+  const structName = ctx.typeIdxToStructName.get(typeIdx);
+  if (structName === undefined) return undefined;
+  const fields = ctx.structFields.get(structName);
+  if (fields === undefined || fields.length === 0) return undefined;
+  if (fields.some((f) => f.type.kind !== "f64" && f.type.kind !== "externref")) return undefined;
+  const externGetIdx = ctx.funcMap.get("__extern_get");
+  if (externGetIdx === undefined) return undefined;
+  const needsUnbox = fields.some((f) => f.type.kind === "f64");
+  const unboxNumIdx = needsUnbox ? ctx.funcMap.get("__unbox_number") : undefined;
+  if (needsUnbox && unboxNumIdx === undefined) return undefined;
+  // Field-name string constants: mint them (a no-op if already registered).
+  // `addStringConstantGlobals` is explicitly designed for finalize-time
+  // callers like this one — see its own doc comment.
+  addStringConstantGlobals(
+    ctx,
+    fields.map((f) => f.name),
+  );
+  const nullable = want.kind === "ref_null";
+  const result: ValType = nullable ? { kind: "ref_null", typeIdx } : { kind: "ref", typeIdx };
+  const buildFromObject: Instr[] = [];
+  for (const f of fields) {
+    buildFromObject.push({ op: "local.get", index: 0 });
+    buildFromObject.push(...stringConstantExternrefInstrs(ctx, f.name));
+    buildFromObject.push({ op: "call", funcIdx: externGetIdx });
+    if (f.type.kind === "f64") buildFromObject.push({ op: "call", funcIdx: unboxNumIdx! });
+  }
+  buildFromObject.push({ op: "struct.new", typeIdx });
+  const body: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: result },
+      then: [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "ref.cast", typeIdx }],
+      else: buildFromObject,
+    },
+  ];
+  const fnTypeIdx = addFuncType(ctx, [EXTERNREF_VT], [result], `$${name}_type`);
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, { name, typeIdx: fnTypeIdx, locals: [], body, exported: false } as WasmFunction);
+  ctx.funcMap.set(name, funcIdx);
+  return funcIdx;
+}
+
+/**
  * (#5380) Mint (once) `__unbox_number_or_omitted(externref) -> f64`: the plain
  * numeric unbox, except that an explicit host `undefined` becomes the
  * omitted-argument sNaN sentinel the callee's parameter prologue recognises.
@@ -381,6 +491,7 @@ export function buildCoerceIdxs(ctx: CodegenContext): CoerceIdxs {
     unboxNumChecked: () => ensureUnboxNumberChecked(ctx, ci.unboxNumIdx),
     unboxNumOrOmitted: () => ensureUnboxNumberOrOmitted(ctx, ci.unboxNumIdx, ci.unboxNumChecked?.()),
     lenientRefArg: (want, optionalHere) => ensureLenientRefArgHelper(ctx, want, optionalHere),
+    structFromObject: (want) => ensureStructFromObjectCoercionHelper(ctx, want),
   };
   return ci;
 }
@@ -390,8 +501,19 @@ export function buildCoerceIdxs(ctx: CodegenContext): CoerceIdxs {
  * `want`. `optionalHere` selects the #5380 sentinel-preserving unboxer for a
  * DEFAULTED f64 formal (a present-but-`undefined` argument must still run the
  * default), so a non-optional formal keeps its previous bytes exactly.
+ *
+ * `allowObjectCoercion` (#6634 S49, default `false`) opts a ref-typed formal
+ * into {@link ensureStructFromObjectCoercionHelper} as a fallback BEHIND the
+ * existing `lenientRefArg` priority, when the plain `ref.cast` would trap. A
+ * call site that does not pass it keeps its previous bytes exactly — only
+ * `closed-method-dispatch.ts`'s mixed class+literal-implementer arms opt in.
  */
-export function externArgCoercionInstrs(ci: CoerceIdxs, want: ValType, optionalHere: boolean): Instr[] {
+export function externArgCoercionInstrs(
+  ci: CoerceIdxs,
+  want: ValType,
+  optionalHere: boolean,
+  allowObjectCoercion = false,
+): Instr[] {
   const { unboxNumIdx, unboxBoolIdx } = ci;
   const out: Instr[] = [];
   if (want.kind === "f64") {
@@ -417,8 +539,16 @@ export function externArgCoercionInstrs(ci: CoerceIdxs, want: ValType, optionalH
     // (#6615) The lenient marshal when this module armed it; otherwise the
     // unconditional cast, byte for byte.
     const lenientIdx = ci.lenientRefArg?.(want, optionalHere);
+    // (#6634 S49) A mixed class+literal-implementer dispatcher arm's opt-in
+    // fallback — see `ensureStructFromObjectCoercionHelper`. Only consulted
+    // when `lenientRefArg` declined AND the call site passed
+    // `allowObjectCoercion`; every other call site keeps the unconditional
+    // cast exactly.
+    const objIdx = lenientIdx === undefined && allowObjectCoercion ? ci.structFromObject?.(want) : undefined;
     if (lenientIdx !== undefined) {
       out.push({ op: "call", funcIdx: lenientIdx });
+    } else if (objIdx !== undefined) {
+      out.push({ op: "call", funcIdx: objIdx });
     } else {
       out.push({ op: "any.convert_extern" });
       out.push({ op: "ref.cast", typeIdx: (want as { typeIdx: number }).typeIdx });

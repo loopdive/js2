@@ -219,4 +219,164 @@ describe("#6634 — interface carrier must not alias to one implementer's struct
     );
     expect(out.probe).toBe(1);
   });
+
+  // ── S49 (#6634 residual): DESTRUCTURED-PARAMETER method + class implementer ──
+  //
+  // S48b reduced a NEW trap this same carrier fix exposed: an interface method
+  // whose parameter is DESTRUCTURED (`compute({year, month, day})`) implemented
+  // by an OBJECT LITERAL, plus an uncalled CLASS implementer of the same
+  // interface anywhere in the program. Both ingredients are required (repro16
+  // below — same shape, no class implementer — already passed before S49).
+  //
+  // The receiver-side #6634 fix correctly forces the call through the
+  // closed-method dispatcher's runtime `ref.test` cascade (the call site can't
+  // know statically which implementer answers). But the destructured-parameter
+  // OBJECT ARGUMENT is compiled generically as the open `$Object` carrier
+  // (`compileInternalCallArgument`'s deliberate externref-expected-type
+  // widening for object literals) — and every dispatcher arm then
+  // unconditionally `ref.cast`s that `$Object` to its own candidate's CLOSED
+  // struct, which it never inhabits. Wasm TRAP ("illegal cast"), regardless of
+  // which arm runs, on an otherwise well-typed call.
+  //
+  // Fix: `src/codegen/extern-arg-marshal.ts`'s
+  // `ensureStructFromObjectCoercionHelper` — a per-typeIdx marshal consulted
+  // ONLY by `closed-method-dispatch.ts`'s arms for a (methodName, arity)
+  // dispatcher whose candidates MIX a class implementer with a non-class one
+  // (`buildEntryArm`'s `allowObjectCoercion` flag). It `ref.test`s the fast
+  // already-closed-struct path first (byte-identical to before), and only for
+  // a genuine mismatch reads the target struct's fields generically off the
+  // externref value via `__extern_get` + `struct.new` — the same "reach a
+  // field the checker could not name" idea as #5187's `carrierNameForAccess`.
+  it("control (repro16 shape): the SAME destructured-parameter object-literal method, with NO class implementer at all, is unaffected (already passed before S49)", async () => {
+    const out = await run(
+      `
+      interface Calc {
+        compute(fields: { year: number; month: number; day: number }): number;
+      }
+      const impl: Record<string, Calc> = {};
+      impl["a"] = {
+        compute({ year, month, day }: { year: number; month: number; day: number }): number {
+          return year + month + day;
+        },
+      };
+      function getCalc(id: string): Calc {
+        return impl[id];
+      }
+      export function probe() {
+        const c = getCalc("a");
+        return c.compute({ year: 1976, month: 11, day: 18 });
+      }
+      `,
+      ["probe"],
+    );
+    expect(out.probe).toBe(2005);
+  });
+
+  it("fix-witness (repro17 shape): a destructured-parameter object-literal method PLUS an UNCALLED class implementer of the same interface (base tree: TRAP illegal cast)", async () => {
+    const out = await run(
+      `
+      interface Calc {
+        compute(fields: { year: number; month: number; day: number }): number;
+      }
+      class ClassCalc implements Calc {
+        compute(fields: { year: number; month: number; day: number }): number {
+          return fields.year * 100;
+        }
+      }
+      function keepAlive(): Calc {
+        return new ClassCalc();
+      }
+      const impl: Record<string, Calc> = {};
+      impl["a"] = {
+        compute({ year, month, day }: { year: number; month: number; day: number }): number {
+          return year + month + day;
+        },
+      };
+      function getCalc(id: string): Calc {
+        return impl[id];
+      }
+      export function probe() {
+        const c = getCalc("a");
+        return c.compute({ year: 1976, month: 11, day: 18 });
+      }
+      export function probeKeepAliveNotNull() {
+        return keepAlive() !== null && keepAlive() !== undefined ? 1 : 0;
+      }
+      `,
+      ["probe", "probeKeepAliveNotNull"],
+    );
+    expect(out.probe).toBe(2005);
+    expect(out.probeKeepAliveNotNull).toBe(1);
+  });
+
+  it("fix-witness (repro17 variant, class implementer CALLED too): the class arm ALSO answers correctly through the same dispatcher (base tree: TRAP illegal cast)", async () => {
+    const out = await run(
+      `
+      interface Calc {
+        compute(fields: { year: number; month: number; day: number }): number;
+      }
+      class ClassCalc implements Calc {
+        compute(fields: { year: number; month: number; day: number }): number {
+          return fields.year * 100 + fields.month * 10 + fields.day;
+        }
+      }
+      const impl: Record<string, Calc> = {};
+      impl["lit"] = {
+        compute({ year, month, day }: { year: number; month: number; day: number }): number {
+          return year + month + day;
+        },
+      };
+      impl["cls"] = new ClassCalc();
+      function getCalc(id: string): Calc {
+        return impl[id];
+      }
+      export function probeLiteral() {
+        return getCalc("lit").compute({ year: 1976, month: 11, day: 18 });
+      }
+      export function probeClass() {
+        return getCalc("cls").compute({ year: 5, month: 3, day: 2 });
+      }
+      `,
+      ["probeLiteral", "probeClass"],
+    );
+    expect(out.probeLiteral).toBe(2005);
+    expect(out.probeClass).toBe(532);
+  });
+
+  it("fix-witness (2-param destructured variant): two destructured-object parameters, class implementer present but uncalled (base tree: TRAP illegal cast)", async () => {
+    const out = await run(
+      `
+      interface Merger {
+        merge(a: { x: number; y: number }, b: { x: number; y: number }): number;
+      }
+      class ClassMerger implements Merger {
+        merge(a: { x: number; y: number }, b: { x: number; y: number }): number {
+          return a.x + b.x;
+        }
+      }
+      function keepAlive(): Merger {
+        return new ClassMerger();
+      }
+      const impl: Record<string, Merger> = {};
+      impl["a"] = {
+        merge({ x: x1, y: y1 }: { x: number; y: number }, { x: x2, y: y2 }: { x: number; y: number }): number {
+          return x1 + y1 + x2 + y2;
+        },
+      };
+      function getMerger(id: string): Merger {
+        return impl[id];
+      }
+      export function probe() {
+        const m = getMerger("a");
+        return m.merge({ x: 1, y: 2 }, { x: 30, y: 40 });
+      }
+      export function probeKeepAliveNotNull() {
+        return keepAlive() !== null && keepAlive() !== undefined ? 1 : 0;
+      }
+      `,
+      ["probe", "probeKeepAliveNotNull"],
+    );
+    expect(out.probe).toBe(73);
+    expect(out.probeKeepAliveNotNull).toBe(1);
+  });
 });

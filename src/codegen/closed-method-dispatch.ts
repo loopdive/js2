@@ -678,6 +678,13 @@ function buildEntryArm(
   entry: MethodEntry,
   pushArg: (a: number) => Instr[],
   providedArity: number | null = null,
+  // (#6634 S49) True only for a (methodName, arity) dispatcher whose
+  // candidate entries mix a CLASS implementer with a NON-class one — see
+  // `ensureStructFromObjectCoercionHelper`'s doc comment for why that mix is
+  // exactly the shape whose call-site argument may arrive as an open
+  // `$Object` no arm's plain `ref.cast` can inhabit. Every other dispatcher
+  // keeps its previous bytes exactly.
+  allowObjectCoercion = false,
 ): Instr[] {
   const arm: Instr[] = [
     { op: "local.get", index: anyLocalIdx },
@@ -722,6 +729,7 @@ function buildEntryArm(
         ci,
         want,
         entry.optionalParams.some((candidate) => candidate.index === a),
+        allowObjectCoercion,
       ),
     );
   }
@@ -761,6 +769,13 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     // local (arity+1) = the `any` temp.
     const anyLocalIdx = arity + 1;
     const entries = collectMethodEntries(ctx, methodName, arity);
+    // (#6634 S49) See `buildEntryArm`'s `allowObjectCoercion` param and
+    // `ensureStructFromObjectCoercionHelper`'s doc comment: only a dispatcher
+    // whose candidates mix a CLASS implementer with a non-class one can
+    // receive an argument the call site had no single struct to target, so
+    // only THAT dispatcher's arms opt into the object-to-struct fallback.
+    const mixedClassAndLiteralEntries =
+      entries.some((e) => ctx.classSet.has(e.structName)) && entries.some((e) => !ctx.classSet.has(e.structName));
 
     // Bottom arm: open-$Object fallback — build a $ObjVec of the fixed args.
     let current: Instr[];
@@ -1796,7 +1811,14 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     }
 
     for (const entry of entries) {
-      const callAndCoerce = buildEntryArm(ci, anyLocalIdx, entry, (a) => [{ op: "local.get", index: 1 + a }], arity);
+      const callAndCoerce = buildEntryArm(
+        ci,
+        anyLocalIdx,
+        entry,
+        (a) => [{ op: "local.get", index: 1 + a }],
+        arity,
+        mixedClassAndLiteralEntries,
+      );
       // An own property installed at runtime beats this class's prototype
       // method for THIS receiver (marked's `use()` hooks). Only user classes,
       // only names the reserve saw a callable member write for; object-literal

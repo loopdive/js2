@@ -10392,3 +10392,59 @@ generic dynamic member-get read (`$__extern_get`, computed key `[t]` on an
 object literal's OWN return value, no interface/class involved at all) is
 still the standing hypothesis nobody has yet reduced to a minimal repro that
 reproduces the exact `null` vs `undefined` mismatch.
+
+### S49 findings (2026-09-18) — the `illegal cast` trap S48b flagged as latent
+debt is CLOSED; #5383's two target rows are still untouched (mandatory task
+only; task 2's reduction was not reached this session)
+
+S49 (branch `issue-5383-standalone-temporal-s49`, worktree off S48b's tip
+`4f68804bc9`) was dispatched with two tasks: (1) mandatory — eliminate the
+`illegal cast` trap S48b's own reduction step found (repro17: a
+destructured-parameter interface method implemented by an object literal,
+plus an uncalled class implementer of the same interface); (2) time-permitting
+— continue the `SameValue(null, undefined)` reduction toward #5383's two
+named target rows. Only task 1 was completed this session; task 2 was not
+reached.
+
+**Root cause and fix**: see `#6634`'s own issue file, "## S49 fix" section —
+the trap was in the CALL ARGUMENT, not the receiver. The dispatcher that
+routes `c.compute({year,month,day})` to the right runtime implementer
+(forced into existence by `#6634`'s own carrier-externref guard) compiles the
+destructured-parameter object literal as the open `$Object` dynamic carrier
+(by design — the call site cannot know statically which candidate struct to
+target), but every dispatch arm then hard-`ref.cast`s that `$Object` to its
+own candidate's CLOSED struct, which it never inhabits. Fixed with a new,
+narrowly-opt-in marshal (`ensureStructFromObjectCoercionHelper` in
+`extern-arg-marshal.ts`) that falls back to reading the target struct's
+fields generically off the externref value (via `__extern_get` +
+`struct.new`) instead of assuming the value already IS that struct — gated
+to fire only for a dispatcher whose candidates mix a class implementer with
+a non-class one, so every other closed-method-dispatch call site (the
+overwhelming majority) keeps its previous bytes exactly.
+
+**#5383's target gap is UNCHANGED by this fix, same as `#6634` itself.**
+The default `iso8601` calendar's `isoToDate` never reaches a mixed
+class+literal dispatcher — the two named test262 rows
+(`Temporal/PlainDate/from/argument-object-valid.js`,
+`…/argument-string.js`) still fail with the byte-identical
+`Expected SameValue(«null», «undefined»)` error, unchanged since S45. Task 2
+(continuing the reduction toward that defect, in the polyfill's own JS
+bundle shape per the dispatch brief) was not attempted this session — no time
+remained after the mandatory task's fix + verification. The standing
+hypothesis from S46/S46b/S47/S48/S48b is unchanged: a generic dynamic
+member-get read (`$__extern_get`, a computed key `[t]` on an object
+literal's OWN return value, no interface/class dispatch involved at all)
+inside the real bundle's composed property-bag shape.
+
+**Verification**: 3 new fix-witnesses + 1 new control added to
+`tests/issue-6634-interface-dictionary-literal-vs-class-dispatch.test.ts`
+(10 tests total, up from 6); all fail with `illegal cast` on a file-copy
+revert of the two touched files to S48b's tip, all pass on the fix.
+`npx vitest run --maxWorkers=2 tests/issue-66*.test.ts tests/issue-6484-*.test.ts`:
+36 files / 221 tests, 0 failed. Criterion-4 battery: 770 sampled test262
+files across the A–F groups (representative samples, not the full
+multi-thousand-file families — out of this session's time budget), 0 status
+flips against S48b's own baseline TSVs for the same files. Full detail,
+including why the four-family Temporal battery and full corpus byte A/B were
+NOT re-measured this session (inferred-safe but unmeasured), in `#6634`'s
+issue file "## S49 fix" section.
