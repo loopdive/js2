@@ -6,6 +6,7 @@ import type { TypeOracle } from "../checker/oracle.js";
 import { awaitIsStaticallyResolved, staticPromiseResolveSettledExpr } from "../ir/async-static.js";
 import { isPromiseType } from "../checker/type-mapper.js";
 import {
+  emitSpilledCallAwaitedOperand,
   emitSpilledCallPreSuspend,
   emitSpilledCallResume,
   planSpilledCallAwait,
@@ -1315,7 +1316,17 @@ export function linearPlanToCfg(linear: LinearAwaitPlan): AsyncCfgPlan {
           }),
       terminator: {
         kind: "suspend",
-        awaited: seg.awaitedExpr,
+        // (#6504 round 31) A short-circuiting optional-chain base makes the
+        // awaited operand conditional: the nullish test is decided from the
+        // pre-suspension spill so `undefined?.[await P]` never evaluates `P`.
+        // Every other plan passes the operand node through unchanged.
+        awaited:
+          spilled?.shortCircuitBase == null
+            ? seg.awaitedExpr
+            : {
+                emit: (ctx: CodegenContext, fctx: FunctionContext): ValType =>
+                  emitSpilledCallAwaitedOperand(ctx, fctx, spilled, seg.awaitedExpr),
+              },
         resumeState: k + 1,
         handler: seg.awaitInTry ? 1 : 0,
       },

@@ -25,6 +25,24 @@ related: [6492, 3451, 5226]
 # (plan + both emit halves) — so the god-files take only the wiring.
 loc-budget-allow:
   - src/codegen/async-frame.ts
+  # 2026-09-18 (round 31) — +15 in `src/codegen/expressions.ts`, all of them the
+  # async twin of the #680 native-generator operand substitution that already
+  # sits at the top of `compileExpressionInner`: a pre-await operand spilled
+  # before the suspension is read back from its local instead of re-evaluated.
+  # It has to be in the common inner dispatch, beside its generator twin, for
+  # the same reason that one is — it must be reached before any outer wrapper
+  # or expected-type coercion re-derives the operand. Moving it out would mean
+  # duplicating the dispatch, not shrinking it.
+  - src/codegen/expressions.ts
+  # 2026-09-18 (round 31) — +8 in `src/codegen/context/types.ts`: the
+  # `asyncOperandValueLocals` field and its doc comment. It is deliberately a
+  # SEPARATE map from the native-generator twin two lines above rather than a
+  # shared one, so each continuation lane owns its own lifetime and a stale
+  # entry from one can never be read by the other; that costs one field.
+  - src/codegen/context/types.ts
+func-budget-allow:
+  # Same +15 counted against the enclosing dispatcher; see the LOC note above.
+  - src/codegen/expressions.ts::compileExpressionInner
 ---
 
 # #6504 — two defects, one row
@@ -328,3 +346,55 @@ listed below.
   performs a `[[Call]]` and would silently build the wrong thing.
 - try/catch ACROSS the await — that planner's states carry no spill hooks;
   `lowerChunk` deliberately does not admit the shape.
+
+## Round 31 — the nested-operand spill lands; a THIRD defect blocks the target row
+
+Full write-up in #6492 `## Round 31`. Implemented: an `await` nested inside ONE
+argument (`f(1 + await x)`, `f(o?.[await k])`, `f([a, await k]?.[1])`). Pre-await
+sub-expressions are spilled in source order by the round-29 carrier; on resume
+the argument is recompiled under two substitutions (operands -> their spills,
+the await -> the delivered value), so the only repeated work is the
+re-combination source order puts after the await. The substitution is the async
+twin of #680's native-generator mechanism, with its own map.
+
+Corpus: **+0 / −0 in both lanes** (linked 1,533; honest 1,530; 138-row 49).
+13 unit cases green. The capability is exercised only by tests today — stated
+plainly rather than presented as a neutral refactor.
+
+### NEXT, and the reason the target row did not move
+
+`await Promise.resolve(1)` written INLINE is statically elided, and the elided
+path yields the PROMISE OBJECT instead of its value. A/B on the linked lane,
+identical but for hoisting:
+
+| body | verdict |
+| --- | --- |
+| `assert.sameValue(await Promise.resolve(1), 1)` | silent, body never completes |
+| `var p = Promise.resolve(1); assert.sameValue(await p, 1)` | passes |
+
+`awaitedStaticallyResolved` / `awaitProvablyCannotSuspend` make
+`anyRealSuspension` false, the engine declines the function, and the legacy
+pass-through compiles `await` as identity. Single-module proof: the inline form
+emits ~10 KB with no async machinery, the hoisted form ~33 KB with the frame.
+
+Same class as this issue's original erasure, reached by the ELISION route rather
+than the shape-decline route, and silent for the same defect-B reason. It is why
+`optional-chain-async-square-brackets.js` cannot pass: three of its four lines
+await an inline `Promise.resolve(…)` / `Promise.reject(…)`.
+
+**Fix this next** — either the elision must not fire when the operand is a real
+promise, or the elided path must unwrap one level. It is likely cheap next to
+the ABI work, and it gates the remaining optional-chaining row.
+
+### Still open
+
+- The elision defect above.
+- `new C(await x)` — needs a `[[Construct]]` resume op.
+- Optional-chain base whose nullishness is not syntactically settled: the
+  short-circuit machinery is correct (measured: the operand is never evaluated,
+  the result is `undefined`) but a statically-`undefined` base is constant-folded
+  ahead of the substitution and lowers as f64 `0`, so those shapes are refused.
+  Fixing the fold re-opens them.
+- The extra microtask tick on the short-circuit path (the spec skips the await
+  entirely); removing it needs the segment split into two CFG states.
+- try/catch ACROSS the await.

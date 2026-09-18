@@ -244,6 +244,102 @@ function sink() {}
     ).toEqual(["nope"]);
   });
 
+  // ── round 31: the await NESTED inside an argument ────────────────────────
+
+  it("an await inside an INDEX operand spills the base and indexes on resume", async () => {
+    // `[22,33]?.[await p]` — the round-26 `nested-operand` bucket. The base is
+    // evaluated before the suspension; the element GET happens on resume,
+    // which is where source order puts it.
+    expect(
+      await failures(
+        `var p1 = Promise.resolve(1);
+(async function () {
+  assert.sameValue([22, 33]?.[await p1], 33, "index operand");
+  assert(false, "__6504_reached_end__");
+})();
+`,
+      ),
+    ).toEqual([SENTINEL]);
+  });
+
+  it("an await inside an ARRAY LITERAL element keeps the earlier elements' order", async () => {
+    // `[44, await p]?.[1]` — element 0 is evaluated (and spilled) before the
+    // suspension; the array is built on resume.
+    expect(
+      await failures(
+        `var log = [];
+var src = { get first() { log.push("first"); return 44; } };
+var p55 = Promise.resolve(55);
+(async function () {
+  assert.sameValue([src.first, await p55]?.[1], 55, "array element operand");
+  assert.sameValue(log.join(","), "first", "the earlier element ran once, before the await");
+  assert(false, "__6504_reached_end__");
+})();
+`,
+      ),
+    ).toEqual([SENTINEL]);
+  });
+
+  it("an await as a BINARY operand spills the left side once, before the suspension", async () => {
+    // `f(src.n + await p)` — the left operand is a getter, so a resume that
+    // recompiled it would run it twice and the count would say so.
+    expect(
+      await failures(
+        `var reads = 0;
+var src = { get n() { reads += 1; return 1; } };
+var p2 = Promise.resolve(2);
+var seen = null;
+function sink(v) { seen = v; }
+(async function () {
+  sink(src.n + await p2);
+  assert.sameValue(seen, 3, "the operator ran on resume with both values");
+  assert.sameValue(reads, 1, "the left operand was evaluated exactly once");
+  assert(false, "__6504_reached_end__");
+})();
+`,
+      ),
+    ).toEqual([SENTINEL]);
+  });
+
+  it("an optional chain with a non-nullish base decides the short-circuit BEFORE suspending", async () => {
+    // The base is an array literal, so the chain never short-circuits — but the
+    // nullish test is still emitted pre-suspension, and this case pins that it
+    // does not disturb the ordinary path.
+    expect(
+      await failures(
+        `var log = [];
+var p0 = Promise.resolve(0);
+(async function () {
+  assert.sameValue([9]?.[await p0], 9, "non-nullish optional base");
+  assert(false, "__6504_reached_end__");
+})();
+`,
+      ),
+    ).toEqual([SENTINEL]);
+  });
+
+  it("a base whose nullishness is not syntactically settled is REFUSED, not guessed", async () => {
+    // `var b = undefined; b?.[await x]` — the short-circuit machinery is
+    // correct here (measured: the operand is never evaluated), but the chain is
+    // constant-folded ahead of the operand substitution and the result lowers
+    // as f64 `0`. Rather than ship that wrong value, the planner refuses the
+    // shape and it keeps its pre-round-31 decline — which this channel reports
+    // as silence. If a later round fixes the fold, THIS case flips to
+    // [SENTINEL] and must be rewritten.
+    expect(
+      await failures(
+        `var ran = false;
+function mk() { ran = true; return Promise.reject(new Error("must not run")); }
+(async function () {
+  var base = undefined;
+  assert.sameValue(base?.[await mk()], undefined, "short-circuit value");
+  assert(false, "__6504_reached_end__");
+})();
+`,
+      ),
+    ).toEqual([]);
+  });
+
   it("try/catch ACROSS the await is deliberately NOT in this round's scope", async () => {
     // `try { o.m(await x) } catch {}` leaves the linear planner entirely: the
     // try/catch analysis owns it, and that path builds its own CFG states which
