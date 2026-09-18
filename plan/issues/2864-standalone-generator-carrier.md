@@ -2164,3 +2164,54 @@ So the two classes are disjoint:
 `for-of` / `for-in` with a yield in the loop head (the 39 + 14
 `statements/*/dstr/*yield*` rows) needs a `for-of` branch in `lowerStatements`
 first; there is none today.
+
+### Measured row delta — both trees, identical
+
+Row runner: `COMPILER_POOL_SIZE=2 npx tsx scripts/run-test262-paths.mts <list>
+--isolate --standalone`, 969 paths = every `dstr` file mentioning `yield` under
+`language/expressions/assignment/dstr` + `language/statements/**/dstr` (337),
+plus the whole generator control set (`language/statements/generators`,
+`language/expressions/generators`, `built-ins/GeneratorPrototype`,
+`built-ins/GeneratorFunction`, 632). Base tree = a frozen copy of the merge-base
+(`0d2ef8633f`) with `node_modules` / `test262` / `.test262-cache` symlinked;
+branch tree = the same, frozen at the commit measured.
+
+| | base | branch |
+| --- | --- | --- |
+| pass | 762 | 762 |
+| fail | 76 | 76 |
+| compile_error | 131 | 131 |
+
+The comparison is per-TEST, not per-count: `diff` of the two reports' entire
+tails — counts, the 207-row non-pass list, and every failure REASON string — is
+**empty**. Zero rows lost, zero rows gained.
+
+Zero-lost is also structural, not just observed. The only standalone generators
+whose lowering changes are ones the plan previously REFUSED, and a refusal is a
+whole-file compile error, so no previously-passing row can change lowering; and
+the gc lane is byte-identical, so the host shards cannot move either. The run is
+the confirmation, not the argument.
+
+Of the 131 base compile errors, 94 are `standalone target emitted host imports`
+and 37 are the `#680` refusal — the two faces of the same bail. None of them is
+a shape S1/S2 admit, for the structural reason above: they are yield-in-TARGET,
+`for-of`-with-a-yield, or the untyped boxed-any-carrier resume-binding bail.
+
+### gc/host byte-identity
+
+`sha256` of the emitted binary for 18 generator probes compiled on both trees:
+
+- **gc lane — all 18 identical**, including every newly-admitted shape.
+- **standalone lane — identical for all 11 probes the change does not admit**
+  (`const a = yield 1`, `const [a] = [5]`, the destructuring default, the
+  member-assignment target, the nested yield operand, the in-`if` continuation,
+  the loop/try/`yield*` generator, the existing #680 bare-yield literal/comma
+  shapes, and the two `.return()` / undefined-sent-value controls). Differs
+  exactly for the 9 newly-admitted shapes.
+
+### Status
+
+Not done. S1 and S2 landed and are pinned; the row-carrying family
+(yield in a destructuring TARGET) and `for-of`/`for-in` with a yield in the loop
+head are untouched, and so is the untyped boxed-any-carrier resume-binding bail
+that dominates real test262 generator code. Left at `in-progress` on purpose.
