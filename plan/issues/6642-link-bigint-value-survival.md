@@ -329,6 +329,28 @@ value), and a thrown `globalThis.BigInt(…)` can break code that today takes th
 all. Nothing from this investigation is in the commit; the diff is exactly
 Fixes A and B plus the witness test.
 
+### S60 validation — everything held flat
+
+Criterion-4 battery, 13 families / 3,684 rows, S60 tree vs the S58 base TSVs
+(fresh bundle → provider `.test262-cache/s60-4` `cacheHit=false` → quickjs
+adapter `32f5a6556aac04ff`): **0 pass→fail, 0 fail→pass, 0 missing, in every
+family** — PlainDate 120, Duration 120, PlainDateTime 120, ZDT 120, A 1250,
+B 205, C 349, D 300, E-unlinked 300, E-linked 300, F-class 250, F-methoddef
+100, F-objproto 150. Four-family total unchanged at **437/480** (PlainDate
+113, Duration 106, PlainDateTime 113, ZDT 105).
+
+Corpus byte A/B, 84 entries × 2 lanes: **0 status flips, 0 SHA flips.**
+Measured against a base run this session (`.tmp/s60/fix/*.base.ts` copied in,
+corpus re-run, files restored) — **not** against the committed S58 jsonl, which
+shows 30 SHA flips that are entirely `origin/main` drift carried in by
+`8a95c4dace`'s merge. That distinction is the whole value of the extra run: the
+committed-baseline diff would have reported 15 gc-lane byte flips against a
+change that moves zero bytes on either lane.
+
+Equivalence gate: `22 failing, 1720 passing, 22 known-failures` — no new
+regressions. Witness sweep (`tests/issue-66*`, `issue-6484-*`, `issue-6493-*`,
+42 files / 260 tests) green under **both** Node 22 and Node 25.
+
 ## Next step for whoever picks this up (S60 — supersedes S59's list below)
 
 The remaining work is **not** in the coercion tables. It is
