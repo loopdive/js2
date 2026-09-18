@@ -180,6 +180,25 @@ export { emitModulo } from "./remainder.js";
  * Arithmetic/bitwise/logical (`&&`/`||` return the operand type) are deliberately
  * excluded — branding a number as boolean would be a bug.
  */
+/**
+ * (#6642) The expected ValType for an operand that is STATICALLY a BigInt.
+ *
+ * `bigint` is a structural-only BRAND on the `i64` carrier (see `ValType` in
+ * wasm/model/instructions.ts): every `.kind === "i64"` check still matches, so
+ * i64 codegen is byte-identical — but the brand is what `coerceType`'s
+ * `externref → i64` row consults to pick §7.1.13 `ToBigInt` (`__to_bigint`,
+ * precision-preserving) over the plain-NUMBER unbox (`__unbox_number` +
+ * `i64.trunc_sat_f64_s`, which answers 0/NaN for a `$BigInt`).
+ *
+ * Every hint below used to be a BARE `{ kind: "i64" }`. That is invisible while
+ * the operand compiles natively to i64 (a literal, an i64 local), and only bites
+ * when the operand arrives BOXED — a dynamically-dispatched closure/property
+ * call (`NS.giveBigInt()`), a link-boundary read — where the generic externref
+ * ABI wraps the native `() -> i64` closure. `coerceType` then took the
+ * number path and the whole comparison silently answered on `0`.
+ */
+const BIGINT_I64: ValType = { kind: "i64", bigint: true };
+
 const BOOLEAN_PRODUCING_BINARY_OPS: ReadonlySet<ts.SyntaxKind> = new Set([
   ts.SyntaxKind.LessThanToken,
   ts.SyntaxKind.GreaterThanToken,
@@ -2066,7 +2085,7 @@ export function compileBinaryExpression(
     }
 
     // Both operands are BigInt — compile as i64
-    const i64Hint: ValType = { kind: "i64" };
+    const i64Hint: ValType = BIGINT_I64;
     let leftType2 = compileExpression(ctx, fctx, expr.left, i64Hint);
     let rightType2 = compileExpression(ctx, fctx, expr.right, i64Hint);
     if (!leftType2 || !rightType2) return null;

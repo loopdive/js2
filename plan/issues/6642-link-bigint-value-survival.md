@@ -22,6 +22,13 @@ loc-budget-allow:
   #   ~8 shared locals (`leftTsType`/`rightTsType`/`leftIsBigInt`/…) that a
   #   split would have to re-parameterize for a net negative (more code, more
   #   risk) versus the modest overage.
+  # 2026-09-18 (S60, #6642) — the same file also gains the `BIGINT_I64`
+  #   module constant + its rationale comment (the bigint-BRANDED i64 hint
+  #   that `coerceType`'s `externref → i64` row consults to pick §7.1.13
+  #   `__to_bigint` over the plain-number unbox). It is a one-line constant
+  #   with a ~17-line comment explaining why a bare `{ kind: "i64" }` hint is
+  #   a silent data-loss bug; the comment is the whole value of the change
+  #   and belongs next to the constant, not in a new file.
   - src/codegen/binary-ops.ts
 func-budget-allow:
   # 2026-09-18 (S59, #6642) — same new branch lands inside
@@ -163,6 +170,74 @@ bug hits) got the equivalent bigint-aware rows added defensively in an
 earlier iteration of this slice's investigation but was reverted along with
 the canonical-recgroup work once it was confirmed not to be on the hit path
 for this defect (kept out to minimize an unproven diff).
+
+## S60 — the residual, fixed. The S59 diagnosis was on the wrong table.
+
+**S59's "Next step" below is superseded. Do NOT thread `toBigIntIdx` through
+`stack-balance.ts`.** Traced directly (a `console.error` stack in
+`coercionPlan`'s `externref → i64` arm, compiling S59's own reduction):
+`coercionPlan` is **never called** for this shape. The site that fires is
+`type-coercion.ts`'s `coerceType`, reached from
+`expressions.ts:1037 → compileExpressionBody → compileBinaryExpression`
+(binary-ops.ts) — and `coerceType` **already has** the correct
+`if (to.bigint) { … __to_bigint … }` arm S59 pointed at. It did not fire
+because `to` arrived as `{"kind":"i64"}` with **no brand**. The brand was lost
+before the coercion site, exactly the second-defect case the S60 brief flagged.
+
+Two brand DROPS, one per direction of the generic externref ABI:
+
+**Fix A — the UNBOX side: `binary-ops.ts`, the both-operands-BigInt arm.**
+`const i64Hint: ValType = { kind: "i64" }` — bare. Every operand of a BigInt
+operator was compiled against an UNBRANDED i64 expected type, so
+`coerceType(externref → i64)` took the plain-NUMBER row
+(`__unbox_number; i64.trunc_sat_f64_s`) and the comparison ran against `0`.
+Fixed by hoisting a module constant `BIGINT_I64 = { kind: "i64", bigint: true }`
+and using it as that hint. Measured in the WAT: `call $__unbox_number;
+i64.trunc_sat_f64_s` → `call $__to_bigint`.
+
+**Fix B — the BOX side: `closures/result-boxing.ts`,
+`buildClosureResultBoxing`.** With Fix A alone the reduction went from a wrong
+answer to a **thrown TypeError** — `__to_bigint` correctly refused a value that
+was no longer a BigInt by the time it arrived. `NS.giveBigInt()` compiles to a
+native monomorphic `() -> i64` closure; reaching it through dynamic dispatch
+makes the `__call_fn_*` ABI box the result, and that arm boxed EVERY i64 as a
+NUMBER: `f64.convert_i64_s; call $__box_number`. Two losses in one line —
+`f64.convert_i64_s` rounds anything above 2^53 (217175010123456789n → …792),
+and `__box_number` erases bigint-ness outright. The **i32 arm immediately
+above it** (`boxI32ClosureResult`) already preserved the `boolean` and `symbol`
+brands for precisely this reason; the i64 arm just had no brand column. Added
+`boxI64ClosureResult`, which picks `__box_bigint` for a branded i64 and leaves
+the unbranded (native `type i64 = number`) path byte-identical.
+
+Neither fix touches `coercion-plan.ts` or `stack-balance.ts` — so the
+number rows of the shared table, and the gc lane that shares them, are
+untouched by construction.
+
+### Witness — revert-and-measure
+
+`tests/issue-6642-coercion-plan-bigint.test.ts` (5 cases). File-copy A/B
+against `8a95c4dace` (S59's head), same command both times
+(`VITEST_FORK_MAX_OLD_SPACE_SIZE=3072 npx vitest run --maxWorkers=2`):
+
+| case | base `8a95c4dace` | with S60 fixes |
+| --- | --- | --- |
+| dynamically dispatched METHOD `===` matching literal | **FAIL** (`0`, expected 1) | pass |
+| dynamically dispatched PROPERTY `===` matching literal | **FAIL** (`0`, expected 1) | pass |
+| linked provider, `Object.is(bigint, literal)` | **FAIL** (`0`, expected 1) | pass |
+| NON-matching literal still `false` (not a blanket true) | pass | pass |
+| native UNBRANDED `type i64 = number` keeps the number box | pass | pass |
+
+Base: `3 failed | 2 passed`. Fixed: `5 passed`. The two that pass on both are
+guards, not witnesses — they exist so the fix cannot be a blanket switch.
+
+Link-level probe (`.tmp/s60/probe/reduce2.mjs`, 5 consumer shapes over a real
+`compileProject` link), base → S60: `eqLiteral` 0 → **1**, `objectIs` 0 → **1**,
+`typeofResult` 0 → **1**. Still wrong and NOT claimed fixed: `toStr` (`"" + v`
+where `v` is `any` — String() of a dynamically-classified BigInt) and
+`arithAdd` (`v + 1n` with `v` typed `any` — throws). Both are the
+`any`-typed-operand path, a different mechanism from the branded-hint one
+fixed here; neither is on the 12 target rows' critical path (see the row table
+below) and both are left open.
 
 ## Next step for whoever picks this up
 
