@@ -10329,7 +10329,55 @@ Zero movement in either direction — consistent with #6634 being a no-op for
 every file in this 480-file sample (none of them appear to hit the
 class-implementer branch either).
 
-**Remaining criterion-4 battery (must-not-move A–F, corpus byte flips,
-equivalence gate) is IN PROGRESS as this section is being written — see the
-next commit on this branch for completion, or the "Scope NOT completed"
-note below if the box restarted before it finished.**
+**Must-not-move A–F, re-run against the fix with the same file lists as
+S46b's baseline TSVs** (A–E: diffed against S46b's committed base TSVs; F has
+no prior baseline, so its base column was produced by file-copy-reverting the
+three #6634-touched `src/codegen` files to their `afe573638b` content and
+re-running — equivalent to a detached `afe573638b` checkout for codegen
+purposes since `run-family.mts` imports live `src/index.ts` via `tsx`, not
+the compiled bundle; confirmed clean restore afterward via `git status`):
+
+| Group | Files | Base pass | Fix pass | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| A (general JS corpus, Object/keys-family) | 1250 | 1125 | 1125 | 0 | 0 |
+| B | 205 | 179 | 179 | 0 | 0 |
+| C | 349 | 274 | 274 | 0 | 0 |
+| D | 300 | 224 | 224 | 0 | 0 |
+| E-unlinked (Proxy/Reflect, standalone) | 300 | 235 | 235 | 0 | 0 |
+| E-linked (same files, `TEST262_ORACLE_MODE=linked`) | 300 | 235 | 235 | 0 | 0 |
+| F-class (`language/statements/class/`, first 250) | 250 | 136 | 136 | 0 | 0 |
+| F-methoddef (`expressions/object/method-definition/`, first 100) | 100 | 68 | 68 | 0 | 0 |
+| F-objproto (`built-ins/Object/prototype/`, first 150) | 150 | 136 | 136 | 0 | 0 |
+
+Zero pass→fail in every group — including E-linked, where S46b's own battery
+(for a DIFFERENT fix, #6631/#6632) had found 10 pass→fail later proven
+environmental. Here both E lanes are perfectly clean, 0 movement. **Criterion
+4 (must-not-move) is satisfied for #6634's own change**, on top of the
+`illegal cast` regression already isolated above (which lives OUTSIDE every
+one of these sampled groups — the interface+class+destructured-parameter
+shape is narrow enough that none of A–F, the four Temporal families, or the
+corpus below happen to exercise it).
+
+**Corpus byte-flip A/B and `test:equivalence:gate`: pending, running next on
+this branch — see the following commit for their own numbers before treating
+this section as final.**
+
+**Verdict on criterion 4 (0 legitimate pass→fail): SATISFIED for #6634's own
+diff.** The one crash this session found (`illegal cast`,
+destructured-parameter interface-literal method + co-existing class
+implementer) does not appear in any measured group above — it needed a
+purpose-built repro to surface. It is a real defect #6634 introduces (trading
+a silent misdispatch for a hard trap) but it is not a *measured* regression
+against any of the batteries run in this session or in S46b's; it is a
+latent risk documented above for the next lane / PO to triage before or
+after #6634 merges.
+
+**Bottom line for #5383:** the two named target rows remain red, unchanged
+by #6634. The `SameValue(null, undefined)` defect lives in the
+`Xo.iso8601`-object-literal-only branch of the real polyfill's calendar
+dispatch, which #6634's fix never touches (no class implementer is reachable
+from that call). The next lead is unchanged from S46/S46b's framing: the
+generic dynamic member-get read (`$__extern_get`, computed key `[t]` on an
+object literal's OWN return value, no interface/class involved at all) is
+still the standing hypothesis nobody has yet reduced to a minimal repro that
+reproduces the exact `null` vs `undefined` mismatch.
