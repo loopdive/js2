@@ -11,9 +11,11 @@ Session ran as the plan lane (Fable role) with Opus implementation subagents.
    (host already passes — the fix is a port) and **842 dual-lane** (host fails
    too — new engineering in both lanes). Those had been planned as one pile.
    Dispatch from that table, not from raw standalone counts.
-2. **There is unfinished, UNVALIDATED work on
-   `claude/es6-5198-regexp-exec-protocol`.** Do not believe any row claim on it
-   that is not accompanied by a run you can see. See §Unfinished below.
+2. **`claude/es6-5198-regexp-exec-protocol` carries measured but UNREVIEWED
+   work** — +7 rows / 0 lost on the 190-row cluster, no PR opened. Its base run
+   independently reproduces this session's own measurement, which is a real
+   check; the open items are listed in §Unfinished below. Do not merge it
+   without them.
 3. **Measure the host side before sizing any standalone slice.** Doing that
    once cut #5198's first slice from a projected 43 rows to an honest 9.
 
@@ -56,21 +58,40 @@ The three zero-dual clusters (`annexB/built-ins/RegExp`,
 `SetIteratorPrototype/next`, `MapIteratorPrototype/next`) are pure ports with
 no dual-lane residue — the cheapest untouched work on the board.
 
-## Unfinished: #5198 RegExp `exec` protocol
+## Unfinished: #5198 RegExp `exec` protocol — measured, no PR
 
 Branch `claude/es6-5198-regexp-exec-protocol`. Commit `0b107a88d0` carries the
 **plan only** (a new dated section in `plan/issues/5198-es2015-standalone-regexp-r2.md`). An Opus lane was
 implementing slice 1 when the session ended.
 
-**State at hand-off — treat as unvalidated:**
+**State at hand-off — measured, but NOT yet reviewed or merged:**
 
-- Working changes: `src/codegen/expressions/call-tail-dispatch.ts` (+8),
-  `src/codegen/regexp-standalone.ts` (±1), and a new untracked
-  `src/codegen/regexp-protocol-slow.ts`.
-- The 190-row validation run had **not** produced counts. **No row claim for
-  this slice has been measured.** If a WIP commit landed on the branch, its
-  message says so; if the lane's worktree was reclaimed first, the work is gone
-  and the plan is the surviving artifact.
+The lane finished its measurement before the session closed. Commits on the
+branch, newest last:
+
+| commit | what |
+| --- | --- |
+| `0b107a88d0` | the plan (docs only) |
+| `80c35d9d69` | `wip(#5198): RegExpExec slice-1 in progress — NOT fully validated` |
+| `3b41aeec28` | `docs(#5198): record slice-1 measurement — +7 rows, 0 lost, byte-inert` |
+
+Claimed result: 190-row cluster, two frozen trees, per-path diff — base
+86/95/9, branch **93/88/9**; **+7 gained, 0 lost**; byte-inertness proved over
+30 binaries (15 non-escaping RegExp programs x {standalone, gc}) sha256-identical.
+
+**Why that is worth some trust and still not a free pass:** the lane's BASE run
+(86 pass / 95 fail / 9 compile_error) reproduces an independent measurement of
+the same cluster made earlier in the session, on a different tree — so the two
+sides agree on the starting point. +7 against a projected 9 is also the honest
+direction: it declined 2 global-`@@match` rows deliberately.
+
+**Before opening or merging a PR from this branch, get from the lane (or
+re-derive):** the 7 gained rows by path, the 2 declined rows and why, the
+prescan-shape deviation from the plan, the list of what the lane itself flagged
+as still unproven, and which gates were run bare with their exit codes —
+specifically `LOC_GATE_BASE=$(git rev-parse origin/main) node
+scripts/check-loc-budget.mjs` and `npm run -s test:equivalence:gate`. No PR was
+opened for this branch during the session.
 
 **The diagnosis is solid and does not need redoing** (probe-verified, with
 controls, on `origin/main` `a8b8dfc180`):
