@@ -149,6 +149,15 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     if (!ctx.vecIndexDeleteDirty && isIndexDelete(node)) {
       ctx.vecIndexDeleteDirty = true;
     }
+    // (#6482 r5/r8) `delete a[i]` arms the absence marker for the same reason
+    // `x.length = n` does: a HOST-side delete of a vec index asks the minting
+    // module to write the marker (`__vec_mark_hole`), and a module that deletes
+    // indices must read them back hole-aware or it reports the deleted element
+    // as present. propertyHelper's `isConfigurable` is exactly a delete plus a
+    // presence question, and it is compiled into the harness PROVIDER.
+    if (!ctx.usesArrayHoles && isIndexDelete(node)) {
+      ctx.usesArrayHoles = true;
+    }
     if (!ctx.arraySpeciesDirty && isArraySpeciesObservable(node)) {
       ctx.arraySpeciesDirty = true;
     }
