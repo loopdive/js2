@@ -11091,5 +11091,19 @@ nothing in this battery either.
 at time of this partial commit** — 3204 files split into ≤250-file chunks,
 running via a resumable batch script (`.tmp/s53brun/run-batch.mts`) that
 skips chunks whose output already exists, so a restart after this box's
-periodic reset picks up where it left off. This section will be updated
-with the full A–F/corpus-byte/equivalence-gate tables once those complete.
+periodic reset picks up where it left off. A-partial (first 280 A files):
+0 pass→fail, 0 fail→pass so far. This section will be updated with the
+full A–F table once it completes.
+
+**Corpus-byte battery: COMPLETE.** 42 files × {gc, standalone} = 84 rows,
+compiled fresh via `.tmp/s53brun/corpus.mts` (same harness as S50's,
+`WT` path updated) and diffed against `.tmp/s53b/s50run/corpus-fix.jsonl`
+with `diff-corpus.mjs`: **`statusFlips=0 shaFlips=0`** — not even a byte
+changed in any of the 84 compiled binaries. Expected: none of the 42
+`website/playground/examples`/`tests/fixtures` corpus files exercise a
+Proxy binding escaping into an untyped call parameter (S53's fix's exact
+trigger shape), so zero movers here is consistent, not surprising.
+
+**Equivalence gate: not yet run** — will run after the A–F battery
+completes to avoid CPU contention (this box has 4 cores; A–F is already
+running at ~4 cores' worth of load).
