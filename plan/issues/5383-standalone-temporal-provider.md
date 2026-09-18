@@ -10099,3 +10099,58 @@ own changes.** The two named real Temporal rows (`PlainDate/from/argument-
 object-valid.js`, `…/argument-string.js`) remain red — the `$__extern_get`/
 `$__extern_set` third site S46 named is still the next lead for whoever picks
 this up.
+
+### S47 findings (2026-09-18) — the `$__extern_get`/`$__extern_set`
+resurrection hypothesis REFUTED for the non-polymorphic case; reduction
+blocked by two orthogonal, previously-undocumented defects in interface-typed
+Calendar dispatch, neither fixed
+
+Full writeup: `plan/issues/6633-calendar-dispatch-blocks-era-reduction.md`.
+Setup: fresh worktree off S46b's tip `3b82884459`, compiler bundle rebuilt,
+no Temporal provider/QuickJS rebuild (findings-only, no `src/` change).
+
+**Step 1 refutes S46's own leading hypothesis.** A plain (non-polymorphic)
+function building the EXACT real `calendar.ts` `isoToDate` literal shape
+(`{ era: undefined, eraYear: undefined, year, month, day, daysInWeek: 7,
+monthsInYear: 12 }` plus the real conditional post-construction
+`if (requestedFields.dayOfWeek) date.dayOfWeek = 3`) resurrects `result[t]`
+(`t = "era"`, computed key) correctly in standalone mode:
+`v === undefined` → `true`. So `$__extern_get`/`$__extern_set` are NOT the
+defect when the calendar interface/dictionary wrapper is absent.
+
+**Step 2 — wrapping the identical literal in the real dispatch shape
+(interface method, `Record<string, Interface>` dictionary with MIXED
+object-literal and class-instance entries, matching `calendar.ts`'s own
+`impl['iso8601'] = {...}` / `impl[helper.id] = new NonIsoCalendar(helper)`)
+hits two separate, more severe defects before any `SameValue` observation is
+reachable:**
+
+1. A bare interface-typed `any`-return method call through a function-
+   returned interface value TRAPS ("dereferencing a null pointer")
+   unconditionally — even with a body as simple as `return 42`, no computed
+   key, no `undefined` field involved at all.
+2. A `Record<string, Interface>` holding both a plain-object-literal impl
+   and a class-instance impl (the polyfill's exact `iso8601`/non-ISO
+   registration shape) dispatches BOTH keys to the class instance's method,
+   ignoring the object literal entirely (`getCalendar("iso8601")` returned
+   `year: 1, era: "x"` instead of the iso8601 body's own `year: 999, era:
+   undefined`) — a genuine interface-dispatch/devirtualization bug, not
+   cosmetic.
+
+**Neither defect was fixed** — both are outside #6633's originally-scoped
+mechanism and each looks substantial enough to need its own issue + architect
+review. Time-boxed per the dispatch brief; handing back the reduction and two
+new hypotheses rather than continuing into interface-dispatch codegen without
+a plan. **Next lane should investigate finding #2 first** — if the real
+Temporal provider's own `impl['iso8601']`/`NonIsoCalendar` dictionary
+misdispatches the same way, that is a plausible root cause for the `era`
+`null`-vs-`undefined` mismatch that bypasses `$__extern_get`/`$__extern_set`
+entirely (a wrong-implementation dispatch falling through to a genuine
+property MISS on the correct implementation's storage reads back as the
+legacy `ref.null.extern` "not found" answer, not the canonical `undefined`
+singleton).
+
+**Criterion-4 battery**: not run — no `src/` change to validate (findings-
+only PR). Real rows: not re-verified with a fresh provider build, for the
+same reason (S46b already confirmed both still-red on the immediately-prior
+commit; re-running without a fix adds no new evidence).
