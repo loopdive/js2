@@ -1,7 +1,7 @@
 ---
 id: 6504
 title: "Linked lane: `await thenable` yields the thenable instead of its resolved value — and pre-#6492-r6 the resulting failure was reported as a PASS"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-09-18
 updated: 2026-09-18
@@ -13,6 +13,18 @@ area: runtime
 language_feature: async-await
 goal: test262-conformance
 related: [6492, 3451, 5226]
+# 2026-09-18 (round 29) — the spill continuation for `o.m(await x)`.
+# `src/codegen/async-frame.ts` +24: the spill-name collection loop in
+# `computeAsyncSpills` (the continuation's frame fields are not source
+# bindings, so `plan.liveAfterAwait` cannot supply them) plus the
+# `allowSpilledCall` argument at the three `planLinearAwaits` call sites that
+# must agree about which shapes exist. It cannot move to the new subsystem
+# module: it is the frame-layout builder's own list, and splitting it would put
+# half of one layout decision in two files.
+# The MECHANISM itself is a new module — `src/codegen/async-spilled-call.ts`
+# (plan + both emit halves) — so the god-files take only the wiring.
+loc-budget-allow:
+  - src/codegen/async-frame.ts
 ---
 
 # #6504 — two defects, one row
@@ -223,3 +235,63 @@ lane's headline was 5 too high before r6.
 - A regression test asserts the **reason** survives a cross-module async
   rejection — the false-pass shape is invisible to any row-count check, so it
   needs its own assertion.
+
+## Round 29 (2026-09-18) — the spill continuation is IMPLEMENTED; one of the five rows is fixed
+
+`src/codegen/async-spilled-call.ts` implements the ABI this issue named. Full
+write-up, measurements and the deliberate scope boundaries are in #6492's
+`## Round 29`. Summary:
+
+| slice | lane | before | after |
+| --- | --- | --- | --- |
+| six async slices (2,212 rows) | linked | 1,532 | **1,533** (+1 / −0) |
+| six async slices (2,212 rows) | honest | 1,526 | **1,530** (+4 / −0) |
+| 138-row #6492 set | linked | 49 | 49 (+0 / −0) |
+
+`language/expressions/await/await-awaits-thenables.js` — the row this issue was
+filed on — **passes on both lanes**. The honest lane also gained the three
+`async-function/named-reassign-fn-name-in-body*` rows: a named function
+expression whose own name binding is reassigned in its body is exactly the
+"callee is not an immutable binding" case the replay arm must refuse.
+
+### Defect A should be SPLIT — the other four rows are a different bug
+
+Re-measured individually on the linked lane after the fix:
+
+| row | verdict | error |
+| --- | --- | --- |
+| `await/await-awaits-thenables.js` | **pass** | — |
+| `dynamic-import/assignment-expression/await-expr.js` | fail | `SameValue(«undefined», «"Te…»)` |
+| `optional-chaining/iteration-statement-for-await-of.js` | fail | `[object Object] is not iterable` |
+| `optional-chaining/member-expression-async-identifier.js` | fail | `Cannot read properties of null` |
+| `optional-chaining/optional-chain-async-square-brackets.js` | fail | `SameValue(«0», «undefined»)` |
+
+None of the four is an erased `await` in a call argument. Three are optional
+chaining (`?.`), which the new planner declines by name because `a?.b()` has its
+own short-circuit semantics; one is dynamic `import()`. They were grouped here
+because they failed alongside the thenable row, not because they share its
+cause. They need their own diagnosis.
+
+### Still open in this issue
+
+- `new C(await x)` — needs a `[[Construct]]` resume op; `__call_function_<n>`
+  would silently perform a `[[Call]]`.
+- `f(1 + await x)` — the await nested INSIDE an argument (the round-26 census's
+  12-event `nested-operand` bucket): same ABI, the partial operand must be
+  spilled too.
+- try/catch ACROSS the await — the try/catch planner's states carry no spill
+  hooks, so `lowerChunk` deliberately does not admit the shape; it keeps its
+  pre-round-29 behaviour. `tests/issue-6504-spilled-call-await.test.ts` pins
+  that boundary.
+- The **loud refusal** half. Plan for the flag-diff run (no event-to-row
+  attribution needed — that failed in round 28 because vitest batches worker
+  stderr):
+  1. gate the widening behind an env flag in
+     `reportDeclinedAsyncRejectionHazard` (`src/codegen/async-activation.ts`):
+     drop the `findSuspensionInsideTry` condition for declines with
+     `anyRealSuspension` true, keeping the existing scope;
+  2. run the six async slices on the linked lane with the flag ON;
+  3. diff against the round-29 baseline (1,533 / 2,212 — the baseline MOVED this
+     round, so no earlier run can be reused);
+  4. ≤ 20 distinct rows flipping pass → fail ⇒ land it and list them here;
+     > 20 ⇒ list them for follow-up and land nothing.

@@ -61,6 +61,7 @@ import {
   isHostAsyncLane,
   tryCatchAsyncSpillInfo,
 } from "./async-cps.js";
+import { spilledCallLaneSupported, spilledCallSpillNames } from "./async-spilled-call.js";
 import { ensureNativeGeneratorResultType } from "./generators-native.js";
 import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "./any-helpers.js"; // (#3178) canonical undefined for the done-result value
 import { recordAsyncFrameMachinery } from "./compiler-support-abi.js";
@@ -252,7 +253,7 @@ export function asyncFnNeedsHostDrive(
   // function-like captures mutably is FORCE-BOXED into a cell-typed frame
   // field (buildAsyncFrameInfo `spillCellInfo`) — no pattern-shape decline
   // remains.
-  const linear = planLinearAwaits(fn, plan, { checker: ctx.checker });
+  const linear = planLinearAwaits(fn, plan, { checker: ctx.checker, allowSpilledCall: spilledCallLaneSupported(ctx) });
   if (linear === null) {
     // (#3587) try/catch-across-await — the #2906 3c CFG machine (catch regions
     // as states + routed dispatcher) drives this shape on the HOST settle
@@ -984,7 +985,11 @@ export function asyncFnNeedsDrive(ctx: CodegenContext, fn: ts.FunctionLikeDeclar
   if (!anyRealSuspension) return false; // fully await-elidable → sync + resolved promise
   // (#2906 3c-ii) The native gate admits return-in-try (return-through-finally
   // via the return hook's finalizer replay); the host gate does not.
-  const linear = planLinearAwaits(fn, plan, { allowReturnInTry: true, checker: ctx.checker });
+  const linear = planLinearAwaits(fn, plan, {
+    allowReturnInTry: true,
+    checker: ctx.checker,
+    allowSpilledCall: spilledCallLaneSupported(ctx),
+  });
   if (linear === null) {
     // (#2906 slice 3a) `while`-with-await loop shape (native drive lane only).
     // Eligible when every widened loop spill local has a spill-safe type — a
@@ -1217,7 +1222,11 @@ function computeAsyncSpills(
     }
     return { spillNames, spillTypes };
   }
-  const linear = planLinearAwaits(decl, plan, { allowReturnInTry, checker: ctx.checker });
+  const linear = planLinearAwaits(decl, plan, {
+    allowReturnInTry,
+    checker: ctx.checker,
+    allowSpilledCall: spilledCallLaneSupported(ctx),
+  });
   if (linear === null) {
     // (#2906 slice 3a) `while`-with-await loop: widened spill set (all loop
     // own-locals). (#2906 slice 3b) for-await drive: loop own-locals + the
@@ -1234,6 +1243,15 @@ function computeAsyncSpills(
   const rbTypeByName = new Map<string, ValType>();
   for (const seg of linear.segments) {
     if (seg.resumeBinding) rbTypeByName.set(seg.resumeBinding.name, resumeBindingValType(ctx, seg.resumeBinding));
+  }
+  // (#6504) The call-argument spill continuation's own fields. They are not
+  // source bindings, so `plan.liveAfterAwait` cannot know about them; they are
+  // written by the suspend state's `emit` hook and read by the resume state's
+  // `postDeliverEmit`, one suspension later. All externref.
+  const spilledCallNames: string[] = [];
+  for (const seg of linear.segments) {
+    if (seg.spilledCall === undefined) continue;
+    for (const name of spilledCallSpillNames(seg.spilledCall)) spilledCallNames.push(name);
   }
 
   const declByName = collectVarDeclsByName(decl);
@@ -1259,6 +1277,12 @@ function computeAsyncSpills(
       spillNames.push(name);
       spillTypes.push(resolved ?? { kind: "externref" });
     }
+  }
+  for (const name of spilledCallNames) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+    spillNames.push(name);
+    spillTypes.push({ kind: "externref" });
   }
   return { spillNames, spillTypes };
 }

@@ -5,6 +5,13 @@
 import type { TypeOracle } from "../checker/oracle.js";
 import { awaitIsStaticallyResolved, staticPromiseResolveSettledExpr } from "../ir/async-static.js";
 import { isPromiseType } from "../checker/type-mapper.js";
+import {
+  emitSpilledCallPreSuspend,
+  emitSpilledCallResume,
+  planSpilledCallAwait,
+  spilledCallLaneSupported,
+  type SpilledCallPlan,
+} from "./async-spilled-call.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { forEachChild, ts } from "../ts-api.js";
 import { lowerAwaitingStatementByHoisting } from "./async-await-hoist.js";
@@ -520,6 +527,15 @@ export interface LinearAwaitSegment {
    * `false` — a throw in it must not re-run it).
    */
   readonly leadInTry: readonly boolean[];
+  /**
+   * (#6504) This await sits in a CALL ARGUMENT and is resumed by the spill
+   * continuation rather than by recompiling the containing statement: the
+   * callee/receiver/preceding arguments are evaluated before the suspension
+   * into frame spills, and the resume state calls the spilled callee. The
+   * containing statement is consumed here and MUST NOT also be pushed into the
+   * next segment's lead.
+   */
+  readonly spilledCall?: SpilledCallPlan;
 }
 
 /**
@@ -674,7 +690,7 @@ function replaySafeNestedCallAwait(
 export function planLinearAwaits(
   fn: ts.FunctionLikeDeclaration,
   plan: AsyncCpsPlan,
-  opts?: { allowReturnInTry?: boolean; checker?: ts.TypeChecker },
+  opts?: { allowReturnInTry?: boolean; checker?: ts.TypeChecker; allowSpilledCall?: boolean },
 ): LinearAwaitPlan | null {
   if (plan.awaitPoints.length === 0) return null;
   const body = fn.body;
@@ -735,6 +751,7 @@ export function planLinearAwaits(
     sawReturnAwait: false,
     allowReturnInTry: opts?.allowReturnInTry === true,
     checker: opts?.checker,
+    allowSpilledCall: opts?.allowSpilledCall === true,
   };
   if (!lowerLinearStatements(body.statements, st, awaitSet)) return null;
 
@@ -810,6 +827,8 @@ interface LowerState {
   allowReturnInTry: boolean;
   /** TypeScript identity proof used by bounded continuation recompilation. */
   checker?: ts.TypeChecker;
+  /** (#6504) Admit the call-argument spill continuation (host lane only). */
+  allowSpilledCall?: boolean;
 }
 
 /**
@@ -988,6 +1007,29 @@ function lowerLinearStatements(
       resetLead();
       pushLead(stmt);
       continue;
+    }
+    // (#6504) `o.m(await x)` / `f(a, await x, b)` — the replay arm above cannot
+    // take these (it would re-read the callee after the suspension), and
+    // declining drops to the legacy pass-through that compiles `await` as a
+    // NO-OP. The spill continuation evaluates callee/receiver/preceding
+    // arguments BEFORE the suspension and calls the spilled callee on resume,
+    // so the statement is fully consumed here and is NOT pushed into the next
+    // lead.
+    if (st.allowSpilledCall === true) {
+      const spilledCall = planSpilledCallAwait(stmt, awaitNode);
+      if (spilledCall !== null) {
+        st.segments.push({
+          leadStmts,
+          awaitedExpr: awaitNode.expression,
+          resumeBinding: { name: `__async_call_sent@${spilledCall.key}`, type: undefined },
+          isReturnAwait: false,
+          awaitInTry,
+          leadInTry,
+          spilledCall,
+        });
+        resetLead();
+        continue;
+      }
     }
     return false; // await sits in a non-canonical position within this statement
   }
@@ -1242,6 +1284,14 @@ export function linearPlanToCfg(linear: LinearAwaitPlan): AsyncCfgPlan {
   for (let k = 0; k < N; k++) {
     const seg = linear.segments[k]!;
     const prev = k > 0 ? linear.segments[k - 1]! : null;
+    // (#6504) The spill halves ride the two hooks the CFG carrier already has:
+    // `emit` runs after this state's leads and before the terminator evaluates
+    // the awaited operand — the exact point JS evaluates the callee reference
+    // and the preceding arguments; `postDeliverEmit` on the RESUME state runs
+    // after the settled value is bound and before that state's leads, which are
+    // the statements following the call.
+    const spilled = seg.spilledCall;
+    const prevSpilled = prev?.spilledCall;
     states.push({
       id: k,
       resumeFrom: prev ? { binding: prev.resumeBinding, handler: prev.awaitInTry ? 1 : 0 } : null,
@@ -1249,6 +1299,20 @@ export function linearPlanToCfg(linear: LinearAwaitPlan): AsyncCfgPlan {
         stmt,
         handler: seg.leadInTry[i] ? 1 : 0,
       })),
+      ...(spilled === undefined
+        ? {}
+        : {
+            emit: (ctx: CodegenContext, fctx: FunctionContext): void => {
+              emitSpilledCallPreSuspend(ctx, fctx, spilled);
+            },
+          }),
+      ...(prevSpilled === undefined || prev?.resumeBinding == null
+        ? {}
+        : {
+            postDeliverEmit: (ctx: CodegenContext, fctx: FunctionContext): void => {
+              emitSpilledCallResume(ctx, fctx, prevSpilled, prev.resumeBinding!.name);
+            },
+          }),
       terminator: {
         kind: "suspend",
         awaited: seg.awaitedExpr,
@@ -1258,12 +1322,20 @@ export function linearPlanToCfg(linear: LinearAwaitPlan): AsyncCfgPlan {
     });
   }
   const last = linear.segments[N - 1]!;
+  const lastSpilled = last.spilledCall;
   states.push({
     id: N,
     resumeFrom: {
       binding: last.resumeBinding,
       handler: last.awaitInTry ? 1 : 0,
     },
+    ...(lastSpilled === undefined || last.resumeBinding === null
+      ? {}
+      : {
+          postDeliverEmit: (ctx: CodegenContext, fctx: FunctionContext): void => {
+            emitSpilledCallResume(ctx, fctx, lastSpilled, last.resumeBinding!.name);
+          },
+        }),
     lead: last.isReturnAwait
       ? []
       : linear.tail.map((stmt, i) => ({
@@ -1329,6 +1401,10 @@ export function planAsyncCfg(
   const linear = planLinearAwaits(fn, plan, {
     allowReturnInTry: opts.allowReturnInTry === true,
     checker: ctx.checker,
+    // (#6504) Derived from `ctx` at every site rather than plumbed through
+    // options, so the claim predicate, the spill computation and the plan
+    // builder cannot disagree about which shapes exist.
+    allowSpilledCall: spilledCallLaneSupported(ctx),
   });
   if (linear !== null) return linearPlanToCfg(linear);
   if (opts.allowLoops) {

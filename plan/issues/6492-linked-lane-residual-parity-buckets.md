@@ -119,6 +119,12 @@ loc-budget-allow:
   # variables of that dispatch chain. Splitting the chain is #3399's job.
   - src/codegen/expressions/call-identifier.ts
   - src/runtime/iterator-polyfills.ts
+  # 2026-09-18 (round 29) — a further +76 in `src/codegen/async-cps.ts` for the
+  # #6504 spill continuation's PLANNER half: the `spilledCall` segment field,
+  # the shape arm in `lowerLinearStatements`, and the two hook attachments in
+  # `linearPlanToCfg`. The mechanism (shape predicate + both emit halves) lives
+  # in the new `src/codegen/async-spilled-call.ts`; what lands here is only what
+  # must sit inside the private lowering walk and the CFG builder it feeds.
   # 2026-09-18 (round 28) — +26 lines in `src/codegen/async-cps.ts`, all of them
   # one threading gap across the THREE `LowerState` builders: `lowerChunk` /
   # `lowerRegionBody` / `analyzeTryCatchAsync` (try/catch) and
@@ -3327,3 +3333,178 @@ inside a `try`; the candidate change is to drop that condition for declines with
     dumper that shows the same defect takes about four seconds and immediately
     invalidated one inherited premise (the single-module arm) and confirmed
     another (the erased await).
+
+## Round 29 (2026-09-18, Opus long-tail lane) — #6504's spill continuation, built
+
+The ABI round 25 designed and rounds 26-28 kept deferring is implemented, in a
+new subsystem module `src/codegen/async-spilled-call.ts`. `o.m(await x)` no
+longer declines into the legacy pass-through that compiles `await` as a no-op.
+
+### What it does
+
+For `<callee>(…, await x, …)` as an expression statement, in source order:
+
+| when | step | where it lives |
+| --- | --- | --- |
+| before the suspension | evaluate the receiver `o` | spill `__async_call_recv@<pos>` |
+| before the suspension | read `o.m` **off that value** (`__extern_get`) | spill `__async_call_callee@<pos>` |
+| before the suspension | evaluate each argument left of the await | spill `__async_call_arg<i>@<pos>` |
+| — | suspend on `x` | — |
+| on resume | `__call_function_<n>(callee, recv, spilled args…, delivered, remaining args)` | resume state |
+
+Reading the method off the already-evaluated receiver, rather than recompiling
+`o.m`, is the step that keeps `o` to exactly ONE evaluation — the difference
+between correct and usually-correct for `getObj().m(await x)` and for a
+getter-valued receiver.
+
+### It needed no new frame machinery
+
+The carrier was already there, which is why this is a small change in the
+god-files (+76 `async-cps.ts`, +24 `async-frame.ts`) and a new module for the
+mechanism:
+
+- `AsyncCfgState.emit` runs after a state's leads and before its terminator
+  evaluates the awaited operand — exactly where JS evaluates the callee
+  reference and the preceding arguments.
+- `AsyncCfgState.postDeliverEmit` runs after the settled value is bound and
+  before the resume state's leads — exactly where the call belongs.
+- `initializeSpillLocals` / `storeSpills` / `restoreSpills` already move any
+  name bound in `fctx.localMap`, so the continuation's fields are ordinary
+  spills. `computeAsyncSpills` appends them because they are not source
+  bindings and `plan.liveAfterAwait` cannot know about them.
+
+The one genuinely new thing is the resume-side call, which goes through the
+existing `__call_function_<n>` host import. That makes this **host lane only**;
+`spilledCallLaneSupported(ctx)` gates it, and wasi/standalone keep their
+existing decline.
+
+### Scope, and the two boundaries that are deliberate
+
+Admitted: member callee (`o.m(await x)`, `o.m(a, await x)`, `o.m(await x, b)`),
+plain identifier callee including `let`/`var`/global/import — i.e. everything
+the pre-existing replay arm could not take, because it re-reads the callee after
+the suspension. Up to 4 user arguments (the fixed-arity import family).
+
+Not admitted, each for a stated reason rather than by omission:
+
+- **`new C(await x)`** — `__call_function_<n>` performs `[[Call]]`, not
+  `[[Construct]]`, so admitting it would silently build the wrong thing. It did
+  NOT fall out for free; it needs its own resume-side op.
+- **try/catch ACROSS the await** — that shape leaves the linear planner for the
+  try/catch analysis, whose CFG states carry no spill hooks. `lowerChunk`
+  therefore leaves `allowSpilledCall` unset, so the plan can never describe a
+  call that path's emitter would not emit. The shape keeps its pre-round-29
+  behaviour exactly, and `tests/issue-6504-spilled-call-await.test.ts` pins that
+  boundary rather than blessing it.
+- **await nested INSIDE an argument** (`f(1 + await x)`, the round-26 census's
+  12-event `nested-operand` bucket) — the partial operand needs spilling too.
+  Same ABI, more plan-side carry; not this round.
+
+### The shape decision is derived, never plumbed
+
+`asyncFnNeedsHostDrive` (claim), `computeAsyncSpills` (frame layout) and
+`planAsyncCfg` (plan) each compute `allowSpilledCall` from `ctx` via the same
+predicate. They cannot disagree about which shapes exist, which is the failure
+mode that would produce a frame whose live values have no field. The IR-overlay
+planner (`async-linear-planning.ts`) does not pass the flag, so it declines
+these bodies and the AST path takes them — also consistent by construction.
+
+### Tests: the sentinel, and why "no failures" was not a safe pass condition
+
+`tests/issue-6504-spilled-call-await.test.ts` runs bodies on the real linked
+lane and reads failures off the `unhandledRejection` channel. The first draft
+asserted "no rejections" and was **vacuous**: with the lane gate forced off, the
+old behaviour reports ZERO failures — the legacy pass-through's rejection never
+reaches an unhandled promise, which is #6504's own defect B. So every body now
+ends in a deliberate `assert(false, SENTINEL)` and every case expects exactly
+that one failure, which proves the body ran to its last line and every
+assertion before it held.
+
+Measured falsifiability: with `spilledCallLaneSupported` forced to `false`,
+**7 of the 8 cases fail** (the eighth is the try/catch boundary case, which is
+supposed to be unaffected). The order cases are the load-bearing ones:
+
+- a `then` that reassigns `obj.m` — the PRE-suspension callee must run;
+- a getter-valued receiver source — evaluated exactly once;
+- getters left and right of the await — `a,then,b`, and `1-2-3` arriving in
+  their source positions;
+- a `var` callee reassigned from `then` — the pre-suspension read wins.
+
+A recompile-the-statement resume passes the value case and fails all four.
+
+### Measured
+
+Fresh `JS2WASM_TEST262_HARNESS_CACHE` per run, both bundles rebuilt between arms
+(`pnpm run build:compiler-bundle` / `build:runtime-bundle`). The honest arms are
+a file-copy A/B against `HEAD` (round 28), not an env switch.
+
+| slice | lane | before | after | delta |
+| --- | --- | --- | --- | --- |
+| six async slices (2,212 rows) | linked | 1,532 | **1,533** | **+1 / −0** |
+| six async slices (2,212 rows) | honest | 1,526 | **1,530** | **+4 / −0** |
+| 138-row #6492 long-tail set | linked | 49 | 49 | +0 / −0 |
+
+Zero regressions in either lane. The rows that moved:
+
+| row | lane(s) |
+| --- | --- |
+| `language/expressions/await/await-awaits-thenables.js` | linked + honest |
+| `language/expressions/async-function/named-reassign-fn-name-in-body.js` | honest |
+| `…/named-reassign-fn-name-in-body-in-arrow.js` | honest |
+| `…/named-reassign-fn-name-in-body-in-eval.js` | honest |
+
+The three `named-reassign` rows were not predicted and are the clearest
+confirmation that the mechanism is the right one: a named function expression
+whose own name binding is reassigned in its body is precisely the
+"callee is not an immutable binding" case, which the replay arm must refuse and
+the spill ABI takes by construction.
+
+`tests/issue-6492-r6-cross-module-host-throw.test.ts`,
+`tests/issue-6492-r28-trycatch-planner-checker.test.ts` and the new
+`tests/issue-6504-spilled-call-await.test.ts` — 17 tests, all green.
+
+### #6504's other four rows are NOT fixed, and they are a different defect
+
+Measured individually on the linked lane after the change:
+
+| row | verdict | error |
+| --- | --- | --- |
+| `await/await-awaits-thenables.js` | **PASS** | — |
+| `dynamic-import/assignment-expression/await-expr.js` | fail | `SameValue(«undefined», «"Te…»)` |
+| `optional-chaining/iteration-statement-for-await-of.js` | fail | `[object Object] is not iterable` |
+| `optional-chaining/member-expression-async-identifier.js` | fail | `Cannot read properties of null` |
+| `optional-chaining/optional-chain-async-square-brackets.js` | fail | `SameValue(«0», «undefined»)` |
+
+None of the four is an erased `await` in a call argument: three are optional
+chaining (`?.`), which `planSpilledCallAwait` declines by name, and one is
+dynamic `import()`. They were grouped into #6504 because they failed together
+with the thenable row, not because they share its cause. #6504's Defect A should
+be split: the call-argument erasure is fixed; the optional-chaining and
+dynamic-import rows need their own diagnosis.
+
+### The loud-refusal flag-diff plan (not run this round)
+
+Deliberately deferred. When it is run, it needs no event-to-row attribution —
+that approach failed in round 28 because vitest batches worker stderr:
+
+1. gate the widening behind an env flag in `reportDeclinedAsyncRejectionHazard`
+   (`src/codegen/async-activation.ts`): drop the `findSuspensionInsideTry`
+   condition for declines with `anyRealSuspension` true, keeping the existing
+   FunctionDeclaration/closure scope;
+2. run the six async slices on the linked lane with the flag ON;
+3. diff against the round-29 baseline (`as-d`, 1,533/2,212). Rows that flip
+   pass → fail ARE the loud-refusal set, by definition;
+4. ≤ 20 distinct rows ⇒ land it and list them in #6504; > 20 ⇒ list them for
+   follow-up and land nothing.
+
+Note the baseline moved this round, so an older run cannot be reused for step 3.
+
+### Finding
+
+49. **A verdict channel that is silent under the old behaviour makes every test
+    on it vacuous.** The natural assertion here ("the body reports no
+    failures") passes both when the fix works and when the bug is fully present,
+    because the bug's signature IS the silence. Testing that the body reached a
+    known last line — rather than that it reported nothing — is what makes the
+    difference observable. Always run the suite once with the mechanism disabled
+    and count how many cases actually fail.
