@@ -18,6 +18,16 @@ related: [2860, 680, 2865]
 umbrella: 2860
 architect_spec: candidate
 loc-budget-allow:
+  # (#2864 S1/S2, 2026-09-18) +140 LOC in generators-native.ts /
+  # buildNativeGeneratorPlan for the yield-in-expression-position widening.
+  # The executable change is ~55 lines (an operand-carrying yield predicate, an
+  # assignment re-root, a declaration entry point, a ContinuationHost record);
+  # the rest is the §13.15.2 evaluation-order argument for why each admitted
+  # target may be deferred past the suspension and each refused one may not.
+  # That argument is the load-bearing part — the refusals here are not
+  # conservatism, they are cases where deferring would move an observable
+  # effect across the resume boundary, and a reader who deletes the note will
+  # widen exactly those.
   - src/codegen/generators-native.ts
   # (#2864 C02) NativeGeneratorInfo carries the optional frame-arguments
   # metadata consumed by the generator factory/resume pair.
@@ -50,6 +60,12 @@ func-budget-allow:
   # lower id. Deriving it correctly is inherently a few lines inside the planner;
   # extracting it would split the state-reservation invariant across two units.
   # Same rationale as the D2 loc-budget-allow grant (#2662 precedent).
+  #
+  # S1/S2 (+140 LOC, 2026-09-18): the continuation grammar lives inside this
+  # function because it closes over the plan's live cursor (`curId`,
+  # `curStatements`), the spill set and `elemValType`. It cannot be lifted out
+  # without exporting that mutable state; see the loc-budget-allow note above
+  # for why the comment mass is deliberate.
   - src/codegen/generators-native.ts::buildNativeGeneratorPlan
   # (#2864 wave-2 S1) All three grow by their root-cause notes, and all three
   # notes have to live INSIDE the function because each corrects a decision

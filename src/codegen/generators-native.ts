@@ -1255,6 +1255,17 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   type ContinuationYieldBinding = readonly [ts.YieldExpression, string];
   type ExpressionContinuationAttempt = "lowered" | "not-applicable" | "failed";
 
+  /**
+   * The statement a continuation re-runs in its successor state, paired with the
+   * expression inside it whose yields / captured operands are replaced by spills.
+   * For an `ExpressionStatement` the two coincide today; the pair exists so a
+   * statement whose root is a sub-expression can reuse the same lowering.
+   */
+  interface ContinuationHost {
+    statement: ts.Statement;
+    root: ts.Expression;
+  }
+
   interface ContinuationCaptureType {
     type: ValType;
     /** Emit the canonical JS undefined singleton instead of a raw i32 value. */
@@ -1300,11 +1311,46 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     }
   }
 
-  /** Only a bare, non-delegating yield belongs to this checkpoint. */
-  function bareContinuationYield(expr: ts.Expression): ts.YieldExpression | null {
+  /**
+   * (#2864 S1) Gate for every widening this slice adds to the #680 continuation
+   * grammar — an operand-carrying yield, an assignment root, a declaration root,
+   * a CALL as a captured prefix operand.
+   *
+   * Deliberately standalone/WASI-only. The JS-host lane keeps a WORKING
+   * eager-buffer fallback for every shape the plan refuses, so admitting more
+   * shapes there would only move already-passing rows onto a different lowering
+   * — pure regression risk for no conformance gain. Standalone has no fallback
+   * at all: a refusal there IS the #680 diagnostic / the `env::__gen_*`
+   * host-import leak this issue exists to remove. Keeping the gate here is also
+   * what makes the gc lane byte-identical across this change.
+   */
+  const continuationYieldsMayCarryOperands = noJsHostTarget(ctx);
+
+  /**
+   * A non-delegating yield this checkpoint can suspend on.
+   *
+   * #680 admitted ONLY the operand-less `yield`. A yield that carries an operand
+   * is admitted too now: the operand is compiled in the SUSPENDING state (it is
+   * the yield terminator's value expression, emitted after that state's prefix
+   * captures), and the successor recompiles the containing statement with the
+   * whole `YieldExpression` node replaced by the sent spill — so the operand is
+   * evaluated exactly once, before the resume boundary, and never re-run after
+   * it. A yield NESTED in the operand (`yield yield 1`) has no such single
+   * evaluation point and stays refused.
+   */
+  function continuationYieldOf(expr: ts.Expression): ts.YieldExpression | null {
     const inner = unwrapContinuationWrapper(expr);
-    if (!ts.isYieldExpression(inner) || inner.asteriskToken || inner.expression !== undefined) return null;
-    return inner;
+    if (!ts.isYieldExpression(inner) || inner.asteriskToken) return null;
+    const operand = inner.expression;
+    if (operand === undefined) return inner;
+    if (!continuationYieldsMayCarryOperands) return null;
+    if (ts.isYieldExpression(unwrapContinuationWrapper(operand)) || nodeContainsYield(operand)) return null;
+    return yieldValueOk(operand) ? inner : null;
+  }
+
+  /** True when `expr` itself is a yield, or holds one outside a nested function. */
+  function containsAnyYield(expr: ts.Expression): boolean {
+    return ts.isYieldExpression(unwrapContinuationWrapper(expr)) || nodeContainsYield(expr);
   }
 
   /** The standalone form is deliberately limited to one-or-more parentheses. */
@@ -1315,20 +1361,17 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       parenthesized = true;
       inner = inner.expression;
     }
-    if (!parenthesized || !ts.isYieldExpression(inner) || inner.asteriskToken || inner.expression !== undefined) {
-      return null;
-    }
-    return inner;
+    return parenthesized ? continuationYieldOf(inner) : null;
   }
 
-  /** Verify that every yield in a rebuilt expression is one of our bare yields. */
+  /** Verify that every yield in a rebuilt expression is one this lane admits. */
   function continuationYields(root: ts.Expression): ts.YieldExpression[] | null {
     const yields: ts.YieldExpression[] = [];
     let valid = true;
     function visit(node: ts.Node): void {
       if (!valid) return;
       if (ts.isYieldExpression(node)) {
-        if (node.asteriskToken || node.expression !== undefined) valid = false;
+        if (continuationYieldOf(node) === null) valid = false;
         else yields.push(node);
         return;
       }
@@ -1343,14 +1386,27 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   }
 
   /**
-   * Values before a suspension must not require observable Get/call/spread/key
-   * work. Local/literal arithmetic and identifier updates are the bounded
-   * one-time-effect set proven by this slice.
+   * An operand this lane may evaluate around a suspension. #680's set was
+   * local/literal arithmetic and identifier updates, described as "values before
+   * a suspension must not require observable Get/call/spread/key work".
+   *
+   * (#2864 S1) That reads as a soundness rule but is a PROOF-SCOPE one, and the
+   * distinction is the whole reason the continuation machinery exists: a
+   * captured prefix operand is compiled EXACTLY ONCE, in the suspending state,
+   * and every later state reads its spill through the planner-validated
+   * replacement map — so an observable CALL before a yield runs once, in source
+   * order, and never again after the resume. That single evaluation is precisely
+   * what `[f(), yield 1, h()]` requires, and it is pinned by the ORDER cases in
+   * `tests/issue-2864-yield-in-expression-position.test.ts`. Calls are therefore
+   * admitted, standalone-only (see `continuationYieldsMayCarryOperands`).
    */
   function isSafeContinuationOperand(expr: ts.Expression): boolean {
-    if (nodeContainsYield(expr)) return false;
+    if (containsAnyYield(expr)) return false;
     const inner = unwrapContinuationWrapper(expr);
     if (ts.isIdentifier(inner) || ts.isNumericLiteral(inner) || ts.isStringLiteral(inner)) return true;
+    // A yield anywhere inside it was rejected above; the capture's spill type
+    // still has to resolve to a struct-storable kind, or the plan bails.
+    if (continuationYieldsMayCarryOperands && ts.isCallExpression(inner)) return true;
     if (
       inner.kind === ts.SyntaxKind.TrueKeyword ||
       inner.kind === ts.SyntaxKind.FalseKeyword ||
@@ -1550,18 +1606,18 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   }
 
   function finishExpressionContinuation(
-    stmt: ts.ExpressionStatement,
+    host: ContinuationHost,
     captures: readonly NativeGeneratorExpressionCapture[],
     yieldBindings: readonly ContinuationYieldBinding[],
   ): boolean {
-    const replacements = buildContinuationReplacements(stmt.expression, captures, yieldBindings);
+    const replacements = buildContinuationReplacements(host.root, captures, yieldBindings);
     if (!replacements || !attachContinuationReplacements(curId, replacements)) return false;
-    curStatements.push(stmt);
+    curStatements.push(host.statement);
     return true;
   }
 
   function lowerSingleExpressionContinuation(
-    stmt: ts.ExpressionStatement,
+    host: ContinuationHost,
     yieldExpr: ts.YieldExpression,
     captureExpressions: readonly ts.Expression[],
     unwind: readonly UnwindEntry[],
@@ -1574,7 +1630,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     }
     const sentSpill = continuationSpillName("sent");
     if (!emitYield(yieldExpr, sentSpill, unwind)) return false;
-    return finishExpressionContinuation(stmt, captures, [[yieldExpr, sentSpill]]);
+    return finishExpressionContinuation(host, captures, [[yieldExpr, sentSpill]]);
   }
 
   function flattenCommaExpression(expr: ts.Expression, terms: ts.Expression[]): void {
@@ -1588,7 +1644,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   }
 
   function lowerCommaExpressionContinuation(
-    stmt: ts.ExpressionStatement,
+    host: ContinuationHost,
     root: ts.Expression,
     unwind: readonly UnwindEntry[],
   ): boolean {
@@ -1598,7 +1654,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
 
     const yields: { index: number; expression: ts.YieldExpression }[] = [];
     for (let index = 0; index < terms.length; index++) {
-      const yieldExpr = bareContinuationYield(terms[index]!);
+      const yieldExpr = continuationYieldOf(terms[index]!);
       if (yieldExpr) yields.push({ index, expression: yieldExpr });
       else if (!isSafeContinuationOperand(terms[index]!)) return false;
     }
@@ -1621,17 +1677,17 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         captures.push(capture);
       }
     }
-    return finishExpressionContinuation(stmt, captures, bindings);
+    return finishExpressionContinuation(host, captures, bindings);
   }
 
   function lowerConditionalExpressionContinuation(
-    stmt: ts.ExpressionStatement,
+    host: ContinuationHost,
     conditional: ts.ConditionalExpression,
     unwind: readonly UnwindEntry[],
   ): boolean {
-    const conditionYield = bareContinuationYield(conditional.condition);
-    const thenYield = bareContinuationYield(conditional.whenTrue);
-    const elseYield = bareContinuationYield(conditional.whenFalse);
+    const conditionYield = continuationYieldOf(conditional.condition);
+    const thenYield = continuationYieldOf(conditional.whenTrue);
+    const elseYield = continuationYieldOf(conditional.whenFalse);
     if (!conditionYield || !thenYield || !elseYield) return false;
 
     const conditionSent = continuationSpillName("sent");
@@ -1659,7 +1715,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     const thenSent = continuationSpillName("sent");
     if (!emitYield(thenYield, thenSent, unwind)) return false;
     const thenReplacements = buildContinuationReplacements(
-      stmt.expression,
+      host.root,
       [],
       [
         [conditionYield, conditionSent],
@@ -1668,14 +1724,14 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       ],
     );
     if (!thenReplacements || !attachContinuationReplacements(curId, thenReplacements)) return false;
-    curStatements.push(stmt);
+    curStatements.push(host.statement);
     finishState(curId, { kind: "jump", next: join });
 
     resetCursor(elseEntry);
     const elseSent = continuationSpillName("sent");
     if (!emitYield(elseYield, elseSent, unwind)) return false;
     const elseReplacements = buildContinuationReplacements(
-      stmt.expression,
+      host.root,
       [],
       [
         [conditionYield, conditionSent],
@@ -1684,19 +1740,64 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       ],
     );
     if (!elseReplacements || !attachContinuationReplacements(curId, elseReplacements)) return false;
-    curStatements.push(stmt);
+    curStatements.push(host.statement);
     finishState(curId, { kind: "jump", next: join });
 
     resetCursor(join);
     return true;
   }
 
+  /**
+   * (#2864 S1) An assignment TARGET whose evaluation may be deferred past a
+   * suspension in the right-hand side — see the call site for the §13.15.2
+   * argument. Standalone/WASI only, like every other S1 widening.
+   */
+  function continuationAssignmentTargetOk(left: ts.Expression): boolean {
+    if (!continuationYieldsMayCarryOperands) return false;
+    const inner = unwrapContinuationWrapper(left);
+    if (containsAnyYield(inner)) return false;
+    if (ts.isArrayLiteralExpression(inner) || ts.isObjectLiteralExpression(inner)) return true;
+    return ts.isIdentifier(inner);
+  }
+
   function lowerExpressionContinuation(
     stmt: ts.ExpressionStatement,
     unwind: readonly UnwindEntry[],
   ): ExpressionContinuationAttempt {
-    const root = unwrapContinuationWrapper(stmt.expression);
-    const singleYield = parenthesizedContinuationYield(stmt.expression);
+    const stmtRoot = unwrapContinuationWrapper(stmt.expression);
+    // (#2864 S1) An ASSIGNMENT whose VALUE suspends is lowered by re-rooting on
+    // its right-hand side and deferring the assignment itself into the successor
+    // state. §13.15.2 is what makes that order-preserving:
+    //   * destructuring target (`[a] = <rhs>`, `({a} = <rhs>)`) — step 2
+    //     evaluates the RHS FIRST; the pattern is not evaluated at all until a
+    //     value exists, so nothing of it can be owed before the suspension;
+    //   * simple identifier target (`x = <rhs>`) — step 1 resolves the binding,
+    //     which is unobservable, then evaluates the RHS.
+    // A MEMBER target (`o.p = yield`, `o[f()] = yield`) is excluded: its
+    // reference evaluation happens BEFORE the RHS and IS observable, so
+    // deferring it would move a Get/`f()` across the resume boundary. A yield
+    // INSIDE the target is excluded too — in a pattern that is a default
+    // initializer, i.e. a CONDITIONAL suspension this unconditional model
+    // cannot express (see the note in #2864).
+    const assignedValueRoot =
+      ts.isBinaryExpression(stmtRoot) &&
+      stmtRoot.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      continuationAssignmentTargetOk(stmtRoot.left)
+        ? unwrapContinuationWrapper(stmtRoot.right)
+        : undefined;
+    const root = assignedValueRoot ?? stmtRoot;
+    const singleYield = assignedValueRoot
+      ? continuationYieldOf(assignedValueRoot)
+      : parenthesizedContinuationYield(stmt.expression);
+    return lowerContinuationRoot({ statement: stmt, root: stmt.expression }, root, singleYield, unwind);
+  }
+
+  function lowerContinuationRoot(
+    host: ContinuationHost,
+    root: ts.Expression,
+    singleYield: ts.YieldExpression | null,
+    unwind: readonly UnwindEntry[],
+  ): ExpressionContinuationAttempt {
     const arrayRoot = ts.isArrayLiteralExpression(root) ? root : undefined;
     const objectRoot = ts.isObjectLiteralExpression(root) ? root : undefined;
     const conditionalRoot = ts.isConditionalExpression(root) ? root : undefined;
@@ -1710,7 +1811,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     if (unwind.length !== 0 || elemValType.kind !== "f64") return "failed";
 
     if (singleYield) {
-      return lowerSingleExpressionContinuation(stmt, singleYield, [], unwind) ? "lowered" : "failed";
+      return lowerSingleExpressionContinuation(host, singleYield, [], unwind) ? "lowered" : "failed";
     }
 
     if (arrayRoot) {
@@ -1719,18 +1820,18 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         if (ts.isOmittedExpression(element) || ts.isSpreadElement(element)) return "not-applicable";
         elements.push(element as ts.Expression);
       }
-      const yieldIndex = elements.findIndex((element) => bareContinuationYield(element) !== null);
-      if (yieldIndex < 0 || elements.some((element, index) => index !== yieldIndex && nodeContainsYield(element))) {
+      const yieldIndex = elements.findIndex((element) => continuationYieldOf(element) !== null);
+      if (yieldIndex < 0 || elements.some((element, index) => index !== yieldIndex && containsAnyYield(element))) {
         return "not-applicable";
       }
-      const yieldExpr = bareContinuationYield(elements[yieldIndex]!);
+      const yieldExpr = continuationYieldOf(elements[yieldIndex]!);
       if (
         !yieldExpr ||
         !elements.every((element, index) => index === yieldIndex || isSafeContinuationOperand(element))
       ) {
         return "not-applicable";
       }
-      return lowerSingleExpressionContinuation(stmt, yieldExpr, elements.slice(0, yieldIndex), unwind)
+      return lowerSingleExpressionContinuation(host, yieldExpr, elements.slice(0, yieldIndex), unwind)
         ? "lowered"
         : "failed";
     }
@@ -1741,24 +1842,24 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         if (!ts.isPropertyAssignment(property) || ts.isComputedPropertyName(property.name)) return "not-applicable";
         values.push(property.initializer);
       }
-      const yieldIndex = values.findIndex((value) => bareContinuationYield(value) !== null);
-      if (yieldIndex < 0 || values.some((value, index) => index !== yieldIndex && nodeContainsYield(value))) {
+      const yieldIndex = values.findIndex((value) => continuationYieldOf(value) !== null);
+      if (yieldIndex < 0 || values.some((value, index) => index !== yieldIndex && containsAnyYield(value))) {
         return "not-applicable";
       }
-      const yieldExpr = bareContinuationYield(values[yieldIndex]!);
+      const yieldExpr = continuationYieldOf(values[yieldIndex]!);
       if (!yieldExpr || !values.every((value, index) => index === yieldIndex || isSafeContinuationOperand(value))) {
         return "not-applicable";
       }
-      return lowerSingleExpressionContinuation(stmt, yieldExpr, values.slice(0, yieldIndex), unwind)
+      return lowerSingleExpressionContinuation(host, yieldExpr, values.slice(0, yieldIndex), unwind)
         ? "lowered"
         : "failed";
     }
 
     if (conditionalRoot) {
-      return lowerConditionalExpressionContinuation(stmt, conditionalRoot, unwind) ? "lowered" : "not-applicable";
+      return lowerConditionalExpressionContinuation(host, conditionalRoot, unwind) ? "lowered" : "not-applicable";
     }
     if (commaRoot) {
-      return lowerCommaExpressionContinuation(stmt, commaRoot, unwind) ? "lowered" : "not-applicable";
+      return lowerCommaExpressionContinuation(host, commaRoot, unwind) ? "lowered" : "not-applicable";
     }
     return "not-applicable";
   }
