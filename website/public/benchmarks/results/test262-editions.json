@@ -1,8 +1,8 @@
 [
   {
     "edition": "ES5",
-    "pass": 7987,
-    "fail": 1017,
+    "pass": 7990,
+    "fail": 1014,
     "ce": 25,
     "skip": 0,
     "total": 9029,
@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10030,
-    "fail": 1623,
+    "pass": 10032,
+    "fail": 1621,
     "ce": 51,
     "skip": 0,
     "total": 11704,
@@ -66,8 +66,8 @@
       },
       {
         "name": "generators",
-        "pass": 2092,
-        "fail": 382,
+        "pass": 2093,
+        "fail": 381,
         "ce": 12,
         "skip": 0,
         "total": 2486,
@@ -1507,12 +1507,12 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1371,
-    "fail": 635,
+    "pass": 1375,
+    "fail": 631,
     "ce": 11,
     "skip": 18,
     "total": 2035,
-    "pct": 67,
+    "pct": 68,
     "features": [
       {
         "name": "BigInt",
@@ -1714,12 +1714,12 @@
       },
       {
         "name": "import.meta",
-        "pass": 12,
-        "fail": 11,
+        "pass": 16,
+        "fail": 7,
         "ce": 0,
         "skip": 0,
         "total": 23,
-        "pct": 52
+        "pct": 70
       },
       {
         "name": "export-star-as-namespace-from-module",
@@ -1831,12 +1831,12 @@
       },
       {
         "name": "destructuring-assignment",
-        "pass": 0,
-        "fail": 4,
+        "pass": 4,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 4,
-        "pct": 0
+        "pct": 100
       },
       {
         "name": "class",
@@ -1912,12 +1912,12 @@
       },
       {
         "name": "object-rest",
-        "pass": 0,
-        "fail": 1,
+        "pass": 1,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 1,
-        "pct": 0
+        "pct": 100
       }
     ]
   },
@@ -2186,8 +2186,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4381,
-    "fail": 1360,
+    "pass": 4385,
+    "fail": 1356,
     "ce": 51,
     "skip": 0,
     "total": 5792,
@@ -2303,12 +2303,12 @@
       },
       {
         "name": "top-level-await",
-        "pass": 175,
-        "fail": 55,
+        "pass": 179,
+        "fail": 51,
         "ce": 27,
         "skip": 0,
         "total": 257,
-        "pct": 68
+        "pct": 70
       },
       {
         "name": "async-functions",
@@ -4304,11 +4304,11 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4434,
-    "fail": 873,
+    "pass": 4441,
+    "fail": 866,
     "ce": 138,
     "skip": 0,
     "total": 5445,
-    "pct": 81
+    "pct": 82
   }
 ]
