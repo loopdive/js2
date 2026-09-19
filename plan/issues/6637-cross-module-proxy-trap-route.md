@@ -7,9 +7,23 @@ priority: high
 horizon: l
 feasibility: hard
 reasoning_effort: max
-owner: sendev-s53
-assignee: ttraenkler/sendev-s53
-completed: 2026-09-18
+owner: sendev-s63
+assignee: ttraenkler/sendev-s63
+completed: 2026-09-19
+loc-budget-allow:
+  # (#6637 S63, 2026-09-19) The foreign-Proxy [[Get]] delegation arm in
+  # `ensureProxyRuntime` plus the comment block that states WHY the fix is a
+  # delegation rather than the S52b/S55 cross-module callable-classification
+  # channel (which was built, measured, and does not suffice). The mechanism
+  # lives where the throw lives; moving the ~10 emitted instructions to a new
+  # module would add an import cycle with `standalone-link-reverse-peer.ts` for
+  # no reduction in the god-file's real complexity.
+  - src/codegen/object-runtime-proxy.ts
+func-budget-allow:
+  # (#6637 S63, 2026-09-19) Same change-set, same rationale as the LOC grant
+  # above: `ensureProxyRuntime` is where the get-trap throw is built, so the
+  # delegation arm and its rationale land inside it.
+  - src/codegen/object-runtime-proxy.ts::ensureProxyRuntime
 ---
 
 # #6637 — untyped-receiver Proxy property access misroutes to "null or undefined" (S53 fix, #5383 stack)
