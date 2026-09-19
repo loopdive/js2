@@ -99,12 +99,16 @@ export const LINK_REVERSE_PEER = Object.freeze({
   reverseHas: "__js2wasm_link_reverse_has",
   /** Provider-internal: the `__extern_method_call` miss hop (#6605). */
   reverseMethodCall: "__js2wasm_link_reverse_method_call",
+  /** (#6637 S63) Provider-internal: the foreign-Proxy `[[Get]]` delegation hop. */
+  reverseProxyGet: "__js2wasm_link_reverse_proxy_get",
   /** Consumer-internal: the normalising terminals it installs. */
   localGet: "__js2wasm_link_local_member_get",
   localKeys: "__js2wasm_link_local_object_keys",
   localHas: "__js2wasm_link_local_has",
   localIsNull: "__js2wasm_link_local_is_null",
   localMethodCall: "__js2wasm_link_local_method_call",
+  /** (#6637 S63) Consumer-internal: the RAW `[[Get]]`, see `localProxyGet`. */
+  localProxyGet: "__js2wasm_link_local_proxy_get",
 } as const);
 
 /** The host lane's `__boundary_object_has` tri-state for "mine, and present". */
@@ -119,6 +123,8 @@ export interface ReversePeerHops {
   ownedGlobal?: number;
   /** (#6605) `__js2wasm_link_reverse_method_call`. */
   methodCall?: number;
+  /** (#6637 S63) `__js2wasm_link_reverse_proxy_get`. */
+  proxyGet?: number;
 }
 
 /**
@@ -313,6 +319,7 @@ export function reserveStandaloneLinkReversePeer(ctx: CodegenContext): ReversePe
       has: ctx.funcMap.get(LINK_REVERSE_PEER.reverseHas),
       ownedGlobal: reverseOwnedGlobals.get(ctx),
       methodCall: ctx.funcMap.get(LINK_REVERSE_PEER.reverseMethodCall),
+      proxyGet: ctx.funcMap.get(LINK_REVERSE_PEER.reverseProxyGet),
     };
   }
   const types = reverseTypes(ctx);
@@ -330,6 +337,12 @@ export function reserveStandaloneLinkReversePeer(ctx: CodegenContext): ReversePe
   ]);
   const peerMethodCallIdx = addGlobal(ctx, "__js2wasm_link_peer_method_call", types.methodCallRef, [
     { op: "ref.null", typeIdx: types.methodCallTypeIdx },
+  ]);
+  // (#6637 S63) Same SHAPE as `peerGet` and deliberately its own slot: this one
+  // carries the peer's RAW `[[Get]]` (see `localProxyGet` for why the
+  // undefined→null normalisation the other terminal does is exactly wrong here).
+  const peerProxyGetIdx = addGlobal(ctx, "__js2wasm_link_peer_proxy_get", types.getRef, [
+    { op: "ref.null", typeIdx: types.getTypeIdx },
   ]);
   const flagIdx = addGlobal(ctx, "__js2wasm_link_in_reverse", I32, [{ op: "i32.const", value: 0 }]);
   // The null-vs-absent channel — see `reverseGetArmInstrs` for why a second
@@ -474,10 +487,39 @@ export function reserveStandaloneLinkReversePeer(ctx: CodegenContext): ReversePe
       miss: { op: "ref.null.extern" },
     }),
   );
+  // (#6637 S63) The foreign-Proxy `[[Get]]` delegation hop. No `after` step and
+  // no `owned` consultation, unlike the `get` hop above: the peer's answer here
+  // is its raw `[[Get]]`, so `undefined` arrives as the boxed-NaN undefined
+  // carrier (a canonical, structurally shared type — the provider's own
+  // `__extern_is_undefined` recognises the consumer's) rather than being
+  // normalised to null and then re-derived from a second and third trap call.
+  // That single-invocation property is load-bearing: the rows this exists for
+  // ASSERT the exact sequence of trap invocations (`order-of-operations.js`,
+  // `options-read-before-algorithmic-validation.js`), so a channel that reads
+  // the key twice fails them even when it returns the right value.
+  const proxyGet = define(
+    ctx,
+    LINK_REVERSE_PEER.reverseProxyGet,
+    [EXTERNREF, EXTERNREF],
+    [EXTERNREF],
+    [
+      { name: "r", type: EXTERNREF },
+      { name: "exc", type: EXTERNREF },
+    ],
+    reverseHopBody(ctx, {
+      peerGlobalIdx: peerProxyGetIdx,
+      flagGlobalIdx: flagIdx,
+      typeIdx: types.getTypeIdx,
+      arity: 2,
+      resultLocal: 2,
+      exceptionLocal: 3,
+      miss: { op: "ref.null.extern" },
+    }),
+  );
   define(
     ctx,
     LINK_REVERSE_PEER.install,
-    [types.getRef, types.keysRef, types.hasRef, types.isNullRef, types.methodCallRef],
+    [types.getRef, types.keysRef, types.hasRef, types.isNullRef, types.methodCallRef, types.getRef],
     [],
     [],
     [
@@ -491,9 +533,11 @@ export function reserveStandaloneLinkReversePeer(ctx: CodegenContext): ReversePe
       { op: "global.set", index: peerIsNullIdx },
       { op: "local.get", index: 4 },
       { op: "global.set", index: peerMethodCallIdx },
+      { op: "local.get", index: 5 },
+      { op: "global.set", index: peerProxyGetIdx },
     ],
   );
-  return { get, keys, has, ownedGlobal: ownedIdx, methodCall };
+  return { get, keys, has, ownedGlobal: ownedIdx, methodCall, proxyGet };
 }
 
 /**
@@ -539,6 +583,30 @@ export function emitStandaloneLinkReverseLocalTerminals(ctx: CodegenContext): vo
         then: [{ op: "ref.null.extern" }],
         else: [{ op: "local.get", index: 2 }],
       },
+    ],
+  );
+  // (#6637 S63) The RAW `[[Get]]` twin of `localGet`, and the normalisation is
+  // exactly what it must NOT do. `localGet` answers `null` for an `undefined`
+  // value so the provider can tell "not mine" from a real answer and fall
+  // through to its own miss path — correct for a property BAG, where the miss
+  // path re-derives `undefined` locally at no cost. For a Proxy the miss path
+  // is a TypeError, and re-asking costs a SECOND and THIRD observable trap
+  // invocation (`localIsNull` = `__extern_get` + `__extern_has`), which the
+  // order-asserting rows count. So this terminal returns `__extern_get`
+  // verbatim: `undefined` crosses as the boxed-NaN carrier the provider's own
+  // `__extern_is_undefined` recognises, and only a trap that genuinely returns
+  // `null` stays ambiguous with "not mine" — that case keeps the pre-#6637
+  // answer (the throw), never a fabricated value.
+  define(
+    ctx,
+    LINK_REVERSE_PEER.localProxyGet,
+    [EXTERNREF, EXTERNREF],
+    [EXTERNREF],
+    [],
+    [
+      { op: "local.get", index: 0 },
+      { op: "local.get", index: 1 },
+      { op: "call", funcIdx: externGet },
     ],
   );
   define(
@@ -712,7 +780,7 @@ export function emitStandaloneLinkReverseLocalTerminals(ctx: CodegenContext): vo
   ensureLateImport(
     ctx,
     LINK_REVERSE_PEER.install,
-    [types.getRef, types.keysRef, types.hasRef, types.isNullRef, types.methodCallRef],
+    [types.getRef, types.keysRef, types.hasRef, types.isNullRef, types.methodCallRef, types.getRef],
     [],
     namespace,
   );
@@ -802,6 +870,39 @@ export function reverseMethodCallArmInstrs(hops: ReversePeerHops, resultLocal: n
 }
 
 /**
+ * (#6637 S63) The foreign-Proxy `[[Get]]` delegation arm, for the PROVIDER's
+ * `__proxy_get_dispatch`.
+ *
+ * Spliced onto the ONE path that throws `Proxy get trap is not callable`, i.e.
+ * after this module's `__typeof_function` has already declined the trap. That
+ * placement is the whole safety argument: every receiver whose trap this module
+ * CAN call is decided before the arm exists, so the arm cannot change a working
+ * answer, only replace a throw.
+ *
+ * Shaped like `reverseMethodCallArmInstrs`, not like `reverseGetArmInstrs`:
+ * only a NON-NULL answer is adopted. A `null` here is "no peer / re-entrant /
+ * the peer's own `[[Get]]` answered null", and the three are indistinguishable
+ * — so control falls through to the pre-existing throw rather than to a
+ * fabricated `undefined`.
+ */
+export function reverseProxyGetArmInstrs(hops: ReversePeerHops, resultLocal: number): Instr[] {
+  if (hops.proxyGet === undefined) return [];
+  return [
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: hops.proxyGet },
+    { op: "local.tee", index: resultLocal },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "local.get", index: resultLocal }, { op: "return" }],
+    },
+  ];
+}
+
+/**
  * FINALIZE, both sides.
  *
  * Provider: publish the setter under its ABI name, resolving the index through
@@ -831,11 +932,13 @@ export function finalizeStandaloneLinkReversePeer(ctx: CodegenContext): void {
   const localHasIdx = ctx.funcMap.get(LINK_REVERSE_PEER.localHas);
   const localIsNullIdx = ctx.funcMap.get(LINK_REVERSE_PEER.localIsNull);
   const localMethodCallIdx = ctx.funcMap.get(LINK_REVERSE_PEER.localMethodCall);
+  const localProxyGetIdx = ctx.funcMap.get(LINK_REVERSE_PEER.localProxyGet);
   if (installIdx === undefined || localGetIdx === undefined || localKeysIdx === undefined) return;
   if (localHasIdx === undefined || localIsNullIdx === undefined || localMethodCallIdx === undefined) return;
+  if (localProxyGetIdx === undefined) return;
   const initFn = ctx.programAbiModuleInitCallables?.firstFunction();
   if (!initFn) return;
-  for (const handle of [localGetIdx, localKeysIdx, localHasIdx, localIsNullIdx, localMethodCallIdx]) {
+  for (const handle of [localGetIdx, localKeysIdx, localHasIdx, localIsNullIdx, localMethodCallIdx, localProxyGetIdx]) {
     if (!ctx.mod.declaredFuncRefs.includes(handle)) ctx.mod.declaredFuncRefs.push(handle);
   }
   // A consumer that could not build BOTH terminals installs neither (the guard
@@ -847,6 +950,7 @@ export function finalizeStandaloneLinkReversePeer(ctx: CodegenContext): void {
     { op: "ref.func", funcIdx: localHasIdx },
     { op: "ref.func", funcIdx: localIsNullIdx },
     { op: "ref.func", funcIdx: localMethodCallIdx },
+    { op: "ref.func", funcIdx: localProxyGetIdx },
     { op: "call", funcIdx: installIdx },
     ...initFn.body,
   ];

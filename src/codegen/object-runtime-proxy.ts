@@ -21,7 +21,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { ensureReflectIsConstructor } from "./reflect-construct-native.js";
 import { ensureExternStrictEqHelper } from "./any-helpers.js";
 import { registerProxyInvariantValidators } from "./object-runtime-proxy-invariants.js"; // (#5316) §10.5 descriptor-model half
-import { reserveStandaloneLinkReversePeer, reverseGetArmInstrs } from "./standalone-link-reverse-peer.js"; // (#6637 S63)
+import { reserveStandaloneLinkReversePeer, reverseProxyGetArmInstrs } from "./standalone-link-reverse-peer.js"; // (#6637 S63)
 
 /** (#1100/#1355) Reserved trap-invoke driver names — filled by `fillProxyDispatch`. */
 const PROXY_CALL_GET = "__proxy_call_get";
@@ -168,7 +168,7 @@ export function ensureProxyRuntime(
   // `__proxy_get_dispatch(proxy, key, receiver)` — params 0/1 are exactly the
   // `(receiver, key)` pair `reverseGetArmInstrs` reads, and local 5 (`res`) is
   // dead until the post-trap invariant validators run, well after this arm.
-  const reverseGetDelegateArm = (): Instr[] => reverseGetArmInstrs(reversePeerHops, 5);
+  const reverseGetDelegateArm = (): Instr[] => reverseProxyGetArmInstrs(reversePeerHops, 5);
 
   // (#5140) §7.3.9 GetMethod: a trap that is present but NOT callable is a
   // TypeError at OPERATION time (not at ProxyCreate time — the tests construct
