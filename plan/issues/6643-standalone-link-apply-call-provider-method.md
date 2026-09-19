@@ -1,7 +1,7 @@
 ---
 id: 6643
 title: "standalone: `Function.prototype.apply`/`.call` on a PROVIDER-OWNED method value returns `null` — the `__apply_closure` peer arm claims the consumer's OWN `%Function.prototype%` glue closure"
-status: in-progress
+status: done
 sprint: current
 priority: high
 horizon: m
@@ -11,6 +11,7 @@ goal: standalone-gap
 parent: 5383
 requested_by: ttraenkler/fable-lead
 created: 2026-09-19
+completed: 2026-09-19
 # (#5383 S65, 2026-09-19) Grants restated HERE, not left to #5383: CI diffs the
 # merge preview against `main`, where #5383's grant does not cover this path
 # (stranded-grant class). +33 LOC in `object-runtime.ts` is this change-set's
@@ -179,6 +180,36 @@ Two things still block a pass, neither of them this slice:
    already pins this in its own CONTROLS as a deliberate pre-existing
    residual. `TemporalHelpers.assertDuration` opens with
    `assert(duration instanceof Temporal.Duration)`.
+
+## Validation
+
+- **Full four-family + regression battery, 3 684 rows** (`.tmp/s65/battery/`,
+  `JS2WASM_TEMPORAL_CACHE=.test262-cache/s65-6`), every group diffed against
+  the S64 head: **0 pass→fail, 0 fail→pass, 0 missing, in all thirteen** —
+  `PlainDate` 120, `Duration` 120, `PlainDateTime` 120, `ZDT` 120, `A` 1250,
+  `B` 205, `C` 349, `D` 300, `E-unlinked` 300, `E-linked` 300, `F-class` 250,
+  `F-methoddef` 100, `F-objproto` 150. The four Temporal families hold at
+  **459/480** (117 / 108 / 117 / 117), the S64 number.
+- **Byte corpus A/B** (84 modules × {gc, standalone}) against a TRUE base run
+  (the four touched files file-copy-reverted to `32967877d8`, re-measured,
+  restored): **0 status flips, 0 sha flips** — `gc` byte-identical and
+  standalone growth **0 bytes**. Every new instruction sequence sits behind a
+  guard that is false unless the module CONSUMES a standalone provider, and no
+  corpus module does.
+- **Equivalence gate**: 22 failing / 1720 passing / 22 known-failures — no new
+  regressions.
+- **Witness sweep**, `tests/issue-66*` + `issue-6484-*` + `issue-6493-*` +
+  `issue-6630-*`: **47 files / 273 tests, 0 failed** under Node **22.22.2**
+  and Node **25.9.0**.
+- Gates run green: `typecheck`, `check-loc-budget` and `check-func-budget`
+  (both at the local merge-base and at `LOC_GATE_BASE=origin/main`),
+  `check-coercion-sites`, `check:oracle-ratchet`,
+  `check:speculative-rollback`, `check:issue-ids:against-main`,
+  `update-issues --check`, `check-issue-spec-coverage`, `lint`,
+  `prettier --check`, `check-compiler-boundaries --mode inventory`,
+  `check:dead-exports` (exit 0; the pre-existing moved-runtime red on
+  `optimize.ts` / `platform-capability-adapter.ts` is inherited, not this
+  change-set's).
 
 ## Next step
 
