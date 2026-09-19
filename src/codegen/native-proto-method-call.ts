@@ -67,7 +67,6 @@ import type { CodegenContext } from "./context/types.js";
  */
 export function unshiftExternMethodCallProtoArm(ctx: CodegenContext): void {
   if (!ctx.standalone) return;
-  if (process.env.JS2WASM_DEBUG_6643_NOARM) return;
   const protoTypeIdx = ctx.nativeProtoTypeIdx;
   if (protoTypeIdx === undefined) return;
   const externGetIdx = ctx.funcMap.get("__extern_get");
