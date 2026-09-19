@@ -410,6 +410,7 @@ import {
   prepareNumberPrimitiveMethodCallArm,
   unshiftExternMethodCallNumberPrimitiveArm,
 } from "./number-primitive-method-call.js"; // (#5383 S23 / #6610) number-PRIMITIVE receiver method CALL
+import { unshiftExternMethodCallBigIntPrimitiveArm } from "./bigint-primitive-to-string.js"; // (#6642 S62) bigint-PRIMITIVE receiver method CALL
 import { unshiftExternMethodCallTaDynViewArm } from "./ta-dyn-method-call.js"; // (#5194 r3-1) dyn-view receiver method CALL
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillProtoFunctionValue } from "./proto-function-value.js"; // (#4637 A1) function value in a [[Prototype]] slot
@@ -6562,6 +6563,10 @@ export function generateModule(
     // `__extern_get`, so it must also run after the read arm above. See
     // number-primitive-method-call.ts.
     unshiftExternMethodCallNumberPrimitiveArm(ctx);
+    // (#6642 S62) The bigint-PRIMITIVE twin — §21.2.3.3 answered off the
+    // `$BigInt` carrier's i64. It resolves by NAME (no `%BigInt.prototype%`
+    // brand exists), so it is independent of the `__extern_get` arms above.
+    unshiftExternMethodCallBigIntPrimitiveArm(ctx);
     // (#5194 r3-1) The `$__ta_dyn_view` twin: a `%TypedArray%.prototype` method
     // called on a dynamically-constructed view reached through an `any`
     // receiver. Narrow by construction — it claims only names whose native
@@ -11287,6 +11292,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // run after the read arm above. See native-proto-method-call.ts.
     profilePhase("unshift-extern-method-call-proto", () => unshiftExternMethodCallProtoArm(ctx));
     profilePhase("unshift-extern-method-call-number-primitive", () => unshiftExternMethodCallNumberPrimitiveArm(ctx));
+    profilePhase("unshift-extern-method-call-bigint-primitive", () => unshiftExternMethodCallBigIntPrimitiveArm(ctx));
     profilePhase("unshift-extern-method-call-ta-dyn-view", () => unshiftExternMethodCallTaDynViewArm(ctx));
     profilePhase("unshift-extern-get-proto-cache", () => unshiftExternGetProtoCacheArm(ctx));
 

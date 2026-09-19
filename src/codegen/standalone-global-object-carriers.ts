@@ -48,6 +48,14 @@ const STANDALONE_GLOBAL_CONSTRUCTOR_NAMES = [
   "Number",
   "Date",
   "RegExp",
+  // (#6642 S61 link 4 / S62) `globalThis.BigInt` was absent, so the
+  // `void 0 !== globalThis.BigInt` guard every BigInt-polyfilling library uses
+  // took the fallback branch and a JSBI carrier reached user code as an Array
+  // subclass. Seeded together with its `[[Call]]` arm
+  // (`CALLABLE_WRAPPER_CTORS`) and the §21.2.3.3 `toString` route
+  // (`bigint-primitive-to-string.ts`) — alone, any one of the three turns a
+  // wrong value into a thrown TypeError, which is why S60/S61 held them back.
+  "BigInt",
   "Error",
   "EvalError",
   "RangeError",
