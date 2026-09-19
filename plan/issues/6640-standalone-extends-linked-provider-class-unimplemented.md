@@ -182,3 +182,139 @@ provider's prototype methods. This is the same shape #6623's Residual
 section already flagged as a third, unreduced mechanism — worth scoping
 together rather than as two separate slices, since both live in exactly this
 heritage arm.
+
+## S64 — implemented: `super(...)` threads through the provider, and the two target rows pass
+
+Branch `issue-5383-standalone-temporal-s64`, base `4337265784` (S63 head =
+PR #5987, S63 + `origin/main`).
+
+### The mechanism, in five lines
+
+A property/element-access heritage in a standalone LINK CONSUMER now makes the
+class **externref-backed with a RUNTIME parent** — the representation
+`class Sub extends Error` has used on this lane since #1366a. `this` is not a
+consumer-side imitation of a provider instance: it **IS** the object the
+provider's own constructor minted. The `super(...)` call — explicit, or the
+synthesized derived constructor — evaluates the heritage EXPRESSION and hands
+it to the existing dynamic `__native_construct_<N>` driver (#3981), whose
+already-correct boundary arm asks the peer's `__js2wasm_link_callable_kind` for
+[[Construct]] and forwards to `__js2wasm_link_construct` (#5383 S2f R12), which
+runs the provider's own `<Name>_new` (#5383 S2g). Everything downstream then
+follows by construction rather than by re-implementation: an inherited read or
+method call on that receiver misses the consumer's own ladder and reaches the
+established link `memberGet`/`methodCall` terminals exactly as a direct
+`new NS.Base()` instance already did, and a value handed BACK to the provider
+(`Temporal.PlainDate.compare(one, two)`) brand-checks as a real instance
+because it is one.
+
+### Files
+
+| File | Change |
+| --- | --- |
+| `src/codegen/standalone-dynamic-parent-class.ts` | NEW — the gate (`isLinkedDynamicParentHeritage`) and the emitter (`emitLinkedDynamicParentConstruct`), plus the full scope rationale |
+| `src/codegen/class-bodies.ts` | three splice points: the heritage arm records the expression + marks the class externref-backed; `computeImplicitDerivedCtorPrefix` gives the synthesized ctor an `__arg{i}` forwarder arity from the observed `new S(…)` sites; `compileSuperCall` gets a head arm for a linked parent |
+| `src/codegen/context/types.ts`, `context/create-context.ts` | `classLinkedDynamicParentExpr` |
+| `src/codegen/standalone-link-boundary.ts` | export `isStandaloneLinkConsumer` (the gate's only new predicate; `peerNamespaces` stays private) |
+| `scripts/compiler-boundaries.json` | inventory entry for the new leaf |
+| `tests/issue-6640-link-extends-provider-class.test.ts` | NEW witness |
+
+### The gate, and why the blast radius is what it is
+
+`--target standalone`/`wasi` **and** the module consumes a wasm provider
+(`peerNamespaces(ctx)` non-empty) **and** the heritage is a
+property/element ACCESS. A standalone module with no linked provider — which
+is every module in the byte corpus, and the provider modules themselves —
+takes no new code path at all. Confirmed two ways: the Temporal provider
+prewarm re-emitted **3,334,356 B, key `a11c84e556193459`, byte-for-byte the
+S63 figure**, and the 84-file byte corpus answered `statusFlips=0 shaFlips=0`
+across BOTH lanes (so the `gc` lane is byte-identical and standalone grew 0
+bytes on unlinked input). No true-base re-run was needed: there were no sha
+flips to attribute.
+
+### Witness — revert-and-measure, both trees
+
+`tests/issue-6640-link-extends-provider-class.test.ts`, run on the fix tree and
+again with the four changed files file-copy-reverted to `4337265784`:
+
+| probe | base | fix |
+| --- | --- | --- |
+| `new SubNs(5).a` | `undefined` | `5` |
+| `new SubNs(5).get()` | `!called value is not a function` | `5` |
+| `new SubNs(5).label()` | `!called value is not a function` | `base` |
+| `new SubCtor().get()` (explicit `super(7)`) | `!called value is not a function` | `7` |
+| `NS.Base.brandOf(new SubNs(5))` | `foreign` | `base` |
+| `NS.Base.brandOf(new SubOwn(5))` | `foreign` | `base` |
+
+All **11 controls identical on both trees**, including `new NS.Base(3).get()`,
+`NS.Base.make().get()`, `new SubOwn(5).own()` (a subclass's OWN method still
+dispatches), `new LocalDerived(4).two()` (local `extends` with `super.two()`),
+and `Object.getPrototypeOf(new NS.Base(3)) === NS.Base.prototype`.
+
+Against the REAL `@js-temporal/polyfill` provider (`.tmp/s64/probes/p1.js`,
+`JS2WASM_TEMPORAL_CACHE=…/s64-{0,1}`) the same flip:
+
+```
+base: [year=undefined] … [cmp!TypeError: year is required]
+fix:  [year=2000]      … [cmp=-1]
+```
+
+### Residuals — measured, not assumed
+
+1. **`instanceof` against a provider-owned class object answers `false` across
+   the link — for a DIRECTLY constructed provider instance too.** Measured on
+   the base tree: `(new NS.Base(3)) instanceof NS.Base` is already `false`.
+   So the subclass answering `false` is that pre-existing gap, not a new one;
+   both facts are PINNED as controls in the witness so the claim stays honest.
+   This is the remaining piece of #6640's own item (3).
+2. **Unresolved-IDENTIFIER heritage is NOT covered** (`class MySubclass extends
+   construct {}`, where `construct` is a function parameter — test262's
+   `checkSubclassConstructorUndefined`/`NotCalled` shape). That arm is shared
+   with every `extends <builtin>` spelling, whose representation
+   `classBuiltinParentMap` already owns; widening it is a separate, separately
+   measurable change.
+3. **`super(...spread)` with a runtime-length spread** falls back to
+   argument-evaluation-only (§13.3.7.1 order preserved, `this` left as-is).
+   The fixed-arity driver cannot serve it; #5383 S34's `__native_construct_argv`
+   driver is the follow-up.
+4. **The subclass's own declared instance FIELDS are not installed** on the
+   parent-minted object, and `Object.getPrototypeOf(instance) ===
+   Sub.prototype` / `instanceof Sub` follow the externref-backed lane's
+   existing bound (#1366a). Own declared METHODS do still dispatch (measured:
+   `new SubOwn(5).own()` → `99` on both trees).
+5. **`String(subclassInstance)` / `.toString()` still render
+   `"[object Object]"`** against the real provider — a `toString`-specific
+   consumer-side arm that claims the receiver before the link terminal. Not
+   needed by any target row; unreduced.
+
+### Target rows
+
+| row | base | fix |
+| --- | --- | --- |
+| `PlainDate/compare/use-internal-slots.js` | fail `[object Object]` | **pass** |
+| `PlainDateTime/compare/use-internal-slots.js` | fail `[object Object]` | **pass** |
+| `PlainDate/from/subclassing-ignored.js` | fail `SameValue(«null», «null»)` | unchanged |
+| `Duration/from/subclassing-ignored.js` | fail `SameValue(«null», «null»)` | unchanged |
+| `Duration/prototype/abs/subclassing-ignored.js` | fail `called value is not a function` | unchanged |
+| `ZonedDateTime/prototype/add/subclassing-ignored.js` | fail `called value is not a function` | unchanged |
+
+The four `subclassing-ignored` rows were **reduced and are a DIFFERENT
+mechanism**, which is why they do not move (`.tmp/s64/probes/p2.js`, real
+provider):
+
+- `Temporal.PlainDate.from.apply(undefined, ["2000-05-02"])` returns **`null`**
+  while the direct `Temporal.PlainDate.from("2000-05-02")` works
+  (`getPrototypeOf(result) === PlainDate.prototype` → `true`). That is
+  `Function.prototype.apply` on a provider-owned METHOD VALUE, and it is the
+  FIRST assertion `checkSubclassingIgnoredStatic` makes — so both `from/*` rows
+  die before any subclass is constructed. (The `«null», «null»` message is the
+  #6623 residual where `String(<linked class>.prototype)` prints `"null"`; the
+  two values genuinely differ.)
+- The `abs`/`add` rows reach `checkSubclassConstructorUndefined`, whose
+  `class MySubclass extends construct` is the IDENTIFIER heritage this slice
+  deliberately excludes (residual 2). Their earlier sub-checks were verified
+  working: `instance.constructor = null; instance["abs"]()` already answers
+  correctly with `getPrototypeOf(result) === Duration.prototype` → `true`.
+
+`Duration/compare/order-of-operations.js` (`RuntimeError: unreachable in
+__apply_closure()`, the #6628 provider-owned-closure class S63 documented) is
+**untouched by this change** — it is in the Duration family diff below at 0/0.
