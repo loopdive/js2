@@ -1085,6 +1085,14 @@
       "skip": 0
     }
   },
+  "built-ins/decodeURI": {
+    "ES2015": {
+      "pass": 1,
+      "fail": 0,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "built-ins/SharedArrayBuffer": {
     "ES2017": {
       "pass": 51,
@@ -1179,14 +1187,6 @@
       "skip": 0
     }
   },
-  "built-ins/decodeURI": {
-    "ES2015": {
-      "pass": 1,
-      "fail": 0,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "built-ins/Error": {
     "ES5": {
       "pass": 15,
@@ -1233,20 +1233,6 @@
       "skip": 0
     }
   },
-  "built-ins/AsyncFunction": {
-    "ES2015": {
-      "pass": 0,
-      "fail": 2,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2017": {
-      "pass": 0,
-      "fail": 2,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "language/reserved-words": {
     "ES5": {
       "pass": 13,
@@ -1261,18 +1247,24 @@
       "skip": 0
     }
   },
-  "built-ins/DisposableStack": {
-    "ES2027": {
-      "pass": 77,
-      "fail": 16,
+  "built-ins/AsyncFunction": {
+    "ES2015": {
+      "pass": 0,
+      "fail": 2,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2017": {
+      "pass": 0,
+      "fail": 2,
       "ce": 0,
       "skip": 0
     }
   },
-  "language/statementList": {
-    "ES2015": {
-      "pass": 23,
-      "fail": 15,
+  "built-ins/DisposableStack": {
+    "ES2027": {
+      "pass": 77,
+      "fail": 16,
       "ce": 0,
       "skip": 0
     }
@@ -1359,6 +1351,14 @@
       "skip": 0
     }
   },
+  "language/statementList": {
+    "ES2015": {
+      "pass": 23,
+      "fail": 15,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "built-ins/isNaN": {
     "ES2015": {
       "pass": 6,
@@ -1370,6 +1370,14 @@
   "built-ins/ThrowTypeError": {
     "ES2015": {
       "pass": 0,
+      "fail": 1,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "language/directive-prologue": {
+    "ES5": {
+      "pass": 61,
       "fail": 1,
       "ce": 0,
       "skip": 0
@@ -1409,14 +1417,6 @@
       "skip": 0
     }
   },
-  "language/directive-prologue": {
-    "ES5": {
-      "pass": 61,
-      "fail": 1,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "language/block-scope": {
     "ES2015": {
       "pass": 64,
@@ -1437,14 +1437,6 @@
       "skip": 0
     }
   },
-  "language/line-terminators": {
-    "ES5": {
-      "pass": 41,
-      "fail": 0,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "language/keywords": {
     "ES5": {
       "pass": 25,
@@ -1456,6 +1448,14 @@
   "language/asi": {
     "ES5": {
       "pass": 101,
+      "fail": 0,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "language/line-terminators": {
+    "ES5": {
+      "pass": 41,
       "fail": 0,
       "ce": 0,
       "skip": 0
@@ -1682,8 +1682,8 @@
   "built-ins/AsyncFromSyncIteratorPrototype": {
     "ES2018": {
       "pass": 6,
-      "fail": 32,
-      "ce": 0,
+      "fail": 31,
+      "ce": 1,
       "skip": 0
     }
   },

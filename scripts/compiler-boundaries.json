@@ -203,9 +203,10 @@
         "src/runtime/contracts/host-capability-schema.ts",
         "src/runtime/contracts/async-provider-schema.ts",
         "src/runtime/contracts/provider-policy.ts",
-        "src/runtime/contracts/index.ts"
+        "src/runtime/contracts/index.ts",
+        "src/runtime/contracts/timer-capability.ts"
       ],
-      "minModules": 4
+      "minModules": 5
     },
     {
       "id": "backend-wasmgc",
@@ -12631,6 +12632,11 @@
       "path": "src/backend/wasmgc/resources/native-promise-inventory.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/runtime/contracts/timer-capability.ts",
+      "state": "clean",
+      "layer": "runtime-contracts"
     }
   ]
 }
