@@ -79,11 +79,6 @@ export function isLinkedDynamicParentHeritage(ctx: CodegenContext, baseExpr: ts.
   return isStandaloneLinkConsumer(ctx);
 }
 
-/** The heritage expression recorded for `className`, if it has one. */
-export function linkedDynamicParentOf(ctx: CodegenContext, className: string): ts.Expression | undefined {
-  return ctx.classLinkedDynamicParentExpr.get(className);
-}
-
 /**
  * Emit `self = __native_construct_<argCount>(<heritage value>, null, …args)`
  * and store it into `selfLocal`.

@@ -19,7 +19,21 @@ requested_by: ttraenkler/senior-dev
 # (explicit `super`). Splitting any of them is a refactor of long-standing code
 # this change does not otherwise touch, and would make the diff harder, not
 # easier, to review against the measurements in `## S64`.
+# (#5383 S64, 2026-09-19) +69 in class-bodies.ts and +10 in context/types.ts are
+# this change-set's own (both files measured at the branch base 4337265784:
+# 4440 / 4832). The bulk of the new mechanism lives in the NEW leaf
+# `standalone-dynamic-parent-class.ts`; what remains in the god-file is the
+# three splice points listed under `func-budget-allow` plus their rationale
+# comments, and the context field's doc comment. Restated HERE rather than left
+# to #5383's grant because CI diffs the merge preview against `main`, where that
+# grant does not cover these two paths (stranded-grant class).
+loc-budget-allow:
+  - src/codegen/class-bodies.ts
+  - src/codegen/context/types.ts
 func-budget-allow:
+  # +1: the one-line initialiser for `classLinkedDynamicParentExpr`. Restated
+  # here for the same stranded-grant reason as `loc-budget-allow` above.
+  - src/codegen/context/create-context.ts::createCodegenContext
   - src/codegen/class-bodies.ts::collectClassDeclaration
   - src/codegen/class-bodies.ts::compileClassBodiesInner
   - src/codegen/class-bodies.ts::compileSuperCall
