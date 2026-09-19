@@ -11,6 +11,28 @@ goal: standalone
 parent: 5383
 requested_by: ttraenkler/fable-lead
 created: 2026-09-19
+# (#5383 S66, 2026-09-19) Grants restated HERE rather than left to #5383/#6640:
+# CI diffs the MERGE PREVIEW against `main`, where neither grant covers these
+# paths (the stranded-grant class). All growth below is this change-set's own,
+# measured at the branch base 930ab332f4.
+#
+# +6 LOC / +5 function LOC in `call-namespace-static.ts` is the ENTIRE
+# call-site splice: two lines of code plus their rationale comment. The whole
+# mechanism lives in the new leaf `standalone-linked-static-inheritance.ts`;
+# what stays in the god-file is the one decision point the new arm must be
+# spliced into — the class-static call ladder, which is where §15.7.14 step 6
+# has to be answered because that is where an own static is resolved and
+# shadowing decided. Splitting `compileNamespaceStaticCall` (3,390 LOC) is a
+# refactor of long-standing code this change does not otherwise touch.
+#
+# +24 LOC in `property-access-dispatch.ts` is the twin splice on the READ side
+# (`emitClassStaticMemberRead`'s last arm, before `PA_FALLTHROUGH`) plus its
+# rationale; the emission itself is in the leaf.
+loc-budget-allow:
+  - src/codegen/expressions/call-namespace-static.ts
+  - src/codegen/property-access-dispatch.ts
+func-budget-allow:
+  - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
 ---
 
 # #6644 — static inheritance + cross-link `instanceof` through a provider heritage

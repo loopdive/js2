@@ -221,6 +221,7 @@ import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } 
 import { isInlineTaggedTemplateParameter } from "./tagged-template-parameter.js";
 import { linkBrandRoleOf } from "./shape-brand.js";
 import { emitDynamicTemplateRawRead, isDynamicTemplateRawRead } from "./template-raw-dynamic.js";
+import { emitLinkedStaticMemberRead, linkedStaticParentHeritage } from "./standalone-linked-static-inheritance.js"; // (#6644) §15.7.14 step 6 across the link
 
 /**
  * Sentinel returned by every dispatch helper to mean "this guard band did not
@@ -2393,6 +2394,26 @@ function emitClassStaticMemberRead(
       fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
       return { kind: "externref" };
     }
+  }
+  // (#6644) LAST arm — §15.7.14 step 6 across the wasm→wasm link. Every own
+  // static surface above has already declined, so a class that `extends` a
+  // LINKED provider class (#6640) puts the question to its parent's class
+  // object. A module with no linked provider never reaches this, and neither
+  // does any own member: `linkedStaticParentHeritage` answers only for a class
+  // in `classLinkedDynamicParentExpr`, and only for a name a derived class does
+  // not own outright.
+  const linkedHeritage = linkedStaticParentHeritage(ctx, resolvedClass, propName);
+  if (
+    linkedHeritage !== undefined &&
+    emitLinkedStaticMemberRead(ctx, fctx, linkedHeritage, propName, (heritageExpr) => {
+      const heritageType = compileExpression(ctx, fctx, heritageExpr, { kind: "externref" });
+      if (heritageType === undefined) return false;
+      if (heritageType === null) fctx.body.push({ op: "ref.null.extern" });
+      else if (heritageType.kind !== "externref") coerceType(ctx, fctx, heritageType, { kind: "externref" });
+      return true;
+    })
+  ) {
+    return { kind: "externref" };
   }
   return PA_FALLTHROUGH;
 }

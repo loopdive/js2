@@ -72,6 +72,7 @@ import {
 } from "../string-ops.js";
 import { emitDefinePropertyDescRuntime, emitNonObjectArgGuard } from "../object-ops.js";
 import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
+import { tryEmitLinkedStaticCall } from "../standalone-linked-static-inheritance.js"; // (#6644)
 import {
   emitStandalonePromiseCombinator,
   emitStandalonePromiseCustomCapabilityCheck,
@@ -3915,6 +3916,11 @@ export function compileNamespaceStaticCall(
     const clsName = ctx.classExprNameMap.get(propAccess.expression.text) ?? propAccess.expression.text;
     const methodName = propAccess.name.text;
     const fullName = `${clsName}_${methodName}`;
+    // (#6644) §15.7.14 step 6 across the wasm→wasm link, when this class
+    // declares no such static. Declines for every own static and for every
+    // class that is not one of #6640's linked-dynamic-parent classes.
+    const linkedStatic = tryEmitLinkedStaticCall(ctx, fctx, expr, clsName, methodName);
+    if (linkedStatic !== undefined) return linkedStatic;
     if (ctx.staticMethodSet.has(fullName)) {
       const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static")); // (#1983)
       if (funcIdx !== undefined) {
