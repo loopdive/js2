@@ -1056,3 +1056,20 @@ in worktree `agent-a38808bf4e81ef147`, next probe: call the provider's
 `extends <provider class>` (#6640 + #6623, incl. `subclassing-ignored`);
 the two `era` rows (#6633); then new issues for the >2^63 BigInt range
 (limb representation) and `options-read-before-algorithmic-validation`.
+
+## Stack state 2026-09-19 (post-S63) — PR #5986 (S62) MERGED; S63 on `issue-5383-standalone-temporal-s63` at `8879da239c`; #6637 DONE; four-family 457/480
+
+PR #5986 landed on `main` 06:10 UTC. S63 (Opus) closed #6637 (see #5383
+"### S63 findings"): a consumer-built Proxy read inside the provider now
+delegates its `[[Get]]` to the owning module through a new raw reverse
+terminal (install ABI 5 → 6). **New base numbers**: PlainDate 116,
+Duration 108, PlainDateTime 116, ZonedDateTime 117 (four-family
+**457/480**); A–F unchanged. TSVs: `.tmp/s63/battery/*-cur.tsv` in
+worktree `agent-a20160b027b58a139` — copy those as the next base.
+
+**Next lanes** (one at a time, Opus): `extends <provider class>` (#6640 +
+#6623 residual, incl. the `subclassing-ignored` rows — the largest
+remaining bucket); the two `era` rows (#6633, S50 WAT pointer); new issues
+for the >2^63 BigInt range (limb representation, whole-lane) and
+`PlainDateTime/from/argument-string-offset.js`; #6628's foreign-closure
+silent-`undefined` class (see S63 finding) once a Temporal row needs it.

@@ -11616,3 +11616,78 @@ Criterion 4 holds and the bucket moved. Residual after S62: 33 rows of the
 rows (#6633), the two >2^63 BigInt rows (limb representation, new issue),
 `options-read-before-algorithmic-validation` (new issue),
 `PlainDateTime/from/argument-string-offset.js`, and the one-offs.
+
+### S63 findings (2026-09-19) — #6637 DONE: a consumer-built Proxy read inside the provider delegates its `[[Get]]` to the owning module; all 10 Proxy-trap rows pass, four-family 447 → 457/480, 0 pass→fail
+
+S63 (Opus, branch `issue-5383-standalone-temporal-s63`, head `8879da239c`,
+off the merged S62 PR #5986 head `d38e8c52c9`, worktree
+`agent-a20160b027b58a139`). Full writeup in
+[#6637](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6637-cross-module-proxy-trap-route)
+"## S63" (`status: done`).
+
+**Decisive probe.** A provider diagnostic `checkCallable(f) { return typeof
+f === "function" ? 1 : 0 }` answers 0 for EVERY consumer-owned closure
+(named function and arrow) while the S17 reverse channel is live: the
+provider's `__typeof_function` classifies callables by `ref.test`ing the
+closure-wrapper types IT registered, `__proxy_get_dispatch` reads the trap
+out of the foreign `$Proxy`'s `ptraps` and asks that classifier, and throws
+`Proxy get trap is not callable`. S52b/S55's reverse-peer
+`callableKind`/`apply` terminals attacked the wrong half (classification
+alone cannot RUN a foreign trap — it also needs the owner's `this` binding
+and `__apply_closure` ladder); they stay unmerged (`751ceea68e`).
+
+**Fix.** On the one path that throws today, delegate the WHOLE `[[Get]]`
+back to the module that owns the Proxy over the reverse channel: the
+consumer re-performs `proxy[key]` with its own dispatch/trap/closure. New
+RAW terminal `__js2wasm_link_local_proxy_get` /
+`__js2wasm_link_reverse_proxy_get` (install ABI 5 → 6 funcrefs) returning
+`__extern_get` verbatim — the existing `localGet` normalises `undefined` →
+`null`, which costs a second and third OBSERVABLE trap call via
+`localIsNull` and fails the order-asserting rows. Placement is the safety
+argument: every receiver whose trap the provider CAN call is decided before
+the arm; with no peer installed the hop index is undefined ⇒ zero bytes
+emitted (gc, single-module standalone, JS-consumer providers untouched).
+Files: `object-runtime-proxy.ts` (+43), `standalone-link-reverse-peer.ts`
+(+108). Witness `tests/issue-6637-link-proxy-trap-invocation.test.ts`:
+lead-run on the base `d38e8c52c9` the fix case fails at its first
+assertion (raw wasm exception) and the residual control passes; on
+`8879da239c` both pass. Trap-call counts pinned: an undefined-valued trap
+answers `undefined` after exactly one call; two reads → exactly two calls.
+
+**Lead verification on `8879da239c`** (S63's fresh bundle + provider +
+adapter; base = S62 TSVs; every diff re-run by the lead):
+
+| Family | S62 base | S63 | Δ |
+| --- | --- | --- | --- |
+| PlainDate | 113/120 | **116/120** | +3 (`from/observable-get-overflow-argument-primitive`, `from/options-read-before-algorithmic-validation`, `from/order-of-operations`) |
+| Duration | 106/120 | **108/120** | +2 (`compare/options-read-before-algorithmic-validation`, `from/order-of-operations`) |
+| PlainDateTime | 113/120 | **116/120** | +3 (same three as PlainDate) |
+| ZonedDateTime | 115/120 | **117/120** | +2 (`prototype/add/options-read-before-algorithmic-validation`, `prototype/add/order-of-operations`) |
+| **four-family total** | **447/480** | **457/480** | **+10, 0 pass→fail** |
+| A 1250 / B 205 / C 349 / D 300 / **E-unlinked 300 / E-linked 300** / F-class 250 / F-methoddef 100 / F-objproto 150 | — | — | 0 pass→fail, 0 fail→pass each (both Proxy+Reflect groups explicitly flat) |
+
+Corpus byte A/B: **0 status flips, 0 sha flips** on both lanes — only the
+linked provider binary moves (3,334,248 → 3,334,356 B, +108). Equivalence
+22 / 1720 / 22. Witness sweep 45 files / 271 tests, 0 failed under Node 22
+and Node 25 (lead re-ran Node 25). Gates green incl.
+`LOC_GATE_BASE=origin/main`, compiler-boundaries inventory, spec-coverage,
+lint, prettier.
+
+**New finding, carried forward (not fixed):** a provider that compiles a
+Proxy of its OWN bypasses this arm — its closure-wrapper type then matches
+a consumer trap closure of the same shape, the guard never fires, and the
+provider runs the foreign closure through its own `__apply_closure`, which
+runs nothing and answers `undefined` (a silent wrong value — #6628's
+foreign-closure class). Does not touch this stack (the compiled
+`@js-temporal/polyfill` has 0 `new Proxy`); the witness's second case pins
+it so it tightens rather than gets deleted when #6628 lands. `set` /
+`deleteProperty` / `has` trap delegation deliberately not done (no raw
+`set`/`delete` terminal; `has`'s tri-state conflates "not mine" with "mine
+but absent") — all ten target rows were get-trap rows.
+
+Criterion 4 holds and the bucket moved. Residual after S63: 23 rows of the
+480 — `extends <provider class>` (#6640/#6623, incl. the
+`subclassing-ignored` rows), the two `era` rows (#6633), the two >2^63
+BigInt rows (limb representation, new issue),
+`PlainDateTime/from/argument-string-offset.js`, and the one-offs listed in
+the S62 findings.
