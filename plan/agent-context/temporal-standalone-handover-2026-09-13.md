@@ -1073,3 +1073,23 @@ remaining bucket); the two `era` rows (#6633, S50 WAT pointer); new issues
 for the >2^63 BigInt range (limb representation, whole-lane) and
 `PlainDateTime/from/argument-string-offset.js`; #6628's foreign-closure
 silent-`undefined` class (see S63 finding) once a Temporal row needs it.
+
+## Stack state 2026-09-19 (post-S64) — PR #5987 (S63) MERGED; S64 on `issue-5383-standalone-temporal-s64` at `212ee38889`; #6640 DONE; four-family 459/480
+
+PR #5987 landed on `main` 10:14 UTC. S64 (Opus) closed #6640 (see #5383
+"### S64 findings"): a link-consumer class with a property-access heritage
+into the provider namespace now constructs through the provider
+(externref-backed, runtime parent). **New base numbers**: PlainDate 117,
+Duration 108, PlainDateTime 117, ZonedDateTime 117 (four-family
+**459/480**); A–F unchanged. TSVs: `.tmp/s64/battery/*-cur.tsv` in
+worktree `agent-a7010bed034096fb2` — copy those as the next base.
+
+**Next lanes** (one at a time, Opus): (a) `Function.prototype.apply` /
+`.call` on a provider-owned METHOD VALUE returns `null` (new issue; blocks
+`{PlainDate,Duration}/from/subclassing-ignored.js`); (b) identifier
+heritage `class X extends <parameter>` under standalone link consumers
+(new issue; blocks `Duration/prototype/abs` and
+`ZonedDateTime/prototype/add` `subclassing-ignored.js`); (c) the two `era`
+rows (#6633); (d) the >2^63 BigInt range (limb representation); (e)
+`Duration/compare/order-of-operations.js` (#6628); (f)
+`PlainDateTime/from/argument-string-offset.js` and the Duration one-offs.
