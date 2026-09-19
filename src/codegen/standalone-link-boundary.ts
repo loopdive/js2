@@ -662,3 +662,30 @@ export function standaloneLinkBoundaryPeerIndex(
   if (peerNamespaces(ctx).length === 0) return undefined;
   return ctx.funcMap.get(LINK_BOUNDARY_EXPORTS[key]);
 }
+
+/**
+ * (#6643) `1` when `local.get <valueLocal>` is a value the linked PROVIDER
+ * reports as having [[Call]] — `undefined` when this module consumes no
+ * standalone provider, in which case the caller must emit NOTHING and keep
+ * whatever it does today.
+ *
+ * Leaves exactly one `i32` on the stack, and reads bit 0 only: a provider
+ * CLASS publishes construct-only (bit 1), and §20.2.3 step 2 asks about
+ * [[Call]], not about "is a function".
+ *
+ * Exists because the consumer's own `__typeof_function` answers 0 for every
+ * provider-owned callable — it tests THIS module's carrier shapes — so
+ * `%Function.prototype%.{call,apply,bind}` rejected `Temporal.PlainDate.from`
+ * outright with "called on non-callable receiver" (measured, `.tmp/s65`
+ * probe p18 against the real `@js-temporal/polyfill` provider).
+ */
+export function linkedForeignCallableBitInstrs(ctx: CodegenContext, valueLocal: number): Instr[] | undefined {
+  const callableKindIdx = standaloneLinkBoundaryPeerIndex(ctx, "callableKind");
+  if (callableKindIdx === undefined) return undefined;
+  return [
+    { op: "local.get", index: valueLocal },
+    { op: "call", funcIdx: callableKindIdx },
+    { op: "i32.const", value: 1 },
+    { op: "i32.and" },
+  ];
+}
