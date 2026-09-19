@@ -3303,6 +3303,16 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   classDynamicUnresolvedHeritageSet: Set<string>;
   /**
+   * (#6640, #5383 S64) Classes whose `extends` heritage is a PROPERTY/ELEMENT
+   * ACCESS into a linked provider namespace (`class S extends NS.PD {}`), in a
+   * standalone/WASI module that consumes a wasm provider. Such a class is
+   * externref-backed and its `super(...)` constructs through the provider's own
+   * constructor via the dynamic `__native_construct_<N>` driver; the recorded
+   * expression is re-compiled at the super-call site to obtain the parent class
+   * VALUE. See `standalone-dynamic-parent-class.ts`.
+   */
+  classLinkedDynamicParentExpr: Map<string, ts.Expression>;
+  /**
    * (#5242) Classes whose singleton reached `__register_class_ctor`, i.e. whose
    * class OBJECT can cross to the host and be constructed there. Exactly the
    * set that needs a `__class_construct_<Class>_<arity>` bridge; every other

@@ -183,6 +183,16 @@ function peerNamespaces(ctx: CodegenContext): string[] {
 }
 
 /**
+ * (#6640) Does this module CONSUME a standalone wasm provider? The one
+ * predicate every consumer-only arm outside this file needs; `peerNamespaces`
+ * itself stays private because its ORDER (first namespace wins) is an internal
+ * detail of the terminal wiring.
+ */
+export function isStandaloneLinkConsumer(ctx: CodegenContext): boolean {
+  return peerNamespaces(ctx).length > 0;
+}
+
+/**
  * Emit the provider-side boundary terminals.
  *
  * NOT raw re-exports of `__extern_get` / `__object_keys`, and the difference is

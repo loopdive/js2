@@ -11691,3 +11691,86 @@ Criterion 4 holds and the bucket moved. Residual after S63: 23 rows of the
 BigInt rows (limb representation, new issue),
 `PlainDateTime/from/argument-string-offset.js`, and the one-offs listed in
 the S62 findings.
+
+### S64 findings (2026-09-19) — #6640 DONE: `class S extends <linked-provider class>` constructs through the provider; both `use-internal-slots` rows pass, four-family 457 → 459/480, 0 pass→fail; the four `subclassing-ignored` rows reduced to two other mechanisms
+
+S64 (Opus, branch `issue-5383-standalone-temporal-s64`, head `212ee38889`,
+off the merged S63 PR #5987 head `4337265784`, worktree
+`agent-a7010bed034096fb2`). Full writeup in
+[#6640](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6640-standalone-extends-linked-provider-class-unimplemented)
+"## S64" (`status: done`).
+
+**Mechanism.** A property/element-access heritage in a standalone LINK
+CONSUMER now makes the class externref-backed with a RUNTIME parent — the
+representation `class Sub extends Error` has used since #1366a. `this` IS
+the object the provider's own constructor minted: `super(...)` (explicit
+or the synthesized derived constructor, whose arity is taken from observed
+`new S(…)` sites) evaluates the heritage expression and hands it to the
+dynamic `__native_construct_<N>` driver (#3981), whose boundary arm asks
+the peer's `__js2wasm_link_callable_kind` for [[Construct]] and forwards to
+`__js2wasm_link_construct` (S2f/S2g). Inherited reads and method calls then
+work through the established `memberGet`/`methodCall` terminals, and a
+value handed back (`compare(one, two)`) brand-checks as a real instance
+because it is one. The instance's `[[Prototype]]` is deliberately NOT
+re-pointed at `S.prototype`. Gate: standalone/wasi AND `peerNamespaces`
+non-empty AND property/element-access heritage — providers and non-linked
+modules take no new path. New leaf
+`src/codegen/standalone-dynamic-parent-class.ts`; three splice points in
+`class-bodies.ts`; `classLinkedDynamicParentExpr` on the context;
+`isStandaloneLinkConsumer` exported from the link boundary. Witness
+`tests/issue-6640-link-extends-provider-class.test.ts`: lead-run on the
+base `4337265784` 1 failed / 1 (six probes wrong: `.a` undefined, inherited
+`get()`/`label()` "called value is not a function", `brandOf` → `foreign`);
+on `212ee38889` passes; 11 controls identical on both trees.
+
+**The 6 rows.** `PlainDate/compare/use-internal-slots.js` and
+`PlainDateTime/compare/use-internal-slots.js` fail→pass. The four
+`subclassing-ignored` rows are a DIFFERENT mechanism, reduced against the
+real provider: `Temporal.PlainDate.from.apply(undefined, [...])` returns
+`null` while direct `from(...)` works — `Function.prototype.apply` on a
+provider-owned method value (the first assertion of
+`checkSubclassingIgnoredStatic`, so both `from/*` rows die before any
+subclass exists; the `«null», «null»` text is #6623's
+`String(<linked class>.prototype)` artifact); `abs`/`add` reach
+`checkSubclassConstructorUndefined`, whose `class MySubclass extends
+construct` is an IDENTIFIER heritage (a parameter), the arm shared with
+every `extends <builtin>` spelling owned by `classBuiltinParentMap` and
+deliberately excluded here.
+
+**Lead verification on `212ee38889`** (S64's fresh bundle + provider
+`s64-1` + adapter; base = S63 TSVs; every diff re-run by the lead):
+
+| Family | S63 base | S64 | Δ |
+| --- | --- | --- | --- |
+| PlainDate | 116/120 | **117/120** | +1 (`compare/use-internal-slots`) |
+| Duration | 108/120 | 108/120 | 0 |
+| PlainDateTime | 116/120 | **117/120** | +1 (`compare/use-internal-slots`) |
+| ZonedDateTime | 117/120 | 117/120 | 0 |
+| **four-family total** | **457/480** | **459/480** | **+2, 0 pass→fail** |
+| A 1250 / B 205 / C 349 / D 300 / E-unlinked 300 / E-linked 300 / **F-class 250** / F-methoddef 100 / F-objproto 150 | — | — | 0 pass→fail, 0 fail→pass each |
+
+Corpus byte A/B: **0 status flips, 0 sha flips** on both lanes (standalone
++0 bytes on unlinked input; the provider re-emitted byte-identical).
+Equivalence 22 / 1720 / 22. Witness sweep 46 files / 272 tests, 0 failed
+under Node 22 and Node 25 (lead re-ran Node 25); class witnesses
+#6617/#6622/#6623 26 tests green on both. Gates green incl.
+`LOC_GATE_BASE=origin/main` (stranded grants restated in #6640),
+compiler-boundaries inventory, spec-coverage, lint, prettier;
+`check:dead-exports` caught and removed one unused export.
+
+**Residuals recorded in #6640 (measured):** `instanceof` across the link
+answers `false` even for a DIRECT provider instance (pre-existing, pinned
+as a control); unresolved-IDENTIFIER heritage not covered (blocks the
+`subclassing-ignored` rows together with the `.apply`-on-provider-method
+`null`); `super(...spread)` with runtime-length spread falls back to
+argument evaluation only (needs S34's argv driver); subclass own FIELDS are
+not installed on the parent-minted object (own methods dispatch);
+`String(subclassInstance)` still `"[object Object]"` (a `toString` consumer
+arm claims the receiver before the link terminal; unreduced).
+
+Criterion 4 holds and the bucket moved. Residual after S64: 21 rows of the
+480 — the four `subclassing-ignored` rows (two mechanisms above, new
+issues), the two `era` rows (#6633), the two >2^63 BigInt rows,
+`Duration/compare/order-of-operations.js` (#6628 provider-owned closure),
+`PlainDateTime/from/argument-string-offset.js`, and the Duration/PlainDate
+one-offs.
