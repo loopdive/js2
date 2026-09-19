@@ -233,6 +233,26 @@ export function tryEmitLinkedStaticCall(
 }
 
 /**
+ * (#6644) Does `className` declare ANY own static surface?
+ *
+ * The COMPUTED read cannot ask "does the class own THIS key" — the key is only
+ * known at run time — so a class with any own static is refused outright. That
+ * is not a precision nicety: with an own static present, the wrapped lowering
+ * takes a different (closure-carrier) shape and the fallback's uniform
+ * externref handling trapped with an uncatchable `illegal cast` on
+ * `SubOwn["tag"]()` (measured, the witness's own control). The NAMED arms have
+ * the key in hand and shadow correctly, so nothing is lost for a class that
+ * mixes its own statics with inherited ones except the computed spelling.
+ */
+function declaresAnyOwnStatic(ctx: CodegenContext, className: string): boolean {
+  const prefix = `${className}_`;
+  for (const key of ctx.staticMethodSet) if (key.startsWith(prefix)) return true;
+  for (const key of ctx.staticAccessorSet) if (key.startsWith(prefix)) return true;
+  for (const key of ctx.staticProps.keys()) if (key.startsWith(prefix)) return true;
+  return false;
+}
+
+/**
  * (#6644) `S[k]` — the COMPUTED read of an inherited static, and with it every
  * computed CALL shape including the spread one test262 actually writes
  * (`MySubclass[method](...methodArgs)`).
@@ -276,6 +296,7 @@ export function tryEmitLinkedStaticComputedRead(
   if (!ts.isIdentifier(elemAccess.expression)) return undefined;
   const className = ctx.classExprNameMap.get(elemAccess.expression.text) ?? elemAccess.expression.text;
   if (!ctx.classLinkedDynamicParentExpr.has(className)) return undefined;
+  if (declaresAnyOwnStatic(ctx, className)) return undefined;
   const externGetIdx = ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
   const isUndefinedIdx = ensureLateImport(ctx, "__extern_is_undefined", [EXTERNREF], [{ kind: "i32" }]);
   if (externGetIdx === undefined || isUndefinedIdx === undefined) return undefined;
