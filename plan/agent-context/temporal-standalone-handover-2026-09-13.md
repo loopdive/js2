@@ -1038,3 +1038,21 @@ standalone for number and bigint receivers, and `String(<bigint>)` answers
 3+4 (15 ZDT rows); then Proxy trap invocation (10 rows; S55 WIP
 `751ceea68e` in worktree `agent-a38808bf4e81ef147`); `extends <provider
 class>` (#6640 + #6623); the two `era` rows (#6633).
+
+## Stack state 2026-09-19 (post-S62) — PR #5985 (S61) MERGED; S62 on `issue-5383-standalone-temporal-s62` at `bec0a80555`; #6642 DONE; four-family 447/480
+
+PR #5985 landed on `main` 02:14 UTC. S62 (Opus) closed #6642 (see #5383
+"### S62 findings"): dynamic-receiver `toString` for number and bigint
+receivers, `String(<bigint>)`, plus the `BigInt` global carrier and
+callable wrapper. **New base numbers**: PlainDate 113, Duration 106,
+PlainDateTime 113, **ZonedDateTime 115** (four-family **447/480**); A–F
+unchanged. TSVs: `.tmp/s62/battery/*-cur.tsv` in worktree
+`agent-a3b2d877c2c97d38c` — copy those as the next base.
+
+**Next lanes** (one at a time, Opus): Proxy trap invocation (10 rows +
+`ZonedDateTime/prototype/add/order-of-operations.js`; S55 WIP `751ceea68e`
+in worktree `agent-a38808bf4e81ef147`, next probe: call the provider's
+`__typeof_function` directly on the trap value as the guard extracts it);
+`extends <provider class>` (#6640 + #6623, incl. `subclassing-ignored`);
+the two `era` rows (#6633); then new issues for the >2^63 BigInt range
+(limb representation) and `options-read-before-algorithmic-validation`.

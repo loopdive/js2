@@ -1,8 +1,8 @@
 ---
 id: 6642
 title: "standalone: a BigInt value does not survive a consumer↔provider link (typeof/===/Object.is/String/arithmetic all answer as if it were not a BigInt)"
-status: blocked
-assignee: ttraenkler/senior-dev-s61
+status: done
+assignee: ttraenkler/senior-dev-s62
 sprint: current
 priority: high
 horizon: m
@@ -10,6 +10,7 @@ goal: standalone
 reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-18
+completed: 2026-09-19
 loc-budget-allow:
   # 2026-09-18 (S59, #6642) — `compileTypeofComparison`'s dynamic helper-call
   #   arm now routes an `any`/`unknown` non-bigint operand of BigInt strict
@@ -49,9 +50,22 @@ loc-budget-allow:
   #   because the pre-existing allowance for this same file lives in
   #   plan/issues/5383-standalone-temporal-provider.md, which this change-set
   #   does not modify — so it is invisible to CI's merge-preview base.
+  # 2026-09-19 (S62, #6642) — STRANDED-GRANT RESTATEMENT + new growth.
+  #   `src/codegen/index.ts` gains SIX lines: the import of the new
+  #   `bigint-primitive-to-string.ts` leaf and its two finalize call sites
+  #   (the ordered pass list and the `profilePhase` twin), plus the comment
+  #   that says why the arm is independent of the `__extern_get` arms above it.
+  #   The ARM ITSELF is zero lines here — it lives entirely in the new leaf —
+  #   so this is the irreducible wiring cost of adding a finalize pass at all,
+  #   the same six lines every neighbouring arm (#4619, #5194 r3-1, #6610)
+  #   paid. It is restated here because the pre-existing allowance for this
+  #   file lives in plan/issues/5383-standalone-temporal-provider.md, which
+  #   this change-set does not modify — so against CI's merge preview the
+  #   allowance is invisible and the gate fails on growth already reviewed.
   - src/codegen/binary-ops.ts
   - src/codegen/typeof-delete.ts
   - src/codegen/registry/imports.ts
+  - src/codegen/index.ts
 func-budget-allow:
   # 2026-09-18 (S59, #6642) — same new branch lands inside
   # `compileBinaryExpression`, and `compileTypeofComparison` (typeof-delete.ts)
@@ -76,6 +90,18 @@ func-budget-allow:
   #   remains here is the layout resolve, the `ref.test $AnyString` guard and
   #   the extra locals.
   - src/codegen/registry/imports.ts::addUnionImportsAsNativeFuncs
+  # 2026-09-19 (S62, #6642) — STRANDED-GRANT RESTATEMENT + new growth, same
+  #   three functions the #5383 lane already holds allowances for, restated
+  #   here because this change-set does not modify that issue file:
+  #   `generateModule` / `generateMultiModule` are `index.ts`'s two ordered
+  #   finalize-pass lists, so a new pass costs exactly one call site in each
+  #   (+4 / +1 with the comment); `fillStandaloneTypeofClosureArms` is the
+  #   function that owns EVERY `__any_to_string` / `__to_primitive` carrier
+  #   splice (#4564's Date arm is the line above), so the bigint arm's call
+  #   has to be there — +5, of which the arm body is zero.
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/typeof-natives-finalize.ts::fillStandaloneTypeofClosureArms
 ---
 
 ## Problem
@@ -532,6 +558,205 @@ Equivalence gate: `22 failing, 1720 passing, 22 known-failures` — no new
 regressions. Witness sweep (`tests/issue-66*`, `issue-6484-*`, `issue-6493-*`,
 43 files / 265 tests) green under **both** Node 22 and Node 25.
 
+## S62 — link 5 fixed, links 3 + 4 re-applied. 10 of the 15 rows PASS.
+
+S61's four-item list was followed exactly and all four items landed. The target
+bucket moved from **0/15 to 10/15**; the five that stay red are three DIFFERENT
+mechanisms, named and measured below, none of them bigint-survival.
+
+### What the defect actually was — two ladders with no `$BigInt` / no radix column
+
+Measured on this tree (`.tmp/s62/probe/q1.mjs`, `q2.mjs` — single standalone
+module, host-free, numeric-returning exports, the #6610 witness's harness shape;
+note that a TS `compile()` probe with a `const n: any = …` initializer does NOT
+reproduce it — the initializer keeps a static f64/i64 local and the call never
+goes dynamic, which cost this slice an hour of chasing a null that was the
+probe's, not the compiler's):
+
+| shape (receiver reached through an `any` binding) | base `bb435fa167` | S62 |
+| --- | --- | --- |
+| `n.toString(16)` / `(2)` / `(10)`, number | **threw** | `"ff"` / `"11111111"` / `"123456789"` |
+| `n.toString(undefined)`, number | **threw** | `"255"` (§21.1.3.6 step 2) |
+| `n.toString(1)` / `(40)`, number | **TypeError** | **RangeError** (§21.1.3.6 step 4) |
+| `b.toString(16)` / `(10)` / 0-arg / negative / zero, bigint | **threw** | exact, sign-aware |
+| `b.toString(1)` / `(40)`, bigint | **TypeError** | **RangeError** (§21.2.3.3 step 3) |
+| `String(<bigint>)` | **`"[object Object]"`** (15 chars, measured) | the digits |
+| `globalThis.BigInt !== undefined` | **0** | 1 |
+| `globalThis.BigInt("12")` / `BigInt(12)` | **threw** | `12n` |
+| `globalThis.BigInt(t.toString(10))` — the polyfill's line | **threw** | `217175010123456789n` |
+| `` `${b}` `` / `"" + b` | correct | correct (untouched) |
+| `n.toString()` 0-arg, number | correct | correct (untouched) |
+
+**Link 5a — the NUMBER half was pure ROUTING.** `"toString"` joins
+`NUMBER_PRIMITIVE_CALL_MEMBERS` (`number-primitive-method-call.ts`); the
+reflective body `emitNumberProtoToStringBody` was already complete, radix ladder
+and all. The demand scan is gated by a new
+`numberPrimitiveMemberDemandArity` — `toString` counts as demand only at
+`arguments.length >= 1`, because the 0-argument spelling appears in nearly every
+standalone module and already answers through another arm; an ungated scan would
+install the arm (and `%Number.prototype%`'s glue) across the whole lane for
+nothing. Once demanded for any reason the arm claims BOTH arities, so the two
+spellings cannot diverge.
+
+**Link 5b — the BIGINT half was two missing ARMS**, new leaf
+`src/codegen/bigint-primitive-to-string.ts`:
+
+- `unshiftExternMethodCallBigIntPrimitiveArm` — a `$BigInt`-receiver arm on
+  `__extern_method_call` that resolves the key by NAME (interned
+  `$NativeString` + `ref.eq`, the `ta-dyn-method-call.ts` shape) and answers
+  `toString` off the carrier's i64 through the EXISTING
+  `bigint_toString_radix` (#1644 slice D, `bigint-format-native.ts`). Radix
+  ladder copied in shape from `emitNumberProtoToStringBody`: absent / `null` /
+  `undefined` ⇒ 10 and no range check; anything else floored and required in
+  [2, 36], else a real `RangeError` instance.
+- `unshiftAnyToStringBigIntArm` — a `$BigInt` arm at the FRONT of
+  `__any_to_string`, the `unshiftDateToStringArm` (#4564) shape.
+
+**Why an arm and not a `%BigInt.prototype%` brand.** The three wrapper families
+get dynamic-receiver routing from a real `$NativeProto` brand with a member CSV
+and reflective bodies. BigInt has none, and minting one is a whole slice
+(brand-table entry, member CSV, `thisBigIntValue`, companion seeder). The single
+broken member already has a complete exact formatter, so the arm delegates to it
+and declines everything else — `BigInt.prototype` stays exactly as un-reified as
+it is on the base.
+
+**Index safety.** Both splices run at finalize and mint only DEFINED functions
+(`emitNativeBigIntFormat`, `emitWasiErrorConstructor` under
+`forceInModuleCtor`), which append; the stale-`funcIdx` hazard S59's Fix 1
+repaired is a late-IMPORT hazard and is not reachable from here.
+
+**Demand.** Both splices gate on `ctx.nativeBigIntTypeIdx >= 0` — the module
+minted the carrier, i.e. it uses BigInt at all. No extra AST scan: unlike the
+Number arm (whose gate must exclude the near-universal 0-arg `toString`), "this
+module has a bigint" is already the narrow condition, and a module that has one
+must be able to print it.
+
+**Links 3 + 4, re-applied verbatim** as S61 wrote them: `"BigInt"` in
+`CALLABLE_WRAPPER_CTORS` (`argOf(0) → __bigint_ctor → __box_bigint`, §21.2.1.1,
+deliberately not `__to_bigint`) and in `STANDALONE_GLOBAL_CONSTRUCTOR_NAMES`.
+`"Symbol"` is still NOT added — it has the identical `globalThis` gap and no
+`[[Call]]` arm, so seeding it alone is the same fail-worse shape S60/S61
+described.
+
+### Witness — revert-and-measure
+
+`tests/issue-6642-bigint-tostring.test.ts` (4 cases / 37 assertions). File-copy
+A/B against `bb435fa167` (the five changed source files reverted, the new leaf
+moved aside), same command both times
+(`VITEST_FORK_MAX_OLD_SPACE_SIZE=3072 npx vitest run --maxWorkers=2`):
+
+| case | base `bb435fa167` | with S62 |
+| --- | --- | --- |
+| §21.1.3.6 / §21.2.3.3 through an `any` receiver, both arities | **FAIL** (`-1`, threw) | pass |
+| every ToString route for a bigint | **FAIL** (`0`, `"[object Object]"`) | pass |
+| a callable realm `BigInt` (links 3 + 4) | **FAIL** (`0`, absent) | pass |
+| the polyfill's converter inside a linked provider | **FAIL** (`-1`, threw) | pass |
+
+Base `4 failed` → `4 passed`. The controls inside each case (0-arg
+`x.toString()`, static receivers of both kinds, `String()` of a number / string
+/ boolean / object / array / null / undefined, the template and `+` spellings,
+`typeof globalThis.BigInt`, a non-callable provider member) answer identically
+on both trees — a prepended arm's one real hazard is displacing a route that
+already works, so they are asserted, not assumed.
+
+### The 15 target rows — 10 pass, 5 remain, for three unrelated reasons
+
+Fresh `build:compiler-bundle` → provider `.test262-cache/s62-1`
+`cacheHit=false` → fresh quickjs adapter `6ed6bdcdae009570`, base measured the
+same way under `.test262-cache/s62-0`.
+
+| row (`ZonedDateTime/prototype/…`) | base | S62 |
+| --- | --- | --- |
+| `add/add-large-subseconds` | fail | **pass** |
+| `add/argument-duration-max` | fail | **pass** |
+| `add/argument-string-fractional-units-rounding-mode` | fail | **pass** |
+| `add/argument-string-negative-fractional-units` | fail | **pass** |
+| `add/blank-duration` | fail | **pass** |
+| `add/negative-epochnanoseconds` | fail | **pass** |
+| `add/options-object` | fail | **pass** |
+| `add/overflow-undefined` | fail | **pass** |
+| `add/overflow-wrong-type` | fail | **pass** |
+| `epochNanoseconds/basic` | fail | **pass** |
+| `add/overflow-adding-months-to-max-year` | fail | fail — `Expected a RangeError … no exception` |
+| `add/throw-when-intermediate-datetime-outside-valid-limits` | fail | fail — `TypeError: cannot convert number to bigint` |
+| `add/options-read-before-algorithmic-validation` | fail | fail — `Expected a RangeError but got a undefined` |
+| `add/order-of-operations` | fail | fail — `TypeError: Proxy get trap is not callable` |
+| `add/subclassing-ignored` | fail | fail — `TypeError: called value is not a function` |
+
+The five are three separate mechanisms, none of them bigint survival:
+
+1. **The one-i64 carrier range** (2 rows). Both tests are built on
+   `864n * 10n ** 19n` = 8.64 × 10²¹, an order of magnitude past 2⁶³ ≈ 9.22 ×
+   10¹⁸. The standalone `$BigInt` carrier is ONE i64 and wraps modulo 2⁶⁴ — the
+   limit S61 documented for the StringToBigInt parser, stated there as a
+   deliberate lane-wide property. A limb representation is the fix and it is a
+   whole-lane change, not an arm.
+2. **Option-read ordering / Proxy trap** (2 rows,
+   `options-read-before-algorithmic-validation`, `order-of-operations`): a
+   RangeError not thrown and a Proxy `get` trap that is not callable. Neither
+   touches BigInt.
+3. **Subclass construction** (1 row): `TemporalHelpers.checkSubclassingIgnored`
+   builds a `class … extends Temporal.ZonedDateTime`; the
+   `called value is not a function` fires inside that construction, not on a
+   `toString` receiver.
+
+### S62 validation
+
+Criterion-4 battery, S62 tree vs the S61 base TSVs (fresh
+`build:compiler-bundle` → provider `.test262-cache/s62-1` `cacheHit=false` →
+fresh quickjs adapter `6ed6bdcdae009570`):
+
+| family | rows | pass→fail | fail→pass | missing |
+| --- | --- | --- | --- | --- |
+| PlainDate | 120 | 0 | 0 | 0 |
+| Duration | 120 | 0 | 0 | 0 |
+| PlainDateTime | 120 | 0 | 0 | 0 |
+| ZonedDateTime | 120 | **0** | **10** | 0 |
+| A | 1250 | 0 | 0 | 0 |
+| B | 205 | 0 | 0 | 0 |
+| C | 349 | 0 | 0 | 0 |
+| D | 300 | 0 | 0 | 0 |
+| E-unlinked | 300 | 0 | 0 | 0 |
+| E-linked | 300 | 0 | 0 | 0 |
+| F-class | 250 | 0 | 0 | 0 |
+| F-methoddef | 100 | 0 | 0 | 0 |
+| F-objproto | 150 | 0 | 0 | 0 |
+
+13 families / 3,684 rows: **0 pass→fail, 0 missing, 10 fail→pass** — and the
+ten are exactly the ten target rows named above, so there is no incidental
+movement anywhere in the battery. Four-family total **437 → 447** (PlainDate
+113, Duration 106, PlainDateTime 113, ZDT **105 → 115**).
+
+Corpus byte A/B, 84 entries × 2 lanes: **0 status flips; 21 SHA flips, ALL on
+the `standalone` lane, 0 on `gc`.** Measured against a TRUE base run this
+session (the five changed files reverted to `bb435fa167`, the new leaf moved
+aside, corpus re-run, files restored) — which produced the identical 21, so
+none of them is `origin/main` drift. The movement is link 4: every standalone
+module with a realm object now seeds a `globalThis.BigInt` carrier. Measured on
+five of the twenty-one, both lanes:
+
+| file | `gc` | `standalone` |
+| --- | --- | --- |
+| `website/playground/examples/benchmarks.ts` | 10,970 → 10,970 (+0) | 150,712 → 151,275 (**+563**) |
+| `website/playground/examples/js/builtins.ts` | 11,204 → 11,204 (+0) | 64,634 → 65,081 (**+447**) |
+| `tests/fixtures/ir-retirement/math.ts` | 1,073 → 1,073 (+0) | 138,190 → 138,753 (**+563**) |
+| `tests/fixtures/eslint-shims/espree.ts` | 697 → 697 (+0) | 137,303 → 137,862 (**+559**) |
+| `website/playground/examples/dom/calendar.ts` | 13,072 → 13,072 (+0) | 71,267 → 71,714 (**+447**) |
+
+So the `gc` lane is byte-identical and standalone grows by a bounded
+**+447…+563 bytes** per module — the carrier and its string constant, not the
+arms (both of those are demand-gated on `ctx.nativeBigIntTypeIdx >= 0` and
+cost zero in a module without a bigint).
+
+COMPILE TIME is unchanged, measured rather than assumed because link 4 touches
+every standalone module: 20 rows of the B family, same list, same box,
+**base 34,037 ms vs S62 33,614 ms** (−1.2 %, inside noise). The battery's slow
+wall-clock is the box, not this change.
+
+Equivalence gate: `22 failing, 1720 passing, 22 known-failures` — no new
+regressions. Witness sweep (`tests/issue-66*`, `issue-6484-*`, `issue-6493-*`,
+44 files / 269 tests) green under **both** Node 22.22.2 and Node 25.9.0.
+
 ## Next step (S61 — supersedes S60's list)
 
 1. **Fix `<any>.toString(radix)` for a NUMBER receiver.** Add `"toString"` to
@@ -674,3 +899,35 @@ own issue.
   is numeric).
 - `status` stays `blocked`, with the next step now naming a DIFFERENT
   mechanism: `<any>.toString(radix)`, not the realm constructor.
+- (S62) `status` is now `done`: the issue's own defect — a BigInt value not
+  surviving a consumer↔provider link — is fixed and witnessed end to end, and
+  the target bucket moved 0/15 → 10/15 with 0 pass→fail in the four Temporal
+  families. The five rows that stay red are three named, unrelated mechanisms
+  (the one-i64 carrier range for two of them, option-read ordering / a Proxy
+  `get` trap for two, subclass construction for one) and each deserves its own
+  issue rather than holding this one open. The full 13-family / 3,684-row
+  battery finished with 0 pass→fail and 0 missing.
+
+### S62 additions to these notes
+
+- Files touched by S62: new leaf `src/codegen/bigint-primitive-to-string.ts`
+  (both arms); `src/codegen/number-primitive-method-call.ts` (`"toString"` in
+  the member list + the arity-gated demand scan);
+  `src/codegen/index.ts` and `src/codegen/typeof-natives-finalize.ts` (the two
+  finalize call sites); `src/codegen/builtin-ctor-callable.ts` and
+  `src/codegen/standalone-global-object-carriers.ts` (links 3 + 4, re-applied
+  exactly as S61 wrote them). `scripts/compiler-boundaries.json` gains the new
+  file's entry. Witness `tests/issue-6642-bigint-tostring.test.ts`.
+- Deliberately NOT touched: `coercion-plan.ts`, `stack-balance.ts`,
+  `type-coercion.ts` (unchanged from S60's finding); `array-object-proto.ts`
+  (no `%BigInt.prototype%` brand was minted — see the S62 section for why);
+  `"Symbol"` in either list.
+- Probe scripts (ephemeral, `.tmp/s62/probe/`): `p1.mjs`–`p6.mjs` (the first,
+  MISLEADING reduction — a TS `compile()` module with a `const n: any = <literal>`
+  initializer keeps a static local and never goes dynamic, so it reported a null
+  answer for `toPrecision` that reproduces on the base tree and is the PROBE's
+  artifact, not a compiler defect; recorded because it cost an hour and the next
+  reader will be tempted by the same spelling), `q1.mjs`/`q2.mjs` (the real
+  reductions — `compileMulti` + JS source + numeric-returning exports, the #6610
+  witness's harness shape, which is what actually routes a receiver through
+  `__extern_method_call`).

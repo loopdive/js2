@@ -14,6 +14,7 @@ import { buildClosureRefTestArms, collectClosureBaseWrapperTypeIdxs } from "./cl
 import { buildBuiltinCallableTestArm, hasBrandedBuiltinCarrier } from "./builtin-callable-brand.js";
 import { installCompiledClosureToStringArm } from "./coercion-engine.js";
 import { unshiftCarrierToPrimitiveArms, unshiftDateToStringArm } from "./carrier-to-primitive.js";
+import { unshiftAnyToStringBigIntArm } from "./bigint-primitive-to-string.js"; // (#6642 S62)
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { standaloneLinkBoundaryPeerIndex } from "./standalone-link-boundary.js"; // (#5383 S2f R12)
 
@@ -62,6 +63,11 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
   // them before the typeof-only early return.
   unshiftCarrierToPrimitiveArms(ctx);
   unshiftDateToStringArm(ctx);
+  // (#6642 S62) …and the bigint carrier's, for the same reason: `String(1n)`
+  // answered null because `__any_to_string`'s ladder has no `$BigInt` arm. It
+  // self-gates on the carrier type, so it must run before the typeof-only
+  // early return below (a module can box a bigint without compiling a closure).
+  unshiftAnyToStringBigIntArm(ctx);
   const baseTypeIdxs = collectClosureBaseWrapperTypeIdxs(ctx);
   const runtimeEvalCallbackTypeIdx = ctx.runtimeEvalInterpretedCallbackTypeIdx;
   const proxyTypeIdx = ctx.objectRuntimeTypes?.proxyTypeIdx;

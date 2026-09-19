@@ -107,11 +107,33 @@ import { ensureWrapperProtoDynamicMember } from "./wrapper-proto-dynamic-demand.
  * are on the base and recorded as a named residual (their reflective bodies are
  * the next slice, not this one).
  *
- * `toString` is absent for the opposite reason: the 0-argument spelling already
- * answers correctly through another arm on the base. Its radix spelling
- * (`x.toString(16)` through an `any` receiver) is a separate residual.
+ * `toString` was absent for the opposite reason: the 0-argument spelling already
+ * answers correctly through another arm on the base. Its RADIX spelling
+ * (`x.toString(16)` through an `any` receiver) was the residual named here, and
+ * #6642 S62 closes it — the same reflective body
+ * (`emitNumberProtoToStringBody`, §21.1.3.6 with the full radix ladder,
+ * including the `undefined` ⇒ 10 carve-out) serves both arities, so routing the
+ * member here is a pure routing change.
+ *
+ * {@link numberPrimitiveMemberDemandArity} is why adding it does not move bytes
+ * on every module: `x.toString()` with NO argument appears in nearly every
+ * standalone module and already answers, so the DEMAND scan only counts a
+ * `toString` call that passes an argument. Once a module has demanded the arm
+ * for any reason the arm claims BOTH arities for a number-primitive receiver —
+ * one body, one answer — which is what keeps the two spellings from diverging.
  */
-export const NUMBER_PRIMITIVE_CALL_MEMBERS: readonly string[] = ["toPrecision"];
+export const NUMBER_PRIMITIVE_CALL_MEMBERS: readonly string[] = ["toPrecision", "toString"];
+
+/**
+ * The minimum argument count at which a member CALL counts as demand.
+ *
+ * `toPrecision` is broken at every arity, so any call demands the arm.
+ * `toString` is broken only with a radix argument (#6642 S62) — see the note on
+ * {@link NUMBER_PRIMITIVE_CALL_MEMBERS}.
+ */
+function numberPrimitiveMemberDemandArity(member: string): number {
+  return member === "toString" ? 1 : 0;
+}
 
 const demandScanCache = new WeakMap<ts.SourceFile, boolean>();
 
@@ -123,7 +145,10 @@ function sourceNamesNumberFormatCall(sourceFile: ts.SourceFile): boolean {
     if (found) return;
     if (ts.isCallExpression(node)) {
       const callee = node.expression;
-      if (ts.isPropertyAccessExpression(callee) && NUMBER_PRIMITIVE_CALL_MEMBERS.includes(callee.name.text)) {
+      const demanded = (member: string): boolean =>
+        NUMBER_PRIMITIVE_CALL_MEMBERS.includes(member) &&
+        node.arguments.length >= numberPrimitiveMemberDemandArity(member);
+      if (ts.isPropertyAccessExpression(callee) && demanded(callee.name.text)) {
         found = true;
         return;
       }
@@ -131,7 +156,7 @@ function sourceNamesNumberFormatCall(sourceFile: ts.SourceFile): boolean {
         ts.isElementAccessExpression(callee) &&
         callee.argumentExpression !== undefined &&
         ts.isStringLiteralLike(callee.argumentExpression) &&
-        NUMBER_PRIMITIVE_CALL_MEMBERS.includes(callee.argumentExpression.text)
+        demanded(callee.argumentExpression.text)
       ) {
         found = true;
         return;

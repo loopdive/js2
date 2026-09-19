@@ -11542,3 +11542,77 @@ Criterion 4 holds. The 15 BigInt rows stay red; next slice (S62): add
 `arguments.length > 0`), fix the bigint receiver family
 (`toString(radix)`, 0-arg, `String(<bigint>)`), re-apply links 3+4, re-run
 the 15 rows.
+
+### S62 findings (2026-09-19) — #6642 DONE: dynamic-receiver `toString` for number and bigint (+ links 3/4); ZonedDateTime 105 → 115/120, four-family 437 → 447/480, 0 pass→fail
+
+S62 (Opus, branch `issue-5383-standalone-temporal-s62`, head `bec0a80555`,
+off the merged S61 PR #5985 head `bb435fa167`, worktree
+`agent-a3b2d877c2c97d38c`). Full writeup in
+[#6642](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6642-link-bigint-value-survival)
+"## S62" (`status: done`).
+
+**Root cause (link 5).** Two stringification ladders had no column for the
+shape the polyfill uses. `__extern_method_call` had a number-primitive arm
+but `toString` was not in its member list, so `<any>.toString(radix)` fell
+to the terminal miss (`TypeError: called value is not a function`) although
+the reflective body `emitNumberProtoToStringBody` already existed — pure
+routing. The standalone `$BigInt` carrier is neither `$Object`, vec, closure
+nor `$AnyValue` tag, so it missed BOTH ladders: `__extern_method_call` (same
+TypeError) and `__any_to_string` (fell to `"[object Object]"`). The exact
+i64 formatter `bigint_toString_radix` (#1644) existed; only the two dynamic
+routes to it were missing.
+
+**Fix.** New leaf `src/codegen/bigint-primitive-to-string.ts`
+(`unshiftExternMethodCallBigIntPrimitiveArm` — §21.2.3.3, name resolved by
+interned `$NativeString` + `ref.eq`, radix ladder in the number arm's
+shape; `unshiftAnyToStringBigIntArm`), both gated on
+`ctx.nativeBigIntTypeIdx >= 0` so a module without a bigint carrier pays
+nothing; `"toString"` added to `NUMBER_PRIMITIVE_CALL_MEMBERS` with a new
+`numberPrimitiveMemberDemandArity` gating its demand on
+`arguments.length >= 1`; the two finalize call sites in `index.ts` /
+`typeof-natives-finalize.ts`; links 3 (`"BigInt"` in
+`CALLABLE_WRAPPER_CTORS`, `argOf(0) → __bigint_ctor → __box_bigint`) and 4
+(`"BigInt"` in `STANDALONE_GLOBAL_CONSTRUCTOR_NAMES`). No
+`%BigInt.prototype%` brand minted — deliberately one name-resolved arm.
+Witness `tests/issue-6642-bigint-tostring.test.ts` (37 assertions):
+lead-run on the base `bb435fa167` 4 failed / 4; on `bec0a80555` 4 passed.
+
+**The 15 rows.** 10 fail→pass (`add/add-large-subseconds`,
+`argument-duration-max`, `argument-string-fractional-units-rounding-mode`,
+`argument-string-negative-fractional-units`, `blank-duration`,
+`negative-epochnanoseconds`, `options-object`, `overflow-undefined`,
+`overflow-wrong-type`, `epochNanoseconds/basic`). 5 stay red for three
+unrelated mechanisms, none bigint survival: `overflow-adding-months-to-max-year`
++ `throw-when-intermediate-datetime-outside-valid-limits` (the one-i64
+carrier's range — the tests use `864n * 10n ** 19n` > 2^63; needs a limb
+representation, whole-lane change), `options-read-before-algorithmic-validation`
+(option-read ordering), `order-of-operations` (Proxy `get` trap — the S55
+bucket), `subclassing-ignored` (#6640).
+
+**Lead verification on `bec0a80555`** (S62's fresh bundle + provider
+`s62-1` `cacheHit=false` + rebuilt adapter; base = S61 TSVs; every diff
+re-run by the lead):
+
+| Family | S61 base | S62 | Δ |
+| --- | --- | --- | --- |
+| PlainDate / Duration / PlainDateTime | 113 / 106 / 113 | same | 0 |
+| ZonedDateTime | 105/120 | **115/120** | +10, 0 pass→fail |
+| **four-family total** | 437/480 | **447/480** | +10 |
+| A 1250 / B 205 / C 349 / D 300 / E-unlinked 300 / E-linked 300 / F-class 250 / F-methoddef 100 / F-objproto 150 | — | — | 0 pass→fail, 0 fail→pass each |
+
+Corpus byte A/B: 0 status flips, 21 sha flips ALL standalone (0 on gc),
+identical against S62's true-base run — link 4 seeds a `globalThis.BigInt`
+carrier in every standalone module with a realm object, +447…+563 B per
+binary; compile time on 20 B rows 34,037 → 33,614 ms (noise). Equivalence
+22 / 1720 / 22. Witness sweep 44 files / 269 tests, 0 failed under Node 22
+and Node 25 (lead re-ran Node 25). Gates green incl.
+`LOC_GATE_BASE=origin/main` (stranded `index.ts`/`generateModule`/
+`generateMultiModule`/`fillStandaloneTypeofClosureArms` grants restated in
+#6642), compiler-boundaries inventory, spec-coverage, lint, prettier.
+
+Criterion 4 holds and the bucket moved. Residual after S62: 33 rows of the
+480 — Proxy trap invocation (10 + `order-of-operations`, S55 WIP), `extends
+<provider class>` (#6640/#6623, incl. `subclassing-ignored`), the two `era`
+rows (#6633), the two >2^63 BigInt rows (limb representation, new issue),
+`options-read-before-algorithmic-validation` (new issue),
+`PlainDateTime/from/argument-string-offset.js`, and the one-offs.
