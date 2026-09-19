@@ -2,7 +2,7 @@
 id: 6642
 title: "standalone: a BigInt value does not survive a consumer↔provider link (typeof/===/Object.is/String/arithmetic all answer as if it were not a BigInt)"
 status: blocked
-assignee: ttraenkler/senior-dev-s60
+assignee: ttraenkler/senior-dev-s61
 sprint: current
 priority: high
 horizon: m
@@ -503,6 +503,34 @@ Reduced **single-module, link-free** (`.tmp/s61/probe/p6.mjs`, `--target standal
 `src/codegen/number-primitive-method-call.ts` already documents the number half
 as a named residual ("Its radix spelling (`x.toString(16)` through an `any`
 receiver) is a separate residual"); the bigint half is new here.
+
+### S61 validation — everything held flat
+
+Criterion-4 battery, 13 families / 3,684 rows, S61 tree vs the S60 base TSVs
+(fresh `build:compiler-bundle` → provider `.test262-cache/s61-f1`
+`cacheHit=false` → fresh quickjs adapter `fc390ba0543de545`): **0 pass→fail,
+0 fail→pass, 0 missing, in every family** — PlainDate 120, Duration 120,
+PlainDateTime 120, ZDT 120, A 1250, B 205, C 349, D 300, E-unlinked 300,
+E-linked 300, F-class 250, F-methoddef 100, F-objproto 150. Four-family total
+unchanged at **437/480** (PlainDate 113, Duration 106, PlainDateTime 113,
+ZDT 105). The 15 target ZonedDateTime rows are byte-for-byte the same failures
+they were on the base — link 1 alone is not on their path, by construction.
+
+Corpus byte A/B, 84 entries × 2 lanes: **0 status flips; 25 SHA flips, ALL on
+the `standalone` lane, 0 on `gc`.** Measured against a TRUE base run this
+session (`imports.ts` reverted to `10873df1e0` and the new leaf moved aside,
+corpus re-run, files restored) — which produced the identical 25, so none of
+them is `origin/main` drift. The movement is `__bigint_ctor`'s grown body:
+**+891 bytes** on every standalone binary measured
+(`benchmarks/fib.ts` 35,324 → 36,215; `js/builtins.ts` 63,743 → 64,634;
+`ir-retirement/math.ts` 137,296 → 138,190), while the same three files' `gc`
+binaries are byte-identical (1,073 / 4,955 / 11,204 both ways). That is the
+price of inlining the scan instead of minting a function, and it is the price
+that buys zero function-index movement.
+
+Equivalence gate: `22 failing, 1720 passing, 22 known-failures` — no new
+regressions. Witness sweep (`tests/issue-66*`, `issue-6484-*`, `issue-6493-*`,
+43 files / 265 tests) green under **both** Node 22 and Node 25.
 
 ## Next step (S61 — supersedes S60's list)
 
