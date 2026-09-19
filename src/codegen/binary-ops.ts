@@ -61,7 +61,14 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringImports, addUnionImports, resolveWasmType } from "./index.js";
 import { isI32CompatibleOperand, nativeTypeOfExpression } from "./native-type-annotations.js";
 import type { InnerResult } from "./shared.js";
-import { coerceType, compileExpression, ensureAnyHelpers, flushLateImportShifts, VOID_RESULT } from "./shared.js";
+import {
+  coerceType,
+  compileExpression,
+  ensureAnyHelpers,
+  flushLateImportShifts,
+  skipTransparentExpressions,
+  VOID_RESULT,
+} from "./shared.js";
 import { isLogicalAssignNamedEvalNameRead, resolveStructName, resolveStructNameForExpr } from "./property-access.js";
 import { compileNullishObservedExpression } from "./property-nullish-read.js";
 import { foldVoidOperandEquality } from "./equality-void-operand.js";
@@ -81,6 +88,7 @@ import { emitIsUndefF64 } from "./value-tags.js";
 import { hasStaticBigIntOperand, usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { objectCoercionBigIntArgumentOf } from "./object-ctor-primitive-receiver.js";
 import { emitUninitialisedFieldStrictNullish, readsUninitialisedFieldSlot } from "./uninitialised-field-undefined.js"; // (#5312)
+import { readsUninitialisedVariableSlot } from "./uninitialised-variable-undefined.js";
 
 /**
  * (#1930) Keep the nullish AnyValue gate on the oracle side of the checker
@@ -900,16 +908,17 @@ export function compileBinaryExpression(
     // has no such fallback: it compares the carriers structurally and reports
     // `void 0 !== undefined` as TRUE, which is the defect this fixes.
     const voidUndefinedIsLiteral = ctx.targetProfile.semanticProviders === "native-first";
-    const rightIsUndefinedId =
-      voidUndefinedIsLiteral && isInertUndefinedLiteral(expr.right)
-        ? true
-        : ts.isIdentifier(expr.right) && expr.right.text === "undefined";
+    const isUndefinedComparisonOperand = (operand: ts.Expression): boolean => {
+      const bare = skipTransparentExpressions(operand);
+      if (ts.isIdentifier(bare)) {
+        return bare.text === "undefined" && (ctx.checker.getTypeAtLocation(bare).flags & ts.TypeFlags.Undefined) !== 0;
+      }
+      return voidUndefinedIsLiteral && isInertUndefinedLiteral(bare);
+    };
+    const rightIsUndefinedId = isUndefinedComparisonOperand(expr.right);
     const rightIsNullish = rightIsNullKeyword || rightIsUndefinedId;
     const leftIsNullKeyword = expr.left.kind === ts.SyntaxKind.NullKeyword;
-    const leftIsUndefinedId =
-      voidUndefinedIsLiteral && isInertUndefinedLiteral(expr.left)
-        ? true
-        : ts.isIdentifier(expr.left) && expr.left.text === "undefined";
+    const leftIsUndefinedId = isUndefinedComparisonOperand(expr.left);
     const leftIsNullish = leftIsNullKeyword || leftIsUndefinedId;
     // A declaration binding whose element type is a heterogeneous primitive
     // union is physically a nullable `$AnyValue`.  Do not consume its
@@ -1077,10 +1086,18 @@ export function compileBinaryExpression(
         // write. Fields whose annotation admits `null` are excluded inside the
         // predicate — there `ref.null` is ambiguous.
         if (isStrictEqOp || isStrictNeqOp) {
+          const isUninitialisedVariableSlot = readsUninitialisedVariableSlot(ctx, nonNullExpr);
           const nullRepresentsUndefined =
-            nonNullUnionHasUndefined || isNullableNativeString || isUninitialisedFieldSlot;
+            nonNullUnionHasUndefined ||
+            isNullableNativeString ||
+            isUninitialisedFieldSlot ||
+            isUninitialisedVariableSlot;
           const nullRepresentsNull =
-            nonNullUnionHasNull || (!nonNullUnionHasUndefined && !isNullableNativeString && !isUninitialisedFieldSlot);
+            nonNullUnionHasNull ||
+            (!nonNullUnionHasUndefined &&
+              !isNullableNativeString &&
+              !isUninitialisedFieldSlot &&
+              !isUninitialisedVariableSlot);
           const comparesRepresentedNullish = nullSideIsUndefinedId ? nullRepresentsUndefined : nullRepresentsNull;
           if (!comparesRepresentedNullish) {
             fctx.body.push({ op: "drop" });

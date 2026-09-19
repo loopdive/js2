@@ -964,8 +964,14 @@ function compileSpreadCallArgs(
     if (argIdx < expr.arguments.length) {
       const restArg = expr.arguments[argIdx]!;
       if (ts.isSpreadElement(restArg)) {
-        // The spread source is already a vec struct — pass directly
-        compileExpression(ctx, fctx, restArg.expression);
+        // A source vec can have a different invariant element heap type from
+        // the rest parameter. Apply the ordinary vector conversion instead of
+        // leaving stack repair to insert an invalid nominal downcast (#1058).
+        const restType = paramTypes?.[paramOffset + restInfo.restIndex] ?? {
+          kind: "ref" as const,
+          typeIdx: restInfo.vecTypeIdx,
+        };
+        compileExpression(ctx, fctx, restArg.expression, restType);
       } else {
         // Single non-spread arg as rest — wrap in vec struct { 1, [val] }
         fctx.body.push({ op: "i32.const", value: 1 });

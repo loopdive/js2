@@ -557,7 +557,7 @@ export function runUpstreamTest() {
           result: {
             native: { count: 2, names: ["one", "two"], statuses: [true, true], errors: ["", ""] },
             compile: { success: true, validates: true, durationMs: 1, binaryBytes: 2 },
-            wasm: { statuses: [true, false], errors: ["", "mismatch"] },
+            wasm: { count: 2, statuses: [true, false], errors: ["", "mismatch"] },
           },
         },
       ],
@@ -567,6 +567,12 @@ export function runUpstreamTest() {
     expect(report.summary.unavailableInfra).toBe(3);
     expect(report.results.passed).toBe(1);
     expect(report.results.failed).toBe(1);
+    expect(report.compile.details[0]).toMatchObject({
+      nativeTestCount: 2,
+      nativeStatusCount: 2,
+      wasmTestCount: 2,
+      wasmStatusCount: 2,
+    });
   });
 });
 

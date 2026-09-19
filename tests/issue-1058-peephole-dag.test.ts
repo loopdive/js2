@@ -4,6 +4,41 @@ import { expect, it } from "vitest";
 import { peepholeOptimize } from "../src/codegen/peephole.js";
 import type { Instr, WasmModule } from "../src/ir/types.js";
 
+it("#1058 optimizes deeply nested shared bodies without recursive stack growth", () => {
+  const leaf: Instr[] = [{ op: "local.get", index: 0 }, { op: "drop" }];
+  let body = leaf;
+  for (let depth = 0; depth < 20000; depth++) {
+    body = [{ op: "if", blockType: { kind: "empty" }, then: body, else: body }];
+  }
+  const mod = {
+    types: [{ kind: "func", params: [{ kind: "i32" }], results: [] }],
+    functions: [{ name: "deep", typeIdx: 0, locals: [], body }],
+  } as unknown as WasmModule;
+
+  expect(peepholeOptimize(mod)).toBe(2);
+  expect(leaf).toEqual([]);
+  expect(peepholeOptimize(mod)).toBe(0);
+});
+
+it("#1058 optimizes children before applying the parent's guarded-cast rewrite", () => {
+  const arm: Instr[] = [{ op: "local.get", index: 0 }, { op: "ref.cast", typeIdx: 1 }, { op: "ref.as_non_null" }];
+  const body: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "ref.test", typeIdx: 1 },
+    { op: "if", blockType: { kind: "empty" }, then: arm, else: [] },
+  ];
+  const mod = {
+    types: [
+      { kind: "func", params: [{ kind: "ref_null", typeIdx: 1 }], results: [] },
+      { kind: "struct", name: "Target", fields: [] },
+    ],
+    functions: [{ name: "parent", typeIdx: 0, locals: [], body }],
+  } as unknown as WasmModule;
+
+  expect(peepholeOptimize(mod)).toBe(2);
+  expect(arm).toEqual([{ op: "local.get", index: 0 }, { op: "ref.as_non_null" }]);
+});
+
 it("#1058 optimizes a shared instruction DAG once", () => {
   const leaf: Instr[] = [{ op: "local.get", index: 0 }, { op: "drop" }];
   let shared = leaf;

@@ -48,6 +48,8 @@ import {
   type JsTag,
   type OracleTypeKey,
   type SignatureFact,
+  type SignaturePositionFact,
+  type SignaturePositionPath,
   type TypeFact,
   type TypeOracle,
 } from "./oracle.js";
@@ -101,6 +103,18 @@ function unwrapExpression(expr: ts.Expression): ts.Expression {
 }
 
 export class InHouseOracle implements TypeOracle {
+  indexedElementShapeOf(_node: ts.Node): undefined {
+    return undefined;
+  }
+  typeDeclarationsOf(_node: ts.Node): readonly ts.Declaration[] {
+    return [];
+  }
+  resolvedCallDeclarationOf(_node: ts.CallExpression): ts.Signature["declaration"] {
+    return undefined;
+  }
+  hasIndexSignature(_node: ts.Node): boolean | undefined {
+    return undefined;
+  }
   private readonly factCache = new WeakMap<ts.Node, TypeFact>();
   private readonly inFlight = new Set<ts.Node>();
   private readonly keyCache = new Map<string, OracleTypeKey>();
@@ -653,6 +667,11 @@ export class InHouseOracle implements TypeOracle {
   signatureOf(node: ts.Node): SignatureFact | undefined {
     const decl = this.functionLikeFor(node);
     return decl ? this.signatureOfDeclaration(decl, 0) : undefined;
+  }
+
+  signaturePositionOf(_node: ts.Node, _path: SignaturePositionPath): SignaturePositionFact | undefined {
+    // Structural interning cannot certify exact instantiated source identity.
+    return undefined;
   }
 
   private functionLikeFor(node: ts.Node): ts.SignatureDeclarationBase | undefined {

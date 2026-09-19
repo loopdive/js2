@@ -75,7 +75,30 @@ function replaceOnce(source: string, before: string, after: string): string {
   if (at < 0 || source.indexOf(before, at + before.length) >= 0) throw new Error("missing/duplicate relocation span");
   return source.slice(0, at) + after + source.slice(at + before.length);
 }
-function requireFactoryRelocation(canonical: string, facade: string): void {
+function requireFactoryRelocation(
+  canonical: string,
+  facade: string,
+  keySource = read("src/ir/core/type-binding-keys.ts"),
+): void {
+  // A later, independent main relocation removed this exact key function.
+  // Undo only that relocation before applying the original two-factory proof.
+  // The original donor hash below is deliberately unchanged.
+  expect(hash(keySource)).toBe("709466679953f53a6efc371d4ea3ba1e4abc192faeea70f64d7dad7d219e2de8");
+  const keyFile = ts.createSourceFile("type-binding-keys.ts", keySource, ts.ScriptTarget.Latest, true);
+  const keyFunctions = keyFile.statements.filter(ts.isFunctionDeclaration);
+  expect(keyFunctions.map((fn) => fn.name?.text)).toEqual(["irTypeBindingKey"]);
+  facade = replaceOnce(
+    facade,
+    'import { irTypeBindingKey } from "./core/type-binding-keys.js";\nexport { irTypeBindingKey } from "./core/type-binding-keys.js";\n',
+    "",
+  );
+  facade = replaceOnce(
+    facade,
+    "export function sameIrTypeBinding",
+    "/** Canonical type-binding key. Compatibility names are deliberately excluded. */\n" +
+      keyFunctions[0]!.getText(keyFile) +
+      "\n\nexport function sameIrTypeBinding",
+  );
   const parsed = ts.createSourceFile("type-references.ts", canonical, ts.ScriptTarget.Latest, true);
   const functions = parsed.statements.filter(ts.isFunctionDeclaration);
   expect(functions.map((fn) => fn.name?.text)).toEqual(["typeRef", "irSupportTypeRef"]);
@@ -116,6 +139,22 @@ type IrBindingOwnerId = IrSourceId | IrUnitId | IrClassId;
 }
 
 describe("nominal index-free support references", () => {
+  it.each(["key body", "unrelated facade"] as const)(
+    "rejects a %s change in the composed relocation receipt",
+    (kind) => {
+      const canonical = read("src/ir/core/type-references.ts");
+      const facade = read("src/ir/abi-bindings.ts");
+      const keys = read("src/ir/core/type-binding-keys.ts");
+      requireFactoryRelocation(canonical, facade, keys);
+      expect(() =>
+        requireFactoryRelocation(
+          canonical,
+          kind === "unrelated facade" ? facade + "\nvoid 0;\n" : facade,
+          kind === "key body" ? replaceOnce(keys, 'case "support":', 'case "changed":') : keys,
+        ),
+      ).toThrow();
+    },
+  );
   it("retains the exact old factory identity and complete two-body relocation receipt", () => {
     expect(compatibilityFactory).toBe(irSupportTypeRef);
     requireFactoryRelocation(read("src/ir/core/type-references.ts"), read("src/ir/abi-bindings.ts"));
