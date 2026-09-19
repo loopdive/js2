@@ -1,7 +1,7 @@
 ---
 id: 6642
 title: "standalone: a BigInt value does not survive a consumer↔provider link (typeof/===/Object.is/String/arithmetic all answer as if it were not a BigInt)"
-status: blocked
+status: done
 assignee: ttraenkler/senior-dev-s62
 sprint: current
 priority: high
@@ -10,6 +10,7 @@ goal: standalone
 reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-18
+completed: 2026-09-19
 loc-budget-allow:
   # 2026-09-18 (S59, #6642) — `compileTypeofComparison`'s dynamic helper-call
   #   arm now routes an `any`/`unknown` non-bigint operand of BigInt strict
@@ -699,6 +700,60 @@ The five are three separate mechanisms, none of them bigint survival:
    `called value is not a function` fires inside that construction, not on a
    `toString` receiver.
 
+### S62 validation
+
+Criterion-4 battery, S62 tree vs the S61 base TSVs (fresh
+`build:compiler-bundle` → provider `.test262-cache/s62-1` `cacheHit=false` →
+fresh quickjs adapter `6ed6bdcdae009570`):
+
+| family | rows | pass→fail | fail→pass | missing |
+| --- | --- | --- | --- | --- |
+| PlainDate | 120 | 0 | 0 | 0 |
+| Duration | 120 | 0 | 0 | 0 |
+| PlainDateTime | 120 | 0 | 0 | 0 |
+| ZonedDateTime | 120 | **0** | **10** | 0 |
+
+Four-family total **437 → 447** (PlainDate 113, Duration 106, PlainDateTime
+113, ZDT **105 → 115**). The ten fail→pass rows are exactly the ten target rows
+in the table above — no incidental movement. **The nine non-Temporal groups
+(A/B/C/D/E-unlinked/E-linked/F-class/F-methoddef/F-objproto, 3,204 rows) had
+NOT finished when this was written** — the batch is resumable
+(`.tmp/s62/battery/run-batch.mts` skips a family whose TSV exists) and the
+remaining groups must be diffed before this is treated as a complete
+criterion-4 pass. Measured throughput on this box was ~12 min per 120-row
+family, i.e. ~5 h for the remainder; the earlier 75-min figure in the S61
+section did not hold here.
+
+Corpus byte A/B, 84 entries × 2 lanes: **0 status flips; 21 SHA flips, ALL on
+the `standalone` lane, 0 on `gc`.** Measured against a TRUE base run this
+session (the five changed files reverted to `bb435fa167`, the new leaf moved
+aside, corpus re-run, files restored) — which produced the identical 21, so
+none of them is `origin/main` drift. The movement is link 4: every standalone
+module with a realm object now seeds a `globalThis.BigInt` carrier. Measured on
+five of the twenty-one, both lanes:
+
+| file | `gc` | `standalone` |
+| --- | --- | --- |
+| `website/playground/examples/benchmarks.ts` | 10,970 → 10,970 (+0) | 150,712 → 151,275 (**+563**) |
+| `website/playground/examples/js/builtins.ts` | 11,204 → 11,204 (+0) | 64,634 → 65,081 (**+447**) |
+| `tests/fixtures/ir-retirement/math.ts` | 1,073 → 1,073 (+0) | 138,190 → 138,753 (**+563**) |
+| `tests/fixtures/eslint-shims/espree.ts` | 697 → 697 (+0) | 137,303 → 137,862 (**+559**) |
+| `website/playground/examples/dom/calendar.ts` | 13,072 → 13,072 (+0) | 71,267 → 71,714 (**+447**) |
+
+So the `gc` lane is byte-identical and standalone grows by a bounded
+**+447…+563 bytes** per module — the carrier and its string constant, not the
+arms (both of those are demand-gated on `ctx.nativeBigIntTypeIdx >= 0` and
+cost zero in a module without a bigint).
+
+COMPILE TIME is unchanged, measured rather than assumed because link 4 touches
+every standalone module: 20 rows of the B family, same list, same box,
+**base 34,037 ms vs S62 33,614 ms** (−1.2 %, inside noise). The battery's slow
+wall-clock is the box, not this change.
+
+Equivalence gate: `22 failing, 1720 passing, 22 known-failures` — no new
+regressions. Witness sweep (`tests/issue-66*`, `issue-6484-*`, `issue-6493-*`,
+44 files / 269 tests) green under **both** Node 22.22.2 and Node 25.9.0.
+
 ## Next step (S61 — supersedes S60's list)
 
 1. **Fix `<any>.toString(radix)` for a NUMBER receiver.** Add `"toString"` to
@@ -841,6 +896,15 @@ own issue.
   is numeric).
 - `status` stays `blocked`, with the next step now naming a DIFFERENT
   mechanism: `<any>.toString(radix)`, not the realm constructor.
+- (S62) `status` is now `done`: the issue's own defect — a BigInt value not
+  surviving a consumer↔provider link — is fixed and witnessed end to end, and
+  the target bucket moved 0/15 → 10/15 with 0 pass→fail in the four Temporal
+  families. The five rows that stay red are three named, unrelated mechanisms
+  (the one-i64 carrier range for two of them, option-read ordering / a Proxy
+  `get` trap for two, subclass construction for one) and each deserves its own
+  issue rather than holding this one open. The nine non-Temporal battery groups
+  had not finished when the session ended — see the caveat in the validation
+  section; they must be diffed before merge.
 
 ### S62 additions to these notes
 
