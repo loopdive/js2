@@ -1,10 +1,10 @@
 ---
 id: 5152
 title: "ES2015 standalone: string conformance wave 1"
-status: in-review
+status: in-progress
 sprint: current
 created: 2026-08-28
-updated: 2026-08-29
+updated: 2026-09-20
 priority: high
 horizon: l
 feasibility: medium
@@ -19,6 +19,8 @@ loc-budget-allow:
   - src/codegen/string-ops.ts
   - src/codegen/regexp-standalone.ts
   - src/codegen/object-runtime.ts
+  - src/codegen/object-runtime-enumeration.ts
+  - src/codegen/object-ops.ts
   - src/codegen/array-object-proto.ts
   - src/codegen/iterator-native.ts
   - src/codegen/case-convert-native.ts
@@ -38,11 +40,21 @@ coercion-sites-allow:
   # ToString/ToNumber/ToPrimitive matrix is hand-rolled here; the ToString half
   # of the same lane deliberately delegates to `emitStringProtoToStringFlat`.
   - src/codegen/string-isregexp-guard.ts
+  # (#5152) The standalone array-like reader turns its f64 index into the
+  # canonical property key with the existing native `number_toString` helper
+  # before delegating to ordinary `__extern_get` / `__extern_has`. This is not
+  # a new coercion matrix: it shares the runtime's established numeric-string
+  # implementation so bag descriptors at keys such as `"0"` retain ordinary
+  # Get/Has behavior.
+  - src/codegen/object-runtime.ts
 func-budget-allow:
   - src/codegen/case-convert-native.ts::emitNativeCaseConversion
   - src/codegen/case-convert-native.ts::makeStr
   - src/codegen/string-ops.ts::compileNativeStringMethodCall
   - src/codegen/array-object-proto.ts::emitStringProtoMemberBody
+  - src/codegen/object-ops.ts::compileObjectDefineProperty
+  - src/codegen/object-runtime.ts::fillExternArrayLikeStructArms
+  - src/codegen/object-runtime.ts::fillClosedStructExternGetArms
 ---
 
 # ES2015 standalone: string conformance wave 1
@@ -54,6 +66,24 @@ tables, and Symbol-rejection arms to the runtime coercion walkers — all in the
 files listed in `loc-budget-allow`. Measured growth is expected and granted
 for this change-set. `src/codegen/case-tables.ts` is GENERATED
 (`scripts/gen-case-tables.mjs`) and grows by the new astral run tables.
+
+Additional allowance rationale (2026-09-20): the bounded standalone
+`String.raw` repair adds ordinary closed-struct reader arms in
+`object-runtime.ts`, extracts their common `ToLength` tail into
+`object-runtime-enumeration.ts`, and mirrors a successfully installed anonymous
+accessor into the already-existing identity bag in `object-ops.ts`. The three
+files are already over the source-size threshold; the allowance is limited to
+these measured, reviewed additions.
+
+Function-growth allowance rationale (2026-09-20): the function gate measured
+only the three owning functions beyond their current thresholds:
+`compileObjectDefineProperty` (1581/1475),
+`fillExternArrayLikeStructArms` (530/425), and
+`fillClosedStructExternGetArms` (534/470). Their added code is respectively
+the one-evaluation successful-accessor bag mirror, the standalone ordinary
+array-like-reader routing, and the descriptor-first closed-struct reader plus
+Symbol boxing. The allowance is restricted to those three measured functions;
+it does not update the shared function baseline or grant unrelated growth.
 
 ## Problem
 
@@ -170,6 +200,19 @@ skip list, or `scripts/*baseline*.json`.
 
 ### Step B — normalize (10 tests; 7 without Unicode tables)
 
+Current-main revalidation (2026-09-19): the pinned oracle-14 ES2015 selection
+contains exactly **14 normalize rows: 11 pass / 3 fail**. The three failures
+remain `return-normalized-string.js`,
+`return-normalized-string-from-coerced-form.js`, and
+`return-normalized-string-using-default-parameter.js`. At `4a6cbdf1ee80`,
+`string-ops.ts` explicitly still returns the receiver unchanged after form
+validation; no native normalization helper or generator exists in the checked
+source. Thus Step B.3 remains real unimplemented normalization, not the
+String.raw descriptor issue. Related #1541's proposed opt-in ICU provider is
+historical design, not implemented support or sufficient acceptance for the
+default standalone goal. No normalization implementation claim or test run
+has been started in this continuation.
+
 1. Rewrite the `normalize` arm in `src/codegen/string-ops.ts` L3563-3598:
    receiver first (keep the #1823 ordering), then if a form arg is present and
    not a statically-valid literal: coerce via `emitArgAsNativeString`
@@ -256,6 +299,395 @@ skip list, or `scripts/*baseline*.json`.
    the mapped pair. Pass-1 length counting is unaffected (pairs contribute 2
    before and after). `toLocale{Lower,Upper}Case` route to the same helpers
    (string-ops.ts L3273) so all 4 tests move together.
+
+### 2026-09-19 Step F read-only revalidation plan
+
+The pinned oracle-14 standalone baseline at baselines commit
+`6c51eb29ef12208ac8f53ae99eea900b53f51a76` still fails all three Step F
+originals: `template-length-throws`, `returns-abrupt-from-next-key`, and
+`nextkey-is-symbol-throws`. Current source is upstream
+`4a6cbdf1ee80b5d1618a7c87b014bc792f0fddc7`.
+
+Before implementation, audit the current template handoff to `__str_raw` and
+identify the narrowest identity-preserving representation already supported
+by ordinary reads. Do not repeat the historical diagnosis as current proof.
+Read exact originals and trace descriptor lookup, segment coercion, and their
+error order. Produce a bounded source-level correction plan with required
+before/after controls, or identify an exact shared-owner dependency.
+
+The parent issue is reserved without a live owner. Open #5748 changes Boolean
+result annotations in `call-builtin-static.ts`; #5736 removes its old generator
+prototype special case. Their inspected hunks do not change `String.raw`,
+but both must be preserved. Generic literals, closure/class representation,
+and runtime lifetime/layout owners remain reserved by the IR task. This
+assignment is read-only: no production edits, test execution, claim takeover,
+or publication until source ownership and the implementation plan are agreed.
+
+### 2026-09-19 Step F audit outcome and corrected implementation boundary
+
+Read-only Terra audit at `4a6cbdf1ee80` revises the historical diagnosis below:
+the outer template materialization preserves the original nested `raw` struct
+reference. Do not patch that materializer or introduce a raw-copy workaround.
+`string-raw.ts` already performs raw/length/index reads in the right order and
+contains a Symbol TypeError guard. The shared dynamic readers lose the values
+before that guard can act.
+
+`Object.defineProperty` stores anonymous closed-struct descriptors in an
+identity-keyed carrier bag (`user-declared-structs.ts`, `carrier-bag-define.ts`).
+In `object-runtime.ts`, `fillExternArrayLikeStructArms` instead reads physical
+length/numeric fields: missing physical length returns zero without consulting
+the bag; accessor-only numeric entries are missed. Both its index boxer and
+`fillClosedStructExternGetArms` number-box non-boolean i32 fields, including
+symbol-branded fields. The named reader also puts physical field arms before
+the bag arm, so switching callers to it alone leaves descriptor precedence
+wrong. These are source-level findings, not a new compiler run; confirm the
+original Symbol field's emitted brand in permitted IR evidence before repair.
+
+Revised implementation plan, pending shared-owner agreement:
+
+1. In `fillClosedStructExternGetArms`, make present carrier-bag descriptors
+   override physical closed fields and box symbol-branded i32 through the
+   existing `__box_symbol` path. Preserve boolean/number distinctions.
+2. In `fillExternArrayLikeStructArms`, route closed-struct length and index
+   reads through ordinary property semantics before ToLength/coercion,
+   preserving getter exceptions and Symbol identity. Reuse the existing
+   Get/ToLength construction in `object-runtime-enumeration.ts` as appropriate;
+   coordinate that file if edits prove necessary. Audit `__extern_has_idx`
+   consistency rather than accidentally making descriptor visibility differ.
+3. Prove the three exact originals plus the existing `tests/issue-3147.test.ts`
+   and `issue-4397-native-semantic-js-host.test.ts` controls in both lanes.
+   Add a getter redefining an existing physical `length`/`"0"` field so a
+   bag-only fix cannot hide incorrect precedence. Retain abrupt ordering,
+   deletion/reassignment/redefinition, nullish/empty-length, substitution, and
+   zero-host-import controls.
+
+No production edits, compiler runs, claims, or commits were made by the audit.
+The coordinator has requested the exact reader/enumeration ownership from the
+IR task before dispatch. The historical Step F materialization remedy below
+is superseded for these three originals by this audit, not silently adopted.
+
+Dispatch release: the IR owner explicitly cleared the two reader functions
+and `object-runtime-enumeration.ts`, including checks against retained and
+unpublished IR trees. Preserve adjacent #5753 tuple-reader import/splice and
+unpublished wrapper-allocation ownership. Complete open-PR hunk locations also
+show #5784 changes wrapper/enumeration-sort/vector/hole/for-in functions and
+#5397 changes Reflect.set/set-vector functions, not these two reader owners.
+The atomic upstream claim `5152:closed-struct-raw-readers` is verified for
+`ttraenkler/codex-5152-raw-readers`, branch
+`codex/5152-string-raw-audit-20260919`. The Terra auditor now implements in its
+own existing worktree. Compiler/test execution waits for the RegExp lane's
+lease handoff; preserve an untouched-base red run before candidate green.
+Independent peer review and full scoped gates remain required before a PR.
+
+The fixed acceptance manifest is
+`plan/agent-context/5152-string-raw-es2015-paths-20260919.txt`: exactly 30
+unique ES2015 String.raw paths in the pinned oracle-14 baseline, all verified
+present in corpus `b363f29d3c43c626dc852744ad64a0b48a003693`. Baseline statuses
+are **27 pass / 3 fail**. SHA-256:
+`d7d2c223fb766dcc9ed460d3c2ddad520195dfc007db6d3c4f575575ba3e3827`.
+Use this unchanged in fresh isolated standalone and host acceptance runs after
+the focused controls; original successes must not regress. Corpus preparation
+does not constitute a test execution or candidate pass claim.
+
+### 2026-09-19 closed-struct raw-reader implementation evidence and remaining owner seam
+
+The reader slice now makes the ordinary-read boundary explicit, but it is not
+yet a complete fix for every statically lowered `Object.defineProperty`
+accessor. The implemented reader-side changes are deliberately bounded to the
+cleared ownership:
+
+1. `fillClosedStructExternGetArms` checks a user-instance carrier bag by
+   *presence* before any physical field arm, then uses
+   `__reflect_get_receiver(bag, key, originalReceiver)`. This preserves
+   descriptor precedence, makes a present `undefined` distinguishable from a
+   miss, and gives a getter its original raw object as `this`.
+2. `fillExternArrayLikeStructArms` sends user-declared closed structs through
+   ordinary `__extern_get` / `number_toString` / `__extern_has` for length,
+   indexed Get, and indexed Has. Its common `ToLength` tail lives in
+   `object-runtime-enumeration.ts`, so the old `$Object` arm and the new closed
+   receiver arm share coercion and clamping exactly.
+3. Closed i32 values branded as Symbol are boxed through `__box_symbol`, not
+   `__box_number`, before `String.raw` performs its existing ToString guard.
+
+The focused fixture `tests/issue-5152-raw-readers.test.ts` adds exact-sentinel
+controls for getter abrupt completion and order, physical-field overrides,
+receiver identity, present-`undefined`, and static-metadata safety:
+pre-definition, untaken/taken branch, and two same-shape instances. On the
+safe bag-backed candidate the latter six temporal/per-instance controls pass;
+the complete standalone result is `130022 / 131071`, with exactly bits
+`1 + 8 + 16 + 1024` still absent. This is useful negative evidence: the reader
+correctly handles descriptors that reach the bag, but does not fabricate a
+descriptor from static metadata.
+
+The exact remaining source dependency is the static accessor branch in
+`src/codegen/object-ops.ts` (current lines 1760-2096). It executes
+`ctx.classAccessorSet.add(accessorKey)` at lines 1777-1778, where `accessorKey`
+is the compile-time `${structName}_${propName}` name,
+synthesizes a bare `${structName}_get/set_${propName}` function, and returns
+the receiver without an identity-keyed descriptor/bag write. `classAccessorSet`
+is a compile-time `Set` created in `src/codegen/context/create-context.ts`, and
+the optional S5C globals are keyed only by `(structName, propName)`; neither is
+runtime proof that this object was defined, that a branch was taken, or that a
+same-shape peer object owns the descriptor. `$shape` is immutable layout
+identity, not a definition epoch. A reader fallback based on any of those
+metadata carriers is therefore unsound and was intentionally removed.
+
+The required shared-owner repair is narrow: on a *successful runtime*
+definition through that static accessor branch, populate the existing
+per-receiver descriptor/bag substrate observed by `__carrier_bag_has` /
+`__carrier_bag_of`; do not copy the raw object or turn struct/key metadata into
+descriptor truth. The existing runtime accessor applier path in
+`emitExternDefinePropertyNoValue` (`object-ops.ts` from line 3019) and
+`carrier-bag-define.ts` is the relevant established mechanism. Its owner must
+preserve one-time receiver/key/descriptor evaluation, descriptor transition
+validation, and direct static-access behavior while making the successful
+definition observable to dynamic reads. This plan slice does not edit
+`object-ops.ts`, runtime sidecars, or storage machinery.
+
+### 2026-09-20 authorized static-accessor mirror plan
+
+The reader-only boundary above is now extended by a single coordinated source
+slice in `src/codegen/object-ops.ts`, limited to the standalone `__anon_*`
+static-inline accessor branch (the branch that currently starts near line
+1760). Before emitting the receiver body, call `ensureObjectRuntime`, reserve
+the existing `__defineProperty_accessor` target, and flush late-import shifts.
+Retain the already evaluated `objLocal`; materialize the literal key and each
+getter/setter closure exactly once into externref locals. Call the existing
+accessor applier with that saved receiver, key, closures, and the established
+accessor flag encoding (including Get/Set-present bits 8/9); on its successful
+result, drop the applier result and then publish those *same* closure locals to
+the legacy per-struct globals.
+
+This preserves receiver/key/closure single evaluation and lets the existing
+carrier-bag define arm establish per-instance runtime presence. It must not
+call `emitExternDefinePropertyNoValue`, because that helper recompiles those
+operands. It does not add a carrier, sidecar, closure ABI, `String.raw`, or
+reader fallback. The mirror's runtime branch is explicitly standalone-only;
+the measured JS-host descriptor snapshot remains 66528, but no byte-for-byte
+host-output comparison is claimed. Direct typed
+property reads still rely on pre-existing compile-time
+`classAccessorSet`/per-shape globals and are explicitly out of this slice's
+lifecycle guarantee; only dynamic reads such as `String.raw` are claimed.
+
+Fresh Node 24, standalone, isolated original-row evidence on the safe reader
+candidate (all artifacts have an empty Wasm import list):
+
+- `built-ins/String/raw/nextkey-is-symbol-throws.js` — **pass**.
+- `built-ins/String/raw/template-length-throws.js` — **fail**: expected the
+  Test262Error accessor throw, but no exception occurred.
+- `built-ins/String/raw/returns-abrupt-from-next-key.js` — **fail** on the
+  strict rerun: `TypeError: Cannot assign to read only property`.
+
+The isolated runner output is retained at
+`/private/tmp/js2-5152-raw-three-standalone-candidate-20260919.log`; the
+primary/strict compiler import audit is retained at
+`/private/tmp/js2-5152-raw-three-imports-20260919.log` and reports `imports: []`
+for all four emitted variants. This is a real Symbol original-row gain only,
+not a three-row or 30-path pass-rate claim. The known compiled-host baseline
+remains 28 pass / 2 non-pass across the 30-path manifest; it was not rewritten
+or represented as parity by this reader slice.
+
+Same-base safeguard: a fresh Node 24 one-row `runTest262File` execution using
+the untouched `4a6cbdf1` coordinator compiler source returns **fail** for
+`nextkey-is-symbol-throws.js` (the expected TypeError is not thrown), with
+`success: true`, `imports: []`, and one diagnostic. The coordinator worktree
+has no populated corpus checkout, so the temporary audit launcher remapped only
+its `test262/` *readFileSync* corpus reads to the pinned shared corpus; compiler
+and test-runner modules themselves remained the untouched coordinator source.
+This is a fresh authoritative one-row runner invocation, not a claim that a
+literal maintained `--isolate` command was run from that unpopulated checkout.
+The exact diagnostic is a **warning**:
+`IR path failed for $DONOTEVALUATE: function typeIdx parity mismatch: IR=132,
+legacy=50 — keeping legacy body [IR-FALLBACK]`. The current candidate's exact
+Symbol assembly likewise reports `success: true`, `imports: []`, and the same
+single warning. Therefore the evidence establishes a same-base Symbol verdict
+delta but makes no diagnostics-clean claim. Durable logs are
+`/private/tmp/js2-5152-raw-symbol-baseline-4a6-20260920.log` and
+`/private/tmp/js2-5152-raw-symbol-candidate-errors-20260920.log`.
+
+### 2026-09-20 frozen reader/mirror checkpoint, validation boundary, and residual
+
+The source candidate is now deliberately frozen outside gate-fixes. It has four
+cooperating, standalone-only pieces:
+
+1. `fillClosedStructExternGetArms` consults a live carrier-bag descriptor by
+   presence before a physical field, calls `__reflect_get_receiver` with the
+   original receiver, and boxes a symbol-branded i32 with `__box_symbol`.
+2. `fillExternArrayLikeStructArms` routes admitted user shapes' length/index/
+   has-index operations through ordinary `__extern_get`, `number_toString`, and
+   `__extern_has`; `buildArrayLikeToLengthFromExternref` is the common ToLength
+   tail shared with the `$Object` arm.
+3. The static inline accessor path mirrors only a successful standalone
+   `__anon_*` definition into the existing identity bag. It evaluates receiver,
+   key, and closures once; rejects an unliftable supplied getter/setter rather
+   than storing null; applies `__defineProperty_accessor`; and only then
+   publishes the legacy globals. No raw-object copy, static metadata fallback,
+   carrier allocation, or JS-host change is involved.
+4. The ordinary array-like routing is gated by `ctx.standalone`. This restores
+   native-first's pre-existing physical-reader boundary: an initial ungated
+   candidate returned `""` for the native-first `String.raw({raw:{length:2,
+   0:"a",1:"b"}}, "X")` control; the corrected route returns `"aXb"`.
+
+Measured candidate evidence (Node 24, fresh isolated standalone runs) is:
+
+- exact three originals: **2 pass / 1 fail** — `template-length-throws` and
+  `nextkey-is-symbol-throws` pass; only the delete/reassignment half of
+  `returns-abrupt-from-next-key` fails;
+  `/private/tmp/js2-5152-raw-three-final-20260920.log`.
+- immutable 30-path manifest: **29 pass / 1 fail / 0 skip**, with that same
+  one original remaining;
+  `/private/tmp/js2-5152-string-raw-30-final-20260920.log`.
+- the standalone fixture's complete ordinary-reader mask is **131071**, and
+  all generated artifacts in this lane have `imports: []`.
+- the direct Node oracle also returns **131071**. The untouched-`4a6` A/B
+  launcher records the historical standalone mask **129478**, direct Node
+  **131071**, host full-source strict-setter throw, host delete-excluded mask
+  **66528**, and native-first `"aXb"` at
+  `/private/tmp/js2-5152-reader-fixture-base-20260920.log`.
+
+The fixture's JS-host case is intentionally a **baseline snapshot**, not a
+positive compatibility or parity claim. For the source with the known
+delete/reassignment sequence excluded, untouched `4a6` produces **66528**;
+the asserted missing descriptor bits are
+`1/2/8/16/1024/2048/4096/8192/16384/32768`. The full host source still throws
+the pre-existing strict setter error. The focused run after the native-first
+gate was 4/5 solely because this case still expected the standalone mask;
+`tests/issue-5152-raw-readers.test.ts` now asserts the documented 66528
+baseline. Its final direct run is **5/5** at
+`/private/tmp/js2-5152-raw-readers-vitest-after-coercion-local-20260920.log`.
+It must never be reported as full host parity.
+
+The final direct TS7 invocation against the shared installed dependencies
+passed: `/private/tmp/js2-5152-typecheck-ts7-final-20260920.log`.
+The package script itself cannot resolve this isolated worktree's absent local
+`node_modules`; that is a worktree provisioning limitation, not a TS result.
+
+#### Remaining original: anonymous bag deletion, not a reader regression
+
+The last standalone original is a shared delete/set residual. A targeted
+diagnostic gives compiled standalone **43** versus direct Node **51**:
+the first accessor throw and `delete` result are observed, but the subsequent
+assignment is refused. The durable helper map is
+`/private/tmp/js2-5152-delete-lifecycle-helper-map-v2-20260920.log`.
+
+Source/WAT attribution is exact:
+
+- `typeof-delete.ts` sends `delete obj.raw["0"]` to `__delete_property`.
+- `__carrier_bag_delete` is reached, but its finalizer currently has closure,
+  generator, vec, and Error lookup arms only. It has no anonymous-instance
+  arm, returns `-1`, and `__delete_property` takes its historical non-object
+  `return 1` fallback without removing the bag accessor.
+- The later strict assignment follows `assignment.ts` →
+  `__extern_set_strict` → `__reflect_set` → `__extern_set`; the still-live
+  getter-only bag entry produces the shared refusal result and the observed
+  TypeError. `object-runtime-strict-set.ts` is only the correct consumer of
+  that refusal and is not an edit target.
+
+No deletion code is included in this reader/mirror checkpoint. A separately
+owned true-expando follow-up may need `carrier-bag-delete.ts` **and an
+explicitly coordinated provenance-registry/API seam**; neither file set nor
+implementation is authorized by this checkpoint. Its source-reviewed plan is:
+
+1. Publish this frozen reader/mirror repair first. Then authenticate actual
+   anonymous-*literal* provenance; neither the `__anon_` naming convention nor
+   a structural type/shape match is proof that a receiver is eligible. The
+   existing `object-literal-carrier.ts` AST-to-carrier private `WeakMap`,
+   strict-method allocation recorder, and insertion-order map are not a
+   complete enumerable finalizer registry (the latter two omit property-only
+   or empty literals). They must not be silently substituted for that proof or
+   widened without coordinated ownership.
+2. Only after an authenticated registry design exists, enumerate its concrete
+   allocated candidates at FINALIZE and match both Wasm type and logical
+   collision stamp through `buildShapeGuardedArm`; type-only matching is
+   insufficient for canonicalized shapes. The existing pipeline stamps shapes
+   before `fillCarrierBagDelete`, but a candidate list alone remains
+   insufficient admission evidence.
+3. Look up, never ensure, the receiver's existing closure bag. Retain the
+   current `-1/0/1` not-handled/refused/deleted protocol and delegate a
+   successful admission to existing `__delete_property`, rather than copying
+   configurable/count logic or widening `IS_INSTANCE_EXPANDO_CARRIER`.
+4. Before delegation, compare the normalized stored own-entry key after
+   `__obj_find` against the receiver's exposed physical fields using
+   `exposedClosedStructFieldName`; do not re-coerce a user-observable key or
+   use value-undefined as absence. `isInternalStructFieldName` metadata must
+   preserve legal `$`/`__` user keys. A physical collision deliberately remains
+   unhandled: deleting its overlay could resurrect stale physical data.
+5. Preserve #5753's class arm, arm order, retained-marker authentication/count
+   repair, builtin function metadata precedence, and generator/vec/Error
+   routes. That arm replaces `fn.locals` with its own bag plus locals 3/4/5,
+   so any anonymous scratch locals must be appended after that actual
+   replacement. Do not mint late helpers/types/imports or share instruction
+   trees across arms; prove the no-class/no-closure/no-vec/no-Error demand case
+   still reserves the helper when an authenticated anonymous candidate exists.
+6. Required follow-up controls include the exact configurable-accessor
+   delete/reassign original; accessor and data true expandos; non-configurable
+   sloppy false and strict TypeError; repeat delete; missing bag; independent
+   same-shaped objects; physical-override non-resurrection; class retained
+   marker; function name/length and generator routes; accessor non-invocation;
+   and Symbol-versus-string keys. Compare against untouched base with the same
+   runner, then rerun all 30 String.raw originals.
+
+The verified IR task confirms no active anonymous-expando writer or pending
+fix to await. This is a handoff specification, not runtime proof or deletion
+implementation approval; `object-runtime.ts`, `typeof-delete.ts`,
+`object-runtime-strict-set.ts`, class tombstones, and the generic instance
+classifier remain out of the follow-up until an authenticated registry design
+is independently owned and reviewed.
+
+#### Required gates before publishing this reader/mirror checkpoint
+
+When the compiler/test lease is next granted, run (and retain terminal logs
+for) the following against this frozen source before any commit or PR:
+
+1. `git diff --check`; the five-case focused fixture (including direct Node,
+   standalone no-import, host baseline snapshot, and native-first control);
+   then the exact isolated three rows and frozen 30-path standalone manifest.
+2. Existing narrow reader regressions `tests/issue-3147.test.ts` and
+   `tests/issue-4397-native-semantic-js-host.test.ts`, plus a fresh TS7
+   invocation resolved from this worktree's canonical dependency source.
+3. Normal quality gates: format check, lint, LOC/function budgets (adding only
+   a gate-proven function allowance if required), coercion-site/oracle/dead-
+   export ratchets, and the normal hooks. Do not bypass hooks or modify shared
+   baseline files.
+4. Independent peer review after the final diff and before publication. The PR
+   describes **two original improvements and 29/30 standalone manifest rows**,
+   not whole-#5152 completion; it remains draft if any required gate or
+   mergeability condition is unresolved.
+
+#### Terminal reader/mirror gate record (2026-09-20)
+
+All commands below used the worktree's direct installed Node 24/tool binaries
+where applicable; the normal commit/push hooks remain to be run without a
+bypass after the temporary RegExp lease handback.
+
+- Full Git-LFS-aware `git diff --check` passed. The focused fixture passed
+  **5/5** both directly and through the normal changed-root runner (one changed
+  root file). The final focused log is
+  `/private/tmp/js2-5152-raw-readers-vitest-after-coercion-local-20260920.log`.
+- The isolated three-original runner settled **2 pass / 1 fail** and the frozen
+  manifest settled **29 pass / 1 fail / 0 skip**, both with only the documented
+  delete/reassign residual. Logs are
+  `/private/tmp/js2-5152-raw-three-final-20260920.log` and
+  `/private/tmp/js2-5152-string-raw-30-final-20260920.log`.
+- The narrow #3147 regression file passed. #4397's URI escape assertion fails
+  identically on candidate and untouched `4a6`, so it is preserved as a
+  baseline failure, not attributed to this change; logs are
+  `/private/tmp/js2-5152-native-reader-regressions-20260920.log` and
+  `/private/tmp/js2-5152-issue-4397-base-4a6-20260920.log`.
+- TS7, Prettier, and Biome pass at
+  `/private/tmp/js2-5152-typecheck-ts7-final-20260920.log` and
+  `/private/tmp/js2-5152-format-lint-final-20260920.log`. LOC and function
+  ratchets pass using only the measured allowances recorded in this issue;
+  oracle and coercion ratchets pass, with `object-runtime.ts`'s one shared
+  `number_toString` property-key call explicitly allowed.
+- Dead-export preservation, codegen-fallback, stack-balance, host-import, and
+  numeric-local checks pass. The dead-export tool retains its pre-existing
+  strict modeled-closure unknowns for two nonliteral dynamic imports while its
+  preservation contract passes; it is not claimed as retirement certification.
+
+This is a **reader/mirror checkpoint**, not #5152 closure or full JS-host
+parity. No deletion code, shared baseline update, skip-list change, or host
+import is included.
 
 ### Step F — String.raw fidelity (3 tests)
 

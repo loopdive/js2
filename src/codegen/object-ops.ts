@@ -1767,12 +1767,47 @@ export function compileObjectDefineProperty(
     propName &&
     !isCanonicalArrayIndexAccessorKey
   ) {
+    // #5152: a dynamic consumer (notably String.raw's array-like reader) cannot
+    // observe this static `${struct}_get/set_${prop}` metadata. For standalone
+    // anonymous object carriers, mirror a successful accessor definition into
+    // the existing identity-keyed descriptor bag. Do the runtime/import setup
+    // before emitting the receiver: its reservation can shift function indices.
+    // Classes and JS-host retain their established static-accessor path.
+    const mirrorStandaloneAnonAccessor =
+      ctx.standalone && S5C_STRUCT_ACCESSOR_CLOSURE && structName.startsWith("__anon_");
+    let mirrorAccessorFnIdx: number | undefined;
+    if (mirrorStandaloneAnonAccessor) {
+      ensureObjectRuntime(ctx);
+      mirrorAccessorFnIdx = ensureLateImport(
+        ctx,
+        "__defineProperty_accessor",
+        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "f64" }],
+        [{ kind: "externref" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      addStringConstantGlobal(ctx, propName);
+    }
+
     // Compile obj and save to local
     const objType = compileExpression(ctx, fctx, objArg);
     if (!objType) return null;
     const objLocal = allocLocal(fctx, `__defprop_obj_${fctx.locals.length}`, objType);
     fctx.body.push({ op: "local.set", index: objLocal });
     emitObjectArgNullGuard(ctx, fctx, objLocal);
+
+    // The runtime mirror may not substitute an absent closure for a supplied
+    // accessor. `buildAccessorClosure` normally succeeds, but its false return
+    // is an admission failure, not JavaScript `get: undefined`: fail this
+    // compilation loudly and leave a stack-valid unreachable expression rather
+    // than installing a descriptor whose specified half is null.
+    const failStandaloneAccessorMirror = (node: ts.Node, reason: string): ValType => {
+      reportError(ctx, node, `Codegen error: #5152 standalone accessor mirror ${reason}`, "error", { sticky: true });
+      fctx.body.push({ op: "unreachable" }, { op: "local.get", index: objLocal });
+      return objType;
+    };
+    if (mirrorStandaloneAnonAccessor && mirrorAccessorFnIdx === undefined) {
+      return failStandaloneAccessorMirror(expr, "could not reserve __defineProperty_accessor");
+    }
 
     const accessorKey = `${structName}_${propName}`;
     ctx.classAccessorSet.add(accessorKey);
@@ -1838,10 +1873,21 @@ export function compileObjectDefineProperty(
     // nodes (MethodDeclaration / Get/SetAccessorDeclaration) structurally satisfy
     // the `.body` / `.parameters` / `.modifiers` reads `compileArrowAsClosure`
     // performs.
+    let mirrorGetLocal: number | undefined;
+    let mirrorSetLocal: number | undefined;
+    let mirrorGetGlobalIdx: number | undefined;
+    let mirrorSetGlobalIdx: number | undefined;
     if (S5C_STRUCT_ACCESSOR_CLOSURE && ctx.standalone) {
       if (getNode) {
         const getGlobalIdx = ensureStructAccessorGlobal(ctx, structName, propName, "get");
-        if (buildAccessorClosure(ctx, fctx, getNode as unknown as ts.FunctionExpression)) {
+        if (mirrorStandaloneAnonAccessor) {
+          mirrorGetGlobalIdx = getGlobalIdx;
+          mirrorGetLocal = allocLocal(fctx, `__defprop_get_${fctx.locals.length}`, { kind: "externref" });
+          if (!buildAccessorClosure(ctx, fctx, getNode as unknown as ts.FunctionExpression)) {
+            return failStandaloneAccessorMirror(getNode, "could not lift getter closure");
+          }
+          fctx.body.push({ op: "local.set", index: mirrorGetLocal });
+        } else if (buildAccessorClosure(ctx, fctx, getNode as unknown as ts.FunctionExpression)) {
           fctx.body.push({ op: "global.set", index: getGlobalIdx });
         } else {
           // Lift failed — leave the global null; the bare-fn read path below
@@ -1852,12 +1898,72 @@ export function compileObjectDefineProperty(
       }
       if (setNode) {
         const setGlobalIdx = ensureStructAccessorGlobal(ctx, structName, propName, "set");
-        if (buildAccessorClosure(ctx, fctx, setNode as unknown as ts.FunctionExpression)) {
+        if (mirrorStandaloneAnonAccessor) {
+          mirrorSetGlobalIdx = setGlobalIdx;
+          mirrorSetLocal = allocLocal(fctx, `__defprop_set_${fctx.locals.length}`, { kind: "externref" });
+          if (!buildAccessorClosure(ctx, fctx, setNode as unknown as ts.FunctionExpression)) {
+            return failStandaloneAccessorMirror(setNode, "could not lift setter closure");
+          }
+          fctx.body.push({ op: "local.set", index: mirrorSetLocal });
+        } else if (buildAccessorClosure(ctx, fctx, setNode as unknown as ts.FunctionExpression)) {
           fctx.body.push({ op: "global.set", index: setGlobalIdx });
         } else {
           fctx.body.push({ op: "ref.null.extern" });
           fctx.body.push({ op: "global.set", index: setGlobalIdx });
         }
+      }
+    }
+
+    if (mirrorStandaloneAnonAccessor) {
+      // The key is statically a string on this branch, so materialising it does
+      // not replay user code. Receiver and accessor closures were each already
+      // evaluated exactly once above; preserve those identities for the bag.
+      const mirrorKeyLocal = allocLocal(fctx, `__defprop_key_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push(...stringConstantExternrefInstrs(ctx, propName), { op: "local.set", index: mirrorKeyLocal });
+
+      fctx.body.push({ op: "local.get", index: objLocal });
+      if (objType.kind === "ref" || objType.kind === "ref_null") {
+        fctx.body.push({ op: "extern.convert_any" });
+      } else if (objType.kind !== "externref") {
+        coerceType(ctx, fctx, objType, { kind: "externref" });
+      }
+      fctx.body.push({ op: "local.get", index: mirrorKeyLocal });
+      if (mirrorGetLocal !== undefined) fctx.body.push({ op: "local.get", index: mirrorGetLocal });
+      else fctx.body.push({ op: "ref.null.extern" });
+      if (mirrorSetLocal !== undefined) fctx.body.push({ op: "local.get", index: mirrorSetLocal });
+      else fctx.body.push({ op: "ref.null.extern" });
+
+      const accDyn = extractDynamicFlagExprs(descArg);
+      emitRuntimeFlagsF64(
+        ctx,
+        fctx,
+        undefined,
+        descEnumerable,
+        descConfigurable,
+        false,
+        undefined,
+        accDyn.enumerableDyn,
+        accDyn.configurableDyn,
+        (getNode ? 1 << 8 : 0) | (setNode ? 1 << 9 : 0),
+      );
+      // Dynamic descriptor flags may have registered more imports, so resolve
+      // the helper only after their emission. Its absence after the preflight is
+      // a compiler invariant failure; do not leave its five prepared operands
+      // on the Wasm stack and silently skip the definition.
+      const finalMirrorAccessorFnIdx = ctx.funcMap.get("__defineProperty_accessor");
+      if (finalMirrorAccessorFnIdx === undefined) {
+        return failStandaloneAccessorMirror(expr, "lost __defineProperty_accessor after preflight");
+      }
+      fctx.body.push({ op: "call", funcIdx: finalMirrorAccessorFnIdx });
+      emitDefinePropertyRejectionThrow(ctx, fctx);
+      fctx.body.push({ op: "drop" });
+      // Publish the same closures only after the bag write succeeds. A
+      // compile-time accessor declaration is not definition-time presence.
+      if (mirrorGetGlobalIdx !== undefined && mirrorGetLocal !== undefined) {
+        fctx.body.push({ op: "local.get", index: mirrorGetLocal }, { op: "global.set", index: mirrorGetGlobalIdx });
+      }
+      if (mirrorSetGlobalIdx !== undefined && mirrorSetLocal !== undefined) {
+        fctx.body.push({ op: "local.get", index: mirrorSetLocal }, { op: "global.set", index: mirrorSetGlobalIdx });
       }
     }
 
