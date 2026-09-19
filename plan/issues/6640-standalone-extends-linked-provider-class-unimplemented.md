@@ -10,6 +10,19 @@ reasoning_effort: max
 goal: standalone-gap
 parent: 5383
 requested_by: ttraenkler/senior-dev
+# (#5383 S64, 2026-09-19) This slice adds a capability that did not exist on the
+# standalone lane at all: `super(...)` through a linked-provider parent, plus the
+# synthesized derived constructor and the heritage-arm recording that feed it.
+# The three grown functions are the three existing decision points the new arm
+# must be spliced into — `collectClassDeclaration` (heritage classification),
+# `compileClassBodiesInner` (synthesized derived ctor) and `compileSuperCall`
+# (explicit `super`). Splitting any of them is a refactor of long-standing code
+# this change does not otherwise touch, and would make the diff harder, not
+# easier, to review against the measurements in `## S64`.
+func-budget-allow:
+  - src/codegen/class-bodies.ts::collectClassDeclaration
+  - src/codegen/class-bodies.ts::compileClassBodiesInner
+  - src/codegen/class-bodies.ts::compileSuperCall
 ---
 
 # #6640 — standalone `extends` across the provider link is unimplemented, not just buggy
