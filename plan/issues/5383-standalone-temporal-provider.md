@@ -11774,3 +11774,82 @@ issues), the two `era` rows (#6633), the two >2^63 BigInt rows,
 `Duration/compare/order-of-operations.js` (#6628 provider-owned closure),
 `PlainDateTime/from/argument-string-offset.js`, and the Duration/PlainDate
 one-offs.
+
+### S65 findings (2026-09-19) — #6643 DONE at the mechanism: `f.apply`/`f.call` on a provider-owned method value no longer returns `null`; the two `from/subclassing-ignored` rows advance to a second blocker (static-member inheritance through a linked heritage, #6644); four-family holds 459/480, 0 pass→fail
+
+S65 (Opus; the first lane was killed by a container restart ~30 min in, its
+uncommitted draft was saved as a patch and a second lane resumed from it —
+the draft was measured inert and not kept). Branch
+`issue-5383-standalone-temporal-s65`, head `9441dba2e8`, off the merged S64
+PR #5988 head `32967877d8`, worktree `agent-a002eab6222ddeaa9`. Full
+writeup in
+[#6643](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6643-standalone-link-apply-call-provider-method)
+(`status: done`).
+
+**Root cause.** `__apply_closure`'s #6420 peer arm is unshifted AHEAD of
+local dispatch and fires on `peer.callableKind(fn) & 1` — a structural
+predicate, not an ownership one: the peer's `__is_callable` answers 1 for
+a closure that crossed INTO it. `f.apply(thisArg, args)` resolves `apply`
+to the consumer's own `%Function.prototype%` glue (#6630) once that
+prototype is materialized and `.apply` is read as a value; that GLUE
+closure was handed to the bridge, the peer arm claimed it and shipped the
+whole operation to the provider, which cannot run a consumer closure and
+returned the null sentinel. Proven by an `unreachable` spliced into the
+arm (traps on exactly that path) and by an argument that MUST throw
+returning `null` instead.
+
+**Fix.** The peer arm gains a conjunct: "the callee is one of THIS
+module's own transferred native-proto method closures" — the exact
+`ref.test` + module-local `bfnid` claim test
+`buildTransferredNativeProtoCallInstrs` already uses (new
+`buildTransferredNativeProtoOwnedBitInstrs` in
+`closures/transferred-native-proto.ts`; `linkedForeignCallableBitInstrs`
+in `standalone-link-boundary.ts`; `object-runtime.ts` peer arm;
+`function-proto-invokers.ts` §20.2.3 step 2 gains a peer `callableKind`
+disjunct). A first cut using `__is_callable(fn) == 0` fixed every #6643
+case but broke the REVERSE direction (#6605 and #6616's linked case went
+`7 → null`: an ordinary consumer closure invoked inside the provider is
+locally callable there too) — the narrow predicate keeps both green and
+additionally fixes `X.prototype.m.apply(instance)`. Secondary find: the
+variadic native-proto arm re-wrapped an `$ObjVec` data array with a bare
+`ref.cast`, an uncatchable `illegal cast` trap for `<provider
+callable>.call(…)` once the peer arm stopped short-circuiting — now
+guarded. Witness `tests/issue-6643-link-apply-call-provider-method.test.ts`:
+lead-run on the base `32967877d8` 1 failed / 1 (`.apply`/`.call` → `null`,
+`callOnNonCallable` no-throw); on `9441dba2e8` passes; controls unmoved.
+Pinned residual: `Reflect.apply` across the link still refuses its
+argumentsList (unchanged from base).
+
+**The 4 rows.** `{PlainDate,Duration}/from/subclassing-ignored.js` move
+from `SameValue(«null», «null»)` to `TypeError: called value is not a
+function` — helpers 1 and 2 of `checkSubclassingIgnoredStatic` now answer
+correctly in full against the real provider (all eight
+`checkStaticInvalidReceiver` receivers, `gPO(result) ===
+construct.prototype`, `calendarId`, `monthCode`; on base the very first
+was `null`); helper 3 `checkThisValueNotCalled` needs `MySubclass.from`
+to exist — static-member inheritance through `class S extends
+Temporal.PlainDate {}` (`typeof MySubclass.from` → `undefined`, probe
+p24) — which is #6644's identifier/linked-heritage scope together with
+cross-link `instanceof` (false even for a directly constructed provider
+instance, pinned in #6640's controls). The abs/add rows are unchanged
+(identifier heritage, #6644).
+
+**Lead verification on `9441dba2e8`** (S65's fresh bundle + provider +
+adapter; base = S64 TSVs; every diff re-run by the lead): four-family
+459/480 (117/108/117/117), 0 flips; A 1250 / B 205 / C 349 / D 300 /
+E-unlinked 300 / E-linked 300 / F-class 250 / F-methoddef 100 / F-objproto
+150 — 0 pass→fail, 0 fail→pass each. Corpus byte A/B: 0 status / 0 sha
+flips against both the S64 base and S65's true-base run — gc
+byte-identical, standalone +0 bytes, provider artifact byte-identical
+(consumer-side only). Equivalence 22 / 1720 / 22. Witness sweep 47 files
+/ 273 tests, 0 failed under Node 22 and Node 25 (lead re-ran Node 25).
+Gates green incl. `LOC_GATE_BASE=origin/main`, compiler-boundaries
+inventory, spec-coverage, lint, prettier, dead-exports (inherited red
+only).
+
+Criterion 4 holds; the sample is unchanged at 459/480 by design (a
+mechanism fix, rows handed to #6644). Residual after S65: 21 rows of the
+480 — the four `subclassing-ignored` rows (#6644: identifier heritage +
+static-member inheritance + cross-link `instanceof`), the two `era` rows
+(#6633), the two >2^63 BigInt rows, `Duration/compare/order-of-operations.js`
+(#6628), `PlainDateTime/from/argument-string-offset.js` and the one-offs.

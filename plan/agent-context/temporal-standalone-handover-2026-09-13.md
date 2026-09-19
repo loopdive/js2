@@ -1093,3 +1093,21 @@ heritage `class X extends <parameter>` under standalone link consumers
 rows (#6633); (d) the >2^63 BigInt range (limb representation); (e)
 `Duration/compare/order-of-operations.js` (#6628); (f)
 `PlainDateTime/from/argument-string-offset.js` and the Duration one-offs.
+
+## Stack state 2026-09-19 (post-S65) — PR #5988 (S64) MERGED; S65 on `issue-5383-standalone-temporal-s65` at `9441dba2e8`; #6643 DONE (mechanism); four-family 459/480
+
+PR #5988 landed on `main` 14:18 UTC. S65 (Opus, resumed after a container
+restart killed the first lane) closed #6643 (see #5383 "### S65
+findings"): `f.apply`/`f.call` on a provider-owned method value no longer
+falls into the peer arm. Rows unchanged (459/480) — the two `from/*`
+`subclassing-ignored` rows now stop at `MySubclass.from` being undefined.
+Base TSVs: `.tmp/s65/battery/*-cur.tsv` in worktree
+`agent-a002eab6222ddeaa9` (identical to S64's).
+
+**Next lanes** (one at a time, Opus): #6644 (reserved id, file to create)
+= static-member inheritance + identifier heritage (`class X extends
+<parameter>`) + cross-link `instanceof` for a linked-provider parent (all
+four `subclassing-ignored` rows); then the two PlainDate `era` rows
+(#6633), the >2^63 BigInt range, `Duration/compare/order-of-operations.js`
+(#6628), `PlainDateTime/from/argument-string-offset.js`, the Duration
+one-offs.
