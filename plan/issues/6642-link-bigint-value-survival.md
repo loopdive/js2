@@ -712,17 +712,20 @@ fresh quickjs adapter `6ed6bdcdae009570`):
 | Duration | 120 | 0 | 0 | 0 |
 | PlainDateTime | 120 | 0 | 0 | 0 |
 | ZonedDateTime | 120 | **0** | **10** | 0 |
+| A | 1250 | 0 | 0 | 0 |
+| B | 205 | 0 | 0 | 0 |
+| C | 349 | 0 | 0 | 0 |
+| D | 300 | 0 | 0 | 0 |
+| E-unlinked | 300 | 0 | 0 | 0 |
+| E-linked | 300 | 0 | 0 | 0 |
+| F-class | 250 | 0 | 0 | 0 |
+| F-methoddef | 100 | 0 | 0 | 0 |
+| F-objproto | 150 | 0 | 0 | 0 |
 
-Four-family total **437 → 447** (PlainDate 113, Duration 106, PlainDateTime
-113, ZDT **105 → 115**). The ten fail→pass rows are exactly the ten target rows
-in the table above — no incidental movement. **The nine non-Temporal groups
-(A/B/C/D/E-unlinked/E-linked/F-class/F-methoddef/F-objproto, 3,204 rows) had
-NOT finished when this was written** — the batch is resumable
-(`.tmp/s62/battery/run-batch.mts` skips a family whose TSV exists) and the
-remaining groups must be diffed before this is treated as a complete
-criterion-4 pass. Measured throughput on this box was ~12 min per 120-row
-family, i.e. ~5 h for the remainder; the earlier 75-min figure in the S61
-section did not hold here.
+13 families / 3,684 rows: **0 pass→fail, 0 missing, 10 fail→pass** — and the
+ten are exactly the ten target rows named above, so there is no incidental
+movement anywhere in the battery. Four-family total **437 → 447** (PlainDate
+113, Duration 106, PlainDateTime 113, ZDT **105 → 115**).
 
 Corpus byte A/B, 84 entries × 2 lanes: **0 status flips; 21 SHA flips, ALL on
 the `standalone` lane, 0 on `gc`.** Measured against a TRUE base run this
@@ -902,9 +905,8 @@ own issue.
   families. The five rows that stay red are three named, unrelated mechanisms
   (the one-i64 carrier range for two of them, option-read ordering / a Proxy
   `get` trap for two, subclass construction for one) and each deserves its own
-  issue rather than holding this one open. The nine non-Temporal battery groups
-  had not finished when the session ended — see the caveat in the validation
-  section; they must be diffed before merge.
+  issue rather than holding this one open. The full 13-family / 3,684-row
+  battery finished with 0 pass→fail and 0 missing.
 
 ### S62 additions to these notes
 
