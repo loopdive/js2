@@ -73,7 +73,8 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { emitNativeBigIntFormat } from "./bigint-format-native.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
-import { nativeStringLiteralInstrs } from "./native-strings.js";
+import { ANY_TO_STRING_HELPER, nativeStringLiteralInstrs } from "./native-strings.js";
+import { runtimeToNumberInstrs } from "./coercion-engine.js";
 
 /** Radix used when the argument is absent, `null` or `undefined` (§21.2.3.3 step 2). */
 const DEFAULT_RADIX = 10;
@@ -109,7 +110,7 @@ export function unshiftAnyToStringBigIntArm(ctx: CodegenContext): void {
   if (!ctx.standalone) return;
   if (ctx.nativeBigIntTypeIdx < 0) return;
   if (ctx.anyStrTypeIdx < 0) return;
-  const fn = ctx.mod.functions.find((candidate) => candidate.name === "__any_to_string");
+  const fn = ctx.mod.functions.find((candidate) => candidate.name === ANY_TO_STRING_HELPER);
   if (!fn) return;
   const marker = ctx as unknown as { __bigintAnyToStringArmFilled?: boolean };
   if (marker.__bigintAnyToStringArmFilled === true) return;
@@ -156,8 +157,11 @@ export function unshiftExternMethodCallBigIntPrimitiveArm(ctx: CodegenContext): 
   const objVecTypeIdx = ctx.objectRuntimeTypes?.objVecTypeIdx;
   const objVecArrTypeIdx = ctx.objectRuntimeTypes?.objVecArrTypeIdx;
   if (objVecTypeIdx === undefined || objVecArrTypeIdx === undefined) return;
-  const unboxNumberIdx = ctx.funcMap.get("__unbox_number");
-  if (unboxNumberIdx === undefined) return;
+  // §7.1.4 ToNumber of the radix argument, taken from the single coercion
+  // engine rather than hand-rolled — the same route `builtin-ctor-callable.ts`
+  // uses for `Number(x)`.
+  const toNumberInstrs = runtimeToNumberInstrs(ctx);
+  if (toNumberInstrs === null) return;
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_method_call");
   if (!fn) return;
   const marker = ctx as unknown as { __bigintExternMethodCallArmFilled?: boolean };
@@ -184,7 +188,7 @@ export function unshiftExternMethodCallBigIntPrimitiveArm(ctx: CodegenContext): 
   // §21.2.3.3 step 3-4 on a supplied, non-undefined argument.
   const validateRadix: Instr[] = [
     { op: "local.get", index: ARG0 },
-    { op: "call", funcIdx: unboxNumberIdx },
+    ...toNumberInstrs,
     { op: "f64.floor" },
     { op: "local.tee", index: RADIX_F64 },
     { op: "f64.const", value: 2 },
