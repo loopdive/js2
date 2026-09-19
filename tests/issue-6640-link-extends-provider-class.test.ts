@@ -163,13 +163,15 @@ const CONTROLS: ReadonlyArray<readonly [string, string]> = [
   ["new LocalDerived(4).two()", "9"],
   // `typeof` of the subclass is still a function value.
   ["typeof SubNs", "function"],
-  // PRE-EXISTING, pinned deliberately: `instanceof` against a provider-owned
-  // class object answers `false` across the link even for a DIRECTLY
-  // constructed provider instance (measured on the base tree). The subclass
-  // answering `false` is therefore this gap, not a new one — it is the #6640
-  // residual, and pinning the DIRECT case here is what keeps that claim honest.
-  ["(new NS.Base(3)) instanceof NS.Base", "false"],
-  ["(new SubNs(5)) instanceof NS.Base", "false"],
+  // (#6644, S66) These two were pinned `false` here as #6640's OWN residual:
+  // `instanceof` against a provider-owned class object answered `false` across
+  // the link even for a DIRECTLY constructed provider instance, so the subclass
+  // answering `false` was that gap and not a new one. #6644 CLOSED it — the
+  // own-property gate in `__instanceof_dynamic` now falls back to the peer for
+  // a provider-owned target — so both are `true`, and #6640's residual 1 is
+  // resolved. See `tests/issue-6644-link-static-inheritance-instanceof.test.ts`.
+  ["(new NS.Base(3)) instanceof NS.Base", "true"],
+  ["(new SubNs(5)) instanceof NS.Base", "true"],
 ];
 
 describe("#6640 — standalone `class S extends <linked-provider class>`", () => {

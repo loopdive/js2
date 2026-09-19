@@ -70,6 +70,7 @@ import { MAX_DYNAMIC_CONSTRUCT_ARITY, reserveNativeConstructDriver } from "./nat
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { isStandaloneLinkConsumer } from "./standalone-link-boundary.js";
 import { nextModuleGlobalIdx } from "./registry/imports.js";
+import { withSpeculativeCompile } from "./context/speculative.js"; // (#1919) transactional rollback
 
 /**
  * Is `baseExpr` a heritage expression this module can construct through the
@@ -219,13 +220,13 @@ export function emitLinkedDynamicParentCapture(
   const globalIdx = ctx.classLinkedDynamicParentGlobal.get(className);
   const heritage = ctx.classLinkedDynamicParentExpr.get(className);
   if (globalIdx === undefined || heritage === undefined) return false;
-  const mark = fctx.body.length;
-  if (!compileHeritage(heritage)) {
-    fctx.body.length = mark;
-    return false;
-  }
-  fctx.body.push({ op: "global.set", index: globalIdx });
-  return true;
+  // (#1919) Transactional rollback — a failed heritage compile must undo any
+  // late import or local it reserved, not only the body it appended.
+  return withSpeculativeCompile(ctx, fctx, () => {
+    if (!compileHeritage(heritage)) return { commit: false, value: false };
+    fctx.body.push({ op: "global.set", index: globalIdx });
+    return { commit: true, value: true };
+  });
 }
 
 /**

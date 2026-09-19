@@ -69,6 +69,7 @@ import { ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
 import { allocLocal } from "./context/locals.js";
 import { coerceType, compileExpression } from "./shared.js";
 import { pushLinkedDynamicParent } from "./standalone-dynamic-parent-class.js"; // (#6644) captured identifier heritage
+import { withSpeculativeCompile } from "./context/speculative.js"; // (#1919) transactional rollback
 
 const EXTERNREF: ValType = { kind: "externref" };
 
@@ -112,14 +113,14 @@ export function emitLinkedStaticMemberRead(
   const externGetIdx = ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
   if (externGetIdx === undefined) return false;
   flushLateImportShifts(ctx, fctx);
-  const mark = fctx.body.length;
-  if (!pushLinkedDynamicParent(ctx, fctx, className, compileHeritage)) {
-    fctx.body.length = mark;
-    return false;
-  }
-  fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
-  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? externGetIdx } satisfies Instr);
-  return true;
+  // (#1919) A failed heritage compile rolls back locals and late imports too,
+  // not just the body — this is a speculative lowering, not a truncation.
+  return withSpeculativeCompile(ctx, fctx, () => {
+    if (!pushLinkedDynamicParent(ctx, fctx, className, compileHeritage)) return { commit: false, value: false };
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? externGetIdx } satisfies Instr);
+    return { commit: true, value: true };
+  });
 }
 
 /**
@@ -164,37 +165,33 @@ function emitLinkedStaticMemberCall(
   const { newIdx, pushIdx } = ensureObjVecBuilders(ctx);
   const applyIdx = reserveApplyClosure(ctx);
   flushLateImportShifts(ctx, fctx);
-  const mark = fctx.body.length;
+  // (#1919) Transactional: a failed parent or argument compile rolls back the
+  // locals allocated below along with the body.
+  return withSpeculativeCompile(ctx, fctx, () => {
+    // §13.3.6.1: the MemberExpression is evaluated and GetValue'd BEFORE the
+    // arguments, so the parent read comes first and is held in a local.
+    const parentLocal = allocLocal(fctx, `__lsi_parent_${fctx.locals.length}`, EXTERNREF);
+    const calleeLocal = allocLocal(fctx, `__lsi_callee_${fctx.locals.length}`, EXTERNREF);
+    if (!pushLinkedDynamicParent(ctx, fctx, className, pushExtern)) return { commit: false, value: false };
+    fctx.body.push({ op: "local.tee", index: parentLocal });
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? externGetIdx } satisfies Instr);
+    fctx.body.push({ op: "local.set", index: calleeLocal });
 
-  // §13.3.6.1: the MemberExpression is evaluated and GetValue'd BEFORE the
-  // arguments, so the parent read comes first and is held in a local.
-  const parentLocal = allocLocal(fctx, `__lsi_parent_${fctx.locals.length}`, EXTERNREF);
-  const calleeLocal = allocLocal(fctx, `__lsi_callee_${fctx.locals.length}`, EXTERNREF);
-  if (!pushLinkedDynamicParent(ctx, fctx, className, pushExtern)) {
-    fctx.body.length = mark;
-    return false;
-  }
-  fctx.body.push({ op: "local.tee", index: parentLocal });
-  fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
-  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? externGetIdx } satisfies Instr);
-  fctx.body.push({ op: "local.set", index: calleeLocal });
-
-  const argsLocal = allocLocal(fctx, `__lsi_args_${fctx.locals.length}`, EXTERNREF);
-  fctx.body.push({ op: "call", funcIdx: newIdx });
-  fctx.body.push({ op: "local.set", index: argsLocal });
-  for (const arg of args) {
-    fctx.body.push({ op: "local.get", index: argsLocal });
-    if (!pushExtern(arg)) {
-      fctx.body.length = mark;
-      return false;
+    const argsLocal = allocLocal(fctx, `__lsi_args_${fctx.locals.length}`, EXTERNREF);
+    fctx.body.push({ op: "call", funcIdx: newIdx });
+    fctx.body.push({ op: "local.set", index: argsLocal });
+    for (const arg of args) {
+      fctx.body.push({ op: "local.get", index: argsLocal });
+      if (!pushExtern(arg)) return { commit: false, value: false };
+      fctx.body.push({ op: "call", funcIdx: pushIdx } satisfies Instr);
     }
-    fctx.body.push({ op: "call", funcIdx: pushIdx } satisfies Instr);
-  }
-  fctx.body.push({ op: "local.get", index: calleeLocal });
-  fctx.body.push({ op: "local.get", index: parentLocal });
-  fctx.body.push({ op: "local.get", index: argsLocal });
-  fctx.body.push({ op: "call", funcIdx: applyIdx });
-  return true;
+    fctx.body.push({ op: "local.get", index: calleeLocal });
+    fctx.body.push({ op: "local.get", index: parentLocal });
+    fctx.body.push({ op: "local.get", index: argsLocal });
+    fctx.body.push({ op: "call", funcIdx: applyIdx });
+    return { commit: true, value: true };
+  });
 }
 
 /**
@@ -302,38 +299,38 @@ export function tryEmitLinkedStaticComputedRead(
   if (externGetIdx === undefined || isUndefinedIdx === undefined) return undefined;
   flushLateImportShifts(ctx, fctx);
 
-  const mark = fctx.body.length;
-  const ownType = compileOwn();
-  if (ownType === undefined) {
-    fctx.body.length = mark;
-    return undefined;
-  }
-  if (ownType === null) fctx.body.push({ op: "ref.null.extern" });
-  else if (ownType.kind !== "externref") coerceType(ctx, fctx, ownType, EXTERNREF);
+  // (#1919) Transactional: the wrapped own lowering, the scratch local and the
+  // fallback block are all rolled back together when any half declines. The
+  // temporary `fctx.body` swap that builds the fallback block is fully internal
+  // — `fctx.body` is the original array again before any outcome is returned,
+  // so the snapshot's body handle is the one that gets restored.
+  return withSpeculativeCompile<ValType | undefined>(ctx, fctx, () => {
+    const ownType = compileOwn();
+    if (ownType === undefined) return { commit: false, value: undefined };
+    if (ownType === null) fctx.body.push({ op: "ref.null.extern" });
+    else if (ownType.kind !== "externref") coerceType(ctx, fctx, ownType, EXTERNREF);
 
-  const valueLocal = allocLocal(fctx, `__lsi_cval_${fctx.locals.length}`, EXTERNREF);
-  fctx.body.push({ op: "local.set", index: valueLocal });
-  const fallback: Instr[] = [];
-  const saved = fctx.body;
-  fctx.body = fallback;
-  const parentPushed = pushLinkedDynamicParent(ctx, fctx, className, (expr) => pushExtern(ctx, fctx, expr));
-  const keyPushed = parentPushed && pushExtern(ctx, fctx, key);
-  if (keyPushed) {
-    emitToPropertyKeyOnce(ctx, fctx);
-    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? externGetIdx } satisfies Instr);
+    const valueLocal = allocLocal(fctx, `__lsi_cval_${fctx.locals.length}`, EXTERNREF);
     fctx.body.push({ op: "local.set", index: valueLocal });
-  }
-  fctx.body = saved;
-  if (!keyPushed) {
-    fctx.body.length = mark;
-    return undefined;
-  }
-  fctx.body.push({ op: "local.get", index: valueLocal });
-  fctx.body.push({ op: "ref.is_null" });
-  fctx.body.push({ op: "local.get", index: valueLocal });
-  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_is_undefined") ?? isUndefinedIdx });
-  fctx.body.push({ op: "i32.or" });
-  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: fallback });
-  fctx.body.push({ op: "local.get", index: valueLocal });
-  return EXTERNREF;
+    const fallback: Instr[] = [];
+    const saved = fctx.body;
+    fctx.body = fallback;
+    const parentPushed = pushLinkedDynamicParent(ctx, fctx, className, (expr) => pushExtern(ctx, fctx, expr));
+    const keyPushed = parentPushed && pushExtern(ctx, fctx, key);
+    if (keyPushed) {
+      emitToPropertyKeyOnce(ctx, fctx);
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? externGetIdx } satisfies Instr);
+      fctx.body.push({ op: "local.set", index: valueLocal });
+    }
+    fctx.body = saved;
+    if (!keyPushed) return { commit: false, value: undefined };
+    fctx.body.push({ op: "local.get", index: valueLocal });
+    fctx.body.push({ op: "ref.is_null" });
+    fctx.body.push({ op: "local.get", index: valueLocal });
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_is_undefined") ?? isUndefinedIdx });
+    fctx.body.push({ op: "i32.or" });
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: fallback });
+    fctx.body.push({ op: "local.get", index: valueLocal });
+    return { commit: true, value: EXTERNREF };
+  });
 }
