@@ -177,6 +177,7 @@ export function emitFunctionProtoApplyBody(ctx: CodegenContext, fctx: FunctionCo
   if (!ctx.standalone && !ctx.wasi) return null;
   ensureObjectRuntime(ctx);
   const applyClosureIdx = reserveApplyClosure(ctx);
+  if (process.env.JS2WASM_DEBUG_6643) console.error("[6643] emit Function.prototype.apply body");
   if (!pushIsCallableGuard(ctx, fctx, "apply")) return null;
   pushApplyArgArrayGuard(ctx, fctx);
   fctx.body.push(

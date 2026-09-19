@@ -92,6 +92,7 @@ import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js"; // (#4221) a
 import { buildResolvedCalleeGuard } from "./resolved-callee-guard.js"; // (#4656) §7.3.14 callability
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
+import { linkedForeignApplyViaPeerInstrs } from "./standalone-link-foreign-invoke.js";
 import {
   addFuncType,
   getArrTypeIdxFromVec,
@@ -7773,8 +7774,19 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   // rejects them before this bridge and they never enter the provider apply
   // terminal. Caller-owned closures make the peer predicate false and retain
   // the existing local dispatch unchanged.
+  // Read the already-registered builders rather than ensuring them: this runs
+  // AFTER the index-space freeze (#1984), so a registration here would shift
+  // every funcIdx already emitted. Missing ⇒ the #6643 arm declines.
+  const objVecNewIdx = ctx.funcMap.get("__objvec_new");
+  const objVecPushIdx = ctx.funcMap.get("__objvec_push");
+  const linkedForeignScratch = 3 + locals.length;
+  locals.push({ name: "__link_fn_invoke", type: { kind: "externref" } });
   const linkedStandaloneCallableKindIdx = standaloneLinkBoundaryPeerIndex(ctx, "callableKind");
   const linkedStandaloneApplyIdx = standaloneLinkBoundaryPeerIndex(ctx, "apply");
+  if (process.env.JS2WASM_DEBUG_6643)
+    console.error(
+      "[6643] fillApplyClosure peer kind=" + linkedStandaloneCallableKindIdx + " apply=" + linkedStandaloneApplyIdx,
+    );
   if (linkedStandaloneCallableKindIdx !== undefined && linkedStandaloneApplyIdx !== undefined) {
     body.unshift(
       { op: "local.get", index: 0 },
@@ -7785,6 +7797,14 @@ export function fillApplyClosure(ctx: CodegenContext): void {
         op: "if",
         blockType: { kind: "empty" },
         then: [
+          // (#6643) …preferring the PROVIDER's own `Function.prototype.apply`
+          // when it resolves there. The provider's `__apply_closure` cannot
+          // dispatch a method-closure singleton (#5383 S2h), which is what a
+          // `Temporal.PlainDate.from` read hands back; its own `apply` can.
+          // Declines (emits nothing) off the linked-consumer lane.
+          ...(objVecNewIdx === undefined || objVecPushIdx === undefined
+            ? []
+            : (linkedForeignApplyViaPeerInstrs(ctx, linkedForeignScratch, objVecNewIdx, objVecPushIdx) ?? [])),
           { op: "local.get", index: 0 },
           { op: "local.get", index: 1 },
           { op: "local.get", index: 2 },
