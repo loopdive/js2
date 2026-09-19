@@ -359,7 +359,18 @@ the better, and both are updated here with a pointer to this issue:
 
 - **Full four-family + regression battery**, 3,684 rows
   (`.tmp/s66/battery/`, provider cache `s66-3`), every group diffed against the
-  S65 head — see the table in the PR / hand-back.
+  S65 head: **0 pass→fail, 0 fail→pass, 0 missing, in all thirteen** —
+  `PlainDate` 120, `Duration` 120, `PlainDateTime` 120, `ZDT` 120, `A` 1250,
+  `B` 205, `C` 349, `D` 300, `E-unlinked` 300, `E-linked` 300, `F-class` 250,
+  `F-methoddef` 100, `F-objproto` 150. The four Temporal families hold at
+  **459/480** (117 / 108 / 117 / 117) and the whole-battery pass count holds at
+  **3,081** — the S64/S65 numbers.
+- **Equivalence gate**: 22 failing / 1720 passing / 22 known-failures — the
+  expected triple, no new regressions.
+- **Witness sweep, Node 22.22.2 AND Node 25.9.0**: `tests/issue-66*.test.ts`
+  `tests/issue-6484-*` `tests/issue-6493-*` → 48 files / 274 tests passed on
+  both; `tests/issue-6617-*` `tests/issue-6622-*` `tests/issue-6623-*` → 3
+  files / 26 tests passed on both.
 - **Byte corpus A/B** (84 modules × {gc, standalone}) against a TRUE base run
   (the nine touched files file-copy-reverted to `930ab332f4`, re-measured,
   restored): **0 status flips, 0 sha flips** — `gc` byte-identical and
