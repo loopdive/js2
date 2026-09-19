@@ -50,16 +50,10 @@ import { recordClosureArgcDispatcher, recordClosureFreeArgcDispatcher } from "./
 import { DATA_STRUCT_HOST_BRIDGE_ORDINAL, publishDataStructHostBridge } from "./data-struct-host-bridge.js";
 import { definedFuncAt, definedFuncHandleOf } from "./func-space.js";
 import {
-  STANDALONE_TIMER_CALLBACK_BINDINGS_EXPORT,
-  STANDALONE_TIMER_CALLBACK_BINDINGS_PHYSICAL_BASE,
-  STANDALONE_TIMER_CALLBACK_DISPATCH_EXPORT,
-  STANDALONE_TIMER_CALLBACK_DISPATCH_PHYSICAL_BASE,
   STANDALONE_TIMER_CALLBACK_MANIFEST_EXPORT,
   STANDALONE_TIMER_CALLBACK_MANIFEST_MAGIC,
-  STANDALONE_TIMER_CALLBACK_MANIFEST_PHYSICAL_BASE,
-  STANDALONE_TIMER_CALLBACK_MARKER_EXPORT,
-  STANDALONE_TIMER_CALLBACK_MARKER_PHYSICAL_BASE,
-} from "../timer-capability-contract.js";
+  planStandaloneTimerCallbackExports,
+} from "../runtime/contracts/timer-capability.js";
 
 const CLOSURE_HOST_BRIDGE_ROLE = "closure-host-bridge";
 const CLOSURE_HOST_BRIDGE_MANIFEST_NAME = "__\0js2_closure_host_bridge";
@@ -401,30 +395,6 @@ export function publishStandaloneTimerCallbackDispatch(ctx: CodegenContext): voi
   if (funcIdx === undefined) {
     throw new Error("standalone timer callback dispatcher lost its compiler-owned function handle");
   }
-  const publishFamily = (
-    logicalName: string,
-    physicalBase: string,
-    desc: { kind: "func" | "global" | "table"; index: number },
-  ): void => {
-    const occupied = new Set(ctx.mod.exports.map(({ name }) => name));
-    if (!occupied.has(logicalName)) {
-      ctx.mod.exports.push({ name: logicalName, desc });
-      occupied.add(logicalName);
-    }
-    let maxOccupiedSuffix = -1;
-    for (const name of occupied) {
-      if (!name.startsWith(physicalBase)) continue;
-      const suffix = name.slice(physicalBase.length);
-      if (/^\$*$/.test(suffix)) maxOccupiedSuffix = Math.max(maxOccupiedSuffix, suffix.length);
-    }
-    for (let suffixLength = 0; suffixLength <= maxOccupiedSuffix + 1; suffixLength++) {
-      const name = `${physicalBase}${"$".repeat(suffixLength)}`;
-      if (occupied.has(name)) continue;
-      ctx.mod.exports.push({ name, desc });
-      occupied.add(name);
-    }
-  };
-
   const bindingsTableIdx =
     ctx.mod.imports.filter((entry) => entry.desc.kind === "table").length + ctx.mod.tables.length;
   ctx.mod.tables.push({ elementType: "funcref", min: 1, max: 1 });
@@ -443,22 +413,15 @@ export function publishStandaloneTimerCallbackDispatch(ctx: CodegenContext): voi
     init: [{ op: "i32.const", value: STANDALONE_TIMER_CALLBACK_MANIFEST_MAGIC }],
   });
 
-  publishFamily(STANDALONE_TIMER_CALLBACK_DISPATCH_EXPORT, STANDALONE_TIMER_CALLBACK_DISPATCH_PHYSICAL_BASE, {
-    kind: "func",
-    index: funcIdx,
-  });
-  publishFamily(STANDALONE_TIMER_CALLBACK_MANIFEST_EXPORT, STANDALONE_TIMER_CALLBACK_MANIFEST_PHYSICAL_BASE, {
-    kind: "global",
-    index: manifestGlobalIdx,
-  });
-  publishFamily(STANDALONE_TIMER_CALLBACK_MARKER_EXPORT, STANDALONE_TIMER_CALLBACK_MARKER_PHYSICAL_BASE, {
-    kind: "table",
-    index: markerTableIdx,
-  });
-  publishFamily(STANDALONE_TIMER_CALLBACK_BINDINGS_EXPORT, STANDALONE_TIMER_CALLBACK_BINDINGS_PHYSICAL_BASE, {
-    kind: "table",
-    index: bindingsTableIdx,
-  });
+  const targets = {
+    dispatch: { kind: "func", index: funcIdx },
+    manifest: { kind: "global", index: manifestGlobalIdx },
+    marker: { kind: "table", index: markerTableIdx },
+    bindings: { kind: "table", index: bindingsTableIdx },
+  } as const;
+  for (const { family, name } of planStandaloneTimerCallbackExports(ctx.mod.exports.map(({ name }) => name))) {
+    ctx.mod.exports.push({ name, desc: targets[family] });
+  }
   // These names deliberately omit `host_bridge`: #4035 strips the general JS
   // inspection bridge but must retain this explicit platform-capability path.
   publishedStandaloneTimerCallbackManifests.add(ctx);
