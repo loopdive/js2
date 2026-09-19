@@ -1,7 +1,7 @@
 {
-  "generated": "2026-09-18",
+  "generated": "2026-09-19",
   "threshold": 1500,
-  "totalCeiling": 899000,
+  "totalCeiling": 899105,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -12,7 +12,7 @@
     "src/codegen/async-frame.ts": 3487,
     "src/codegen/async-scheduler.ts": 4656,
     "src/codegen/binary-ops-typed-dispatch.ts": 1593,
-    "src/codegen/binary-ops.ts": 3875,
+    "src/codegen/binary-ops.ts": 3938,
     "src/codegen/builtin-value-read.ts": 1820,
     "src/codegen/class-bodies.ts": 4440,
     "src/codegen/closed-method-dispatch.ts": 2086,
@@ -80,7 +80,7 @@
     "src/codegen/ta-dyn-mop.ts": 1791,
     "src/codegen/type-coercion.ts": 5239,
     "src/codegen/typed-this.ts": 2276,
-    "src/codegen/typeof-delete.ts": 2547,
+    "src/codegen/typeof-delete.ts": 2564,
     "src/codegen/vec-access-exports.ts": 1916,
     "src/codegen/vec-overlay.ts": 2853,
     "src/codegen/wasi.ts": 2268,
