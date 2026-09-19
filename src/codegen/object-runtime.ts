@@ -104,6 +104,7 @@ import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3140) __
 import * as bc from "./builtin-ctor-callable.js"; // (#4394/#4656) constructor [[Call]] arms
 import { buildApplyClosureArityWidening, buildTransferredCharAtApplyArm } from "./closure-exports.js"; // (#3592) under-application widening
 import {
+  buildTransferredNativeProtoOwnedBitInstrs,
   buildTransferredNativeProtoVariadicApplyInstrs,
   collectTransferredNativeProtoReceivers,
 } from "./closures/transferred-native-proto.js";
@@ -7775,41 +7776,44 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   // the existing local dispatch unchanged.
   const linkedStandaloneCallableKindIdx = standaloneLinkBoundaryPeerIndex(ctx, "callableKind");
   const linkedStandaloneApplyIdx = standaloneLinkBoundaryPeerIndex(ctx, "apply");
-  // (#6643) …but ONLY for a callable this module does not itself recognise.
-  // The arm above is unshifted AHEAD of the local dispatcher, and the peer's
-  // predicate is not a statement about OWNERSHIP: under `canonicalRuntimeTypes`
-  // the provider's `__is_callable` also answers 1 for a CONSUMER-owned closure
-  // that crossed into it. So every dynamic call whose callee was locally
-  // dispatchable — in particular the consumer's own
-  // `%Function.prototype%.apply` glue closure, which `__closure_method_call`
-  // hands to this bridge for `f.apply(thisArg, args)` — was handed wholesale to
-  // the provider, which cannot run it and answers the null sentinel. Measured
-  // against the real `@js-temporal/polyfill` provider: every
+  // (#6643) …but NEVER for one of THIS module's own native-prototype method
+  // closures. The arm is unshifted AHEAD of the local dispatcher and the peer's
+  // predicate is not a statement about OWNERSHIP — the peer's `__is_callable`
+  // is structural, so it answers 1 for a closure that crossed INTO it too.
+  // `f.apply(thisArg, args)` resolves `apply` to this module's own
+  // `%Function.prototype%` glue (#6630) whenever `%Function.prototype%` is
+  // materialized and `.apply` has been read as a value, and
+  // `__closure_method_call` then hands that GLUE closure to this bridge — where
+  // the peer arm claimed it and shipped the whole operation to the provider,
+  // which cannot run a consumer closure and answered the null sentinel.
+  // Measured against the real `@js-temporal/polyfill` provider: every
   // `Temporal.PlainDate.from.apply(…)` spelling returned `null` WITHOUT the
   // provider function ever being entered (a deliberately invalid argument that
-  // must throw returned `null` instead), which is the first assertion of
-  // test262's `checkSubclassingIgnoredStatic`. Adding this conjunct routes the
-  // glue through its own local dispatch, and its inner
-  // `__apply_closure(target, …)` — where `target` IS provider-owned and
-  // locally NOT callable — then takes the peer arm as #6420 intended.
+  // must throw returned `null` instead) — the first assertion of test262's
+  // `checkSubclassingIgnoredStatic`. With the conjunct the glue takes its own
+  // local dispatch and the `__apply_closure(target, …)` INSIDE it, where
+  // `target` really is provider-owned, takes the peer arm as #6420 intended.
   //
-  // Absent `__is_callable` the conjunct is omitted and the arm keeps its
-  // pre-#6643 shape, so a module without the callability native is unchanged.
-  const localIsCallableIdx = ctx.funcMap.get("__is_callable");
+  // The predicate is deliberately NOT "is locally callable": that would also
+  // exclude an ORDINARY consumer closure invoked inside the provider, which is
+  // the reverse-call case #6605/#6616 exist for and which MUST reach the peer
+  // (measured — those two witnesses fail on the broader predicate). It is the
+  // narrow "this module has a dedicated dispatch arm for this exact callee",
+  // sharing `buildTransferredNativeProtoCallInstrs`'s own claim test.
+  const nativeProtoOwnedBit = buildTransferredNativeProtoOwnedBitInstrs(
+    ctx,
+    collectTransferredNativeProtoReceivers(ctx, 0),
+    0,
+  );
   if (linkedStandaloneCallableKindIdx !== undefined && linkedStandaloneApplyIdx !== undefined) {
     body.unshift(
       { op: "local.get", index: 0 },
       { op: "call", funcIdx: linkedStandaloneCallableKindIdx },
       { op: "i32.const", value: 1 },
       { op: "i32.and" },
-      ...(localIsCallableIdx === undefined
+      ...(nativeProtoOwnedBit === undefined
         ? []
-        : ([
-            { op: "local.get", index: 0 },
-            { op: "call", funcIdx: localIsCallableIdx },
-            { op: "i32.eqz" },
-            { op: "i32.and" },
-          ] as Instr[])),
+        : ([...nativeProtoOwnedBit, { op: "i32.eqz" }, { op: "i32.and" }] as Instr[])),
       {
         op: "if",
         blockType: { kind: "empty" },

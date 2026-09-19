@@ -172,6 +172,11 @@ const TEETH: ReadonlyArray<readonly [string, string]> = [
   // §20.2.3 step 2 on the glue value itself: a non-callable receiver must
   // throw, and did not — the guard silently answered undefined. base: "no-throw"
   ["callOnNonCallable()", "Function.prototype.apply called on non-callable receiver"],
+  // A provider PROTOTYPE method value invoked with an explicit provider
+  // instance as `thisArg` — the `Temporal.PlainDate.prototype.<m>.apply(inst)`
+  // shape.                                                     base: "null"
+  ["NS.get.apply(new NS.Base(4), [])", "4"],
+  ["NS.get.call(new NS.Base(4))", "4"],
 ];
 
 /** CONTROLS — must not move. */
@@ -199,23 +204,12 @@ const CONTROLS: ReadonlyArray<readonly [string, string]> = [
 ];
 
 /**
- * RESIDUALS — still WRONG after this slice, pinned so the claim "this fixes
- * `apply`/`call` on a provider-owned method value" stays honest about what it
- * does not fix.
- *
- * A provider PROTOTYPE method invoked with an explicit provider instance as
- * `thisArg` reaches the provider (base answered a silent `null`; it now raises
- * a catchable error) but its `this` does not bind to that instance. That is
- * the #5383 S2h receiver-carrier gap, not this one: the peer `apply` terminal
- * is the provider's own `__apply_closure`, which binds `this` through the
- * PROVIDER's `__current_this`, and a method-closure singleton read out through
- * `memberGet` carries no receiver.
+ * RESIDUALS — still WRONG after this slice, pinned so the claim stays honest
+ * about what it does not fix. `Reflect.apply` across the link refuses its
+ * argumentsList; unchanged by this slice (the base tree answers the same),
+ * tracked with the rest of #5383.
  */
 const RESIDUALS: ReadonlyArray<readonly [string, string]> = [
-  ["NS.get.apply(new NS.Base(4), [])", "!Cannot read properties of undefined (reading a class field)"],
-  ["NS.get.call(new NS.Base(4))", "!Cannot read properties of undefined (reading a class field)"],
-  // `Reflect.apply` across the link refuses its argumentsList — unchanged by
-  // this slice (base answers the same), tracked with the rest of #5383.
   ["Reflect.apply(NS.id, undefined, [3])", "!Reflect.apply argumentsList is not an object"],
 ];
 

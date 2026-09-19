@@ -13,7 +13,7 @@ requested_by: ttraenkler/fable-lead
 created: 2026-09-19
 # (#5383 S65, 2026-09-19) Grants restated HERE, not left to #5383: CI diffs the
 # merge preview against `main`, where #5383's grant does not cover this path
-# (stranded-grant class). +29 LOC in `object-runtime.ts` is this change-set's
+# (stranded-grant class). +33 LOC in `object-runtime.ts` is this change-set's
 # own, measured at the branch base 32967877d8 (12710).
 loc-budget-allow:
   - src/codegen/object-runtime.ts
@@ -78,11 +78,26 @@ Three parts, each independently guarded so a module off the linked-consumer
 lane emits identical bytes:
 
 1. **`object-runtime.ts::fillApplyClosure`** — the #6420 peer arm additionally
-   requires `__is_callable(fn) == 0`. The glue then takes its own local
+   requires that the callee is **not one of this module's own transferred
+   native-prototype method closures**. The glue then takes its own local
    dispatch, and the `__apply_closure(target, …)` **inside** it — where
-   `target` really is provider-owned and locally not callable — takes the peer
-   arm as #6420 intended. Absent `__is_callable` the conjunct is omitted and
-   the arm keeps its pre-#6643 shape.
+   `target` really is provider-owned — takes the peer arm as #6420 intended.
+   The predicate is the *exact* claim test
+   `buildTransferredNativeProtoCallInstrs` already uses (`ref.test` on the
+   per-(brand, member) meta subtype plus the `bfnid` exact-identity re-check,
+   a MODULE-LOCAL type index, which is what makes it an ownership answer and
+   not a structural one); it is exported as
+   `buildTransferredNativeProtoOwnedBitInstrs`. No such closures ⇒ the
+   conjunct is omitted and the arm keeps its pre-#6643 shape.
+
+   **A broader predicate does not work, and this cost a measurement.** The
+   first cut asked `__is_callable(fn) == 0` ("this module does not recognise
+   the callee"). It fixes every #6643 case, and it BREAKS the reverse
+   direction: an ORDINARY consumer closure invoked inside the provider is
+   locally callable there too, so `tests/issue-6605-link-reverse-method-call`
+   and `tests/issue-6616-static-objlit-spread-rest-abi` (LINKED case) both
+   went `7` → `null`. The narrow predicate keeps them green and additionally
+   fixes the `X.prototype.m.apply(instance)` shape the broad one did not.
 2. **`closures/transferred-native-proto.ts`** — the variadic native-proto arm
    admitted an `$ObjVec` carrier and then re-wrapped its data array with a
    **bare `ref.cast`**. Newly reachable once (1) stops the peer arm from
@@ -108,7 +123,8 @@ fixture, base → fix:
 | `NS.from.apply(undefined, [3]).get()` | `!Cannot read properties of undefined (reading 'get')` | `3` |
 | `NS.from.call(undefined, 3).get()` | same | `3` |
 | `callOnNonCallable()` (§20.2.3 step 2) | `no-throw` | `Function.prototype.apply called on non-callable receiver` |
-| `NS.get.apply(new NS.Base(4), [])` | `null` | `!Cannot read properties of undefined (reading a class field)` |
+| `NS.get.apply(new NS.Base(4), [])` | `null` | `4` |
+| `NS.get.call(new NS.Base(4))` | `null` | `4` |
 
 Controls that must not move — and did not: `NS.id(3)`, `NS.from(3).get()`,
 `new NS.Base(4).get()`, `NS.id.bind(undefined)(3)`, `lf.apply/.call/.bind`,
@@ -117,43 +133,49 @@ Controls that must not move — and did not: `NS.id(3)`, `NS.from(3).get()`,
 
 ## Real rows — they MOVE, none flips to pass
 
-`JS2WASM_TEMPORAL_CACHE=.test262-cache/s65-{2 base, 4 fix}`, four-file run:
+`JS2WASM_TEMPORAL_CACHE=.test262-cache/s65-{2 base, 6 fix}`, four-file run:
 
 | row | base | fix |
 | --- | --- | --- |
-| `PlainDate/from/subclassing-ignored.js` | `Test262Error: Expected SameValue(«null», «null»)` | `TypeError: Cannot access property on null or undefined at 199:27365` |
-| `Duration/from/subclassing-ignored.js` | `Test262Error: Expected SameValue(«null», «null»)` | `Test262Error: instanceof` |
-| `Duration/prototype/abs/subclassing-ignored.js` | `TypeError: called value is not a function` | `Test262Error: instanceof` |
-| `ZonedDateTime/prototype/add/subclassing-ignored.js` | `TypeError: called value is not a function` | `Test262Error: epochNanoseconds result Expected SameValue(«0n», «15n»)` |
+| `PlainDate/from/subclassing-ignored.js` | `Test262Error: Expected SameValue(«null», «null»)` | `TypeError: called value is not a function` |
+| `Duration/from/subclassing-ignored.js` | `Test262Error: Expected SameValue(«null», «null»)` | `TypeError: called value is not a function` |
+| `Duration/prototype/abs/subclassing-ignored.js` | `TypeError: called value is not a function` | unchanged |
+| `ZonedDateTime/prototype/add/subclassing-ignored.js` | `TypeError: called value is not a function` | unchanged |
 
-The provider compiles to **byte-identical** output (3 334 356 B at both base and
+The provider compiles to **byte-identical** output (3 334 356 B at base and
 fix) — this slice is consumer-side only.
 
-## Why they still fail — two blockers, neither this slice
+## What the slice DOES buy on the real provider, and what still blocks the rows
 
-1. **`instanceof` across the link answers `false`, always.** Measured directly
+`TemporalHelpers.checkSubclassingIgnoredStatic` runs three helpers in order.
+Probe `.tmp/s65/probes/p23.js` replicates the first two inline against the real
+provider and, on the fix tree, **every one of their cases now answers
+correctly** — all eight `checkStaticInvalidReceiver` receivers (`undefined`,
+`null`, `true`, `"test"`, `Symbol()`, `7`, `7n`, `{}`), the
+`checkStaticReceiverNotCalled` function receiver, and
+`Object.getPrototypeOf(result) === construct.prototype`, `calendarId`,
+`monthCode`. On the base tree the very first of those answered `null`.
+
+Two things still block a pass, neither of them this slice:
+
+1. **The third helper, `checkThisValueNotCalled`**, builds
+   `class MySubclass extends construct` and calls `MySubclass[method](…)` — a
+   static INHERITED from a provider class object. That answers "called value
+   is not a function"; it is the static half of the #6640 / #6644
+   extends-a-linked-provider-class work, and it is what all four rows now stop
+   on.
+2. **`instanceof` across the link answers `false`, always.** Measured directly
    (p21/p22): `Temporal.Duration.from({days:1}) instanceof Temporal.Duration`
    is `false` for a DIRECTLY constructed provider instance, with or without
    `%Function.prototype%` materialized, while
-   `Object.getPrototypeOf(…) === Temporal.Duration.prototype` is `true`. This
-   is exactly the residual #6640 pins in its own CONTROLS
-   (`(new NS.Base(3)) instanceof NS.Base` → `"false"`, "PRE-EXISTING, pinned
-   deliberately"). `TemporalHelpers.assertDuration` opens with
-   `assert(duration instanceof Temporal.Duration)`, so the two `Duration` rows
-   cannot pass until cross-link `instanceof` lands.
-2. **`PlainDate.from` / `PlainDateTime.from` fail INSIDE the provider when
-   entered through `__apply_closure`** — `TypeError: Cannot access property on
-   null or undefined at 199:27365` — for every argument kind and every
-   receiver (p19/p20). `Duration.from` and `PlainTime.from` through the same
-   route answer correctly, so it is specific to those two statics, not to the
-   route. Newly *exposed* by this slice (the base answer was a silent `null`
-   because the provider was never entered), not newly *created*.
+   `Object.getPrototypeOf(…) === Temporal.Duration.prototype` is `true`. #6640
+   already pins this in its own CONTROLS as a deliberate pre-existing
+   residual. `TemporalHelpers.assertDuration` opens with
+   `assert(duration instanceof Temporal.Duration)`.
 
 ## Next step
 
-Cross-link `instanceof` (the #6640/#6625 residual) is the blocker for two of
-the four rows; the `PlainDate.from`-under-`__apply_closure` failure at provider
-`199:27365` is the blocker for the third. Both want their own slice. Reduce (2)
-by dumping the provider WAT around the `PlainDate_from` static and comparing
-the `__current_this` / calendar-default reads on the `__call_fn_method_N` entry
-against the `__call_m_from_1` entry.
+Static-member inheritance through a linked-provider heritage clause
+(`class S extends Temporal.PlainDate {}` ⇒ `S.from`) is the blocker for all
+four rows and belongs with #6640/#6644. Cross-link `instanceof` is the blocker
+behind it.
