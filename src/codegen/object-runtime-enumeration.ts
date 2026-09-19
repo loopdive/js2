@@ -106,17 +106,17 @@ function nonObjectForInKeysIf(ctx: CodegenContext, boundaryObjectForInKeysIdx?: 
  * Called once, in place, from `ensureObjectRuntime`.
  */
 /**
- * (#2036 / #3317 / #4556, extracted from `buildObjectEnumerationHelpers` to fit
- * the function-size budget — behaviour unchanged) The array-like open-`$Object`
- * arm of standalone `__extern_length`: ToLength(Get(O, "length")) per §23.1.3,
- * so a borrowed `Array.prototype.<m>.call(arrayLike, …)` iterates correctly.
+ * (#2036 / #3317 / #4556) Shared ToLength conversion for standalone
+ * `__extern_length` readers. The input `externref` is already on the stack;
+ * the caller supplies the ordinary Get. This preserves the full
+ * ToLength(Get(O, "length")) sequence for both `$Object` and closed
+ * user-struct receivers.
  *
- * Locals it uses, as registered by the caller: 1=any(anyref), 2=lenF64(f64),
+ * Locals it uses, as registered by the caller: 2=lenF64(f64),
  * 3=lenTrunc(f64), 4=primExt(externref, the ToPrimitive scratch).
  */
-function buildObjectArrayLikeLengthArm(ctx: CodegenContext, objectTypeIdx: number, symbolTypeIdx: number): Instr[] {
+export function buildArrayLikeToLengthFromExternref(ctx: CodegenContext, symbolTypeIdx: number): Instr[] {
   const MAX_SAFE = 9007199254740991; // 2^53 - 1
-  const externGetIdx2036 = ctx.funcMap.get("__extern_get")!;
   const unboxIdx2036 = ctx.funcMap.get("__unbox_number")!;
   // (#4556) ToNumber, not just unbox. §7.1.20 ToLength is
   // `ToIntegerOrInfinity(ToNumber(Get(O,"length")))`, and ToNumber of an
@@ -191,49 +191,57 @@ function buildObjectArrayLikeLengthArm(ctx: CodegenContext, objectTypeIdx: numbe
           { op: "call", funcIdx: unboxIdx2036 },
         ];
   return [
+    // ToLength: ToNumber (above — NaN for a non-numeric length), then
+    // truncate + clamp to [0, 2^53-1].
+    ...toNumberInstrs,
+    { op: "local.tee", index: 2 },
+    // if NaN → 0 (n != n)
+    { op: "local.get", index: 2 },
+    { op: "f64.ne" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "f64" } },
+      then: [{ op: "f64.const", value: 0 }],
+      else: [
+        // trunc toward zero
+        { op: "local.get", index: 2 },
+        { op: "f64.trunc" },
+        { op: "local.tee", index: 3 },
+        // if <= 0 → 0
+        { op: "f64.const", value: 0 },
+        { op: "f64.le" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "f64" } },
+          then: [{ op: "f64.const", value: 0 }],
+          else: [
+            // min(trunc, 2^53-1)
+            { op: "local.get", index: 3 },
+            { op: "f64.const", value: MAX_SAFE },
+            { op: "f64.min" },
+          ],
+        },
+      ],
+    },
+  ];
+}
+
+/** `$Object` arm: Get first, then the shared ordinary ToLength conversion. */
+function buildObjectArrayLikeLengthArm(ctx: CodegenContext, objectTypeIdx: number, symbolTypeIdx: number): Instr[] {
+  const externGetIdx2036 = ctx.funcMap.get("__extern_get")!;
+  return [
     { op: "local.get", index: 1 },
     { op: "ref.test", typeIdx: objectTypeIdx },
     {
       op: "if",
       blockType: { kind: "val", type: { kind: "f64" } },
       then: [
-        // lenVal = __extern_get(v, "length")  (proto-walk + marshaling)
+        // lenVal = __extern_get(v, "length") (proto-walk + marshaling).
         { op: "local.get", index: 0 },
         ...nativeStringLiteralInstrs(ctx, "length"),
         { op: "extern.convert_any" },
         { op: "call", funcIdx: externGetIdx2036 },
-        // ToLength: ToNumber (above — NaN for a non-numeric length),
-        // then truncate + clamp to [0, 2^53-1].
-        ...toNumberInstrs,
-        { op: "local.tee", index: 2 },
-        // if NaN → 0 (n != n)
-        { op: "local.get", index: 2 },
-        { op: "f64.ne" },
-        {
-          op: "if",
-          blockType: { kind: "val", type: { kind: "f64" } },
-          then: [{ op: "f64.const", value: 0 }],
-          else: [
-            // trunc toward zero
-            { op: "local.get", index: 2 },
-            { op: "f64.trunc" },
-            { op: "local.tee", index: 3 },
-            // if <= 0 → 0
-            { op: "f64.const", value: 0 },
-            { op: "f64.le" },
-            {
-              op: "if",
-              blockType: { kind: "val", type: { kind: "f64" } },
-              then: [{ op: "f64.const", value: 0 }],
-              else: [
-                // min(trunc, 2^53-1)
-                { op: "local.get", index: 3 },
-                { op: "f64.const", value: MAX_SAFE },
-                { op: "f64.min" },
-              ],
-            },
-          ],
-        },
+        ...buildArrayLikeToLengthFromExternref(ctx, symbolTypeIdx),
       ],
       else: [{ op: "f64.const", value: 0 }],
     },
