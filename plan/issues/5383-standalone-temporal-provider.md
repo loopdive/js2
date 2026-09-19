@@ -11482,3 +11482,63 @@ move yet because the blocker is upstream of the fixes). Residual after S60:
 43 rows of the 480 — the 12+3 BigInt-realm rows (#6642, specified above),
 Proxy trap invocation (10, S55 WIP), `extends <provider class>`
 (#6640/#6623), the two `era` rows (#6633), and the one-offs.
+
+### S61 findings (2026-09-19) — #6642 link 1 landed (native StringToBigInt); link 2 measured unnecessary; links 3+4 built and deliberately withheld; a FIFTH link found and reduced
+
+S61 (Opus, branch `issue-5383-standalone-temporal-s61`, head `14b0634c78`,
+off the merged S59/S60 PR #5984 head `10873df1e0`, worktree
+`agent-a80fccfb366ccfbfe`). Full writeup in
+[#6642](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6642-link-bigint-value-survival)
+"## S61".
+
+**Landed — link 1.** `__bigint_ctor` threw `SyntaxError` for every string
+argument, so the polyfill's `globalThis.BigInt(x.toString(10))` could never
+succeed. New leaf `src/runtime/wasmgc/values/string-to-bigint-body.ts`: a
+§7.1.14 StringToBigInt scan accumulating into i64 (trim, optional sign for
+decimal only, `0x`/`0o`/`0b`, empty/whitespace → `0n`, anything else →
+SyntaxError), spliced INLINE into `__bigint_ctor`'s body
+(`registry/imports.ts`, new `ref.test $AnyString` arm) so no wasm function
+index moves (the S59 Fix-1 hazard). Range: exact on [-2^63, 2^63-1], wraps
+modulo 2^64 above — consistent with the rest of the standalone BigInt lane,
+documented in the file header. Cost: +891 bytes per standalone binary; the
+gc lane is byte-identical. Witness `tests/issue-6642-realm-bigint.test.ts`:
+lead-run on the base `10873df1e0` 3 failed / 2 passed (the two are
+guards), on `14b0634c78` 5 passed.
+
+**Link 2 is NOT needed.** Each standalone module owns its OWN realm object
+and its OWN `__builtin_ctor_*` carriers (`api.realmRef() === globalThis` →
+0 across a link), so the provider's `__apply_closure` `ref.eq`-matches the
+carrier it seeded itself. Verified end-to-end: the provider minting a
+BigInt via `globalThis.BigInt(str)` gives the consumer a value whose
+`typeof`, `===` and `Object.is` are all correct.
+
+**Links 3+4 (`"BigInt"` in `CALLABLE_WRAPPER_CTORS` and in
+`STANDALONE_GLOBAL_CONSTRUCTOR_NAMES`) built, measured, withheld.** With
+them applied the 15 target rows fail WORSE — 13 flip from a wrong value to
+`TypeError: called value is not a function` — because of a **fifth link**:
+instrumenting `buildResolvedCalleeGuard` against the real prewarmed
+provider shows the failing call is `toString` on a bigint receiver.
+Reduced single-module, link-free: `<any>.toString(radix)` throws TypeError
+for both number and bigint receivers under standalone (0-arg works for
+number, answers wrong for bigint; `String(<bigint>)` answers `0`). The exact
+one-line diffs for links 3+4 are in the issue so the next slice re-applies
+them in minutes.
+
+**Lead verification on `14b0634c78`** (S61's fresh bundle + provider
+`s61-f1` `cacheHit=false` + rebuilt adapter; base = S60 TSVs; every diff
+re-run by the lead): four-family 437/480, 0 flips; A 1250 / B 205 / C 349 /
+D 300 / E-unlinked 300 / E-linked 300 / F-class 250 / F-methoddef 100 /
+F-objproto 150 — 0 pass→fail, 0 fail→pass each. Corpus byte A/B: 0 status
+flips, 25 sha flips ALL standalone-lane, **0 on gc** (S61's true-base run
+shows the same 25 → none is main drift). Equivalence 22 / 1720 / 22.
+Witness sweep 43 files / 265 tests, 0 failed under Node 22 and Node 25
+(lead re-ran Node 25). Gates green incl. `LOC_GATE_BASE=origin/main`,
+compiler-boundaries inventory (new leaf classified `native-runtime`),
+spec-coverage, lint, prettier.
+
+Criterion 4 holds. The 15 BigInt rows stay red; next slice (S62): add
+`"toString"` to `NUMBER_PRIMITIVE_CALL_MEMBERS`
+(`number-primitive-method-call.ts`, gate the demand scan on
+`arguments.length > 0`), fix the bigint receiver family
+(`toString(radix)`, 0-arg, `String(<bigint>)`), re-apply links 3+4, re-run
+the 15 rows.

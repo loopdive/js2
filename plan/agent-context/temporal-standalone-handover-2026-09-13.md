@@ -1022,3 +1022,19 @@ sibling `.test262-cache/` plus `node scripts/build-quickjs-eval-provider.mjs`.
 Proxy trap invocation (10 rows; S55 WIP `751ceea68e` in worktree
 `agent-a38808bf4e81ef147`); `extends <provider class>` (#6640 + #6623
 residual); the two `era` rows (#6633).
+
+## Stack state 2026-09-19 (post-S61) — PR #5984 (S59+S60) MERGED; S61 on `issue-5383-standalone-temporal-s61` at `14b0634c78` (native StringToBigInt), BigInt rows now blocked on `toString` of a bigint/number receiver
+
+PR #5984 landed on `main` 00:09 UTC. S61 (Opus) landed #6642 link 1 (see
+#5383 "### S61 findings"): `BigInt("<digits>")` now parses natively under
+standalone; link 2 (cross-link ctor identity) proven unnecessary — every
+standalone module owns its own realm + wrapper-ctor carriers; links 3+4
+withheld because they expose link 5: `<any>.toString(radix)` throws under
+standalone for number and bigint receivers, and `String(<bigint>)` answers
+`0`. Base numbers unchanged (four-family 437/480). TSVs:
+`.tmp/s61/battery/*-cur.tsv` in worktree `agent-a80fccfb366ccfbfe`.
+
+**Next lanes** (one at a time, Opus): S62 = #6642 link 5 + re-apply links
+3+4 (15 ZDT rows); then Proxy trap invocation (10 rows; S55 WIP
+`751ceea68e` in worktree `agent-a38808bf4e81ef147`); `extends <provider
+class>` (#6640 + #6623); the two `era` rows (#6633).

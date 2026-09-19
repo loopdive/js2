@@ -2,7 +2,7 @@
 id: 6642
 title: "standalone: a BigInt value does not survive a consumer↔provider link (typeof/===/Object.is/String/arithmetic all answer as if it were not a BigInt)"
 status: blocked
-assignee: ttraenkler/senior-dev-s60
+assignee: ttraenkler/senior-dev-s61
 sprint: current
 priority: high
 horizon: m
@@ -37,8 +37,21 @@ loc-budget-allow:
   #   does not modify — so against CI's merge preview the allowance is
   #   invisible and the gate fails on growth that is already reviewed. Restated
   #   here, in a file this PR does touch.
+  # 2026-09-18 (S61, #6642) — `src/codegen/registry/imports.ts` gains the native
+  #   StringToBigInt arm on `__bigint_ctor`'s terminal. The §7.1.14 scan itself
+  #   is spliced INLINE, and its ~370-line body lives in the new leaf file
+  #   `src/runtime/wasmgc/values/string-to-bigint-body.ts` rather than being
+  #   minted as its own wasm function — deliberately: a new defined function
+  #   shifts every already-registered function index, which is exactly the
+  #   stale-`funcIdx` hazard S59's Fix 1 had to repair. The cost of that choice
+  #   is ~56 lines of wiring (layout resolve, `ref.test $AnyString` guard,
+  #   extra locals) in the file that owns `__bigint_ctor`. Restated here
+  #   because the pre-existing allowance for this same file lives in
+  #   plan/issues/5383-standalone-temporal-provider.md, which this change-set
+  #   does not modify — so it is invisible to CI's merge-preview base.
   - src/codegen/binary-ops.ts
   - src/codegen/typeof-delete.ts
+  - src/codegen/registry/imports.ts
 func-budget-allow:
   # 2026-09-18 (S59, #6642) — same new branch lands inside
   # `compileBinaryExpression`, and `compileTypeofComparison` (typeof-delete.ts)
@@ -54,6 +67,15 @@ func-budget-allow:
   - src/codegen/binary-ops.ts::compileBinaryExpression
   - src/codegen/typeof-delete.ts::compileTypeofComparison
   - src/codegen/typeof-delete.ts::compileTypeofExpression
+  # 2026-09-18 (S61, #6642) — `addUnionImportsAsNativeFuncs` is the single
+  #   function that registers EVERY union native, `__bigint_ctor` included, so
+  #   the new string arm has to be built where that body is built: it needs the
+  #   local `throwNativeError` closure and the same `bigIntStructIdx`/
+  #   `registerNative` scope. +52 lines, of which the parser itself is ZERO —
+  #   the scan was deliberately factored out into its own leaf module; what
+  #   remains here is the layout resolve, the `ref.test $AnyString` guard and
+  #   the extra locals.
+  - src/codegen/registry/imports.ts::addUnionImportsAsNativeFuncs
 ---
 
 ## Problem
@@ -351,7 +373,188 @@ Equivalence gate: `22 failing, 1720 passing, 22 known-failures` — no new
 regressions. Witness sweep (`tests/issue-66*`, `issue-6484-*`, `issue-6493-*`,
 42 files / 260 tests) green under **both** Node 22 and Node 25.
 
-## Next step for whoever picks this up (S60 — supersedes S59's list below)
+## S61 — link 1 landed. Link 2 measured UNNECESSARY. A FIFTH link found.
+
+**What landed: link 1 only — a real native StringToBigInt.** Links 3 and 4 were
+built, measured end-to-end, and then **deliberately held back**, for exactly the
+reason S60 gave for links 1–2: with the newly-found link 5 missing they turn the
+target rows from a wrong VALUE into a thrown TypeError. Everything needed to
+re-apply them in minutes is written down below.
+
+### Link 1 (LANDED) — `__bigint_ctor` parses a string
+
+`src/runtime/wasmgc/values/string-to-bigint-body.ts` (new leaf) implements
+§7.1.14 StringToBigInt / StringIntegerLiteral over the flattened
+`$NativeString` i16 array, accumulating **straight into i64**. It is spliced
+**INLINE** into `__bigint_ctor` (`src/codegen/registry/imports.ts`) behind a
+`ref.test $AnyString` guard, not minted as its own wasm function — a new defined
+function shifts every already-registered function index, which is the precise
+stale-`funcIdx` hazard S59's Fix 1 had to repair. Non-string operands keep the
+pre-#6642 terminal verbatim.
+
+Precision is the whole point and is why a `__str_to_number` +
+`i64.trunc_sat_f64_s` shortcut was rejected: `217175010123456789` has 18
+significant decimal digits, an f64 carries ~15.95, and the double route answers
+`217175010123456792`.
+
+**Range, stated because it is a real limit:** the standalone `$BigInt` carrier is
+one immutable i64, so the scan is exact on [-2^63, 2^63-1] and **wraps modulo
+2^64** above it (`i64.mul`/`i64.add` are wrapping ops; neither traps). That is
+deliberately the same answer the rest of the standalone BigInt lane already gives
+for arithmetic overflow, so a parsed string and a literal agree. Arbitrary
+precision is a whole-lane change (a limb representation), not a parser change.
+
+Witness `tests/issue-6642-realm-bigint.test.ts`, file-copy revert-and-measure
+against `10873df1e0` (this branch's base), same command both times
+(`VITEST_FORK_MAX_OLD_SPACE_SIZE=3072 npx vitest run --maxWorkers=2`):
+
+| case group | base `10873df1e0` | with S61 |
+| --- | --- | --- |
+| decimal string, exact past the f64 significand | **FAIL** (SyntaxError) | pass |
+| StrWhiteSpace trim; `""` / `"   "` → `0n` | **FAIL** (SyntaxError) | pass |
+| `0x` / `0X` / `0o` / `0b` prefixes; `"0"`, `"09"` | **FAIL** (SyntaxError) | pass |
+| `"12abc"` / `"1.5"` / `"1e3"` / `"0x"` / `"+"` / `"-0x10"` → SyntaxError | pass | pass |
+| number / boolean / null operands unchanged | pass | pass |
+
+Base `3 failed | 2 passed` → `5 passed`. The two that pass on both are guards
+(the base threw SyntaxError for *everything*, so a blanket-accept parser would
+have to break them).
+
+### Link 2 — measured UNNECESSARY. S60's premise was wrong.
+
+S60 called the `__apply_closure` wrapper-ctor front-guard "the link that
+actually stops the Temporal rows", on the premise that the provider reads a
+**shared** realm object whose carrier it cannot `ref.eq` against. Measured over a
+real `compileProject` link (`.tmp/s61/probe/l2.mjs`, host-free, standalone):
+
+| probe (consumer asks the provider) | answer |
+| --- | --- |
+| `api.realmRef() === globalThis` | **0** |
+| `api.ctorRef() === globalThis.BigInt` | **0** |
+
+**Each module owns its OWN realm object and its OWN `__builtin_ctor_*`
+carriers.** So the provider's `__apply_closure` compares a callee against the
+carrier *it* seeded, and #4394's identity guard matches with no change at all.
+Verified end-to-end with links 3+4 applied — a provider that calls
+`globalThis.BigInt("217175010123456789")` and hands the result across the link
+gave the consumer `typeof === "bigint"` **1**, `=== 217175010123456789n` **1**,
+`Object.is(..., 12n)` **1** (`.tmp/s61/probe/l2.mjs`), and `globalThis.Number(s)`
+already worked across the link on the unmodified base (`.tmp/s61/probe/l1.mjs`),
+which is the same mechanism one builtin over.
+
+(That two modules of one realm see two different `globalThis` is its own
+pre-existing spec gap — `globalThis !== globalThis` across the seam. It is NOT
+fixed here and NOT what blocks these rows.)
+
+### Links 3 + 4 — built, measured, HELD BACK
+
+- Link 4: `"BigInt"` in `STANDALONE_GLOBAL_CONSTRUCTOR_NAMES`
+  (`src/codegen/standalone-global-object-carriers.ts`). Flips
+  `globalThis.BigInt !== undefined` from 0 to 1.
+- Link 3: `"BigInt"` in `CALLABLE_WRAPPER_CTORS`
+  (`src/codegen/builtin-ctor-callable.ts`) with `argOf(0) → __bigint_ctor →
+  __box_bigint` (§21.2.1.1 — deliberately NOT `__to_bigint`, which TypeErrors on
+  a Number). No zero-arg constant is needed: `BigInt()` must be a TypeError and
+  `__bigint_ctor` already throws exactly that for the null operand `argOf(0)`
+  hands it.
+
+With 1+3+4 applied, single-module and linked probes all answer correctly
+(`BigInt(strVar)` 1, `g.BigInt(strVar)` 1, `globalThis.BigInt` present 1,
+provider→consumer BigInt survival 1/1/1). **But the 15 target rows do not pass —
+they change failure mode**, 13 of 15 from `Expected SameValue(«977899425,…», …)`
+to `TypeError: called value is not a function`. That is the fail-worse state, so
+the two links are not in this commit.
+
+`"Symbol"` was NOT added either: it has the identical `globalThis` gap but no
+`[[Call]]` arm, so seeding it alone is exactly the same fail-worse shape.
+
+### The FIFTH link — `<any>.toString(radix)` is not callable in standalone
+
+Found by instrumenting `buildResolvedCalleeGuard`
+(`src/codegen/resolved-callee-guard.ts`) to throw the method NAME and then the
+receiver's `String()` instead of its fixed message, against the **real**
+prewarmed polyfill provider (`.tmp/s61/probe/real.mjs` — `buildTemporalProvider`
++ `compileWithTemporalGlobal`, numeric-return exports):
+
+- the throw is the guard's **null-callee** arm (not the primitive arm, not the
+  #6618 class arm);
+- the method name is **`toString`**;
+- the receiver stringifies as `"123456789"` — the low 9 digits of
+  `217175010123456789`, i.e. a bigint whose standalone stringification is
+  already broken (S60's `String(1n)` → `0` note, re-confirmed).
+
+The call is the `t.toString(10)` inside the polyfill's own converters
+(`function ko(e){const t=Lo(e);return void 0!==globalThis.BigInt?globalThis.BigInt(t.toString(10)):t}`
+and `Lo`'s `e.BigInt(n.toString(10))`). It was NEVER EXECUTED before, because the
+`void 0 !== globalThis.BigInt` guard short-circuited — link 4 is what exposes it.
+
+Reduced **single-module, link-free** (`.tmp/s61/probe/p6.mjs`, `--target standalone`):
+
+| expression (receiver typed `any`) | answer |
+| --- | --- |
+| `n.toString(10)` where `n = 123456789` | **TypeError** |
+| `n.toString(16)` where `n = 255` | **TypeError** |
+| `n.toString(10)` where `n = 217175010123456789n` | **TypeError** |
+| `n.toString()` (0-arg, number) | ok |
+| `n.toString()` (0-arg, bigint) | **wrong answer** |
+| `String(n)` (bigint) | **wrong answer** |
+| same calls with a STATICALLY typed receiver | ok |
+
+`src/codegen/number-primitive-method-call.ts` already documents the number half
+as a named residual ("Its radix spelling (`x.toString(16)` through an `any`
+receiver) is a separate residual"); the bigint half is new here.
+
+### S61 validation — everything held flat
+
+Criterion-4 battery, 13 families / 3,684 rows, S61 tree vs the S60 base TSVs
+(fresh `build:compiler-bundle` → provider `.test262-cache/s61-f1`
+`cacheHit=false` → fresh quickjs adapter `fc390ba0543de545`): **0 pass→fail,
+0 fail→pass, 0 missing, in every family** — PlainDate 120, Duration 120,
+PlainDateTime 120, ZDT 120, A 1250, B 205, C 349, D 300, E-unlinked 300,
+E-linked 300, F-class 250, F-methoddef 100, F-objproto 150. Four-family total
+unchanged at **437/480** (PlainDate 113, Duration 106, PlainDateTime 113,
+ZDT 105). The 15 target ZonedDateTime rows are byte-for-byte the same failures
+they were on the base — link 1 alone is not on their path, by construction.
+
+Corpus byte A/B, 84 entries × 2 lanes: **0 status flips; 25 SHA flips, ALL on
+the `standalone` lane, 0 on `gc`.** Measured against a TRUE base run this
+session (`imports.ts` reverted to `10873df1e0` and the new leaf moved aside,
+corpus re-run, files restored) — which produced the identical 25, so none of
+them is `origin/main` drift. The movement is `__bigint_ctor`'s grown body:
+**+891 bytes** on every standalone binary measured
+(`benchmarks/fib.ts` 35,324 → 36,215; `js/builtins.ts` 63,743 → 64,634;
+`ir-retirement/math.ts` 137,296 → 138,190), while the same three files' `gc`
+binaries are byte-identical (1,073 / 4,955 / 11,204 both ways). That is the
+price of inlining the scan instead of minting a function, and it is the price
+that buys zero function-index movement.
+
+Equivalence gate: `22 failing, 1720 passing, 22 known-failures` — no new
+regressions. Witness sweep (`tests/issue-66*`, `issue-6484-*`, `issue-6493-*`,
+43 files / 265 tests) green under **both** Node 22 and Node 25.
+
+## Next step (S61 — supersedes S60's list)
+
+1. **Fix `<any>.toString(radix)` for a NUMBER receiver.** Add `"toString"` to
+   `NUMBER_PRIMITIVE_CALL_MEMBERS` (`number-primitive-method-call.ts`). The
+   reflective native already exists and is real, not a refusal stub
+   (`emitNumberProtoToStringBody`, `wrapper-proto-to-string.ts`, full §21.1.3.6
+   radix validation). **Gate the demand scan on `arguments.length > 0`** — a
+   bare `x.toString()` appears in nearly every module and already works through
+   another arm, so an ungated scan would install the prepended arm everywhere
+   and move bytes across the whole standalone lane for nothing.
+2. **Fix the BIGINT receiver**, both `toString(radix)` and the 0-arg spelling,
+   and `String(<bigint>)` with it — these are one defect family and they change
+   ANSWERS, not just failure text.
+3. **Then re-apply links 3 + 4** (two one-line list entries, described above)
+   and re-run the 15 rows. They are prerequisites, not the blocker.
+4. Re-run the four-family battery; the acceptance bar is still 0 pass→fail.
+
+### S60's list (superseded — kept for the record)
+
+Link 2 is not needed (measured above); links 3 and 4 are correct as written but
+are blocked behind the toString family, not in front of it.
+
+## Next step for whoever picks this up (S60 — historical)
 
 The remaining work is **not** in the coercion tables. It is
 "standalone has no realm-level `BigInt` constructor", and it is four links,
@@ -446,3 +649,28 @@ own issue.
   no bigint column" (wrong) to "standalone has no realm-level `BigInt`
   constructor, and the wrapper-ctor `[[Call]]` guard does not cross a link"
   (measured, four links listed above).
+
+### S61 additions to these notes
+
+- Files touched by S61: `src/runtime/wasmgc/values/string-to-bigint-body.ts`
+  (new leaf, the §7.1.14 scan) and `src/codegen/registry/imports.ts` (the
+  `ref.test $AnyString` arm on `__bigint_ctor`, plus the layout resolve).
+  `scripts/compiler-boundaries.json` gains the new file's `native-runtime`
+  entry. Witness `tests/issue-6642-realm-bigint.test.ts`.
+- Deliberately NOT touched: `src/codegen/builtin-ctor-callable.ts` and
+  `src/codegen/standalone-global-object-carriers.ts` (links 3/4 — built,
+  measured, held back behind link 5, see the S61 section above);
+  `coercion-plan.ts`, `stack-balance.ts`, `type-coercion.ts` (unchanged from
+  S60's finding).
+- Probe scripts (ephemeral, `.tmp/s61/probe/`): `p1.mjs`–`p3.mjs` (the
+  `BigInt(<string variable>)` reduction and the 22-case parser table),
+  `p5.mjs`/`p6.mjs` (the link-5 reduction — `<any>.toString(radix)` for number
+  and bigint receivers, single-module and link-free), `link.mjs` (a reusable
+  two-module `compileProject`+`compileMulti` harness), `l1.mjs`–`l4.mjs` (realm
+  ownership, cross-link BigInt survival, the polyfill-shaped converter),
+  `real.mjs` (the REAL prewarmed polyfill provider via `buildTemporalProvider` +
+  `compileWithTemporalGlobal` — this is the probe that found link 5; note again
+  that string-returning standalone exports do not marshal out, so every answer
+  is numeric).
+- `status` stays `blocked`, with the next step now naming a DIFFERENT
+  mechanism: `<any>.toString(radix)`, not the realm constructor.
