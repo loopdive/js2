@@ -1,7 +1,8 @@
 ---
 id: 6640
 title: "standalone: `class S extends <linked-provider class>` has NO real inheritance at all — no super()-threaded construction, no inherited method dispatch, no instanceof — root-causing the PlainDate/PlainDateTime `compare` use-internal-slots pair"
-status: blocked
+status: done
+completed: 2026-09-19
 sprint: current
 priority: high
 horizon: xl
@@ -328,3 +329,50 @@ provider):
 `Duration/compare/order-of-operations.js` (`RuntimeError: unreachable in
 __apply_closure()`, the #6628 provider-owned-closure class S63 documented) is
 **untouched by this change** — it is in the Duration family diff below at 0/0.
+
+### Full battery — 3,684 files, ZERO `pass → fail` in every group
+
+`.tmp/s64/battery/run-batch.mts` against the S63-head base TSVs, provider cache
+`s64-1`. Every group `matched = <size>`, `missing = 0`:
+
+| group | files | pass→fail | fail→pass |
+| --- | --- | --- | --- |
+| PlainDate | 120 | 0 | **1** (`compare/use-internal-slots.js`) |
+| Duration | 120 | 0 | 0 |
+| PlainDateTime | 120 | 0 | **1** (`compare/use-internal-slots.js`) |
+| ZonedDateTime | 120 | 0 | 0 |
+| A (Object/keys, …) | 1250 | 0 | 0 |
+| B (Proxy) | 205 | 0 | 0 |
+| C (Object/getPrototypeOf, …) | 349 | 0 | 0 |
+| D | 300 | 0 | 0 |
+| E-unlinked | 300 | 0 | 0 |
+| E-linked | 300 | 0 | 0 |
+| **F-class** (class semantics) | **250** | **0** | **0** |
+| F-methoddef | 100 | 0 | 0 |
+| F-objproto | 150 | 0 | 0 |
+| **total** | **3684** | **0** | **2** |
+
+Four-family standalone Temporal score **457 → 459 / 480**: PlainDate 116 → 117,
+Duration 108, PlainDateTime 116 → 117, ZonedDateTime 117. Whole-battery pass
+count 3079 → 3081.
+
+### Other validation
+
+- **Byte corpus** (84 files × `gc` + `standalone`): `statusFlips=0 shaFlips=0`.
+  The `gc` lane is byte-identical and standalone grew **0 bytes** on unlinked
+  input; the Temporal provider re-emitted the identical 3,334,356 B artifact
+  under the identical cache key. No sha flip existed to attribute, so no
+  true-base corpus re-run was required.
+- **Equivalence gate**: 22 failing / 1720 passing / 22 known-failures — the
+  expected triple, no new regressions.
+- **Witness sweep, Node 22 AND Node 25**: `tests/issue-66*.test.ts`
+  `tests/issue-6484-*` `tests/issue-6493-*` → 46 files / 272 tests passed on
+  both; `tests/issue-6617-*` `tests/issue-6622-*` `tests/issue-6623-*` → 3
+  files / 26 tests passed on both.
+- **Gates**: typecheck · loc-budget (merge-base AND `origin/main`) ·
+  func-budget (both bases) · coercion-sites · oracle-ratchet ·
+  speculative-rollback · issue-ids:against-main · `update-issues --check` ·
+  issue-spec-coverage · lint · prettier · compiler-boundaries inventory ·
+  dead-exports (green — the two `moved-runtime` complaints about
+  `src/optimize.ts` / `src/runtime/platform-capability-adapter.ts` are the
+  inherited red, unrelated to this change).
