@@ -9353,6 +9353,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/vec-pop-body.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Closed pop instruction builder separated from allocation; still uses backend physical types and handles, not a migrated semantic IR producer."
+    },
+    {
       "path": "src/codegen/vec-props.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
