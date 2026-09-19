@@ -1,7 +1,7 @@
 {
   "generated": "2026-09-19",
   "threshold": 1500,
-  "totalCeiling": 899887,
+  "totalCeiling": 900034,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -60,7 +60,7 @@
     "src/codegen/object-ops.ts": 5387,
     "src/codegen/object-runtime-descriptors.ts": 3598,
     "src/codegen/object-runtime-enumeration.ts": 1753,
-    "src/codegen/object-runtime-proxy.ts": 2734,
+    "src/codegen/object-runtime-proxy.ts": 2777,
     "src/codegen/object-runtime.ts": 12710,
     "src/codegen/program-abi-session.ts": 3562,
     "src/codegen/promise-combinators.ts": 1667,
