@@ -23,7 +23,8 @@
 //   numeric radix RangeError      2 (TypeError)   → 1 (RangeError, §21.1.3.6)
 //   every bigint `toString` row   -1 (threw)      → 1
 //   bigint radix RangeError       2 (TypeError)   → 1 (RangeError, §21.2.3.3)
-//   `String(<bigint>)` rows       trapped         → 1
+//   `String(<bigint>)` rows       0 ("[object Object]" — `__any_to_string`'s
+//                                 residual arm; 15 chars, measured) → 1
 //   `globalThis.BigInt` present   0               → 1
 //   `globalThis.BigInt("12")`     -1 (threw)      → 1
 //   the two-module polyfill shape -1 (threw)      → 1
@@ -103,9 +104,12 @@ const TOSTRING = `
   export function strSmallBig() { try { return str(12n) === "12" ? 1 : 0; } catch (e) { return -1; } }
   export function strLargeBig() { try { return str(217175010123456789n) === "217175010123456789" ? 1 : 0; } catch (e) { return -1; } }
   export function strNegBig()   { try { return str(-5n) === "-5" ? 1 : 0; } catch (e) { return -1; } }
-  export function tmplBig()     { try { return tmpl(12n) === "12" ? 1 : 0; } catch (e) { return -1; } }
 
   // CONTROLS — every other ToString receiver, identical on base and branch.
+  // The template and \`+\` spellings ALREADY answered correctly on the base
+  // (\`__to_primitive\` has its own bigint arm); they are here because the one
+  // real hazard of a prepended arm is displacing a route that already works.
+  export function tmplBig()  { try { return tmpl(12n) === "12" ? 1 : 0; } catch (e) { return -1; } }
   export function catBig()   { try { return cat(12n) === "12" ? 1 : 0; } catch (e) { return -1; } }
   export function strNum()   { try { return str(5) === "5" ? 1 : 0; } catch (e) { return -1; } }
   export function strStr()   { try { return str("q") === "q" ? 1 : 0; } catch (e) { return -1; } }
@@ -220,13 +224,13 @@ describe("#6642 dynamic-receiver toString for number and bigint (standalone)", (
 
   it("stringifies a bigint through every ToString route, and moves no other receiver", async () => {
     const ex = await singleModule(TOSTRING);
-    // TEETH — `__any_to_string` had no `$BigInt` arm, so these answered a null
-    // ref that trapped the caller on the base tree.
+    // TEETH — `__any_to_string` had no `$BigInt` arm, so a bigint fell to its
+    // residual `"[object Object]"` (15 chars, measured) on the base tree.
     expect(ex.strSmallBig()).toBe(1);
     expect(ex.strLargeBig()).toBe(1);
     expect(ex.strNegBig()).toBe(1);
-    expect(ex.tmplBig()).toBe(1);
     // CONTROLS.
+    expect(ex.tmplBig()).toBe(1);
     expect(ex.catBig()).toBe(1);
     expect(ex.strNum()).toBe(1);
     expect(ex.strStr()).toBe(1);
