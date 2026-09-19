@@ -583,3 +583,32 @@ tri-state conflates "not mine" with "mine but absent", which would turn a
 legitimate `false` into a throw. All ten target rows are get-trap rows. Adding
 the write side means three more terminals and a matching install-ABI bump; it
 should be its own slice with its own rows to justify it.
+
+#### S63 full-battery table (completed 2026-09-31T09:31Z, per-file diff vs the S62 base TSVs)
+
+Four families — the four-family total moves **447/480 → 457/480**:
+
+| Family | Base | S63 | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- |
+| PlainDate | 113/120 | 116/120 | 0 | 3 |
+| Duration | 106/120 | 108/120 | 0 | 2 |
+| PlainDateTime | 113/120 | 116/120 | 0 | 3 |
+| ZonedDateTime | 115/120 | 117/120 | 0 | 2 |
+
+A–F must-not-move (3,204 files, every group byte-for-byte the same per-file
+pass/fail assignment, not merely the same total):
+
+| Group | Base | S63 | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- |
+| A | 1129/1250 | 1129/1250 | 0 | 0 |
+| B | 179/205 | 179/205 | 0 | 0 |
+| C | 274/349 | 274/349 | 0 | 0 |
+| D | 224/300 | 224/300 | 0 | 0 |
+| **E-unlinked** | 238/300 | 238/300 | **0** | 0 |
+| **E-linked** | 238/300 | 238/300 | **0** | 0 |
+| F-class | 136/250 | 136/250 | 0 | 0 |
+| F-methoddef | 68/100 | 68/100 | 0 | 0 |
+| F-objproto | 136/150 | 136/150 | 0 | 0 |
+
+The two E groups are the Proxy+Reflect must-not-move sets and are the ones this
+change could plausibly have moved; both are flat.
