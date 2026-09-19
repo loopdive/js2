@@ -21,6 +21,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { ensureReflectIsConstructor } from "./reflect-construct-native.js";
 import { ensureExternStrictEqHelper } from "./any-helpers.js";
 import { registerProxyInvariantValidators } from "./object-runtime-proxy-invariants.js"; // (#5316) §10.5 descriptor-model half
+import { reserveStandaloneLinkReversePeer, reverseProxyGetArmInstrs } from "./standalone-link-reverse-peer.js"; // (#6637 S63)
 
 /** (#1100/#1355) Reserved trap-invoke driver names — filled by `fillProxyDispatch`. */
 const PROXY_CALL_GET = "__proxy_call_get";
@@ -134,6 +135,41 @@ export function ensureProxyRuntime(
     { op: "call", funcIdx: typeErrorCtorIdx },
     { op: "throw", tagIdx: exnTagIdx },
   ];
+  // (#6637 S63) The trap-callable verdict above is THIS module's. In a linked
+  // standalone project it is not the last word: a Proxy built by the CONSUMER
+  // carries a consumer-owned closure in `ptraps`, and the provider's
+  // `__typeof_function` ladder can only `ref.test` closure wrapper types IT
+  // registered, so it answers 0 for every foreign closure (measured
+  // 2026-09-19, `.tmp/s63/probe1.out`: a provider `typeof f === "function"` on
+  // a consumer function — named, arrow, either — answers 0, while the same
+  // Proxy read inside the consumer answers correctly). That misverdict is what
+  // turns `Temporal.PlainDate.from(fields, new Proxy(opts, {get(){…}}))` into
+  // `TypeError: Proxy get trap is not callable`.
+  //
+  // The fix is NOT to teach the provider to classify and invoke a foreign
+  // closure (S52b/S55 built that channel — `callableKind`/`apply` terminals —
+  // and it classified a bare cross-module closure correctly yet still could not
+  // run a trap: a trap call also needs the owner's `this` binding, its own
+  // `__apply_closure` arity ladder, and its own argument carriers). It is to
+  // hand the WHOLE [[Get]] back to the module that owns the Proxy, over the
+  // reverse channel that already exists and is already proven for consumer
+  // carriers (#5383 S17 / #6605): the consumer re-performs `proxy[key]` with
+  // its own proxy dispatch, its own trap, its own closure call, and returns the
+  // value as an externref.
+  //
+  // It is spliced ONLY on the path that throws today, so it cannot change any
+  // answer a working program already gets: no peer installed (every gc build,
+  // every single-module standalone build, every provider whose consumer is JS)
+  // ⇒ `hops.get` is undefined ⇒ zero bytes emitted. A peer that does not own
+  // the receiver answers "not mine" and control falls through to the same
+  // throw. Locals are reused (`res`, index 2+arity), so no dispatch function
+  // grows a local either.
+  const reversePeerHops = reserveStandaloneLinkReversePeer(ctx);
+  // `__proxy_get_dispatch(proxy, key, receiver)` — params 0/1 are exactly the
+  // `(receiver, key)` pair `reverseGetArmInstrs` reads, and local 5 (`res`) is
+  // dead until the post-trap invariant validators run, well after this arm.
+  const reverseGetDelegateArm = (): Instr[] => reverseProxyGetArmInstrs(reversePeerHops, 5);
+
   // (#5140) §7.3.9 GetMethod: a trap that is present but NOT callable is a
   // TypeError at OPERATION time (not at ProxyCreate time — the tests construct
   // the proxy successfully and then expect the operation to throw). Phase 1
@@ -444,7 +480,14 @@ export function ensureProxyRuntime(
                 { op: "local.get", index: TRAPL },
                 { op: "call", funcIdx: typeofFunctionIdx },
                 { op: "i32.eqz" },
-                { op: "if", blockType: { kind: "empty" }, then: throwGetTrapNotCallable() },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  // (#6637 S63) …unless the Proxy's OWNER can run the trap for
+                  // us. The delegation arm returns on an owned receiver; every
+                  // other case falls straight through to the throw.
+                  then: [...reverseGetDelegateArm(), ...throwGetTrapNotCallable()],
+                },
                 ...trapArm,
               ]
             : [...trapCallableGuard(TRAPL), ...trapArm],

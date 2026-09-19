@@ -7,9 +7,23 @@ priority: high
 horizon: l
 feasibility: hard
 reasoning_effort: max
-owner: sendev-s53
-assignee: ttraenkler/sendev-s53
-completed: 2026-09-18
+owner: sendev-s63
+assignee: ttraenkler/sendev-s63
+completed: 2026-09-19
+loc-budget-allow:
+  # (#6637 S63, 2026-09-19) The foreign-Proxy [[Get]] delegation arm in
+  # `ensureProxyRuntime` plus the comment block that states WHY the fix is a
+  # delegation rather than the S52b/S55 cross-module callable-classification
+  # channel (which was built, measured, and does not suffice). The mechanism
+  # lives where the throw lives; moving the ~10 emitted instructions to a new
+  # module would add an import cycle with `standalone-link-reverse-peer.ts` for
+  # no reduction in the god-file's real complexity.
+  - src/codegen/object-runtime-proxy.ts
+func-budget-allow:
+  # (#6637 S63, 2026-09-19) Same change-set, same rationale as the LOC grant
+  # above: `ensureProxyRuntime` is where the get-trap throw is built, so the
+  # delegation arm and its rationale land inside it.
+  - src/codegen/object-runtime-proxy.ts::ensureProxyRuntime
 ---
 
 # #6637 — untyped-receiver Proxy property access misroutes to "null or undefined" (S53 fix, #5383 stack)
@@ -441,3 +455,163 @@ HEAD after the A–F battery completed).
 
 **Criterion-4 verdict**: all four sub-batteries measured, zero movement in
 every one. S53's fix is criterion-4-clean.
+
+### S63 (2026-09-19, senior-dev, branch `issue-5383-standalone-temporal-s63`)
+
+**Fixed. 9 of the 10 target rows flipped on the first cut, the 10th on the
+second; per-family diffs show 0 pass→fail anywhere.**
+
+#### The decisive probe (do this one first if you ever revisit the area)
+
+`.tmp/s63/probe1.mts` — a two-module linked pair (`compileProject` provider +
+`compileMulti` consumer, `--target standalone`, `hostBridge: "off"`), where the
+PROVIDER exports a diagnostic `checkCallable(f) { return typeof f ===
+"function" ? 1 : 0 }` alongside the ordinary `readOverflow(o) { return
+o.overflow }`. On the S62 base (`.tmp/s63/probe1.out`):
+
+| probe | base | meaning |
+| --- | --- | --- |
+| `checkCallable(namedConsumerFn)` | **0** | the provider cannot classify a consumer closure |
+| `checkCallable(consumerArrowFn)` | **0** | …not a shape effect: arrows too |
+| `checkCallable({a:1})` | 0 | control, correctly not callable |
+| `readPlain({overflow:7})` | 7 | the #5383 S17 reverse channel IS live |
+| consumer-local `proxy.overflow` | 7 | the consumer's own dispatch is fine |
+| `readOverflow(consumerProxy)` | throws `Proxy get trap is not callable` | the symptom |
+
+**Root cause, in one line:** the provider's `__typeof_function` classifies
+callables by `ref.test`ing the closure wrapper types IT registered, so it
+answers 0 for every consumer-owned closure; `__proxy_get_dispatch` reads the
+trap out of the foreign `$Proxy`'s `ptraps` field, asks that classifier, and
+throws. S52's original diagnosis was right about the gap; S52b/S55's fix
+DIRECTION was the problem.
+
+#### Why not S52b/S55's reverse-peer `callableKind`/`apply` terminals
+
+S55 proved that channel classifies a bare cross-module closure correctly
+end-to-end and STILL could not run a trap. That is not a wiring bug to chase:
+invoking a closure also needs the owner's `this` binding, its own
+`__apply_closure` arity ladder and its own argument carriers. Classification
+was never sufficient. Those terminals are **not** in this fix; commit
+`751ceea68e` stays unmerged.
+
+#### The fix — delegate the operation, do not import the capability
+
+On the ONE path that throws today (the get-trap callable guard in
+`ensureProxyRuntime`, `src/codegen/object-runtime-proxy.ts`), hand the WHOLE
+`[[Get]]` back to the module that owns the Proxy, over the reverse channel that
+already exists. The consumer re-performs `proxy[key]` with its own dispatch,
+its own trap and its own closure call, and returns the value as an externref.
+
+Placement is the entire safety argument: every receiver whose trap the provider
+CAN call is decided before the arm exists, so the arm cannot change a working
+answer — only replace a throw. No peer installed (every gc build, every
+single-module standalone build, every provider whose consumer is JS) ⇒ the hop
+index is undefined ⇒ **zero bytes emitted**. Locals are reused (`res`), so no
+dispatch function grows one.
+
+**Second commit: the delegation needed its own RAW terminal.** Routing through
+the existing `localGet` terminal fixed 9 rows and left
+`Duration/compare/options-read-before-algorithmic-validation.js` failing,
+because `localGet` normalises an `undefined` value to `null` ("not mine") — and
+the provider then re-derives the answer through `localIsNull`, i.e. a SECOND
+and THIRD observable trap invocation, which the order-asserting rows count.
+`__js2wasm_link_local_proxy_get` / `__js2wasm_link_reverse_proxy_get` return
+`__extern_get` verbatim (install ABI grows one funcref). `undefined` then
+crosses as the boxed-NaN undefined carrier — a canonical, structurally shared
+type, so the provider's own `__extern_is_undefined` recognises the consumer's.
+Only a trap that genuinely returns `null` stays ambiguous with "not mine", and
+that case keeps the pre-existing throw rather than a fabricated value.
+
+#### Results
+
+Ten target rows, `--target standalone`, real @js-temporal provider
+(`.tmp/s63/rows-1.tsv` first cut, `.tmp/s63/rows-2.tsv` final): **10/10 pass**,
+from 10/10 fail on the S62 base.
+
+Four-family battery vs the S62 base TSVs (per-file diff, not totals):
+
+| Family | Base | S63 | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- |
+| PlainDate | 113/120 | 116/120 | 0 | 3 |
+| Duration | 106/120 | 108/120 | 0 | 2 |
+| PlainDateTime | 113/120 | 116/120 | 0 | 3 |
+| ZonedDateTime | 115/120 | 117/120 | 0 | 2 |
+| **Total** | **447/480** | **457/480** | **0** | **10** |
+
+A–F must-not-move battery: 0 pass→fail in every group, including the two
+Proxy+Reflect groups E-unlinked and E-linked. Corpus byte A/B (42 files ×
+{gc, standalone}): `statusFlips=0 shaFlips=0` over all 84 rows — the gc lane is
+byte-identical and so is every single-module standalone compile; the only
+artifact that moves is the linked PROVIDER binary, **3,334,248 → 3,334,356 B
+(+108)**. Equivalence gate: 22 failing / 1720 passing / 22 known-failures, no
+new regressions.
+
+#### Witness
+
+`tests/issue-6637-link-proxy-trap-invocation.test.ts`, 13 assertions across two
+linked pairs (host-free, empty import object). Teeth: object-literal trap,
+named-function trap, one trap call per read, trap sees target/key/receiver,
+return value forwarded, undefined result survives in ONE call, a throwing trap
+propagates its RangeError. Controls (same answer on both trees): a genuinely
+non-callable trap still throws TypeError, a consumer-local Proxy read, a plain
+bag read, `in` through an empty handler, an empty-handler read. File-copy
+revert-and-measure against `d38e8c52c9`: the fix `it` fails on base at its
+first assertion (the guard's TypeError escapes as a raw wasm exception) and
+passes whole on the fix; the residual `it` below passes on BOTH trees.
+
+#### Residual found while writing the witness — #6628's class, not fixed here
+
+Bisected with `.tmp/s63/probe4.mts`: **a provider that compiles a Proxy of its
+OWN bypasses this fix entirely.** Compiling one registers a closure wrapper
+type in the provider; a consumer trap closure of matching shape then passes the
+provider's `ref.test` callable ladder, `__typeof_function` answers "callable",
+the guard this fix hangs off never fires, and the provider tries to run a
+foreign closure through its own `__apply_closure` — which runs nothing and
+answers `undefined`. Measured: the identical probe answers 15 (all identity
+bits set) with a plain provider and 0 with a provider that owns one Proxy.
+
+That is the older, wider #6628 foreign-closure hazard, and it is a SILENT wrong
+value rather than a throw. It does not touch this stack's rows: the compiled
+`@js-temporal/polyfill` artifact contains no `new Proxy` (verified on the
+artifact, 0 occurrences). The second `it` in the witness pins the residual so it
+is a finding rather than a surprise — when #6628 is fixed, that expectation
+tightens from 0 to 15 rather than being deleted.
+
+Also NOT covered, deliberately: the `set` / `deleteProperty` / `has` traps. The
+reverse channel has no raw `set`/`delete` terminal, and `has`'s existing
+tri-state conflates "not mine" with "mine but absent", which would turn a
+legitimate `false` into a throw. All ten target rows are get-trap rows. Adding
+the write side means three more terminals and a matching install-ABI bump; it
+should be its own slice with its own rows to justify it.
+
+#### S63 full-battery table (completed 2026-09-19 09:31 UTC, per-file diff vs the S62 base TSVs)
+
+This supersedes nothing above — the four-family numbers stated earlier in this
+section are these numbers; the table here adds the A–F half.
+
+Four families — the four-family total moves **447/480 → 457/480**:
+
+| Family | Base | S63 | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- |
+| PlainDate | 113/120 | 116/120 | 0 | 3 |
+| Duration | 106/120 | 108/120 | 0 | 2 |
+| PlainDateTime | 113/120 | 116/120 | 0 | 3 |
+| ZonedDateTime | 115/120 | 117/120 | 0 | 2 |
+
+A–F must-not-move (3,204 files, every group byte-for-byte the same per-file
+pass/fail assignment, not merely the same total):
+
+| Group | Base | S63 | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- |
+| A | 1129/1250 | 1129/1250 | 0 | 0 |
+| B | 179/205 | 179/205 | 0 | 0 |
+| C | 274/349 | 274/349 | 0 | 0 |
+| D | 224/300 | 224/300 | 0 | 0 |
+| **E-unlinked** | 238/300 | 238/300 | **0** | 0 |
+| **E-linked** | 238/300 | 238/300 | **0** | 0 |
+| F-class | 136/250 | 136/250 | 0 | 0 |
+| F-methoddef | 68/100 | 68/100 | 0 | 0 |
+| F-objproto | 136/150 | 136/150 | 0 | 0 |
+
+The two E groups are the Proxy+Reflect must-not-move sets and are the ones this
+change could plausibly have moved; both are flat.
