@@ -9284,3 +9284,65 @@ The adjacent native Promise contract and PR5753, generator and array specificati
 record exact ownership, dependencies, controls and remaining implementation.
 Parent alone integrates and publishes. Native agents own isolated bounded fixes;
 runtime array work follows the generator owner to avoid shared-file overwrite.
+
+
+## Native timer publication contract extraction — 2026-09-14
+
+Implement existing frozen lane B2 from
+`agent-context/3518-lane-b-delay-timer-implementation-contract-2026-09-09.md`
+in an isolated child of `2aa3959c`; PR 5937 remains untouched during CI. Move
+all nine timer constants to the runtime contract layer with exact one-way
+compatibility exports. Extract the existing four-family alias algorithm into
+one pure planner used by the real legacy publication caller. Keep its actual
+dispatcher ownership, table/element/global mutations, indices, publication
+order and idempotence intact. Preserve the original donor function and constants
+as a source-pinned fixture. Verify exact constants, collision/hole ordering,
+independent old/new publication traces and unchanged surrounding donor behavior.
+This supplies the prerequisite contract for the already-planned timer resource
+producer; it does not supply C2 dispatcher authority or complete async execution.
+Publication waits for PR 5937 delivery and the normal checks.
+
+
+B2 implementation is now present in the isolated timer-contract worktree. All
+25 pure contract/donor tests pass, including 16 collision-occupancy traces,
+source inverse outside the extracted planner, idempotence and two live trace
+mutants. The existing timer artifact/numeric-handle regression passes its one
+selected row (21 other rows unselected); it compares two real compiled binaries
+and exercises the timer runtime bridge. Initial donor constant comparison failed
+on module namespace metadata (21/22); the corrected comparison checks all nine
+enumerable contract values, and the original failure is retained. Typecheck,
+LOC/function budgets and boundary inventory pass; the inventory remains
+architecture-incomplete. Current evidence is under `.tmp/timer-contract`; this
+is not a native C2 dispatcher or whole-family execution claim.
+
+
+## September 19 resume from freshly fetched main
+
+Fetched loopdive/js2 main `62cb4a2b060a5a20880ea45d9dc671ff383aaf38` into
+a persistent isolated checkout, `worktrees/codex-3518-resume-main-20260919`.
+The dirty root and peer worktrees remain intact; no pruning or resets.
+PR 5937 is delivered as `06d74c0c575749414406785a15472a0f1f86545d`, an
+ancestor of current main. Its source/test contents match tested head `2aa3959c`;
+the merge differs only in six npm benchmark report files. PR 5939 is also
+delivered as `9f3a5afd`; the Promise inventory implementation remains on main.
+
+Old September 14 temporary checkout directories and raw local logs are absent.
+The signed timer commit `0e12faae` survives in Git and has been restored onto
+current main without committing. Preserve both the newer Promise inventory and
+timer entries when composing their append-only issue/inventory conflicts.
+Fresh timer donor tests pass 25/25, TypeScript7 passes, and boundary inventory
+is valid but architecture-incomplete. Historical test results remain historical;
+missing raw artifacts are not presented as newly available evidence.
+
+The clock executable-state scan correction and its dedicated test did not land.
+Its old total-gap assertion must be remeasured because the new Promise inventory
+adds explicit obligations. Current delivery priority is existing held PRs 5753
+(main composition) and 5748 (conflicts plus reported quality failures); retain
+their holds until current-root semantic and architecture checks pass. Exclude
+PR 5942, which is an explicitly held strategy experiment. The full migration
+and native async execution remain incomplete.
+
+The September 19 timer artifact/numeric-handle regression also passes its one
+selected case (21 unselected), exercising both compiled instances on current
+main. The recovered timer delta is ready for normal hooks and a ready PR;
+this does not release either existing integration hold.
