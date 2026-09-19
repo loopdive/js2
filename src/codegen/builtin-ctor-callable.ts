@@ -276,7 +276,7 @@ export function builtinConstructorBindArmInstrs(ctx: CodegenContext, anyLocal: n
 
 /** The wrapper builtins whose carrier gets a callable arm. Must stay a subset
  *  of `BUILTIN_CONSTRUCTOR_IDENTITY_NAMES` (builtin-static-globals.ts). */
-const CALLABLE_WRAPPER_CTORS = ["String", "Number", "Boolean"] as const;
+const CALLABLE_WRAPPER_CTORS = ["String", "Number", "Boolean", "BigInt"] as const;
 
 /**
  * Build the `[[Call]]` front-guard arm(s) for the wrapper-constructor carriers.
@@ -298,6 +298,8 @@ export function builtinCtorCallableArmInstrs(ctx: CodegenContext, argOf: (k: num
   const boxNumberIdx = ctx.funcMap.get("__box_number");
   const isTruthyIdx = ctx.funcMap.get("__is_truthy");
   const boxBooleanIdx = ctx.funcMap.get("__box_boolean");
+  const bigintCtorIdx = ctx.funcMap.get("__bigint_ctor");
+  const boxBigIntIdx = ctx.funcMap.get("__box_bigint");
 
   /** `__extern_length(args) < 1` — i32 on the stack. */
   const zeroArgTest = (): Instr[] => [
@@ -356,6 +358,19 @@ export function builtinCtorCallableArmInstrs(ctx: CodegenContext, argOf: (k: num
           },
           { op: "call", funcIdx: boxBooleanIdx },
         ];
+      }
+      case "BigInt": {
+        if (bigintCtorIdx === undefined || boxBigIntIdx === undefined) return undefined;
+        // §21.2.1.1 `BigInt(value)` — ToPrimitive(number hint) then
+        // NumberToBigInt / StringToBigInt, which is exactly `__bigint_ctor`'s
+        // job (its string arm is #6642 S61's native §7.1.14 scan). Deliberately
+        // NOT `__to_bigint` (§7.1.13), which TypeErrors on a Number — the whole
+        // point of the wrapper call is that `BigInt(1)` is `1n`.
+        //
+        // No zero-argument constant: `BigInt()` must be a TypeError, and
+        // `__bigint_ctor` already throws exactly that for the null operand
+        // `argOf(0)` hands it when no argument was passed.
+        return [...argOf(0), { op: "call", funcIdx: bigintCtorIdx }, { op: "call", funcIdx: boxBigIntIdx }];
       }
     }
   };

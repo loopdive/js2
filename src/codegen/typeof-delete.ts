@@ -2095,8 +2095,7 @@ export function compileTypeofExpression(
 
   // For union/unknown externref types, call the __typeof host helper at runtime
   addUnionImports(ctx);
-  const funcIdx = ctx.funcMap.get("__typeof");
-  if (funcIdx === undefined) return null;
+  if (ctx.funcMap.get("__typeof") === undefined) return null;
 
   // Compile the operand to push its value onto the stack
   const operandType = compileExpression(ctx, fctx, operand);
@@ -2119,10 +2118,35 @@ export function compileTypeofExpression(
     const boxIdx = ctx.funcMap.get(operandType.symbol === true ? "__box_symbol" : "__box_boolean");
     if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
   } else if (operandType.kind === "ref" || operandType.kind === "ref_null") {
-    fctx.body.push({ op: "extern.convert_any" });
+    // (#6632) A nullable `$AnyString` slot (the wasm carrier for a
+    // `string | undefined` field/local — `resolveWasmType`'s single-kind
+    // nullable-union collapse) uses `ref.null` to mean "absent" (the value is
+    // `undefined`), while a genuinely-`string | null` slot uses the SAME
+    // `ref.null` bit pattern to mean the JS value `null`. The two are
+    // representationally identical at this point — there is no way to tell
+    // them apart from the raw ref alone — so distinguishing them requires the
+    // #4741 resurrection arm in `coerceType` (ref_null $AnyString → externref:
+    // null becomes the canonical `undefined` extern, not host `null`). A raw
+    // `extern.convert_any` here (as for every other ref kind) skips that arm
+    // and republishes the null as host `null`, so `typeof (v: string |
+    // undefined)` on an absent value answered "object" instead of
+    // "undefined" — mirrors the #5378 f64/undefSentinel fix immediately
+    // above; `coerceType` owns the resurrection arm for both carriers.
+    coerceType(ctx, fctx, operandType, { kind: "externref" });
   }
 
-  fctx.body.push({ op: "call", funcIdx });
+  // (#6642) Re-read the helper's funcIdx AFTER compiling the operand, not
+  // before: compiling a cross-module link-boundary read (a foreign provider
+  // call) can lazily register new import funcs, which shifts every already
+  // -registered defined-function index (`shiftLateImportIndices`/
+  // `flushLateImportShifts`). A funcIdx captured into a bare local BEFORE the
+  // shift is invisible to that walker — it only rewrites `funcIdx` fields
+  // already sitting inside an emitted Instr, and this local isn't one yet —
+  // so the stale value bakes a `call` into whatever function has since slid
+  // into that slot. Re-reading here reflects any shift that just happened.
+  const typeofFuncIdx = ctx.funcMap.get("__typeof");
+  if (typeofFuncIdx === undefined) return null;
+  fctx.body.push({ op: "call", funcIdx: typeofFuncIdx });
   return { kind: "externref" };
 }
 
@@ -2485,8 +2509,7 @@ export function compileTypeofComparison(
 
   if (!helperName) return null;
 
-  const funcIdx = ctx.funcMap.get(helperName);
-  if (funcIdx === undefined) return null;
+  if (ctx.funcMap.get(helperName) === undefined) return null;
 
   // Compile the operand of typeof — need to get the raw externref value
   // The operand should be loaded without narrowing (use the declared type)
@@ -2521,8 +2544,16 @@ export function compileTypeofComparison(
     if (valType.kind !== "externref") coerceType(ctx, fctx, valType, { kind: "externref" });
   }
 
-  // Call the typeof helper
-  fctx.body.push({ op: "call", funcIdx });
+  // Call the typeof helper. (#6642) Re-read the funcIdx AFTER compiling the
+  // operand — see the matching comment in compileTypeofExpression above; the
+  // same stale-local hazard applies here, and this is the path the #6642
+  // ZonedDateTime `epochNanoseconds`/`add` reduction actually hit (compiling
+  // a cross-module BigInt-returning provider call lazily registered a link
+  // -boundary import mid-expression, shifting `__typeof_bigint`'s index out
+  // from under a funcIdx already captured into this function's stack frame).
+  const helperFuncIdx = ctx.funcMap.get(helperName);
+  if (helperFuncIdx === undefined) return null;
+  fctx.body.push({ op: "call", funcIdx: helperFuncIdx });
 
   // If !== comparison, negate the result
   if (isNeq) {

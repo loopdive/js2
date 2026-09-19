@@ -1086,6 +1086,21 @@ function compileExpressionInner(
   // inner dispatch: outer wrappers and public expected-type boxing/coercion
   // therefore still run before the original operand identity is reached.
   // The planner validates every entry; this has no replay/default fallback.
+  // (#6504 round 31) Same contract, async lane: a pre-await operand that was
+  // evaluated and spilled BEFORE the suspension is read back here rather than
+  // re-evaluated, which is what makes recompiling the containing argument
+  // expression on resume side-effect-free.
+  const asyncOperandLocal = fctx.asyncOperandValueLocals?.get(expr);
+  if (asyncOperandLocal !== undefined) {
+    const asyncOperandType = getLocalType(fctx, asyncOperandLocal);
+    if (asyncOperandType === undefined) {
+      reportError(ctx, expr, "Internal error: async continuation operand spill local is unavailable");
+      return null;
+    }
+    fctx.body.push({ op: "local.get", index: asyncOperandLocal });
+    return asyncOperandType;
+  }
+
   const nativeGeneratorExpressionLocal = fctx.nativeGeneratorExpressionValueLocals?.get(expr);
   if (nativeGeneratorExpressionLocal !== undefined) {
     const nativeGeneratorExpressionType = getLocalType(fctx, nativeGeneratorExpressionLocal);

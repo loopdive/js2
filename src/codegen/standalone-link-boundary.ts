@@ -38,6 +38,7 @@ import { CLASS_CONSTRUCT_DISPATCH } from "./standalone-class-construct.js"; // (
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { definedFuncAt } from "./func-space.js";
 import { LINK_BOUNDARY_TO_STRING_TAG } from "./link-boundary-names.js";
+import { STANDALONE_CLASS_INSTANCE_PROTO } from "./standalone-class-instance-proto.js"; // (#6617)
 import type { CodegenContext } from "./context/types.js";
 import type { Instr, ValType } from "../ir/types.js";
 
@@ -78,12 +79,45 @@ export const LINK_BOUNDARY_EXPORTS = Object.freeze({
   // owning module keeps resolution AND receiver binding on the side that owns
   // both.
   methodCall: "__js2wasm_link_method_call",
+  // (#6617) `Object.getPrototypeOf(<instance the provider minted>)`.
+  //
+  // Not derivable from `memberGet`: an instance's [[Prototype]] is not a
+  // property of it, and the consumer cannot ask for one — the link is a
+  // per-class `__tag` fact over a WasmGC struct the consumer has no type for,
+  // exactly the reason `__class_object_of` (#5354) exists on the host lane.
+  // Answering it here is what joins the two halves of the object-identity
+  // graph across the seam: the value this returns IS the object
+  // `NS.C.prototype` already answers (one module global, reached by reference),
+  // so `getPrototypeOf(new NS.C()) === NS.C.prototype` holds by `ref.eq`.
+  getPrototypeOf: "__js2wasm_link_get_prototype_of",
   // (#5406) `Object.prototype.toString` over a value the consumer cannot
   // decode. The name lives in the leaf `link-boundary-names.ts` because the
   // CONSUMER side of this terminal is emitted by `object-proto-tostring.ts`,
   // which this module may not import (it would close a cycle through
   // `object-runtime`).
   toStringTag: LINK_BOUNDARY_TO_STRING_TAG,
+  // (#6624) `Object.isExtensible(<provider-owned value>)` — a class OBJECT
+  // (not an instance) the provider exports is a closed struct in the
+  // consumer's own carrier ladder (`__is_vec_prop_carrier` /
+  // `__is_closure_prop_carrier` / … in `object-integrity-carrier.ts`) only
+  // when the consumer happens to have registered a structurally identical
+  // type of its own; a genuinely foreign class-object shape (the common case
+  // across a real link) matches none of them, so the consumer's own
+  // `__object_isExtensible` fell to its non-object terminal (`false`) for a
+  // value that IS extensible. Same "ask the owner" shape as `getPrototypeOf`.
+  isExtensible: "__js2wasm_link_is_extensible",
+  // (#6625) `Object.getPrototypeOf(<provider-owned CLASS VALUE>)` — a BOOLEAN
+  // "ask the owner", not a value. Unlike `getPrototypeOf`/`isExtensible`
+  // above, the correct answer (`Function.prototype`) must be produced by the
+  // CONSUMER's own read of it: a value handed back from the provider would
+  // carry the PROVIDER's own `%Function.prototype%` singleton, a DIFFERENT
+  // externref from the consumer's, so `=== Function.prototype` in the
+  // consumer's own test would fail by identity even though both sides are
+  // "correct" in isolation (the same reasoning #6609/S22 used for an ordinary
+  // function value, reusing `__is_callable` rather than asking the provider
+  // for the value). This terminal only tells the consumer WHICH answer to
+  // produce locally.
+  isClassObject: "__js2wasm_link_is_class_object",
 } as const);
 
 /** The internal terminal each boundary name wraps, and its signature. */
@@ -112,7 +146,30 @@ const TERMINALS: ReadonlyArray<{ export: string; internal: string; params: ValTy
     internal: LINK_BOUNDARY_EXPORTS.toStringTag,
     params: [EXTERNREF],
   },
+  {
+    export: LINK_BOUNDARY_EXPORTS.getPrototypeOf,
+    internal: LINK_BOUNDARY_EXPORTS.getPrototypeOf,
+    params: [EXTERNREF],
+  },
+  {
+    export: LINK_BOUNDARY_EXPORTS.isExtensible,
+    internal: LINK_BOUNDARY_EXPORTS.isExtensible,
+    params: [EXTERNREF],
+    results: [I32],
+  },
+  {
+    export: LINK_BOUNDARY_EXPORTS.isClassObject,
+    internal: LINK_BOUNDARY_EXPORTS.isClassObject,
+    params: [EXTERNREF],
+    results: [I32],
+  },
 ];
+
+/** The heap type index `ref.test`/`ref.cast` use for the internal `eq` type —
+ * the SAME magic constant `typeof-natives-finalize.ts`'s `classObjectIdentityArms`
+ * uses, duplicated here rather than imported to avoid a cross-module cycle
+ * through `object-runtime.ts` (this module is itself an input to that one). */
+const EQ_HEAP_TYPE = -19;
 
 /** A module compiled as a linked provider whose consumer is wasm, not JS. */
 function isWasmConsumedStandaloneProvider(ctx: CodegenContext): boolean {
@@ -123,6 +180,16 @@ function isWasmConsumedStandaloneProvider(ctx: CodegenContext): boolean {
 function peerNamespaces(ctx: CodegenContext): string[] {
   if (!ctx.standalone || isWasmConsumedStandaloneProvider(ctx)) return [];
   return [...ctx.linkedNamespaces].filter((name) => name.startsWith("js2wasm:npm:")).sort();
+}
+
+/**
+ * (#6640) Does this module CONSUME a standalone wasm provider? The one
+ * predicate every consumer-only arm outside this file needs; `peerNamespaces`
+ * itself stays private because its ORDER (first namespace wins) is an internal
+ * detail of the terminal wiring.
+ */
+export function isStandaloneLinkConsumer(ctx: CodegenContext): boolean {
+  return peerNamespaces(ctx).length > 0;
 }
 
 /**
@@ -271,6 +338,45 @@ export function emitStandaloneLinkBoundaryTerminals(ctx: CodegenContext, registe
   if (!ctx.funcMap.has(LINK_BOUNDARY_EXPORTS.toStringTag)) {
     registerNative(LINK_BOUNDARY_EXPORTS.toStringTag, [EXTERNREF], [EXTERNREF], [], [{ op: "ref.null.extern" }]);
   }
+  // (#6617) Reserved with the miss body ("not mine") for the same reason: the
+  // dispatcher it wraps (`__std_class_instance_proto`) is minted at finalize,
+  // over the class set and the prototype builders as they end up. A provider
+  // with no compiled class keeps this body and the consumer keeps its own
+  // (null) answer — which is today's behaviour, unchanged.
+  if (!ctx.funcMap.has(LINK_BOUNDARY_EXPORTS.getPrototypeOf)) {
+    registerNative(LINK_BOUNDARY_EXPORTS.getPrototypeOf, [EXTERNREF], [EXTERNREF], [], [{ op: "ref.null.extern" }]);
+  }
+  // (#6624) `__object_isExtensible` (the general, non-`_obj` variant) already
+  // has a body by this point — `buildObjectDescriptorHelpers` runs earlier in
+  // `ensureObjectRuntime` — so this is a direct forward, not a reserve+fill
+  // pair like `callableKind`/`getPrototypeOf` above (which depend on helpers
+  // that only materialise at finalize). A module whose own `__object_isExtensible`
+  // is absent (host mode; never happens for a standalone provider, since
+  // `buildObjectIntegrityPredicates` is unconditional there) keeps the `0`
+  // refusal, matching the consumer's own pre-fix answer exactly.
+  if (!ctx.funcMap.has(LINK_BOUNDARY_EXPORTS.isExtensible)) {
+    const isExtensibleIdx = ctx.funcMap.get("__object_isExtensible");
+    registerNative(
+      LINK_BOUNDARY_EXPORTS.isExtensible,
+      [EXTERNREF],
+      [I32],
+      [],
+      isExtensibleIdx === undefined
+        ? [{ op: "i32.const", value: 0 }]
+        : [
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: isExtensibleIdx },
+          ],
+    );
+  }
+  // (#6625) Reserved with the refusal body ("not one of mine"). Filled at
+  // finalize from `ctx.classObjectGlobals` — the SAME per-class singleton
+  // registry `STANDALONE_CLASS_INSTANCE_PROTO`'s own class-object arm reads —
+  // which is only complete once every class declaration in this module has
+  // been compiled.
+  if (!ctx.funcMap.has(LINK_BOUNDARY_EXPORTS.isClassObject)) {
+    registerNative(LINK_BOUNDARY_EXPORTS.isClassObject, [EXTERNREF], [I32], [], [{ op: "i32.const", value: 0 }]);
+  }
   if (!ctx.funcMap.has(LINK_BOUNDARY_EXPORTS.construct)) {
     registerNative(
       LINK_BOUNDARY_EXPORTS.construct,
@@ -312,6 +418,82 @@ function fillStandaloneLinkBoundaryLateTerminals(ctx: CodegenContext): void {
       { op: "i32.const", value: 1 },
       { op: "i32.shl" },
       { op: "i32.or" },
+    ];
+  }
+
+  // (#6625) The class-object identity ladder: ref.eq against every one of
+  // THIS module's own class-object singletons. Deliberately NOT a `ref.test`
+  // over the struct type — a class object and its instances share one struct
+  // type AND `__tag` (#3976), so only identity tells them apart, exactly the
+  // reasoning `classObjectIdentityArms` (`typeof-natives-finalize.ts`) and the
+  // class-object arm in `standalone-class-instance-proto.ts` already use. A
+  // singleton that has not been materialised yet holds a null global, which
+  // `ref.eq` against a non-null receiver is simply false — the arm degrades to
+  // "not one of mine" rather than a wrong match.
+  //
+  // BASE classes only (no `extends`): a derived class's [[Prototype]] is its
+  // PARENT's class-object value (§15.7.14 step 6), not %Function.prototype% —
+  // matching this predicate for one would make the CONSUMER answer
+  // %Function.prototype%, a NEW wrong answer (worse than today's `null`, which
+  // at least keeps `gPO(D) !== Function.prototype` true by accident). The
+  // parent-aware answer is an unreduced residual (plan/issues/6625-*.md).
+  const isClassObjectIdx = ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.isClassObject);
+  const isClassObjectFn = isClassObjectIdx === undefined ? undefined : definedFuncAt(ctx, isClassObjectIdx);
+  const classObjectGlobalIdxs = [...ctx.classObjectGlobals.entries()]
+    .filter(([className]) => !ctx.classParentMap.has(className))
+    .map(([, globalIdx]) => globalIdx)
+    .sort((a, b) => a - b);
+  if (isClassObjectFn && classObjectGlobalIdxs.length > 0) {
+    const anyLocalIdx = 1 + isClassObjectFn.locals.length;
+    isClassObjectFn.locals.push({ name: "__any", type: { kind: "anyref" } });
+    const arms: Instr[] = [];
+    for (const globalIdx of classObjectGlobalIdxs) {
+      arms.push(
+        { op: "global.get", index: globalIdx },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: anyLocalIdx },
+            { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+            { op: "global.get", index: globalIdx },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+            { op: "ref.eq" },
+            { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
+          ],
+        },
+      );
+    }
+    isClassObjectFn.body = [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "local.set", index: anyLocalIdx },
+      { op: "local.get", index: anyLocalIdx },
+      { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+      { op: "if", blockType: { kind: "empty" }, then: arms },
+      { op: "i32.const", value: 0 },
+    ];
+  }
+
+  // (#6617) The prototype terminal is a thin forward to the module's own
+  // class-instance dispatcher, and deliberately NOT to `__getPrototypeOf`.
+  // The consumer reaches this only after its own answer was null, so anything
+  // this returns REPLACES a null — and `__getPrototypeOf` would then answer the
+  // PROVIDER's `%Object.prototype%` for any provider-owned plain object, a
+  // foreign intrinsic the consumer can never name and never compare equal to
+  // its own. The dispatcher answers for exactly one shape, a tagged instance of
+  // one of this module's classes, which is the shape whose prototype the
+  // consumer genuinely cannot reach.
+  const prototypeTerminalIdx = ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.getPrototypeOf);
+  const prototypeTerminalFn = prototypeTerminalIdx === undefined ? undefined : definedFuncAt(ctx, prototypeTerminalIdx);
+  const classInstanceProtoIdx = ctx.funcMap.get(STANDALONE_CLASS_INSTANCE_PROTO);
+  if (prototypeTerminalFn && classInstanceProtoIdx !== undefined) {
+    prototypeTerminalFn.body = [
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: classInstanceProtoIdx },
     ];
   }
 
@@ -431,6 +613,8 @@ export function standaloneLinkBoundaryPeerIndices(ctx: CodegenContext): {
   memberGet?: number;
   objectKeys?: number;
   methodCall?: number;
+  getPrototypeOf?: number;
+  isExtensible?: number;
 } {
   const namespace = peerNamespaces(ctx)[0];
   if (namespace === undefined) return {};
@@ -456,6 +640,8 @@ export function standaloneLinkBoundaryPeerIndices(ctx: CodegenContext): {
     memberGet: ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.memberGet),
     objectKeys: ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.objectKeys),
     methodCall: ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.methodCall),
+    getPrototypeOf: ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.getPrototypeOf),
+    isExtensible: ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.isExtensible),
   };
 }
 
@@ -471,8 +657,35 @@ export function standaloneLinkBoundaryPeerIndices(ctx: CodegenContext): {
  */
 export function standaloneLinkBoundaryPeerIndex(
   ctx: CodegenContext,
-  key: "apply" | "callableKind" | "construct",
+  key: "apply" | "callableKind" | "construct" | "isClassObject",
 ): number | undefined {
   if (peerNamespaces(ctx).length === 0) return undefined;
   return ctx.funcMap.get(LINK_BOUNDARY_EXPORTS[key]);
+}
+
+/**
+ * (#6643) `1` when `local.get <valueLocal>` is a value the linked PROVIDER
+ * reports as having [[Call]] — `undefined` when this module consumes no
+ * standalone provider, in which case the caller must emit NOTHING and keep
+ * whatever it does today.
+ *
+ * Leaves exactly one `i32` on the stack, and reads bit 0 only: a provider
+ * CLASS publishes construct-only (bit 1), and §20.2.3 step 2 asks about
+ * [[Call]], not about "is a function".
+ *
+ * Exists because the consumer's own `__typeof_function` answers 0 for every
+ * provider-owned callable — it tests THIS module's carrier shapes — so
+ * `%Function.prototype%.{call,apply,bind}` rejected `Temporal.PlainDate.from`
+ * outright with "called on non-callable receiver" (measured, `.tmp/s65`
+ * probe p18 against the real `@js-temporal/polyfill` provider).
+ */
+export function linkedForeignCallableBitInstrs(ctx: CodegenContext, valueLocal: number): Instr[] | undefined {
+  const callableKindIdx = standaloneLinkBoundaryPeerIndex(ctx, "callableKind");
+  if (callableKindIdx === undefined) return undefined;
+  return [
+    { op: "local.get", index: valueLocal },
+    { op: "call", funcIdx: callableKindIdx },
+    { op: "i32.const", value: 1 },
+    { op: "i32.and" },
+  ];
 }

@@ -136,6 +136,7 @@ import {
   getOrRegisterVecType,
   isTaViewTypeIdx,
   TA_CTOR_KINDS,
+  taCtorIdentityTestInstrs,
   taCtorKindOf,
 } from "./registry/types.js";
 import {
@@ -219,6 +220,7 @@ import {
 import { tryEmitBuiltinStaticExpandoRead } from "./builtin-static-expando.js"; // (#4639 C2) ordinary [[Get]] tail
 import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } from "./global-environment.js";
 import { isInlineTaggedTemplateParameter } from "./tagged-template-parameter.js";
+import { linkBrandRoleOf } from "./shape-brand.js";
 import { emitDynamicTemplateRawRead, isDynamicTemplateRawRead } from "./template-raw-dynamic.js";
 
 /**
@@ -413,8 +415,11 @@ export function tryConstructorPrototypeIdentity(
           fctx.body = saved;
           if (ok) int8Proto = emitted;
         }
-        fctx.body.push({ op: "local.get", index: anyLocal });
-        fctx.body.push({ op: "ref.test", typeIdx: ctx.taCtorTypeIdx });
+        // (#5383 S39 R-other-bare-ref-test) See registry/types.ts's
+        // `taCtorIdentityTestInstrs` doc — a field-less class's compiled root
+        // shares `$__ta_ctor`'s shape (#6620), so a bare `ref.test` here
+        // misclassified it too.
+        fctx.body.push(...taCtorIdentityTestInstrs(ctx, [{ op: "local.get", index: anyLocal }]));
         fctx.body.push({
           op: "if",
           blockType: { kind: "val", type: { kind: "externref" } },
@@ -3777,7 +3782,8 @@ export function tryNamespaceConstantAndSymbolReads(
       // `__box_number`, so `new WeakSet([Symbol.hasInstance])` stores the
       // symbol rather than the NUMBER 2 (its well-known id). The js-host lane
       // stays unbranded for the #4626 index-shift reason recorded there.
-      return usesNativeSymbolProvider(ctx) ? { kind: "i32", symbol: true } : { kind: "i32" };
+      const branded = usesNativeSymbolProvider(ctx) || linkBrandRoleOf(ctx) !== undefined; // (#6482 r2)
+      return branded ? { kind: "i32", symbol: true } : { kind: "i32" };
     }
   }
 

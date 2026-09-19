@@ -316,7 +316,18 @@ export function wireCompiledInstance(
   // lone module must keep the registry empty so every read stays byte-identical.
   linked = false,
 ): void {
-  const setInstance = (imports as { __setInstance?: (instance: WebAssembly.Instance) => void }).__setInstance;
-  setInstance?.(instance);
+  // (#6482) `buildImports` publishes the consumer's lifecycle hook as
+  // `setInstance`; only provider import objects carry the `__setInstance`
+  // alias (see `buildProviderImportObject`). Reading the alias alone left every
+  // in-process linked lane (smoke script, issue-3451/6475/6476/6477 suites)
+  // running `__module_init` with `getExports()` undefined — the vec
+  // defineProperty path then bailed to the sidecar and the provider read the
+  // stale element. The sharded worker was unaffected because it calls
+  // `importObj.setInstance` itself before `__module_init`.
+  const hooks = imports as {
+    __setInstance?: (instance: WebAssembly.Instance) => void;
+    setInstance?: (instance: WebAssembly.Instance) => void;
+  };
+  (hooks.__setInstance ?? hooks.setInstance)?.(instance);
   if (linked) registerLinkedConsumerModule(instance.exports as Record<string, Function>);
 }

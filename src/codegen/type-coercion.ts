@@ -15,7 +15,7 @@ import { popBody, pushBody } from "./context/bodies.js";
 import type { ClosureInfo, CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addUnionImports, ensureAnyHelpers, ensureAnyToExternHelper, isAnyValue } from "./index.js";
-import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "./any-helpers.js"; // (#2106 S1 / #2864 wave-2 S1)
+import { canonicalUndefinedExternInstrs, ensureAnyFromExternHelper, undefinedExternInstrs } from "./any-helpers.js"; // (#2106 S1 / #2864 wave-2 S1 / #6631)
 import { ensureAnyToStringHelper, stringConstantExternrefInstrs } from "./native-strings.js";
 import { buildThrowJsErrorInstrs } from "./expressions/helpers.js";
 import { ensureWrapperStringValueHelper } from "./object-runtime.js";
@@ -27,6 +27,7 @@ import { reserveObjLitToPrimitive } from "./objlit-to-primitive.js"; // (#3481 s
 import { buildRecordFromExternref } from "./record-from-host-object.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
+import { ensureCanonicalUndefinedExtern } from "./undefined-extern-import.js"; // (#6419/#6492 r6)
 import { f64HoleToExternrefInstrs } from "./vec-f64-hole-coercion.js";
 import {
   elemGetOp,
@@ -2153,6 +2154,32 @@ function emitVecToVecBody(
       },
     );
     releaseTempLocal(fctx, elemLocal);
+  } else if (
+    needsCoerce &&
+    srcKind === "externref" &&
+    isAnyValue(dstVec.elemType, ctx) &&
+    ensureAnyFromExternHelper(ctx) !== undefined
+  ) {
+    // (#6631) A heterogeneous-primitive-union vec (e.g. `(string | number)[]`
+    // from `["x", 1976]`) widens its raw-externref elements (each boxed by its
+    // OWN static type — `__box_number`/`__box_boolean`/native-string — never a
+    // tagged `$AnyValue`) into this vec's `$AnyValue` element slot. The generic
+    // `coerceType` path below routes through `boxToAny`'s externref arm, whose
+    // `undefinedSingleton` default (`__any_box_extern_s1`) only recovers NULL
+    // and the UNDEF_F64-sentinel `$BoxedNumber`; every other externref —
+    // including a perfectly ordinary boxed number or boolean — falls to the
+    // #1888 tag-5 "string" lie. That made `typeof row[1]` report "string" for
+    // the NUMBER `1976` (and `typeof` on ANY element of such a literal, since
+    // the corruption happens once, at construction, not per-read).
+    //
+    // `ensureAnyFromExternHelper` (the #3055 fix for the `===`/`==` operand
+    // seam) classifies `$BoxedNumber`/i31/`$BoxedBoolean` BEFORE falling back
+    // to tag-5, so it recovers the correct tag for every element this literal
+    // can produce. Scoped to exactly this call site (mirrors #3055's own
+    // per-site substitution) — `boxToAny`'s shared default is untouched, so
+    // the −788/−794 standalone regression that flipping it globally caused
+    // cannot recur here.
+    fctx.body.push({ op: "call", funcIdx: ensureAnyFromExternHelper(ctx)! });
   } else if (needsCoerce) {
     coerceType(ctx, fctx, readElemType, dstVec.elemType);
   }
@@ -3248,6 +3275,24 @@ export function coerceType(
   // f64 → externref (box number)
   if (from.kind === "f64" && to.kind === "externref") {
     addUnionImports(ctx);
+    // (#6492 round 6) The sentinel arm below resolves the lane's canonical
+    // `undefined` through `canonicalUndefinedExternInstrs`, which is READ-ONLY
+    // by design and falls back to `ref.null.extern` — JS **`null`** — when
+    // `__get_undefined` is not registered yet. That fallback is not a fallback
+    // here: it changes the VALUE. Measured on the linked test262 lane, where a
+    // body-only compile unit has no other reason to import it,
+    // `for await (let { w: [x, y, z] = [4, 5, 6] } of [{ w: [7, undefined,] }])`
+    // bound `y` to `null` (`typeof y === "object"`) while the honest whole
+    // assembly — whose harness prefix imports `__get_undefined` long before
+    // this site — bound `undefined`.
+    //
+    // It MUST run before `__box_number`'s index is read: registering an import
+    // shifts func indices, and `flushLateImportShifts` remaps already-EMITTED
+    // instructions, not a `funcIdx` already captured in a local. Gated on the
+    // brand so every other f64 box is byte-identical, and `ensureCanonical…`
+    // is itself a no-op on the standalone/native-strings lanes and after the
+    // #1984 index-space freeze.
+    if (from.undefSentinel === true) ensureCanonicalUndefinedExtern(ctx, fctx);
     const funcIdx = ctx.funcMap.get("__box_number");
     // (#2864 wave-2 S1) UNDEF-SENTINEL-BRANDED f64 (`{kind:"f64",
     // undefSentinel:true}`) — an f64 read out of a slot that genuinely holds

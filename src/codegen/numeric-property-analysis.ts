@@ -293,6 +293,40 @@ const STRING_STRING_METHODS: ReadonlySet<string> = new Set([
 /** Global functions whose result is always a number. */
 const NUMERIC_GLOBAL_CALLS: ReadonlySet<string> = new Set(["parseInt", "parseFloat", "Number"]);
 
+/**
+ * (#6627) Well-known ES global NAMESPACE objects — never a same-named user
+ * INSTANCE the `numericFunctions` name-keyed heuristic below is meant for.
+ *
+ * `<recv>.m(…)` with a bare-identifier `recv` falls through to
+ * `sets.numericFunctions.has(m)` — "every visible function named `m` anywhere
+ * in the program returns a number" (#4122) — which is sound for a genuine
+ * user instance (`p.inc()`) but not for a static namespace call: `Reflect.get`
+ * is not "some class's `get` method", it is THE global `Reflect.get`, whose
+ * own return is never a plain number. Missing this exclusion created a
+ * self-reinforcing fixpoint: an object-literal Proxy trap named exactly `get`
+ * (`get(target,key,receiver){ return Reflect.get(...); }`, the shape
+ * `TemporalHelpers.propertyBagObserver` and countless other Proxy handlers
+ * use) starts `numericFunctions` with "get" seeded true; `Reflect.get(...)`'s
+ * own return then asks `numericFunctions.has("get")`, which is STILL true
+ * (the trap's own body hasn't been decided yet), so it answers `true`, which
+ * is exactly what keeps the trap's own return numeric — "get" never gets
+ * removed by its own single disqualifying use. `Math`/`Date` already get a
+ * narrow explicit exemption above; this generalises it to the whole
+ * namespace-call family instead of special-casing each new namespace.
+ */
+const NON_INSTANCE_GLOBAL_NAMESPACES: ReadonlySet<string> = new Set([
+  "Reflect",
+  "JSON",
+  "Object",
+  "Array",
+  "String",
+  "Number",
+  "Symbol",
+  "Promise",
+  "Proxy",
+  "Intl",
+]);
+
 function unwrap(expr: ts.Expression): ts.Expression {
   let current = expr;
   while (
@@ -1078,7 +1112,12 @@ function makeProver(
         // exists for `this.m()`, whose receiver is equally unconstrained at
         // runtime. Restricted to a bare identifier receiver so member chains
         // (`a.b.inc()`) and call results (`f().inc()`) keep the old answer.
-        if (ts.isIdentifier(recv)) return sets.numericFunctions.has(callee.name.text);
+        //
+        // (#6627) EXCEPT a well-known global namespace — `Reflect.get(...)` is
+        // never "some class's `get` method"; see `NON_INSTANCE_GLOBAL_NAMESPACES`.
+        if (ts.isIdentifier(recv) && !NON_INSTANCE_GLOBAL_NAMESPACES.has(recv.text)) {
+          return sets.numericFunctions.has(callee.name.text);
+        }
       }
       return false;
     }

@@ -7,6 +7,7 @@ import { propertyValueIsAccessorObjectLiteral } from "./accessor-value-field.js"
 import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { emitToBoolean } from "./coercion-engine.js";
+import { interfaceHasClassImplementer } from "./interface-class-implementer.js";
 import {
   emitNativeErrorBoundaryBridge,
   emitWasiErrorConstructor,
@@ -182,6 +183,7 @@ import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-sessi
 import { sourceFunctionHandleForDeclaration } from "./program-abi-source-callable-planning.js";
 import { stripHostBridgeExports } from "./host-bridge-exports.js";
 import { publishStandaloneLinkBoundaryExports } from "./standalone-link-boundary.js"; // (#5383 S2d)
+import { finalizeStandaloneLinkReversePeer } from "./standalone-link-reverse-peer.js"; // (#5383 S17)
 import { fillLinkBoundaryToStringTagTerminal } from "./link-boundary-tostring.js"; // (#5406)
 import { eliminateDeadLayoutAndPlanProgramAbi } from "./program-abi-finalization.js";
 import { emitDataStructHostBridgeManifest } from "./data-struct-host-bridge.js";
@@ -289,7 +291,10 @@ import { ensureMapRuntimeTypes } from "./map-runtime.js";
 import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
 import { fillClassProtoLookupArm } from "./class-proto-lookup.js"; // (#5195 Step 1.7)
+import { classArmClaimInstrs, classArmTagCondition } from "./class-arm-tag-guard.js"; // (#4618 / #6608) nominal `__tag` arm guard
 import { fillClassPrototypeReadArm } from "./standalone-class-prototype-read.js"; // (#6457)
+import { fillStandaloneObjectCreateClassInstance } from "./standalone-object-create-class-instance.js"; // (#6464)
+import { fillStandaloneClassInstanceProtoArm } from "./standalone-class-instance-proto.js"; // (#6617)
 import { mintStandaloneClassProtoBuilders } from "./standalone-class-dyn-member.js"; // (#5383 S2h)
 import { mintStandaloneClassStaticBuilders } from "./standalone-class-dyn-static.js"; // (#5383 S2i)
 import { scanForArrayHoles, ensureHoleType } from "./array-holes.js"; // (#2001 S1)
@@ -319,6 +324,7 @@ import { fillRuntimeEvalIntrinsicFunctionOwnProps } from "./runtime-eval-intrins
 import {
   ensureNativeIteratorRuntime,
   fillAnyIterNext,
+  prependIterRecPrototypeArm,
   fillIterResultObject,
   fillNativeIteratorLateArms,
   fillIteratorMethodPresent,
@@ -400,7 +406,14 @@ import { unshiftNativeProtoHasOwnArms } from "./native-proto-own-props.js"; // (
 import { unshiftRegExpAccessorSetGuard } from "./regexp-accessor-set-guard.js"; // (#2875 w4-F)
 import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
 import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-read.js"; // (#4248) inherited method value
+import { unshiftExternGetIterRecArm } from "./iterator-proto-next.js"; // (#6484 S2) record property reads
 import { unshiftExternMethodCallProtoArm } from "./native-proto-method-call.js"; // (#4619) proto-receiver method CALL
+import {
+  noteNumberPrimitiveMethodDemand,
+  prepareNumberPrimitiveMethodCallArm,
+  unshiftExternMethodCallNumberPrimitiveArm,
+} from "./number-primitive-method-call.js"; // (#5383 S23 / #6610) number-PRIMITIVE receiver method CALL
+import { unshiftExternMethodCallBigIntPrimitiveArm } from "./bigint-primitive-to-string.js"; // (#6642 S62) bigint-PRIMITIVE receiver method CALL
 import { unshiftExternMethodCallTaDynViewArm } from "./ta-dyn-method-call.js"; // (#5194 r3-1) dyn-view receiver method CALL
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillProtoFunctionValue } from "./proto-function-value.js"; // (#4637 A1) function value in a [[Prototype]] slot
@@ -443,7 +456,7 @@ import { inlineExternGetCallSites } from "./extern-get-inline-ic.js"; // (#4157)
 import { inlineMemberSetCallSites } from "./member-set-inline-ic.js"; // (#4157) write-side member IC
 import { inlineCallDispatchSites } from "./call-dispatch-ic.js"; // (#4157) __call_m_* devirtualization
 import { inlineFlatStrCallSites } from "./flat-str-ic.js"; // (#4157) __str_flatten/__str_equals call-site fast paths
-import { brandCollidingShapeTypes } from "./shape-brand.js";
+import { brandCollidingShapeTypes, linkBrandRoleOf } from "./shape-brand.js";
 import {
   addImport,
   addStringConstantGlobal,
@@ -499,6 +512,7 @@ import {
 } from "./stack-balance.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { ensureRegexMatchVecType } from "./native-regex.js";
+import { nullableNativeStringElemBindingType } from "./nullable-native-string-elem-binding.js"; // (#6603)
 import { STANDALONE_REGEXP_REFLECTION_PROPS } from "./regexp-standalone.js";
 import { ensureVecElemSet, ensureVecNewSized } from "./vec-elem-set.js";
 
@@ -528,6 +542,12 @@ import { finalizeForwardClassCallableAbis } from "./class-callable-abi.js";
 import { finalizeForwardClassFieldLayouts } from "./class-field-layout.js";
 import { externrefBackedClassValType } from "./externref-backed-class-rep.js";
 import { classMemberFuncKey, fnctorAncestorOfClass, moduleHasFnctorSubclass } from "./class-member-keys.js"; // (#1983 / #3123)
+import { collectAccessorLiteralReturnCarrierTypes } from "./accessor-literal-return-carrier.js"; // (#6614) accessor-literal return slot
+import {
+  armExternF64ArgTypeGuardForLinkedProvider,
+  armExternRefArgTypeGuardForLinkedProvider,
+} from "./extern-arg-marshal.js"; // (#6615) lenient ref-argument marshal; (#6619) its f64 twin
+import { moduleHasF64TypedConstructFormal, moduleHasRefTypedConstructFormal } from "./standalone-class-construct.js"; // (#6615/#6619) their arming gates
 import {
   applyShapeInference,
   collectDeclarations,
@@ -579,7 +599,10 @@ import {
   irNativeNumberToStringAvailable,
 } from "./number-format-native.js"; // #4462/#4576
 import { emitJsonQuoteString } from "./json-runtime.js";
-import { fillStandaloneObjectProtoToStringFnctorArms } from "./object-proto-tostring-native.js";
+import {
+  fillStandaloneObjectProtoToStringFnctorArms,
+  fillIterRecObjectProtoToStringArms,
+} from "./object-proto-tostring-native.js";
 import { isSyntheticStructName, exportFunc } from "./emit-helpers.js"; // (#3272) DRY helpers
 import {
   hasExportModifier,
@@ -5117,7 +5140,7 @@ function resolveAndRecordShapeStamping(ctx: CodegenContext): void {
 }
 
 function resolveAndRecordShapeBranding(ctx: CodegenContext): void {
-  const affected = brandCollidingShapeTypes(ctx.mod, ctx.noBrandShapeTypes);
+  const affected = brandCollidingShapeTypes(ctx.mod, ctx.noBrandShapeTypes, linkBrandRoleOf(ctx));
   ctx.programAbiSession?.recordShapeBranding(affected);
 }
 
@@ -5229,6 +5252,8 @@ export function generateModule(
   const sourceFileInternal = ast.sourceFile as ts.SourceFile & { externalModuleIndicator?: ts.Node };
   ctx.sourceIsModule = sourceFileInternal.externalModuleIndicator !== undefined;
   recordSourceGlobalEnvironment(ctx, ast.sourceFile);
+  // (#5383 S23 / #6610) Demand for the number-PRIMITIVE method-call arm.
+  noteNumberPrimitiveMethodDemand(ctx, ast.sourceFile);
   // (#2138) Populated only under JS2WASM_IR_FIRST=1 — the top-level functions
   // whose legacy body emission was skipped (IR owns the slot). Declared out
   // here so the return statement below (outside the try) can surface it.
@@ -5431,6 +5456,10 @@ export function generateModule(
     // and after the subview / ObjVecArr reservations so the type-table prefix is
     // already stable.
     collectDynamicObjectReturnCarrierTypes(ctx, ast.checker, ast.sourceFile);
+    // (#6614) Same relative position, same reason: the return type of any
+    // function-like that hands out an accessor-bearing object literal must be
+    // known to be externref BEFORE any binding is typed. Standalone/WASI only.
+    collectAccessorLiteralReturnCarrierTypes(ctx, ast.checker, ast.sourceFile);
     reserveFnctorStructTypes(ctx);
 
     // $AnyValue struct type is now registered lazily via ensureAnyValueType()
@@ -6006,6 +6035,12 @@ export function generateModule(
       );
     }
 
+    // (#6615) Same post-bodies arming as the multi-source path — see
+    // `armExternRefArgTypeGuardForLinkedProvider`.
+    if (moduleHasRefTypedConstructFormal(ctx)) armExternRefArgTypeGuardForLinkedProvider(ctx);
+    // (#6619) Its f64 twin, same gate shape.
+    if (moduleHasF64TypedConstructFormal(ctx)) armExternF64ArgTypeGuardForLinkedProvider(ctx);
+
     // Fixup pass: reconcile struct.new argument counts with actual struct field counts.
     // Dynamic field additions during expression compilation can add fields to struct types
     // after the constructor's struct.new was already emitted (#516).
@@ -6221,6 +6256,8 @@ export function generateModule(
     // fully-armed `__iterator_next`.
     fillIterResultObject(ctx);
     fillAnyIterNext(ctx);
+    // (#6484 S3 review) `%ArrayIteratorPrototype%` for a kind-VEC `$__IterRec`.
+    prependIterRecPrototypeArm(ctx);
 
     // (#2922) Rebuild `__combinator_to_vec`'s user-iterable arm with the same
     // closed-struct dispatchers (identical five-dispatcher condition, so the
@@ -6538,14 +6575,28 @@ export function generateModule(
     // prototype-lookup cache hit arm ahead of the ladder arms unshifted above.
     // (#4223) BEFORE the cache arm (which must stay last): answer
     // `<wrapper>.constructor` from the builtin ctor carrier.
+    // (#5383 S23 / #6610) Materialize `%Number.prototype%` BEFORE the proto
+    // member ladder below is assembled from the minted/seeded brands.
+    prepareNumberPrimitiveMethodCallArm(ctx);
     unshiftExternGetWrapperCtorArm(ctx);
     // (#4248) §21.1.5 — an inherited builtin-proto METHOD read off a wrapper
     // instance (or off the prototype through a binding) must yield the same
     // singleton the static `<Builtin>.prototype.<m>` read does.
     unshiftExternGetProtoMethodArm(ctx);
+    // (#6484 S2) A `$__IterRec` has no own properties — resolve every read off
+    // one through `__iter_rec_proto`. No-op unless the module demanded it.
+    unshiftExternGetIterRecArm(ctx);
     // (#4619) The CALL twin, which delegates to `__extern_get` — so it must
     // run after the read arm above. See native-proto-method-call.ts.
     unshiftExternMethodCallProtoArm(ctx);
+    // (#5383 S23 / #6610) The number-PRIMITIVE twin — same delegation to
+    // `__extern_get`, so it must also run after the read arm above. See
+    // number-primitive-method-call.ts.
+    unshiftExternMethodCallNumberPrimitiveArm(ctx);
+    // (#6642 S62) The bigint-PRIMITIVE twin — §21.2.3.3 answered off the
+    // `$BigInt` carrier's i64. It resolves by NAME (no `%BigInt.prototype%`
+    // brand exists), so it is independent of the `__extern_get` arms above.
+    unshiftExternMethodCallBigIntPrimitiveArm(ctx);
     // (#5194 r3-1) The `$__ta_dyn_view` twin: a `%TypedArray%.prototype` method
     // called on a dynamically-constructed view reached through an `any`
     // receiver. Narrow by construction — it claims only names whose native
@@ -6750,6 +6801,14 @@ export function generateModule(
     // in front of the sidecar delegation (which would only miss), behind #802's
     // dynamic-proto arm, which must keep the front slot.
     fillClassPrototypeReadArm(ctx);
+    // (#6464) The `Object.create(<value>.prototype)` dispatcher, reserved at its
+    // call sites and filled here because its body reads `ctx.protoGlobals`.
+    fillStandaloneObjectCreateClassInstance(ctx);
+    // (#6617) `Object.getPrototypeOf(<class instance>)` through a dynamic value.
+    // Same window and the same reason: the builders it calls exist by now, and
+    // #802's marked-root arm must still take the front slot of
+    // `__getPrototypeOf` (the two arm sets are disjoint besides).
+    fillStandaloneClassInstanceProtoArm(ctx);
     fillDynamicProtoHelpers(ctx);
 
     // A separately compiled runtime-eval provider can invoke caller-owned AOT
@@ -6803,6 +6862,7 @@ export function generateModule(
     // the late carrier reservation completed. Fill those ref.test arms in the
     // existing classifier/closure bodies without changing function indices.
     fillStandaloneObjectProtoToStringFnctorArms(ctx);
+    fillIterRecObjectProtoToStringArms(ctx);
 
     // Fill the reserve/fill identity probes used by the fully-dynamic
     // `instanceof` substrate after all builtin carrier globals and native
@@ -7122,6 +7182,12 @@ function finalizeStandaloneTimerCallbackExports(ctx: CodegenContext): void {
   // finalize. A provider that declines keeps the reserved "not mine" body.
   fillLinkBoundaryToStringTagTerminal(ctx);
   publishStandaloneLinkBoundaryExports(ctx);
+  // (#5383 S17 / #6600) The reverse channel's two finalize duties, in the same
+  // post-strip window and for the same reason: the provider publishes its
+  // installer under the ABI name, and the consumer prepends the install call to
+  // `__module_init`. Both resolve through `funcMap`, because every late import
+  // since registration shifted the indices.
+  finalizeStandaloneLinkReversePeer(ctx);
 }
 
 /**
@@ -7738,62 +7804,6 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
   const dispatchTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }], "$call_method_type");
 
   // Helper to emit a method dispatch export
-  // (#4618) Same-shaped same-named sibling classes canonicalize to ONE WasmGC
-  // struct type, so a bare `ref.test` dispatch arm matches BOTH classes'
-  // instances and the first arm wins — the canonical class's instance ran the
-  // SIBLING's method body (react's per-test `class Foo` re-declarations).
-  // When an entry's layout collides with another entry's, guard its arm with
-  // the `__tag` field: own tag plus every DESCENDANT's tag (a parent's arm
-  // must keep matching subclass instances for inherited-method dispatch).
-  // Returns undefined — zero byte change — when no collision exists.
-  const classDispatchTagCondition = (
-    structName: string,
-    typeIdx: number,
-    receiverLocal: number,
-  ): Instr[] | undefined => {
-    const fields = ctx.structFields.get(structName);
-    if (!fields || fields.length === 0 || fields[0]!.name !== "__tag") return undefined;
-    const layoutSig = (n: string): string | undefined => {
-      const fs = ctx.structFields.get(n);
-      return fs?.map((f) => `${f.type.kind}:${(f.type as { typeIdx?: number }).typeIdx ?? ""}`).join(",");
-    };
-    const own = layoutSig(structName);
-    if (own === undefined) return undefined;
-    // Compare against every emitted struct, not only the classes that also
-    // declare this member. A same-layout sibling that does NOT declare the
-    // key is the important negative case: without a tag guard its instance
-    // passes this arm's structural ref.test and appears to inherit an
-    // unrelated sibling-only lifecycle method (React's repeated `class Foo`
-    // tests observed UNSAFE_componentWillMount from a later sibling).
-    const conflict = [...ctx.structFields.keys()].some((name) => name !== structName && layoutSig(name) === own);
-    if (!conflict) return undefined;
-    const ownTag = ctx.classTagMap.get(structName);
-    if (ownTag === undefined) return undefined;
-    const tags = [ownTag];
-    const isDescendantOf = (n: string): boolean => {
-      let cur: string | undefined = ctx.classParentMap.get(n);
-      const seen = new Set<string>();
-      while (cur !== undefined && !seen.has(cur)) {
-        if (cur === structName) return true;
-        seen.add(cur);
-        cur = ctx.classParentMap.get(cur);
-      }
-      return false;
-    };
-    for (const [childName, tag] of ctx.classTagMap) {
-      if (childName !== structName && isDescendantOf(childName) && !tags.includes(tag)) tags.push(tag);
-    }
-    const readTag: Instr[] = [
-      { op: "local.get", index: receiverLocal },
-      { op: "ref.cast", typeIdx },
-      { op: "struct.get", typeIdx, fieldIdx: 0 },
-    ];
-    const cond: Instr[] = [...readTag, { op: "i32.const", value: tags[0]! }, { op: "i32.eq" }];
-    for (const t of tags.slice(1)) {
-      cond.push(...readTag, { op: "i32.const", value: t }, { op: "i32.eq" }, { op: "i32.or" });
-    }
-    return cond;
-  };
 
   const emitMethodDispatch = (
     methodSuffix: string,
@@ -8179,7 +8189,7 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
       // externref: no conversion needed
 
       const tagCond = classMember
-        ? classDispatchTagCondition(entry.structName, entry.typeIdx, receiverAnyLocal)
+        ? classArmTagCondition(ctx, entry.structName, entry.typeIdx, receiverAnyLocal)
         : undefined;
       current = [
         { op: "local.get", index: receiverAnyLocal },
@@ -8691,58 +8701,6 @@ function emitExternrefClassGetterDispatch(ctx: CodegenContext, className: string
  * ref.test cascade. Getters remain self-only; methods additionally publish
  * their declared arity so the host can select an arity-specific bridge.
  */
-// (#4618) Shared tag-guard condition for class member dispatch arms — see the
-// classDispatchTagCondition closure in generateModule for the rationale
-// (same-layout sibling classes canonicalize to ONE WasmGC type; `ref.test`
-// alone matches both). Guards only when the entry's field layout collides
-// with another entry's; own tag plus descendant tags keep inherited-method
-// dispatch working.
-function classArmTagCondition(
-  ctx: CodegenContext,
-  structName: string,
-  typeIdx: number,
-  receiverLocal: number,
-): Instr[] | undefined {
-  const fields = ctx.structFields.get(structName);
-  if (!fields || fields.length === 0 || fields[0]!.name !== "__tag") return undefined;
-  const layoutSig = (n: string): string | undefined => {
-    const fs = ctx.structFields.get(n);
-    return fs?.map((f) => `${f.type.kind}:${(f.type as { typeIdx?: number }).typeIdx ?? ""}`).join(",");
-  };
-  const own = layoutSig(structName);
-  if (own === undefined) return undefined;
-  // A class-member arm must also reject same-layout classes that do not own
-  // this member. Restricting the collision universe to `methodEntries` made a
-  // singleton entry look safe even though a structurally identical sibling
-  // could pass its ref.test and acquire the method.
-  if (![...ctx.structFields.keys()].some((name) => name !== structName && layoutSig(name) === own)) return undefined;
-  const ownTag = ctx.classTagMap.get(structName);
-  if (ownTag === undefined) return undefined;
-  const tags = [ownTag];
-  const isDescendantOf = (n: string): boolean => {
-    let cur: string | undefined = ctx.classParentMap.get(n);
-    const seen = new Set<string>();
-    while (cur !== undefined && !seen.has(cur)) {
-      if (cur === structName) return true;
-      seen.add(cur);
-      cur = ctx.classParentMap.get(cur);
-    }
-    return false;
-  };
-  for (const [childName, tag] of ctx.classTagMap) {
-    if (childName !== structName && isDescendantOf(childName) && !tags.includes(tag)) tags.push(tag);
-  }
-  const readTag: Instr[] = [
-    { op: "local.get", index: receiverLocal },
-    { op: "ref.cast", typeIdx },
-    { op: "struct.get", typeIdx, fieldIdx: 0 },
-  ];
-  const cond: Instr[] = [...readTag, { op: "i32.const", value: tags[0]! }, { op: "i32.eq" }];
-  for (const t of tags.slice(1)) {
-    cond.push(...readTag, { op: "i32.const", value: t }, { op: "i32.eq" }, { op: "i32.or" });
-  }
-  return cond;
-}
 
 function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number, keys: string[]): void {
   const mod = ctx.mod;
@@ -9709,8 +9667,14 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
             ];
 
       return [
-        { op: "local.get", index: anyLocal },
-        { op: "ref.test", typeIdx: entry.typeIdx },
+        // (#6608) NOMINAL claim. This ladder is FIRST-match, and `ref.test` is
+        // structural: with several same-shaped classes each declaring
+        // `toString`, the earliest arm ran for every one of them (measured:
+        // `o.toString()` on a `B` ran `A`'s body and threw A's brand error;
+        // in the compiled Temporal provider it surfaced as
+        // *toString() radix argument must be between 2 and 36*). Byte-identical
+        // when no other emitted struct shares this one's layout.
+        ...classArmClaimInstrs(ctx, entry.structName, entry.typeIdx, anyLocal),
         {
           op: "if",
           blockType: { kind: "val" as const, type: { kind: "externref" as const } },
@@ -10635,7 +10599,19 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     ctx.runtimeEvalCallableBoundaryEnabled = true;
   }
   // Multi-file compilation is linked through import/export module records.
-  ctx.sourceIsModule = true;
+  //
+  // (#6474) …except when the caller says the ENTRY may legitimately be a
+  // script. The linked test262 harness lane compiles a test262 script plus an
+  // ambient-global stub file, and forcing the module goal here silently changed
+  // observable semantics the honest single-file lane gets right: a top-level
+  // `var` became module-scoped rather than a global-object property, top-level
+  // `this` became `undefined`, and an undeclared assignment stopped creating a
+  // global. Under `entryScriptGoal` the goal comes from the entry's own
+  // `externalModuleIndicator`, so a real `import`/`export` still yields a
+  // module. Unset (every other caller) keeps the unconditional `true`.
+  ctx.sourceIsModule = options?.entryScriptGoal
+    ? (multiAst.entryFile as { externalModuleIndicator?: ts.Node }).externalModuleIndicator !== undefined
+    : true;
   // (#3057 multi-source parity) Discover dynamic TypedArray constructors over
   // the complete graph before any shared runtime helper is emitted. A helper
   // in an earlier source file may receive the resulting `$__ta_dyn_view` as
@@ -10901,6 +10877,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
           ctx.arrayIteratorMaybeOverridden = true;
         }
         recordSourceGlobalEnvironment(ctx, sf);
+        // (#5383 S23 / #6610) Demand for the number-PRIMITIVE method-call arm.
+        noteNumberPrimitiveMethodDemand(ctx, sf);
       }
       // (#5139) Second pass: the brand must be final before any slot is rooted.
       for (const sf of multiAst.sourceFiles) reserveArrayProtoIteratorOverrideGlobals(ctx, sf);
@@ -10953,6 +10931,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // graph reserves nothing and stays byte-identical.
     for (const sf of multiAst.sourceFiles) {
       collectDynamicObjectReturnCarrierTypes(ctx, multiAst.checker, sf);
+      // (#6614) Multi-source parity for the accessor-literal return carrier.
+      collectAccessorLiteralReturnCarrierTypes(ctx, multiAst.checker, sf);
     }
     reserveFnctorStructTypes(ctx);
 
@@ -11110,6 +11090,14 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     restoreNativeGeneratorEndState(ctx, nativeGenEndState);
 
     frameStage(ctx, "bodies");
+
+    // (#6615) A linked provider's construct trampolines are driven from ANOTHER
+    // module, so the expression-site arming never fires here. Post-bodies, not
+    // finalize: the throw materialises an error constructor. Gated on a
+    // REF-typed construct formal existing at all.
+    if (moduleHasRefTypedConstructFormal(ctx)) armExternRefArgTypeGuardForLinkedProvider(ctx);
+    // (#6619) Its f64 twin, same gate shape.
+    if (moduleHasF64TypedConstructFormal(ctx)) armExternF64ArgTypeGuardForLinkedProvider(ctx);
 
     // (#1602) Rebuild method-closure trampolines against final method sigs.
     profilePhase("finalize-method-trampolines", () => finalizeMethodTrampolines(ctx));
@@ -11320,14 +11308,22 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // prototype-lookup cache hit arm ahead of the ladder arms unshifted above.
     // (#4223) BEFORE the cache arm (which must stay last): answer
     // `<wrapper>.constructor` from the builtin ctor carrier.
+    profilePhase("prepare-number-primitive-method-call", () => prepareNumberPrimitiveMethodCallArm(ctx));
     profilePhase("unshift-extern-get-wrapper-ctor", () => unshiftExternGetWrapperCtorArm(ctx));
     // (#4248) §21.1.5 — an inherited builtin-proto METHOD read off a wrapper
     // instance (or off the prototype through a binding) must yield the same
     // singleton the static `<Builtin>.prototype.<m>` read does.
     profilePhase("unshift-extern-get-proto-method", () => unshiftExternGetProtoMethodArm(ctx));
+    // (#6484 S2) A `$__IterRec` has no own properties — resolve every read off
+    // one through `__iter_rec_proto`. No-op unless the module demanded that
+    // helper. MUST stay ahead of the cache arm below, which has to remain the
+    // body's PREFIX for the #4157 inline extractor.
+    profilePhase("unshift-extern-get-iter-rec", () => unshiftExternGetIterRecArm(ctx));
     // (#4619) The CALL twin, which delegates to `__extern_get` — so it must
     // run after the read arm above. See native-proto-method-call.ts.
     profilePhase("unshift-extern-method-call-proto", () => unshiftExternMethodCallProtoArm(ctx));
+    profilePhase("unshift-extern-method-call-number-primitive", () => unshiftExternMethodCallNumberPrimitiveArm(ctx));
+    profilePhase("unshift-extern-method-call-bigint-primitive", () => unshiftExternMethodCallBigIntPrimitiveArm(ctx));
     profilePhase("unshift-extern-method-call-ta-dyn-view", () => unshiftExternMethodCallTaDynViewArm(ctx));
     profilePhase("unshift-extern-get-proto-cache", () => unshiftExternGetProtoCacheArm(ctx));
 
@@ -11443,6 +11439,10 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fill-class-proto-lookup", () => fillClassProtoLookupArm(ctx));
     // (#6457) Same position as the twin site above, same reason.
     profilePhase("fill-class-prototype-read", () => fillClassPrototypeReadArm(ctx));
+    // (#6464) Same position and same reason as the twin site above.
+    profilePhase("fill-object-create-class-instance", () => fillStandaloneObjectCreateClassInstance(ctx));
+    // (#6617) See the single-source path — same placement, same reason.
+    profilePhase("fill-class-instance-proto-arm", () => fillStandaloneClassInstanceProtoArm(ctx));
     profilePhase("fill-dynamic-proto-helpers", () => fillDynamicProtoHelpers(ctx));
     profilePhase("fill-runtime-eval-callable-get-arm", () => fillRuntimeEvalCallablePropertyGetArm(ctx));
     profilePhase("fill-runtime-eval-intrinsic-own-props", () => fillRuntimeEvalIntrinsicFunctionOwnProps(ctx));
@@ -11504,6 +11504,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fill-iterator-method-present", () => fillIteratorMethodPresent(ctx));
     profilePhase("fill-iter-result-object", () => fillIterResultObject(ctx));
     profilePhase("fill-any-iter-next", () => fillAnyIterNext(ctx));
+    profilePhase("prepend-iter-rec-prototype-arm", () => prependIterRecPrototypeArm(ctx));
     profilePhase("fill-combinator-to-vec", () => fillCombinatorToVec(ctx));
 
     // Emit __call_fn_0 export for calling zero-arg closures from JS (#851, #1308).
@@ -11593,6 +11594,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
 
     // Same late fnctor-carrier fill on the multi-source finalize path.
     profilePhase("fill-standalone-fnctor-to-string-arms", () => fillStandaloneObjectProtoToStringFnctorArms(ctx));
+    profilePhase("fill-iter-rec-to-string-arms", () => fillIterRecObjectProtoToStringArms(ctx));
 
     // Same reserve/fill identity probes as the single-source pipeline.
     profilePhase("fill-native-dynamic-instanceof", () => fillNativeDynamicInstanceOf(ctx));
@@ -12955,6 +12957,26 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
       if (ctx.classExternrefBackedSet.has(name)) {
         return { kind: "externref" };
       }
+      // (#6634) A NAMED INTERFACE (not a class itself) that also has at least
+      // one CLASS implementer cannot be represented by a single struct type.
+      // `collectInterface` synthesizes the interface's own struct from an
+      // OBJECT-LITERAL-compatible shape (method members become mutable
+      // externref "closure slot" fields) — a class instance never physically
+      // matches that layout (it carries a real vtable-dispatched method, not a
+      // per-instance closure field), so a value flowing through this
+      // interface-typed slot (parameter/return/variable/Record value) that is
+      // ACTUALLY a class instance fails the struct's own `ref.test`/`ref.cast`
+      // guard and silently becomes null — either a wrong answer when the
+      // struct arm happens not to read `this` (#6634 repro13: a
+      // `Record<string, Iface>` holding both a literal and a class instance
+      // always answered the literal) or a null-pointer trap when it does
+      // (#6634 repro9: a SOLE class implementer, `ref.as_non_null` on the
+      // nulled cast). Only a class's OWN type reaches this branch too — guard
+      // with `!ctx.classSet.has(name)` so an actual class instance's type
+      // keeps its real struct carrier unchanged.
+      if (!ctx.classSet.has(name) && interfaceHasClassImplementer(ctx, name)) {
+        return { kind: "externref" };
+      }
       return { kind: "ref", typeIdx: ctx.structMap.get(name)! };
     }
     // (#4149) EMPTY anonymous object shape (`{}` — zero properties, zero call
@@ -12986,6 +13008,25 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // Check anonymous type registry
     const anonName = ctx.anonTypeMap.get(tsType);
     if (anonName && ctx.structMap.has(anonName)) {
+      // (#6634) The checker can hand back the SAME `ts.Type` object for a
+      // named interface reference (`CalImpl`) and an object literal that
+      // structurally realizes it with no extra members (contextual typing
+      // collapses the two) — so `tsType` here may be keyed in `anonTypeMap`
+      // under the LITERAL's registered struct even though `name` is the
+      // interface's own spelled-out name. Apply the same class-implementer
+      // guard as the named-struct branch above using `name` (not `anonName`):
+      // a class implementer's instances never physically match the literal's
+      // "closure slot" struct, so this interface-typed slot must be
+      // externref whenever some known class also implements it.
+      if (
+        name &&
+        name !== "__type" &&
+        name !== "__object" &&
+        !ctx.classSet.has(name) &&
+        interfaceHasClassImplementer(ctx, name)
+      ) {
+        return { kind: "externref" };
+      }
       return { kind: "ref", typeIdx: ctx.structMap.get(anonName)! };
     }
 
@@ -14918,6 +14959,13 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
                   inferLetConstInitializerWasmType(ctx, fctx, decl) ??
                   usageInferredLocalType(ctx, decl) ??
                   resolveWasmType(ctx, varType));
+        // (#6603) LAST step of the cascade, and a post-filter rather than
+        // another arm: it only ever rewrites `ref $anyStr` → `ref_null $anyStr`
+        // for a binding whose initializer reads a NULL-carrying native-string
+        // vec element, so it cannot preempt an arm above it. See
+        // nullable-native-string-elem-binding.ts for why the checker's
+        // non-null `string` is a lie here and why the filter stops at strings.
+        wasmType = nullableNativeStringElemBindingType(ctx, fctx, decl, wasmType);
         // (#3123) A let-binding declared as a FNCTOR-SUBCLASS class instance
         // (`class C extends F`, F a top-level plain function) that is
         // REASSIGNED with another static type can hold a HOST object at

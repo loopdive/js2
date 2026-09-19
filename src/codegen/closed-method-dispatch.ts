@@ -54,6 +54,7 @@ import {
   isDynArrayProducerForm,
 } from "./dyn-array-producers.js"; // (#6447)
 import { ensureNativeArrayHof, NATIVE_HOF_METHODS } from "./hof-native.js";
+import { taDynDetachedGuardInstrs } from "./ta-dyn-method-call.js"; // (#1645 S1) detached-view ValidateTypedArray prologue
 import { COLLECTION_KIND } from "./collection-kind.js"; // (#6419) import-free leaf — map-runtime.js is in an import cycle
 import { ensureMapHelpers, MAP_LAYOUT } from "./map-runtime.js"; // (#3309) $Map brand arm
 import { ensureSetHelpers } from "./set-runtime.js"; // (#3309) __set_add for the `add` arm
@@ -78,6 +79,7 @@ import { defaultValueInstrs } from "./type-coercion.js";
 // `standalone-class-construct.ts` is the second caller.
 import { buildCoerceIdxs, type CoerceIdxs, externArgCoercionInstrs, resultBoxingInstrs } from "./extern-arg-marshal.js";
 import { closedDispatchGuardsOwnSlot } from "./expressions/own-property-method-shadow.js";
+import { classArmClaimInstrs } from "./class-arm-tag-guard.js"; // (#6608) nominal `__tag` arm guard
 
 /**
  * (#2583) The callback-free, argument-taking array search/predicate methods
@@ -676,6 +678,13 @@ function buildEntryArm(
   entry: MethodEntry,
   pushArg: (a: number) => Instr[],
   providedArity: number | null = null,
+  // (#6634 S49) True only for a (methodName, arity) dispatcher whose
+  // candidate entries mix a CLASS implementer with a NON-class one — see
+  // `ensureStructFromObjectCoercionHelper`'s doc comment for why that mix is
+  // exactly the shape whose call-site argument may arrive as an open
+  // `$Object` no arm's plain `ref.cast` can inhabit. Every other dispatcher
+  // keeps its previous bytes exactly.
+  allowObjectCoercion = false,
 ): Instr[] {
   const arm: Instr[] = [
     { op: "local.get", index: anyLocalIdx },
@@ -720,6 +729,7 @@ function buildEntryArm(
         ci,
         want,
         entry.optionalParams.some((candidate) => candidate.index === a),
+        allowObjectCoercion,
       ),
     );
   }
@@ -759,6 +769,13 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     // local (arity+1) = the `any` temp.
     const anyLocalIdx = arity + 1;
     const entries = collectMethodEntries(ctx, methodName, arity);
+    // (#6634 S49) See `buildEntryArm`'s `allowObjectCoercion` param and
+    // `ensureStructFromObjectCoercionHelper`'s doc comment: only a dispatcher
+    // whose candidates mix a CLASS implementer with a non-class one can
+    // receive an argument the call site had no single struct to target, so
+    // only THAT dispatcher's arms opt into the object-to-struct fallback.
+    const mixedClassAndLiteralEntries =
+      entries.some((e) => ctx.classSet.has(e.structName)) && entries.some((e) => !ctx.classSet.has(e.structName));
 
     // Bottom arm: open-$Object fallback — build a $ObjVec of the fixed args.
     let current: Instr[];
@@ -1027,7 +1044,14 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     // carrier through the fully-armed `__iterator_next` and materialize a REAL
     // §7.4.11 result object. Placed outermost: a user closed struct with its own
     // `next` is neither carrier, so the `ref.test` misses and precedence holds.
-    if (ctx.standalone && methodName === "next" && arity === 0) {
+    // (#6484 S3 review) `ctx.wasi` joined the gate. WASI is the other no-JS-host
+    // lane and builds the same `$IterRec` carriers, but this arm was
+    // `ctx.standalone`-only, so `it.next()` on a typed-array iterator fell to
+    // `__extern_method_call` and threw `next is not a function` under
+    // `--target wasi` while standalone answered correctly. Map/Set hid the gap:
+    // map-runtime.ts prepends its OWN `$__IterRec.next()` arm to
+    // `__extern_method_call`, so only the vec carriers were exposed.
+    if ((ctx.standalone || ctx.wasi) && methodName === "next" && arity === 0) {
       const stepResultIdx = ctx.funcMap.get("__iter_next_result");
       const carrierTypeIdxs = [ctx.structMap.get("__IterRec"), ctx.structMap.get("$LazyIterHelper")].filter(
         (t): t is number => t !== undefined,
@@ -1787,7 +1811,14 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     }
 
     for (const entry of entries) {
-      const callAndCoerce = buildEntryArm(ci, anyLocalIdx, entry, (a) => [{ op: "local.get", index: 1 + a }], arity);
+      const callAndCoerce = buildEntryArm(
+        ci,
+        anyLocalIdx,
+        entry,
+        (a) => [{ op: "local.get", index: 1 + a }],
+        arity,
+        mixedClassAndLiteralEntries,
+      );
       // An own property installed at runtime beats this class's prototype
       // method for THIS receiver (marked's `use()` hooks). Only user classes,
       // only names the reserve saw a callable member write for; object-literal
@@ -1818,8 +1849,10 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
             ] satisfies Instr[])
           : callAndCoerce;
       current = [
-        { op: "local.get", index: anyLocalIdx },
-        { op: "ref.test", typeIdx: entry.typeIdx },
+        // (#6608) NOMINAL claim: `ref.test` alone is structural, and every
+        // same-shaped class in the ladder passes it — so the outermost arm ran
+        // for every receiver. Byte-identical when no layout collides.
+        ...classArmClaimInstrs(ctx, entry.structName, entry.typeIdx, anyLocalIdx),
         { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: armBodyForEntry, else: current },
       ];
     }
@@ -1847,12 +1880,25 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
       for (const instr of mcPatchInstrs) (instr as { index: number }).index = mResLocal;
     }
 
+    // (#1645 S1) §23.2.4.4 step 5 — a detached dyn view throws TypeError before
+    // ANY arm below observes it. It has to sit here, not on one of the arms: a
+    // `$__ta_dyn_view` is a `$__vec_base` subtype, so the generic vec arm claims
+    // it for every method with no `__ta_dyn_<m>` helper (`some`, `forEach`,
+    // `sort`, `find`, …) and answers from the view's post-detach length of 0 —
+    // i.e. returns normally where the spec requires a throw.
+    const taDynDetached = taDynDetachedGuardInstrs(ctx, methodName, anyLocalIdx, (name, type) => {
+      const idx = arity + 1 + locals.length;
+      locals.push({ name, type });
+      return idx;
+    });
+
     dispFn.locals = locals;
     dispFn.body = [
       ...nullishReceiverGuardInstrs(ctx, methodName),
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.set", index: anyLocalIdx },
+      ...taDynDetached,
       ...current,
     ];
     void (dispFn as WasmFunction);
@@ -1934,11 +1980,18 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
             ])
           : current;
       current = [
-        { op: "local.get", index: anyLocalIdx },
-        { op: "ref.test", typeIdx: entry.typeIdx },
+        // (#6608) Same nominal claim as the fixed-arity ladder above.
+        ...classArmClaimInstrs(ctx, entry.structName, entry.typeIdx, anyLocalIdx),
         { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: callAndCoerce, else: current },
       ];
     }
+
+    // (#1645 S1) Same §23.2.4.4 step-5 prologue as the fixed-arity fill above.
+    const taDynDetachedVararg = taDynDetachedGuardInstrs(ctx, methodName, anyLocalIdx, (name, type) => {
+      const idx = anyLocalIdx + varargLocals.length;
+      varargLocals.push({ name, type });
+      return idx;
+    });
 
     dispFn.locals = varargLocals;
     dispFn.body = [
@@ -1946,6 +1999,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.set", index: anyLocalIdx },
+      ...taDynDetachedVararg,
       ...current,
     ];
     void (dispFn as WasmFunction);

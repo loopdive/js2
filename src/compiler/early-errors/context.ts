@@ -7,6 +7,7 @@
 // to the original closures.
 import { ts } from "../../ts-api.js";
 import type { CompileError } from "../../index.js";
+import { markModuleGoalSourceFile } from "./predicates.js";
 
 export interface EarlyErrorContext {
   /** The source file being validated. */
@@ -20,6 +21,13 @@ export interface EarlyErrorContext {
    * declarations: legal in Scripts §16.1.1, SyntaxError in Modules §16.2.1.1).
    */
   readonly moduleGoal: boolean;
+  /**
+   * (#6491 r3) The unit is explicitly SCRIPT goal. Distinct from `!moduleGoal`,
+   * which is also the state of every product compile — see `scriptGoal` in
+   * `CompileOptions`. Gates the three rules where a ModuleItem is a SyntaxError
+   * because there is no module to put it in.
+   */
+  readonly scriptGoal: boolean;
   /** Accumulated errors (rules may push warnings/errors directly). */
   readonly errors: CompileError[];
   /** 1-based line/column for a node. */
@@ -29,8 +37,14 @@ export interface EarlyErrorContext {
 }
 
 /** Build an EarlyErrorContext for a source file, with a fresh error array. */
-export function createEarlyErrorContext(sourceFile: ts.SourceFile, opts?: { moduleGoal?: boolean }): EarlyErrorContext {
+export function createEarlyErrorContext(
+  sourceFile: ts.SourceFile,
+  opts?: { moduleGoal?: boolean; scriptGoal?: boolean },
+): EarlyErrorContext {
   const errors: CompileError[] = [];
+  // (#6491 r2) Module code is strict (§11.2.2). Registered BEFORE any rule
+  // runs, so `isStrictMode`'s memo cannot hold a pre-mark answer for this file.
+  if (opts?.moduleGoal === true) markModuleGoalSourceFile(sourceFile);
   const pos = (node: ts.Node): { line: number; column: number } => {
     const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
     return { line: line + 1, column: character + 1 };
@@ -39,5 +53,12 @@ export function createEarlyErrorContext(sourceFile: ts.SourceFile, opts?: { modu
     const p = pos(node);
     errors.push({ message, line: p.line, column: p.column, severity: "error" });
   };
-  return { sourceFile, moduleGoal: opts?.moduleGoal === true, errors, pos, addError };
+  return {
+    sourceFile,
+    moduleGoal: opts?.moduleGoal === true,
+    scriptGoal: opts?.scriptGoal === true,
+    errors,
+    pos,
+    addError,
+  };
 }

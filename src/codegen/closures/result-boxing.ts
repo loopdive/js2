@@ -50,6 +50,33 @@ function boxI32ClosureResult(
   return [{ op: "drop" }, { op: "ref.null.extern" }];
 }
 
+/**
+ * (#6642) Preserve the structural `bigint` brand across the externref ABI —
+ * the exact i64 twin of the boolean/Symbol brands `boxI32ClosureResult` keeps.
+ *
+ * Without it a closure declared `(): bigint` — i.e. compiled to a native,
+ * monomorphic `() -> i64` body — had its result boxed as a NUMBER the moment it
+ * was reached through DYNAMIC dispatch (`NS.giveBigInt()`, a property/method
+ * read, a link-boundary call): `f64.convert_i64_s` first rounds every value
+ * above 2^53 (217175010123456789n → …792) and `__box_number` then erases
+ * bigint-ness outright, so `typeof`, `===`, `Object.is`, `String()` and
+ * arithmetic all answered as if the value had never been a BigInt. Silent: no
+ * trap, no diagnostic, just a wrong number.
+ */
+function boxI64ClosureResult(
+  ctx: CodegenContext,
+  returnType: Extract<ValType, { kind: "i64" }>,
+  boxNumberIdx: number | undefined,
+): Instr[] {
+  const boxBigIntIdx = ctx.funcMap.get("__box_bigint");
+  if (returnType.bigint === true && boxBigIntIdx !== undefined) {
+    return [{ op: "call", funcIdx: boxBigIntIdx }];
+  }
+  return boxNumberIdx !== undefined
+    ? [{ op: "f64.convert_i64_s" }, { op: "call", funcIdx: boxNumberIdx }]
+    : [{ op: "drop" }, { op: "ref.null.extern" }];
+}
+
 export function buildClosureResultBoxing(
   ctx: CodegenContext,
   returnType: ValType | null,
@@ -83,9 +110,7 @@ export function buildClosureResultBoxing(
     return boxI32ClosureResult(ctx, returnType, boxNumberIdx);
   }
   if (returnType.kind === "i64") {
-    return boxNumberIdx !== undefined
-      ? [{ op: "f64.convert_i64_s" }, { op: "call", funcIdx: boxNumberIdx }]
-      : [{ op: "drop" }, { op: "ref.null.extern" }];
+    return boxI64ClosureResult(ctx, returnType, boxNumberIdx);
   }
   // Already externref (or an ABI-compatible kind): nothing to do. Matches the
   // previous behaviour, which fell through every branch and emitted nothing.

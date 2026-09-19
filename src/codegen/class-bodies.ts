@@ -91,6 +91,10 @@ import {
   emitStandaloneObjectConstructor, // (#3238) native `class Sub extends Object`
   resolveStandaloneSubclassBuiltinCtor, // (#3972) the identity/collection/wrapper arms
 } from "./standalone-subclass-ctors.js";
+import {
+  emitLinkedDynamicParentConstruct, // (#6640) `super(...)` through the link boundary
+  isLinkedDynamicParentHeritage,
+} from "./standalone-dynamic-parent-class.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import {
   cacheParamDefaultArgc,
@@ -471,9 +475,15 @@ function computeImplicitDerivedCtorPrefix(
   prefixParams: { name: string; type: ValType }[];
 } {
   const implicitBuiltinParent = !ctor ? ctx.classBuiltinParentMap.get(className) : undefined;
+  // (#6640) A linked-provider parent has no `__new_<Parent>` forward arity to
+  // max against — the synthesized `constructor(...args) { super(...args) }`
+  // forwards exactly what the program's own `new S(…)` sites pass.
+  const implicitLinkedParent = !ctor && !implicitBuiltinParent && ctx.classLinkedDynamicParentExpr.has(className);
   const implicitForwarderArity = implicitBuiltinParent
     ? getImplicitExternrefForwarderArity(ctx, decl, className, implicitBuiltinParent)
-    : 0;
+    : implicitLinkedParent
+      ? getObservedClassNewArity(ctx, decl, className)
+      : 0;
   const implicitStructCtorParams =
     !ctor && !implicitBuiltinParent ? findNearestAncestorCtorParams(ctx, className) : undefined;
 
@@ -1037,7 +1047,8 @@ export function collectClassDeclaration(
           // as `HonoBase`, and imported through that alias. Resolve the exact
           // class-expression declaration so the derived struct is registered
           // as a subtype of the synthetic base struct whose bodies actually run.
-          parentClassName = resolveClassHeritageAlias(ctx, baseExpr, new Set(), decl) ?? baseExpr.text;
+          const resolvedParentClassName = resolveClassHeritageAlias(ctx, baseExpr, new Set(), decl);
+          parentClassName = resolvedParentClassName ?? baseExpr.text;
           // Guard against circular inheritance (e.g., class X extends X)
           if (parentClassName === className) {
             parentClassName = undefined;
@@ -1047,6 +1058,19 @@ export function collectClassDeclaration(
           parentFields = ctx.structFields.get(parentClassName) ?? [];
           // Record parent-child relationship
           ctx.classParentMap.set(className, parentClassName);
+          // (#6623, #5383 S36) `resolveClassHeritageAlias` returning `undefined`
+          // means the identifier could not be tied to any known local class
+          // declaration (a function PARAMETER is the test262
+          // `checkSubclassingIgnored(construct, ...)` shape: `class MySubclass
+          // extends construct {}}`). The `?? baseExpr.text` fallback above keeps
+          // `classParentMap` populated with a name that resolves to nothing
+          // (`parentStructTypeIdx` stays `undefined`), so this class is really an
+          // independent ROOT struct wearing a heritage clause it has no compiled
+          // relationship to. See the field-collision note on
+          // `classDynamicUnresolvedHeritageSet`.
+          if ((ctx.standalone || ctx.wasi) && resolvedParentClassName === undefined) {
+            ctx.classDynamicUnresolvedHeritageSet.add(className);
+          }
           // (#2620) A subclass of a native-collection builtin (Set/Map/WeakMap/
           // WeakSet) under nativeStrings (`--target standalone`/`wasi`) cannot
           // take the host-constructible path below: there is no JS host, so
@@ -1150,6 +1174,24 @@ export function collectClassDeclaration(
             parentStructTypeIdx = ctx.structMap.get(parentClassName);
             parentFields = ctx.structFields.get(parentClassName) ?? [];
             ctx.classParentMap.set(className, parentClassName);
+          }
+        } else if (ctx.standalone || ctx.wasi) {
+          // (#6623, #5383 S36) A property/element-access heritage expression
+          // (`class S extends NS.PD {}`, the shape a LINKED provider namespace
+          // produces) is resolved at runtime on the host lane
+          // (`hasDynamicHostParent` above) but has NO standalone/wasi handling
+          // at all — `parentClassName` stays `undefined` and this class is
+          // silently registered as an independent ROOT struct. Same collision
+          // risk as the unresolved-identifier case just above.
+          ctx.classDynamicUnresolvedHeritageSet.add(className);
+          // (#6640, #5383 S64) …but in a LINK CONSUMER the value behind that
+          // property access is a provider-owned class OBJECT, which the dynamic
+          // construct driver's boundary arm already knows how to construct.
+          // Record it and switch the class to the externref-backed
+          // representation so `this` can BE the provider-minted instance.
+          if (isLinkedDynamicParentHeritage(ctx, baseExpr)) {
+            ctx.classLinkedDynamicParentExpr.set(className, baseExpr);
+            ctx.classExternrefBackedSet.add(className);
           }
         }
       }
@@ -2735,7 +2777,27 @@ function compileClassBodiesInner(
     // field-walk path is irrelevant (no struct fields to copy). When there's no
     // explicit ctor, emit the default derived constructor: forward the synthetic
     // externref parameter list to `__new_<ParentBuiltin>(...)`.
-    if (!ctor && isExternrefBacked) {
+    if (!ctor && isExternrefBacked && ctx.classLinkedDynamicParentExpr.has(className)) {
+      // (#6640) Synthesized derived constructor for a linked-provider parent:
+      // forward the `__arg{i}` externref params straight to the provider's own
+      // constructor through the dynamic construct driver. No
+      // `emitSetSubclassProto`/`emitSetSubclassUserBrand`: re-pointing the
+      // instance's [[Prototype]] at the consumer's own `S.prototype` would cut
+      // it off from the provider's method table, which is the only source of
+      // the inherited behaviour this whole path exists to obtain.
+      const built = emitLinkedDynamicParentConstruct(
+        ctx,
+        fctx,
+        className,
+        implicitForwarderArity,
+        () => {
+          for (let i = 0; i < implicitForwarderArity; i++) fctx.body.push({ op: "local.get", index: i });
+        },
+        (expr) => compileExternrefArgument(ctx, fctx, expr),
+      );
+      if (!built) fctx.body.push({ op: "ref.null.extern" });
+      fctx.body.push({ op: "local.set", index: selfLocal });
+    } else if (!ctor && isExternrefBacked) {
       const parentName = ctx.classBuiltinParentMap.get(className);
       if (parentName) {
         const importName = getParentConstructorImportName(ctx, parentName);
@@ -4046,6 +4108,36 @@ export function compileSuperCall(
   // host instance. Only ever set for an externref-backed builtin parent.
   onHost = false,
 ): void {
+  // (#6640) A linked-provider parent: `super(a, b)` IS the provider's own
+  // `new Parent(a, b)`, run on the provider side. Its result becomes `this`.
+  if (ctx.classLinkedDynamicParentExpr.has(childClassName)) {
+    const superArgs = callExpr.arguments;
+    const flat = superArgs.some((arg) => ts.isSpreadElement(arg))
+      ? flattenStaticallyKnownArgs(superArgs)
+      : [...superArgs];
+    if (
+      flat != null &&
+      emitLinkedDynamicParentConstruct(
+        ctx,
+        fctx,
+        childClassName,
+        flat.length,
+        () => {
+          for (const arg of flat) compileExternrefArgument(ctx, fctx, arg);
+        },
+        (expr) => compileExternrefArgument(ctx, fctx, expr),
+      )
+    ) {
+      fctx.body.push({ op: "local.set", index: selfLocal });
+      return;
+    }
+    // A runtime-length spread is not representable by the fixed-arity driver
+    // yet (#5383 S34's argv driver is the follow-up): keep §13.3.7.1
+    // ArgumentListEvaluation and leave `this` as it was.
+    for (const arg of superArgs) evaluateArgumentForSideEffects(ctx, fctx, arg);
+    return;
+  }
+
   const parentClassName = ctx.classParentMap.get(childClassName);
   if (!parentClassName) {
     const childDecl = ctx.classDeclarationMap.get(childClassName);

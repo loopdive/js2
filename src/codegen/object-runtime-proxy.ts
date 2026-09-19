@@ -21,6 +21,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { ensureReflectIsConstructor } from "./reflect-construct-native.js";
 import { ensureExternStrictEqHelper } from "./any-helpers.js";
 import { registerProxyInvariantValidators } from "./object-runtime-proxy-invariants.js"; // (#5316) §10.5 descriptor-model half
+import { reserveStandaloneLinkReversePeer, reverseProxyGetArmInstrs } from "./standalone-link-reverse-peer.js"; // (#6637 S63)
 
 /** (#1100/#1355) Reserved trap-invoke driver names — filled by `fillProxyDispatch`. */
 const PROXY_CALL_GET = "__proxy_call_get";
@@ -119,6 +120,13 @@ export function ensureProxyRuntime(
     { op: "call", funcIdx: typeErrorCtorIdx },
     { op: "throw", tagIdx: exnTagIdx },
   ];
+  // (#6494 S1) §Set(O, P, V, true) step 4 — a `set` trap that reports failure
+  // in a strict-mode write. Declared with the other proxy messages so the
+  // string constant exists before the `__extern_set_strict` front guard far
+  // below bakes its global index.
+  const proxySetRefusedMsg = "'set' on proxy: trap returned falsish";
+  addStringConstantGlobal(ctx, proxySetRefusedMsg);
+
   const getTrapNotCallableMsg = "Proxy get trap is not callable";
   addStringConstantGlobal(ctx, getTrapNotCallableMsg);
   const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
@@ -127,6 +135,41 @@ export function ensureProxyRuntime(
     { op: "call", funcIdx: typeErrorCtorIdx },
     { op: "throw", tagIdx: exnTagIdx },
   ];
+  // (#6637 S63) The trap-callable verdict above is THIS module's. In a linked
+  // standalone project it is not the last word: a Proxy built by the CONSUMER
+  // carries a consumer-owned closure in `ptraps`, and the provider's
+  // `__typeof_function` ladder can only `ref.test` closure wrapper types IT
+  // registered, so it answers 0 for every foreign closure (measured
+  // 2026-09-19, `.tmp/s63/probe1.out`: a provider `typeof f === "function"` on
+  // a consumer function — named, arrow, either — answers 0, while the same
+  // Proxy read inside the consumer answers correctly). That misverdict is what
+  // turns `Temporal.PlainDate.from(fields, new Proxy(opts, {get(){…}}))` into
+  // `TypeError: Proxy get trap is not callable`.
+  //
+  // The fix is NOT to teach the provider to classify and invoke a foreign
+  // closure (S52b/S55 built that channel — `callableKind`/`apply` terminals —
+  // and it classified a bare cross-module closure correctly yet still could not
+  // run a trap: a trap call also needs the owner's `this` binding, its own
+  // `__apply_closure` arity ladder, and its own argument carriers). It is to
+  // hand the WHOLE [[Get]] back to the module that owns the Proxy, over the
+  // reverse channel that already exists and is already proven for consumer
+  // carriers (#5383 S17 / #6605): the consumer re-performs `proxy[key]` with
+  // its own proxy dispatch, its own trap, its own closure call, and returns the
+  // value as an externref.
+  //
+  // It is spliced ONLY on the path that throws today, so it cannot change any
+  // answer a working program already gets: no peer installed (every gc build,
+  // every single-module standalone build, every provider whose consumer is JS)
+  // ⇒ `hops.get` is undefined ⇒ zero bytes emitted. A peer that does not own
+  // the receiver answers "not mine" and control falls through to the same
+  // throw. Locals are reused (`res`, index 2+arity), so no dispatch function
+  // grows a local either.
+  const reversePeerHops = reserveStandaloneLinkReversePeer(ctx);
+  // `__proxy_get_dispatch(proxy, key, receiver)` — params 0/1 are exactly the
+  // `(receiver, key)` pair `reverseGetArmInstrs` reads, and local 5 (`res`) is
+  // dead until the post-trap invariant validators run, well after this arm.
+  const reverseGetDelegateArm = (): Instr[] => reverseProxyGetArmInstrs(reversePeerHops, 5);
+
   // (#5140) §7.3.9 GetMethod: a trap that is present but NOT callable is a
   // TypeError at OPERATION time (not at ProxyCreate time — the tests construct
   // the proxy successfully and then expect the operation to throw). Phase 1
@@ -437,7 +480,14 @@ export function ensureProxyRuntime(
                 { op: "local.get", index: TRAPL },
                 { op: "call", funcIdx: typeofFunctionIdx },
                 { op: "i32.eqz" },
-                { op: "if", blockType: { kind: "empty" }, then: throwGetTrapNotCallable() },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  // (#6637 S63) …unless the Proxy's OWNER can run the trap for
+                  // us. The delegation arm returns on an owned receiver; every
+                  // other case falls straight through to the throw.
+                  then: [...reverseGetDelegateArm(), ...throwGetTrapNotCallable()],
+                },
                 ...trapArm,
               ]
             : [...trapCallableGuard(TRAPL), ...trapArm],
@@ -2011,6 +2061,139 @@ export function ensureProxyRuntime(
     );
   }
 
+  // (#6494 S1) __extern_set_strict(obj, key, value) -> () : §Set(O, P, V, true)
+  // step 4 — "If success is false, throw a TypeError". A `$Proxy` receiver is
+  // NOT a `$Object` (see the `$Proxy` type comment in object-runtime.ts), so
+  // `__extern_set_strict` took its non-`$Object` arm, called `__extern_set`
+  // (whose proxy guard runs the trap and DROPS the answer) and returned
+  // silently: a `set` trap returning `false` wrote nothing and threw nothing.
+  // Measured 2026-09-17 on `c698c755bb`: the trap ran once, no throw.
+  //
+  // Two deliberate narrowings, both to keep every currently-working shape
+  // byte-identical:
+  //  - Only the trap-PRESENT arm is intercepted. `__proxy_set_dispatch`'s
+  //    trap-ABSENT arm pushes `ref.null.extern` as a placeholder that
+  //    `__extern_set`'s guard drops rather than reads, and `__is_truthy(null)`
+  //    is 0 — so reading that arm's result would throw on EVERY trap-absent
+  //    proxy. Gating on the trap's presence removes the question entirely and
+  //    leaves the forward path exactly where it was.
+  //  - The guard does not `return` on the trap-absent arm; it falls through to
+  //    the untouched body.
+  // §10.5.9 with the proxy as its own receiver is `__proxy_set_receiver_dispatch`
+  // (the spec's Set(O,P,V,O) shape); it is only registered when the ordinary
+  // receiver walk exists, so fall back to the 3-argument dispatch — on the
+  // trap-present arm the two are the same trap call with the same receiver.
+  //
+  // STANDALONE-GATED, for the reason `registerProxyInvariantValidators` states
+  // at length: under `--target wasi` the attribute-model primitives this path
+  // ends up consulting answer wrongly for ordinary objects, and that lane keeps
+  // its pre-existing bytes. Measured 2026-09-17: ungated, a Proxy-free wasi
+  // probe moved by 113 bytes — a lane this slice does not measure should not
+  // move at all.
+  const strictSetBody = ctx.standalone ? findBody("__extern_set_strict") : undefined;
+  const strictSetDispatchIdx = setReceiverDispatchIdx ?? setDispatchIdx;
+  const strictSetTruthyIdx = ctx.funcMap.get("__is_truthy");
+  if (strictSetBody && strictSetTruthyIdx !== undefined) {
+    const setTrapPresent: Instr[] = [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: proxyTypeIdx },
+      { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [{ op: "i32.const", value: 0 }],
+        else: [
+          { op: "local.get", index: 0 },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: proxyTypeIdx },
+          { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: TRAP_SET },
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
+        ],
+      },
+    ];
+    const dispatchArgs: Instr[] =
+      setReceiverDispatchIdx !== undefined
+        ? [
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: 1 },
+            { op: "local.get", index: 2 },
+            { op: "local.get", index: 0 }, // Receiver = O, per Set(O, P, V, true)
+          ]
+        : [
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: 1 },
+            { op: "local.get", index: 2 },
+          ];
+    strictSetBody.unshift(
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: proxyTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          ...setTrapPresent,
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              ...dispatchArgs,
+              { op: "call", funcIdx: strictSetDispatchIdx },
+              { op: "call", funcIdx: strictSetTruthyIdx },
+              { op: "i32.eqz" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  ...stringConstantExternrefInstrs(ctx, proxySetRefusedMsg),
+                  { op: "call", funcIdx: typeErrorCtorIdx },
+                  { op: "throw", tagIdx: exnTagIdx },
+                ],
+              },
+              { op: "return" },
+            ],
+          },
+        ],
+      },
+    );
+  }
+
+  // (#6494 S2) §10.5 revoked-proxy reachability for the ARRAY-LIKE length read.
+  // `__extern_get`/`_set`/`_has`/`__delete_property`/… all route a `$Proxy`
+  // into a dispatch whose first act is the revoked check, but `__extern_length`
+  // — the `length` [[Get]] every generic `Array.prototype.*` starts with —
+  // carries no proxy front guard, so a revoked proxy reaching an internal
+  // method that way answered silently instead of throwing (measured 2026-09-17
+  // on `c698c755bb`: `Array.prototype.map.call(revoked, f)`, no throw). §10.5
+  // makes EVERY internal method of a revoked proxy throw, and LengthOfArrayLike
+  // is the first one `map` performs — so guarding the length read alone is
+  // enough to make the generic path throw.
+  //
+  // `__extern_get_idx` is the OTHER array-like terminal and is deliberately NOT
+  // guarded here. It cannot take a naive `body.unshift`: `fillExternGetIdxVecArms`
+  // locates its splice point by `__extern_get_idx`'s 3-instruction PREAMBLE
+  // SHAPE (see the comment block around `fillClassProtoLookupArm` in
+  // `codegen/index.ts`), so prepending silently drops every typed-vec arm.
+  // Measured, not reasoned: with the prepend in place,
+  // `Proxy/defineProperty/{trap-is-undefined,return-boolean-and-define-target}.js`
+  // both went pass→fail with the harness reporting
+  // "Invalid descriptor field: undefined" — `names.length` still right,
+  // `names[i]` gone. Adding an index guard needs to participate in that
+  // late-prepend ordering protocol, and it buys no row this slice measured.
+  //
+  // This is the REVOKED bit only, not a trap reroute: routing the terminal into
+  // `__proxy_get_dispatch` would change what a LIVE proxy answers for a `length`
+  // read, which is a separate pre-existing gap (a live proxy over `[1,2,3]`
+  // maps to an empty array on base and on this branch alike). A live proxy
+  // falls through to the untouched body — the guard has no `return` there.
+  //
+  // Standalone-gated for the same reason as the strict-set arm above: wasi
+  // keeps its pre-existing bytes.
   // __extern_has(obj, key) -> i32 : if proxy → ToBoolean(has_dispatch(obj,key,obj))
   // The dispatch returns the trap's booleanish result as an externref; coerce to
   // i32 via `__is_truthy` (reliably present in the standalone runtime — same
@@ -2517,6 +2700,41 @@ export function fillProxyDispatch(ctx: CodegenContext): void {
     if (driverIdx === undefined) return;
     const driverFn = definedFuncAt(ctx, driverIdx);
     if (!driverFn) return;
+    // (#5383 S41 / #6628) A trap is read via GetMethod(handler, trapName) at
+    // ProxyCreate/operation time and is, in every reachable case here, a
+    // closure THIS module's own source compiled — never a value that crossed
+    // the wasm-to-wasm link boundary as a foreign funcref. `__apply_closure`'s
+    // shared #6420 "route a positive peer-owned callable before the local
+    // dispatcher" front-guard cannot tell a local closure from a peer one:
+    // under `canonicalRuntimeTypes` their WASM struct shapes canonicalise to
+    // the SAME type, so the peer's `__is_callable` (a bare `ref.test`, no
+    // ownership check) answers "callable" for a trap it has never seen, and
+    // `__apply_closure` hijacks the call into the peer's own apply terminal,
+    // which silently returns null instead of running the real trap body —
+    // #5383's `Proxy get trap is not callable` bucket (S41, 9-line repro, no
+    // Reflect/Temporal needed). Routing THIS call directly to the fixed-arity
+    // `__call_fn_method_<argCount>` dispatcher — whose param convention
+    // (0=thisVal, 1=closure, 2..=args) is IDENTICAL to this driver's own
+    // (0=handler, 1=trap, 2..=trap args), so every arg forwards unchanged —
+    // sidesteps the peer guard entirely for the one caller (Proxy trap
+    // invocation) that never legitimately needs it, without touching
+    // `__apply_closure` itself (used by many other callers that DO need the
+    // peer route — #6605/#6616 regressed when the peer-ownership gate was
+    // added to the shared function instead). `emitClosureMethodCallExportN`
+    // always emits arities 0..5 (`index.ts`'s `maxClosureArity = 5` floor),
+    // which covers every fixed arity `fill()` is called with below, so this
+    // path is taken unconditionally once the closure bridge exists; the
+    // vec-based `__apply_closure` fallback below is kept only for the
+    // (currently unreachable, but not asserted-impossible) case where the
+    // dispatcher is absent.
+    const directIdx = ctx.funcMap.get(`__call_fn_method_${argCount}`);
+    if (directIdx !== undefined) {
+      const body: Instr[] = [];
+      for (let a = 0; a < argCount + 2; a++) body.push({ op: "local.get", index: a });
+      body.push({ op: "call", funcIdx: directIdx });
+      driverFn.body = body;
+      return;
+    }
     if (applyClosureIdx === undefined || objVecNewIdx === undefined || objVecPushIdx === undefined) {
       // Closure bridge / objvec builders absent (no standalone closure in the
       // module) → no trap could have been installed; keep a valid stub body.

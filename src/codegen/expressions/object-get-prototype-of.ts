@@ -21,6 +21,7 @@ import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { integrityVarKey } from "../widened-var-key.js";
 import { objectLiteralHasColonProto } from "../literals.js"; // (#5270 step 2)
 import { sourceShadowsGlobalName } from "../source-function-members.js"; // (#5194 review F1)
+import { popBody, pushBody } from "../context/bodies.js"; // (#6630 fallback)
 
 const NATIVE_COLLECTION_NAMES = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
 
@@ -506,6 +507,144 @@ export function tryCompileEs5GetPrototypeOfValue(
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
   }
   return null;
+}
+
+/**
+ * (#6609/#6625) `Object.getPrototypeOf(<value that is CALLABLE, or a CLASS
+ * OBJECT, only at RUNTIME>)` → `%Function.prototype%` (§10.3.1: every
+ * built-in function object's [[Prototype]] is %Function.prototype%; §15.7.14
+ * step 4: an ordinary class with no heritage clause is the same).
+ *
+ * The arm above answers `Function` whenever the CHECKER can prove the argument
+ * callable (`signatureOf`, a function expression, an arrow). A value that
+ * arrives through an `any` binding — every member of a linked standalone
+ * provider's namespace, by construction — carries no signature, so it fell to
+ * the generic `__getPrototypeOf`, whose `$proto` walk only knows `$Object`
+ * receivers. A closure carrier is not one, so the walk answered `null`:
+ * `Object.getPrototypeOf(Temporal.PlainDate.compare)` was `null` where the spec
+ * (and the other three assertions of test262's `builtin.js` rows, which already
+ * pass) say `Function.prototype`. The class-VALUE case (`Object.getPrototypeOf
+ * (Temporal.PlainDate)`) has the identical gap and the identical answer, so it
+ * shares this arm rather than a separate one (#6625; originally split, folded
+ * back after measuring that `tryEmitDynamicCallableGetPrototypeOf`'s "return
+ * true whenever the runtime dispatch was emitted" contract means a SECOND,
+ * sequential all-or-nothing arm can never run — the first arm's `if/else`
+ * always wins the caller's early return, regardless of which side of it fires).
+ *
+ * TWO predicates, ORed, not one relaxed predicate: `__is_callable`, NOT
+ * `__typeof_function`, and the difference is load-bearing across the link —
+ * the boundary's `callable_kind` terminal sets bit 1 ([[Construct]]) for a
+ * provider-owned INSTANCE as well, which is why `typeof <provider instance>`
+ * currently answers `"function"` (a documented #5383 residual); `__is_callable`
+ * masks bit 0 only, so an instance keeps its existing answer instead of
+ * acquiring a wrong one. `__is_class_object` is a SEPARATE identity ladder
+ * (never a `ref.test`: a class object and its own instances share one struct
+ * type AND `__tag`, #3976, so only identity tells "this IS the class C" apart
+ * from "this is merely an instance of C") — reusing `__is_callable`'s bit
+ * scheme would have required overloading a bit that a provider-owned INSTANCE
+ * already sets (same #5383 residual), silently claiming every foreign
+ * instance too. Across a linked standalone provider each predicate independently
+ * asks the owner (`standalone-link-boundary.ts`) for a BOOLEAN only — the VALUE
+ * this function answers is always produced by compiling `Function.prototype`
+ * HERE, on the caller's own side, so its identity matches the caller's own
+ * later read of it (S22's rule).
+ *
+ * Class scope: base classes only (no `extends`). A class with a heritage
+ * clause keeps today's answer (typically `null`) — DOCUMENTED RESIDUAL, not
+ * reduced here; see plan/issues/6625-*.md.
+ *
+ * Standalone/WASI only; the JS-host lane's `__getPrototypeOf` import already
+ * answers correctly and stays byte-identical. The argument is already compiled
+ * and coerced to externref on the stack when this runs; returns true when it
+ * consumed it.
+ */
+export function tryEmitDynamicCallableGetPrototypeOf(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  anchor: ts.Node,
+): boolean {
+  if (!ctx.standalone && !ctx.wasi) return false;
+  if (ensureLateImport(ctx, "__is_callable", [{ kind: "externref" }], [{ kind: "i32" }]) === undefined) return false;
+  if (ensureLateImport(ctx, "__is_class_object", [{ kind: "externref" }], [{ kind: "i32" }]) === undefined) {
+    return false;
+  }
+  if (ensureLateImport(ctx, "__getPrototypeOf", [{ kind: "externref" }], [{ kind: "externref" }]) === undefined) {
+    return false;
+  }
+  flushLateImportShifts(ctx, fctx);
+
+  const valueLocal = allocLocal(fctx, `__gpo_dyn_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: valueLocal });
+
+  const isCallableIdx = ctx.funcMap.get("__is_callable");
+  const isClassObjectIdx = ctx.funcMap.get("__is_class_object");
+  const getPrototypeIdx = ctx.funcMap.get("__getPrototypeOf");
+  if (isCallableIdx === undefined || isClassObjectIdx === undefined || getPrototypeIdx === undefined) {
+    // Degrade to the pre-#6609 answer rather than to a broken call.
+    fctx.body.push({ op: "local.get", index: valueLocal });
+    return false;
+  }
+
+  // (#6630 fallback, 2026-09-17) %Function.prototype% is a lazily-materialised
+  // singleton, and materialising it has a module-wide side effect the comment
+  // this replaces called "free": it triggers `ensureObjectRuntime`'s bootstrap
+  // (`emitFunctionPrototypeObjectSingleton` → `ensureObjectRuntime`), which
+  // bakes `__extern_method_call`'s body — including its `.call`/`.apply`
+  // dispatch — against whatever helpers are registered AT THAT MOMENT. A
+  // pre-existing (merge-independent) defect in that bootstrap, #6630, means a
+  // module that materialises %Function.prototype% BEFORE its first `.call`/
+  // `.apply` on an ordinary closure can misdispatch that call at runtime
+  // ("Function.prototype.call is not yet implemented in --target standalone").
+  // #6609/#6625 previously materialised it EAGERLY for every dynamic
+  // `Object.getPrototypeOf(<any-typed value>)`, regardless of whether the
+  // value actually turned out to be callable — so a module doing nothing more
+  // exotic than `Object.getPrototypeOf(<some object>)` followed by an ordinary
+  // `fn.call(...)` could trip #6630 even though the getPrototypeOf receiver
+  // was never callable (measured: `tests/issue-6484-iterator-prototypes
+  // .test.ts`'s "%IteratorPrototype% is the shared parent" case regressed
+  // exactly this way once #6629 restored this arm's reachability).
+  //
+  // Fix at the call site, not at #6630's architecture-level root cause (out of
+  // scope here — see #6630): materialise %Function.prototype% LAZILY, inside
+  // the `then:` arm, so it is only built (and #6630's bootstrap only triggers)
+  // when `__is_callable`/`__is_class_object` have ALREADY proven the value is
+  // one of the two cases that need it. A non-callable, non-class-object value
+  // — the common case for a bare `Object.getPrototypeOf` probe — never
+  // reaches `emitEs5IntrinsicPrototype` at all. #6609/#6625's own witnesses
+  // (a genuinely callable/class-object receiver) still take the `then:` arm
+  // and get the identical answer; only the ORDER changed (predicate first,
+  // materialisation second), not the result.
+  const savedThenBody = pushBody(fctx);
+  const fnProtoType = emitEs5IntrinsicPrototype(ctx, fctx, anchor, "Function");
+  if (fnProtoType !== null && typeof fnProtoType === "object" && fnProtoType.kind !== "externref") {
+    coerceType(ctx, fctx, fnProtoType, { kind: "externref" });
+  }
+  const thenArm = fctx.body;
+  popBody(fctx, savedThenBody);
+
+  // Re-read every index AFTER building the then-arm: compiling
+  // `Function.prototype` inside it may itself add a late import, which shifts
+  // everything emitted before it (mirrors the eager version's own re-read).
+  const isCallableIdxFinal = ctx.funcMap.get("__is_callable") ?? isCallableIdx;
+  const isClassObjectIdxFinal = ctx.funcMap.get("__is_class_object") ?? isClassObjectIdx;
+  const getPrototypeIdxFinal = ctx.funcMap.get("__getPrototypeOf") ?? getPrototypeIdx;
+  fctx.body.push(
+    { op: "local.get", index: valueLocal },
+    { op: "call", funcIdx: isCallableIdxFinal },
+    { op: "local.get", index: valueLocal },
+    { op: "call", funcIdx: isClassObjectIdxFinal },
+    { op: "i32.or" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: thenArm,
+      else: [
+        { op: "local.get", index: valueLocal },
+        { op: "call", funcIdx: getPrototypeIdxFinal },
+      ],
+    },
+  );
+  return true;
 }
 
 function objectGetPrototypeOfSource(

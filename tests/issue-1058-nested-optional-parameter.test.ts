@@ -86,6 +86,30 @@ describe("#1058 nested optional-parameter ABI", () => {
     expect(exports.run!(1)).toBe(0);
   });
 
+  it.each(["gc", "standalone"] as const)("preserves wrapped shadowed undefined on both sides in %s", async (target) => {
+    const result = await compile(
+      `
+      export function run(undefined: boolean): number {
+        let score = 0;
+        if (false === (undefined)) score += 1;
+        if ((undefined as boolean) === false) score += 2;
+        if (false === (undefined satisfies boolean)) score += 4;
+        if (undefined! === false) score += 8;
+        return score;
+      }
+    `,
+      { target },
+    );
+    expect(result.success).toBe(true);
+    const module = new WebAssembly.Module(result.binary);
+    if (target === "standalone") expect(WebAssembly.Module.imports(module)).toEqual([]);
+    const imports = result.importObject ?? {};
+    const instance = await WebAssembly.instantiate(module, imports);
+    (imports as { __setInstance?: (value: WebAssembly.Instance) => void }).__setInstance?.(instance);
+    expect((instance.exports.run as (value: number) => number)(0)).toBe(15);
+    expect((instance.exports.run as (value: number) => number)(1)).toBe(0);
+  });
+
   it.each(["gc", "standalone"] as const)("preserves a shadowed undefined binding in %s", async (target) => {
     const source = `
       export function run(): number {

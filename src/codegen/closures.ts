@@ -22,6 +22,7 @@ import type { FieldDef, Instr, LocalDef, StructTypeDef, ValType } from "../ir/ty
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2867 Gap 1) native-$Promise carrier gate
 import { emitEagerAsyncPromiseWrap, parkedAsyncClosureWrapsPromise } from "./async-eager-promise.js"; // (#4630)
 import { widenAsyncThenableResult } from "./async-thenable-return.js"; // (#5371)
+import { applyNullableElemParamOverride } from "./array-hof-nullable-elem-param.js"; // (#6602) nullable vec element at the HOF callback boundary
 import { definedFuncAt, funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { pushProgramAbiNestedCallable, pushProgramAbiTypedThisTwin } from "./program-abi-source-callable-planning.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3b) manual import-shift must skip stable handles
@@ -2054,7 +2055,19 @@ export function computeClosureWrapperSig(
         ? ctx.arrayMapCallbackFirstParamOverride
         : !ts.isFunctionDeclaration(arrow) && setAccessorParamIsDynamic(arrow)
           ? EXTERNREF_PARAM
-          : resolveWasmType(ctx, paramType);
+          : // (#6602) The receiver's element type wins over the checker's ONLY
+            // at the callback's ELEMENT parameter (0 for the predicate family,
+            // 1 for `reduce`/`reduceRight` whose parameter 0 is the
+            // accumulator), and only when the checker handed back that type's
+            // exact non-null twin — the `RegExpExecArray extends Array<string>`
+            // nullability lie. Any other pair is returned unchanged, so no
+            // other callback shape can move a byte. `map` never reaches here:
+            // its unconditional override above already fired.
+            applyNullableElemParamOverride(
+              resolveWasmType(ctx, paramType),
+              ctx.arrayHofNullableElemParamOverride,
+              runtimeIndex,
+            );
     wasmType = preserveOptionalDeclarationParameter(ctx, p, wasmType);
     if (sourceCollectionCallbackParameterIsErased(ctx, arrow, runtimeIndex)) wasmType = EXTERNREF_PARAM;
     // JSDoc optional parameters (for example `@param {number=} size`) are
@@ -4117,6 +4130,36 @@ export function compileArrowAsCallback(
     forceExternrefParams?: boolean;
   },
 ): ValType | null {
+  // (#6492) A SUSPENDING async function expression must not reach this bridge
+  // in a linked graph — the bridge compiles the body with NO async activation,
+  // so every `await` is erased and the callback returns `undefined` instead of
+  // a promise. #4648 gave the AWAIT-FREE case a Promise wrapper here; the
+  // await-ful case was simply mis-lowered, and nothing noticed because the
+  // static call-site repair (`isAsyncCallExpression`) covers every call the
+  // module makes ITSELF.
+  //
+  // A separately compiled provider is the case where the call is NOT made by
+  // this module: `asyncTest(async function () { await … })` hands the harness
+  // provider a callback it invokes, and `testFunc().then(…)` then read `.then`
+  // of null — the whole `Array.fromAsync` / `asyncHelpers` population of the
+  // linked lane (`Test262:AsyncTestFailure:TypeError: Cannot read properties of
+  // null (reading 'then')`).
+  //
+  // `compileArrowAsClosure` is the path that DOES activate the frame engine
+  // (`asyncDecision` above), and the provider reaches a closure struct through
+  // the #3098 `__call_fn_N` substrate the same way it reaches a bridge export.
+  // Gated on this module being a linked-package CONSUMER so every single-module
+  // compile — the honest test262 lane, the CLI, the playground — is
+  // byte-identical; the standalone arm below already uses the same escape.
+  if (
+    ctx.linkedPackageBindings.size > 0 &&
+    (arrow.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false) &&
+    !(ts.isFunctionExpression(arrow) && arrow.asteriskToken !== undefined) &&
+    planAsyncClosureActivation(ctx, arrow, /*isAsync*/ true) !== null
+  ) {
+    return compileArrowAsClosure(ctx, fctx, arrow);
+  }
+
   const cbId = ctx.callbackCounter++;
   const cbName = `__cb_${cbId}`;
   const body = arrow.body;
