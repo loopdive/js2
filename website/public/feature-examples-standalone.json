@@ -1240,7 +1240,7 @@
     {
       "name": "BigInt",
       "testCategories": ["built-ins/BigInt"],
-      "passCount": 565,
+      "passCount": 569,
       "totalCount": 1048
     },
     {
