@@ -1507,8 +1507,8 @@
   },
   {
     "edition": "ES2020",
-    "pass": 975,
-    "fail": 540,
+    "pass": 976,
+    "fail": 539,
     "ce": 502,
     "skip": 18,
     "total": 2035,
@@ -1516,8 +1516,8 @@
     "features": [
       {
         "name": "BigInt",
-        "pass": 569,
-        "fail": 401,
+        "pass": 570,
+        "fail": 400,
         "ce": 78,
         "skip": 0,
         "total": 1048,
@@ -4305,8 +4305,8 @@
   {
     "edition": "Unclassified (untagged)",
     "pass": 4461,
-    "fail": 906,
-    "ce": 78,
+    "fail": 907,
+    "ce": 77,
     "skip": 0,
     "total": 5445,
     "pct": 82
