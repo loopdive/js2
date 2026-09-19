@@ -281,7 +281,17 @@ fix:  [year=2000]      … [cmp=-1]
    Sub.prototype` / `instanceof Sub` follow the externref-backed lane's
    existing bound (#1366a). Own declared METHODS do still dispatch (measured:
    `new SubOwn(5).own()` → `99` on both trees).
-5. **`String(subclassInstance)` / `.toString()` still render
+5. **A property-access heritage whose object is LOCAL** — `const ns = { C };
+   class D extends ns.C {}` **inside a link-consumer module** — also takes the
+   new path, because the gate is syntactic (the checker types a linked
+   namespace member as `any`, so there is nothing to discriminate on). It still
+   constructs correctly (the driver's `__class_construct_dispatch` arm owns a
+   local class-object value), but `D` becomes externref-backed, so it inherits
+   residual 4's bound. Before this change that shape had NO relationship to `C`
+   at all, so this is a behaviour change inside an already-broken shape, and it
+   cannot reach a module with no linked provider. The `E-linked` battery group
+   is the one that would show it.
+6. **`String(subclassInstance)` / `.toString()` still render
    `"[object Object]"`** against the real provider — a `toString`-specific
    consumer-side arm that claims the receiver before the link terminal. Not
    needed by any target row; unreduced.
