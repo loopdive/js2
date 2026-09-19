@@ -1,0 +1,75 @@
+{
+  "units": [
+    "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+    "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000001",
+    "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000002",
+    "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000003",
+    "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000004"
+  ],
+  "functions": [
+    {
+      "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+      "name": "delay"
+    },
+    {
+      "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000001",
+      "name": "fetchUser"
+    },
+    {
+      "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000001:ir-async-state:0000000000000000",
+      "name": "fetchUser__ir_async_state_0"
+    },
+    {
+      "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000002",
+      "name": "fetchAllSequential"
+    },
+    {
+      "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000000",
+      "name": "fetchAllSequential__ir_async_state_0"
+    },
+    {
+      "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000001",
+      "name": "fetchAllSequential__ir_async_state_1"
+    },
+    {
+      "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000002",
+      "name": "fetchAllSequential__ir_async_state_2"
+    },
+    {
+      "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000003",
+      "name": "fetchAllSequential__ir_async_state_3"
+    },
+    {
+      "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000002:ir-async-state:0000000000000004",
+      "name": "fetchAllSequential__ir_async_state_4"
+    },
+    {
+      "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000003",
+      "name": "fetchAllParallel"
+    },
+    {
+      "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000003:ir-async-state:0000000000000000",
+      "name": "fetchAllParallel__ir_async_state_0"
+    },
+    {
+      "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000003:ir-async-state:0000000000000001",
+      "name": "fetchAllParallel__ir_async_state_1"
+    },
+    {
+      "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000004",
+      "name": "main"
+    },
+    {
+      "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000004:ir-async-state:0000000000000000",
+      "name": "main__ir_async_state_0"
+    },
+    {
+      "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000004:ir-async-state:0000000000000001",
+      "name": "main__ir_async_state_1"
+    },
+    {
+      "unitId": "ir-unit:v1:derived:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000004:ir-async-state:0000000000000002",
+      "name": "main__ir_async_state_2"
+    }
+  ]
+}
