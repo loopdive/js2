@@ -28,9 +28,17 @@ created: 2026-09-19
 # +24 LOC in `property-access-dispatch.ts` is the twin splice on the READ side
 # (`emitClassStaticMemberRead`'s last arm, before `PA_FALLTHROUGH`) plus its
 # rationale; the emission itself is in the leaf.
+#
+# +9 LOC / +8 function LOC in `expressions.ts` is the third splice, on the
+# COMPUTED read (`S[k]`): `compileExpressionInner`'s element-access arm is the
+# one chokepoint that owns the existing lowering the new arm WRAPS — the arm is
+# deliberately a superset of that lowering rather than a re-derivation of the
+# class-object static surface (the #5820 regression is what re-derivation costs),
+# so it has to sit where that lowering is called.
 loc-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/property-access-dispatch.ts
+  - src/codegen/expressions.ts
 #
 # +14 in `collectClassDeclaration` and +11 in `compileStatementInner` are the
 # two splice points of the IDENTIFIER-heritage arm, both already reduced to a
@@ -46,6 +54,7 @@ func-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   - src/codegen/class-bodies.ts::collectClassDeclaration
   - src/codegen/statements.ts::compileStatementInner
+  - src/codegen/expressions.ts::compileExpressionInner
 ---
 
 # #6644 — static inheritance + cross-link `instanceof` through a provider heritage

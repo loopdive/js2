@@ -63,6 +63,7 @@ import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
+import { emitToPropertyKeyOnce } from "./expressions/computed-member-reference.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
 import { allocLocal } from "./context/locals.js";
@@ -229,4 +230,89 @@ export function tryEmitLinkedStaticCall(
     pushExtern(ctx, fctx, value),
   );
   return emitted ? EXTERNREF : undefined;
+}
+
+/**
+ * (#6644) `S[k]` — the COMPUTED read of an inherited static, and with it every
+ * computed CALL shape including the spread one test262 actually writes
+ * (`MySubclass[method](...methodArgs)`).
+ *
+ * Measured with the named arms already landed: `typeof Sub["tag"]` was
+ * `undefined` while `typeof Sub.tag` answered `"function"`, and
+ * `S[method](...args)` died in the callee guard — so the defect is in the READ,
+ * not in any call form. One arm therefore serves all of them.
+ *
+ * Shape, and why it is a strict SUPERSET of today's answer:
+ *
+ * ```
+ * r = <the existing lowering>                    // own statics, sidecar, everything
+ * if (r === null || r === undefined) r = __extern_get(<linked parent>, ToPropertyKey(k))
+ * ```
+ *
+ * The own half is the compiler's existing element-access lowering, called
+ * through `compileOwn`, so no answer this module could give is lost — only a
+ * MISS is replaced. That is also why it cannot be written as
+ * `__extern_get(<class object>, k)`: a class object's own static surface is
+ * reachable through several carriers (the #5195 sidecar, `staticProps`
+ * globals, a callable static field), and re-deriving it here would be weaker
+ * than the ladder that already knows about all of them (the #5820 regression
+ * `emitClassValueDynamicCall` documents is exactly that mistake).
+ *
+ * **Restricted to a side-effect-free KEY** (an identifier or a string literal),
+ * because the fallback evaluates the key a second time and §13.3.3 evaluates it
+ * once. That covers `MySubclass[method]` exactly; any other key expression
+ * declines and keeps today's behaviour rather than duplicating an observable
+ * evaluation.
+ */
+export function tryEmitLinkedStaticComputedRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  elemAccess: ts.ElementAccessExpression,
+  compileOwn: () => ValType | null | undefined,
+): ValType | undefined {
+  const key = elemAccess.argumentExpression;
+  if (key === undefined) return undefined;
+  if (!ts.isIdentifier(key) && !ts.isStringLiteralLike(key)) return undefined;
+  if (!ts.isIdentifier(elemAccess.expression)) return undefined;
+  const className = ctx.classExprNameMap.get(elemAccess.expression.text) ?? elemAccess.expression.text;
+  if (!ctx.classLinkedDynamicParentExpr.has(className)) return undefined;
+  const externGetIdx = ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
+  const isUndefinedIdx = ensureLateImport(ctx, "__extern_is_undefined", [EXTERNREF], [{ kind: "i32" }]);
+  if (externGetIdx === undefined || isUndefinedIdx === undefined) return undefined;
+  flushLateImportShifts(ctx, fctx);
+
+  const mark = fctx.body.length;
+  const ownType = compileOwn();
+  if (ownType === undefined) {
+    fctx.body.length = mark;
+    return undefined;
+  }
+  if (ownType === null) fctx.body.push({ op: "ref.null.extern" });
+  else if (ownType.kind !== "externref") coerceType(ctx, fctx, ownType, EXTERNREF);
+
+  const valueLocal = allocLocal(fctx, `__lsi_cval_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push({ op: "local.set", index: valueLocal });
+  const fallback: Instr[] = [];
+  const saved = fctx.body;
+  fctx.body = fallback;
+  const parentPushed = pushLinkedDynamicParent(ctx, fctx, className, (expr) => pushExtern(ctx, fctx, expr));
+  const keyPushed = parentPushed && pushExtern(ctx, fctx, key);
+  if (keyPushed) {
+    emitToPropertyKeyOnce(ctx, fctx);
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? externGetIdx } satisfies Instr);
+    fctx.body.push({ op: "local.set", index: valueLocal });
+  }
+  fctx.body = saved;
+  if (!keyPushed) {
+    fctx.body.length = mark;
+    return undefined;
+  }
+  fctx.body.push({ op: "local.get", index: valueLocal });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({ op: "local.get", index: valueLocal });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_is_undefined") ?? isUndefinedIdx });
+  fctx.body.push({ op: "i32.or" });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: fallback });
+  fctx.body.push({ op: "local.get", index: valueLocal });
+  return EXTERNREF;
 }
