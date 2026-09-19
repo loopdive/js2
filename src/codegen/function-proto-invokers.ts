@@ -75,6 +75,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
+import { linkedForeignCallableBitInstrs } from "./standalone-link-boundary.js"; // (#6643)
 import {
   ensureObjectRuntime,
   ensureObjVecBuilders,
@@ -93,9 +94,19 @@ const EXTERNREF_RESULT: ValType = { kind: "externref" };
 function pushIsCallableGuard(ctx: CodegenContext, fctx: FunctionContext, member: string): boolean {
   const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
   if (typeofFunctionIdx === undefined) return false;
+  // (#6643) `__typeof_function` tests THIS module's callable carriers, so a
+  // receiver the linked PROVIDER owns — `Temporal.PlainDate.from`,
+  // `Temporal.PlainDate.prototype.toString` — answered 0 and `.call`/`.bind`
+  // threw "Function.prototype.<m> called on non-callable receiver" for a value
+  // that plainly has [[Call]] (measured against the real provider, probe p18).
+  // The peer knows; ask it as a DISJUNCT so nothing about the local answer
+  // changes. Emits nothing off the linked-consumer lane.
+  const peerCallable = linkedForeignCallableBitInstrs(ctx, 1);
   fctx.body.push(
     { op: "local.get", index: 1 },
     { op: "call", funcIdx: typeofFunctionIdx },
+    ...(peerCallable ?? []),
+    ...(peerCallable ? ([{ op: "i32.or" }] as Instr[]) : []),
     { op: "i32.eqz" },
     {
       op: "if",
@@ -177,7 +188,6 @@ export function emitFunctionProtoApplyBody(ctx: CodegenContext, fctx: FunctionCo
   if (!ctx.standalone && !ctx.wasi) return null;
   ensureObjectRuntime(ctx);
   const applyClosureIdx = reserveApplyClosure(ctx);
-  if (process.env.JS2WASM_DEBUG_6643) console.error("[6643] emit Function.prototype.apply body");
   if (!pushIsCallableGuard(ctx, fctx, "apply")) return null;
   pushApplyArgArrayGuard(ctx, fctx);
   fctx.body.push(

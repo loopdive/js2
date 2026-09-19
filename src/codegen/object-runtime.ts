@@ -92,7 +92,6 @@ import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js"; // (#4221) a
 import { buildResolvedCalleeGuard } from "./resolved-callee-guard.js"; // (#4656) §7.3.14 callability
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
-import { linkedForeignApplyViaPeerInstrs } from "./standalone-link-foreign-invoke.js";
 import {
   addFuncType,
   getArrTypeIdxFromVec,
@@ -7774,37 +7773,47 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   // rejects them before this bridge and they never enter the provider apply
   // terminal. Caller-owned closures make the peer predicate false and retain
   // the existing local dispatch unchanged.
-  // Read the already-registered builders rather than ensuring them: this runs
-  // AFTER the index-space freeze (#1984), so a registration here would shift
-  // every funcIdx already emitted. Missing ⇒ the #6643 arm declines.
-  const objVecNewIdx = ctx.funcMap.get("__objvec_new");
-  const objVecPushIdx = ctx.funcMap.get("__objvec_push");
-  const linkedForeignScratch = 3 + locals.length;
-  locals.push({ name: "__link_fn_invoke", type: { kind: "externref" } });
   const linkedStandaloneCallableKindIdx = standaloneLinkBoundaryPeerIndex(ctx, "callableKind");
   const linkedStandaloneApplyIdx = standaloneLinkBoundaryPeerIndex(ctx, "apply");
-  if (process.env.JS2WASM_DEBUG_6643)
-    console.error(
-      "[6643] fillApplyClosure peer kind=" + linkedStandaloneCallableKindIdx + " apply=" + linkedStandaloneApplyIdx,
-    );
+  // (#6643) …but ONLY for a callable this module does not itself recognise.
+  // The arm above is unshifted AHEAD of the local dispatcher, and the peer's
+  // predicate is not a statement about OWNERSHIP: under `canonicalRuntimeTypes`
+  // the provider's `__is_callable` also answers 1 for a CONSUMER-owned closure
+  // that crossed into it. So every dynamic call whose callee was locally
+  // dispatchable — in particular the consumer's own
+  // `%Function.prototype%.apply` glue closure, which `__closure_method_call`
+  // hands to this bridge for `f.apply(thisArg, args)` — was handed wholesale to
+  // the provider, which cannot run it and answers the null sentinel. Measured
+  // against the real `@js-temporal/polyfill` provider: every
+  // `Temporal.PlainDate.from.apply(…)` spelling returned `null` WITHOUT the
+  // provider function ever being entered (a deliberately invalid argument that
+  // must throw returned `null` instead), which is the first assertion of
+  // test262's `checkSubclassingIgnoredStatic`. Adding this conjunct routes the
+  // glue through its own local dispatch, and its inner
+  // `__apply_closure(target, …)` — where `target` IS provider-owned and
+  // locally NOT callable — then takes the peer arm as #6420 intended.
+  //
+  // Absent `__is_callable` the conjunct is omitted and the arm keeps its
+  // pre-#6643 shape, so a module without the callability native is unchanged.
+  const localIsCallableIdx = ctx.funcMap.get("__is_callable");
   if (linkedStandaloneCallableKindIdx !== undefined && linkedStandaloneApplyIdx !== undefined) {
     body.unshift(
       { op: "local.get", index: 0 },
       { op: "call", funcIdx: linkedStandaloneCallableKindIdx },
       { op: "i32.const", value: 1 },
       { op: "i32.and" },
+      ...(localIsCallableIdx === undefined
+        ? []
+        : ([
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: localIsCallableIdx },
+            { op: "i32.eqz" },
+            { op: "i32.and" },
+          ] as Instr[])),
       {
         op: "if",
         blockType: { kind: "empty" },
         then: [
-          // (#6643) …preferring the PROVIDER's own `Function.prototype.apply`
-          // when it resolves there. The provider's `__apply_closure` cannot
-          // dispatch a method-closure singleton (#5383 S2h), which is what a
-          // `Temporal.PlainDate.from` read hands back; its own `apply` can.
-          // Declines (emits nothing) off the linked-consumer lane.
-          ...(objVecNewIdx === undefined || objVecPushIdx === undefined
-            ? []
-            : (linkedForeignApplyViaPeerInstrs(ctx, linkedForeignScratch, objVecNewIdx, objVecPushIdx) ?? [])),
           { op: "local.get", index: 0 },
           { op: "local.get", index: 1 },
           { op: "local.get", index: 2 },

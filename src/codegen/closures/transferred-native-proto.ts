@@ -280,10 +280,33 @@ export function buildTransferredNativeProtoVariadicApplyInstrs(
       { op: "ref.test", typeIdx: vecTypeIdx },
     ];
     if (hasObjVec) {
+      // (#6643) The `$ObjVec` adoption below re-wraps the carrier's DATA array
+      // as this entry's own `arrTypeIdx` with a bare `ref.cast`. That cast is
+      // only sound when the two array types actually unify, so make the
+      // admission predicate ask — a `$ObjVec` whose data array is a different
+      // type must NOT be admitted, or the arm traps `illegal cast` instead of
+      // declining. Reached on the standalone LINK-CONSUMER lane, where the
+      // `%Function.prototype%.call` glue hands `__apply_closure` an `$ObjVec`
+      // it built itself: measured as an UNCATCHABLE trap for
+      // `<provider callable>.call(…)` (probe: `tests/issue-6643-*.test.ts`).
+      // Declining leaves the ordinary arity dispatch to answer, which is the
+      // behaviour every module that never reaches this arm already has.
       carrierCompatible.push(
         { op: "local.get", index: slots.argsLocal },
         { op: "any.convert_extern" },
         { op: "ref.test", typeIdx: slots.objVecTypeIdx! },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "i32" } },
+          then: [
+            { op: "local.get", index: slots.argsLocal },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: slots.objVecTypeIdx! },
+            { op: "struct.get", typeIdx: slots.objVecTypeIdx!, fieldIdx: 1 },
+            { op: "ref.test", typeIdx: arrTypeIdx },
+          ],
+          else: [{ op: "i32.const", value: 0 }],
+        },
         { op: "i32.or" },
       );
     }
