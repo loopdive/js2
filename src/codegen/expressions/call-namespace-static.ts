@@ -87,6 +87,9 @@ import {
 } from "../promise-observable-combinators.js";
 import type { InnerResult } from "../shared.js";
 import { brandExternMethodResult, coerceType, compileExpression, VOID_RESULT } from "../shared.js";
+import { compileSpreadCallArgs } from "./extern.js";
+import { emitKnownRestMethodArguments, knownMethodRestInfo } from "./object-method-rest-abi.js";
+import { compileSpreadCallArgsWithArguments } from "./spread-arguments-call.js";
 import { emitSetExtrasArgv, maybeSetArgcForKnownCall } from "../statements/nested-declarations.js";
 import {
   ensureNativeSymbolBoundaryBridge,
@@ -993,6 +996,47 @@ export function compileNamespaceStaticCall(
     const guardReflectTargetIsObject = (targetLocal: number, message: string): void => {
       emitNativeReflectNonObjectGuard(ctx, fctx, targetLocal, message);
     };
+    // (#6494 S3) §28.1.6 / §28.1.9 step 1 for the two spellings the runtime
+    // guard deliberately declines: a target that is LITERALLY `null` or
+    // `undefined`. `emitNativeReflectNonObjectGuard` refuses to brand those at
+    // runtime because this compiler's alias/element widening nulls ordinary
+    // objects (see its comment) — but that hazard is about VALUES, and this is
+    // a question about the expression. `Reflect.get(null, 'p')` cannot be a
+    // nulled real object; it is the spec's step-1 TypeError, and it is what
+    // `Reflect/{get,has}/target-is-not-object-throws.js` spend half their
+    // assertions on (the number/string spellings already throw).
+    //
+    // Deliberately NOT extended to the other Reflect arms: their guards are
+    // pre-existing and widening them is not this slice's to do.
+    const targetIsStaticallyNullish = (argument: ts.Expression | undefined): boolean => {
+      if (argument === undefined) return false;
+      let inner: ts.Expression = argument;
+      while (
+        ts.isParenthesizedExpression(inner) ||
+        ts.isAsExpression(inner) ||
+        ts.isTypeAssertionExpression(inner) ||
+        ts.isNonNullExpression(inner)
+      ) {
+        inner = inner.expression;
+      }
+      // `null` and `void <expr>` are unambiguous in the grammar.
+      if (inner.kind === ts.SyntaxKind.NullKeyword) return true;
+      if (ts.isVoidExpression(inner)) return true;
+      // `undefined` is an ordinary identifier and CAN be shadowed, so the
+      // oracle — not the spelling — owns the decision. A shadowing
+      // `var undefined = {}` reports `object` and keeps its previous lowering.
+      const fact = ctx.oracle.typeFactOf(inner);
+      return fact.kind === "null" || fact.kind === "undefined" || fact.kind === "void";
+    };
+    const guardReflectTargetIsObjectOrNullish = (
+      targetLocal: number,
+      message: string,
+      argument: ts.Expression | undefined,
+    ): void => {
+      emitNativeReflectNonObjectGuard(ctx, fctx, targetLocal, message, {
+        staticallyNullish: targetIsStaticallyNullish(argument),
+      });
+    };
     // (#5196 R3-2 C5) §7.1.19 ToPropertyKey on the Reflect key argument, in
     // place, AFTER the target guard and BEFORE the native call. An object key
     // with a throwing `toString`/`valueOf` must propagate that abrupt
@@ -1061,7 +1105,8 @@ export function compileNamespaceStaticCall(
         }
         // (#5196 R3-2 C4) §28.1.6 step 1 for EVERY non-Object target — same
         // guard the `deleteProperty`/`ownKeys`/`isExtensible` arms use.
-        guardReflectTargetIsObject(targetLocal, "Reflect.get called on non-object");
+        // (#6494 S3) …plus a statically-nullish target.
+        guardReflectTargetIsObjectOrNullish(targetLocal, "Reflect.get called on non-object", expr.arguments[0]);
         coerceReflectPropertyKey(argLocals[1]);
 
         // (#2046/#4397) Preserve the optional receiver in Wasm. A native
@@ -1267,7 +1312,8 @@ export function compileNamespaceStaticCall(
         // the Symbol carrier — the same guard `deleteProperty`/`ownKeys`/
         // `isExtensible` already use (it admits closure and expando carriers
         // positively, so an ordinary callable/instance target is unaffected).
-        guardReflectTargetIsObject(targetLocal, "Reflect.has called on non-object");
+        // (#6494 S3) …plus a statically-nullish target.
+        guardReflectTargetIsObjectOrNullish(targetLocal, "Reflect.has called on non-object", expr.arguments[0]);
         fctx.body.push({ op: "local.get", index: argLocals[0]! });
         fctx.body.push({ op: "local.get", index: argLocals[1]! });
         const funcIdx = ensureLateImport(ctx, "__extern_has", [externRef, externRef], [i32Ty]);
@@ -3925,18 +3971,45 @@ export function compileNamespaceStaticCall(
         const staticParamCount = paramTypes ? paramTypes.length : expr.arguments.length;
         const calleeReadsArgsEarly = ctx.funcUsesArguments.has(fullName);
         const memberDecl = ctx.fnMetaMemberDecls?.get(fullName);
-        for (let i = 0; i < Math.min(expr.arguments.length, staticParamCount); i++) {
-          const sourceParam =
-            memberDecl !== undefined && ts.isMethodDeclaration(memberDecl) ? memberDecl.parameters[i] : undefined;
-          const forceArrayLiteralVec =
-            (ctx.standalone || ctx.wasi) && sourceParam !== undefined && ts.isArrayBindingPattern(sourceParam.name);
-          if (forceArrayLiteralVec) {
-            compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i], true);
-          } else {
-            compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[i]);
+        // (#6616) `K.s(...xs)` — this arm is the one that CLAIMS a static call
+        // through a class-object identifier, and it bound each argument NODE to
+        // one formal. A spread element therefore arrived whole: the callee saw
+        // the array (or, for an inline `[1, 2]`, a tuple struct) in formal 0 and
+        // `undefined` in every other. `paramOffset` is 0 — a static body has no
+        // `self` param.
+        //
+        // (#6616) The same arm also never materialised the hidden REST vec, so
+        // a `static f(...args)` body saw `args === null` and trapped on the
+        // first read — `K.f(1, 2)` with no spread anywhere. Every other callee
+        // shape (object-literal method, plain function, instance method) was
+        // already correct; only the static-through-a-class-object arm was
+        // missing both halves of the known-callee argument ABI.
+        const restInfoStatic = knownMethodRestInfo(ctx, expr, fullName, paramTypes, 0);
+        const handledRestStatic =
+          restInfoStatic !== undefined && emitKnownRestMethodArguments(ctx, fctx, expr, paramTypes, restInfoStatic, 0);
+        const hasSpreadStatic = expr.arguments.some((argument) => ts.isSpreadElement(argument));
+        const handledSpreadStatic = !handledRestStatic && hasSpreadStatic && staticParamCount > 0;
+        const handledArgvSpreadStatic =
+          handledSpreadStatic &&
+          calleeReadsArgsEarly &&
+          restInfoStatic === undefined &&
+          compileSpreadCallArgsWithArguments(ctx, fctx, expr, funcIdx, 0, fullName);
+        if (handledSpreadStatic) {
+          if (!handledArgvSpreadStatic) compileSpreadCallArgs(ctx, fctx, expr, funcIdx, restInfoStatic, 0);
+        } else if (!handledRestStatic) {
+          for (let i = 0; i < Math.min(expr.arguments.length, staticParamCount); i++) {
+            const sourceParam =
+              memberDecl !== undefined && ts.isMethodDeclaration(memberDecl) ? memberDecl.parameters[i] : undefined;
+            const forceArrayLiteralVec =
+              (ctx.standalone || ctx.wasi) && sourceParam !== undefined && ts.isArrayBindingPattern(sourceParam.name);
+            if (forceArrayLiteralVec) {
+              compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, paramTypes?.[i], true);
+            } else {
+              compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[i]);
+            }
           }
         }
-        if (expr.arguments.length > staticParamCount) {
+        if (!handledRestStatic && !handledSpreadStatic && expr.arguments.length > staticParamCount) {
           if (calleeReadsArgsEarly) {
             emitSetExtrasArgv(ctx, fctx, expr.arguments as unknown as ts.Expression[], staticParamCount);
           } else {
@@ -3949,13 +4022,15 @@ export function compileNamespaceStaticCall(
           }
         }
         // Pad missing arguments with defaults
-        if (paramTypes) {
+        if (paramTypes && !handledRestStatic && !handledSpreadStatic) {
           for (let i = expr.arguments.length; i < paramTypes.length; i++) {
             pushDefaultValue(fctx, paramTypes[i]!, ctx);
           }
         }
         // Set __argc before the call so the callee knows the actual arg count
-        maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, staticParamCount);
+        // (#5093: not over a flattened spread, which published a runtime one).
+        if (!handledArgvSpreadStatic)
+          maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, staticParamCount);
         // Re-lookup funcIdx: argument compilation may trigger addUnionImports
         const finalStaticIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static")) ?? funcIdx; // (#1983)
         fctx.body.push({ op: "call", funcIdx: finalStaticIdx });

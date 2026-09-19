@@ -118,6 +118,11 @@ const CLOSURE_FREE_SPOOF_SOURCE = `
 `;
 
 const CLOSURE_STANDALONE_HELPER_EXPORTS = [
+  // (#6491) the free-function argc channel, sibling of the method family below.
+  "__\0js2_call_fn_argc_1",
+  "__\0js2_call_fn_argc_2",
+  "__\0js2_call_fn_argc_3",
+  "__\0js2_call_fn_argc_4",
   "__\0js2_call_fn_method_argc_1",
   "__\0js2_call_fn_method_argc_2",
   "__\0js2_call_fn_method_argc_3",

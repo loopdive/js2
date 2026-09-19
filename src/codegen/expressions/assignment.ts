@@ -5,6 +5,7 @@
 import { ts, forEachChild } from "../../ts-api.js";
 import { receiverIsRealmGlobalObject } from "../helpers/sloppy-this-global.js"; // (#4500 Slice A) realm-global receiver
 import { tryEmitRealmGlobalElementWrite } from "../realm-global-element-write.js"; // (#4491 T4) its bracket twin
+import { emitVecLengthHoleFill } from "../vec-length-hole-fill.js"; // (#6482 r4) shared length-store hole fill
 import { isBooleanType, isExternalDeclaredClass, isStringType } from "../../checker/type-mapper.js";
 import { integrityVarKey } from "../widened-var-key.js";
 import { classMemberFuncKey } from "../class-member-keys.js"; // (#5195 Step 9 H) static setter key
@@ -4789,6 +4790,14 @@ function compilePropertyAssignment(
         { op: "local.get", index: newLenTmp },
         { op: "struct.set", typeIdx: vecBaseIdx, fieldIdx: 0 },
       ];
+      // (#6482 r4) This store touches ONLY field 0, so a shrink leaves the
+      // dropped elements sitting in the backing array and a later grow exposes
+      // them again (`[0,1]; length = 1; length = 10` → index 1 read back as
+      // `1`). Mark the orphaned region before the length moves. Shared emitter —
+      // the receiver here is `$__vec_base`, whose only field is `length`, so
+      // reaching the data array needs the per-vec-type ladder that
+      // `vec-length-hole-fill.ts` owns for all three length-store sites.
+      emitVecLengthHoleFill(ctx, fctx, vecTmp, newLenTmp, "shrink-only");
       const selectedStore = buildOverlayArrayLengthSet(ctx, fctx, vecTmp, newLenTmp, target) ?? lengthStore;
       if (receiverProvenVec) {
         for (const instr of selectedStore) fctx.body.push(instr);
@@ -6364,7 +6373,17 @@ function compileExternSetFallback(
       fctx.body.push({ op: "drop" });
       fctx.body.push({ op: "ref.null.extern" });
     }
-  } else if (objType.kind === "ref" || objType.kind === "ref_null") {
+  } else if (objType.kind === "ref" || objType.kind === "ref_null" || objType.kind === "anyref") {
+    // (#6635) `anyref` reaches here the same way it reaches
+    // `compileElementAccessBody`'s read-side twin — e.g. the un-annotated
+    // return of `Map`/`WeakMap.prototype.get()` used directly as a WRITE
+    // target with no intervening local (`someMap.get(k)[computedKey] = v`).
+    // `extern.convert_any` accepts anyref (and its struct-ref subtypes)
+    // identically, so this is the same conversion the `ref`/`ref_null` arm
+    // already performs — not a new code path, just widening its guard to
+    // stop anyref falling to the `reportError` below, which the #1919
+    // speculative wrapper turns into a SILENT no-op write (the RHS value is
+    // dropped instead of ever reaching `__extern_set`).
     fctx.body.push({ op: "extern.convert_any" });
   } else {
     reportError(ctx, target, "Unsupported element assignment target type");

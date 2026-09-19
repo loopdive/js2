@@ -9,6 +9,7 @@ import { emitFnctorCtorCallSiteArgc } from "./fnctor-ctor-arguments.js";
 import { FNCTOR_CONSTRUCTOR_FIELD } from "./fnctor-identity-fields.js";
 import { getOrRegisterRefCellType, refCellValueType } from "./registry/types.js";
 import { coerceType, compileExpression } from "./shared.js";
+import { resolveStaticSpreadArgs } from "./static-spread-arity.js"; // (#6460)
 import { pushDefaultValue } from "./type-coercion.js";
 
 export interface FnctorCapture {
@@ -235,10 +236,21 @@ export function emitFnctorConstructorArguments(
   fctx: FunctionContext,
   captureLayout: FnctorCaptureLayout,
   callee: ts.Expression,
-  args: readonly ts.Expression[],
+  rawArgs: readonly ts.Expression[],
   userParamTypes: ValType[] | undefined,
   ctorReadsArguments = false,
 ): void {
+  // (#6460) `new F(...xs)` on an ordinary function constructor pushed ONE
+  // operand for the whole spread, because the generic argument compiler
+  // degrades a `SpreadElement` to its own inner expression. Every parameter
+  // after the first then read its default: `function C(a,b,c){}` called as
+  // `new C(...[1,2,3])` stored the ARRAY in `a` and `undefined` in `b`/`c`.
+  // Expand the statically-known element list so the positional loop below
+  // sees the real arity. Standalone/WASI only — the JS-host lane routes the
+  // same shape through `emitDynamicSpreadCall`, and widening here would
+  // change its bytes for no behavioural gain.
+  const args: readonly ts.Expression[] =
+    ctx.standalone || ctx.wasi ? (resolveStaticSpreadArgs(ctx, rawArgs) ?? rawArgs) : rawArgs;
   let constructorIdentityLocal: number | undefined;
   if (!ctx.wasi) {
     const valueType = compileExpression(ctx, fctx, callee, { kind: "externref" });

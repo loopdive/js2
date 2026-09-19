@@ -646,6 +646,47 @@ export interface CompileOptions {
    * `"use strict"` prologue and class context still force strict regardless.
    */
   inferModuleStrictArguments?: boolean;
+  /**
+   * (#6491 round 3) The compilation unit is explicitly **Script** goal.
+   *
+   * The positive counterpart of `inferModuleStrictArguments`, and it has to be
+   * its own flag rather than its negation: `inferModuleStrictArguments === false`
+   * is ALSO what every ordinary product compile leaves behind (the option is
+   * simply absent), and a product `.ts` file legitimately contains `export` and
+   * `import`. So "not module goal" cannot be read as "Script goal" — doing that
+   * would reject valid code with a SyntaxError.
+   *
+   * Only a caller that KNOWS the goal may set it. Today that is exactly the
+   * test262 runner, which reads it off the test's own `flags: [module]`
+   * metadata. It gates the three Script-goal rules — `import`/`export`
+   * declarations (§16.1.1) and `import.meta` (§13.3.12.1) are ModuleItems and
+   * are SyntaxErrors in a Script — and nothing else.
+   */
+  scriptGoal?: boolean;
+  /**
+   * (#6474) Let the MULTI-FILE codegen path derive the entry's source goal from
+   * the entry file itself instead of forcing the module goal.
+   *
+   * `generateMultiModule` sets `ctx.sourceIsModule = true` unconditionally
+   * ("multi-file compilation is linked through import/export module records").
+   * For an ordinary package graph that is right. For the linked test262 harness
+   * lane it is not: the entry is a test262 **script**, and the module goal
+   * changes observable semantics — a top-level `var` becomes module-scoped
+   * instead of a global-object property (so a closure created before the
+   * declaration sees `undefined`, and a `with`-introduced `var` never reaches
+   * the global), top-level `this` becomes `undefined`, and an undeclared
+   * assignment stops creating a global.
+   *
+   * When `true`, `ctx.sourceIsModule` follows the entry file's own
+   * `externalModuleIndicator` — a genuine `import`/`export` in the entry still
+   * yields the module goal. Sibling files are unaffected; they keep their own
+   * per-file binding scoping.
+   *
+   * Opt-in and OFF by default, so every other `compileMulti` / `compileProject`
+   * caller is byte-identical. Today the only caller that sets it is
+   * `compileHarnessLinkedBody`.
+   */
+  entryScriptGoal?: boolean;
   /** Use WasmGC-native strings (array i16) instead of wasm:js-string imports.
    *  Enabled automatically when fast: true or target: "wasi".
    *  Required for non-browser runtimes (wasmtime, wasmer, etc.) */

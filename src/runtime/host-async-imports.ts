@@ -3,6 +3,7 @@
 import { ASYNC_CALLBACK_EXCEPTION_POLICY } from "./contracts/async-provider-schema.js";
 import { createNativeFunctionCallbackBridge } from "./native-function-source.js";
 import { createPromiseThenImport } from "./promise-then-reactions.js";
+import { PROMISE_INTRINSICS } from "./promise-intrinsics.js";
 
 export interface HostAsyncCallbackState {
   readonly getExports: () => Record<string, Function> | undefined;
@@ -106,13 +107,24 @@ export function createHostNumberUnboxImport(
   };
 }
 
+/**
+ * `PromiseResolve(%Promise%, x)` — the INTRINSIC operation, captured at module
+ * load in `./promise-intrinsics.js` (see that file for the recursion this
+ * prevents and for why the combinators' observable `Get(C, "resolve")` is a
+ * different question). Deliberately NOT a late `Promise.resolve` property
+ * read: §27.7.5.3 Await performs `PromiseResolve(%Promise%, value)`, which
+ * reads nothing off the `Promise` object, and this import also serves a folded
+ * `Promise.resolve`-alias call site.
+ */
+const _intrinsicPromiseResolve = PROMISE_INTRINSICS.resolve;
+
 /** Host-realm Promise allocation and the existing live `then`/capability dispatch. */
 export function createHostPromiseBuiltinImport(
   name: HostAsyncPromiseBuiltinName,
   _wrapThenable: HostAsyncValueOperations["wrapThenable"],
   _wrapPromiseReaction: HostAsyncValueOperations["wrapPromiseReaction"],
 ): Function {
-  if (name === "Promise_resolve") return (val: any) => Promise.resolve(_wrapThenable(val));
+  if (name === "Promise_resolve") return (val: any) => _intrinsicPromiseResolve(_wrapThenable(val));
   if (name === "Promise_new_pending")
     return () => {
       let r: (v: any) => void = () => {};

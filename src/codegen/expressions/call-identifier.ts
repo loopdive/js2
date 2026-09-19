@@ -102,7 +102,7 @@ import { URI_DECODE_MASK, URI_ENCODE_MASK } from "../uri-encoding-native.js";
 import { ensureWasiWriteFileStringsHelper } from "../wasi.js";
 import { wasiAllocStringData } from "./builtins.js";
 import { compileClosureCall, runtimeSignatureParameters } from "./calls-closures.js";
-import { tryCompileStoredObjectBuiltinCall } from "./call-object-builtins.js";
+import { tryCompileStoredObjectBuiltinCall, uncurriedBuiltinAliasArmActive } from "./call-object-builtins.js";
 import { compileSpreadCallArgs } from "./extern.js";
 import { compileSpreadCallArgsWithArguments } from "./spread-arguments-call.js";
 import {
@@ -118,6 +118,7 @@ import { resolveDefaultExpressionImportGlobal } from "../default-expression-impo
 import { emitTdzCheckAtGlobal } from "../statements/tdz.js";
 import { buildThrowJsErrorInstrs } from "../js-errors.js";
 import { tryEmitUndeclaredCalleeReferenceError } from "./undeclared-callee.js"; // undeclared-identifier call → ReferenceError
+import { tryEmitLinkedProviderFreeGlobalCall } from "./linked-free-global-call.js"; // (#6492 r9) provider free callee → live realm lookup
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { isSloppyImplicitGlobalBinding } from "./implicit-global-binding.js"; // (#3966) callee stored on the realm global
 import { tryEmitNullishIdentifierCalleeTypeError } from "./stored-member-closure-call.js"; // (#4640 D1)
@@ -130,6 +131,7 @@ import { paramUndefinedTypeIsDefaultArtifact } from "../destructuring-params.js"
 import {
   calleeIsCapabilityCtorParam,
   calleeIsPromiseExecutorParam,
+  calleeIsLinkedProviderParam,
   calleeMayBeHostCallable,
   appendForwardedOptionalArgcOverride,
   compileCallExpression,
@@ -520,7 +522,7 @@ function tryCompileStoredStandaloneCarrierCall(
   expr: ts.CallExpression,
   isKnownVariable: boolean,
 ): InnerResult | undefined {
-  if (!isKnownVariable || (!ctx.standalone && !noJsHost(ctx))) return undefined;
+  if (!isKnownVariable || !uncurriedBuiltinAliasArmActive(ctx)) return undefined;
   const storedObjectCall = tryCompileStoredObjectBuiltinCall(ctx, fctx, expr);
   if (storedObjectCall !== undefined) return storedObjectCall;
   if (!calleeIsBoundFunctionVar(ctx.oracle, expr.expression)) return undefined;
@@ -1757,7 +1759,7 @@ export function compileIdentifierCall(
     // bind provider otherwise routes the `$__bound_fn` through the stored
     // `Function.prototype.call` VALUE, whose standalone body is the #2984
     // degrade throw. The resolver only matches the immutable harness idiom.
-    if (!isLocallyShadowed && (ctx.standalone || noJsHost(ctx))) {
+    if (!isLocallyShadowed && uncurriedBuiltinAliasArmActive(ctx)) {
       // Deno's `uncurryThis = bind.bind(call)` has the exact native spelling
       // `call.bind(...args)`. Construct that bound-function carrier directly;
       // invoking the generic Function.prototype.bind method-value body would
@@ -2919,6 +2921,12 @@ export function compileIdentifierCall(
             // params is preserved.
             (calleeMayBeHostCallable(ctx, expr.expression) ||
               calleeIsPromiseExecutorParam(ctx, expr.expression) ||
+              // (#6490) A callable param of a separately-linked PROVIDER can
+              // hold a consumer-module closure, whose struct belongs to the
+              // consumer's type group; the guarded cast here nulls and the
+              // dispatch traps un-catchably. Linker-only flag, so ordinary
+              // single-module compiles are byte-identical.
+              calleeIsLinkedProviderParam(ctx, expr.expression) ||
               // Captures explicitly marked as host-bound callback values stay
               // externref by design. They may be real JS functions after a
               // compiled method crosses the host boundary (Jest's Prompt
@@ -3520,6 +3528,18 @@ export function compileIdentifierCall(
           fctx.body.push({ op: "call", funcIdx: resolvedBridgeIdx });
           return { kind: "externref" };
         }
+      }
+
+      // (#6492 round 9) A linked PROVIDER resolves a free callee through the
+      // realm's global object FIRST, and only throws when the property is
+      // genuinely absent — §9.1.1.4, and the shape the test262 harness needs
+      // for `$DONE(err)`. Declines for every non-provider unit, so the
+      // ReferenceError arm below is unchanged everywhere else. Must come
+      // before that arm, which is unconditional once it decides the name is
+      // undeclared.
+      if (declaration === undefined && !implicitCallee && !isRuntimeEvalGlobal) {
+        const freeGlobal = tryEmitLinkedProviderFreeGlobalCall(ctx, fctx, expr, funcName);
+        if (freeGlobal !== undefined) return freeGlobal;
       }
 
       // §6.2.5.5 GetValue on an unresolvable Reference — both lanes. See

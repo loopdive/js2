@@ -220,8 +220,24 @@ export function emitResolvedIdentifierWriteFromStack(
   // precise same-helper reads. Chunk leaves must still persist the write in
   // the module global for subsequent helpers, so mirror the already-coerced
   // value into that established shadow before the durable store.
-  const shadowLocalIdx =
-    durableModuleGlobalIdx === undefined ? undefined : fctx.moduleBindingShadowLocals?.get(id.text);
+  // (#6492 round 4d) The shadow registry only knows the bindings declared
+  // through the closure-global arm of `statements/variables.ts`. A top-level
+  // `let { value, done } = …` also mirrors global+local, but registers no
+  // shadow — so a later `({ value, done } = …)` stored ONLY to the module
+  // global while every read still resolved the local, and the assignment was
+  // silently lost. Measured in the #3451 linked lane on
+  // `Iterator/prototype/{map,filter}/underlying-iterator-advanced-in-parallel.js`:
+  // `mapped.next()` produced the right result and the test still read the
+  // pre-assignment value. Fall back to the same-named local, but only when its
+  // type matches the global's — a `local.tee` of a mismatched type is invalid
+  // wasm, and those bindings keep the existing global-only store.
+  let shadowLocalIdx = durableModuleGlobalIdx === undefined ? undefined : fctx.moduleBindingShadowLocals?.get(id.text);
+  if (shadowLocalIdx === undefined && durableModuleGlobalIdx !== undefined) {
+    const mirrored = fctx.localMap.get(id.text);
+    if (mirrored !== undefined && targetType && valTypesMatch(getLocalType(fctx, mirrored) ?? targetType, targetType)) {
+      shadowLocalIdx = mirrored;
+    }
+  }
   if (shadowLocalIdx !== undefined) fctx.body.push({ op: "local.tee", index: shadowLocalIdx });
   // Re-read after coercion/guard helpers: either can settle imports/globals.
   fctx.body.push({ op: "global.set", index: ctx.moduleGlobals.get(id.text)! });

@@ -1,4 +1,6 @@
 import { emitNativeGeneratorProtocolMethodBody } from "./generators-native-protocol.js";
+import { emitIteratorFamilyNextBody } from "./iterator-proto-next.js"; // (#6484 S2)
+import { ITER_FAMILY_ARRAY, ITER_FAMILY_MAP, ITER_FAMILY_SET } from "./iterator-native.js"; // (#6484 S1)
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#2193 / #43 harvest) Native `$NativeProto` glue for `Array.prototype` and
@@ -116,6 +118,11 @@ import {
 } from "./builtin-static-globals.js";
 import { moduleReadsBareFunctionValue } from "./function-intrinsic-carrier.js";
 import { emitFunctionProtoHasInstanceBody, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "./function-proto-has-instance.js";
+import {
+  emitFunctionProtoApplyBody,
+  emitFunctionProtoBindBody,
+  emitFunctionProtoCallBody,
+} from "./function-proto-invokers.js"; // (#6630)
 import {
   ERROR_STACK_GETTER_MEMBER,
   ERROR_STACK_SETTER_MEMBER,
@@ -2434,7 +2441,13 @@ function makeGlue(
     memberIsVariadic: (member) =>
       name === "Array" && (member === "join" || member === "push" || member === "unshift" || member === "concat")
         ? true
-        : name === "String" && member === "concat",
+        : name === "String" && member === "concat"
+          ? true
+          : // (#6630, merged with #6493 S1 2026-09-18) `call`/`bind` both take
+            // `(thisArg, ...rest)` — the packed vec ABI the invoker bodies below
+            // unpack themselves. `apply` stays fixed at its 2-slot spec arity
+            // (thisArg, argArray).
+            name === "Function" && (member === "call" || member === "bind"),
     // (#4485) §B.2.4.3 — `Date.prototype.toGMTString` IS `Date.prototype.
     // toUTCString` (one function object, asserted by test262 annexB
     // .../toGMTString/value.js). The Annex B String aliases have the same
@@ -2505,6 +2518,13 @@ function makeGlue(
       (name === "Function" && member === FUNCTION_PROTO_HAS_INSTANCE_MEMBER
         ? emitFunctionProtoHasInstanceBody(c, fctx)
         : null) ??
+      // (#6630) `call`/`apply`/`bind` as reflective VALUES — forward to the
+      // generic "invoke any callable" primitives (`__apply_closure`/
+      // `__bind_dyn`) the rest of the runtime already uses for this question.
+      // See function-proto-invokers.ts's header for the full defect trace.
+      (name === "Function" && member === "call" ? emitFunctionProtoCallBody(c, fctx) : null) ??
+      (name === "Function" && member === "apply" ? emitFunctionProtoApplyBody(c, fctx) : null) ??
+      (name === "Function" && member === "bind" ? emitFunctionProtoBindBody(c, fctx) : null) ??
       (name === "Array"
         ? emitArrayProtoMemberBody(c, fctx, member)
         : name === "Promise"
@@ -2737,12 +2757,54 @@ export function ensurePromiseNativeProtoGlue(ctx: CodegenContext): number | unde
   return brand;
 }
 
+/**
+ * (#6484 S1) Compiler spelling of the `[Symbol.iterator]` member key. `@@1` is
+ * the well-known-symbol id for `Symbol.iterator`, and
+ * `nativeProtoMemberDisplayName` turns it into the `.name` the spec requires,
+ * `"[Symbol.iterator]"`.
+ */
+const ITERATOR_PROTO_SYMBOL_ITERATOR = "@@1";
+
 /** (#2861) Register `Iterator.prototype` glue (idempotent) and return its brand. */
 export function ensureIteratorNativeProtoGlue(ctx: CodegenContext): number | undefined {
   const brand = getBuiltinBrand(ctx, "Iterator");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
-    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Iterator", ITERATOR_PROTO_METHODS));
+    const base = makeGlue(ctx, brand, "Iterator", ITERATOR_PROTO_METHODS);
+    registerNativeProtoBuiltin(ctx, {
+      ...base,
+      // (#6484 S1) §27.1.2.1 `%IteratorPrototype%[@@iterator]` — `length` 0, and
+      // a body that returns its `this` UNCHANGED for every value, primitives
+      // included (the spec step is literally "Return the this value"). The
+      // member is deliberately NOT added to `memberCsv`: that CSV describes
+      // `Iterator.prototype`'s own-property surface, which this slice does not
+      // touch; the closure identity is all `%IteratorPrototype%` needs.
+      memberLength: (member) => (member === ITERATOR_PROTO_SYMBOL_ITERATOR ? 0 : base.memberLength(member)),
+      emitMemberBody: (c, fctx, member, kind) => {
+        if (member !== ITERATOR_PROTO_SYMBOL_ITERATOR) return base.emitMemberBody(c, fctx, member, kind);
+        fctx.body.push({ op: "local.get", index: 1 });
+        return { kind: "externref" };
+      },
+    });
+  }
+  return brand;
+}
+
+/**
+ * (#6484 S1) Register `%ArrayIteratorPrototype%` glue (idempotent). Same shape
+ * as the Map/Set twins below — one own `next` member, `length` 0 — which is
+ * what `ArrayIteratorPrototype/next/{name,length,property-descriptor}.js` read.
+ */
+export function ensureArrayIteratorNativeProtoGlue(ctx: CodegenContext): number | undefined {
+  const brand = getBuiltinBrand(ctx, "ArrayIterator");
+  if (brand === undefined) return undefined;
+  if (!getNativeProtoBuiltinGlue(ctx, brand)) {
+    registerNativeProtoBuiltin(ctx, {
+      ...makeGlue(ctx, brand, "ArrayIterator", ["next"]),
+      memberLength: () => 0,
+      emitMemberBody: (c, fctx) =>
+        emitIteratorFamilyNextBody(c, fctx, ITER_FAMILY_ARRAY, "%ArrayIteratorPrototype%.next"),
+    });
   }
   return brand;
 }
@@ -2760,6 +2822,17 @@ export function ensureCollectionIteratorNativeProtoGlue(ctx: CodegenContext, kin
     registerNativeProtoBuiltin(ctx, {
       ...makeGlue(ctx, brand, `${kind}Iterator`, ["next"]),
       memberLength: () => 0,
+      // (#6484 S2) A real §24.1.5.2 / §24.2.5.2 body — brand-check the receiver
+      // against this family, then step the record. Before this the member was a
+      // pure metadata stand-in whose body always threw, so
+      // `iterator.next.call(<a genuine map iterator>)` threw too.
+      emitMemberBody: (c, fctx) =>
+        emitIteratorFamilyNextBody(
+          c,
+          fctx,
+          kind === "Set" ? ITER_FAMILY_SET : ITER_FAMILY_MAP,
+          `%${kind}IteratorPrototype%.next`,
+        ),
     });
   }
   return brand;
@@ -4059,12 +4132,115 @@ export function emitIteratorPrototypeSingleton(
       );
     }
   }
+  // (#6484 S1) `%ArrayIteratorPrototype%.next` is an own data property too
+  // (§23.1.5.2) — Map/Set/String already install theirs above; Array was the
+  // one family whose prototype had no `next` at all, so `verifyProperty(proto
+  // .next, …)` saw `undefined`.
+  if (kind === "Array" && defineValueIdx !== undefined) {
+    const brand = ensureArrayIteratorNativeProtoGlue(ctx);
+    const closure =
+      brand === undefined
+        ? null
+        : ensureStandaloneNativeMethodClosure(ctx, brand, "next", "method", { refusalBodyFallback: true });
+    if (closure) {
+      initBody.push(
+        { op: "local.get", index: objLocal },
+        ...stringConstantExternrefInstrs(ctx, "next"),
+        ...pushBuiltinFnSingletonValueInstrs(ctx, closure),
+        { op: "extern.convert_any" },
+        { op: "f64.const", value: 0x01 | 0x04 }, // writable:true, enumerable:false, configurable:true
+        { op: "call", funcIdx: defineValueIdx },
+        { op: "drop" },
+      );
+    }
+  }
+
+  // (#6484 S1) §27.1.2 — all four family prototypes INHERIT from the single
+  // %IteratorPrototype%. Linking it here (rather than at each call site) is what
+  // makes `Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()))`
+  // an object with an own `[Symbol.iterator]`. The link is written inside the
+  // one-shot init, so it costs nothing on later reads.
+  emitIteratorRootPrototypeInit(ctx, fctx, initBody, objLocal, boxSymbolIdx);
+
   initBody.push({ op: "local.get", index: objLocal }, { op: "global.set", index: globalIdx });
   fctx.body.push({ op: "global.get", index: globalIdx });
   fctx.body.push({ op: "ref.is_null" });
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });
   fctx.body.push({ op: "global.get", index: globalIdx });
   return { kind: "externref" };
+}
+
+/**
+ * (#6484 S1) Materialize `%IteratorPrototype%` (§27.1.2) and append the
+ * `[[Prototype]]` link from the family prototype in `objLocal` onto `initBody`.
+ *
+ * The root is its own identity-stable `$Object` singleton in
+ * `__native_iterator_prototype`, with an own `[Symbol.iterator]` data property
+ * whose value is the `%IteratorPrototype%[@@iterator]` closure (`name`
+ * `"[Symbol.iterator]"`, `length` 0, returns its `this`). Returns the root's
+ * global index, or `undefined` when the object runtime cannot supply the
+ * pieces — then the family prototype keeps its historical null parent.
+ */
+function emitIteratorRootPrototypeInit(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  initBody: Instr[],
+  objLocal: number,
+  boxSymbolIdx: number | undefined,
+): number | undefined {
+  const newObjectIdx = ctx.funcMap.get("__new_plain_object");
+  const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
+  const setProtoIdx = ctx.funcMap.get("__object_setPrototypeOf");
+  if (newObjectIdx === undefined || defineValueIdx === undefined || setProtoIdx === undefined) return undefined;
+  if (boxSymbolIdx === undefined) return undefined;
+
+  const globalName = "__native_iterator_prototype";
+  let globalIdx = ctx.builtinObjectGlobals.get(globalName);
+  if (globalIdx === undefined) {
+    globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
+    ctx.mod.globals.push({
+      name: globalName,
+      type: { kind: "externref" },
+      mutable: true,
+      init: [{ op: "ref.null.extern" }],
+    });
+    ctx.builtinObjectGlobals.set(globalName, globalIdx);
+  }
+
+  const rootLocal = allocLocal(fctx, `__iter_root_proto_${fctx.locals.length}`, { kind: "externref" });
+  const rootInit: Instr[] = [
+    { op: "call", funcIdx: newObjectIdx },
+    { op: "local.set", index: rootLocal },
+  ];
+  const brand = ensureIteratorNativeProtoGlue(ctx);
+  const closure =
+    brand === undefined
+      ? null
+      : ensureStandaloneNativeMethodClosure(ctx, brand, ITERATOR_PROTO_SYMBOL_ITERATOR, "method");
+  if (closure) {
+    rootInit.push(
+      { op: "local.get", index: rootLocal },
+      { op: "i32.const", value: 1 }, // Symbol.iterator
+      { op: "call", funcIdx: boxSymbolIdx },
+      ...pushBuiltinFnSingletonValueInstrs(ctx, closure),
+      { op: "extern.convert_any" },
+      { op: "f64.const", value: 0x01 | 0x04 }, // writable:true, enumerable:false, configurable:true
+      { op: "call", funcIdx: defineValueIdx },
+      { op: "drop" },
+    );
+  }
+  rootInit.push({ op: "local.get", index: rootLocal }, { op: "global.set", index: globalIdx });
+
+  initBody.push(
+    { op: "global.get", index: globalIdx },
+    { op: "ref.is_null" },
+    { op: "if", blockType: { kind: "empty" }, then: rootInit, else: [] },
+    { op: "local.get", index: objLocal },
+    { op: "global.get", index: globalIdx },
+    { op: "call", funcIdx: setProtoIdx },
+    { op: "drop" },
+  );
+  return globalIdx;
 }
 
 export function emitArrayIteratorPrototypeSingleton(ctx: CodegenContext, fctx: FunctionContext): ValType | null {

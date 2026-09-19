@@ -112,6 +112,7 @@ async function runLinked(body: string, withHost: boolean): Promise<Verdict> {
   try {
     await instantiateTest262Module(result.binary, importObject, {
       linkedModules: result.linkedModules ?? [],
+      runDeferredInit: true,
       linkedRuntime,
       linkedHost: withHost ? { deps: { console }, options: { globalSandbox: sandbox } } : undefined,
     });

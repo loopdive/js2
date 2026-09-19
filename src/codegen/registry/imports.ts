@@ -35,6 +35,10 @@ import { STANDALONE_REGEXP_REFLECTION_PROPS } from "../regexp-standalone.js";
 import { reconcileNativeStrFinalizeShift } from "../expressions/late-imports.js";
 import { emitWasiErrorConstructor } from "./error-constructor-delegates.js";
 import { emitNativeParseNumber } from "./parse-number-delegates.js";
+import {
+  buildStringToBigIntBody,
+  buildStringToBigIntLocals,
+} from "../../runtime/wasmgc/values/string-to-bigint-body.js"; // (#6642 S61)
 import { boxBooleanBody } from "../interned-boolean-boxes.js"; // (#3780) interned true/false carriers
 import { planProgramAbiStringConstantImport } from "../program-abi-import-planning.js";
 import { shiftModuleGlobalExportIndices } from "../global-export-fixup.js";
@@ -1274,6 +1278,30 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
   }
   const strToNumberIdx = ctx.funcMap.get("__str_to_number");
 
+  // (#6642 S61) Native StringToBigInt operands. `__bigint_ctor`s terminal used
+  // to throw SyntaxError for EVERY string, which is what makes a linked
+  // standalone Temporal provider hand back a raw JSBI limb array instead of a
+  // BigInt (it converts via `globalThis.BigInt(x.toString(10))`). The scan is
+  // spliced INLINE rather than minted as its own function so the function index
+  // space does not move — see string-to-bigint-body.ts.
+  const strFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+  const strToBigIntLayout =
+    ctx.nativeStrings &&
+    ctx.anyStrTypeIdx >= 0 &&
+    ctx.nativeStrTypeIdx >= 0 &&
+    ctx.nativeStrDataTypeIdx >= 0 &&
+    strFlattenIdx !== undefined
+      ? {
+          anyStrTypeIdx: ctx.anyStrTypeIdx,
+          nativeStrTypeIdx: ctx.nativeStrTypeIdx,
+          nativeStrDataTypeIdx: ctx.nativeStrDataTypeIdx,
+          consStrTypeIdx: ctx.consStrTypeIdx,
+          hashedStrTypeIdx: ctx.hashedStrTypeIdx,
+          utf8StrDataTypeIdx: ctx.utf8StrDataTypeIdx,
+          utf8StrTypeIdx: ctx.utf8StrTypeIdx,
+        }
+      : undefined;
+
   // (#2106 S1) `undefinedSingleton` regime support for the union natives:
   // when active, `undefined` is a non-null extern-wrapped tag-1 `$AnyValue`
   // (never `ref.null.extern`), so ToBoolean must classify it FALSY, the
@@ -1526,11 +1554,39 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
           { op: "return" },
         ],
       },
+      // (#6642 S61) String operand — §7.1.14 StringToBigInt, scanned natively
+      // into the i64 the `$BigInt` carrier holds. Spliced inline (no new
+      // function index, so no already-emitted `call` immediate shifts); leaves
+      // one i64, consumed by the `return` that follows. A grammar violation
+      // throws SyntaxError from inside the scan.
+      ...(strToBigIntLayout !== undefined && strFlattenIdx !== undefined
+        ? ([
+            { op: "local.get", index: 1 },
+            { op: "ref.test", typeIdx: strToBigIntLayout.anyStrTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                ...buildStringToBigIntBody(
+                  strToBigIntLayout,
+                  strFlattenIdx,
+                  1,
+                  3,
+                  throwNativeError("SyntaxError", "Cannot convert string to a BigInt"),
+                ),
+                { op: "return" },
+              ],
+            },
+          ] as Instr[])
+        : []),
+      // Non-string, non-number, non-boolean, non-bigint operands keep the
+      // pre-#6642 terminal verbatim.
       ...throwNativeError("SyntaxError", "Cannot convert string to a BigInt in standalone mode"),
     ],
     [
       { name: "$any_temp", type: { kind: "anyref" } as ValType },
       { name: "$num_temp", type: { kind: "f64" } },
+      ...(strToBigIntLayout !== undefined ? buildStringToBigIntLocals(strToBigIntLayout) : []),
     ],
   );
 
@@ -1856,6 +1912,13 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
   // placeholder at finalize from the same host-free carrier inventory, omitting
   // only class-object singletons.
   registerNative("__is_callable", externrefToI32, [{ op: "i32.const", value: 0 }]);
+
+  // 14b. __is_class_object(externref) -> i32 — (#6625) true only for a
+  // class-object SINGLETON (`class C {}`'s own value, not an instance).
+  // Conservative placeholder; `fillStandaloneTypeofClosureArms` fills the real
+  // body at finalize from the class-object identity ladder plus (across a
+  // linked provider) the wasm→wasm boundary's own identity ladder.
+  registerNative("__is_class_object", externrefToI32, [{ op: "i32.const", value: 0 }]);
 
   // 15. __typeof(externref) -> externref — the MATERIALIZED typeof result.
   //     (#2965) This was a `ref.null.extern` stub ("defer until a wasi caller

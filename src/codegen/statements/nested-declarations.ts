@@ -3749,6 +3749,33 @@ export function ensureExtrasArgvGlobal(ctx: CodegenContext): { globalIdx: number
 }
 
 /**
+ * (#6491) Lazily register a `(mut i32)` module global `__host_argc`: the
+ * HOST's channel for telling `__call_fn_<arity>` the real call-site argument
+ * count when it widened an under-applied call to the closure's declared arity.
+ *
+ * Deliberately NOT `__argc`. That global is written by in-Wasm callers
+ * (`maybeSetArgcForKnownCall`) and consumed only by callees that read
+ * `arguments`, so at the moment a host callback re-enters the module it may
+ * hold a stale count from an unrelated Wasm call — a free-function dispatcher
+ * that consumed `__argc` would report THAT number as `arguments.length`. This
+ * global is written by exactly one producer (the `__\0js2_call_fn_argc_<arity>`
+ * wrapper) and consumed-and-cleared by exactly one consumer, so a module whose
+ * host never seeds it observes the historical behaviour bit for bit.
+ */
+export function ensureHostArgcGlobal(ctx: CodegenContext): number {
+  if (ctx.hostArgcGlobalIdx >= 0) return ctx.hostArgcGlobalIdx;
+  const globalIdx = nextModuleGlobalIdx(ctx);
+  ctx.mod.globals.push({
+    name: "__host_argc",
+    type: { kind: "i32" },
+    mutable: true,
+    init: [{ op: "i32.const", value: -1 }],
+  });
+  ctx.hostArgcGlobalIdx = globalIdx;
+  return globalIdx;
+}
+
+/**
  * Lazily register a `(mut i32)` module global `__argc` that callers set
  * to the actual call-site argument count before invoking a function whose
  * body reads `arguments`. The callee reads this to set `arguments.length`
