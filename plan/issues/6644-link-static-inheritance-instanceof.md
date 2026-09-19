@@ -273,7 +273,7 @@ pass, and helper 3 is the whole of what is left for both `from/*` rows.
 | `S.from(lit)`, no own ctor | `2000` |
 | `S[m](lit)`, no own ctor | `2000` |
 | `S[m](...args)`, no own ctor | `TypeError: year is required` |
-| `typeof S[m]` with an EXPLICIT ctor | `undefined` |
+| `typeof S[m]` inside the harness's own method shape | `undefined` |
 | `C.from(...args)` directly on the provider (control) | `2000` |
 
 ## Residuals — measured, not assumed
@@ -282,13 +282,33 @@ pass, and helper 3 is the whole of what is left for both `from/*` rows.
    computed read.** `typeof S[m]` is `"function"` for
    `class S extends construct {}` and `undefined` for
    `class S extends construct { constructor(...a) { super(...a) } }`, in the same
-   enclosing shape (`.tmp/s66/probes/p9.js`, cases `e`/`f` vs `i`). The named
-   spelling is unaffected. Unreduced past that point: the discriminator is the
-   own constructor, and the likely mechanism is a class-identity difference
-   (the scoped-synthetic name `mintScopedClassIdentity` assigns vs the name
-   `collectClassDeclaration` recorded), which the computed arm resolves through
-   `classExprNameMap`. **This is the first blocker for both `from/*` rows** —
-   the harness's `MySubclass` has an explicit constructor.
+   enclosing shape (`.tmp/s66/probes/p9.js`, cases `e`/`f` vs `i`). The NAMED
+   spelling is unaffected — `S.from(3)` answers correctly for a class with an
+   explicit constructor — so the class IS claimed as a linked-dynamic-parent
+   class and mechanism 2 is not the problem.
+
+   **The discriminator is NOT the constructor, and it is not yet isolated.**
+   Three further probes say so and they do not agree on a single trigger:
+
+   - `.tmp/s66/probes/p11.mts` (two-module fixture): an explicit constructor —
+     fixed-arity or rest — changes NOTHING. `typeof SubCtor["tag"]`,
+     `SubCtor["tag"]()` and the same shapes nested in a function declaration
+     with an identifier heritage all answer correctly.
+   - `.tmp/s66/probes/p12.mts` (same fixture): inside an object-literal METHOD
+     body the computed read declines (`undefined`) with or without a
+     constructor, while the NAMED read in the identical shape answers
+     `function`.
+   - `.tmp/s66/probes/p8.js` (real provider, test262 file): the object-literal
+     method shape DOES resolve (`typeof S[m]` → `function`, case `e`).
+
+   So the arm's class-name resolution (`classExprNameMap.get(text) ?? text`) is
+   shape-sensitive in a way the NAMED arm's is not — the named arm gets
+   `resolvedClass` from the property-access dispatch, which already handles the
+   #4618/#4646 scoped-synthetic identity that a class declared in a nested or
+   never-collected scope carries. Routing the computed arm through the same
+   resolution is the obvious next step, but it is a HYPOTHESIS, not a
+   measurement, and the three probes above must be made to agree before it is
+   acted on. **This is the first blocker for both `from/*` rows.**
 2. **Calling the resolved provider static with a RUNTIME SPREAD passes the array
    itself.** `S[m](...a)` reaches the provider's `from` with the argument vector
    rather than its single element (`TypeError: year is required`), while the
