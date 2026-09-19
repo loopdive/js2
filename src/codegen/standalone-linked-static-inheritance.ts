@@ -67,6 +67,7 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
 import { allocLocal } from "./context/locals.js";
 import { coerceType, compileExpression } from "./shared.js";
+import { pushLinkedDynamicParent } from "./standalone-dynamic-parent-class.js"; // (#6644) captured identifier heritage
 
 const EXTERNREF: ValType = { kind: "externref" };
 
@@ -103,7 +104,7 @@ export function linkedStaticParentHeritage(
 export function emitLinkedStaticMemberRead(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  heritage: ts.Expression,
+  className: string,
   propName: string,
   compileHeritage: (expr: ts.Expression) => boolean,
 ): boolean {
@@ -111,7 +112,7 @@ export function emitLinkedStaticMemberRead(
   if (externGetIdx === undefined) return false;
   flushLateImportShifts(ctx, fctx);
   const mark = fctx.body.length;
-  if (!compileHeritage(heritage)) {
+  if (!pushLinkedDynamicParent(ctx, fctx, className, compileHeritage)) {
     fctx.body.length = mark;
     return false;
   }
@@ -152,7 +153,7 @@ export function emitLinkedStaticMemberRead(
 function emitLinkedStaticMemberCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  heritage: ts.Expression,
+  className: string,
   propName: string,
   args: readonly ts.Expression[],
   pushExtern: (expr: ts.Expression) => boolean,
@@ -168,7 +169,7 @@ function emitLinkedStaticMemberCall(
   // arguments, so the parent read comes first and is held in a local.
   const parentLocal = allocLocal(fctx, `__lsi_parent_${fctx.locals.length}`, EXTERNREF);
   const calleeLocal = allocLocal(fctx, `__lsi_callee_${fctx.locals.length}`, EXTERNREF);
-  if (!pushExtern(heritage)) {
+  if (!pushLinkedDynamicParent(ctx, fctx, className, pushExtern)) {
     fctx.body.length = mark;
     return false;
   }
@@ -223,9 +224,8 @@ export function tryEmitLinkedStaticCall(
 ): ValType | undefined {
   if (ctx.staticMethodSet.has(`${className}_${methodName}`)) return undefined;
   if (expr.arguments.some((argument) => ts.isSpreadElement(argument))) return undefined;
-  const heritage = linkedStaticParentHeritage(ctx, className, methodName);
-  if (heritage === undefined) return undefined;
-  const emitted = emitLinkedStaticMemberCall(ctx, fctx, heritage, methodName, expr.arguments, (value) =>
+  if (linkedStaticParentHeritage(ctx, className, methodName) === undefined) return undefined;
+  const emitted = emitLinkedStaticMemberCall(ctx, fctx, className, methodName, expr.arguments, (value) =>
     pushExtern(ctx, fctx, value),
   );
   return emitted ? EXTERNREF : undefined;

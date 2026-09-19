@@ -2405,7 +2405,7 @@ function emitClassStaticMemberRead(
   const linkedHeritage = linkedStaticParentHeritage(ctx, resolvedClass, propName);
   if (
     linkedHeritage !== undefined &&
-    emitLinkedStaticMemberRead(ctx, fctx, linkedHeritage, propName, (heritageExpr) => {
+    emitLinkedStaticMemberRead(ctx, fctx, resolvedClass, propName, (heritageExpr) => {
       const heritageType = compileExpression(ctx, fctx, heritageExpr, { kind: "externref" });
       if (heritageType === undefined) return false;
       if (heritageType === null) fctx.body.push({ op: "ref.null.extern" });

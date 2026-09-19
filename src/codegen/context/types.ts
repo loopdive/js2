@@ -3313,6 +3313,19 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   classLinkedDynamicParentExpr: Map<string, ts.Expression>;
   /**
+   * (#6644) For a class whose linked-provider heritage is an IDENTIFIER that
+   * only has a value at run time (a function PARAMETER — test262's
+   * `class MySubclass extends construct {}`), the module global that CAPTURES
+   * that value at ClassDefinitionEvaluation.
+   *
+   * A property-access heritage (`NS.Base`) needs no entry here: it is a pure
+   * read of a module-level binding, so every consuming site can simply
+   * re-compile the expression. A parameter is in scope ONLY at the class
+   * declaration's own statement, and the synthesized constructor and the
+   * static-inheritance arms are separate wasm functions that cannot see it.
+   */
+  classLinkedDynamicParentGlobal: Map<string, number>;
+  /**
    * (#5242) Classes whose singleton reached `__register_class_ctor`, i.e. whose
    * class OBJECT can cross to the host and be constructed there. Exactly the
    * set that needs a `__class_construct_<Class>_<arity>` bridge; every other

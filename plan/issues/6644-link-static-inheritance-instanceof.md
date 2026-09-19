@@ -31,8 +31,21 @@ created: 2026-09-19
 loc-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/property-access-dispatch.ts
+#
+# +14 in `collectClassDeclaration` and +11 in `compileStatementInner` are the
+# two splice points of the IDENTIFIER-heritage arm, both already reduced to a
+# single call into `standalone-dynamic-parent-class.ts`: the heritage-arm
+# classification (which must sit in the `extends <Identifier>` ladder, AFTER the
+# host-constructible-builtin and extern-class arms decline, or it would change
+# `classBuiltinParentMap`'s representation) and the ClassDefinitionEvaluation
+# capture (which must sit in the nested-class statement arm, because that is the
+# one program point where the parameter the heritage names is in scope).
+# Splitting either long-standing function is a refactor this change does not
+# otherwise touch.
 func-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
+  - src/codegen/class-bodies.ts::collectClassDeclaration
+  - src/codegen/statements.ts::compileStatementInner
 ---
 
 # #6644 — static inheritance + cross-link `instanceof` through a provider heritage
