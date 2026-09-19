@@ -584,7 +584,10 @@ legitimate `false` into a throw. All ten target rows are get-trap rows. Adding
 the write side means three more terminals and a matching install-ABI bump; it
 should be its own slice with its own rows to justify it.
 
-#### S63 full-battery table (completed 2026-09-31T09:31Z, per-file diff vs the S62 base TSVs)
+#### S63 full-battery table (completed 2026-09-19 09:31 UTC, per-file diff vs the S62 base TSVs)
+
+This supersedes nothing above — the four-family numbers stated earlier in this
+section are these numbers; the table here adds the A–F half.
 
 Four families — the four-family total moves **447/480 → 457/480**:
 
