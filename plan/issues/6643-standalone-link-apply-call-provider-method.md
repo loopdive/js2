@@ -160,10 +160,17 @@ Two things still block a pass, neither of them this slice:
 
 1. **The third helper, `checkThisValueNotCalled`**, builds
    `class MySubclass extends construct` and calls `MySubclass[method](…)` — a
-   static INHERITED from a provider class object. That answers "called value
-   is not a function"; it is the static half of the #6640 / #6644
-   extends-a-linked-provider-class work, and it is what all four rows now stop
-   on.
+   static INHERITED from a provider class object. Replicated inline against
+   the real provider (`.tmp/s65/probes/p24.js`, fix tree):
+   `typeof MySubclass.from` → `undefined`, `MySubclass.from("2000-05-02")` →
+   `TypeError: called value is not a function` (the exact row text),
+   `MySubclass["from"](…)` → `null`,
+   `Object.getPrototypeOf(MySubclass) === Temporal.PlainDate` → `false`,
+   `new MySubclass(2000,5,2)` → `null`, while `Temporal.PlainDate.from(…)` in
+   the same module answers `2000`. That is the static half of the
+   #6640 / #6644 extends-a-linked-provider-class work — a derived class object
+   gets no [[Prototype]] link to its provider parent, so no static is
+   inherited — and it is what all four rows now stop on.
 2. **`instanceof` across the link answers `false`, always.** Measured directly
    (p21/p22): `Temporal.Duration.from({days:1}) instanceof Temporal.Duration`
    is `false` for a DIRECTLY constructed provider instance, with or without
