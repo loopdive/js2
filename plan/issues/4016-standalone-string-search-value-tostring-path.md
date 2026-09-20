@@ -28,11 +28,20 @@ contains documentation only, not the unpublished implementation.
   `codex/4016-split-coercion-order-20260920`. Matched baseline:
   `/private/tmp/js2-4016-split-coercion-order-baseline-20260920`.
   Both were synced to `ac76d8c6cd63864e04de4592a5179050ff1b1f91` without
-  discarding dirty work. The implementation is still local and uncommitted.
+  discarding dirty work. The implementation is committed locally but its
+  attempted draft publication was blocked by the mandatory coercion-site gate.
+  The implementation checkpoint is `1fb196048b26b9a686eaf5a4719cc646a1d1353a`;
+  no remote code PR is claimed.
 - Owned source: `string-search-value.ts`, `string-ops.ts`,
   `string-proto-split.ts`, and new `string-split-coercion.ts`, all under
   `src/codegen/`. The helper SHA256 is
   `ed7f9af98d71a5e7712f790039728164fccee847c0e66e97b56514a55d3f787b`.
+  That is the measured pre-format helper. The formatted checkpoint helper is
+  `3c6275a4bc6db55c43af1ce77e1aed60c820effcb6d9fac6e5a1cc33ecbf5f5c`.
+  A redundant `kind: "native"` property before a spread carrying that same
+  discriminant was removed for TS2783; final `string-search-value.ts` SHA256 is
+  `7b7511b4f1e08a8725246adf869e618bbb659943f4799e2e251fa6b6c3f6a49b`.
+  The raw runtime results below predate that cleanup, not a rerun of this head.
   No IR, context-layout, or `registry/imports.ts` change was made.
 - The implementation stages call operands once, performs limit coercion before
   separator conversion, uses exact ToUint32 reduction, and rejects native
@@ -73,9 +82,18 @@ contains documentation only, not the unpublished implementation.
    the other machine's IR migration.
 3. Keep the custom `@@split` originals and descriptor-boundary residuals
    explicit. Do not close the umbrella based on the bounded coercion gains.
-4. After a fresh upstream sync, rerun corrected comparisons and normal
-   repository gates, then publish the fix against `loopdive/js2`. No code PR
-   was opened for this unfinished implementation during wrap-up.
+4. Resolve the mandatory coercion-site gate before publication: the new
+   `string-split-coercion.ts` adds two `__to_primitive` and three
+   `__unbox_number` references. Route through the shared coercion engine or
+   obtain a substantive, reviewed migration decision; do not grant an
+   allowance solely to turn the gate green. The attempted normal pre-push
+   stopped here after typecheck, lint, formatting, and oracle checks; later
+   gates are not claimed. Its durable log is
+   `.tmp/4016/draft-checkpoint-push-1fb196048b-20260920.log`.
+5. After a fresh upstream sync, rerun corrected comparisons and normal
+   repository gates, then publish against `loopdive/js2`. No code PR was
+   opened for this unfinished implementation during wrap-up. No check was
+   disabled and no expected result was weakened to force publication.
 
 All compiler/test processes were terminal at wrap-up. Resume only on request;
 preserve the worktrees, raw receipts, and unfinished code.

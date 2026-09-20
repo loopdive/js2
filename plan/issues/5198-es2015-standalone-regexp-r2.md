@@ -36,8 +36,10 @@ func-budget-allow:
 
 ## 2026-09-20 wrap-up handoff — Annex B compile syntax
 
-This section records an unfinished, unpublished implementation. This handoff
-PR changes documentation only and does not mark the RegExp umbrella complete.
+This section records an unfinished implementation, subsequently published as
+draft [PR #6014](https://github.com/loopdive/js2/pull/6014), head
+`5cc07c7dd33eea2830cfac7fdcb5faf8eb27dea2`. This handoff PR changes
+documentation only and does not mark the RegExp umbrella complete.
 
 - Current candidate worktree:
   `/Users/thomas/Code/js2/.codex-worktrees/codex-5198-annexb-syntax-on-main-20260920`,
@@ -76,16 +78,22 @@ isolated standalone runner. The current poison suite, original-four rerun,
 and full20 A/B remain unrun. Preserve all raw failures; obtain ownership
 clearance before any `expressions.ts` fix for shadowed undefined. Do not touch
 the separate old strict-nonglobal #5198 worktree whose extraction awaits
-approval. Finish normal gates before a code PR, and never claim the focused
-checks establish 100% ES2015 conformance.
+approval. Before marking the checkpoint ready, finish the missing validation
+and repair the residuals; never claim focused checks establish 100% ES2015
+conformance. Checkpoint publication used the repository-sanctioned fast
+pre-commit mode after the full hook reproduced the recorded 8P/4F result.
+Mandatory pre-push typecheck, lint, formatting, oracle/coercion ratchets,
+numeric-local regression tests (18/18), and issue integrity passed. The raw
+expectations were not weakened. Publication readback was draft and behind main.
 
 Completed adjacent work is already in upstream PRs #6007, #6008, #6009, and
 #6010. The validated dynamic capture-index slice is in ready PR
 [#6012](https://github.com/loopdive/js2/pull/6012), head
 `58cd381ff24e580c55f9c2449aba74b591a75e24`; its local gates passed, with
 69 semantic fixture passes, four explicit expected failures, and two original
-Test262 preservation passes. CI was still running at the last read. A
-subagent is designated passive shepherd, but this environment has no webhook
+Test262 preservation passes. The subsequent user-requested shepherd read
+confirmed it clean and mergeable, with all active CI checks successful and no
+unresolved review threads. A subagent performed that one-shot audit, but this environment has no webhook
 subscription tool; no polling, enqueueing, or merging is scheduled.
 
 The last complete goal census remains **10,377/11,778** at `f3520ca177`.
