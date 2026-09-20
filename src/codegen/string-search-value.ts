@@ -31,10 +31,18 @@ import { ts } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
+import { canonicalUndefinedExternInstrs } from "./any-helpers.js";
 import { noJsHost } from "./js-errors.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
+import { addStringConstantGlobal } from "./registry/imports.js";
 import { compileExpression } from "./shared.js";
-import { ensureNativeStringHelpers, nativeStringLiteralInstrs, nativeStringType } from "./native-strings.js";
+import {
+  ensureAnyToStringHelper,
+  ensureNativeStringHelpers,
+  flatStringType,
+  nativeStringLiteralInstrs,
+  nativeStringType,
+} from "./native-strings.js";
 import { regexI32ArrayType } from "./native-regex.js";
 import {
   emitRegexExecArrayCall,
@@ -45,7 +53,21 @@ import {
   isStaticallyUndefinedExpr,
   stripStaticWrapper,
 } from "./regexp-standalone.js";
-import { compileStringIntegerArg, emitArgAsNativeString } from "./string-ops.js";
+import { coerceType } from "./type-coercion.js";
+import { ensureObjectRuntime } from "./object-runtime.js";
+import { emitStringProtoToStringFlat } from "./string-proto-tostring.js";
+import { emitStringSplitRequireObjectCoercible } from "./string-proto-split.js";
+import {
+  captureHostStagedSplitLimitProviders,
+  captureStagedSplitLimitProviders,
+  emitHostStagedSplitLimitFromExternref,
+  emitStagedSplitLimitFromExternref,
+  prepareHostStagedSplitLimitCoercion,
+  prepareStagedSplitLimitCoercion,
+  type HostStagedSplitLimitProviders,
+  type StagedSplitLimitProviders,
+} from "./string-split-coercion.js";
+import { emitArgAsNativeString } from "./string-ops.js";
 import { isPlainToStringReplacement } from "./string-proto-replace.js";
 import { tryCompileStandaloneStringSearchFunctionReplace } from "./regex-replace-fn.js";
 
@@ -288,6 +310,201 @@ export function tryCompileCoercedStringMatch(
   return emitRegexExecArrayCall(ctx, fctx, argExpr ?? expr, subjExpr, staged);
 }
 
+type StagedSplitValue = { readonly local: number; readonly type: ValType };
+
+/** Every native/no-host direct-arm dependency captured before user operand evaluation. */
+type NativeStagedDirectSplitProviders = {
+  readonly kind: "native";
+  readonly anyToStringIdx: number;
+  readonly flattenIdx: number;
+  readonly splitIdx: number;
+  readonly vecTypeIdx: number;
+  readonly arrTypeIdx: number;
+  readonly limit: StagedSplitLimitProviders;
+};
+
+/** Host-only providers for the proven-undefined separator arm. */
+type HostStagedDirectSplitProviders = {
+  readonly kind: "host-undefined";
+  readonly flattenIdx: number;
+  readonly vecTypeIdx: number;
+  readonly arrTypeIdx: number;
+  readonly limit: HostStagedSplitLimitProviders;
+};
+
+type StagedDirectSplitProviders = NativeStagedDirectSplitProviders | HostStagedDirectSplitProviders;
+
+/** Type-layout reservations that stay stable across staged expressions. */
+type NativeStagedDirectSplitReservation = {
+  readonly kind: "native";
+  readonly vecTypeIdx: number;
+  readonly arrTypeIdx: number;
+};
+
+type HostStagedDirectSplitReservation = {
+  readonly kind: "host-undefined";
+  readonly vecTypeIdx: number;
+  readonly arrTypeIdx: number;
+  /** Current pre-staging index; later imports repair its emitted ROC call. */
+  readonly exactUndefinedIdx: number;
+};
+
+type StagedDirectSplitReservation = NativeStagedDirectSplitReservation | HostStagedDirectSplitReservation;
+
+/** Evaluate one call operand once and retain its raw value without coercing it. */
+function stageSplitValue(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  emit: () => ValType | null,
+  stem: string,
+): StagedSplitValue | undefined {
+  const type = emit();
+  // A void-returning expression has already performed its effects and denotes
+  // `undefined` for the later value operation. Its canonical external form is
+  // materialized only after every call operand has been evaluated.
+  if (type === null) return undefined;
+  const local = allocLocal(fctx, `${stem}_${fctx.locals.length}`, type);
+  fctx.body.push({ op: "local.set", index: local });
+  return { local, type };
+}
+
+/** Convert a staged raw value to an external slot without evaluating it again. */
+function externalizeStagedSplitValue(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  staged: StagedSplitValue | undefined,
+  stem: string,
+): number {
+  const external = allocLocal(fctx, `${stem}_${fctx.locals.length}`, { kind: "externref" });
+  if (staged === undefined) {
+    fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
+  } else {
+    fctx.body.push({ op: "local.get", index: staged.local });
+    if (staged.type.kind !== "externref" && staged.type.kind !== "ref_extern") {
+      coerceType(ctx, fctx, staged.type, { kind: "externref" });
+    }
+  }
+  fctx.body.push({ op: "local.set", index: external });
+  return external;
+}
+
+/**
+ * Install every provider before the direct arm emits user code. A missing
+ * provider can therefore decline safely instead of re-running operands through
+ * a fallback after observable evaluation.
+ */
+function prepareStagedDirectSplit(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+): StagedDirectSplitReservation | undefined {
+  ensureNativeStringHelpers(ctx);
+
+  if (ctx.targetProfile.semanticProviders === "host-assisted") {
+    // This arm is selected only for a proven undefined separator. Its receiver
+    // remains the native-string carrier owned by compileNativeStringMethodCall;
+    // use the dedicated host limit/undefined providers instead of activating
+    // the compatibility object runtime (which would mint unrelated proxy code).
+    if (!prepareHostStagedSplitLimitCoercion(ctx, fctx)) return undefined;
+    const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+    const elemType: ValType = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
+    const vecTypeIdx = getOrRegisterVecType(ctx, `ref_${ctx.anyStrTypeIdx}`, elemType);
+    const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+    const limit = captureHostStagedSplitLimitProviders(ctx);
+    if (flattenIdx === undefined || arrTypeIdx < 0 || limit === undefined) return undefined;
+    return { kind: "host-undefined", vecTypeIdx, arrTypeIdx, exactUndefinedIdx: limit.isUndefinedIdx };
+  }
+
+  ensureObjectRuntime(ctx);
+  if (!prepareStagedSplitLimitCoercion(ctx, fctx)) return undefined;
+
+  // `emitStringProtoToStringFlat` materializes the `"string"` hint.  Like the
+  // `"number"` hint prepared above, register it before user code so a late
+  // host-mode constant import cannot repair indices after operand staging.
+  addStringConstantGlobal(ctx, "string");
+  ensureAnyToStringHelper(ctx);
+  const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+  const splitIdx = ctx.nativeStrHelpers.get("__str_split");
+  const elemType: ValType = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
+  const vecTypeIdx = getOrRegisterVecType(ctx, `ref_${ctx.anyStrTypeIdx}`, elemType);
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+  const limit = captureStagedSplitLimitProviders(ctx, true);
+  if (flattenIdx === undefined || splitIdx === undefined || arrTypeIdx < 0 || limit === undefined) return undefined;
+  return { kind: "native", vecTypeIdx, arrTypeIdx };
+}
+
+/**
+ * Resolve mutable function indices only after arbitrary staged expressions and
+ * the direct receiver's ROC boundary have finished provisioning imports. Types
+ * were reserved before staging, but defined-function indices may have shifted.
+ */
+function resolveStagedDirectSplitProviders(
+  ctx: CodegenContext,
+  reservation: StagedDirectSplitReservation,
+): StagedDirectSplitProviders {
+  const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+  if (flattenIdx === undefined) {
+    throw new Error("direct split lost a preflighted provider after staging");
+  }
+  if (reservation.kind === "host-undefined") {
+    const limit = captureHostStagedSplitLimitProviders(ctx);
+    if (limit === undefined) throw new Error("host direct split lost a preflighted provider after staging");
+    return {
+      kind: "host-undefined",
+      flattenIdx,
+      vecTypeIdx: reservation.vecTypeIdx,
+      arrTypeIdx: reservation.arrTypeIdx,
+      limit,
+    };
+  }
+
+  const anyToStringIdx = ensureAnyToStringHelper(ctx);
+  const splitIdx = ctx.nativeStrHelpers.get("__str_split");
+  const limit = captureStagedSplitLimitProviders(ctx, true);
+  if (splitIdx === undefined || limit === undefined) {
+    throw new Error("direct split lost a preflighted provider after staging");
+  }
+  return { anyToStringIdx, flattenIdx, splitIdx, ...reservation, limit };
+}
+
+/** Strict `ToString` of an already staged external value, retained as a flat string. */
+function emitStagedSplitToString(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  externalLocal: number,
+  stem: string,
+  providers: NativeStagedDirectSplitProviders,
+): number {
+  emitStringProtoToStringFlat(ctx, fctx, externalLocal, providers.anyToStringIdx, providers.flattenIdx, {
+    rejectPostPrimitiveSymbol: true,
+  });
+  const local = allocLocal(fctx, `${stem}_${fctx.locals.length}`, flatStringType(ctx));
+  fctx.body.push({ op: "local.set", index: local });
+  return local;
+}
+
+/**
+ * The host undefined-separator arm enters only through a native string method
+ * receiver. Preserve that established carrier contract rather than handing an
+ * opaque `$AnyString` to a host ToPrimitive import.
+ */
+function emitStagedNativeSplitReceiverFlat(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiverExternLocal: number,
+  stem: string,
+  flattenIdx: number,
+): number {
+  fctx.body.push(
+    { op: "local.get", index: receiverExternLocal },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+    { op: "call", funcIdx: flattenIdx },
+  );
+  const local = allocLocal(fctx, `${stem}_${fctx.locals.length}`, flatStringType(ctx));
+  fctx.body.push({ op: "local.set", index: local });
+  return local;
+}
+
 /**
  * §22.1.3.23 step 2 — the whole "what does `split` do with THIS separator?"
  * decision, for the two arms the native lane owns:
@@ -306,90 +523,141 @@ export function tryCompileCoercedStringMatch(
  * Returns `undefined` for a string-like separator so the caller's existing
  * (byte-identical) arm still handles it.
  *
- * Operands are emitted receiver → separator → limit, matching that arm, so
- * ARGUMENT evaluation stays left-to-right as at any call site. The spec coerces
- * `ToUint32(limit)` (step 4) before `ToString(separator)` (step 5), which is the
- * reverse; reordering the two coercions would require holding an un-coerced
- * arbitrary value across the limit coercion and, worse, would invert argument
- * evaluation for `s.split(f(), g())` — trading a non-observable deviation for an
- * observable one. The string-separator arm already ships this order, so this
- * introduces no new deviation.
+ * This direct arm first stages receiver, separator, limit, and every trailing
+ * argument in source evaluation order. It then follows the builtin's observable
+ * coercion order: `ToString(this)`, `ToUint32(limit)`, and
+ * `ToString(separator)`. The existing string-like arm remains byte-identical.
  */
 export function tryCompileStandaloneSplitSeparator(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.CallExpression,
-  emitReceiver: () => ValType | null,
+  emitRawReceiver: () => ValType | null,
   firstArgIsStringLike: boolean,
 ): ValType | null | undefined {
   const sepExpr = expr.arguments[0];
   const limitExpr = expr.arguments[1];
-  const emitLimit = (): void => {
-    // Absent / statically-undefined limit → unbounded, encoded as -1 (#2125).
-    if (limitExpr !== undefined && !isStaticallyUndefinedExpr(limitExpr)) {
-      compileStringIntegerArg(ctx, fctx, limitExpr);
-    } else {
-      fctx.body.push({ op: "i32.const", value: -1 });
-    }
-  };
+  // Type assertions are erased at runtime. The same unwrapped node must drive
+  // both the admissibility proof and raw staging, or an `as any` would select a
+  // different carrier route from the value the gate analyzed.
+  const separatorValueExpr = sepExpr === undefined ? undefined : searchValueOperand(sepExpr);
+  const limitValueExpr = limitExpr === undefined ? undefined : searchValueOperand(limitExpr);
+  const undefinedSeparator = sepExpr === undefined || isDefinitelyUndefinedExpr(ctx, sepExpr);
+  const plainSeparator =
+    !firstArgIsStringLike &&
+    noJsHost(ctx) &&
+    sepExpr !== undefined &&
+    isPlainToStringSearchValue(ctx, sepExpr, "split");
+  if (!(ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 && (undefinedSeparator || plainSeparator))) return undefined;
 
-  if (
-    ctx.nativeStrings &&
-    ctx.anyStrTypeIdx >= 0 &&
-    (sepExpr === undefined || isDefinitelyUndefinedExpr(ctx, sepExpr))
-  ) {
-    const elemType: ValType = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
-    const vecTypeIdx = getOrRegisterVecType(ctx, `ref_${ctx.anyStrTypeIdx}`, elemType);
-    const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
-    // Receiver → native-string local (kept nullable; a null receiver would have
-    // thrown at the property access already).
-    const recvLocal = allocLocal(fctx, `__split_recv_${fctx.locals.length}`, nativeStringType(ctx));
-    emitReceiver();
-    fctx.body.push({ op: "local.set", index: recvLocal });
-    // (#4016) The separator's VALUE is unused, but its EXPRESSION is still
-    // evaluated at the call site — a type-level `void` one (`f()`) is not
-    // side-effect-free like the syntactic forms, so discard rather than delete.
-    if (sepExpr !== undefined && !isStaticallyUndefinedExpr(sepExpr)) {
-      const sepType = compileExpression(ctx, fctx, sepExpr);
-      if (sepType) fctx.body.push({ op: "drop" });
-    }
-    const limLocal = allocLocal(fctx, `__split_lim_${fctx.locals.length}`, { kind: "i32" });
-    emitLimit();
-    fctx.body.push({ op: "local.set", index: limLocal });
-    // lim === 0 ? { length: 0, data: [] } : { length: 1, data: [S] }
-    fctx.body.push({ op: "local.get", index: limLocal });
-    fctx.body.push({ op: "i32.eqz" });
+  // Provision before evaluating operands. A later failure must not fall back
+  // and observe the receiver or an argument for a second time.
+  const reservation = prepareStagedDirectSplit(ctx, fctx);
+  if (reservation === undefined) return undefined;
+
+  // Evaluate the receiver first. A nullish member base throws before argument
+  // evaluation, but receiver conversion itself remains deferred until every
+  // argument has been evaluated below.
+  const rawReceiver = stageSplitValue(ctx, fctx, emitRawReceiver, "__split_raw_receiver");
+  const receiverExtern = externalizeStagedSplitValue(ctx, fctx, rawReceiver, "__split_receiver_extern");
+  emitStringSplitRequireObjectCoercible(
+    ctx,
+    fctx,
+    receiverExtern,
+    reservation.kind === "host-undefined" ? reservation.exactUndefinedIdx : undefined,
+  );
+
+  // JavaScript call evaluation continues with separator, limit, then every
+  // trailing argument. Every local below preserves its raw value until coercion.
+  const rawSeparator =
+    separatorValueExpr === undefined
+      ? undefined
+      : stageSplitValue(ctx, fctx, () => compileExpression(ctx, fctx, separatorValueExpr), "__split_raw_separator");
+  const rawLimit =
+    limitValueExpr === undefined
+      ? undefined
+      : stageSplitValue(ctx, fctx, () => compileExpression(ctx, fctx, limitValueExpr), "__split_raw_limit");
+  for (let i = 2; i < expr.arguments.length; i++) {
+    stageSplitValue(ctx, fctx, () => compileExpression(ctx, fctx, expr.arguments[i]!), `__split_raw_extra_${i}`);
+  }
+
+  // Externalization is representation-only; it gives the shared strict
+  // coercion routines a stable, already-evaluated value slot.
+  const separatorExtern = externalizeStagedSplitValue(ctx, fctx, rawSeparator, "__split_separator_extern");
+  const limitExtern = externalizeStagedSplitValue(ctx, fctx, rawLimit, "__split_limit_extern");
+
+  const providers = resolveStagedDirectSplitProviders(ctx, reservation);
+
+  // §22.1.3.23 steps 3–5. The host compatibility arm is only admitted for a
+  // proven undefined separator: its expression effects are already staged, and
+  // ToString(undefined) has no further observable operation. It retains the
+  // caller's native-string receiver rather than passing that opaque carrier to
+  // a host ToPrimitive import.
+  let receiverLocal: number;
+  let limitLocal: number;
+  let separatorLocal: number | undefined;
+  if (providers.kind === "host-undefined") {
+    receiverLocal = emitStagedNativeSplitReceiverFlat(
+      ctx,
+      fctx,
+      receiverExtern,
+      "__split_receiver",
+      providers.flattenIdx,
+    );
+    limitLocal = emitHostStagedSplitLimitFromExternref(fctx, limitExtern, providers.limit);
+  } else {
+    receiverLocal = emitStagedSplitToString(ctx, fctx, receiverExtern, "__split_receiver", providers);
+    const emittedLimit = emitStagedSplitLimitFromExternref(
+      ctx,
+      fctx,
+      limitExtern,
+      "__split",
+      providers.limit,
+      "raw-value",
+    );
+    if (emittedLimit === undefined) return null;
+    limitLocal = emittedLimit;
+    separatorLocal = emitStagedSplitToString(ctx, fctx, separatorExtern, "__split_separator", providers);
+  }
+
+  if (undefinedSeparator) {
+    // The native arm keeps strict separator conversion observable before the
+    // zero-limit early result. The host arm has already proved it is undefined.
+    if (separatorLocal !== undefined) fctx.body.push({ op: "local.get", index: separatorLocal }, { op: "drop" });
+    fctx.body.push({ op: "local.get", index: limitLocal }, { op: "i32.eqz" });
     fctx.body.push({
       op: "if",
-      blockType: { kind: "val", type: { kind: "ref", typeIdx: vecTypeIdx } as ValType },
+      blockType: { kind: "val", type: { kind: "ref", typeIdx: providers.vecTypeIdx } as ValType },
       then: [
         { op: "i32.const", value: 0 },
         { op: "i32.const", value: 0 },
-        { op: "array.new_default", typeIdx: arrTypeIdx },
-        { op: "struct.new", typeIdx: vecTypeIdx },
+        { op: "array.new_default", typeIdx: providers.arrTypeIdx },
+        { op: "struct.new", typeIdx: providers.vecTypeIdx },
       ],
       else: [
         { op: "i32.const", value: 1 },
-        { op: "local.get", index: recvLocal },
-        { op: "array.new_fixed", typeIdx: arrTypeIdx, length: 1 },
-        { op: "struct.new", typeIdx: vecTypeIdx },
+        { op: "local.get", index: receiverLocal },
+        { op: "array.new_fixed", typeIdx: providers.arrTypeIdx, length: 1 },
+        { op: "struct.new", typeIdx: providers.vecTypeIdx },
       ],
     });
-    return { kind: "ref", typeIdx: vecTypeIdx };
+    return { kind: "ref", typeIdx: providers.vecTypeIdx };
   }
 
-  if (firstArgIsStringLike || !noJsHost(ctx)) return undefined;
-  if (sepExpr === undefined || !isPlainToStringSearchValue(ctx, sepExpr, "split")) return undefined;
-  const splitIdx = ctx.nativeStrHelpers.get("__str_split");
-  const nstrVecTypeIdx = ctx.vecTypeMap.get(`ref_${ctx.anyStrTypeIdx}`);
-  if (splitIdx === undefined || nstrVecTypeIdx === undefined) return undefined;
+  if (separatorLocal === undefined) {
+    throw new Error("host direct split admitted a non-undefined separator");
+  }
+  if (providers.kind !== "native") {
+    throw new Error("non-undefined split separator lost its native direct providers");
+  }
 
-  emitReceiver();
-  // Emit from the same node the gate proved on — see `searchValueOperand`.
-  emitArgAsNativeString(ctx, fctx, searchValueOperand(sepExpr));
-  emitLimit();
-  fctx.body.push({ op: "call", funcIdx: splitIdx });
-  return { kind: "ref", typeIdx: nstrVecTypeIdx };
+  fctx.body.push(
+    { op: "local.get", index: receiverLocal },
+    { op: "local.get", index: separatorLocal },
+    { op: "local.get", index: limitLocal },
+    { op: "call", funcIdx: providers.splitIdx },
+  );
+  return { kind: "ref", typeIdx: providers.vecTypeIdx };
 }
 
 /**
