@@ -103,6 +103,16 @@ arms that mis-claim — routes such a receiver to
 `__extern_method_call(recv, key, argv)` terminal the dot spelling reaches, with
 #6616's `tryEmitSpreadHostArgs` argv.
 
+The predicate asks for an INSTANCE receiver, by VALUE DECLARATION: an
+identifier whose value is a class declaration/expression IS the constructor,
+and `Sub[m]()` is a STATIC call owned by #6644's linked-static arms. The first
+cut of this fix omitted that half and regressed
+`tests/issue-6644-link-{computed-static-spread-super,static-inheritance-instanceof}`
+to `called value is not a function` — `tryEmitLinkedStaticComputedCall` runs
+earlier in the driver but is gated on a spread being present, so a no-spread
+static call fell through to the new arm. A static control is now pinned in the
+witness.
+
 Two scope decisions, both measured rather than assumed:
 
 - **NOT gated on a spread being present.** The no-spread case (`instance[m]()`,

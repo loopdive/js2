@@ -277,8 +277,38 @@ export function pushLinkedDynamicParent(
  * every other module — including a plain local `class B extends A` and the
  * provider modules themselves — is out of the blast radius by construction.
  */
-export function isLinkedDynamicParentClass(ctx: CodegenContext, className: string | undefined): boolean {
+function isLinkedDynamicParentClass(ctx: CodegenContext, className: string | undefined): boolean {
   return className !== undefined && ctx.classLinkedDynamicParentExpr.has(className);
+}
+
+/**
+ * (#6654) …asked of an INSTANCE receiver, which is the whole question.
+ *
+ * `elemAccessReceiverClassName` answers the same class name for `inst[m]()`
+ * and for `Sub[m]()` — one is an instance, the other is the CLASS OBJECT — and
+ * a static call through a linked heritage is already owned by #6644's
+ * `standalone-linked-static-inheritance.ts` arms, which read the parent's own
+ * `__linked_parent_<C>` global rather than treating the class value as a
+ * receiver. Routing a static call to `__extern_method_call(<the class>, k, …)`
+ * regresses it to `called value is not a function`; measured exactly that way
+ * on the first cut of this fix, against
+ * `tests/issue-6644-link-{computed-static-spread-super,static-inheritance-instanceof}`.
+ *
+ * The discrimination is by VALUE DECLARATION, not by name: an identifier whose
+ * value is a class declaration/expression IS the constructor. That is stricter
+ * than `resolveLinkedStaticClassName`, which additionally refuses a colliding
+ * same-named twin — here a refusal must mean "not a static receiver", so the
+ * twin case has to decline too rather than fall through to this arm.
+ */
+export function isLinkedDynamicParentInstanceReceiver(
+  ctx: CodegenContext,
+  receiver: ts.Expression,
+  receiverClassName: string | undefined,
+): boolean {
+  if (!isLinkedDynamicParentClass(ctx, receiverClassName)) return false;
+  if (!ts.isIdentifier(receiver)) return true;
+  const decl = ctx.oracle.valueDeclarationOf(receiver);
+  return decl === undefined || (!ts.isClassDeclaration(decl) && !ts.isClassExpression(decl));
 }
 
 /**

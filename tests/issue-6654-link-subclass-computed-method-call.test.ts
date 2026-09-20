@@ -91,6 +91,8 @@ const PRELUDE = `
   class LocalBase { constructor(x) { this.x = x; } echo(a, b) { return "L:" + a + "," + b + ":" + arguments.length; } }
   class LocalSub extends LocalBase {}
   function localComputedPlain(m) { const i = new LocalSub(3); return String(i[m]("p", "q")); }
+  // The STATIC twin: the receiver is the CLASS OBJECT, not an instance.
+  function subStatic(construct, m) { class S2 extends construct {} return String(S2[m]()); }
 `;
 
 /**
@@ -184,6 +186,10 @@ const CONTROLS: ReadonlyArray<readonly [string, string]> = [
   // A DIRECT provider instance is not a user class at all.
   ["directComputed(NS.Base, 'echo', A2)", "echo:p,q:2"],
   ["directDot(NS.Base)", "echo:p,q:2"],
+  // A computed STATIC call through the same linked heritage stays with #6644's
+  // linked-static arms. The first cut of this fix claimed it too and regressed
+  // it to `!called value is not a function` — hence this control.
+  ["subStatic(NS.Base, 'tag')", "base"],
   // A plain LOCAL `extends` keeps its existing lowering — the new arm consults
   // the linked-dynamic-parent registry, which a local class is never in.
   ["localComputedPlain('echo')", "L:p,q:2"],
