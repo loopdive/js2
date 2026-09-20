@@ -116,12 +116,9 @@ for (const target of ["standalone", "gc"] as const) {
       expect(ex.staticNumericStringElement()).toBe(1);
     });
 
-    const dynamicNumericStringElement = () => {
+    it("preserves dynamic numeric-string capture element reads", () => {
       expect(ex.dynamicNumericStringElement()).toBe(1);
-    };
-    target === "standalone"
-      ? it.fails("RESIDUAL: dynamic numeric-string capture element read", dynamicNumericStringElement)
-      : it("preserves dynamic numeric-string capture element reads", dynamicNumericStringElement);
+    });
 
     it("returns undefined for a missing dynamic capture property", () => {
       expect(ex.dynamicMissingNamedKey()).toBe(1);

@@ -34,6 +34,73 @@ func-budget-allow:
 
 # #5198 — regexp r2: cluster and fix the residual regexp-bucket failures
 
+## 2026-09-20 wrap-up handoff — Annex B compile syntax
+
+This section records an unfinished implementation, subsequently published as
+draft [PR #6014](https://github.com/loopdive/js2/pull/6014), head
+`5cc07c7dd33eea2830cfac7fdcb5faf8eb27dea2`. This handoff PR changes
+documentation only and does not mark the RegExp umbrella complete.
+
+- Current candidate worktree:
+  `/Users/thomas/Code/js2/.codex-worktrees/codex-5198-annexb-syntax-on-main-20260920`,
+  branch `codex/5198-annexb-syntax-on-main-20260920`, based on
+  `ac76d8c6cd63864e04de4592a5179050ff1b1f91`. The older
+  `codex-4444-annexb-regexp-compile-audit-20260920` worktree is preserved.
+- Only the 50-line direct `RegExp.prototype.compile` syntax guard was
+  reconciled onto the newer source, alongside the complete 12-control test
+  and an appended issue plan. The incoming global-match changes were retained;
+  the direct compile function itself was unchanged upstream. No IR, layout,
+  or `expressions.ts` change was made.
+- Production file SHA256:
+  `243d13a6230714cfee2420fb64e1b6f7c68c208be1f90b3537671a8700b462f9`.
+  `tests/issue-5198-regexp-compile-syntax.test.ts` SHA256:
+  `872287be75fd47de8b0fdb9b6e27c32802af44a279237212b416b5b4d65cf871`.
+- Current ac76 candidate compact run: **8P/4F**. Both lanes retain failures
+  for shadowed `undefined` and abrupt receivers. The standalone abrupt case
+  refuses a RegExp value not created by the backend; the other three return
+  wrong values. Invalid-pattern state preservation, receiver evaluation, and
+  valid-but-unsupported poison controls pass. Candidate log:
+  `.tmp/5198-annexb-compile-syntax-candidate-ac76-rerun-20260920.log`.
+  An earlier missing-dependency attempt ran no tests and is setup evidence only.
+- The new clean-ac76 baseline fixture is prepared but **not run**. Historical
+  f352 comparisons were compact **6P/6F to 8P/4F** and four originals
+  **2P/2F to 4P/0F**; do not substitute those for a current paired comparison.
+- The exact 20-file goal subset is frozen at
+  `.tmp/5198-annexb-compile-es2015-20.txt`, SHA256
+  `67d0af1ee37b488d35ff76dd543c02021f58b7092e4d65a95529cce8536ebef3`.
+  It is the verified directory intersection of the frozen 11,778-file ES2015
+  manifest (SHA256 `f2fdd4e4544a44608f0b53d89d343526cfa9c9044ca263e860da949dc1a2f59f`)
+  with corpus `b363f29d3c43c626dc852744ad64a0b48a003693`; all paths exist.
+
+On resume: first complete the byte-identical current compact A/B, then run
+`tests/issue-4439.test.ts` and the frozen original paths with the maintained
+isolated standalone runner. The current poison suite, original-four rerun,
+and full20 A/B remain unrun. Preserve all raw failures; obtain ownership
+clearance before any `expressions.ts` fix for shadowed undefined. Do not touch
+the separate old strict-nonglobal #5198 worktree whose extraction awaits
+approval. Before marking the checkpoint ready, finish the missing validation
+and repair the residuals; never claim focused checks establish 100% ES2015
+conformance. Checkpoint publication used the repository-sanctioned fast
+pre-commit mode after the full hook reproduced the recorded 8P/4F result.
+Mandatory pre-push typecheck, lint, formatting, oracle/coercion ratchets,
+numeric-local regression tests (18/18), and issue integrity passed. The raw
+expectations were not weakened. Publication readback was draft and behind main.
+
+Completed adjacent work is already in upstream PRs #6007, #6008, #6009, and
+#6010. The validated dynamic capture-index slice is in ready PR
+[#6012](https://github.com/loopdive/js2/pull/6012), head
+`58cd381ff24e580c55f9c2449aba74b591a75e24`; its local gates passed, with
+69 semantic fixture passes, four explicit expected failures, and two original
+Test262 preservation passes. The subsequent user-requested shepherd read
+confirmed it clean and mergeable, with all active CI checks successful and no
+unresolved review threads. A subagent performed that one-shot audit, but this environment has no webhook
+subscription tool; no polling, enqueueing, or merging is scheduled.
+
+The last complete goal census remains **10,377/11,778** at `f3520ca177`.
+These subsequent focused fixes are not a replacement full census. All local
+test processes were terminal at wrap-up; implementation work stops here until
+requested again.
+
 ## 2026-09-20 global `@@match` plain-array result-shape follow-up
 
 ### Scope and original evidence

@@ -18,6 +18,56 @@ related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445
 
 # #4444 — UMBRELLA: ES6 (ES2015) standalone edition close-out
 
+## 2026-09-20 open-PR shepherd handoff
+
+This is a one-shot live audit requested during wrap-up, not a new full-suite
+measurement or a claim that every historical worktree is published.
+
+- Completed capture-index fix [#6012](https://github.com/loopdive/js2/pull/6012)
+  is ready, clean, and mergeable; all active checks passed and there were no
+  unresolved review threads. The same is true of the completed RegExp numeric
+  coercion fix [#5996](https://github.com/loopdive/js2/pull/5996).
+- Documentation handoff [#6013](https://github.com/loopdive/js2/pull/6013)
+  is ready and mergeable. Its initial quality check was still running; do not
+  describe that initial read as all-green CI.
+- Annex B syntax work is preserved as unfinished draft
+  [#6014](https://github.com/loopdive/js2/pull/6014), with its raw 8P/4F
+  compact result and missing validation explicit. Normal pre-push gates passed.
+- Split-coercion issue #4016 has a local implementation checkpoint but no code
+  PR: normal pre-push rejects five new low-level coercion references. Its
+  handoff records the exact gate, source hashes, invalid receiver oracle, and
+  required shared-engine review. Do not claim every current fix is in a PR.
+- Promise [#5883](https://github.com/loopdive/js2/pull/5883) is behind main
+  and held. Its quality report says `inventoryValid: true`, `errors: []`, but
+  `architectureComplete: false`. Integrate main only after coordinating with
+  the compiler-boundary/IR owner; an empty error list is not gate success.
+- Super-property draft [#5839](https://github.com/loopdive/js2/pull/5839)
+  conflicts and documents #6420 as its readiness blocker. The class-valued
+  object-literal super test expects 2 and gets 0. Resolve the dependency before
+  reconciling and revalidating the branch.
+- Generator draft [#5736](https://github.com/loopdive/js2/pull/5736)
+  conflicts and retains five failures among nine bridge controls. Its old
+  lint failure is not a reason to mark this incomplete implementation ready.
+- Yield-star [#5063](https://github.com/loopdive/js2/pull/5063) conflicts,
+  is held, and describes an unfinished 9/13 standalone checkpoint. Its live
+  non-draft state contradicted that handoff; draft state was restored and
+  verified, retaining the hold. Its stale host-import policy baseline also
+  fails quality.
+- RegExp draft [#5393](https://github.com/loopdive/js2/pull/5393) conflicts.
+  The remote head `b1b58773` differs from the local branch `7795fd9`, so do not
+  overwrite or adopt another machine's changes. The old quality run retained
+  14 failures among 42 controls. Obtain the remote author's handoff first.
+- Reflect drafts [#5400](https://github.com/loopdive/js2/pull/5400) and
+  [#5397](https://github.com/loopdive/js2/pull/5397) conflict and explicitly
+  retain unfinished new-target and receiver/prototype work. Their shared
+  context/IR-sensitive files are not cleared for this wrap-up to modify.
+
+No unresolved review threads were found on the six agent-audited older PRs
+(#5996, #5393, #5883, #5839, #5736, #5063). No branches were force-pushed,
+queued, or merged by this shepherd pass. No webhook subscription tool is
+available, and the repository prohibits polling; future CI or conflict changes
+will require a new event or explicit check, not an unattended watcher promise.
+
 ## Active implementation checkpoint (2026-09-20)
 
 ### Later verified publication and local receipts
