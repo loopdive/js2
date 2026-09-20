@@ -20,6 +20,75 @@ related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445
 
 ## Active implementation checkpoint (2026-09-20)
 
+**Regression priority:** extending the same pinned-row comparison to all
+48,735 standalone rows found five prior passes now failing with
+`illegal cast [in __extern_has() ← __extern_has_idx ← __hof_* ← __module_init]`:
+
+- `built-ins/Array/prototype/some/15.4.4.17-8-10.js`
+- `built-ins/Array/prototype/forEach/15.4.4.18-8-10.js`
+- `built-ins/Array/prototype/map/15.4.4.19-9-3.js`
+- `built-ins/Array/prototype/filter/15.4.4.20-10-3.js`
+- `built-ins/Array/prototype/every/15.4.4.16-8-10.js`
+
+These are outside the ES2015 selection, so the no-other-ES2015-change statement
+below remains true but is **not broad regression clearance**. Comparing the
+two recorded compiler SHAs shows only PR #5991's three source files and its
+test file changed. That is strong attribution evidence, not a substitute for
+isolated reproduction. The String.raw Terra agent is prioritizing a separate
+current-main worktree to reproduce and repair these regressions before
+resuming anonymous deletion. Preserve the deletion worktree and retain the
+two landed String.raw gains. Track the implementation in existing issue #5152.
+The five-row acceptance manifest is
+`plan/agent-context/5152-array-subclass-regression-paths-20260920.txt`, SHA-256
+`ab15801cdd5330ca442019ac142583e98fd22a46e56d537dd11cc4100397c0db`.
+All five paths are unique and physically present in the provisioned corpus.
+The old pinned rows are 5/5 pass and the new published rows 0/5 pass.
+Isolated runner A/B now reproduces that exact delta: Node 24 with
+`run-test262-paths.mts <frozen-5> --standalone --isolate` gives **5 pass** on
+untouched `4a6cbdf1ee80` and **5 fail** on `35e040c08e`, with the same five
+illegal-cast paths. Logs are retained at
+`/private/tmp/js2-5152-array-hof-five-base-4a6-20260920.log` and
+`/private/tmp/js2-5152-array-hof-five-candidate-35e-20260920.log`.
+The bounded repair preserves the existing fnctor prototype-aware candidate
+route whenever `fnctorPrototypeGlobalForStruct` supplies that provider;
+the new ordinary reader remains for other admitted types. The post-fix
+five-row isolated run is now **5/5 pass**, terminal exit 0, recorded in
+`/private/tmp/js2-5152-array-hof-five-after-fnctor-proto-guard-20260920.log`.
+The frozen String.raw 30-row retention run is terminal: **29 pass / 1 fail**,
+retaining the landed gains with only the existing
+`built-ins/String/raw/returns-abrupt-from-next-key.js` strict setter failure.
+Evidence is `/private/tmp/js2-5152-string-raw-30-after-fnctor-proto-guard-20260920.log`.
+This clears the scoped retention check, not broad regression clearance.
+The narrow repair is committed as `54bffc6d9afc925846729e7987b56963d0dfc5b7`
+after normal pre-commit gates. The normal push is terminal and accepted by the
+fork, with TS7, lint, Prettier, oracle/coercion checks, issue integrity, and
+18/18 numeric-local controls passing. Ready upstream PR #5994 is open at that
+exact head, with passive peer shepherding assigned. No merge is claimed.
+The isolated regression
+worktree is `codex-5152-array-hof-reader-regression-20260920`, branch
+`codex/5152-array-hof-reader-regression-20260920`, based on exact `35e040c08e`.
+
+Row-level follow-up now confirms that aggregate comparison. Downloaded the
+standalone report and JSONL from immutable baselines commit
+`950cf4b00bf4375742a5b6a6a84a5f39cf46eb7b`, leaving the prior local cache
+untouched. JSONL SHA-256:
+`d954ebc1c02232e8d99faa2cde1b2b8b6b30f4f9a4a44ebd34b595b1a3a976b1`.
+All 48,735 rows are unique, stamped oracle 14 / honest / auto. Selecting
+ES2015 by edition name in the current map yields exactly 11,704 rows and
+10,371 pass / 1,047 fail / 286 compile errors. Against the prior pinned
+JSONL (`bb397c54305afc558b1569c4076260535eaae7c29df63266e55c08ee1a32bdbe`),
+exactly two selected statuses changed, both fail to pass:
+
+- `built-ins/String/raw/template-length-throws.js`
+- `built-ins/String/raw/nextkey-is-symbol-throws.js`
+
+No other selected ES2015 status changed. This is an immutable published-row
+comparison, not a fresh local rerun or a claim about unselected editions.
+Downloaded evidence is retained at
+`/private/tmp/js2-es2015-baseline-20260920.uTtFjf/`; the producer report names
+compiler `d5e58586d1f915908fe4f20cf6c5f21c8d0c2e49` and generation time
+`2026-09-19T23:38:17.737Z` (the mirrored aggregate has its own later timestamp).
+
 The newly committed upstream edition report at `35e040c08e` records
 **10,371 pass / 1,047 fail / 286 compile errors / 0 skips**, total **11,704**
 ES2015 rows. Its paired standalone summary names baseline compiler
@@ -28,8 +97,9 @@ ES2015 rows. Its paired standalone summary names baseline compiler
 10,369 pass / 1,049 fail / 286 compile errors at the same denominator.
 Thus the committed upstream aggregate improved by two passes; **1,333 rows
 remain non-passing**. This is a committed report comparison, not a fresh local
-full-suite run or per-file attribution. The local pinned JSONL and its earlier
-row-level analysis remain historical until refreshed. The discovery/Intl402
+full-suite run; the separate row-level receipt above supplies the per-file
+comparison. The earlier local cache is retained as the historical comparator.
+The discovery/Intl402
 scope audit below is still open; 100% is not achieved.
 
 Fresh upstream synchronization found `35e040c08ed10f793faf26bb0f0eac55be662627`.
@@ -46,8 +116,37 @@ Its added controls are not yet acceptance evidence: emitted-WAT inspection
 showed open-object allocations rather than the intended anonymous closed
 structs. Correct the fixture and prove receiver admission before diagnosing
 those failures as defects in the new deletion arm.
+The revised 12-control run is terminal **6 pass / 6 fail** at
+`/private/tmp/js2-5152-anon-delete-revised12-20260920.log`. Two failures concern
+WAT local/type-label assumptions, one is a TypeScript PropertyKey diagnostic,
+and three concern strict-delete validation, physical-field behavior, and
+Symbol-key behavior. Separate instrument corrections from same-source
+baseline comparisons; no deletion fix or conformance gain is established.
 An independent exact `$Object` numeric-coercion routing investigation is
-ownership-cleared with the IR task, but remains unvalidated and unshipped.
+ownership-cleared with the IR task and remains unshipped. Its exact original
+single-function receipt now returns all seven expected bits with fused
+ToNumber enabled, retaining a raw `$Object` local and zero imports. The
+unfused diagnostic instead reported invalid bytes under Node 22.23.2.
+Configured Node 24.19.0 now reproduces it: `directNumberTrace` fails validation
+because `any.convert_extern` receives `local.tee` of `(ref null 77)` rather
+than externref. The existing SMI-on/fusion-off helper's fixed local 2 is the
+static suspect. The exact-source/options Node 24 pairing is now terminal:
+untouched `35e040c08e` and the candidate fail identically in function 52 at
+offset `+56305`, establishing an independent pre-existing validation defect.
+Candidate WAT replaces the original Number call site's incorrect constant
+zero with the intended raw-object conversion sequence. Focused Node 24
+acceptance now reports **2/2** for default fused/default SMI and **6/6** for
+the full matrix with SMI disabled, including unfused semantics and host/WASI
+controls. The checked-in fixture must select that workaround only for its
+unfused variant and pass unfiltered under the normal test environment before
+publication; default fused coverage must remain unchanged. The baseline
+SMI-on/fusion-off defect is a separate tracked defect, not conformance credit.
+Evidence lives under the Number worktree's
+`.tmp/5198/toprimitive-original-after-{fused,unfused}-20260920.log`.
+The exact Node 24 engine error is retained in
+`.tmp/5198/toprimitive-original-current-unfused-node24-module.log`.
+The paired baseline error is
+`.tmp/5198/toprimitive-original-base35e-unfused-node24-module.log`.
 
 RegExp broader candidate measurement has completed on the frozen 190-original
 manifest: **99 pass / 84 fail / 7 compile errors / 0 skips**. This is a
@@ -55,6 +154,30 @@ candidate-only measurement, not a before/after gain: same-base 190-path
 comparison is pending. Its runner and manifest receipt are recorded in #5198.
 The 30-case focused matrix and original-nine controls below remain separate
 denominators; no result is added to the full ES2015 census yet.
+
+The post-sync alias-capacity matrix is now **31 pass / 11 fail / 42** under
+Node 24. Its wrapper exit 0 is not test success; the Vitest failure count is
+authoritative. Split-assignment search and two-hop match controls pass, while
+saved search aliases, raw lastIndex aliases, and existing descriptor/order
+controls remain red. A numeric lastIndex operator control stops at an IR
+capability disagreement before runtime; that candidate-only receipt has been
+handed to the migration owner without edits to IR files. See the RegExp
+worktree's `.tmp/5198/alias-capacity-focused-20260920.log` and issue 5198 for
+the exact fixture and failure inventory. No new edition-wide gain is claimed.
+The IR owner identifies the assertion at the `recvType.kind === "extern"`
+property-write arm in `src/ir/from-ast.ts`: lastIndex reaches DOM/extern setter
+classification. No known migration fix addresses it. Preserve the assertion
+and pair untouched `35e040c08e` against the candidate before assigning cause;
+physical externref storage alone does not establish IR extern-class semantics.
+The separate saved-search alias hypothesis has now been tested on the exact
+initialized/split source in candidate and untouched `35e040c08e`: all four
+report `body-shape-rejected` and use legacy AST, not IR. Candidate initialized
+returns 0 despite externref slots, while candidate split returns 1; both base
+variants return 0. This falsifies an IR-default-hint explanation for these
+fixtures and localizes remaining investigation to legacy coercion/boxing
+after slot allocation. No IR provider change is authorized by this evidence.
+Four `search-alias-route-{candidate,base}-{initialized,split}-20260920.log`
+receipts are retained under the RegExp worktree's `.tmp/5198/` directory.
 
 The earlier measurements below used the `4a6cbdf1ee80` base. String.raw was
 published as ready upstream PR #5991 at fork head
