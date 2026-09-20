@@ -12323,3 +12323,54 @@ briefed rows (three to the vendored polyfill's offset grammar, two to the
 reduction of the next target (`PlainDate.prototype.add` for every input, ~78
 rows across `PlainDate`/`PlainYearMonth` add/subtract: a spread-built object
 from a provider-local source breaks when it crosses a function return).
+
+### S70 findings (2026-09-20) — #6650 DONE: a spread-built object literal returned from a function declaration now keeps its externref carrier (+ comma-expression unwrap at the return boundary); `PlainDate`/`PlainYearMonth` add/subtract 72 → 138/150; four-family holds 463/480, 0 pass→fail
+
+S70 (Opus, branch `issue-5383-standalone-temporal-s70`, head `ac9c098e1e`, off
+the merged S69 PR #6011 head `0813ae554d`, worktree `agent-a81e3f8f42bdcb089`).
+The lane was killed by the ~16:10 UTC container restart after both fixes and the
+AddSub measurement were pushed; the lead finished the remaining verification
+from its worktree. Full writeup in
+[#6650](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6650-standalone-spread-literal-return-null).
+
+**Mechanism.** `function f(){ const o = {…}; return {...o, days: 9}; }` — the
+literal is built on the open host `$Object` route (an externref, because
+`objectLiteralSpreadTakesHostPath` routes a spread literal in a non-specific
+contextual position there; a `return` with no annotation has no contextual
+type), but the function's result ABI is `resolveWasmType` of the
+checker-inferred concrete struct, so the emitted return is a guarded downcast
+that can never succeed and every call takes the `ref.null none` arm.
+`functionReturnsHostObjectLiteralCarrier` consulted only the SHAPE-driven
+host-path predicate, not the CONTEXT-driven spread one; the local-binding and
+captured-init boundaries already consulted both. Fix 1: a helper ORing the two
+predicates (`src/codegen/declarations/host-carrier-object-literal.ts`), used at
+both literal sites of the return-carrier scan. Fix 2: the minified polyfill
+returns `zr(…), {...t.date, days: n}` — a COMMA expression — which the carrier
+scan could not see through; `unwrapReturnCarrierExpression` now peels a comma
+to its right operand, as it already did for parens/`as`/`!`/`satisfies`. Fix 1
+alone produced a byte-identical provider (72/150); both together 138/150.
+
+**Rows.** `PlainDate/prototype/{add,subtract}` + `PlainYearMonth/prototype/{add,subtract}`
+(150): 72 → 138, 0 pass→fail; every `TypeError: Cannot destructure 'null' or
+'undefined'` gone. The 12 residuals are four unrelated mechanisms (subclassing
+receiver brand, PlainYearMonth lower-unit RangeError, PYM overflow day clamp,
+last-representable-month range). Four-family sample unchanged at 463/480.
+
+**Residuals (measured by the lane, `.tmp/s70/probes/solo3.mts`).** The return
+boundary is fixed for FUNCTION DECLARATIONS only; the same carrier mismatch
+remains for an arrow function (`NaN`), a function expression (`NaN`), an
+object-literal method (`illegal cast`), a class method and a nested function
+declaration (`dereferencing a null pointer`). Each needs its own registration
+site widened.
+
+#### S70 — lead verification (2026-09-20)
+
+| check | result |
+| --- | --- |
+| gate chain incl. `LOC_GATE_BASE=origin/main`, boundaries inventory (new leaf classified), issue-ids, typecheck, lint | green |
+| `tests/issue-6650-spread-literal-function-return.test.ts` on a TRUE file-copy revert of the three touched files to `0813ae554d` | fails; passes on the fix |
+| sweep `tests/issue-66*` + 6484 + 6493 (55 files / 328 tests) | Node 22 and Node 25: 327 pass, 1 fail = main's own `issue-6648` residual |
+| AddSub 150 rows vs the lane's reverted-base run | 66 fail→pass, 0 pass→fail |
+| 13 battery groups (3,684 rows) vs the S69 base, own diff | 0 pass→fail, 0 fail→pass; four-family 463/480 |
+| corpus vs S69 base | 0 status / 0 sha flips (94 rows) |
+| equivalence | 22 / 1720 / 22 |

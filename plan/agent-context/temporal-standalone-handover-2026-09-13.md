@@ -1305,3 +1305,31 @@ as `Duration-cur-contended.tsv`.
 
 Base TSVs for the next lane: `.tmp/s69/battery/*-cur.tsv` in worktree
 `agent-aa4900de162b96313`; corpus base `.tmp/s69/corpus-fix.jsonl`.
+
+## Stack state 2026-09-20 (post-S70) — PR #6011 (S69) MERGED; S70 on `issue-5383-standalone-temporal-s70` at `ac9c098e1e`+; #6650 DONE; four-family 463/480; add/subtract 138/150
+
+PR #6011 landed on `main` 15:22 UTC. S70 (Opus; lane killed by the ~16:10
+container restart after its fixes were pushed, lead finished verification)
+fixed the return-carrier mismatch for a spread-built object literal returned
+from a function declaration, plus the comma-expression unwrap the minified
+polyfill needs (see #5383 "### S70 findings", #6650). `PlainDate`/`PlainYearMonth`
+add/subtract 72 → 138/150; four-family unchanged 463/480. Base TSVs:
+`.tmp/s70/battery/*-cur.tsv` (13 groups + `AddSub-cur.tsv`) in worktree
+`agent-a81e3f8f42bdcb089`; corpus base `.tmp/s70/lead-corpus-fix.jsonl`.
+
+**Next lanes** (one at a time, Opus): (a) the same return-carrier mismatch for
+the four other callable shapes (arrow, function expression, object-literal
+method, class method, nested function declaration — #6650 residual table,
+probe `.tmp/s70/probes/solo3.mts`), measured against the whole Temporal
+corpus, since the minified polyfill uses all of them; (b) subclassing-ignored
+`abs`/`add` (`instance[method](...a)` on a subclass instance); (c) the >2^53
+precision rows + two epoch-limit rows (arbitrary-precision BigInt, XL, new
+issue); (d) `__apply_closure` unreachable ×3 (#6628 etc.); the three
+offset-grammar rows are polyfill-version, not ours.
+
+Traps added this slice: `run-batch.mts` skips any pair whose out-file exists
+(move the kit's shipped TSVs to `base/` first); a fresh harness worktree has no
+`test262` submodule (symlink a sibling's, never commit the ` T` typechange);
+`prewarm-temporal-provider.mjs` needs `--target both`; a file-copy revert
+corrupts an in-process battery; container restarts kill lanes every ~2–3 h —
+the lead finishes a dead lane's verification from its worktree.

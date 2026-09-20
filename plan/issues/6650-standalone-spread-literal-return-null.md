@@ -1,7 +1,8 @@
 ---
 id: 6650
 title: "standalone: a spread-built object literal returned from a function is null at the caller"
-status: in-progress
+status: done
+completed: 2026-09-20
 sprint: current
 priority: high
 horizon: m
