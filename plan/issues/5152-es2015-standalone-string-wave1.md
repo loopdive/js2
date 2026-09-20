@@ -1560,6 +1560,46 @@ Physical-field collisions, the strict/coercion baseline validation failures,
 and other explicitly named descriptor-lifecycle limitations remain outside the
 true-expando admission and are not presented as ordinary-delete conformance.
 
+#### 2026-09-20 deletion-slice publication handoff
+
+Before this handoff note, the local deletion-slice source checkpoint was clean
+at `ead8e8520ae132a36e794364349e33d30979bf55`. Its final small source correction
+gives the two conditional instruction fragments in
+`fillCarrierBagDelete` contextual `Instr[]` types; it preserves the reviewed
+operation sequence and lets TS7 validate the nested Wasm `if` rather than
+using a broad cast. Direct TS7 against `tsconfig.ts7.json` exited zero, and
+the post-correction focused reader fixture is **12/12**:
+`/private/tmp/js2-5152-raw-readers-after-ts7-gate-fix-20260920.log`. As above,
+four of those named checks are baseline observations rather than conformance
+passes.
+
+This worktree initially lacked only its local `node_modules/typescript7`
+entry. It now has a missing-only local symlink to the already verified canonical
+dependency at `/Users/thomas/Code/js2/node_modules/typescript7`; no dependency
+tree was overwritten, installed, purged, or committed. That repair lets the
+normal hook's TS7 command resolve from the worktree without changing the
+repository payload.
+
+The normal hooked commit for that type-only correction is `ead8e8520a`. Its
+fast pre-commit gates (Prettier, Biome, LOC budget, and function budget) passed.
+The required normal `git push --set-upstream fork
+codex/5152-anon-expando-delete-20260920` has **not** begun its pre-push hooks
+or updated a remote: the environment denied it before execution as sensitive
+egress because the fork ownership/payload lacked explicit current approval.
+That attempt made no remote change. The user has now explicitly renewed
+authorization to push completed branches to `ttraenkler/js2`, with fallback
+to a feature branch on `loopdive/js2` if the fork push fails. This does not
+authorize pushing `main`. The user also explicitly permits unsigned commits
+for these fixes; normal repository hooks remain required.
+
+The prepared repository-template PR body is retained locally at
+`/private/tmp/js2-5152-pr-body-20260920.md`. With push approval now supplied,
+the remaining sequence is: run the normal pre-push gates and fork
+push with the validated Node 24/pnpm 10 route; verify the remote head; create
+the ready upstream PR with that body; and retain the known-shape residuals and
+the frozen-#5753-versus-current-main distinction. This remains a partial
+true-expando deletion slice, not whole-#5152 completion.
+
 #### Required gates before publishing this reader/mirror checkpoint
 
 When the compiler/test lease is next granted, run (and retain terminal logs
