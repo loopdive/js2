@@ -839,7 +839,7 @@
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 2274,
+      "passCount": 2279,
       "totalCount": 3161,
       "editionSpread": [
         {
@@ -889,7 +889,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 1694,
+          "pass": 1699,
           "total": 2250
         }
       ]

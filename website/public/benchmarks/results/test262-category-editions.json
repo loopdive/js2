@@ -1099,14 +1099,6 @@
       "skip": 0
     }
   },
-  "built-ins/decodeURI": {
-    "ES2015": {
-      "pass": 1,
-      "fail": 0,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "built-ins/Proxy": {
     "ES2015": {
       "pass": 240,
@@ -1219,6 +1211,14 @@
       "skip": 0
     }
   },
+  "built-ins/decodeURI": {
+    "ES2015": {
+      "pass": 1,
+      "fail": 0,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "language/white-space": {
     "ES5": {
       "pass": 40,
@@ -1289,6 +1289,14 @@
       "skip": 0
     }
   },
+  "language/statementList": {
+    "ES2015": {
+      "pass": 23,
+      "fail": 15,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "language/destructuring": {
     "ES2015": {
       "pass": 17,
@@ -1343,18 +1351,18 @@
       "skip": 0
     }
   },
-  "language/statementList": {
+  "language/computed-property-names": {
     "ES2015": {
-      "pass": 23,
+      "pass": 29,
       "fail": 15,
       "ce": 0,
       "skip": 0
     }
   },
-  "language/computed-property-names": {
+  "built-ins/isNaN": {
     "ES2015": {
-      "pass": 29,
-      "fail": 15,
+      "pass": 6,
+      "fail": 2,
       "ce": 0,
       "skip": 0
     }
@@ -1367,10 +1375,10 @@
       "skip": 0
     }
   },
-  "built-ins/isNaN": {
+  "built-ins/ArrayIteratorPrototype": {
     "ES2015": {
-      "pass": 6,
-      "fail": 2,
+      "pass": 17,
+      "fail": 10,
       "ce": 0,
       "skip": 0
     }
@@ -1397,14 +1405,6 @@
     "ES2020": {
       "pass": 2,
       "fail": 0,
-      "ce": 0,
-      "skip": 0
-    }
-  },
-  "built-ins/ArrayIteratorPrototype": {
-    "ES2015": {
-      "pass": 17,
-      "fail": 10,
       "ce": 0,
       "skip": 0
     }
@@ -1445,14 +1445,6 @@
       "skip": 0
     }
   },
-  "language/keywords": {
-    "ES5": {
-      "pass": 25,
-      "fail": 0,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "language/asi": {
     "ES5": {
       "pass": 101,
@@ -1461,10 +1453,10 @@
       "skip": 0
     }
   },
-  "built-ins/AsyncDisposableStack": {
-    "ES2027": {
-      "pass": 81,
-      "fail": 23,
+  "language/keywords": {
+    "ES5": {
+      "pass": 25,
+      "fail": 0,
       "ce": 0,
       "skip": 0
     }
@@ -1485,6 +1477,14 @@
     "ES2027": {
       "pass": 0,
       "fail": 5,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "built-ins/AsyncDisposableStack": {
+    "ES2027": {
+      "pass": 81,
+      "fail": 23,
       "ce": 0,
       "skip": 0
     }
