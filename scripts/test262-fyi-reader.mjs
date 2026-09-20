@@ -7,12 +7,13 @@ import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { discoverFixtureGraph } from "./test262-fixture-graph.mjs";
+import { discoverFixtureGraph, hasPinnedNamespaceSelfModuleImport } from "./test262-fixture-graph.mjs";
 import { ITERATOR_BINDING_PREAMBLE, needsIteratorBinding } from "./test262-iterator-binding.mjs";
 
 export {
   discoverFixtureGraph,
   dynamicFixtureSpecifiers,
+  hasPinnedNamespaceSelfModuleImport,
   hasSelfModuleImport,
   staticFixtureSpecifiers,
   staticRelativeModuleSpecifiers,
@@ -37,8 +38,13 @@ function normalizeTestPath(path) {
 function attachFixtureGraphs(tests) {
   for (const test of tests) {
     const graph = discoverFixtureGraph(test.file, test.contents);
-    if (Object.keys(graph.fixtureFiles).length > 0 || Object.keys(graph.dynamicFixtureFiles).length > 0) {
-      Object.assign(test, graph);
+    const selfModuleGraph = hasPinnedNamespaceSelfModuleImport(graph.entryFile, test.contents);
+    if (
+      Object.keys(graph.fixtureFiles).length > 0 ||
+      Object.keys(graph.dynamicFixtureFiles).length > 0 ||
+      selfModuleGraph
+    ) {
+      Object.assign(test, graph, selfModuleGraph ? { selfModuleGraph: true } : {});
     }
   }
   return tests;
