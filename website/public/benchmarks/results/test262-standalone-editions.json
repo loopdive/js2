@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10371,
-    "fail": 1047,
+    "pass": 10378,
+    "fail": 1040,
     "ce": 286,
     "skip": 0,
     "total": 11704,
@@ -93,17 +93,17 @@
       },
       {
         "name": "Symbol.iterator",
-        "pass": 655,
-        "fail": 74,
+        "pass": 657,
+        "fail": 72,
         "ce": 66,
         "skip": 0,
         "total": 795,
-        "pct": 82
+        "pct": 83
       },
       {
         "name": "Symbol",
-        "pass": 507,
-        "fail": 100,
+        "pass": 508,
+        "fail": 99,
         "ce": 2,
         "skip": 0,
         "total": 609,
@@ -4305,8 +4305,8 @@
   {
     "edition": "Unclassified (untagged)",
     "pass": 4468,
-    "fail": 899,
-    "ce": 78,
+    "fail": 900,
+    "ce": 77,
     "skip": 0,
     "total": 5445,
     "pct": 82
