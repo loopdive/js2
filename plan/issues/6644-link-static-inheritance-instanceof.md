@@ -35,10 +35,37 @@ created: 2026-09-19
 # deliberately a superset of that lowering rather than a re-derivation of the
 # class-object static surface (the #5820 regression is what re-derivation costs),
 # so it has to sit where that lowering is called.
+#
+# (#5383 S67, 2026-09-19) +10 LOC / +9 function LOC in `call-tail-dispatch.ts`
+# is the fourth and last splice, on the COMPUTED CALL (`S[k](...args)`): the
+# element-access CALL ladder is the one chokepoint where a spread-bearing call
+# has to be diverted, because every arm below it marshals a FIXED arity and so
+# hands the spread's source array over as a single argument. It is three lines
+# of code plus the rationale, and the mechanism itself lives in the leaf
+# `standalone-linked-static-inheritance.ts`. Splitting `compileTailDispatch`
+# (2,149 LOC) is a refactor of long-standing code this change does not
+# otherwise touch.
+#
+# (#5383 S67, 2026-09-19) +35 LOC in `new-super.ts` and +30 LOC / +25 function
+# LOC in `class-bodies.ts` are the runtime-spread `super(…)` arm. Both are
+# splices into long-standing code plus their rationale:
+#  - `new-super.ts` parameterises `compileNativeConstructRuntimeArgv` on the
+#    CALLEE push (a captured heritage global cannot be named as an expression)
+#    and exports the result. The alternative — a second copy of the driver
+#    prelude, guards and argv builder in the leaf — is the duplication #5383
+#    S34 wrote that function to avoid.
+#  - `class-bodies.ts::compileSuperCall` is the ONE program point where a
+#    SuperCall's argument list is known, so the runtime-length arm has to sit
+#    there; it replaces a five-line “decline and evaluate for effect” stub.
+# Splitting either long-standing function is a refactor this change does not
+# otherwise touch.
 loc-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/property-access-dispatch.ts
   - src/codegen/expressions.ts
+  - src/codegen/expressions/call-tail-dispatch.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/class-bodies.ts
 #
 # +14 in `collectClassDeclaration` and +11 in `compileStatementInner` are the
 # two splice points of the IDENTIFIER-heritage arm, both already reduced to a
@@ -51,6 +78,8 @@ loc-budget-allow:
 # Splitting either long-standing function is a refactor this change does not
 # otherwise touch.
 func-budget-allow:
+  - src/codegen/class-bodies.ts::compileSuperCall
+  - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   - src/codegen/class-bodies.ts::collectClassDeclaration
   - src/codegen/statements.ts::compileStatementInner
@@ -377,3 +406,145 @@ the better, and both are updated here with a pointer to this issue:
   standalone growth **0 bytes**. The Temporal provider re-emitted the identical
   **3,334,356 B** artifact under the identical key `a11c84e556193459`, so this
   slice is consumer-side only.
+
+
+## S67 — residuals 1, 2 and 4 closed; the two `from/*` rows advance to a different, pre-existing blocker
+
+Branch `issue-5383-standalone-temporal-s67`, base `ab6e22f345` (the S66 head).
+
+### Residual 1 — the discriminator was a class-NAME COLLISION, not the enclosing shape
+
+S66 left this un-isolated because three probes disagreed. They agree under one
+explanation, and it is not the one the hypothesis named.
+
+`tryEmitLinkedStaticComputedRead` (and the class-static CALL ladder) resolved
+the receiver with `classExprNameMap.get(text) ?? text`. That is NAME-keyed, and
+a name is not an identity: #4618's `mintScopedClassIdentity` gives every
+same-named class but the FIRST a per-site synthetic (`__anonClass_S_4`), and
+#4646 mints it lazily for the scopes the collection pass never walks — a
+class/object-literal METHOD body, a sibling block. So the bare name resolves to
+a DIFFERENT declaration.
+
+For these arms that is not a precision nicety but a **wrong answer**, because a
+captured IDENTIFIER heritage stores its parent in a per-class module global
+(`__linked_parent_<C>`): keying on the name reads the TWIN's global. Measured on
+the branch base with the two-module fixture (`.tmp/s67/probes/p31.mts`) — two
+same-named classes in two object-literal methods, with DIFFERENT parents:
+
+| call | base |
+| --- | --- |
+| `oB.go(NS.Other, 'tag')`, before the owner has ever run | `null` |
+| `oA.go(NS.Base, 'tag')` (the owner) | `base` |
+| `oB.go(NS.Other, 'tag')`, after it | **`base`** — the WRONG parent |
+
+That third row is the whole of S66's "shape sensitivity": an inherited static
+resolved whenever some earlier call happened to have written the shared global
+with a compatible value, and declined (`undefined`) otherwise. `.tmp/s67/probes/p30.mts`
+separates the two candidate causes directly — a UNIQUELY-named class inside an
+object-literal method answers `function` on the base tree (so the shape is
+innocent), while a name-colliding one in the same shape answers `undefined`.
+
+**The fix** (`resolveLinkedStaticClassName`): resolve by DECLARATION identity
+through `ctx.oracle.valueDeclarationOf` — a per-site synthetic is the identity
+outright; a declaration that OWNS its source name keeps the name; a colliding
+twin with no synthetic minted yet is REFUSED rather than guessed. A cheap exact
+gate (`classLinkedDynamicParentExpr.size === 0`) keeps the oracle query off
+every element access in every module with no linked provider.
+
+### Residual 2 — a runtime spread is a RUNTIME length, and the call was fixed-arity
+
+The computed read hands back a plain externref callee; the CALL of that value is
+lowered by `calls.ts::tryEmitInlineDynamicCall` (measured — that is the arm that
+fires). Its marshalling is `expr.arguments.length` locals, one per AST node, so
+a spread contributes exactly ONE value: the source array. Measured on the base
+with a provider static that echoes its arguments (`.tmp/s67/probes/p32.mts`):
+
+| call | base |
+| --- | --- |
+| `NS.Base.two(...A2)` directly on the provider (control) | `two:p,q:2` |
+| `Sub[m](...A2)` where `Sub extends construct` | `two:p,q,undefined:1` |
+
+The one-element case masks itself (`"one:" + ["p"]` prints what `"one:" + "p"`
+prints), which is why S66 saw it only as the real provider's `year is required`.
+
+**The fix**: ship the whole call through the boundary's
+`__apply_closure(__extern_get(P, ToPropertyKey(k)), P, argv)` terminal — the
+same one the NAMED form already used — whose argv is a runtime vector, and
+expand the spread with #6616's shared `tryEmitSpreadHostArgs`. **Gated on a
+spread being PRESENT**: without one the existing lowering is already correct, so
+no call site that works today gains an instruction. The NAMED form stopped
+refusing spreads for the same reason.
+
+### Residual 4 — `super(...<runtime spread>)` now builds `this`
+
+The fixed-arity construct driver cannot serve a runtime-length argument list, so
+`compileSuperCall`'s linked arm declined and only evaluated the arguments for
+effect — `called` was already 1 and `new S()` was `null`. #5383 S34's
+`__native_construct_argv` driver takes an args VECTOR plus a runtime count and
+carries the SAME boundary-construct arm, so its body is now parameterised on the
+callee push (a captured heritage global cannot be named as an expression) and
+reused here. Null NewTarget-prototype, for the same reason the fixed-arity arm
+passes one: the PROVIDER picks the prototype its own constructor would.
+
+Measured, `.tmp/s67/probes/p38.mts`, base → fix: `mkCaptured(NS.Base,[5])`
+`1/NULL` → `1/5`.
+
+### Real rows — helper 3 passes; the `from/*` rows move to a DIFFERENT blocker
+
+`JS2WASM_TEMPORAL_CACHE=.test262-cache/s67-2`, four rows plus canaries:
+
+| row | S66 head | S67 |
+| --- | --- | --- |
+| `PlainDate/from/subclassing-ignored.js` | `TypeError: called value is not a function` | `Test262Error: SameValue(«null», «undefined»)` |
+| `Duration/from/subclassing-ignored.js` | same | same as above |
+| `Duration/prototype/abs/subclassing-ignored.js` | same | unchanged |
+| `ZonedDateTime/prototype/add/subclassing-ignored.js` | same | unchanged |
+| `PlainDate/compare/use-internal-slots.js` (canary) | `pass` | `pass` |
+| `PlainDateTime/compare/use-internal-slots.js` (canary) | `pass` | `pass` |
+| `PlainDate/from/argument-object-valid.js` (canary) | `fail` (`SameValue(«null», «undefined»)`) | unchanged |
+
+`.tmp/s67/probes/p7.js` against the real provider now answers
+`[h1=ok][h2=ok][h3=ok][inline=2000/called=false]` — **all three helpers of
+`checkSubclassingIgnoredStatic` pass**, which was the whole of what #6644 was
+asked to unblock. `.tmp/s67/probes/p24.js`:
+`[typeofSubFrom=function][subFrom=2000][called=false][subFromComputed=2000][gpoSub=false][newSub=NULL]`
+— unchanged from S66 apart from the two residuals below.
+
+The two `from/*` rows now stop **later**, on the SAME failure the canary
+`PlainDate/from/argument-object-valid.js` already had on the base tree:
+`temporalHelpers.js`'s `canonicalizeCalendarEra` line 140,
+`assert.sameValue(eraName, undefined)`, with `eraName` arriving as `null`. So
+this is a pre-existing `undefined`-becomes-`null` defect on an argument path,
+not something this slice introduced — it was simply unreachable while helper 3
+threw first.
+
+## Residuals after S67 — measured
+
+1. **A rest-forwarded call does not happen at all.** `const O = { fwd(...args)
+   { return this.echo(...args); }, echo(a,b,c,d){…} }` — `O.fwd(1,"s",[2],fn)`
+   answers `undefined` while `O.echo(…)` answers `number/string/object/function/4`
+   (`.tmp/s67/probes/p34.js`). `temporalHelpers.js` routes EVERY
+   `checkSubclassingIgnored*` entry point through exactly that shape
+   (`checkSubclassingIgnoredStatic(...args) { this.checkStaticInvalidReceiver(...args); … }`),
+   which is why calling the three helpers separately passes and calling the
+   combined one does not. This, plus the `undefined`→`null` argument defect
+   above, is what the two `from/*` rows now stop on. It is a general
+   dynamic-callee/rest-forwarding spread gap, not a linked-boundary one: the
+   same probe fails with no provider in sight.
+2. **`f(...a)` on a dynamic callee.** `function callSpread(f,a){ return f(...a) }`
+   delivers the wrong argument (`.tmp/s67/probes/p37.js`), and
+   `var g = S[m]; g(...a)` answers `null` (`.tmp/s67/probes/p32.mts`). Same
+   mechanism as (1) — `tryEmitInlineDynamicCall` is fixed-arity. S67 fixed only
+   the linked-static computed CALL, which is the shape helper 3 writes.
+3. **`instance[method](...methodArgs)` on a subclass instance** — the shape
+   `checkSubclassConstructorUndefined` uses, and therefore the blocker the
+   `abs`/`add` rows now stop on (still `called value is not a function`). The
+   receiver is a user-class instance, so `elemAccessReceiverIsUserClass` claims
+   it before the spread-capable `__extern_method_call` arm is reached.
+4. **`new X(...<runtime spread>)`** is an uncatchable `illegal cast`, for a
+   purely LOCAL class too (`.tmp/s67/probes/p38.mts`: `mkLocalSpread([9])`
+   traps on both trees). Pre-existing, unrelated to the link, unchanged here.
+5. **`Object.getPrototypeOf(<class object>)`** — unchanged from S66's residual 3.
+6. **`C["ownStatic"]()`** — unchanged; the computed arm still refuses any class
+   with an own static, and the pre-existing local-class trap is neither caused
+   nor widened.
