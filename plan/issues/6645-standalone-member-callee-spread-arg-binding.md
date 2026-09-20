@@ -130,6 +130,13 @@ Measured with a fresh provider prewarmed from HEAD (`--target both`,
 The middle column is the intermediate measurement that attributes each row to
 its own defect.
 
+Full battery against the S67 base (`.tmp/s68/battery/diff-all.log`): four
+families **463/480** (PlainDate **120/120** ← 117, Duration 109 ← 108,
+PlainDateTime 117, ZDT 117), **0 pass→fail**, +4 fail→pass — exactly these four
+rows. The nine must-not-move groups (A/B/C/D/E-unlinked/E-linked/F-class/
+F-methoddef/F-objproto, 3,204 rows) are flat in both directions. Corpus
+42×{gc,standalone}: statusFlips=0, shaFlips=0. Equivalence: 22 / 1720 / 22.
+
 ## Residuals measured, NOT fixed
 
 1. **A spread with NO trailing argument does not apply a DEFAULT to the

@@ -175,3 +175,13 @@ after this fix — p34's `echo` ends with `arguments.length`. The
 `temporalHelpers.js` helpers do not read `arguments`, so the rows are not
 blocked on it. Filed as a residual here for the next lane rather than widened
 into this slice.
+
+## Verification
+
+Full battery against the S67 base, with #6645 on top (the two land as one
+stack): four families **463/480**, **0 pass→fail**, +4 fail→pass; the nine
+must-not-move groups (3,204 rows) flat in both directions; corpus
+42×{gc,standalone} statusFlips=0 shaFlips=0; equivalence 22 / 1720 / 22;
+witness sweep `tests/issue-66* + 6484 + 6493` 51 files / 287 tests green under
+Node 22 and Node 25.9. Artifacts: `.tmp/s68/battery/diff-all.log`,
+`.tmp/s68/corpus-fix.jsonl`, `.tmp/s68/equiv.log`, `.tmp/s68/sweep-node2*.log`.

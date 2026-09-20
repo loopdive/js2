@@ -1160,7 +1160,7 @@ is a full path with a fresh label per src change, copy the QuickJS artifact
 + rebuild the eval provider in a fresh worktree, CI `quality` runs Node 25
 (no legacy `try`). Container restarts every ~2–3 h: lanes commit WIP early.
 
-## Stack state 2026-09-20 (post-S68) — S68 on `issue-5383-standalone-temporal-s68` at `d4416f899f` (off the S67 PR #5998 head); #6646 + #6645 DONE; the four `era` rows flip to pass
+## Stack state 2026-09-20 (post-S68) — S68 on `issue-5383-standalone-temporal-s68` at `537b436084`+ (off the S67 PR #5998 head); #6646 + #6645 DONE; four-family 459 → **463/480**, 0 pass→fail
 
 S68 (Opus) landed two mechanisms and closed the `SameValue(«null»,
 «undefined»)` blocker. **The headline is a correction**: it was never a
@@ -1184,6 +1184,11 @@ Rows: `PlainDate/from/argument-object-valid.js`, `…/argument-string.js`,
 `PlainDate/from/subclassing-ignored.js`, `Duration/from/subclassing-ignored.js`
 — all four **pass** (the last two with the callable-property splice alone; the
 first two need the trailing-spread one, which is how each row is attributed).
+Four-family **463/480** (PlainDate **120/120** ← 117, Duration 109 ← 108,
+PlainDateTime 117, ZDT 117), 0 pass→fail; the nine must-not-move groups
+(3,204 rows) are flat in both directions; corpus 42×{gc,standalone}
+statusFlips=0 shaFlips=0; equivalence 22 / 1720 / 22; witness sweep 51 files /
+287 tests green under Node 22 AND Node 25.9.
 
 **S67's residual 1 was a misattribution** — `fwd(...args){return
 this.echo(...args)}` was already correct; that probe's callee reads

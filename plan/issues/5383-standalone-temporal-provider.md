@@ -12141,7 +12141,17 @@ provider, which the brief's prewarm line does not build — `--target standalone
 | gate chain (loc, func, coercion-sites, oracle-ratchet, dead-exports) | green, incl. `LOC_GATE_BASE=origin/main` | `.tmp/s68/g*.log` |
 | compiler-boundaries inventory vs `origin/main` | `inventoryValid: true` (new leaf classified) | `.tmp/s68/g6.log` |
 | typecheck, lint | green | — |
-| battery (4 families × 120 + 9 must-not-move groups, 3,684 rows) | RUNNING at the time of this commit — appended in a follow-up commit on this branch | `.tmp/s68/battery/*-cur.tsv` |
+| four families × 120 vs the S67 base | **463/480** (PlainDate 120 ← 117, Duration 109 ← 108, PlainDateTime 117, ZDT 117); 0 pass→fail, +4 fail→pass | `.tmp/s68/battery/diff-all.log` |
+| must-not-move A/B/C/D/E-unlinked/E-linked/F-class/F-methoddef/F-objproto (3,204 rows) | 0 pass→fail, 0 fail→pass in every group | same |
+
+
+### The four fail→pass rows
+
+`PlainDate/from/argument-object-valid.js`, `PlainDate/from/argument-string.js`,
+`PlainDate/from/subclassing-ignored.js`, `Duration/from/subclassing-ignored.js`
+— exactly the four rows this slice targeted, no collateral movement. The
+PlainDate family is now **120/120**. The battery ran under the s68-4 provider
+(prewarmed `--target both` from HEAD, `cacheHit=false` on first use).
 
 ## Residuals measured, NOT fixed
 
