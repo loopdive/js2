@@ -12177,3 +12177,16 @@ PlainDate family is now **120/120**. The battery ran under the s68-4 provider
 5. Unchanged from S67: `instance[method](...a)` on a subclass instance (the
    `abs`/`add` rows), `new X(...<runtime spread>)` on a local class,
    `Object.getPrototypeOf(<class object>)`, `C["ownStatic"]()`.
+
+#### S68 — lead verification (2026-09-20)
+
+Head `4ea3d63941` (clean tree), merged with `origin/main` (`b84d58d64c`) for landing.
+
+| check | result |
+| --- | --- |
+| gate chain incl. `LOC_GATE_BASE=origin/main`, boundaries inventory, issue-ids, typecheck, lint (merged head) | green — the pre-merge `LOC_GATE_BASE` run failed only on `statements/variables.ts`, which main had shrunk after the branch point and the slice does not touch |
+| own diff of the lane's 13 battery TSVs vs the S67 base | exactly the four target rows fail→pass; 0 pass→fail across all 3,684 rows; four-family 463/480 (PlainDate 120, Duration 109, PlainDateTime 117, ZDT 117) |
+| corpus | the lane's base file is byte-identical to S67's `corpus-fix.jsonl`; 0 status / 0 sha flips |
+| equivalence | 22 / 1720 / 22 |
+| both witnesses on a TRUE file-copy revert of the three src files to `5e3d2225f9` | 6 of 12 cases fail, all 6 controls pass — real witnesses. NOTE: the lane's own `ab.sh base` restores from `HEAD`, so its recorded "base" run was a no-op; the lead's revert is the evidence |
+| sweep `tests/issue-66*` + 6484 + 6493 (51 files / 289 tests) on the merged head | Node 22 and Node 25: 287 pass, 2 fail — `issue-6602` ("unmatched capture group … as `undefined`") and `issue-6603` (controls). Both reproduce on `origin/main` `b84d58d64c` ALONE, and were green on the lane's unmerged head; main regressed them between `ea8d7f87ff` and `b84d58d64c` (PRs #5999–#6004; #6004 "preserve global match plain-array shape" is the plausible culprit). Not this slice's — recorded, not chased |

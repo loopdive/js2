@@ -1,7 +1,8 @@
 ---
 id: 6645
 title: "standalone: a spread into a member callee mis-binds formals — the `era` `SameValue(«null», «undefined»)` on four Temporal rows"
-status: in-progress
+status: done
+completed: 2026-09-20
 assignee: ttraenkler/sendev-s68
 sprint: current
 priority: high

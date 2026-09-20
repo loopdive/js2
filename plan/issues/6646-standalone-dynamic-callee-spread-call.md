@@ -1,7 +1,8 @@
 ---
 id: 6646
 title: "standalone: a spread into a DYNAMIC (identifier-held) callee does not expand — `f(...a)` passes the source array as formal zero"
-status: in-progress
+status: done
+completed: 2026-09-20
 assignee: ttraenkler/sendev-s68
 sprint: current
 priority: high
