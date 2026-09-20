@@ -25,6 +25,7 @@ import { flushLateImportShifts } from "./shared.js";
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#3315, #4491 T11)
 import { emitVecDefineWritebackExports } from "./vec-define-writeback.js";
 import { guardVecElementRead } from "./vec-oob-read.js";
+import { buildVecPopBody, type VecPopEntry } from "./vec-pop-body.js";
 
 export const VEC_HOST_BRIDGE_ROLE = "vec-host-bridge";
 
@@ -597,11 +598,11 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
   // below resolves it via funcMap and emits a real JS `undefined` (not the
   // `ref.null.extern` null fallback — null does NOT satisfy `__extern_is_undefined`,
   // so a marshaled hole would still suppress a destructuring default). Standalone /
-  // native-strings returns undefined here (no host) and the map falls back to
-  // `ref.null.extern`, which is the standalone undefined convention — and the host
-  // marshaling path that leaks holes does not exist there anyway. Gated on
-  // `usesArrayHoles` so hole-free modules add no import.
+  // native-strings instead uses the canonical singleton (null is a distinct
+  // value). Reserve it here, before the generated accessor bodies are built.
+  // Gated on `usesArrayHoles` so hole-free modules add no import.
   if (ctx.usesArrayHoles) {
+    undefinedExternInstrs(ctx);
     ensureGetUndefined(ctx);
     flushLateImportShifts(ctx, null);
   }
@@ -680,7 +681,6 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
       ensureHoleType(ctx);
       holeTypeIdxForGet = ctx.holeTypeIdx;
     }
-    const getUndefIdxForGet = holeMapInVecGet ? ctx.funcMap.get("__get_undefined") : undefined;
     // (#3315) UNDEF_F64-sentinel → undefined at the same host read boundary.
     // An f64 vec can carry the UNDEF_F64_BITS signaling-NaN sentinel for an
     // `undefined` element (`[7, undefined, ]` lowers to __vec_f64 — see the
@@ -743,14 +743,13 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
       if (elemKey === "externref") {
         // (#2001 S1 regress) Map a `$Hole` slot back to `undefined` before it
         // leaves to the host. `[externref] → [externref]`: tee the slot, test it
-        // for `$Hole`; if it is the sentinel, substitute `undefined` (host
-        // `__get_undefined` when imported, else `ref.null.extern` — the standalone
-        // undefined convention), otherwise return the slot unchanged.
+        // for `$Hole`; return the same canonical undefined source as the f64
+        // sentinel arm. A genuine null or any other stored value is unchanged.
         if (holeMapInVecGet && holeTypeIdxForGet >= 0) {
-          const undefInstrs: Instr[] =
-            getUndefIdxForGet !== undefined
-              ? [{ op: "call", funcIdx: getUndefIdxForGet }]
-              : [{ op: "ref.null.extern" }];
+          const singleton = undefinedExternInstrs(ctx);
+          if (ctx.undefinedSingleton && (ctx.standalone || ctx.nativeStrings) && singleton === undefined)
+            throw new Error("vector Hole Get requires its selected canonical undefined reservation");
+          const undefInstrs: Instr[] = singleton ?? oobUndefinedInstrs.map((instr) => ({ ...instr }));
           boxInstrs = [
             { op: "local.tee", index: 3 },
             { op: "any.convert_extern" },
@@ -1450,84 +1449,32 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
   // __vec_pop(externref) -> externref (boxed last element; null.extern when
   // empty or unsupported — callers gate on __vec_mut_supported to tell apart)
   {
-    const locals: { name: string; type: ValType }[] = [{ name: "__any", type: { kind: "anyref" } }];
-    const body: Instr[] = [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 1 }];
-    let current: Instr[] = [{ op: "ref.null.extern" }, { op: "return" }];
+    const entries: (Readonly<VecPopEntry> | undefined)[] = new Array(mutEntries.length);
+    // Prepare at the original pop phase; reverse order preserves validation
+    // failures and skipped carriers without allocating any module resources.
     for (let i = mutEntries.length - 1; i >= 0; i--) {
       const [elemKey, vecTypeIdx] = mutEntries[i]!;
       const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
       if (arrTypeIdx < 0) continue;
-      const base = 1 + locals.length; // 1 param + locals so far
-      const vecL = base;
-      const lenL = base + 1;
-      locals.push(
-        { name: `__vpop_vec_${vecTypeIdx}`, type: { kind: "ref_null", typeIdx: vecTypeIdx } },
-        { name: `__vpop_len_${vecTypeIdx}`, type: { kind: "i32" } },
-      );
-      // (#2593) Packed i8/i16 elements need array.get_u and unsigned→f64; plain
-      // `array.get` is invalid Wasm on a packed array. Generic dynamic path reads
-      // zero-extended (the per-view signedness is at the typed `a[i]` site).
-      // (#2835) `i32_byte` (ArrayBuffer/DataView byte buffer) is now packed i8 too
-      // — same unsigned read/box. `i32_elem` (Int32/Uint32 element storage) stays
-      // full-width signed (plain `array.get`), preserving its pre-split behaviour.
-      const isPackedByte = elemKey === "i8_byte" || elemKey === "i16_byte" || elemKey === "i32_byte";
       const isNativeStr = nativeStrVecElemTypeIdx(ctx, vecTypeIdx) >= 0;
-      const boxInstrs: Instr[] =
-        elemKey === "externref"
-          ? []
-          : // (#3311) native-string element (`ref null $AnyString`) → externref via
-            // the plain anyref→externref box (no `__box_number`).
-            // (#4531/#4527) struct-ref elements box the same way.
-            isNativeStr || elemKey === "structref"
-            ? [{ op: "extern.convert_any" }]
-            : elemKey === "f64"
-              ? [{ op: "call", funcIdx: boxNumIdx2! }]
-              : isPackedByte
-                ? [{ op: "f64.convert_i32_u" }, { op: "call", funcIdx: boxNumIdx2! }]
-                : [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxNumIdx2! }];
-      const thenBranch: Instr[] = [
-        { op: "local.get", index: 1 },
-        { op: "ref.cast", typeIdx: vecTypeIdx },
-        { op: "local.set", index: vecL },
-        { op: "local.get", index: vecL },
-        { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
-        { op: "local.set", index: lenL },
-        // empty → undefined
-        { op: "local.get", index: lenL },
-        { op: "i32.eqz" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [{ op: "ref.null.extern" }, { op: "return" }],
-        },
-        // value = data[len-1] (boxed)
-        { op: "local.get", index: vecL },
-        { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
-        { op: "local.get", index: lenL },
-        { op: "i32.const", value: 1 },
-        { op: "i32.sub" },
-        { op: isPackedByte ? "array.get_u" : "array.get", typeIdx: arrTypeIdx },
-        ...boxInstrs,
-        // vec.length = len - 1 (value stays beneath on the stack)
-        { op: "local.get", index: vecL },
-        { op: "local.get", index: lenL },
-        { op: "i32.const", value: 1 },
-        { op: "i32.sub" },
-        { op: "struct.set", typeIdx: vecTypeIdx, fieldIdx: 0 },
-        { op: "return" },
-      ];
-      current = [
-        { op: "local.get", index: 1 },
-        { op: "ref.test", typeIdx: vecTypeIdx },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: thenBranch,
-          else: current,
-        },
-      ];
+      let storageGet: FuncHandle | undefined;
+      if (elemKey === "externref") {
+        const backing = ctx.mod.types[arrTypeIdx];
+        const allocation = vecHostBridgeAllocations.get(ctx)?.get("get");
+        storageGet = resolveVecHostBridgeHelper(ctx, "get");
+        if (
+          backing?.kind !== "array" ||
+          backing.element.kind !== "externref" ||
+          storageGet === undefined ||
+          allocation === undefined ||
+          definedFuncAt(ctx, storageGet) !== allocation.func ||
+          allocation.func.body.length <= 1
+        )
+          throw new Error("externref pop requires its allocated and filled storage Get");
+      }
+      entries[i] = Object.freeze({ elemKey, vecTypeIdx, arrTypeIdx, isNativeStr, storageGet });
     }
-    body.push(...current);
+    const { locals, body } = buildVecPopBody(Object.freeze(entries), boxNumIdx2);
     fillVecHostBridge(ctx, "pop", locals, body);
   }
 
