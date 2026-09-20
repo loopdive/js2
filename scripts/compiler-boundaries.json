@@ -4073,6 +4073,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/declarations/host-carrier-object-literal.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "6650-spread-literal-return-carrier",
+      "nextBoundary": "Separate AST-based host-path evidence from physical carrier selection."
+    },
+    {
       "path": "src/codegen/declarations/heterogeneous-scalar-var-widening.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

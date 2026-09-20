@@ -82,6 +82,7 @@ import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
 import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.js"; // (#3024/#4638) module-global externref routing in lockstep with the literal's own host-path gate
+import { objectLiteralTakesHostCarrier } from "./declarations/host-carrier-object-literal.js"; // (#6650) return boundary: BOTH host-path reasons
 import { needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { readsAmbientThisGlobal } from "./helpers/body-references-own-this.js";
 import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.js";
@@ -1073,9 +1074,14 @@ function unwrapReturnCarrierExpression(expression: ts.Expression): ts.Expression
     ts.isAsExpression(current) ||
     ts.isTypeAssertionExpression(current) ||
     ts.isNonNullExpression(current) ||
-    ts.isSatisfiesExpression(current)
+    ts.isSatisfiesExpression(current) ||
+    // (#6650) A COMMA expression's value is its right operand. The minified
+    // `@js-temporal/polyfill` writes its date-arithmetic result exactly that
+    // way — `return zr(…), { ...t.date, days: n }` — so without this the
+    // carrier scan never sees the spread literal it has to pin.
+    (ts.isBinaryExpression(current) && current.operatorToken.kind === ts.SyntaxKind.CommaToken)
   ) {
-    current = current.expression;
+    current = ts.isBinaryExpression(current) ? current.right : current.expression;
   }
   return current;
 }
@@ -1112,7 +1118,7 @@ function functionReturnsHostObjectLiteralCarrier(ctx: CodegenContext, stmt: ts.F
     }
     if (ts.isVariableDeclaration(node) && node.initializer) {
       const initializer = unwrapReturnCarrierExpression(node.initializer);
-      if (ts.isObjectLiteralExpression(initializer) && objectLiteralForcesHostPath(ctx, initializer)) {
+      if (ts.isObjectLiteralExpression(initializer) && objectLiteralTakesHostCarrier(ctx, initializer)) {
         hostDeclarations.add(node);
       }
     } else if (ts.isReturnStatement(node) && node.expression) {
@@ -1124,7 +1130,7 @@ function functionReturnsHostObjectLiteralCarrier(ctx: CodegenContext, stmt: ts.F
 
   const isHostCarrier = (expression: ts.Expression): boolean => {
     const current = unwrapReturnCarrierExpression(expression);
-    if (ts.isObjectLiteralExpression(current)) return objectLiteralForcesHostPath(ctx, current);
+    if (ts.isObjectLiteralExpression(current)) return objectLiteralTakesHostCarrier(ctx, current);
     if (ts.isIdentifier(current)) {
       const declaration = ctx.oracle.valueDeclarationOf(current);
       return declaration !== undefined && ts.isVariableDeclaration(declaration) && hostDeclarations.has(declaration);
