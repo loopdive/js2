@@ -1813,8 +1813,23 @@ The dirty shared main checkout was not modified.
   physical value mutation from changed read/storage routing; the six red pins
   are not six independent proven defects.
 - #5269 Symbol probes are separate from the completed #6484 iterator slice.
-  Dynamic undefined/Symbol conversion and reentrancy are being measured;
-  production Symbol edits remain pending the separate IR coordination.
+  The isolated Symbol implementation now improves the identical two-original
+  manifest from **1 pass / 1 fail** on upstream `62221769a8` to **2 pass**,
+  using the same `run-test262-paths.mts --isolate --standalone` command.
+  Baseline and candidate logs are respectively
+  `/private/tmp/js2-5269-symbol-matched-base-terra-20260920-isolated-baseline-pair-20260920.log`
+  and `/private/tmp/js2-5269-symbol-controls-terra-20260920-matched-isolated-candidate-pair-20260920.log`.
+  This is not yet a completed fix: a subsequent ordinary control for a Symbol
+  returned by object-to-primitive conversion fails its value assertion
+  (**5 instead of 7**), while the other 11 assertions pass (including three
+  explicitly expected, baseline-confirmed later-edition accessor failures).
+  Its terminal log is
+  `/private/tmp/js2-5269-symbol-controls-terra-20260920-postprimitive-control-baseline-20260920.log`.
+  The agent owns a consumer-specific coercion correction; do not change
+  global `String` behavior or count the later-edition accessor diagnostics
+  as ES2015 gains. Local production edits are permitted in the isolated
+  worktree after published-hunk review; fresh IR overlap review remains
+  required before integration, and unpublished remote IR work is not known.
 - A one-shot publication read finds PR 5996 open, ready and mergeable at
   `9e7ea9471ae0f0efd22293f09badfe6c1432760e`, with no merge commit. Quality,
   issue tests and equivalence checks succeeded, but the Test262 shard jobs
@@ -1829,3 +1844,78 @@ The dirty shared main checkout was not modified.
 The full standalone goal remains unachieved. Retain the edition/discovery
 scope caveat and do not add local slice gains to the historical global pass
 count without a fresh authoritative census.
+
+### Follow-up review: call evaluation and optimized reads
+
+The Symbol and normalization owners must preserve complete argument-list
+evaluation before builtin coercion. Source review found that the direct
+Symbol call forwards its arguments untouched to `compileSymbolCall`, whose
+native implementation currently evaluates only the description. Its outer
+static-Symbol rejection also precedes later argument evaluation. The existing
+normalize implementation similarly throws for a statically invalid form
+before evaluating its receiver and ignores later arguments. Each owner is
+adding ordinary side-effect/order/abrupt-completion controls while replacing
+these call paths; these observations are source evidence, not yet measured
+Test262 gains.
+
+A native Node v24 reference check establishes the expected traces for those
+new controls (not evidence about js2 execution): `Symbol(descriptionObject,
+extra())` records `extra;convert;`; a Symbol-valued first argument still
+records `extra;` before `TypeError`; and
+`getReceiver().normalize("bad", extra())` records `receiver;extra;` before
+`RangeError`. Compile, zero-import, and runtime assertions must remain outside
+any expected-value failure wrapper when measuring the corresponding js2 pins.
+
+The RegExp reader correction needs a matching optimization guard: the
+`member-get-inline-ic.ts` call-site rewrite can replace the corrected generic
+getter with a physical numeric-field read. The isolated owner is validating
+a native-RegExp/`lastIndex`-specific decline, preserving ordinary field
+optimizations. This is distinct from the dispatcher's own optional inline
+cache, which was investigated and ruled out for the failing carrier.
+
+Verified follow-up receipts:
+
+- RegExp's optimized-default reader selection improved from **6/8 to 7/8**
+  after that specific decline. Raw null/undefined aliases now pass; the
+  aggregate object-identity-after-lock control still fails. The selected run
+  skipped the other 56 tests, so this is not a full-suite result. Log:
+  `.tmp/5198/lastindex-member-get-inline-decline-focused-20260920.log` in the
+  isolated RegExp worktree.
+- Symbol's split ToPrimitive/primitive-ToString path and trailing-argument
+  evaluation now pass **9 ordinary ES2015 controls**. One supplementary
+  accessor control also passes; three baseline-confirmed accessor failures
+  remain explicitly expected value assertions. Thus the harness reports
+  13 green assertions, not 13 new ES2015 passes. Log:
+  `/private/tmp/js2-5269-symbol-controls-terra-20260920-postprimitive-and-argument-order-candidate-20260920.log`.
+  Source SHA-256 is
+  `9ad3122360e16d7e99d732e542592a23a0c5e6c2fb216ab069c890ad1d425c9f`;
+  test SHA-256 is
+  `05a06c36348667e653227e4889e11ff729eebd72aba1a8399ee9b7f9fa424118`.
+  The original Test262 pair and broader Symbol neighborhood must be rerun
+  after this new source change before carrying forward prior pass claims.
+
+The subsequent Symbol retention rerun completed **2/2 original Test262
+passes** on that same source SHA, using the identical isolated standalone
+runner and manifest. Log:
+`/private/tmp/js2-5269-symbol-controls-terra-20260920-final-matched-isolated-candidate-pair-20260920.log`.
+An added primitive-rendering control also passes: the focused harness now has
+**10 ordinary ES2015 controls + 1 supplementary pass + 3 expected accessor
+failures**, with test SHA-256
+`28083423263f6516e0a9b9906981bc3e0488491026db04011c64c2cdf6c19a33`.
+Log:
+`/private/tmp/js2-5269-symbol-controls-terra-20260920-final-focused-candidate-20260920.log`.
+Broader neighborhood and repository gates remain outstanding; this does not
+establish merge readiness or a full-edition pass count.
+
+The frozen 19-row Symbol description/registry comparison subsequently finished
+**baseline 13 pass / 6 fail; candidate 14 pass / 5 fail**. Only
+`built-ins/Symbol/desc-to-string.js` changed verdict. The three remaining
+semantic/runtime failures have identical reported signatures; two cross-realm
+rows on both sides lack the QuickJS provider and remain infrastructure-unmeasured.
+Manifest SHA-256:
+`445b961b2e9f7baf4389f1feaba033e9fe1843a47a1bf94bfbd8e1a7aaf3215a`.
+Logs:
+`/private/tmp/js2-5269-symbol-matched-base-terra-20260920-description-registry-baseline-20260920.log`
+and `/private/tmp/js2-5269-symbol-controls-terra-20260920-description-registry-candidate-20260920.log`.
+The repository-supported provider recovery is being attempted separately;
+matching missing-provider errors do not prove absence of regressions there.
