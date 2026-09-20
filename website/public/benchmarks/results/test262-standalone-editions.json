@@ -1062,8 +1062,8 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3802,
-    "fail": 548,
+    "pass": 3805,
+    "fail": 545,
     "ce": 473,
     "skip": 0,
     "total": 4823,
@@ -1152,12 +1152,12 @@
       },
       {
         "name": "regexp-named-groups",
-        "pass": 75,
-        "fail": 13,
+        "pass": 76,
+        "fail": 12,
         "ce": 5,
         "skip": 0,
         "total": 93,
-        "pct": 81
+        "pct": 82
       },
       {
         "name": "arrow-function",
@@ -1215,12 +1215,12 @@
       },
       {
         "name": "regexp-lookbehind",
-        "pass": 15,
-        "fail": 4,
+        "pass": 18,
+        "fail": 1,
         "ce": 0,
         "skip": 0,
         "total": 19,
-        "pct": 79
+        "pct": 95
       },
       {
         "name": "regexp-dotall",
@@ -4305,8 +4305,8 @@
   {
     "edition": "Unclassified (untagged)",
     "pass": 4468,
-    "fail": 899,
-    "ce": 78,
+    "fail": 900,
+    "ce": 77,
     "skip": 0,
     "total": 5445,
     "pct": 82

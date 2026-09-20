@@ -897,7 +897,7 @@
     {
       "name": "Regular expressions",
       "testCategories": ["built-ins/RegExp", "built-ins/RegExpStringIteratorPrototype"],
-      "passCount": 1685,
+      "passCount": 1688,
       "totalCount": 1896,
       "editionSpread": [
         {
@@ -917,7 +917,7 @@
         },
         {
           "edition": "ES2018",
-          "pass": 626,
+          "pass": 629,
           "total": 648
         },
         {
