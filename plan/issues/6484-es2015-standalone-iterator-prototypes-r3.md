@@ -1,7 +1,7 @@
 ---
 id: 6484
 title: "ES2015 standalone: iterator prototypes are unreachable from a dynamically-typed iterator — r3"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-09-16
 updated: 2026-09-20
@@ -592,7 +592,7 @@ afterwards and the file is byte-identical to the validated fix.
   iterator still reports `%StringIteratorPrototype%` (bitmask 63/63), so it is
   not shadowing. Left in place rather than removed as out-of-scope cleanup.
 
-## S4 — `arguments` iterator observes its logical `length` (planned 2026-09-20)
+## S4 — `arguments` iterator observes its logical `length` (completed slice, 2026-09-20)
 
 ### Scope and claim boundary
 
@@ -784,6 +784,13 @@ It exited 0 with `{ pass: 2 }` and `0 non-pass (excluding skip)`; durable log:
 The separate typed-array detachment control remains unclaimed and was not
 included in this retention result.
 
+**S4 completion boundary.** The two mapped/unmapped arguments originals now
+pass on the final publication tree, and the focused suite retains its 12
+ordinary controls. This completes the owned S4 live-length slice only. #6484
+as a whole remains `in-progress`: the independent TypedArray-detachment row
+and the separately tracked #4622/#3251 post-delete behavior are not closed or
+claimed by this branch.
+
 ### Post-sync publication-tree receipt (2026-09-20)
 
 After checkpoint `d08cb026cd2ac94b5d5f54fbe1316e6c1caf0e83`, the branch normally
@@ -799,3 +806,23 @@ The guarded focused suite again exited 0; it has 12 ordinary conformance
 controls and one explicitly separate #4622/#3251 expected failure, not 13
 conformance passes; durable log:
 `/private/tmp/js2-6484-iterator-residual-terra-20260920-focused-final-tree-20260920.log`.
+
+### Publication handoff blocker (2026-09-20)
+
+The completed local branch is
+`codex/6484-iterator-residual-20260920a` at checkpoint
+`0ab8d03e0d72710d971be203de7c1929c9167db4`. Its normal commit hooks completed
+with formatting/lint, LOC/function budgets, the changed-root focused suite,
+and the oracle ratchet green (the focused aggregate is still 12 ordinary
+controls plus the separate expected #4622/#3251 failure).
+
+The ordinary fork push remains pending. An earlier sandboxed
+`git push --set-upstream fork codex/6484-iterator-residual-20260920a` could not
+resolve GitHub, and a later retry was denied before execution; neither attempt
+made network contact or created a remote branch or PR. On 2026-09-20 the user
+explicitly authorized a normal fork-feature-branch push and an unsigned commit
+for completed fixes. This branch now awaits the serialized normal-hook slot;
+it must still run those hooks and use only `fork`, never push to `main`. The
+prepared PR body is
+`/private/tmp/js2-6484-iterator-residual-terra-20260920-pr-body.md`; it uses
+the canonical website issue links and leaves the CLA checkbox unchecked.
