@@ -86,6 +86,7 @@ import {
   nativeStringLiteralInstrs,
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
+import { REGEXP_MATCH_VEC_STRUCT } from "./native-regex.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js"; // (#4221) absent-callee TypeError
@@ -8862,6 +8863,78 @@ export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
     fn.locals.push({ name: "__f64hole_get_v", type: { kind: "f64" } });
   }
   const vecArms: Instr[] = [];
+
+  // A non-global RegExp exec/match result is a nullable-native-string vec
+  // subtype. Its null backing slots mean an unmatched capture, which is JS
+  // undefined rather than JS null. Keep that distinction at this exact
+  // physical read only: __extern_get_idx's later overlay prologue returns
+  // deleted/accessor/companion values before this arm, including a user-owned
+  // null descriptor value.
+  const registeredMatchVecTypeIdx = ctx.structMap.get(REGEXP_MATCH_VEC_STRUCT);
+  const registeredMatchVecArrTypeIdx =
+    registeredMatchVecTypeIdx === undefined ? -1 : getArrTypeIdxFromVec(ctx, registeredMatchVecTypeIdx);
+  const registeredMatchVecArrDef =
+    registeredMatchVecArrTypeIdx >= 0 ? ctx.mod.types[registeredMatchVecArrTypeIdx] : undefined;
+  const matchVec =
+    registeredMatchVecTypeIdx !== undefined &&
+    registeredMatchVecArrDef?.kind === "array" &&
+    registeredMatchVecArrDef.element.kind === "ref_null" &&
+    registeredMatchVecArrDef.element.typeIdx === ctx.anyStrTypeIdx
+      ? { typeIdx: registeredMatchVecTypeIdx, arrTypeIdx: registeredMatchVecArrTypeIdx }
+      : undefined;
+  if (matchVec !== undefined) {
+    const matchRaw = 2 + fn.locals.length;
+    fn.locals.push({ name: "__regexp_match_capture_raw", type: { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx } });
+    const matchUndefined = canonicalUndefinedExternInstrs(ctx);
+    vecArms.push(
+      { op: "local.get", index: 2 },
+      { op: "ref.test", typeIdx: matchVec.typeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          // i = trunc_sat(idx) ; if i < 0 → existing indexed miss
+          { op: "local.get", index: 1 },
+          { op: "i32.trunc_sat_f64_s" },
+          { op: "local.tee", index: 4 },
+          { op: "i32.const", value: 0 },
+          { op: "i32.lt_s" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [...idxMiss(), { op: "return" }],
+          },
+          // Logical length and physical backing capacity retain the generic
+          // vec reader's guards; a grown sparse tail remains a normal miss.
+          { op: "local.get", index: 4 },
+          { op: "local.get", index: 2 },
+          { op: "ref.cast", typeIdx: matchVec.typeIdx },
+          { op: "struct.get", typeIdx: matchVec.typeIdx, fieldIdx: 0 },
+          { op: "i32.ge_s" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [...idxMiss(), { op: "return" }],
+          },
+          ...backedBoundsGuard(2, 4, matchVec.typeIdx, matchVec.arrTypeIdx, idxMiss),
+          { op: "local.get", index: 2 },
+          { op: "ref.cast", typeIdx: matchVec.typeIdx },
+          { op: "struct.get", typeIdx: matchVec.typeIdx, fieldIdx: 1 },
+          { op: "local.get", index: 4 },
+          { op: "array.get", typeIdx: matchVec.arrTypeIdx },
+          { op: "local.tee", index: matchRaw },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: matchUndefined,
+            else: [{ op: "local.get", index: matchRaw }, { op: "extern.convert_any" }],
+          },
+          { op: "return" },
+        ],
+      },
+    );
+  }
   for (const { typeIdx, arrTypeIdx, elemType } of carriers) {
     const readBox = packedElemReadBox(elemType);
     if (readBox === null) continue; // unsupported element kind — leave to null fallback
@@ -11322,10 +11395,21 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
   // ── __extern_get: "length" → box(len); numeric index → __extern_get_idx ──
   const getFn = findFn("__extern_get");
   if (getFn && externGetIdxIdx !== undefined) {
-    // params: 0=obj 1=key ; append locals: gAny(anyref) gN(f64)
+    const registeredMatchVecTypeIdx = ctx.structMap.get(REGEXP_MATCH_VEC_STRUCT);
+    const objIndexOfKeyIdx = ctx.funcMap.get("__obj_index_of_key");
+    const captureNumeric =
+      registeredMatchVecTypeIdx !== undefined && objIndexOfKeyIdx !== undefined
+        ? { typeIdx: registeredMatchVecTypeIdx, indexOfKeyIdx: objIndexOfKeyIdx }
+        : undefined;
+    // params: 0=obj 1=key ; append locals: gAny(anyref) gN(f64) gI(i32)
     const gAny = 2 + getFn.locals.length;
     const gN = gAny + 1;
-    getFn.locals.push({ name: "__vec_any", type: { kind: "anyref" } }, { name: "__vec_n", type: { kind: "f64" } });
+    const gI = captureNumeric === undefined ? -1 : gN + 1;
+    getFn.locals.push(
+      { name: "__vec_any", type: { kind: "anyref" } },
+      { name: "__vec_n", type: { kind: "f64" } },
+      ...(captureNumeric === undefined ? [] : ([{ name: "__regexp_match_key_i", type: { kind: "i32" } }] as const)),
+    );
     const getMiss = (): Instr[] => undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }];
     const lenArm = keyIsLength();
     const numericArm: Instr[] =
@@ -11348,6 +11432,43 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
             },
           ]
         : [];
+    // A capture result uses an exact canonical index parser before the broad
+    // StringToNumber vec arm. A recognized index delegates to __extern_get_idx
+    // so overlays, deletes, accessors, and prototype misses retain their one
+    // existing reader. A rejected spelling deliberately falls through to the
+    // ordinary named-property path instead of being coerced by __str_to_number.
+    const captureOrGenericNumericArm: Instr[] =
+      captureNumeric === undefined
+        ? numericArm
+        : [
+            { op: "local.get", index: gAny },
+            { op: "ref.test", typeIdx: captureNumeric.typeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: 1 },
+                { op: "any.convert_extern" },
+                { op: "ref.cast", typeIdx: anyStrTypeIdx },
+                { op: "call", funcIdx: captureNumeric.indexOfKeyIdx },
+                { op: "local.tee", index: gI },
+                { op: "i32.const", value: 0 },
+                { op: "i32.ge_s" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: 0 },
+                    { op: "local.get", index: gI },
+                    { op: "f64.convert_i32_s" },
+                    { op: "call", funcIdx: externGetIdxIdx },
+                    { op: "return" },
+                  ],
+                },
+              ],
+              else: numericArm,
+            },
+          ];
     const lenBody: Instr[] =
       lenArm && boxNumberIdx !== undefined
         ? [
@@ -11433,7 +11554,7 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
           {
             op: "if",
             blockType: { kind: "empty" },
-            then: [...lenBody, ...ctorBody, ...numericArm],
+            then: [...lenBody, ...ctorBody, ...captureOrGenericNumericArm],
           },
           // Vec receiver, non-"length"/non-index key: FALL THROUGH to the main
           // body — its non-$Object miss arm consults the #3537 expando side
