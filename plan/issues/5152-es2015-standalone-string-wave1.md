@@ -634,6 +634,468 @@ implementation approval; `object-runtime.ts`, `typeof-delete.ts`,
 classifier remain out of the follow-up until an authenticated registry design
 is independently owned and reviewed.
 
+#### 2026-09-20 provenance-marker proposal — held by IR; do not implement
+
+**Status (2026-09-20).** IR explicitly put the marker/layout direction on hold.
+The proposal below is retained as historical investigation, not an approved
+implementation plan: do not add a registry, marker field, ABI receipt, finalizer,
+or allocation patch walk from it. In particular, a FINALIZE-time candidate cannot
+be used to reserve `__carrier_bag_delete` after `__delete_property` has already
+baked its optional call. The existing side-bag route is audited separately below.
+
+The existing `object-literal-carrier.ts` map is useful evidence but cannot be
+the deletion admission itself: it is a private, non-enumerable
+`WeakMap<ObjectLiteralExpression, typeIdx>`, populated by
+`compileObjectLiteralForStruct`. It has no finalizer snapshot, and
+`compileWidenedEmptyObject` emits its own closed `struct.new` without using it.
+Even an iterable copy of that map would prove only that *some* literal used a
+canonical type. It would not distinguish a later copied/manual/nonliteral
+allocation of the same Wasm type. The existing strict-method recorder shows the
+same constraint explicitly: its IR token is construction-site provenance, but
+it deliberately ignores property-only literals and thus cannot be repurposed
+as this registry.
+
+Historical fail-closed seam (rejected for this follow-up; retained for the
+provenance constraint it established):
+
+1. `object-literal-carrier.ts` owns a per-`CodegenContext` allocation registry,
+   held in module-private `WeakMap`s rather than a new shared context field.
+   `recordClosedObjectLiteralAllocation(ctx, structNew, literal, typeIdx)` puts
+   a primitive `objectLiteralAllocationToken` on the actual `struct.new` and
+   records its exact literal/type pair. The companion
+   `requestClosedObjectLiteralDeleteProvenance(ctx, typeIdx)` is demand-only;
+   it records a type requested by the already-existing standalone anonymous
+   accessor-mirror path, not a claim that every instance of that type is a
+   literal.
+2. `literals.ts` is the only producer integration: call that recorder from
+   `pushStrictMethodLiteralAllocation` for every
+   `compileObjectLiteralForStruct` allocation, and from
+   `compileWidenedEmptyObject` immediately before its direct `struct.new`.
+   The latter is required for empty/property-only widened literals. Open
+   `$Object` literals, host/accessor literals, and any construction path that
+   does not carry this exact token stay unadmitted.
+3. `object-ops.ts` adds only one demand registration, inside the existing
+   successful standalone anonymous accessor-mirror branch, after its resolved
+   `structTypeIdx` is available. It must not broaden that branch, use an
+   `__anon_` name as runtime proof, or change receiver/closure evaluation.
+   At finalization the request is intersected with actual recorded literal
+   allocations; a requested type with no such allocation produces no marker,
+   no delete arm, and no new behavior.
+4. `object-literal-carrier.ts` also owns
+   `finalizeClosedObjectLiteralDeleteProvenance(ctx)` and its immutable
+   `closedObjectLiteralDeleteCandidates(ctx)` snapshot. For each demanded type
+   with an exact recorded allocation, finalization appends a compiler-private
+   immutable i32 marker field and patches every `struct.new` of that augmented
+   type: only an instruction whose token resolves to the same literal *and*
+   type receives its nonzero marker; all other allocations receive zero. The
+   marker field index is held in a private side table, never rediscovered by a
+   `$`/`__` name, because those are legal user keys. The patch walk must cover
+   functions, globals, nested instruction arrays, and retained inline bodies;
+   shallow IR clones preserve the primitive token exactly as the existing
+   strict-method mechanism requires.
+5. `index.ts` owns only the two pipeline placements. Invoke this finalizer
+   after `resolveAndRecordShapeStamping` (so its candidate snapshot can carry
+   the final logical shape guard) and before the first
+   `fillObjVecReflectionHelpers`/`fillCarrierBagDelete` consumer in both the
+   single-source and multi-source finalization pipelines. It must not mint late
+   helpers, imports, or types. The marker is appended after any existing shape
+   stamp; the snapshot records the authoritative marker field index plus the
+   existing shape id/index.
+6. `carrier-bag-delete.ts` is a consumer only. It receives the immutable
+   candidate snapshot and adds a lookup-only arm guarded by exact Wasm type,
+   final logical shape (`buildShapeGuardedArm`), and nonzero provenance marker
+   before calling the existing `__closure_bag_lookup`. It retains the current
+   `-1/0/1` protocol and delegates deletion to `__delete_property`. Before
+   delegation, it obtains the existing entry via `__obj_find` and compares that
+   stored normalized key against the candidate's exposed physical fields via
+   `exposedClosedStructFieldName`/`isInternalStructFieldName` and the existing
+   flattened native-string equality path. A physical collision remains
+   **not handled**; no key is re-coerced and no `undefined` value is used as an
+   absence test. Any missing provenance, marker, bag, entry, or shape metadata
+   also remains `-1`.
+
+This historical design correctly identified that type-only provenance is not an
+allocation proof, but it does **not** authorize a type-name or type-only fallback.
+It is superseded for this slice by the receiver-identity-bag audit below. No
+source or test execution has been performed for the held design.
+
+#### 2026-09-20 existing identity-bag audit — marker-free anonymous delete arm
+
+The current runtime already has a per-receiver authentication fact that the
+marker proposal did not use. In standalone/WASI, `ensureObjectRuntime` first
+reserves `__closure_bag_lookup` / `__closure_bag_ensure`, then carrier visibility,
+class tombstones, and instance props; only later does it construct
+`__delete_property`, whose `reserveCarrierBagDelete` call bakes the optional
+carrier-delete call. Thus the needed lookup and delete slots are already stable
+before the caller body exists; no late demand, import, helper, or ABI-layout
+mutation is needed.
+
+`__closure_bag_ensure` records `{ key: eqref receiver identity, bag: $Object }`;
+`__closure_bag_lookup` returns that same bag only after `ref.eq` with the original
+receiver. The native `__defineProperty_accessor` and value twin already route a
+user-instance receiver through `defineCarrierBagSubstitutionArm`, which tests the
+existing instance substrate, creates or reuses this identity-keyed bag before the
+ordinary `$Object` descriptor path validates and applies the definition.
+`__obj_find` then proves a live *own* entry in that exact bag: it skips
+`FLAG_TOMBSTONE`, so neither an absent entry nor a deleted entry is admitted, and
+it never infers absence from the stored value (including `undefined`). The reader
+checkpoint already consumes this same fact: `fillClosedStructExternGetArms` gives
+a live bag descriptor precedence over a physical field and uses
+`__reflect_get_receiver(bag, key, original)` to preserve accessor `this`.
+
+IR confirmed that this is a consumer-only seam with no conflicting producer or
+layout owner. That is ownership clearance, not blanket semantic acceptance; the
+following source admission proof is the implementation boundary. The narrow
+candidate is consumer-only in `carrier-bag-delete.ts`:
+
+1. Build a private list of existing anonymous closed-shape entries carrying the
+   already-established `typeIdx` plus `$shape` id/index when canonicalization
+   requires it. This is a static dispatch list, **not** a new generic carrier
+   predicate and not a claim about literal allocation provenance. The runtime
+   admission remains the exact receiver's live bag entry.
+2. Place its lookup-only arm after the existing closure, native-generator, vec,
+   Error, and #5753 class arms. The class arm retains its own retained-marker
+   repair and locals 3/4/5; any new scratch locals must be appended after that
+   actual replacement. No change may widen `IS_INSTANCE_EXPANDO_CARRIER`,
+   `IS_CLASS_INSTANCE_CARRIER`, or the closure/generator classifiers.
+3. On a type-and-shape hit, call the existing `__closure_bag_lookup`; null or a
+   non-`$Object` bag returns `-1`. Call the existing `__obj_find` and return
+   `-1` for no live entry. This both prevents cross-instance effects and makes a
+   failed/untaken definition inert.
+4. Before delegation, read the **stored** key from that `$PropEntry`, rather
+   than replaying the caller key after lookup. A string entry is flattened and
+   compared through the existing native string equality helper against every
+   exposed physical own-field name of the matched shape. A collision returns
+   `-1`: deleting an overlay while leaving a physical field would resurrect
+   stale storage. A physical `@@…` name is declined wholesale because it can
+   mean a well-known Symbol slot which the string-only comparison cannot prove
+   distinct. Field filtering must use `exposedClosedStructFieldName` plus
+   `isInternalStructFieldName`, so legal user `$`/`__` keys are not silently
+   erased as compiler internals.
+5. Only then delegate to the existing `__delete_property(bag, storedKey)`, preserving
+   its `-1/0/1` protocol, configurability refusal, tombstone/count bookkeeping,
+   and strict-mode caller behavior. There is no copied delete algorithm.
+
+This explains why a nonliteral receiver of an admitted anonymous type can be
+safe without a marker: the bag is keyed to that concrete receiver, and a live
+entry whose stored key is not any physical own field is a true expando regardless
+of which allocation path produced the receiver. A receiver without a bag, without
+a live entry, with a physical collision, or without an exact logical shape remains
+unhandled and retains current behavior. This is deliberately narrower than a
+claim that every `__anon_` allocation is a literal.
+
+**Implemented source admission (revised controls await a fresh test lease).**
+The selector is intentionally a static inventory gate, not a runtime `__anon_`
+name test:
+
+1. It runs only in standalone/WASI and declines every non-undefined
+   `linkBrandRoleOf(ctx)` result, matching the branding finalizer's actual
+   consumer/provider classification rather than duplicating its flags. A linked
+   peer can contribute a canonical twin outside this module's inventory; this
+   slice preserves the old `-1` route rather than relying on an implicit
+   cross-module receipt.
+2. Each candidate must be one exact `__anon_` registry entry: its
+   `structMap`/reverse-map identity is one-to-one, `typeDef.name` agrees with
+   the map key, and `typeDef.fields === ctx.structFields.get(name)`. Missing
+   fields, aliases, a nominal parent/child edge, a `noBrandShapeTypes` entry,
+   or any fnctor cold/layout registration declines the whole candidate.
+3. The candidate must be a bare type after the `__vec_base` shape-brand anchor.
+   This helper is filled after `resolveAndRecordShapeStamping` and before the
+   final `brandCollidingShapeTypes` pass in both compile pipelines. A surviving
+   candidate is therefore either unique or gets the existing trailing nominal
+   brand before encoding; a static `$shape` guard is additionally required when
+   a logical collision stamp exists. The finalizer's own no-brand/supertype/
+   anchor exclusions match this selector, so an unknown canonical or subtype
+   state stays unhandled rather than widening `ref.test`.
+4. Physical inventory walks every recorded field, using `!== undefined`, not
+   truthiness: `""` is physical, and recorded `$…`/`__…` keys remain physical
+   while compiler bookkeeping stays hidden. A recorded `$constructor` carries
+   both its raw spelling and the dynamic reader's exposed `constructor`
+   spelling. A physical `@@…` name declines the entire candidate, because the
+   compiler may use that spelling for a well-known Symbol field. Every admitted
+   comparison literal is preflighted from an already-materialized global/helper;
+   FINALIZE never mints a literal global or oversized helper. The stored
+   `$PropEntry.key` is flattened only after `__obj_find`, then becomes the
+   delegated delete key so this new arm does not add a caller-key coercion
+   replay. This is not a blanket claim that the existing lookup performs only
+   one coercion for every possible external key.
+5. The arm calls lookup only; it never ensures a bag. It records a candidate
+   ordinal only after a non-null identity lookup, retains `-1/0/1`, and invokes
+   the existing `__delete_property` only after a live entry and no physical-key
+   collision. A collision returns `-1`, so it cannot delete an overlay and
+   resurrect a stale slot.
+
+`ensureObjectRuntime` reserves closure-bag helpers unconditionally in the
+standalone/WASI path before it emits `__delete_property`; that emission calls
+`reserveCarrierBagDelete` before its own call site is baked. Thus an
+anonymous-only module already has a reserved helper. The fill gate names the
+anonymous arm independently so a closure/vec/Error arm cannot conceal a
+no-demand failure.
+
+The implementation adds only the private candidate collector, lookup arm, and
+stored-key collision screen in `carrier-bag-delete.ts`; it does not add a
+context field, generic classifier, sidecar, marker, ABI receipt, producer, or
+layout mutation. Its scratch locals are appended from the actual local count.
+The published branch does not yet contain #5753's class retained-marker hunk.
+An actual `cddba56b` composition worktree is still required: its class arm and
+retained-marker path must remain ahead of this arm and retain locals 3/4/5;
+only then may this slice append its locals from the resulting list.
+
+The first focused lease attempt was intentionally treated as fixture
+preflight, not a behavior verdict. Its direct `const first = { ... }` /
+`const second = { ... }` receivers were deliberately promoted by the
+growable-literal pass to open `$Object` carriers after their dynamic
+define/delete operations. The emitted WAT showed both receiver locals as
+`externref`, rather than an `__anon_*` type, so the three observed fixture
+failures could not establish an anonymous-arm defect. That preliminary run
+settled 7/10 tests; it has no durable green/red claim or retained acceptance
+log. The replacement sources bind the nested `raw` value of an outer template,
+matching the original `indexOnly` allocation shape instead of a direct mutable
+receiver literal.
+
+The revised fixture adds an intended WAT admission assertion for the original
+`RAW_READER_SOURCE` index-only receiver: numeric structural producer/store
+(`struct.new` or outer-template `struct.get`, including plain temporary
+transfers) and `ref.test` operands must be mapped back through the explicit
+type table, then tied to the matching `__carrier_bag_delete` arm. This is meant
+to provide a reviewable all-or-nothing physical-literal-materialization proof
+for the target receiver; the source uses pure `selectNativeStringLiteral`
+lookup and declines missing globals/helpers rather than finalizing a new
+literal helper.
+
+The first revised-fixture run was a **diagnostic preflight, not acceptance**:
+Node 24 direct Vitest at
+`/private/tmp/js2-5152-anon-delete-revised12-20260920.log` settled **6 pass /
+6 fail**. The ordinary-reader runtime mask itself still passes, but the
+structural probe found no WAT local named `indexOnly`; compiler locals are
+generated names and its type operands are numeric. A second probe saw WAT
+formatter label `type66`, which is likewise not evidence that the receiver is
+not anonymous. Those assertions need a persisted WAT artifact and a structural
+producer-to-slot-to-helper identity trace, not source-local-name or formatted
+type-name matching.
+
+The same run also exposed a TypeScript-only `PropertyKey` rejection in the
+coercion fixture; its source now casts **only the key** (`firstKey as any` /
+`secondKey as any`) and retains concrete receiver inference, so it has not
+silently selected the open-object path. The strict-delete invalid-Wasm,
+physical-field exception, and Symbol snapshot results are unclassified until
+each is paired against the exact untouched `35e040c` base. No result from that
+preflight is attributed to the anonymous delete helper.
+
+At the next explicit compiler/test lease, run first the exact original
+`built-ins/String/raw/returns-abrupt-from-next-key.js` once on this candidate
+and once on an untouched `35e040c` compiler/harness. Then pair the three
+unclassified fixture cases against that same base before changing their
+expectations. For the structural probe, set `JS2WASM_5152_WAT_DIR` to a
+dedicated temporary directory: the fixture writes each successful `emitWat`
+artifact there before it evaluates its assertions. Preserve that artifact and
+derive the producer-to-slot-to-helper trace from it; a passing
+`RAW_READER_SOURCE` runtime mask alone does not establish closed-carrier
+admission.
+
+Required lease-time controls are: the exact delete/reassign String.raw original;
+the exact `indexOnly` numeric-WAT type/ref-test admission proof; an
+anonymous-only, concretely inferred data-expando module with no user closure/vec
+demand plus receiver-local WAT construction/ref-test evidence; accessor/data
+true expandos; non-configurable sloppy/strict behavior; repeat/missing delete;
+independent same-shaped objects plus a nonliteral allocation; public operator
+and Reflect object-key coercion counts; noBrand/super/alias/layout and
+linked-decline structural probes; and unchanged class retained-marker, fnctor,
+generator, closure, vec, and Error lanes. Physical `length`, `""`, `$…`,
+`__…`, raw `$constructor`, exposed `constructor`, and Symbol.iterator/`@@iterator`
+controls are deliberately labeled **nonconforming baseline snapshots**. Their
+stage and payload must be observed separately before any preservation assertion
+is accepted; they are not a claim that physical descriptor deletion is now
+ordinary-delete complete. The revised 12-test fixture keeps
+`Reflect.deleteProperty` refusal and strict operator throwing as separate
+assertions; its corrected rerun waits for the next compiler/test lease.
+
+#### 2026-09-20 paired residual receipt and fixture-boundary correction
+
+The exact original row has now been run against the same compiler base rather
+than inferred from the earlier fixture:
+
+- candidate, this anonymous-delete worktree:
+  `/private/tmp/js2-5152-return-abrupt-candidate-delete-35e-20260920.log` —
+  **1 pass**;
+- detached untouched `35e040c08ed10f793faf26bb0f0eac55be662627`:
+  `/private/tmp/js2-5152-return-abrupt-base-35e-20260920.log` — **1 fail**,
+  `strict rerun: TypeError: TypeError: Cannot assign to read only property`.
+
+That is one localized original-row gain. It is not a frozen-30 result, a
+whole-issue completion claim, or artifact/import proof: the isolated Test262
+runner reports the row verdict but not the emitted module imports. A later
+candidate rerun will set `JS2WASM_DUMP_WAT_FN=test,__carrier_bag_delete` and
+`JS2WASM_DUMP_TYPES=<durable temporary prefix>` so the exact original's WAT
+can be retained before any producer-to-slot-to-helper assertion is accepted.
+
+The same source fixtures were paired against the candidate and detached 35e
+base through `/private/tmp/js2-5152-delete-fixture-pair-20260920.mts`:
+
+1. Strict non-configurable operator delete reaches the same standalone Wasm
+   validation `CompileError` in both trees (including the reported offset).
+   Direct strict Node returns `1`, so this is an unchanged compiler limitation,
+   not a passing standalone assertion.
+2. The physical-field fixture had equal compilation receipts and empty reported
+   imports, but the original pair driver caught module construction,
+   instantiation, and export invocation in one block. Its
+   `instantiated:false` record is therefore **not** evidence of an
+   instantiation failure and must not be cited as physical-delete behavior.
+3. The Symbol/`@@iterator` fixture invokes and returns `1` in both trees. That
+   is a baseline snapshot, not Symbol-delete conformance.
+
+The focused TypeScript fixture now has an explicit `observeStandalone` helper
+that records `compile`, `module`, `instance`, `invoke`, and `invoke-throw`
+separately, including imports at the point a module is valid. The external
+pair driver has the same staging repair. Positive true-expando tests are kept
+separate from these named baseline limitations; no known limitation is folded
+into an aggregate passing mask. The obsolete WAT checks that guessed a source
+local name or interpreted formatter `typeNN` labels as anonymous-shape proof
+were removed. Opt-in `JS2WASM_5152_WAT_DIR` capture writes WAT before any
+review assertion, and the next run must inspect the artifact structurally
+rather than recreate that label assumption.
+
+The remaining lease-time order is intentionally bounded: capture the exact
+original artifact and verdict; run the repaired focused fixture to classify
+its limitation stages; then run the frozen 30-path standalone String.raw
+manifest unchanged. The #5753 retained-class composition receipt remains a
+separate prerequisite for deletion publication and is not implied by these
+anonymous-only results.
+
+#### 2026-09-20 terminal standalone receipts; publication boundary remains open
+
+The ordered lease-time runs above are terminal on this candidate:
+
+- exact `returns-abrupt-from-next-key.js` with artifact dump: **1 pass**, 0
+  non-pass —
+  `/private/tmp/js2-5152-return-abrupt-candidate-artifact-run-20260920.log`;
+- repaired focused `issue-5152-raw-readers.test.ts`: **12/12 pass** —
+  `/private/tmp/js2-5152-anon-delete-repaired-fixture-20260920.log`;
+- frozen 30-path standalone String.raw manifest: **30 pass**, 0 non-pass,
+  exit 0 —
+  `/private/tmp/js2-5152-string-raw-frozen30-delete-candidate-20260920.log`.
+
+The manifest is exactly the 30 unique corpus paths in
+`plan/agent-context/5152-string-raw-es2015-paths-20260919.txt`, SHA-256
+`d7d2c223fb766dcc9ed460d3c2ddad520195dfc007db6d3c4f575575ba3e3827`.
+The raw30 receipt is a retention gain; it does not close #5152 or the
+physical-delete residual.
+
+The original artifact files are
+`/private/tmp/js2-5152-return-abrupt-candidate-artifact-20260920` (physical
+type listing) and the matching `.wat`. This WAT is an explicitly **filtered
+one-function diagnostic**: it contains only `__carrier_bag_delete`, whose body
+has `anonCandidate` / `anonEntry` and a `ref.test (ref 82)` arm; the type receipt
+identifies `82` as `__anon_1` with its physical `length` field. That is useful
+helper-admission evidence only. It cannot prove original binary imports or the
+exact producer-to-slot-to-anonymous-helper path, because it does not contain a
+named original `test`, `__module_init`, or callback/allocation body. A fresh
+run must retain `WebAssembly.Module.imports` from the actual original binary as
+a separate receipt and capture the relevant module-init/callback bodies before
+that structural claim is accepted. Use `rg -a` when inspecting the saved WAT:
+it contains NUL data. This trace remains a publication gate, not a
+formatter-label substitution.
+
+`/private/tmp/js2-5152-original-artifact-receipt-20260920.mts` is prepared
+for that fresh run. It assembles the original Test262 harness source with the
+same standalone compile options used by `runOriginalHarnessVariant`, writes the
+exact primary/strict source hashes and full WAT, and records both compiler-
+reported and `WebAssembly.Module.imports` manifests.
+
+**Terminal full-artifact receipt.** The diagnostic subsequently ran on the
+candidate and saved
+`/private/tmp/js2-5152-return-abrupt-full-artifact-candidate-run-20260920.log`.
+Both original-harness variants compiled successfully with the same one
+`IR-FALLBACK` warning for `$DONOTEVALUATE`; each records
+`reportedImports: []` and actual `WebAssembly.Module.imports: []`, plus these
+source/binary SHA-256 pairs:
+
+- primary source `82fb5616d323f3403890c1ca8e9371ef786528435cfee40c7049261f5dbfbe42`,
+  binary `822fce6acbb7aca3fb3bdcafde9fb420370cdbdc27b6dc670b74e30f05a39f20`;
+- strict source `f3b572e0884d42b7686acded4302f6daa5cc235cc274f488556536e1d7ab33ad`,
+  binary `0d75c4370653fce936088df345c0fc4937a292bcba209afaff8fdb91782e9b29`.
+
+The full strict WAT and exact assembled strict source are retained as
+`/private/tmp/js2-5152-return-abrupt-full-artifact-candidate-20260920-strict.wat`
+and `.source.js`. They establish the static lowering chain without relying on
+a formatter local name:
+
+1. The exact strict source constructs the only `obj.raw` nested literal at
+   source lines 337–341 and executes `delete obj.raw['0']` at line 354.
+2. The full WAT names type 82 `__anon_1` with its physical `length` field
+   (line 60), and type 83 `__anon_2` with a `raw: (ref null 82)` field
+   (line 61). `__module_init_chunk_0` constructs 82 then 83 and stores the
+   outer value at lines 125193–125196.
+3. That same chunk extracts `struct.get 83 0` to its delete receiver local at
+   lines 125393–125397 and issues `call 170` at lines 125435–125437. Function
+   170 is named `__delete_property`; its full body invokes function 169,
+   `__carrier_bag_delete`, on the applicable non-vector carrier route. The
+   helper includes the anonymous `ref.test (ref 82)` arm.
+
+This is a static producer-to-slot-to-delete-helper receipt for the original
+strict variant, not a runtime branch-trace claim. It removes the earlier
+filtered-WAT ambiguity while retaining the independent row verdict and actual
+import manifests.
+
+The repaired focused file has eight positive checks and four deliberately
+named baseline observations. The latter now record, without changing their
+meaning, strict and coercion validation failures at `module`, the physical
+case's guest `invoke-throw` with an opaque object payload, and the Symbol case's
+`invoke` result `1`. The 12/12 count must never be summarized as 12
+conformance successes. The physical payload is intentionally not claimed to
+be an instantiation error or an ordinary-delete result.
+
+A temporary candidate/base pair of a manually mirrored coercion program has
+the same `module` validation error in both trees, but it is not an exact
+extraction of the revised fixture source. It is diagnostic-only. The retained
+pair driver now has an `exact-coercion` mode that extracts
+`ANONYMOUS_EXPANDO_DELETE_COERCION_SOURCE` from this candidate test file and
+passes that one source path to both compilers. That exact-source candidate/35e
+pair is now terminal:
+
+- candidate:
+  `/private/tmp/js2-5152-delete-pair-candidate-exact-coercion-35e-20260920.log`;
+- untouched 35e:
+  `/private/tmp/js2-5152-delete-pair-base-exact-coercion-35e-20260920.log`.
+
+Both compile successfully with `imports: []` and then fail at the same module
+validation point, with the identical `function #50:"test"`, `fallthru[0]`,
+`expected i32, got (ref null 46)`, and `@+55345` detail. The focused coercion
+observation is therefore regression-cleared as an unchanged baseline
+limitation, while still not counted as a compiled delete-semantics pass.
+
+#### 2026-09-20 frozen #5753 class/anonymous composition receipt
+
+The required composition was performed only in the disposable worktree
+`codex-5152-anon-delete-5753-composition-20260920`, rooted at frozen
+`cddba56b768f30eb5d9af29d2954dd69e2b534b5`. It preserves that checkpoint's
+actual class retained-marker implementation: closure, generator, vec, Error,
+class, then anonymous arm order; class locals 3/4/5; the retained-marker
+branch before the common object lookup; and its existing `classArm` lookup
+claim. The composition appends the anonymous scratch locals only after the
+class replacement (6–9 when the class arm is present), and does not alter the
+class helper or publish a copy of #5753-owned code.
+
+The unchanged frozen class suite plus a disposable one-module joint control
+passed **97/97** in 104.37 seconds:
+`/private/tmp/js2-5152-5753-frozen-composition-20260920.log`. The joint module
+contains both a class expando and two same-shaped nested `{ raw: { length: 1 } }`
+receivers. It validates as a standalone module with no imports and returns the
+direct-Node mask 63. To establish that this is not a vacuous alternate path,
+the exact same compact fixture was run against an untouched detached `cddba56b`
+compiler root. It intentionally failed its 63 assertion with actual **27**:
+`/private/tmp/js2-5152-5753-composition-untouched-cdd-20260920.log`. The
+36-point difference is exactly the two anonymous deletion observations (4 and
+32); class deletion/physical-slot checks (1 and 2), raw `length` (8), and the
+second receiver's pre-delete expando observation (16) remain in the untouched
+result.
+
+This is a frozen source-compatibility and attribution receipt only. Frozen
+`cddba56b` predates the landed reader checkpoint and #5994, so it does not
+substitute for latest-main integration, final frozen raw30 retention, or the
+Array-HOF five-row retention run. The disposable source/test changes are not
+part of this #5152 publication branch.
+
 #### Required gates before publishing this reader/mirror checkpoint
 
 When the compiler/test lease is next granted, run (and retain terminal logs
@@ -688,6 +1150,22 @@ bypass after the temporary RegExp lease handback.
 This is a **reader/mirror checkpoint**, not #5152 closure or full JS-host
 parity. No deletion code, shared baseline update, skip-list change, or host
 import is included.
+
+#### 2026-09-20 landed reader receipt — immutable ES2015 baseline
+
+The landed #5991 reader/mirror result was independently remeasured from
+immutable baseline `950cf4b00bf4375742a5b6a6a84a5f39cf46eb7` using compiler
+`d5e58586d1`. The generated JSONL has SHA-256
+`d954ebc1c02232e8d99faa2cde1b2b8b6b30f4f9a4a44ebd34b595b1a3a976b1` and
+contains 48,735 unique oracle-14 / honest / auto rows. Its ES2015 selection is
+10,371 pass / 1,047 fail / 286 compile-error (11,704 total).
+
+Compared with the prior `bb397` receipt, exactly two ES2015 status changes
+exist: `template-length-throws` and `nextkey-is-symbol-throws`, each
+fail-to-pass. No other ES2015 row changed. The raw receipt files are retained
+at `/private/tmp/js2-es2015-baseline-20260920.uTtFjf/`. This records the landed
+reader improvement only; anonymous-expando deletion and the remaining
+`returns-abrupt-from-next-key` lifecycle residual remain pending.
 
 ### Step F — String.raw fidelity (3 tests)
 
