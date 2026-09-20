@@ -18,6 +18,8 @@ loc-budget-allow:
   - src/codegen/regexp-standalone.ts
   - src/codegen/native-regex.ts
   - src/codegen/string-proto-match-search.ts
+  - src/codegen/index.ts
+  - src/codegen/statements/variables.ts
   - src/codegen/context/types.ts
   - src/codegen/type-coercion.ts
 func-budget-allow:
@@ -31,6 +33,299 @@ func-budget-allow:
 ---
 
 # #5198 — regexp r2: cluster and fix the residual regexp-bucket failures
+
+## 2026-09-20 global `@@match` plain-array result-shape follow-up
+
+### Scope and original evidence
+
+This follow-up is isolated in
+`/Users/thomas/Code/js2/.codex-worktrees/codex-5198-global-match-result-shape-20260920`
+on `codex/5198-global-match-result-shape-20260920`, created from upstream
+`62221769a87acdc32759c656702eede64936feb5`. It is deliberately separate
+from the completed String normalization candidate and from the active #5198
+nonglobal subject-coercion lane.
+
+The owned original is
+`built-ins/RegExp/prototype/Symbol.match/g-success-return-val.js`. The latest
+#5198 candidate receipt is
+`.tmp/5198/original-190-standalone-isolate-candidate-after-postlock-carrier-20260920.log`:
+the 190-row run is `99 pass / 84 fail / 7 compile_error`, and this original
+fails its final `result.index === undefined` assertion with actual `0`.
+Its preceding `hasOwnProperty(result, "index") === false` assertion has already
+passed, so this is evidence of a typed property-read leak rather than proof
+that the generic own-property reflection path exposes an own descriptor.
+The original's top-level binding is:
+
+```js
+var result = /.(.)./g[Symbol.match]("abcdefghi");
+```
+
+No compiler, test, build, or hook was run from this worktree before this plan.
+
+### Source diagnosis and source-only implementation checkpoint
+
+Before this patch, `native-regex.ts::ensureRegexMatchAll` used
+`$__regexp_match_vec` as its result carrier solely to unify it with a
+nonglobal capture result. It records `FIRSTMS` and `SUBJ`, then constructs
+the subtype's `index`, `input`, `groups`, and `indices` fields
+(`native-regex.ts` pre-patch global-all body). This contradicts the global branch of
+RegExp.prototype[@@match], which returns a plain Array of full-match strings;
+it must have no result metadata.
+
+The static direct producers both consume that helper:
+
+- `String.prototype.match(re)` through
+  `regexp-standalone.ts::emitStandaloneRegExpMatchCore` at 4177-4253; and
+- `re[Symbol.match](str)` through `tryCompileStandaloneRegExpSymbolCall` at
+  4872-4925, which calls the same core.
+
+The specialized result reader had a second independent error:
+`tryCompileStandaloneRegExpMatchResultRead` used a static
+`RegExpExecArray`/`RegExpMatchArray` checker type as its route and blindly
+`ref.cast` every ref receiver to `$__regexp_match_vec`. A base native-string
+vec must not be treated as a capture result merely because it is statically
+typed as a match array. Returning a statically typed numeric fallback is also
+wrong: the generic reader's `undefined` would become `NaN` during a later
+checker-directed coercion.
+
+The prepared patch fixes both boundaries without adding a parallel descriptor
+reader. `ensureRegexMatchAll` now constructs the ordinary native-string base
+vector; `exec`, non-global `match`, and `matchAll` retain the capture subtype.
+For `.index` / `.input` / `.groups` / `.indices`, the specialized front-end
+reader now returns the canonical `__extern_get` result as `externref`. The
+existing runtime helper already distinguishes `$__regexp_match_vec` through
+its concrete field arms, then lets plain vectors reach their sidecar and
+Array/Object-prototype lookup. This preserves a capture's real metadata,
+exposes a pristine global result's canonical `undefined`, and leaves ordinary
+global-vector expandos/prototype values observable. It also guards a nullish
+receiver with a catchable TypeError before the property lookup. No checker
+annotation is used as a runtime brand.
+
+### Coordinated implementation plan
+
+User clearance covers the following narrow, non-IR source set. No
+`declarations.ts` change is planned: its module-global chooser already delegates
+to `inferStandaloneRegExpMatchGlobalType` and can consume that helper's revised
+return type.
+
+1. **`src/codegen/native-regex.ts`** — make `ensureRegexMatchAll` return the
+   ordinary native-string vector (`{ length, data }`), removing the
+   first-match metadata construction only from this global-all helper.
+   `ensureRegexCaptureArray` and `ensureRegexMatchAllArrays` stay on the
+   `$__regexp_match_vec` capture subtype.
+2. **`src/codegen/regexp-standalone.ts`** — preserve the output distinction in
+   the two static direct producers; classify direct global vs capture calls;
+   revise module-global match-result inference to use the common base vector
+   when all allowed writes are backend match producers/nullish; and replace the
+   static-type-only result metadata reader with an exact provenance gate plus
+   the existing runtime `__extern_get` field/vec dispatch. This must not turn
+   arbitrary checker-asserted arrays into global matches.
+3. **`src/codegen/index.ts`** — update the authoritative function-local
+   let/const pre-hoister (`nativeStringVecTypeForStandaloneRegExp`,
+   `inferStandaloneRegExpMatchArrayType`, used at 14946) so a global direct
+   `match`/`Symbol.match` binding is allocated as the base string vector,
+   while `exec` and non-global `match` keep the metadata subtype.
+4. **`src/codegen/statements/variables.ts`** — keep declaration lowering and
+   the var retype rule in lockstep with that pre-hoister, including the missing
+   computed `Symbol.match` inference. This is necessary for local `var`,
+   `let`/`const`, and alias paths; it is not a broad annotation override.
+5. **`src/codegen/string-proto-match-search.ts`** — required consumer of the
+   shared helper. Its runtime-flag reflective `String.prototype.match` body
+   currently has an `if` whose global and nonglobal arms are both declared as
+   match-vec. After the global helper returns the base vec, each arm must be
+   converted at the external boundary rather than downcasting the global
+   plain-array value. This preserves the reflective dynamic `/g/` versus
+   non-global capture distinction.
+
+No context-type, declarations, IR layout, or generic object/property runtime
+change is admitted by this plan. If exact provenance cannot be represented
+inside the listed source set without a new context registry, stop and request
+that narrower ownership rather than accepting a checker-type-only shortcut.
+
+### Focused acceptance design (source preparation; unrun)
+
+A new focused #5198 fixture will use actual standalone compilation and assert
+an empty Wasm import section before instantiation. It will cover:
+
+- the exact original's top-level `var` `re[Symbol.match](str)` path;
+- direct `str.match(re)` and `re[Symbol.match](str)` global results at a
+  nonzero first position, with elements/length retained but `index`, `input`,
+  `groups`, and `indices` absent/`undefined`;
+- function-local `var`/`let`/`const` and an alias of each admitted global
+  result, ensuring no hoister-slot cast recreates metadata;
+- null no-match for both direct callers;
+- non-global `match`/`Symbol.match` and `exec` positive controls retaining
+  their actual index/input/capture metadata;
+- reflective `String.prototype.match.call` with runtime `/g/` and non-global
+  receivers, preserving the same flat/capture distinction;
+- global lastIndex reset/control behavior; and
+- both caller families' zero-import proof.
+
+The prepared fixture observes property absence separately from a direct value
+read, and its exact/direct/top-level/local/mixed cases deliberately avoid
+`: any` so a `RegExpMatchArray` checker annotation cannot hide the
+`undefined`-to-`NaN` route. It also covers a match-producing binding read while
+it still holds a capture before a later foreign reassignment, and a null capture
+result whose metadata access must throw TypeError. The assignment,
+`defineProperty`, and inherited-Array-prototype metadata cases are retained as
+ordinary-reader probes; if any is unsupported on the untouched base, it must be
+reported as a paired baseline limitation rather than silently relabeled as a
+conformance result. The fixture remains unrun until the exclusive compiler/test
+lease is granted.
+
+### Handoff state
+
+The source-only patch is now confined to the approved five implementation
+files plus the focused fixture and this issue record. It includes full
+declaration write-set joins for local/global result-slot inference: a
+capture-only binding gets the capture subtype, while a global or mixed binding
+gets the base vector; unknown/foreign writes decline concrete-slot inference.
+A separate candidate gate permits the ordinary runtime reader for a binding
+that started as a native result but later widened, so a currently held capture
+still reaches the helper's physical metadata arm. No compiler, test, build, or
+hook receipt had been taken at that source-only checkpoint. The #5198 nonglobal
+subject-coercion owner remains independent; this work neither edits nor
+subsumes that lane.
+
+### Bounded post-patch measurement receipts (2026-09-20)
+
+The source-only checkpoint above was measured before any upstream sync on
+working base `ea8d7f87ff6799b2bbdcb648f761ad162b5e4bf3`. The candidate has an
+uncommitted scoped diff; it is not itself a commit at that SHA. The one-row
+manifest has SHA-256
+`cb3c22547da83fc173fd6085d7efad9ac8c481592e0ea56190b47bdf9948b352` and
+contains only the owned original.
+
+With Node 24, `COMPILER_POOL_SIZE=1`,
+`JS2WASM_ROW_TIMEOUT_MS=120000`, `--isolate`, and `--standalone`, the patched
+candidate is **1 pass / 0 non-pass** for
+`built-ins/RegExp/prototype/Symbol.match/g-success-return-val.js`. The first
+attempt caught and fixed a narrow missing import:
+`ensureObjectRuntime` was referenced by the new canonical-reader wrapper but
+was not imported from `object-runtime.js`. That failed receipt is retained as
+`original-g-success.log`; the corrected authoritative receipt is
+`original-g-success-rerun.log`.
+
+A clean detached worktree at the same `ea8d7f87` base, with no patch source,
+ran the identical manifest/options and is **0 pass / 1 fail**. Its only
+failure is the original assertion that `result.index` must be `undefined`,
+with actual `0`:
+
+```text
+Expected SameValue(«0», «undefined»)
+```
+
+This establishes a same-base one-row gain; it is not a broad #5198 or ES2015
+claim. The candidate and baseline logs are respectively
+`.tmp/5198-global-shape/original-g-success-rerun.log` and the detached
+worktree's `.tmp/5198-global-shape/original-g-success-base-ea8d.log`.
+
+The import-free focused candidate fixture then completed with **1 file / 4
+tests passed**. It covers the exact unannotated global `@@match` shape,
+direct/top-level/local/alias/mixed result carriers, reflective dynamic global
+and nonglobal match, null/no-match and lastIndex controls, plus ordinary
+assignment/`defineProperty`/prototype metadata probes. Each compiled module
+asserts `WebAssembly.Module.imports(module) === []`. Receipt:
+`.tmp/5198-global-shape/focused-full-four.log`. The earlier relative-Vitest
+entrypoint lookup failure is retained separately as setup evidence and was
+not interpreted as a test result.
+
+Implementation file hashes before the required formatter pass are:
+
+```text
+77e6d70cfcaddcd44bee7d84d18e6909cc98217891a7ce78925540be2ca75e8a  native-regex.ts
+5500de08b80fc812bf864c5cc00aac4d3f9b7d41c43832a61e7bad2bf4019f7a  regexp-standalone.ts
+4f168d3d23eaf52570bf897f1aaed031d62c4f9762ed5967a18cbbf627aa9e75  index.ts
+4ad0e54ba6eb1bef616e011a3842cb7a682522d6ea84e9fbef2b48047c66663d  variables.ts
+c2392a4baed16369d64916985511bfd03304a1b89707d2db7af30265a806e0ff  string-proto-match-search.ts
+4d931222352f97d9a1a5cc8e317a32af5771b71325981146753e0a6f9527b95e  issue-5198-global-match-result-shape.test.ts
+```
+
+Before publication the branch must safely merge `upstream/main` at
+`ae0a46be500e475e514b908361710e6ecbe563c6` and repeat proportionate scoped
+validation. Its source changes since `ea8d7f87` are only the independently
+owned `carrier-bag-delete.ts` and `iterator-native.ts` lanes; this is a
+non-overlap inventory, not a substitute for revalidation.
+
+The next bounded blast radius is deliberately limited to the relevant existing
+groups in `issue-4439.test.ts`,
+`issue-5198-es2015-regexp-match-cursor.test.ts`, `issue-1914.test.ts`,
+`issue-1913.test.ts`, and `issue-2161-regex-symbol-protocol.test.ts`, plus six
+frozen originals: global `g-success-return-val.js`, nonglobal
+`builtin-success-return-val.js`, `builtin-success-return-val-groups.js`,
+`g-zero-matches.js`, `exec-return-type-valid.js`, and
+`String/prototype/match/invoke-builtin-match.js`. No broad default suite is
+authorized by this receipt. The existing-test command is a single-fork direct
+Vitest invocation over only those five files; the original command uses the
+six-line manifest above with the maintained `run-test262-paths.mts --isolate
+--standalone` runner and the same Node 24/pool/timeout environment as the
+one-row A/B.
+
+### Post-sync semantic receipt (`ae0a46be50`, 2026-09-20)
+
+The dirty scoped branch fast-forwarded cleanly to
+`ae0a46be500e475e514b908361710e6ecbe563c6`; no stash or conflict resolution
+was needed. The five implementation hashes and the focused-fixture hash above
+were unchanged by that upstream sync. The six-row manifest was then rerun with
+the same Node 24 standalone/isolate runner settings:
+
+```text
+candidate: 4 pass / 2 fail / 0 skip
+```
+
+The four passing rows include the owned global plain-array original. The two
+non-passes are **not** counted as green or hidden: they are
+`Symbol.match/exec-return-type-valid.js` (overridden `exec` identity) and
+`String/prototype/match/invoke-builtin-match.js` (RegExp receiver identity).
+A clean detached `ae0a46be50` baseline ran those exact two paths with the
+identical options and failed with the identical assertion messages. They are
+therefore recorded as known baseline residuals outside this global-result-shape
+patch, not repaired or weakened here. Candidate receipt:
+`.tmp/5198-global-shape/post-sync-six-originals.log`; clean baseline receipt:
+`post-sync-red-originals-base-ae0.log` in the detached comparison worktree.
+
+The narrow existing regression slice completed **5 files / 58 tests passed**:
+`issue-4439`, `issue-5198-es2015-regexp-match-cursor`, `issue-1914`,
+`issue-1913`, and `issue-2161-regex-symbol-protocol`. The post-sync new
+fixture also completed **1 file / 4 tests passed**, retaining import-free
+module assertions. Receipts are
+`.tmp/5198-global-shape/post-sync-existing-regression-controls.log` and
+`.tmp/5198-global-shape/post-sync-focused-full-four.log`.
+
+This is a bounded no-regression receipt: original coverage is accurately
+**4 pass / 2 known-baseline failures**, plus the separately paired one-row
+gain and focused controls. It is not a full #5198 regression or conformance
+claim. Remaining publication work is TS7/style/issue-budget gates and the
+normal commit/pre-push hooks.
+
+### Final pre-commit gate receipt (2026-09-20)
+
+Prettier reformatted only `index.ts`, `regexp-standalone.ts`,
+`variables.ts`, and `string-proto-match-search.ts`; it made no intended
+semantic edit. The initial post-format four-control fixture remains green
+(`post-format-focused-full-four.log`). A final fifth control then verified
+capture metadata across both a `RegExpExecArray` typed function parameter and
+a `matchAll` iterator entry; its targeted receipt is
+`typed-param-matchall-control.log`, and the final full fixture is **5/5
+passed** (`final-focused-full-five.log`).
+TS7 and full Prettier check are green. Repository-wide Biome exits zero but
+caps 1,868 unrelated diagnostics, so the meaningful owned receipt is the
+changed-file Biome invocation: **6 files checked, no diagnostics**. The LOC,
+function-budget, oracle, coercion-site, pushRaw, and issue-integrity gates all
+pass. The budget gates grant only the existing #5198 scoped allowances
+(`regexp-standalone.ts`, `string-proto-match-search.ts`, and
+`emitMatchResult`).
+
+Final implementation/test SHA-256 values are:
+
+```text
+77e6d70cfcaddcd44bee7d84d18e6909cc98217891a7ce78925540be2ca75e8a  native-regex.ts
+6102ad02ad1cfdf6674518ac9b7c3f0077fec3d2d5b72ff5a1b7b53e19aa0337  regexp-standalone.ts
+4a10e019ac887ac70a8409746a9b23e05836edf792db6631cb05895c8881deeb  index.ts
+a37cc3802aae447f48dafe95a3b0f8f8ba32682a6d35bbc35aefc81ad5f33ddf  variables.ts
+c5693b98643b86fb248313b285604bd2b24d9da4e9e88cfebda711178e9d57e6  string-proto-match-search.ts
+25042e0be2e55994232091990803c1518730e0b75cc8f0b3fa7653aab4a52529  issue-5198-global-match-result-shape.test.ts
+```
 
 ## 2026-09-20 upstream sync and declaration-slot diagnostic
 

@@ -508,9 +508,8 @@ import {
   callArgCoercionInstrs,
 } from "./stack-balance.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
-import { ensureRegexMatchVecType } from "./native-regex.js";
 import { nullableNativeStringElemBindingType } from "./nullable-native-string-elem-binding.js"; // (#6603)
-import { STANDALONE_REGEXP_REFLECTION_PROPS } from "./regexp-standalone.js";
+import { inferStandaloneRegExpMatchResultType, STANDALONE_REGEXP_REFLECTION_PROPS } from "./regexp-standalone.js";
 import { ensureVecElemSet, ensureVecNewSized } from "./vec-elem-set.js";
 
 // ── Extracted sub-modules ──────────────────────────────────────────────────
@@ -14540,71 +14539,8 @@ function stripRegExpInferenceWrapper(expr: ts.Expression): ts.Expression {
   return expr;
 }
 
-function isStaticRegExpExpressionForInference(ctx: CodegenContext, expr: ts.Expression): boolean {
-  const unwrapped = stripRegExpInferenceWrapper(expr);
-  if (unwrapped.kind === ts.SyntaxKind.RegularExpressionLiteral) return true;
-  if (ts.isNewExpression(unwrapped) || (ts.isCallExpression(unwrapped) && !unwrapped.questionDotToken)) {
-    const callee = stripRegExpInferenceWrapper(unwrapped.expression);
-    return ts.isIdentifier(callee) && callee.text === "RegExp";
-  }
-  if (ts.isIdentifier(unwrapped)) {
-    const sym = ctx.checker.getSymbolAtLocation(unwrapped);
-    const decl = sym?.getDeclarations()?.find((d) => ts.isVariableDeclaration(d)) as ts.VariableDeclaration | undefined;
-    return decl?.initializer !== undefined && isStaticRegExpExpressionForInference(ctx, decl.initializer);
-  }
-  return false;
-}
-
-function nativeStringVecTypeForStandaloneRegExp(ctx: CodegenContext): ValType | null {
-  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return null;
-  // The match result is the match-vec SUBTYPE of the nstr vec (#1914) — the
-  // precise local type keeps `.index`/`.input` reads cast-free while every
-  // base-vec consumer still applies via subsumption.
-  const vecTypeIdx = ensureRegexMatchVecType(ctx);
-  return { kind: "ref_null", typeIdx: vecTypeIdx };
-}
-
-/** True for the computed key `Symbol.match` (the @@match well-known symbol). */
-function isSymbolMatchKeyForInference(arg: ts.Expression): boolean {
-  return (
-    ts.isPropertyAccessExpression(arg) &&
-    ts.isIdentifier(arg.expression) &&
-    arg.expression.text === "Symbol" &&
-    arg.name.text === "match"
-  );
-}
-
-function inferStandaloneRegExpMatchArrayType(
-  ctx: CodegenContext,
-  initializer: ts.Expression | undefined,
-): ValType | null {
-  if (!ctx.standalone || !initializer) return null;
-  const unwrapped = stripRegExpInferenceWrapper(initializer);
-  if (!ts.isCallExpression(unwrapped)) return null;
-  if (ts.isPropertyAccessExpression(unwrapped.expression)) {
-    const method = unwrapped.expression.name.text;
-    if (method === "exec") {
-      return isStaticRegExpExpressionForInference(ctx, unwrapped.expression.expression)
-        ? nativeStringVecTypeForStandaloneRegExp(ctx)
-        : null;
-    }
-    if (method === "match" && unwrapped.arguments.length === 1) {
-      return isStaticRegExpExpressionForInference(ctx, unwrapped.arguments[0]!)
-        ? nativeStringVecTypeForStandaloneRegExp(ctx)
-        : null;
-    }
-    return null;
-  }
-  // `re[Symbol.match](s)` (#2161) — symbol-protocol dual of `s.match(re)`.
-  if (ts.isElementAccessExpression(unwrapped.expression)) {
-    const elem = unwrapped.expression;
-    if (isSymbolMatchKeyForInference(elem.argumentExpression) && unwrapped.arguments.length === 1) {
-      return isStaticRegExpExpressionForInference(ctx, elem.expression)
-        ? nativeStringVecTypeForStandaloneRegExp(ctx)
-        : null;
-    }
-  }
-  return null;
+function inferStandaloneRegExpMatchArrayType(ctx: CodegenContext, declaration: ts.VariableDeclaration): ValType | null {
+  return ctx.standalone ? inferStandaloneRegExpMatchResultType(ctx, declaration) : null;
 }
 
 function inferLetConstInitializerWasmType(
@@ -14624,7 +14560,7 @@ function inferLetConstInitializerWasmType(
   if (taViewType !== null) return taViewType;
   const taViewCallResultType = inferNativeTaViewCallResultType(ctx, initializer);
   if (taViewCallResultType !== null) return taViewCallResultType;
-  const standaloneRegExpMatchArrayType = inferStandaloneRegExpMatchArrayType(ctx, initializer);
+  const standaloneRegExpMatchArrayType = inferStandaloneRegExpMatchArrayType(ctx, declaration);
   if (standaloneRegExpMatchArrayType !== null) return standaloneRegExpMatchArrayType;
 
   const genericFactory = genericStructFactoryExpression(ctx, initializer);
