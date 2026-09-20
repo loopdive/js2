@@ -5,7 +5,7 @@
 // surface, which remains a separate follow-up cluster.
 
 import { describe, expect, it } from "vitest";
-import { hasSelfModuleImport } from "../scripts/test262-fixture-graph.mjs";
+import { hasPinnedNamespaceSelfModuleImport, hasSelfModuleImport } from "../scripts/test262-fixture-graph.mjs";
 import { compileMulti } from "../src/index.js";
 import { join } from "node:path";
 import { runTest262File } from "./test262-runner.js";
@@ -82,6 +82,32 @@ describe("#4759 module namespace self-import linking", () => {
     expect(hasSelfModuleImport(path, `import("./Symbol.iterator.js");`)).toBe(false);
     expect(hasSelfModuleImport(path, `/* import * as ns from "./Symbol.iterator.js"; */`)).toBe(false);
     expect(hasSelfModuleImport(path, `import * as other from "./other.js";`)).toBe(false);
+  });
+
+  it("accepts only the pinned namespace virtual key for FYI's empty graph route", () => {
+    const source = `import * as ns from "./Symbol.iterator.js";`;
+    expect(hasPinnedNamespaceSelfModuleImport("./language/module-code/namespace/Symbol.iterator.js", source)).toBe(
+      true,
+    );
+    expect(hasPinnedNamespaceSelfModuleImport("language/module-code/namespace/Symbol.iterator.js", source)).toBe(false);
+    expect(hasPinnedNamespaceSelfModuleImport("./language/module-code/namespace/./Symbol.iterator.js", source)).toBe(
+      false,
+    );
+    expect(hasPinnedNamespaceSelfModuleImport("./language/module-code/namespace//Symbol.iterator.js", source)).toBe(
+      false,
+    );
+    expect(
+      hasPinnedNamespaceSelfModuleImport(
+        "./built-ins/Proxy/preventExtensions/trap-is-undefined-target-is-proxy.js",
+        `import * as ns from "./trap-is-undefined-target-is-proxy.js";`,
+      ),
+    ).toBe(false);
+    expect(
+      hasPinnedNamespaceSelfModuleImport(
+        "./language/module-code/namespace/Symbol.iterator.js",
+        `import("./Symbol.iterator.js");`,
+      ),
+    ).toBe(false);
   });
 
   it.each(["gc", "standalone"] as const)("resolves the self namespace in %s", async (target) => {
