@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10379,
-    "fail": 1039,
+    "pass": 10384,
+    "fail": 1034,
     "ce": 286,
     "skip": 0,
     "total": 11704,
@@ -102,12 +102,12 @@
       },
       {
         "name": "Symbol",
-        "pass": 508,
-        "fail": 99,
+        "pass": 510,
+        "fail": 97,
         "ce": 2,
         "skip": 0,
         "total": 609,
-        "pct": 83
+        "pct": 84
       },
       {
         "name": "arrow-function",
@@ -147,12 +147,12 @@
       },
       {
         "name": "Reflect",
-        "pass": 211,
-        "fail": 110,
+        "pass": 213,
+        "fail": 108,
         "ce": 9,
         "skip": 0,
         "total": 330,
-        "pct": 64
+        "pct": 65
       },
       {
         "name": "Symbol.species",
@@ -255,12 +255,12 @@
       },
       {
         "name": "Symbol.toStringTag",
-        "pass": 32,
-        "fail": 20,
+        "pass": 37,
+        "fail": 15,
         "ce": 0,
         "skip": 0,
         "total": 52,
-        "pct": 62
+        "pct": 71
       },
       {
         "name": "WeakMap",
@@ -4305,8 +4305,8 @@
   {
     "edition": "Unclassified (untagged)",
     "pass": 4468,
-    "fail": 900,
-    "ce": 77,
+    "fail": 899,
+    "ce": 78,
     "skip": 0,
     "total": 5445,
     "pct": 82
