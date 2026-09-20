@@ -1899,3 +1899,43 @@ SPLICED into `src/codegen/case-tables.ts` rather than regenerating the whole
 file, because this container runs Node v22 while the committed BMP tables were
 generated on Node v24 — a blind re-run would have silently downgraded the BMP
 Unicode data (one Latin-Extended run differs).
+
+## 2026-09-20 PR #5999 compiler-boundary inventory repair
+
+The initial ready PR for the completed Unicode 17 normalize slice,
+https://github.com/loopdive/js2/pull/5999, exposed a real CI metadata omission:
+its `quality` job ran
+`node --max-old-space-size=2048 scripts/check-compiler-boundaries.mjs --mode inventory --base HEAD^1`
+and failed only because the three new source modules were unclassified. The
+failure named `src/codegen/normalize-native.ts`,
+`src/codegen/normalize-tables.ts`, and
+`src/codegen/string-proto-normalize.ts` as both unclassified modules and
+targets. This is not a normalization algorithm, test, baseline, verifier, or
+CI-policy failure.
+
+The narrow repair adds exactly those three `mixed-needs-split` records to
+`scripts/compiler-boundaries.json`, matching the adjacent native-string and
+string-prototype codegen classifications: destination `backend-wasmgc`, owner
+`3518-coordinator`, and the existing AST/context/physical-resource/native-runtime
+next-boundary wording. It changes neither the inventory verifier nor its
+baseline/allowlist semantics. After the record addition, rerun the exact
+inventory command against `HEAD^1`; only after a green static receipt may this
+metadata-only follow-up be committed and pushed through normal hooks.
+
+That targeted static receipt is terminal: the command exits **0** with
+`status: inventory-valid-architecture-incomplete`, `inventoryValid: true`, and
+an empty `errors` array (the architecture-incomplete label is the repository's
+pre-existing migration-debt state, not a new failure). It inventories 1,470
+source modules with the three entries classified; no compiler, emitted-Wasm,
+or test runner was invoked.
+
+A read-only upstream refresh advanced `upstream/main` from
+`62221769a87acdc32759c656702eede64936feb5` to
+`ea8d7f87ff`. The branch is 3 commits ahead and 9 commits behind that head.
+The incoming commits include #5998 and a Test262 baseline refresh. Their
+changed paths overlap the normalize branch's existing edits in the shared
+string call-site files and this issue document, while upstream does not carry
+the new normalize modules, generator, or fixtures. A read-only `git merge-tree`
+scan produced no textual conflict markers; no merge was performed here, and a
+normal hook-slot sync must still preserve both issue histories and revalidate
+the committed result.
