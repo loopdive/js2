@@ -37,7 +37,11 @@ import { setProgramAbiInheritedClassCallableAlias } from "./program-abi-class-ca
 import { absoluteFuncIndex } from "../emit/resolve-layout.js"; // (#1916 S3b) resolve handles for order-stable declaredFuncRefs sort
 import { definedFuncAt } from "./func-space.js";
 import { getOrAssignClassNewTargetId } from "./new-target.js"; // (#2023)
-import { emitSuperInitializedFlagStore, ensureSuperInitializedFlagLocal } from "./expressions/new-super.js"; // (#5350 r3) runtime this-initialised flag
+import {
+  emitNativeConstructRuntimeArgv, // (#5383 S67) runtime-length `super(...spread)` across the link
+  emitSuperInitializedFlagStore,
+  ensureSuperInitializedFlagLocal,
+} from "./expressions/new-super.js"; // (#5350 r3) runtime this-initialised flag
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, deduplicateLocals } from "./context/locals.js";
@@ -94,6 +98,7 @@ import {
   emitLinkedDynamicParentConstruct, // (#6640) `super(...)` through the link boundary
   isLinkedDynamicParentHeritage,
   isLinkedDynamicParentIdentifier, // (#6644) …and the identifier-heritage twin
+  pushLinkedDynamicParent, // (#5383 S67) the runtime-spread `super(…)` twin
   recordLinkedDynamicParentIdentifier,
 } from "./standalone-dynamic-parent-class.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
@@ -4148,9 +4153,34 @@ export function compileSuperCall(
       fctx.body.push({ op: "local.set", index: selfLocal });
       return;
     }
-    // A runtime-length spread is not representable by the fixed-arity driver
-    // yet (#5383 S34's argv driver is the follow-up): keep §13.3.7.1
-    // ArgumentListEvaluation and leave `this` as it was.
+    // (#6644 residual 4, #5383 S67) A runtime-length spread is not
+    // representable by the FIXED-ARITY driver, which is why `new S()` for
+    // `class S extends construct { constructor() { super(...cargs) } }` left
+    // `this` unbuilt (`null`) while `called` was already 1 — the shape
+    // `TemporalHelpers.checkSubclassConstructorUndefined` writes. #5383 S34's
+    // argv driver takes an args VECTOR plus a runtime count and carries the
+    // SAME boundary-construct arm, so the spread is expanded at its runtime
+    // length and forwarded to the provider's own constructor. A null
+    // NewTarget-prototype for the same reason the fixed-arity arm passes one:
+    // the PROVIDER must pick the prototype its own constructor would.
+    if (
+      emitNativeConstructRuntimeArgv(
+        ctx,
+        fctx,
+        superArgs,
+        () =>
+          pushLinkedDynamicParent(ctx, fctx, childClassName, (expr) => {
+            compileExternrefArgument(ctx, fctx, expr);
+            return true;
+          }),
+        undefined,
+      )
+    ) {
+      fctx.body.push({ op: "local.set", index: selfLocal });
+      return;
+    }
+    // Nothing could be emitted — keep §13.3.7.1 ArgumentListEvaluation and
+    // leave `this` as it was.
     for (const arg of superArgs) evaluateArgumentForSideEffects(ctx, fctx, arg);
     return;
   }

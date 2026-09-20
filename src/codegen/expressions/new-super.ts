@@ -4255,6 +4255,46 @@ function compileNativeConstructRuntimeArgv(
   calleeExpr: ts.Expression,
   rawArgs: readonly ts.Expression[],
 ): ValType {
+  emitNativeConstructRuntimeArgv(
+    ctx,
+    fctx,
+    rawArgs,
+    () => {
+      const calleeTy = compileExpression(ctx, fctx, calleeExpr, { kind: "externref" });
+      if (calleeTy && calleeTy.kind !== "externref") coerceType(ctx, fctx, calleeTy, { kind: "externref" });
+      else if (calleeTy === null) fctx.body.push({ op: "ref.null.extern" });
+      return true;
+    },
+    calleeExpr,
+  );
+  return { kind: "externref" };
+}
+
+/**
+ * (#5383 S34, opened up in S67) The same runtime-argv construct, with the
+ * CALLEE supplied by the caller rather than compiled from an expression.
+ *
+ * `super(...<runtime spread>)` through a LINKED provider heritage (#6644
+ * residual 4) needs exactly this body but cannot name its callee as an
+ * expression: a captured IDENTIFIER heritage lives in a module global, and a
+ * property-access heritage has to be re-compiled through
+ * `pushLinkedDynamicParent`. Everything else — the driver, the prelude, the
+ * guards and the argv vector — is identical, so it is parameterised here
+ * instead of copied.
+ *
+ * `protoSource` is the expression a user fnctor prototype would be read from;
+ * pass `undefined` for a null NewTarget-prototype, which is what the boundary
+ * arm wants (the PROVIDER picks the prototype its own constructor would).
+ *
+ * Returns false having emitted nothing when the callee could not be pushed.
+ */
+export function emitNativeConstructRuntimeArgv(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  rawArgs: readonly ts.Expression[],
+  pushCallee: () => boolean,
+  protoSource: ts.Expression | undefined,
+): boolean {
   ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
   ensureLateImport(ctx, "__object_create", [{ kind: "externref" }], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
@@ -4267,16 +4307,11 @@ function compileNativeConstructRuntimeArgv(
   reserveApplyClosure(ctx);
   const driverIdx = reserveNativeConstructDriverArgv(ctx, stringConstantExternrefInstrs(ctx, "prototype"));
 
-  const calleeTy = compileExpression(ctx, fctx, calleeExpr, { kind: "externref" });
-  if (calleeTy && calleeTy.kind !== "externref") {
-    coerceType(ctx, fctx, calleeTy, { kind: "externref" });
-  } else if (calleeTy === null) {
-    fctx.body.push({ op: "ref.null.extern" });
-  }
+  if (!pushCallee()) return false;
   const calleeLocal = allocLocal(fctx, `__ncv_callee_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: calleeLocal });
 
-  const fnctorName = resolveUserFnctorName(ctx, calleeExpr);
+  const fnctorName = protoSource === undefined ? undefined : resolveUserFnctorName(ctx, protoSource);
   if (fnctorName === undefined || !emitFnctorProtoGet(ctx, fctx, fnctorName)) {
     fctx.body.push({ op: "ref.null.extern" });
   }
@@ -4292,7 +4327,7 @@ function compileNativeConstructRuntimeArgv(
     { op: "local.get", index: argcLocal },
     { op: "call", funcIdx: ctx.funcMap.get("__native_construct_argv") ?? driverIdx },
   );
-  return { kind: "externref" };
+  return true;
 }
 
 /**
