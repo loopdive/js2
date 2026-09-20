@@ -3776,7 +3776,19 @@ function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr
   // this exact `=` RHS site. Keeping the gate here avoids changing inline class
   // expressions used as Proxy targets or call arguments, which require the
   // ordinary callable-closure representation.
-  if (syntheticName !== undefined && assignment !== undefined && ctx.classObjectGlobals?.has(syntheticName)) {
+  // (#4376 deno bootstrap) On the standalone/wasi lanes the gate widens to
+  // EVERY value position: an inline class value has no singleton identity in
+  // the callable-closure representation, so a callee's `safe.prototype` read
+  // (`makeSafe(Map, class SafeMap … )` in deno_core's primordials) answered
+  // undefined and its gOPD threw "called on non-object". The class-object
+  // singleton carries the prototype edge; native dispatch constructs it the
+  // same way it constructs `const C = class {}` values. The host lane keeps
+  // the assignment-only gate — its inline class values must stay host-callable.
+  if (
+    syntheticName !== undefined &&
+    (assignment !== undefined || ctx.standalone || ctx.wasi) &&
+    ctx.classObjectGlobals?.has(syntheticName)
+  ) {
     // Heritage evaluation belongs at ClassDefinitionEvaluation, before the
     // class value is produced. The singleton registration deliberately keeps
     // dynamic parents lazy, so registering it here remains valid even when a

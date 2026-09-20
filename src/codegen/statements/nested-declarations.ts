@@ -147,6 +147,16 @@ function nestedParameterMayBeOmitted(param: ts.ParameterDeclaration): boolean {
   );
 }
 
+/**
+ * Mirror declarations.ts' bindingPatternParamNeedsWiden (#862) for lifted
+ * nested declarations: an unannotated binding-pattern parameter must take the
+ * externref destructure path, never a nominal tuple/anon-struct ABI.
+ */
+function nestedBindingPatternParamNeedsWiden(p: ts.ParameterDeclaration): boolean {
+  if (p.type || p.dotDotDotToken) return false;
+  return ts.isArrayBindingPattern(p.name) || ts.isObjectBindingPattern(p.name);
+}
+
 const nestedParamUndefinedObservationCache = new WeakMap<ts.ParameterDeclaration, boolean>();
 
 /**
@@ -1389,13 +1399,21 @@ function compileNestedFunctionDeclarationInScope(
     }
     return false;
   };
+  // An unannotated binding-pattern parameter routes through the externref
+  // destructure path (#862) — a nominal tuple/anon-struct ABI makes every
+  // caller holding a different runtime shape fail the guarded cast and pass
+  // null. Top-level declarations (bindingPatternParamNeedsWiden) and lifted
+  // closures both widen; the nested-declaration lane silently did not, so a
+  // nested `function f(a, { b, c })` pinned its pattern to one `__anon_*`
+  // shape and deno_core's `copyAccessor(dest, prefix, key, desc)` destructured
+  // null at `__module_init`.
   const paramTypes: ValType[] = [];
   for (let pi = 0; pi < stmt.parameters.length; pi++) {
     const p = stmt.parameters[pi]!;
     const paramType = foreignEvalDeclaration ? undefined : ctx.checker.getTypeAtLocation(p);
     if (paramType !== undefined) ensureStructForType(ctx, paramType);
     let wasmType: ValType =
-      foreignEvalDeclaration || restBindingOverridesToExternref(p)
+      foreignEvalDeclaration || restBindingOverridesToExternref(p) || nestedBindingPatternParamNeedsWiden(p)
         ? { kind: "externref" }
         : resolveWasmType(ctx, paramType!);
     if (!foreignEvalDeclaration) {
@@ -3288,7 +3306,7 @@ export function hoistFunctionDeclarations(
       // stale result ABI.
       const foreignEvalDeclaration = isForeignEvalNode(stmt);
       const paramTypes: ValType[] = stmt.parameters.map((p) => {
-        if (foreignEvalDeclaration) return { kind: "externref" };
+        if (foreignEvalDeclaration || nestedBindingPatternParamNeedsWiden(p)) return { kind: "externref" };
         const paramType = ctx.checker.getTypeAtLocation(p);
         ensureStructForType(ctx, paramType);
         let wt = resolveWasmType(ctx, paramType);
