@@ -1159,3 +1159,57 @@ Environment traps unchanged (see post-S59/S60): rebuild
 is a full path with a fresh label per src change, copy the QuickJS artifact
 + rebuild the eval provider in a fresh worktree, CI `quality` runs Node 25
 (no legacy `try`). Container restarts every ~2–3 h: lanes commit WIP early.
+
+## Stack state 2026-09-20 (post-S68) — S68 on `issue-5383-standalone-temporal-s68` at `d4416f899f` (off the S67 PR #5998 head); #6646 + #6645 DONE; the four `era` rows flip to pass
+
+S68 (Opus) landed two mechanisms and closed the `SameValue(«null»,
+«undefined»)` blocker. **The headline is a correction**: it was never a
+provider resurrection. `PlainDate.prototype.era` answers `undefined` through
+all eight routes measured (`from`, `from.apply`, `C["from"](...)`, a subclass,
+a property descriptor — `.tmp/s68/probes/e4.js`), and
+`canonicalizeCalendarEra` answers correctly for every spelling of `undefined`.
+The `null` comes from ARGUMENT BINDING at the call site, in two arms:
+
+- **#6646** — a spread into an identifier-held dynamic callee is lowered
+  fixed-arity, so the source array becomes formal zero. The JS-host lane
+  already had a repair (`emitDynamicSpreadCall`); the standalone twin was
+  missing. New leaf `src/codegen/standalone-dynamic-spread-call.ts`
+  (`__objvec` argv + `__apply_closure`), one splice in `call-identifier.ts`.
+- **#6645** — a spread into a MEMBER callee, two arms: a positional argument
+  AFTER a spread (the resolved-method arm binds formals by a compile-time
+  accounting that a runtime-length spread breaks) and a spread into a callable
+  PROPERTY (fixed-arity). Two splices in `call-receiver-method.ts`.
+
+Rows: `PlainDate/from/argument-object-valid.js`, `…/argument-string.js`,
+`PlainDate/from/subclassing-ignored.js`, `Duration/from/subclassing-ignored.js`
+— all four **pass** (the last two with the callable-property splice alone; the
+first two need the trailing-spread one, which is how each row is attributed).
+
+**S67's residual 1 was a misattribution** — `fwd(...args){return
+this.echo(...args)}` was already correct; that probe's callee reads
+`arguments`, and `this.<m>(…)` on an `arguments`-reading method answers `null`
+with no spread at all. A second splice written for that shape was REMOVED
+rather than shipped.
+
+**Environment trap the brief's prewarm line misses:** `node
+scripts/prewarm-temporal-provider.mjs` builds only the HOST provider. Every
+standalone Temporal probe/row needs `--target standalone` (or `both`), else it
+answers `Temporal is not defined` / `standalone target emitted host imports`.
+The QuickJS eval adapter must ALSO be rebuilt after each compiler-bundle
+rebuild (its key hashes the bundle), or every row reports "quickjs provider is
+not built".
+
+Full writeup: #5383 "### S68 findings", plus the two issue files. Base TSVs for
+the next lane: `.tmp/s68/battery/*-cur.tsv` in worktree
+`agent-ab63aa31880f93760`; corpus base `.tmp/s68/corpus-fix.jsonl`
+(statusFlips=0 shaFlips=0 vs S67's).
+
+**Next lanes** (one at a time, Opus): (a) `instance[method](...a)` on a
+subclass instance — the `abs`/`add` rows, still S67 residual 3; (b) the four
+S68 residuals, all argument-binding cousins: a spread with no trailing
+argument not applying a formal's DEFAULT (`number/2000/5/NULL`),
+`this.<m>(…)` on an `arguments`-reading method answering `null`, a stored
+function property called through a rest forward TRAPPING, and a defaulted
+parameter returning `null` inside a `temporalHelpers.js`-scale module; then
+the >2^63 BigInt range, `Duration/compare/order-of-operations.js` (#6628),
+`PlainDateTime/from/argument-string-offset.js`, the Duration one-offs.
