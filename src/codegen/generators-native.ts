@@ -2267,9 +2267,36 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         (ts.isClassDeclaration(decl.parent) ||
           ts.isObjectLiteralExpression(decl.parent) ||
           ts.isClassExpression(decl.parent));
+      // (#6651 A2) A GENERATOR function-expression default (`[g = function*(){}]`)
+      // is admitted on exactly the terms #4769 already set for a class-valued
+      // one, and for the same reason: in a ZERO-SUSPEND method the default is
+      // produced by the factory's eager (call-time, §10.2.11) destructure and
+      // read back in the resume function that runs immediately after, so the
+      // value never has to survive a suspension. The #3952 note above left this
+      // as "a measured, bounded follow-up" rather than a permanent bail — it
+      // declined to admit on lane identity alone. This is that measurement: the
+      // 24 `gen-meth[-static]-{ary,obj}-ptrn-*-init-fn-name-gen` rows of the
+      // #6651 cluster-A manifest, all three method lanes, before/after on the
+      // isolated standalone runner.
+      //
+      // The generator FUNCTION-EXPRESSION host (`ts.isFunctionExpression(decl)`)
+      // keeps its blanket bail, unchanged and for the reason recorded above:
+      // that lane mishandles element defaults with no closure involved at all,
+      // so admitting these would swap a loud import leak for a silent wrong
+      // value. A yielding method likewise keeps the host path.
+      const genDefaultSafe =
+        el.initializer !== undefined &&
+        ts.isFunctionExpression(el.initializer!) &&
+        el.initializer!.asteriskToken !== undefined &&
+        ts.isMethodDeclaration(decl) &&
+        decl.body !== undefined &&
+        !nodeContainsYield(decl.body) &&
+        (ts.isClassDeclaration(decl.parent) ||
+          ts.isObjectLiteralExpression(decl.parent) ||
+          ts.isClassExpression(decl.parent));
       if (
         closureDefault &&
-        ((ts.isFunctionExpression(el.initializer!) && el.initializer!.asteriskToken !== undefined) ||
+        ((ts.isFunctionExpression(el.initializer!) && el.initializer!.asteriskToken !== undefined && !genDefaultSafe) ||
           (ts.isClassExpression(el.initializer!) && !classDefaultSafe) ||
           ts.isFunctionExpression(decl))
       ) {
@@ -2475,7 +2502,26 @@ function isNativeGeneratorExpressionShape(ctx: CodegenContext, decl: ts.Function
     }
     if (param.questionToken || param.dotDotDotToken || (param.initializer && !noJsHostTarget(ctx))) return false;
   }
-  if (fnExprBodyReferencesThis(decl.body)) return false;
+  // (#6651 A1) A `this` in the body no longer bails in the no-JS-host lane.
+  // The receiver is snapshotted into the frame's `dynamic_this` field by the
+  // FACTORY (the lifted closure, which reads `__current_this` at call time —
+  // exactly where §10.2 binds it) and restored as the resume function's `this`
+  // local; see `capturesDynamicThis` in `registerNativeGenerator`. This is the
+  // #5255 free-declaration mechanism, widened to the fn-expr closure ABI.
+  //
+  // `super` keeps the bail: a fn-expr has no [[HomeObject]] in this codegen and
+  // the frame carries no home-object slot, so there is nothing to restore.
+  // `fnExprBodyReferencesThis` conflates the two, so re-ask separately.
+  // The two scans must AGREE before admitting: `fnExprBodyReferencesThis`
+  // descends into class bodies (a computed key `[this.k]` counts) while
+  // `bodyReferencesOwnThis` — the predicate that actually arms the snapshot —
+  // stops at class nodes. Admitting on the wider scan alone would compile a
+  // `this` the frame never captured, so a disagreement keeps the bail.
+  if (fnExprBodyReferencesThis(decl.body)) {
+    if (!noJsHostTarget(ctx)) return false;
+    if (methodBodyUsesSuper(decl.body)) return false;
+    if (!bodyReferencesOwnThis(decl.body)) return false;
+  }
   if (decl.name && bodyReferencesOwnName(decl.body, decl.name.text)) return false;
   // (#3302) Outer-scope captures are ADMITTED in the standalone/wasi lane:
   // the lifted closure already carries them as `__self` struct fields, and
@@ -3499,10 +3545,25 @@ export function registerNativeGenerator(
   // (`{ g: g }.g()`), whose receiver is installed only while its factory call
   // runs. Native execution resumes later, so persist that dynamic receiver in
   // the state frame. Methods already have their exact receiver as the leading
-  // synthetic wasm param; generator function expressions remain separately
-  // gated because their closure ABI supplies a different capture carrier.
+  // synthetic wasm param.
+  //
+  // (#6651 A1) Generator function EXPRESSIONS join this mechanism. Their
+  // closure ABI carries CAPTURES in the `__self` struct, but `this` is not a
+  // capture — a non-arrow function expression rebinds it per call — so the two
+  // do not compete for the same carrier. The factory here IS the lifted closure
+  // body, whose `this` resolves through the `__current_this` global that
+  // `__call_fn_method_N` installs around the dispatch (this-keyword.ts
+  // `readsCurrentThis` arm). Reading it in the factory pins the receiver at
+  // CALL time, which is where §10.2.1 [[Call]] binds it; the resume function
+  // runs later, when the global has long been restored, so without this
+  // snapshot the body would observe whatever receiver the *resuming* caller
+  // happened to have. This unblocks the `Array.prototype[Symbol.iterator] =
+  // function*(){ … this.length … }` fixture family.
   const capturesDynamicThis =
-    !synthesizedThis && ts.isFunctionDeclaration(decl) && decl.body !== undefined && bodyReferencesOwnThis(decl.body);
+    !synthesizedThis &&
+    (ts.isFunctionDeclaration(decl) || ts.isFunctionExpression(decl)) &&
+    decl.body !== undefined &&
+    bodyReferencesOwnThis(decl.body);
   // (#2571) The synthetic `this` (when present) is the FIRST param name, aligned
   // with the caller's `paramTypes[0] === receiverType`. User params follow.
   // (#2920) A binding-pattern param has no source identifier; mint a unique
