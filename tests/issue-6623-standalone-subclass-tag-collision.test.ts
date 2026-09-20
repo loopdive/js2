@@ -207,11 +207,20 @@ describe("#6623 — cross-module class-tag collision, standalone", () => {
   });
 
   it("CONTROL — a field-HAVING provider is unaffected (the exclusion only applies to field-less classes)", async () => {
-    // CONTROL — identical on both trees. `PD`'s struct here carries a real
-    // `y` field, so it cannot structurally collide with a field-less local
-    // subclass in the first place; this fix's guard never fires for it. (The
-    // dynamic method dispatch itself still fails for an unrelated reason —
-    // #6623's own write-up sizes that as a SEPARATE, un-fixed mechanism.)
+    // CONTROL for #6623's own guard, which never fires here: `PD`'s struct
+    // carries a real `y` field, so it cannot structurally collide with a
+    // field-less local subclass in the first place.
+    //
+    // (#6644, S66) The EXPECTED VALUE changed, and the change is an
+    // improvement, not a regression. #6623 recorded that the dynamic method
+    // dispatch on this receiver "still fails for an unrelated reason" — a
+    // SEPARATE, un-fixed mechanism it deliberately sized out of scope — and
+    // pinned that failure (`called value is not a function`) here. That
+    // mechanism is #6640's residual 2, and #6644 fixed it: an IDENTIFIER
+    // heritage naming a function parameter now constructs through the
+    // provider, so `instance` is a provider-minted object and `instance.m()`
+    // reaches the provider's own method. #6623's guard is untouched — the two
+    // TEETH above, which are what it actually protects, still answer "OK".
     await expect(
       runLinkedString(
         PROVIDER_FIELDED,
@@ -226,7 +235,7 @@ describe("#6623 — cross-module class-tag collision, standalone", () => {
           }
         })(NS.PD)`,
       ),
-    ).resolves.toBe("threw:called value is not a function");
+    ).resolves.toBe("called");
   });
 
   it("CONTROL — a class with unresolved heritage but its OWN declared field still answers ITS OWN prototype correctly", async () => {

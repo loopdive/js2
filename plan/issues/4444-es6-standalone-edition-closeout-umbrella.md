@@ -4,7 +4,7 @@ title: "UMBRELLA: ES6 (ES2015) standalone close-out → 100% (discovery scope au
 status: in-progress
 sprint: current
 created: 2026-08-15
-updated: 2026-09-13
+updated: 2026-09-20
 assignee: codex/es6-test262-closeout
 priority: high
 horizon: xl
@@ -17,6 +17,317 @@ related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445
 ---
 
 # #4444 — UMBRELLA: ES6 (ES2015) standalone edition close-out
+
+## Active implementation checkpoint (2026-09-20)
+
+**Regression priority:** extending the same pinned-row comparison to all
+48,735 standalone rows found five prior passes now failing with
+`illegal cast [in __extern_has() ← __extern_has_idx ← __hof_* ← __module_init]`:
+
+- `built-ins/Array/prototype/some/15.4.4.17-8-10.js`
+- `built-ins/Array/prototype/forEach/15.4.4.18-8-10.js`
+- `built-ins/Array/prototype/map/15.4.4.19-9-3.js`
+- `built-ins/Array/prototype/filter/15.4.4.20-10-3.js`
+- `built-ins/Array/prototype/every/15.4.4.16-8-10.js`
+
+These are outside the ES2015 selection, so the no-other-ES2015-change statement
+below remains true but is **not broad regression clearance**. Comparing the
+two recorded compiler SHAs shows only PR #5991's three source files and its
+test file changed. That is strong attribution evidence, not a substitute for
+isolated reproduction. The String.raw Terra agent is prioritizing a separate
+current-main worktree to reproduce and repair these regressions before
+resuming anonymous deletion. Preserve the deletion worktree and retain the
+two landed String.raw gains. Track the implementation in existing issue #5152.
+The five-row acceptance manifest is
+`plan/agent-context/5152-array-subclass-regression-paths-20260920.txt`, SHA-256
+`ab15801cdd5330ca442019ac142583e98fd22a46e56d537dd11cc4100397c0db`.
+All five paths are unique and physically present in the provisioned corpus.
+The old pinned rows are 5/5 pass and the new published rows 0/5 pass.
+Isolated runner A/B now reproduces that exact delta: Node 24 with
+`run-test262-paths.mts <frozen-5> --standalone --isolate` gives **5 pass** on
+untouched `4a6cbdf1ee80` and **5 fail** on `35e040c08e`, with the same five
+illegal-cast paths. Logs are retained at
+`/private/tmp/js2-5152-array-hof-five-base-4a6-20260920.log` and
+`/private/tmp/js2-5152-array-hof-five-candidate-35e-20260920.log`.
+The bounded repair preserves the existing fnctor prototype-aware candidate
+route whenever `fnctorPrototypeGlobalForStruct` supplies that provider;
+the new ordinary reader remains for other admitted types. The post-fix
+five-row isolated run is now **5/5 pass**, terminal exit 0, recorded in
+`/private/tmp/js2-5152-array-hof-five-after-fnctor-proto-guard-20260920.log`.
+The frozen String.raw 30-row retention run is terminal: **29 pass / 1 fail**,
+retaining the landed gains with only the existing
+`built-ins/String/raw/returns-abrupt-from-next-key.js` strict setter failure.
+Evidence is `/private/tmp/js2-5152-string-raw-30-after-fnctor-proto-guard-20260920.log`.
+This clears the scoped retention check, not broad regression clearance.
+The narrow repair is committed as `54bffc6d9afc925846729e7987b56963d0dfc5b7`
+after normal pre-commit gates. The normal push is terminal and accepted by the
+fork, with TS7, lint, Prettier, oracle/coercion checks, issue integrity, and
+18/18 numeric-local controls passing. Ready upstream PR #5994 is open at that
+exact head, with passive peer shepherding assigned. No merge is claimed.
+The isolated regression
+worktree is `codex-5152-array-hof-reader-regression-20260920`, branch
+`codex/5152-array-hof-reader-regression-20260920`, based on exact `35e040c08e`.
+
+Row-level follow-up now confirms that aggregate comparison. Downloaded the
+standalone report and JSONL from immutable baselines commit
+`950cf4b00bf4375742a5b6a6a84a5f39cf46eb7b`, leaving the prior local cache
+untouched. JSONL SHA-256:
+`d954ebc1c02232e8d99faa2cde1b2b8b6b30f4f9a4a44ebd34b595b1a3a976b1`.
+All 48,735 rows are unique, stamped oracle 14 / honest / auto. Selecting
+ES2015 by edition name in the current map yields exactly 11,704 rows and
+10,371 pass / 1,047 fail / 286 compile errors. Against the prior pinned
+JSONL (`bb397c54305afc558b1569c4076260535eaae7c29df63266e55c08ee1a32bdbe`),
+exactly two selected statuses changed, both fail to pass:
+
+- `built-ins/String/raw/template-length-throws.js`
+- `built-ins/String/raw/nextkey-is-symbol-throws.js`
+
+No other selected ES2015 status changed. This is an immutable published-row
+comparison, not a fresh local rerun or a claim about unselected editions.
+Downloaded evidence is retained at
+`/private/tmp/js2-es2015-baseline-20260920.uTtFjf/`; the producer report names
+compiler `d5e58586d1f915908fe4f20cf6c5f21c8d0c2e49` and generation time
+`2026-09-19T23:38:17.737Z` (the mirrored aggregate has its own later timestamp).
+
+The newly committed upstream edition report at `35e040c08e` records
+**10,371 pass / 1,047 fail / 286 compile errors / 0 skips**, total **11,704**
+ES2015 rows. Its paired standalone summary names baseline compiler
+`d5e58586d1f915908fe4f20cf6c5f21c8d0c2e49`, oracle 14, generated
+`2026-09-19T23:38:37.044Z`. The previous `4a6cbdf1ee80` edition report had
+10,369 pass / 1,049 fail / 286 compile errors at the same denominator.
+Thus the committed upstream aggregate improved by two passes; **1,333 rows
+remain non-passing**. This is a committed report comparison, not a fresh local
+full-suite run; the separate row-level receipt above supplies the per-file
+comparison. The earlier local cache is retained as the historical comparator.
+The discovery/Intl402
+scope audit below is still open; 100% is not achieved.
+
+Fresh upstream synchronization found `35e040c08ed10f793faf26bb0f0eac55be662627`.
+It contains the String.raw reader fix via merged PR #5991 (`d5e58586d1`),
+including both published commits and the frozen acceptance manifest. The
+coordinator preserved its handoff notes in `96619182e4`, then merged this base
+in `657f99fca3`. Its compiler, tests, and benchmark files exactly match upstream;
+only issue notes and acceptance manifests differ. Normal merge hooks passed.
+Implementation branches must identify their post-sync test provenance.
+The invalid RegExp baseline run has ended with missing-corpus errors. Its
+log is retained separately and none of its rows count as test results.
+The anonymous-property deletion follow-up is also synchronized to this base.
+Its added controls are not yet acceptance evidence: emitted-WAT inspection
+showed open-object allocations rather than the intended anonymous closed
+structs. Correct the fixture and prove receiver admission before diagnosing
+those failures as defects in the new deletion arm.
+The revised 12-control run is terminal **6 pass / 6 fail** at
+`/private/tmp/js2-5152-anon-delete-revised12-20260920.log`. Two failures concern
+WAT local/type-label assumptions, one is a TypeScript PropertyKey diagnostic,
+and three concern strict-delete validation, physical-field behavior, and
+Symbol-key behavior. Separate instrument corrections from same-source
+baseline comparisons; no deletion fix or conformance gain is established.
+An independent exact `$Object` numeric-coercion routing investigation is
+ownership-cleared with the IR task and remains unshipped. Its exact original
+single-function receipt now returns all seven expected bits with fused
+ToNumber enabled, retaining a raw `$Object` local and zero imports. The
+unfused diagnostic instead reported invalid bytes under Node 22.23.2.
+Configured Node 24.19.0 now reproduces it: `directNumberTrace` fails validation
+because `any.convert_extern` receives `local.tee` of `(ref null 77)` rather
+than externref. The existing SMI-on/fusion-off helper's fixed local 2 is the
+static suspect. The exact-source/options Node 24 pairing is now terminal:
+untouched `35e040c08e` and the candidate fail identically in function 52 at
+offset `+56305`, establishing an independent pre-existing validation defect.
+Candidate WAT replaces the original Number call site's incorrect constant
+zero with the intended raw-object conversion sequence. Focused Node 24
+acceptance now reports **2/2** for default fused/default SMI and **6/6** for
+the full matrix with SMI disabled, including unfused semantics and host/WASI
+controls. The checked-in fixture must select that workaround only for its
+unfused variant and pass unfiltered under the normal test environment before
+publication; default fused coverage must remain unchanged. The baseline
+SMI-on/fusion-off defect is a separate tracked defect, not conformance credit.
+Evidence lives under the Number worktree's
+`.tmp/5198/toprimitive-original-after-{fused,unfused}-20260920.log`.
+The exact Node 24 engine error is retained in
+`.tmp/5198/toprimitive-original-current-unfused-node24-module.log`.
+The paired baseline error is
+`.tmp/5198/toprimitive-original-base35e-unfused-node24-module.log`.
+
+RegExp broader candidate measurement has completed on the frozen 190-original
+manifest: **99 pass / 84 fail / 7 compile errors / 0 skips**. This is a
+candidate-only measurement, not a before/after gain: same-base 190-path
+comparison is pending. Its runner and manifest receipt are recorded in #5198.
+The 30-case focused matrix and original-nine controls below remain separate
+denominators; no result is added to the full ES2015 census yet.
+
+The post-sync alias-capacity matrix is now **31 pass / 11 fail / 42** under
+Node 24. Its wrapper exit 0 is not test success; the Vitest failure count is
+authoritative. Split-assignment search and two-hop match controls pass, while
+saved search aliases, raw lastIndex aliases, and existing descriptor/order
+controls remain red. A numeric lastIndex operator control stops at an IR
+capability disagreement before runtime; that candidate-only receipt has been
+handed to the migration owner without edits to IR files. See the RegExp
+worktree's `.tmp/5198/alias-capacity-focused-20260920.log` and issue 5198 for
+the exact fixture and failure inventory. No new edition-wide gain is claimed.
+The IR owner identifies the assertion at the `recvType.kind === "extern"`
+property-write arm in `src/ir/from-ast.ts`: lastIndex reaches DOM/extern setter
+classification. No known migration fix addresses it. Preserve the assertion
+and pair untouched `35e040c08e` against the candidate before assigning cause;
+physical externref storage alone does not establish IR extern-class semantics.
+The separate saved-search alias hypothesis has now been tested on the exact
+initialized/split source in candidate and untouched `35e040c08e`: all four
+report `body-shape-rejected` and use legacy AST, not IR. Candidate initialized
+returns 0 despite externref slots, while candidate split returns 1; both base
+variants return 0. This falsifies an IR-default-hint explanation for these
+fixtures and localizes remaining investigation to legacy coercion/boxing
+after slot allocation. No IR provider change is authorized by this evidence.
+Four `search-alias-route-{candidate,base}-{initialized,split}-20260920.log`
+receipts are retained under the RegExp worktree's `.tmp/5198/` directory.
+
+The earlier measurements below used the `4a6cbdf1ee80` base. String.raw was
+published as ready upstream PR #5991 at fork head
+`e34ebcbb8e1283eddf9f2cc0b91a55eccbbfd97e`, with normal push gates passed and
+independent subagent shepherding assigned, and is now landed as noted above.
+RegExp remains unpublished and is integrating the upstream reader changes
+before its next validation. A third Terra Max lane owns the exact `$Object`
+numeric-conversion investigation in a separate worktree.
+Neither candidate's changes are counted in the edition census below.
+String.raw (#5152) now measures **29 pass / 1 fail / 0 skips** across its
+frozen 30-original standalone manifest, including 2/3 originally failing
+rows. The remaining strict-rerun failure is reproduced by deleting a
+configurable getter and then assigning to the same property. Delete reports
+success and the descriptor read reports absence, but assignment throws;
+the exact setter/refusal path is being traced before widening source scope.
+
+RegExp (#5198) latest full focused matrix measures **20/30 pass** after the
+native public-flags repair (previously 17/30). The actual failure-name diff
+shows flags-getter ordering and both large-index advancement controls fixed,
+with no newly failing focused case. Its last completed original
+nine-row isolated standalone comparison is **0/9** on untouched `4a6cbdf1ee80`
+and **9/9** on the candidate-local post-flags run. This is nine verified improvements in that
+cohort, not broad regression clearance or an edition-wide census update.
+The implemented flags fix replaces generic reads of the internal bitmask with
+own-descriptor lookup and public string flags; original-nine rerun is green.
+Nominal-object deferred numeric
+conversion is a separate diagnosed residual, not justification to discard raw
+lastIndex identity. All focused controls and the 190-original cohort remain
+in scope. String.raw's final focused fixture is **5/5**; its host deficit
+snapshot is not host conformance. A URI-escape regression control remains red
+on both candidate and untouched base.
+
+The IR task confirms no active anonymous-expando deletion or nominal-object
+ToPrimitive writer. Follow-up investigations/specifications can proceed; new
+shared-runtime implementation still requires narrow composition review.
+Preserve its existing class-deletion reserve/fill locals and authenticated
+retained-marker/count repair. Do not wait for an unclaimed hypothetical fix.
+
+One compiler/test/hook lease is shared between the two writers. Independent
+peer review/shepherding is assigned to RegExp; the coordinator reviews and
+shepherds String.raw. Next gates include fresh same-base original comparisons,
+remaining correctness fixes, broader regressions, and normal-hook checkpoint
+publication to fork-headed PRs against `loopdive/js2`. Unmergeable checkpoints
+may be draft; completed mergeable fixes must be ready. Neither lane nor the
+edition-wide goal is complete. Detailed plans and logs remain in #5152/#5198.
+
+## Resume after upstream sync (2026-09-19, Codex)
+
+The isolated branch `codex/4444-es2015-resume-20260919` was fast-forwarded
+from previous coordinator commit `ea411aa801c43b6659d1c9d8587a2e881fde75bb`
+to verified `loopdive/js2` main
+`4a6cbdf1ee80b5d1618a7c87b014bc792f0fddc7`. The shared root checkout and
+older dirty worktrees, including their uncommitted handoff records, remain
+untouched. No reset, stash, or source-patch reapplication was performed.
+
+The committed standalone report now records oracle version **14** and compiler
+baseline `a3943f63e07d6d572e3a5f7a66439c32ed518754`, generated
+`2026-09-19T19:45:39.783Z`. Its whole-suite totals are not an ES2015 result.
+The version-13 ES2015 figures below are historical, not current-main evidence.
+
+Fresh row reconciliation on 2026-09-19: **10,369 pass / 1,049 fail / 286
+compile errors**, exactly **11,704 unique ES2015-selected rows**, zero selected
+timeouts or skips. The edition map still labels 11,778 paths ES2015; all 74
+absent paths are under `intl402/`, so that scope question remains unresolved.
+All matched rows are official, `honest`, providers `auto`, oracle 14.
+Downloaded JSONL SHA-256
+`bb397c54305afc558b1569c4076260535eaae7c29df63266e55c08ee1a32bdbe`
+is byte-identical to the file at immutable baselines commit
+`6c51eb29ef12208ac8f53ae99eea900b53f51a76` (48,735 unique physical rows).
+That commit's matching metadata reports compiler
+`a3943f63e07d6d572e3a5f7a66439c32ed518754`, generated
+`2026-09-19T19:45:22.353Z`, standalone/auto/official scope. The repository's
+new `test262-baseline-pair.json` producer receipt is absent at that baseline
+commit: this is a pinned observational census, not a claim of successful
+producer-artifact admission or candidate regression-gate equivalence.
+
+RegExp pre-dispatch reconciliation found preserved, unreviewed work on upstream
+`claude/es6-5198-regexp-exec-protocol`, exact head
+`3b41aeec2824dc51309658fbd0e6a966b8d3761d`, documented in the Sep18 handoff.
+Do not recreate it. Its outstanding observable coercion/Get(exec) ordering and
+acceptance gaps need review before adoption. Open #5393 remains a separate
+tests-only custom-exec checkpoint; #5748 also lists `regexp-standalone.ts`,
+so its overlap has been raised with the IR owner before production edits.
+The IR owner subsequently confirmed the exact #5748 overlap consists only of
+two `{ kind: "i32", boolean: true }` result annotations in
+`tryCompileStandaloneRegExpTest`. Preserve those during integration; the rest
+of RegExp protocol implementation is unclaimed by that task. Shared generator,
+closure, class/provenance, Promise/vector, and layout/lifetime owners remain
+reserved. Independent Terra Max review of recovered `3b41aeec28` identified
+five protocol blockers, recorded with the correction contract in #5198.
+The verified `5198:exec-protocol-recovery` claim now belongs to
+`ttraenkler/codex-5198-protocol-recovery`; a separate Terra Max writer has
+imported the candidate in its own current-main worktree and is correcting it.
+Untouched-main portable controls completed at 6 pass / 3 fail; the imported
+candidate completed at 5 pass / 4 fail, exposing coercion ordering and
+receiver-replay defects. These are failing regression evidence, not gains.
+The independent reviewer remains assigned to final review and PR shepherding.
+The old `5198:exec-lastindex-identity` claim still belongs to this task's
+`ttraenkler/regexp-residual-20260913` lane; it was not stolen or released.
+
+Independent next-slice triage against the same pinned rows: all **22/22**
+ES2015 paths under `MapIteratorPrototype` and `SetIteratorPrototype` already
+pass. The Sep18 ranking's ten failing `next` rows must not be redispatched.
+The two remaining WeakMap `iterator-item-{first,second}-entry-returns-abrupt`
+failures are already documented in #5267 as the module-scope array identity /
+accessor-overlay defect, not evidence of a new isolated WeakMap constructor
+bug. Their originals return the same accessor-bearing array through an
+iterator result, require the original getter error, and require IteratorClose
+exactly once. No new claim, implementation, or test run was started for them;
+coordinate representation/vector ownership before revisiting that mechanism.
+The three `String.raw` failures also remain in the fresh rows and match
+existing #5152 Step F. A fresh open-PR gate found both #5748 and #5736 touch
+`expressions/call-builtin-static.ts`, its documented materialization site.
+No independent writer was dispatched into that overlap. The reserved parent
+#5152 has no live claim, but an empty claim alone does not override open-PR
+ownership or prove the source is free.
+
+Exact-hunk follow-up found #5748's Boolean annotations and #5736's removed
+generator special case do not modify the String.raw arm. A separate Terra Max
+read-only audit is now checking the three originals and a bounded correction
+plan in its own worktree, as recorded in #5152. The IR owner acknowledged no
+conflicting String.raw implementation claim, while retaining literals/runtime
+ownership. No String.raw source edits or compiler jobs are authorized yet.
+
+Subsequent audit/release: a separate Terra writer now owns the verified
+`5152:closed-struct-raw-readers` slice in its isolated worktree after IR cleared
+the two object-runtime reader functions and enumeration helper. The first
+safe candidate improves two portable assertions (Symbol boxing and getter
+receiver), but is not green. A proposed static-accessor dispatch was removed
+after independent review proved it lacked per-instance/temporal presence;
+the remaining definition-site dependency is recorded in #5152. Exact original
+row checks are pending. RegExp protocol work separately expanded, after exact
+IR/open-PR coordination, to runtime lastIndex writability and descriptor
+routes; #5198 records the ABI impact and initialization-order design. Neither
+lane is a completed fix or a published PR at this checkpoint.
+
+Implementation plan before dispatching another fix:
+
+1. Acquire and pin current standalone row data and matching metadata; derive
+   the maintained-runner ES2015 selection and reconcile missing/duplicate rows.
+   Keep the unresolved Intl402 scope question explicit.
+2. Reconcile previously published fixes and remaining issues against this
+   upstream commit, open PRs, and active claims; do not replay frozen patches
+   or dispatch work solely from stale issue status.
+3. Coordinate with the IR task before shared-source implementation. Its latest
+   retained work includes #5753 capture/class/generator repairs and #5883
+   vector/Promise integration; an interrupted task is not a released claim.
+4. Record a concrete per-fix plan here or in the owning issue, then implement
+   in an isolated worktree, verify original tests plus controls, and publish a
+   scoped upstream PR with a separate shepherd.
 
 ## Active continuation (2026-09-13, Codex)
 

@@ -23,6 +23,7 @@ import {
 } from "./annexb-cancel.js";
 import { tryCompileAnnexBModuleBlockFnEvaluation } from "./annexb-global-live-binding.js";
 import { mintScopedClassIdentity } from "./class-bodies.js";
+import { emitLinkedDynamicParentCaptureForNames } from "./standalone-dynamic-parent-class.js"; // (#6644)
 import { emitCachedFuncClosureAccess, emitFuncRefAsClosure } from "./closures.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
@@ -769,6 +770,17 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
     // class that legitimately owns its name is untouched.
     const scopedSynthetic = ctx.anonClassExprNames.get(stmt) ?? mintScopedClassIdentity(ctx, stmt);
     compileNestedClassDeclaration(ctx, fctx, stmt, scopedSynthetic);
+    // (#6644) ClassDefinitionEvaluation for a class whose linked-provider
+    // heritage is an IDENTIFIER: this statement is the ONE point where that
+    // identifier (a function parameter) is in scope, so the value is captured
+    // into the class's module global here. No-op for every other class.
+    emitLinkedDynamicParentCaptureForNames(ctx, fctx, [scopedSynthetic, stmt.name?.text], (heritageExpr) => {
+      const heritageType = compileExpression(ctx, fctx, heritageExpr, { kind: "externref" });
+      if (heritageType === undefined) return false;
+      if (heritageType === null) fctx.body.push({ op: "ref.null.extern" });
+      else if (heritageType.kind !== "externref") coerceType(ctx, fctx, heritageType, { kind: "externref" });
+      return true;
+    });
     // Only synthetic nested duplicates need a local singleton binding.  The
     // ordinary class-declaration path intentionally keeps its historical
     // module/class binding: eagerly materialising every class object here
