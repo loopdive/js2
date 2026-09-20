@@ -12275,3 +12275,30 @@ consumer-side reduction comes back clean (`.tmp/s69/probes/linked3.mts` — obje
 literal, array, nested literal, statement-built object, `{...o, k:v}`,
 `Object.assign`, null-proto object all cross the link correctly), so it has to
 be reduced INSIDE a provider module.
+
+## S69 verification
+
+| check | result | artifact |
+| --- | --- | --- |
+| witness `tests/issue-6647-*` on a TRUE file-copy revert of `src/codegen/closures/method-trampolines.ts` to `ce58705b68` | 5 of 9 probes fail (`objectLiteral` 0, `objectProperty` −1, `arrayLiteral` 0, `builtObject` 0, `calledFromNested` 0); all 4 controls pass on both sides | `.tmp/s69/witness-base.log`, `.tmp/s69/ab/base/method-trampolines.ts` |
+| the same probe file through the REAL runner (`.tmp/s69/probes/l8.js`, 15 shapes) | base 14 NULL / 1 object → fix **15 / 15 object** | `.tmp/s69/rows-after.log` |
+| four-family battery, fresh `cacheHit=false` `--target both` provider `s69-2` built from HEAD | **463 / 480** — PlainDate 120, Duration 109, PlainDateTime 117, ZDT 117 — identical to S68 | `.tmp/s69/battery/*-cur.tsv` |
+| all 13 battery groups (3 684 rows) vs the S68 base | **0 pass→fail, 0 fail→pass**, 0 missing | `.tmp/s69/battery/diff-all-s69.log` |
+| the one flip the contended run showed | `Duration/negative-infinity-throws-rangeerror.js` → `compilation timeout (32322.27ms)` against the runner's 30 s budget, while the corpus/equivalence/sweep runs shared the box. Re-run on an idle box with the battery's OWN `run-family` settings: **pass**, family 109/120, 0 pass→fail. The contended TSV is kept as `Duration-cur-contended.tsv`; `Duration-cur.tsv` is the idle-box run | `.tmp/s69/battery/duration-rerun.log` |
+| corpus 47 files × {gc, standalone} | statusFlips=0 shaFlips=0 over 84 matched rows (the fix run has 10 extra rows — five `tests/fixtures/normalize-ucd17-*` files absent from the S68 worktree's base; new rows, not flips) | `.tmp/s69/corpus-fix.jsonl` |
+| equivalence | 22 failing / 1 720 passing / 22 known — unchanged from S68 | `.tmp/s69/equiv.log` |
+| witness sweep `tests/issue-66*` + 6484 + 6493 (52 files / 290 tests) | Node 22.22 and Node 25.9: 288 pass, 2 fail — `issue-6602` and `issue-6603`, the two known `origin/main` breakages (PRs #5999–#6004), not this slice's | `.tmp/s69/sweep-node22.log`, `.tmp/s69/sweep-node25.log` |
+| gate chain (`LOC_GATE_BASE=origin/main 2f6c0f4f57`) | loc OK (+21 LOC, **no allowance needed**), func OK, coercion-sites OK, oracle-ratchet OK, dead-exports OK, boundaries inventory `inventoryValid: true`, typecheck OK, lint OK | `.tmp/s69/{loc,func,coerce,oracle,dead,boundaries,typecheck,lint}.log` |
+
+### The five briefed rows — before / after
+
+Unchanged, by design: their mechanisms are the polyfill grammar and i64 BigInt,
+neither of which this slice touches.
+
+| row | base | fix |
+| --- | --- | --- |
+| `Duration/compare/relativeto-propertybag-invalid-offset-string.js` | fail (`"+00:0000" is not a valid offset string`) | fail — Mechanism A |
+| `Duration/compare/relativeto-string-invalid.js` | fail | fail — Mechanism A |
+| `PlainDateTime/from/argument-string-invalid.js` | fail (`+00:0000`) | fail — Mechanism A |
+| `Duration/compare/throws-when-target-zoned-date-time-outside-valid-limits.js` | fail | fail — Mechanism B |
+| `ZonedDateTime/prototype/add/overflow-adding-months-to-max-year.js` | fail (reported L12; the real failure is L15) | fail — Mechanism B |

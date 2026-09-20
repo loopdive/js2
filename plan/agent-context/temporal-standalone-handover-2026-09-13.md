@@ -1291,5 +1291,17 @@ builder.
   measuring what you think it is** — run-family compiles from `src/` live. Kill
   and restart the battery around any revert window.
 
+**Validation:** four-family **463/480** (PlainDate 120, Duration 109,
+PlainDateTime 117, ZDT 117) — unchanged from S68; all 13 battery groups
+(3 684 rows) **0 pass→fail, 0 fail→pass**; corpus statusFlips=0 shaFlips=0;
+equivalence 22 / 1720 / 22; witness sweep 52 files / 290 tests green under
+Node 22 AND Node 25 apart from the two known `origin/main` breakages
+(#6602, #6603). The one flip the contended battery showed —
+`Duration/negative-infinity-throws-rangeerror.js` → `compilation timeout
+(32.3 s)` against a 30 s budget while the corpus/equivalence/sweep runs
+shared the box — re-runs **pass** on an idle box with the battery's own
+settings; `Duration-cur.tsv` is the idle-box run, the contended one is kept
+as `Duration-cur-contended.tsv`.
+
 Base TSVs for the next lane: `.tmp/s69/battery/*-cur.tsv` in worktree
 `agent-aa4900de162b96313`; corpus base `.tmp/s69/corpus-fix.jsonl`.
