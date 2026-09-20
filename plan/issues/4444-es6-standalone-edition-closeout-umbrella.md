@@ -1425,7 +1425,18 @@ generator row).
 
 ## Acceptance
 
-- ES2015 standalone (host-free) reaches 100% of its 11,704-test bucket.
+- A fresh authoritative standalone (host-free) run on the final integrated
+  head passes every path in the reconciled ES2015 population, with zero fail,
+  compile error, compile timeout, skip, missing, or duplicate verdicts.
+- Reconcile the edition map with actual runner discovery before claiming
+  completion. The current map contains 11,778 ES2015 paths, while default
+  discovery covers 11,704 and omits 74 Intl402 paths. A 11,704/11,704 result
+  alone is not whole-goal proof while that scope discrepancy is unresolved;
+  no exclusion is authorized merely because default discovery omits a path.
+- Validate exact selected-path identity against completion manifests and
+  physical verdict rows, retaining source/corpus commits and filter hashes.
+  Historical denominator statements below describe their dated runs, not a
+  waiver of this current completeness requirement.
 - Interim checkpoints: each cluster row either has an owning issue with a plan
   or a landed fix; the edition table in this file is refreshed per measurement
   (name the artifact + date per project measurement discipline).
@@ -1791,3 +1802,743 @@ first slice's honest target fell from 43 to **9**. See #5198.
 The lesson worth keeping: **measure the host side before sizing a standalone
 slice.** Without it, a mechanism's standalone row count reads as the
 deliverable, and it is not.
+
+## 2026-09-20 post-sync execution handoff
+
+The coordinating branch includes upstream `62221769a8`, incorporating the
+merged documentation PR 5997 and a differential baseline refresh. No compiler
+change arrived between the earlier `200f7e2c8b` slice receipts and this sync.
+The dirty shared main checkout was not modified.
+
+- Normalization implementation is assigned to the isolated #5152 normalization
+  worktree. Its fresh isolated standalone baseline at `c47fcc7c081a`
+  (including upstream `62221769a8`) finished **11 pass / 3 fail / 14**,
+  with no skips or runner errors. The terminal log is
+  `/private/tmp/js2-5152-normalize-baseline-20260920.log`, SHA-256
+  `80213e5772351e05607389dcba81b034a62602e00892035a2c98e8472182aa99`.
+  Only the three `return-normalized-string*` originals failed. The recorded plan requires full
+  Unicode-17 transformation and official normalization-corpus coverage, not
+  merely repairs for the three known originals.
+- The #5198 RegExp lane has 49/55 focused pins passing after the conditional
+  argument-slot correction. Its next descriptor probe must distinguish
+  physical value mutation from changed read/storage routing; the six red pins
+  are not six independent proven defects.
+- #5269 Symbol probes are separate from the completed #6484 iterator slice.
+  The isolated Symbol implementation now improves the identical two-original
+  manifest from **1 pass / 1 fail** on upstream `62221769a8` to **2 pass**,
+  using the same `run-test262-paths.mts --isolate --standalone` command.
+  Baseline and candidate logs are respectively
+  `/private/tmp/js2-5269-symbol-matched-base-terra-20260920-isolated-baseline-pair-20260920.log`
+  and `/private/tmp/js2-5269-symbol-controls-terra-20260920-matched-isolated-candidate-pair-20260920.log`.
+  This is not yet a completed fix: a subsequent ordinary control for a Symbol
+  returned by object-to-primitive conversion fails its value assertion
+  (**5 instead of 7**), while the other 11 assertions pass (including three
+  explicitly expected, baseline-confirmed later-edition accessor failures).
+  Its terminal log is
+  `/private/tmp/js2-5269-symbol-controls-terra-20260920-postprimitive-control-baseline-20260920.log`.
+  The agent owns a consumer-specific coercion correction; do not change
+  global `String` behavior or count the later-edition accessor diagnostics
+  as ES2015 gains. Local production edits are permitted in the isolated
+  worktree after published-hunk review; fresh IR overlap review remains
+  required before integration, and unpublished remote IR work is not known.
+- A one-shot publication read finds PR 5996 open, ready and mergeable at
+  `9e7ea9471ae0f0efd22293f09badfe6c1432760e`, with no merge commit. Quality,
+  issue tests and equivalence checks succeeded, but the Test262 shard jobs
+  were skipped. Neither the PR's green summary nor the local slice receipts
+  prove a new full ES2015 census.
+- The completed anonymous-delete and iterator branches remain local at
+  `ead8e8520a` and `0ab8d03e0d`. Publication was denied before execution;
+  renewed authorization is pending. Prepared PR descriptions now explicitly
+  distinguish successful targeted validation from the outstanding final
+  normal pre-push gates. No denied push was retried through another route.
+
+The full standalone goal remains unachieved. Retain the edition/discovery
+scope caveat and do not add local slice gains to the historical global pass
+count without a fresh authoritative census.
+
+### Follow-up review: call evaluation and optimized reads
+
+The Symbol and normalization owners must preserve complete argument-list
+evaluation before builtin coercion. Source review found that the direct
+Symbol call forwards its arguments untouched to `compileSymbolCall`, whose
+native implementation currently evaluates only the description. Its outer
+static-Symbol rejection also precedes later argument evaluation. The existing
+normalize implementation similarly throws for a statically invalid form
+before evaluating its receiver and ignores later arguments. Each owner is
+adding ordinary side-effect/order/abrupt-completion controls while replacing
+these call paths; these observations are source evidence, not yet measured
+Test262 gains.
+
+A native Node v24 reference check establishes the expected traces for those
+new controls (not evidence about js2 execution): `Symbol(descriptionObject,
+extra())` records `extra;convert;`; a Symbol-valued first argument still
+records `extra;` before `TypeError`; and
+`getReceiver().normalize("bad", extra())` records `receiver;extra;` before
+`RangeError`. Compile, zero-import, and runtime assertions must remain outside
+any expected-value failure wrapper when measuring the corresponding js2 pins.
+
+The RegExp reader correction needs a matching optimization guard: the
+`member-get-inline-ic.ts` call-site rewrite can replace the corrected generic
+getter with a physical numeric-field read. The isolated owner is validating
+a native-RegExp/`lastIndex`-specific decline, preserving ordinary field
+optimizations. This is distinct from the dispatcher's own optional inline
+cache, which was investigated and ruled out for the failing carrier.
+
+Verified follow-up receipts:
+
+- RegExp's optimized-default reader selection improved from **6/8 to 7/8**
+  after that specific decline. Raw null/undefined aliases now pass; the
+  aggregate object-identity-after-lock control still fails. The selected run
+  skipped the other 56 tests, so this is not a full-suite result. Log:
+  `.tmp/5198/lastindex-member-get-inline-decline-focused-20260920.log` in the
+  isolated RegExp worktree.
+- Symbol's split ToPrimitive/primitive-ToString path and trailing-argument
+  evaluation now pass **9 ordinary ES2015 controls**. One supplementary
+  accessor control also passes; three baseline-confirmed accessor failures
+  remain explicitly expected value assertions. Thus the harness reports
+  13 green assertions, not 13 new ES2015 passes. Log:
+  `/private/tmp/js2-5269-symbol-controls-terra-20260920-postprimitive-and-argument-order-candidate-20260920.log`.
+  Source SHA-256 is
+  `9ad3122360e16d7e99d732e542592a23a0c5e6c2fb216ab069c890ad1d425c9f`;
+  test SHA-256 is
+  `05a06c36348667e653227e4889e11ff729eebd72aba1a8399ee9b7f9fa424118`.
+  The original Test262 pair and broader Symbol neighborhood must be rerun
+  after this new source change before carrying forward prior pass claims.
+
+The subsequent Symbol retention rerun completed **2/2 original Test262
+passes** on that same source SHA, using the identical isolated standalone
+runner and manifest. Log:
+`/private/tmp/js2-5269-symbol-controls-terra-20260920-final-matched-isolated-candidate-pair-20260920.log`.
+An added primitive-rendering control also passes: the focused harness now has
+**10 ordinary ES2015 controls + 1 supplementary pass + 3 expected accessor
+failures**, with test SHA-256
+`28083423263f6516e0a9b9906981bc3e0488491026db04011c64c2cdf6c19a33`.
+Log:
+`/private/tmp/js2-5269-symbol-controls-terra-20260920-final-focused-candidate-20260920.log`.
+Broader neighborhood and repository gates remain outstanding; this does not
+establish merge readiness or a full-edition pass count.
+
+The frozen 19-row Symbol description/registry comparison subsequently finished
+**baseline 13 pass / 6 fail; candidate 14 pass / 5 fail**. Only
+`built-ins/Symbol/desc-to-string.js` changed verdict. The three remaining
+semantic/runtime failures have identical reported signatures; two cross-realm
+rows on both sides lack the QuickJS provider and remain infrastructure-unmeasured.
+Manifest SHA-256:
+`445b961b2e9f7baf4389f1feaba033e9fe1843a47a1bf94bfbd8e1a7aaf3215a`.
+Logs:
+`/private/tmp/js2-5269-symbol-matched-base-terra-20260920-description-registry-baseline-20260920.log`
+and `/private/tmp/js2-5269-symbol-controls-terra-20260920-description-registry-candidate-20260920.log`.
+The repository-supported provider recovery is being attempted separately;
+matching missing-provider errors do not prove absence of regressions there.
+
+Provider recovery subsequently completed in both isolated worktrees. Each
+independently built and canary-verified its adapter using the pinned QuickJS
+artifact `2e2d7736713beeda`. The two cross-realm originals now have measured
+runtime verdicts: **baseline 0/2 pass; candidate 0/2 pass**, with the same
+undefined foreign `Symbol.for` error. They are no longer infrastructure-unmeasured.
+The measured realm handoff and exact provenance are recorded in
+`4274-es2015-true-realms-runtime-ir.md`; implementation remains subject to the
+parallel IR migration coordination hold. The description fix therefore has
+one measured gain and no observed regression in this frozen 19-row comparison,
+not proof of a full-suite result.
+
+The Symbol candidate's subsequent TS7, LOC, and function-budget checks passed.
+The coercion-sites gate rejected one new reference to the canonical
+`__any_to_string` renderer. Its owner is documenting the scoped allowance and
+rerunning the gate; this intermediate receipt is not merge readiness:
+`/private/tmp/js2-5269-symbol-controls-terra-20260920-ts7-source-ratchets-20260920.log`.
+
+The scoped-allowance rerun prints successful TS7, LOC, function, coercion,
+and oracle results. Its dead-exports command prints two unknown dynamic-import
+edges (`optimize.ts:394`, `platform-capability-adapter.ts:151`). The exact
+command on pristine `62221769a8` prints the same edges and **exits 0**:
+`/private/tmp/js2-5269-symbol-matched-base-terra-20260920-dead-exports-baseline-20260920.log`.
+Thus the printed `moved-runtime gate: FAIL` is not alone evidence of a new
+Symbol regression or nonzero command exit. The candidate composite's final
+exit receipt was not captured; retain that verification gap rather than
+inferring an exit status from its printed output.
+
+RegExp's exact runtime-brand guard for plural `lastIndex` descriptor rejection
+now passes **5 selected tests / 5**, with **64 unselected tests** in the
+69-test file. The unchanged original aggregate and attribution mask are
+included alongside illegal-accessor, legal-no-value, and ordinary-object
+controls. Receipt in the isolated #5198 worktree:
+`.tmp/5198/plural-lastindex-runtime-brand-guard-focused-20260920.log`.
+This establishes the targeted sentinel-consumption correction, not resolution
+of the separate post-lock alias-reader failure or the entire protocol suite.
+
+Normalization's corrected implementation now passes its first emitted-code
+smoke: **3/3 tests**, including the standalone five-bit Unicode/direct-reflective
+matrix, a separate six-bit void-operator/void-returning-call effect matrix,
+and host preservation. Both standalone fixtures assert an empty import list.
+Receipt: `/private/tmp/js2-5152-normalize-smoke-rerun2-20260920.log`.
+The original compile failure was a missing mandatory `then` array in the
+Hangul decomposition emitter, corrected locally without changing IR traversal.
+An intervening test-template syntax error executed no tests and is not counted.
+The public expression wrapper already supplies undefined for void calls with
+an expected externref; speculative caller fallbacks were removed after source
+review, while regression controls remain. The frozen 14-original comparison
+and full official Unicode corpus through emitted Wasm are still outstanding;
+generator-table verification alone does not certify this implementation.
+
+Symbol's final void-returning-description control passes without changing
+production source: the expected-externref expression wrapper already emits
+the undefined default after a void call. Final focused receipt is **15 green
+harness assertions = 11 ordinary ES2015 passes + 1 supplementary pass + 3
+baseline-confirmed expected accessor value failures**, terminal exit 0:
+`/private/tmp/js2-5269-symbol-controls-terra-20260920-final-focused-void-candidate-20260920.log`.
+The separately recaptured candidate dead-exports command also exits 0 with
+the same two unknown dynamic-import observations as pristine main:
+`/private/tmp/js2-5269-symbol-controls-terra-20260920-dead-exports-candidate-terminal-20260920.log`.
+This closes the earlier missing command-exit receipt; ordinary commit gates
+and publication are not inferred from these focused results.
+
+The post-format Symbol gate chain now finishes **terminal exit 0**, including
+TS7, lint, formatting, LOC/function/coercion/oracle checks, dead-exports,
+staged changed-root tests (the 15-assertion focused file), numeric-local
+parity, and issue integrity. Actual measured production SHA-256:
+`d9ca35b538b04f7627144adf6b6265ee843ab58074252ef983283d10c1cc8e70`;
+test SHA-256:
+`69b36cfdf89073e2d98d9b7103f627bfcf070ef57ba341f604392e6f94a3a3b3`.
+Receipt:
+`/private/tmp/js2-5269-symbol-controls-terra-20260920-normal-scoped-gates-rerun-20260920.log`.
+The production difference from the earlier measured SHA is formatting only;
+this chain reran the focused tests on the actual formatted content. Commit
+hooks and publication remain separate state transitions.
+
+The Symbol commit attempt subsequently passed its hook chain but failed at
+`git commit -S`: `cannot run gpg: No such file or directory`. No commit was
+created. Read-only configuration checks in both isolated worktrees show no
+configured `commit.gpgsign`, `gpg.format`, signer program, or signing key;
+the memory describing `/tmp/code-sign` applies to a different container.
+Inspection of the raw prior root checkpoint `3ab021e1064a0d97a6e8366a0f1ec386def338c1`
+also shows no signature header, so it must not be described as signed.
+The user has been asked whether to configure signing or permit unsigned
+checkpoints. No security configuration was changed, no unsigned retry was
+made, and no push was attempted. Both issue-document changes remain staged;
+normalization testing continues independently of this commit blocker.
+
+The frozen normalization comparison has now settled **baseline 11 pass / 3
+fail → candidate 14 pass / 0 non-pass**, with the exact same 14-path manifest
+and isolated standalone runner settings. The three named normalization
+transform rows now pass and all eleven prior controls retain their passes.
+Candidate log:
+`/private/tmp/js2-5152-normalize-frozen14-candidate-20260920.log`;
+base/head/runtime and seven measured production-file SHA-256s:
+`/private/tmp/js2-5152-normalize-frozen14-candidate-20260920.txt`.
+The authoritative denominator is 14; no skip/error row is being counted as a
+pass. This is a measured three-row slice gain, not an updated global census.
+Official Unicode-corpus execution, assigned-scalar identity checks, source
+gates, commit, and publication remain outstanding for this implementation.
+
+The subsequent numeric-only normalization adapter control passed, including
+mutable native-string globals, surrogate barriers, and actual zero Wasm
+imports. The one-instance official Unicode-17 corpus test then passed all
+**400,680 relations across 20,034 rows**, verifying the loaded fixture arrays'
+SHA-256 before compilation. Receipts:
+`/private/tmp/js2-5152-normalize-ucd17-adapter-control-20260920.log` and
+`/private/tmp/js2-5152-normalize-ucd17-corpus-20260920.log`.
+The production hashes still match the frozen 14-original run; corpus-test
+SHA-256 is `ba2ac6c2cbd97d425ad0026cea24949fcc0e143beffa067d1a298678564c4d8a`.
+This supersedes the pending official-row execution above, but not the pending
+UAX Rule-2 assigned-scalar identity test, repository gates, or full-edition
+census. It is emitted-Wasm evidence, not just generator validation.
+
+### 2026-09-20 matched shared String-call regression controls
+
+Root ran the unchanged `tests/issue-2875-slice3-search.test.ts` and
+`tests/issue-2875-transferred-proto-method-call.test.ts` on the frozen
+normalization candidate and pristine `62221769a87acdc32759c656702eede64936feb5`
+at `/private/tmp/js2-5269-symbol-matched-base-terra-20260920`. Both completed
+**23 pass / 5 fail out of 28**, terminal exit 1. Search coverage is 18/23;
+transferred-method coverage is 5/5 on each side. The same five reflective
+search cases throw `WebAssembly.Exception` on both sides:
+
+- `includes.call('abcabc', 'ca')` and `includes.call('abcabc', 'a', 4)`;
+- `startsWith.call('abcabc', 'ca', 2)`;
+- `endsWith.call('abcabc', 'ab', 2)` and `endsWith.call('abcabc', 'bc')`.
+
+Both runs used Node 24 with `VITEST_FORK_MAX_OLD_SPACE_SIZE=3072`, direct
+`node node_modules/vitest/vitest.mjs run` with the two files, and
+`--pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism`.
+Candidate tool session 83944 and baseline session 91211 are terminal. Exact
+test SHA-256s match across worktrees:
+`b27dc5f1c844ceb1e68053bc6b475eb0685e8f1c0761bd23796f503211efd040`
+and `d3714591ac8ab6fd31fd68a930a23124f072507077075547f1acc4d37527948d`,
+respectively. All seven candidate production hashes matched the frozen
+normalization manifest during the protected run. This is no observed
+regression in these 28 controls, not 28 passes; the five existing failures
+remain work toward the full goal and were not converted to expected failures.
+
+The RegExp raw-result preservation correction subsequently passes all six
+focused controls, including the original 7/31 post-lock mask now reaching 31,
+an opaque-any receiver, and ordinary numeric consumers. Its full protocol file
+finishes **71 pass / 1 fail out of 72** and TS7 exits 0. The remaining numeric
+alias test fails compilation with the IR selector/capability disagreement
+`extern property write .lastIndex is capability-deferred`.
+Receipts in the isolated #5198 worktree:
+`.tmp/5198/regexp-exec-protocol-full72-after-postlock-carrier-20260920.log`
+and `.tmp/5198/ts7-after-postlock-carrier-20260920.log`.
+The failure was reproduced against clean upstream by the owner, but the test
+itself is newly introduced on this branch (`be5ff8ec1f`), not an already-green
+upstream test. Consequently this branch is **not merge-ready** while that
+assertion remains red. It is retained unchanged and handed to the existing
+#3518 IR prerequisite; the parallel IR migration files remain untouched.
+
+Normalization's expanded UCD test file is now **4/4 green**, including the
+numeric adapter, all 400,680 official-row relations, 1,120,992 Rule-2 scalar
+identities, and 8,192 lone-surrogate identities. That is **1,529,864 measured
+normalization relations**, excluding the adapter prerequisite. The assigned
+inventory includes 297,334 scalars, of which 137,468 are private use; 17,086
+Part-1 scalars are excluded from the Rule-2 identity loop, leaving 280,248.
+The 2,048 surrogate code points are tested separately in all four forms.
+Root independently counted the same assigned/private-use/surrogate totals
+from pinned UnicodeData range endpoints. Receipt:
+`/private/tmp/js2-5152-normalize-ucd17-rule2-20260920.log`.
+Expanded fixture payload SHA-256:
+`733ccbe5078c762ac50a176279f08219f8d1d110e991ccac5c2da4e517bb5833`.
+All seven production hashes still match the frozen 14/14 original-test run.
+This closes the pending Rule-2/surrogate validation above, not repository
+gates, commit/publication, or integrated full-edition conformance.
+
+### Upstream refresh and resumed validation — 2026-09-20
+
+At the user's renewed sync request, `git fetch upstream main` succeeded.
+`FETCH_HEAD` and `upstream/main` both resolve to
+`62221769a87acdc32759c656702eede64936feb5`; the root working branch
+`codex/4444-es2015-followup-20260920` already contains that commit (four
+commits ahead, zero behind). No merge, stash, or shared-checkout mutation
+was needed. Pending issue handoffs remain preserved.
+
+The Symbol.keyFor child #6647 reports four passing and two failing focused
+assertions. Its exact original `arg-non-symbol` remains zero pass / one fail
+on both candidate and matched upstream: boxed Symbol rejection is still
+incorrect. The no-argument focused control fails compilation in the existing
+standalone builtin fallback. These are outstanding defects, not a Test262
+gain. The owner released the test lease and continues source-only diagnosis.
+Normalization now owns the exclusive test lease for normal repository gates;
+the RegExp 190-original matched comparison follows it. The parallel IR
+migration remains outside these implementation lanes. Signing and publication
+blockers recorded above are unchanged by this fetch authorization.
+
+The renewed selection audit reads the current edition map (SHA-256
+`e2217d94c741e54f19bf4a5ac530b27544fc20176e3dccc1106475b398e37388`):
+11,778 paths are labelled ES2015, all present in the local corpus. They comprise
+6,871 language, 4,652 built-ins, 168 Annex B, 13 harness, and 74 Intl402 paths.
+`TEST_CATEGORIES` in `tests/test262-runner.ts` includes the first four groups
+but not Intl402. Thus the 11,704 historical discovery population does not
+prove coverage of every mapped ES2015 path. The old external manifest
+`/private/tmp/js2-es2015-11704-pr5008.txt` is absent on this machine; do not
+treat that historical artifact as available input for a resumed census.
+Regenerate and validate a current manifest before execution, retaining the
+74-path discrepancy explicitly rather than silently excluding it from a
+whole-goal completion claim. This audit ran no compiler and consumed no test
+lease.
+
+Normalization's post-format original-test rerun is terminal exit 0 and still
+reports exactly 14 passes, with zero non-passes and no skip count. Root read
+the durable receipt
+`/private/tmp/js2-5152-normalize-frozen14-postformat-20260920.log` after the
+owner confirmed session 71234 terminated. This supersedes the pre-format
+result for the formatted candidate; normal repository gates remain in
+progress under the same exclusive lease.
+
+Post-format normalization smoke is terminal **3/3 pass**
+(`/private/tmp/js2-5152-normalize-smoke-postformat-20260920.log`), and its
+owner reports TS7 terminal exit 0 with no diagnostics
+(`/private/tmp/js2-5152-normalize-ts7-postformat-20260920.log`). Root read
+the smoke receipt. However, root's inspection of
+`/private/tmp/js2-5152-normalize-lint-postformat-20260920.log` found that
+Biome skipped the newly generated 2.2 MiB fixture because it exceeds the
+1 MiB configured limit, despite the command's reported zero exit status.
+This is missing lint coverage, not clean validation of that file. The owner
+must resolve it with deterministic smaller generated modules or a genuinely
+file-scoped supported exception and explicit validation; global limit
+weakening is not authorized. Retain all corpus counts and payload identity
+through any resulting fixture-only reorganization, then rerun its tests.
+
+The normalization owner released the compiler lease with no live process;
+RegExp now owns it for the frozen 190-path original-test A/B. Root independently
+verified that all 190 paths exist and are unique, and that the unchanged
+manifest SHA-256 is
+`567987a2f7b705a318ce45a003c5bd8e05543a2b2da5718b6ab73dc430105890`.
+The edition map classifies **181 ES2015 and 9 ES2018**, so report the two
+populations separately; all 190 remain valuable regression controls.
+Candidate HEAD `0a25740fe9be65486ae921573199e1adb7d81dc2` lacks three
+upstream commits, but their only changes are the umbrella documentation and
+`benchmarks/results/diff-test-baseline.json`. Its upstream source base therefore
+matches clean baseline `62221769a87acdc32759c656702eede64936feb5` for
+`src`, `tests`, `scripts`, package manifest, and lockfile.
+
+Root verified candidate runner PID 21414 live at elapsed 01:28, not merely
+inferred from a log file. The exact command/provenance is recorded in the
+RegExp worktree's
+`.tmp/5198/original-190-standalone-isolate-candidate-after-postlock-carrier-20260920.log`.
+This is a live measurement, not a terminal verdict. Baseline execution follows
+candidate completion; no other lane may start compiler work meanwhile.
+
+Root independently audited the subsequent fixture split without importing the
+compiler or starting tests: parsed numeric declarations from its wrapper and
+four chunk modules reconstruct the identical canonical payload SHA-256
+`733ccbe5078c762ac50a176279f08219f8d1d110e991ccac5c2da4e517bb5833`.
+The data still comprises 20,034 rows, 100,171 cell offsets, and 205,047 scalar
+values split into 51,261 + 51,262 + 51,262 + 51,262 elements. Rule-2 retains
+280,248 inputs. All five modules are below 1,048,576 bytes; the largest is
+the 1,021,416-byte wrapper. This verifies source-data preservation, not yet
+Biome coverage or the post-split emitted-Wasm rerun.
+
+The frozen RegExp candidate run is now terminal: **99 pass, 84 fail, 7 compile
+errors, 0 skip out of 190**. Root read the terminal counts and verified receipt
+SHA-256 `5bdebbaa4d122091bca4ea165563ff0021258f8247725df05045019259a7a886`.
+Reconciliation of all 91 unique non-pass paths against the exact manifest and
+edition map gives **ES2015: 97 pass / 77 fail / 7 compile errors / 181 total**;
+the nine ES2018 controls are **2 pass / 7 fail**. These are candidate totals,
+not improvement claims. The owner is proceeding with the already-authorized
+matched clean-6222 baseline under the same exclusive compiler lease.
+
+Normalization's split fixture subsequently passes explicit Biome validation:
+`/private/tmp/js2-5152-normalize-ucd17-fixture-biome-20260920.log` reports
+five files checked. Root compared the two generation hash manifests and found
+them identical. The LOC/function gates now cover all seven changed production
+files and pass using only issue-5152 allowances, including the generated
+3,612-line Unicode table and its 852-line native instruction builder. Their
+receipts are `normalize-{loc-budget,func-budget}-after-allow-20260920.log`
+under the same `/private/tmp/js2-5152-` prefix. The dead-exports command's
+informational moved-runtime/graph-closure failures at `optimize.ts:394` and
+`platform-capability-adapter.ts:151` match the previously checked pristine
+6222 diagnostics; zero exit status is not runtime-retirement certification.
+Post-split compiler/runtime checks remain queued behind RegExp.
+
+The matched RegExp baseline has now terminated with **86 pass / 95 fail /
+9 compile errors / 190 total**, zero skips. Its receipt SHA-256 is
+`5c9ace085a1b1be8bcd0cdf17c83b79fa47841aa029b706470946511457b92df` at
+`/private/tmp/js2-5269-symbol-matched-base-terra-20260920/.tmp/5198/original-190-standalone-isolate-baseline-62221769-after-postlock-carrier-20260920.log`.
+Root reconciled every non-pass path and the manifest: **ES2015 improves from
+84 pass / 88 fail / 9 compile errors to 97 pass / 77 fail / 7 compile errors
+out of 181**. All thirteen newly passing paths are ES2015 (eleven `@@match`,
+two `@@search`); no baseline pass becomes a non-pass in the complete 190-path
+cohort. `@@match/coerce-global.js` additionally changes compile-error to fail,
+which is not a pass gain. The nine ES2018 controls remain 2 pass / 7 fail.
+
+Both runner processes are terminal; the owner released the exclusive lease
+and normalization now owns it for post-split runtime revalidation. The
+RegExp branch remains unready because its separate full focused file retains
+the new IR-capability failure described above; this thirteen-row original
+gain does not waive that failure, prove whole-edition conformance, or establish
+upstream integration.
+
+Normalization's frozen post-split runtime sequence is complete: Unicode
+conformance **4/4**, original Test262 slice **14 pass / 0 non-pass**, smoke
+**3/3**, and TS7 terminal exit 0 with no diagnostics. Receipts under
+`/private/tmp/js2-5152-` are respectively
+`normalize-ucd17-postsplit-20260920.log`,
+`normalize-frozen14-postsplit-20260920.log`,
+`normalize-smoke-postsplit-20260920.log`, and
+`normalize-ts7-postsplit-20260920.log`. Root read the nonempty test receipts;
+TS7 terminal status was supplied by the process owner, not inferred from its
+empty log. The exact tested files are frozen in
+`/private/tmp/js2-5152-normalize-postsplit-candidate-20260920.txt`.
+The owner released the compiler lease, now held by Symbol.keyFor for its
+no-argument focused rerun and three-original matched comparison. Required
+Unicode data attribution is a separate source-only packaging review and must
+not be silently blended into the frozen receipt. Signing/publication remain
+subject to the existing unresolved blockers.
+
+Symbol.keyFor's no-argument rerun is terminal **5 pass / 1 fail out of 6**:
+the omitted-argument TypeError now passes; the real boxed-Symbol assertion
+remains red. The exact three-original candidate/baseline pair is **2 pass /
+1 fail on both**, with byte-identical logs (SHA-256
+`adcd3d78e39e2a09d4d2843c81a7b8227a83c3e82f69a03d9018e95cdea9a604`).
+The remaining original failure is `Symbol/keyFor/arg-non-symbol.js` because
+`Object(Symbol())` still lacks a distinct wrapper representation. Thus the
+focused behavior improves but there is no original-row gain or merge-ready
+claim. Issue #6647 retains the exact receipts and corrected wrapper plan:
+observable `GetMethod(@@toPrimitive)` precedes any ordinary hint-ordered
+conversion, and internal-slot recovery cannot bypass inherited overrides.
+The owner released the lease to RegExp's exact-original route diagnostic.
+
+The final normalization notice-bearing checkpoint also completes all four
+validation groups: UCD **4/4**, exact originals **14/14**, smoke **3/3**, and
+TS7 terminal exit 0. Final logs use the
+`/private/tmp/js2-5152-normalize-` prefix and suffix
+`-unicode-notice-20260920.log`, with group names `ucd17`, `frozen14`, `smoke`,
+and `ts7`. The Unicode notice regeneration preserved the numeric payload and
+remained below the fixture lint size limit. Fresh file hashes are recorded in
+`/private/tmp/js2-5152-normalize-unicode-notice-candidate-20260920.sha256`.
+The owner released the test lease and is preparing the scoped PR body without
+bypassing signing or publication restrictions. RegExp now owns the short
+exact-original numeric-call-mapping diagnostic; the prior compiled artifact
+proved runtime failure and zero imports, but not which helper its callback
+actually invokes. No fast-path admission change is justified yet.
+
+The refined exact-original RegExp diagnostic now maps the missing operation:
+the final `assert.throws` callback is numeric function 531 (`__closure_65`),
+whose complete emitted body is `global.get 12; extern.convert_any; drop`.
+It evaluates the subject but has no call route to matching, `__extern_toString`,
+or the expected throw. Root verified that body and receipt SHA-256
+`f65a4b772aaa6f304c31730b9c8489c8a8a878869efc815ffecb0576f1624478` in
+`.tmp/5198/exact-original-symbol-match-coerce-arg-route-mapped-20260920.log`.
+The original/assembled/WAT hashes and zero imports match the prior artifact.
+This disproves the earlier compile-refusal explanation and motivates tracing
+where call emission is lost; it does not yet establish which compiler stage
+is responsible. The owner retains a bounded diagnostic lease, without changing
+IR ownership or widening the fast-path gate as an unproven fix.
+
+The subsequent emission trace now resolves the apparent contradiction: the
+exact callback does enter legacy symbol dispatch, both protocol and native
+arms decline, and the native arm specifically rejects the object subject at
+its string-like admission guard. The dispatcher then calls `reportError` and
+returns null, yet the final artifact still contains only the subject load and
+drop. Thus the earlier observation disproved a *terminal compile error*, not
+the existence of an internal refusal. Root verified trace SHA-256
+`f1c2d403024d9e9f35bdc0e6e9d65d818d9ccdcf2ea99b6ec00d18d35354d693`
+in `.tmp/5198/exact-original-symbol-match-coerce-arg-emission-trace-20260920.log`.
+The owner is tracing the fallback once more, then restoring temporary tracing
+before implementing narrowly verified `@@match` subject coercion. Other symbol
+methods must not be admitted merely because they share this guard. Required
+controls include exact original execution, successful object conversion,
+observable conversion order, abrupt completion, Symbol rejection, and actual
+zero-import standalone artifacts. The separate IR migration remains untouched.
+
+Two parallel read-only audits identify additional work without claiming gains:
+
+- Global `@@match`'s `g-success-return-val.js` gets numeric `index` zero instead
+  of undefined. Its preceding own-property check passes. The native global
+  producer deliberately returns a match-vector carrying index/input metadata,
+  and the specialized typed reader exposes that metadata. The RegExp owner
+  must coordinate producer, result provenance and global-variable inference;
+  suppressing every match-vector read would regress non-global capture arrays.
+- `Symbol/not-callable.js` stops at its first `sym()` assertion, so its other
+  three call/construction assertions remain individually unmeasured. A factory
+  initializer exception in the non-callable call guard is a hypothesis for the
+  primitive case. The wrapper forms additionally require real standalone
+  Symbol wrappers; changing the shared closure bridge is not a narrow fix.
+
+A fresh fetch and fast-forward-only synchronization with `loopdive/js2 main`
+confirmed upstream remains `62221769a87acdc32759c656702eede64936feb5`.
+This handoff branch already contains that commit (four ahead, zero behind);
+pending edits were preserved without stashing or changing another worktree.
+
+The non-global `@@match` coercion preflight rejects a gate-only fix. In
+`.tmp/5198/fast-native-match-coercion-preflight-retry2-20260920.log`, direct
+cast-at-call controls give the expected result for ordinary object conversion
+and abrupt marker propagation (2/2), but both a raw Symbol and an object whose
+`@@toPrimitive` returns Symbol silently stringify instead of throwing (0/2).
+All four compile with zero actual imports. These are diagnostic controls, not
+original Test262 gains. The earlier retry1 did not preserve the raw argument
+through its asserted declaration and cannot establish downstream behavior.
+The existing `__extern_toString` route is therefore not a strict implementation
+of this spec operation for the newly admitted domain. Implementation must first
+perform observable `ToPrimitive(string)` once, reject a resulting Symbol with
+TypeError, then convert the primitive to a string. The shared gate remains
+unchanged pending that correction and focused validation; global matching and
+other symbol methods cannot inherit an unverified admission widening.
+
+The separate global-match result-shape audit found a wider required ownership
+boundary before production edits. Changing the global producer from match-vector
+to plain string-vector also requires function-local hoisting in
+`src/codegen/index.ts` and matching variable handling in
+`src/codegen/statements/variables.ts`. Top-level declarations already delegate
+their inference to the RegExp helper, so `declarations.ts` itself need not
+change. The reflective caller in `string-proto-match-search.ts` also consumes
+the shared helper and must be updated if its return type changes; excluding its
+tests would not make an incompatible helper ABI safe. That lane remains
+source-only pending confirmation that the local-hoisting files do not overlap
+the other machine's active IR migration. The independent non-global coercion
+fix can proceed within `regexp-standalone.ts` without those ownership changes.
+
+The user subsequently confirmed: "These inference areas are clear to change."
+The global-match lane is therefore authorized to implement the coordinated
+producer, reader, local-hoister and reflective-caller change in its separate
+worktree. This clearance covers the specified inference sites, not IR
+implementation or layout changes. Its compiler validation remains queued behind
+the current Symbol probe lease; no additional original-row gain is claimed.
+
+### 2026-09-20 publication authorization and verified deliveries
+
+The user explicitly renewed completed-branch publication permission: push to
+`ttraenkler/js2`, with fallback to feature branches on `loopdive/js2` if needed,
+and permit unsigned commits for these fixes. Neither authorization permits a
+direct push to `main`, bypassing repository hooks, or manually merging PRs.
+The previously recorded signing/egress blockers no longer apply to this work.
+
+Two completed fixes are now published upstream, both ready (not draft) and
+verified `MERGEABLE` when created:
+
+- Unicode normalization: PR [#5999](https://github.com/loopdive/js2/pull/5999),
+  fork head `15e401c8208266e1143f903b9428588920abbe38`. The final 15-file
+  source/test/generator hash manifest still matches the validated checkpoint.
+- Anonymous true-expando deletion: PR
+  [#6000](https://github.com/loopdive/js2/pull/6000), fork head
+  `b74e1c833deb38444ba59940e62b242b594ef52e`. The publication merge contains
+  upstream `62221769`; its source/tests are unchanged from tested `ead8e8520a`.
+
+Both normal pre-push chains completed, including typechecking, lint,
+formatting, oracle/coercion ratchets, numeric-local parity **18/18**, and
+issue integrity. Remote branch SHAs were verified directly. An existing
+shared Git config lock prevented local tracking configuration after successful
+pushes; the lock was left untouched and did not prevent publication. The
+deletion lane first corrected local pnpm/biome command resolution and reran
+the full hook; those environment failures are not passing gate receipts.
+
+A passive shepherd owns the two PRs. Mergeability and local gates are not
+claims of completed CI, merged integration, or a new overall ES2015 rate.
+The completed iterator and Symbol-description slices have the next serialized
+publication slot. The new global-match implementation is held before source
+edits so publication of validated work takes priority; non-global strict
+coercion remains unvalidated and must not be presented as merge-ready.
+
+The next completed slice is published as ready, mergeable PR
+[#6001](https://github.com/loopdive/js2/pull/6001), iterator arguments-length
+coercion, with exact fork and PR head
+`9e50fe3a01d2c88748f48a7f1e7ead32a7c9995e`. The local tracking-config failure
+again did not indicate push failure: direct remote verification proved the
+branch landed, preventing a duplicate push. The publication owner's redundant
+manual format run lacked a retained final receipt and is not cited as a pass.
+
+The first passive CI read found a concrete PR #5999 quality failure:
+`normalize-native.ts`, `normalize-tables.ts`, and
+`string-proto-normalize.ts` lack compiler-boundary inventory classifications.
+The owner is adding the required exact module classifications, without
+weakening the verifier or altering normalization semantics. Test262 jobs
+skipped/cancelled after this quality failure provide no conformance result.
+PR #6000's CI was still pending at that observation. No PR is counted as a
+merged integrated gain until upstream ancestry and fresh test evidence prove it.
+
+Symbol descriptions are also published: ready PR
+[#6002](https://github.com/loopdive/js2/pull/6002), exact fork head
+`5be42ee36831927600a6256ec6450c366f57b64f`. Both #6001 and #6002 explicitly
+report `mergeable: MERGEABLE`; `mergeStateStatus: BEHIND` is a freshness signal,
+not evidence of a conflict or grounds to mark these completed fixes draft.
+
+The normalization boundary repair is committed as `e787f5f197` and pushed
+with upstream synchronization at
+`20c3edc29d0f8ce45d506b9e067330019897e773`. The exact three inventory entries
+pass the targeted static gate (`inventoryValid: true`, errors empty, 1,470
+modules); the architecture still reports incomplete, not falsely complete.
+Normal pre-push gates passed again. Root verified the post-sync smoke log at
+`/private/tmp/js2-5152-normalize-smoke-postsync-20260920.log`: **3/3** pass.
+The exact 14-original run remains pending at this checkpoint. This repairs
+the observed CI cause; fresh CI success is not inferred from a local pass.
+
+The subsequent post-sync original run is terminal **14 pass / 0 non-pass**,
+verified in `/private/tmp/js2-5152-normalize-frozen14-postsync-20260920.log`.
+It uses the unchanged frozen manifest SHA-256
+`027e4b21d7fd72e77e419c2bd758e30a9498b70eafd2aa344daef2c2856ec76e`
+and the maintained standalone runner with fresh isolation per original.
+The first sandbox invocation failed before any row on a tsx IPC permission
+error; the escalated successful retry, not that setup failure, is this receipt.
+No source changed during the post-sync validation and the published head
+remains `20c3edc29d0f8ce45d506b9e067330019897e773`. The test slot is released
+to the existing RegExp worktree's narrow strict-coercion validation. Creating
+a separate coercion branch remains pending the requested split approval.
+
+The strict non-global RegExp subject implementation now has its first measured
+original result: `Symbol.match/coerce-arg-err.js` passes **1/1** via the
+maintained standalone isolated runner, where the earlier exact artifact failed
+without invoking conversion. Root read the new log
+`.tmp/5198/coerce-arg-err-strict-subject-original-20260920.log`, SHA-256
+`9c564ff79bba501370a0917566487437c673c73c10c02008b5c171d0a2fdac1e`.
+The seven selected new controls also pass (**7 selected / 79 total**, 72
+unselected), covering object conversion, abrupt completion, raw/result Symbol
+rejection, nullish and void values, and the unchanged global string path.
+The earlier filter invocation selected zero tests and is explicitly invalid
+as acceptance evidence. These new results do not resolve the separately
+recorded full-file IR failure or prove a 190-original regression sweep.
+
+Full-census preparation against upstream `ea8d7f87` confirms the refreshed
+edition map SHA-256
+`9193b4d0fbbd7b7ee4df8b5f74afc866906de43ae7f62bd16e1079efa5e43fc1`
+still contains **11,778** unique existing ES2015 paths. Default category
+discovery omits 74 Intl402 paths; a paths filter cannot add undiscovered files.
+The maintained `test:262:fyi` full recursive discovery covers all mapped paths
+and accepts `--target standalone --paths-file <exact-manifest> --json <output>`.
+Its authoritative preflight requires Node 25 and Unicode 17. Prepare that
+runtime separately, then derive and validate the exact sorted manifest from
+the eventual integrated map; do not reuse a missing historical temporary list
+or use the non-authoritative smoke flag to claim full acceptance. This FYI
+artifact is not a replacement for committed CI-baseline JSONL.
+
+The authoritative FYI runtime is now available task-locally at
+`/private/tmp/js2-4444-node25-fyi.7D1w1C/node-v25.9.0-darwin-arm64/bin/node`.
+The official Darwin arm64 archive matched the Node release SHA-256 manifest:
+`e479f3c469d3d9303a44f00a8ea37a3788395d171bb8059c48a4bbbd2e371b59`.
+The maintained preflight reports `v25.9.0 / Unicode 17.0`
+(`test262-fyi-node25-unicode17-v1`). Provisioning changed no global runtime,
+repository dependency, compiler source, or test verdict. The full census has
+not started; run it on the reconciled integrated source with a newly verified
+complete manifest rather than treating runtime readiness as conformance.
+
+Strict `@@match`'s next bounded checks are terminal and root-read:
+Node 24 existing protocol controls **8 selected pass / 79 total** (71
+unselected) and direct non-global native controls **3 selected pass / 14 total**
+(11 unselected). Their log hashes are respectively
+`75af07f2bc79feb52026311cc3139ee59e961c831622563d0bbe2170c8dff9f2`
+and `703963376e30caf20f1fde600063632750690d6dae34b53e2065a48ab389e8db`.
+The exact original independently passes **1/1 on Node 25**, using the same
+manifest SHA-256
+`ea762af3e0ca5aafc32ba88f9a5de56ab3a5ce59c2f627d9e4a021c4de66cdcb`.
+Keep that Node 25 confirmation separate from the Node 24 cohort, and keep the
+unfiltered branch's known IR-first red explicit. The owner released the test
+slot; selective branch separation remains awaiting approval, not silently done.
+
+The primitive-Symbol call investigation now corroborates its proposed guard
+seam with a single terminal diagnostic, rather than source inference. Both
+checker backends report `fact=symbol`, `static=symbol`, no call signature,
+and a `Symbol(...)` call-expression initializer, then take the initializer
+bailout. The resulting callback calls `__apply_closure`, drops its result,
+and continues instead of throwing. Receipt:
+`/private/tmp/js2-5269-symbol-route.nq9jp5/probe.log`; the two WAT artifacts
+match SHA-256
+`b01f564f2dfd845e5021f34aab5e2ee1732de26f6f28d20a1b98aa8c8ed6cd4a`.
+Temporary tracing was removed and the original guard file hash restored.
+This authorizes the narrowly planned primitive-call correction and controls,
+not a runtime-wrapper shortcut or a claim that the four-form original passes.
+
+### Full-population manifest materialized (2026-09-20)
+
+The next census now has a concrete, fail-closed input artifact:
+`/private/tmp/js2-4444-full-es2015-manifest.i16PO6/es2015-11778.txt`.
+Its sibling `.receipt.json` records the source map, corpus root, runtime, count,
+and hashes; `build-manifest.mjs` in the same temporary directory regenerates it
+to a new output path. The script selects the ES2015 edition index, uses
+locale-independent JavaScript string ordering, rejects a changed population,
+and checks that every selected path exists inside the corpus test root before
+writing a new file without overwriting an existing artifact.
+
+Verified: **11,778 unique existing paths**, including **74 Intl402 paths**.
+Manifest SHA-256 (newline-terminated):
+`f2fdd4e4544a44608f0b53d89d343526cfa9c9044ca263e860da949dc1a2f59f`.
+The edition-map SHA-256 remains
+`9193b4d0fbbd7b7ee4df8b5f74afc866906de43ae7f62bd16e1079efa5e43fc1`;
+the corpus is `b363f29d3c43c626dc852744ad64a0b48a003693`.
+Upstream advanced to `ae0a46be50` by merging PRs #6000 and #6001, with no
+edition-map change from `ea8d7f87`. Revalidate this manifest against the final
+integrated source/map before the maintained Node-25 FYI run. This is population
+preparation only: no full census has run, and no new overall pass rate is claimed.
+
+### Integrated census setup checkpoint (2026-09-20)
+
+The isolated census checkout is now clean at upstream `f3520ca177960f49c006edc3fd7acce8bebf58d9`,
+which includes merged fixes #5999, #6000, #6001, and #6002. Its directory still
+ends in `full-census-ae0-20260920`; use the recorded commit, not that older name,
+as provenance. Global-match PR #6004 is published separately and is not included
+in this frozen upstream checkpoint.
+
+Initialized the pinned FYI reader submodule at
+`beeff8b3d70e65dcdd00270fdb31ab12f041b049` in that checkout only. Maintained
+reader discovery finds 53,583 paths, including all 11,778 manifest members
+(zero missing); literal harness assembly was also checked without compilation.
+The first maintained FYI smoke exited before worker readiness because the fresh
+checkout lacked `scripts/runtime-bundle.mjs`. This is an infrastructure failure,
+not a measured Test262 failure. Built the runtime bundle using the maintained
+`build:runtime-bundle` command; the retried original
+`built-ins/TypedArrayConstructors/from/invoked-as-func.js` passes **1/1** on
+Node 25, standalone, original harness. Receipt:
+`/private/tmp/js2-4444-full-es2015-manifest.i16PO6/smoke-f352.json`.
+
+Before starting the full population, prepare and verify the default QuickJS
+eval provider in this checkout's own cache, using the maintained provider
+builder. Do not let missing dynamic-eval artifacts masquerade as semantic
+failures or change the engine silently. This setup checkpoint is not a full
+census and does not establish a new overall pass rate.
