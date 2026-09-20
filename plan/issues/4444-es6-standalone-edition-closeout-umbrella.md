@@ -1791,3 +1791,41 @@ first slice's honest target fell from 43 to **9**. See #5198.
 The lesson worth keeping: **measure the host side before sizing a standalone
 slice.** Without it, a mechanism's standalone row count reads as the
 deliverable, and it is not.
+
+## 2026-09-20 post-sync execution handoff
+
+The coordinating branch includes upstream `62221769a8`, incorporating the
+merged documentation PR 5997 and a differential baseline refresh. No compiler
+change arrived between the earlier `200f7e2c8b` slice receipts and this sync.
+The dirty shared main checkout was not modified.
+
+- Normalization implementation is assigned to the isolated #5152 normalization
+  worktree. Its fresh isolated standalone baseline at `c47fcc7c081a`
+  (including upstream `62221769a8`) finished **11 pass / 3 fail / 14**,
+  with no skips or runner errors. The terminal log is
+  `/private/tmp/js2-5152-normalize-baseline-20260920.log`, SHA-256
+  `80213e5772351e05607389dcba81b034a62602e00892035a2c98e8472182aa99`.
+  Only the three `return-normalized-string*` originals failed. The recorded plan requires full
+  Unicode-17 transformation and official normalization-corpus coverage, not
+  merely repairs for the three known originals.
+- The #5198 RegExp lane has 49/55 focused pins passing after the conditional
+  argument-slot correction. Its next descriptor probe must distinguish
+  physical value mutation from changed read/storage routing; the six red pins
+  are not six independent proven defects.
+- #5269 Symbol probes are separate from the completed #6484 iterator slice.
+  Dynamic undefined/Symbol conversion and reentrancy are being measured;
+  production Symbol edits remain pending the separate IR coordination.
+- A one-shot publication read finds PR 5996 open, ready and mergeable at
+  `9e7ea9471ae0f0efd22293f09badfe6c1432760e`, with no merge commit. Quality,
+  issue tests and equivalence checks succeeded, but the Test262 shard jobs
+  were skipped. Neither the PR's green summary nor the local slice receipts
+  prove a new full ES2015 census.
+- The completed anonymous-delete and iterator branches remain local at
+  `ead8e8520a` and `0ab8d03e0d`. Publication was denied before execution;
+  renewed authorization is pending. Prepared PR descriptions now explicitly
+  distinguish successful targeted validation from the outstanding final
+  normal pre-push gates. No denied push was retried through another route.
+
+The full standalone goal remains unachieved. Retain the edition/discovery
+scope caveat and do not add local slice gains to the historical global pass
+count without a fresh authoritative census.

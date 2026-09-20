@@ -1656,3 +1656,92 @@ The durable terminal log is
 Result: **1 fail / 1 pass**. The unchanged object-description original still
 reports an empty callback trace instead of `toStringvalueOf`; the primitive
 Symbol rejection control passes. No production Symbol edits were made.
+
+### Implementation boundary after upstream sync
+
+The coordinating branch now includes upstream
+`62221769a87acdc32759c656702eede64936feb5`; the incoming changes since
+`200f7e2c8b` are the merged documentation handoff and a differential-test
+baseline refresh, not a Symbol compiler change. The two-row receipt above
+remains explicitly a measurement at `200f7e2c8b`, not a rerun at the newer SHA.
+
+The source audit separates static primitive-Symbol rejection from dynamic
+description conversion. The existing `emitSymbolOperandCoercionThrow` guard
+precedes counter mutation, whereas the object-description path targets
+`ref_null $AnyString` without observable ToString. Before implementation,
+the isolated test lane will measure dynamic undefined, a dynamically carried
+Symbol, callback order/fallback, abrupt identity, and nested Symbol identity
+and descriptions. In particular, an expression-level ToString helper cannot
+be substituted blindly: it would stringify undefined, and a generic native
+conversion may accept a boxed Symbol. The intended boundary evaluates once
+into a local, distinguishes undefined from other values, rejects a Symbol
+value at runtime, and only then performs ordinary ToString. Preserve the
+allocated outer identity in a local rather than rereading a counter after
+user callbacks. No production Symbol edit is authorized by the empty IR
+coordination response; independent regression probes can proceed meanwhile.
+
+### Independent Symbol control baseline at `62221769a8`
+
+The isolated worktree `/private/tmp/js2-5269-symbol-controls-terra-20260920`
+contains `tests/issue-5269-symbol-description.test.ts`, with five separately
+compiled sources and ordinary assertions. Its corrected baseline finished
+**1 pass / 4 fail / 5**; compilation, instantiation, execution and the
+zero-import assertions succeeded for every source. The terminal semantic log
+is `/private/tmp/js2-5269-symbol-controls-terra-20260920-baseline-retry-20260920.log`.
+A second receipt run printed each exact value and `imports=[]` in
+`/private/tmp/js2-5269-symbol-controls-terra-20260920-baseline-import-receipt-20260920.log`.
+
+- Omitted versus dynamic undefined: **7/7**, including ES2015 `toString()`
+  and supplementary `.description` assertions. Preserve this existing pass.
+- An `any` parameter consumed by `Symbol(value)`: **2/3**. The passing string
+  control contributes bit 2; the runtime Symbol TypeError bit is absent.
+- Observable `toString` then `valueOf`: **0/3** for callback order and stored
+  description.
+- Abrupt conversion: **0/3** for thrown-marker equality and callback order.
+- Nested Symbol creation: **1/7**. Only the inequality bit passes. Because
+  the callback never runs, the inner value remains undefined; this is **not**
+  proof that reentrant Symbol identities are preserved. Re-measure after
+  observable conversion is implemented before attributing counter reuse.
+
+The first attempted run stopped in test-fixture transformation due to a
+template-literal comment typo, before compiler execution; it is not a
+compiler failure or part of these five measured results. The test harness
+also uses the `WebAssembly.instantiate(Module, imports)` Instance return
+contract and asserts imports before instantiation. No expected-failure
+wrapper masks setup failures, and these focused controls do not replace the
+unchanged Test262 original or establish a global pass-count gain.
+
+### Isolated implementation decision
+
+After the measured baseline, the coordinating agent authorized a local-only
+implementation in the separate Symbol worktree, limited to
+`compileSymbolCall` and a dedicated helper if needed. This supersedes the
+earlier blanket source-edit hold, not the IR ownership boundary. Published
+PR 5753's literal hunks do not overlap this function; no reply concerning
+unpublished other-machine changes has been observed. An isolated patch does
+not modify that machine or the shared checkout. Do not integrate or publish
+it without a fresh exact-hunk comparison and resolution of any actual
+conflict; preserve all IR selection, layout and producer work. Do not treat
+the missing reply as affirmative clearance.
+
+A further baseline probe evaluates a string-returning argument expression
+that itself creates a Symbol. Unlike the object-description probe, this
+exercises reentrancy without depending on the currently missing ToString
+callback, allowing the counter-identity hypothesis to be tested independently.
+
+That sixth probe is now measured at `62221769a8`: the ordinary suite finishes
+**1 pass / 5 fail / 6**, with no setup failure. The test source SHA-256 is
+`9169c40cea0eb8814af70a0ff2bd83ff46ac625f203d26ade38c91771b269e9e`;
+the terminal log is
+`/private/tmp/js2-5269-symbol-controls-terra-20260920-reentrancy-baseline-20260920.log`.
+Direct argument reentrancy scores **34/127**: only the ordinary string
+`toString()` bit (2) and outer `toString()` bit (32) pass. Distinct identity
+(4) and inner `toString()` (64) fail, independently of object ToString
+callbacks. This supports the counter-reuse defect. All six sources assert
+zero imports before instantiation.
+
+Do not attribute every missing bit to counter reuse: the ordinary string's
+supplementary `.description` bit (1) also fails while its ES2015 `toString()`
+control passes. Keep the later-edition accessor limitation separate, and
+retain ES2015 identity/`toString()` acceptance rather than silently expanding
+this fix to unrelated reflective accessor behavior.
