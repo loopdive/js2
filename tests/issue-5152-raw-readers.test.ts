@@ -6,7 +6,11 @@
  * physical-field controls make descriptor precedence explicit: the bag entry
  * must win even when a compiled struct already has a `length` or `"0"` slot.
  */
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
+
 import { compile } from "../src/index.js";
 import { buildCompiledImports, wrapCompiledExports } from "../src/runtime.js";
 
@@ -275,7 +279,174 @@ const NATIVE_FIRST_POSITIVE_SOURCE = `
   }
 `;
 
+// No user closures, classes, arrays, or generators occur in this source. The
+// dynamic receiver is the nested raw value, matching the original `indexOnly`
+// allocation shape. Keeping the outer template literal untouched prevents the
+// growable-literal prepass from deliberately promoting a direct receiver
+// literal to an open $Object carrier before this anonymous-arm probe runs.
+const ANONYMOUS_EXPANDO_DELETE_SOURCE = `
+  export function test() {
+    let checks = 0;
+    const key = "expando";
+    const firstTemplate = { raw: { length: 1 } };
+    const secondTemplate = { raw: { length: 1 } };
+    const first = firstTemplate.raw;
+    const second = secondTemplate.raw;
+    const lengthKey = "length";
+
+    // Define both bags before either deletion. A shared-bag bug would then
+    // make first's delete erase second's independently defined entry.
+    Object.defineProperty(first, key, { value: 41, configurable: true });
+    Object.defineProperty(second, key, { value: 9, configurable: true });
+    if (first[key] === 41) checks += 1;
+    if (delete first[key]) checks += 2;
+    if (first[key] === undefined) checks += 4;
+    if (delete first[key]) checks += 8;
+    if (first[lengthKey] === 1) checks += 256;
+
+    // A same-shape second receiver must retain its independently defined bag
+    // entry after first's delete, before its own delete can change the result.
+    if (second[key] === 9) checks += 16;
+    if (delete second[key] && second[key] === undefined) checks += 32;
+
+    // Symbols never collide with a physical string field and retain their
+    // identity through the stored '$PropEntry.key' route.
+    const symbol = Symbol("anon-delete");
+    Object.defineProperty(first, symbol, { value: 7, configurable: true });
+    if (delete first[symbol] && first[symbol] === undefined) checks += 64;
+
+    // The delegated ordinary delete must still refuse a non-configurable bag
+    // entry; it cannot collapse the answer into the non-object fallback.
+    const lockedTemplate = { raw: { length: 1 } };
+    const locked = lockedTemplate.raw;
+    Object.defineProperty(locked, key, { value: 3 });
+    // Module source is strict, where a failed 'delete' would throw instead of
+    // yielding false. Reflect keeps this non-configurable refusal check
+    // language-mode-neutral; strict-delete throwing is a separate control.
+    if (Reflect.deleteProperty(locked, key) === false && locked[key] === 3) checks += 128;
+
+    return checks;
+  }
+`;
+
+// This is a diagnostic baseline-limitation fixture, not a conformance claim.
+// It exercises physical `length`, empty, `$`, `__`, and constructor spellings
+// so the candidate selector must decline them rather than exposing stale
+// storage. Its compiled standalone result is recorded separately because the
+// underlying physical-field delete path is not yet ordinary-delete complete.
+const ANONYMOUS_EXPANDO_PHYSICAL_DELETE_SNAPSHOT_SOURCE = `
+  export function test() {
+    let checks = 0;
+    const physicalTemplate = { raw: {
+      length: 1,
+      "": "empty",
+      "$keep": "dollar",
+      "__keep": "under",
+      "$constructor": "dollar-constructor"
+    } };
+    const target = physicalTemplate.raw;
+    const lengthKey = "length";
+    const emptyKey = "";
+    const dollarKey = "$keep";
+    const underKey = "__keep";
+    const dollarConstructorKey = "$constructor";
+    // The current dynamic reader maps a '$constructor' field to both spelling
+    // surfaces. Both must remain covered by this delete arm's physical union.
+    const constructorKey = "constructor";
+    Object.defineProperty(target, lengthKey, { value: 10, configurable: true });
+    Object.defineProperty(target, emptyKey, { value: "empty-override", configurable: true });
+    Object.defineProperty(target, dollarKey, { value: "dollar-override", configurable: true });
+    Object.defineProperty(target, underKey, { value: "under-override", configurable: true });
+    Object.defineProperty(target, dollarConstructorKey, { value: "dollar-constructor-override", configurable: true });
+    Object.defineProperty(target, constructorKey, { value: "constructor-override", configurable: true });
+    if (delete target[lengthKey] && target[lengthKey] === 10) checks += 1;
+    if (delete target[emptyKey] && target[emptyKey] === "empty-override") checks += 2;
+    if (delete target[dollarKey] && target[dollarKey] === "dollar-override") checks += 4;
+    if (delete target[underKey] && target[underKey] === "under-override") checks += 8;
+    if (delete target[dollarConstructorKey] && target[dollarConstructorKey] === "dollar-constructor-override") checks += 16;
+    if (delete target[constructorKey] && target[constructorKey] === "constructor-override") checks += 32;
+
+    return checks;
+  }
+`;
+
+// This deliberately uses public operator and Reflect routes. A key object's
+// toString must run exactly once per deletion: the anonymous carrier helper may
+// reuse the `$PropEntry` key after lookup, but must not replay user coercion.
+const ANONYMOUS_EXPANDO_DELETE_COERCION_SOURCE = `
+  export function test() {
+    let calls = 0;
+    const firstTemplate = { raw: { length: 1 } };
+    const secondTemplate = { raw: { length: 1 } };
+    const first = firstTemplate.raw;
+    const second = secondTemplate.raw;
+    const lengthKey = "length";
+    Object.defineProperty(first, "expando", { value: 1, configurable: true });
+    Object.defineProperty(second, "expando", { value: 2, configurable: true });
+    const firstKey = {
+      toString: function () {
+        calls += 1;
+        return "expando";
+      }
+    };
+    const secondKey = {
+      toString: function () {
+        calls += 1;
+        return "expando";
+      }
+    };
+    // Keep both receivers concretely inferred. Only the dynamic key needs the
+    // TypeScript escape hatch; annotating either receiver as any would route
+    // this probe through the open-object lowering instead of the closed arm.
+    const operatorDeleted = delete first[firstKey as any];
+    const reflectDeleted = Reflect.deleteProperty(second, secondKey as any);
+    return operatorDeleted && reflectDeleted && calls === 2 && first[lengthKey] === 1 &&
+      first["expando"] === undefined && second["expando"] === undefined ? 1 : 0;
+  }
+`;
+
+// This stays separate from the language-mode-neutral Reflect control above:
+// ES modules are strict, so a failed operator delete of a non-configurable
+// bag entry must throw rather than merely return false.
+const ANONYMOUS_EXPANDO_STRICT_DELETE_SOURCE = `
+  export function test() {
+    const template = { raw: { length: 1 } };
+    const target = template.raw;
+    Object.defineProperty(target, "locked", { value: 3 });
+    try {
+      delete target["locked"];
+      return 0;
+    } catch (error) {
+      return error instanceof TypeError && target["locked"] === 3 ? 1 : 0;
+    }
+  }
+`;
+
+// A closed field named `@@iterator` can denote an actual well-known Symbol
+// slot. Until the delete native has exact Symbol-field inventory, this fixture
+// records the baseline behavior for that receiver and the distinct ordinary
+// string spelling. It is deliberately not asserted as Symbol-delete
+// conformance.
+const ANONYMOUS_EXPANDO_SYMBOL_COLLISION_SOURCE = `
+  export function test() {
+    const symbolTemplate = { raw: { length: 1, [Symbol.iterator]: "physical-symbol" } };
+    const stringTemplate = { raw: { length: 1, "@@iterator": "physical-string" } };
+    const symbolTarget = symbolTemplate.raw;
+    const stringTarget = stringTemplate.raw;
+    const symbolKey = Symbol.iterator;
+    const stringKey = "@@iterator";
+    Object.defineProperty(symbolTarget, symbolKey, { value: "symbol-override", configurable: true });
+    Object.defineProperty(stringTarget, stringKey, { value: "string-override", configurable: true });
+    const symbolRetained = delete symbolTarget[symbolKey] &&
+      symbolTarget[symbolKey] === "symbol-override";
+    const stringRetained = delete stringTarget[stringKey] &&
+      stringTarget[stringKey] === "string-override";
+    return (symbolRetained ? 1 : 0) + (stringRetained ? 2 : 0);
+  }
+`;
+
 const FULL_READER_MASK = 131071;
+const ANONYMOUS_EXPANDO_DELETE_MASK = 511;
 // Read-only 4a6 evidence: JS-host compilation has the same descriptor-reader
 // deficit even when the delete/reassignment sequence is removed. This records
 // the pre-existing mask rather than presenting host parity as a #5152 result.
@@ -289,12 +460,105 @@ const HOST_COMPATIBLE_RAW_READER_SOURCE = RAW_READER_SOURCE.replace(
   "\n",
 );
 
-async function runStandalone(source: string): Promise<number> {
-  const result = await compile(source, { fileName: "issue-5152-raw-readers.js", target: "standalone" });
+async function runStandalone(source: string, fileName = "issue-5152-raw-readers.js"): Promise<number> {
+  const result = await compile(source, { fileName, target: "standalone" });
   expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
   expect(WebAssembly.Module.imports(new WebAssembly.Module(result.binary))).toEqual([]);
   const { instance } = await WebAssembly.instantiate(result.binary, {});
   return (instance.exports as { test(): number }).test();
+}
+
+type ThrownObservation =
+  | { readonly kind: "error"; readonly name: string; readonly message: string }
+  | { readonly kind: "object" }
+  | { readonly kind: "primitive"; readonly value: string };
+
+function observeThrown(error: unknown): ThrownObservation {
+  if (error instanceof Error) return { kind: "error", name: error.name, message: error.message };
+  if (typeof error === "object" && error !== null) return { kind: "object" };
+  return { kind: "primitive", value: String(error) };
+}
+
+/**
+ * Keep known standalone limitations out of positive tests. It records exactly
+ * whether compilation, validation, instantiation, or the exported call fails,
+ * rather than conflating a guest exception with invalid Wasm.
+ */
+async function observeStandalone(source: string, fileName: string) {
+  const result = await compile(source, { fileName, target: "standalone" });
+  const reportedImports = result.imports;
+  if (!result.success) {
+    return {
+      stage: "compile" as const,
+      reportedImports,
+      errors: result.errors.map(({ severity, message }) => ({ severity, message })),
+    };
+  }
+
+  let module: WebAssembly.Module;
+  try {
+    module = new WebAssembly.Module(result.binary);
+  } catch (error) {
+    return { stage: "module" as const, reportedImports, error: observeThrown(error) };
+  }
+  const imports = WebAssembly.Module.imports(module);
+  let instance: WebAssembly.Instance;
+  try {
+    instance = new WebAssembly.Instance(module, {});
+  } catch (error) {
+    return { stage: "instance" as const, reportedImports, imports, error: observeThrown(error) };
+  }
+  try {
+    return {
+      stage: "invoke" as const,
+      reportedImports,
+      imports,
+      value: (instance.exports as { test(): number }).test(),
+    };
+  } catch (error) {
+    return { stage: "invoke-throw" as const, reportedImports, imports, error: observeThrown(error) };
+  }
+}
+
+async function compileStandaloneWithWat(source: string, fileName: string) {
+  const result = await compile(source, { fileName, target: "standalone", emitWat: true });
+  expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
+  expect(WebAssembly.Module.imports(new WebAssembly.Module(result.binary))).toEqual([]);
+  // Artifact capture is opt-in so normal focused tests stay side-effect free.
+  // The structural assertions below must be derived from the exact WAT that
+  // ran, rather than a formatter label or a guessed source-local name.
+  const artifactDir = process.env.JS2WASM_5152_WAT_DIR;
+  if (artifactDir !== undefined) {
+    mkdirSync(artifactDir, { recursive: true });
+    writeFileSync(join(artifactDir, `${fileName}.wat`), result.wat);
+  }
+  return result;
+}
+
+function watFunctionBody(wat: string, name: string): string {
+  const starts = [...wat.matchAll(/^[ \t]*\(func \$([^\s(]+)/gm)].map((match) => ({
+    name: match[1]!,
+    index: match.index,
+  }));
+  const matches = starts.flatMap((entry, index) =>
+    entry.name === name ? [wat.slice(entry.index, starts[index + 1]?.index ?? wat.length)] : [],
+  );
+  expect(matches, `unique WAT function $${name}`).toHaveLength(1);
+  return matches[0]!;
+}
+
+function watCallTargets(wat: string, body: string): string[] {
+  const imports = [...wat.matchAll(/^[ \t]*\(import .+ \(func(?: \$([^\s(]+))?/gm)].map(
+    (match) => match[1] ?? "<anonymous-import>",
+  );
+  const definitions = [...wat.matchAll(/^[ \t]*\(func \$([^\s(]+)/gm)].map((match) => match[1]!);
+  const names = [...imports, ...definitions];
+  if (new Set(names).size !== names.length) throw new Error("WAT callable names are not unique");
+  return [...body.matchAll(/\b(?:return_)?call (\d+)/g)].map((match) => {
+    const target = names[Number(match[1])];
+    if (!target) throw new Error(`WAT call ${match[1]} has no exact callable target`);
+    return target;
+  });
 }
 
 async function runHost<T>(source: string): Promise<T> {
@@ -319,8 +583,21 @@ async function runNativeFirst<T>(source: string): Promise<T> {
 }
 
 function runDirectNodeOracle(source: string): number {
-  const script = source.replace("export function test()", "function test()");
+  const script = source
+    .replace("export function test(): number", "function test()")
+    .replace("export function test()", "function test()")
+    .replaceAll(": any", "")
+    .replaceAll(" as any", "");
   return new Function(`${script}\nreturn test();`)() as number;
+}
+
+function runStrictDirectNodeOracle(source: string): number {
+  const script = source
+    .replace("export function test(): number", "function test()")
+    .replace("export function test()", "function test()")
+    .replaceAll(": any", "")
+    .replaceAll(" as any", "");
+  return new Function(`"use strict";\n${script}\nreturn test();`)() as number;
 }
 
 describe("#5152 closed-struct String.raw readers", () => {
@@ -344,5 +621,99 @@ describe("#5152 closed-struct String.raw readers", () => {
 
   it("keeps the native-first JavaScript boundary positive", async () => {
     expect(await runNativeFirst<string>(NATIVE_FIRST_POSITIVE_SOURCE)).toBe("aXb");
+  });
+
+  describe("anonymous true-expando deletion", () => {
+    it("keeps the direct-Node oracle positive", () => {
+      expect(runDirectNodeOracle(ANONYMOUS_EXPANDO_DELETE_SOURCE)).toBe(ANONYMOUS_EXPANDO_DELETE_MASK);
+    });
+
+    it("deletes independently owned string and Symbol bag entries without host imports", async () => {
+      expect(await runStandalone(ANONYMOUS_EXPANDO_DELETE_SOURCE, "issue-5152-anonymous-expando-delete.js")).toBe(
+        ANONYMOUS_EXPANDO_DELETE_MASK,
+      );
+    });
+
+    it("captures a reviewable anonymous-delete helper artifact when requested", async () => {
+      const result = await compileStandaloneWithWat(
+        ANONYMOUS_EXPANDO_DELETE_SOURCE,
+        "issue-5152-anonymous-expando-delete-artifact.js",
+      );
+      const carrierDelete = watFunctionBody(result.wat, "__carrier_bag_delete");
+      // These identifiers are emitted only by this consumer-only arm. They
+      // establish that an anonymous lookup/screen path was filled, but not
+      // that a formatter's local/type labels identify a particular source
+      // allocation. The persisted artifact is the input to that separate
+      // producer-to-slot audit.
+      expect(carrierDelete).toContain("$anonCandidate");
+      expect(carrierDelete).toContain("$anonEntry");
+      expect(watCallTargets(result.wat, carrierDelete)).toEqual(
+        expect.arrayContaining(["__closure_bag_lookup", "__obj_find", "__delete_property"]),
+      );
+    });
+  });
+
+  describe("known standalone deletion limitations (not conformance)", () => {
+    it("records the unchanged strict failed-delete validation error", async () => {
+      expect(runStrictDirectNodeOracle(ANONYMOUS_EXPANDO_STRICT_DELETE_SOURCE)).toBe(1);
+      const observation = await observeStandalone(
+        ANONYMOUS_EXPANDO_STRICT_DELETE_SOURCE,
+        "issue-5152-anon-delete-strict.js",
+      );
+      expect(observation.stage).toBe("module");
+      if (observation.stage !== "module") throw new Error(`expected module error, got ${observation.stage}`);
+      expect(observation.reportedImports).toEqual([]);
+      expect(observation.error).toMatchObject({
+        kind: "error",
+        name: "CompileError",
+        message: expect.stringContaining("type error in fallthru"),
+      });
+    });
+
+    it("records the coercion-path validation limitation before asserting delete semantics", async () => {
+      expect(runDirectNodeOracle(ANONYMOUS_EXPANDO_DELETE_COERCION_SOURCE)).toBe(1);
+      const observation = await observeStandalone(
+        ANONYMOUS_EXPANDO_DELETE_COERCION_SOURCE,
+        "issue-5152-anon-delete-coercion.ts",
+      );
+      expect(observation.stage).toBe("module");
+      if (observation.stage !== "module") throw new Error(`expected module error, got ${observation.stage}`);
+      expect(observation.reportedImports).toEqual([]);
+      expect(observation.error).toMatchObject({
+        kind: "error",
+        name: "CompileError",
+        message: expect.stringContaining("type error in fallthru"),
+      });
+    });
+
+    it("records the physical-field deletion limitation without treating it as conformance", async () => {
+      const observation = await observeStandalone(
+        ANONYMOUS_EXPANDO_PHYSICAL_DELETE_SNAPSHOT_SOURCE,
+        "issue-5152-anon-delete-physical.js",
+      );
+      expect(observation.stage).toBe("invoke-throw");
+      if (observation.stage !== "invoke-throw") {
+        throw new Error(`expected guest invocation failure, got ${observation.stage}`);
+      }
+      expect(observation.reportedImports).toEqual([]);
+      expect(observation.imports).toEqual([]);
+      // The guest value is deliberately not normalized into a passing delete
+      // result. Its exact payload is recorded in the issue evidence instead.
+      expect(observation.error.kind).toBe("object");
+    });
+
+    it("records the well-known-Symbol physical-field limitation distinctly from the @@ string", async () => {
+      const observation = await observeStandalone(
+        ANONYMOUS_EXPANDO_SYMBOL_COLLISION_SOURCE,
+        "issue-5152-anon-delete-symbol.js",
+      );
+      expect(observation.stage).toBe("invoke");
+      if (observation.stage !== "invoke") throw new Error(`expected invocation result, got ${observation.stage}`);
+      expect(observation.reportedImports).toEqual([]);
+      expect(observation.imports).toEqual([]);
+      // `1` is the current baseline's nonconforming snapshot: only the Symbol
+      // spelling remains visible. It is not a positive Symbol-delete claim.
+      expect(observation.value).toBe(1);
+    });
   });
 });

@@ -1,11 +1,10 @@
 ---
 id: 5269
 title: "ES2015 standalone: Function / Error / Symbol / String / JSON / Number built-ins — r2 residual pass"
-status: done
+status: in-progress
 sprint: current
 created: 2026-09-01
-updated: 2026-09-03
-completed: 2026-09-03
+updated: 2026-09-20
 priority: high
 horizon: l
 feasibility: medium
@@ -83,6 +82,16 @@ loc-budget-allow:
   # this change removes.
   - src/codegen/number-format-native.ts
 coercion-sites-allow:
+  # 2026-09-20 (#5269 Symbol(description)): +1 `__any_to_string` consumer in
+  # `compileNativeSymbolCall`. The narrow native constructor path preflights
+  # the existing object/undefined/Symbol/ToPrimitive/stringifier providers,
+  # evaluates and stores one raw description, and rejects Symbol both before
+  # and after the canonical `ToPrimitive(input, "string")` provider. It then
+  # delegates rendering of that already-obtained non-Symbol primitive to the
+  # existing `__any_to_string` helper. Calling `__extern_toString` instead
+  # would repeat ToPrimitive and admit a Symbol result; this is provider reuse,
+  # not a second hand-rolled coercion matrix.
+  - src/codegen/literals.ts
   # 2026-09-02 (Opus impl, Step J-1): the reflective
   # `Number.prototype.toPrecision` body is §21.1.3.5 verbatim, and its two
   # coercions are the SAME helpers the already-native DIRECT arm
@@ -1745,3 +1754,331 @@ supplementary `.description` bit (1) also fails while its ES2015 `toString()`
 control passes. Keep the later-edition accessor limitation separate, and
 retain ES2015 identity/`toString()` acceptance rather than silently expanding
 this fix to unrelated reflective accessor behavior.
+
+### Isolated native Symbol(description) implementation and receipts
+
+The authorized isolated implementation is based on
+`62221769a87acdc32759c656702eede64936feb5` and is limited to
+`src/codegen/literals.ts`, the dedicated
+`tests/issue-5269-symbol-description.test.ts`, and this issue plan. It does
+not alter IR selection, layouts, factories, runtime providers, or the host
+description-registration ABI.
+
+The native path now:
+
+1. evaluates the raw description once and evaluates every ignored trailing
+   argument in source order before constructor conversion;
+2. tests raw `undefined` before conversion, so omission-equivalent undefined
+   remains absent while an object whose conversion returns undefined stores the
+   string `"undefined"`;
+3. applies `ToPrimitive(input, "string")` once, rejects a native Symbol both
+   before and after that step, then sends only the non-Symbol primitive through
+   the existing `$__any_to_string` helper;
+4. allocates/captures the outer id only after successful conversion, retaining
+   the id local for the description store and result; and
+5. fails closed when the native object/undefined/Symbol/stringifier providers
+   are unavailable. The description-store template and both distinct TypeError
+   templates are provisioned before numeric indices are captured, so an
+   import-index repair cannot double-shift a shared instruction array.
+
+The original post-implementation control exposed one remaining narrow gap:
+`Symbol({ toString() { return Symbol("x"); } })` scored **5/7** in
+`/private/tmp/js2-5269-symbol-controls-terra-20260920-postprimitive-control-baseline-20260920.log`.
+The callback-once bit (1) and `Object(Symbol(...))` TypeError bit (4) passed;
+the direct post-`ToPrimitive` Symbol TypeError bit (2) was absent. This is why
+the implementation does not call `__extern_toString` after conversion: that
+helper would run the correct `ToPrimitive` but let a resulting Symbol reach
+the general native renderer.
+
+At the time of the initial focused receipt, the candidate source SHA-256 was
+`9ad3122360e16d7e99d732e542592a23a0c5e6c2fb216ab069c890ad1d425c9f` and
+the focused test SHA-256 was
+`28083423263f6516e0a9b9906981bc3e0488491026db04011c64c2cdf6c19a33`.
+With Node v24.19.0 and Vitest v3.2.4, the final focused receipt is
+`/private/tmp/js2-5269-symbol-controls-terra-20260920-final-focused-candidate-20260920.log`:
+**14/14 harness assertions pass**. Its denominator is deliberately split:
+
+- 10 ordinary ES2015 controls: dynamic undefined, null/boolean/number
+  primitive rendering, dynamic Symbol rejection, post-`ToPrimitive` Symbol
+  rejection, ignored-trailing-argument order/abrupt completion, object
+  fallback, object-to-undefined, abrupt identity, nested conversion, and
+  direct argument reentrancy;
+- 1 ordinary supplementary preservation control for omitted/dynamic undefined;
+- 3 value-only `it.fails` assertions for the separately measured later-edition
+  `.description` accessor residual. Compilation, import inspection,
+  instantiation, and execution stay in `beforeAll` and are never inverted.
+
+The trailing-argument control independently proves all `ArgumentListEvaluation`
+steps relevant here: an ignored side effect runs before `description.toString`,
+a static first-argument Symbol throws only after its trailing side effect, and
+an abrupt trailing argument prevents `description.toString` while preserving
+the thrown marker. The primitive rendering control covers the new direct
+`$__any_to_string` consumer for null, boolean, and number descriptions.
+
+#### Void-returning description follow-up — terminal focused rerun
+
+The recorded 14/14 receipt above remains the result for its named test SHA;
+it did not cover a direct call whose TypeScript return type is `void`. The
+follow-up control (current test SHA-256
+`69b36cfdf89073e2d98d9b7103f627bfcf070ef57ba341f604392e6f94a3a3b3`) calls
+`Symbol(description())` where `description(): void` increments a counter. It
+asserts the effect runs once, the result renders as `Symbol()`, and the result
+has a distinct identity from a subsequently omitted-description Symbol.
+
+The public `compileExpression` contract is relevant: with the requested
+`externref` type, a `VOID_RESULT` preserves its emitted side effects and pushes
+the canonical default externref, which follows the existing native undefined
+predicate. The local `rawType === null` branch remains fail-closed for an
+actual compile refusal so it cannot erase an existing diagnostic by silently
+substituting undefined. The terminal rerun is
+`/private/tmp/js2-5269-symbol-controls-terra-20260920-final-focused-void-candidate-20260920.log`:
+**15/15 harness assertions pass** with Node v24.19.0 and Vitest v3.2.4. Its
+denominator is 11 ordinary ES2015 controls (the ten recorded above plus the
+void-return control), one ordinary supplementary preservation control, and
+three baseline-confirmed expected value-assertion failures for the separately
+tracked later-edition accessor residual. Thus “15/15” is a harness result, not
+15 independent conformance passes; compilation, import inspection,
+instantiation, and execution remain outside every expected-failure wrapper.
+
+#### Final scoped validation after formatting
+
+The final staged `literals.ts` SHA-256 is
+`d9ca35b538b04f7627144adf6b6265ee843ab58074252ef983283d10c1cc8e70`.
+The durable normal-chain receipt is
+`/private/tmp/js2-5269-symbol-controls-terra-20260920-normal-scoped-gates-rerun-20260920.log`,
+which terminated with exit 0 after TS7 typecheck, scoped lint and formatting,
+the LOC/function/coercion/oracle ratchets, changed-root execution of this
+15-assertion suite, the existing 18/18 numeric-local control, and issue-plan
+integrity validation. The explicit `__any_to_string` allowance is limited to
+this guarded native Symbol consumer and records why existing object,
+undefined, Symbol, `ToPrimitive`, and rendering providers are reused rather
+than adding a coercion matrix.
+
+The exact dead-export checker also exits 0 on both candidate and pristine
+baseline. It retains the same informational non-retirement observation for
+two unrelated dynamic imports (`getBinaryenModule` and
+`resolvePlatformCapabilityImport`), so the exit is a preservation result, not
+a claim that the repository-wide strict closure is clean.
+
+#### Exact original pair, same runner and manifest
+
+The fixed two-row manifest
+`/private/tmp/js2-5269-symbol-baseline-terra-20260920.paths` has SHA-256
+`559ab2b3939aaa7e36a578ffb9580f0e62c5cf524008bbd1dd8b70689b59019f` and
+contains only:
+
+```text
+built-ins/Symbol/desc-to-string.js
+built-ins/Symbol/desc-to-string-symbol.js
+```
+
+Both sides used the same Node v24.19.0 command:
+
+```text
+node --import tsx scripts/run-test262-paths.mts <manifest> --isolate --standalone
+```
+
+The pristine detached baseline at the same `62221769a8` source commit, with
+`literals.ts` SHA-256
+`6febfb7607d0ff1293301febd7102ec2784cec3d918f6e983f7ddffaba8924ef`, was
+**1 pass / 1 fail**: `desc-to-string.js` failed at the empty callback trace and
+`desc-to-string-symbol.js` passed. The earlier durable baseline receipt is
+`/private/tmp/js2-5269-symbol-matched-base-terra-20260920-isolated-baseline-pair-20260920.log`.
+The final candidate rerun is
+`/private/tmp/js2-5269-symbol-controls-terra-20260920-final-matched-isolated-candidate-pair-20260920.log`:
+**2 pass / 0 non-pass**. This is the matched-runner evidence for exactly one
+original 1F→P gain; the primitive Symbol original remains P→P.
+
+#### ES2015 description/registry neighborhood comparison
+
+The scoped neighborhood manifest is
+`/private/tmp/js2-5269-symbol-description-registry-es2015-20260920.paths`,
+SHA-256
+`445b961b2e9f7baf4389f1feaba033e9fe1843a47a1bf94bfbd8e1a7aaf3215a`.
+It has 19 rows, all verified against
+`website/public/benchmarks/results/test262-file-editions.json` as ES2015:
+the two description originals, eight `Symbol.for` rows, eight `Symbol.keyFor`
+rows, and `Symbol/not-callable.js`. It is a description/registry neighborhood,
+not a claim to have rerun all 80 ES2015 files below `built-ins/Symbol/`.
+
+The candidate receipt
+`/private/tmp/js2-5269-symbol-controls-terra-20260920-description-registry-candidate-20260920.log`
+is **14 pass / 5 fail**; the pristine same-manifest baseline receipt
+`/private/tmp/js2-5269-symbol-matched-base-terra-20260920-description-registry-baseline-20260920.log`
+is **13 pass / 6 fail**. Among rows that could run in both worktrees, the only
+delta is again `desc-to-string.js` 1F→P. The following three failures are
+identical and outside this description slice: `Symbol/for/to-string-err.js`
+(closure null-pointer runtime error), `Symbol/keyFor/arg-non-symbol.js`
+(missing TypeError), and `Symbol/not-callable.js` (missing TypeError).
+
+`Symbol/for/cross-realm.js` and `Symbol/keyFor/cross-realm.js` are deliberately
+retained in both manifests. The initial receipt marked them
+**infrastructure-unmeasured** because each lacked a compiler-keyed QuickJS
+provider; that provisional label is corrected by the paired provider recovery
+and reruns recorded below. Do not skip them, change only one side's eval
+engine, or infer correctness from either a matched provider error or a matched
+realm failure.
+
+The approved provider recovery uses the repository's
+`scripts/build-quickjs-eval-provider.mjs` with a source-keyed artifact and a
+locally compiled/canary-verified adapter. The candidate and pristine baseline
+default keys both reconstruct to `2e2d7736713beeda` with no pin or `OPT`
+override; the existing prebuilt artifact directory
+`/Users/thomas/Code/js2/.test262-cache/quickjs-artifact-2e2d7736713beeda`
+has `libquickjs.wasm` SHA-256
+`073742801ba76347371be277f6d275488badce1df6bfb480741548ec2a279d45`, matching
+its `build-info.json`. It was verified/copied through the official builder into
+each worktree's own keyed cache, which then compiled a worktree-specific
+adapter and ran linked-pair canaries. The complete paired results are recorded
+under **QuickJS recovery and cross-realm update** below.
+
+The historical `.description` observations were separately compared on the
+same candidate and pristine source and each still produced value 0:
+`/private/tmp/js2-5269-symbol-controls-terra-20260920-accessor-observation-candidate-20260920.log`
+and
+`/private/tmp/js2-5269-symbol-matched-base-terra-20260920-accessor-observation-baseline-20260920.log`.
+That unchanged later-edition gap is intentionally neither counted as an
+ES2015 success nor silently erased by this implementation.
+
+The QuickJS recovery and paired cross-realm reruns below supersede that pending
+measurement. Remaining acceptance is the normal TS7/source-gate sequence, a
+fresh published-hunk overlap check, and a separately authorized publication
+attempt. Egress remains blocked for prior branches; no push or PR is implied by
+these local receipts.
+
+#### QuickJS recovery and cross-realm update
+
+The supported QuickJS recovery is now complete on both comparison worktrees.
+The candidate builder receipt is
+`/private/tmp/js2-5269-symbol-controls-terra-20260920-quickjs-provider-candidate-20260920.log`;
+the pristine baseline receipt is
+`/private/tmp/js2-5269-symbol-matched-base-terra-20260920-quickjs-provider-baseline-20260920.log`.
+Each copied and verified the matching artifact into its own
+`.test262-cache`, compiled its own adapter from `src/index.ts`, and ran the
+official linked-pair canaries. Both generated adapter key
+`d4799bda84cfed0d`, 518166 bytes, against the same artifact SHA-256
+`073742801ba76347371be277f6d275488badce1df6bfb480741548ec2a279d45`;
+candidate/baseline canary timings were 1974ms/2030ms respectively. Matching
+adapter bytes do not imply shared reuse: each official builder invocation used
+its own source checkout and own cache destination.
+
+The dedicated two-row ES2015 cross-realm manifest
+`/private/tmp/js2-5269-symbol-crossrealm-es2015-20260920.paths` (SHA-256
+`2a4648073a41b6739f26bd5f72f72a09a419e9a14d796452eed8fc3bc55c7680`) was
+then rerun with explicit `JS2WASM_EVAL_ENGINE=quickjs` and `--isolate
+--standalone`. Candidate and pristine baseline are both **0 pass / 2 fail**:
+
+- `built-ins/Symbol/for/cross-realm.js`
+- `built-ins/Symbol/keyFor/cross-realm.js`
+
+Both now reach the same real, pre-existing realm exposure error,
+`TypeError: Cannot read properties of undefined (reading 'for')`, at the
+foreign `OSymbol.for` access. The terminal receipts are
+`/private/tmp/js2-5269-symbol-controls-terra-20260920-crossrealm-candidate-20260920.log`
+and
+`/private/tmp/js2-5269-symbol-matched-base-terra-20260920-crossrealm-baseline-20260920.log`.
+This supersedes the earlier **infrastructure-unmeasured** label for those two
+rows: provider setup is proven; the identical foreign-realm-global failure is
+not part of this `Symbol(description)` implementation.
+
+The authoritative route is `scripts/run-test262-paths.mts` →
+`runTest262File` → `assembleOriginalHarness`, which prepends
+`scripts/test262-fyi-runtime.js`. That runtime's `createRealm` explicitly
+attempts to forward `realmGlobal.Symbol` from `globalThis.Symbol`; the empty
+`createRealm` stub in the deprecated synthetic `wrapTest` path is not involved.
+The precise lowering cause of the observed undefined foreign constructor is
+therefore not assigned here. It is handed to [#4274 — ES2015 true realms:
+replace `$262.createRealm` pseudo-realm with IR/runtime realm identity (128
+files)](https://js2wasm.loopdive.com/dashboard/issue.html?slug=4274-es2015-true-realms-runtime-ir),
+which owns distinct realm intrinsics with the shared global Symbol registry.
+
+#### Local commit/signing checkpoint
+
+The final issue-integrity rerun is terminal exit 0 at
+`/private/tmp/js2-5269-symbol-controls-terra-20260920-final-issue-integrity-20260920.log`.
+An earlier requested signed commit stopped at `cannot run gpg: No such file or
+directory`; this worktree has no configured GPG/SSH signing format, signing
+key, signing program, or reachable SSH agent. No credential or global
+configuration was invented, and that attempt created no commit, push, or PR.
+On 2026-09-20 the user explicitly authorized an unsigned commit and a normal
+fork-feature-branch push for completed fixes. This candidate awaits the
+serialized normal-hook/commit slot; it will still run ordinary hooks and push
+only to `fork`, never to `main`. This is a publication checkpoint, not a claim
+that the umbrella issue is complete.
+
+#### Follow-up A2 diagnosis — not part of this patch
+
+The matched neighborhood keeps
+`built-ins/Symbol/keyFor/arg-non-symbol.js` red. Source and test review locate
+the surviving final assertion at `Object(Symbol("s"))`: earlier primitive,
+ordinary-object, array, and arguments-object cases already receive TypeError.
+The native `Symbol.keyFor` arm at
+`src/codegen/expressions/call-namespace-static.ts:686-712` has a static
+non-symbol fast throw, but `Object(Symbol("s"))` is `mixed` and reaches
+`compileExpression(..., { kind: "i32" })`. That coercion accepts a broad
+externref lane and lets the wrapper become a registry id rather than enforcing
+§20.4.2.6's primitive-Symbol brand. It also evaluates only argument zero: both
+the static throw path (`:699-705`) and the mixed path (`:709-711`) can skip
+ignored trailing arguments even though ArgumentListEvaluation completes before
+`Symbol.keyFor` runs.
+
+`ensureSymbolCarrier` already provides the exact native primitive test:
+an i32 value branded as `symbol` boxes through `__box_symbol` into the
+interned `$Symbol` carrier (`type-coercion.ts:3360-3376`), whose field 0 is the
+registry id. A wrapper is a different object carrier and must fail
+`ref.test $Symbol`; it must **not** be unboxed through Number or subjected to
+`ToPrimitive`. The exported boundary helpers in `symbol-native.ts:224-271` are
+host-bridge-gated, so this standalone lowering must emit the existing direct
+carrier test/cast locally rather than assume that those exports exist.
+
+**Future isolated A2 ownership and algorithm (not authorized by this
+description patch).** Limit production ownership to the native `keyFor` arm in
+`src/codegen/expressions/call-namespace-static.ts` plus a new narrow regression
+test. Do not modify `symbol-native.ts`, `type-coercion.ts`, any IR selector,
+layout/factory, registry ABI, `Symbol.for`, or the JS-host arm.
+
+1. Preflight the existing carrier and registry, provision a local TypeError
+   instruction template, flush late-import shifts, then fetch the final
+   `$Symbol` type and registry-helper indices. A missing prerequisite must
+   decline/fail closed, never revive i32 coercion.
+2. Evaluate argument zero exactly once into an externref local; the established
+   symbol-branded i32-to-externref conversion supplies the interned `$Symbol`
+   carrier. Evaluate each non-spread trailing argument in source order and drop
+   it before any brand test. A later abrupt trailing argument therefore wins
+   over the eventual TypeError. A spread must use the canonical expanded-call
+   route or make this native arm decline; it must never be silently compiled as
+   a dropped `SpreadElement`.
+3. Test that saved raw value with `any.convert_extern`/`ref.test $Symbol`. On
+   failure, throw the §20.4.2.6 TypeError. On success, cast the same saved
+   carrier, read only its id field, and call `__symbol_keyfor_native`. This is
+   a Type check, not a coercion: `Object(Symbol())`, a plain object whose
+   `valueOf` returns a Symbol, and a number all fail without observable
+   conversion callbacks.
+
+Required ordinary standalone controls for that future slice are: direct
+registered and unregistered primitive ids; the same cases through an `any`
+parameter; `Object(Symbol("s"))` rejection; a fake object whose conversion
+methods count calls (TypeError with zero conversion calls); and two
+ArgumentListEvaluation cases proving a normal ignored trailing effect occurs
+before rejection while an abrupt trailing effect propagates instead of the
+brand TypeError. Setup/compile/instantiate/import checks must remain outside
+any expected-failure wrapper.
+
+The first authoritative manifest is exactly
+`built-ins/Symbol/keyFor/arg-non-symbol.js`; a matched pristine/candidate
+isolated pair must establish its current verdict before a fix claim. The
+immediate positive retention neighbors are
+`built-ins/Symbol/keyFor/arg-symbol-registry-hit.js` and
+`built-ins/Symbol/keyFor/arg-symbol-registry-miss.js`. The cross-realm row
+remains #4274 work, and reflection metadata/not-a-constructor rows are not
+evidence for this brand-only slice.
+
+**IR/ownership boundary.** At source base
+`62221769a87acdc32759c656702eede64936feb5`, published #5748
+`60fb42a20c` has no `call-namespace-static.ts` diff. Published #5753
+`cddba56b768` does touch that file, but its Symbol-area hunk changes the
+`Symbol.for` return brand; the `keyFor` instructions above are context-only.
+It also changes `type-coercion.ts` and IR-owned files, which this slice must
+not touch. This is a narrow current-hunk observation, not clearance for
+unpublished work: recheck the exact overlap after synchronization before any
+implementation or publication.
