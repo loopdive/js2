@@ -1693,3 +1693,91 @@ repository-hook evidence remains required before publication.
 ## References
 
 - #5142 (wave-1 plan), PRs #5179, #5213; #5200 (strict-rerun isolation).
+
+## 2026-09-20 Annex B `RegExp.prototype.compile` direct-syntax reconciliation (ac76, source-only)
+
+This is an isolated reconciliation of the previously measured Annex B literal
+slice, on
+`codex/5198-annexb-syntax-on-main-20260920` at
+`ac76d8c6cd63864e04de4592a5179050ff1b1f91`. Before the transplant,
+`tryCompileStandaloneRegExpCompile` was verified byte-for-byte equal to its
+`f3520ca177` direct-compile body. The later global `@@match` result-shape
+change shares this source file but changes neither this direct route nor its
+in-place compiler contract.
+
+The scoped source change stages the receiver and both arguments exactly as the
+existing route does, then recognizes only direct string/no-substitution-template
+literals, omitted arguments, and `void 0`. For a host-invalid static pair it
+uses the existing syntax oracle and runtime `SyntaxError` emitter before
+`emitRegExpCompileInPlace` can mutate the existing RegExp. Identifiers named
+`undefined`, dynamic values, reflective calls, and valid-but-unsupported
+patterns deliberately remain on their existing paths. No expressions,
+IR/context/layout, dynamic-parser, or generic property-runtime code is part of
+this slice.
+
+The accompanying 12-control focused fixture is retained verbatim. Historical,
+same-base `f352` evidence is **not** current-main validation: its compact
+receipt was baseline 6 pass / 6 fail and candidate 8 pass / 4 fail, while the
+four original maintained-harness rows were baseline 2 pass / 2 fail and
+candidate 4 pass / 0 fail. The four compact residuals stay raw requirements:
+shadowed `undefined` and abrupt receiver completion in host and standalone.
+They must not be converted to expected failures or used to claim publication
+readiness.
+
+Before any publication decision, run a fresh matched `ac76` baseline and this
+candidate for the compact fixture and exact original rows, then retain the
+existing #4439 poison/first-use controls and a frozen 20-row compile-family
+manifest. This handoff neither closes #5198 nor changes ownership of the
+pending expression-dispatch investigation.
+
+### Wrap-up checkpoint — current `ac76` candidate only
+
+The reconciled source checksum is
+`243d13a6230714cfee2420fb64e1b6f7c68c208be1f90b3537671a8700b462f9`;
+the complete focused fixture checksum is
+`872287be75fd47de8b0fdb9b6e27c32802af44a279237212b416b5b4d65cf871`.
+With Node 24 and one Vitest fork, the current candidate fixture is **8 pass /
+4 fail**. It passes both invalid-literal/state-preservation cases, both
+receiver-evaluation cases, both valid-but-unsupported poison cases, and both
+host valid-pattern controls. Its unchanged raw failures are shadowed
+`undefined` in host and standalone, abrupt receiver completion in host, and
+the standalone abrupt-receiver compile refusal
+`RegExp values not created by this standalone backend`. Receipt:
+`.tmp/5198-annexb-compile-syntax-candidate-ac76-rerun-20260920.log`.
+An earlier no-`node_modules` setup attempt executed zero tests and is retained
+separately; it is not a semantic receipt.
+
+A detached clean `ac76` baseline worktree at
+`/private/tmp/js2-5198-annexb-syntax-baseline-ac76-20260920` has the
+byte-identical fixture and provisioned repository dependencies, but **was not
+run** when the user requested wrap-up. Therefore there is no current-base
+baseline/candidate attribution, no current `pattern-string-invalid{,-u}`
+original result, and no current #4439 poison/first-use result. The frozen
+derived 20-row Annex B compile manifest is
+`.tmp/5198-annexb-compile-es2015-20.txt` (SHA-256
+`67d0af1ee37b488d35ff76dd543c02021f58b7092e4d65a95529cce8536ebef3`);
+it too remains unrun.
+
+Ready publication is not eligible: the four focused failures remain strict
+requirements, and the matched baseline, exact-original, poison, and 20-row
+evidence is pending. This change is instead being preserved as an explicitly
+unfinished **draft checkpoint** so the current three-file reconciliation and
+its raw evidence are reviewable without claiming merge readiness. The
+shadowed-`undefined` failure remains an
+`expressions.ts` binding-identity ownership boundary outside this slice; the
+abrupt-receiver paths remain separately unattributed. This checkpoint preserves
+the old `f352` worktree and makes no expected-failure conversion, IR/context,
+or expression-dispatch change.
+
+### Draft checkpoint gate receipt
+
+The full normal pre-commit was deliberately attempted before this draft
+checkpoint. `lint-staged`, the LOC budget, and the function budget passed;
+`test:changed-root` then stopped on the same raw focused result, **8 pass / 4
+fail**. The failures are host and standalone shadowed-`undefined` (actual
+`0`), host abrupt receiver completion (actual `0`), and standalone abrupt
+receiver compilation refusal (#1539 Phase 2a). This draft neither suppresses
+nor reclassifies those failures. Per the repository's documented unfinished
+checkpoint mode, its commit may use `SKIP_SLOW_PRECOMMIT=1` only to retain the
+normal lint/format and budget hooks while omitting that known slow failing
+changed-root chain; it must still run the mandatory normal pre-push gates.
