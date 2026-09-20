@@ -1580,3 +1580,79 @@ throughout), so nothing here trades value loss for an import leak.
   `tests/issue-5269-es2015-builtins-r2.test.ts` is 68/68 green (63 existing +
   5 new R3-2/R3-1 pins), and the 20-row ordinary-shape control shows zero blast
   radius on all three targets.
+
+## 2026-09-20 Symbol description residual triage (not implemented)
+
+The completed r2/r3 slices above do not establish that A-6's description
+coercion requirement is complete. The pinned standalone oracle-14 rows at
+compiler `d5e58586d1` still report `built-ins/Symbol/desc-to-string.js` failing:
+the first expected `toStringvalueOf` trace is empty. This is historical
+selection evidence, not a reproduction on current main or a newly measured
+regression. The ES2015 file-edition join retains 1,333 non-pass rows; no global
+pass count changes are claimed by this audit.
+
+At upstream `200f7e2c8bc00dfb9a9c50dcc4b6570413f8a567`, source inspection of
+`src/codegen/literals.ts::compileSymbolCall` confirms that the native-provider
+description still uses an AnyString-targeted `compileExpression` and
+`coerceType`. A second, unexecuted hypothesis is reentrant identity loss:
+the function increments the global symbol counter before evaluating the
+description, then rereads that global for both description storage and its
+result. If description conversion creates another Symbol, the outer call
+may reuse the inner call's identity and overwrite its description. Source
+inspection alone does not prove which runtime route the original takes.
+
+### Proposed next slice and acceptance
+
+1. Obtain exact-hunk clearance for `compileSymbolCall` from the separate IR
+   migration owner; a coordination request was sent, but no claim or source
+   edit has been made. Keep IR selection, layout, and producer work reserved.
+   A one-shot published-overlap check found IR PR 5748 open at
+   `60fb42a20c0c71e1f273527571170e38da9e5d1e` without a literals/Symbol file
+   change, and IR PR 5753 open at frozen
+   `cddba56b768f30eb5d9af29d2954dd69e2b534b5`. The latter's `literals.ts`
+   changes are an import and `objectLiteralForcesHostPath`, not
+   `compileSymbolCall` or `ensureSymbolCounter`. Preserve those published
+   hunks. This establishes published non-overlap only; it is not clearance
+   for unpublished work on the other machine.
+2. In a fresh current-main worktree, reproduce the unchanged original with
+   `scripts/run-test262-paths.mts --isolate --standalone`, saving the terminal
+   result and commit. Retain a passing primitive-description control. Check
+   the route and zero host imports before attributing the failure.
+3. Pair nested-Symbol description controls with native JavaScript: conversion
+   order, object-return fallback to `valueOf`, abrupt completion identity,
+   dynamic `undefined` versus the string `"undefined"`, and distinct inner /
+   outer identities with independently preserved descriptions. Do not infer
+   the reentrancy defect from the original's trace failure.
+4. If confirmed, use the existing semantic ToString path while evaluating the
+   description exactly once. Preserve the call's identity across callbacks
+   (or allocate it after successful conversion); do not use the mutable
+   global counter as a saved result. Preserve primitive Symbol rejection and
+   the host-provider boundary. Derive the implementation from current helper
+   contracts rather than copying the old A-6 line-number sketch. In particular,
+   `emitArgAsNativeString` is expression-based, stringifies `undefined`, and
+   may decline to legacy coercion; it is not by itself Symbol's optional
+   description algorithm. Any undefined check and subsequent conversion must
+   share the already-evaluated value, not replay the argument expression.
+5. Re-run the exact original, the paired controls, neighboring Symbol
+   description/registry tests, and normal gates on the final publication
+   tree. Publish this as its own completed-fix PR, not as part of the iterator
+   fix. If ownership or reproduction disproves the proposed slice, record
+   that outcome here before selecting another target.
+
+This is a residual handoff, not a reopening of every completed r2/r3 slice or
+a claim that the historical 100% ES2015 goal has been reached.
+
+### Current-main reproduction
+
+The provisioned detached baseline worktree
+`/private/tmp/js2-5269-symbol-baseline-terra-20260920` at
+`200f7e2c8bc00dfb9a9c50dcc4b6570413f8a567` ran the original together with
+`built-ins/Symbol/desc-to-string-symbol.js` as a passing primitive-Symbol
+rejection control, using the isolated standalone project runner. The two-row
+manifest SHA-256 is
+`559ab2b3939aaa7e36a578ffb9580f0e62c5cf524008bbd1dd8b70689b59019f`.
+The durable terminal log is
+`/private/tmp/js2-5269-symbol-baseline-terra-20260920-original-plus-primitive-20260920.log`.
+Result: **1 fail / 1 pass**. The unchanged object-description original still
+reports an empty callback trace instead of `toStringvalueOf`; the primitive
+Symbol rejection control passes. No production Symbol edits were made.
