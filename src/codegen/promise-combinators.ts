@@ -126,7 +126,7 @@ export function isNativeCombinatorMethod(method: string): method is NativeCombin
  * observable combinator work is constructing C and validating the executor's
  * captured resolve/reject pair.
  */
-interface CustomCapabilityRuntime {
+export interface CustomCapabilityRuntime {
   stateTypeIdx: number;
   executorTypeIdx: number;
   executorFuncIdx: number;
@@ -143,7 +143,7 @@ interface CustomCapabilityRuntime {
  * builtin-fn metadata carrier exactly as `$__promise_settle_cap` does, and the
  * capture is appended AFTER the carrier's fields — never at a hard-coded index.
  */
-function buildCustomCapabilityExecutorInstrs(runtime: CustomCapabilityRuntime, stateLocal: number): Instr[] {
+export function buildCustomCapabilityExecutorInstrs(runtime: CustomCapabilityRuntime, stateLocal: number): Instr[] {
   return [
     { op: "ref.func", funcIdx: runtime.executorFuncIdx },
     { op: "i32.const", value: 2 }, // (#3673) $arity — the executor takes (resolve, reject)
@@ -157,7 +157,7 @@ function buildCustomCapabilityExecutorInstrs(runtime: CustomCapabilityRuntime, s
 
 type CtxWithCustomCapability = CodegenContext & { __promiseCustomCapability?: CustomCapabilityRuntime };
 
-function customCapabilityTypeError(ctx: CodegenContext): Instr[] {
+export function customCapabilityTypeError(ctx: CodegenContext): Instr[] {
   // NewPromiseCapability's executor protocol throws a TypeError before the
   // combinator touches an empty iterable when either captured slot is not
   // callable.  Reuse the in-module standalone Error constructor and native
@@ -169,7 +169,7 @@ function customCapabilityTypeError(ctx: CodegenContext): Instr[] {
 }
 
 /** Register the two-argument capability executor and its mutable slots once. */
-function ensureCustomCapabilityRuntime(ctx: CodegenContext): CustomCapabilityRuntime | null {
+export function ensureCustomCapabilityRuntime(ctx: CodegenContext): CustomCapabilityRuntime | null {
   const cached = (ctx as CtxWithCustomCapability).__promiseCustomCapability;
   if (cached) return cached;
 

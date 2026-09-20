@@ -81,6 +81,7 @@ import {
   isNativeCombinatorMethod,
   resolveExternrefVecArg,
 } from "../promise-combinators.js";
+import { isCustomCombinatorMethod, tryEmitCustomCombinatorCall } from "../promise-custom-combinator.js";
 import type { InnerResult } from "../shared.js";
 import { brandExternMethodResult, coerceType, compileExpression, VOID_RESULT } from "../shared.js";
 import { compileSpreadCallArgs } from "./extern.js";
@@ -2944,6 +2945,17 @@ export function compileNamespaceStaticCall(
     // the earlier direct-call site (`Promise.resolve(v)` /
     // `Promise.reject(r)` without `.call`) and does not apply here.
     const methodName = propAccess.expression.name.text;
+
+    // (#6651 cluster D / #5197 R3-3) `Promise.{all,race}.call(C, iterable)` for
+    // an ordinary compiled `C` runs the §27.2.4.1.1/§27.2.4.3.1 element
+    // protocol natively (promise-custom-combinator.ts owns admission, argument
+    // compilation and the transactional refusal) instead of leaking the
+    // unsatisfiable `Promise_all`/`Promise_race` host import. Tried BEFORE the
+    // narrow #4682 empty-array arm, which remains the fallback.
+    if (isStandalonePromiseActive(ctx) && isCustomCombinatorMethod(methodName)) {
+      const custom = tryEmitCustomCombinatorCall(ctx, fctx, expr, methodName);
+      if (custom !== undefined) return custom;
+    }
 
     // (#4682) Bounded NewPromiseCapability arm: an ordinary compiled
     // constructor plus an empty array.  The existing native aggregate path
