@@ -4,7 +4,7 @@ title: "ES2015 true realms: replace `$262.createRealm` pseudo-realm with IR/runt
 status: ready
 sprint: current
 created: 2026-08-09
-updated: 2026-09-13
+updated: 2026-09-20
 priority: high
 horizon: xl
 feasibility: hard
@@ -23,6 +23,53 @@ origin: "2026-08-09 exact-ES2015 cross-realm feature cohort: GC 128/128 non-pass
 ---
 
 # #4274 — Give `$262.createRealm()` real realm identity
+
+## 2026-09-20 measured Symbol-realm handoff
+
+The two official ES2015 originals `built-ins/Symbol/for/cross-realm.js`
+and `built-ins/Symbol/keyFor/cross-realm.js` were rerun on upstream
+`62221769a87acdc32759c656702eede64936feb5` and the isolated #5269
+description-coercion candidate. Both runs finish **0 pass / 2 fail** with
+`TypeError: Cannot read properties of undefined (reading 'for')` when using
+the foreign `OSymbol`. This is an existing failure, not a regression attributed
+to the description patch. Manifest SHA-256:
+`2a4648073a41b6739f26bd5f72f72a09a419e9a14d796452eed8fc3bc55c7680`.
+
+Both worktrees independently built and canary-verified their QuickJS adapters
+through `scripts/build-quickjs-eval-provider.mjs`; the pinned artifact key is
+`2e2d7736713beeda`, artifact SHA-256
+`073742801ba76347371be277f6d275488badce1df6bfb480741548ec2a279d45`.
+The earlier missing-provider errors are superseded by these measured runtime
+failures. Exact terminal logs:
+
+- `/private/tmp/js2-5269-symbol-matched-base-terra-20260920-crossrealm-baseline-20260920.log`
+- `/private/tmp/js2-5269-symbol-controls-terra-20260920-crossrealm-candidate-20260920.log`
+
+**Current harness attribution:** `run-test262-paths.mts --isolate --standalone`
+calls `runTest262File`, which assembles the original harness through
+`tests/test262-original-harness.ts::harnessSourceParts`. That route prepends
+`scripts/test262-fyi-runtime.js`, whose `createRealm` currently forwards
+`Symbol: globalThis.Symbol`. The empty `createRealm` stub in the deprecated
+`wrapTest` path is not the cause demonstrated by this run. The exact lowering
+that exposes the forwarded Symbol as undefined remains to be isolated.
+
+Next implementation plan, subject to the existing IR coordination hold:
+
+1. Reproduce the two originals plus direct `globalThis.Symbol` and returned
+   realm-global property controls, preserving the authoritative harness route.
+2. Trace the failed global/property lowering separately from realm identity.
+   Repairing undefined exposure alone cannot satisfy the originals: they also
+   require distinct foreign `Symbol.for`/`Symbol.keyFor` function identities.
+3. Implement realm-local intrinsic facades with the existing planned explicit
+   realm carrier and shared agent-level Symbol registry. Do not make the tests
+   appear green by aliasing the current realm's Symbol namespace or weakening
+   their identity assertions.
+4. Rerun the frozen realm cohorts and ordinary current-realm Symbol controls;
+   record exact per-file deltas. These two rows do not update the historical
+   128/129-row cohort totals below.
+
+This is a documentation handoff, not a new implementation claim or permission
+to modify the parallel machine's IR migration.
 
 ## 2026-09-13 redispatch plan
 
