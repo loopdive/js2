@@ -233,12 +233,36 @@ Measured row cost, standalone, provider `s69-1`:
 | `PlainDate/prototype/add/` (first 39 files, `.tmp/s69/pdadd.tsv`) | 22 / 39 | 20 |
 | `PlainDate/prototype/subtract/` + `PlainYearMonth/prototype/{add,subtract}/` (`.tmp/s69/scope1.tsv`) | 56 / 111 | ~41 |
 
-~78 rows in four directories on one mechanism. **Not reduced further** — the
-consumer-side reductions all come back clean (`.tmp/s69/probes/linked3.mts`:
-object literal, array, nested literal, statement-built object, `{...o, k:v}`,
-`Object.assign`, null-proto object all cross the link correctly), so the next
-lane has to reduce it INSIDE a provider module. That is the highest-value
-remaining target in this lane.
+~78 rows in four directories on one mechanism.
+
+### Reduced (`.tmp/s69/probes/linked5.mts` → `linked8.mts`, ~15 s per run)
+
+It reduces INSIDE a provider module, which is why every consumer-side reduction
+came back clean (`linked3.mts`: object literal, array, nested literal,
+statement-built object, `{...o, k:v}`, `Object.assign`, null-proto object all
+cross the link correctly).
+
+**An object built by an object-SPREAD literal from a provider-LOCAL source is
+broken once it crosses a FUNCTION-RETURN boundary** — reading a property of it
+answers `null` or traps, even though `typeof` still says `"object"`:
+
+| provider function | consumer reads | result |
+| --- | --- | --- |
+| `s2(){ const o={years:1}; const x={...o,days:9}; return x.days; }` (read INSIDE, no return of the object) | `NS.s2()` | **9** ✅ |
+| `collideParam(o){ return {...o, days:9}; }` (spread of a PARAM) | `.days` | **9** ✅ |
+| `plain(e){ return {years:e, days:0}; }` (no spread) | `.years` | ✅ |
+| `noCollide(){ const o={years:1,months:2}; return {...o,days:9}; }` | `.days` | **`Cannot access property on null or undefined`** |
+| `collide(){ const o={years:1,days:0}; return {...o,days:9}; }` | `.days` | same |
+| `{days:9, ...o}` (spread last) | `.years` | same |
+| `wr(e){ const t=qr(e); return {...t.date, days:n}; }` | `typeof NS.wr(3)` | `"object"` — but `.days` fails |
+| `wrDays(e){ return wr(e).days; }` (the read is INSIDE the provider) | `NS.wrDays(3)` | **TRAP `dereferencing a null pointer`** |
+
+So the carrier survives a `typeof` but not a property read, and the boundary it
+does not survive is the **function return**, not the link: the in-provider
+`wrDays` read traps too. A spread of a PARAMETER is fine, which points at the
+source object's local/return representation rather than at the spread builder.
+
+That is the highest-value remaining target in this lane.
 
 ## Residuals (measured, not fixed)
 

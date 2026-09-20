@@ -1265,9 +1265,20 @@ and `zdt.add(dur)` as clean controls. **22/39** rows fail in
 `PlainDate/prototype/subtract/` + `PlainYearMonth/prototype/{add,subtract}/` —
 ~78 rows on one mechanism. It sits on the polyfill's `Wr()` path
 (`{...qr(e).date, days:n}`), which `PlainDate`/`PlainYearMonth` arithmetic uses
-and `ZonedDateTime` (via `Ar`) does not. **Unreduced** — every consumer-side
-reduction comes back clean (`.tmp/s69/probes/linked3.mts`), so it must be
-reduced INSIDE a provider module.
+and `ZonedDateTime` (via `Ar`) does not.
+
+**REDUCED** (`.tmp/s69/probes/linked5.mts` → `linked8.mts`, ~15 s per run, a
+custom provider through the S68 linked harness): **an object built by an
+object-SPREAD literal from a provider-LOCAL source is broken once it crosses a
+FUNCTION-RETURN boundary** — `typeof` still says `"object"`, but a property read
+answers `Cannot access property on null or undefined`, and reading it inside
+the provider (`wrDays(e){ return wr(e).days; }`) TRAPS with `dereferencing a
+null pointer`. Clean controls: the same spread read WITHOUT returning the object
+(`const x={...o,days:9}; return x.days` → 9), a spread of a PARAMETER
+(`collideParam(o){ return {...o,days:9}; }` → 9), and any non-spread object
+literal. So the boundary is the function return, not the link, and the suspect
+is the source object's local/return representation rather than the spread
+builder.
 
 **Environment notes that cost time this lane:**
 - A fresh harness worktree has **no `test262` submodule**. Symlinking a sibling
