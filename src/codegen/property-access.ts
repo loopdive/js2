@@ -238,12 +238,14 @@ import {
   typedArrayViewSignedness,
 } from "./builtin-value-read.js"; // (#3267) built-in static/prototype VALUE-read subsystem — extracted
 import {
+  arrayIndexConstantKey,
   elementAccessTypedArrayName,
   emitDynamicVecElementGet,
   emitDynamicStringVecElementGet,
   emitNonIndexVecElementGet,
   nonArrayIndexNumericKey,
   compileElementIndexI32,
+  isDynamicStringVecKey,
   isDynamicPropertyKeyExpression,
 } from "./array-nonindex-key.js"; // (#4247)
 // (#3267) Re-export the moved symbols other modules import from property-access.js
@@ -6460,6 +6462,24 @@ export function compileElementAccessBody(
     }
 
     const isRegexMatchVec = typeDef.fields.length >= 4 && typeDef.fields[2]?.name === "index";
+    // A capture result has physical `index` / `input` fields in addition to its
+    // ordinary vec prefix. In standalone, the generic dynamic-string vec route
+    // below intentionally declines, so these keys must use the existing
+    // externref `__extern_get` dispatch before the numeric element fallback.
+    // Reuse the helper rather than duplicating its receiver/key staging: it
+    // evaluates both exactly once and resolves the import after nested emission.
+    // A literal canonical array index such as `m["1"]` retains the existing
+    // positional read. `arrayIndexConstantKey` deliberately declines mutable
+    // identifier initializers, so dynamic string keys still reach __extern_get.
+    if (
+      isRegexMatchVec &&
+      arrayIndexConstantKey(ctx, fctx, expr.argumentExpression) === undefined &&
+      isDynamicStringVecKey(ctx, expr.argumentExpression)
+    ) {
+      return emitDynamicVecElementGet(ctx, fctx, objType, expr.argumentExpression, (e, h) =>
+        compileExpression(ctx, fctx, e, h),
+      );
+    }
     // Dynamic object-like keys must be canonicalized with ToPropertyKey before
     // the receiver-specific runtime dispatch. This is the read twin of the
     // assignment fallback above: numeric results (for example an object's
