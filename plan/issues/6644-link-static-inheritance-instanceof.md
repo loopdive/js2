@@ -45,11 +45,27 @@ created: 2026-09-19
 # `standalone-linked-static-inheritance.ts`. Splitting `compileTailDispatch`
 # (2,149 LOC) is a refactor of long-standing code this change does not
 # otherwise touch.
+#
+# (#5383 S67, 2026-09-19) +35 LOC in `new-super.ts` and +30 LOC / +25 function
+# LOC in `class-bodies.ts` are the runtime-spread `super(…)` arm. Both are
+# splices into long-standing code plus their rationale:
+#  - `new-super.ts` parameterises `compileNativeConstructRuntimeArgv` on the
+#    CALLEE push (a captured heritage global cannot be named as an expression)
+#    and exports the result. The alternative — a second copy of the driver
+#    prelude, guards and argv builder in the leaf — is the duplication #5383
+#    S34 wrote that function to avoid.
+#  - `class-bodies.ts::compileSuperCall` is the ONE program point where a
+#    SuperCall's argument list is known, so the runtime-length arm has to sit
+#    there; it replaces a five-line “decline and evaluate for effect” stub.
+# Splitting either long-standing function is a refactor this change does not
+# otherwise touch.
 loc-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/property-access-dispatch.ts
   - src/codegen/expressions.ts
   - src/codegen/expressions/call-tail-dispatch.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/class-bodies.ts
 #
 # +14 in `collectClassDeclaration` and +11 in `compileStatementInner` are the
 # two splice points of the IDENTIFIER-heritage arm, both already reduced to a
@@ -62,6 +78,7 @@ loc-budget-allow:
 # Splitting either long-standing function is a refactor this change does not
 # otherwise touch.
 func-budget-allow:
+  - src/codegen/class-bodies.ts::compileSuperCall
   - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   - src/codegen/class-bodies.ts::collectClassDeclaration
