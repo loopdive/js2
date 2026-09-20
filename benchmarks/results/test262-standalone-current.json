@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-20T14:22:06.324Z",
-  "baseline_generated_at": "2026-09-20T14:22:06.324Z",
-  "baseline_sha": "17fc40c1c87e51224364692240fc16666f3d1cff",
+  "timestamp": "2026-09-20T15:24:21.600Z",
+  "baseline_generated_at": "2026-09-20T15:24:21.600Z",
+  "baseline_sha": "c2d32823c7eb45abca26f135870705d704604726",
   "oracle_version": 14,
   "mode": {
     "target": "standalone",
@@ -13,8 +13,8 @@
     "total": 48232,
     "pass": 35668,
     "fail": 9509,
-    "compile_error": 3026,
-    "compile_timeout": 11,
+    "compile_error": 3025,
+    "compile_timeout": 12,
     "skip": 18,
     "compilable": 45177,
     "host_free_pass": 35668,
@@ -24,8 +24,8 @@
         "total": 47146,
         "pass": 34639,
         "fail": 9471,
-        "compile_error": 3007,
-        "compile_timeout": 11,
+        "compile_error": 3006,
+        "compile_timeout": 12,
         "skip": 18,
         "compilable": 44110,
         "host_free_pass": 34639,
@@ -60,8 +60,8 @@
         "total": 48232,
         "pass": 35668,
         "fail": 9509,
-        "compile_error": 3026,
-        "compile_timeout": 11,
+        "compile_error": 3025,
+        "compile_timeout": 12,
         "skip": 18,
         "compilable": 45177,
         "host_free_pass": 35668,
@@ -72,8 +72,8 @@
         "total": 48735,
         "pass": 35903,
         "fail": 9525,
-        "compile_error": 3182,
-        "compile_timeout": 11,
+        "compile_error": 3181,
+        "compile_timeout": 12,
         "skip": 114,
         "compilable": 45428,
         "host_free_pass": 35903,
@@ -86,8 +86,8 @@
     "total": 48232,
     "pass": 35668,
     "fail": 9509,
-    "compile_error": 3026,
-    "compile_timeout": 11,
+    "compile_error": 3025,
+    "compile_timeout": 12,
     "skip": 18,
     "compilable": 45177,
     "host_free_pass": 35668,
@@ -97,8 +97,8 @@
     "total": 48735,
     "pass": 35903,
     "fail": 9525,
-    "compile_error": 3182,
-    "compile_timeout": 11,
+    "compile_error": 3181,
+    "compile_timeout": 12,
     "skip": 114,
     "compilable": 45428,
     "host_free_pass": 35903,
@@ -108,8 +108,8 @@
     "total": 45721,
     "pass": 33385,
     "fail": 9372,
-    "compile_error": 2935,
-    "compile_timeout": 11,
+    "compile_error": 2934,
+    "compile_timeout": 12,
     "skip": 18,
     "compilable": 42757,
     "host_free_pass": 33385,
@@ -142,8 +142,8 @@
       "total": 47146,
       "pass": 34639,
       "fail": 9471,
-      "compile_error": 3007,
-      "compile_timeout": 11,
+      "compile_error": 3006,
+      "compile_timeout": 12,
       "skip": 18,
       "compilable": 44110,
       "host_free_pass": 34639,
@@ -805,8 +805,8 @@
       "path": "built-ins/TypedArray",
       "pass": 955,
       "fail": 479,
-      "compile_error": 12,
-      "compile_timeout": 0,
+      "compile_error": 11,
+      "compile_timeout": 1,
       "skip": 0,
       "total": 1446,
       "host_free_pass": 955
@@ -1205,7 +1205,7 @@
     "negative_test_fail": 3,
     "null_deref": 15,
     "oob": 7,
-    "other": 3232,
+    "other": 3231,
     "promise_error": 57,
     "range_error": 15,
     "runtime_error": 165,
@@ -1292,17 +1292,17 @@
         },
         "sample_files": [
           "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
-          "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
+          "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
           "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
-          "test/built-ins/Temporal/Duration/prototype/round/subclassing-ignored.js"
+          "test/built-ins/Temporal/ZonedDateTime/prototype/with/disambiguation-wrong-type.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: null Expected a RangeError but got a TypeError",
-          "type_error:TypeError: Cannot read properties of undefined (reading 'round')",
           "type_error:TypeError: Cannot read properties of undefined (reading 'until')",
+          "type_error:TypeError: Cannot read properties of undefined (reading 'round')",
           "host_import_leak:standalone target emitted host imports: env::__temporal_plain_date_add_field, env::__temporal_plain_date_from_string_field (##)",
-          "other:ReferenceError: Temporal is not defined"
+          "type_error:TypeError: called value is not a function"
         ]
       },
       {
@@ -1977,8 +1977,8 @@
         "statuses": {
           "pass": 0,
           "fail": 1536,
-          "compile_error": 210,
-          "compile_timeout": 11,
+          "compile_error": 209,
+          "compile_timeout": 12,
           "skip": 0,
           "total": 1757,
           "host_free_pass": 0
@@ -1989,7 +1989,7 @@
           "illegal_cast": 174,
           "type_error": 250,
           "host_import_leak": 180,
-          "other": 34,
+          "other": 33,
           "wasm_compile": 4,
           "oob": 5
         },
@@ -2412,15 +2412,15 @@
         "sample_files": [
           "test/built-ins/Symbol/species/subclassing.js",
           "test/built-ins/Symbol/prototype/Symbol.toPrimitive/removed-symbol-wrapper-ordinary-toprimitive.js",
-          "test/built-ins/Symbol/not-callable.js",
           "test/built-ins/Symbol/for/to-string-err.js",
+          "test/built-ins/Symbol/not-callable.js",
           "test/built-ins/Symbol/keyFor/arg-non-symbol.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected SameValue(«undefined», «function () { [native code] }») to be true",
           "assertion_fail:Test262Error: hint: default",
-          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
           "null_deref:dereferencing a null pointer [in __closure_66() ← __closure_60 ← __call_fn_method_3 ← __apply_closure]",
+          "assertion_fail:Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
           "assertion_fail:Test262Error: symbol object Expected a TypeError to be thrown but no exception was thrown at all"
         ]
       },
@@ -2642,15 +2642,15 @@
           "test/language/expressions/bitwise-xor/bigint-non-primitive.js",
           "test/language/expressions/unsigned-right-shift/bigint-non-primitive.js",
           "test/built-ins/Atomics/store/bigint/non-shared-bufferdata.js",
-          "test/built-ins/Atomics/or/bigint/bad-range.js",
-          "test/built-ins/Atomics/notify/bigint/non-shared-bufferdata-returns-0.js"
+          "test/built-ins/Atomics/notify/bigint/non-shared-bufferdata-returns-0.js",
+          "test/built-ins/Atomics/or/bigint/bad-range.js"
         ],
         "sample_signatures": [
           "type_error:TypeError: Cannot mix BigInt and other types, use explicit conversions",
           "assertion_fail:Test262Error: Object(0b101n) >>> Object(1n) throws TypeError Expected a TypeError to be thrown but no exception was thrown at all",
           "type_error:TypeError: Atomics.store requires a shared integer TypedArray, which is unsupported in --target standalone",
-          "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)",
-          "type_error:TypeError: Atomics.notify requires a shared integer TypedArray, which is unsupported in --target standalone"
+          "type_error:TypeError: Atomics.notify requires a shared integer TypedArray, which is unsupported in --target standalone",
+          "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)"
         ]
       },
       {
@@ -2911,8 +2911,8 @@
         "sample_files": [
           "test/language/identifiers/part-unicode-16.0.0-escaped.js",
           "test/language/identifiers/start-unicode-17.0.0-class.js",
-          "test/language/identifiers/start-unicode-16.0.0-escaped.js",
           "test/language/identifiers/part-unicode-17.0.0-class.js",
+          "test/language/identifiers/start-unicode-16.0.0-escaped.js",
           "test/language/identifiers/start-unicode-17.0.0.js"
         ],
         "sample_signatures": [
@@ -2958,7 +2958,7 @@
           "test/built-ins/WeakRef/throws-when-target-cannot-be-held-weakly.js",
           "test/built-ins/Atomics/wait/cannot-suspend-throws.js",
           "test/built-ins/FinalizationRegistry/prototype/register/return-undefined-register-symbol.js",
-          "test/built-ins/FinalizationRegistry/target-not-callable-throws.js"
+          "test/built-ins/FinalizationRegistry/prototype/unregister/custom-this.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)",
