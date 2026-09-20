@@ -84,6 +84,7 @@ import { emitPlainObjectDynamicCallWithReceiver } from "./plain-object-dynamic-r
 import { tryEmitClassDynamicMemberCall } from "./class-dynamic-member-call.js"; // (#5195 F1/F3)
 import { tryEmitDynamicElementHostMethodCall } from "./dynamic-element-host-call.js";
 import { tryEmitGenericComputedMethodCall } from "./dynamic-element-generic-call.js";
+import { tryEmitLinkedStaticComputedCall } from "../standalone-linked-static-inheritance.js"; // (#6644)
 import { tryNormalizeStaticStringElementCallee } from "./element-access-callee-normalization.js"; // (#4625)
 import { tryDetachedBuiltinPrototypeNullishThisThrow } from "../builtin-prototype-brand.js";
 import {
@@ -674,6 +675,15 @@ export function compileTailDispatch(
   if (ts.isElementAccessExpression(expr.expression)) {
     const elemAccess = expr.expression;
     const argExpr = elemAccess.argumentExpression;
+    // (#6644, #5383 S67) `S[k](...args)` where `S` extends a LINKED provider
+    // class: the whole call has to be shipped through the boundary's
+    // `__apply_closure` terminal, because every arm below marshals a FIXED
+    // arity and hands a spread's source array over as one argument. Gated on a
+    // spread being present, so a computed call that works today keeps its
+    // exact lowering; declines for every receiver that is not one of #6640's
+    // linked-dynamic-parent classes, which is every module with no provider.
+    const linkedSpreadCall = tryEmitLinkedStaticComputedCall(ctx, fctx, expr, elemAccess);
+    if (linkedSpreadCall !== undefined) return linkedSpreadCall;
     // Resolve the key to a static string: string literals, numeric literals, const variables, etc.
     let resolvedMethodName: string | undefined;
     if (argExpr) {

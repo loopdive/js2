@@ -3919,7 +3919,7 @@ export function compileNamespaceStaticCall(
     // (#6644) §15.7.14 step 6 across the wasm→wasm link, when this class
     // declares no such static. Declines for every own static and for every
     // class that is not one of #6640's linked-dynamic-parent classes.
-    const linkedStatic = tryEmitLinkedStaticCall(ctx, fctx, expr, clsName, methodName);
+    const linkedStatic = tryEmitLinkedStaticCall(ctx, fctx, expr, propAccess.expression, clsName, methodName);
     if (linkedStatic !== undefined) return linkedStatic;
     if (ctx.staticMethodSet.has(fullName)) {
       const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "static")); // (#1983)

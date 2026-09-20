@@ -1128,3 +1128,34 @@ static read class-name resolution via the property-access dispatch's
 two PlainDate `era` rows (#6633), the >2^63 BigInt range,
 `Duration/compare/order-of-operations.js` (#6628),
 `PlainDateTime/from/argument-string-offset.js`, the Duration one-offs.
+
+## Stack state 2026-09-20 (post-S67) — PR #5992 (S66) MERGED; S67 on `issue-5383-standalone-temporal-s67` at `907ac32037` (+ merge of main); #6644 in-progress (residuals 1, 2, 4 closed); four-family 459/480
+
+PR #5992 landed on `main` 00:22 UTC. S67 (Opus; lane killed by the 03:20
+container restart, lead finished verification) landed identity-keyed
+linked-static resolution, runtime spread into an inherited linked static,
+and `super(...spread)` through a linked heritage (see #5383 "### S67
+findings", #6644 "S67"). Rows unchanged at 459/480; the two `from/*`
+`subclassing-ignored` rows now stop on `SameValue(«null», «undefined»)`.
+Base TSVs: `.tmp/s67/battery/*-cur.tsv` in worktree
+`agent-a6457c177911f46f1` (identical statuses to S66's; corpus base is
+`.tmp/s67/corpus-fix.jsonl` — S66's stored corpus base had one stale sha).
+
+**Next lanes** (one at a time, Opus): (a) the `SameValue(«null»,
+«undefined»)` mechanism — `temporalHelpers.js` `canonicalizeCalendarEra`
+receives `null` for an `undefined` `era` (#6633 era rows,
+`PlainDate/from/argument-object-valid.js`, `argument-string.js`, the two
+`from/subclassing-ignored` rows) — together with S67 residual 1 (a
+rest-forwarded spread call `fwd(...args){ return this.echo(...args) }`
+answers `undefined`, no provider needed; both are needed for the
+`from/*` rows); (b) `instance[method](...a)` on a subclass instance
+(`abs`/`add` rows); then the >2^63 BigInt range (new issue),
+`Duration/compare/order-of-operations.js` (#6628),
+`PlainDateTime/from/argument-string-offset.js` +
+`overflow-default-constrain.js`, the Duration one-offs.
+
+Environment traps unchanged (see post-S59/S60): rebuild
+`scripts/compiler-bundle.mjs` before every prewarm, `JS2WASM_TEMPORAL_CACHE`
+is a full path with a fresh label per src change, copy the QuickJS artifact
++ rebuild the eval provider in a fresh worktree, CI `quality` runs Node 25
+(no legacy `try`). Container restarts every ~2–3 h: lanes commit WIP early.
