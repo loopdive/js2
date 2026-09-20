@@ -62,6 +62,9 @@ import {
   ensureWrapperStringValueHelper,
   reserveApplyClosure,
 } from "./object-runtime.js";
+// (#6484 S4) Reuse the one authoritative standalone ToLength builder rather
+// than approximating an ordinary `arguments.length` with a raw f64 cast.
+import { buildArrayLikeToLengthFromExternref } from "./object-runtime-enumeration.js";
 import { ensureHoleType } from "./array-holes.js";
 // (#3206) `__array_from_mapped` reuses the native array-map HOF loop
 // (`__hof_map`) after normalizing the source through `__array_from_iter_n`.
@@ -492,6 +495,102 @@ interface IterRuntimeTypes {
   iterRecTypeIdx: number;
   vecTypeIdx: number;
   arrTypeIdx: number;
+}
+
+/**
+ * (#6484 S4) Fill-time dependencies for the live arguments-object VEC step.
+ * `logicalLengthIdx` performs `ToLength(Get(arguments, "length"))`, while
+ * `getIdxIdx` preserves the established indexed-read bounds/miss behavior for
+ * a logical length that extends past the physical argument backing store.
+ */
+interface ArgumentsIteratorDeps {
+  argumentsTypeIdx: number;
+  logicalLengthIdx: number;
+  getIdxIdx: number;
+}
+
+const ARGUMENTS_ITERATOR_LENGTH = "__args_iter_length";
+
+/**
+ * Register `__args_iter_length(args) -> f64`, the narrow S4 bridge from the
+ * branded arguments carrier to the existing ordinary-property + ToLength
+ * machinery. The direct vec `__extern_length` arm intentionally returns the
+ * physical field-0 length, so it cannot be used here: `arguments.length` is a
+ * configurable ordinary data property whose override may be any JS value.
+ *
+ * Locals 2..4 deliberately match `buildArrayLikeToLengthFromExternref`'s
+ * documented helper ABI. Local 1 is a padding slot; keeping that layout here
+ * lets this wrapper reuse the authoritative ToPrimitive/ToNumber/clamp path,
+ * including string/object/Symbol conversion and abrupt completion, without
+ * duplicating it. Observable property deletion remains the existing
+ * arguments-Get substrate's #4622/#3251 residual.
+ */
+function ensureArgumentsIteratorLengthHelper(ctx: CodegenContext): number | undefined {
+  if (!ctx.standalone && !ctx.wasi) return undefined;
+  if (ctx.structMap.get("__arguments_vec") === undefined) return undefined;
+  const existing = ctx.funcMap.get(ARGUMENTS_ITERATOR_LENGTH);
+  if (existing !== undefined) return existing;
+
+  // `ensureNativeIteratorRuntime` eagerly calls `ensureNativeIterResultObject`,
+  // which has already established this runtime before this finalize pass. Do
+  // not call `ensureObjectRuntime` here: its first-use path can settle a late
+  // import shift after other iterator dependencies have been captured.
+  if (!ctx.objectRuntimeTypes) return undefined;
+  const externGetIdx = ctx.funcMap.get("__extern_get");
+  const unboxNumberIdx = ctx.funcMap.get("__unbox_number");
+  const toPrimitiveIdx = ctx.funcMap.get("__to_primitive");
+  const typeofStringIdx = ctx.funcMap.get("__typeof_string");
+  const stringToNumberIdx = ctx.funcMap.get("__str_to_number");
+  // `buildArrayLikeToLengthFromExternref` has a defensive unbox-only fallback
+  // for legacy callers. S4 cannot use that weaker mode: an assigned object or
+  // string length must take the observable ToPrimitive/ToNumber path, including
+  // abrupt completion. Require the complete provider set before emitting this
+  // arguments-only arm.
+  if (
+    externGetIdx === undefined ||
+    unboxNumberIdx === undefined ||
+    toPrimitiveIdx === undefined ||
+    typeofStringIdx === undefined ||
+    stringToNumberIdx === undefined ||
+    ctx.nativeStrTypeIdx < 0
+  )
+    return undefined;
+
+  const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "f64" }], "$__args_iter_length_type");
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set(ARGUMENTS_ITERATOR_LENGTH, funcIdx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: ARGUMENTS_ITERATOR_LENGTH,
+    typeIdx,
+    locals: [
+      { name: "__args_len_pad", type: { kind: "externref" } },
+      { name: "__args_len_f64", type: { kind: "f64" } },
+      { name: "__args_len_trunc", type: { kind: "f64" } },
+      { name: "__args_len_prim", type: { kind: "externref" } },
+    ],
+    body: [
+      // Get(args, "length") first. The vec dynamic reader owns the existing
+      // arguments override/delete behavior, so this iterator slice does not
+      // copy it (observable deletion remains the #4622/#3251 substrate gap).
+      { op: "local.get", index: 0 },
+      ...nativeStringLiteralInstrs(ctx, "length"),
+      { op: "extern.convert_any" },
+      { op: "call", funcIdx: externGetIdx },
+      ...buildArrayLikeToLengthFromExternref(ctx, ctx.symbolTypeIdx),
+    ],
+    exported: false,
+  });
+  return funcIdx;
+}
+
+/** Resolve the S4 step dependencies only once the arguments subtype exists. */
+function argumentsIteratorDeps(ctx: CodegenContext): ArgumentsIteratorDeps | undefined {
+  const argumentsTypeIdx = ctx.structMap.get("__arguments_vec");
+  if (argumentsTypeIdx === undefined) return undefined;
+  const logicalLengthIdx = ensureArgumentsIteratorLengthHelper(ctx);
+  const getIdxIdx = ctx.funcMap.get("__extern_get_idx");
+  if (logicalLengthIdx === undefined || getIdxIdx === undefined) return undefined;
+  return { argumentsTypeIdx, logicalLengthIdx, getIdxIdx };
 }
 
 /**
@@ -2721,6 +2820,10 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
   }
 
   const types = iterRuntimeTypes(ctx);
+  // S4 is independent of the USER/OBJ/GEN carrier families. Resolve it at
+  // finalize because the nominal arguments subtype is created while lowering
+  // function bodies, after the eager vec-only iterator quartet is reserved.
+  const argumentDeps = argumentsIteratorDeps(ctx);
 
   // (#3146) STRING subjects — `Iterator.from("ab")`, a string element reaching
   // a dynamic GetIterator. Normalize the string into its per-code-point char
@@ -2774,7 +2877,17 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
   // be rebuilt in a module whose legacy iterator has no late arms.  Without
   // this guard the vec-only early return leaves `__iterator_strict` unable to
   // admit strings, typed-array carriers, or plain object iterators.
-  if (!deps && !objDeps && !hostDeps && !agDeps && !sgDeps && familyArms.length === 0 && !strictRuntime) return; // nothing to fill — byte-identical
+  if (
+    !deps &&
+    !objDeps &&
+    !hostDeps &&
+    !agDeps &&
+    !sgDeps &&
+    !argumentDeps &&
+    familyArms.length === 0 &&
+    !strictRuntime
+  )
+    return; // nothing to fill — byte-identical
 
   const iteratorIdx = ctx.funcMap.get("__iterator");
   const iteratorNextIdx = ctx.funcMap.get("__iterator_next");
@@ -2910,7 +3023,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
       undefined,
       ITER_FAMILY_LOCAL,
     );
-  if ((deps || objDeps || hostDeps || agDeps || sgDeps) && iteratorNextFn) {
+  if ((deps || objDeps || hostDeps || agDeps || sgDeps || argumentDeps) && iteratorNextFn) {
     // (#3164) The GENSTATE step's sentinel-aware f64 boxing needs an f64
     // scratch local; append it at fill time (locals are read at emit, after
     // this fill — same discipline as the #3100 S5 `__iterator_rest` locals
@@ -2918,7 +3031,19 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
     if (sgDeps && iteratorNextFn.locals.length === 6) {
       iteratorNextFn.locals.push({ name: "__gen_f64tmp", type: { kind: "f64" } });
     }
-    iteratorNextFn.body = buildIteratorNextBody(types, deps, objDeps, hostDeps, agDeps, sgDeps);
+    iteratorNextFn.body = buildIteratorNextBody(
+      types,
+      deps,
+      objDeps,
+      hostDeps,
+      agDeps,
+      sgDeps,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      argumentDeps,
+    );
   }
 
   // (#5131) Rebuild the strict provider after all late carrier/dispatcher
@@ -2963,6 +3088,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
         nonIterableThrowInstrs(ctx),
         ctx,
         strictMethods,
+        argumentDeps,
       );
     }
     const strictMaterializeFn = definedFuncAt(ctx, strictRuntime.materializeIdx);
@@ -4759,11 +4885,14 @@ function buildIteratorNextBody(
   strictError?: Instr[],
   strictCtx?: CodegenContext,
   strictMethods?: StrictMethodDispatchDeps,
+  argsDeps?: ArgumentsIteratorDeps,
 ): Instr[] {
   const { iterRecTypeIdx, vecTypeIdx, arrTypeIdx } = types;
 
-  // The vec-carrier step (existing behavior), computing done(4)/value(5).
-  const vecStep: Instr[] = [
+  // The ordinary vec-carrier step, computing done(4)/value(5). Keep this as a
+  // factory: the arguments guard below needs a separate instruction graph for
+  // its fallback, and sharing one graph would trip the finalize remapper.
+  const buildOrdinaryVecStep = (): Instr[] => [
     // vec = rec.vec
     { op: "local.get", index: 1 },
     { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 1 },
@@ -4850,6 +4979,120 @@ function buildIteratorNextBody(
       ],
     },
   ];
+
+  // (#6484 S4) `arguments` is a `$__arguments_vec` subtype whose physical
+  // field-0 length deliberately does NOT track its ordinary `length` property.
+  // ArrayIteratorPrototype.next instead performs LengthOfArrayLike on every
+  // step, so this arm reads the existing Get+ToLength helper live. The element
+  // read remains in `__extern_get_idx`: it has the backing-array guard that
+  // turns a logical length grown past argc into an ordinary undefined miss,
+  // rather than an OOB `array.get` trap.
+  //
+  // The cursor latch check MUST precede the length Get/ToLength. A finished
+  // array iterator has [[IteratedObject]] = undefined; changing `length` to a
+  // huge or throwing value later cannot revive it or trigger conversion.
+  const argumentsVecStep: Instr[] =
+    argsDeps === undefined
+      ? []
+      : [
+          // vec = rec.vec ; i = rec.idx
+          { op: "local.get", index: 1 },
+          { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 1 },
+          { op: "local.set", index: 2 },
+          { op: "local.get", index: 1 },
+          { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 2 },
+          { op: "local.set", index: 3 },
+          // value defaults to undefined for every done/missing-index result.
+          { op: "ref.null.extern" },
+          { op: "local.set", index: 5 },
+          // Do not read/convert length after the one-way exhaustion latch.
+          { op: "local.get", index: 3 },
+          { op: "i32.const", value: 0x7fffffff },
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "i32.const", value: 1 },
+              { op: "local.set", index: 4 },
+            ],
+            else: [
+              // done = i >= ToLength(Get(args, "length")); the helper is
+              // intentionally f64 because ToLength spans up to 2^53-1 while
+              // this carrier's physical cursor remains i32.
+              { op: "local.get", index: 3 },
+              { op: "f64.convert_i32_s" },
+              { op: "local.get", index: 2 },
+              { op: "ref.as_non_null" },
+              { op: "extern.convert_any" },
+              { op: "call", funcIdx: argsDeps.logicalLengthIdx },
+              { op: "f64.ge" },
+              { op: "local.set", index: 4 },
+              { op: "local.get", index: 4 },
+              { op: "i32.eqz" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  // ES2015 §22.1.5.2.1 steps 11–15 advance
+                  // [[ArrayLikeNextIndex]] after the successful length check
+                  // and before Get(O, index). A throwing/reentrant indexed Get
+                  // therefore observes and retains the consumed index.
+                  { op: "local.get", index: 1 },
+                  { op: "local.get", index: 3 },
+                  { op: "i32.const", value: 1 },
+                  { op: "i32.add" },
+                  { op: "struct.set", typeIdx: iterRecTypeIdx, fieldIdx: 2 },
+                  // Get(args, ToString(i)) through the existing indexed
+                  // reader. It preserves the physical-backing OOB guard and
+                  // normal prototype/miss behavior for a grown logical length.
+                  { op: "local.get", index: 2 },
+                  { op: "ref.as_non_null" },
+                  { op: "extern.convert_any" },
+                  { op: "local.get", index: 3 },
+                  { op: "f64.convert_i32_s" },
+                  { op: "call", funcIdx: argsDeps.getIdxIdx },
+                  { op: "local.set", index: 5 },
+                ],
+                else: [
+                  // Match the ordinary vec arm's §23.1.5.1 one-way latch.
+                  { op: "local.get", index: 1 },
+                  { op: "i32.const", value: 0x7fffffff },
+                  { op: "struct.set", typeIdx: iterRecTypeIdx, fieldIdx: 2 },
+                ],
+              },
+            ],
+          },
+        ];
+
+  const vecStep: Instr[] =
+    argsDeps === undefined
+      ? buildOrdinaryVecStep()
+      : [
+          // `ref.test` needs a non-null receiver. A VEC record normally has
+          // one, but retaining the ordinary branch for null keeps the legacy
+          // behavior intact for malformed/internal records.
+          { op: "local.get", index: 1 },
+          { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 1 },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [{ op: "i32.const", value: 0 }],
+            else: [
+              { op: "local.get", index: 1 },
+              { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 1 },
+              { op: "ref.as_non_null" },
+              { op: "ref.test", typeIdx: argsDeps.argumentsTypeIdx },
+            ],
+          },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: argumentsVecStep,
+            else: buildOrdinaryVecStep(),
+          },
+        ];
 
   // (#3302) `!sgDeps` is load-bearing: a module whose ONLY step-driven carrier
   // is a native SYNC generator (a minimal capturing fn-expr module — no user /
