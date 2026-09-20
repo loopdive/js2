@@ -521,7 +521,9 @@ const ARGUMENTS_ITERATOR_LENGTH = "__args_iter_length";
  * Locals 2..4 deliberately match `buildArrayLikeToLengthFromExternref`'s
  * documented helper ABI. Local 1 is a padding slot; keeping that layout here
  * lets this wrapper reuse the authoritative ToPrimitive/ToNumber/clamp path,
- * including deletion, Symbols, and abrupt conversion, without duplicating it.
+ * including string/object/Symbol conversion and abrupt completion, without
+ * duplicating it. Observable property deletion remains the existing
+ * arguments-Get substrate's #4622/#3251 residual.
  */
 function ensureArgumentsIteratorLengthHelper(ctx: CodegenContext): number | undefined {
   if (!ctx.standalone && !ctx.wasi) return undefined;
@@ -567,9 +569,9 @@ function ensureArgumentsIteratorLengthHelper(ctx: CodegenContext): number | unde
       { name: "__args_len_prim", type: { kind: "externref" } },
     ],
     body: [
-      // Get(args, "length") first. The vec dynamic reader knows the
-      // arguments override/tombstone fields, so delete/revive behavior stays
-      // in the existing #4658 owner rather than being copied into this slice.
+      // Get(args, "length") first. The vec dynamic reader owns the existing
+      // arguments override/delete behavior, so this iterator slice does not
+      // copy it (observable deletion remains the #4622/#3251 substrate gap).
       { op: "local.get", index: 0 },
       ...nativeStringLiteralInstrs(ctx, "length"),
       { op: "extern.convert_any" },

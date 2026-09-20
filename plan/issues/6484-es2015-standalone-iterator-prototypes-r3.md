@@ -69,6 +69,12 @@ func-budget-allow:
   - src/codegen/map-runtime.ts::fillMapSetDynDispatchArms
   - src/codegen/index.ts::generateMultiModule
   - src/codegen/index.ts::generateModule
+# 2026-09-20 (#6484 S4): the arguments iterator preflights the complete
+# canonical object/string/number conversion provider set and delegates its
+# logical-length work to buildArrayLikeToLengthFromExternref, rather than
+# hand-rolling a second conversion matrix.
+coercion-sites-allow:
+  - src/codegen/iterator-native.ts
 ---
 
 # ES2015 standalone: iterator prototypes are unreachable from a dynamically-typed iterator
