@@ -16,6 +16,19 @@ goal: standalone-mode
 parent: 4444
 related: [4444, 5199, 5198, 5152, 5269, 5318, 5350, 6484, 6485, 6494, 1665, 2867, 4119]
 assignee: "ttraenkler/fable-es2015-plan"
+# 2026-09-20 (cluster H, arguments ordinary `length`) — +4 lines in
+# `src/codegen/vec-overlay.ts`: two comment lines stating §10.4.4's rule, the
+# one-line call that splices the arguments arm into `__vec_dp_value`'s
+# `"length"` body, and the two `...argumentsLengthDefineArm` spreads at its two
+# entry points. The arm BODY (and the descriptor-value reader beside it) lives
+# in the length subsystem module `src/codegen/vec-length-descriptor.ts`, which
+# exists for exactly this — "keep the brand-sensitive seed and descriptor reads
+# out of the overlay emitter so the length implementation remains within its
+# subsystem budget". Inlined in the overlay the same change was +77. What
+# cannot move is the call site: the decision "an arguments receiver does not
+# run ArraySetLength" has to be readable at the point ArraySetLength starts.
+loc-budget-allow:
+  - src/codegen/vec-overlay.ts
 ---
 
 # #6651 — ES2015 standalone → 100%: cluster execution plan
@@ -135,6 +148,125 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
 ## Cluster status
 
 _(owners append here: date, branch, before → after, log paths, residuals)_
+
+### H — builtins misc (2026-09-20, Opus lane)
+
+- Branch `worktree-agent-a5c18a3e8a3d3a0fd`, worktree
+  `/home/user/js2/.claude/worktrees/agent-a5c18a3e8a3d3a0fd`, based on
+  `claude/es2015-test262-plan-54tooh` (905dca75).
+- Manifest `plan/agent-context/6651/H-builtins-misc.txt`, sha256
+  `f1eb655415155ac7e7d262ffbaa50a479f8a495bdeb297fad7292169811c104f`, 217 rows.
+
+**Before → after on the manifest** (isolated standalone runner, one row per
+child process; logs `.tmp/6651/H-{before,after}.tsv`):
+
+| | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before | 0 | 211 | 6 |
+| after | **3** | 208 | 6 |
+
+Per-row diff: **3 gained, 0 lost, 0 other verdict changes** —
+`Array.prototype.concat_{sloppy-arguments,sloppy-arguments-with-dupes,
+strict-arguments}.js`.
+
+**What landed: an `arguments` object's `length` is an ORDINARY property
+(§10.4.4), on all three surfaces.** The assignment half already modelled this
+(`member-set-dispatch.ts`, `vec-length-set.ts` arm 1: store the value in the
+`$__arguments_vec` override fields, leave the index domain alone). Three
+surfaces disagreed with it, each measured on the base tree:
+
+1. `Object.defineProperty(args, "length", {value: 6})` ran Array ArraySetLength
+   (`__vec_dp_value`), which GREW the physical backing; the new tail read back
+   as wasm null — JS `null`, not `undefined` — and `4 in args` answered `true`
+   for a slot that is not an own property.
+2. `__extern_length` (the array-like length every generic spec loop reads) read
+   field 0, so `[].concat(args)` after `args.length = 6` produced three
+   elements where §23.1.3.1 wants six (three values + three holes).
+3. `Object.getOwnPropertyDescriptor(args, "length").value` answered the
+   physical count (3) while `args.length` answered 6 — the same property, the
+   same module, two answers.
+
+Files: `src/codegen/vec-length-descriptor.ts` (both new builders — the
+subsystem module for brand-sensitive length descriptor reads),
+`src/codegen/vec-length-set.ts` (`spliceArgumentsExternLengthArm`),
+`src/codegen/vec-overlay.ts` (+4 lines: the two call sites). Pin file
+`tests/issue-6651-arguments-ordinary-length.test.ts` — 5 cases, **3 verified
+RED on the base tree**, 2 are guards (green both sides), including the negative
+direction (an untouched arguments object must keep the physical length).
+
+**Neighbourhood control** — `built-ins/Array/prototype/concat` (all 69 rows) +
+the 53 `language/arguments-object` rows that write/define/delete `length` or
+run `verifyProperty`, standalone, before vs after on the same machine
+(`.tmp/6651/ctl-{before,after}.tsv`): `95 pass / 26 fail / 1 CE` →
+`98 / 23 / 1`, **0 pass → non-pass**, no other verdict changes.
+
+**Host (default target) control is a byte-identity proof, not a sample.** Both
+arms are standalone-gated (`ctx.externGetIdxReserved` / `ctx.standalone`), so
+the honest control is that host output cannot move: the 13-file
+`website/playground/examples` corpus compiles byte-identically on **gc and
+standalone** before vs after (26/26 sha256 equal), and a module that exercises
+exactly this construct (`arguments` + `length` write + define + concat +
+gOPD) is byte-identical on **gc** (`31006917fced63c6` both sides) while its
+standalone output changes (`0d2af224b558c195` → `f04025b3dd538141`).
+
+Gates, bare: loc-budget OK (+4 in `vec-overlay.ts`, granted in this file's
+frontmatter above, dated), func-budget OK, coercion-sites OK, oracle-ratchet OK
+(`getTypeAtLocation +0`, `ctx.checker +0`), dead-exports OK, typecheck OK,
+prettier OK, `biome lint --diagnostic-level=error` OK.
+`node scripts/equivalence-gate.mjs`: **22 failing / 1720 passing, all 22 already
+in `scripts/equivalence-baseline.json` — no new equivalence regressions.** (The
+bare `vitest run tests/equivalence` OOMs in this container, as the project docs
+warn; the gate's single-fork run is the supported way to score it.)
+
+#### Residuals — what the other 214 rows are
+
+Two thirds of this cluster is not "builtins misc" at all:
+
+- **63 rows are not measurable in this container**: they need the runtime-eval
+  provider (`JS2WASM_EVAL_ENGINE=quickjs`, artifact not built here) — mostly
+  the `$262.createRealm` family. Before and after were measured with the SAME
+  engine, so the delta is comparable; the absolute cause mix is not
+  CI-comparable.
+- **53 further rows are realm- or Proxy-dependent by source inspection**
+  (`createRealm` / `new Proxy` / `Proxy.revocable` in the test body) —
+  `proto-from-ctor-realm*`, `Symbol/*/cross-realm`, `create-proxy`,
+  `Function/prototype/toString/proxy-*`. Cross-realm intrinsics have no
+  standalone representation today; these belong with cluster F's Proxy work or
+  a `wont-fix` with the realm reason, not here.
+- **101 rows are core-measurable** and fragment into buckets of ≤5, the largest
+  being: `Expected a TypeError … no exception` (5, builtin-method
+  not-a-constructor + frozen-target `Object.assign`), `Expected a Test262Error
+  but got a TypeError` (5, Map/WeakMap iterable-entry abrupt completions),
+  bound-function `new.target` (5), `target-array-with-non-writable-property`
+  species rows (4), `Array.prototype.flat` standalone CE (3), the
+  `Object.prototype.toString` standalone refusal (3, all needing a runtime
+  `@@toStringTag` Get honouring `delete`), and ~25 singletons.
+
+Measured findings worth the next lane's time (each reproduced on the base tree
+with a standalone probe, none fixed here):
+
+- **Symbol-keyed ACCESSOR `defineProperty` on a vec carrier is silently
+  dropped.** `Object.defineProperty(arr, Symbol.isConcatSpreadable, {get})`
+  leaves `arr[Symbol.isConcatSpreadable]` `undefined` and never fires the
+  getter, while the same descriptor on a plain object works and a plain
+  symbol-keyed assignment on the array works. Cause: the vec overlay's
+  `stringKeyGuard` BAILS on a non-string key, and the bail returns from
+  `__defineProperty_value`/`_accessor` outright. This is #6485's recorded
+  `is-concat-spreadable-get-order` residual, now localised.
+- **`__extern_length` answers 0 for non-`$Object` object carriers.** A
+  spreadable `new String("yuck")` concats to `[]`; a spreadable function with
+  `length = 3` is not spread at all. The `$Object` array-like arm
+  (`ToLength(Get(O,"length"))`) has no counterpart for wrapper / closure /
+  RegExp carriers — deliberately not widened here, because it changes the
+  array-like length of every such receiver and needs its own control set.
+- **`Object.assign(Symbol(), …)` does not box**: `typeof` stays `"symbol"` and
+  `Object(sym) === sym`. ToObject has no Symbol-wrapper carrier.
+- **`Object("hi").length` is 0** while `new String("xy").length` is 2 — the
+  ToObject path builds a different carrier from the constructor path.
+- **`Object.getOwnPropertyDescriptor(Object.prototype, "__proto__")`** works
+  (#5268) but `get.call({})` answers `null` rather than `Object.prototype`, and
+  `set.call(o, proto)` does not make `getPrototypeOf(o)` that proto — an
+  object-model gap, not an accessor gap.
 
 ## Manifest generator note
 
