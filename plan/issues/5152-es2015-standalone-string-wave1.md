@@ -1541,6 +1541,25 @@ substitute for latest-main integration, final frozen raw30 retention, or the
 Array-HOF five-row retention run. The disposable source/test changes are not
 part of this #5152 publication branch.
 
+#### 2026-09-20 synced publication-tree retention
+
+After checkpoint `88bd7169a8` and the clean merge of upstream
+`200f7e2c8bc00dfb9a9c50dcc4b6570413f8a567`, both frozen manifests were rerun
+through the maintained isolated standalone runner on this publication tree:
+
+- String.raw: **30 pass / 0 non-pass** —
+  `/private/tmp/js2-5152-string-raw-frozen30-latest-sync-20260920.log`;
+- Array-HOF subclass regression set: **5 pass / 0 non-pass** —
+  `/private/tmp/js2-5152-array-hof-five-latest-sync-20260920.log`.
+
+These latest-tree receipts retain the two landed reader gains and the Array
+regression repair while the anonymous true-expando deletion slice is present.
+They do not turn the frozen #5753 composition receipt into a current-main
+class integration claim: no #5753-owned source was copied into this branch.
+Physical-field collisions, the strict/coercion baseline validation failures,
+and other explicitly named descriptor-lifecycle limitations remain outside the
+true-expando admission and are not presented as ordinary-delete conformance.
+
 #### Required gates before publishing this reader/mirror checkpoint
 
 When the compiler/test lease is next granted, run (and retain terminal logs
