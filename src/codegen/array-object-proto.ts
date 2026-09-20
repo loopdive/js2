@@ -99,6 +99,7 @@ import { htmlWrapperFor } from "./html-wrapper-native.js"; // (#4445) Annex B §
 import { emitStringHtmlWrapperMemberBody } from "./string-proto-html.js"; // (#4445) reflective HTML wrappers
 import { emitStringMatchSearchMemberBody } from "./string-proto-match-search.js"; // (#4439) reflective match/search
 import { emitStringReplaceMemberBody } from "./string-proto-replace-transfer.js"; // (#4232) reflective String.prototype.replace
+import { emitStringNormalizeMemberBody } from "./string-proto-normalize.js";
 import {
   NO_ARG_STRING_MEMBER_HELPER,
   SUPERSEDED_BY_BORROWED_PATH,
@@ -758,6 +759,9 @@ const PROTO_METHOD_LENGTH: Readonly<Record<string, number>> = Object.assign(
  * closure types stay byte-identical.
  */
 const STRING_PROTO_METHOD_PARAM_SLOTS: Readonly<Record<string, number>> = {
+  // `normalize` advertises length 0 but needs a real optional form slot so
+  // borrowed `.call` / `.apply` can distinguish omitted/undefined from null.
+  normalize: 1,
   indexOf: 2, // (searchString, position) §22.1.3.8
   lastIndexOf: 2, // (searchString, position) §22.1.3.9
   includes: 2, // (searchString, position) §22.1.3.7
@@ -1104,6 +1108,11 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
   if (member === "replace")
     return (
       emitStringReplaceMemberBody(ctx, fctx, () => emitStringRequireObjectCoercible(ctx, fctx, member)) ??
+      emitProtoMemberBodyRefusal(ctx, fctx, "String", member)
+    );
+  if (member === "normalize" && (ctx.standalone || ctx.wasi))
+    return (
+      emitStringNormalizeMemberBody(ctx, fctx, () => emitStringRequireObjectCoercible(ctx, fctx, member)) ??
       emitProtoMemberBodyRefusal(ctx, fctx, "String", member)
     );
   // (#2875 slice 3a) The number-returning search family — `indexOf` /
@@ -2437,7 +2446,14 @@ function makeGlue(
     // `position` arg — give their closures a real param slot for it. Non-String
     // families return 0 (= "no override": the slot count falls back to the spec
     // arity), keeping their closure types byte-identical.
-    memberParamSlots: (member) => (name === "String" ? (STRING_PROTO_METHOD_PARAM_SLOTS[member] ?? 0) : 0),
+    memberParamSlots: (member) => {
+      if (name !== "String") return 0;
+      // All pre-existing String slot overrides are shared with host/native-first
+      // closure ABIs. Only normalize's new optional-form slot belongs to the
+      // native standalone/WASI body.
+      if (member === "normalize" && !(ctx.standalone || ctx.wasi)) return 0;
+      return STRING_PROTO_METHOD_PARAM_SLOTS[member] ?? 0;
+    },
     memberIsVariadic: (member) =>
       name === "Array" && (member === "join" || member === "push" || member === "unshift" || member === "concat")
         ? true

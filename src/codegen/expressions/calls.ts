@@ -481,7 +481,7 @@ import {
   flushLateImportShifts,
   shiftLateImportIndices,
 } from "./late-imports.js";
-import { ensureAnyHelpers, undefinedExternInstrs } from "../any-helpers.js";
+import { canonicalUndefinedExternInstrs, ensureAnyHelpers, undefinedExternInstrs } from "../any-helpers.js";
 import { emitSymbolToString, ensureSymbolRegistry } from "../symbol-native.js";
 import { resolveStructName } from "./misc.js";
 import {
@@ -1493,6 +1493,13 @@ export function emitReflectiveNativeProtoClosureCall(
   // runtime predicate. Other builtin families retain their existing ABI.
   const arrayBufferUndefinedPad =
     getNativeProtoBuiltinGlue(ctx, brand)?.name === "ArrayBuffer" ? undefinedExternInstrs(ctx) : undefined;
+  // `String.prototype.normalize` has an optional form parameter even though
+  // its public `.length` is 0. Its closure body must distinguish an omitted
+  // form (and written `undefined`) from explicit `null`: only the former
+  // defaults to NFC. Keep this padding local to the one native String member;
+  // every other reflective ABI retains its existing null/undefined policy.
+  const nativeStringNormalize =
+    (ctx.standalone || ctx.wasi) && getNativeProtoBuiltinGlue(ctx, brand)?.name === "String" && member === "normalize";
   for (let i = 0; i < paramTypes.length; i++) {
     const pType = paramTypes[i]!;
     if (nativeProtoVariadic && i === 1) {
@@ -1520,9 +1527,24 @@ export function emitReflectiveNativeProtoClosureCall(
         coerceType(ctx, fctx, aType, pType);
       }
     } else if (pType.kind === "externref") {
-      fctx.body.push(...(arrayBufferUndefinedPad ?? [{ op: "ref.null.extern" }]));
+      // The receiver is always supplied by the caller. Only normalize's
+      // optional *form* slot (index 1) represents an omitted argument as the
+      // canonical undefined singleton; explicit null is still a real value.
+      const missingPad =
+        nativeStringNormalize && i === 1 ? canonicalUndefinedExternInstrs(ctx) : arrayBufferUndefinedPad;
+      fctx.body.push(...(missingPad ?? [{ op: "ref.null.extern" }]));
     } else {
       pushDefaultValue(fctx, pType, ctx);
+    }
+  }
+  // Native closure ABI carries only normalize's receiver and optional form.
+  // JavaScript still evaluates every surplus argument before entering the
+  // builtin, even though NormalizeString ignores them. Preserve those effects
+  // after the form slot and before call_ref; no other native member is widened.
+  if (nativeStringNormalize) {
+    for (let i = paramTypes.length; i < userArgs.length; i++) {
+      const extraType = compileExpression(ctx, fctx, userArgs[i]!);
+      if (extraType !== null) fctx.body.push({ op: "drop" });
     }
   }
 

@@ -33,6 +33,12 @@ loc-budget-allow:
   - src/codegen/expressions/calls.ts
   - src/codegen/string-isregexp-guard.ts
   - src/codegen/string-proto-tostring.ts
+  # 2026-09-20 Unicode 17 normalization: this is generated, pinned UCD data
+  # (not a hand-maintained god-file). The 3,644 LOC module is the compact
+  # table serialization consumed by the isolated native helper; splitting it
+  # across codegen modules would duplicate generated-data plumbing rather than
+  # reduce the emitted-data surface.
+  - src/codegen/normalize-tables.ts
 coercion-sites-allow:
   # (#5152) §7.2.8 IsRegExp step 3 is literally `ToBoolean(matcher)`, and this
   # site performs it by CALLING the shared native `__is_truthy` helper — the
@@ -55,6 +61,14 @@ func-budget-allow:
   - src/codegen/object-ops.ts::compileObjectDefineProperty
   - src/codegen/object-runtime.ts::fillExternArrayLikeStructArms
   - src/codegen/object-runtime.ts::fillClosedStructExternGetArms
+  # 2026-09-20 Unicode 17 normalization: `ensureStrNormalize` emits one
+  # self-contained Wasm function whose 39 local slots and nested instruction
+  # factories share table globals and late-resolved helper indices. Splitting
+  # this TypeScript builder would re-thread that mutable emission state across
+  # artificial helpers and create index-lifetime/stack-order hazards without
+  # reducing the generated Wasm function. The dedicated module contains the
+  # algorithm; existing dispatchers only demand it.
+  - src/codegen/normalize-native.ts::ensureStrNormalize
 ---
 
 # ES2015 standalone: string conformance wave 1
@@ -569,6 +583,26 @@ Test262, or a data generator. The queued next receipt is the exact three
 remaining originals plus the eleven passing normalize controls, after the
 separate lanes explicitly release the serial compiler/test lease.
 
+**Current-main baseline receipt (2026-09-20).** After checkpointing this plan
+and merging `upstream/main` `62221769a87acdc32759c656702eede64936feb5` into
+local merge head `c47fcc7c081accaea26dfe556e44999043acd43f`, the exact frozen
+14-row manifest at
+`/private/tmp/js2-5152-normalize-paths-20260920.txt` (SHA-256
+`027e4b21d7fd72e77e419c2bd758e30a9498b70eafd2aa344daef2c2856ec76e`) was
+measured with `COMPILER_POOL_SIZE=1`, `JS2WASM_ROW_TIMEOUT_MS=120000`,
+`VITEST_FORK_MAX_OLD_SPACE_SIZE=3072`, Node 24, and
+`scripts/run-test262-paths.mts <manifest> --isolate --standalone`. The durable
+terminal log is `/private/tmp/js2-5152-normalize-baseline-20260920.log`.
+Its authoritative settled denominator is **14 = 11 pass + 3 fail**, with zero
+skip/error rows. The wrapper itself exits zero after reporting verdicts, so
+the counts—not that process status—are the receipt. The only non-passes are
+`return-normalized-string.js` (NFD),
+`return-normalized-string-from-coerced-form.js` (coerced NFC), and
+`return-normalized-string-using-default-parameter.js` (default NFC). Their
+Test262 assertions all observe the unchanged input rather than normalized
+output, confirming the source diagnosis below; all eleven abrupt/type/name/
+length preservation controls retain their baseline verdict.
+
 The retained controls are `form-is-not-valid-throws.js`, `length.js`,
 `name.js`, `normalize.js`, `not-a-constructor.js`,
 `return-abrupt-from-form-as-symbol.js`, `return-abrupt-from-form.js`,
@@ -646,6 +680,323 @@ incomplete table. This is the
 canonical ordering, then canonical composition for C forms; its conformance
 clause requires `NormalizationTest.txt`.
 
+**2026-09-20 generated-data checkpoint (source-only; not a Wasm receipt).**
+The local generator now pins and verifies the exact Unicode 17.0.0 source
+bytes: `UnicodeData.txt`
+`2e1efc1dcb59c575eedf5ccae60f95229f706ee6d031835247d843c11d96470c`,
+`DerivedNormalizationProps.txt`
+`71fd6a206a2c0cdd41feb6b7f656aa31091db45e9cedc926985d718397f9e488`, and
+`NormalizationTest.txt`
+`5019ffd530751a741900c849c0e010332f142a3612234639bd200b82138a87db`.
+Its table-backed reference implementation consumes the exact serialized
+key/offset/length/value and CCC/composition arrays that the native helper will
+consume, and passed all 20,034 official rows without consulting host ICU. It
+also asserts the Rule-2 data-side invariant: all generated singleton
+transformation sources (including all 11,172 algorithmic Hangul syllables)
+occur in the 17,086 Part-1 c1 scalars. This is a generator/data invariant,
+not yet compiled-Wasm identity coverage for all other assigned scalars.
+
+The original compatibility index triple encoding would have required one
+17,742-element `array.new_fixed`, beyond the repository's 10,000-element
+engine limit. The generated module instead serializes each decomposition index
+as three parallel arrays (keys, offsets, lengths); the native binary search
+returns the shared entry ordinal. The generator rejects any emitted fixed-array
+slice above 10,000 and the current maximum is the 9,193-element compatibility
+value slice. The native builder repeats that bound defensively. No compiler,
+typecheck, or Wasm validation ran for this checkpoint; validating actual module
+construction and imports remains a required lease-gated acceptance step.
+
+**2026-09-20 conformance-fixture generation checkpoint (historical row-corpus
+artifact; not a Wasm receipt).** The same local, hash-verified UCD inputs first
+generated the test-only `tests/fixtures/normalize-ucd17-conformance.ts`
+alongside the native table module. That predecessor was 2,265,243 bytes and
+contained scalar-only row-major values, five-column offsets, original source
+line numbers, and the Part-1 c1 scalar set; it deliberately contained neither
+JavaScript strings nor host-normalized answers. Its payload SHA-256 was
+`b23dbd3ce6245e1bc3fac3ea084091cc9250f760105223d9adb813c3c2857e49`, and its
+source `NormalizationTest.txt` SHA-256 remains
+`5019ffd530751a741900c849c0e010332f142a3612234639bd200b82138a87db`, and it
+declares exactly 20,034 rows / 400,680 required relations. The future harness
+recomputes that payload digest from the loaded arrays before compiling any
+adapter, rather than trusting two duplicated header constants. This generated
+test data needs a measured per-file size/ratchet allowance if repository gates
+require one; no global budget or format rule may be weakened. The Rule-2
+assigned-scalar inventory was deliberately a separately required generated
+artifact, not inferred from this Part-1 data.
+
+**2026-09-20 Rule-2 inventory source-only update (before emitted-Wasm run).** The pinned local
+generator now also derives a compact, sorted inventory from *every*
+`UnicodeData.txt` assignment after validating each `First`/`Last` record's
+fields. It records **735** non-surrogate scalar ranges covering **297,334**
+assigned scalars, including **137,468** `Co` private-use scalars; it separately
+records all **2,048** `Cs` surrogate code points rather than silently treating
+them as scalars. Every Part-1 c1 scalar is checked to lie in the emitted range
+inventory, leaving **280,248** assigned non-surrogate Rule-2 identity inputs.
+The regenerated 2,276,541-byte fixture authenticates that inventory in its
+payload digest
+`733ccbe5078c762ac50a176279f08219f8d1d110e991ccac5c2da4e517bb5833`.
+A separate root read-only calculation over the pinned `UnicodeData.txt` range
+endpoints independently matched the 297,334 / 137,468 / 2,048 inventory
+counts without invoking the generator, compiler, or test runner.
+
+The corresponding harness has two separately named gates on the one numeric
+emitted-Wasm adapter: all 280,248 Part-1-absent
+assigned scalars in NFC/NFD/NFKC/NFKD (**1,120,992** scalar identity
+relations), and all 2,048 lone UTF-16 surrogate code units in those four forms
+(**8,192** code-unit identity relations). The existing leading/trailing
+surrogate barrier remains a distinct mixed-sequence control. This respects the
+UAX #15 Rule-2 wording about assigned code points while stating the JavaScript
+WTF-16 surrogate boundary with a separate denominator. The prior row-corpus
+receipt below used the predecessor payload (`b23dbd…`) before this range
+inventory was added; it remains historical evidence for the official rows. The
+expanded-fixture terminal receipt immediately below supplies the required
+Rule-2 and surrogate denominators.
+
+**2026-09-20 first emitted-Wasm smoke (failed implementation checkpoint).**
+The first leased Node-24 Vitest run of
+`tests/issue-5152-normalize-native.test.ts` is retained at
+`/private/tmp/js2-5152-normalize-smoke-20260920.log` (terminal exit 1): its
+host-preservation control passed, while the standalone compilation failed
+before Wasm emission. A temporary, restored stack-only diagnostic captured
+the DCE failure at
+`/private/tmp/js2-5152-normalize-smoke-stack-20260920.log`; a second restored
+walker path diagnostic at
+`/private/tmp/js2-5152-normalize-smoke-arm-trace-20260920.log` identified an
+undefined `if.then` in the native Hangul trailing-T branch. The builder had
+emitted an `if` with an `else` but no required `then: Instr[]`, so dead-import
+elimination attempted to walk `undefined`. `normalize-native.ts` now supplies
+the semantically empty `then: []`. That source-only correction has not yet
+been rerun. Therefore this checkpoint establishes neither standalone Wasm
+construction nor any normalization result; the next leased smoke must rerun
+the original direct/reflective and host controls before widening to Test262 or
+the UCD corpus. A separate void-value boundary control covers a
+direct form, reflective form, and direct surplus argument for both
+`VoidExpression` and a real `(): void` call: each must preserve its effect and
+pass canonical `undefined` to the optional form slot where applicable. This is
+a narrow ABI control, not an additional Unicode-algorithm claim.
+
+**2026-09-20 corrected emitted-Wasm smoke receipt.** The same focused Node-24
+Vitest invocation then passed at
+`/private/tmp/js2-5152-normalize-smoke-rerun2-20260920.log` (terminal exit
+0): one file and all three tests passed. The original standalone matrix
+returned mask 31 for NFC, NFD Hangul, NFKC compatibility, omitted reflective
+form, and explicit-null RangeError/`.length`, while asserting an empty Wasm
+import section before instantiation. The separate void-value matrix returned
+mask 63 for direct and reflective `VoidExpression` and real `(): void` form
+calls plus the corresponding ignored surplus arguments. The existing reached
+host control also passed. This establishes the initial emitted helper path and
+the optional-form ABI boundary only; it is not a 14-row Test262 receipt or a
+full Unicode-conformance claim.
+
+**2026-09-20 frozen candidate Test262 receipt.** With production source held
+at the exact seven-file SHA-256 manifest in
+`/private/tmp/js2-5152-normalize-frozen14-candidate-20260920.txt` (worktree
+HEAD `c47fcc7c081accaea26dfe556e44999043acd43f`, Node `v24.19.0`), the exact
+same frozen-14 manifest/options as the baseline were rerun under
+`COMPILER_POOL_SIZE=1`, `JS2WASM_ROW_TIMEOUT_MS=120000`,
+`VITEST_FORK_MAX_OLD_SPACE_SIZE=3072`, Node 24, and
+`scripts/run-test262-paths.mts <manifest> --isolate --standalone`. The durable
+log `/private/tmp/js2-5152-normalize-frozen14-candidate-20260920.log` is
+terminal (runner session 68778, exit 0) and reports **14 pass / 0 non-pass**;
+there are no skip or error rows. Thus all eleven frozen validation/preservation
+controls remain passing and all three baseline transformation rows now pass:
+the exact manifest moves **11 pass / 3 fail → 14 pass / 0 fail**.
+The runner's exit alone is not the claim; its settled 14-row denominator and
+per-row non-pass section are. This is a bounded Test262 gain receipt, not yet
+the UCD corpus or Rule-2 Wasm conformance gate.
+
+**2026-09-20 shared-call-seam preservation A/B.** While the seven normalize
+production files were frozen at the manifest above, the root lane ran the
+shared String parameter-slot/reflective seam controls in this worktree and a
+pristine `62221769` matched-base worktree. Both terminal runs were exactly
+**23 pass / 5 fail / 28 settled**: all five transferred-prototype controls
+passed, 18 of 23 search controls passed, and the identical five historical
+reflective `includes`/`startsWith`/`endsWith` cases threw
+`WebAssembly.Exception` in both candidates. The test source hashes were held
+equal (`b27dc5f1…efd040` and `d3714591…7948d`), and the seven frozen normalize
+production hashes matched. This is no observed regression in the 28 controls,
+not a claim that all 28 pass; the root owns the detailed durable A/B logs.
+
+**2026-09-20 emitted-Wasm UCD row-corpus receipt (historical predecessor;
+Rule 2 then pending).**
+The seven production-file hashes were compared against the frozen-14 manifest
+immediately before this run and matched exactly. The small numeric adapter
+control at `/private/tmp/js2-5152-normalize-ucd17-adapter-control-20260920.log`
+is terminal (Node 24 direct Vitest, exit 0, one selected pass / one filtered):
+it proves native-string global mutation, numeric `String.fromCharCode` ingress,
+numeric output reads, a retained unpaired-surrogate barrier, and a real empty
+`WebAssembly.Module.imports(module)` section. It is a prerequisite control, not
+the corpus claim.
+
+The full adapter receipt at
+`/private/tmp/js2-5152-normalize-ucd17-corpus-20260920.log` is also terminal
+(exit 0, one selected pass / one filtered; 1.692 seconds test time). It
+compiled and instantiated exactly one standalone adapter and asserted
+`imports=[]` before instantiation. Before compilation the harness recomputed
+SHA-256 `b23dbd3ce6245e1bc3fac3ea084091cc9250f760105223d9adb813c3c2857e49`
+from the *loaded* scalar/offset/line/Part-1 arrays, checked their 20,034-row
+shape, and pinned the official source SHA-256
+`5019ffd530751a741900c849c0e010332f142a3612234639bd200b82138a87db`.
+It then executed all **400,680** official relationships (20 per row: the full
+NFC/NFD/NFKC/NFKD five-column relation set) through numeric UTF-16 ingress and
+egress. There is no host `String.prototype.normalize()`/ICU comparison in this
+harness. This is positive compiled-Wasm coverage of every official row. At
+this predecessor checkpoint, the separate assigned-scalar Rule-2 identity
+inventory/test was still pending; the expanded receipt follows.
+
+**2026-09-20 expanded emitted-Wasm UCD receipt (Rules 1/2 plus JavaScript
+surrogate boundary).** With the same frozen seven production hashes (verified
+unchanged against `/private/tmp/js2-5152-normalize-frozen14-candidate-20260920.txt`),
+the expanded test file is terminal at
+`/private/tmp/js2-5152-normalize-ucd17-rule2-20260920.log`: Node 24 direct
+Vitest exit 0, **1 test file / 4 tests passed**, 3.676 seconds test time
+(15.21 seconds total process duration). It compiled one full numeric UCD
+adapter and one small ingress prerequisite adapter; each construction asserted
+an empty `WebAssembly.Module.imports(module)` section before instantiation.
+The loaded fixture recomputed payload SHA-256
+`733ccbe5078c762ac50a176279f08219f8d1d110e991ccac5c2da4e517bb5833`,
+including its assignment inventory, before compilation.
+
+The terminal denominator is deliberately split rather than folded into a
+sampled mask: **400,680** official five-column `NormalizationTest.txt`
+relationships over 20,034 rows; **1,120,992** Rule-2 scalar identities
+(280,248 Part-1-absent assigned non-surrogate scalars × four forms); and
+**8,192** lone-surrogate UTF-16 code-unit identities (2,048 × four forms), in
+addition to the explicit mixed surrogate-barrier adapter control. All numeric
+UTF-16 ingress/egress comparisons are made by the harness; no host ICU or
+`String.prototype.normalize()` result is consulted. This closes the planned
+official-row/Rule-2 corpus acceptance for the pinned Unicode-17 data and
+states the separate JavaScript surrogate boundary explicitly; it does not
+erase the remaining ordinary project gates below.
+
+**2026-09-20 deterministic fixture-layout correction (source-only; runtime
+receipts above remain historical).** Biome skips a source file at its 1 MiB
+limit, so the expanded 2,276,541-byte single fixture could not be called
+lint-covered merely because the repository-wide lint command exited zero while
+its unrelated diagnostics were capped. The pinned generator now deterministically
+emits a wrapper plus four fixed contiguous scalar-value modules instead of a
+single oversized values declaration. The public wrapper API and loaded payload
+remain unchanged: its payload digest is still
+`733ccbe5078c762ac50a176279f08219f8d1d110e991ccac5c2da4e517bb5833`, and
+the wrapper reassembles all four chunks in order before the existing harness
+hashes it.
+
+The generated module sizes are all strictly below the 1,048,576-byte limit:
+the wrapper is **1,021,416** bytes and the `values-0` through `values-3`
+modules are respectively **322,453**, **333,739**, **319,086**, and
+**282,119** bytes (2,278,813 bytes total). The generator checks this bound
+before writing any generated fixture file, verifies each nonempty chunk and
+their aggregate scalar count, and uses a fixed four-way floor-partition so
+output does not depend on host formatting. It emits `prettier-ignore` only on
+generator-owned numeric arrays; no global formatter or Biome configuration was
+weakened.
+
+Two back-to-back generation runs against the same pinned UCD input produced
+identical SHA-256 manifests at
+`/private/tmp/js2-5152-normalize-generator-split-before-20260920.sha256` and
+`/private/tmp/js2-5152-normalize-generator-split-after-20260920.sha256`.
+The generated table remained
+`c9394e157b7402928a7f27eaaa4fc17a9b217268eb6b3b84e47e5bb1d8dfeeff`; the
+five fixture-module hashes are recorded in the latter manifest. Targeted
+Biome lint over the wrapper and all four chunks is terminal with **5 checked,
+zero errors** at
+`/private/tmp/js2-5152-normalize-ucd17-fixture-biome-20260920.log`; a targeted
+Prettier check over the generator, normalize sources/tests, wrapper, and all
+chunks is terminal at
+`/private/tmp/js2-5152-normalize-prettier-split-20260920.log`. The full
+repository lint command still reports a capped set of unrelated diagnostics,
+so its exit status is not cited as proof of fixture coverage. No compiler,
+Wasm, or Test262 process ran for this layout correction. Consequently the
+earlier Test262, smoke, TS7, and UCD receipts must be rerun against this exact
+generated fixture topology before a final current-tree claim.
+
+**2026-09-20 static normal-gate checkpoint (no compiler/test lease used).**
+Against explicit current main
+`LOC_GATE_BASE=62221769a87acdc32759c656702eede64936feb5`, the LOC and
+function-budget gates are terminal clean over all seven changed codegen files
+at `/private/tmp/js2-5152-normalize-loc-budget-after-allow-20260920.log` and
+`/private/tmp/js2-5152-normalize-func-budget-after-allow-20260920.log`.
+The issue-scoped grants are intentionally exact: generated
+`normalize-tables.ts` is **3,644** LOC of pinned UCD data, while the one
+`ensureStrNormalize` builder is **852** LOC because its one emitted Wasm
+function shares 39 local slots, table globals, and late-resolved helper
+indices. Their frontmatter rationale records why a cosmetic TypeScript split
+would add index/stack-order risk without reducing the emitted helper. No
+baseline file or global ceiling was changed.
+
+The static coercion and oracle ratchets pass with no net growth, and issue
+spec coverage, issue-ID uniqueness against main, done-status integrity,
+`update-issues --check`, and the IR retirement ledger all exit zero (durable
+logs use the `js2-5152-normalize-*-20260920.log` prefix). Full source/test/
+script Prettier verification is terminal at
+`/private/tmp/js2-5152-normalize-format-check-split-retry-20260920.log`.
+The dead-export command itself exits zero but is deliberately **not** called a
+retirement certification: its pre-existing whole-repository modeled-closure
+report remains open on nonliteral imports at `src/optimize.ts:394` and
+`src/runtime/platform-capability-adapter.ts:151`, matching the independently
+paired baseline finding. This slice does not touch either path.
+
+**2026-09-20 Unicode License V3 provenance correction (comment-only data
+refresh; final runtime revalidation terminal).** The pinned `NormalizationTest.txt`
+header identifies Unicode, Inc. and points to the Unicode terms page; the
+[official terms](https://www.unicode.org/copyright.html) identify files under
+`https://www.unicode.org/Public/` as Unicode Data Files and subject them to
+Unicode License V3. Its [license text](https://www.unicode.org/license.txt)
+requires the copyright and permission notice to accompany copies or associated
+documentation. The prior generated data headers named the sources and hashes
+but carried only the project Apache header, so the generator now documents
+that its own implementation remains Apache-2.0 WITH LLVM-exception while it
+emits the complete Unicode License V3 copyright/permission notice into every
+generated derivative-data file: `normalize-tables.ts`, the UCD fixture wrapper,
+and all four value chunks. No implementation source was relabeled and the
+repository-wide license was not changed.
+
+This header-only refresh retains the same pinned sources, table values,
+fixture API, and payload SHA-256
+`733ccbe5078c762ac50a176279f08219f8d1d110e991ccac5c2da4e517bb5833`
+(20,034 rows, 100,171 offsets, 205,047 scalar values, and 280,248 Rule-2
+scalars), verified by importing the rebuilt wrapper in plain Node without a
+compiler/test harness. Two regeneration passes are byte-identical at
+`/private/tmp/js2-5152-normalize-unicode-notice-{before,after}-20260920.sha256`.
+The full notices keep every fixture module below Biome's limit: wrapper
+**1,023,187** bytes; chunks **324,224**, **335,510**, **320,857**, and
+**283,890** bytes. Targeted Biome (five generated fixture modules) and
+Prettier (generator, tables, wrapper, chunks) both pass at
+`/private/tmp/js2-5152-normalize-ucd17-fixture-biome-notice-20260920.log` and
+`/private/tmp/js2-5152-normalize-prettier-unicode-notice-20260920.log`.
+
+The post-split UCD 4/4, frozen-14 14/0, smoke 3/3, and TS7 receipts preceding
+this paragraph remain historical behavior evidence, not byte-identical
+source-hash receipts after this required comment/provenance refresh. The
+refreshed candidate is frozen in
+`/private/tmp/js2-5152-normalize-unicode-notice-candidate-20260920.sha256`.
+With that candidate held unchanged, final Node-24 receipts are terminal:
+`/private/tmp/js2-5152-normalize-ucd17-unicode-notice-20260920.log` reports
+**4/4** tests passing for the import-free adapter, all **400,680** official
+row relations, **1,120,992** Rule-2 identities, and **8,192** lone-surrogate
+identities; the exact frozen Test262 manifest is **14 pass / 0 non-pass** at
+`/private/tmp/js2-5152-normalize-frozen14-unicode-notice-20260920.log`; the
+focused direct/reflective smoke is **3/3** at
+`/private/tmp/js2-5152-normalize-smoke-unicode-notice-20260920.log`; and
+direct TS7 exits zero with no diagnostics at
+`/private/tmp/js2-5152-normalize-ts7-unicode-notice-20260920.log`. The
+comment-only refresh also reran explicit-main LOC/function budgets successfully
+(`normalize-tables.ts` is now measured at 3,644 LOC under its exact issue
+grant). This establishes the current source/data receipt; normal commit and
+pre-push gates still require authorized publication and must not be bypassed.
+
+**Remaining normalize-slice gates.** The deterministic UCD generation, numeric
+adapter, frozen 14, and expanded UCD corpus receipts above must be repeated if
+production source changes. Before a completed-fix publication claim, rerun the
+existing direct/reflective smoke file after any production edit; then run direct
+TS7 over the current generated fixture and harness, the focused Vitest files,
+`git diff --check`, and unchanged normal
+pre-commit/pre-push gates (lint/format, LOC/function ratchets, oracle/coercion
+ratchets, numeric-local parity, and issue integrity). The 2.26 MB generated
+fixture is now represented by five deterministically generated modules below
+Biome's file-size limit; retain their explicit lint coverage and do not add a
+global exception, baseline change, or gate weakening.
+
 **Native helper design.** `ensureStrNormalize(ctx)` should be demand-driven
 from the direct and reflective call sites, after `ensureNativeStringHelpers`,
 so modules that merely use another string method do not retain the Unicode
@@ -693,6 +1044,64 @@ imports. Vendor or generate a hash-pinned Unicode-17
 compiled native helper in bounded chunks; this is a positive conformance gate,
 not a host-ICU comparison or a three-example fixture. Keep js-host behavior
 unchanged and record any size/ratchet budget for generated data explicitly.
+
+**2026-09-20 emitted-Wasm acceptance design and execution status.** The
+generator/data receipt alone is deliberately insufficient: it validates a
+JavaScript reference over the serialized tables, not the generated Wasm helper.
+The frozen-14 and expanded UCD adapter receipts above have executed this
+design against one frozen production candidate, recording its `HEAD`, relevant
+hash manifest, Node-24 path, and terminal logs. The design has two independent
+parts:
+
+1. **Exact Test262 retention and gain.** Re-run exactly
+   `/private/tmp/js2-5152-normalize-paths-20260920.txt` (SHA-256
+   `027e4b21d7fd72e77e419c2bd758e30a9498b70eafd2aa344daef2c2856ec76e`) with
+   `COMPILER_POOL_SIZE=1`, `JS2WASM_ROW_TIMEOUT_MS=120000`,
+   `VITEST_FORK_MAX_OLD_SPACE_SIZE=3072`, the installed Node 24, and
+   `scripts/run-test262-paths.mts <manifest> --isolate --standalone`. Treat
+   the settled per-row verdicts as authoritative rather than the wrapper's
+   zero exit: require denominator 14, zero skip/error rows, all eleven
+   retained controls still passing, and the three named transform rows changing
+   from the baseline's fail to pass. This run is intentionally separate from
+   Unicode conformance and must retain the baseline's isolated runner/options.
+
+2. **One compiled numeric UCD adapter, not 20,034 compiled AST fixtures.**
+   Extend the pinned Unicode-17 generator to emit a committed test-only
+   `NormalizationTest.txt` payload: version/source hashes, exact row count,
+   a digest of its serialized payload, and compact flattened scalar sequences
+   with offsets for all five columns. The Vitest harness must verify those
+   metadata/digest values before testing; it must neither fetch UCD data nor
+   call host `String.prototype.normalize()`/ICU as an oracle. First add a tiny
+   standalone adapter-control that proves this compiler supports mutating a
+   module-global native string via numeric exports and that its real Wasm
+   import section is empty. The full adapter is then compiled and instantiated
+   exactly once. It exposes only numeric boundary methods such as
+   `resetInput()`, `appendUnit(unit)`, `run(mode)`, `outputLength()`, and
+   `outputUnit(index)`; `appendUnit` builds the input with native
+   `String.fromCharCode`, and `run(0..3)` selects the four literal forms
+   NFC/NFD/NFKC/NFKD. The host harness encodes each pinned scalar sequence to
+   UTF-16 units itself, feeds and reads units numerically, and compares numeric
+   units itself. No host string bridge or host normalization result is allowed.
+
+   The single instance must check all UAX #15 `NormalizationTest.txt`
+   relationships, not merely one preferred source column: NFC c1/c2/c3 → c2
+   and c4/c5 → c4; NFD c1/c2/c3 → c3 and c4/c5 → c5; NFKC every c1–c5 → c4;
+   NFKD every c1–c5 → c5. That is 20 relations per row, or 400,680 normalizer
+   invocations for the pinned 20,034-row corpus. Chunks may bound host-loop
+   progress and make the first failing row/form/column durable, but they may
+   not recompile a module per row or substitute sampled fixtures. Assert
+   `WebAssembly.Module.imports(new WebAssembly.Module(binary))` is exactly
+   empty before instantiation and report the corpus digest/row denominator.
+
+   UAX #15 Rule 2 also requires identity in every form for assigned scalars not
+   listed in NormalizationTest Part 1. The data-side Part-1 coverage invariant
+   is useful but not a Wasm proof. The generator now emits a reproducible,
+   validated `UnicodeData.txt` assignment inventory after First/Last expansion;
+   the terminal same-adapter gate exercised all 280,248 Part-1-absent scalars
+   in all four forms against their own UTF-16 encodings. A separately named
+   all-2,048-code-unit surrogate lane and the existing mixed barrier control
+   cover the JavaScript WTF-16 boundary. Their separate terminal denominators
+   are recorded above rather than silently folded into the row corpus.
 
 This plan rejects both a three-character patch and an unpinned
 `String.prototype.normalize()`-as-generator oracle. The separate #1541
