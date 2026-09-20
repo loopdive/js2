@@ -81,7 +81,7 @@
   "codegen/object-runtime-ordinary-set.ts": 1,
   "codegen/object-runtime-proxy-invariants.ts": 2,
   "codegen/object-runtime-proxy.ts": 11,
-  "codegen/object-runtime.ts": 36,
+  "codegen/object-runtime.ts": 37,
   "codegen/parse-number-native.ts": 4,
   "codegen/promise-combinators.ts": 1,
   "codegen/property-access-dispatch.ts": 7,

@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10369,
-    "fail": 1049,
+    "pass": 10371,
+    "fail": 1047,
     "ce": 286,
     "skip": 0,
     "total": 11704,
@@ -102,8 +102,8 @@
       },
       {
         "name": "Symbol",
-        "pass": 506,
-        "fail": 101,
+        "pass": 507,
+        "fail": 100,
         "ce": 2,
         "skip": 0,
         "total": 609,
@@ -689,12 +689,12 @@
   },
   {
     "edition": "ES2016",
-    "pass": 99,
-    "fail": 17,
+    "pass": 102,
+    "fail": 14,
     "ce": 8,
     "skip": 0,
     "total": 124,
-    "pct": 80,
+    "pct": 82,
     "features": [
       {
         "name": "exponentiation",
@@ -707,12 +707,12 @@
       },
       {
         "name": "Array.prototype.includes",
-        "pass": 21,
-        "fail": 7,
+        "pass": 24,
+        "fail": 4,
         "ce": 1,
         "skip": 0,
         "total": 29,
-        "pct": 72
+        "pct": 83
       },
       {
         "name": "u180e",
@@ -1316,12 +1316,12 @@
   },
   {
     "edition": "ES2019",
-    "pass": 82,
-    "fail": 38,
+    "pass": 83,
+    "fail": 37,
     "ce": 16,
     "skip": 0,
     "total": 136,
-    "pct": 60,
+    "pct": 61,
     "features": [
       {
         "name": "string-trimming",
@@ -1343,12 +1343,12 @@
       },
       {
         "name": "Object.fromEntries",
-        "pass": 10,
-        "fail": 14,
+        "pass": 11,
+        "fail": 13,
         "ce": 1,
         "skip": 0,
         "total": 25,
-        "pct": 40
+        "pct": 44
       },
       {
         "name": "String.prototype.trimEnd",
@@ -1397,12 +1397,12 @@
       },
       {
         "name": "Symbol",
-        "pass": 2,
-        "fail": 3,
+        "pass": 3,
+        "fail": 2,
         "ce": 4,
         "skip": 0,
         "total": 9,
-        "pct": 22
+        "pct": 33
       },
       {
         "name": "Symbol.prototype.description",
@@ -2683,8 +2683,8 @@
   },
   {
     "edition": "ES2023",
-    "pass": 176,
-    "fail": 156,
+    "pass": 178,
+    "fail": 154,
     "ce": 2,
     "skip": 0,
     "total": 334,
@@ -2710,12 +2710,12 @@
       },
       {
         "name": "array-find-from-last",
-        "pass": 91,
-        "fail": 16,
+        "pass": 93,
+        "fail": 14,
         "ce": 2,
         "skip": 0,
         "total": 109,
-        "pct": 83
+        "pct": 85
       },
       {
         "name": "ShadowRealm",
@@ -4304,9 +4304,9 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4461,
-    "fail": 909,
-    "ce": 75,
+    "pass": 4463,
+    "fail": 904,
+    "ce": 78,
     "skip": 0,
     "total": 5445,
     "pct": 82

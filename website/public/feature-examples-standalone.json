@@ -574,7 +574,7 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 4337,
+      "passCount": 4338,
       "totalCount": 4581,
       "editionSpread": [
         {
@@ -604,7 +604,7 @@
         },
         {
           "edition": "ES2019",
-          "pass": 10,
+          "pass": 11,
           "total": 25
         },
         {
@@ -647,7 +647,7 @@
     {
       "name": "Strings",
       "testCategories": ["built-ins/String", "built-ins/StringIteratorPrototype"],
-      "passCount": 1128,
+      "passCount": 1130,
       "totalCount": 1230,
       "editionSpread": [
         {
@@ -657,7 +657,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 249,
+          "pass": 251,
           "total": 277
         },
         {
@@ -839,7 +839,7 @@
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 2267,
+      "passCount": 2274,
       "totalCount": 3161,
       "editionSpread": [
         {
@@ -854,7 +854,7 @@
         },
         {
           "edition": "ES2016",
-          "pass": 22,
+          "pass": 25,
           "total": 45
         },
         {
@@ -879,7 +879,7 @@
         },
         {
           "edition": "ES2023",
-          "pass": 77,
+          "pass": 79,
           "total": 131
         },
         {
@@ -889,7 +889,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 1692,
+          "pass": 1694,
           "total": 2250
         }
       ]
@@ -1080,7 +1080,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1507,
+      "passCount": 1508,
       "totalCount": 1955
     },
     {
@@ -1282,7 +1282,7 @@
     {
       "name": "Array.prototype.includes",
       "testCategories": ["built-ins/Array/prototype/includes"],
-      "passCount": 21,
+      "passCount": 24,
       "totalCount": 29
     },
     {
@@ -1306,13 +1306,13 @@
     {
       "name": "Object.fromEntries",
       "testCategories": ["built-ins/Object/fromEntries"],
-      "passCount": 10,
+      "passCount": 11,
       "totalCount": 25
     },
     {
       "name": "Array.findLast / findLastIndex",
       "testCategories": ["built-ins/Array/prototype/findLast", "built-ins/Array/prototype/findLastIndex"],
-      "passCount": 91,
+      "passCount": 93,
       "totalCount": 109
     },
     {
