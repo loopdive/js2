@@ -268,6 +268,7 @@ export function createCodegenContext(
     classExternrefBackedSet: new Set(),
     classDynamicUnresolvedHeritageSet: new Set(),
     classLinkedDynamicParentExpr: new Map(),
+    classLinkedDynamicParentGlobal: new Map(),
     classCtorHostRegistered: new Set(),
     classTagCounter: 0,
     classTagMap: new Map(),

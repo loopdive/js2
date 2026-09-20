@@ -1111,3 +1111,20 @@ four `subclassing-ignored` rows); then the two PlainDate `era` rows
 (#6633), the >2^63 BigInt range, `Duration/compare/order-of-operations.js`
 (#6628), `PlainDateTime/from/argument-string-offset.js`, the Duration
 one-offs.
+
+## Stack state 2026-09-19 (post-S66) — PR #5990 (S65) MERGED; S66 on `issue-5383-standalone-temporal-s66` at `3e7ac90073`; #6644 in-progress (three mechanisms landed); four-family 459/480
+
+PR #5990 landed on `main` 19:44 UTC. S66 (Opus) landed cross-link
+`instanceof`, static inheritance through a linked heritage and identifier
+heritage with a captured parent (see #5383 "### S66 findings"); rows
+unchanged. Base TSVs: `.tmp/s66/battery/*-cur.tsv` in worktree
+`agent-a5b45fd9c24d31356` (identical to S65's).
+
+**Next lanes** (one at a time, Opus): S67 = #6644 blockers (a) computed
+static read class-name resolution via the property-access dispatch's
+`resolvedClass`, (b) runtime spread into a resolved provider static
+(`S[m](...a)`) — the two `from/*` `subclassing-ignored` rows; then
+`super(...<runtime spread>)` via S34's argv driver (`abs`/`add` rows), the
+two PlainDate `era` rows (#6633), the >2^63 BigInt range,
+`Duration/compare/order-of-operations.js` (#6628),
+`PlainDateTime/from/argument-string-offset.js`, the Duration one-offs.

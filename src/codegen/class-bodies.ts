@@ -93,6 +93,8 @@ import {
 import {
   emitLinkedDynamicParentConstruct, // (#6640) `super(...)` through the link boundary
   isLinkedDynamicParentHeritage,
+  isLinkedDynamicParentIdentifier, // (#6644) …and the identifier-heritage twin
+  recordLinkedDynamicParentIdentifier,
 } from "./standalone-dynamic-parent-class.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import {
@@ -1166,6 +1168,20 @@ export function collectClassDeclaration(
             const builtinAncestor = ctx.classBuiltinParentMap.get(parentClassName)!;
             ctx.classBuiltinParentMap.set(className, builtinAncestor);
             ctx.classExternrefBackedSet.add(className);
+          } else if (
+            // (#6644, #5383 S66) …and #6640's residual 2: an identifier
+            // heritage that resolves to NOTHING compiled — a function
+            // PARAMETER holding a provider class object
+            // (`checkSubclassConstructorUndefined` / `checkThisValueNotCalled`).
+            // Reached only when BOTH arms above declined, so every
+            // `extends <builtin>` spelling keeps `classBuiltinParentMap` and
+            // its bytes unchanged.
+            parentStructTypeIdx === undefined &&
+            resolvedParentClassName === undefined &&
+            !ctx.classSet.has(parentClassName) &&
+            isLinkedDynamicParentIdentifier(ctx, decl, baseExpr)
+          ) {
+            recordLinkedDynamicParentIdentifier(ctx, className, baseExpr);
           }
         } else if (ts.isClassExpression(baseExpr)) {
           parentClassName = ctx.anonClassExprNames.get(baseExpr);
