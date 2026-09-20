@@ -1218,3 +1218,67 @@ function property called through a rest forward TRAPPING, and a defaulted
 parameter returning `null` inside a `temporalHelpers.js`-scale module; then
 the >2^63 BigInt range, `Duration/compare/order-of-operations.js` (#6628),
 `PlainDateTime/from/argument-string-offset.js`, the Duration one-offs.
+
+## Stack state 2026-09-20 (post-S69) — S69 on `issue-5383-standalone-temporal-s69` at `0981ed3967` (off the S68 PR #6005 head `ce58705b68`); #6647 one mechanism fixed, the five briefed rows attributed and CLOSED as not-ours
+
+S69 (Opus) was briefed on five red rows sharing
+`Expected a RangeError … no exception was thrown at all`. **None of the five is
+a js2wasm call-shape defect, and both briefed hypotheses are falsified.** The
+three `+00:0000` offset rows reproduce under **plain Node importing the
+polyfill directly** (`.tmp/s69/probes/host-truth.mjs`) — the vendored
+`@js-temporal/polyfill` grammar makes the offset separators independently
+optional and predates the normative "separators must match" rule, so the HOST
+lane fails them too. The two epoch-limit rows are **standalone BigInt being a
+branded i64**: `864n * 10n ** 19n` wraps to `6923773503929843712`, so the
+`ZonedDateTime` under test is ~219 years from the epoch and nothing overflows.
+The first needs a polyfill upgrade, the second arbitrary-precision BigInt (XL).
+
+**Trap:** the runner's `assert.throws` line attribution names the FIRST
+`assert.throws(` in a file, not the failing one —
+`overflow-adding-months-to-max-year.js` reports L12, but L12 PASSES and L15 is
+the failure.
+
+**What was fixed (#6647).** Probing surfaced a separate, bigger defect: with
+`eval` reachable and a provider linked, `function g(){ return {a:1}; } g()`
+answered **`null`**, while `.call`/`.apply`/`new`/a function EXPRESSION/a
+primitive result were all correct. Bisected to ONE LINE —
+`function ev(s){ return eval(s); }` — with a ~7 s repro loop
+(`.tmp/s69/probes/tp3.mts`, real provider via `compileWithTemporalGlobal`).
+`eval` sets `ctx.runtimeEvalGlobalFunctionBindings`, which routes every
+top-level declaration's call through the generic dynamic dispatcher; that
+dispatcher can only produce an `externref`, but `ensureFuncClosureSingleton`
+kept the callee's CONCRETE struct result in the wrapper's funcref type, so no
+arm matched. Fix: promote the WRAPPER's result to `externref` for exactly that
+case — one gate + one `extern.convert_any` in
+`src/codegen/closures/method-trampolines.ts`, the same shape as the
+parked-async (#4630) and native-generator bridges already on that line. Byte-
+inert without `eval`: the standalone provider binary is **3 489 530 B before and
+after**.
+
+**The next lane's target, measured and handed over:**
+`Temporal.PlainDate.prototype.add` is broken for EVERY input
+(`TypeError: Cannot destructure 'null' or 'undefined'`) and is **not** the
+mechanism above — it reproduces with no `eval` and no harness, straight through
+`compileWithTemporalGlobal` (`.tmp/s69/probes/spec2.json`), with `PD.with(…)`
+and `zdt.add(dur)` as clean controls. **22/39** rows fail in
+`PlainDate/prototype/add/` and **56/111** across
+`PlainDate/prototype/subtract/` + `PlainYearMonth/prototype/{add,subtract}/` —
+~78 rows on one mechanism. It sits on the polyfill's `Wr()` path
+(`{...qr(e).date, days:n}`), which `PlainDate`/`PlainYearMonth` arithmetic uses
+and `ZonedDateTime` (via `Ar`) does not. **Unreduced** — every consumer-side
+reduction comes back clean (`.tmp/s69/probes/linked3.mts`), so it must be
+reduced INSIDE a provider module.
+
+**Environment notes that cost time this lane:**
+- A fresh harness worktree has **no `test262` submodule**. Symlinking a sibling
+  worktree's `test262/` works but leaves a ` T test262` typechange in
+  `git status` — never `git add -A`.
+- The battery kit ships its own `*-cur.tsv`; `run-batch.mts` SKIPS any pair
+  whose out-file exists, so the copied TSVs must be moved to `base/` and
+  deleted before the run, or the whole battery silently no-ops in 2 seconds.
+- A file-copy revert for an A/B measurement **stops the in-process battery from
+  measuring what you think it is** — run-family compiles from `src/` live. Kill
+  and restart the battery around any revert window.
+
+Base TSVs for the next lane: `.tmp/s69/battery/*-cur.tsv` in worktree
+`agent-aa4900de162b96313`; corpus base `.tmp/s69/corpus-fix.jsonl`.

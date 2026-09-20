@@ -12190,3 +12190,88 @@ Head `4ea3d63941` (clean tree), merged with `origin/main` (`b84d58d64c`) for lan
 | equivalence | 22 / 1720 / 22 |
 | both witnesses on a TRUE file-copy revert of the three src files to `5e3d2225f9` | 6 of 12 cases fail, all 6 controls pass — real witnesses. NOTE: the lane's own `ab.sh base` restores from `HEAD`, so its recorded "base" run was a no-op; the lead's revert is the evidence |
 | sweep `tests/issue-66*` + 6484 + 6493 (51 files / 289 tests) on the merged head | Node 22 and Node 25: 287 pass, 2 fail — `issue-6602` ("unmatched capture group … as `undefined`") and `issue-6603` (controls). Both reproduce on `origin/main` `b84d58d64c` ALONE, and were green on the lane's unmerged head; main regressed them between `ea8d7f87ff` and `b84d58d64c` (PRs #5999–#6004; #6004 "preserve global match plain-array shape" is the plausible culprit). Not this slice's — recorded, not chased |
+
+### S69 findings (2026-09-20) — the five `Expected a RangeError` rows are NOT a codegen defect; the fixable defect underneath is a live-global-bound call answering `null` (#6647)
+
+Branch `issue-5383-standalone-temporal-s69`, off the S68 head `ce58705b68`.
+One src commit (`src/codegen/closures/method-trampolines.ts`, +21 LOC, no
+allowance needed), one witness pair.
+
+## The five briefed rows — measured, and none of them is ours to fix
+
+Both briefed hypotheses are FALSIFIED.
+
+- **(a) "the exception is swallowed at the link boundary / in `assert.throws`'s
+  callback path"** — dead. `.tmp/s69/probes/l3.js`: a plain `throw`, a
+  Temporal-originated `RangeError` and an `assert.throws` wrapper all propagate
+  correctly through a closure passed to a helper, through an
+  `assert.throws`-shaped call, and through `assert.throws` itself
+  (`v6=THREW v7=OK v8=OK v9=THREW v10=THREW`).
+- **(b) "a value crosses the seam wrongly"** — half right, but not at a seam.
+
+The rows split three-and-two:
+
+| rows | mechanism | evidence |
+| --- | --- | --- |
+| the three `+00:0000` offset rows | **the polyfill's own grammar**, `_o = /^([+-])([01][0-9]\|2[0-3])(?::?([0-5][0-9])(?::?([0-5][0-9])…)?)?$/` — the two separators are independently optional, so `+00:0000` matches | reproduces under **plain Node importing the polyfill directly**, zero js2wasm in the path (`.tmp/s69/probes/host-truth.mjs`) |
+| the two epoch-limit rows | **standalone BigInt is a branded i64**, so `864n * 10n ** 19n` wraps to `6923773503929843712` and the constructed `ZonedDateTime` lands ~219 years from the epoch, comfortably inside the limits | `.tmp/s69/probes/l2.js` / `l4.js`; `zdtMaxEp=6923773503929843712`, `minEp=-6923773503929843712` |
+
+The first needs a polyfill upgrade; the second needs arbitrary-precision BigInt
+on the native-first lane (`src/codegen/host-bigint-carrier.ts` selects the
+arbitrary-width carrier **only** for host-assisted JS, and
+`bigint-format-native.ts` states its own 64-bit limit). Neither is an
+`m`-horizon splice.
+
+**A trap for the next lane:** the runner's `assert.throws` line attribution
+names the FIRST `assert.throws(` in the file, not the failing one.
+`overflow-adding-months-to-max-year.js` reports `L12`, but L12 PASSES and L15
+(the BigInt-built `minYear`) is the failure — measured both ways in
+`.tmp/s69/probes/l4.js`.
+
+## What WAS fixed — #6647
+
+Under the linked standalone Temporal provider, `function g(){ return {a:1}; }
+g()` answered **`null`**, while `g.call(…)`, `g.apply(…)`, `new g()`, the same
+function written as an EXPRESSION, and a primitive-returning declaration were
+all correct.
+
+The trigger is **`eval`**, bisected to one line
+(`.tmp/s69/probes/tp3.mts`, ~7 s per run against the real provider):
+`harness/assert.js + sta.js` clean · the `$262` shim with its three `eval` uses
+removed clean · `function ev(s){ return eval(s); }` alone **NULL**. `eval`
+without a linked provider is clean, and `sharedExceptionTag` is not it.
+
+Root cause: `eval` + a linked realm sets `ctx.runtimeEvalGlobalFunctionBindings`
+(`src/codegen/index.ts` ~L9886), which makes `hasLiveFunctionBinding` true for
+every top-level declaration, so `compileIdentifierCall` routes the call through
+`tryEmitInlineDynamicCall` — correct, since runtime eval may replace the
+binding. But the function-value wrapper from `ensureFuncClosureSingleton` kept
+the callee's CONCRETE struct result, so the trampoline's funcref type reads
+`(func (result (ref null 53)))` and the dispatcher — which can only produce an
+`externref` — has no arm to match. Fix: promote the WRAPPER's result to
+`externref` in exactly that case, the same shape as the parked-async (#4630)
+and native-generator bridges already on that line.
+
+Byte-inert without `eval`: the standalone Temporal provider binary is
+**3 489 530 B before and after** (the polyfill has no `eval`).
+
+## The biggest remaining target, measured and handed over
+
+`Temporal.PlainDate.prototype.add` is broken for **every** input —
+`TypeError: Cannot destructure 'null' or 'undefined'` — and it is **NOT** the
+mechanism above: it reproduces with no `eval` and no harness, straight through
+`compileWithTemporalGlobal` (`.tmp/s69/probes/spec2.json`). `PD.with(…)` and
+`zdt.add(dur)` are clean controls.
+
+| directory | fail / total |
+| --- | --- |
+| `PlainDate/prototype/add/` (first 39 files) | 22 / 39 |
+| `PlainDate/prototype/subtract/` + `PlainYearMonth/prototype/{add,subtract}/` | 56 / 111 |
+
+~78 rows on one mechanism. It sits on the polyfill's `Wr()` path
+(`{...qr(e).date, days:n}`), which `PlainDate`/`PlainYearMonth` arithmetic uses
+and `ZonedDateTime` arithmetic (via `Ar`) does not. **Unreduced**: every
+consumer-side reduction comes back clean (`.tmp/s69/probes/linked3.mts` — object
+literal, array, nested literal, statement-built object, `{...o, k:v}`,
+`Object.assign`, null-proto object all cross the link correctly), so it has to
+be reduced INSIDE a provider module.
