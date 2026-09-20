@@ -777,3 +777,19 @@ It exited 0 with `{ pass: 2 }` and `0 non-pass (excluding skip)`; durable log:
 `/private/tmp/js2-6484-iterator-residual-terra-20260920-original2-retention-20260920.log`.
 The separate typed-array detachment control remains unclaimed and was not
 included in this retention result.
+
+### Post-sync publication-tree receipt (2026-09-20)
+
+After checkpoint `d08cb026cd2ac94b5d5f54fbe1316e6c1caf0e83`, the branch normally
+merged upstream `200f7e2c8bc00dfb9a9c50dcc4b6570413f8a567` at
+`b4d05facdaa1ecc8b3e6a2d2ca602a6d1c90469f`. The merge changed only the
+upstream edition-closeout documentation; nevertheless, both scoped validation
+commands were repeated on that final publication tree.
+
+The exact two-original manifest again exited 0 with `{ pass: 2 }` and `0
+non-pass (excluding skip)`; durable log:
+`/private/tmp/js2-6484-iterator-residual-terra-20260920-original2-final-tree-20260920.log`.
+The guarded focused suite again exited 0; it has 12 ordinary conformance
+controls and one explicitly separate #4622/#3251 expected failure, not 13
+conformance passes; durable log:
+`/private/tmp/js2-6484-iterator-residual-terra-20260920-focused-final-tree-20260920.log`.
