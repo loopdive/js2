@@ -20,6 +20,97 @@ related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445
 
 ## Active implementation checkpoint (2026-09-20)
 
+### Later verified publication and local receipts
+
+- Coordinator synchronized to upstream `200f7e2c8bc00dfb9a9c50dcc4b6570413f8a567`
+  after handoff PR #5995 merged. Unfinished notes were preserved on fresh branch
+  `codex/4444-es2015-followup-20260920`; the merged PR branch is retired.
+- Array regression PR #5994 is merged at
+  `4c43798b4979c6f5497b8fc1eca996f8c572c942`; tested head `54bffc6d9a` is an
+  ancestor and its `object-runtime.ts` contents exactly match that main.
+- Raw-object numeric conversion is published as ready PR #5996 at
+  `9e7ea9471ae0f0efd22293f09badfe6c1432760e`, with 6/6 focused controls after
+  synchronization. The independent fusion-off/SMI defect remains tracked.
+- The original `String/raw/returns-abrupt-from-next-key.js` now passes on the
+  deletion candidate and fails on untouched `35e040c08e`, using the isolated
+  authoritative runner. Its strict-delete and Symbol control failures also
+  occur on the baseline; the physical-field throw is still insufficiently
+  diagnosed. This is a local gain, not a published or full-suite result.
+  The writer reports the repaired focused fixture at 12/12 checks, including
+  four expected observations of existing defects, not twelve conformance
+  passes. Its helper-presence assertion explicitly does not yet prove a
+  particular source allocation reaches the anonymous deletion arm. Retain
+  the producer-to-slot audit as a separate gate. The frozen String.raw manifest
+  subsequently completed **30 pass / 0 non-pass**, owner session 59030 exited 0;
+  the root independently read the terminal log at
+  `/private/tmp/js2-5152-string-raw-frozen30-delete-candidate-20260920.log`.
+  Manifest SHA-256:
+  `d7d2c223fb766dcc9ed460d3c2ddad520195dfc007db6d3c4f575575ba3e3827`.
+  This is one local original-row gain over 29/30, pending upstream integration
+  and the frozen IR compatibility check, not a fresh edition-wide census.
+  The original-row WAT artifact is **filtered diagnostic output**: root found
+  only the `__carrier_bag_delete` function definition, not the allocation or
+  module-initializer bodies. Its lack of textual imports is not independently
+  sufficient to prove the final binary's import list. Preserve the authoritative
+  pass, but require an actual binary import receipt and producer-to-slot evidence
+  for those separate claims; the writer has been notified.
+  **Subsequent receipt closes that gap:**
+  `/private/tmp/js2-5152-return-abrupt-full-artifact-candidate-run-20260920.log`
+  records successful primary and strict compilation and actual
+  `WebAssembly.Module.imports=[]` for both (one retained `$DONOTEVALUATE`
+  IR-fallback warning each). Root inspected full strict WAT allocation of
+  type 82 into type 83, extraction of raw field 0 into local 28, and its call
+  to `__delete_property` (170), which delegates to `__carrier_bag_delete` (169).
+  The exact extracted coercion control also fails identically on candidate
+  and untouched 35e: function 50, expected i32 / got ref-null 46, offset 55345.
+  These are artifact/paired-control receipts, not additional Test262 gains.
+- The RegExp selected-result read guard improves the expanded fixture to
+  **39 pass / 4 fail / 43**. The exact initialized alias now returns 1 with
+  zero imports on the legacy route. Remaining failures are coercion order,
+  plural lastIndex descriptors, Reflect.set, and the separate numeric
+  lastIndex IR capability assertion. No edition-wide count is inferred.
+  Isolated composition with the Number PR's two-file patch remained
+  **39 pass / 4 fail / 43** in
+  `.tmp/5198/number5996-composition-focused-20260920.log`; it did not resolve
+  the order fixture. The earlier dependency hypothesis was incorrect:
+  `ORDER_SOURCE` exercises an object asserted as a static string and protocol
+  ToString, not Number conversion. Its natural `any` counterpart already passes.
+  The follow-up diagnosis inspected initializer/storage/read carrier preservation
+  rather than changing the protocol's existing unconditional ToString call.
+  The paired asserted/natural receipts now locate that loss: both use legacy
+  codegen and zero imports, returning 29 and 123 respectively. Asserted input
+  stores a string-converted value in local 3 (ref-null 6); natural input keeps
+  its object carrier (ref-null 80). Both subsequently pass local 3 through the
+  same raw-argument slot and protocol ToString. Preserve the initializer's
+  value until the actual call; converting earlier would change observable order.
+- An explicitly configured Terra Max agent owns a separate iterator-prototype
+  residual fix under issue 6484, outside IR ownership. Its isolated three-row
+  baseline at `4c43798b4979c6f5497b8fc1eca996f8c572c942` reproduced two genuine
+  arguments-iterator truncation failures. The third row, typed-array detachment,
+  failed because the QuickJS provider was unavailable: it is an infrastructure
+  result, not a semantic verdict. The implementation must preserve permanent
+  exhaustion and safely handle logical lengths beyond physical argument storage.
+  Review of its initial S4 implementation caught cursor advancement after
+  indexed Get. ES2015 ArrayIterator `next` steps 11–15 advance before Get;
+  the writer corrected that order and is adding an abrupt-getter control.
+  A Node 24 reference probe confirmed one getter call and preserved thrown
+  identity, followed by `{value:20, done:false}` from the next index. This is
+  a reference oracle, not a compiler pass receipt.
+  The first candidate run subsequently completed **2 pass / 0 non-pass**,
+  exit 0, for exactly the mapped and unmapped truncation originals on the
+  4c43798b base plus the S4 working diff. This is the writer's terminal tool
+  receipt (16.621 seconds), not a saved log; root independently verified the
+  two-row manifest SHA-256
+  `aaa46d8aedd23fa924f10387ffc42b99406237d7547c776899da9e8d6387db3f`
+  and the pre-Get cursor increment in source. Safety fixtures and regression
+  checks remain required before publication. No detachment result or
+  edition-wide count is inferred from these two original-row gains.
+  The Number-fix agent has moved to read-only work after its
+  recorded Sol model identity was discovered; that attribution is retained.
+
+Evidence: `/private/tmp/js2-5152-return-abrupt-{candidate-delete,base}-35e-20260920.log`
+and the RegExp worktree's `.tmp/5198/selected-result-readguard-focused-20260920.log`.
+
 **Regression priority:** extending the same pinned-row comparison to all
 48,735 standalone rows found five prior passes now failing with
 `illegal cast [in __extern_has() ← __extern_has_idx ← __hof_* ← __module_init]`:
