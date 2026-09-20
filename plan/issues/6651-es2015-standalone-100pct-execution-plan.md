@@ -16,6 +16,15 @@ goal: standalone-mode
 parent: 4444
 related: [4444, 5199, 5198, 5152, 5269, 5318, 5350, 6484, 6485, 6494, 1665, 2867, 4119]
 assignee: "ttraenkler/fable-es2015-plan"
+# 2026-09-20 (cluster D, #5197 R3-3): the `Promise.{all,race}.call(C, iterable)`
+# arm in `compileNamespaceStaticCall` grows by 10 lines — the admission check plus
+# the delegation to `tryEmitCustomCombinatorCall`. The protocol itself (≈700 LOC)
+# lives in the NEW module `src/codegen/promise-custom-combinator.ts`, not in the
+# god-file; this grant covers only the dispatch site that has to name it.
+loc-budget-allow:
+  - src/codegen/expressions/call-namespace-static.ts
+func-budget-allow:
+  - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
 ---
 
 # #6651 — ES2015 standalone → 100%: cluster execution plan
@@ -135,6 +144,91 @@ node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
 ## Cluster status
 
 _(owners append here: date, branch, before → after, log paths, residuals)_
+
+### 2026-09-20 — Cluster D (native Promise combinators), slice D1: custom-constructor `.call`
+
+- **Branch** `worktree-agent-a6d336193709ec50a`, base `claude/es2015-test262-plan-54tooh`
+  (`905dca75`). **Worktree** `/home/user/js2/.claude/worktrees/agent-a6d336193709ec50a`.
+- **Manifest** `plan/agent-context/6651/D-promise-combinators.txt` (101 rows),
+  `--standalone --isolate`, measured on this branch's own base:
+
+  | | pass | fail | compile_error |
+  | --- | ---: | ---: | ---: |
+  | before (`.tmp/6651/D-before.log`) | 0 | 55 | 46 |
+  | after (`.tmp/6651/D-after.log`) | **26** | 57 | **18** |
+
+  Every one of the 28 compile errors in the targeted cohort is gone: 26 of them
+  now PASS, 2 became documented fails (below). The fail count rises by exactly
+  those 2 — no row that executed before stopped executing.
+
+- **What landed.** `Promise.{all,race}.call(C, iterable)` for an ORDINARY
+  compiled constructor now runs the §27.2.4.1.1 / §27.2.4.3.1 element protocol
+  natively (new `src/codegen/promise-custom-combinator.ts`): NewPromiseCapability
+  over `C`, one `Get(C, "resolve")`, per-element `Call(resolve, C, «value»)` and
+  `Invoke(next, "then", …)`, with real per-index resolve-element functions
+  (builtin-fn-meta carrier, `[[AlreadyCalled]]`, `[[RemainingElements]]`), and
+  IfAbruptRejectPromise on any abrupt element step. Before this, that whole
+  shape fell through to the unsatisfiable `env::Promise_all`/`env::Promise_race`
+  host import, so the rows did not compile at all. The narrow #4682 empty-array
+  arm stays as the fallback for `allSettled`/`any` and refused constructors.
+  Two sub-fixes were needed and are load-bearing:
+  1. `C` is invoked through `__apply_closure`, not a baked `call_ref` — every
+     row in the cohort writes a static (`C.resolve = …`), which moves the
+     identifier's value onto the `$Object` function carrier; the `call_ref`
+     path found a null funcref and threw the capability TypeError before `C`
+     ran (measured `checkPoint === 0`).
+  2. An array of object literals compiles to a vec of the CLOSED STRUCT type,
+     which `__combinator_to_vec` answers null for. Those are re-materialized
+     into the canonical externref vec instead of being called "not iterable"
+     (that alone was 9 of the 28 rows).
+
+- **Neighbourhood control** — all 729 `built-ins/Promise/**` rows, `--standalone`,
+  before vs after (`.tmp/6651/neigh-standalone-{before,after}.log`):
+  pass **359 → 385**, fail 204 → 206, compile_error 166 → 138.
+  Per-row set diff: **0 pass → non-pass**, 26 non-pass → pass.
+- **Host (gc) lane**: the non-isolated host run of that directory cannot be used
+  as a control — one row poisons `Promise.all` in the runner's own realm and
+  kills the process (`src/runtime.ts:17502 … PROMISE_INTRINSICS.all?.call`).
+  Substituted a stronger check where it applies: a sha256 byte comparison of 8
+  compiled programs (3 custom-constructor `.call` shapes, 4 intrinsic
+  combinator shapes, a `.then` chain) on base vs branch —
+  **all 8 host binaries byte-identical** (`.tmp/6651/hostbytes-{before,after}.txt`).
+  On standalone the same corpus shows exactly the intended delta: the 3
+  custom-constructor programs change (and lose all host imports), the 5
+  intrinsic ones are byte-identical (`.tmp/6651/sabytes-{before,after}.txt`).
+- **Unit tests**: new `tests/issue-6651-promise-custom-combinator.test.ts`
+  (8 cases: values array, deferred `[[RemainingElements]]`, race handler
+  identity, zero-arg-ctor TypeError, throwing ctor, both IfAbruptRejectPromise
+  arms, host-lane control). `tests/issue-4682.test.ts` — the
+  "keeps the non-empty custom-constructor fallback unchanged" case asserted the
+  shape still leaked `env.Promise_all`; it is REWRITTEN to assert the native
+  lowering. The 3 failures in `tests/promise-combinators.test.ts` (2 timeouts)
+  and `tests/issue-2671-promise-capability.test.ts` reproduce IDENTICALLY on the
+  base tree (`.tmp/promise-suite-{before,after}.log`) — pre-existing, host-lane.
+- **Gates**: loc-budget and func-budget pass with the grants added to this file's
+  frontmatter (+12 LOC / +11 func LOC at the dispatch site only); coercion-sites,
+  oracle-ratchet, dead-exports, compiler-boundaries `--mode inventory` (the new
+  module is classified in `scripts/compiler-boundaries.json`) and
+  `scripts/equivalence-gate.mjs` (22 known failures, no new) all pass.
+
+**Residual sub-buckets (18 CE + 57 fail on the manifest), with signatures:**
+
+| rows | status | sub-bucket | why it is still open |
+| ---: | --- | --- | --- |
+| 8 | CE | `{all,race,allSettled,any}/resolve-throws-iterator-return-*` — `env::Promise_*` | the receiver is a `class BadPromise {…}`; standalone has no `Construct(C, «executor»)` for a compiled class (#5197 G10, DEFERRED there) |
+| 6 | CE | `{all,race,resolve,reject}/ctx-ctor.js`, `*/invoke-resolve-on-promises-every-iteration-of-custom` — `env::__promise_subclass_ctor` | `class X extends Promise` receiver (#5197 G9, DEFERRED) |
+| 4 | CE | `{all,race}/invoke-resolve-on-{promises,values}-every-iteration-of-promise` — `env::Promise_{all,race}` | INTRINSIC receiver with a reassigned `Promise.resolve` over an f64/promise vec — #5197 R3-2 step 6, the half held PR #5883 implements |
+| ~20 | fail | `invoke-resolve*`, `invoke-then*`, `resolve-not-callable-*`, `resolve-poisoned-then` | the observable intrinsic `Get(C,"resolve")`/`Invoke(then)` pipeline (R3-2 / PR #5883) — deliberately NOT duplicated here |
+| ~10 | fail | `*-close`, `iter-step-err-reject`, `iter-next-val-err-reject`, `S25.4.4.*_A5.1` | the iterable is drained before the element loop, so `IteratorClose` never runs and a throwing `next()` surfaces as "argument is not iterable" (R3-4) |
+| 1 | fail | `all/capability-resolve-throws-no-close.js` — `Expected SameValue(«0», «1»)` | NEW in this slice's scope: the iterable is `iter[Symbol.iterator] = fn` on an `$Object`; `__combinator_to_vec` does not see the symbol-keyed expando, so the aggregate rejects "not iterable" and `nextCount` stays 0 (R3-4 hypothesis H1) |
+| 1 | fail | `all/resolve-element-function-prototype.js` — `JS2WASM_EVAL_ENGINE=quickjs … provider is not built` | environment only: the quickjs provider is not built in this container, so the row is unverifiable locally (it exercises `Object.getPrototypeOf(resolveElementFunction)`) |
+| rest | fail | `then`/species/`constructor` reads, `Object.prototype.toString` tag, boolean handler boxing | #5197 R3-5…R3-10 and #4119 — untouched by this slice |
+
+**Not started in this slice (and why):** the runtime-fail half of cluster D is
+the observable-protocol work of held PR #5883 (#5197 R3-2), which the brief
+explicitly says not to duplicate; the class-receiver CEs need a standalone
+`Construct` for compiled classes, which is a separate mechanism, not a
+combinator change.
 
 ## Manifest generator note
 
