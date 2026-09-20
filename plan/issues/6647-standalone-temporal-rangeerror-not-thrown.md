@@ -1,6 +1,6 @@
 ---
 id: 6647
-title: "standalone Temporal: five `Expected a RangeError … no exception thrown` rows — two mechanisms, neither a codegen call-shape defect"
+title: "standalone Temporal: the five `Expected a RangeError … no exception thrown` rows are a polyfill-grammar gap + i64 BigInt; the fixable defect found underneath is a live-global-bound call answering `null` for an object result"
 status: in-progress
 assignee: ttraenkler/sendev-s69
 sprint: current
@@ -114,13 +114,13 @@ debugging from the reported line will chase the wrong assertion.
 **Consequence:** these two rows need arbitrary-precision BigInt on the
 native-first lane. That is an XL project of its own, not an `m`-horizon splice.
 
-## The larger defect this probing surfaced — `qr()`-shaped functions answer `null` under the linked Temporal provider
+## The defect this probing surfaced and FIXED — a live-global-bound function declaration answers `null` for an object result
 
-While reducing the rows above, a far broader standalone defect fell out. Under
-the **linked standalone Temporal provider**, a **function declaration that
-returns a freshly-built plain object or array** answers `null` at its call
-site, while the same function answers correctly through `.call`/`.apply`, and
-the identical source compiled WITHOUT the provider is fine.
+While reducing the rows above, a broader standalone defect fell out, and it IS
+fixable at this horizon. Under the **linked standalone Temporal provider with
+`eval` reachable**, a **function declaration that returns a freshly built plain
+object or array** answers `null` at its call site, while the same function
+answers correctly through `.call`/`.apply`/`new`.
 
 `.tmp/s69/probes/l8.js` (with `features: [Temporal]`) vs `l8b.js` (identical
 source, feature tag removed):
@@ -132,43 +132,113 @@ source, feature tag removed):
 | `function f(){ var o={}; o.a=1; return o; } f()` | **NULL** | object |
 | `function f(){ return "s"; } f()` / `return 1` | string / number | same |
 | `function f(){ return Object.create(null); } f()` | object | object |
-| `function f(){ return new Temporal.PlainDate(2000,1,1); } f()` | object | — |
-| `f.call(undefined)` / `f.apply(undefined, [])` | **object** | object |
+| `f.call(undefined)` / `f.apply(undefined, [])` / `new f()` | **object** | object |
 | `var f = function(){ return {a:1}; }; f()` (expression) | object | object |
-| the same declaration **nested** inside another function | object | object |
 
-The call/apply row is what makes this a **call-lowering** defect rather than a
-body defect: the function genuinely builds the object; the direct-by-name call
-is what answers `null`.
+### The trigger is `eval`, not the provider — a one-line repro
 
-This is almost certainly why `Temporal.PlainDate.prototype.add` is broken for
-**every** input: the polyfill's
+Bisected by prefix (`.tmp/s69/probes/tp3.mts`, ~7 s per run against the REAL
+provider through `compileWithTemporalGlobal`):
 
-```js
-function qr(e){ … return { date:{years:…,months:…,weeks:…,days:0}, time:t } }
-function Wr(e){ const t = qr(e), n = Math.trunc(t.time.sec/86400); … return { ...t.date, days:n } }
+| prefix fed to the probe | result |
+| --- | --- |
+| `harness/assert.js` + `harness/sta.js` | object (clean) |
+| `scripts/test262-fyi-runtime.js` with its three `eval` uses REMOVED | object (clean) |
+| `function ev(s) { return eval(s); }` — **one line** | **NULL** |
+
+`eval` alone without the provider is clean (`.tmp/s69/probes/fasteval.mts`,
+`canonical=false|true` both `object`), and `sharedExceptionTag: true` is not
+the trigger either (`fasteval2.mts`). The two together are: `eval` +
+`runtimeEvalPlan.sharedRealmMayContainCanonicalValues` (which the link
+supplies) set `ctx.runtimeEvalGlobalFunctionBindings`
+(`src/codegen/index.ts` ~L9886).
+
+### Root cause
+
+With that flag set, `hasLiveFunctionBinding` (`call-identifier.ts` L274) is
+true for every top-level function declaration, so `compileIdentifierCall`
+routes the call through `tryEmitInlineDynamicCall` instead of emitting a direct
+`call` — correct in itself, since runtime eval may replace the binding.
+
+The dynamic dispatcher can only produce an `externref`. But the function-value
+wrapper minted by `ensureFuncClosureSingleton`
+(`src/codegen/closures/method-trampolines.ts` L1170) keeps the callee's own
+wasm result type, so for `function g(){ return {a:1}; }` the trampoline's
+funcref type returns a CONCRETE struct:
+
+```wat
+(func $__fn_tramp_g1_cached (type 142)
+  (block (result (ref null 53)) f64.const 1  ref.null 3  struct.new 53  br 0))
 ```
 
-is exactly that shape, and `Wr` is on the `PlainDate`/`PlainYearMonth`
-add/subtract path but **not** on the `ZonedDateTime` one (which uses `Ar`,
-whose returns are consumed differently) — matching the measurement that
-`zdt.add(dur)` works while `plainDate.add(dur)` does not:
+No dispatcher arm can match that shape, so the call answers `null`. The two
+promotions already sitting on that same line — the parked-async `$Promise`
+promotion (#4630) and the native-generator state bridge — are the precedent:
+the WRAPPER's result is promoted to `externref` while the declaration's own
+signature and every direct call site are left untouched.
+
+### The fix
+
+One gate + one `extern.convert_any` in `ensureFuncClosureSingleton`, armed only
+when the module is host-free AND `runtimeEvalGlobalFunctionBindings` is set AND
+the callee's single result is a concrete `ref`/`ref_null`. A program without
+`eval` is byte-identical: the standalone Temporal provider binary is 3 489 530 B
+before and after (the polyfill has no `eval`, so its own functions keep the
+precise wrapper type).
+
+### Witness
+
+`tests/issue-6647-live-global-binding-object-result.test.ts` +
+`tests/dogfood/temporal-6647-harness.mjs` (child process — the 3.3 MB provider
+compile OOMs a vitest worker in-process, same rationale as the S2 smoke
+harness). Five defect probes, four controls.
+
+| probe | true base `ce58705b68` | fix |
+| --- | --- | --- |
+| `objectLiteral` | 0 (null) | 1 |
+| `objectProperty` | −1 (null) | 7 |
+| `arrayLiteral` | 0 | 1 |
+| `builtObject` | 0 | 1 |
+| `calledFromNested` | 0 | 1 |
+| `ctrlNoEval` / `ctrlApply` / `ctrlStringResult` / `ctrlTemporal` | 1 | 1 |
+
+Base run: file-copy revert of the one touched file to `ce58705b68`
+(`.tmp/s69/ab/base/method-trampolines.ts`), log `.tmp/s69/witness-base.log`.
+
+## A SEPARATE, still-open provider defect — `PlainDate.prototype.add` is broken for every input
+
+Initially mis-attributed to the mechanism above; **falsified**. It reproduces
+with no `eval` and no test262 harness at all, straight through
+`compileWithTemporalGlobal` (`.tmp/s69/probes/spec2.json`):
 
 ```
-[d1!TypeError: Cannot destructure 'null' or 'undefined']   PD.add({days:1})
-[d7!TypeError: Cannot destructure 'null' or 'undefined']   PD.add(new Temporal.Duration(0,0,0,1))
-[d6=[object Object]]                                        PD.with({day:3})        (control, ok)
+PD.toString()                       => [object Object]      (control, ok)
+PD.with({ day: 3 }).toString()      => [object Object]      (control, ok)
+PD.add({ days: 1 }).toString()      => !Cannot destructure 'null' or 'undefined'
+PD.add(DUR).toString()              => !Cannot destructure 'null' or 'undefined'
+PD.subtract(DUR).toString()         => !Cannot destructure 'null' or 'undefined'
+PlainYearMonth.from('2000-05').add({months:1}) => !Cannot destructure …
 ```
 
-Measured row cost, `test/built-ins/Temporal/PlainDate/prototype/add/` (first 39
-files, `.tmp/s69/pdadd.tsv`): **22 fail / 17 pass**, and 20 of the 22 carry the
-identical `TypeError: Cannot destructure 'null' or 'undefined'`.
+So the failure is inside the PROVIDER module, on the `Wr()` path
+(`function Wr(e){ const t=qr(e), n=Math.trunc(t.time.sec/86400); … return
+{...t.date, days:n} }`) which the `PlainDate`/`PlainYearMonth` arithmetic uses
+and the `ZonedDateTime` arithmetic (which goes through `Ar`) does not —
+matching the measurement that `zdt.add(dur)` works.
 
-**Not reproduced** by `canonicalRuntimeTypes: true` alone
-(`.tmp/s69/probes/fast.mts` — identical output for `canonical=false|true`), nor
-by the small two-module linked fixture (`.tmp/s69/probes/linked1.mts` — all
-`object`). So the trigger is something specific to the real Temporal-provider
-link, not to linking per se; that is where the next lane should start.
+Measured row cost, standalone, provider `s69-1`:
+
+| directory | fail / total | same error |
+| --- | --- | --- |
+| `PlainDate/prototype/add/` (first 39 files, `.tmp/s69/pdadd.tsv`) | 22 / 39 | 20 |
+| `PlainDate/prototype/subtract/` + `PlainYearMonth/prototype/{add,subtract}/` (`.tmp/s69/scope1.tsv`) | 56 / 111 | ~41 |
+
+~78 rows in four directories on one mechanism. **Not reduced further** — the
+consumer-side reductions all come back clean (`.tmp/s69/probes/linked3.mts`:
+object literal, array, nested literal, statement-built object, `{...o, k:v}`,
+`Object.assign`, null-proto object all cross the link correctly), so the next
+lane has to reduce it INSIDE a provider module. That is the highest-value
+remaining target in this lane.
 
 ## Residuals (measured, not fixed)
 
@@ -177,16 +247,17 @@ link, not to linking per se; that is where the next lane should start.
 2. Two epoch-limit rows — need >64-bit BigInt on the native-first lane
    (Mechanism B). Reduced probe: `.tmp/s69/probes/l2.js` rows `bigLit`,
    `zdtMaxEp`, `minEp`.
-3. The `qr()`-shaped-return `null` defect above — reduced probe
-   `.tmp/s69/probes/l8.js` vs `l8b.js`; ≥22 rows in one directory.
+3. The `PlainDate.prototype.add` provider defect above — ~78 rows, unreduced.
 4. The runner's `assert.throws` line attribution reports the FIRST
    `assert.throws(` in the file, not the failing one
-   (`overflow-adding-months-to-max-year.js` reports L12; L15 is the failure).
+   (`overflow-adding-months-to-max-year.js` reports L12, but L12 PASSES and
+   L15 is the failure). Anyone debugging from the reported line chases the
+   wrong assertion.
 
 ## Acceptance criteria
 
 - The five rows are each attributed to a named mechanism with a reduced probe. ✅
 - Any mechanism fixable at `m` horizon is fixed with a witness that fails on
-  the true reverted base `ce58705b68`.
+  the true reverted base `ce58705b68`. ✅ (the live-global-binding object result)
 - No pass→fail anywhere in the four-family battery or the nine must-not-move
   groups.
