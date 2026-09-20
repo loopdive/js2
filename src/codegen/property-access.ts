@@ -6520,7 +6520,18 @@ export function compileElementAccessBody(
     // elements use the dedicated reference-array widen below.
     const numericHint = expectedType?.kind === "f64" || expectedType?.kind === "i32";
     const taClass = classifyTypedArrayType(ctx.checker.getTypeAtLocation(expr.expression), ctx.checker);
-    const oobUndefined = !numericHint && taClass === "other" && !isRegexMatchVec;
+    // `$__regexp_match_vec` carries physical `index` / `input` metadata, but
+    // its `{length,data}` prefix remains an ordinary nullable native-string
+    // array for a numeric element read. The constant non-array numeric-key
+    // route above has already handled literal `m[-1]`, `m[1.5]`, and other
+    // compile-time named numeric properties through the expando reader. A
+    // number-typed variable retains the established direct-i32 lowering; this
+    // change only gives its positional element result the existing
+    // boxed-or-undefined boundary, and does not claim a general runtime
+    // canonical-numeric-property implementation.
+    const numericRegexMatchElementRead =
+      isRegexMatchVec && isNumericIndexExpression(ctx, expr.argumentExpression, fctx);
+    const oobUndefined = !numericHint && taClass === "other" && (!isRegexMatchVec || numericRegexMatchElementRead);
     // (#2798 — hybrid audit Row 9) A genuine typed-array VIEW OOB element read
     // returns JS `undefined` (the view length is the bound). Mutually exclusive
     // with the plain-array F1 arm above (`taClass !== "other"` vs `=== "other"`).
