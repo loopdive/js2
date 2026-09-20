@@ -80,6 +80,65 @@ const EXTERNREF: ValType = { kind: "externref" };
 const NOT_INHERITED = new Set(["prototype", "name", "length", "constructor"]);
 
 /**
+ * (#6644, #5383 S67) Resolve the class IDENTITY an identifier names, for the
+ * linked-static arms only.
+ *
+ * `classExprNameMap.get(text) ?? text` — what the computed arm and the static
+ * call ladder key on — is NAME-keyed, and a name is not an identity: #4618's
+ * `mintScopedClassIdentity` gives every same-named class but the FIRST a
+ * per-site synthetic (`__anonClass_S_4`), and #4646 mints it lazily for the
+ * scopes the collection pass never walks (a class/object-literal METHOD body,
+ * a sibling block). The bare name then resolves to a DIFFERENT declaration.
+ *
+ * For these arms that is not a precision nicety but a wrong answer, because a
+ * captured IDENTIFIER heritage stores its parent in a per-class module global
+ * (`__linked_parent_<C>`): keying on the name reads the twin's global. Measured
+ * on the branch base with the two-module fixture (`.tmp/s67/probes/p31.mts`),
+ * two same-named classes in two object-literal methods with DIFFERENT parents:
+ *
+ * | call | base |
+ * | --- | --- |
+ * | `oB.go(NS.Other, 'tag')` before the owner ever ran | `null` |
+ * | `oA.go(NS.Base, 'tag')` (the owner) | `base` |
+ * | `oB.go(NS.Other, 'tag')` after it | **`base`** — the WRONG parent |
+ *
+ * That third row is why the shape-sensitivity #6644's residual 1 recorded
+ * looked contradictory across probes: an inherited static resolved whenever
+ * some earlier call happened to have written the shared global with a
+ * compatible value, and declined (`undefined`) otherwise. The trigger is the
+ * NAME COLLISION and which declaration owns the bare name, not the enclosing
+ * shape.
+ *
+ * Resolution is therefore by DECLARATION identity, through the oracle:
+ *
+ *  - a per-site synthetic (#4618) is the identity outright;
+ *  - a declaration that OWNS its source name (`classDeclarationMap` maps the
+ *    name back to this very node) keeps the name, resolved through
+ *    `classExprNameMap` exactly as before;
+ *  - a colliding twin with no synthetic MINTED YET is refused — the arms then
+ *    emit nothing and the caller keeps today's behaviour, which is a miss
+ *    rather than another class's parent.
+ *
+ * Anything that is not a compiled class declaration is not this arm's
+ * receiver and is refused too.
+ */
+export function resolveLinkedStaticClassName(ctx: CodegenContext, identifier: ts.Identifier): string | undefined {
+  // Cheap exact gate: with no linked-dynamic-parent class in the module there
+  // is nothing for any caller to match, so no oracle query is worth paying for
+  // (every element access on an identifier reaches here).
+  if (ctx.classLinkedDynamicParentExpr.size === 0) return undefined;
+  const decl = ctx.oracle.valueDeclarationOf(identifier);
+  if (decl === undefined || (!ts.isClassDeclaration(decl) && !ts.isClassExpression(decl))) return undefined;
+  const synthetic = ctx.anonClassExprNames.get(decl);
+  if (synthetic !== undefined) return synthetic;
+  const sourceName = decl.name?.text;
+  if (sourceName === undefined) return undefined;
+  const owner = ctx.classDeclarationMap.get(sourceName);
+  if (owner !== undefined && owner !== decl) return undefined;
+  return ctx.classExprNameMap.get(sourceName) ?? sourceName;
+}
+
+/**
  * The heritage expression `className` extends across the link, or `undefined`
  * when this class is not one of #6640's linked-dynamic-parent classes or
  * `propName` is a member a derived class owns outright.
@@ -217,9 +276,14 @@ export function tryEmitLinkedStaticCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.CallExpression,
-  className: string,
+  receiver: ts.Identifier,
+  nameKeyedClassName: string,
   methodName: string,
 ): ValType | undefined {
+  if (ctx.staticMethodSet.has(`${nameKeyedClassName}_${methodName}`)) return undefined;
+  // (#5383 S67) Identity, not name — see {@link resolveLinkedStaticClassName}.
+  const className = resolveLinkedStaticClassName(ctx, receiver);
+  if (className === undefined) return undefined;
   if (ctx.staticMethodSet.has(`${className}_${methodName}`)) return undefined;
   if (expr.arguments.some((argument) => ts.isSpreadElement(argument))) return undefined;
   if (linkedStaticParentHeritage(ctx, className, methodName) === undefined) return undefined;
@@ -291,7 +355,9 @@ export function tryEmitLinkedStaticComputedRead(
   if (key === undefined) return undefined;
   if (!ts.isIdentifier(key) && !ts.isStringLiteralLike(key)) return undefined;
   if (!ts.isIdentifier(elemAccess.expression)) return undefined;
-  const className = ctx.classExprNameMap.get(elemAccess.expression.text) ?? elemAccess.expression.text;
+  // (#5383 S67) Identity, not name — see {@link resolveLinkedStaticClassName}.
+  const className = resolveLinkedStaticClassName(ctx, elemAccess.expression);
+  if (className === undefined) return undefined;
   if (!ctx.classLinkedDynamicParentExpr.has(className)) return undefined;
   if (declaresAnyOwnStatic(ctx, className)) return undefined;
   const externGetIdx = ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
