@@ -12302,3 +12302,24 @@ neither of which this slice touches.
 | `PlainDateTime/from/argument-string-invalid.js` | fail (`+00:0000`) | fail — Mechanism A |
 | `Duration/compare/throws-when-target-zoned-date-time-outside-valid-limits.js` | fail | fail — Mechanism B |
 | `ZonedDateTime/prototype/add/overflow-adding-months-to-max-year.js` | fail (reported L12; the real failure is L15) | fail — Mechanism B |
+
+#### S69 — lead verification (2026-09-20)
+
+Head `694d345a80` (clean tree apart from the lane's `test262` symlink, which is
+not in any commit), merged with `origin/main` (`647d10cc3e`) for landing.
+
+| check | result |
+| --- | --- |
+| gate chain incl. `LOC_GATE_BASE=origin/main`, boundaries inventory, issue-ids, typecheck, lint (merged head) | green (+21 LOC in `closures/method-trampolines.ts`, under budget) |
+| own diff of the lane's 13 battery TSVs vs the S68 base (3,684 rows) | 0 pass→fail, 0 fail→pass; four-family 463/480 unchanged |
+| corpus vs S68 base | 0 status / 0 sha flips on the 84 shared rows (10 new `normalize-ucd17-*` fixture rows from main) |
+| equivalence | 22 / 1720 / 22 |
+| `tests/issue-6647-*` on a TRUE file-copy revert of `method-trampolines.ts` to `ce58705b68` | fails; passes on the fix |
+| sweep `tests/issue-66*` + 6484 + 6493 (54 files / 327 tests) on the merged head | Node 22 and Node 25: 326 pass, 1 fail — main's own `tests/issue-6648-regexp-capture-array-output.test.ts` "RESIDUAL: dynamic capture metadata keys …", which fails on `origin/main` `647d10cc3e` alone. `issue-6602`/`issue-6603` are green again on main (#6648 landed) |
+
+Accepted with rows unchanged: the slice's value is the attribution of all five
+briefed rows (three to the vendored polyfill's offset grammar, two to the
+64-bit BigInt carrier) plus the eval-realm `null`-object-result fix, and the
+reduction of the next target (`PlainDate.prototype.add` for every input, ~78
+rows across `PlainDate`/`PlainYearMonth` add/subtract: a spread-built object
+from a provider-local source breaks when it crosses a function return).

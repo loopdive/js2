@@ -1,7 +1,8 @@
 ---
 id: 6647
 title: "standalone Temporal: the five `Expected a RangeError … no exception thrown` rows are a polyfill-grammar gap + i64 BigInt; the fixable defect found underneath is a live-global-bound call answering `null` for an object result"
-status: in-progress
+status: done
+completed: 2026-09-20
 assignee: ttraenkler/sendev-s69
 sprint: current
 priority: high
