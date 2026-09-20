@@ -20,14 +20,32 @@ related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445
 
 ## Active implementation checkpoint (2026-09-20)
 
+The newly committed upstream edition report at `35e040c08e` records
+**10,371 pass / 1,047 fail / 286 compile errors / 0 skips**, total **11,704**
+ES2015 rows. Its paired standalone summary names baseline compiler
+`d5e58586d1f915908fe4f20cf6c5f21c8d0c2e49`, oracle 14, generated
+`2026-09-19T23:38:37.044Z`. The previous `4a6cbdf1ee80` edition report had
+10,369 pass / 1,049 fail / 286 compile errors at the same denominator.
+Thus the committed upstream aggregate improved by two passes; **1,333 rows
+remain non-passing**. This is a committed report comparison, not a fresh local
+full-suite run or per-file attribution. The local pinned JSONL and its earlier
+row-level analysis remain historical until refreshed. The discovery/Intl402
+scope audit below is still open; 100% is not achieved.
+
 Fresh upstream synchronization found `35e040c08ed10f793faf26bb0f0eac55be662627`.
 It contains the String.raw reader fix via merged PR #5991 (`d5e58586d1`),
 including both published commits and the frozen acceptance manifest. The
-coordinator preserves its uncommitted handoff notes before merging this base;
-implementation branches must identify their post-sync test provenance.
+coordinator preserved its handoff notes in `96619182e4`, then merged this base
+in `657f99fca3`. Its compiler, tests, and benchmark files exactly match upstream;
+only issue notes and acceptance manifests differ. Normal merge hooks passed.
+Implementation branches must identify their post-sync test provenance.
 The invalid RegExp baseline run has ended with missing-corpus errors. Its
 log is retained separately and none of its rows count as test results.
-The anonymous-property deletion follow-up now holds the focused-test lease.
+The anonymous-property deletion follow-up is also synchronized to this base.
+Its added controls are not yet acceptance evidence: emitted-WAT inspection
+showed open-object allocations rather than the intended anonymous closed
+structs. Correct the fixture and prove receiver admission before diagnosing
+those failures as defects in the new deletion arm.
 An independent exact `$Object` numeric-coercion routing investigation is
 ownership-cleared with the IR task, but remains unvalidated and unshipped.
 
@@ -38,10 +56,13 @@ comparison is pending. Its runner and manifest receipt are recorded in #5198.
 The 30-case focused matrix and original-nine controls below remain separate
 denominators; no result is added to the full ES2015 census yet.
 
-The two Terra Max implementation worktrees remain based on `4a6cbdf1ee80`.
-String.raw is published as ready upstream PR #5991 at fork head
+The earlier measurements below used the `4a6cbdf1ee80` base. String.raw was
+published as ready upstream PR #5991 at fork head
 `e34ebcbb8e1283eddf9f2cc0b91a55eccbbfd97e`, with normal push gates passed and
-independent subagent shepherding assigned. RegExp remains unpublished.
+independent subagent shepherding assigned, and is now landed as noted above.
+RegExp remains unpublished and is integrating the upstream reader changes
+before its next validation. A third Terra Max lane owns the exact `$Object`
+numeric-conversion investigation in a separate worktree.
 Neither candidate's changes are counted in the edition census below.
 String.raw (#5152) now measures **29 pass / 1 fail / 0 skips** across its
 frozen 30-original standalone manifest, including 2/3 originally failing
