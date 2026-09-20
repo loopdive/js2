@@ -138,11 +138,19 @@ days:9}` (comma, NO spread) answers `9` on both sides.
 Run through `run-family.mts` against a fresh `cacheHit=false` `--target both`
 provider built from each tree.
 
-| tree | pass / 150 |
-| --- | --- |
-| base `0813ae554d` | (see `AddSub-base.tsv`) |
-| part 1 only (host-carrier OR, no comma unwrap) | 72 (`AddSub-nocomma.tsv`) |
-| part 1 + part 2 | **138** (`AddSub-cur.tsv`) |
+| tree | provider (standalone) | pass / 150 |
+| --- | --- | --- |
+| base `0813ae554d` (file-copy revert) | `f5a4aafdcbcbe7da`, 3 493 417 B | 72 (`.tmp/s70/battery/base/AddSub-cur.tsv`) |
+| part 1 only (host-carrier OR, no comma unwrap) | `f5a4aafdcbcbe7da`, 3 493 417 B — **byte-identical to base** | 72 (`AddSub-nocomma.tsv`) |
+| part 1 + part 2 | `654d6ee7f9b76529`, 3 491 120 B | **138** (`AddSub-cur.tsv`) |
+
+`diff-tsv.mjs base/AddSub-cur.tsv AddSub-cur.tsv`: **matched=150 missing=0
+passToFail=0 failToPass=66**.
+
+The middle row is the measurement that matters for anyone extending this: part
+1 produced a **byte-identical provider binary**, so it is not merely "no row
+moved" — the polyfill never reached the widened predicate at all, because the
+comma expression hid the literal from the scan.
 
 Every `TypeError: Cannot destructure 'null' or 'undefined'` is gone. The 12
 residuals are four unrelated mechanisms, none of them this one:
