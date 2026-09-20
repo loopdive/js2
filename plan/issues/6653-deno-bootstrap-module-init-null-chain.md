@@ -1,11 +1,12 @@
 ---
 id: 6653
 title: "deno_core bootstrap __module_init: destructure-null / in-fold / inline-class-prototype chain"
-status: in-progress
+status: done
 sprint: current
 assignee: ttraenkler/claude
 created: 2026-09-20
 updated: 2026-09-20
+completed: 2026-09-20
 priority: high
 horizon: l
 feasibility: hard
@@ -19,6 +20,11 @@ loc-budget-allow:
   - src/codegen/statements/nested-declarations.ts
   - src/codegen/expressions/new-super.ts
   - src/codegen/binary-ops-in.ts
+  # 2026-09-20 slice 2: +137 — emitCollectionMethodBody, the reflective
+  # Map/Set proto method bodies over the existing __map_*/__set_add kernels
+  # (the makeSafe dummy-probe blocker; turns issue-4376-deno-core-bootstrap
+  # green).
+  - src/codegen/array-object-proto.ts
 func-budget-allow:
   - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclarationInScope
   - src/codegen/binary-ops-in.ts::compileInOperator
@@ -70,15 +76,24 @@ calls, culprit key `JSON.parse` (a DATA property).
    values must stay host-callable). Witness: `f(class Safe {})` +
    `safe.prototype == null` → non-null (was null); `#4618` suite stays green.
 
-## Still open (next gap in the same bootstrap)
+## Slice 2 (same day): collection reflective method bodies
 
-After the three fixes `__module_init` advances to `makeSafe`'s dummy-probe
-loop and throws `Map.prototype.clear is not yet implemented in --target
-standalone`: the collection reflective member closures
-(`makeCollectionGlue` → `emitProtoMemberBodyRefusal`) need real native bodies
-(`__map_clear`/`__map_get`/… exist in `map-runtime.ts`; the iterator members
-need the native collection-iterator machinery). Tracked as the follow-up
-slice.
+After the three fixes `__module_init` advanced to `makeSafe`'s dummy-probe
+loop and threw `Map.prototype.clear is not yet implemented`. Fixed:
+`emitCollectionMethodBody` (array-object-proto.ts) gives the Map/Set proto
+member closures real brand-checked bodies over the existing kernels — Map
+clear/delete/get/has/set, Set add/clear/delete/has, and entries/keys/values
+returning the same live `$__IterRec` record `emitLiveCollectionIterRec`
+builds (so `%MapIteratorPrototype%.next`'s #6484 family check adopts it).
+Members without a kernel (forEach, getOrInsert*, set algebra) keep the
+catchable refusal.
+
+**Result: `tests/issue-4376-deno-core-bootstrap.test.ts` is GREEN** — all
+stages (wrappers/module/info-arrays/hello-world usage) answer the
+checkpoint's expected values, host ops round-trip, hello-world output exact.
+The artifact byte envelope re-centred 10 MiB → 6.46 MB (the inline-class
+singleton route collapsed duplicated per-class closure machinery; measured
+base-vs-head, behavioral checkpoints identical).
 
 ## Validation (2026-09-20)
 
