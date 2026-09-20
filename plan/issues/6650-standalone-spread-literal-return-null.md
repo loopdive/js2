@@ -82,12 +82,27 @@ externref at `ref.test`"*. It consulted only `objectLiteralForcesHostPath`
 **captured-init** boundary (`statements/nested-declarations.ts` :1674) already
 consult both in lockstep; the return boundary was the missing third.
 
-## Fix
+## Fix — two parts, and the second is what moved the real rows
 
-`src/codegen/declarations.ts` — one helper, `objectLiteralTakesHostCarrier`,
-that ORs the two host-path predicates, used at both literal sites inside
-`functionReturnsHostObjectLiteralCarrier` (the returned expression and the
-local-variable carrier it may be returned through).
+1. `src/codegen/declarations/host-carrier-object-literal.ts` — one helper,
+   `objectLiteralTakesHostCarrier`, ORing the two host-path predicates, used at
+   both literal sites inside `functionReturnsHostObjectLiteralCarrier` (the
+   returned expression and the local-variable carrier it may be returned
+   through).
+2. `unwrapReturnCarrierExpression` now unwraps a **comma expression** to its
+   right operand. The minified polyfill writes `Wr()` as
+
+   ```js
+   function Wr(e){const t=qr(e),n=Math.trunc(t.time.sec/86400);
+     return zr(t.date.years,…), {...t.date, days:n}}
+   ```
+
+   so the returned expression is a `BinaryExpression` with a `CommaToken`, not
+   an object literal. Without this the carrier scan never sees the spread
+   literal at all, and part 1 alone moved **zero** of the 150 briefed rows
+   (measured: `.tmp/s70/battery/AddSub-nocomma.tsv`, still 72/150). The
+   unwrapper already peels parens / `as` / `!` / `satisfies`; a comma
+   expression's value is its right operand by the same logic.
 
 ## Measurement
 
@@ -112,6 +127,33 @@ The S69 linked reduction (`.tmp/s70/probes/linked8.mts`, a real provider
 module through the two-module link) goes from 6 of 7 expressions erroring to
 **7 of 7 answering**, including `collideLast` (`{days:9, ...o}`) whose correct
 answer is `0`, not `9`.
+
+The comma-return shapes (`.tmp/s70/probes/solo4.mts`, `.tmp/s70/solo4-base.log`):
+`commaReturn` / `commaReturnParenthesised` / `commaViaLocal` all go from
+`TRAP dereferencing a null pointer` to `9`; the control `return f(), {years:1,
+days:9}` (comma, NO spread) answers `9` on both sides.
+
+### The 150 briefed rows — `PlainDate/prototype/{add,subtract}` + `PlainYearMonth/prototype/{add,subtract}`
+
+Run through `run-family.mts` against a fresh `cacheHit=false` `--target both`
+provider built from each tree.
+
+| tree | pass / 150 |
+| --- | --- |
+| base `0813ae554d` | (see `AddSub-base.tsv`) |
+| part 1 only (host-carrier OR, no comma unwrap) | 72 (`AddSub-nocomma.tsv`) |
+| part 1 + part 2 | **138** (`AddSub-cur.tsv`) |
+
+Every `TypeError: Cannot destructure 'null' or 'undefined'` is gone. The 12
+residuals are four unrelated mechanisms, none of them this one:
+
+| rows | residual |
+| --- | --- |
+| 3 | `subclassing-ignored.js` — `TypeError: invalid receiver: method called with the wrong type of this-object` |
+| 4 | `PlainYearMonth` `argument-lower-units` / `options-read-before-algorithmic-validation` — `Expected a RangeError … no exception was thrown` |
+| 2 | `PlainYearMonth` `overflow.js` — `RangeError: value out of range: 1 <= 31 <= 28` |
+| 2 | `subtract-from-last-representable-month.js` — `RangeError: date/time value is outside of supported range` |
+| 1 | (the twelfth is the second `subclassing-ignored`) |
 
 ## Residuals (measured, not fixed)
 

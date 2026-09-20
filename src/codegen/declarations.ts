@@ -1074,9 +1074,14 @@ function unwrapReturnCarrierExpression(expression: ts.Expression): ts.Expression
     ts.isAsExpression(current) ||
     ts.isTypeAssertionExpression(current) ||
     ts.isNonNullExpression(current) ||
-    ts.isSatisfiesExpression(current)
+    ts.isSatisfiesExpression(current) ||
+    // (#6650) A COMMA expression's value is its right operand. The minified
+    // `@js-temporal/polyfill` writes its date-arithmetic result exactly that
+    // way — `return zr(…), { ...t.date, days: n }` — so without this the
+    // carrier scan never sees the spread literal it has to pin.
+    (ts.isBinaryExpression(current) && current.operatorToken.kind === ts.SyntaxKind.CommaToken)
   ) {
-    current = current.expression;
+    current = ts.isBinaryExpression(current) ? current.right : current.expression;
   }
   return current;
 }

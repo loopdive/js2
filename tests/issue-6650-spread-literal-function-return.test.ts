@@ -64,6 +64,24 @@ const CASES: [name: string, decl: string, read: string][] = [
     `function t0() { return { date: { years: 1, months: 2 }, time: 3 }; } function t1() { const t = t0(); return { ...t.date, days: 9 }; }`,
     `t1().days`,
   ],
+  // The polyfill's `Wr()` is written `return zr(…), { ...t.date, days: n }` —
+  // a COMMA expression, whose value is its right operand. The carrier scan has
+  // to unwrap it or it never sees the spread literal at all.
+  [
+    "commaReturn",
+    `function w0() { return { date: { years: 1, months: 2 }, time: 3 }; } function side() { return 1; } function w1(e) { const t = w0(); const n = e; return side(), { ...t.date, days: n }; }`,
+    `w1(9).days`,
+  ],
+  [
+    "commaReturnParenthesised",
+    `function x0() { return { date: { years: 1, months: 2 } }; } function xs() { return 1; } function x1() { const t = x0(); return (xs(), { ...t.date, days: 9 }); }`,
+    `x1().days`,
+  ],
+  [
+    "commaViaLocal",
+    `function y0() { return { years: 1, months: 2 }; } function ys() { return 1; } function y1() { const o = y0(); const v = (ys(), { ...o, days: 9 }); return v; }`,
+    `y1().days`,
+  ],
   // ── controls: already correct on the base, must stay correct ──────────────
   ["ctrlParamSpread", `function d1(o) { return { ...o, days: 9 }; }`, `d1({ years: 1, months: 2 }).days`],
   [
@@ -81,6 +99,11 @@ const CASES: [name: string, decl: string, read: string][] = [
     "ctrlAnnotatedAny",
     `/** @returns {any} */ function s1() { const o = { years: 1, months: 2 }; return { ...o, days: 9 }; }`,
     `s1().days`,
+  ],
+  [
+    "ctrlCommaPlainLiteral",
+    `function zs() { return 1; } function z1() { return zs(), { years: 1, days: 9 }; }`,
+    `z1().days`,
   ],
 ];
 
@@ -136,11 +159,15 @@ describe("#6650 — a spread-built object literal must survive a function return
       twoSpreadSources: "9",
       readInsideSecondFn: "9",
       nestedSpreadSource: "9",
+      commaReturn: "9",
+      commaReturnParenthesised: "9",
+      commaViaLocal: "9",
       ctrlParamSpread: "9",
       ctrlReadInside: "9",
       ctrlNoSpread: "9",
       ctrlPlainLocalReturn: "2",
       ctrlAnnotatedAny: "9",
+      ctrlCommaPlainLiteral: "9",
     });
   });
 });
