@@ -183,3 +183,51 @@ function pushAsExtern(ctx: CodegenContext, fctx: FunctionContext, value: ts.Expr
   else if (valueType.kind !== "externref") coerceType(ctx, fctx, valueType, EXTERNREF);
   return true;
 }
+
+/**
+ * (#6645) A positional argument that FOLLOWS a spread — `f(a, ...src, b)`.
+ *
+ * This is the one shape `compileSpreadCallArgs`'s static accounting cannot get
+ * right. Its own header states the model: "each spread is assumed to cover
+ * exactly the parameter slots left over after the trailing positional args are
+ * reserved (#2053)" — an assumption that holds only while the spread's length
+ * is known at compile time. `src.length` is a RUNTIME number, so with a
+ * trailing argument present the binding shifts.
+ *
+ * Measured against the real Temporal provider (`.tmp/s68/probes/e2.js`), with
+ * `EXP = [2000, 5, "M05", 2]`:
+ *
+ * | call | answer |
+ * | --- | --- |
+ * | `TemporalHelpers.assertPlainDate(D, ...EXP, "desc")` | `year result: SameValue(«2000», «"desc"»)` — formal `year` got the TRAILING argument |
+ * | `TemporalHelpers.assertPlainDate(D, 2000, 5, "M05", 2, "desc")` | ok |
+ *
+ * That is exactly what `PlainDate/from/argument-object-valid.js` and
+ * `…/argument-string.js` write (`assertPlainDate(result, ...expected, desc)`),
+ * and misbinding `era` is what surfaced as `SameValue(«null», «undefined»)`
+ * inside `canonicalizeCalendarEra`.
+ *
+ * Kept SEPARATE from {@link tryEmitStandaloneDynamicSpreadCall}'s own gate on
+ * purpose: this entry point sits in front of a lowering that is already
+ * spread-AWARE and correct for a trailing-free list, so claiming every spread
+ * there would re-lower working call sites for no measured gain. Only the shape
+ * the static accounting provably cannot express is taken.
+ */
+export function tryEmitStandaloneTrailingSpreadCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+): ValType | undefined {
+  if (!argumentFollowsSpread(expr.arguments)) return undefined;
+  return tryEmitStandaloneDynamicSpreadCall(ctx, fctx, expr);
+}
+
+/** True when some non-spread argument appears after a spread one. */
+function argumentFollowsSpread(args: ts.NodeArray<ts.Expression>): boolean {
+  let seenSpread = false;
+  for (const arg of args) {
+    if (ts.isSpreadElement(arg)) seenSpread = true;
+    else if (seenSpread) return true;
+  }
+  return false;
+}

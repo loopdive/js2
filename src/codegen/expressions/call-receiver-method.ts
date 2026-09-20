@@ -97,6 +97,10 @@ import { isLazyIterForm, LAZY_ITER_METHODS } from "../iter-lazy-native.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { usesNativeNumberFormat } from "../number-format-native.js";
 import { ensureStandaloneRegExpCarrierTestHelper } from "../regexp-standalone.js";
+import {
+  tryEmitStandaloneDynamicSpreadCall,
+  tryEmitStandaloneTrailingSpreadCall,
+} from "../standalone-dynamic-spread-call.js"; // (#6645/#6646)
 import { compilePropertyIntrospection } from "../object-ops.js";
 import { ensureObjVecBuilders, ensureObjectRuntime, reserveBindDynHelper } from "../object-runtime.js";
 import {
@@ -2346,6 +2350,19 @@ export function compileReceiverMethodCall(
       if (funcIdx !== undefined && objectLiteralMethodNeedsCallReceiver(ctx, expr)) {
         funcIdx = undefined;
       }
+      // (#6645, #5383 S68) `o.m(a, ...src, b)` — a positional argument AFTER a
+      // spread. The arms below ARE spread-aware (#6616), but bind formals by
+      // the static accounting `compileSpreadCallArgs` documents, which is exact
+      // only while the spread's length is known at compile time. With a
+      // trailing argument the binding shifts — see
+      // {@link tryEmitStandaloneTrailingSpreadCall} for the measurement. Sits
+      // before the resolved-method arm because that arm claims the call
+      // whenever `funcIdx` is defined, which is the case for every
+      // object-literal method (`TemporalHelpers.assertPlainDate`).
+      {
+        const trailingSpread = tryEmitStandaloneTrailingSpreadCall(ctx, fctx, expr);
+        if (trailingSpread !== undefined) return trailingSpread;
+      }
       // If no method found, check callable property on struct
       if (funcIdx === undefined) {
         // (#4775) A fnctor receiver gets its devirtualization chance HERE.
@@ -2374,6 +2391,19 @@ export function compileReceiverMethodCall(
           });
           if (devirtualized !== undefined) return devirtualized;
         }
+        // (#6645, #5383 S68) A SPREAD into a callable PROPERTY. Both arms of
+        // `compileCallablePropertyCall` marshal a fixed arity — one local per
+        // AST argument node — so the spread's source array arrives as formal
+        // ZERO. Measured against the real Temporal provider,
+        // `.tmp/s68/probes/ea.js`: `TemporalHelpers.checkStaticInvalidReceiver(
+        // ...[Ctor,"from",["x"],fn])` threw "Cannot read properties of
+        // undefined (reading 'apply')" (`construct[method]` on the ARRAY),
+        // while the identical call with the four arguments written out ran
+        // both `from` and the assertion callback. Route it through the
+        // runtime-argv terminal instead; gated on a spread being present, so
+        // every callable-property call that works today is untouched.
+        const nativeSpreadCall = tryEmitStandaloneDynamicSpreadCall(ctx, fctx, expr);
+        if (nativeSpreadCall !== undefined) return nativeSpreadCall;
         const callablePropResult = compileCallablePropertyCall(ctx, fctx, expr, propAccess, structTypeName);
         if (callablePropResult !== undefined) return callablePropResult;
       }
