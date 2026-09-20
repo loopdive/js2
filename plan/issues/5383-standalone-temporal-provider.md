@@ -11853,3 +11853,90 @@ mechanism fix, rows handed to #6644). Residual after S65: 21 rows of the
 static-member inheritance + cross-link `instanceof`), the two `era` rows
 (#6633), the two >2^63 BigInt rows, `Duration/compare/order-of-operations.js`
 (#6628), `PlainDateTime/from/argument-string-offset.js` and the one-offs.
+
+### S66 findings (2026-09-19) — #6644 (in-progress): cross-link `instanceof` FIXED, static inheritance through a linked heritage (named, computed, identifier spellings) landed; the four `subclassing-ignored` rows still red on two newly located blockers; four-family holds 459/480, 0 pass→fail
+
+S66 (Opus, branch `issue-5383-standalone-temporal-s66`, head `3e7ac90073`,
+off the merged S65 PR #5990 head `930ab332f4`, worktree
+`agent-a5b45fd9c24d31356`). Full writeup in
+[#6644](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6644-link-static-inheritance-instanceof)
+(`status: in-progress`, rows did not move).
+
+**Mechanism 3 — cross-link `instanceof`.** `(new NS.Base(1)) instanceof
+NS.Base` was `false` for a DIRECTLY constructed provider instance (#6640's
+pinned residual 1). Decomposed on the base: every §7.3.20 ingredient
+already crossed the seam (`typeof T` function, `T.prototype` readable,
+`T.prototype.isPrototypeOf(V)` true); the one miss was the own-property
+GATE — `hasOwnProperty(T, "prototype")` is a module-local `ref.test`
+ladder a foreign struct matches nowhere, so the helper fell to the
+conservative `false`. Fix: a last-resort arm in `__instanceof_dynamic`
+(`native-dynamic-instanceof.ts`) that, when the peer's
+`__js2wasm_link_callable_kind` reports the target as a function object
+(`!= 0`, a provider class publishes construct-only), reads
+`Get(C, "prototype")` through `__extern_get` and runs the existing steps
+3 + 5–7 tail. #6640's residual 1 is RESOLVED; its two `instanceof`
+controls flip `false → true`.
+
+**Mechanism 1 — static inheritance through the heritage** (§15.7.14
+step 6). New leaf `standalone-linked-static-inheritance.ts` re-compiles
+the recorded heritage expression at the consuming site and asks
+`__extern_get`; three splices, each the LAST arm of its ladder: the named
+read (`property-access-dispatch.ts`), the class-static call
+(`expressions/call-namespace-static.ts`), the computed read (`S[k]`,
+`expressions.ts`). `prototype`/`name`/`length`/`constructor` never
+forwarded; an own static always shadows; `this` binds to the PARENT class
+object (documented bound — exactly the "subclassing ignored" answer these
+rows assert).
+
+**Mechanism 2 — identifier heritage with a captured parent value**
+(#6640's residual 2): `class MySubclass extends construct {}` where
+`construct` is a parameter. The value is in scope at exactly one program
+point, so it is captured at ClassDefinitionEvaluation into a per-class
+global `__linked_parent_<C>` (`statements.ts`, `class-bodies.ts`,
+`standalone-dynamic-parent-class.ts`, context field) and read by the
+synthesized constructor and the static arms; the predicate REFUSES
+anything it cannot capture (claiming without capturing would turn a
+harmless root struct into a `null` instance). #6623's field-having-provider
+control flips from `threw` to `called`.
+
+Witness `tests/issue-6644-link-static-inheritance-instanceof.test.ts`:
+lead-run on the base `930ab332f4` 1 failed / 1 (ten teeth: `typeof
+Sub.from` undefined, `Sub.from(3).get()`/`Sub.tag()` "called value is not
+a function", `Sub['tag']()` null, identifier heritage `.get()`/`.a`
+missing, three `instanceof` false); on `3e7ac90073` passes; 18 controls
+identical on both trees.
+
+**The 4 rows — unchanged, two blockers located.** Against the real
+provider `typeof MySubclass.from` `undefined → function`,
+`MySubclass.from(…)` → `2000`, helpers 1 and 2 of
+`checkSubclassingIgnoredStatic` pass; helper 3 still throws for the two
+`from/*` rows because (a) the COMPUTED read's class-name resolution is
+shape-sensitive (an object-literal method body makes it decline in the
+fixture yet resolve in the real file — routing the computed arm through
+the property-access dispatch's `resolvedClass` is the recorded
+hypothesis) and (b) a runtime SPREAD into the resolved provider static
+passes the array itself (`S[m](...a)` → `TypeError: year is required`,
+while `C.from(...a)` directly is correct — the dynamic-callee spread
+path, newly reachable). `abs`/`add` stop earlier on `super(...<runtime
+spread>)` leaving `this` unbuilt (#6640 residual 3; needs S34's argv
+driver). Pre-existing and not widened: `C["ownStatic"]()` is an
+uncatchable `illegal cast` even for a purely local class (the computed
+arm refuses any class with an own static for that reason).
+
+**Lead verification on `3e7ac90073`** (S66's fresh bundle + provider +
+adapter; base = S65 TSVs; every diff re-run by the lead): four-family
+459/480 (117/108/117/117), 0 flips; A 1250 / B 205 / C 349 / D 300 /
+E-unlinked 300 / E-linked 300 / F-class 250 / F-methoddef 100 / F-objproto
+150 — 0 pass→fail, 0 fail→pass each. Corpus byte A/B: 0 status / 0 sha
+flips against the S65 base and S66's true-base run — gc byte-identical,
+standalone +0 bytes, provider byte-identical. Equivalence 22 / 1720 / 22.
+Witness sweep 48 files / 274 tests, 0 failed under Node 22 and Node 25
+(lead re-ran Node 25). Gates green incl. `LOC_GATE_BASE=origin/main`
+(stranded grants restated in #6644), compiler-boundaries inventory (new
+leaf classified), spec-coverage, lint, prettier, dead-exports.
+
+Criterion 4 holds; sample unchanged at 459/480 by design. Residual after
+S66: 21 rows of the 480 — the four `subclassing-ignored` rows (blockers
+above), the two PlainDate `era` rows (#6633), the two >2^63 BigInt rows,
+`Duration/compare/order-of-operations.js` (#6628),
+`PlainDateTime/from/argument-string-offset.js` and the one-offs.
