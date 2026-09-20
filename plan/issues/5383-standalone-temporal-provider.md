@@ -11940,3 +11940,75 @@ S66: 21 rows of the 480 — the four `subclassing-ignored` rows (blockers
 above), the two PlainDate `era` rows (#6633), the two >2^63 BigInt rows,
 `Duration/compare/order-of-operations.js` (#6628),
 `PlainDateTime/from/argument-string-offset.js` and the one-offs.
+
+### S67 findings (2026-09-20) — #6644 (in-progress): linked-static arms resolve by class IDENTITY, runtime spread into an inherited linked static, `super(...<runtime spread>)` through a linked heritage; the two `from/subclassing-ignored` rows advance to the pre-existing `SameValue(«null», «undefined»)` blocker; four-family holds 459/480, 0 pass→fail
+
+S67 (Opus, branch `issue-5383-standalone-temporal-s67`, head `907ac32037`,
+off the merged S66 PR #5992 head `ab6e22f345`, worktree
+`agent-a6457c177911f46f1`). The lane was killed by the 03:20 UTC container
+restart mid-battery with all commits in place; the lead finished the
+battery (PlainDate, Duration) and every other verification step from its
+worktree. Full writeup appended to
+[#6644](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6644-link-static-inheritance-instanceof)
+("S67 — residuals 1, 2 and 4 closed").
+
+**What landed** (5 src files, +248/−25):
+
+1. `resolveLinkedStaticClassName` (`standalone-linked-static-inheritance.ts`)
+   resolves the computed-static READ and CALL receivers by declaration
+   identity via `ctx.oracle.valueDeclarationOf`, not by
+   `classExprNameMap.get(name)`. S66's "enclosing-shape sensitivity" was a
+   NAME COLLISION: a same-named twin class read the other's
+   `__linked_parent_<C>` global (measured `oB.go(NS.Other)` → `base`, the
+   WRONG parent, once the owner had run). A colliding twin with no synthetic
+   identity minted yet is REFUSED, not guessed.
+2. `S[k](...a)` on an inherited linked static routes through the boundary's
+   `__apply_closure(__extern_get(P, ToPropertyKey(k)), P, argv)` terminal
+   with #6616's `tryEmitSpreadHostArgs`, gated on a spread being PRESENT
+   (splice in `call-tail-dispatch.ts`); `calls.ts::tryEmitInlineDynamicCall`
+   is fixed-arity and handed the source array over as ONE argument
+   (`Sub[m](...A2)` → `two:p,q,undefined:1` on the base).
+3. `compileSuperCall`'s linked arm now serves a runtime-length argument
+   list through S34's `__native_construct_argv` driver, parameterised on
+   the callee push (`new-super.ts`, `class-bodies.ts`); it used to decline
+   and evaluate the arguments for effect (`new S()` was `null`).
+
+**Rows.** `PlainDate/from/subclassing-ignored.js` and
+`Duration/from/subclassing-ignored.js`: `called value is not a function` →
+`Test262Error: SameValue(«null», «undefined»)` — `temporalHelpers.js`
+`canonicalizeCalendarEra` line 140, the SAME pre-existing failure as
+`PlainDate/from/argument-object-valid.js` / `argument-string.js` and the
+#6633 `era` rows (an `undefined`-becomes-`null` argument-path defect), now
+reachable because all three `checkSubclassingIgnoredStatic` helpers pass
+when called separately. `abs`/`add` `subclassing-ignored` unchanged
+(`instance[method](...methodArgs)` on a subclass instance —
+`elemAccessReceiverIsUserClass` claims the receiver before the
+spread-capable arm).
+
+**Verification (lead, 2026-09-20).**
+
+| check | result |
+| --- | --- |
+| gate chain incl. `LOC_GATE_BASE=origin/main`, boundaries inventory vs `ab6e22f345`, issue-ids | green |
+| witness sweep `tests/issue-66*` + 6484 + 6493 (49 files / 275 tests) | Node 22 and Node 25.9 green |
+| new witness `tests/issue-6644-link-computed-static-spread-super.test.ts` on the file-copy reverted base (`ab.sh base`) | FAILS (18-case table mismatch) — a real witness |
+| four families × 120 vs S66 base | PlainDate 117, Duration 108, PlainDateTime 117, ZDT 117 = 459/480; 0 pass→fail, 0 fail→pass |
+| must-not-move A/B/C/D/E-unlinked/E-linked/F-class/F-methoddef/F-objproto (3,204 rows) | 0 pass→fail, 0 fail→pass |
+| corpus 42×{gc,standalone} | fix vs TRUE-base 0 status / 0 sha flips; the one sha flip vs S66's stored base (`ir-retirement/class-closure.ts::standalone`) reproduces on the true base, so it is base drift, not S67 |
+| equivalence | 22 / 1720 / 22, no new regressions |
+
+**Residuals (measured by the lane, `.tmp/s67/probes/`)** — all general
+dynamic-callee spread gaps, none link-specific:
+
+1. `fwd(...args) { return this.echo(...args) }` — a rest-forwarded call
+   does not happen at all (`undefined`), no provider involved.
+   `temporalHelpers.js` routes every `checkSubclassingIgnored*` entry
+   through exactly that shape.
+2. `f(...a)` on a dynamic callee delivers the wrong argument; `var g =
+   S[m]; g(...a)` → `null`.
+3. `instance[method](...methodArgs)` on a subclass instance (the `abs`/`add`
+   rows' blocker).
+4. `new X(...<runtime spread>)` traps `illegal cast` for a LOCAL class too —
+   pre-existing.
+5. `Object.getPrototypeOf(<class object>)` unmodelled; `C["ownStatic"]()`
+   still refused — unchanged from S66.
