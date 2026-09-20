@@ -2494,3 +2494,51 @@ match SHA-256
 Temporary tracing was removed and the original guard file hash restored.
 This authorizes the narrowly planned primitive-call correction and controls,
 not a runtime-wrapper shortcut or a claim that the four-form original passes.
+
+### Full-population manifest materialized (2026-09-20)
+
+The next census now has a concrete, fail-closed input artifact:
+`/private/tmp/js2-4444-full-es2015-manifest.i16PO6/es2015-11778.txt`.
+Its sibling `.receipt.json` records the source map, corpus root, runtime, count,
+and hashes; `build-manifest.mjs` in the same temporary directory regenerates it
+to a new output path. The script selects the ES2015 edition index, uses
+locale-independent JavaScript string ordering, rejects a changed population,
+and checks that every selected path exists inside the corpus test root before
+writing a new file without overwriting an existing artifact.
+
+Verified: **11,778 unique existing paths**, including **74 Intl402 paths**.
+Manifest SHA-256 (newline-terminated):
+`f2fdd4e4544a44608f0b53d89d343526cfa9c9044ca263e860da949dc1a2f59f`.
+The edition-map SHA-256 remains
+`9193b4d0fbbd7b7ee4df8b5f74afc866906de43ae7f62bd16e1079efa5e43fc1`;
+the corpus is `b363f29d3c43c626dc852744ad64a0b48a003693`.
+Upstream advanced to `ae0a46be50` by merging PRs #6000 and #6001, with no
+edition-map change from `ea8d7f87`. Revalidate this manifest against the final
+integrated source/map before the maintained Node-25 FYI run. This is population
+preparation only: no full census has run, and no new overall pass rate is claimed.
+
+### Integrated census setup checkpoint (2026-09-20)
+
+The isolated census checkout is now clean at upstream `f3520ca177960f49c006edc3fd7acce8bebf58d9`,
+which includes merged fixes #5999, #6000, #6001, and #6002. Its directory still
+ends in `full-census-ae0-20260920`; use the recorded commit, not that older name,
+as provenance. Global-match PR #6004 is published separately and is not included
+in this frozen upstream checkpoint.
+
+Initialized the pinned FYI reader submodule at
+`beeff8b3d70e65dcdd00270fdb31ab12f041b049` in that checkout only. Maintained
+reader discovery finds 53,583 paths, including all 11,778 manifest members
+(zero missing); literal harness assembly was also checked without compilation.
+The first maintained FYI smoke exited before worker readiness because the fresh
+checkout lacked `scripts/runtime-bundle.mjs`. This is an infrastructure failure,
+not a measured Test262 failure. Built the runtime bundle using the maintained
+`build:runtime-bundle` command; the retried original
+`built-ins/TypedArrayConstructors/from/invoked-as-func.js` passes **1/1** on
+Node 25, standalone, original harness. Receipt:
+`/private/tmp/js2-4444-full-es2015-manifest.i16PO6/smoke-f352.json`.
+
+Before starting the full population, prepare and verify the default QuickJS
+eval provider in this checkout's own cache, using the maintained provider
+builder. Do not let missing dynamic-eval artifacts masquerade as semantic
+failures or change the engine silently. This setup checkpoint is not a full
+census and does not establish a new overall pass rate.
