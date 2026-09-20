@@ -689,6 +689,62 @@ This is a **reader/mirror checkpoint**, not #5152 closure or full JS-host
 parity. No deletion code, shared baseline update, skip-list change, or host
 import is included.
 
+### 2026-09-20 Array HOF subclass regression containment
+
+The fresh full-corpus receipt found five non-ES2015 pass-to-fail rows after the
+reader/mirror checkpoint. They are intentionally tracked here as a regression
+follow-up, not folded into the prior String.raw gain claim. The frozen reduced
+manifest is
+`plan/agent-context/5152-array-subclass-regression-paths-20260920.txt`
+(five unique pinned-corpus paths, SHA-256
+`ab15801cdd5330ca442019ac142583e98fd22a46e56d537dd11cc4100397c0db`):
+
+- `built-ins/Array/prototype/some/15.4.4.17-8-10.js`
+- `built-ins/Array/prototype/forEach/15.4.4.18-8-10.js`
+- `built-ins/Array/prototype/map/15.4.4.19-9-3.js`
+- `built-ins/Array/prototype/filter/15.4.4.20-10-3.js`
+- `built-ins/Array/prototype/every/15.4.4.16-8-10.js`
+
+Fresh Node 24 isolated standalone runs through the runner's own
+`runTest262File` establish the boundary before this follow-up makes a source
+change: untouched `4a6cbdf1ee80b5d1618a7c87b014bc792f0fddc7` is **5 pass**
+(`/private/tmp/js2-5152-array-hof-five-base-4a6-20260920.log`), while the
+landed reader checkpoint at
+`35e040c08ed10f793faf26bb0f0eac55be662627` is **5 fail**
+(` /private/tmp/js2-5152-array-hof-five-candidate-35e-20260920.log`). Every
+candidate failure is `illegal cast in __extern_has` through
+`__extern_has_idx ← __hof_*`. The source range from the old baseline compiler
+to the landed reader commit contains only the #5991 reader files and fixture,
+which makes this a strong attribution; the explicit A/B above is the
+authoritative proof.
+
+The affected programs construct a raw function-constructor instance after
+making its live `F.prototype` array-like. #5991 admitted every allocated
+user-declared struct to the new ordinary array-like Get/Has route, then marked
+that type seen before the legacy candidate collector reached
+`fnctorArray.fnctorPrototypeGlobalForStruct`. As a result, the raw fnctor
+entered `__extern_has` rather than its established own-index plus recursive
+prototype route, where the generic helper attempts a `$Object` cast.
+
+The narrow correction preserves the legacy candidate lane only when the
+existing `fnctorPrototypeGlobalForStruct(ctx, structName)` provider returns a
+live prototype global. It does not blacklist all `__fnctor_*` values or user
+classes: descriptor-backed ordinary readers retain their #5991 admission for
+all other eligible types. Required validation is the same frozen five-path
+isolated command after the edit, followed by the frozen 30-path standalone
+String.raw manifest to prove that the two landed original gains remain intact.
+No anonymous-expando deletion source belongs in this follow-up.
+
+Terminal follow-up evidence, again using Node 24 and the runner's isolated
+mode, is **5 pass / 0 non-pass** after the guard at
+`/private/tmp/js2-5152-array-hof-five-after-fnctor-proto-guard-20260920.log`.
+The frozen standalone String.raw manifest then remains **29 pass / 1 fail** at
+`/private/tmp/js2-5152-string-raw-30-after-fnctor-proto-guard-20260920.log`;
+its sole non-pass is the pre-existing
+`built-ins/String/raw/returns-abrupt-from-next-key.js` strict setter/delete
+residual. This follow-up therefore restores the five unrelated Array rows
+without trading away either landed String.raw improvement.
+
 ### Step F — String.raw fidelity (3 tests)
 
 1. Descriptor loss: the template arg in

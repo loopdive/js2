@@ -11982,7 +11982,17 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
     for (const [structName] of ctx.structFields) {
       if (isSyntheticStructName(structName) || !isUserDeclaredStruct(ctx, structName)) continue;
       const typeIdx = ctx.structMap.get(structName);
-      if (typeIdx !== undefined && allocatedTypes.has(typeIdx)) ordinaryReadTypeIdxs.add(typeIdx);
+      if (typeIdx === undefined || !allocatedTypes.has(typeIdx)) continue;
+      // A raw function-constructor instance with a materialized live
+      // `F.prototype` must retain the established closed-struct candidate
+      // route: its indexed Has/Get miss recurses through that prototype. The
+      // ordinary dynamic helper cannot stand in for that raw fnctor receiver
+      // (and falls through to its $Object cast). This is deliberately keyed to
+      // the existing live-prototype provider, not a broad user-class/fnctor
+      // name screen, so descriptor-backed ordinary reads for other user
+      // carriers remain admitted.
+      if (fnctorArray.fnctorPrototypeGlobalForStruct(ctx, structName) !== undefined) continue;
+      ordinaryReadTypeIdxs.add(typeIdx);
     }
   }
   for (const [structName, fields] of ctx.structFields) {
