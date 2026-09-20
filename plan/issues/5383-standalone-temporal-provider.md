@@ -12012,3 +12012,181 @@ dynamic-callee spread gaps, none link-specific:
    pre-existing.
 5. `Object.getPrototypeOf(<class object>)` unmodelled; `C["ownStatic"]()`
    still refused — unchanged from S66.
+
+### S68 findings (2026-09-20) — #6646 + #6645: the `era` `SameValue(«null», «undefined»)` is an ARGUMENT-BINDING defect at the call site, not a provider resurrection; all four rows flip to pass
+
+Branch `issue-5383-standalone-temporal-s68`, off the S67 PR #5998 head
+`5e3d2225f9` (which already carries `origin/main`). Two commits:
+
+| commit | issue | src files |
+| --- | --- | --- |
+| `604b2414cb` | #6646 — spread into an identifier-held dynamic callee | new leaf `src/codegen/standalone-dynamic-spread-call.ts`, one splice in `call-identifier.ts` |
+| `d4416f899f` | #6645 — spread into a member callee mis-binds formals | two splices in `call-receiver-method.ts`, one new entry point in the leaf |
+
+## The headline correction
+
+**The `era` mismatch is not a resurrection site.** The brief's three candidate
+sites (a `ref_null`→`undefined` boundary on the provider read path, an
+object-literal field holding `undefined` through the link,
+`Object.entries`/destructuring inside `canonicalizeCalendarEra`) are all
+clean. Measured against the real standalone provider through eight routes —
+`C.from(s)`, `C.from(var)`, `C.from.apply(undefined, args)`,
+`C.from.apply({}, args)`, `C["from"](...args)`, `C.from(...args)`,
+`C[m].apply(…)`, `class Sub extends C` — `PlainDate.prototype.era` answered
+`undefined` every time, `typeof "undefined"`, `=== undefined` true,
+`=== null` false, no own property, `"era" in date` false
+(`.tmp/s68/probes/e4.js`). `canonicalizeCalendarEra` itself answers correctly
+for `date.era`, a literal `undefined` and `void 0` (`.tmp/s68/probes/e1.js`).
+
+The `null` comes from ARGUMENT BINDING at the call site, in two different arms,
+and the four rows split two-and-two between them.
+
+## #6646 — a spread into an identifier-held dynamic callee
+
+`calls.ts::emitDynamicSpreadCall` already repairs this shape for the JS-host
+lane and declines for standalone, with a header that says the standalone lane
+"retains its native ObjVec/call_ref lowering, where the vector … can be
+expanded without a host boundary". That is not the lowering that runs: every
+dynamic-callee arm sizes its list from `expr.arguments.length`, one local per
+AST node.
+
+Base → fix (`.tmp/s68/probes/q1.js`, `q2.js`, file-copy reverted base):
+
+| expression | base | fix |
+| --- | --- | --- |
+| `callSpread(f,a){return f(...a)}` | `arr3/UNDEF/UNDEF/1` | `number/string/arr1/3` |
+| `var g=O.echo; g(...[1,"s",[2],4])` | `object/UNDEF/UNDEF/UNDEF/1` | `number/string/arr1/number/4` |
+| `var f=this.echo; f(...args)` | `E1,2,3undefinedundefined` | `E123` |
+| `f(1, ...a)` | first formal only | `number/string/arr1/3` |
+
+New leaf `standalone-dynamic-spread-call.ts`: `__objvec_new` + #6616's shared
+spread expander + `__apply_closure(callee, receiver, argv)` — already the
+innermost DEFAULT arm of `tryEmitInlineDynamicCall`, so no carrier becomes
+reachable that was not; only the argument COUNT changes. One splice, right
+after the host arm it twins, gated on a spread being present.
+
+**S67's residual 1 was a misattribution.** It recorded
+`fwd(...args){return this.echo(...args)}` as "the call does not happen at all".
+That probe's callee ends with `arguments.length`, and `this.<m>(…)` on an
+`arguments`-reading method answers `null` with **no spread at all** — a
+separate pre-existing defect. With an `arguments`-free callee (what
+`temporalHelpers.js` has) the spelling was already correct on the S67 head, so
+it is pinned as a CONTROL in the witness. A second splice into
+`call-tail-dispatch.ts` was written and then REMOVED for exactly this reason:
+it would have taken over a working lowering for no measured gain.
+
+## #6645 — a spread into a member callee
+
+Two arms, both in `compileReceiverMethodCall`:
+
+1. **A positional argument AFTER a spread.** The resolved-method arm is
+   spread-aware (#6616) but binds formals through `compileSpreadCallArgs`'s
+   static accounting — "each spread is assumed to cover exactly the parameter
+   slots left over after the trailing positional args are reserved (#2053)" —
+   which is a compile-time count. Measured:
+   `TemporalHelpers.assertPlainDate(D, ...EXP, "desc")` →
+   `year result: SameValue(«2000», «"desc"»)`; the same call written out is ok.
+   A shifted binding puts a value in `era`, which is what
+   `assert.sameValue(eraName, undefined)` reports.
+2. **A spread into a callable PROPERTY.** Both paths of
+   `compileCallablePropertyCall` are fixed-arity, so the source array arrives
+   as formal ZERO. With a controlled fake constructor
+   (`.tmp/s68/probes/ea.js`), `checkStaticInvalidReceiver(...[Ctor,"from",
+   ["x"],fn])` threw `Cannot read properties of undefined (reading 'apply')` —
+   `construct[method]` on the ARRAY — and the callee log was EMPTY, while the
+   same four arguments written out ran both `Ctor.from` and the callback. For
+   `checkThisValueNotCalled` the same miss surfaces as
+   `assert.sameValue(Object.getPrototypeOf(result), construct.prototype)` =
+   `SameValue(«null», «undefined»)`.
+
+Splice 1 is gated on an argument FOLLOWING a spread (a spread-only list keeps
+its existing, correct, cheaper lowering); splice 2 on a spread being present.
+
+### The reduction that found it
+
+`p7.js` — the three `checkSubclassingIgnoredStatic` helpers called DIRECTLY —
+all pass. `e5.js` — the ENTRY `checkSubclassingIgnoredStatic(C,"from",ARGS,RA)`
+— fails. That pair is what moved the search from the provider to the call
+shape.
+
+## Rows — before / after
+
+Fresh provider prewarmed from HEAD (`--target both`, `cacheHit=false`,
+`JS2WASM_TEMPORAL_CACHE=…/s68-4`):
+
+| row | S67 head | #6645 splice 2 only | both splices |
+| --- | --- | --- | --- |
+| `PlainDate/from/argument-object-valid.js` | `SameValue(«null», «undefined»)` | same | **pass** |
+| `PlainDate/from/argument-string.js` | `SameValue(«null», «undefined»)` | same | **pass** |
+| `PlainDate/from/subclassing-ignored.js` | `SameValue(«null», «undefined»)` | **pass** | **pass** |
+| `Duration/from/subclassing-ignored.js` | `SameValue(«null», «undefined»)` | **pass** | **pass** |
+
+p34/p37 (the S67 probes named in the brief) are NOT a verdict on this work:
+p34's `fwd` row still reads `undefined` because its `echo` ends with
+`arguments.length` (residual 2 below), and both probes need the standalone
+provider, which the brief's prewarm line does not build — `--target standalone`
+(or `both`) is required, else every Temporal row answers
+`Temporal is not defined` / `standalone target emitted host imports`.
+
+## Verification
+
+| check | result | artifact |
+| --- | --- | --- |
+| witness `tests/issue-6646-*` on the reverted base | 4 failed / 8; 8/8 after; 4 controls pass on both | `.tmp/s68/ab.sh base\|fix` |
+| witness `tests/issue-6645-*` on the reverted base | 2 failed / 4; 4/4 after; 2 controls pass on both | same |
+| sweep `tests/issue-66* + 6484 + 6493`, Node 22 | 51 files / 287 tests, 0 failed | `.tmp/s68/sweep-node22.log` |
+| same, Node 25.9 | 51 files / 287 tests, 0 failed | `.tmp/s68/sweep-node25.log` |
+| corpus 42×{gc,standalone} vs the S67 base | statusFlips=0 shaFlips=0 (84/84) | `.tmp/s68/corpus-fix.jsonl` |
+| equivalence gate | 22 failing / 1720 passing / 22 known — no new regressions | `.tmp/s68/equiv.log` |
+| gate chain (loc, func, coercion-sites, oracle-ratchet, dead-exports) | green, incl. `LOC_GATE_BASE=origin/main` | `.tmp/s68/g*.log` |
+| compiler-boundaries inventory vs `origin/main` | `inventoryValid: true` (new leaf classified) | `.tmp/s68/g6.log` |
+| typecheck, lint | green | — |
+| four families × 120 vs the S67 base | **463/480** (PlainDate 120 ← 117, Duration 109 ← 108, PlainDateTime 117, ZDT 117); 0 pass→fail, +4 fail→pass | `.tmp/s68/battery/diff-all.log` |
+| must-not-move A/B/C/D/E-unlinked/E-linked/F-class/F-methoddef/F-objproto (3,204 rows) | 0 pass→fail, 0 fail→pass in every group | same |
+
+
+### The four fail→pass rows
+
+`PlainDate/from/argument-object-valid.js`, `PlainDate/from/argument-string.js`,
+`PlainDate/from/subclassing-ignored.js`, `Duration/from/subclassing-ignored.js`
+— exactly the four rows this slice targeted, no collateral movement. The
+PlainDate family is now **120/120**. The battery ran under the s68-4 provider
+(prewarmed `--target both` from HEAD, `cacheHit=false` on first use).
+
+## Residuals measured, NOT fixed
+
+1. **A spread with NO trailing argument does not apply a DEFAULT to the
+   unfilled formal.** `NS.take(1, ...[2000, 5])` against
+   `take(a, b, c, e = "DEF")` answers `number/2000/5/NULL` on BOTH trees
+   (`.tmp/s68/r/t2.mts`) — a typed null instead of `"DEF"`. Same
+   null-for-undefined family as the row symptom, in the arm splice 1
+   deliberately does not claim.
+2. **`this.<m>(…)` where `m` reads `arguments` answers `null`** — with or
+   without a spread (`.tmp/s68/probes/q5.js`: `this.a3(1,2,3)` → `null`,
+   `this.p3(...x)` → correct, `var f = this.a3; f(...x)` → correct,
+   `O.a3(...x)` → correct).
+3. **`var NS = { f: someFunction }; NS.f(...args)` through a rest forward
+   TRAPS** (`dereferencing a null pointer`), and so does an object-literal
+   method reached as `this.h3(...args)` where `h3` is a stored function
+   property. Hit twice while writing probes.
+4. **A function declaration with a DEFAULT parameter returns `null` inside a
+   module that also includes `temporalHelpers.js`** — `defp(1)` with
+   `function defp(a, b = undefined)` answered `null` there but `b:UNDEF` in a
+   harness-free module (`e1.js` vs `e3.js`). Module-scale dependent, not
+   reduced further.
+5. Unchanged from S67: `instance[method](...a)` on a subclass instance (the
+   `abs`/`add` rows), `new X(...<runtime spread>)` on a local class,
+   `Object.getPrototypeOf(<class object>)`, `C["ownStatic"]()`.
+
+#### S68 — lead verification (2026-09-20)
+
+Head `4ea3d63941` (clean tree), merged with `origin/main` (`b84d58d64c`) for landing.
+
+| check | result |
+| --- | --- |
+| gate chain incl. `LOC_GATE_BASE=origin/main`, boundaries inventory, issue-ids, typecheck, lint (merged head) | green — the pre-merge `LOC_GATE_BASE` run failed only on `statements/variables.ts`, which main had shrunk after the branch point and the slice does not touch |
+| own diff of the lane's 13 battery TSVs vs the S67 base | exactly the four target rows fail→pass; 0 pass→fail across all 3,684 rows; four-family 463/480 (PlainDate 120, Duration 109, PlainDateTime 117, ZDT 117) |
+| corpus | the lane's base file is byte-identical to S67's `corpus-fix.jsonl`; 0 status / 0 sha flips |
+| equivalence | 22 / 1720 / 22 |
+| both witnesses on a TRUE file-copy revert of the three src files to `5e3d2225f9` | 6 of 12 cases fail, all 6 controls pass — real witnesses. NOTE: the lane's own `ab.sh base` restores from `HEAD`, so its recorded "base" run was a no-op; the lead's revert is the evidence |
+| sweep `tests/issue-66*` + 6484 + 6493 (51 files / 289 tests) on the merged head | Node 22 and Node 25: 287 pass, 2 fail — `issue-6602` ("unmatched capture group … as `undefined`") and `issue-6603` (controls). Both reproduce on `origin/main` `b84d58d64c` ALONE, and were green on the lane's unmerged head; main regressed them between `ea8d7f87ff` and `b84d58d64c` (PRs #5999–#6004; #6004 "preserve global match plain-array shape" is the plausible culprit). Not this slice's — recorded, not chased |
