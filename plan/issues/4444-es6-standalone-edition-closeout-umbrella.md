@@ -2542,3 +2542,243 @@ eval provider in this checkout's own cache, using the maintained provider
 builder. Do not let missing dynamic-eval artifacts masquerade as semantic
 failures or change the engine silently. This setup checkpoint is not a full
 census and does not establish a new overall pass rate.
+
+The isolated QuickJS provider build subsequently completed and passed its
+canaries (adapter key `3cb2c272c6df4394`, 518,166 bytes). The full manifest run
+has now started with four maintained FYI workers, Node 25, standalone target,
+and explicit `JS2WASM_EVAL_ENGINE=quickjs`. Live log and eventual JSON are
+`/private/tmp/js2-4444-full-es2015-manifest.i16PO6/full-f352.log` and
+`full-f352.json`. Wait for terminal completion and validate all 11,778 unique
+result paths against the manifest before quoting an aggregate. Do not confuse
+an intermediate log count with completion. Compiler-bundle SHA-256:
+`84f1b83ff7183f2754ce8c932d0ed83ad1a520999d0e3996e34b4d8614617da7`;
+runtime-bundle SHA-256:
+`679256c1c493e67c46cf8f202d49c287c099f0b4390d46c4e8d5599724db3bd9`.
+Root retains the exclusive compiler/test/hook lease while this run is active;
+implementation teammates may continue source-only work in separate checkouts.
+
+### Source-only follow-ups queued behind the full census
+
+- Annex B invalid-literal `RegExp.prototype.compile`: candidate in
+  `.codex-worktrees/codex-4444-annexb-regexp-compile-audit-20260920`, based on
+  `f3520ca177`, tracked in #5198. It stages receiver/arguments before reusing
+  the existing literal syntax oracle and runtime SyntaxError emitter, preserving
+  receiver state on failure. Compact controls are separate from the four exact
+  originals. Source review corrected omitted-flags expectations to the empty
+  string. No candidate test or conformance gain has yet been recorded.
+- TypedArray mapped `from`: #5194 retains its unvalidated draft and thirteen
+  controls. The compatibility collector can double-read `@@iterator` and pass
+  native carriers through without a snapshot; the alternative HasProperty
+  route mishandles nullish methods. Do not ship either as a complete mapper fix.
+  #6484 S6, in `/private/tmp/js2-typedarray-from-iter-next-error-audit-20260920`,
+  plans an iterator-owned one-read/cached-method materializer without layout or
+  IR changes. Native/static arms must respect observable method overrides.
+- Keep the abstract `%TypedArray%.from` original separate: its intrinsic
+  refusal may throw before iteration. Frozen unannotated route fixtures in the
+  #6484 checkout distinguish it from a concrete constructor; they are not
+  measured acceptance tests and do not prove iterator exception rewrapping.
+
+All three records preserve their actual scope. Testing, hooks, and publication
+of these new source checkpoints remain queued behind the live census lease.
+
+S6 additive helper source drafting is now authorized after review: no existing
+consumer rewiring, no unproven native/static shortcut, and no layout/IR edits.
+Keep the iterator provider and mapped TypedArray consumer in separate owned
+worktrees during drafting, then integrate and measure them as one completed
+fix before opening its PR. An unused provider alone must not claim an original
+Test262 gain. The proposed public collector returns a raw array-like source or
+a fully collected iterable snapshot; method lookup/caching stays iterator-owned.
+
+S6 source audit found that clean native-array dynamic property reads can miss
+the default Array-prototype iterator: the proto companion store/seeder is
+demand-gated. Iterator ownership now also includes a narrowly explicit
+per-consumer/per-brand demand in `native-proto.ts` and `proto-index-store.ts`
+(`vec-props.ts` only if required). Existing demand defaults must remain intact;
+do not mutate `protoMemberDirty` or seed every brand globally. Initialize the
+companion once before the new Get path, preserving own properties and prior
+prototype overrides, accessors, nullish values, and deletions. This is still
+unvalidated source work with no IR, context-type, or layout change authorized.
+
+The provisioning gate must use the pre-scan `arrayIteratorMaybeOverridden`
+flag, not emptiness of `protoOverrides`, which is populated later during
+lowering. The pre-scan itself recognizes bounded syntactic forms; its false
+result is not proof that aliased or indirect prototype mutation is impossible.
+Source review must establish whether those forms write the runtime companion
+observed by Get, or conservatively decline before lowering operands. No
+post-evaluation fallback or statement-order-dependent proof is acceptable.
+
+Further source review queued a strict-mapper `thisArg` control in #5194:
+the mapped call site currently pads an omitted argument with extern null.
+Verify the closure bridge's semantics and distinguish omitted, explicit
+undefined, and explicit null before claiming mapper fidelity. The predecessor
+route using the same padding is not evidence of correctness. These checks are
+still unrun while the full census owns the test lease. Source tracing confirmed
+that `__apply_closure` forwards the receiver unchanged to its call bridge;
+the #5194 draft now supplies canonical semantic undefined only for an omitted
+`thisArg`, preserving explicit null and other evaluated values. This is a
+source correction, not a measured pass gain.
+
+S6 draft review identified a compatibility trap before testing: the existing
+`ensureObjectRuntime` sets `objectRuntimeTypes` before its ordinary
+`reserveProtoIndexStore(ctx)` call. A new unconditional late-provisioning guard
+would therefore disable the historical path. Restrict that refusal to the new
+explicit demand, preserve the no-options caller, and constrain the demand to
+Array rather than every builtin brand. The mapper caller must also provision
+the iterator provider before the old array-like helper creates the object
+runtime. Both source owners have these ordering requirements; no runtime
+verification has occurred yet.
+
+The iterator draft now applies the late guard only to a valid explicit
+Array demand and leaves no-options reservation unchanged; both demand/seeder
+entry points constrain the opt-in brand to Array. Root re-read those changes
+and the scoped whitespace check is clean. Semantic regression controls remain
+queued, so this is not runtime validation.
+
+### Next independent Promise slice (read-only census triage)
+
+Frozen-f352 source audit maps the observed resolve-get-once failures to #5197
+R3-2 and #5143 C1a: direct literal-array combinators create/subscribe native
+promises without observing `Promise.resolve`, including their empty-array arm.
+A next independent implementation can own `promise-combinators.ts` and
+`expressions/call-namespace-static.ts`: cache one observable resolve Get after
+argument evaluation and call it once per element with the correct receiver,
+using existing native promise assimilation. Measure empty/nonempty getter and
+call counts, receiver/argument identity, abrupt completion, zero imports, and
+unchanged host/unmutated paths. This is not yet dispatched or validated and
+does not establish completion of the broader R3-2 bundle.
+
+Keep iterator-abrupt Promise rows separate: the current null drain result does
+not distinguish Symbol-method visibility from caught next/value abruptness;
+#5197 already records the required discriminator. That work overlaps the
+active iterator owner. Custom-constructor `.call(C, iterable)` host imports
+instead belong to #5143 C1b / #5197 R3-3 / #3390 Slice 3 and require real
+NewPromiseCapability behavior, not merely removal of imports.
+
+### Iterator values-closure prerequisite
+
+S6 cannot yet call the default method it observes: Array's seeded
+`@@iterator` aliases its reflective `values` closure, whose body currently
+falls through to a catchable refusal in `array-object-proto.ts`. Iterator
+ownership now includes that file and, only if needed, `array-methods.ts` for
+an AST-free producer. Keep this non-IR and preserve existing record layouts.
+The direct `compileNativeArrayIterator` eagerly copies elements, so merely
+wrapping that producer is insufficient for a generic values closure. Required
+behavior includes no indexed reads at creation, live length/indexed Get on
+next, permanent exhaustion, and alias identity. Assess the existing record or
+closure substrate before implementation; keys/entries are not prerequisites.
+Do not introduce an identity shortcut whose only correctness evidence is
+equivalence to the existing eager direct lowering. The mapped TypedArray draft
+remains unavailable until this dependency is resolved and measured.
+
+The iterator owner identified a no-layout candidate: a new array-like iterator
+kind uses the existing `userIter` field for the original receiver and existing
+cursor field for the next index. Wire the real reflective `values` closure to
+that record, and read/convert length plus indexed values only from `next`.
+Audit every kind consumer so its null vec field cannot reach an old vec read;
+reuse full Get+ToLength semantics, latch before subsequent length reads, and
+advance before indexed Get. This is an unvalidated source plan. The inherited
+i32 cursor ceiling remains an explicit residual, not a full-domain claim.
+
+### Full original-harness census terminal receipt
+
+The frozen `f3520ca177960f49c006edc3fd7acce8bebf58d9` standalone census
+finished normally with exit 1: **10,377 passed / 1,401 failed / 11,778 total
+(88.1049414162% pass)**. Exact set comparison verified every manifest path
+appears once, with no missing, extra, or duplicate result. Pass/fail counters
+were independently recomputed from all result rows.
+
+Result: `/private/tmp/js2-4444-full-es2015-manifest.i16PO6/full-f352.json`.
+SHA-256: `851a8f4e09d048aba2ce76d4c693d16c04efd5477ee36077079934bb00c73d6f`.
+Runner: `test262-fyi-original-harness`, project worker, four workers,
+standalone, authoritative compatible `test262-fyi-node25-unicode17-v1`,
+Node 25.9.0 / Unicode 17 / UTC. Corpus gitlink:
+`b363f29d3c43c626dc852744ad64a0b48a003693`; FYI reader gitlink:
+`beeff8b3d70e65dcdd00270fdb31ab12f041b049`. The QuickJS provider and bundle
+hashes are recorded above. PR #6004 is not included in this frozen revision.
+
+This is the measured full-scope result, not 100% completion and not a
+regression comparison to historical CI JSONL from a different harness.
+Category counts describe observed rows, not proven root-cause boundaries:
+RegExp 122, Promise 99, TypedArray 76, Proxy 75, Array 62, Object 51,
+TypedArrayConstructors 44 failing rows; language expressions/statements add
+274/232. Reproduce apparent regressions in isolation before attribution.
+
+Root released the census lease to the RegExp owner for the prepared focused
+host/standalone controls, four exact-original same-base comparisons, and
+existing poison-contract controls. Iterator/TypedArray work remains source-only;
+root documentation hooks/publication wait for that bounded lease to end.
+
+The terminal rows divide into 289 compile-phase and 1,112 runtime-phase
+failures. Sixteen module-namespace rows report `ReferenceError: ns is not
+defined`; the mapper owner has a read-only secondary audit of exact fixtures,
+FYI source assembly, worker handling, and a passing module control to locate
+the defect. This signature alone does not establish a shared root cause or
+justify changing the harness. No tests or IR edits are authorized by that
+secondary audit while RegExp owns the test lease.
+
+RegExp's first compact candidate run is terminal exit 1: **8 pass / 4 fail
+out of 12**. Receipt:
+`/private/tmp/js2-5198-regexp-compile-syntax-candidate-f352-20260920.log`.
+Shadowed-undefined controls returned 0 on host and standalone; abrupt receiver
+returned 0 on host and failed compilation on standalone with the existing
+native-RegExp carrier refusal. All four controls remain present. The owner
+retains the bounded lease for identical clean-f352 comparisons and exact
+originals; no regression attribution, readiness, or original pass gain is yet
+established. Subsequent runs omit the process-wide heap override and retain
+only scoped fork resource settings when needed.
+
+### Upstream regression report takes priority
+
+A fresh remote read found main at
+`2f6c0f4f57db129c772a476345c28d85010cd175`, including merged PR #6003
+(handoff), #6004 (global-match shape), and #6005 (dynamic/member spread).
+The frozen census remains f352, not this newer revision.
+
+Upstream #6648 reports two pre-existing witnesses regressed between
+`ea8d7f87ff` and `b84d58d64c`: issue-6602 nullable capture filtering now emits
+invalid struct construction, and issue-6603 inline nullable-string concat
+traps. The report suspects #6004 but does not prove attribution. Its author
+owns a priority follow-up: let the current four-original RegExp run finish,
+preserve the syntax candidate, create a separate current-main regression
+worktree, reproduce unchanged witnesses, and record same-base attribution
+before fixing. No expectation edits, IR edits, or layout changes. New-fix
+publication waits for this possible regression to be resolved. S68 also
+changed `call-receiver-method.ts`; the mapper owner must preserve those edits
+when synchronizing its later integration branch.
+
+Because #6003 has merged, these new handoff changes need a new follow-up PR
+after the serialized hook slot is free; do not push them as an update to the
+already-merged PR or claim that its merged snapshot contains this receipt.
+
+Before switching to #6648, the RegExp candidate completed its four exact
+originals with **4/4 pass** (Node 24 maintained isolated standalone runner;
+receipt `/private/tmp/js2-5198-regexp-compile-four-candidate-f352-20260920.log`).
+This is not the matched original-harness comparison or a resolution of the
+four red compact controls. The clean-base/poison checks remain pending and
+the source candidate is preserved unchanged. New documentation branch:
+`codex/4444-es2015-census-results-20260920`.
+
+### Namespace runner-parity audit and follow-up
+
+Read-only source tracing attributes the 16 namespace `ns` ReferenceErrors to
+missing self-import graph routing in the FYI path, not a newly established
+compiler regression. The maintained project runner already uses `compileMulti`
+for validated namespace self-imports, while FYI graph attachment and worker
+selection require nonempty fixture maps; a self edge has no extra fixture.
+Existing #4759 records this distinction and a real linked semantic control.
+
+The census namespace subset is 3 pass / 20 fail out of 23. Its three passes
+expect ReferenceError and are not reliable positive semantic controls for
+linking; retain this vacuity caveat with the overall census measurement.
+The standalone goal requires correct execution, not retaining those accidental
+passes. No adjusted aggregate or assumed gain is claimed.
+
+The mapper owner is assigned a separate current-main #4759 worktree for a
+narrow explicit self-module-graph signal through FYI reader, executor, worker.
+Gate it on the namespace path plus validated pinned self edge; do not broaden
+all entry files or dynamic fixtures into compileMulti, rewrite source, weaken
+verdicts, or remove failures. Controls must include a genuinely linked circular
+fixture, the non-namespace Proxy self-import exclusion, and preserved dynamic
+imports. Update provenance/version contracts if the repo requires it and
+remeasure actual originals after routing. Source-only until the priority
+#6648 test lease is released; the TypedArray draft stays in its own checkout.
