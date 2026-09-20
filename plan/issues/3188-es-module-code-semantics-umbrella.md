@@ -223,6 +223,18 @@ it does not establish runtime-namespace `Symbol.toStringTag` descriptor
 semantics. The candidate's full focused file is also 8/8:
 `/private/tmp/js2-3188-focused8-candidate-de232-20260920.log`.
 
+After the private branch merged live upstream main
+`05b994b0cc5f7780cb9c7e5fc37c2b73339ba453` (which updates the maintained
+runner but not this slice's owned files), the full focused file remained 8/8:
+`/private/tmp/js2-3188-focused8-candidate-postsync-05b994-20260920.log`.
+The frozen original manifest also remained 4/4 through that current runner:
+`/private/tmp/js2-3188-original4-candidate-postsync-05b994-20260920.log`.
+The candidate's local QuickJS pair was required-cache verified before that
+run (`artifact 073742801ba7`, adapter key `d4799bda84cfed0d`):
+`/private/tmp/js2-3188-quickjs-provider-candidate-postsync-05b994-require-cache-20260920.log`.
+These are post-sync retention receipts, not a replacement full-suite baseline
+or rate claim.
+
 Out of scope: mutable `var`/`let` exports and live bindings; namespace
 `[[GetOwnProperty]]` for export keys; delete/set/define/freeze behavior;
 `Reflect.ownKeys` export ordering; dynamic-import namespace identity; and all
@@ -231,9 +243,9 @@ and #1089 work, not a reason to weaken this focused acceptance.
 
 ### Budget assessment
 
-Against `de232b80e43dc82c2fafc331cc10d658f26a8897`, this source slice changes
-`src/codegen/module-namespace-value.ts` from 720 to 766 lines and
-`emitNamespaceObject` from 168 to 207 lines. Both remain below the
+Against merged upstream `05b994b0cc5f7780cb9c7e5fc37c2b73339ba453`, this
+source slice changes `src/codegen/module-namespace-value.ts` from 720 to 769
+lines and `emitNamespaceObject` from 184 to 225 lines. Both remain below the
 change-scoped 1,500-file and 300-function ceilings, so neither
 `loc-budget-allow` nor `func-budget-allow` is justified; shared budget
 baselines remain untouched.

@@ -815,6 +815,20 @@
       "skip": 0
     }
   },
+  "built-ins/Uint8Array": {
+    "ES2026": {
+      "pass": 60,
+      "fail": 8,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2027": {
+      "pass": 0,
+      "fail": 2,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "built-ins/TypedArrayConstructors": {
     "ES2015": {
       "pass": 275,
@@ -843,20 +857,6 @@
     "ES2024": {
       "pass": 84,
       "fail": 46,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2027": {
-      "pass": 0,
-      "fail": 2,
-      "ce": 0,
-      "skip": 0
-    }
-  },
-  "built-ins/Uint8Array": {
-    "ES2026": {
-      "pass": 60,
-      "fail": 8,
       "ce": 0,
       "skip": 0
     },
@@ -1113,14 +1113,6 @@
       "skip": 0
     }
   },
-  "built-ins/decodeURI": {
-    "ES2015": {
-      "pass": 1,
-      "fail": 0,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "built-ins/Set": {
     "ES2015": {
       "pass": 186,
@@ -1269,6 +1261,22 @@
       "skip": 0
     }
   },
+  "built-ins/decodeURI": {
+    "ES2015": {
+      "pass": 1,
+      "fail": 0,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "language/statementList": {
+    "ES2015": {
+      "pass": 23,
+      "fail": 15,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "language/eval-code": {
     "ES5": {
       "pass": 51,
@@ -1311,6 +1319,14 @@
       "skip": 0
     }
   },
+  "language/computed-property-names": {
+    "ES2015": {
+      "pass": 29,
+      "fail": 15,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "language/module-code": {
     "ES2015": {
       "pass": 42,
@@ -1340,22 +1356,6 @@
       "pass": 1,
       "fail": 0,
       "ce": 12,
-      "skip": 0
-    }
-  },
-  "language/computed-property-names": {
-    "ES2015": {
-      "pass": 29,
-      "fail": 15,
-      "ce": 0,
-      "skip": 0
-    }
-  },
-  "language/statementList": {
-    "ES2015": {
-      "pass": 23,
-      "fail": 15,
-      "ce": 0,
       "skip": 0
     }
   },
