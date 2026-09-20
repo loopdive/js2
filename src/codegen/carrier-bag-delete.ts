@@ -676,6 +676,31 @@ export function fillCarrierBagDelete(ctx: CodegenContext): void {
   }
 
   const notHandled: Instr[] = [{ op: "i32.const", value: -1 }, { op: "return" }];
+  const foundEntryTee: Instr[] =
+    anonymousState === undefined ? [] : [{ op: "local.tee", index: anonymousState.entryLocal }];
+  const delegatedDeleteKey: Instr[] =
+    anonymousState === undefined
+      ? [{ op: "local.get", index: 1 }]
+      : [
+          // Anonymous candidates delegated through a found `$PropEntry`; use
+          // that entry's stored key rather than replaying an arbitrary caller
+          // coercion in the ordinary-delete helper. Legacy carrier arms retain
+          // their original key verbatim.
+          { op: "local.get", index: anonymousState.candidateLocal },
+          { op: "i32.const", value: 0 },
+          { op: "i32.ne" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: [
+              { op: "local.get", index: anonymousState.entryLocal },
+              { op: "ref.as_non_null" },
+              { op: "struct.get", typeIdx: anonymousPlan!.propEntryTypeIdx, fieldIdx: 0 },
+              { op: "extern.convert_any" },
+            ],
+            else: [{ op: "local.get", index: 1 }],
+          },
+        ];
   fn.body = [
     ...closureArm,
     ...nativeGeneratorArm,
@@ -702,7 +727,7 @@ export function fillCarrierBagDelete(ctx: CodegenContext): void {
     { op: "ref.cast", typeIdx: objectTypeIdx },
     { op: "local.get", index: 1 },
     { op: "call", funcIdx: objFindIdx },
-    ...(anonymousState === undefined ? [] : [{ op: "local.tee", index: anonymousState.entryLocal }]),
+    ...foundEntryTee,
     { op: "ref.is_null" },
     { op: "if", blockType: { kind: "empty" }, then: notHandled.map((i) => ({ ...i })) },
     ...(anonymousState === undefined
@@ -716,28 +741,7 @@ export function fillCarrierBagDelete(ctx: CodegenContext): void {
           equalsIdx: anonymousPlan!.equalsIdx,
         })),
     { op: "local.get", index: BAG },
-    ...(anonymousState === undefined
-      ? [{ op: "local.get", index: 1 }]
-      : [
-          // Anonymous candidates delegated through a found `$PropEntry`; use
-          // that entry's stored key rather than replaying an arbitrary caller
-          // coercion in the ordinary-delete helper. Legacy carrier arms retain
-          // their original key verbatim.
-          { op: "local.get", index: anonymousState.candidateLocal },
-          { op: "i32.const", value: 0 },
-          { op: "i32.ne" },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "externref" } },
-            then: [
-              { op: "local.get", index: anonymousState.entryLocal },
-              { op: "ref.as_non_null" },
-              { op: "struct.get", typeIdx: anonymousPlan!.propEntryTypeIdx, fieldIdx: 0 },
-              { op: "extern.convert_any" },
-            ],
-            else: [{ op: "local.get", index: 1 }],
-          },
-        ]),
+    ...delegatedDeleteKey,
     { op: "call", funcIdx: deleteIdx },
   ];
 }
