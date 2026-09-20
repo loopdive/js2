@@ -66,6 +66,9 @@ import { ensureLateImport, flushLateImportShifts } from "./expressions/late-impo
 import { emitToPropertyKeyOnce } from "./expressions/computed-member-reference.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
+import { tryEmitSpreadHostArgs } from "./host-method-args.js"; // (#5383 S67) runtime-length spread
+import { hasSpreadArgument } from "./spread-arg-list.js";
+
 import { allocLocal } from "./context/locals.js";
 import { coerceType, compileExpression } from "./shared.js";
 import { pushLinkedDynamicParent } from "./standalone-dynamic-parent-class.js"; // (#6644) captured identifier heritage
@@ -215,7 +218,7 @@ function emitLinkedStaticMemberCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
   className: string,
-  propName: string,
+  member: { name: string } | { key: ts.Expression },
   args: readonly ts.Expression[],
   pushExtern: (expr: ts.Expression) => boolean,
 ): boolean {
@@ -228,27 +231,44 @@ function emitLinkedStaticMemberCall(
   // locals allocated below along with the body.
   return withSpeculativeCompile(ctx, fctx, () => {
     // §13.3.6.1: the MemberExpression is evaluated and GetValue'd BEFORE the
-    // arguments, so the parent read comes first and is held in a local.
+    // arguments, so the parent read — and, for `S[k](…)`, the KEY — comes
+    // first and is held in a local.
     const parentLocal = allocLocal(fctx, `__lsi_parent_${fctx.locals.length}`, EXTERNREF);
     const calleeLocal = allocLocal(fctx, `__lsi_callee_${fctx.locals.length}`, EXTERNREF);
     if (!pushLinkedDynamicParent(ctx, fctx, className, pushExtern)) return { commit: false, value: false };
     fctx.body.push({ op: "local.tee", index: parentLocal });
-    fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
+    if ("name" in member) {
+      fctx.body.push(...stringConstantExternrefInstrs(ctx, member.name));
+    } else {
+      if (!pushExtern(member.key)) return { commit: false, value: false };
+      emitToPropertyKeyOnce(ctx, fctx);
+    }
     fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? externGetIdx } satisfies Instr);
     fctx.body.push({ op: "local.set", index: calleeLocal });
 
     const argsLocal = allocLocal(fctx, `__lsi_args_${fctx.locals.length}`, EXTERNREF);
     fctx.body.push({ op: "call", funcIdx: newIdx });
     fctx.body.push({ op: "local.set", index: argsLocal });
-    for (const arg of args) {
-      fctx.body.push({ op: "local.get", index: argsLocal });
-      if (!pushExtern(arg)) return { commit: false, value: false };
-      fctx.body.push({ op: "call", funcIdx: pushIdx } satisfies Instr);
+    // (#5383 S67) A SPREAD contributes its RUNTIME element count, so the
+    // unrolled one-push-per-AST-node loop below is exact only without one:
+    // `S[m](...a)` reached the provider's `from` with the argument vector
+    // itself. `tryEmitSpreadHostArgs` is the single place in the compiler that
+    // repairs that difference (#6616's shared builder); it emits nothing and
+    // answers false when there is no spread, which is what keeps every
+    // existing call site byte-identical.
+    if (!tryEmitSpreadHostArgs(ctx, fctx, args, argsLocal, "__objvec_push", pushIdx)) {
+      for (const arg of args) {
+        fctx.body.push({ op: "local.get", index: argsLocal });
+        if (!pushExtern(arg)) return { commit: false, value: false };
+        fctx.body.push({ op: "call", funcIdx: pushIdx } satisfies Instr);
+      }
     }
     fctx.body.push({ op: "local.get", index: calleeLocal });
     fctx.body.push({ op: "local.get", index: parentLocal });
     fctx.body.push({ op: "local.get", index: argsLocal });
-    fctx.body.push({ op: "call", funcIdx: applyIdx });
+    // Expanding a spread can register late imports, which shifts every
+    // defined-function index captured before them — re-resolve by name.
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__apply_closure") ?? applyIdx });
     return { commit: true, value: true };
   });
 }
@@ -285,9 +305,71 @@ export function tryEmitLinkedStaticCall(
   const className = resolveLinkedStaticClassName(ctx, receiver);
   if (className === undefined) return undefined;
   if (ctx.staticMethodSet.has(`${className}_${methodName}`)) return undefined;
-  if (expr.arguments.some((argument) => ts.isSpreadElement(argument))) return undefined;
   if (linkedStaticParentHeritage(ctx, className, methodName) === undefined) return undefined;
-  const emitted = emitLinkedStaticMemberCall(ctx, fctx, className, methodName, expr.arguments, (value) =>
+  const emitted = emitLinkedStaticMemberCall(ctx, fctx, className, { name: methodName }, expr.arguments, (value) =>
+    pushExtern(ctx, fctx, value),
+  );
+  return emitted ? EXTERNREF : undefined;
+}
+
+/**
+ * (#6644, #5383 S67) `S[k](...args)` — the COMPUTED call of an inherited
+ * static whose argument list contains a RUNTIME SPREAD. This is the shape
+ * test262's `TemporalHelpers.checkThisValueNotCalled` writes verbatim
+ * (`MySubclass[method](...methodArgs)`), and it is #6644's residual 2.
+ *
+ * ## Why the computed READ arm is not enough
+ *
+ * The read arm hands back a plain externref callee, and the CALL of that value
+ * is then lowered by `calls.ts::tryEmitInlineDynamicCall` (measured: that is
+ * the arm that fires). Its argument marshalling is fixed-arity —
+ * `expr.arguments.length` locals, one per AST node — so a spread contributes
+ * exactly ONE value: the source array. Measured on the branch base with the
+ * two-module fixture (`.tmp/s67/probes/p32.mts`), a provider static echoing its
+ * arguments:
+ *
+ * | call | base |
+ * | --- | --- |
+ * | `NS.Base.two(...A2)` directly on the provider (control) | `two:p,q:2` |
+ * | `Sub[m](...A2)` where `Sub extends construct` | `two:p,q,undefined:1` |
+ *
+ * `arguments.length` is 1 and the first formal is the ARRAY. (The one-element
+ * case masks itself: `"one:" + ["p"]` and `"one:" + "p"` print the same, which
+ * is why S66 saw it only as a `year is required` from the real provider.)
+ *
+ * ## The mechanism
+ *
+ * Route the whole call — not just the read — through the same
+ * `__apply_closure(__extern_get(P, ToPropertyKey(k)), P, argv)` terminal the
+ * NAMED form already uses, whose argv is a runtime vector and therefore has an
+ * exact answer for a spread (`tryEmitSpreadHostArgs`).
+ *
+ * **Gated on the spread being PRESENT**, deliberately: without one the
+ * existing dynamic-call lowering is already correct (`S[m](lit)` answers
+ * `2000` against the real provider) and keeping it means this change adds no
+ * instruction to any call site that works today. The remaining gates are the
+ * computed READ arm's, for the same reasons: a side-effect-free key (the
+ * fallback would evaluate it twice), an identifier receiver resolved by
+ * DECLARATION identity, and a refusal for any class with an own static (the
+ * `illegal cast` trap documented on {@link declaresAnyOwnStatic}).
+ */
+export function tryEmitLinkedStaticComputedCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  elemAccess: ts.ElementAccessExpression,
+): ValType | undefined {
+  if (ctx.classLinkedDynamicParentExpr.size === 0) return undefined;
+  if (!hasSpreadArgument(expr.arguments)) return undefined;
+  const key = elemAccess.argumentExpression;
+  if (key === undefined) return undefined;
+  if (!ts.isIdentifier(key) && !ts.isStringLiteralLike(key)) return undefined;
+  if (!ts.isIdentifier(elemAccess.expression)) return undefined;
+  const className = resolveLinkedStaticClassName(ctx, elemAccess.expression);
+  if (className === undefined) return undefined;
+  if (!ctx.classLinkedDynamicParentExpr.has(className)) return undefined;
+  if (declaresAnyOwnStatic(ctx, className)) return undefined;
+  const emitted = emitLinkedStaticMemberCall(ctx, fctx, className, { key }, expr.arguments, (value) =>
     pushExtern(ctx, fctx, value),
   );
   return emitted ? EXTERNREF : undefined;

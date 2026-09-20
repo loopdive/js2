@@ -35,10 +35,21 @@ created: 2026-09-19
 # deliberately a superset of that lowering rather than a re-derivation of the
 # class-object static surface (the #5820 regression is what re-derivation costs),
 # so it has to sit where that lowering is called.
+#
+# (#5383 S67, 2026-09-19) +10 LOC / +9 function LOC in `call-tail-dispatch.ts`
+# is the fourth and last splice, on the COMPUTED CALL (`S[k](...args)`): the
+# element-access CALL ladder is the one chokepoint where a spread-bearing call
+# has to be diverted, because every arm below it marshals a FIXED arity and so
+# hands the spread's source array over as a single argument. It is three lines
+# of code plus the rationale, and the mechanism itself lives in the leaf
+# `standalone-linked-static-inheritance.ts`. Splitting `compileTailDispatch`
+# (2,149 LOC) is a refactor of long-standing code this change does not
+# otherwise touch.
 loc-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/property-access-dispatch.ts
   - src/codegen/expressions.ts
+  - src/codegen/expressions/call-tail-dispatch.ts
 #
 # +14 in `collectClassDeclaration` and +11 in `compileStatementInner` are the
 # two splice points of the IDENTIFIER-heritage arm, both already reduced to a
@@ -51,6 +62,7 @@ loc-budget-allow:
 # Splitting either long-standing function is a refactor this change does not
 # otherwise touch.
 func-budget-allow:
+  - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   - src/codegen/class-bodies.ts::collectClassDeclaration
   - src/codegen/statements.ts::compileStatementInner
