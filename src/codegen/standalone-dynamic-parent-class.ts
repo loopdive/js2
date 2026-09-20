@@ -255,6 +255,33 @@ export function pushLinkedDynamicParent(
 }
 
 /**
+ * (#6654) Is `className` a class whose parent is a LINKED PROVIDER class —
+ * i.e. one of the externref-backed subclasses this module mints, whose
+ * instance IS the value the provider's own constructor built?
+ *
+ * The question is asked of a CALL RECEIVER, not of a heritage clause, and the
+ * answer decides who owns a COMPUTED-key method call on such an instance.
+ * `elemAccessReceiverIsUserClass` (`calls.ts`) answers `true` here — the class
+ * is a genuine user class declaration in `ctx.classSet` — and the user-class
+ * arms it gates resolve a member by CONSUMER-SIDE struct identity, which a
+ * provider-minted carrier does not have. They therefore answer with the
+ * receiver unbound (`Duration.prototype.abs` → "Cannot read properties of
+ * undefined (reading a class field)") and, being fixed-arity, hand a spread
+ * over as a single array argument. The dot-access spelling never had either
+ * problem: it falls through to the link `methodCall` terminal, which resolves
+ * through the provider's prototype chain at run time and binds `this`.
+ *
+ * Consulting the #6640/#6644 registry is the whole discrimination: only a
+ * class recorded there is externref-backed with a runtime provider parent, and
+ * the registry is populated exclusively in a standalone/wasi LINK CONSUMER, so
+ * every other module — including a plain local `class B extends A` and the
+ * provider modules themselves — is out of the blast radius by construction.
+ */
+export function isLinkedDynamicParentClass(ctx: CodegenContext, className: string | undefined): boolean {
+  return className !== undefined && ctx.classLinkedDynamicParentExpr.has(className);
+}
+
+/**
  * (#6644) {@link emitLinkedDynamicParentCapture} over the names one class
  * declaration may be registered under — its per-site synthetic identity (#4618)
  * and its source name. At most one of them owns a capture global; the rest are
