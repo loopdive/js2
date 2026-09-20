@@ -1,8 +1,8 @@
 ---
 id: 4016
 title: "standalone: String.prototype search-value methods refuse the spec's plain-ToString path"
-status: done
-sprint: 78
+status: in-progress
+sprint: current
 priority: high
 horizon: l
 feasibility: hard
@@ -10,11 +10,75 @@ reasoning_effort: max
 goal: standalone-gap
 assignee: ttraenkler/M-regexp
 created: 2026-08-01
-completed: 2026-08-02
+updated: 2026-09-20
 oracle-ratchet-allow: []
 loc-budget-allow:
   - src/codegen/regexp-standalone.ts
 ---
+
+## 2026-09-20 wrap-up handoff — unfinished split coercion follow-up
+
+The original plain-ToString scope completed on 2026-08-02. This issue is
+reopened for the unfinished split-coercion follow-up below; this handoff PR
+contains documentation only, not the unpublished implementation.
+
+### Preserved work and measured evidence
+
+- Candidate: `/private/tmp/js2-4016-split-coercion-order-20260920`, branch
+  `codex/4016-split-coercion-order-20260920`. Matched baseline:
+  `/private/tmp/js2-4016-split-coercion-order-baseline-20260920`.
+  Both were synced to `ac76d8c6cd63864e04de4592a5179050ff1b1f91` without
+  discarding dirty work. The implementation is still local and uncommitted.
+- Owned source: `string-search-value.ts`, `string-ops.ts`,
+  `string-proto-split.ts`, and new `string-split-coercion.ts`, all under
+  `src/codegen/`. The helper SHA256 is
+  `ed7f9af98d71a5e7712f790039728164fccee847c0e66e97b56514a55d3f787b`.
+  No IR, context-layout, or `registry/imports.ts` change was made.
+- The implementation stages call operands once, performs limit coercion before
+  separator conversion, uses exact ToUint32 reduction, and rejects native
+  Symbols after ToPrimitive. A narrow host-assisted undefined-separator arm
+  preserves that existing call shape without provisioning unrelated proxies.
+- Frozen raw fixture SHA256:
+  `49ab2f32f2a2fb3f5e04c7335008acb21576ed427f423593444793e9c0111353`;
+  preserved Git blob `6a182414d4cdb4c5b1511e055740314d75734497` in the local
+  repository. Node 24.19, pool 1/single fork: **31P/11F to 39P/3F**, eight
+  failure-to-pass transitions and no lost passes, with identical 42 test names.
+  The JSON/log receipts are under each worktree's `.tmp/4016/`, named
+  `full42-{baseline,candidate}-ac76d8c6cd-node24-pool1-20260920`.
+- **That is not a 42-valid-test conformance denominator.** The receiver-order
+  fixture asserts a result from an object with no `.split` method. Root's
+  type-erased Node execution instead throws TypeError after argument effects
+  reach `1234`. None of the eight observed gains is this invalid row. Keep the
+  raw receipts, but do not pin its invalid expected value as a compiler defect.
+  Valid primitive direct and genuinely borrowed-call oracles produce
+  `1234672` and `12345672`, respectively. Details are in
+  `.tmp/4016/root-receiver-oracle-correction.md`.
+- The other raw residuals are the host post-ToPrimitive Symbol case (baseline
+  wrong result, candidate invalid Wasm from a stale undefined-global index)
+  and a descriptor-before-split host TypeError. These failure signatures must
+  not be described as unchanged. The 12 original split tests previously
+  measured **8P/4F to 9P/3F** at `de232b80`; those are historical receipts,
+  not a fresh full-suite measurement.
+
+### Resume plan and boundaries
+
+1. Preserve raw42, repair the invalid fixture, and Node-verify direct,
+   borrowed, nullish, and abrupt-receiver expectations. Run the corrected,
+   versioned fixture identically on baseline and candidate before publication.
+2. Obtain shared-file ownership clearance before touching
+   `src/codegen/registry/imports.ts::fixupModuleGlobalIndices`. A recorded
+   trace shows a host global insertion shifts imports 0 to 1 while the cached
+   undefined index remains 11 and points to `__symbol_counter:i32`.
+   Do not work around this cache defect in the split caller or collide with
+   the other machine's IR migration.
+3. Keep the custom `@@split` originals and descriptor-boundary residuals
+   explicit. Do not close the umbrella based on the bounded coercion gains.
+4. After a fresh upstream sync, rerun corrected comparisons and normal
+   repository gates, then publish the fix against `loopdive/js2`. No code PR
+   was opened for this unfinished implementation during wrap-up.
+
+All compiler/test processes were terminal at wrap-up. Resume only on request;
+preserve the worktrees, raw receipts, and unfinished code.
 
 ## Problem
 
