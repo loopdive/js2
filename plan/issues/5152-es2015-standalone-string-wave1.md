@@ -561,6 +561,145 @@ historical design, not implemented support or sufficient acceptance for the
 default standalone goal. No normalization implementation claim or test run
 has been started in this continuation.
 
+#### 2026-09-20 read-only triage — complete normalization wave (base `upstream` `200f7e2c8bc00dfb9a9c50dcc4b6570413f8a567`)
+
+This is a source/standards audit only. It preserves the frozen oracle-14
+receipt above (11 pass / 3 fail) and deliberately did not run a compiler,
+Test262, or a data generator. The queued next receipt is the exact three
+remaining originals plus the eleven passing normalize controls, after the
+separate lanes explicitly release the serial compiler/test lease.
+
+The retained controls are `form-is-not-valid-throws.js`, `length.js`,
+`name.js`, `normalize.js`, `not-a-constructor.js`,
+`return-abrupt-from-form-as-symbol.js`, `return-abrupt-from-form.js`,
+`return-abrupt-from-this-as-symbol.js`, `return-abrupt-from-this.js`,
+`this-is-null-throws.js`, and `this-is-undefined-throws.js`. They are
+preservation controls, not evidence that the three transform rows are solved.
+
+**Verified current root cause.** `compileNativeStringMethodCall` in
+`src/codegen/string-ops.ts` has a dedicated `method === "normalize"` arm. It
+does receiver/form handling, but after validation leaves `recvLocal` on the
+stack unchanged (or directly returns `emitReceiver()` for no argument). There
+is no `__str_normalize` helper, no normalization-table module, and no
+normalization data generator. This exactly explains all three remaining
+return-value rows:
+
+- `return-normalized-string.js` requires canonical decomposition, canonical
+  ordering, NFC composition, and compatibility behavior across all four forms;
+- `return-normalized-string-from-coerced-form.js` reaches the same transform
+  after `['NFC']`/object-form coercion; and
+- `return-normalized-string-using-default-parameter.js` requires the omitted
+  and explicit-`undefined` default of NFC.
+
+The older Step-B wording is now partly historical: current
+`src/codegen/string-proto-tostring.ts` includes `normalize` in
+`NO_ARG_STRING_MEMBER_HELPER`, mapped to `__str_flatten`, so the reflective
+path has the receiver preamble but still returns the identity and has no slot
+to read its optional form. `STRING_PROTO_METHOD_PARAM_SLOTS` in
+`src/codegen/array-object-proto.ts` likewise has no `normalize` entry. A real
+implementation must replace that no-argument shortcut rather than reuse it.
+Also, the direct static-invalid-form shortcut currently throws before
+`emitReceiver()`. The replacement must materialize/evaluate the receiver
+first for every form spelling, then decide the form, preserving #1823 rather
+than retaining that shortcut.
+
+**Ownership and boundary.** This is a native-string/codegen task, not an IR
+or carrier-layout task. A targeted implementation owns
+`src/codegen/string-ops.ts`; a new lazy
+`src/codegen/normalize-native.ts`; generated
+`src/codegen/normalize-tables.ts`; and a new
+`scripts/gen-normalize-tables.mjs`. The reflective optional-form glue needs a
+narrow `array-object-proto.ts` dispatch/slot change and either a dedicated
+`string-proto-normalize.ts` body or an equivalently isolated helper; it must
+remove only the `normalize: "__str_flatten"` no-argument mapping from
+`string-proto-tostring.ts`. No `src/ir/**` normalization opcode, frontend
+lowering, object runtime, carrier bag, provenance, or layout change was found
+or is needed. The native builder must use the existing append-only
+`mintDefinedFunc`/`pushDefinedFunc`, late-import settlement, and
+`nativeStrHelpers` index-shift discipline; it must add no host import.
+
+**Pinned data contract, not sampled host ICU.** Follow the repository's
+existing Unicode-17 contract in
+`scripts/generate-regexp-string-properties.mjs`; do not silently move to
+Unicode 18. The normalization generator should use versioned Unicode 17.0.0
+UCD URLs, record a SHA-256 for every consumed source in both the generator's
+expected-input manifest and the generated header, and reject a version/hash
+mismatch. Required inputs are:
+
+1. `UnicodeData.txt` for decomposition mappings and Canonical_Combining_Class;
+2. `DerivedNormalizationProps.txt` for
+   `Full_Composition_Exclusion=Yes`; and
+3. `NormalizationTest.txt` as the pinned conformance corpus.
+
+`CompositionExclusions.txt` alone is not enough: UAX #15 identifies
+singletons and non-starter decompositions as exclusions too, while the full
+derived property is the complete machine-readable set. The generator must
+parse a tagged decomposition as compatibility-only and an untagged mapping as
+canonical, recursively pre-expand canonical and compatibility mappings into
+separate compact tables, omit surrogate code points, compress nonzero CCC
+values, safely validate/expand `First`/`Last` UCD ranges rather than silently
+discarding a range record, and build a sorted pairwise composition index from
+canonical pairs only when the composite is not
+`Full_Composition_Exclusion`. Algorithmic Hangul must remain code, not an
+incomplete table. This is the
+[UAX #15](https://www.unicode.org/reports/tr15/) model: full decomposition,
+canonical ordering, then canonical composition for C forms; its conformance
+clause requires `NormalizationTest.txt`.
+
+**Native helper design.** `ensureStrNormalize(ctx)` should be demand-driven
+from the direct and reflective call sites, after `ensureNativeStringHelpers`,
+so modules that merely use another string method do not retain the Unicode
+tables. It should install `__str_normalize(s, formMode) -> ref $AnyString` and
+immutable generated-table globals via `array.new_fixed`, as the case-mapping
+helper does. A correct first implementation is intentionally table-driven,
+without an unsafe quick-check fast path:
+
+1. Flatten the WTF-16 `NativeString`, decode valid surrogate pairs to scalar
+   values, and preserve each unpaired surrogate unchanged as a CCC-0 barrier.
+2. Append the selected pre-expanded canonical (NFD/NFC) or compatibility
+   (NFKD/NFKC) decomposition to a growable mutable i32 scalar buffer. Handle
+   Hangul syllable decomposition algorithmically.
+3. Perform stable canonical ordering within each starter-delimited run using
+   the CCC table. The buffer must grow geometrically with `array.new_default`
+   plus `array.copy`, following the existing string/vec builders; no fixed
+   maximum expansion or bounded combining-mark stack is sound.
+4. For NFC/NFKC, run UAX #15 canonical composition with its blocking rule,
+   the generated pair index and algorithmic Hangul L/V/T composition. NFD and
+   NFKD stop after ordering.
+5. Compute the exact UTF-16 output length, allocate the native i16 backing
+   array once, encode scalars (including preserved unpaired units), and return
+   a new flat native string. The output must not be an alias/identity shortcut
+   merely because the input happens to contain non-ASCII text.
+
+The shared call-site form routine should produce a small mode enum only after
+the receiver is evaluated. It must default only absent or `undefined` form to
+NFC (including the standalone undefined singleton), coerce every other form
+once with the existing ToString/Symbol path, reject `null` as the string
+`"null"`, and throw the existing RangeError for values outside the four exact
+names. The reflective body needs one physical optional argument slot while
+leaving `.length === 0`; it must use the same routine and helper after
+RequireObjectCoercible/ToString(this), rather than make a separate identity
+path.
+
+**Validation required before a future implementation claim.** In addition to
+the frozen 14 Test262 rows (all 11 current passes retained and all three
+original failures green), add a focused native test that checks all four forms,
+default/explicit undefined, coercion and Symbol/RangeError/evaluation-order
+semantics, canonical ordering and blocking, composition exclusions (including
+U+0344/U+0958/U+2126), compatibility mappings, Hangul, astral pairs, and
+unpaired-surrogate preservation. It must assert a standalone module has no
+imports. Vendor or generate a hash-pinned Unicode-17
+`NormalizationTest.txt` fixture and execute every official row through the
+compiled native helper in bounded chunks; this is a positive conformance gate,
+not a host-ICU comparison or a three-example fixture. Keep js-host behavior
+unchanged and record any size/ratchet budget for generated data explicitly.
+
+This plan rejects both a three-character patch and an unpinned
+`String.prototype.normalize()`-as-generator oracle. The separate #1541
+ICU4X/opt-in side-module idea remains an alternative product decision, not a
+substitute for the default standalone Unicode-17 conformance implementation
+described here.
+
 1. Rewrite the `normalize` arm in `src/codegen/string-ops.ts` L3563-3598:
    receiver first (keep the #1823 ordering), then if a form arg is present and
    not a statically-valid literal: coerce via `emitArgAsNativeString`
@@ -578,14 +717,14 @@ has been started in this continuation.
    the same form validation. Mimic `emitStringSearchNumericMemberBody`
    (L1270+) for the closure ABI. Covers the four `this-*`/`return-abrupt-from-this*` tests.
 3. Actual normalization (3 `return-normalized-string*` tests) — the largest
-   sub-step, land LAST and defer to a wave 2 if it does not fit: a new
-   `scripts/gen-normalize-tables.mjs` (pattern: `scripts/gen-case-tables.mjs`,
-   which already uses Node's ICU as the offline oracle) emitting canonical +
-   compat decomposition tables, a ccc-order table (derivable offline by
-   probing `normalize('NFD')` stability of combining-mark pairs), and the NFC
-   pairwise composition table; plus a `__str_normalize` helper in a new
-   `src/codegen/normalize-native.ts` (module-global tables via
-   `array.new_fixed`, same #3900 pattern as case-convert-native.ts).
+   sub-step, land LAST and defer to a wave 2 if it does not fit. The 2026-09-20
+   audit above supersedes this item's earlier Node-ICU/probe sketch: use pinned
+   Unicode-17 UCD data, full decomposition/CCC/composition-exclusion semantics,
+   Hangul code, and the official `NormalizationTest.txt` corpus rather than
+   sampled host normalization. Implement it through
+   `scripts/gen-normalize-tables.mjs`, generated `normalize-tables.ts`, and
+   `__str_normalize` in `src/codegen/normalize-native.ts`, with immutable
+   module globals via `array.new_fixed`.
 
 ### Step C — `String.prototype[Symbol.iterator]` (5 tests, unblocks A.4)
 
