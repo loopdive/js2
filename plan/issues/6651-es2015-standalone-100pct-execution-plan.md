@@ -94,6 +94,16 @@ assignee: "ttraenkler/fable-es2015-plan"
 # about a lowering the reader cannot see. The `for-of` function grows by the
 # same 8 lines (`compileForOfAssignDestructuringExternref`), for the same
 # reason and at the same point.
+# 2026-09-21 (cluster E, slice E2) — `src/codegen/index.ts` +6 (the import plus
+# one finalize call site in each of `generateModule` / `generateMultiModule`,
+# with the ordering note that makes the placement readable). The MECHANISM
+# (~330 LOC) is the NEW module `src/codegen/ta-dyn-own-keys.ts`, and
+# `src/codegen/ta-dyn-mop.ts` SHRINKS by 53 lines in the same change-set — its
+# narrower `__object_keys` arm is retired INTO that module rather than
+# duplicated beside it. What cannot move is the call site: these arms prepend
+# at body[0] of natives that several earlier passes also prepend to, so "after
+# `fillVecLengthDynamicArms`, after `fillTaDynViewMopArms`" is an ORDERING
+# fact that is only checkable where the order is written.
 loc-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/expressions/assignment.ts
@@ -178,8 +188,26 @@ func-budget-allow:
 # front guards already use to read exactly this kind of booleanish trap result.
 # This makes the `Reflect` arms agree with one another rather than introducing
 # a second rule — the same argument #6494 recorded for its own three.
+# 2026-09-21 (cluster E, slice E2) — the two coercion-vocabulary growths are a
+# MOVE and a spec correction, not a fresh matrix.
+#   - `ta-dyn-own-keys.ts` (+`number_toString`, +`__str_to_number`): the
+#     §7.1.21 CanonicalNumericIndexString round-trip and the index→key
+#     ToString. Both are verbatim the pair `ta-dyn-mop.ts` already uses for the
+#     same question on the same receiver; the count appears in a new file only
+#     because the own-key emitter lives there instead of in a god-file at its
+#     ceiling. `ta-dyn-mop.ts`'s narrower `__object_keys` arm — which used the
+#     same pair — is DELETED in this change-set.
+#   - `ta-dyn-mop.ts` (+`__to_primitive` ×2): this one REMOVES a hand-rolled
+#     shortcut. `__ta_dyn_set_elem` called `__unbox_number` directly, which
+#     answers NaN for an ordinary object without ever running its `valueOf` —
+#     so §10.4.5.16 step 1's observable ToNumber never happened. Routing
+#     through the shared `__to_primitive` native (hint "number") before the
+#     unbox is the coercion ENGINE doing the work, which is what this gate is
+#     protecting; the two sites are the value operand and its hint string.
 coercion-sites-allow:
   - src/codegen/expressions/call-namespace-static.ts
+  - src/codegen/ta-dyn-mop.ts
+  - src/codegen/ta-dyn-own-keys.ts
 ---
 
 # #6651 — ES2015 standalone → 100%: cluster execution plan
@@ -2067,7 +2095,159 @@ re-run this same control** — it is the only thing that catches the class.
   the in-process mode is sound and is what made a 2,370-row × 2-target ×
   before/after control affordable at all (~3 h).
 
-## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
+### 2026-09-21 — Cluster E (TypedArray / ArrayBuffer / DataView), slice E2
+
+- **Branch** `worktree-agent-a1920dd19b9b71c1e`, base
+  `claude/es2015-test262-plan-54tooh` (`3769840fe0`, identical to `origin/main`).
+  **Worktree** `/home/user/js2/.claude/worktrees/agent-a1920dd19b9b71c1e`.
+  Engine for every run below: **QuickJS** (`JS2WASM_EVAL_ENGINE=quickjs`,
+  artifact `073742801ba7`, adapter `d4799bda84cfed0d`) — so the 22
+  detached-buffer rows E1 could not measure at all WERE scored this time.
+
+- **Manifest** `plan/agent-context/6651/E-typedarray-buffers.txt` (144 rows,
+  E1's 13 included), `--standalone`, measured on this branch's own base:
+
+  | | pass | fail | compile_error |
+  | --- | ---: | ---: | ---: |
+  | before (`.tmp/6651/before/`, base tree) | 13 | 130 | 1 |
+  | after (`.tmp/6651/after2/`) | **19** | 124 | 1 |
+
+  Per-row set diff (`.tmp/6651/manifest-diff.txt`): **6 non-pass → pass, 0 pass
+  → non-pass.** The before side reproduces E1's isolated result exactly
+  (13 pass), which is what licenses the cheaper chunked lane used here.
+
+#### What landed — ONE mechanism: the own-property SURFACE of a dynamic view
+
+`ta-dyn-mop.ts` (#3177) gave `$__ta_dyn_view` its §10.4.5 arms for
+`[[Get]]/[[Set]]/[[HasProperty]]/[[Delete]]/[[DefineOwnProperty]]/
+[[GetOwnProperty]]/[[PreventExtensions]]`. It did **not** touch the natives
+that answer the *reflective* own-key questions, and a `$__ta_dyn_view` is a
+`$__vec_base` subtype (#3057) — so each of them answered **as if the view were
+an Array**. Measured on this branch's base (`.tmp/6651/p2.js`, `.tmp/6651/p4.js`,
+Float64Array, one string expando + one symbol expando):
+
+```
+Reflect.ownKeys(sample)                     0,1,2,length      spec: 0,1,2,test262,@@s
+Object.getOwnPropertySymbols(sample).length 0                 spec: 1
+hasOwnProperty.call(sample, 0)              false             spec: true
+hasOwnProperty.call(sample, "foo")          false             spec: true
+```
+
+Two independent errors in one answer: `"length"` reported as an OWN key (it is
+an accessor on `%TypedArray%.prototype`, §23.2.3.19, never own), and the view's
+own expandos invisible because the generic vec arm does not know the side-table
+exists. The predicates were worse — a uniform `false`, including for a valid
+integer index.
+
+The blast radius was **not** key listings. `propertyHelper.js`'s
+`verifyNotConfigurable` deletes the key and then asks `hasOwnProperty` whether
+it survived; a blanket `false` reads as "it was configurable after all". That
+is how `internals/DefineOwnProperty/key-is-symbol.js` failed with *"Expected
+obj[102] NOT to be configurable, but was"* while the descriptor it had just
+defined round-tripped `w=false e=false c=false` correctly (`.tmp/6651/p3.js`).
+The same helper's `verifyEnumerable` runs a `for…in`, which is a THIRD native
+(`__object_keys_forin`) that #3177 never touched at all.
+
+New module `src/codegen/ta-dyn-own-keys.ts` (`fillTaDynViewOwnKeyArms`), one
+emitter per shape, spliced at finalize AFTER `fillVecLengthDynamicArms` (whose
+vec own-`"length"` arm sits in the same natives) and after
+`fillTaDynViewMopArms`:
+
+1. **Own-ness predicates** — `__hasOwnProperty`, `__object_hasOwn`,
+   `__propertyIsEnumerable`: canonical index → §10.4.5.14 IsValidIntegerIndex
+   (`__ta_dyn_has_idx`); any other key → the expando side-table by recursive
+   self-call. One body serves all three: an existing integer-indexed element is
+   always enumerable (§10.4.5.1 builds its descriptor with
+   `[[Enumerable]]: true`), and a non-index key's enumerability IS the
+   expando's answer.
+2. **`__getOwnPropertyNames`** — a FRESH vec of the indices, then the expando's
+   own string keys in creation order. Building fresh instead of falling through
+   is what removes the spurious `"length"`.
+3. **`__object_keys` / `__object_keys_forin`** — same emitter, with
+   `__object_keys(expando)` as the delegate because that delegate carries the
+   enumerability filter. #3177's narrower indices-only `__object_keys` arm is
+   **deleted** from `ta-dyn-mop.ts` in the same change-set rather than shadowed;
+   two arms racing for the front slot of one native is worse than one.
+4. **`__getOwnPropertySymbols`** — the expando's symbols, or a fresh empty vec.
+
+Plus one seam in `ta-dyn-mop.ts` that the same tests exposed:
+
+5. **Observable ToNumber on an element write** (`__ta_dyn_set_elem`). It called
+   `__unbox_number` directly, which answers NaN for an ordinary object without
+   ever running its `valueOf` — so §10.4.5.16 step 1 was not observable and
+   `Object.defineProperty(view, 0, {value: {valueOf(){throw}}})` completed
+   silently. Now `__to_primitive(v, "number")` runs first. That is the shared
+   coercion native doing the work, i.e. one hand-rolled shortcut REMOVED.
+
+**Why a new module rather than the obvious place:** `ta-dyn-mop.ts` is a
+tracked god-file at its LOC ceiling and `fillTaDynViewMopArms` is already a
+966-line unit. Net effect of the split: `ta-dyn-mop.ts` **shrinks by 53 lines**,
+`src/codegen/index.ts` grows by 6 (import + one call site per entry point).
+
+#### Receipts
+
+- **Neighbourhood control** — 1,213 rows (`.tmp/6651/control-targeted.txt`),
+  `--standalone`, before vs after, identical 24-row chunking on both sides
+  (`.tmp/6651/ctl24-{before,after}/`). Selection: every row under
+  `built-ins/{TypedArray,TypedArrayConstructors,ArrayBuffer,DataView}/**` whose
+  SOURCE can reach a changed native (own-key / own-ness / enumeration
+  vocabulary, or an element write whose value is not a bare numeric literal),
+  plus the whole E manifest. pass **824 → 846**. Per-row set diff
+  (`.tmp/6651/ctl24-diff.txt`): **0 pass → non-pass**, 22 non-pass → pass — the
+  6 manifest rows, their BigInt twins, and six rows outside the ES2015 manifest
+  (`internals/Set/{tonumber-value-throws,tonumber-value-detached-buffer,
+  detached-buffer}`, `OwnPropertyKeys/integer-indexes-resizable-array-buffer-*`).
+  - **Chunk size is load-bearing for THIS family, and the first control run
+    proved it the hard way.** A 60-row in-process chunk reported 16 `pass →
+    non-pass` rows and ZERO gains; every one was realm poisoning, not a
+    regression — `internals/OwnPropertyKeys/not-enumerable-keys.js` read `fail`
+    inside a 60-row chunk on BOTH sides while passing when probed alone. These
+    tests install accessors on `TA.prototype` and `%TypedArray%.prototype` by
+    design. Re-running both sides at 24 rows (the size the manifest runs use,
+    and the size whose before-side reproduces E1's isolated numbers) turned the
+    same comparison into 22/0. Treat a chunked verdict in this directory as
+    provisional until the chunk size is pinned to a known-good one.
+- **Byte-level blast radius** (`.tmp/6651/sha-{before,after}.txt`, 9 programs ×
+  2 targets): the 4 standalone programs that dynamically construct a view
+  differ; the 5 standalone programs that do not (plain object keys, plain array
+  keys, plain `hasOwnProperty`, plain `for…in`, a STATIC `Int8Array`) are
+  **byte-identical**, and **all 9 host-lane binaries are byte-identical**. The
+  arms are `ref.test $__ta_dyn_view`-gated and only exist where the dyn-view
+  type is registered, so this is the whole reachable set, not a sample.
+- **Unit tests**: new `tests/issue-6651-e2-ta-own-keys.test.ts`, 8 cases. Each
+  asserts a FULL key list or an exact predicate answer (both halves of the
+  defect were answers of the right SHAPE), and the comparison runs INSIDE the
+  module returning a number — a standalone module's strings are WasmGC arrays
+  with no host-readable form, so returning one and comparing on the host reads
+  `{}` for every case, pass or fail. Verified to FAIL on the base tree: 5 of the
+  6 positive cases fail there, both negative controls pass on both trees
+  (`.tmp/6651/unit-base.log`).
+- **Gates**: loc-budget, func-budget, coercion-sites, oracle-ratchet,
+  dead-exports, `check-compiler-boundaries --mode inventory`, `typecheck`,
+  `biome lint`, and `scripts/equivalence-gate.mjs` (22 failing / 1,720 passing,
+  no new) all pass. Grants added to this file's frontmatter: `index.ts` +6 LOC
+  (+4 / +1 in the two generators), and coercion-sites for `ta-dyn-mop.ts`
+  (the `__to_primitive` routing) and `ta-dyn-own-keys.ts` (the
+  CanonicalNumericIndexString pair, MOVED from the deleted arm).
+
+#### Residual buckets in the 144-row manifest (125 non-pass), re-measured
+
+| rows | sub-bucket | why it is still open |
+| ---: | --- | --- |
+| 7 | `internals/Set/*` — receiver-aware `[[Set]]` | `__reflect_set` is a THREE-argument native `(obj, key, value)`; §10.4.5.5 / `Reflect.set(target, key, v, receiver)` needs the Receiver and the §10.1.9.2 OrdinarySetWithOwnDescriptor cascade over it. Not an arm — a fourth parameter plus a protocol |
+| 3 | `internals/OwnPropertyKeys/{integer-indexes,integer-indexes-and-string-keys,integer-indexes-and-string-and-symbol-keys-}` | **the own-key answer is now correct** for all three; each then dies on an UNRELATED defect one line later: `new TA(makeCtorArg(4)).subarray(2)` — a method call whose receiver is a `new` EXPRESSION — evaluates to `null`. `emitDynViewSpeciesMethodTwoArm` / `emitDynViewMethodTwoArm` both open with `if (!ts.isIdentifier(receiverExpr)) return undefined`, and the else-arm recompiles the whole call (so a side-effecting receiver would be evaluated twice) — that restriction is load-bearing and lifting it is its own slice. Measured: two-step `var a = new TA(4); a.subarray(2)` works and answers `0,1` |
+| 9 | `TypedArray/from/*` error propagation + 11 `TypedArrayConstructors/{from,of}/*` | needs `%TypedArray%.from` / `.of` as first-class inherited function VALUES (`TA.of === TypedArray.of`, `TA.of.call(ctor, 42)` → `Construct(ctor)`). Today `TA.of` reads `undefined` and `of/custom-ctor-returns-other-instance` reaches a refusal closure. An intrinsic-static-method mechanism, not an arm |
+| 5 | `ctors/object-arg/throws-setting-obj-*` | **E1's root cause is superseded — the static carrier's expando table is NOT the blocker.** Measured (`.tmp/6651/p10.js`): `var s = new Int8Array(1); s.foo = 7; s.valueOf = fn` reads back `7` and `"function"` on a STATIC carrier, so the side-table exists and works. The single remaining gap is `__to_primitive`: `Number(s)` answers `0` and `s + 0` answers `"00"` for BOTH static and dynamic views, i.e. it still reduces through `Array.prototype.toString` and never runs OrdinaryToPrimitive. One arm in the `carrier-to-primitive.ts` style (§7.1.1.1 cascade for the view carriers) should take all five; it was left out here because `__to_primitive` is a hot shared native and the honest control for it is corpus-wide, not TypedArray-shaped |
+| 5 | `ctors/object-arg/iterator-*` | unchanged from E1: the ctor argument is a CALLABLE (`function(){}`), neither `$Object` nor a vec, so dispatch falls to the count form and never consults `@@iterator` |
+| 22 | detached-buffer cohort | now MEASURED under QuickJS rather than unmeasurable — and still failing; they are real gaps, not environment |
+| 9 | `prototype/toLocaleString/*` | needs per-element `Invoke(element, "toLocaleString")`; a user `Number.prototype.toLocaleString` override is not honoured even on a direct call |
+| rest | `Object.prototype.toString` (#4119, cluster H), species-ctor `this`, `{filter,map}` callback receiver IDENTITY, DataView proto identity, `%ArrayIteratorPrototype%` results | each its own mechanism, unchanged from E1's table |
+
+**Not attempted in this slice, deliberately:** the four buckets above that need
+a mechanism each (receiver-aware `[[Set]]`, the `from`/`of` intrinsics, the
+`__to_primitive` carrier arm, the non-identifier receiver). The brief's rule was
+to land one mechanism FULLY with receipts before starting the next; the own-key
+surface is that mechanism, and each of the four is comparable in size to it.
 
 ### What landed
 
@@ -2157,6 +2337,8 @@ compile errors are generator leaks belonging to A2.
 Unchanged: 11,704 / 11,704 on a full authoritative standalone run, or a
 `wont-fix` issue with the spec-level reason for every remaining row; bank the
 ES2015 floor via `check:edition-ratchet:update` from a FULL run only.
+
+## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 
 ## Manifest generator note
 
