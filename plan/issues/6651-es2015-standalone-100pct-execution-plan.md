@@ -4,7 +4,7 @@ title: "ES2015 standalone → 100%: cluster execution plan from the 2026-09-20 c
 status: in-progress
 sprint: current
 created: 2026-09-20
-updated: 2026-09-20
+updated: 2026-09-21
 priority: high
 horizon: xl
 feasibility: hard
@@ -1343,6 +1343,90 @@ would move the slot of **every defaulted parameter in every JS input**, which
 is all of test262 and every npm package. The attempted patch is kept at
 `.tmp/w6651C/attempt-type-mapper.ts` rather than committed; nothing of it is in
 the branch.
+
+## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
+
+### What landed
+
+PR [#6023](https://github.com/loopdive/js2/pull/6023) merged into `main` at
+`5ac0df63bd` with slices A1, B1, C1+C2, D1, E1, F1, H1. Per-owner manifest
+receipts (isolated `--standalone` runner, before → after, all with **zero
+pass→non-pass** in their neighbourhood controls and byte-identical host-lane
+binaries for the probed programs):
+
+| cluster | manifest rows | before → after | gain |
+| --- | ---: | --- | ---: |
+| A generators | 197 | 1 → 62 | +61 |
+| D promise combinators | 101 | 0 → 26 | +26 |
+| E typed arrays / buffers | 144 | 0 → 13 | +13 |
+| C class / object / super (C1+C2) | 177 | 0 → 12 | +12 |
+| B RegExp protocol | 147 | 0 → 7 | +7 |
+| F Proxy / Reflect | 89 | 0 → 7 | +7 |
+| H builtins misc | 217 | 0 → 3 | +3 |
+| **sum** | | | **+129** |
+
+These are manifest-row gains measured by each owner on their own base, not a
+fresh full-suite census. The next authoritative number comes from the
+`promote-baseline` run on `main` after #6023 (baseline
+`test262-standalone-current.jsonl`); until then the honest statement is
+"10,384 + ≤129 of 11,704".
+
+G (for-of / destructuring / iterators) and I (language misc) were dispatched
+last; their receipts, if any, appear as Cluster-status entries below this
+handoff or in the follow-up PR.
+
+### Environment facts the next session needs
+
+- **QuickJS eval provider is now built** in `.test262-cache/` (artifact
+  `quickjs-artifact-2e2d7736713beeda`, adapter keyed on the compiler source
+  hash; rebuild the adapter with
+  `node --import tsx scripts/build-quickjs-eval-provider.mjs`, ~10 s when the
+  artifact is cached). Every round-1 owner reported 5–63 rows per cluster as
+  "unmeasurable: provider not built" (realm / `$262.createRealm` /
+  detached-buffer shapes, ~130 rows total). Round 2 measures them with
+  `JS2WASM_EVAL_ENGINE=quickjs` before classifying anything as environment.
+- Agent worktrees get a `test262/` symlink farm that may not resolve; repair
+  with `ln -sfn /home/user/js2/test262/test test262/test` (same for
+  `harness`). An all-`error` counts line is a broken farm, not a measurement.
+- The in-process runner OOMs / dies with an empty log above ~200–500 rows
+  (realm poisoning); chunk neighbourhood sweeps at 128–200 rows per fresh
+  process. Never `pkill -f run-test262-paths` (it killed other lanes' runs);
+  match `/proc/<pid>/cwd`.
+- Probe against the ORIGINAL-HARNESS assembly at module scope
+  (`assembleOriginalHarness`), not a hand-written `export function test()`:
+  several defects (C2-a, the `{kind:"class"}` expando fact in B1) exist only
+  in the module-scope shape.
+- A compile-only per-gate histogram (instrument every bail in the candidate
+  gates) turns "N compile errors" into a bucket table in minutes; an 8-row
+  host-lane probe per bucket then says which buckets can reach `pass`.
+- The pre-commit hook greps the COMMAND LINE for the `✓` sign-off; `-F file`
+  alone is blocked. New `src/codegen/*` modules must be classified in
+  `scripts/compiler-boundaries.json` or `quality` fails on the inventory gate
+  (this cost #6023 one CI cycle).
+- The per-box spawn load cap was raised to 3 in the gitignored
+  `.claude/max-load` for the PR shepherd; 4-core box, three heavy agents max.
+
+### Round 2 — dispatch table (largest measured residuals, with owner shape)
+
+| # | residual family | rows | mechanism (from the owner's receipt) | lane / effort |
+| --- | --- | ---: | --- | --- |
+| A2 | `yield` inside a destructuring pattern (`[x = yield] = v`, `for ([{} = yield] of …)`) | 90 | `lowerStatements` must model a suspension inside a pattern; **fails on host too** (8/8 probe), so it is new engineering in both lanes, not a port | senior-dev, max |
+| C3 | defaulted parameter typed `number` by the checker lowered to an f64 slot (`«0» vs «false»`, `«NaN» vs «undefined»`) | ≥18 in C, more in G | widen the parameter TYPE in the function's type map, not just the slot (`isUndefinedDefaultOnlyParam` doc); needs a control over every defaulted param in the corpus | senior-dev, max |
+| D2 | observable intrinsic `Promise.all/race` protocol (`invoke-resolve*`, `invoke-then*`, iterator close) | ~34 | held PR #5883 (#5197 R3-2/R3-4) — integrate, don't re-implement; class-receiver `Construct(C)` (14 CE) is #5197 G9/G10 | senior-dev, high |
+| B2 | observable `RegExpExec` substrate + brand-check widening | 62 | #5198 Slice B / draft #5393 owns it; coordinate with that lane first | senior-dev, high |
+| E2 | integer-indexed MOP `internals/{Set,DefineOwnProperty,OwnPropertyKeys}`, `TypedArray.from/of` statics, static-carrier expando table | 37 | each is a mechanism, not an arm; the static `new Int8Array(1)` carrier has no expando side-table for `__extern_get` | senior-dev, high |
+| F2 | proxy in the prototype chain never runs its trap; `Proxy/construct` NewTarget | 7 + 7 | `$Object.$proto` is `ref null $Object` and `$Proxy` is not a subtype — architectural; NewTarget belongs to the #3371 lane | architect spec first |
+| H2 | symbol-keyed accessor `defineProperty` on a vec carrier dropped; `__extern_length` for non-`$Object` carriers; `Object.prototype.toString` runtime tag honouring `delete` | ~15 | localized to lines in H's receipt | developer, high |
+| realm | every `*-realm*` / `cross-realm` / detached row across A–H | ~130 | re-measure under `JS2WASM_EVAL_ENGINE=quickjs`; then split fixable vs `$262.createRealm` wont-fix | developer, medium |
+
+Dispatch order by rows-per-effort: A2, C3, E2 first (three slots), then D2/B2
+(coordination-bound), then H2/realm, F2 after its spec.
+
+### Definition of done reminder
+
+Unchanged: 11,704 / 11,704 on a full authoritative standalone run, or a
+`wont-fix` issue with the spec-level reason for every remaining row; bank the
+ES2015 floor via `check:edition-ratchet:update` from a FULL run only.
 
 ## Manifest generator note
 
