@@ -70,8 +70,22 @@ assignee: "ttraenkler/fable-es2015-plan"
 # `ownKeys` "the native runtime does not retain symbol-keyed properties yet" —
 # it does), so the measurement that overturns each claim is recorded next to
 # it rather than in a commit message nobody reads at the site.
+# 2026-09-21 — cluster G (spec-ordered ArrayAssignmentPattern + IteratorClose,
+# standalone). The MECHANISM (~350 LOC) is the NEW module
+# `src/codegen/dstr-assign-iterator-drive.ts`; the god-file growth is two
+# dispatch sites only — `expressions/assignment.ts` +14 and
+# `statements/for-of-destructuring.ts` +9, both ~70 % comment. Neither can move
+# behind a seam: each sits at the exact point where its caller is about to
+# perform the eager `__array_from_iter_n` materialisation, and the decision
+# being recorded is "this pattern's target references are observable, so the
+# drain below is the wrong shape". Written anywhere else it would be a fact
+# about a lowering the reader cannot see. The `for-of` function grows by the
+# same 8 lines (`compileForOfAssignDestructuringExternref`), for the same
+# reason and at the same point.
 loc-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/statements/for-of-destructuring.ts
   - src/codegen/vec-overlay.ts
   - src/codegen/generators-native.ts
   - src/codegen/expressions/call-receiver-method.ts
@@ -84,6 +98,7 @@ func-budget-allow:
   - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
+  - src/codegen/statements/for-of-destructuring.ts::compileForOfAssignDestructuringExternref
 # 2026-09-21 (cluster F) — the three new `__is_truthy` calls are not a
 # hand-rolled coercion matrix. Each is literally the spec's ToBoolean on a
 # [[SetPrototypeOf]] / [[PreventExtensions]] success bit (§28.1.14 step 4,
@@ -999,6 +1014,156 @@ the 24 nested-proxy-over-exotic-target rows (many mechanisms per row) and the
 7 prototype-chain rows (blocked on `$Object.$proto` being unable to hold a
 `$Proxy` — a type-graph change, not a call-site one). The 4+3 `construct` rows
 are a single, clean mechanism but sit inside #3371's active surface.
+
+### 2026-09-21 — Cluster G (for-of / destructuring residuals / iterators, standalone), slice G1: spec-ordered ArrayAssignmentPattern + IteratorClose
+
+- **Branch** `worktree-agent-a3b8356df530ad9e4`, based on
+  `claude/es2015-test262-plan-54tooh` @ `64801f10` (carries A, B, C1, D, F, H).
+  **Worktree** `/home/user/js2/.claude/worktrees/agent-a3b8356df530ad9e4`.
+- **Manifest** `plan/agent-context/6651/G-forof-destructuring-iterators.txt`,
+  134 rows, sha256
+  `e68a764ab55ce04936572717bdf96f724fb337af6a9af3a758f3525851ff1dec`.
+- **Engine note:** every log below was measured with the runner's DEFAULT eval
+  engine (the QuickJS provider was not built in this container when the
+  before-state was taken), so the 7 `quickjs provider is not built` rows are
+  environment-blocked on BOTH sides and the delta is comparable.
+
+| standalone, `--isolate`, 134 rows | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/6651/G-before.log`) | **0** | 132 | 2 |
+| after (`.tmp/6651/G-after.log`) | **21** | 111 | 2 |
+
+**+21 rows pass; 0 lost; no other status changed** (the two logs were joined
+per path, not compared by count). One further row moved to a LATER assertion:
+`assignment/destructuring/iterator-destructuring-property-reference-target-evaluation-order.js`
+now reports `[source, iterator, target, target-key, …]` where it reported
+`[source, iterator, iterator-step, …]` — i.e. the ordering this slice fixes is
+now observable in its trace, and it fails on a later step.
+
+#### What landed — the answer was MIS-ORDERED, not missing
+
+§13.15.5.2 ArrayAssignmentPattern is three-phase: GetIterator, then **per
+element** evaluate the DestructuringAssignmentTarget's *Reference*
+(§13.15.5.5 step 1) and only then IteratorStep (step 2); an abrupt completion
+with `[[done]]` still false runs §7.4.9 IteratorClose. Both destructuring
+entry points normalise the source through `__array_from_iter_n(src, n)` FIRST
+— a complete drain of `n` steps before any target reference is touched. So for
+
+```js
+0, [ {}[thrower()] ] = iterable;     // array-elem-iter-thrw-close.js
+```
+
+the compiler reported `nextCount 1 / returnCount 0` where the spec requires
+`0 / 1`. Hoisting the reference in front of the materialisation fixes
+`nextCount` and **cannot** fix `returnCount`: the throw would then precede
+GetIterator, so there would be no iterator to close. Hence a lazy drive, not a
+re-ordering.
+
+New module `src/codegen/dstr-assign-iterator-drive.ts`
+(`tryEmitSpecOrderedArrayAssignDrive`) plus two dispatch sites
+(`expressions/assignment.ts::compileExternrefArrayDestructuringAssignment` +14,
+`statements/for-of-destructuring.ts::compileForOfAssignDestructuringExternref`
++9). It emits GetIterator once, then per element: member-target reference into
+`(obj, key)` locals → `__iterator_next` → `__extern_set_strict`; a rest element
+drains via `__iterator_rest`; the whole element loop is wrapped so any throw
+runs IteratorClose with the close's own abrupt completion suppressed
+(§7.4.9 step 6 — the original throw wins, which is what every `*-thrw-close-err`
+row asserts). **No new host import** — all six natives already route to the
+standalone object/iterator runtime.
+
+Three details are load-bearing and were measured, not assumed:
+
+1. **`doneLocal` is raised to 1 BEFORE each step and lowered after.** §7.4.6
+   sets `[[done]]` true when `next()` throws, and `[[done]]` true is exactly
+   what suppresses the close. Without the pre-raise a throwing `next()` would
+   be followed by a `return()` call the spec forbids.
+2. **A rest element reached with `[[done]]` already true must not step again**
+   — it still receives an array, an EMPTY one. `__array_from_iter_n(null, -1)`
+   answers that, so no second empty-vec shape is introduced.
+3. **A `never`-typed operand is not a refusal.** `compileExpression` answers
+   `null` for `{}[thrower()]`'s call (the declared return type IS `never`)
+   while still emitting the throw; the slot is padded with `ref.null.extern`
+   exactly as `emitDynamicMemberSet` pads it. Refusing there rejected the
+   entire family — the first cut did, and silently fell through to the old
+   path after having already emitted a GetIterator, which is why the drive now
+   builds into a DETACHED buffer and splices only on success.
+
+#### The drive is STANDALONE/WASI-gated, and that gate is a measurement
+
+Ungated, the 1,207-row **host** sweep gained 10 rows and **LOST 3**
+(`for-of/dstr/array-rest-{lref,nested-array-iter-thrw-close-skip,
+put-prop-ref-user-err-iter-close-skip}.js`, `nextCount 0` where 1 is required).
+Cause, probed directly: the host `__iterator_rest` (`src/runtime.ts:17999`)
+drains via `iter.next` / the string sidecar, and the iterator in this whole
+family is a compiled OBJECT LITERAL — a WasmGC struct neither lookup finds — so
+it answers `[]` without stepping, where the eager `__array_from_iter_n` it
+replaces goes through the host's own iteration bridge. Gating costs nothing
+measurable: every row in this bucket already fails on host, for the same
+ordering reason plus a host-only close-receiver defect (`return()` does not see
+the iterator as its `this`, measured 1010 vs the required 1011). Lifting the
+gate means first giving the host lane a rest drain that can step a struct
+iterator.
+
+#### Controls — zero pass → non-pass
+
+Neighbourhood: all 1,207 rows of `language/statements/for-of/**`,
+`language/expressions/assignment/dstr/**`, `built-ins/ArrayIteratorPrototype/**`,
+`built-ins/GeneratorPrototype/**`. Run in 128-row chunks, one fresh process per
+chunk; the 6 `*array-prototype*` rows ran `--isolate` (they replace
+`Array.prototype[@@iterator]` and poison the runner's own realm). Base measured
+with the file-copy A/B revert.
+
+| lane | rows | before non-pass | after non-pass | flips |
+| --- | ---: | ---: | ---: | --- |
+| standalone (`.tmp/6651/nb-{before,after}-*.log`) | 1,207 | 164 | **143** | **+21, 0 lost, 0 other status changes** |
+| host, ungated draft (`.tmp/6651/nbh-{before,after}-*.log`) | 1,207 | 214 | 207 | +10, **−3** ⇒ the gate above |
+
+**Host control on the shipped change is a byte-identity proof.** A 9-program
+corpus — the three admitted shapes, a for-of over a plain array literal, an
+all-identifier assignment, an identifier default, a for-of identifier head, an
+object pattern and a destructuring-free control — compiles **9/9
+byte-identically on gc** before vs after (`.tmp/6651/sha-{before,after}.txt`),
+while on standalone exactly the 3 admitted shapes move and the other 6 are
+byte-identical. That is the intended delta, stated as bytes.
+
+Pin file `tests/issue-6651-dstr-iterator-close.test.ts`, 7/7 — 5 verified RED
+on the base tree, 2 are guards green on both sides, including the two negative
+directions (an all-identifier pattern keeps the old lowering on BOTH targets; a
+rest element after an exhausted slot must not step again).
+
+Gates, run bare: coercion-sites, oracle-ratchet (`getTypeAtLocation +0`,
+`ctx.checker +0`), dead-exports and typecheck pass untouched; loc-budget and
+func-budget pass with the grants added to this file's frontmatter above, dated.
+
+#### Residual sub-buckets (113 rows), with signatures
+
+| rows | signature | what it needs |
+| ---: | --- | --- |
+| 21 | `built-ins/Iterator/prototype/{chunks,windows}/**` + `Iterator/prototype/join/not-a-constructor.js` | **OUT OF SCOPE, not a gap.** These are the `iterator-chunking` / `Iterator.prototype.join` PROPOSALS; the edition index tags them ES2015 only because their `features` list also names `class`/`generators`. Building them would be implementing a proposal surface, not finishing ES2015. Recommend a `wont-fix`-with-reason on the #6651 definition of done rather than a lane. |
+| 20 | `built-ins/GeneratorFunction/**` | ~13 need `GeneratorFunction(…)` — CreateDynamicFunction, i.e. compiling source at runtime, which standalone cannot do without the eval provider; the other ~7 (`name`, `is-a-constructor`, `has-instance`, `prototype/*`) need the **intrinsic object itself** reified so `Object.getPrototypeOf(function*(){}).constructor` answers a real function with the right descriptors. |
+| 14 | `Expected a TypeError … no exception` | scattered: `iterator-next-result-type`, non-callable `return`, `GeneratorPrototype/*/from-state-executing`, `restricted-properties`. |
+| 7 | `quickjs provider is not built` | environment only at measurement time; the provider now exists in the shared cache (coordinator note, 2026-09-21) and these are re-measurable with `JS2WASM_EVAL_ENGINE=quickjs`. |
+| 7 | `Expected a Test262Error … no exception` | mostly `scope-param-elem-var-{open,close}` / `params-dflt-ref-arguments` — generator parameter-scope shapes. |
+| 6 | `Cannot access property on null or undefined` | `yield`-in-operand rows (`yield-as-yield-operand`, `rhs-yield`, `in-rltn-expr`). |
+| 6 | `called value is not a function` | `*-spread-arr-*` / `named-yield-*` — a generator result spread through a call. |
+| 6 | `Expected a Test262Error but got a TypeError` | `*/dstr/ary-ptrn-elem-ary-*` — cluster A's generator-destructuring lane. |
+| 4 | `Cannot destructure 'null' or 'undefined'` | `*/dstr/*-ary-empty-init.js`, same lane. |
+| 4 | `SameValue(«"outside"», «"inside"»)` | `scope-body-lex-distinct` / `scope-param-elem-var-*` — a generator body's lexical environment is shared with the params'. |
+| 2 | `SameValue(«NaN», «undefined»)` — `dflt-obj-ptrn-prop-ary` | the f64-typed-parameter-slot defect cluster **C2** owns; deliberately not touched here. |
+| ~16 | assorted singletons | `default-proto`, `prototype-relation-to-function`, `iterator-next-reference`, `map-expand`, `throw-from-finally`, `head-lhs-let`, `detach-typedarray-in-progress`, … |
+
+#### Next steps for this cluster, in rows-per-fix order
+
+1. **Widen the drive's admission scan to DEFAULTS** (`[a = init]`) and to
+   object/nested array patterns in non-rest slots. The refusal is one function
+   (`planElements`) and the per-element emitter already has the value in a
+   local; that reaches the `*-init-*` and `obj-prop-elem-target-*` rows.
+2. **Classify the 21 Iterator-helpers rows** as out-of-scope in the #6651
+   definition of done (above), which removes them from the gap arithmetic.
+3. **Reify the `GeneratorFunction` intrinsic** (7 rows) separately from
+   CreateDynamicFunction (13 rows, eval-dependent).
+4. **Give the host lane a struct-capable rest drain** if the drive is ever to
+   be ungated — see the gate rationale above.
 
 ## Manifest generator note
 

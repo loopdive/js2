@@ -63,6 +63,7 @@ import {
 } from "../registry/types.js"; // (#2357/#47) subview write; (#3054 B1) TA view write; vec-base length write
 import { emitTaDynViewElementSet, emitTaViewElementSet } from "../dataview-native.js"; // (#3054 B1) shared-backing TA view write; (#3057) dynamic view element write
 import { buildDestructureNullThrow, emitNativeObjectRest, patternIteratorStepCount } from "../destructuring-params.js";
+import { tryEmitSpecOrderedArrayAssignDrive } from "../dstr-assign-iterator-drive.js"; // (#6651 G1) §13.15.5.2 lazy drive
 import { resolveComputedKeyExpression } from "../literals.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js"; // (#2681/#2686 A3) pinned-struct write dispatch
 import { presenceSetInstrs, presenceSlotOf } from "../fnctor-presence-bits.js"; // (#3780) packed own-presence flags
@@ -2535,6 +2536,19 @@ function compileExternrefArrayDestructuringAssignment(
   // GetIterator so they always throw on null/undefined.
   if (resultType.kind === "externref") {
     emitExternrefAssignDestructureGuard(ctx, fctx, tmpLocal);
+  }
+
+  // (#6651 cluster G, G1) A pattern with a MEMBER target makes the
+  // DestructuringAssignmentTarget reference evaluation OBSERVABLE, and
+  // §13.15.5.5 evaluates it BEFORE the iterator is stepped. The
+  // `__array_from_iter_n` materialisation below is a complete drain up front,
+  // so that ordering — and the §13.15.5.2 step 5 IteratorClose that depends on
+  // it — cannot be expressed here. Hand those patterns to the lazy drive; it
+  // refuses (emitting nothing) for every shape it does not model, so the
+  // all-identifier common case stays on the path below, byte-identical.
+  if (resultType.kind === "externref" && tryEmitSpecOrderedArrayAssignDrive(ctx, fctx, target, tmpLocal)) {
+    fctx.body.push({ op: "local.get", index: tmpLocal });
+    return resultType;
   }
 
   // #1454: Spec §13.15.5.2 ArrayAssignmentPattern requires GetIterator(value)
