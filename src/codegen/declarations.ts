@@ -23,6 +23,7 @@ import {
   mapTsTypeToWasm,
   resolveBindingElementType,
   unwrapPromiseType,
+  widenJsUntypedDefaultParamSlot,
 } from "../checker/type-mapper.js";
 import type { FieldDef, FuncHandle, GlobalDef, Instr, StructTypeDef, ValType, WasmFunction } from "../ir/types.js";
 import type { IrUnitId } from "../ir/identity.js";
@@ -1444,7 +1445,11 @@ function lowerParamType(
   if (isUndefinedDefaultOnlyParam(param, paramType)) {
     wasmType = { kind: "externref" };
   }
+  // (#6651 C3) …and its JavaScript generalisation: in a `.js` file the
+  // checker's parameter type comes from the default initializer alone, so a
+  // scalar slot silently coerces every argument the default did not predict.
   if (nativeParam === null) {
+    wasmType = widenJsUntypedDefaultParamSlot(param, wasmType);
     wasmType = preserveIdentityForStructuralParam(ctx, param, index, stmt, wasmType, paramType);
   }
   if (jsArrayParamNeedsOpenObjectCarrier(ctx, param, stmt, wasmType)) {

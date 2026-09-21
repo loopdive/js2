@@ -266,6 +266,111 @@ export function isUndefinedDefaultOnlyParam(param: ts.ParameterDeclaration, para
   );
 }
 
+/** JavaScript-family source extensions — a file with no parameter type syntax at all. */
+const JS_SOURCE_FILE_RE = /\.(?:[cm]?js|jsx)$/i;
+
+/**
+ * (#6651 C3 residual) A parameter of an `async` METHOD — `class C { async m(a = 23) {} }`
+ * or the object-literal spelling, generator or not.
+ *
+ * MEASURED EXCLUSION, not a design preference. An async method's callable value
+ * is a cached singleton trampoline whose wrapper signature is derived from the
+ * method signature at first `C.prototype.m` access and rebuilt at finalize
+ * (`closures/method-trampolines.ts`, the #1669 `pendingMethodTrampolines`
+ * enrolment). With the slot widened, that path stops applying the parameter
+ * defaults when the method is invoked THROUGH the extracted reference — the
+ * direct `new C().m(undefined)` call is correct, `var ref = C.prototype.m;
+ * ref()` is not. Reproducer: `.tmp/w6651C3/p13.src.js`, and the 2,370-row
+ * control caught it as 16 (standalone) / 20 (host) `dflt-params-arg-val-undefined`
+ * + `dflt-params-trailing-comma` rows in exactly these four lanes.
+ *
+ * That is a defect in the trampoline's signature rebuild, NOT in the widening
+ * — async FUNCTIONS, async ARROWS, sync methods and generator methods all take
+ * the widening and gain. Excluding the one lane keeps every measured gain and
+ * costs the four async-method rows in `*-arg-val-not-undefined`, which stay on
+ * their pre-existing failure. Remove this clause together with a fix to
+ * `finalizeMethodTrampolines`, re-running the same control.
+ */
+function isAsyncMethodParam(param: ts.ParameterDeclaration): boolean {
+  const fn = param.parent;
+  if (!ts.isMethodDeclaration(fn)) return false;
+  return fn.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) === true;
+}
+
+/**
+ * (#6651 C3) The same absence-of-information argument as
+ * {@link isUndefinedDefaultOnlyParam}, one step more general: a parameter in a
+ * JAVASCRIPT source file whose only type evidence is its own default.
+ *
+ * A `.js` file has no parameter type syntax, so whatever the checker infers
+ * from `method(aFalse = (falseCount += 1))` — here `number` — describes the
+ * DEFAULT, not a contract any caller agreed to. §10.2.11 says the default is
+ * evaluated only when the argument is `undefined`; every other argument must
+ * reach the body unchanged. Lowering the slot from the inferred type destroys
+ * exactly the arguments outside the guessed domain:
+ *
+ *     class C { method(aFalse = (falseCount += 1)) { … } }
+ *     C.prototype.method(false)      // arrived as 0 — «0» vs «false»
+ *
+ * and, one level inside a nested pattern default, `«NaN»` vs `«undefined»`.
+ *
+ * TypeScript sources are deliberately untouched: there `m(a = 1)` genuinely
+ * DECLARES a `number` parameter and `m(false)` is a type error, so the scalar
+ * slot is a chosen lowering, not a guess — which is also what keeps the numeric
+ * benchmark corpus (all `.ts`) byte-identical. Annotated and JSDoc-typed
+ * JavaScript parameters are excluded for the same reason: the type was written
+ * down. A call-site-based carve-out ("all callers pass numbers, keep f64") is
+ * NOT sound here and is not attempted — a JS function's callers are not
+ * statically enumerable (exported, invoked dynamically, or, as in every row of
+ * the manifest this fixes, a class method reached through the prototype).
+ */
+export function isJsUntypedDefaultParam(param: ts.ParameterDeclaration): boolean {
+  return (
+    !isAsyncMethodParam(param) &&
+    param.initializer !== undefined &&
+    param.dotDotDotToken === undefined &&
+    param.type === undefined &&
+    ts.getJSDocType(param) === undefined &&
+    !ts.getJSDocParameterTags(param).some((tag) => tag.typeExpression !== undefined) &&
+    JS_SOURCE_FILE_RE.test(param.getSourceFile().fileName)
+  );
+}
+
+/**
+ * Nodes whose SLOT {@link widenJsUntypedDefaultParamSlot} actually moved.
+ *
+ * The widening is not a function of the declaration alone — it also depends on
+ * the Wasm type the declaration lowered to — so the read path cannot recompute
+ * it. Identifier reads consult this to skip the checker-type unbox that would
+ * otherwise re-narrow the widened slot one instruction after the prologue
+ * (`local.get 1; call $__unbox_number`), which is how the first attempt at this
+ * fix moved the coercion instead of removing it. Keyed on AST nodes, which are
+ * unique per program, so nothing leaks between compiles.
+ */
+const jsUntypedDefaultWidenedParams = new WeakSet<ts.ParameterDeclaration>();
+
+/**
+ * Widen a JS-inferred defaulted parameter's SCALAR slot to the undefined- and
+ * everything-capable `externref` domain. Scalar only: a string default is
+ * already externref, and a ref-typed default has its own (nullable) widening in
+ * the closure lane, whose reads legitimately narrow back to the struct.
+ *
+ * Like every parameter widening in this file, **every site that lowers a
+ * parameter list must apply this identically** — a signature/body disagreement
+ * is invalid Wasm, not a wrong value.
+ */
+export function widenJsUntypedDefaultParamSlot(param: ts.ParameterDeclaration, wasmType: ValType): ValType {
+  if (wasmType.kind !== "i32" && wasmType.kind !== "f64" && wasmType.kind !== "i64") return wasmType;
+  if (!isJsUntypedDefaultParam(param)) return wasmType;
+  jsUntypedDefaultWidenedParams.add(param);
+  return { kind: "externref" };
+}
+
+/** True once {@link widenJsUntypedDefaultParamSlot} has moved this parameter's slot. */
+export function isJsUntypedDefaultWidenedParam(param: ts.ParameterDeclaration): boolean {
+  return jsUntypedDefaultWidenedParams.has(param);
+}
+
 /**
  * Resolve the Wasm type of a destructuring binding element's local (#821).
  *
