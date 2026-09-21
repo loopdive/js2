@@ -5917,10 +5917,25 @@ function compileElementAssignment(
     // `x[object] = value` preserves coercion order and reaches either the
     // numeric element or the vec expando/prototype path selected by the
     // runtime (`S15.4_A1.1_T9`).
+    // (#6651 E3) A SYMBOL key is the one dynamic key shape a TypedArray view
+    // must take this route for. §10.4.5.5 step 1 only diverts a key that is a
+    // String whose CanonicalNumericIndexString is not undefined; a Symbol is
+    // neither, so `view[Symbol.toPrimitive] = f` is an ORDINARY named set.
+    // The TA exclusion above sent it to the numeric element lane instead,
+    // where the write is DROPPED — not misdirected: measured on this slice's
+    // base (`.tmp/6651/p4.js`, `.tmp/6651/t1.mts`), `f64[S]`, `i8[S]` and
+    // `u8[S]` all read back `undefined` afterwards, the STRING-keyed
+    // `i8.str = 6` landed, and element 0 of a pre-filled view was left
+    // untouched. Narrow by construction — a non-symbol key on a view keeps the
+    // numeric lane exactly as before.
+    const symbolTypedElementKey =
+      vecElementTypedArrayName(ctx, target.expression) !== undefined &&
+      ctx.oracle.staticJsTypeOf(target.argumentExpression) === "symbol";
     if (
-      vecElementTypedArrayName(ctx, target.expression) === undefined &&
-      !(ts.isIdentifier(target.expression) && target.expression.text === "arguments") &&
-      isDynamicPropertyKeyExpression(ctx, target.argumentExpression, target.expression)
+      symbolTypedElementKey ||
+      (vecElementTypedArrayName(ctx, target.expression) === undefined &&
+        !(ts.isIdentifier(target.expression) && target.expression.text === "arguments") &&
+        isDynamicPropertyKeyExpression(ctx, target.argumentExpression, target.expression))
     ) {
       fctx.body.push({ op: "local.get", index: vecLocal });
       return compileExternSetFallback(ctx, fctx, target, value, arrType);
