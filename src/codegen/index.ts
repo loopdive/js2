@@ -427,6 +427,7 @@ import { fillHoleyArrayHasIdxArm } from "./holey-array-presence.js"; // (#4222) 
 import { fillSparseHoleHasIdxArms } from "./vec-externref-hole-presence.js"; // (#4491/#2001) sparse absence markers
 import { finalizeFunctionPoisonPillCalls } from "./function-poison-pill.js";
 import { fillDataViewConstructProtoArm, fillTaDynViewMopArms } from "./ta-dyn-mop.js"; // (#3177/#3371) native view prototype arms
+import { fillTaDynViewOwnPropertyNamesArm } from "./ta-dyn-own-property-names.js"; // (#6651 E2) §10.4.5.6 on __getOwnPropertyNames
 import { fillObjVecReflectionHelpers } from "./objvec-array-proto.js"; // (#3666) RegExp indices Array reflection
 import {
   fillNativeReflectOwnPropertyMop,
@@ -6666,6 +6667,10 @@ export function generateModule(
     // (each fill prepends at body[0]; last fill wins the front slot, and the
     // dyn-view arm must beat the generic `$__vec_base` arms it subtypes).
     fillTaDynViewMopArms(ctx);
+    // (#6651 E2) …and §10.4.5.6 `[[OwnPropertyKeys]]` on `__getOwnPropertyNames`,
+    // which `Reflect.ownKeys` / `Object.getOwnPropertyNames` read and
+    // `__object_keys` (filled above) does NOT feed. Same front-slot rule.
+    fillTaDynViewOwnPropertyNamesArm(ctx);
     fillDataViewConstructProtoArm(ctx);
     fillReflectIsConstructor(ctx);
 
@@ -11366,6 +11371,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // in the single-source pipeline. Keep native views after generic vec fills
     // so they retain front precedence.
     profilePhase("fill-ta-dyn-view-mop-arms", () => fillTaDynViewMopArms(ctx));
+    // (#6651 E2) Multi-source parity with the single-source call above.
+    profilePhase("fill-ta-dyn-view-own-property-names", () => fillTaDynViewOwnPropertyNamesArm(ctx));
     profilePhase("fill-data-view-construct-proto", () => fillDataViewConstructProtoArm(ctx));
     profilePhase("fill-reflect-is-constructor", () => fillReflectIsConstructor(ctx));
 
