@@ -4,7 +4,7 @@ title: "ES2015 standalone → 100%: cluster execution plan from the 2026-09-20 c
 status: in-progress
 sprint: current
 created: 2026-09-20
-updated: 2026-09-20
+updated: 2026-09-21
 priority: high
 horizon: xl
 feasibility: hard
@@ -82,8 +82,22 @@ assignee: "ttraenkler/fable-es2015-plan"
 #     HOF arm (its reserve gate plus the `undefined` callback operand).
 # The `sort` comparefn gate went into `dyn-array-producers.ts`, a subsystem
 # module already under budget, so it needs no grant.
+# 2026-09-21 — cluster G (spec-ordered ArrayAssignmentPattern + IteratorClose,
+# standalone). The MECHANISM (~350 LOC) is the NEW module
+# `src/codegen/dstr-assign-iterator-drive.ts`; the god-file growth is two
+# dispatch sites only — `expressions/assignment.ts` +14 and
+# `statements/for-of-destructuring.ts` +9, both ~70 % comment. Neither can move
+# behind a seam: each sits at the exact point where its caller is about to
+# perform the eager `__array_from_iter_n` materialisation, and the decision
+# being recorded is "this pattern's target references are observable, so the
+# drain below is the wrong shape". Written anywhere else it would be a fact
+# about a lowering the reader cannot see. The `for-of` function grows by the
+# same 8 lines (`compileForOfAssignDestructuringExternref`), for the same
+# reason and at the same point.
 loc-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/statements/for-of-destructuring.ts
   - src/codegen/vec-overlay.ts
   - src/codegen/generators-native.ts
   - src/codegen/expressions/call-receiver-method.ts
@@ -103,7 +117,6 @@ loc-budget-allow:
 # absent-`message` read has to be inside the arm that owns the
 # statically-typed Error read. Inlined, the same change was +114.
   - src/codegen/declarations.ts
-  - src/codegen/expressions/assignment.ts
   - src/codegen/property-access-dispatch.ts
 func-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
@@ -114,6 +127,7 @@ func-budget-allow:
   - src/codegen/index.ts::generateMultiModule
   - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/expressions/assignment.ts::compilePropertyAssignment
+  - src/codegen/statements/for-of-destructuring.ts::compileForOfAssignDestructuringExternref
 # 2026-09-21 (cluster F) — the three new `__is_truthy` calls are not a
 # hand-rolled coercion matrix. Each is literally the spec's ToBoolean on a
 # [[SetPrototypeOf]] / [[PreventExtensions]] success bit (§28.1.14 step 4,
@@ -1343,6 +1357,405 @@ would move the slot of **every defaulted parameter in every JS input**, which
 is all of test262 and every npm package. The attempted patch is kept at
 `.tmp/w6651C/attempt-type-mapper.ts` rather than committed; nothing of it is in
 the branch.
+
+### 2026-09-21 — Cluster I (language misc, standalone), triage pass (no source slice)
+
+- **Branch** `worktree-agent-adcaab82a3507f049`, base
+  `claude/es2015-test262-plan-54tooh` @ `b104f96e41`.
+  **Worktree** `/home/user/js2/.claude/worktrees/agent-adcaab82a3507f049`.
+- **Manifest** `plan/agent-context/6651/I-language-misc.txt`, 114 rows,
+  sha256 `f94fe9f129c0bcc5e5e52ce798cbeedfa6cae99f7506f5547af54717a71cdd68`.
+- **This entry is a TRIAGE deliverable. No `src/` change is in it** — every
+  bucket below was measured, three root causes were proven with probes, and
+  none of the buckets is the small slice the dispatch assumed. Nothing is
+  half-applied: the tree this was committed from is source-clean.
+
+| standalone, `--isolate`, eval engine **quickjs** | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/6651/I-before.log`, cleaned copy `I-before-clean.log`) | **0** | 103 | 11 |
+
+#### Read this before measuring cluster I: the engine changes 40 of the 114 rows
+
+The first before-run (`.tmp/6651/I-before-noqjs.log`) reported **40 rows** as
+`Error: JS2WASM_EVAL_ENGINE=quickjs but the quickjs provider is not built`.
+That is not a verdict — it is the runner refusing to measure. The provider is
+**not** present in a fresh worktree and the selector deliberately never builds
+one (a silent degrade to the interpreter would invalidate the measurement), so
+a cluster-I sweep run without it silently converts a third of the manifest into
+noise, including **every** module-namespace row.
+
+Build it once per worktree — the artifact is ~50 s (clang-18 + network), the
+adapter ~5 s, and the adapter key folds in the compiler source hash, so it must
+be rebuilt after a `src/` edit:
+
+```bash
+node scripts/build-quickjs-eval-provider.mjs            # builds the artifact, then
+node --import tsx scripts/build-quickjs-eval-provider.mjs   # builds the adapter
+```
+
+Both logs in this entry are from the **quickjs** engine. With it present,
+**zero** rows are environment-unmeasurable.
+
+#### Triage table — all 114 rows, measured, bucketed by signature
+
+`fix?` is the verdict asked for: **(a)** fixable in standalone · **(b)**
+wont-fix-with-reason candidate (needs a second realm, or direct `eval` of
+dynamic text that the target has no host for) · **(c)** environment-unmeasurable.
+"size" is the honest horizon of the *whole* bucket, not of one row.
+
+| # | bucket | rows | fail/CE | fix? | size | what it actually needs |
+| --- | --- | ---: | --- | --- | --- | --- |
+| B3 | `with` + `@@unscopables` | 15 | 13 / 2 | a | XL | a **dynamic** `with` environment record. 5 rows put a `Proxy` in the `with` head; 6 need `@@unscopables` on an arbitrary object; 2 are the #1387 CE ("requires a proven closed object-literal shape"). The closed-shape model cannot answer any of them. |
+| B15 | singletons | 14 | 14 / 0 | a | — | 14 unrelated one-row defects; see `.tmp/6651/I-buckets.txt` for the list. |
+| B1 | `module-code/namespace/internals` | 12 | 12 / 0 | a | XL | **root cause proven, see below** — two independent blockers, runner *and* compiler. |
+| B5 | direct `eval` — spread args, caller scope, class-in-eval | 10 | 10 / 0 | a (4) / b (6) | L | `eval-spread*` (4) and `statementList/eval-class-*` (4) are real runtime-eval-lane defects (wrong arg vector; wrong `[[Prototype]]` identity for an `Array`/`RegExp` literal built inside the eval). `eval-code/direct/{new.target-fn,super-prop-method}` need the *caller's* `new.target`/`[[HomeObject]]` inside eval'd text — **wont-fix candidates** (#1066). |
+| B11 | parameter defaults / destructuring params | 9 | 9 / 0 | a | M | three tests × three function forms. `params-dflt-ref-arguments` needs `arguments` bound in the **parameter** scope (reads null today); `dstr/ary-ptrn-elem-ary-rest-init` reads null; `dflt-params-arg-val-not-undefined` returns `0` for an explicit `false` argument. |
+| B10 | global-object declaration descriptors | 7 | 7 / 0 | a | L | `var`/`function`/`let` at global code must create global-object properties with the spec's `configurable:false` and collide per §9.1.1.4. Two rows escape a bare `WebAssembly.Exception`. |
+| B9 | arrow `this` / `new.target` / `super` | 7 | 7 / 0 | a | L | lexical capture of the *enclosing function's* `new.target` and `[[HomeObject]]`. One row (`lexical-this.js`) is a null-pointer trap in `__module_init`, i.e. a miscompile, not a missing feature. |
+| B7 | tagged template | 7 | 6 / 1 | a | L | the site object is not frozen, is not passed as argument 0 in the member/call-expression forms, `this` binding is wrong for `obj.fn\`\``, `new tag\`\`` is not constructible, and one row still leaks `env::__tagged_template`. |
+| B4 | cross-realm | 6 | 6 / 0 | **b** | — | every row calls `$262.createRealm()`. A standalone binary is one realm by construction; there is no host to make a second one. **The clearest wont-fix-with-reason group in the cluster.** |
+| B8 | `instanceof` | 6 | 6 / 0 | a | M | 3 × `@@hasInstance` (**root cause proven, see below**), 3 × an accessor `Function.prototype.prototype` that `Get(C,"prototype")` must call observably. |
+| B12 | `arguments` object | 5 | 5 / 0 | a | M | own `@@iterator` (2 rows), and `arguments`-named-`arguments` shadowing, which currently traps with `illegal cast` (2) or reports `typeof "function"` (1). |
+| B2 | `module-code` generator exports | 5 | 0 / 5 | a | — | all five are `standalone target emitted host imports: env::g` — a **generator** leak. Same family as cluster A; they landed in I only because the partition rule keyed on the path, not the error. Hand to A. |
+| B14 | annexB | 4 | 1 / 3 | a | S | one `\P{…}` RegExp CE (#1539 Phase 2d), one labelled-function-declaration SyntaxError, one block-scope redeclaration, one `substr` coercion order. |
+| B13 | TDZ in closures / block scope | 4 | 4 / 0 | a | M | a closure that reads a `let`/`const` before its initializer must throw `ReferenceError`; we return the value. |
+| B6 | proper tail calls | 3 | 3 / 0 | a | M | `tco-non-eval-*`; one now blows the stack (`RangeError: Maximum call stack size exceeded`), which is the honest signature — the tail position is not being taken. |
+| | **total** | **114** | 103 / 11 | | | |
+
+Counts: **(a) fixable 102 · (b) wont-fix candidates 12** (6 cross-realm + 6
+direct-eval-of-dynamic-text) · **(c) environment-unmeasurable 0** once the
+quickjs provider is built.
+
+#### Root cause 1 — the module-namespace family is blocked TWICE, not once
+
+The 12 rows do not fail on the §10.4.6 exotic-object MOP. They fail because
+`ns` is **null**: `Reflect.defineProperty called on non-object`,
+`stringKeys.length === 0`, `Cannot access property on null or undefined`.
+
+- **Blocker A (runner).** These tests SELF-import
+  (`import * as ns from './own-property-keys-sort.js'`). `wrapTest` hoists only
+  `_FIXTURE` specifiers to module top level — deliberately, per the #2932 note
+  in `tests/test262-runner.ts`: the test compiles under the virtual key
+  `./test.ts`, so a hoisted self-import cannot resolve, and hoisting it anyway
+  flipped 4 of these rows to "ns is not defined" in PR #2471's merge_group. So
+  the import stays nested inside `export function test()`, where it is
+  leniently ignored and the binding reads null.
+- **Blocker B (compiler).** Even given a top-level self-import, the compiler
+  does not materialize the namespace. Probed directly
+  (`.tmp/6651/selfimport2.mts`, source-clean tree, `--target standalone`, module
+  compiled under `fileName: "test.ts"` with `import * as ns from './test.ts'`):
+
+  | probe body | result |
+  | --- | --- |
+  | `typeof ns === 'object'` | **0** (it is not an object) |
+  | `ns !== null` | **throws a bare `WebAssembly.Exception`** |
+  | `ns.localA` | throws |
+  | `Object.getOwnPropertyNames(ns)` | throws |
+  | `Object.keys(ns)` | throws |
+
+  `module-namespace-value.ts` materializes a namespace for an import of
+  *another* module in the same compilation; the self-import case is not
+  modelled and reaches a trap rather than a decline.
+
+So the slice is: rewrite the self-import specifier to the compilation's own key
+and hoist it (runner), teach `module-namespace-value.ts` the self case
+(compiler), and only *then* do the MOP details (live-binding TDZ
+`ReferenceError`, `[[Set]]`/`[[Delete]]`/`[[DefineOwnProperty]]` refusals,
+sorted `[[OwnPropertyKeys]]`, `@@toStringTag`) decide individual rows. That is
+an XL, two-component slice — **not** the "likely small one" the dispatch
+assumed, which is the single most useful thing this triage establishes.
+
+#### Root cause 2 — `instanceof` never consults `@@hasInstance`, and the fix route is known
+
+§13.10.2 step 2 does `GetMethod(C, @@hasInstance)` **before** the step-5
+`IsCallable(C)` throw. `native-ordinary-instanceof.ts` already knows this — its
+`moduleInstallsCallableHasInstance` gate (#4484 A) declines the non-callable-RHS
+throw when the module installs a handler. But the very next arm in
+`emitDynamicInstanceOf` (`isExclusivelyPrimitiveType`, the #2998 primitive-LHS
+fold) then answers `false` for `0 instanceof F` **without** consulting the
+handler, so the handler is never called. That is exactly
+`symbol-hasinstance-{invocation,to-boolean}`; `symbol-hasinstance-get-err`
+additionally needs the gate widened to `Object.defineProperty(F,
+Symbol.hasInstance, {get})`, which the current syntactic scan does not match.
+
+The reason this is worth writing down: **the primitives to lower it already
+work.** Probed on the source-clean tree, `--target standalone`
+(`.tmp/6651/hasinst.mts`):
+
+| probe | result |
+| --- | --- |
+| `F[Symbol.hasInstance](7)` after `F[Symbol.hasInstance] = fn` | **1 (works)** |
+| `F[Symbol.hasInstance].call(F, 7)` | **1 (works)** |
+| `0 instanceof F` (same module) | **0 (handler never called)** |
+
+So the slice is a lowering change in `emitDynamicInstanceOf` only — read
+`@@hasInstance` off the RHS, and when it is callable invoke it through the
+generic `__apply_closure(target, thisArg, restVec)` primitive that
+`function-proto-invokers.ts` (#6630) already uses for
+`Function.prototype.call`, then `ToBoolean`. It needs its own before/after over
+`language/expressions/instanceof/**` on both lanes, because the gate is
+module-scoped and would change every `instanceof` site in a module that
+installs a handler.
+
+#### Root cause 3 — the partition put 5 generator rows in this cluster
+
+B2's five `language/module-code/*-gen-*` rows are `env::g` generator leaks, not
+language-misc work. The manifest generator note keys cluster I as "the rest",
+and the generator rule only matched errors mentioning `__gen_`/yield. Route
+them to A rather than re-deriving the same lowering here.
+
+#### Residuals
+
+All 114 rows. Nothing flipped; this entry buys the next owner a measured,
+engine-correct starting point and removes two false assumptions (that the
+namespace family is a MOP slice, and that a bare sweep measures this cluster).
+Logs: `.tmp/6651/I-before.log` (quickjs), `.tmp/6651/I-before-noqjs.log` (the
+unusable no-provider run, kept as the evidence for the engine warning),
+`.tmp/6651/I-before-clean.log`, per-bucket row lists in
+`.tmp/6651/I-buckets.txt`. Probes: `.tmp/6651/{selfimport,selfimport2,hasinst,probe}.mts`.
+None of the probes is committed.
+
+
+### 2026-09-21 — Cluster G (for-of / destructuring residuals / iterators, standalone), slice G1: spec-ordered ArrayAssignmentPattern + IteratorClose
+
+- **Branch** `worktree-agent-a3b8356df530ad9e4`, based on
+  `claude/es2015-test262-plan-54tooh` @ `64801f10` (carries A, B, C1, D, F, H).
+  **Worktree** `/home/user/js2/.claude/worktrees/agent-a3b8356df530ad9e4`.
+- **Manifest** `plan/agent-context/6651/G-forof-destructuring-iterators.txt`,
+  134 rows, sha256
+  `e68a764ab55ce04936572717bdf96f724fb337af6a9af3a758f3525851ff1dec`.
+- **Engine note:** every log below was measured with the runner's DEFAULT eval
+  engine (the QuickJS provider was not built in this container when the
+  before-state was taken), so the 7 `quickjs provider is not built` rows are
+  environment-blocked on BOTH sides and the delta is comparable.
+
+| standalone, `--isolate`, 134 rows | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/6651/G-before.log`) | **0** | 132 | 2 |
+| after (`.tmp/6651/G-after.log`) | **21** | 111 | 2 |
+
+**+21 rows pass; 0 lost; no other status changed** (the two logs were joined
+per path, not compared by count). One further row moved to a LATER assertion:
+`assignment/destructuring/iterator-destructuring-property-reference-target-evaluation-order.js`
+now reports `[source, iterator, target, target-key, …]` where it reported
+`[source, iterator, iterator-step, …]` — i.e. the ordering this slice fixes is
+now observable in its trace, and it fails on a later step.
+
+#### What landed — the answer was MIS-ORDERED, not missing
+
+§13.15.5.2 ArrayAssignmentPattern is three-phase: GetIterator, then **per
+element** evaluate the DestructuringAssignmentTarget's *Reference*
+(§13.15.5.5 step 1) and only then IteratorStep (step 2); an abrupt completion
+with `[[done]]` still false runs §7.4.9 IteratorClose. Both destructuring
+entry points normalise the source through `__array_from_iter_n(src, n)` FIRST
+— a complete drain of `n` steps before any target reference is touched. So for
+
+```js
+0, [ {}[thrower()] ] = iterable;     // array-elem-iter-thrw-close.js
+```
+
+the compiler reported `nextCount 1 / returnCount 0` where the spec requires
+`0 / 1`. Hoisting the reference in front of the materialisation fixes
+`nextCount` and **cannot** fix `returnCount`: the throw would then precede
+GetIterator, so there would be no iterator to close. Hence a lazy drive, not a
+re-ordering.
+
+New module `src/codegen/dstr-assign-iterator-drive.ts`
+(`tryEmitSpecOrderedArrayAssignDrive`) plus two dispatch sites
+(`expressions/assignment.ts::compileExternrefArrayDestructuringAssignment` +14,
+`statements/for-of-destructuring.ts::compileForOfAssignDestructuringExternref`
++9). It emits GetIterator once, then per element: member-target reference into
+`(obj, key)` locals → `__iterator_next` → `__extern_set_strict`; a rest element
+drains via `__iterator_rest`; the whole element loop is wrapped so any throw
+runs IteratorClose with the close's own abrupt completion suppressed
+(§7.4.9 step 6 — the original throw wins, which is what every `*-thrw-close-err`
+row asserts). **No new host import** — all six natives already route to the
+standalone object/iterator runtime.
+
+Three details are load-bearing and were measured, not assumed:
+
+1. **`doneLocal` is raised to 1 BEFORE each step and lowered after.** §7.4.6
+   sets `[[done]]` true when `next()` throws, and `[[done]]` true is exactly
+   what suppresses the close. Without the pre-raise a throwing `next()` would
+   be followed by a `return()` call the spec forbids.
+2. **A rest element reached with `[[done]]` already true must not step again**
+   — it still receives an array, an EMPTY one. `__array_from_iter_n(null, -1)`
+   answers that, so no second empty-vec shape is introduced.
+3. **A `never`-typed operand is not a refusal.** `compileExpression` answers
+   `null` for `{}[thrower()]`'s call (the declared return type IS `never`)
+   while still emitting the throw; the slot is padded with `ref.null.extern`
+   exactly as `emitDynamicMemberSet` pads it. Refusing there rejected the
+   entire family — the first cut did, and silently fell through to the old
+   path after having already emitted a GetIterator, which is why the drive now
+   builds into a DETACHED buffer and splices only on success.
+
+#### The drive is STANDALONE/WASI-gated, and that gate is a measurement
+
+Ungated, the 1,207-row **host** sweep gained 10 rows and **LOST 3**
+(`for-of/dstr/array-rest-{lref,nested-array-iter-thrw-close-skip,
+put-prop-ref-user-err-iter-close-skip}.js`, `nextCount 0` where 1 is required).
+Cause, probed directly: the host `__iterator_rest` (`src/runtime.ts:17999`)
+drains via `iter.next` / the string sidecar, and the iterator in this whole
+family is a compiled OBJECT LITERAL — a WasmGC struct neither lookup finds — so
+it answers `[]` without stepping, where the eager `__array_from_iter_n` it
+replaces goes through the host's own iteration bridge. Gating costs nothing
+measurable: every row in this bucket already fails on host, for the same
+ordering reason plus a host-only close-receiver defect (`return()` does not see
+the iterator as its `this`, measured 1010 vs the required 1011). Lifting the
+gate means first giving the host lane a rest drain that can step a struct
+iterator.
+
+#### Controls — zero pass → non-pass
+
+Neighbourhood: all 1,207 rows of `language/statements/for-of/**`,
+`language/expressions/assignment/dstr/**`, `built-ins/ArrayIteratorPrototype/**`,
+`built-ins/GeneratorPrototype/**`. Run in 128-row chunks, one fresh process per
+chunk; the 6 `*array-prototype*` rows ran `--isolate` (they replace
+`Array.prototype[@@iterator]` and poison the runner's own realm). Base measured
+with the file-copy A/B revert.
+
+| lane | rows | before non-pass | after non-pass | flips |
+| --- | ---: | ---: | ---: | --- |
+| standalone (`.tmp/6651/nb-{before,after}-*.log`) | 1,207 | 164 | **143** | **+21, 0 lost, 0 other status changes** |
+| host, ungated draft (`.tmp/6651/nbh-{before,after}-*.log`) | 1,207 | 214 | 207 | +10, **−3** ⇒ the gate above |
+
+**Host control on the shipped change is a byte-identity proof.** A 9-program
+corpus — the three admitted shapes, a for-of over a plain array literal, an
+all-identifier assignment, an identifier default, a for-of identifier head, an
+object pattern and a destructuring-free control — compiles **9/9
+byte-identically on gc** before vs after (`.tmp/6651/sha-{before,after}.txt`),
+while on standalone exactly the 3 admitted shapes move and the other 6 are
+byte-identical. That is the intended delta, stated as bytes.
+
+Pin file `tests/issue-6651-dstr-iterator-close.test.ts`, 7/7 — 5 verified RED
+on the base tree, 2 are guards green on both sides, including the two negative
+directions (an all-identifier pattern keeps the old lowering on BOTH targets; a
+rest element after an exhausted slot must not step again).
+
+Gates, run bare: coercion-sites, oracle-ratchet (`getTypeAtLocation +0`,
+`ctx.checker +0`), dead-exports and typecheck pass untouched; loc-budget and
+func-budget pass with the grants added to this file's frontmatter above, dated.
+
+#### Residual sub-buckets (113 rows), with signatures
+
+| rows | signature | what it needs |
+| ---: | --- | --- |
+| 21 | `built-ins/Iterator/prototype/{chunks,windows}/**` + `Iterator/prototype/join/not-a-constructor.js` | **OUT OF SCOPE, not a gap.** These are the `iterator-chunking` / `Iterator.prototype.join` PROPOSALS; the edition index tags them ES2015 only because their `features` list also names `class`/`generators`. Building them would be implementing a proposal surface, not finishing ES2015. Recommend a `wont-fix`-with-reason on the #6651 definition of done rather than a lane. |
+| 20 | `built-ins/GeneratorFunction/**` | ~13 need `GeneratorFunction(…)` — CreateDynamicFunction, i.e. compiling source at runtime, which standalone cannot do without the eval provider; the other ~7 (`name`, `is-a-constructor`, `has-instance`, `prototype/*`) need the **intrinsic object itself** reified so `Object.getPrototypeOf(function*(){}).constructor` answers a real function with the right descriptors. |
+| 14 | `Expected a TypeError … no exception` | scattered: `iterator-next-result-type`, non-callable `return`, `GeneratorPrototype/*/from-state-executing`, `restricted-properties`. |
+| 7 | `quickjs provider is not built` | environment only at measurement time; the provider now exists in the shared cache (coordinator note, 2026-09-21) and these are re-measurable with `JS2WASM_EVAL_ENGINE=quickjs`. |
+| 7 | `Expected a Test262Error … no exception` | mostly `scope-param-elem-var-{open,close}` / `params-dflt-ref-arguments` — generator parameter-scope shapes. |
+| 6 | `Cannot access property on null or undefined` | `yield`-in-operand rows (`yield-as-yield-operand`, `rhs-yield`, `in-rltn-expr`). |
+| 6 | `called value is not a function` | `*-spread-arr-*` / `named-yield-*` — a generator result spread through a call. |
+| 6 | `Expected a Test262Error but got a TypeError` | `*/dstr/ary-ptrn-elem-ary-*` — cluster A's generator-destructuring lane. |
+| 4 | `Cannot destructure 'null' or 'undefined'` | `*/dstr/*-ary-empty-init.js`, same lane. |
+| 4 | `SameValue(«"outside"», «"inside"»)` | `scope-body-lex-distinct` / `scope-param-elem-var-*` — a generator body's lexical environment is shared with the params'. |
+| 2 | `SameValue(«NaN», «undefined»)` — `dflt-obj-ptrn-prop-ary` | the f64-typed-parameter-slot defect cluster **C2** owns; deliberately not touched here. |
+| ~16 | assorted singletons | `default-proto`, `prototype-relation-to-function`, `iterator-next-reference`, `map-expand`, `throw-from-finally`, `head-lhs-let`, `detach-typedarray-in-progress`, … |
+
+#### Next steps for this cluster, in rows-per-fix order
+
+1. **Widen the drive's admission scan to DEFAULTS** (`[a = init]`) and to
+   object/nested array patterns in non-rest slots. The refusal is one function
+   (`planElements`) and the per-element emitter already has the value in a
+   local; that reaches the `*-init-*` and `obj-prop-elem-target-*` rows.
+2. **Classify the 21 Iterator-helpers rows** as out-of-scope in the #6651
+   definition of done (above), which removes them from the gap arithmetic.
+3. **Reify the `GeneratorFunction` intrinsic** (7 rows) separately from
+   CreateDynamicFunction (13 rows, eval-dependent).
+4. **Give the host lane a struct-capable rest drain** if the drive is ever to
+   be ungated — see the gate rationale above.
+
+## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
+
+### What landed
+
+PR [#6023](https://github.com/loopdive/js2/pull/6023) merged into `main` at
+`5ac0df63bd` with slices A1, B1, C1+C2, D1, E1, F1, H1. Per-owner manifest
+receipts (isolated `--standalone` runner, before → after, all with **zero
+pass→non-pass** in their neighbourhood controls and byte-identical host-lane
+binaries for the probed programs):
+
+| cluster | manifest rows | before → after | gain |
+| --- | ---: | --- | ---: |
+| A generators | 197 | 1 → 62 | +61 |
+| D promise combinators | 101 | 0 → 26 | +26 |
+| E typed arrays / buffers | 144 | 0 → 13 | +13 |
+| C class / object / super (C1+C2) | 177 | 0 → 12 | +12 |
+| B RegExp protocol | 147 | 0 → 7 | +7 |
+| F Proxy / Reflect | 89 | 0 → 7 | +7 |
+| H builtins misc | 217 | 0 → 3 | +3 |
+| G for-of / destructuring (follow-up PR) | 134 | 0 → 21 | +21 |
+| I language misc (triage only, follow-up PR) | 114 | 0 → 0 | 0 |
+| **sum** | | | **+150** |
+
+These are manifest-row gains measured by each owner on their own base, not a
+fresh full-suite census. The next authoritative number comes from the
+`promote-baseline` run on `main` after #6023 (baseline
+`test262-standalone-current.jsonl`); until then the honest statement is
+"10,384 + ≤150 of 11,704".
+
+G (for-of / destructuring / iterators, +21) and I (language misc, triage
+only) landed after #6023 and ship in the follow-up PR together with this
+handoff; their receipts are the two Cluster-status entries just above.
+
+### Environment facts the next session needs
+
+- **QuickJS eval provider is now built** in `.test262-cache/` (artifact
+  `quickjs-artifact-2e2d7736713beeda`, adapter keyed on the compiler source
+  hash; rebuild the adapter with
+  `node --import tsx scripts/build-quickjs-eval-provider.mjs`, ~10 s when the
+  artifact is cached). Every round-1 owner reported 5–63 rows per cluster as
+  "unmeasurable: provider not built" (realm / `$262.createRealm` /
+  detached-buffer shapes, ~130 rows total). Round 2 measures them with
+  `JS2WASM_EVAL_ENGINE=quickjs` before classifying anything as environment.
+- Agent worktrees get a `test262/` symlink farm that may not resolve; repair
+  with `ln -sfn /home/user/js2/test262/test test262/test` (same for
+  `harness`). An all-`error` counts line is a broken farm, not a measurement.
+- The in-process runner OOMs / dies with an empty log above ~200–500 rows
+  (realm poisoning); chunk neighbourhood sweeps at 128–200 rows per fresh
+  process. Never `pkill -f run-test262-paths` (it killed other lanes' runs);
+  match `/proc/<pid>/cwd`.
+- Probe against the ORIGINAL-HARNESS assembly at module scope
+  (`assembleOriginalHarness`), not a hand-written `export function test()`:
+  several defects (C2-a, the `{kind:"class"}` expando fact in B1) exist only
+  in the module-scope shape.
+- A compile-only per-gate histogram (instrument every bail in the candidate
+  gates) turns "N compile errors" into a bucket table in minutes; an 8-row
+  host-lane probe per bucket then says which buckets can reach `pass`.
+- The pre-commit hook greps the COMMAND LINE for the `✓` sign-off; `-F file`
+  alone is blocked. New `src/codegen/*` modules must be classified in
+  `scripts/compiler-boundaries.json` or `quality` fails on the inventory gate
+  (this cost #6023 one CI cycle).
+- The per-box spawn load cap was raised to 3 in the gitignored
+  `.claude/max-load` for the PR shepherd; 4-core box, three heavy agents max.
+
+### Round 2 — dispatch table (largest measured residuals, with owner shape)
+
+| # | residual family | rows | mechanism (from the owner's receipt) | lane / effort |
+| --- | --- | ---: | --- | --- |
+| A2 | `yield` inside a destructuring pattern (`[x = yield] = v`, `for ([{} = yield] of …)`) | 90 | `lowerStatements` must model a suspension inside a pattern; **fails on host too** (8/8 probe), so it is new engineering in both lanes, not a port | senior-dev, max |
+| C3 | defaulted parameter typed `number` by the checker lowered to an f64 slot (`«0» vs «false»`, `«NaN» vs «undefined»`) | ≥18 in C, more in G | widen the parameter TYPE in the function's type map, not just the slot (`isUndefinedDefaultOnlyParam` doc); needs a control over every defaulted param in the corpus | senior-dev, max |
+| D2 | observable intrinsic `Promise.all/race` protocol (`invoke-resolve*`, `invoke-then*`, iterator close) | ~34 | held PR #5883 (#5197 R3-2/R3-4) — integrate, don't re-implement; class-receiver `Construct(C)` (14 CE) is #5197 G9/G10 | senior-dev, high |
+| B2 | observable `RegExpExec` substrate + brand-check widening | 62 | #5198 Slice B / draft #5393 owns it; coordinate with that lane first | senior-dev, high |
+| E2 | integer-indexed MOP `internals/{Set,DefineOwnProperty,OwnPropertyKeys}`, `TypedArray.from/of` statics, static-carrier expando table | 37 | each is a mechanism, not an arm; the static `new Int8Array(1)` carrier has no expando side-table for `__extern_get` | senior-dev, high |
+| F2 | proxy in the prototype chain never runs its trap; `Proxy/construct` NewTarget | 7 + 7 | `$Object.$proto` is `ref null $Object` and `$Proxy` is not a subtype — architectural; NewTarget belongs to the #3371 lane | architect spec first |
+| H2 | symbol-keyed accessor `defineProperty` on a vec carrier dropped; `__extern_length` for non-`$Object` carriers; `Object.prototype.toString` runtime tag honouring `delete` | ~15 | localized to lines in H's receipt | developer, high |
+| I2 | `instanceof` never consults `@@hasInstance` (primitive-LHS fold in `emitDynamicInstanceOf` answers before the handler) | 3 (+ corpus) | lowering change in one function via the existing `__apply_closure` invoker; both-lane sweep over `language/expressions/instanceof/**` | developer, high |
+| I3 | module namespace object: self-import under the runner's virtual `./test.ts` key is left nested (#2932) AND the compiler materializes no namespace for a top-level self-import (`ns` reads null) | 12 | runner + compiler + then the MOP — XL, not the small MOP slice round 1 assumed | architect spec first |
+| realm | every `*-realm*` / `cross-realm` / detached row across A–H | ~130 | re-measure under `JS2WASM_EVAL_ENGINE=quickjs`; then split fixable vs `$262.createRealm` wont-fix | developer, medium |
+
+Dispatch order by rows-per-effort: A2, C3, E2 first (three slots), then D2/B2
+(coordination-bound), then I2/H2/realm, F2 and I3 after their specs. Cluster I's
+triage (above) also found that with the QuickJS provider present ZERO of its 114
+rows are environment-unmeasurable, and that 5 `language/module-code/*-gen-*`
+compile errors are generator leaks belonging to A2.
+
+### Definition of done reminder
+
+Unchanged: 11,704 / 11,704 on a full authoritative standalone run, or a
+`wont-fix` issue with the spec-level reason for every remaining row; bank the
+ES2015 floor via `check:edition-ratchet:update` from a FULL run only.
 
 ## Manifest generator note
 
