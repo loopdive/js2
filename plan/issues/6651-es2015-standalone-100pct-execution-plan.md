@@ -175,6 +175,24 @@ loc-budget-allow:
 # the grant is not stranded in #5197 alone.
   - src/codegen/promise-combinators.ts
   - src/codegen/builtin-write-keeps.ts
+# 2026-09-21 — cluster C, slice C3b (C3's two residual mechanisms). Both grants
+# are CALL-SITE decisions that cannot move behind a seam, and both are ~80 %
+# comment recording the measurement that set them.
+#   * `call-tail-dispatch.ts` +13: the IIFE-inline arms park the enclosing
+#     function's `return` protocol. The MECHANISM (and its rationale) lives in
+#     the 139-line leaf `expressions/iife-return-patch.ts`, the module that
+#     already owns "an inlined IIFE's `return` is not the enclosing function's";
+#     what is left here is the two save/restore pairs, one per arm, which have
+#     to sit exactly where `fctx.returnType` is already saved and restored.
+#   * `call-identifier.ts` +23: the third widening this site must MIRROR when it
+#     rebuilds a callee's wrapper signature from the DECLARED types. The site
+#     already carries the binding-pattern and `parameterMayBeOmitted` cases for
+#     the identical reason (a scalar the compiled callee never declared makes
+#     the dispatch chain miss every arm); the JS-inferred-default case was
+#     simply missing, and that miss is what forced C3's async-method exclusion.
+#     A widening cannot be applied anywhere but where the signature is built.
+  - src/codegen/expressions/call-tail-dispatch.ts
+  - src/codegen/expressions/call-identifier.ts
 func-budget-allow:
   # (see coercion-sites-allow below for slice B2's other gate grant)
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
@@ -255,6 +273,13 @@ func-budget-allow:
 # the observable runtime emitter. The pipeline itself is in new module-level
 # helpers, not in this function.
   - src/codegen/promise-combinators.ts::emitStandalonePromiseCombinatorRuntime
+# 2026-09-21 — cluster C, slice C3b. The two host functions of the grants above:
+# `compileTailDispatch` +9 (two save/restore pairs, one per IIFE-inline arm) and
+# `compileIdentifierCall` +17 (the mirrored parameter widening at the point the
+# wrapper signature is built). See the loc-budget rationale for why neither can
+# move.
+  - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
 coercion-sites-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/ta-dyn-mop.ts
@@ -2693,6 +2718,151 @@ both absent from the R3-4 plan):**
   wasm. `race` drive mode needs none of that (its handlers are the capability's
   own resolve/reject), so **`race` is the cheap half and should be sliced
   first**. That sizing is why D2 stops here rather than half-landing it.
+
+### 2026-09-21 — Cluster C, slice C3b (C3's residuals: the nested default, and the async-method exclusion)
+
+- **Branch** `worktree-agent-a186f0693b98e763a`, base
+  `claude/es2015-test262-plan-54tooh` @ `685351f7bd` (= `origin/main` + A2 + C3
+  + E2 + B2 + D2). **Worktree**
+  `/home/user/js2/.claude/worktrees/agent-a186f0693b98e763a`.
+- **Manifest** `.tmp/6651/C3b-manifest.txt`, 38 rows, sha256
+  `e6a82fb74ab0ccd4d5484a9d46c33f91e79560d3f01f1e135fdcadd9c0e7d90c` — C3's 28
+  residual rows plus the 10 `dflt-params-arg-val-not-undefined` rows its
+  `isAsyncMethodParam` exclusion was paying for (class
+  `async-{method,gen-method}[-static]`, object-literal `async-{meth,gen-meth}`).
+- **Eval engine `quickjs`** on every run below (adapter rebuilt after every
+  `src/` edit and before every control pass).
+
+#### Results
+
+| standalone, `--isolate`, engine quickjs | pass | fail |
+| --- | ---: | ---: |
+| before (`.tmp/6651/C3b-before.log`) | **0** | 38 |
+| after (`.tmp/6651/C3b-after-final.log`) | **14** | 24 |
+
+Per-row set diff: **14 non-pass → pass, 0 pass → non-pass.** Two mechanisms,
+seven rows each.
+
+#### C3's hypothesis for the nested default was WRONG, and the measurement says why
+
+C3 attributed its 17 `dstr/*dflt-*` residuals to `resolveBindingElementType`
+widening only elements WITHOUT a default, and asked for the same
+absence-of-information argument one level inside the pattern. Probed on this
+base (`.tmp/w6651C3/q*.src.js`, original-harness assembly, module scope), that
+is not what either family is:
+
+- The 7 `dflt-ary-ptrn-elem-ary-empty-init` rows are **not a slot-typing defect
+  at all** — they are all GENERATORS, and the shape reduces to
+  `function* g(a = function () { return 5; }())`, where `a` arrived `NaN`. The
+  binding pattern is incidental.
+- The 10 `dstr/*dflt-obj-ptrn-prop-ary` rows are **two independent defects**,
+  neither of them the binding element's slot, and **both are still open** (see
+  residuals below).
+
+So only the first was landed here, and its fix is in a different subsystem.
+
+#### Mechanism 1 (7 rows) — an inlined IIFE inherits the GENERATOR's `return`
+
+`compileReturnStatement` dispatches on `fctx.isGenerator` (stash the value on
+`__gen_buffer`, `br` to the generator's exit) and `fctx.asyncDriveReturn`
+(settle the frame's `$Promise`, then `return`) BEFORE the ordinary path. An
+IIFE inlined into such a frame has no Wasm function of its own, so both hooks
+fired for a `return` that belongs to the IIFE. Emitted body, from the factory of
+`function* g(a = function () { return 5; }())`:
+
+```wat
+(block
+  f64.const 5
+  drop            ;; the generator arm's value-drop
+  br 1            ;; ...and its exit branch
+)
+local.get 1       ;; $__iife_ret_0 — never written
+```
+
+`patchInlinedIifeReturns` cannot repair this: the generator arm emits a `br`, so
+no `return` op survives for the walker to rewrite. The fix parks both hooks
+across the inlined body — `parkOuterReturnProtocol` /
+`restoreOuterReturnProtocol`, in the 139-line leaf
+`expressions/iife-return-patch.ts` that already owns "an inlined IIFE's `return`
+is not the enclosing function's", beside `fctx.returnType`'s existing
+save/restore. The generator BODY lane is unaffected by construction (the native
+lowering compiles it into a resume function whose `isGenerator` is already
+false) — measured: `function* g() { var v = function () { return 7; }(); }` is
+correct on base and after.
+
+#### Mechanism 2 (7 standalone / 10 host rows) — the async-method exclusion is REMOVED, and its cause was not the trampoline
+
+C3 recorded the async-method regression as "a defect in the trampoline's
+signature rebuild" in `finalizeMethodTrampolines`. Instrumented on the
+reproducer, that is not it: at finalize the wrapper params, the method params
+and the trampoline's own func type all agree (`externref`), so the rebuild is a
+no-op for this shape.
+
+The real site is the CALL. `call-identifier.ts` rebuilds the callee's wrapper
+signature from the **declared (checker)** parameter types to choose the dispatch
+arms, and the checker still says `number`. Base vs widened WAT for
+`class C { async m1(a = 23) {} } … var r1 = C.prototype.m1; r1(undefined)`:
+
+| | trampoline's func type | `ref.test` arms emitted at the call |
+| --- | --- | --- |
+| base | `273` | `{128, 136, 204, 271, 273, 276, 277, 68}` — contains `273` |
+| C3-widened | `132` | `{128, 136, 204, 271, 274, 275, 276, 68}` — **no `132`** |
+
+The call reached no arm, so the body never ran (the observation register stayed
+`'none'`; the direct `new C().m1(undefined)` was correct throughout). That site
+already carries the SAME mirror-widening twice — for binding-pattern parameters
+and for `parameterMayBeOmitted` — each with a comment saying that building the
+signature from declared types without the callee's widening "asks for a scalar
+the compiled callee never declared". C3's widening is the third case and was
+simply missing. Added as `jsUntypedDefaultParamSlotMoves` (deliberately
+**non-memoising**: `jsUntypedDefaultWidenedParams` means "this parameter's slot
+was widened in the function being compiled", and a caller's view of someone
+else's parameter is not that fact), and `isAsyncMethodParam` is deleted.
+
+#### Control — C3's same 2,370 rows, BOTH targets, before/after on this base
+
+`.tmp/6651/C3-control.txt`, sha256
+`3e8d80a0ae76e6a98b1f0c5885499c06a058ac46cc582c6e50077500d20ce808`, 12 chunks of
+≤200, one runner at a time, **all 12 chunk exits `0` and `counted=2370` on all
+four passes** (a crashed chunk cannot masquerade as "everything passed").
+
+| target | before non-pass | after non-pass | pass→non-pass | non-pass→pass |
+| --- | ---: | ---: | ---: | ---: |
+| standalone (`ctl-{before,after}-standalone.log`) | 189 | 182 | **0** | **7** |
+| host (`ctl-{before,after}-host.log`) | 180 | 170 | **0** | **10** |
+
+Every gain is a `*-arg-val-not-undefined` async-method row. **The 16 rows C3's
+first cut regressed (`dflt-params-arg-val-undefined` +
+`dflt-params-trailing-comma`, `.tmp/6651/C3-regress16.txt`) are all in this
+control and none of them moved** — which is what licenses removing the exclusion
+rather than keeping it. The 7 mechanism-1 rows are NOT in this control (its
+builder required a parameter-list default in the stripped body and did not match
+those generated `dstr/` files); they are measured on the manifest.
+
+Other gates, all on the final tree: 32/32 playground+benchmark corpus files
+compile to **byte-identical** binaries (`.tmp/6651/corpus-{base,new}.txt`,
+zero-line diff, no `THREW`/`NO_BINARY` rows); `node scripts/equivalence-gate.mjs`
+— 22 failing / 1,720 passing / 22 known-failures, **no new regressions**;
+`pnpm run check:ir-fallbacks` OK; loc/func (local **and**
+`LOC_GATE_BASE=origin/main`), coercion-sites, oracle-ratchet, dead-exports,
+biome, typecheck all green.
+
+#### Residuals in the manifest (24)
+
+| rows | signature | owner |
+| ---: | --- | --- |
+| 10 | `SameValue(«NaN», «undefined»)` — `dstr/*dflt-obj-ptrn-prop-ary` | **TWO defects, both re-diagnosed here, neither the binding element's slot.** (a) `[7, undefined, ]` in a `.js` file is lowered as a NUMERIC array, so the `undefined` is stored as `NaN` **before any destructuring** — `var o = { w: [7, undefined, ] }; o.w[1]` reads `NaN` at top level (`.tmp/w6651C3/q2.src.js`), while `o.w[2]` (past the end) is correctly `undefined`. (b) A nested pattern WITH its own default reads a missing element as `null` instead of `undefined`, but **only when the parameter's own default fired**: for one `function g({ w: [a,b,c] = [4,5,6] } = { w: [7,8] })`, `g({w:[7,8]})` gives `7 \| 8 \| undefined` and `g()` gives `7 \| 8 \| null` (`.tmp/w6651C3/q12.src.js`). Both fixes are needed for these rows; (a) is an array-literal lowering question, (b) lives in the parameter-default path. |
+| 9 | `Cannot access property on null or undefined` — `params-dflt-ref-arguments`, `dstr/ary-ptrn-elem-ary-rest-init` | unchanged from C3: `arguments` bound in the PARAMETER scope (cluster I's B11 finding), and a rest-with-init element reading null. Unrelated to the slot. |
+| 3 | `*-arg-val-not-undefined` — object-literal `gen-meth` / `async-gen-meth`, plus the class `async-gen-method` pair that gains on HOST but not standalone | the object-literal generator-method lane keeps its own pre-existing defect (the 2 rows below); the class `async-gen-method` pair is now blocked by something else in the standalone lane only. |
+| 2 | `Cannot read properties of undefined (reading 'next')` — object-literal GENERATOR methods | pre-existing and independent (C3's `.tmp/w6651C3/p6.src.js` fails on base too). |
+
+#### Process note
+
+The A/B swap script is regenerated from `git status --porcelain src/` every time
+the file set changes — it moved from three files to four mid-slice when the IIFE
+mechanism was relocated out of the god-file, and a stale list is exactly what
+produced C3's 45-minute all-`SyntaxError` "base" pass. Both trees were
+typechecked before the control started.
 
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 
