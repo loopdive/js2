@@ -12374,3 +12374,99 @@ site widened.
 | 13 battery groups (3,684 rows) vs the S69 base, own diff | 0 pass→fail, 0 fail→pass; four-family 463/480 |
 | corpus vs S69 base | 0 status / 0 sha flips (94 rows) |
 | equivalence | 22 / 1720 / 22 |
+
+### S71 findings (2026-09-21) — #6652 DONE: the #6650 return-carrier fix now covers arrow / function-expression / object-literal-method / class-method / nested-declaration; the standalone Temporal PROVIDER is byte-identical, so the win is user-code correctness, not Temporal rows
+
+S71 (Opus, branch `issue-5383-standalone-temporal-s71`, head `8d587b0159`, off
+the S70 PR head `78dd538964`, worktree `agent-a1913968da57de166`). Full writeup
+in [#6652](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6652-standalone-spread-literal-return-non-declaration-shapes).
+
+**Mechanism.** The plumbing that covers every callable shape already existed:
+the #6614 pre-pass `collectAccessorLiteralReturnCarrierTypes`
+(`src/codegen/accessor-literal-return-carrier.ts`) walks every function-like and
+puts a host-carrier return type into `ctx.objectHashConsumerTypes`, which
+`resolveWasmType` answers `externref` for wherever that type lands. It was
+deliberately narrowed to ACCESSOR-bearing literals; the SPREAD reason
+(`objectLiteralSpreadTakesHostPath`, #2804 — context-driven, not shape-driven)
+was never added, and its private wrapper peeler lacked #6650's comma arm. Fix:
+widen the predicate to accessor-or-spread, and move
+`unwrapReturnCarrierExpression` into
+`src/codegen/declarations/host-carrier-object-literal.ts` so the declaration lane
+and the pre-pass share ONE peeler by construction. The other
+`objectLiteralForcesHostPath` arms stay out on purpose — several read `ctx` state
+the pre-pass runs too early to see; the spread predicate reads only a contextual
+type, which is what makes it safe there.
+
+**Shapes.** `.tmp/s71/probes/solo3.mts`, base = file-copy revert of the three
+touched files to `78dd538964`: arrow `NaN` → 9, function expression `NaN` → 9,
+object-literal method → 9, class method `dereferencing a null pointer` → 9,
+nested declaration `dereferencing a null pointer` → 9; all controls unchanged.
+Witness `tests/issue-6652-spread-literal-callable-shapes.test.ts` — 9 defect rows
++ 6 controls; on the reverted base all 9 fail and all 6 controls pass.
+
+**The measurement the next lane needs.** The standalone Temporal provider is
+**byte-identical** base vs fix (`57781189fa76e796`, 3 491 376 B, `cmp`-verified
+on the two cache dirs). The minified polyfill has exactly six spread-bearing
+returns: `Wr()` (a top-level declaration, #6650 already), and five class /
+object-literal methods that every one of them spread a **PARAMETER** — `any` in
+untyped JS, so their result ABI was already externref and there was never a
+mismatch. Verified directly on the base with `.tmp/s71/probes/polyfill-shapes.mts`
+(three polyfill-shaped param-spread cases answer correctly on the base; only the
+concrete-local-shape case traps). **So this is a user-code correctness fix, not
+a Temporal row-mover — do not plan the next lane expecting Temporal rows from
+this class.** It is not literally zero, though: a test262 row also compiles the
+TEST BODY, and the new `Temporal-rest` group's chunk-3 base run found 3
+fail→pass (`compile_error → pass`: `Instant/compare/argument-zoneddatetime.js`,
+`Instant/from/argument-zoneddatetime.js`, `Instant/from/subclassing-ignored.js`),
+0 pass→fail.
+
+**Validation.** 15 battery groups / 4 434 rows, **0 pass→fail everywhere**;
+four-family **463/480** unchanged (PlainDate 120, Duration 109, PlainDateTime
+117, ZDT 117); AddSub 138/150 unchanged; the nine must-not-move groups 0/0;
+corpus `statusFlips=0 shaFlips=0` (94 rows); equivalence 22 / 1720 / 22; witness
+sweep 58 files / 365 tests green under Node 22 AND Node 25; gate chain (loc,
+func, coercion-sites, oracle-ratchet, dead-exports, typecheck, lint) green,
+`LOC_GATE_BASE=origin/main` included.
+
+**Caveat, by coordinator decision (box contention).** Of the 600-row
+`Temporal-rest` group, only chunk 3 (rows 401–600) has a reverted-base run;
+chunks 1–2 (400 rows) are fix-tree-only. The byte-identical provider bounds the
+risk to test-body compilation, which chunk 3 measured at 0 pass→fail — a bound,
+not a measurement. Lists are kept as `.tmp/s71/battery/rest{1,2,3}-files.txt`.
+
+**Residual found and NOT ours (new issue candidate).** An object-literal method
+and a class method sharing a NAME emit an **invalid module** — `local.set[0]
+expected type (ref null N), found ref.as_non_null of type (ref M)` — with no
+spread anywhere, identically on the base and the fix. Five-line repro in
+`.tmp/s71/probes/collide.mts`. This is why S70's residual table recorded the
+object-literal-method row as `illegal cast`: its 20-case probe contained both an
+`O1.mk` and a `class Q1 { mk }`.
+
+**Traps added this slice.** (1) The oracle-ratchet gate counts the literal token
+`ctx.checker` **in comments** — a prose mention of it in a new file fails the
+gate; reword. (2) `.claude` worktrees share the 16 GB box with sibling lanes and
+have no swap: three concurrent `run-batch` shards get OOM-killed (rc 137), and
+**orphaned vitest workers / `tsc` from your own earlier sweeps hold gigabytes
+long after the command returns** — `ps -eo pid,rss --sort=-rss` and reap them
+before blaming concurrency. (3) `run-batch.mts` writes its TSV only at GROUP
+end, so a kill loses the whole group — split a long group into ≤200-row chunks.
+(4) `pnpm install` in a fresh harness worktree needs `CI=true` (no TTY).
+
+#### S71 — lead verification (2026-09-21)
+
+Head `5a9484b198` (clean tree), merged with `origin/main` for landing (main
+brought seven files under the merge, none conflicting).
+
+| check | result |
+| --- | --- |
+| gate chain incl. `LOC_GATE_BASE=origin/main`, boundaries inventory, issue-ids, typecheck, lint (merged head) | green (+26 LOC net) |
+| own diff of the lane's 14 battery groups + AddSub (3,834 rows) vs the S70 base | 0 pass→fail, 0 fail→pass; four-family 463/480, AddSub 138/150 |
+| `Temporal-rest` chunk 3 (200 rows) fix vs the lane's reverted-base run | 3 fail→pass (`Instant/compare/argument-zoneddatetime.js`, `Instant/from/argument-zoneddatetime.js`, `Instant/from/subclassing-ignored.js`: `compile_error → pass`), 0 pass→fail. Chunks 1–2 (400 rows) are fix-tree-only, by lead decision, to free the box for three sibling lanes; the provider binary is byte-identical, so the unmeasured delta is bounded to test-body compilation |
+| corpus vs S70 base | 0 status / 0 sha flips (94 rows) |
+| `tests/issue-6652-spread-literal-callable-shapes.test.ts` on a TRUE file-copy revert of the three touched files to `78dd538964` | fails (the 9 defect rows); passes on the fix |
+| equivalence (lane) | 22 / 1720 / 22 |
+
+Accepted as a user-code correctness fix that happens to lift three `Instant`
+rows; it is not a four-family mover, and the next Temporal lever is elsewhere
+(S72 subclass method calls, S73 `__apply_closure` traps, S74 BigInt — all in
+flight in parallel).
