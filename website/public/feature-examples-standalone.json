@@ -1013,7 +1013,7 @@
     {
       "name": "Destructuring",
       "testCategories": ["language/destructuring"],
-      "passCount": 4153,
+      "passCount": 4174,
       "totalCount": 4290
     },
     {
@@ -1080,7 +1080,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1577,
+      "passCount": 1598,
       "totalCount": 1955
     },
     {

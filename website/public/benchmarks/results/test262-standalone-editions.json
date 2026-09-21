@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10518,
-    "fail": 990,
+    "pass": 10539,
+    "fail": 969,
     "ce": 196,
     "skip": 0,
     "total": 11704,
@@ -57,8 +57,8 @@
     "features": [
       {
         "name": "destructuring-binding",
-        "pass": 4016,
-        "fail": 64,
+        "pass": 4037,
+        "fail": 43,
         "ce": 73,
         "skip": 0,
         "total": 4153,
@@ -93,12 +93,12 @@
       },
       {
         "name": "Symbol.iterator",
-        "pass": 697,
-        "fail": 74,
+        "pass": 718,
+        "fail": 53,
         "ce": 24,
         "skip": 0,
         "total": 795,
-        "pct": 88
+        "pct": 90
       },
       {
         "name": "Symbol",
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4472,
-    "fail": 895,
+    "pass": 4473,
+    "fail": 894,
     "ce": 78,
     "skip": 0,
     "total": 5445,

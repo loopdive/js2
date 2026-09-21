@@ -1,7 +1,7 @@
 {
   "generated": "2026-09-21",
   "threshold": 1500,
-  "totalCeiling": 911543,
+  "totalCeiling": 912053,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -27,7 +27,7 @@
     "src/codegen/destructuring-params.ts": 2908,
     "src/codegen/dyn-read.ts": 1736,
     "src/codegen/expressions.ts": 1693,
-    "src/codegen/expressions/assignment.ts": 6459,
+    "src/codegen/expressions/assignment.ts": 6473,
     "src/codegen/expressions/builtins.ts": 3874,
     "src/codegen/expressions/call-builtin-static.ts": 4693,
     "src/codegen/expressions/call-identifier.ts": 4315,
@@ -73,7 +73,7 @@
     "src/codegen/stack-balance.ts": 3358,
     "src/codegen/statements/control-flow.ts": 2046,
     "src/codegen/statements/destructuring.ts": 1505,
-    "src/codegen/statements/for-of-destructuring.ts": 2954,
+    "src/codegen/statements/for-of-destructuring.ts": 2963,
     "src/codegen/statements/loops.ts": 4461,
     "src/codegen/statements/nested-declarations.ts": 4461,
     "src/codegen/statements/variables.ts": 2647,
