@@ -968,6 +968,53 @@ dead-exports, compiler-boundaries `--mode inventory`, typecheck, prettier and
 on the merged base unclassified and fails the inventory gate for every lane
 that follows it.
 
+#### C2-b — a block-scoped class capturing a function-scoped `var` (zero rows, shipped anyway)
+
+`collectBlockScopedDeclNames` collected only `let`/`const`, on the premise that
+"a `var` is function-scoped and therefore already a module global" — true at
+MODULE scope, and this function is only ever called from INSIDE a function
+body, which is where it is false. Base (`.tmp/w6651C/q31.ts`, standalone):
+
+```
+function test() { var n = 0;
+  if (1) { class C { m() { n = 5; } } new C().m(); }
+  return n; }                              // base 0, node 5
+```
+
+`$C_m` declares `(local $n f64)` and stores into it. The same class at
+function-body level answers 5, a `let` in the same block already worked, and a
+function expression / object-literal method in the same block already worked —
+the class method was the only one of three closure kinds that was broken. The
+collector now takes `var` too, moved to the leaf module
+`src/codegen/scope-local-decl-names.ts`.
+
+**This is the coordinator's item (2), and the re-measurement it asked for says
+the thing it was expected to unblock was already fixed by C2-a.** The
+`super/prop-*-cls-val` family passes because the top-level
+`A.prototype.fromA = 'a'` statement now runs, not because of any `var` capture:
+with C2-b applied the manifest is **byte-for-byte the same verdicts as C2-a**
+(12 pass / 161 fail / 4 CE, identical per-row), and #5350's attribution of that
+family to a block-scoped `var` capture does not survive contact with the honest
+harness shape, where the class and the `var` are both at module scope.
+
+It ships regardless because it is a real wrong answer with no measured cost,
+and because #2818's stated reason for excluding `var` — "including `var`
+needlessly perturbed the order-sensitive async-generator lowering" — was
+re-tested rather than taken on trust:
+
+| control | rows | result |
+| --- | ---: | --- |
+| cluster-C manifest, `--isolate` | 177 | identical to C2-a (12 / 161 / 4) |
+| 960-row combined control, in-process | 960 | **identical non-pass set**, 673 / 265 / 21 / 1 |
+| generator sample (`expressions/generators`, `statements/generators`, `expressions/async-generator`, every 4th row) | 295 | **identical non-pass set**, 248 passing |
+
+Logs `.tmp/6651/C2-after2.log`, `.tmp/6651/ctl2b-*.log`,
+`.tmp/6651/ctl3-{before,after}-*.log`. Gates all 0 (the collector moving to its
+own module is what kept `compileDeclarations` under its ceiling); equivalence
+22 failing / 1720 passing, all in baseline. Pin
+`tests/issue-6651-block-class-var-capture.test.ts` — 3 cases, 2 RED on the base
+(0→5, 5→7), 1 guard.
+
 ## Manifest generator note
 
 Partition rule applied to the 1,320 non-pass rows, first match wins:
