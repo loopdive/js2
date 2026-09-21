@@ -2249,6 +2249,8 @@ a mechanism each (receiver-aware `[[Set]]`, the `from`/`of` intrinsics, the
 to land one mechanism FULLY with receipts before starting the next; the own-key
 surface is that mechanism, and each of the four is comparable in size to it.
 
+## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
+
 ### What landed
 
 PR [#6023](https://github.com/loopdive/js2/pull/6023) merged into `main` at
@@ -2337,8 +2339,6 @@ compile errors are generator leaks belonging to A2.
 Unchanged: 11,704 / 11,704 on a full authoritative standalone run, or a
 `wont-fix` issue with the spec-level reason for every remaining row; bank the
 ES2015 floor via `check:edition-ratchet:update` from a FULL run only.
-
-## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 
 ## Manifest generator note
 
