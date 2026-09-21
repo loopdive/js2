@@ -132,6 +132,11 @@ loc-budget-allow:
 # object made `x * 2` NaN while `typeof x` still said "number"), so the next
 # owner inherits the probe result rather than the conclusion.
   - src/codegen/generators-delegation-runtime.ts
+# 2026-09-21 — cluster C, slice C3 (see the rationale below, under the function
+# keys this same change-set needs).
+  - src/codegen/class-bodies.ts
+  - src/codegen/destructuring-params.ts
+  - src/codegen/expressions/identifiers.ts
 func-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   - src/codegen/generators-native.ts::buildNativeGeneratorPlan
@@ -148,6 +153,23 @@ func-budget-allow:
 # the god-function is the four-line dispatch arm that names it. A terminator
 # kind cannot be dispatched from anywhere but the terminator switch.
   - src/codegen/generators-native.ts::compileState
+# 2026-09-21 — cluster C, slice C3 (the f64-typed defaulted parameter).
+# The MECHANISM is three functions in `src/checker/type-mapper.ts`, the module
+# that already owns every other parameter widening, plus the read guard in the
+# 99-line leaf `strict-eq-stale-type.ts` — neither is a god-file. What is left
+# is four irreducible LOWERING SITES: `class-bodies.ts` +10 (the signature and
+# fctx-build phases, which MUST agree or the module is invalid Wasm, not merely
+# wrong), `declarations.ts` +7, `destructuring-params.ts` +5 (one delegation
+# that carries the closure and all three object-literal-method twins with it)
+# and `identifiers.ts` +1 (the guard's call). A parameter widening cannot move
+# behind a seam by construction: `isUndefinedDefaultOnlyParam`'s own doc
+# requires every site that lowers a parameter list to apply it identically, so
+# the decision has to be readable at each list. The growth is ~80 % comment for
+# the same reason the neighbouring #5221/#5360 widenings are — each site is
+# where a future reader will ask why this parameter is not a scalar.
+  - src/codegen/class-bodies.ts::collectClassDeclaration
+  - src/codegen/class-bodies.ts::compileClassBodiesInner
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCore
 # 2026-09-21 (cluster F) — the three new `__is_truthy` calls are not a
 # hand-rolled coercion matrix. Each is literally the spec's ToBoolean on a
 # [[SetPrototypeOf]] / [[PreventExtensions]] success bit (§28.1.14 step 4,
@@ -1908,6 +1930,142 @@ Residual buckets in the 278-row manifest after this slice, by first bail
 | 1 | `ExpressionStatement` — `` str = `1${ yield }3${4}5` `` | a TemplateExpression root |
 | 1 | `ExpressionStatement` — `obj.foo = yield` | the member-target exclusion #2864 documents; capturing the receiver as a prefix operand is order-preserving and would admit it |
 | 65 | candidate gate (no plan bail) | A1's enumerated list, unchanged |
+
+### 2026-09-21 — Cluster C, slice C3 (the f64-typed defaulted parameter)
+
+- **Branch** `worktree-agent-af2a369315ce9f6a7`, base
+  `claude/es2015-test262-plan-54tooh` @ `3769840fe0` (== `origin/main`).
+  **Worktree** `/home/user/js2/.claude/worktrees/agent-af2a369315ce9f6a7`.
+- **Manifest** `.tmp/6651/C3-manifest.txt`, 42 rows, sha256
+  `b59c95b8c08e1e52ebd780d46d94d1eb133dc9e2d67d6ae6a6699b1d104d687b` — the 26
+  `dflt` rows of C's manifest + the 7 of G's + cluster I's 9-row "parameter
+  defaults / destructuring params" bucket (B11). The three
+  `module-code/*-dflt-*-gen-*` rows in I match `dflt` only because it spells
+  "default"; they are generator leaks and belong to A.
+- **Eval engine `quickjs`** on every run below (adapter rebuilt after each
+  `src/` edit; its key did not move, the artifact was copied from the main
+  checkout's `.test262-cache/`).
+
+#### What C2 left, and why the one-line widening was not the fix
+
+C2-c above diagnosed this exactly and stopped in the right place. Its
+one-line widening of `isUndefinedDefaultOnlyParam` moves the SLOT
+(WAT-verified) and nothing else, because the parameter's checker TYPE is still
+`number`: the identifier read path re-narrows it (`local.get 1; call
+$__unbox_number`) one instruction after the prologue correctly declined to use
+the default. **Both halves are needed, and neither is sufficient alone** — with
+the slot widened but the read guard reverted, the probe still fails
+(`.tmp/w6651C3/p13-ng.out`).
+
+#### The change
+
+| file | role |
+| --- | --- |
+| `src/checker/type-mapper.ts` | `isJsUntypedDefaultParam` (syntax-only predicate), `widenJsUntypedDefaultParamSlot` (scalar slot → `externref`, memoising which nodes it moved), `isJsUntypedDefaultWidenedParam` |
+| `src/codegen/strict-eq-stale-type.ts` | `readsJsUntypedDefaultWidenedParam` — the READ guard, in the module that already owns "the checker type of this expression is stale, keep the carrier" |
+| `src/codegen/destructuring-params.ts` | one delegation inside `widenUndefinedDefaultParamSlot`, which carries the closure lane and all three object-literal-method derivations with it |
+| `src/codegen/declarations.ts`, `src/codegen/class-bodies.ts` ×2 | the remaining parameter-lowering sites, signature and fctx-build phases |
+| `src/codegen/expressions/identifiers.ts` | one clause in the unbox-narrowing guard |
+
+Three design points worth keeping:
+
+1. **JavaScript sources only.** In a `.js` file a parameter has no declared
+   type, so `m(a = (count += 1))` typing `a` as `number` is a guess about the
+   DEFAULT; in a `.ts` file the same text genuinely declares the parameter and
+   `m(false)` is a type error. This is also what makes the numeric fast path
+   safe: the whole `.ts` corpus is untouched **by construction**, and measured
+   — all **32** files under `website/playground/examples/` + `benchmarks/`
+   compile to **byte-identical binaries** (`.tmp/6651/corpus-base.txt` vs
+   `corpus-new.txt`, sha256 of each `result.binary`, zero-line diff).
+2. **Scalar slots only** (`f64`/`i32`/`i64`). A string default is already
+   `externref`; an object-valued default has its own nullable widening in the
+   closure lane whose reads legitimately narrow back to the struct, and
+   widening the read guard over it would change unrelated npm-shaped code.
+3. **No call-site carve-out was attempted, deliberately.** "All callers pass
+   numbers, keep the f64" is unsound for this shape: a JS function's callers
+   are not statically enumerable (exported, invoked dynamically, or — as in
+   every row of this manifest — a class method reached through the prototype).
+
+#### Results
+
+| standalone, `--isolate`, engine quickjs | pass | fail |
+| --- | ---: | ---: |
+| before (`.tmp/6651/C3-before.log`) | **0** | 42 |
+| after (`.tmp/6651/C3-after.log`) | **14** | 28 |
+
+All 14 are `dflt-params-arg-val-not-undefined.js` — class methods (static and
+not), generator methods, object-literal methods, function declarations and
+expressions, generators, arrows. Zero rows moved the other way.
+
+#### Control — the whole `language/**` parameter surface, BOTH targets
+
+The change moves the slot and type of every defaulted parameter in every JS
+input, so the control is not a neighbourhood. `.tmp/6651/C3-control.txt`, **2,370
+rows**, sha256 `3e8d80a0ae76e6a98b1f0c5885499c06a058ac46cc582c6e50077500d20ce808`:
+every test262 file under `language/{expressions,statements}/{function,
+arrow-function,class,object,generators,async-function,async-arrow-function,
+async-generator}/**` and `language/default-parameters/**` whose body (frontmatter
+stripped) contains a parameter-list default. Run in 12 chunks of ≤200 rows, one
+runner at a time, all 12 chunk exits `0` on all four passes.
+
+| target | before non-pass | after non-pass | pass→non-pass | non-pass→pass |
+| --- | ---: | ---: | ---: | ---: |
+| standalone (`ctl-{before,after}-standalone.log`) | 210 | 189 | **0** | **21** |
+| host (`ctl-{before,after}-host.log`) | 202 | 180 | **0** | **22** |
+
+Other gates, all on the final tree: `node scripts/equivalence-gate.mjs` — 22
+failing / 1,720 passing / 22 known-failures, **no new regressions**;
+`pnpm run check:ir-fallbacks` — OK, no unintended/post-claim/module-level
+increase; loc/func/coercion/oracle-ratchet/dead-exports/biome/typecheck green.
+
+#### The measured exclusion: `async` METHODS are not widened
+
+**The first cut of this slice regressed 16 rows (standalone) / 20 (host)** —
+`dflt-params-arg-val-undefined.js` and `dflt-params-trailing-comma.js` in
+exactly four lanes: class `async-method`, `async-method-static`,
+`async-gen-method`(`-static`), and the object-literal `async-meth`. Only the
+2,370-row control saw it; the 42-row manifest did not contain a single one of
+those rows, and the probe shapes all passed.
+
+Root cause, as far as it was bisected: an async method's callable value is a
+cached singleton trampoline (`closures/method-trampolines.ts`) whose wrapper
+signature is derived from the method signature at the first `C.prototype.m`
+access and rebuilt at finalize by the #1669 `pendingMethodTrampolines`
+enrolment. With the slot widened, invoking the method **through the extracted
+reference** stops applying the parameter defaults —
+`new C().m(undefined)` is correct, `var ref = C.prototype.m; ref()` is not
+(`.tmp/w6651C3/p13.src.js`; base OK, widened THROWS). Reverting only the read
+guard does not change it, so it is the widening reaching that lane, not the
+narrowing guard.
+
+That is a defect in the trampoline's signature rebuild, not in the widening —
+async FUNCTIONS, async ARROWS, sync methods and generator methods all take the
+widening and gain. `isAsyncMethodParam` in `type-mapper.ts` excludes the one
+lane; it keeps every measured gain and costs the four async-method
+`*-arg-val-not-undefined` rows, which stay on their pre-existing failure.
+**Remove that clause together with a fix to `finalizeMethodTrampolines`, and
+re-run this same control** — it is the only thing that catches the class.
+
+#### Residuals in the manifest (28)
+
+| rows | signature | owner |
+| ---: | --- | --- |
+| 10 | `SameValue(«NaN», «undefined»)` — `dstr/*dflt-obj-ptrn-prop-ary` | the NESTED-pattern default, one level inside the parameter: the binding element's slot, not the parameter's. `resolveBindingElementType` widens only elements WITHOUT a default; the `{ x: [y = 7] = [] }` shape needs the same absence-of-information argument applied to a defaulted element. |
+| 9 | `Cannot access property on null or undefined` — `params-dflt-ref-arguments`, `dstr/ary-ptrn-elem-ary-rest-init` | `arguments` bound in the PARAMETER scope (cluster I's B11 finding), and a rest-with-init element reading null. Unrelated to the slot. |
+| 7 | `Cannot destructure 'null' or 'undefined'` — `dflt-ary-ptrn-elem-ary-empty-init` | same nested-default family as the 10 above. |
+| 2 | `Cannot read properties of undefined (reading 'next')` — object-literal GENERATOR methods | pre-existing and independent: the reduced shape (`.tmp/w6651C3/p6.src.js`, an object-literal `*m()` with six defaulted params, `var ref = obj.m`) **fails on base too**. One of the two changed its SIGNATURE from `«0» vs «false»` to this, which is the slot fix landing on top of a different defect, not a new one. |
+
+#### Two process notes
+
+- The A/B swap script started out covering five of the six changed files; the
+  "base" tree then imported an export that did not exist and a 45-minute
+  control pass came back as 12 identical `SyntaxError`s. An all-error log is
+  broken infrastructure, not a measurement — but it is only obvious if you
+  look at the log rather than the counts line.
+- The `--isolate` runner costs ~2–4 s/row; the in-process runner does 200 rows
+  in ~216 s. For a DIFFERENTIAL control (same rows, same order, both passes)
+  the in-process mode is sound and is what made a 2,370-row × 2-target ×
+  before/after control affordable at all (~3 h).
 
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 

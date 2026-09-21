@@ -21,6 +21,7 @@ import {
   isUndefWidenedBindingElement,
   resolveBindingElementType,
   undefinedPreservingBindingSourceType,
+  widenJsUntypedDefaultParamSlot,
 } from "../checker/type-mapper.js";
 import { boxToAny, UNDEF_F64_BITS } from "./value-tags.js"; // (#3315)
 import { addImport, addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
@@ -812,6 +813,10 @@ export function paramUndefinedTypeIsDefaultArtifact(ctx: CodegenContext, expr: t
  * pairing rule the neighbouring binding-pattern widening documents.
  */
 export function widenUndefinedDefaultParamSlot(param: ts.ParameterDeclaration, wasmType: ValType): ValType {
+  // (#6651 C3) The JavaScript generalisation of the same argument — an
+  // inferred-from-its-own-default parameter type is a guess about one call.
+  const jsWidened = widenJsUntypedDefaultParamSlot(param, wasmType);
+  if (jsWidened !== wasmType) return jsWidened;
   if (param.type !== undefined) return wasmType;
   if (param.dotDotDotToken !== undefined) return wasmType;
   if (param.initializer === undefined) return wasmType;

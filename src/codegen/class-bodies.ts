@@ -13,7 +13,12 @@ import {
 } from "./ast-modifiers.js";
 import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
 import { resolveIrDynamicCarrierType } from "./any-helpers.js";
-import { isUndefinedDefaultOnlyParam, isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
+import {
+  isUndefinedDefaultOnlyParam,
+  isVoidType,
+  unwrapPromiseType,
+  widenJsUntypedDefaultParamSlot,
+} from "../checker/type-mapper.js";
 import { widenAsyncThenableResults } from "./async-thenable-return.js"; // (#5371)
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../ir/types.js";
 // (#3522) nested implicit-ctor family
@@ -1706,6 +1711,9 @@ export function collectClassDeclaration(
         if (isUndefinedDefaultOnlyParam(param, paramType)) {
           wasmType = { kind: "externref" };
         }
+        // (#6651 C3) JavaScript generalisation of the same rule — see
+        // `isJsUntypedDefaultParam`. Also mirrored in the fctx-build phase.
+        wasmType = widenJsUntypedDefaultParamSlot(param, wasmType);
         // Widen ref to ref_null for params with defaults (caller passes ref.null as sentinel)
         if (param.initializer && wasmType.kind === "ref") {
           wasmType = { kind: "ref_null", typeIdx: (wasmType as any).typeIdx };
@@ -3235,6 +3243,8 @@ function compileClassBodiesInner(
           if (isUndefinedDefaultOnlyParam(param, paramType)) {
             wasmType = { kind: "externref" };
           }
+          // (#6651 C3) Mirror of the collection phase's JS-inferred-default widening.
+          wasmType = widenJsUntypedDefaultParamSlot(param, wasmType);
         }
         // Widen ref to ref_null for params with defaults or optional params
         // (caller passes ref.null as sentinel). Must match collection phase (#702)
