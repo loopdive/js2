@@ -12470,6 +12470,122 @@ Accepted as a user-code correctness fix that happens to lift three `Instant`
 rows; it is not a four-family mover, and the next Temporal lever is elsewhere
 (S72 subclass method calls, S73 `__apply_closure` traps, S74 BigInt — all in
 flight in parallel).
+### S74 findings (2026-09-20/21) — #6656: standalone BigInt. Exact static ToString landed; the briefed rows re-attributed to a BIGGER, measured defect: `any`-typed bigint ARITHMETIC does not exist in standalone
+
+Branch `issue-5383-standalone-temporal-s74` off `bccd46c552`, three pushed
+commits (`72d818b87b` plan, `1a826fb272` fix, `9554bf8bec` slice-3 design).
+Issue file `plan/issues/6656-standalone-bigint-beyond-i64.md`.
+
+**The brief's premise was half right and the half that was wrong is the
+important half.** Standalone does carry a bigint as a branded i64 that wraps at
+2^64 — confirmed, `864n * 10n ** 19n` → `6923773503929843712`. But the eight
+briefed rows are **not** waiting on arbitrary precision first. Probing
+(`.tmp/s74/probes/bi5.mts`) found that with untyped (`any`) operands —
+the shape the vendored `@js-temporal/polyfill` is written in — standalone has
+**no bigint arithmetic at all**:
+
+| probe | standalone | Node |
+| --- | --- | --- |
+| `mul(6n, 7n)` | `NaN` | `42` |
+| `add(9007199254740992n, 1n)` | `90071992547409921` | `9007199254740993` |
+| `sub` / `div` / `mod` | `NaN` | correct |
+| `lt(1n, 2n)` | `false` | `true` |
+| `neg(9007199254740993n)` | `NaN` | `-9007199254740993` |
+| `typeof mul(6n, 7n)` | `number` | `bigint` |
+| `eq(x, x)` | `true` ✅ | `true` |
+
+Only `===` works — #6642 S62's `extern-eq-fast` bigint arm, the one place the
+carrier is recognised. Root cause: the `binary-ops.ts` bigint block is entered
+only on a STATIC `bigint` type, and the dynamic `AnyValue` tag set
+(`0 null · 1 undefined · 2 number · 4 boolean · 5 string · 6 object`) has **no
+bigint tag** — so `*` sees a non-number (`NaN`), `+` takes the stringy arm
+(hence the concatenated `90071992547409921` = `"9007199254740992" + "1"`), and
+`<` compares two non-numbers.
+
+That is what owns three of the eight rows: `Duration#total("seconds")`
+answering **`«NaN»`** is this, not a >2^63 wrap. The wrap hypothesis predicts a
+wrong NUMBER; the observed value is NaN. A limb representation behind an
+operator that answers `NaN` changes nothing, so the issue's slice order is
+reordered: dynamic bigint arithmetic first (slice 3, i64 carrier, no
+representation change), limbs after.
+
+**What landed (slice 2, `1a826fb272`).** Exact ToString for a **statically**
+bigint-typed operand. Five string contexts in `src/codegen/string-ops.ts` (the
+native-strings operand arm, a template span, a `String.raw` substitution and
+both `+` concat operands) stringified a branded-bigint i64 as
+`f64.convert_i64_s` + `number_toString` — exact only to 2^53 — while the exact
+formatter has existed since #1644 and S62 had already routed the DYNAMIC
+receiver and `__any_to_string` to it. New leaf
+`src/codegen/bigint-string-context.ts` owns both halves of the decision
+(`bigIntToStringIdx` for codegen, `registerBigIntToStringDemand` for the import
+collector) so emitter and demand cannot disagree; both gated on
+`usesNativeNumberFormat`, because in the JS-host lane the demand becomes an
+`env` IMPORT and a new import shifts every function index.
+
+`String(9223372036854775807n)` was `9223372036854776000` and is now exact;
+`"" + 9007199254740993n`, `` `${b}` ``, `String(BigInt(x) + 1n)` likewise.
+
+**HONEST NEGATIVE: slice 2 moves no Temporal row.** All eight are `fail` before
+and after with byte-identical error text
+(`.tmp/s74/battery/base/Target8-base.tsv` vs `Target8-s2.tsv`), and the
+standalone provider binary is **3 488 870 B before and after** with the same
+cache key — the polyfill is untyped JS, so its bigints were already on the
+exact dynamic route. The slice-1 "string-round-trip" hypothesis for the `«NaN»`
+rows is **falsified**, and chasing why is what surfaced the finding above.
+
+**Validation (slice 2).** Full battery — 13 groups + `AddSub`, **3 834 rows**,
+slice-2 provider, vs the S70 base: **0 pass→fail everywhere**. One fail→pass,
+`language/expressions/object/fn-name-class.js`, which this change cannot reach
+— the base TSVs are on S70's tree while this branch is off `bccd46c552`, so it
+is `main`'s own progress in between. (The run was OOM-killed once after
+`F-methoddef` and resumed cleanly; keep
+`NODE_OPTIONS=--max-old-space-size=3072`.) Witness
+`tests/issue-6656-bigint-tostring-exact.test.ts`
+(24 rows) FAILS on the file-copy revert of the two touched files with 17 rounded
+rows while all five `ctrl` rows already pass, so the controls cannot carry it
+green; 24/24 with the fix. Probes `bi2` 20/20 and `bi4` 10/10 exact (were 12 and
+7 wrong). Corpus 47×{gc,standalone} `statusFlips=0 shaFlips=0` vs the S70 base.
+`test:equivalence:gate`: no new regressions. Witness sweep 59 files / 368 tests
+green under Node 22 — the five files that first reported red were all
+`Hook timed out` / `Test timed out` on the contended 4-core box and pass on
+re-run (four together, `issue-6614` alone). Gate chain green including
+`LOC_GATE_BASE=origin/main`; LOC/func allowances for the two god-file call sites
+are granted in the issue frontmatter with a dated rationale.
+
+**Next lane — slice 3, designed and committed** (`9554bf8bec`, "Slice 3 design"
+in the issue file). Detection is already free (`__typeof_bigint`, plus five
+existing `ref.test $BigInt` sites), the value is one `struct.get` away, and the
+gap is confined to `src/codegen/any-helpers.ts`: `addNumericBinaryHelper`
+(`__any_sub`/`__any_mul`), `__any_div`, `__any_add`'s stringy test,
+`emitAnyRelational`, `__any_to_f64`, plus `__any_typeof`. The one real decision
+is a new `AnyValue` tag versus testing the carrier behind the existing
+extern/object tag — the latter is narrower and is what `extern-eq-fast.ts`
+already does for `===`. Acceptance: `bi5.mts` 11/11 plus a re-measure of the
+eight rows.
+
+**Env notes.** The harness worktree DID have a populated `test262` submodule
+this time (no symlink needed). The battery kit's shipped `*-cur.tsv` must still
+be moved to `base/` first. `.test262-cache/s74-1` is the base-compiler provider,
+`s74-2` the slice-2 one; both `--target both`, both `cacheHit=false` on first
+use. Base TSVs for the next lane: `.tmp/s74/battery/base/` (S70's 13 groups +
+`Target8-base.tsv`); corpus base `.tmp/s74/corpus-s2.jsonl`.
+
+#### S74 — lead verification (2026-09-21)
+
+Head `d51b9c4959` (clean tree), merged with `origin/main` (S71 landed in
+between; the only conflict was this file's appended sections, kept in order).
+
+| check | result |
+| --- | --- |
+| gate chain incl. `LOC_GATE_BASE=origin/main`, boundaries inventory (new leaf `bigint-string-context.ts` classified), issue-ids, typecheck, lint (merged head) | green |
+| own diff of the lane's 13 groups + AddSub (3,834 rows) vs the S70 base | 0 pass→fail; 1 fail→pass (`language/expressions/object/fn-name-class.js`), attributed to main's own progress between S70's tree and this branch's base `bccd46c552` |
+| corpus vs S70 base | 0 status / 0 sha flips (94 rows) |
+| `tests/issue-6656-bigint-tostring-exact.test.ts` on a TRUE file-copy revert of the four touched files to `bccd46c552` | fails; passes on the fix |
+| provider binary | byte-identical (3,488,870 B): slice 2 moves no Temporal row, as the lane states |
+
+Accepted as slice 2 of #6656 (issue stays `in-progress`; slice 3 = `any`-typed
+bigint arithmetic in `src/codegen/any-helpers.ts` is the next lane, designed in
+the issue file).
 
 ### S73 findings (2026-09-21) — #6655: the `__apply_closure` `unreachable` is an ARITY ceiling, and there are TWO of them, in two different modules; the caller's is fixed, the provider's is the next slice
 
