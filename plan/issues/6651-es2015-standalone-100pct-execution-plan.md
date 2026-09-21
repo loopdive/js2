@@ -160,6 +160,20 @@ loc-budget-allow:
 # would otherwise happen; and (b) the builtin-exec callback it passes down IS
 # the moved prologue plus `emitRegexExecArrayCall`, both `$NativeRegExp`
 # operations that live in this file.
+# 2026-09-21 — cluster B, slice B3 (the DIRECT `re[Symbol.search](s)` /
+# `re[Symbol.match](s)` spelling, plus §22.2.6.8 step 6 in full).
+# `regexp-standalone.ts` +24: the ROUTING DECISION inside
+# `tryCompileStandaloneRegExpSymbolCall`, plus the comment stating why a
+# whole-file predicate is the gate. It cannot move: the decision is "take the
+# observable protocol or the static native core", and both alternatives are
+# resolved in this function — the gate has to be readable at the point the
+# static core is entered, exactly as B2's arm had to be readable at the point
+# the brand check was. The route's MECHANISM is the new module
+# `src/codegen/regexp-symbol-protocol-call.ts` (~170 LOC: the whole-file
+# predicate and the `__apply_closure` call on the reified
+# `RegExp.prototype[@@x]` singleton), and step 6's collect loop (~240 LOC) is
+# in `regexp-exec-protocol.ts`, where the rest of the §22.2.6.8 body already
+# lives.
   - src/codegen/regexp-standalone.ts
 func-budget-allow:
   # (see coercion-sites-allow below for slice B2's other gate grant)
@@ -2513,6 +2527,180 @@ result through loops that are each comparable in size to this whole slice, and
 wiring them to the substrate *without* their loops would replace a wrong answer
 with a differently wrong answer — so the substrate is published with its two
 honest consumers and the loops are named above with their row counts.
+
+### 2026-09-21 — Cluster B (RegExp `@@` protocol, standalone), slice B3: the DIRECT spelling + `@@match`'s global arm
+
+- **Branch** `worktree-agent-a78cc91817f356a89`, based on
+  `claude/es2015-test262-plan-54tooh` @ `0f5b3ed8bc` (origin/main + A2 + C3 + E2 + B2).
+  **Worktree** `/home/user/js2/.claude/worktrees/agent-a78cc91817f356a89`.
+- **Manifest** `plan/agent-context/6651/B-regexp-protocol.txt` **minus the 17
+  rows B1+B2 landed** = 130 rows, sha256
+  `a0acb88e1450bf4acaee35dccb5a56373f6ddaba217ea24692d57f830b3839ff`. The
+  subtraction was re-measured, not taken on trust: the full 147-row file on this
+  source-clean base came back **17 pass / 119 fail / 11 compile_error**, exactly
+  B1's 7 + B2's 10, and the 130 non-pass rows ARE the manifest.
+- **Engine** `JS2WASM_EVAL_ENGINE=quickjs` (artifact `073742801ba7`, adapter key
+  `d4799bda84cfed0d`), `--standalone --isolate`, 65-row chunks, one runner at a
+  time.
+
+#### Item 1 — the DIRECT spelling, routed through the reified method value
+
+`tryCompileStandaloneRegExpSymbolCall` answered `re[Symbol.search](s)` /
+`re[Symbol.match](s)` from the **static native core** — the same engine
+`"abc".search(/b/)` uses, which never consults `exec`. B2's substrate could not
+be reached from that spelling, so eight rows stayed red with the code that
+answers them already in the module.
+
+The new module `src/codegen/regexp-symbol-protocol-call.ts` (~170 LOC) emits
+`__apply_closure(m, rx, «arg»)` where `m` is the identity-stable
+`RegExp.prototype[@@<id>]` singleton every other reader already sees
+(`resolveStandaloneProtoMemberValueClosure`, the #2984 three-tier resolver).
+There is therefore exactly ONE §22.2.6.8/.12 body in the compiler and this
+spelling now reaches it. That the bridge works on a native-proto closure was
+measured BEFORE the module existed:
+`Reflect.apply(RegExp.prototype[Symbol.search], /ring/, ["a string"]) === 4`
+on `--standalone` (`Reflect.apply` lowers to the same `__apply_closure`).
+
+**The gate is a whole-file predicate** — the file mentions `exec` (a `.exec`
+member, an `"exec"` key, an `exec` declaration) or touches `RegExp.prototype`,
+OR the call's own argument is not statically string-like (in which case the
+static core declines anyway and the previous answer was a compile error). The
+coarseness is deliberate and points the safe way: a file that merely CALLS
+`re.exec(s)` takes the observable route and gets the same answer through it
+(the `[[Get]]` finds no own `exec`, RegExpExec step 5 runs the builtin), while
+an `exec`-free file keeps the static core **byte-for-byte** — asserted by
+compiled-binary sha256, not by reading the gate.
+
+Two facts this route depends on, each probed rather than assumed:
+
+1. **An `exec` expando on a RegExp INSTANCE is visible to `__extern_get`**
+   (`r = /./; r.exec = f` → the generic protocol calls `f`). Without that the
+   route would have been dead on arrival for every `exec-*` row.
+2. **`lastIndex` Get/Set on a real RegExp receiver round-trips** through the
+   same ordinary-property path (probe: init to `0`, restore to `3`).
+
+#### Item 2 — §22.2.6.8 step 6 in full (the global collect loop)
+
+B2 shipped the global arm as an observable PREFIX (`Set(rx,"lastIndex",+0)` +
+one `RegExpExec`, then `null`). It is now the whole step: a `$ObjVec` result
+array (`__objvec_new`/`__objvec_push` — the same host-import-free,
+`[i]`/`.length`-readable builder `Array.prototype.filter`/`map` use in this
+target), `matchStr = ToString(Get(result,"0"))` per iteration,
+**AdvanceStringIndex** on an empty match (unicode-aware — a lead/trail
+surrogate pair advances by 2, read straight out of the flattened subject's
+backing array), ToLength via the canonical `__unbox_number(__to_primitive(v,
+"number"))` chain, and `null` when n = 0.
+
+It is verified end to end over an object receiver — 2 matches collected in 3
+`exec` calls, the empty-match arm advancing `lastIndex` to 2 and terminating,
+and `null` for no match at all (the last control in
+`tests/issue-6651-regexp-symbol-protocol-b3.test.ts`).
+
+**It gains zero manifest rows, and the reason is a third mechanism, measured:**
+on a real `$NativeRegExp` receiver `Get(rx, "flags")` answers the **raw flag
+bitfield** — `re["flags"]` reads `1` (a number) for `/a/g`, and `re["global"]`
+reads `false` — where the static `re.flags` correctly reads `"g"`. §22.2.6.8
+step 4 is `ToString(Get(rx,"flags"))`, so `"1"` contains no `g` and the
+**non-global arm** is taken for every real RegExp. The dynamic read is answering
+from a struct-field ladder instead of the §22.2.6 accessor. This is B2's
+recorded `prototype/flags` residual (#5198 Slice F) seen from the instance side,
+and it gates the entire `@@match/g-*` family plus `get-global-err` /
+`get-unicode-error` / `builtin-infer-unicode`. Closing it needs an
+`unshiftExternGet…Arm`-shaped arm for the `$NativeRegExp` carrier that consults
+own properties before the struct (an own `Object.defineProperty(r,'global',…)`
+must still shadow), which is a separate slice — not a line in this one.
+
+#### Receipt — manifest
+
+| 130 rows, `--standalone --isolate`, QuickJS | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/6651/B3-full-base-{00,01}.log`) | **0** | 119 | 11 |
+| after (`.tmp/6651/B3-after-{00,01}.log`) | **10** | 111 | 9 |
+
+**+10 rows pass, zero regressions.** The two logs were joined row-by-row, not
+compared by count: 11 rows changed status, 10 of them non-pass → pass and one
+`compile_error → fail` (`coerce-global`, which now compiles and runs — see the
+`flags` residual above for why it still fails). Every other row keeps its exact
+status.
+
+| row | what it pins |
+| --- | --- |
+| `@@match/exec-invocation` | the custom `exec` is called with the regexp as `this` and exactly ONE already-`ToString`ed argument |
+| `@@match/exec-err` | its abrupt completion propagates out of the direct spelling |
+| `@@match/exec-return-type-invalid` | a primitive result is a TypeError |
+| `@@match/exec-return-type-valid` | an Object / Null result comes back by IDENTITY |
+| `@@match/get-exec-err` | step 3 is a real `[[Get]]` — a poisoned `exec` accessor throws |
+| `@@match/coerce-arg-err` | the argument's `toString` runs, inside the method |
+| `@@match/g-match-no-set-lastindex` | the global arm's lastIndex discipline (was a compile error) |
+| `@@search/coerce-string` | `ToString(string)` on a non-string argument — the static core refused this shape outright |
+| `@@search/set-lastindex-init-samevalue` | §22.2.6.12 step 5's SameValue-vs-SameValueZero on `-0`, on the direct spelling |
+| `@@search/set-lastindex-restore-samevalue` | the same for step 8's restore |
+
+#### Controls — zero pass → non-pass
+
+The control universe is B2's 2,280 rows (`built-ins/RegExp/**` +
+`annexB/built-ins/RegExp/**` +
+`built-ins/String/prototype/{match,matchAll,replace,replaceAll,search,split}/**`)
+filtered the same way — rows whose source mentions `Symbol.match` /
+`Symbol.search` / `@@match` / `@@search` (157, the identical count B2 measured),
+plus every third `prototype/{exec,test,flags,source,lastIndex,toString,global,
+sticky,unicode}` validity canary (63) — WIDENED for this slice with all of
+`built-ins/String/prototype/{match,search}/**` (252 rows, as the brief
+requires). Minus the manifest: **252 control rows**, sha256
+`a7b5a7c782f116632106d9a0cfd1ae4bdb7846172f5392f725a295a1a3ebe1fd`.
+
+| lane | rows | result |
+| --- | ---: | --- |
+| standalone, after (`.tmp/6651/ctrl-after-{00,01,02}.log`) | 252 | 196 pass / 35 fail / 21 compile_error |
+| standalone, before — the **56 non-pass-after rows**, re-run on `cp`-reverted sources (`.tmp/6651/ctrl-before.log`) | 56 | 35 fail / 21 compile_error, **0 pass**, every row's status IDENTICAL to its after status |
+| host — compiled-binary sha256 of 12 representative programs | 12 | **all 12 byte-identical** (`.tmp/6651/hostsha-{before,after}.txt`) |
+| standalone — the same 12 programs | 12 | **10 byte-identical**; only `reflective-match` (item 2) and `exec-observing-direct-search` (item 1's gated route) differ (`.tmp/6651/sasha-{before,after}.txt`) |
+
+The 56-row before-side is a COMPLETE check, not a sample: a pass→non-pass
+regression is by definition non-pass AFTER. The standalone sha table is the
+load-bearing half of the gate claim — `string-search-static`,
+`direct-search-exec-free`, `direct-match-exec-free` and `direct-search-global`
+are all byte-identical, i.e. the ungated direct spelling really does keep the
+static native core.
+
+Also green: `npm run -s typecheck`; `npx biome lint src tests scripts
+--diagnostic-level=error`; the five ratchet gates (`check-loc-budget`,
+`check-func-budget`, `check-coercion-sites`, `check:oracle-ratchet`,
+`check:dead-exports`); the boundaries inventory
+(`check-compiler-boundaries --mode inventory --base origin/main`, with
+`regexp-symbol-protocol-call.ts` classified); `scripts/equivalence-gate.mjs`
+(22 failing / 1720 passing, all 22 in the committed baseline); B1's
+`issue-6651-string-symbol-protocol.test.ts` (9/9) and B2's
+`issue-6651-regexp-exec-protocol.test.ts` (13/13); and the new
+`tests/issue-6651-regexp-symbol-protocol-b3.test.ts` (13/13 — the 10 rows plus
+3 controls). The vitest runs exit non-zero on a `[vitest-worker]: Timeout
+calling "onTaskUpdate"` RPC flake under a loaded 4-core box; every test in them
+reports PASS.
+
+#### One defect found and fixed during the work, worth keeping
+
+The step-6 loop's ToLength chain registers `__to_primitive` as a LATE IMPORT,
+and a late import shifts every defined-function index at or above it. Registered
+where the loop READ it, the already-resolved `deps` were one import stale and
+the emitted loop called the wrong functions — the result array came back empty
+and the loop ran once, with a module that still validated and still ran. The
+registration is therefore hoisted to the decline block (before the first
+`fctx.body.push`) and `deps` is re-resolved immediately after it, exactly like
+B2's `post`. This is the #2043 late-shift class in its quietest form: no crash,
+no validation error, just wrong answers.
+
+#### Residual buckets (120 rows)
+
+| rows | signature | what it needs |
+| ---: | --- | --- |
+| 31 | `@@split` | unchanged from B2: SpeciesConstructor, the sticky splitter walk, generic result reads. 21 of the 31 sit directly on this slice's substrate. |
+| 30 | `@@replace` | unchanged from B2: §22.2.6.11's result loop + GetSubstitution. |
+| 13 | `@@match` global family (`g-*`, `builtin-*`, `coerce-global`, `get-global-err`, `get-unicode-error`, `builtin-infer-unicode`) | the `Get(rx,"flags")` defect above (the loop behind them is implemented and tested), plus — for the four `*-set-lastindex-err` rows — a strict `[[Set]]` on a non-writable property that THROWS. `__extern_set` silently no-ops there; that is the same object-runtime gap B2 recorded for `@@search/set-lastindex-*-err`. |
+| 13 | RegExp constructor / statics | observable `IsRegExp`, the called-as-function short-circuit, ordered `source`/`flags` Gets. |
+| 7 | `prototype/compile` | Annex B ordering + SyntaxError/TypeError shapes. |
+| 5 | `prototype/flags` | the generic `flags` getter (fails on host too) — the PROTOTYPE-side twin of the instance-side defect above. |
+| 1 | `@@search/coerce-string-err` | half of it passes (the poisoned `toString` propagates); the other half needs `__extern_toString(symbol)` to throw a TypeError per §7.1.17. A one-line object-runtime fact, not a RegExp one. |
+| 20 | assorted `String.prototype.*`, the individual flag getters, `prototype/exec` | unchanged from B1/B2. |
 
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 

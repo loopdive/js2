@@ -96,6 +96,8 @@ import { addFuncType } from "./registry/types.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "../ir/regexp-runtime-contract.js";
 import { integrityVarKey } from "./widened-var-key.js";
 import { emitRegExpSymbolMatchBody, emitRegExpSymbolSearchBody } from "./regexp-exec-protocol.js";
+import { emitRegExpSymbolProtocolApply, fileObservesRegExpExecProtocol } from "./regexp-symbol-protocol-call.js";
+import { getWellKnownSymbolId } from "./literals.js";
 import { emitTestCapsAcquire, emitTestCapsRelease } from "./regex-scratch-pool.js";
 import {
   ensureDynamicPatternTokenDecoder,
@@ -4906,6 +4908,28 @@ export function tryCompileStandaloneRegExpSymbolCall(
   // (`re[Symbol.match](42)`) falls through to the host path which does ToString.
   if (expr.arguments.length < 1) return undefined;
   const strExpr = expr.arguments[0]!;
+
+  // (#6651 B3) The DIRECT spelling of the two methods whose generic §22.2.6
+  // body exists (`@@match`, `@@search`) routes through the reified
+  // `RegExp.prototype[@@<id>]` value when the program can OBSERVE the protocol
+  // — i.e. when it mentions `exec` / `RegExp.prototype`, or when the argument
+  // is not string-like and the static core below would decline anyway. The
+  // static core never consults `exec`, so without this route eight rows stay
+  // red despite B2's substrate answering them. See
+  // `regexp-symbol-protocol-call.ts` for the gate's rationale; an `exec`-free
+  // file keeps the static core byte-for-byte.
+  if ((symbolMethod === "search" || symbolMethod === "match") && expr.arguments.length === 1) {
+    const observed = fileObservesRegExpExecProtocol(expr) || !isStringLikeArg(ctx, strExpr);
+    if (observed) {
+      ensureRegExpNativeProtoGlue(ctx);
+      const symbolId = getWellKnownSymbolId(symbolMethod);
+      if (symbolId !== undefined) {
+        const routed = emitRegExpSymbolProtocolApply(ctx, fctx, regexExpr, strExpr, symbolId);
+        if (routed !== undefined) return routed;
+      }
+    }
+  }
+
   if (!isStringLikeArg(ctx, strExpr)) return undefined;
 
   // WASI shares only the fail-loud function-replacer contract. Supported

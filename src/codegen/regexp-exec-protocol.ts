@@ -69,6 +69,7 @@ import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
+import { prepareStandaloneExternrefToNumberProviders } from "./tonumber-fast-paths.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -516,6 +517,126 @@ function flagsContainAvailable(ctx: CodegenContext): boolean {
   return ctx.nativeStrHelpers.get("__str_indexOf") !== undefined && ctx.anyStrTypeIdx >= 0;
 }
 
+/**
+ * (#6651 B3) Everything §22.2.6.8 step 6's COLLECT LOOP needs beyond
+ * {@link RegExpExecProtocolDeps}: the flat-string reader behind
+ * AdvanceStringIndex and the empty-match test, and the standalone
+ * `externref → f64` ToNumber chain behind ToLength.
+ *
+ * Asked as one question, BEFORE the body emits anything — a `@@match` body that
+ * declines half-emitted leaves the operand stack unbalanced and the whole
+ * module fails to validate (B2's late correctness fix, same hazard).
+ */
+interface MatchLoopDeps {
+  readonly flatten: number;
+  readonly anyStr: number;
+  readonly nativeStr: number;
+  readonly dataTypeIdx: number;
+  readonly toPrimitive?: number;
+}
+
+function prepareMatchLoopDeps(ctx: CodegenContext, fctx: FunctionContext): MatchLoopDeps | undefined {
+  const flatten = ctx.nativeStrHelpers.get("__str_flatten");
+  if (flatten === undefined || ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0 || ctx.nativeStrDataTypeIdx < 0) {
+    return undefined;
+  }
+  // ToLength's input is `Get(rx, "lastIndex")`, an arbitrary value: the
+  // canonical standalone chain is `__unbox_number(__to_primitive(v, "number"))`,
+  // which is what makes a poisoned `valueOf` on `lastIndex` throw from where the
+  // spec says it does. A context without `__to_primitive` degrades to the bare
+  // unbox rather than declining the whole arm.
+  const providers = prepareStandaloneExternrefToNumberProviders(ctx, fctx);
+  if (providers !== undefined) addStringConstantGlobal(ctx, "number");
+  return {
+    flatten,
+    anyStr: ctx.anyStrTypeIdx,
+    nativeStr: ctx.nativeStrTypeIdx,
+    dataTypeIdx: ctx.nativeStrDataTypeIdx,
+    toPrimitive: providers?.toPrimitive,
+  };
+}
+
+/** `[externref] → [ref $NativeString]` — narrow a string externref and flatten it. */
+function flattenExternStringInstrs(loop: MatchLoopDeps): Instr[] {
+  return [
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: loop.anyStr },
+    { op: "call", funcIdx: loop.flatten },
+  ];
+}
+
+/**
+ * `[] → [i32]` — §22.2.7.3 **AdvanceStringIndex**(S, index, unicode).
+ *
+ * `index + 1`, except that in unicode mode a lead surrogate followed by a trail
+ * surrogate advances by 2 so the loop never splits an astral code point. The
+ * code units are read straight out of the flattened subject's backing array
+ * (`data[off + i]`), the same reader the matcher itself uses.
+ */
+function buildAdvanceStringIndexInstrs(
+  loop: MatchLoopDeps,
+  flatLocal: number,
+  idxLocal: number,
+  unicodeLocal: number,
+): Instr[] {
+  const next1: Instr[] = [{ op: "local.get", index: idxLocal }, { op: "i32.const", value: 1 }, { op: "i32.add" }];
+  const unit = (offset: number): Instr[] => [
+    { op: "local.get", index: flatLocal },
+    { op: "struct.get", typeIdx: loop.nativeStr, fieldIdx: 2 },
+    { op: "local.get", index: flatLocal },
+    { op: "struct.get", typeIdx: loop.nativeStr, fieldIdx: 1 },
+    { op: "local.get", index: idxLocal },
+    { op: "i32.add" },
+    { op: "i32.const", value: offset },
+    { op: "i32.add" },
+    { op: "array.get_u", typeIdx: loop.dataTypeIdx },
+  ];
+  const isSurrogate = (offset: number, lo: number): Instr[] => [
+    ...unit(offset),
+    { op: "i32.const", value: 0xfc00 },
+    { op: "i32.and" },
+    { op: "i32.const", value: lo },
+    { op: "i32.eq" },
+  ];
+  return [
+    { op: "local.get", index: unicodeLocal },
+    {
+      op: "if",
+      blockType: { kind: "val", type: I32 },
+      then: [
+        // index + 1 >= len ⇒ there is no trail unit to pair with.
+        ...next1,
+        { op: "local.get", index: flatLocal },
+        { op: "struct.get", typeIdx: loop.nativeStr, fieldIdx: 0 },
+        { op: "i32.ge_s" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: I32 },
+          then: next1,
+          else: [
+            ...isSurrogate(0, 0xd800),
+            {
+              op: "if",
+              blockType: { kind: "val", type: I32 },
+              then: [
+                ...isSurrogate(1, 0xdc00),
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: I32 },
+                  then: [{ op: "local.get", index: idxLocal }, { op: "i32.const", value: 2 }, { op: "i32.add" }],
+                  else: next1,
+                },
+              ],
+              else: next1,
+            },
+          ],
+        },
+      ],
+      else: next1,
+    },
+  ];
+}
+
 function buildFlagsContainInstrs(ctx: CodegenContext, flagsLocal: number, flag: string): Instr[] {
   const indexOf = ctx.nativeStrHelpers.get("__str_indexOf") ?? 0;
   addStringConstantGlobal(ctx, flag);
@@ -534,6 +655,162 @@ function buildFlagsContainInstrs(ctx: CodegenContext, flagsLocal: number, flag: 
 }
 
 /**
+ * `[] → [externref]` — §22.2.6.8 **step 6**, the global collect loop, in full.
+ *
+ * ```
+ *  6. else,
+ *     a. Assert: flags contains "g"
+ *     b. fullUnicode = flags contains "u"
+ *     c. ? Set(rx, "lastIndex", +0, true)
+ *     d. A = ! ArrayCreate(0);  e. n = 0
+ *     f. repeat:
+ *        i.   result = ? RegExpExec(rx, S)
+ *        ii.  if result is null, return n = 0 ? null : A
+ *        iii. matchStr = ? ToString(? Get(result, "0"))
+ *             CreateDataProperty(A, ToString(n), matchStr)
+ *             if matchStr is "":
+ *                thisIndex = ℝ(? ToLength(? Get(rx, "lastIndex")))
+ *                ? Set(rx, "lastIndex", AdvanceStringIndex(S, thisIndex, fullUnicode), true)
+ *             n = n + 1
+ * ```
+ *
+ * Three things this shape is load-bearing for, each with its own row:
+ *
+ * - **`Get(result, "0")` is a real `[[Get]]` and its result is `ToString`ed.**
+ *   `g-get-result-err` poisons that getter and `g-coerce-result-err` poisons the
+ *   returned object's `toString`; both must throw from inside the loop.
+ * - **The empty-match advance is the loop's only termination guarantee.** A
+ *   custom `exec` that keeps matching the empty string at a fixed `lastIndex`
+ *   would spin forever without it; the spec's answer is AdvanceStringIndex, and
+ *   its unicode arm is what keeps an astral code point from being split.
+ * - **`n = 0 ⇒ null`.** The array is built eagerly, so the "no match at all"
+ *   answer is decided by the counter, not by the carrier.
+ *
+ * The array carrier is the standalone `$ObjVec` (`__objvec_new` /
+ * `__objvec_push`) — the same host-import-free, `[i]`/`.length`-readable
+ * builder `Array.prototype.filter`/`map` use in this target. Pushing
+ * sequentially IS `CreateDataProperty(A, ToString(n), …)` here because `n`
+ * increases by exactly one per push, so the vec's dense index and the spec's
+ * property key are the same number by construction.
+ */
+function buildMatchGlobalArm(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  deps: RegExpExecProtocolDeps,
+  loop: MatchLoopDeps,
+  rxLocal: number,
+  sLocal: number,
+  flagsLocal: number,
+  zeroLocal: number,
+  builtinArm: Instr[],
+): Instr[] {
+  addStringConstantGlobal(ctx, "0");
+  const aLocal = allocLocal(fctx, `__rm_a_${fctx.locals.length}`, EXTERNREF);
+  const nLocal = allocLocal(fctx, `__rm_n_${fctx.locals.length}`, I32);
+  const mLocal = allocLocal(fctx, `__rm_m_${fctx.locals.length}`, EXTERNREF);
+  const resLocal = allocLocal(fctx, `__rm_res_${fctx.locals.length}`, EXTERNREF);
+  const uLocal = allocLocal(fctx, `__rm_u_${fctx.locals.length}`, I32);
+  const idxLocal = allocLocal(fctx, `__rm_i_${fctx.locals.length}`, I32);
+  const flatSLocal = allocLocal(fctx, `__rm_fs_${fctx.locals.length}`, { kind: "ref", typeIdx: loop.nativeStr });
+
+  // ToNumber, then §7.1.20 ToLength's clamp. `i32.trunc_sat_f64_s` answers 0
+  // for NaN, which is ToLength's own answer for it; the explicit test below
+  // covers the negative case.
+  const toNumber: Instr[] =
+    loop.toPrimitive === undefined
+      ? [{ op: "call", funcIdx: deps.unboxNumber }]
+      : [
+          ...stringConstantExternrefInstrs(ctx, "number"),
+          { op: "call", funcIdx: loop.toPrimitive },
+          { op: "call", funcIdx: deps.unboxNumber },
+        ];
+
+  const emptyMatchArm: Instr[] = [
+    ...buildGetInstrs(ctx, deps, rxLocal, "lastIndex"),
+    ...toNumber,
+    { op: "i32.trunc_sat_f64_s" },
+    { op: "local.set", index: idxLocal },
+    { op: "local.get", index: idxLocal },
+    { op: "i32.const", value: 0 },
+    { op: "i32.lt_s" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: idxLocal },
+      ],
+      else: [],
+    },
+    ...buildSetInstrs(ctx, deps, rxLocal, "lastIndex", [
+      ...buildAdvanceStringIndexInstrs(loop, flatSLocal, idxLocal, uLocal),
+      { op: "f64.convert_i32_s" },
+      { op: "call", funcIdx: deps.boxNumber },
+    ]),
+  ];
+
+  const body: Instr[] = [
+    // steps 6.b-6.e — the loop's invariants, established once.
+    ...buildFlagsContainInstrs(ctx, flagsLocal, "u"),
+    { op: "local.set", index: uLocal },
+    { op: "local.get", index: sLocal },
+    ...flattenExternStringInstrs(loop),
+    { op: "local.set", index: flatSLocal },
+    ...buildSetInstrs(ctx, deps, rxLocal, "lastIndex", [{ op: "local.get", index: zeroLocal }]),
+    { op: "call", funcIdx: deps.objVecNew },
+    { op: "local.set", index: aLocal },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: nLocal },
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            // step 6.f.i-ii
+            ...buildRegExpExecInstrs(ctx, fctx, deps, rxLocal, sLocal, builtinArm),
+            { op: "local.set", index: resLocal },
+            { op: "local.get", index: resLocal },
+            { op: "ref.is_null" },
+            { op: "br_if", depth: 1 },
+            // step 6.f.iii.1-2
+            ...buildGetInstrs(ctx, deps, resLocal, "0"),
+            { op: "call", funcIdx: deps.externToString },
+            { op: "local.set", index: mLocal },
+            { op: "local.get", index: aLocal },
+            { op: "local.get", index: mLocal },
+            { op: "call", funcIdx: deps.objVecPush },
+            { op: "local.get", index: nLocal },
+            { op: "i32.const", value: 1 },
+            { op: "i32.add" },
+            { op: "local.set", index: nLocal },
+            // step 6.f.iii.3 — the empty-match advance.
+            { op: "local.get", index: mLocal },
+            ...flattenExternStringInstrs(loop),
+            { op: "struct.get", typeIdx: loop.nativeStr, fieldIdx: 0 },
+            { op: "i32.eqz" },
+            { op: "if", blockType: { kind: "empty" }, then: emptyMatchArm, else: [] },
+            { op: "br", depth: 0 },
+          ],
+        },
+      ],
+    },
+    // step 6.f.ii's answer, decided by the counter.
+    { op: "local.get", index: nLocal },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: EXTERNREF },
+      then: [{ op: "ref.null.extern" }],
+      else: [{ op: "local.get", index: aLocal }],
+    },
+  ];
+  return body;
+}
+
+/**
  * §22.2.6.8 `RegExp.prototype[@@match](string)`, generic over an Object receiver.
  *
  * ```
@@ -547,16 +824,10 @@ function buildFlagsContainInstrs(ctx: CodegenContext, flagsLocal: number, flag: 
  * identity, which is why `exec-return-type-valid` can assert the exec object
  * comes back unchanged and why no result property is read here.
  *
- * The GLOBAL arm is deliberately PARTIAL: it performs step 6's observable
- * prefix — the `Set(rx, "lastIndex", +0)` and the first `RegExpExec` — and then
- * answers `null`. The collect loop needs a runtime Array plus AdvanceStringIndex,
- * a second mechanism that belongs with the `@@replace`/`@@split` result loops.
- * Answering `null` is exactly what this closure answered BEFORE this change (its
- * body was a `ref.null.extern` placeholder), so the partial arm strictly adds
- * observable effects that the spec requires and removes none: a poisoned
- * `lastIndex` setter or a poisoned `exec` getter now throws where it previously
- * went unnoticed. A global match that actually matches still answers `null`, and
- * that residual is recorded in #6651 rather than papered over.
+ * The GLOBAL arm (#6651 B3) is now step 6 in full — see
+ * {@link buildMatchGlobalArm}. B2 shipped it as a PARTIAL arm (the
+ * `Set(rx, "lastIndex", +0)` and the first `RegExpExec`, then `null`), which was
+ * honest about its effects but could not answer a global match that matches.
  *
  * Params are the reflective-closure ABI: 1 = `this`, 2 = the first argument.
  */
@@ -567,14 +838,26 @@ export function emitRegExpSymbolMatchBody(
   argParam: number,
   emitBuiltinExec: BuiltinExecEmitter,
 ): ValType | null {
-  const deps = prepareRegExpExecProtocol(ctx, fctx);
-  if (deps === undefined) return null;
+  const deps0 = prepareRegExpExecProtocol(ctx, fctx);
+  if (deps0 === undefined) return null;
   // EVERY decline has to happen here, before the first `fctx.body.push`. A
   // body that bails half-emitted leaves the operand stack unbalanced and the
   // whole module fails to validate — which is a far worse failure than the
   // "keep the previous answer" the caller's decline path is written to give.
-  // `__str_indexOf` is the one dependency that is not part of `deps`.
+  // `__str_indexOf` and the step-6 loop's readers are the dependencies that are
+  // not part of `deps`.
   if (!flagsContainAvailable(ctx)) return null;
+  // (#6651 B3) The loop deps REGISTER `__to_primitive` (ToLength's ToNumber),
+  // and a late import shifts every defined-function index at or above it — so
+  // this runs BEFORE the first `fctx.body.push` and `deps` is re-resolved
+  // immediately after it. Registering it here rather than next to the loop also
+  // keeps the whole decline set in one place. (Measured, not theorised: with the
+  // registration left where the loop reads it, `deps` pointed one import short
+  // and the collect loop's `__objvec_push` was calling a different function —
+  // the array came back empty and the loop ran once.)
+  const loop0 = prepareMatchLoopDeps(ctx, fctx);
+  if (loop0 === undefined) return null;
+  const deps = prepareRegExpExecProtocol(ctx, fctx) ?? deps0;
 
   for (const instr of buildRequireObjectReceiver(ctx, fctx, deps, thisParam)) fctx.body.push(instr);
 
@@ -601,15 +884,24 @@ export function emitRegExpSymbolMatchBody(
   const builtinArmGlobal = captureInto(fctx, () => emitBuiltinExec(thisParam, sLocal));
   const builtinArm = captureInto(fctx, () => emitBuiltinExec(thisParam, sLocal));
   const post = prepareRegExpExecProtocol(ctx, fctx) ?? deps;
+  // The loop's own indices are re-read here for the same reason `post` is: the
+  // builtin arms may have registered an import. Every registration inside is
+  // idempotent, so this adds nothing to the module.
+  const loop = prepareMatchLoopDeps(ctx, fctx) ?? loop0;
 
   const hasG = buildFlagsContainInstrs(ctx, flagsLocal, "g");
 
-  const globalArm: Instr[] = [
-    ...buildSetInstrs(ctx, post, thisParam, "lastIndex", [{ op: "local.get", index: zeroLocal }]),
-    ...buildRegExpExecInstrs(ctx, fctx, post, thisParam, sLocal, builtinArmGlobal),
-    { op: "drop" },
-    { op: "ref.null.extern" },
-  ];
+  const globalArm: Instr[] = buildMatchGlobalArm(
+    ctx,
+    fctx,
+    post,
+    loop,
+    thisParam,
+    sLocal,
+    flagsLocal,
+    zeroLocal,
+    builtinArmGlobal,
+  );
   const nonGlobalArm = buildRegExpExecInstrs(ctx, fctx, post, thisParam, sLocal, builtinArm);
 
   for (const instr of hasG) fctx.body.push(instr);
