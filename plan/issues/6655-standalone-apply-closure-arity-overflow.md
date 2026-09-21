@@ -1,7 +1,7 @@
 ---
 id: 6655
-title: "standalone: a dynamic call to a 9+-formal function traps `unreachable` in `__apply_closure` — the bridge's dispatcher ladder stops at arity 8 and its overflow guard is a hard trap"
-status: in-progress
+title: "standalone: a dynamic call to a 9+-formal function traps `unreachable` in `__apply_closure` — the caller's dispatcher ladder stopped at arity 8 (FIXED); the three Temporal rows stay red on a SECOND ceiling in the linked provider's own ladder, briefed for the next slice"
+status: done
 sprint: current
 priority: high
 horizon: m
@@ -11,6 +11,7 @@ goal: standalone
 parent: 5383
 requested_by: ttraenkler/fable-lead
 created: 2026-09-20
+completed: 2026-09-21
 assignee: ttraenkler/senior-dev-s73
 loc-budget-allow:
   # 2026-09-20 (S73, #6655) — the above-cap dispatcher path has to live in the
@@ -227,6 +228,24 @@ will hand the same value straight back across the link.
 one re-prewarm, and it answers whether the provider can round-trip the callee
 at all — then fall back to (a), which is the durable fix and is shared with
 #6628.
+
+## Measurement record (S73, 2026-09-21)
+
+**Validation.**
+
+| check | result |
+| --- | --- |
+| `tests/issue-6655-standalone-apply-closure-high-arity.test.ts` on a file-copy revert of the three touched files to `bccd46c552` (identical to `origin/main` for those three files) | fails with EXACTLY ONE differing key, `spread14: "TRAP unreachable"`; passes on the fix |
+| witness sweep `tests/issue-66*` + 6484 + 6493 (59 files / 368 tests) | Node 22 and Node 25: 368/368 pass |
+| equivalence gate | 22 failing / 1720 passing / 22 known-failures — unchanged |
+| corpus (94 rows, gc + standalone) vs the S70 base | statusFlips=0 shaFlips=0 |
+| both Temporal providers rebuilt from HEAD, `cacheHit=false`, `--target both` | byte-IDENTICAL to base: host 1,726,098 B, standalone 3,488,870 B |
+| four Temporal families (PlainDate, PlainDateTime, ZonedDateTime, Duration — 480 rows) vs the S70 base | 0 pass→fail, 0 fail→pass |
+| AddSub (`PlainDate`/`PlainYearMonth` add+subtract, 150 rows) vs the S70 base | 0 pass→fail, 0 fail→pass |
+| the nine must-not-move groups (A–D, E-linked/unlinked, F-class/methoddef/objproto) | **fix-tree only, not diffed** — S72 and S74 held the battery slot for the whole window. The risk is bounded: both providers rebuild byte-identical, the corpus shows 0 sha flips, and the mint is gated on `ctx.applyClosureReserved` AND on the module declaring a 9+-formal closure, which none of those groups' consumers do |
+| the three briefed rows | unchanged from base (same trap, same frames) — see above |
+| gate chain incl. `LOC_GATE_BASE=origin/main`, boundaries inventory, typecheck, lint | green |
+
 
 ## Residuals (measured, not fixed)
 
