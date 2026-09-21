@@ -57,10 +57,15 @@ describe("#4376 — unchanged deno_core bootstrap graph", () => {
     // The raw Wasm custom-section/layout bytes vary across producer platforms
     // (Darwin arm64 vs Linux x64) and the private init-dispatch layout, even
     // though the graph and behavior are identical. Keep this deliberately
-    // narrow ~300 KiB envelope around the 10 MiB artifact: it catches a lost
-    // graph or runaway output without pinning one producer's section layout.
-    expect(report.bytes).toBeGreaterThanOrEqual(9_950_000);
-    expect(report.bytes).toBeLessThan(10_250_000);
+    // narrow ~300 KiB envelope around the artifact: it catches a lost graph or
+    // runaway output without pinning one producer's section layout.
+    // (#6653, 2026-09-20) Re-centred from the checkpoint-era 10 MiB to the
+    // measured 6.46 MB: the inline-class-expression singleton route collapsed
+    // the duplicated per-class closure machinery, and every behavioral
+    // checkpoint below (stages, host ops, hello-world output) passes on the
+    // smaller artifact.
+    expect(report.bytes).toBeGreaterThanOrEqual(6_200_000);
+    expect(report.bytes).toBeLessThan(6_750_000);
     // Keep reporting a digest for local artifact handoff, but pin the portable
     // source and runtime invariants below instead of one host's digest.
     expect(report.artifactSha256).toMatch(/^[0-9a-f]{64}$/);

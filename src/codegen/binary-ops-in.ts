@@ -445,10 +445,18 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
   // This handles built-in constructors (Number.MAX_VALUE), prototype methods
   // (valueOf, toString), and dynamically assigned properties.
   let tsTypeHasProperty = false;
+  // An OPTIONAL declared property (`get?: …`) is a may-exist claim, never a
+  // presence proof — `"get" in Reflect.getOwnPropertyDescriptor(o, "x")` folded
+  // TRUE for every data descriptor because lib.es5's PropertyDescriptor declares
+  // `get?`, which sent deno_core's primordials copier down its accessor arm for
+  // every data property. A non-optional prop keeps the fold; an optional one
+  // leaves the answer to `__extern_has` (externref/anyref receivers) or the
+  // struct-field check (closed structs, where presence is physical).
+  const nonOptionalProp = (prop: ts.Symbol | undefined): boolean =>
+    prop !== undefined && (prop.flags & ts.SymbolFlags.Optional) === 0;
   if (staticKey !== null) {
     // Check direct properties on the TypeScript type
-    const prop = rightType.getProperty(staticKey);
-    if (prop) {
+    if (nonOptionalProp(rightType.getProperty(staticKey))) {
       tsTypeHasProperty = true;
     }
     // Check the right side's type for comma expressions too
@@ -462,14 +470,12 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
         lastRight = lastRight.right;
       }
       const lastRightType = ctx.checker.getTypeAtLocation(lastRight);
-      const prop2 = lastRightType.getProperty(staticKey);
-      if (prop2) tsTypeHasProperty = true;
+      if (nonOptionalProp(lastRightType.getProperty(staticKey))) tsTypeHasProperty = true;
     }
     // Also check apparent type (includes prototype methods like valueOf, toString)
     if (!tsTypeHasProperty) {
       const apparentType = ctx.checker.getApparentType(rightType);
-      const apparentProp = apparentType.getProperty(staticKey);
-      if (apparentProp) tsTypeHasProperty = true;
+      if (nonOptionalProp(apparentType.getProperty(staticKey))) tsTypeHasProperty = true;
     }
   }
 
