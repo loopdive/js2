@@ -12451,3 +12451,22 @@ long after the command returns** — `ps -eo pid,rss --sort=-rss` and reap them
 before blaming concurrency. (3) `run-batch.mts` writes its TSV only at GROUP
 end, so a kill loses the whole group — split a long group into ≤200-row chunks.
 (4) `pnpm install` in a fresh harness worktree needs `CI=true` (no TTY).
+
+#### S71 — lead verification (2026-09-21)
+
+Head `5a9484b198` (clean tree), merged with `origin/main` for landing (main
+brought seven files under the merge, none conflicting).
+
+| check | result |
+| --- | --- |
+| gate chain incl. `LOC_GATE_BASE=origin/main`, boundaries inventory, issue-ids, typecheck, lint (merged head) | green (+26 LOC net) |
+| own diff of the lane's 14 battery groups + AddSub (3,834 rows) vs the S70 base | 0 pass→fail, 0 fail→pass; four-family 463/480, AddSub 138/150 |
+| `Temporal-rest` chunk 3 (200 rows) fix vs the lane's reverted-base run | 3 fail→pass (`Instant/compare/argument-zoneddatetime.js`, `Instant/from/argument-zoneddatetime.js`, `Instant/from/subclassing-ignored.js`: `compile_error → pass`), 0 pass→fail. Chunks 1–2 (400 rows) are fix-tree-only, by lead decision, to free the box for three sibling lanes; the provider binary is byte-identical, so the unmeasured delta is bounded to test-body compilation |
+| corpus vs S70 base | 0 status / 0 sha flips (94 rows) |
+| `tests/issue-6652-spread-literal-callable-shapes.test.ts` on a TRUE file-copy revert of the three touched files to `78dd538964` | fails (the 9 defect rows); passes on the fix |
+| equivalence (lane) | 22 / 1720 / 22 |
+
+Accepted as a user-code correctness fix that happens to lift three `Instant`
+rows; it is not a four-family mover, and the next Temporal lever is elsewhere
+(S72 subclass method calls, S73 `__apply_closure` traps, S74 BigInt — all in
+flight in parallel).
