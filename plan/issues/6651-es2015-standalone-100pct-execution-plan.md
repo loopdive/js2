@@ -1575,10 +1575,15 @@ handoff or in the follow-up PR.
 | E2 | integer-indexed MOP `internals/{Set,DefineOwnProperty,OwnPropertyKeys}`, `TypedArray.from/of` statics, static-carrier expando table | 37 | each is a mechanism, not an arm; the static `new Int8Array(1)` carrier has no expando side-table for `__extern_get` | senior-dev, high |
 | F2 | proxy in the prototype chain never runs its trap; `Proxy/construct` NewTarget | 7 + 7 | `$Object.$proto` is `ref null $Object` and `$Proxy` is not a subtype — architectural; NewTarget belongs to the #3371 lane | architect spec first |
 | H2 | symbol-keyed accessor `defineProperty` on a vec carrier dropped; `__extern_length` for non-`$Object` carriers; `Object.prototype.toString` runtime tag honouring `delete` | ~15 | localized to lines in H's receipt | developer, high |
+| I2 | `instanceof` never consults `@@hasInstance` (primitive-LHS fold in `emitDynamicInstanceOf` answers before the handler) | 3 (+ corpus) | lowering change in one function via the existing `__apply_closure` invoker; both-lane sweep over `language/expressions/instanceof/**` | developer, high |
+| I3 | module namespace object: self-import under the runner's virtual `./test.ts` key is left nested (#2932) AND the compiler materializes no namespace for a top-level self-import (`ns` reads null) | 12 | runner + compiler + then the MOP — XL, not the small MOP slice round 1 assumed | architect spec first |
 | realm | every `*-realm*` / `cross-realm` / detached row across A–H | ~130 | re-measure under `JS2WASM_EVAL_ENGINE=quickjs`; then split fixable vs `$262.createRealm` wont-fix | developer, medium |
 
 Dispatch order by rows-per-effort: A2, C3, E2 first (three slots), then D2/B2
-(coordination-bound), then H2/realm, F2 after its spec.
+(coordination-bound), then I2/H2/realm, F2 and I3 after their specs. Cluster I's
+triage (above) also found that with the QuickJS provider present ZERO of its 114
+rows are environment-unmeasurable, and that 5 `language/module-code/*-gen-*`
+compile errors are generator leaks belonging to A2.
 
 ### Definition of done reminder
 
