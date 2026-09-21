@@ -11,7 +11,30 @@ requested_by: ttraenkler/fable-lead
 created: 2026-09-20
 assignee: ttraenkler/senior-dev-s74
 parent: 5383
+loc-budget-allow:
+  - src/codegen/string-ops.ts
+  - src/codegen/declarations/import-collector.ts
+func-budget-allow:
+  - src/codegen/string-ops.ts::compileStringBinaryOp
+  - src/codegen/declarations/import-collector.ts::unifiedVisitNode
 ---
+
+<!--
+2026-09-20 budget rationale (slice 2). The DECISION (which formatter a
+bigint-typed operand gets, and the native-format gate that keeps the JS-host
+lane byte-inert) lives entirely in the new leaf
+`src/codegen/bigint-string-context.ts`. What remains in the two god-files is
+call-site glue that cannot move: five separate string contexts in
+`string-ops.ts` (native operand arm, template span, `String.raw` substitution,
+and both `+` concat operands) each already own their numeric lowering inline,
+and the three demand blocks in `import-collector.ts::unifiedVisitNode` sit
+inside existing `number_toString` registrations whose `spanType`/`leftType`/
+`stringArgFact` locals they reuse — hoisting them out would duplicate the type
+queries. Measured after extracting everything extractable into the leaf:
+string-ops +25, import-collector +7, `compileStringBinaryOp` +9,
+`unifiedVisitNode` +6.
+-->
+
 
 # #6656 — standalone BigInt beyond i64
 
@@ -68,7 +91,7 @@ The last row is the tell. An `any`-typed bigint boxes into the `$BigInt`
 carrier and takes S62's `__any_to_string` bigint arm, which calls the
 **exact** `bigint_toString_radix` formatter
 (`src/codegen/bigint-format-native.ts`). A **statically** bigint-typed
-operand never gets there: `src/codegen/string-ops.ts` has six
+operand never gets there: `src/codegen/string-ops.ts` has five
 `i64 → f64.convert_i64_s → number_toString` sites that treat a branded
 bigint exactly like a native `type i64 = number`.
 
@@ -95,11 +118,17 @@ All 8 fail. Three distinct signatures:
 | `ZonedDateTime/prototype/add/throw-when-intermediate-datetime-outside-valid-limits.js` | `TypeError: cannot convert number to bigint` |
 
 The two `RangeError`-never-thrown rows are the pure >2^63 limit checks
-(S69's attribution). The `«NaN»` and `«[object Object]»` rows are
-**string-round-trip** failures — the polyfill converts its JSBI carrier
-with `globalThis.BigInt(t.toString(10))` and reads values back out of
-strings, so a rounded `String(bigint)` corrupts a value that never left
-i64 range. That is why slice 2 below is expected to move rows on its own.
+(S69's attribution).
+
+The slice-1 hypothesis for the `«NaN»` and `«[object Object]»` rows was that
+they are **string-round-trip** failures — the polyfill converts its JSBI
+carrier with `globalThis.BigInt(t.toString(10))` and reads values back out of
+strings, so a rounded `String(bigint)` would corrupt a value that never left
+i64 range. **Slice 2 falsified that** (see its log below): those rows do not
+move, because the vendored polyfill is untyped JS whose bigints are `any` and
+therefore already took the exact dynamic route. `Duration#total("seconds")`
+answering `NaN` is the >2^63 wrap — the nanosecond total is ~9.0e24. All eight
+rows are on slices 3–5.
 
 ## Implementation Plan
 
@@ -119,7 +148,7 @@ i64 range. That is why slice 2 below is expected to move rows on its own.
 | `StringToBigInt` | `runtime/wasmgc/values/string-to-bigint-body.ts` | native parser, i64 |
 | ToString (exact) | `bigint-format-native.ts` `bigint_toString{,_radix}` | i64, radix 2..36 |
 | ToString routes | `bigint-primitive-to-string.ts` | dynamic receiver + `__any_to_string` |
-| ToString (LOSSY) | `string-ops.ts:345,890,1084,2198,2274,2517/2568` | six `f64.convert_i64_s` sites |
+| ToString (LOSSY, fixed in slice 2) | `string-ops.ts` ×5 | `f64.convert_i64_s` + `number_toString` |
 | strict eq on carriers | `extern-eq-fast.ts:135-155`, `any-helpers.ts:832-848` | `struct.get` + `i64.eq` |
 | truthiness | `is-truthy-ladder.ts:91` | brand → `"bigint"` |
 | `typeof` | `typeof-delete.ts` bigint arms | |
@@ -212,3 +241,110 @@ re-measurement of the eight rows in section C.
 Base `bccd46c552`. No `src/` change. Probes and the base TSV for the eight
 rows are in `.tmp/s74/` (gitignored); the numbers they produced are
 transcribed in sections A–C above.
+
+### Slice 2 (2026-09-20) — exact ToString for a statically-typed bigint
+
+**Landed.** `src/codegen/string-ops.ts` had five sites that stringified a
+branded-bigint i64 by `f64.convert_i64_s` + `number_toString`, which rounds
+above 2^53: the native-strings operand arm, a template span, a `String.raw`
+substitution and both `+` concat operands. Each now prefers the exact
+`bigint_toString` formatter when the operand carries the `bigint` brand, the
+lane emits native number formatters, and the module demanded the helper.
+
+New leaf `src/codegen/bigint-string-context.ts` owns both halves of that one
+decision — `bigIntToStringIdx` (codegen) and `registerBigIntToStringDemand`
+(import collector) — so the emitter and the demand can never disagree. The
+`usesNativeNumberFormat` gate is load-bearing: in the JS-host lane the demand
+would become an `env` IMPORT, and a new import shifts every function index.
+
+**Result: the eight section-C Temporal rows are UNCHANGED — all 8 still fail,
+with byte-identical error text (`.tmp/s74/battery/Target8-s2.tsv` vs
+`base/Target8-base.tsv`).** The slice-1 hypothesis that they were
+string-round-trip failures is therefore **falsified**, and the corroborating
+evidence is that the standalone Temporal provider binary is
+**3 488 870 B before and after** with the same cache key: the vendored
+polyfill is untyped JS, so its bigints are `any`-typed and already took the
+exact `__any_to_string` route that #6642 S62 built. Only code whose operand is
+**statically** `bigint` — i.e. TypeScript source, not the polyfill — was on
+the lossy path. `Duration#total("seconds")` answering `NaN` is the >2^63 wrap
+(the nanosecond total is ~9.0e24), not a printing defect.
+
+So slice 2 is a real correctness fix with no Temporal yield, and the eight
+rows remain entirely on slices 3–5.
+
+Measured:
+
+- Witness `tests/issue-6656-bigint-tostring-exact.test.ts` — 24 rows. On the
+  file-copy revert of the two touched files it FAILS with 17 rounded rows
+  (`String(9223372036854775807n)` → `9223372036854776000`, `"" +
+  9007199254740993n` → `…992`, `` `${2n ** 62n}` `` → `4611686018427388000`,
+  …) while all 5 `ctrl` rows plus `strSmall`/`strZero` already pass, so the
+  controls cannot carry the file green. With the fix: 24/24.
+- Probes: `bi2.mts` 20/20 exact (was 12 wrong), `bi4.mts` 10/10 (was 7 wrong).
+  `bi1.mts`'s remaining 10 wrong rows are all genuine >2^63 wrap and now print
+  the wrapped value EXACTLY (`864n * 10n ** 19n` →
+  `6923773503929843712`, previously the f64-rounded `6923773503929844000`).
+- Corpus 47×{gc,standalone}: `statusFlips=0 shaFlips=0` vs the S70 base.
+- `npm run -s test:equivalence:gate`: no new equivalence regressions.
+- Gate chain green with the frontmatter allowances above.
+
+### Slice 3 target — measured, and it REORDERS the plan (2026-09-20)
+
+Probing where slice 2's `any`-typed control row actually goes turned up a
+defect an order of magnitude larger than the >2^63 range, and it is the one
+that owns the eight briefed rows.
+
+**`any`-typed bigint ARITHMETIC does not exist in standalone.** Probe
+`.tmp/s74/probes/bi5.mts` — plain untyped helpers (`function mul(a,b){return
+a*b}` …) called with bigint arguments, `--target standalone`,
+`hostBridge: off`:
+
+| probe | standalone | Node |
+| --- | --- | --- |
+| `mul(6n, 7n)` | `NaN` | `42` |
+| `mul(1234567890123456789n, 7n)` | `NaN` | `8641975230864197523` |
+| `add(9007199254740992n, 1n)` | `90071992547409921` | `9007199254740993` |
+| `sub(…)` / `div(…)` / `mod(…)` | `NaN` | correct |
+| `lt(1n, 2n)` | `false` | `true` |
+| `neg(9007199254740993n)` | `NaN` | `-9007199254740993` |
+| `typeof mul(6n, 7n)` | `number` | `bigint` |
+| `eq(x, x)` | `true` ✅ | `true` |
+
+Only `===` is right — that is #6642 S62's `extern-eq-fast` bigint arm, the one
+place a bigint carrier is explicitly recognised.
+
+**Root cause.** The `binary-ops.ts` bigint block is entered only when
+`isBigIntType(leftTsType) || isBigIntType(rightTsType)` — i.e. on a STATIC
+bigint type. An `any`-typed operand never reaches it and falls into the
+generic `AnyValue` numeric path, whose tag set is `0 null · 1 undefined ·
+2 number · 4 boolean · 5 string · 6 object` — **there is no bigint tag**. The
+`$BigInt` carrier boxes as an opaque ref, so `*` reads it as a non-number
+(`NaN`), `+` takes the stringy arm (hence the concatenated
+`90071992547409921`, which is `"9007199254740992" + "1"`), and `<` compares
+two non-numbers.
+
+**Why this owns the briefed rows.** `@js-temporal/polyfill` is untyped JS, so
+every bigint it touches is `any`. `Duration.prototype.total("seconds")`
+answering `«NaN»` on three of the eight rows is this, not a >2^63 wrap and not
+a printing defect — the wrap hypothesis predicted a WRONG NUMBER, and the
+observed value is `NaN`. `TypeError: cannot convert number to bigint` on the
+eighth row is the same absence seen from the conversion side.
+
+**Consequence for this issue's order.** A limb representation is worthless
+until the dynamic path dispatches to bigint at all: arbitrary precision behind
+an operator that answers `NaN` changes nothing. So the slice order becomes:
+
+| slice | content |
+| --- | --- |
+| 3 (was 4) | **dynamic bigint arithmetic** — a bigint arm in the `AnyValue` numeric helpers (`+ - * / % **`, unary `-`, ordering) plus `typeof` and ToNumeric, still on the i64 carrier |
+| 4 | `$BigIntVal` supertype + promote/demote (the limb representation) |
+| 5 | limb arithmetic / conversions |
+| 6 | link-boundary survival |
+
+Slice 3 is the one with measurable Temporal yield and it is **independent of
+the representation change**, so it can land on the i64 carrier first. The
+open design question it has to answer is whether the bigint carrier gets a
+real `AnyValue` TAG (touches `typeof`, `===`, truthiness, ToString, ToNumber
+and every arithmetic helper) or whether each numeric helper tests
+`ref.test $BigInt` on the existing object tag's `refval` — the second is
+narrower and is what `extern-eq-fast.ts` already does for `===`.

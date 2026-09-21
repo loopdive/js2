@@ -13,6 +13,7 @@ import {
   isAnyValue,
   undefinedSingletonActive,
 } from "./any-helpers.js";
+import { bigIntToStringIdx } from "./bigint-string-context.js";
 import { compileNumericBinaryOp } from "./binary-ops.js";
 import { callableToStringLiteral } from "./callable-to-string.js";
 import { ensureTaDynProtoMethodHelper, hasTaDynProtoMethodHelper } from "./ta-dyn-proto-methods.js"; // (#5194 r3-2) dyn-view search helpers
@@ -340,6 +341,14 @@ function compileNativeConcatOperand(ctx: CodegenContext, fctx: FunctionContext, 
     return true;
   }
 
+  // (#6656) A bigint-branded i64 has an EXACT formatter; the f64 route below
+  // rounds above 2^53. Declines when the brand is absent — bigint-string-context.ts.
+  const opBigIntToStr = bigIntToStringIdx(ctx, opType);
+  if (opBigIntToStr !== undefined) {
+    fctx.body.push({ op: "call", funcIdx: opBigIntToStr });
+    emitNativeStringRefFromExternref(ctx, fctx);
+    return true;
+  }
   if ((opType.kind === "f64" || opType.kind === "i32" || opType.kind === "i64") && toStrIdx !== undefined) {
     if (opType.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" });
     else if (opType.kind === "i64") fctx.body.push({ op: "f64.convert_i64_s" });
@@ -885,6 +894,10 @@ export function compileNativeTemplateExpression(
       fctx.body.push({ op: "f64.convert_i32_s" });
       fctx.body.push({ op: "call", funcIdx: toStrIdx });
       emitNativeStringRefFromExternref(ctx, fctx);
+    } else if (spanType && bigIntToStringIdx(ctx, spanType) !== undefined) {
+      // (#6656) exact bigint formatter — see bigint-string-context.ts.
+      fctx.body.push({ op: "call", funcIdx: bigIntToStringIdx(ctx, spanType)! });
+      emitNativeStringRefFromExternref(ctx, fctx);
     } else if (spanType && spanType.kind === "i64" && toStrIdx !== undefined) {
       // (#3912) native-formatter box — see the f64 arm above.
       fctx.body.push({ op: "f64.convert_i64_s" });
@@ -1080,6 +1093,9 @@ function compileStringRaw(
     } else if (subType && subType.kind === "i32" && toStrIdx !== undefined) {
       fctx.body.push({ op: "f64.convert_i32_s" });
       fctx.body.push({ op: "call", funcIdx: toStrIdx });
+    } else if (subType && bigIntToStringIdx(ctx, subType) !== undefined) {
+      // (#6656) exact bigint formatter — see bigint-string-context.ts.
+      fctx.body.push({ op: "call", funcIdx: bigIntToStringIdx(ctx, subType)! });
     } else if (subType && subType.kind === "i64" && toStrIdx !== undefined) {
       fctx.body.push({ op: "f64.convert_i64_s" });
       fctx.body.push({ op: "call", funcIdx: toStrIdx });
@@ -2190,9 +2206,14 @@ export function compileStringBinaryOp(
     leftType &&
     (leftType.kind === "f64" || leftType.kind === "i32" || leftType.kind === "i64")
   ) {
+    const leftBigIntToStr = bigIntToStringIdx(ctx, leftType);
     if (leftType.kind === "i32" && (isBooleanType(leftTsType) || (leftType as { boolean?: true }).boolean)) {
       // Boolean → "true"/"false" via conditional select of string constants
       emitBoolToString(ctx, fctx);
+    } else if (leftBigIntToStr !== undefined) {
+      // (#6656) exact bigint formatter. A bigint is never the #6423 undefined
+      // sentinel, so the sentinel-aware wrapper is deliberately skipped.
+      fctx.body.push({ op: "call", funcIdx: leftBigIntToStr });
     } else {
       if (leftType.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" });
       else if (leftType.kind === "i64") fctx.body.push({ op: "f64.convert_i64_s" });
@@ -2267,8 +2288,12 @@ export function compileStringBinaryOp(
     rightType &&
     (rightType.kind === "f64" || rightType.kind === "i32" || rightType.kind === "i64")
   ) {
+    const rightBigIntToStr = bigIntToStringIdx(ctx, rightType);
     if (rightType.kind === "i32" && (isBooleanType(rightTsType) || (rightType as { boolean?: true }).boolean)) {
       emitBoolToString(ctx, fctx);
+    } else if (rightBigIntToStr !== undefined) {
+      // (#6656) exact bigint formatter — see the symmetric left-operand branch.
+      fctx.body.push({ op: "call", funcIdx: rightBigIntToStr });
     } else {
       if (rightType.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" });
       else if (rightType.kind === "i64") fctx.body.push({ op: "f64.convert_i64_s" });
