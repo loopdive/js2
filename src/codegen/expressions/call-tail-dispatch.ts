@@ -85,6 +85,7 @@ import { tryEmitClassDynamicMemberCall } from "./class-dynamic-member-call.js"; 
 import { tryEmitDynamicElementHostMethodCall } from "./dynamic-element-host-call.js";
 import { tryEmitGenericComputedMethodCall } from "./dynamic-element-generic-call.js";
 import { tryEmitLinkedStaticComputedCall } from "../standalone-linked-static-inheritance.js"; // (#6644)
+import { isLinkedDynamicParentInstanceReceiver } from "../standalone-dynamic-parent-class.js"; // (#6654)
 import { tryNormalizeStaticStringElementCallee } from "./element-access-callee-normalization.js"; // (#4625)
 import { tryDetachedBuiltinPrototypeNullishThisThrow } from "../builtin-prototype-brand.js";
 import {
@@ -1531,6 +1532,10 @@ export function compileTailDispatch(
       // receiver. Placed BEFORE the field arm because a class with such a
       // member may also have a closure-valued field, and the runtime dispatch
       // serves that shape correctly too.
+      // (#6654) The linked-subclass arm spliced into the RUNTIME-key twin below
+      // has deliberately NO copy here — a statically resolved key on that
+      // receiver already answers correctly; see
+      // `isLinkedDynamicParentInstanceReceiver`.
       {
         const classDyn = tryEmitClassDynamicMemberCall(ctx, fctx, expr, elemAccess);
         if (classDyn !== undefined) return classDyn;
@@ -1611,6 +1616,18 @@ export function compileTailDispatch(
     // historical behaviour. A non-closure read value hits the safe default arm.
     // (#5195 F1/F3) The runtime-keyed twin of the resolved-key arm above — same
     // reason, and it must precede the receiver-less dispatch below.
+    // (#6654) An instance of a subclass of a LINKED PROVIDER class is in
+    // `ctx.classSet` like any other, so every user-class arm below claims it —
+    // but its carrier is the one the PROVIDER's constructor minted, which the
+    // consumer-side struct identity those arms resolve by cannot recognise, and
+    // they are fixed-arity. A receiver that is the CLASS OBJECT is excluded —
+    // that is a static call, owned by #6644's linked-static arms.
+    if (
+      isLinkedDynamicParentInstanceReceiver(ctx, elemAccess.expression, elemAccessReceiverClassName(ctx, elemAccess))
+    ) {
+      const linkedDyn = tryEmitGenericComputedMethodCall(ctx, fctx, expr, elemAccess);
+      if (linkedDyn !== undefined) return linkedDyn;
+    }
     {
       const classDyn = tryEmitClassDynamicMemberCall(ctx, fctx, expr, elemAccess);
       if (classDyn !== undefined) return classDyn;

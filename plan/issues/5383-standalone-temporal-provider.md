@@ -12725,3 +12725,106 @@ and completed the checks below.
 Accepted with rows unchanged and the arity trap deliberately kept: retiring it
 makes the three rows pass vacuously (a mutated copy passes too). The
 provider-side ladder cap is the S75 brief in #6655.
+### S72 findings (2026-09-21) — #6654 DONE: a computed-key method call on an instance of a subclass of a LINKED provider class now binds the receiver and expands a spread; both briefed `subclassing-ignored` rows flip to pass
+
+S72 (Opus, branch `issue-5383-standalone-temporal-s72`, worktree
+`agent-ad7a06878f57fb497`, off `origin/main` `bccd46c552`). Two commits, two
+src files, +55/−5. Full writeup in
+[#6654](https://js2wasm.loopdive.com/dashboard/issue.html?slug=6654-standalone-linked-subclass-computed-method-call).
+
+**The defect was DISPATCH ORDER, not the boundary.** `instance[method](...args)`
+where `instance` is an instance of a user class extending a linked provider
+class: #6640 makes that class externref-backed with a runtime provider parent,
+so the instance IS the carrier the provider's constructor minted — but the
+class is still a genuine declaration in `ctx.classSet`, so
+`elemAccessReceiverIsUserClass` answers true and the user-class arms of
+`compileTailDispatch`'s RUNTIME-key element-access dispatch claim the call
+before the spread-capable, receiver-binding #6641 arm sees it. Those arms
+resolve a member by CONSUMER-SIDE struct identity (which a provider-minted
+carrier does not have) and are fixed-arity, so two independent wrong answers
+followed: the inherited method ran with `this` unbound, and a spread arrived as
+one array in formal zero. **Every DOT spelling was already correct** — it falls
+through to the link `methodCall` terminal — which is what localised this to the
+arm ordering rather than to the link.
+
+The fix is one splice routing such a receiver to
+`tryEmitGenericComputedMethodCall`, gated by
+`isLinkedDynamicParentInstanceReceiver` on the #6640/#6644 registry
+`ctx.classLinkedDynamicParentExpr` (populated ONLY in a standalone/wasi link
+consumer, so nothing outside this lane is discriminated at all).
+
+**Reduction** (`.tmp/s72/probes/p1.test.ts`, host-free two-module fixture),
+base `bccd46c552` → fix:
+
+| probe | base | fix |
+| --- | --- | --- |
+| `i[m](...A2)` on a subclass-of-linked instance | `echo:p,q,undefined:1` | `echo:p,q:2` |
+| `i[m]()` where the method reads `this` | `!Cannot read properties of undefined (reading a class field)` | `30` |
+| the verbatim `checkSubclassConstructorUndefined` shape | `1/echo:p,q,undefined:1` | `1/echo:p,q:2` |
+
+**A REAL regression in the first cut, caught by the sweep and fixed in the
+second commit.** `elemAccessReceiverClassName` answers the same class name for
+`inst[m]()` and for `Sub[m]()` — an instance and the CLASS OBJECT — so the
+first cut also claimed computed STATIC calls through a linked heritage and
+regressed them to `called value is not a function` (4 cases across
+`tests/issue-6644-link-computed-static-spread-super` and
+`…-static-inheritance-instanceof`). #6644's `tryEmitLinkedStaticComputedCall`
+does run earlier in the driver, but it is gated on a spread being PRESENT, so a
+no-spread static call fell straight through. The predicate now discriminates by
+VALUE DECLARATION — an identifier whose value is a class declaration/expression
+IS the constructor — and a static control is pinned in the #6654 witness.
+
+**Two scope decisions, measured not assumed.** Not gated on a spread being
+present (the no-spread `abs` row is broken by the unbound receiver alone); and
+NO twin splice on the statically-resolved-key arm, where `i["echo"](...A2)` and
+`i["slot"]()` already answer correctly on the base tree — the S68 precedent of
+not taking over a working lowering for no measured gain. A comment at that site
+records the measurement.
+
+**Verification** (head `80a49601a4`, base `bccd46c552`; the box was at load
+~20 on 4 cores with three other lanes, so the battery was resumed twice after
+OOM kills — `run-batch.mts` skips groups whose out-file exists):
+
+| check | result |
+| --- | --- |
+| gate chain (loc, func, coercion-sites, oracle-ratchet, dead-exports), typecheck, lint | green — loc +13 / func +12 in `call-tail-dispatch.ts`, allowance with dated rationale in the #6654 frontmatter |
+| witness on a TRUE file-copy revert of the two src files to `bccd46c552` | 3 teeth FAIL, all 11 controls pass; 14/14 on the fix |
+| sweep `tests/issue-66*` + 6484 + 6493, Node 25.9 | 59 files / 368 tests, all pass |
+| same, Node 22 | 346 pass, 0 test failures; 2 suites died on a 10 s `beforeAll` hook timeout under load (`issue-6484-iterator-prototypes`, `issue-6648-regexp-capture-array-output`) — both green on Node 25 in the same tree, so load artifacts |
+| battery, 14 groups / 3,834 rows, fresh `--target both` provider from HEAD (`cacheHit=false`) | **0 pass→fail**, 6 fail→pass |
+| four families × 120 | **465/480** ← 463 (PlainDate 120, Duration 110 ← 109, PlainDateTime 117, ZDT 118 ← 117) |
+| AddSub 150 | **142/150** ← 138 |
+| must-not-move A/B/C/D/E-unlinked/E-linked/F-class/F-methoddef/F-objproto (3,204 rows) | 0 pass→fail, 0 fail→pass |
+| corpus 94 rows vs the S70 base | statusFlips=0 shaFlips=0 |
+| equivalence | 22 / 1720 / 22, no new regressions |
+
+**Six fail→pass, all one shape** — the two briefed rows plus four never
+targeted individually: `Duration/prototype/abs`, `ZonedDateTime/prototype/add`,
+`PlainDate/prototype/{add,subtract}`, `PlainYearMonth/prototype/{add,subtract}`,
+each `subclassing-ignored.js`. One further flip,
+`language/expressions/object/fn-name-class.js`, is **base drift, not S72**: it
+PASSES on a true file-copy revert to `bccd46c552`, and the mechanism cannot
+reach it (`ctx.classLinkedDynamicParentExpr` is empty outside a link consumer,
+so the predicate short-circuits and emits nothing).
+
+**Residuals measured, NOT fixed**: `C.prototype.m.call(inst, …)` through a link
+answers `undefined` (a provider-`prototype` member READ, a different
+mechanism); a computed-key spread call on a plain LOCAL subclass is still
+fixed-arity (`L:p,q,undefined:2` on both trees) — general, not link-specific.
+
+#### S72 — lead verification (2026-09-21)
+
+Head `4031a8abca` (clean tree), merged with `origin/main` (docs-only conflict
+in this file's appended sections, kept in order). The lane was killed by a
+container restart after its full battery had finished; the lead re-diffed and
+completed the checks below.
+
+| check | result |
+| --- | --- |
+| own diff of the lane's 13 groups + AddSub (3,834 rows) vs the S70 base | 0 pass→fail; fail→pass exactly `Duration/prototype/abs/subclassing-ignored.js`, `ZonedDateTime/prototype/add/subclassing-ignored.js` (the two briefed rows), `PlainYearMonth/prototype/subtract/subclassing-ignored.js` (AddSub) and `language/expressions/object/fn-name-class.js` (main's own progress since the S70 base tree) |
+| corpus vs S70 base | 0 status / 0 sha flips (94 rows) |
+| `tests/issue-6654-link-subclass-computed-method-call.test.ts` on a TRUE file-copy revert of both touched src files to `bccd46c552` | fails; passes on the fix |
+| equivalence (lane log) | 22 / 1720 / 22, no new regressions |
+| gate chain incl. `LOC_GATE_BASE=origin/main`, boundaries inventory, issue-ids, typecheck, lint (merged head) | see the landing commit's trailer |
+
+Four-family: 463 → 465/480 (ZDT 118, Duration 110); add/subtract 138 → 139/150.

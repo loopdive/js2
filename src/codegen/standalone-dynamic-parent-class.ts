@@ -255,6 +255,63 @@ export function pushLinkedDynamicParent(
 }
 
 /**
+ * (#6654) Is `className` a class whose parent is a LINKED PROVIDER class —
+ * i.e. one of the externref-backed subclasses this module mints, whose
+ * instance IS the value the provider's own constructor built?
+ *
+ * The question is asked of a CALL RECEIVER, not of a heritage clause, and the
+ * answer decides who owns a COMPUTED-key method call on such an instance.
+ * `elemAccessReceiverIsUserClass` (`calls.ts`) answers `true` here — the class
+ * is a genuine user class declaration in `ctx.classSet` — and the user-class
+ * arms it gates resolve a member by CONSUMER-SIDE struct identity, which a
+ * provider-minted carrier does not have. They therefore answer with the
+ * receiver unbound (`Duration.prototype.abs` → "Cannot read properties of
+ * undefined (reading a class field)") and, being fixed-arity, hand a spread
+ * over as a single array argument. The dot-access spelling never had either
+ * problem: it falls through to the link `methodCall` terminal, which resolves
+ * through the provider's prototype chain at run time and binds `this`.
+ *
+ * Consulting the #6640/#6644 registry is the whole discrimination: only a
+ * class recorded there is externref-backed with a runtime provider parent, and
+ * the registry is populated exclusively in a standalone/wasi LINK CONSUMER, so
+ * every other module — including a plain local `class B extends A` and the
+ * provider modules themselves — is out of the blast radius by construction.
+ */
+function isLinkedDynamicParentClass(ctx: CodegenContext, className: string | undefined): boolean {
+  return className !== undefined && ctx.classLinkedDynamicParentExpr.has(className);
+}
+
+/**
+ * (#6654) …asked of an INSTANCE receiver, which is the whole question.
+ *
+ * `elemAccessReceiverClassName` answers the same class name for `inst[m]()`
+ * and for `Sub[m]()` — one is an instance, the other is the CLASS OBJECT — and
+ * a static call through a linked heritage is already owned by #6644's
+ * `standalone-linked-static-inheritance.ts` arms, which read the parent's own
+ * `__linked_parent_<C>` global rather than treating the class value as a
+ * receiver. Routing a static call to `__extern_method_call(<the class>, k, …)`
+ * regresses it to `called value is not a function`; measured exactly that way
+ * on the first cut of this fix, against
+ * `tests/issue-6644-link-{computed-static-spread-super,static-inheritance-instanceof}`.
+ *
+ * The discrimination is by VALUE DECLARATION, not by name: an identifier whose
+ * value is a class declaration/expression IS the constructor. That is stricter
+ * than `resolveLinkedStaticClassName`, which additionally refuses a colliding
+ * same-named twin — here a refusal must mean "not a static receiver", so the
+ * twin case has to decline too rather than fall through to this arm.
+ */
+export function isLinkedDynamicParentInstanceReceiver(
+  ctx: CodegenContext,
+  receiver: ts.Expression,
+  receiverClassName: string | undefined,
+): boolean {
+  if (!isLinkedDynamicParentClass(ctx, receiverClassName)) return false;
+  if (!ts.isIdentifier(receiver)) return true;
+  const decl = ctx.oracle.valueDeclarationOf(receiver);
+  return decl === undefined || (!ts.isClassDeclaration(decl) && !ts.isClassExpression(decl));
+}
+
+/**
  * (#6644) {@link emitLinkedDynamicParentCapture} over the names one class
  * declaration may be registered under — its per-site synthetic identity (#4618)
  * and its source name. At most one of them owns a capture global; the rest are
