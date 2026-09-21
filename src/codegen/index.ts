@@ -8,6 +8,7 @@ import { interfaceHasClassImplementer } from "./interface-class-implementer.js";
 import {
   emitNativeErrorBoundaryBridge,
   emitWasiErrorConstructor,
+  fillErrorCtorUndefinedMessage,
   fillErrorStructMessageOwnPropArms,
   fillExternGetErrorProps,
 } from "./registry/error-types.js";
@@ -6720,6 +6721,7 @@ export function generateModule(
     // on native Error objects instead of missing to `undefined` (see the fill's
     // doc in registry/error-types.ts). No-op unless the module constructs
     // native errors (standalone/wasi only) — byte-identical otherwise.
+    fillErrorCtorUndefinedMessage(ctx);
     fillExternGetErrorProps(ctx);
     // (#5269 L) …and the one intrinsic `$Error_struct` field that is a spec OWN
     // data property, so `hasOwnProperty(err, "message")` stops disagreeing with
@@ -11378,6 +11380,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // (#4098) Multi-source parity: the helper bodies were filled above; now
     // splice the native Error reader and publish the optional JS-boundary
     // adapter after native Error/string types are complete.
+    profilePhase("fill-error-ctor-undefined-message", () => fillErrorCtorUndefinedMessage(ctx));
     profilePhase("fill-extern-get-error-props", () => fillExternGetErrorProps(ctx));
     // (#5269 L) Multi-source parity with the single-source call above.
     profilePhase("fill-error-struct-hasown-message", () => fillErrorStructMessageOwnPropArms(ctx));

@@ -332,7 +332,21 @@ export function isViewRefTestInstrs(ctx: CodegenContext, anyLocalIdx: number): I
   // plain `$Vec`s, so the pre-#5150 chain answered `false` for it whenever the
   // static type could not decide — which is always, for a first-class value
   // read. `ref.test` needs no ordering, so a Set keeps the chain duplicate-free.
+  // (#6651 E-S3) Two corrections to the carrier set, both measured on the
+  // `built-ins/ArrayBuffer/isView/*` rows:
+  //  - the DYNAMIC view brand `$__ta_dyn_view` was missing, so every
+  //    `testWithTypedArrayConstructors` sample (`new TA(…)` through an `any`
+  //    constructor) read as NOT a view — `arg-is-typedarray.js` and
+  //    `invoked-as-a-fn.js`. Read, never registered: a module with no dynamic
+  //    view keeps today's chain.
+  //  - `$__vec_i32_byte` is the ARRAYBUFFER's own backing carrier (#5349 says
+  //    so where it brands `i8_byte` `final` to keep the two apart), and an
+  //    ArrayBuffer has no [[ViewedArrayBuffer]] slot, so §25.1.4.1 answers
+  //    false for it — `arg-is-typedarray-buffer.js` asserts exactly that.
   const carriers = new Set<number>([...ctx.vecTypeMap.values(), ...ctx.taViewTypeMap.values(), dvWinTypeIdx]);
+  const bufferVecTypeIdx = ctx.vecTypeMap.get("i32_byte");
+  if (bufferVecTypeIdx !== undefined) carriers.delete(bufferVecTypeIdx);
+  if (ctx.taDynViewTypeIdx >= 0) carriers.add(ctx.taDynViewTypeIdx);
   const out: Instr[] = [];
   let emitted = false;
   for (const vi of carriers) {

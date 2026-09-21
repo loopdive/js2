@@ -60,7 +60,7 @@ import {
   tryEmitJsonParseLiteral,
   tryEmitJsonStringifyStatic,
 } from "../json-standalone.js";
-import { canonicalUndefinedExternInstrs } from "../any-helpers.js";
+import { canonicalUndefinedExternInstrs, ensureExternStrictEqHelper } from "../any-helpers.js";
 import { compileObjectLiteralAsExternref, materializeStructAsDynamicObject } from "../literals.js";
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { emitCollectionIteratorVec } from "../map-runtime.js";
@@ -81,6 +81,7 @@ import {
   isNativeCombinatorMethod,
   resolveExternrefVecArg,
 } from "../promise-combinators.js";
+import { isCustomCombinatorMethod, tryEmitCustomCombinatorCall } from "../promise-custom-combinator.js";
 import type { InnerResult } from "../shared.js";
 import { brandExternMethodResult, coerceType, compileExpression, VOID_RESULT } from "../shared.js";
 import { compileSpreadCallArgs } from "./extern.js";
@@ -1382,6 +1383,100 @@ export function compileNamespaceStaticCall(
 
         const funcIdx = ensureLateImport(ctx, "__getOwnPropertyNames", [externRef], [externRef]);
         flushLateImportShifts(ctx, fctx);
+        // (#6651 cluster F) §28.1.13 is `target.[[OwnPropertyKeys]]()`, whose
+        // §10.1.11.1 order is integer indices ascending, then string keys in
+        // creation order, then SYMBOL keys in creation order.
+        // `__getOwnPropertyNames` supplies the first two groups and drops the
+        // third — the arm's own comment says "the native runtime does not
+        // retain symbol-keyed properties yet", which is stale: it does, and
+        // `Object.getOwnPropertySymbols` already reads them back with correct
+        // identity (measured — `Reflect.ownKeys(o).length` was 1 where
+        // `getOwnPropertySymbols(o).length` was 1 on the same object). So the
+        // gap is only that the two lists are never joined. Appending the
+        // symbol vec to the (freshly built, unshared) names vec is the whole
+        // §10.1.11.1 step-4 concatenation; declines to the names-only answer
+        // when any of the three helpers is absent from this module.
+        const ownSymbolsIdx = ensureLateImport(ctx, "__getOwnPropertySymbols", [externRef], [externRef]);
+        flushLateImportShifts(ctx, fctx);
+        const externLengthIdx = ensureLateImport(ctx, "__extern_length", [externRef], [{ kind: "f64" }]);
+        flushLateImportShifts(ctx, fctx);
+        const externGetIdxIdx = ensureLateImport(ctx, "__extern_get_idx", [externRef, { kind: "f64" }], [externRef]);
+        flushLateImportShifts(ctx, fctx);
+        const objVecPushIdx = ctx.funcMap.get("__objvec_push");
+        const proxyTypeIdxOwnKeys = ctx.objectRuntimeTypes?.proxyTypeIdx;
+        /** Append every own symbol key of `targetLocal` onto the names vec on the stack. */
+        const appendOwnSymbols = (): Instr[] => {
+          const symsIdx = ctx.funcMap.get("__getOwnPropertySymbols") ?? ownSymbolsIdx;
+          const lenIdx = ctx.funcMap.get("__extern_length") ?? externLengthIdx;
+          const getIdx = ctx.funcMap.get("__extern_get_idx") ?? externGetIdxIdx;
+          if (symsIdx === undefined || lenIdx === undefined || getIdx === undefined || objVecPushIdx === undefined) {
+            return [];
+          }
+          const keysLocal = allocTempLocal(fctx, externRef);
+          const symsLocal = allocTempLocal(fctx, externRef);
+          const nLocal = allocTempLocal(fctx, { kind: "f64" });
+          const iLocal = allocTempLocal(fctx, { kind: "f64" });
+          const appendLoop: Instr[] = [
+            { op: "local.get", index: targetLocal },
+            { op: "call", funcIdx: symsIdx },
+            { op: "local.tee", index: symsLocal },
+            { op: "call", funcIdx: lenIdx },
+            { op: "local.set", index: nLocal },
+            { op: "f64.const", value: 0 },
+            { op: "local.set", index: iLocal },
+            {
+              op: "block",
+              blockType: { kind: "empty" },
+              body: [
+                {
+                  op: "loop",
+                  blockType: { kind: "empty" },
+                  body: [
+                    { op: "local.get", index: iLocal },
+                    { op: "local.get", index: nLocal },
+                    { op: "f64.ge" },
+                    { op: "br_if", depth: 1 },
+                    { op: "local.get", index: keysLocal },
+                    { op: "local.get", index: symsLocal },
+                    { op: "local.get", index: iLocal },
+                    { op: "call", funcIdx: getIdx },
+                    { op: "call", funcIdx: objVecPushIdx },
+                    { op: "local.get", index: iLocal },
+                    { op: "f64.const", value: 1 },
+                    { op: "f64.add" },
+                    { op: "local.set", index: iLocal },
+                    { op: "br", depth: 0 },
+                  ],
+                },
+              ],
+            },
+          ];
+          // A `$Proxy` receiver is EXCLUDED, and the exclusion is load-bearing:
+          // `__getOwnPropertyNames`'s proxy front guard returns the §10.5.11
+          // `ownKeys` TRAP's own array, which the spec requires be returned
+          // as-is and which the user still holds a reference to. Appending to
+          // it would both mutate a user array and add keys the trap did not
+          // report. Only the ordinary `$Object` walk (a vec this call just
+          // built) is concatenated.
+          const out: Instr[] = [
+            { op: "local.set", index: keysLocal },
+            ...(proxyTypeIdxOwnKeys === undefined
+              ? appendLoop
+              : ([
+                  { op: "local.get", index: targetLocal },
+                  { op: "any.convert_extern" },
+                  { op: "ref.test", typeIdx: proxyTypeIdxOwnKeys },
+                  { op: "i32.eqz" },
+                  { op: "if", blockType: { kind: "empty" }, then: appendLoop },
+                ] satisfies Instr[])),
+            { op: "local.get", index: keysLocal },
+          ];
+          releaseTempLocal(fctx, iLocal);
+          releaseTempLocal(fctx, nLocal);
+          releaseTempLocal(fctx, symsLocal);
+          releaseTempLocal(fctx, keysLocal);
+          return out;
+        };
         const boundaryOwnKeysIdx = boundaryReflectInterop ? ctx.funcMap.get("__boundary_object_own_keys") : undefined;
         if (funcIdx !== undefined && boundaryOwnKeysIdx !== undefined) {
           const resultLocal = allocTempLocal(fctx, externRef);
@@ -1392,10 +1487,7 @@ export function compileNamespaceStaticCall(
           fctx.body.push({
             op: "if",
             blockType: { kind: "val", type: externRef },
-            then: [
-              { op: "local.get", index: targetLocal },
-              { op: "call", funcIdx },
-            ],
+            then: [{ op: "local.get", index: targetLocal }, { op: "call", funcIdx }, ...appendOwnSymbols()],
             else: [{ op: "local.get", index: resultLocal }],
           });
           releaseTempLocal(fctx, resultLocal);
@@ -1405,6 +1497,7 @@ export function compileNamespaceStaticCall(
         if (funcIdx !== undefined) {
           fctx.body.push({ op: "local.get", index: targetLocal });
           fctx.body.push({ op: "call", funcIdx });
+          fctx.body.push(...appendOwnSymbols());
           releaseTempLocal(fctx, targetLocal);
           return { kind: "externref" };
         }
@@ -1687,6 +1780,88 @@ export function compileNamespaceStaticCall(
         fctx.body.push({ op: "local.tee", index: spoProtoLocal });
         const spoIdx = ensureLateImport(ctx, "__object_setPrototypeOf", [externRef, externRef], [externRef]);
         flushLateImportShifts(ctx, fctx);
+        // (#6651 cluster F) §28.1.14 step 4 — the REAL boolean. The KNOWN
+        // LIMITATION above ("a refused set returns `true`") described the
+        // missing failure channel; #5148 cluster 2b has since built exactly
+        // that channel as `__object_setPrototypeOf_status`, a pure §10.1.2.1
+        // predicate (SameValue → true, non-extensible → false, cycle → false)
+        // that performs NO write and answers a permissive 1 for every receiver
+        // the writer does not own (non-`$Object`, `$Proxy`). So the answer is
+        // the CONJUNCTION of two bits that are each already correct:
+        //   - the ordinary bit: `__object_setPrototypeOf_status(o, p)`;
+        //   - the exotic bit: `__is_truthy(__object_setPrototypeOf(o, p))`,
+        //     which for a `$Proxy` receiver is the §10.5.2 trap's booleanish
+        //     result (the writer's proxy front guard returns it instead of the
+        //     obj) and for an ordinary receiver is the always-truthy obj → 1.
+        // Reading the writer's result through `__is_truthy` is the same rule
+        // `Reflect.defineProperty` above already applies to its applier, so
+        // this makes the two Reflect arms agree rather than adding a rule.
+        // Evaluation order is status-then-write and the operands come from the
+        // two locals, so neither argument is re-evaluated.
+        const spoStatusIdx = ensureLateImport(ctx, "__object_setPrototypeOf_status", [externRef, externRef], [i32Ty]);
+        flushLateImportShifts(ctx, fctx);
+        // (#6651 cluster F, review of the first cut) The status native's step-2
+        // SameValue compares the two ENCODED `$proto` references, and an
+        // ordinary object's `%Object.prototype%` terminal is encoded as a NULL
+        // field (`OBJ_FLAG_NULL_PROTO` distinguishes it from an explicitly
+        // null-prototype object). So `Reflect.setPrototypeOf(o, Object.prototype)`
+        // on a NON-EXTENSIBLE ordinary `o` looked like "different prototype"
+        // and fell through to the step-3 refusal — the spec says step 2 wins and
+        // the answer is `true`. That shape is REAL: it cost
+        // `Reflect/setPrototypeOf/return-true-if-proto-is-current.js` a
+        // pass → fail in the neighbourhood sweep of the first cut, which is how
+        // it was found. No probe predicted it; only the before/after row run did.
+        // The fallback asks the reader that already models the implicit
+        // terminal — `__getPrototypeOf` — and ONLY when the status bit is 0, so
+        // a live `$Proxy` never sees an extra `getPrototypeOf` trap call: the
+        // status native answers a permissive 1 for every non-`$Object` receiver,
+        // and that set is exactly the one that contains proxies.
+        const spoGpoIdx = ensureLateImport(ctx, "__getPrototypeOf", [externRef], [externRef]);
+        flushLateImportShifts(ctx, fctx);
+        const spoStrictEqIdx = ensureExternStrictEqHelper(ctx);
+        flushLateImportShifts(ctx, fctx);
+        const spoWriteIdx = ctx.funcMap.get("__object_setPrototypeOf") ?? spoIdx;
+        const spoIsTruthyIdx = ctx.funcMap.get("__is_truthy");
+        const spoSameAsCurrent = (): Instr[] => {
+          const gpo = ctx.funcMap.get("__getPrototypeOf") ?? spoGpoIdx;
+          if (gpo === undefined || spoStrictEqIdx === undefined) return [];
+          return [
+            { op: "i32.eqz" },
+            {
+              op: "if",
+              blockType: { kind: "val", type: i32Ty },
+              then: [
+                { op: "local.get", index: spoTargetLocal },
+                { op: "call", funcIdx: gpo },
+                { op: "local.get", index: spoProtoLocal },
+                { op: "call", funcIdx: spoStrictEqIdx },
+              ],
+              else: [{ op: "i32.const", value: 1 }],
+            },
+          ];
+        };
+        // The answer, built from the two locals. Declines to the previous
+        // unconditional `true` if either half is unavailable in this module.
+        const spoBooleanAnswer = (writeIdx: number): Instr[] =>
+          spoStatusIdx === undefined || spoIsTruthyIdx === undefined
+            ? [
+                { op: "local.get", index: spoTargetLocal },
+                { op: "local.get", index: spoProtoLocal },
+                { op: "call", funcIdx: writeIdx },
+                { op: "drop" },
+                { op: "i32.const", value: 1 },
+              ]
+            : [
+                { op: "local.get", index: spoTargetLocal },
+                { op: "local.get", index: spoProtoLocal },
+                { op: "call", funcIdx: spoStatusIdx },
+                ...spoSameAsCurrent(),
+                { op: "local.get", index: spoTargetLocal },
+                { op: "local.get", index: spoProtoLocal },
+                { op: "call", funcIdx: writeIdx },
+                { op: "call", funcIdx: spoIsTruthyIdx },
+                { op: "i32.and" },
+              ];
         if (spoIdx !== undefined) {
           const immutable = objectPrototypeIsImmutableInstrs(ctx, spoTargetLocal);
           if (immutable) {
@@ -1700,18 +1875,14 @@ export function compileNamespaceStaticCall(
               op: "if",
               blockType: { kind: "val", type: i32Ty },
               then: [{ op: "local.get", index: spoProtoLocal }, { op: "ref.is_null" }],
-              else: [
-                { op: "local.get", index: spoTargetLocal },
-                { op: "local.get", index: spoProtoLocal },
-                { op: "call", funcIdx: spoIdx },
-                { op: "drop" }, // native returns obj; Reflect wants a boolean
-                { op: "i32.const", value: 1 }, // success → true (see KNOWN LIMITATION)
-              ],
+              else: spoBooleanAnswer(spoWriteIdx ?? spoIdx),
             });
           } else {
-            fctx.body.push({ op: "call", funcIdx: spoIdx });
-            fctx.body.push({ op: "drop" }); // native returns obj; Reflect wants a boolean
-            fctx.body.push({ op: "i32.const", value: 1 }); // success → true (see KNOWN LIMITATION)
+            // Both operands are already in their locals (the two `local.tee`s
+            // above), so the stack copies are redundant here.
+            fctx.body.push({ op: "drop" }); // proto
+            fctx.body.push({ op: "drop" }); // obj
+            fctx.body.push(...spoBooleanAnswer(spoWriteIdx ?? spoIdx));
           }
           releaseTempLocal(fctx, spoProtoLocal);
           releaseTempLocal(fctx, spoTargetLocal);
@@ -1772,6 +1943,22 @@ export function compileNamespaceStaticCall(
 
         const nativeIdx = ensureLateImport(ctx, "__object_preventExtensions", [externRef], [externRef]);
         flushLateImportShifts(ctx, fctx);
+        // (#6651 cluster F) §28.1.11 step 2 returns the BOOLEAN
+        // `target.[[PreventExtensions]]()`. `__object_preventExtensions`'s
+        // `$Proxy` front guard already returns the §10.5.4 trap's booleanish
+        // result (the helper returns externref precisely so it can), and for
+        // an ordinary receiver it returns the always-truthy obj — so
+        // `__is_truthy` is the whole conversion, and `drop; i32.const 1`
+        // was discarding a `false` the trap had already computed. Same rule
+        // `Reflect.defineProperty` applies to its applier result.
+        const prevExtIsTruthyIdx = ctx.funcMap.get("__is_truthy");
+        const prevExtAnswer = (callIdx: number): Instr[] =>
+          prevExtIsTruthyIdx === undefined
+            ? [{ op: "call", funcIdx: callIdx }, { op: "drop" }, { op: "i32.const", value: 1 }]
+            : [
+                { op: "call", funcIdx: callIdx },
+                { op: "call", funcIdx: prevExtIsTruthyIdx },
+              ];
         const boundaryIdx = boundaryReflectInterop
           ? ctx.funcMap.get("__boundary_object_reflect_prevent_extensions")
           : undefined;
@@ -1784,12 +1971,7 @@ export function compileNamespaceStaticCall(
           fctx.body.push({
             op: "if",
             blockType: { kind: "val", type: i32Ty },
-            then: [
-              { op: "local.get", index: targetLocal },
-              { op: "call", funcIdx: nativeIdx },
-              { op: "drop" },
-              { op: "i32.const", value: 1 },
-            ],
+            then: [{ op: "local.get", index: targetLocal }, ...prevExtAnswer(nativeIdx)],
             else: [{ op: "local.get", index: resultLocal }, { op: "i32.const", value: 1 }, { op: "i32.sub" }],
           });
           releaseTempLocal(fctx, resultLocal);
@@ -1798,9 +1980,7 @@ export function compileNamespaceStaticCall(
         }
         fctx.body.push({ op: "local.get", index: targetLocal });
         if (nativeIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx: nativeIdx });
-          fctx.body.push({ op: "drop" });
-          fctx.body.push({ op: "i32.const", value: 1 });
+          fctx.body.push(...prevExtAnswer(nativeIdx));
         } else {
           fctx.body.push({ op: "drop" });
           fctx.body.push({ op: "i32.const", value: 0 });
@@ -2944,6 +3124,17 @@ export function compileNamespaceStaticCall(
     // the earlier direct-call site (`Promise.resolve(v)` /
     // `Promise.reject(r)` without `.call`) and does not apply here.
     const methodName = propAccess.expression.name.text;
+
+    // (#6651 cluster D / #5197 R3-3) `Promise.{all,race}.call(C, iterable)` for
+    // an ordinary compiled `C` runs the §27.2.4.1.1/§27.2.4.3.1 element
+    // protocol natively (promise-custom-combinator.ts owns admission, argument
+    // compilation and the transactional refusal) instead of leaking the
+    // unsatisfiable `Promise_all`/`Promise_race` host import. Tried BEFORE the
+    // narrow #4682 empty-array arm, which remains the fallback.
+    if (isStandalonePromiseActive(ctx) && isCustomCombinatorMethod(methodName)) {
+      const custom = tryEmitCustomCombinatorCall(ctx, fctx, expr, methodName);
+      if (custom !== undefined) return custom;
+    }
 
     // (#4682) Bounded NewPromiseCapability arm: an ordinary compiled
     // constructor plus an empty array.  The existing native aggregate path

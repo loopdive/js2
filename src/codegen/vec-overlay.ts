@@ -105,7 +105,12 @@ import { SPARSE_INDEX_CEILING } from "./vec-sparse-index.js";
 import { growHighArrayIndexLength, markNumericLikeNamedKey } from "./vec-overlay-high-index.js";
 import { holeTestInstrs } from "./array-holes.js";
 import { buildVecGopdHoleBail } from "./vec-overlay-hole-bail.js"; // (#4491 T11) sparse marker descriptor guard
-import { buildLengthSeedFlags, buildVecLengthConfig } from "./vec-length-descriptor.js";
+import {
+  buildArgumentsOrdinaryLengthDefineArm,
+  buildLengthSeedFlags,
+  buildVecLengthConfig,
+  buildVecLengthDescriptorValue,
+} from "./vec-length-descriptor.js";
 import { buildArgumentsLengthDeletedBail, fillArgumentsLengthBrand } from "./arguments-length-brand.js"; // (#4658)
 import {
   allowedCarriers,
@@ -1044,12 +1049,17 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
               ];
       const bailReturnVec: Instr[] = [{ op: "local.get", index: 0 }, { op: "return" }];
 
+      // (#6651 cluster H) §10.4.4 — an `arguments` object's `length` is an ORDINARY
+      // data property, so a `{value: n}` define on one must not run ArraySetLength.
+      const argumentsLengthDefineArm = buildArgumentsOrdinaryLengthDefineArm(ctx, HOST_HAS_VALUE);
+
       // (#3251 S3) The `"length"` define body — ArraySetLength §10.4.2.1.
       // Runs INSTEAD of the index path when key == "length"; always returns.
       const lengthDefineBody: Instr[] =
         s3 === null
-          ? bailReturnVec.map((i) => ({ ...i }))
+          ? [...argumentsLengthDefineArm, ...bailReturnVec.map((i) => ({ ...i }))]
           : [
+              ...argumentsLengthDefineArm,
               // comp / compExt + seed the length descriptor
               { op: "local.get", index: 4 },
               { op: "call", funcIdx: core.ensureIdx },
@@ -1902,13 +1912,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
               },
               { op: "call", funcIdx: newPlainObjectIdx },
               { op: "local.set", index: 6 },
-              ...setKey("value", [
-                { op: "local.get", index: 2 },
-                { op: "ref.cast", typeIdx: vecBaseIdx },
-                { op: "struct.get", typeIdx: vecBaseIdx, fieldIdx: 0 },
-                { op: "f64.convert_i32_s" },
-                { op: "call", funcIdx: s3.boxNumIdx },
-              ]),
+              ...setKey("value", buildVecLengthDescriptorValue(ctx, 2, vecBaseIdx, s3.boxNumIdx)),
               ...setKey("writable", [
                 { op: "local.get", index: 4 },
                 { op: "call", funcIdx: boxBoolIdx },

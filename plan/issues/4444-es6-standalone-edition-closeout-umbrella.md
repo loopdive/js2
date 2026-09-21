@@ -18,6 +18,12 @@ related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445
 
 # #4444 — UMBRELLA: ES6 (ES2015) standalone edition close-out
 
+> **Dispatch plan lives in #6651** (`plan/issues/6651-es2015-standalone-100pct-execution-plan.md`,
+> 2026-09-20): fresh census 10,384 / 11,704, the 1,320-row gap partitioned into
+> nine frozen cluster manifests under `plan/agent-context/6651/`, each with an
+> owner lane, model, effort and a uniform acceptance recipe. Per-cluster
+> receipts go there; this file stays the narrative history.
+
 ## 2026-09-20 open-PR shepherd handoff
 
 This is a one-shot live audit requested during wrap-up, not a new full-suite
