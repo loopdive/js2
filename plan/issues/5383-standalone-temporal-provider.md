@@ -12704,3 +12704,24 @@ symlink with an empty directory — check `ls test262/harness` afterwards. (It
 was needed here: S71's install had rewritten the shared
 `/home/user/js2/node_modules` to point into its own worktree store, which
 broke `lint` and `check:dead-exports` box-wide.)
+
+#### S73 — lead verification (2026-09-21)
+
+Head `f46b6e2df8` (clean tree), merged with `origin/main` (docs-only conflict
+in this file's appended sections, kept in order). The lane was killed by a
+container restart with groups C and D of its battery outstanding; the lead ran
+those two from its worktree against the lane's HEAD-built provider (`s73-14`)
+and completed the checks below.
+
+| check | result |
+| --- | --- |
+| gate chain incl. `LOC_GATE_BASE=origin/main`, boundaries inventory, issue-ids, typecheck, lint (merged head) | green |
+| sweep `tests/issue-66*` + 6484 + 6493 on the merged head, Node 25 | 61 files / 370 tests green (lane: Node 22 and 25 green on its head) |
+| 13 groups + AddSub (3,834 rows) vs the S70 base, own diff (C and D run by the lead) | 0 pass→fail; 1 fail→pass (`language/expressions/object/fn-name-class.js`, main's own progress) |
+| corpus vs S70 base | 0 status / 0 sha flips (94 rows); both Temporal providers byte-identical |
+| `tests/issue-6655-standalone-apply-closure-high-arity.test.ts` on a TRUE file-copy revert of the three touched src files to the merge-base | fails; passes on the fix |
+| equivalence (lane log) | 22 / 1720 / 22 |
+
+Accepted with rows unchanged and the arity trap deliberately kept: retiring it
+makes the three rows pass vacuously (a mutated copy passes too). The
+provider-side ladder cap is the S75 brief in #6655.
