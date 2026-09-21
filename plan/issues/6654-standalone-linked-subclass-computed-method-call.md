@@ -92,7 +92,7 @@ Base tree (`bccd46c552`) → fix:
 
 ## The fix
 
-`isLinkedDynamicParentClass` (`src/codegen/standalone-dynamic-parent-class.ts`)
+`isLinkedDynamicParentInstanceReceiver` (`src/codegen/standalone-dynamic-parent-class.ts`)
 asks the #6640/#6644 registry `ctx.classLinkedDynamicParentExpr` whether the
 element-access receiver's class has a linked provider parent. That registry is
 populated ONLY in a standalone/wasi link consumer, so the discrimination costs
