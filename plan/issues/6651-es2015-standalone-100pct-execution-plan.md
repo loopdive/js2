@@ -60,6 +60,16 @@ assignee: "ttraenkler/fable-es2015-plan"
 # `fill*ErrorProps` phases so the ordering is readable where it matters. The
 # first cut built the test at emit time instead and silently degraded to the
 # bare `local.get 0` it was meant to replace.
+# 2026-09-21 — cluster F (Proxy/Reflect, standalone). All three edits are inside
+# the ONE standalone `Reflect.*` arm of `compileNamespaceStaticCall`
+# (`nativeReflectProvider`), which is where each method's own answer is built;
+# there is no seam to move them behind without splitting a god-function this
+# slice does not otherwise touch. The growth is ~60 % comment: two of the three
+# reverse a written-down claim that has gone STALE (the `setPrototypeOf` "KNOWN
+# LIMITATION: the native has no failure channel" — #5148 built one; the
+# `ownKeys` "the native runtime does not retain symbol-keyed properties yet" —
+# it does), so the measurement that overturns each claim is recorded next to
+# it rather than in a commit message nobody reads at the site.
 loc-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/vec-overlay.ts
@@ -74,6 +84,16 @@ func-budget-allow:
   - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
+# 2026-09-21 (cluster F) — the three new `__is_truthy` calls are not a
+# hand-rolled coercion matrix. Each is literally the spec's ToBoolean on a
+# [[SetPrototypeOf]] / [[PreventExtensions]] success bit (§28.1.14 step 4,
+# §28.1.11 step 2), and each calls the SAME shared `__is_truthy` native that
+# the neighbouring `Reflect.defineProperty` arm and the six #6494/#5316 proxy
+# front guards already use to read exactly this kind of booleanish trap result.
+# This makes the `Reflect` arms agree with one another rather than introducing
+# a second rule — the same argument #6494 recorded for its own three.
+coercion-sites-allow:
+  - src/codegen/expressions/call-namespace-static.ts
 ---
 
 # #6651 — ES2015 standalone → 100%: cluster execution plan
@@ -822,6 +842,163 @@ ORIGINAL-HARNESS assembly, not against a hand-written `export function test()`.*
 several of this cluster's defects live and where a function-scoped probe cannot
 see them. Most of this slice's investigation time went into a defect that
 only exists in the function-scoped shape.
+
+### 2026-09-21 — Cluster F (Proxy / Reflect, standalone), slice F1: the discarded booleans
+
+- **Branch** `issue-6651-cluster-F-proxy-reflect`, based on
+  `claude/es2015-test262-plan-54tooh` @ `a68e20f7`.
+  **Worktree** `/home/user/js2/.claude/worktrees/agent-a883e5b95a1723f67`.
+- **Manifest** `plan/agent-context/6651/F-proxy-reflect.txt`, 89 rows, sha256
+  `3edd7052b503ee48f0022a8bc2f5c041a116228d19ef65d31bf2aeb54cf80dd7`.
+
+| standalone, `--isolate`, 89 rows | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/6651/F-before.log`) | **0** | 84 | 5 |
+| after (`.tmp/6651/F-after.log`) | **7** | 77 | 5 |
+
+**+7 rows pass; every other row keeps its exact status** (the two logs were
+joined per path, not compared by count). No compile_error became a fail and no
+fail became a compile_error.
+
+**23 of the 89 rows are environment-unmeasurable in this container** —
+`*-realm*` / `cross-realm`, which need `$262.createRealm` and the QuickJS eval
+provider (`JS2WASM_EVAL_ENGINE=quickjs … provider is not built`). They were
+measured, not assumed, and they fail identically before and after, so the delta
+is comparable; their absolute cause mix is not CI-comparable. The honest
+denominator for this slice is therefore **66 rows, of which 7 now pass.**
+
+#### Triage method — the whole 66-row measurable set was probed on the HOST lane first
+
+Cluster A's cheapest-triage rule, applied to every measurable row rather than 8
+per bucket (same order of cost, complete answer): **32 of 66 PASS on the default
+target**, so those are standalone-only lowering gaps and are reachable; 14 fail
+on host too and need work in both lanes; 16 answer `error` on host (the row
+kills its own child process). Every row this slice converted is in the host-pass
+set. Log: `.tmp/6651/F-host-before.tsv`.
+
+#### What changed — three discarded values and one fold that outranked a write
+
+Each of the first three is a value the runtime had **already computed correctly**
+and the call site then threw away. None is a new mechanism; two of them overturn
+a comment that had gone stale, which is why they were mis-signposted as "not
+implemented" rather than "not read".
+
+1. **`Reflect.setPrototypeOf` always answered `true`** (`call-namespace-static.ts`).
+   The arm's own "KNOWN LIMITATION" said `__object_setPrototypeOf` has no failure
+   channel. **Stale:** #5148 cluster 2b built one — `__object_setPrototypeOf_status`,
+   a pure §10.1.2.1 predicate that performs no write and answers a permissive 1
+   for every receiver the writer does not own. The answer is now the conjunction
+   of that ordinary bit with `__is_truthy(writer result)`, which for a `$Proxy`
+   receiver IS the §10.5.2 trap's boolean (the writer's proxy front guard returns
+   it instead of the obj) and for an ordinary receiver is the always-truthy obj.
+   Reading a booleanish trap result through `__is_truthy` is the same rule the
+   neighbouring `Reflect.defineProperty` arm already applies.
+2. **`Reflect.preventExtensions` did `drop; i32.const 1`** over a result whose
+   `$Proxy` front guard had already computed the §10.5.4 trap's `false`.
+3. **`Reflect.ownKeys` dropped SYMBOL keys.** The arm's comment claimed "the
+   native runtime does not retain symbol-keyed properties yet". **Also stale:**
+   it retains them, and `Object.getOwnPropertySymbols` already read them back
+   with correct identity on base (measured: `ownKeys(o).length === 1` while
+   `getOwnPropertySymbols(o).length === 1` on the same object). The two lists
+   were simply never joined — §10.1.11.1 step 4. A `$Proxy` receiver is
+   **excluded**, and that exclusion is load-bearing: `__getOwnPropertyNames`'s
+   proxy front guard returns the `ownKeys` TRAP's own array, which the spec
+   requires be returned as-is and which the caller still holds; appending to it
+   would both mutate a user array and report keys the trap did not.
+4. **`Object.getPrototypeOf` folded from the DECLARATION even when the module
+   writes that binding's prototype** (`object-get-prototype-of.ts`). Measured on
+   base: `var o = {}; Reflect.setPrototypeOf(o, proto)` made the inherited read
+   `o.tag` resolve through `proto` — the write was already correct — while
+   `Object.getPrototypeOf(o)` still answered `%Object.prototype%`. One object,
+   one link, two answers. Same unsoundness #5270 step 2 recognised for
+   `{ __proto__: v }`; the only difference is that the write is a statement.
+
+Two things the fix for (4) had to get right, both measured rather than assumed:
+
+- **It must ROUTE, not decline.** A decline in the two literal folds falls
+  through to the CLASS arm, which re-folds to the compile-time prototype
+  singleton — measured: the decline alone moved nothing for the JS shape. The
+  check therefore claims the expression ahead of every fold and emits the
+  generic `__getPrototypeOf`.
+- **`ctx.dynamicProtoLiteralNodes` is NOT the fact this reader needs.** That set
+  is populated by `markReceiver`, whose first branch is
+  `ctx.oracle.typeFactOf(recv).kind === "class"` — and test262 rows are **JS**,
+  where expando inference gives `var o = {}` an anonymous type whose symbol
+  carries the VARIABLE's name, so the fact reads `{kind:"class", name:"o"}` and
+  the function returns before recording the literal. (Cluster B hit the same
+  trap from the other side.) A small per-`SourceFile` scan of
+  `setPrototypeOf` / `__proto__ =` receiver NAMES supplies it instead, narrowed
+  to bindings whose declaration is a plain object literal — the one carrier
+  whose runtime answer is verified equivalent to the fold it replaces (an unset
+  `$proto` reads back as `%Object.prototype%`, checked with a probe because the
+  whole "a REFUSED set leaves Object.prototype" family depends on it).
+
+#### The regression the sweep caught, and no probe did
+
+The first cut regressed `Reflect/setPrototypeOf/return-true-if-proto-is-current.js`
+pass → fail. §10.1.2.1 step 2 (SameValue → `true`) runs BEFORE the step-3
+extensibility refusal, and the status native compares the two ENCODED `$proto`
+references — an ordinary object's `%Object.prototype%` terminal is encoded as a
+NULL field. So `Reflect.setPrototypeOf(o, Object.prototype)` on a non-extensible
+ordinary `o` looked like "a different prototype" and took the refusal. The fix
+asks the reader that already models the implicit terminal (`__getPrototypeOf`),
+and **only when the status bit is 0** — so a live `$Proxy` never sees an extra
+`getPrototypeOf` trap call, because the status native answers a permissive 1 for
+exactly the set of receivers that contains proxies. Twelve probes were green at
+the moment that regression existed; only the before/after row run saw it.
+
+#### Neighbourhood regression control — zero pass → non-pass
+
+Run in 128-row chunks, one fresh process per chunk (the runner OOMs on
+>~500-row in-process sweeps — a property of the runner, not a finding). Base
+measured with the file-copy A/B revert, branch measured with the exact sources
+committed here (verified by re-deriving the same compiled shas).
+
+| lane | rows | before | after | flips |
+| --- | ---: | --- | --- | --- |
+| `built-ins/Proxy/**` + `built-ins/Reflect/**`, standalone (`.tmp/6651/nb-pr-{before,after}.tsv`) | 464 | 355 / 104 / 5 | **362** / 97 / 5 | +7, **0 lost** |
+| `built-ins/Object/{getPrototypeOf,setPrototypeOf,getOwnPropertyNames,getOwnPropertySymbols,preventExtensions,isExtensible,keys}/**`, standalone (`.tmp/6651/nb-obj-{before,after}.tsv`) | 245 | 220 / 24 / 1 | 220 / 24 / 1 | **none** |
+
+**Host (gc) control is a byte-identity proof.** Both edits are lane-gated (the
+Reflect arm on `targetProfile.semanticProviders === "native-first"`, the
+getPrototypeOf route on `ctx.standalone || ctx.wasi`), so the honest control is
+that host output cannot move: 8 representative programs — a Proxy/Reflect-free
+control, the three changed shapes, a `delete`-through-proxy module, a
+proxy-in-the-prototype-chain module and two integrity modules — are
+**8/8 byte-identical on gc** before vs after (`.tmp/6651/sha-{before,after}.txt`).
+On standalone the same corpus shows exactly the intended delta: the 5 programs
+that exercise a changed arm move, the other 3 are byte-identical.
+
+Also green, all run bare: `npm run -s typecheck`; the five ratchet gates
+(`check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`); `node scripts/equivalence-gate.mjs`
+(22 failing / 1720 passing, all 22 in the committed baseline — no new
+regressions); `biome lint --diagnostic-level=error`; and the new pin file
+`tests/issue-6651-cluster-f-proxy-reflect.test.ts`, 9/9 — **5 of the 9 verified
+RED on the base commit** and 4 are guards that are green on both sides
+(including the two negative directions: a legal `setPrototypeOf` still answers
+`true`, and an untouched literal binding keeps the `%Object.prototype%` fold).
+
+#### Residual sub-buckets (82 rows), with signatures
+
+| rows | status | sub-bucket | what it needs |
+| ---: | --- | --- | --- |
+| 23 | fail | `*-realm*` / `cross-realm` | **environment, not the compiler** — `$262.createRealm` + a built QuickJS provider. Unmeasurable in this container. |
+| 24 | fail | `*-target-is-proxy.js` (every trap) | nested-proxy forwarding over EXOTIC targets — an array's `length`, `new String("str")`'s non-configurable `length`, a RegExp's `lastIndex`, a function's `prototype`. Each row asserts across several such targets, so the rows/fix ratio is poor; 6 of the 24 also fail on host. |
+| 7 | fail | `has/call-in-prototype*`, `has/call-object-create`, `set/call-parameters-prototype*`, `defineProperty/call-parameters` — "handler is the trap context" | **a proxy reached through the PROTOTYPE CHAIN never runs its trap.** Probed directly: `Object.create(proxy)` resolves the proxy to its TARGET as the prototype, so a trapless proxy gives correct ordinary answers and a trapped one is invisible (`Object.getPrototypeOf(heir) === p` is false; the `get`/`set`/`has` traps run ZERO times). The trap `this` IS the handler on the direct path — that half is correct. The blocker is architectural: `$Object.$proto` is typed `ref null $Object` and `$Proxy` is not a subtype, so the chain cannot hold a proxy at all. |
+| 4 | fail | `Proxy/construct/{call-parameters-new-target,trap-is-null,trap-is-undefined,trap-is-undefined-no-property}` | `Reflect.construct(P, args, NT)` on a proxy target passes **the proxy itself** as NewTarget (`native-construct.ts`: "Ordinary `new proxy(...)` uses the proxy itself as NewTarget"), and the trap-absent forward re-enters the driver, which passes the INNER proxy. `__proxy_construct_dispatch` already takes newTarget as its third parameter, so the dispatch is right and the two call sites are wrong. **Deliberately not taken here:** #3371 is in-progress in another lane and owns `Reflect.construct` + NewTarget end-to-end (`reflect-construct-newtarget.ts`); threading a second NewTarget channel through the same arm would duplicate it. All 4 pass on host. |
+| 3 | CE | `Proxy/construct/*-target-is-proxy` | the same NewTarget channel plus `class MyArray extends Array` — strictly harder than the 4 above. |
+| 4 | fail | `deleteProperty` family + `Reflect/deleteProperty/delete-properties` | `delete` does not actually remove the entry: probed on base, `Reflect.deleteProperty(o,'prop')` returns `true` while `o.hasOwnProperty('prop')` stays `true` and `o.prop` is still 42. A tombstone/closed-struct gap (#4745), not a proxy gap. |
+| 4 | fail | `getOwnPropertyDescriptor/*` — "X should be an own property" | the gOPD trap-absent forward over exotic targets; 3 of 4 fail on host too. |
+| 1 | fail | `Reflect/setPrototypeOf/return-false-if-target-is-not-extensible.js` | **localised, not mysterious:** `Object.preventExtensions` records non-extensibility in the integrity BAG for a carrier that is not an `$Object`, and `__object_setPrototypeOf_status` returns a permissive 1 for exactly those carriers, so the refusal is invisible. The TS shape (`const o: any = {}`) already answers `false`; only the JS `var o = {}` carrier does not. Fixing it means teaching the status native to consult `__object_isExtensible` — which would be a no-op, since the same non-`$Object` test makes it return 1 first. The real fix is carrier promotion, in the integrity subsystem. |
+| 2 | fail | `Reflect/ownKeys/{order-after-define-property,return-on-corresponding-order-large-index}` | **both moved to a narrower failure in this slice.** The symbol half of `order-after-define-property` now passes; it fails on a `new String("")` wrapper, whose exotic `length` is pushed at the END of `__getOwnPropertyNames` where §10.1.11.1 wants it in creation order (before later string keys). The large-index row needs `4294967294` classified as an array index and `12345678900` as a string key. |
+| 10 | fail/CE | singletons | `Reflect.apply(fn, null, null)` must throw (CreateListFromArrayLike), `Reflect.construct(<non-ctor>, [])` must throw (IsConstructor on the TARGET — the newTarget check exists, the target check does not), `Reflect.hasOwnProperty` CE, `Proxy/getPrototypeOf/not-extensible-same-proto` invariant, `Proxy/enumerate`, `Proxy/set/trap-is-null-receiver`, and the `Proxy/apply/*-target-is-proxy` pair. |
+
+**Not started in this slice, and why:** the two largest measurable buckets are
+the 24 nested-proxy-over-exotic-target rows (many mechanisms per row) and the
+7 prototype-chain rows (blocked on `$Object.$proto` being unable to hold a
+`$Proxy` — a type-graph change, not a call-site one). The 4+3 `construct` rows
+are a single, clean mechanism but sit inside #3371's active surface.
 
 ## Manifest generator note
 
