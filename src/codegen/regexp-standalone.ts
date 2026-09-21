@@ -95,6 +95,7 @@ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "../ir/regexp-runtime-contract.js";
 import { integrityVarKey } from "./widened-var-key.js";
+import { emitRegExpSymbolMatchBody, emitRegExpSymbolSearchBody } from "./regexp-exec-protocol.js";
 import { emitTestCapsAcquire, emitTestCapsRelease } from "./regex-scratch-pool.js";
 import {
   ensureDynamicPatternTokenDecoder,
@@ -5652,6 +5653,52 @@ function emitRegExpProtoMemberBody(
       return { kind: "externref" };
     }
     return fieldType;
+  }
+
+  // (#6651 B2) `@@9` = `RegExp.prototype[@@search]`, §22.2.6.12, runs BEFORE the
+  // brand-recovery prologue and does not use it. Its step 2 requires only
+  // `Type(rx) is Object`; the RegExp brand requirement is RegExpExec step 5 and
+  // is reached only when `exec` is not callable, which is what makes
+  // `RegExp.prototype[Symbol.search].call({exec: f}, s)` legal. Emitting the
+  // brand check first answered TypeError for that shape before the user's
+  // `exec` could run — see `regexp-exec-protocol.ts`. The builtin arm below IS
+  // the old prologue, moved to where the spec puts it.
+  if (member === "@@9" || member === "@@7") {
+    // RegExpExec steps 5-6 for a genuine RegExp `this`: the brand recovery that
+    // used to run first, plus `RegExpBuiltinExec`, leaving an externref.
+    const emitBuiltinExec = (_rxLocal: number, sLocal: number): void => {
+      const builtin = recoverRegExpStructFromExternref(ctx, fctx, 1);
+      if (builtin === null) {
+        fctx.body.push({ op: "ref.null.extern" });
+        return;
+      }
+      const subjLocal = flattenExternrefArgToString(ctx, fctx, sLocal);
+      const emitted = emitRegexExecArrayCall(ctx, fctx, null, null, {
+        gyLastIndex: "runtime",
+        readLastIndex: true,
+        inputOverride: () => {
+          fctx.body.push({ op: "local.get", index: subjLocal });
+          return nativeStringType(ctx);
+        },
+        regexpOverride: { regexpLocal: builtin.regexpLocal, structTypeIdx: builtin.structTypeIdx },
+      });
+      if (emitted === null) {
+        fctx.body.push({ op: "ref.null.extern" });
+        return;
+      }
+      fctx.body.push({ op: "extern.convert_any" });
+    };
+    const protocolResult =
+      member === "@@9"
+        ? emitRegExpSymbolSearchBody(ctx, fctx, 1, 2, emitBuiltinExec)
+        : emitRegExpSymbolMatchBody(ctx, fctx, 1, 2, emitBuiltinExec);
+    if (protocolResult === null) {
+      // Declining leaves the previous answer for this member — the null
+      // placeholder below — rather than a half-emitted body.
+      fctx.body.push({ op: "ref.null.extern" });
+      return { kind: "externref" };
+    }
+    return protocolResult;
   }
 
   // Method bodies. Brand-recovery prologue: `this` is closure param index 1

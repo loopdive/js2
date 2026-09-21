@@ -147,7 +147,22 @@ loc-budget-allow:
   - src/codegen/class-bodies.ts
   - src/codegen/destructuring-params.ts
   - src/codegen/expressions/identifiers.ts
+# 2026-09-21 — cluster B, slice B2 (observable RegExpExec substrate).
+# `regexp-standalone.ts` +47, all of it in `emitRegExpProtoMemberBody`'s new
+# `@@7`/`@@9` arm. The MECHANISM (~330 LOC — §22.2.7.1 RegExpExec plus the
+# generic §22.2.6.12 `@@search` and §22.2.6.8 `@@match` bodies) is the NEW
+# module `src/codegen/regexp-exec-protocol.ts`, which deliberately knows
+# nothing about the `$NativeRegExp` struct so it stays usable from any receiver
+# shape. What cannot move is the arm itself, for two reasons that are both
+# ordering facts: (a) the arm has to sit BEFORE the brand-recovery prologue —
+# the whole defect being fixed is that the prologue ran first, and "this member
+# does not brand-check here" is only readable at the point the brand check
+# would otherwise happen; and (b) the builtin-exec callback it passes down IS
+# the moved prologue plus `emitRegexExecArrayCall`, both `$NativeRegExp`
+# operations that live in this file.
+  - src/codegen/regexp-standalone.ts
 func-budget-allow:
+  # (see coercion-sites-allow below for slice B2's other gate grant)
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   - src/codegen/generators-native.ts::buildNativeGeneratorPlan
   - src/codegen/generators-native.ts::registerNativeGenerator
@@ -204,10 +219,28 @@ func-budget-allow:
 #     through the shared `__to_primitive` native (hint "number") before the
 #     unbox is the coercion ENGINE doing the work, which is what this gate is
 #     protecting; the two sites are the value operand and its hint string.
+# 2026-09-21 (cluster B, slice B2) — four sites in the new
+# `regexp-exec-protocol.ts`, and the gate is counting two different things.
+#   - `__extern_toString` ×2 — §22.2.6.12 step 3 and §22.2.6.8 steps 3-4,
+#     literally "S = ? ToString(string)" and "flags = ? ToString(? Get(rx,
+#     "flags"))". They are the SAME shared native that `array-tolocalestring.ts`
+#     and `array-like-native.ts` already use for §7.1.17 on an arbitrary value,
+#     so this is the existing spelling rather than a new matrix. It is also the
+#     only spelling that keeps the operation ONCE: the result is a String VALUE
+#     that is then handed unchanged to a user-supplied `exec`, and routing it
+#     through `coerceType` to a native-string GC ref would force a re-box on the
+#     way out — a second coercion opportunity, which `coerce-string-err` and
+#     `flags-tostring-error` exist precisely to catch.
+#   - `__unbox_number` ×2 — NOT a coercion. Both operands are already proven to
+#     be numeric zeros by the preceding `__same_value_zero`; the unbox only
+#     reads the sign so §7.2.10 SameValue can separate `-0` from `+0`, which
+#     `set-lastindex-init-samevalue` and `set-lastindex-restore-samevalue`
+#     measure. No value is converted from one type to another.
 coercion-sites-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/ta-dyn-mop.ts
   - src/codegen/ta-dyn-own-keys.ts
+  - src/codegen/regexp-exec-protocol.ts
 ---
 
 # #6651 — ES2015 standalone → 100%: cluster execution plan
@@ -2248,6 +2281,238 @@ a mechanism each (receiver-aware `[[Set]]`, the `from`/`of` intrinsics, the
 `__to_primitive` carrier arm, the non-identifier receiver). The brief's rule was
 to land one mechanism FULLY with receipts before starting the next; the own-key
 surface is that mechanism, and each of the four is comparable in size to it.
+
+### 2026-09-21 — Cluster B (RegExp `@@` protocol, standalone), slice B2: the observable `RegExpExec` substrate
+
+- **Branch** `issue-6651-cluster-B2-regexp-exec`, based on
+  `claude/es2015-test262-plan-54tooh` @ `16ae7ce977` (origin/main + A2 + C3 + E2).
+  **Worktree** `/home/user/js2/.claude/worktrees/agent-a3fef6f654cd4d90a`.
+- **Manifest** `plan/agent-context/6651/B-regexp-protocol.txt` **minus B1's 7
+  landed rows** = 140 rows, sha256
+  `c75f3f64b702b062778703d26ba3e71d08f7aa86fa7822c954ebc7b2cb3e33c1`. The
+  subtraction was not taken on trust: the full 147-row file was re-measured on
+  this source-clean base and came back **7 pass / 129 fail / 11 compile_error**,
+  exactly B1's published after-state, and the 140 non-pass rows ARE the manifest.
+- **Engine**: `JS2WASM_EVAL_ENGINE=quickjs` (artifact `073742801ba7`, adapter
+  key `d4799bda84cfed0d`), `--standalone --isolate`, 64-row chunks, one runner
+  at a time. B1's 7 `cross-realm` / `proto-from-ctor-realm` rows are measured
+  here rather than reported unmeasurable.
+
+#### What of draft PR #5393 was carried
+
+#5393 (`codex/5198-regexp-exec-slice-b-checkpoint-20260901`) was fetched and
+read. Its delta against the `main` it last merged is **two files and no
+production source**: `plan/issues/5198-…md` (+232) and
+`tests/issue-5198-es2015-regexp-r2.test.ts` (+35). So there was no
+implementation to integrate — the branch is a *contract* checkpoint, and
+deliberately so: its own audit records that it would make "no production-source
+edit" until an unmerged result-carrier candidate was reconciled, and the
+reconciliation that followed concluded **"do not reapply b85"** because the
+bundle was already an upstream ancestor.
+
+What it does own, and what this slice takes from it:
+
+1. **The pre-loop contract**, stated as a boundary: one helper performing
+   `Get(rx, "exec")`, calling a callable override with `rx` and the coerced
+   string, propagating getter and call abrupt completions, rejecting only
+   non-object non-null results — and explicitly NOT reading `index`, `length`,
+   captures, flags or replacement data, because those are C1-C4. The module
+   header of `src/codegen/regexp-exec-protocol.ts` implements exactly that
+   boundary.
+2. **Its 11-row census** (1 pass / 10 fail on `7fff`), which named the `@@match`
+   / `@@replace` / `@@search` custom-`exec` rows. Every one of those 11 is in
+   this slice's manifest and its recorded status matches what was measured here
+   three weeks later, which is a useful independent confirmation that the
+   failure is structural rather than drifting.
+3. Its warning that `built-ins/RegExp/prototype/Symbol.search/
+   cstm-exec-return-invalid.js` **passes for the wrong reason** — its expected
+   TypeError was being produced by the incompatible-receiver path, not by a
+   verified custom-exec result check. That row is still `pass` after this slice,
+   now for the right reason, and it is a control rather than a claim.
+
+#### The defect, and why the two biggest buckets are one bucket
+
+`recoverRegExpStructFromExternref` is the standalone RegExp brand check, and it
+ran as the **first instruction of every reflective `RegExp.prototype.*` body**.
+That is correct for `.test`, `.exec` and the flag getters, and wrong for the
+four `@@` methods: §22.2.6.8/.11/.12/.14 step 2 requires only `Type(rx) is
+Object`, and the brand requirement appears later — in §22.2.7.1 **RegExpExec
+step 5**, reached only when `exec` is *not* callable.
+
+So `RegExp.prototype[Symbol.search].call({exec: f}, s)` is spec-legal and the
+compiler answered `TypeError: Method called on incompatible receiver` before
+`f` could ever run. That is why the residual table's 18 `brand check failed`
+rows and its 19 `Expected a Test262Error but got a TypeError` rows are not two
+buckets: they are the same ordering defect, observed one step apart. The brand
+check is not deleted by this slice — it is **moved to where the spec puts it**,
+with the identical message, so a genuinely wrong `this` with no `exec` still
+reports exactly what it reported before (pinned by a control).
+
+#### What changed
+
+One new module, `src/codegen/regexp-exec-protocol.ts` (~330 LOC), plus a 47-line
+arm in `emitRegExpProtoMemberBody`. **No new host import** — the emitted code is
+built from natives the standalone object runtime already exports
+(`__extern_get`, `__extern_set`, `__extern_toString`, `__is_callable`,
+`__typeof_object`, `__same_value_zero`, `__box_number`, `__unbox_number`,
+`__objvec_new/push`, `__apply_closure`, `__str_indexOf`).
+
+The module is the substrate plus the two method bodies whose spec text consumes
+the exec result trivially:
+
+- **`buildRegExpExecInstrs`** — §22.2.7.1, emitted once and inlined at each call
+  site. Its builtin arm (steps 5-6) is passed in as a callback, so the module
+  knows nothing about the `$NativeRegExp` struct and stays usable from any
+  receiver shape.
+- **`emitRegExpSymbolSearchBody`** — §22.2.6.12 in full: the two `lastIndex`
+  `Get`s, the two conditional `Set`s, the exec, and `Get(result, "index")`.
+- **`emitRegExpSymbolMatchBody`** — §22.2.6.8 steps 1-5 in full (step 5's
+  non-global arm *is* `return RegExpExec(rx, S)`), plus a deliberately PARTIAL
+  global arm: it performs step 6's observable prefix — `Set(rx, "lastIndex",
+  +0)` and the first `RegExpExec` — and then answers `null`, which is what this
+  closure answered before the change (its body was a `ref.null.extern`
+  placeholder). The collect loop needs a runtime Array and AdvanceStringIndex;
+  that is a second mechanism and it is recorded as a residual below rather than
+  approximated.
+
+Three things the implementation had to get right, each measured rather than
+assumed:
+
+1. **`SameValue`, not `SameValueZero`.** `__same_value_zero` is the only
+   ready-made comparator, and it differs from §7.2.10 on exactly one input:
+   `±0`. §22.2.6.12 steps 5 and 8 compare `lastIndex` against `+0` and against
+   its own previous value, and two rows hinge on the difference
+   (`set-lastindex-init-samevalue` writes `-0` and requires the `Set` to happen
+   anyway; `set-lastindex-restore-samevalue` requires the restore). The
+   correction is `1 / x < 0` on the already-proven-numeric operands — no
+   `i64.reinterpret_f64`, no extra local.
+2. **`Type(x) is Object` needs two natives, not one.** `__typeof_object`
+   implements `typeof`, and `typeof null === "object"` — under the #2106
+   singleton regime it answers 1 for a null externref. A receiver test that
+   trusted it alone would admit `.call(null)`, which `this-val-non-obj` requires
+   to be a TypeError. The null test comes first and separately, and the same
+   ordering makes RegExpExec step 4.b correct for `undefined` (a tagged
+   singleton, not null, so it lands in the throw arm).
+3. **The builtin arm must be emitted and spliced out BEFORE any further index is
+   read.** The builtin lowering registers late imports, and a late import shifts
+   every defined-function index at or above it. `flushLateImportShifts` rewrites
+   what is still in `fctx.body` — it cannot rewrite indices already captured in
+   a JS object. So the resolved-natives record is **re-resolved after** the arm
+   is captured (the #2043 late-shift class, in its easiest-to-miss form).
+
+#### Receipt — manifest
+
+| 140 rows, `--standalone --isolate`, QuickJS | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/6651/B2-before.log`) | **0** | 129 | 11 |
+| after (`.tmp/6651/B2-after.log`) | **10** | 119 | 11 |
+
+**+10 rows pass; every one of the other 130 rows keeps its EXACT status.** The
+two logs were joined row-by-row, not compared by count: no `fail` became a
+`compile_error` and none the other way, and the compile_error total is
+unchanged at 11. The ten:
+
+| row | what it pins |
+| --- | --- |
+| `@@search/cstm-exec-return-index` | a custom `exec` runs on a non-RegExp receiver and its result's `index` is returned |
+| `@@search/match-err` | the custom `exec`'s abrupt completion propagates, and `lastIndex` is NOT restored after it |
+| `@@search/get-lastindex-err` | step 4's `Get` is real and its getter can throw |
+| `@@search/lastindex-no-restore` | exactly TWO `lastIndex` reads, and the restoring `Set` is conditional |
+| `@@search/set-lastindex-init` | step 5's `Set` actually runs, before `exec` |
+| `@@search/set-lastindex-restore` | step 8's `Set` actually runs |
+| `@@search/success-get-index-err` | step 10's `Get(result, "index")` is real |
+| `@@match/this-val-non-regexp` | the brand-check widening, both halves in one row |
+| `@@match/get-flags-err` | step 4's `flags` Get precedes everything; `global`/`unicode` are not read |
+| `@@match/g-get-exec-err` | the partial global arm still performs its `Set` and its first RegExpExec |
+
+The bucket movement in the residual signatures corroborates the diagnosis
+rather than just the count: `Method called on incompatible receiver (RegExp
+brand check failed)` went **18 → 13** and `Expected a Test262Error but got a
+TypeError` went **19 → 13**, i.e. both halves of the same ordering defect
+shrank together.
+
+#### Controls — zero pass → non-pass
+
+The blast radius is bounded by construction: the changed code is the body of
+the `RegExp.prototype[@@match]` / `[@@search]` reflective closures, reachable
+only from a program that READS one of those members. The 2,280-row universe
+(`built-ins/RegExp/**` + `annexB/built-ins/RegExp/**` +
+`built-ins/String/prototype/{match,matchAll,replace,replaceAll,search,split}/**`)
+was therefore filtered to rows whose source mentions `Symbol.match` /
+`Symbol.search` / `@@match` / `@@search` (157) — sound because **no row in the
+2,280 includes `wellKnownIntrinsicObjects.js`**, the only harness file that
+mentions those symbols, checked rather than assumed — plus a module-VALIDITY
+canary of every third `prototype/{exec,test,flags,source,lastIndex,toString,
+global,sticky,unicode}` row, because the closure bodies are emitted whenever
+the RegExp proto glue is registered even if never called. Minus this slice's
+own manifest rows, that is **167 control rows** (sha256
+`2aa9d2bdbc76a1e7da1966b0e6a64d0cd889f81cff002c1d1f8fc9406469c2b1`).
+
+| lane | rows | result |
+| --- | ---: | --- |
+| standalone, after (`.tmp/6651/ctrl-after.log`) | 167 | 114 pass / 35 fail / 18 compile_error |
+| standalone, before — the **53 non-pass-after rows**, re-run on a `cp`-reverted `regexp-standalone.ts` (`.tmp/6651/ctrl-before.log`) | 53 | 35 fail / 18 compile_error, **0 pass**, and every row's status IDENTICAL to its after status |
+| host — compiled-binary sha256 of 9 representative programs | 9 | **all 9 byte-identical** (`.tmp/6651/hostsha-{before,after}.txt`) |
+| standalone — the same 9 programs | 9 | **7 byte-identical**; only `reflective-search` and `reflective-match` differ — the two admitted shapes (`.tmp/6651/sasha-{before,after}.txt`) |
+
+The 53-row before-side is a **complete** check, not a sample: a pass→non-pass
+regression is by definition a row that is non-pass AFTER, so running only those
+53 on the base covers every candidate while costing a third of a full A/B.
+
+Also green: `npm run -s typecheck`; `npx biome lint src tests scripts`; the five
+ratchet gates (`check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`); the boundaries inventory
+(`check-compiler-boundaries --mode inventory`, with the new module classified);
+`scripts/equivalence-gate.mjs` (22 failing / 1720 passing, all 22 in the
+committed baseline); B1's `tests/issue-6651-string-symbol-protocol.test.ts`
+(9/9); and the new pin suite `tests/issue-6651-regexp-exec-protocol.test.ts`
+(13/13 — the 10 rows plus 3 controls).
+
+One late correctness fix landed AFTER the measurement and is proved not to
+invalidate it: `emitRegExpSymbolMatchBody`'s `__str_indexOf` availability check
+was moved ahead of its first `fctx.body.push`, because a body that declines
+half-emitted leaves the operand stack unbalanced and makes the whole module
+fail to validate. The guard is unreachable in practice (the helper is
+registered by `prepareRegExpExecProtocol` itself), and the binary-sha control
+confirms it: all 18 programs compile byte-identically before and after the
+move.
+
+#### Residual buckets (130 rows), with signatures
+
+| rows | signature | what it needs |
+| ---: | --- | --- |
+| 31 | `@@split` | §22.2.6.14 generically: **SpeciesConstructor** (9 rows are `species-ctor-*`, 6 of them the `Object_set_constructor` compile error — a `constructor` write on a plain object), the sticky splitter walk, and generic result reads. 21 of the 31 are the `RegExp.prototype[@@split].call(…)` shape, so they sit directly on this slice's substrate. #5198 Slice C4/E. |
+| 30 | `@@replace` | §22.2.6.11's result loop: `Get(result, "0"/"index"/"length"/n)` with their coercions (14 rows are exactly `result-{coerce,get}-*`) plus **GetSubstitution**. #5198 Slice C3. |
+| 20 | `@@match` | the GLOBAL collect loop this slice deliberately left partial — a runtime Array plus AdvanceStringIndex — and the 4 `exec-*` rows, which use the DIRECT `r[Symbol.match](s)` spelling (see below). |
+| 13 | RegExp constructor / statics | observable `IsRegExp`, the called-as-function short-circuit, ordered `source`/`flags` Gets. #5198 Slice E. |
+| 7 | `prototype/compile` | Annex B `compile` ordering and its SyntaxError/TypeError shapes — untouched by this slice. |
+| 6 | `@@search` | 4 are the DIRECT spelling (below); 2 are `set-lastindex-{init,restore}-err`, which need a strict-mode `[[Set]]` on an accessor with **no setter** to throw a TypeError. `__extern_set` silently no-ops there — an object-runtime gap, not a RegExp one. |
+| 5 | `prototype/flags` | the **generic** `flags` getter (accept any Object, ordered `ToBoolean(Get(R, …))`). #5198 Slice F; fails on host too. It also blocks `@@match/get-global-err`, which poisons `global` on a real RegExp and needs the flags GETTER to read it. |
+| 18 | assorted: `String.prototype.{search,split,match,indexOf,replace}` (10), the individual flag getters `global`/`ignoreCase`/`multiline`/`sticky`/`unicode`/`source` (6), `prototype/exec` (2) | each its own mechanism, unchanged from B1's table. |
+
+**The single largest lever left, and it is one mechanism:** the DIRECT spelling
+`re[Symbol.search](s)` / `r[Symbol.match](s)` does NOT reach the reflective
+closure — `tryCompileStandaloneRegExpSymbolCall` answers it from the static
+native core, which never consults `exec`. That is why
+`@@match/exec-{err,invocation,return-type-invalid,return-type-valid}` and
+`@@search/{coerce-string,coerce-string-err,set-lastindex-init-samevalue,
+set-lastindex-restore-samevalue}` are still red **even though the substrate
+that would answer all eight now exists**. Routing that spelling through the
+reified `RegExp.prototype[@@x]` method value (`__apply_closure`) is the next
+slice, and it is the same change B1's residual table wanted for its 3
+`invoke-builtin-*` rows. It needs a gate — the call's result type becomes
+externref — so the gate should be a whole-file predicate ("this program writes
+`exec`/observes the protocol"), which keeps `"abc".search(/b/)` byte-identical.
+
+**Not attempted in this slice, deliberately:** the `@@replace` and `@@split`
+bodies. The brief asked for the substrate as ONE mechanism used by all four
+methods; it is one module, and it is wired into the two methods whose spec text
+consumes the exec result trivially (`@@search` reads one property, `@@match`
+non-global returns it by identity). `@@replace` and `@@split` consume the
+result through loops that are each comparable in size to this whole slice, and
+wiring them to the substrate *without* their loops would replace a wrong answer
+with a differently wrong answer — so the substrate is published with its two
+honest consumers and the loops are named above with their row counts.
 
 ## Handoff — 2026-09-21 (round 1 closed, round 2 ready to dispatch)
 
