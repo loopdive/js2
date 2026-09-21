@@ -1580,6 +1580,21 @@ function emitDynViewSpeciesMethodTwoArm(
   const receiverExpr = propAccess.expression;
   if (!ts.isIdentifier(receiverExpr)) return undefined;
   const name = receiverExpr.text;
+  // (#6651 E-S4) §23.2.3.26 step 4 / §23.2.3.30 step 7 run `? ToIntegerOrInfinity`
+  // on the window arguments, and §7.1.4 step 3 makes a Symbol there a TypeError.
+  // Both arms below compile those args in `{kind:"f64"}` context, where a Symbol
+  // (an i32 id) coerces SILENTLY to 0 — `sample.subarray(Symbol())` returned a
+  // view instead of throwing (`{slice,subarray}/return-abrupt-from-*-symbol.js`).
+  // Same static-type question and same evaluation order as the `fill`/
+  // `copyWithin` gate; `map`/`filter` are excluded because their position 0 is
+  // the callback, not an index.
+  if (
+    (methodName === "slice" || methodName === "subarray") &&
+    emitSymbolIndexArgThrow(ctx, fctx, propAccess, callExpr, [0, 1])
+  ) {
+    fctx.body.push({ op: "unreachable" });
+    return { kind: "externref" };
+  }
   const dynIdx = getOrRegisterTaDynViewType(ctx);
 
   const rt = compileExpression(ctx, fctx, receiverExpr);
