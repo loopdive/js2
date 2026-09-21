@@ -48,16 +48,32 @@ assignee: "ttraenkler/fable-es2015-plan"
 # lane, so the decision "this search value may carry a protocol method" has to
 # be readable at the point the native string lane is entered, and the probe's
 # fall-through arm IS that same lane re-entered through a closure.
+# 2026-09-21 — cluster C (standalone Error `message`, §20.5.1.1 step 3).
+# `src/codegen/context/types.ts` +7 and `src/codegen/index.ts` +3 (one +1 in
+# each of `generateModule` / `generateMultiModule`). The MECHANISM is in two
+# leaf modules that did not exist before (`error-subclass-proto-chain.ts`) or
+# already own it (`registry/error-types.ts`); what cannot move is (a) the
+# context field that carries the `__new_<Error>` bodies from emit time to
+# finalize — `$AnyValue`, the carrier the `undefined` test reads, is not
+# reserved when those constructors are emitted, WAT-verified — and (b) the two
+# finalize call sites that drain it, which have to sit with the other
+# `fill*ErrorProps` phases so the ordering is readable where it matters. The
+# first cut built the test at emit time instead and silently degraded to the
+# bare `local.get 0` it was meant to replace.
 loc-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/vec-overlay.ts
   - src/codegen/generators-native.ts
   - src/codegen/expressions/call-receiver-method.ts
+  - src/codegen/context/types.ts
+  - src/codegen/index.ts
 func-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   - src/codegen/generators-native.ts::buildNativeGeneratorPlan
   - src/codegen/generators-native.ts::registerNativeGenerator
   - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 ---
 
 # #6651 — ES2015 standalone → 100%: cluster execution plan
@@ -633,6 +649,179 @@ regressions); and the new pin suite
 | 3 | `Expected true but got false` at `assert.notSameValue(originalSearch, undefined)` | `invoke-builtin-{search,match}*` — needs `RegExp.prototype[@@x]` to be a **reified, replaceable** method object, so the step-3 RegExp lane dispatches through it. Strictly harder than this slice. |
 | 1 | CE, `String.prototype.replace/cstm-replace-get-err.js` | reachable and **deliberately left**: `"".replace(poisoned)` has ONE argument, and `tryCompileStandaloneStringValueReplace` requires exactly two, so the fall-through arm cannot lower and the `#1474` refusal is still reported. The fix is to admit an absent `replaceValue` as the literal `"undefined"` (§22.1.3.19 step 3) — a separate behaviour change for one row, which would have invalidated this slice's measured after-state. |
 | 40 | assorted `Expected SameValue(…)` | per-method result-shape and cursor residuals across `@@replace` (30 rows), `@@split` (30), `@@match` (23), `@@search` (13) — #5198 Slices C1–C4. |
+
+### 2026-09-21 — Cluster C (class / object-literal / `super`, standalone), slice C1
+
+- **Branch** `worktree-agent-a27d2e622e3791fde`, based on
+  `claude/es2015-test262-plan-54tooh` @ `9b1ff0dc` (origin/main + plan +
+  cluster A merged). **Worktree**
+  `/home/user/js2/.claude/worktrees/agent-a27d2e622e3791fde`.
+- **Manifest** `plan/agent-context/6651/C-class-object-super.txt`, 177 rows,
+  sha256 `785dd45d78a609ecefc58377433fd144a142423557001a9b513cf1ae1492ad8d`.
+
+| standalone, `--isolate` | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/6651/C-before.log`) | 0 | 173 | 4 |
+| after (`.tmp/6651/C-after.log`) | 0 | 173 | 4 |
+
+**No row flipped to pass in this slice, and no row regressed.** The plan's own
+census said 171 fail / 6 CE; this branch's base measures 173 / 4 — quote the
+measured numbers, not the census. Seven rows moved to a LATER assertion and are
+recorded below as a narrower residual; nothing else in the log changed except
+two byte-offset numbers inside pre-existing `CompileError` texts.
+
+#### What landed — §20.5.1.1 step 3 and the error-subclass prototype edge
+
+Two defects, both reproduced with probes on the base tree before any edit.
+
+1. **`new Err()` on `class Err extends TypeError {}` had an own `message`.**
+   A direct `new TypeError()` lowers with `argCount === 0`, so the constructor
+   stores `ref.null.extern` in `$Error_struct` field 1 and the own-property
+   surfaces correctly report absence. The derived subclass goes through a
+   FIXED-ARITY forwarder (`Err_new : (externref) -> externref`), so `new Err()`
+   pads slot 0 with the canonical `undefined` singleton (`global.get
+   $undefined`, WAT-verified) — a non-null value, so the same field said
+   "present". The fix is in the CONSTRUCTOR, not the forwarder: passing
+   `undefined` to `super()` is exactly what the default derived constructor
+   does (§15.7.14), so the value is right and §20.5.1.1 step 3 is the step that
+   must ignore it.
+   Load-bearing detail: the test could NOT be built where the constructor body
+   is built. `$AnyValue` — the carrier the `undefined` singleton lives in — is
+   not reserved yet when the standalone scaffold emits `__new_TypeError`, so
+   the first cut silently degraded to the bare `local.get 0` it was meant to
+   replace (WAT-verified, and the probe that "passed" did so for an unrelated
+   reason). It is now recorded at emit time and woven in at FINALIZE
+   (`fillErrorCtorUndefinedMessage`), which is why the change needs a context
+   field and two call sites in `index.ts`.
+2. **An error-subclass instance inherited NOTHING from its own class
+   prototype.** Measured (`.tmp/w6651C/e4.ts`): `Err.prototype["tag"+"x"]`
+   answers `"T"`, `new Err()["tag"+"x"]` answers `undefined`, and the same
+   shape on a PLAIN class answers `"Y"`. So the carrier, the write and the
+   ordinary class rule all worked; the one missing edge was instance →
+   subclass prototype for the `$Error_struct` representation.
+   `emitStandaloneClassProtoObject` declines for a class with a builtin parent,
+   so there is no `$Object` proto link to walk; the instance's identity lives
+   in `$userClassId` (fieldIdx 4). The new leaf module
+   `src/codegen/error-subclass-proto-chain.ts` turns that brand back into the
+   class's prototype global and delegates the lookup — including the rest of
+   the chain — to `__extern_get` on the carrier. `message` additionally stops
+   answering from a NULL field in both `__extern_get` and the own-property
+   arms, so presence and value cannot disagree.
+
+Files: `src/codegen/error-subclass-proto-chain.ts` (new),
+`src/codegen/registry/error-types.ts`,
+`src/runtime/wasmgc/values/error-bodies.ts`, plus the context field and the two
+finalize call sites. Pin `tests/issue-6651-error-undefined-message.test.ts` —
+4 cases, **2 verified RED on the base tree** (base 6 → 7, base 4 → 7), 2 are
+guards green on both sides (an explicit `undefined` argument; a plain builtin
+error's message/name/throw-catch round trip).
+
+#### Controls — zero pass → non-pass
+
+| set | rows | before | after | flips |
+| --- | ---: | --- | --- | --- |
+| manifest, `--isolate` | 177 | 0 / 173 / 4 | 0 / 173 / 4 | none |
+| `built-ins/Error/**` + `built-ins/NativeErrors/**`, in-process | 187 | 132 pass / 46 fail / 9 CE | 132 / 46 / 9 | **identical non-pass set** |
+| `class/subclass` + `expressions/super` + `statements/try` + `AggregateError`, in-process, 4 chunks | 429 | 316 pass / 111 fail / 2 CE | 316 / 111 / 2 | **identical non-pass set** |
+
+Logs: `.tmp/6651/C-{before,after}.log`, `.tmp/6651/ctlerr-{before,after}.log`,
+`.tmp/6651/ctlcls-{before,after}-0*.log`. The 429-row set had to be run in
+110-row chunks: the whole list in one in-process run dies with an empty log
+(exit 1, zero bytes), which is the realm-contamination hazard the runner header
+documents.
+
+**Host (gc) control is a byte-identity proof, not a sample.** Every arm is
+gated on `ctx.targetProfile.semanticProviders === "native-first"`, so host
+output cannot move: an 11-program corpus (the playground example plus ten
+probe modules, several of them error-heavy) compiles **byte-identically on gc,
+11/11 sha256 equal**, while 9 of the 11 standalone binaries change — exactly
+the intended delta (`.tmp/6651/bytes-{before,after}.txt`). The later extraction
+of the ladder into its own module was separately proven byte-neutral (22/22
+identical across both targets).
+
+Gates, run bare: loc-budget and func-budget PASS with the grants added to this
+file's frontmatter above (`context/types.ts` +7, `index.ts` +3 / +1 / +1 —
+everything else moved into leaf modules; extracting the ladder is what took
+`fillExternGetErrorProps` back under its 300-LOC ceiling); coercion-sites,
+oracle-ratchet (`getTypeAtLocation` +0, `ctx.checker` +0), dead-exports,
+typecheck, compiler-boundaries `--mode inventory` (the new module is classified
+in `scripts/compiler-boundaries.json`), prettier and
+`biome lint --diagnostic-level=error` all 0. `node scripts/equivalence-gate.mjs`:
+**22 failing / 1720 passing, all 22 already in the baseline — no new
+equivalence regressions.**
+
+#### Residuals — what the other 177 rows are, measured
+
+The seven rows this slice moved are the `NativeError/{Eval,Range,Reference,
+Syntax,Type,URI}Error-message.js` family plus
+`Error/message-property-assignment.js`. They now fail one assertion LATER:
+`err2.hasOwnProperty('message')` passes, and they stop at
+`assert.sameValue(err2.message, 'custom-…')`. The remaining blocker is
+**MODULE-scope**, and it is a third, independent defect: with the class and the
+prototype write at module top level — which is what the honest harness
+assembly compiles, since the test body is NOT wrapped in a function there —
+`Err.prototype.message = "custom"` does not land where the dynamic read looks
+(`.tmp/w6651C/e9.ts`: 1 of 4, where the same program inside a function answers
+4 of 4). That is a prototype-WRITE placement bug at module scope, not a read or
+a construction bug, and it is the next thing to fix for this family.
+
+Bucketed before-state of the whole manifest, by signature:
+
+| rows | signature | mechanism |
+| ---: | --- | --- |
+| 10 | `SameValue(«0», «false»)` — `*/dflt-params-arg-val-not-undefined.js` | a method parameter with a numeric default is lowered as `f64`, so an explicitly passed `false` / `''` / `null` arrives as `0`. TS infers the parameter type from its initializer; in JS there is no type. A type-lowering question, not a class one. |
+| 10 | `Cannot destructure 'null' or 'undefined'` — `*/gen-meth-ary-ptrn-elem-ary-empty-init.js` | generator-method destructuring; cluster A's lane, deliberately not built here |
+| 8 | `SameValue(«NaN», «undefined»)` — `*/dstr/*-dflt-obj-ptrn-prop-ary.js` | same f64-typed-slot defect as the 10 above, one level inside a nested destructuring default |
+| 9 | `Cannot access property on null or undefined` | mixed |
+| 8 | `Expected a TypeError … no exception` | scattered singletons (`constructable-but-no-prototype`, `invalid-extends`, `methods-restricted-properties`, `prototype-setter`, `name-binding/const`, `arguments-callee`, `Proxy/no-prototype-throws`, `Symbol/new-symbol-with-super-throws`) — no shared lever |
+| 6 | `SameValue(«"undefined"», «"object"»)` / `«null», «"a"»` — `expressions/super/prop-{dot,expr}-cls-{val,val-from-arrow,this-uninit}.js` | see the #2818 finding below |
+| 5 | `quickjs provider is not built` | environment only; unmeasurable in this container |
+| ~20 | `gen-method` / `decorator` shaped | measured, not built — cluster A's base |
+
+#### Two localised findings the next lane should not have to re-derive
+
+Both were reproduced with probes, both are REAL, and **neither moves a single
+test262 row** — which is why this slice does not ship either of them. They are
+recorded because each cost real measurement to localise and each looks like an
+obvious lever until it is measured.
+
+1. **A class declared inside a BLOCK whose method writes a captured
+   function-scoped `var` drops the write.** `.tmp/w6651C/q31.ts`, ten lines, no
+   `super`: `function test(){ var n=0; if(1){ class C{ m(){ n=5; } } new C().m(); } return n; }`
+   answers **0**, node answers 5. The emitted `$C_m` declares `(local $n f64)`
+   and stores into it; move the same class to function-body level and the
+   method stores into the promoted `__captured_n` global and the answer is 5.
+   Root cause: `collectBlockScopedDeclNames` (`src/codegen/declarations.ts`)
+   collects only `let`/`const`, on the premise that "a `var` is function-scoped
+   and therefore already a module global" — true at module scope, false inside
+   a function, which is the only place that function is ever called from.
+   Collecting `var` there fixes it (verified), and a `let` in the same shape
+   already works.
+   **Why it is not shipped: it flips ZERO test262 rows.** The test262 wrapper
+   HOISTS every initialised test-body `var` to module scope as a `let`, and —
+   more decisively — the standalone lane is scored on the honest
+   whole-assembly harness, which does not wrap the body in a function at all.
+   The #5350 lane recorded this same defect as "the single largest blocker" for
+   the `super/prop-*-cls-val` family; measured against the harness assembly the
+   rows those tests actually run, it is not their blocker.
+2. **The #2818 standalone carve-out that keeps every DERIVED class eager is no
+   longer paying for itself.** `classDeclCapturesNames` returns false for any
+   `extends` clause under standalone, citing 6 rows that regressed when derived
+   capturers were deferred. Disabling the carve-out and running those 6 named
+   rows plus 14 related class/super rows gives an **identical 2 pass / 18 fail**
+   on both sides (`.tmp/6651/ctl-{base,fix2}.log`) — the 8 Iterator
+   `return-is-forwarded` rows now fail for an unrelated reason
+   (`called value is not a function`). So the carve-out can probably be
+   retired, but retiring it alone also flips zero rows, for the same
+   harness-shape reason as finding 1.
+
+The honest lesson for the next owner of this cluster: **probe against the
+ORIGINAL-HARNESS assembly, not against a hand-written `export function test()`.**
+`assembleOriginalHarness(source, meta).primary.source` is three lines of driver
+(`.tmp/w6651C/harness.mts`) and it puts the test body at MODULE scope, where
+several of this cluster's defects live and where a function-scoped probe cannot
+see them. Most of this slice's investigation time went into a defect that
+only exists in the function-scoped shape.
 
 ## Manifest generator note
 

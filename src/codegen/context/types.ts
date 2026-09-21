@@ -3786,6 +3786,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   /** Type index for the WasmGC `$Error_struct` used in standalone/WASI mode (#1104). -1 = not yet registered. */
   errorStructTypeIdx: number;
   /**
+   * (#6651 cluster C) `__new_<Error>` bodies whose message operand still needs
+   * the §20.5.1.1 step-3 `undefined` test woven in at FINALIZE — the
+   * `$AnyValue` carrier the test reads is not reserved when those
+   * constructors are emitted. Drained by `fillErrorCtorUndefinedMessage`.
+   */
+  errorCtorMessageSlots?: { funcIdx: number; argCount: number }[];
+  /**
    * Extra properties for empty object variables.
    *
    * (#3364) Keyed by a PER-DECLARATION key (`widenedVarKey`, name + decl start
