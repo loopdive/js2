@@ -94,6 +94,29 @@ assignee: "ttraenkler/fable-es2015-plan"
 # about a lowering the reader cannot see. The `for-of` function grows by the
 # same 8 lines (`compileForOfAssignDestructuringExternref`), for the same
 # reason and at the same point.
+# 2026-09-21 (cluster E, slice E2): three god-file call sites, each ~70 %
+# comment; every MECHANISM lives in a leaf module.
+#   - index.ts (+8, split across `generateModule` and `generateMultiModule`):
+#     the two finalize call sites for the §10.4.5.6 `[[OwnPropertyKeys]]` arm.
+#     They cannot move behind a seam — the arm must be spliced at body index 0
+#     of `__getOwnPropertyNames` AFTER `fillTaDynViewMopArms` and AFTER the
+#     generic `$__vec_base` arm that `fillObjVecReflectionHelpers` installs,
+#     because the vec arm is written for an ordinary Array and appends
+#     `"length"`. "Last fill wins the front slot" is a fact about this exact
+#     phase list, so the ordering has to be readable here. The arm body
+#     (~250 LOC) is the new module `ta-dyn-own-property-names.ts`.
+#   - expressions/call-receiver-method.ts (+13): admitting the `%TypedArray%`
+#     intrinsic carrier to `tryEmitTaStaticOfFrom`, and the §23.2.2.1 step-3
+#     `IsCallable(mapfn)` gate. The gate has to be emitted BEFORE both drain
+#     arms — step 3 precedes step 4's `GetMethod(source, @@iterator)` — and it
+#     cannot be folded into the existing nullish test, which cannot tell `null`
+#     (a TypeError) from `undefined` (no mapping). Both predicates live in the
+#     new module `ta-static-from-of-spec.ts`.
+#   - dataview-native.ts (+13): the abstract-`%TypedArray%` TypeError inside
+#     `__ta_from_arraylike`. Its PLACEMENT is the whole point and is measured:
+#     in front of the `__extern_length` read the source's `length` getter ran
+#     0 times; behind it, 1 — §23.2.2.1 performs the array-like length read
+#     before TypedArrayCreate, so a throwing getter must win.
 loc-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/expressions/assignment.ts
@@ -136,8 +159,16 @@ func-budget-allow:
 # front guards already use to read exactly this kind of booleanish trap result.
 # This makes the `Reflect` arms agree with one another rather than introducing
 # a second rule — the same argument #6494 recorded for its own three.
+# 2026-09-21 (cluster E, slice E2) — the one new `number_toString` is not a
+# hand-rolled ToString. It is §10.4.5.6 step 4's `! ToString(𝔽(i))` over an
+# integer index the arm has just produced itself, and it is the SAME call the
+# two sibling own-key producers already make for the same purpose: the
+# `__object_keys` dyn-view arm (`ta-dyn-mop.ts`) and the generic `$__vec_base`
+# arm (`vec-overlay-keys.ts::fillGopnVecArm`). Routing it anywhere else would
+# make the three key producers disagree about how an index becomes a key.
 coercion-sites-allow:
   - src/codegen/expressions/call-namespace-static.ts
+  - src/codegen/ta-dyn-own-property-names.ts
 ---
 
 # #6651 — ES2015 standalone → 100%: cluster execution plan

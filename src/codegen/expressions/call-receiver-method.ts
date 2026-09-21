@@ -74,6 +74,7 @@ import {
   isDataViewAccessor,
   usesNativeDataViewProvider,
 } from "../dataview-native.js";
+import { buildTaFromMapfnCallableGate, buildTypedArrayIntrinsicCarrierMatch } from "../ta-static-from-of-spec.js"; // (#6651 E2) §23.2.1 carrier identity + §23.2.2.1 step 3
 import { ensureTaDynProtoMethodHelper, hasTaDynProtoMethodHelper } from "../ta-dyn-proto-methods.js"; // (#5194 r3-1.3) dyn-view read-side helpers
 import { taDynDetachedGuardPrologue } from "../ta-dyn-method-call.js"; // (#6501) §23.2.4.4 prologue for the helper-routed mutators
 import { ensureNativeArrayFromIterN, ensureNativeArrayFromMapped, reserveAnyIterNext } from "../iterator-native.js";
@@ -407,6 +408,11 @@ function tryEmitTaStaticOfFrom(
         const nullishIdx = ctx.funcMap.get("__nullish_to_null");
         const mapfn = argLocals[1]!;
         const thisArg = argLocals[2];
+        // (#6651 E2) §23.2.2.1 step 3 runs BEFORE step 4's
+        // `GetMethod(source, @@iterator)`, so the gate has to be emitted here —
+        // ahead of both drain arms — not folded into the nullish test below,
+        // which cannot tell `null` (a TypeError) from `undefined` (no mapping).
+        fctx.body.push(...buildTaFromMapfnCallableGate(ctx, mapfn));
         const iterArm: Instr[] = [
           { op: "local.get", index: src },
           { op: "f64.const", value: -1 },
@@ -468,6 +474,21 @@ function tryEmitTaStaticOfFrom(
   fctx.body.push({ op: "local.set", index: isTaCtorLocal });
   fctx.body.push(
     ...buildInt8ArrayCarrierMatch(ctx, recvAnyLocal, [
+      { op: "i32.const", value: 1 },
+      { op: "local.set", index: isTaCtorLocal },
+    ]),
+  );
+  // (#6651 E2) …and the `%TypedArray%` INTRINSIC carrier (§23.2.1), which is
+  // neither a `$__ta_ctor` nor the Int8Array carrier. IsConstructor(%TypedArray%)
+  // is TRUE, so §23.2.2.1 step 2 does NOT throw for it — the abstract-constructor
+  // TypeError belongs to TypedArrayCreate at step 5/6, AFTER the source has been
+  // drained. Declining here sent `TypedArray.from(src)` to the dispatcher, whose
+  // refusal closure threw that TypeError as the FIRST observable act, so a
+  // source whose `@@iterator`/`next`/`length` throws reported the wrong
+  // completion. `__ta_from_arraylike` raises it at the right point instead
+  // (kind < 0 arm), so admitting the carrier here is what restores spec order.
+  fctx.body.push(
+    ...buildTypedArrayIntrinsicCarrierMatch(ctx, recvAnyLocal, [
       { op: "i32.const", value: 1 },
       { op: "local.set", index: isTaCtorLocal },
     ]),
