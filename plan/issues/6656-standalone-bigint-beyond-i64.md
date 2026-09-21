@@ -415,3 +415,40 @@ have; the standalone Temporal provider is byte-identical before and after
 (3 488 870 B, same cache key); and the 94-row corpus shows `shaFlips=0`. The
 `Duration` group — the one of the thirteen that actually contains bigint rows
 — is measured flat above.
+
+### Full battery — complete (2026-09-21)
+
+All 13 groups plus `AddSub`, **3 834 rows**, slice-2 provider
+(`.test262-cache/s74-2`, `--target both`, `cacheHit=false` on first build),
+against the S70 base TSVs:
+
+| group | rows | pass→fail | fail→pass |
+| --- | --- | --- | --- |
+| Duration | 120 | 0 | 0 |
+| ZonedDateTime | 120 | 0 | 0 |
+| PlainDate | 120 | 0 | 0 |
+| PlainDateTime | 120 | 0 | 0 |
+| AddSub | 150 | 0 | 0 |
+| F-class | 250 | 0 | 0 |
+| F-methoddef | 100 | 0 | 0 |
+| F-objproto | 150 | 0 | 0 |
+| E-linked | 300 | 0 | 0 |
+| E-unlinked | 300 | 0 | 0 |
+| B | 205 | 0 | 0 |
+| C | 349 | 0 | 0 |
+| D | 300 | 0 | 0 |
+| A | 1250 | 0 | **1** |
+
+**0 pass→fail across all 3 834 rows.** The single fail→pass is
+`test/language/expressions/object/fn-name-class.js` (`name should be an own
+property`), a class-expression name-inference row that this change cannot
+reach. Its cause is the comparison base, not the fix: the base TSVs were taken
+on S70's tree while this branch is off `bccd46c552`, so `main`'s own progress
+in between shows up as a `+1`. Reported rather than dropped, because a
+comparison against a base that is not your own base is exactly where an
+unexplained flip belongs in the record.
+
+The run was OOM-killed once after `F-methoddef` (exit 137 on a 16 GB box with
+four lanes active) and resumed cleanly — `run-batch.mts` skips any pair whose
+out-file exists — with `NODE_OPTIONS=--max-old-space-size=3072`. That bound is
+worth keeping for the next lane.

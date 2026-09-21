@@ -12438,7 +12438,14 @@ cache key — the polyfill is untyped JS, so its bigints were already on the
 exact dynamic route. The slice-1 "string-round-trip" hypothesis for the `«NaN»`
 rows is **falsified**, and chasing why is what surfaced the finding above.
 
-**Validation (slice 2).** Witness `tests/issue-6656-bigint-tostring-exact.test.ts`
+**Validation (slice 2).** Full battery — 13 groups + `AddSub`, **3 834 rows**,
+slice-2 provider, vs the S70 base: **0 pass→fail everywhere**. One fail→pass,
+`language/expressions/object/fn-name-class.js`, which this change cannot reach
+— the base TSVs are on S70's tree while this branch is off `bccd46c552`, so it
+is `main`'s own progress in between. (The run was OOM-killed once after
+`F-methoddef` and resumed cleanly; keep
+`NODE_OPTIONS=--max-old-space-size=3072`.) Witness
+`tests/issue-6656-bigint-tostring-exact.test.ts`
 (24 rows) FAILS on the file-copy revert of the two touched files with 17 rounded
 rows while all five `ctrl` rows already pass, so the controls cannot carry it
 green; 24/24 with the fix. Probes `bi2` 20/20 and `bi4` 10/10 exact (were 12 and
