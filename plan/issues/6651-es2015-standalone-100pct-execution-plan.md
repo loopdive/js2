@@ -40,14 +40,24 @@ assignee: "ttraenkler/fable-es2015-plan"
 # widening reverses a bail whose prior rationale is recorded in place, so the
 # measurement that overturns it is recorded next to it rather than in a commit
 # message nobody reads at the bail site.
+# 2026-09-20 — cluster B (String.prototype @@match/@@replace/@@search/@@split
+# dispatch, standalone). The protocol itself (~290 LOC) lives in the NEW module
+# `src/codegen/string-symbol-protocol.ts`; the only god-file growth is the
+# dispatch site in `call-receiver-method.ts::compileReceiverMethodCall` that has
+# to NAME it. The call site cannot move: §22.1.3 step 2 runs BEFORE the string
+# lane, so the decision "this search value may carry a protocol method" has to
+# be readable at the point the native string lane is entered, and the probe's
+# fall-through arm IS that same lane re-entered through a closure.
 loc-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/vec-overlay.ts
   - src/codegen/generators-native.ts
+  - src/codegen/expressions/call-receiver-method.ts
 func-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   - src/codegen/generators-native.ts::buildNativeGeneratorPlan
   - src/codegen/generators-native.ts::registerNativeGenerator
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
 ---
 
 # #6651 — ES2015 standalone → 100%: cluster execution plan
@@ -506,6 +516,123 @@ manifest was run through a **compile-only** probe. That turns "197 compile
 errors" into a per-gate histogram in ~8 minutes instead of a 40-minute runner
 pass, and it is how the three buckets above were sized before any code changed.
 The instrumentation is not committed.
+
+### 2026-09-21 — Cluster B (RegExp Symbol.\* protocol, standalone), slice B1: `String.prototype` @@-dispatch
+
+- **Branch** `issue-6651-cluster-B-regexp`, based on
+  `claude/es2015-test262-plan-54tooh` @ `9b1ff0dc`.
+  **Worktree** `/home/user/js2/.claude/worktrees/agent-a35ed687b8f0ef175`.
+- **Manifest** `plan/agent-context/6651/B-regexp-protocol.txt`, 147 rows,
+  sha256 `f34bba06f50029156d5fb0cf36bb4f7da0c670b8645cdd35136dec9916a90b61`.
+- Coordinated against **#5198** (Codex lane): its Slices A–C (observable
+  `RegExpExec`/custom `exec`, `lastIndex`, the `flags` getter) and the Annex B
+  compile-syntax work are UNTOUCHED here. This slice is #5198's **Slice D**,
+  which had no in-flight branch.
+
+| standalone, `--isolate`, 147 rows | pass | fail | compile_error |
+| --- | ---: | ---: | ---: |
+| before (`.tmp/6651/B-before.log`) | **0** | 136 | 11 |
+| after (`.tmp/6651/B-after.log`) | **7** | 129 | 11 |
+
+**+7 rows pass; every one of the other 140 rows keeps its exact status** (the
+two logs were joined row-by-row, not just compared by count). No compile_error
+became a fail and no fail became a compile_error.
+
+#### What changed, and why the previous answer was wrong rather than missing
+
+One new module, `src/codegen/string-symbol-protocol.ts`, plus a 10-line
+dispatch site in `call-receiver-method.ts`. No new host import — the probe is
+built from natives the object runtime already exports (`__extern_get`,
+`__box_symbol`, `__typeof_function`, `__objvec_new/push`, `__apply_closure`).
+
+§22.1.3 step 2 of `match`/`replace`/`search`/`split` is
+`GetMethod(searchValue, @@<protocol>)`, and `string-search-value.ts` (#4016)
+answered it **statically**, with
+`ctx.oracle.wellKnownSymbolMemberOf(v, protocol) === false`. That proof is
+exact for a primitive and for a builtin RegExp, and **unsound for an ordinary
+object** — the idiom the step exists for installs the method *after* the object
+is created (`var regexp = {}; regexp[Symbol.search] = f`), where no declared
+type can see it. So the old lowering took the step-3 lane instead and ran
+`RegExpCreate(ToString(regexp))`, i.e. the pattern `"[object Object]"`. The
+four `cstm-*-invocation` rows therefore reported
+`TypeError: Unsupported dynamic regular expression pattern`, **which reads like
+a missing engine feature and was actually the compiler stringifying a value it
+was required to call.** That is the reason this bucket was worth taking before
+the much larger `exec`-protocol buckets: it was mis-signposted, not merely
+unimplemented.
+
+Two things the implementation had to get right, both measured rather than
+assumed:
+
+1. **The gate must admit `{kind:"class"}`, not just `{kind:"object"}.** test262
+   rows are **JS**, so TypeScript's expando inference gives `var regexp = {}` an
+   anonymous type whose symbol carries the VARIABLE's name — and `factOfType`
+   reports `{kind:"class", name:"regexp"}`. The first cut gated on `object`
+   alone: it compiled and fired under a hand-written `.ts` probe and **never
+   fired under the runner**, so the focused 17-row slice came back
+   byte-identical. The `.ts` probe alone would have shipped a no-op.
+2. **The probe must not leak its `externref` carrier into a typed consumer.**
+   The branch's result type is externref (the protocol method may return
+   anything), while the fall-through arm produces the native carrier —
+   `const parts: string[] = "a,b".split(sep)` is the shape that catches a leak,
+   because it compiles green and fails at `WebAssembly.instantiate`. It is
+   pinned as a control. (A first attempt at that control used a dynamic
+   symbol-keyed assignment and hit a **pre-existing, unrelated** invalid-module
+   bug — `local.set expected (ref null 6), found (ref null 46)` — reproduced
+   byte-identically on the base commit by a one-`cp` revert, so it is not
+   attributable here and the control was rewritten.)
+
+Both arms are re-emitted from the same AST, so the gate additionally requires
+the receiver, search value and extra argument to be **re-evaluable without
+observable effect** (identifier / `this` / literal). A computed operand keeps
+the previous behaviour rather than risking a doubled side effect.
+
+#### Neighbourhood regression control — zero pass → non-pass
+
+The blast radius is provably bounded: the hook can only fire on a
+`String.prototype.{match,replace,search,split}` call. The full 2,280-row
+`built-ins/RegExp/**` + `annexB/built-ins/RegExp/**` +
+`built-ins/String/prototype/{match,matchAll,replace,replaceAll,search,split}/**`
+sweep was therefore filtered to the **512 rows whose source contains such a
+call or a `[Symbol.<protocol>]` reference** — sound because none of the 2,280
+rows includes one of the three harness files that call those methods
+(`iteratorZipUtils`, `temporalHelpers`, `testIntl`), checked rather than
+assumed. Run in 128-row chunks, one fresh process each: the single 2,280-row
+in-process run **OOMs** at ~8 GB after ~27 min, which is a property of the
+runner, not a finding.
+
+| lane | rows | before | after | flips |
+| --- | ---: | ---: | ---: | --- |
+| standalone (`.tmp/6651/nbr-{before,after}.tsv`) | 512 | 161 non-pass | **154 non-pass** | the 7 target rows only; **0 regressions** |
+| host — compiled-binary sha256 of 7 representative programs | 7 | — | — | **all 7 byte-identical** (`.tmp/6651/hostsha-{before,after}.txt`) |
+| standalone — same 7 programs | 7 | — | — | **6 byte-identical**; only `split-object` differs, which is the admitted shape |
+
+The host lane is byte-identical by construction too — `noJsHost(ctx)` is the
+probe's first condition — but the sha comparison is the evidence, not the
+argument.
+
+Also green: `npm run -s typecheck`; the five ratchet gates
+(`check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`); `scripts/equivalence-gate.mjs`
+(22 failing / 1720 passing, all 22 in the committed baseline — no new
+regressions); and the new pin suite
+`tests/issue-6651-string-symbol-protocol.test.ts`, 9/9.
+
+#### Residual sub-buckets (140 rows), with signatures
+
+| rows | signature | owner / what it needs |
+| ---: | --- | --- |
+| 44 | `Expected a Test262Error … no exception` / `… but got a TypeError` | the observable **`RegExpExec`** substrate — `Get(R,"exec")`, call a callable override, propagate its abrupt completion. **#5198 Slice B** (draft PR #5393). Do not start here. |
+| 18 | `Method called on incompatible receiver (RegExp brand check failed)` | `RegExp.prototype[@@x].call(plainObjWithExec, …)` is spec-legal; widening `recoverRegExpStructFromExternref` only helps once the row can then run a user `exec`, so it is **downstream of Slice B**, not independent. |
+| 8 | `Expected a TypeError … no exception` | same family, TypeError-shaped assertions |
+| 7 | `JS2WASM_EVAL_ENGINE=quickjs … provider is not built` | **environment, not the compiler** — the 7 `*/cross-realm.js` + `proto-from-ctor-realm.js` rows need a built QuickJS provider in this container. Unmeasurable here; #5198 records them failing on host too. |
+| 7 | CE `standalone target emitted host imports: env::Object_set_constructor` | 6 of 7 are `Symbol.split/species-ctor*` — `SpeciesConstructor` needs a `constructor` write on a plain object. #5198 Slice C4/E. |
+| 5 | `flags` coercion (`built-ins/RegExp/prototype/flags/coercion-*`) | the **generic** `flags` getter: accept any Object, ordered `ToBoolean(Get(R, …))`. #5198 **Slice F**; fails on host too. |
+| 4 | `Unsupported dynamic regular expression pattern` | the runtime pattern compiler. 2 are the `cstm-*-is-null` rows, which reach the ToString lane correctly now and then need `\d` from `__regex_compile_dynamic_simple`. |
+| 3 | CE `… does not support String.prototype.match with dynamic RegExp flags` | `@@match` must read flags at RUNTIME. #5198 Slice C2. |
+| 3 | `Expected true but got false` at `assert.notSameValue(originalSearch, undefined)` | `invoke-builtin-{search,match}*` — needs `RegExp.prototype[@@x]` to be a **reified, replaceable** method object, so the step-3 RegExp lane dispatches through it. Strictly harder than this slice. |
+| 1 | CE, `String.prototype.replace/cstm-replace-get-err.js` | reachable and **deliberately left**: `"".replace(poisoned)` has ONE argument, and `tryCompileStandaloneStringValueReplace` requires exactly two, so the fall-through arm cannot lower and the `#1474` refusal is still reported. The fix is to admit an absent `replaceValue` as the literal `"undefined"` (§22.1.3.19 step 3) — a separate behaviour change for one row, which would have invalidated this slice's measured after-state. |
+| 40 | assorted `Expected SameValue(…)` | per-method result-shape and cursor residuals across `@@replace` (30 rows), `@@split` (30), `@@match` (23), `@@search` (13) — #5198 Slices C1–C4. |
 
 ## Manifest generator note
 
