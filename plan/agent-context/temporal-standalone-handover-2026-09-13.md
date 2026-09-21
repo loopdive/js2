@@ -1333,3 +1333,60 @@ Traps added this slice: `run-batch.mts` skips any pair whose out-file exists
 `prewarm-temporal-provider.mjs` needs `--target both`; a file-copy revert
 corrupts an in-process battery; container restarts kill lanes every ~2–3 h —
 the lead finishes a dead lane's verification from its worktree.
+
+## Stack state 2026-09-20 (post-S71) — S71 on `issue-5383-standalone-temporal-s71` at `8d587b0159` (off the S70 PR head `78dd538964`); #6652 DONE; four-family 463/480; add/subtract 138/150 — both UNCHANGED, and that is the finding
+
+S71 (Opus) finished #6650's residual table: the return-carrier mismatch — a
+spread-built object literal is an open host `$Object` externref while the
+enclosing function's result ABI is the checker-inferred concrete struct, so the
+emitted return is a guarded downcast that always takes the null arm — is now
+fixed for the **arrow, function expression, object-literal method, class method
+and nested function declaration** as well as the top-level declaration #6650
+covered. One predicate, in the pre-pass that already walked every callable
+shape: `collectAccessorLiteralReturnCarrierTypes` consulted only the
+accessor reason, never `objectLiteralSpreadTakesHostPath`; and its private
+wrapper peeler lacked #6650's comma arm, so the two boundaries now share ONE
+peeler in `src/codegen/declarations/host-carrier-object-literal.ts`.
+
+**Read this before planning the next Temporal lane.** The standalone Temporal
+provider is **byte-identical** base vs fix (`57781189fa76e796`, 3 491 376 B,
+`cmp`-verified). The minified polyfill's five non-declaration spread-returns all
+spread a **PARAMETER** — `any` in untyped JS, hence already on the externref
+carrier, hence never broken. #6652 is a **user-code correctness fix, not a
+Temporal row-mover**; the brief's expectation that it would move Temporal rows
+outside the S70 sample is falsified, and measured
+(`.tmp/s71/probes/polyfill-shapes.mts` runs the polyfill's own shapes on the
+base and they answer correctly). The corpus is not literally flat, because a
+test262 row also compiles the TEST BODY: the new `Temporal-rest` group's chunk-3
+base run found 3 `compile_error → pass`, 0 pass→fail.
+
+Validation: 15 battery groups / 4 434 rows, 0 pass→fail everywhere; four-family
+463/480 and AddSub 138/150 both unchanged; corpus 0 status / 0 sha flips;
+equivalence 22 / 1720 / 22; witness sweep 58 files / 365 tests green on Node 22
+AND Node 25. Base TSVs for the next lane: `.tmp/s71/battery/*-cur.tsv` (15
+groups) in worktree `agent-a1913968da57de166`; corpus base
+`.tmp/s71/corpus-fix.jsonl`. **Caveat (coordinator decision, box contention):**
+`Temporal-rest` chunks 1–2 (400 of its 600 rows) have a fix-tree run only, no
+reverted-base run; the byte-identical provider bounds that to test-body
+compilation, which chunk 3 measured at 0 pass→fail.
+
+**Next lanes** (one at a time, Opus): (a) subclassing-ignored `abs`/`add`
+(`instance[method](...a)` on a subclass instance); (b) the >2^53 precision rows
++ two epoch-limit rows (arbitrary-precision BigInt, XL, new issue);
+(c) `__apply_closure` unreachable ×3 (#6628 etc.); (d) NEW — an object-literal
+method and a class method sharing a NAME emit an **invalid module**
+(`local.set[0] expected type (ref null N), found ref.as_non_null of type
+(ref M)`), no spread involved, pre-existing; five-line repro
+`.tmp/s71/probes/collide.mts`. The three offset-grammar rows remain
+polyfill-version, not ours.
+
+Traps added this slice: the **oracle-ratchet gate counts `ctx.checker` in
+COMMENTS**, so a prose mention in a new file fails it; the box has **no swap and
+sibling lanes** — run ONE `run-batch`/`run-family` at a time and `--maxWorkers=1`
+for vitest, and **reap orphaned vitest/`tsc` workers from your own earlier
+sweeps** (`ps -eo pid,rss --sort=-rss`) before blaming concurrency, they held
+~6 GB here; `run-batch.mts` writes its TSV only at GROUP end, so a kill loses the
+whole group — chunk long groups at ≤200 rows; `pnpm install` in a fresh harness
+worktree needs `CI=true` (no TTY); a `git checkout HEAD -- <path>` elsewhere in
+the tree can drop the `test262` symlink back to an empty submodule dir — re-link
+before any further battery run.
