@@ -6,7 +6,9 @@
  * Extracted from codegen/index.ts (#1013).
  */
 import { isTopLevelClassPrototypeWrite } from "./class-proto-toplevel-write.js";
+import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
 import { collectScopeLocalDeclNames } from "./scope-local-decl-names.js";
+import { widenUndefinedDefaultParamSlot } from "./destructuring-params.js";
 import { expressionHasWidenedPropertyType } from "./strict-eq-stale-type.js";
 import { functionReturnsWidenedProperty } from "./declarations/widened-property-return.js";
 import { ts, forEachChild } from "../ts-api.js";
@@ -1445,6 +1447,9 @@ function lowerParamType(
   if (isUndefinedDefaultOnlyParam(param, paramType)) {
     wasmType = { kind: "externref" };
   }
+  // (#6651 C3) …and the same for a JS defaulted parameter whose type is read
+  // off its own initializer. See `paramTypeIsJsDefaultGuess`.
+  if (nativeParam === null) wasmType = widenUndefinedDefaultParamSlot(param, wasmType);
   if (nativeParam === null) {
     wasmType = preserveIdentityForStructuralParam(ctx, param, index, stmt, wasmType, paramType);
   }
@@ -3211,7 +3216,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
             const params: ValType[] = [];
             for (const param of fnExpr.parameters) {
               const paramType = ctx.checker.getTypeAtLocation(param);
-              params.push(resolveWasmType(ctx, paramType));
+              params.push(widenJsDefaultGuessSlot(param, resolveWasmType(ctx, paramType)));
             }
             const retType = ctx.checker.getReturnTypeOfSignature(sig);
             // (#2905) Carrier own-return guard — see findCallSignature. An async
@@ -3282,7 +3287,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           const params: ValType[] = [];
           for (const param of fnExpr.parameters) {
             const paramType = ctx.checker.getTypeAtLocation(param);
-            params.push(resolveWasmType(ctx, paramType));
+            params.push(widenJsDefaultGuessSlot(param, resolveWasmType(ctx, paramType)));
           }
           const retType = ctx.checker.getReturnTypeOfSignature(sig);
           // (#2905) Carrier own-return guard — see findCallSignature. CJS named

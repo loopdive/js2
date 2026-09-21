@@ -7294,6 +7294,32 @@ export function ensureTaFromArrayLikeHelper(ctx: CodegenContext): number | undef
     else: [],
   });
 
+  // (#6651 E2) §23.2.4.1 TypedArrayCreate step 1 is `Construct(C, «len»)`, and
+  // §23.2.1 step 1 makes constructing `%TypedArray%` DIRECTLY a TypeError. Both
+  // identity probes above leave `kind` at the -1 sentinel exactly when `C` is
+  // not a CONCRETE view constructor, and since E2 widened `tryEmitTaStaticOfFrom`
+  // to admit the `%TypedArray%` intrinsic carrier that sentinel is now
+  // reachable. Before this it fell through to `pushElemSizeForKind(-1)` and
+  // built a view out of an abstract constructor.
+  //
+  // The PLACEMENT is the load-bearing part, not the throw. §23.2.2.1 orders the
+  // IteratorStep drain (step 5) — or ToObject + LengthOfArrayLike (step 6) —
+  // BEFORE TypedArrayCreate, so the check must sit AFTER the `__extern_length`
+  // read above, not before it. Raised earlier it reported the
+  // abstract-constructor TypeError for `TypedArray.from(<obj whose length
+  // getter throws>)`, where `built-ins/TypedArray/from/arylk-get-length-error.js`
+  // requires the getter's OWN completion — measured on this branch: the getter
+  // ran 0 times with the check in front of the length read, 1 time behind it.
+  fctx.body.push({ op: "local.get", index: kindLocal });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "i32.lt_s" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: buildThrowJsErrorInstrs(ctx, "TypeError", "TypeError: Abstract class TypedArray not directly constructable"),
+    else: [],
+  });
+
   // bl = n * es; arr = new zeroed byte array[bl].
   fctx.body.push({ op: "local.get", index: nLocal });
   fctx.body.push({ op: "local.get", index: esLocal });

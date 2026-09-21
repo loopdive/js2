@@ -1,4 +1,5 @@
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
+import { widenJsDefaultGuessSlot } from "../js-default-param-type-guess.js";
 import { materializeFnctorTwinCaptures } from "../fnctor-twin-captures.js";
 import { resolveStaticSpreadArgs } from "../static-spread-arity.js"; // (#6460)
 import { emitLayoutSelectingStructNew, maybeEmitLayoutHint } from "../fnctor-layout-emit.js"; // (#3927) per-type layouts
@@ -2812,7 +2813,7 @@ function compileNewFunctionDeclaration(
   for (let i = 0; i < funcDecl.parameters.length; i++) {
     const param = funcDecl.parameters[i]!;
     const paramType = ctx.checker.getTypeAtLocation(param);
-    userCtorParams.push(resolveWasmType(ctx, paramType));
+    userCtorParams.push(widenJsDefaultGuessSlot(param, resolveWasmType(ctx, paramType)));
   }
   // (fnctor-ctor-arguments.ts) Asked ONCE and shared by both halves of the
   // `arguments` protocol — the ctor-body materialization below and the call
@@ -3164,7 +3165,7 @@ function compileNewFunctionExpression(
   if (funcExpr.parameters.length > 0) {
     for (const p of funcExpr.parameters) {
       const paramType = ctx.checker.getTypeAtLocation(p);
-      formalParams.push(resolveWasmType(ctx, paramType));
+      formalParams.push(widenJsDefaultGuessSlot(p, resolveWasmType(ctx, paramType)));
     }
   } else if (!hasDynamicSpread) {
     // No formal params — create f64 params for each call-site arg
