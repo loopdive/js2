@@ -48,9 +48,9 @@
   },
   {
     "edition": "ES2015",
-    "pass": 10658,
-    "fail": 887,
-    "ce": 159,
+    "pass": 10666,
+    "fail": 880,
+    "ce": 158,
     "skip": 0,
     "total": 11704,
     "pct": 91,
@@ -210,12 +210,12 @@
       },
       {
         "name": "Symbol.match",
-        "pass": 51,
-        "fail": 24,
-        "ce": 1,
+        "pass": 59,
+        "fail": 17,
+        "ce": 0,
         "skip": 0,
         "total": 76,
-        "pct": 67
+        "pct": 78
       },
       {
         "name": "Symbol.replace",
@@ -2186,8 +2186,8 @@
   },
   {
     "edition": "ES2022",
-    "pass": 4171,
-    "fail": 1228,
+    "pass": 4173,
+    "fail": 1226,
     "ce": 393,
     "skip": 0,
     "total": 5792,
@@ -2438,12 +2438,12 @@
       },
       {
         "name": "regexp-match-indices",
-        "pass": 22,
-        "fail": 5,
+        "pass": 24,
+        "fail": 3,
         "ce": 0,
         "skip": 0,
         "total": 27,
-        "pct": 81
+        "pct": 89
       },
       {
         "name": "DataView",
@@ -2627,12 +2627,12 @@
       },
       {
         "name": "regexp-dotall",
-        "pass": 2,
-        "fail": 2,
+        "pass": 4,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 4,
-        "pct": 50
+        "pct": 100
       },
       {
         "name": "Int8Array",
@@ -2856,8 +2856,8 @@
   },
   {
     "edition": "ES2024",
-    "pass": 378,
-    "fail": 69,
+    "pass": 379,
+    "fail": 68,
     "ce": 109,
     "skip": 0,
     "total": 556,
@@ -2874,12 +2874,12 @@
       },
       {
         "name": "regexp-v-flag",
-        "pass": 182,
-        "fail": 5,
+        "pass": 183,
+        "fail": 4,
         "ce": 0,
         "skip": 0,
         "total": 187,
-        "pct": 97
+        "pct": 98
       },
       {
         "name": "align-detached-buffer-semantics-with-web-reality",
@@ -3234,12 +3234,12 @@
       },
       {
         "name": "Symbol.match",
-        "pass": 0,
-        "fail": 1,
+        "pass": 1,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 1,
-        "pct": 0
+        "pct": 100
       },
       {
         "name": "Symbol.matchAll",

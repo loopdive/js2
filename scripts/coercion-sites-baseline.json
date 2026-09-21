@@ -89,6 +89,7 @@
   "codegen/property-access.ts": 5,
   "codegen/proto-index-store.ts": 2,
   "codegen/record-from-host-object.ts": 1,
+  "codegen/regexp-accessor-get-arm.ts": 2,
   "codegen/regexp-exec-protocol.ts": 6,
   "codegen/regexp-standalone.ts": 2,
   "codegen/registry/imports.ts": 17,

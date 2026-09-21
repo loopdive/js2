@@ -647,7 +647,7 @@
     {
       "name": "Strings",
       "testCategories": ["built-ins/String", "built-ins/StringIteratorPrototype"],
-      "passCount": 1143,
+      "passCount": 1144,
       "totalCount": 1230,
       "editionSpread": [
         {
@@ -687,7 +687,7 @@
         },
         {
           "edition": "ES2024",
-          "pass": 12,
+          "pass": 13,
           "total": 21
         },
         {
@@ -897,7 +897,7 @@
     {
       "name": "Regular expressions",
       "testCategories": ["built-ins/RegExp", "built-ins/RegExpStringIteratorPrototype"],
-      "passCount": 1708,
+      "passCount": 1718,
       "totalCount": 1896,
       "editionSpread": [
         {
@@ -907,7 +907,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 177,
+          "pass": 185,
           "total": 278
         },
         {
@@ -927,7 +927,7 @@
         },
         {
           "edition": "ES2022",
-          "pass": 22,
+          "pass": 24,
           "total": 27
         },
         {
@@ -1080,7 +1080,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1627,
+      "passCount": 1635,
       "totalCount": 1955
     },
     {
@@ -1346,7 +1346,7 @@
     {
       "name": "RegExp v flag",
       "testCategories": ["built-ins/RegExp/unicodeSets"],
-      "passCount": 182,
+      "passCount": 183,
       "totalCount": 187
     },
     {
